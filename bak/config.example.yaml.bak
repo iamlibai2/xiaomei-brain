@@ -1,0 +1,78 @@
+# Xiaomei Brain 配置文件
+# 复制此文件为 config.yaml 并修改配置
+
+# ==================== 大模型提供商配置 ====================
+# 选择使用的提供商: zhipu (智谱AI), volcengine (火山引擎), openai (OpenAI)
+provider: "zhipu"
+
+# 各提供商的具体配置
+providers:
+  # 智谱AI (GLM)
+  zhipu:
+    base_url: "https://open.bigmodel.cn/api/paas/v4/"
+    model: "glm-5.1"
+    # 也可以在环境变量中设置: ZHIPU_API_KEY
+    api_key: ""
+
+  # 火山引擎 (Doubao)
+  volcengine:
+    base_url: "https://ark.cn-beijing.volces.com/v3"
+    model: "doubao-pro-32k"
+    # 也可以在环境变量中设置: VOLCENGINE_API_KEY
+    api_key: ""
+
+  # OpenAI (或兼容 OpenAI 格式的 API)
+  openai:
+    base_url: "https://api.openai.com/v1"
+    model: "gpt-4o-mini"
+    # 也可以在环境变量中设置: OPENAI_API_KEY
+    api_key: ""
+
+# ==================== Agent 行为配置 ====================
+agent:
+  # 最大 ReAct 循环步数
+  max_steps: 10
+
+  # 系统提示词
+  system_prompt: "You are a helpful assistant."
+
+# ==================== 上下文管理配置 ====================
+context:
+  # 上下文最大 token 数
+  max_tokens: 4000
+
+  # 保留最近的对话轮数（原文）
+  recent_turns: 6
+
+# ==================== 记忆系统配置 ====================
+memory:
+  # 记忆存储目录
+  # 默认: ~/.xiaomei-brain/memory
+  dir: ""
+
+  # 相似度阈值 (0.0-1.0)，低于此值的记忆不注入
+  similarity_threshold: 0.3
+
+  # 最大主题数量，超过后 LRU 淘汰
+  max_topics: 100
+
+  # 单个主题最大字符数
+  max_topic_chars: 5000
+
+# ==================== 梦境系统配置 ====================
+dream:
+  # 空闲多少秒后自动触发梦境 (默认 300 = 5分钟)
+  idle_threshold: 300
+
+  # 是否在午夜自动触发
+  midnight_run: true
+
+# ==================== 主动行为配置 ====================
+proactive:
+  # 检测用户离开多久后认为是"回来" (秒)
+  away_threshold: 3600
+
+# ==================== 日志配置 ====================
+logging:
+  # 日志级别: DEBUG, INFO, WARNING, ERROR
+  level: "INFO"

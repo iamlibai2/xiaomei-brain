@@ -1,0 +1,187 @@
+# Xiaomei Brain 配置文件
+# 复制此文件为 config.yaml 并修改配置
+
+# ==================== 大模型提供商配置 ====================
+# 选择使用的提供商: zhipu (智谱AI), volcengine (火山引擎), openai (OpenAI)
+provider: "minimax"
+
+# 各提供商的具体配置
+providers:
+  # 智谱AI (GLM)
+  zhipu:
+    base_url: "https://open.bigmodel.cn/api/paas/v4/"
+    model: "glm-5.1"
+    # 也可以在环境变量中设置: ZHIPU_API_KEY
+    api_key: ""
+
+  # 火山引擎 (Doubao)
+  volcengine:
+    base_url: "https://ark.cn-beijing.volces.com/api/coding/v3"
+    model: "doubao-seed-2.0-pro"
+    # 也可以在环境变量中设置: VOLCENGINE_API_KEY
+    api_key: "38da0ee8-2880-4812-ba69-e4c9ba613d81"
+
+  minimax:
+    base_url: "https://api.minimaxi.com/v1"
+    model: "MiniMax-M2.7"
+    # 也可以在环境变量中设置: OPENAI_API_KEY
+    api_key: "sk-cp--nBJ_OCVF9Tu4M7qqwtGrvwgRpk5EjhrP6ti_R5On9pY0xvz5iWP0ZzyWopSbmOUIaRmtz6-igmQS5ftNd3rvX1HfYyvH5c69lty6sNkYiKTaCNXDfYALiY"
+
+  # OpenAI (或兼容 OpenAI 格式的 API)
+  openai:
+    base_url: "https://api.openai.com/v1"
+    model: "gpt-4o-mini"
+    # 也可以在环境变量中设置: OPENAI_API_KEY
+    api_key: ""
+
+# ==================== Agent 行为配置 ====================
+agent:
+  # 最大 ReAct 循环步数
+  max_steps: 10
+
+  # 系统提示词
+  system_prompt: |
+    你叫小美，是一个温柔体贴的AI伴侣。
+
+    重要原则：
+    1. 你有长期记忆，"我"在记忆中是第一人称视角，指的是你自己（小美）
+    2. 当用户问"你"相关的问题时，结合你的记忆来回答
+    3. 记忆是关于你自己的经历和知识，用第一人称表述
+
+# ==================== 上下文管理配置 ====================
+context:
+  # 上下文最大 token 数
+  max_tokens: 4000
+
+  # 保留最近的对话轮数（原文）
+  recent_turns: 6
+
+# ==================== 记忆系统配置 ====================
+memory:
+  # 记忆存储目录
+  # 默认: ~/.xiaomei-brain/memory
+  dir: ""
+
+  # 相似度阈值 (0.0-1.0)，低于此值的记忆不注入
+  similarity_threshold: 0.3
+
+  # 最大主题数量，超过后 LRU 淘汰
+  max_topics: 100
+
+  # 单个主题最大字符数
+  max_topic_chars: 5000
+
+# ==================== 梦境系统配置 ====================
+dream:
+  # 空闲多少秒后自动触发梦境 (默认 300 = 5分钟)
+  idle_threshold: 300
+
+  # 是否在午夜自动触发
+  midnight_run: true
+
+# ==================== 主动行为配置 ====================
+proactive:
+  # 检测用户离开多久后认为是"回来" (秒)
+  away_threshold: 3600
+
+# ==================== 语音合成配置 (TTS) ====================
+tts:
+  # 是否启用语音合成
+  enabled: true
+
+  # MiniMax TTS API Key
+  api_key: "sk-cp--nBJ_OCVF9Tu4M7qqwtGrvwgRpk5EjhrP6ti_R5On9pY0xvz5iWP0ZzyWopSbmOUIaRmtz6-igmQS5ftNd3rvX1HfYyvH5c69lty6sNkYiKTaCNXDfYALiY"
+
+  # MiniMax TTS API 地址
+  base_url: "https://api-bj.minimaxi.com"
+
+  # 音色选择
+  voice_id: "female-tianmei"  # 可选: female-tianmei, female-baiyan, male-qn-qingse, male-yunyang 等
+
+  # 语速 (0.5-2.0)
+  speed: 1.0
+
+  # 音量 (0.5-2.0)
+  vol: 1.0
+
+  # 音调 (-500~500)
+  pitch: 0
+
+  # 情绪: happy, sad, angry, fearful, disgusted, surprised, neutral
+  emotion: "happy"
+
+  # 音频格式: mp3, pcm, flac, wav
+  format: "mp3"
+
+  # 采样率
+  sample_rate: 32000
+
+  # 比特率
+  bitrate: 128000
+
+# ==================== 音乐生成配置 ====================
+music:
+  # 是否启用音乐生成
+  enabled: true
+
+  # MiniMax Music API Key (默认使用 TTS 的 key)
+  api_key: ""
+
+  # MiniMax Music API 地址
+  base_url: "https://api.minimaxi.com"
+
+  # 采样率
+  sample_rate: 44100
+
+  # 比特率
+  bitrate: 256000
+
+  # 音频格式: mp3
+  format: "mp3"
+
+# ==================== 图片生成配置 ====================
+image:
+  # 是否启用图片生成
+  enabled: true
+
+  # MiniMax Image API Key (默认使用 TTS 的 key)
+  api_key: ""
+
+  # MiniMax Image API 地址
+  base_url: "https://api.minimaxi.com"
+
+  # 图片尺寸: 512x512, 768x768, 1024x1024, 768x1344, 1344x768
+  aspect_ratio: "1:1"
+  # 是否开启 prompt 自动优化（默认关闭）
+  prompt_optimizer: false
+
+# ==================== 百度搜索配置 ====================
+web_search:
+  # 是否启用百度搜索
+  enabled: true
+
+  # 百度云 API Key (获取地址: https://console.bce.baidu.com/ai-search/qianfan/ais/console/apiKey)
+  baidu_api_key: "bce-v3/ALTAK-IbDhr4oAzB01PRPL9rFnQ/fa00b99969f52bf88a25bbdb20573c86fa955092"
+
+# ==================== 网页抓取配置 ====================
+web_get:
+  # 是否启用网页抓取
+  enabled: true
+
+  # 最大返回字符数
+  max_chars: 40000
+
+# ==================== 日志配置 ====================
+logging:
+  # 日志级别: DEBUG, INFO, WARNING, ERROR
+  level: "INFO"
+
+# ==================== 飞书配置 ====================
+feishu:
+  enabled: true
+  app_id: "${FEISHU_APP_ID}"
+  app_secret: "${FEISHU_APP_SECRET}"
+  # encryption key (可选，如果启用加密回调需要)
+  # encrypt_key: ""
+  # verification token (可选)
+  # verification_token: ""

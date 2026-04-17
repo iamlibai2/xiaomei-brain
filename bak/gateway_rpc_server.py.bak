@@ -1,0 +1,287 @@
+"""Gateway RPC Server - WebSocket JSON-RPC 服务器
+
+提供配置管理接口：
+- config.get: 获取配置
+- config.apply: 完整替换配置
+- config.patch: 部分更新配置
+"""
+
+import asyncio
+import json
+import logging
+import os
+import threading
+from typing import Any, Callable
+
+from .config_provider import ConfigProvider, ConflictError, get_provider
+from .file_watcher import FileWatcher
+
+logger = logging.getLogger(__name__)
+
+
+class RPCHandler:
+    """RPC 请求处理器"""
+
+    def __init__(self, provider: ConfigProvider):
+        self.provider = provider
+
+    async def handle(self, method: str, params: dict) -> dict:
+        """处理 RPC 请求"""
+        try:
+            if method == "config.get":
+                return await self._config_get(params)
+            elif method == "config.apply":
+                return await self._config_apply(params)
+            elif method == "config.patch":
+                return await self._config_patch(params)
+            elif method == "config.reload":
+                return await self._config_reload(params)
+            else:
+                return {"error": {"code": -32601, "message": f"Method not found: {method}"}}
+        except ConflictError as e:
+            return {"error": {"code": 409, "message": str(e)}}
+        except ValueError as e:
+            return {"error": {"code": 400, "message": str(e)}}
+        except Exception as e:
+            logger.error(f"RPC error: {e}", exc_info=True)
+            return {"error": {"code": -32603, "message": str(e)}}
+
+    async def _config_get(self, params: dict) -> dict:
+        """获取配置"""
+        path = params.get("path", "")
+        value = self.provider.get(path)
+        return {
+            "value": value,
+            "hash": self.provider.hash
+        }
+
+    async def _config_apply(self, params: dict) -> dict:
+        """完整替换配置"""
+        raw = params.get("raw", "")
+        base_hash = params.get("baseHash", "")
+        restart_delay_ms = params.get("restartDelayMs", 2000)
+
+        # 解析 JSON5/JSON
+        try:
+            new_config = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON: {e}")
+
+        # 应用配置
+        self.provider.apply(new_config, base_hash)
+
+        # 延迟后触发重启（如果有注册重启回调）
+        if restart_delay_ms > 0:
+            asyncio.get_event_loop().call_later(
+                restart_delay_ms / 1000,
+                self._emit_restart
+            )
+
+        return {
+            "success": True,
+            "hash": self.provider.hash
+        }
+
+    async def _config_patch(self, params: dict) -> dict:
+        """部分更新配置"""
+        raw = params.get("raw", "")
+        base_hash = params.get("baseHash", "")
+        restart_delay_ms = params.get("restartDelayMs", 2000)
+
+        # 解析 JSON5/JSON
+        try:
+            partial = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON: {e}")
+
+        # 合并配置
+        self.provider.patch(partial, base_hash)
+
+        # 延迟后触发重启
+        if restart_delay_ms > 0:
+            asyncio.get_event_loop().call_later(
+                restart_delay_ms / 1000,
+                self._emit_restart
+            )
+
+        return {
+            "success": True,
+            "hash": self.provider.hash
+        }
+
+    async def _config_reload(self, params: dict) -> dict:
+        """重新加载配置"""
+        self.provider.reload()
+        return {
+            "success": True,
+            "hash": self.provider.hash
+        }
+
+    def _emit_restart(self) -> None:
+        """触发重启事件"""
+        # 这里是简化实现，实际应该通过事件系统触发
+        logger.info("Config changed, restart event emitted")
+
+
+class GatewayRPCServer:
+    """Gateway RPC WebSocket 服务器
+
+    监听 WebSocket 连接，处理 JSON-RPC 请求
+    """
+
+    def __init__(
+        self,
+        config_path: str | None = None,
+        host: str = "127.0.0.1",
+        port: int = 18789
+    ):
+        self.host = host
+        self.port = port
+        self.provider = get_provider(config_path)
+        self.rpc_handler = RPCHandler(self.provider)
+        self.file_watcher: FileWatcher | None = None
+        self._server = None
+        self._running = False
+        self._restart_callbacks: list[Callable[[], None]] = []
+
+    async def start(self) -> None:
+        """启动 RPC 服务器"""
+        if self._running:
+            return
+
+        self._running = True
+
+        # 启动文件监听
+        self.file_watcher = FileWatcher(
+            path=self.provider.config_path,
+            callback=self._on_config_file_changed
+        )
+        self.file_watcher.start()
+
+        # 启动 WebSocket 服务器
+        self._server = await self._start_ws_server()
+        logger.info(f"Gateway RPC Server started on {self.host}:{self.port}")
+
+    async def stop(self) -> None:
+        """停止 RPC 服务器"""
+        self._running = False
+
+        if self.file_watcher:
+            self.file_watcher.stop()
+
+        if self._server:
+            self._server.close()
+            await self._server.wait_closed()
+
+        logger.info("Gateway RPC Server stopped")
+
+    def _on_config_file_changed(self) -> None:
+        """配置文件变化时的回调"""
+        logger.info("Config file changed, reloading...")
+        self.provider.reload()
+
+    def on_restart(self, callback: Callable[[], None]) -> None:
+        """注册重启回调"""
+        self._restart_callbacks.append(callback)
+
+    async def _start_ws_server(self):
+        """启动 WebSocket 服务器"""
+        import websockets
+
+        async def handler(ws):
+            try:
+                async for message in ws:
+                    await self._handle_ws_message(ws, message)
+            except Exception as e:
+                logger.debug(f"WebSocket client disconnected: {e}")
+
+        self._server = await websockets.serve(handler, self.host, self.port)
+        return self._server
+
+    async def _handle_ws_message(self, ws, message: str) -> None:
+        """处理 WebSocket 消息"""
+        try:
+            request = json.loads(message)
+            jsonrpc = request.get("jsonrpc", "2.0")
+            method = request.get("method")
+            params = request.get("params", {})
+            id = request.get("id")
+
+            # 处理 RPC 请求
+            result = await self.rpc_handler.handle(method, params)
+
+            # 发送响应
+            response = {
+                "jsonrpc": jsonrpc,
+                "id": id
+            }
+            if "error" in result:
+                response["error"] = result["error"]
+            else:
+                response["result"] = result
+
+            await ws.send(json.dumps(response))
+
+        except json.JSONDecodeError:
+            await ws.send(json.dumps({
+                "jsonrpc": "2.0",
+                "error": {"code": -32700, "message": "Parse error"},
+                "id": None
+            }))
+        except Exception as e:
+            logger.error(f"Error handling WS message: {e}", exc_info=True)
+
+
+# CLI 命令接口
+def cli_get(path: str = "") -> dict:
+    """CLI: 获取配置"""
+    provider = get_provider()
+    return {
+        "value": provider.get(path),
+        "hash": provider.hash
+    }
+
+
+def cli_set(path: str, value: Any) -> dict:
+    """CLI: 设置配置（部分更新）"""
+    provider = get_provider()
+
+    # 构建 nested path
+    keys = path.split(".")
+    partial = value
+    for key in reversed(keys):
+        partial = {key: partial}
+
+    provider.patch(partial)
+    return {"success": True, "hash": provider.hash}
+
+
+def cli_validate() -> dict:
+    """CLI: 验证配置格式"""
+    provider = get_provider()
+    errors = []
+
+    try:
+        config = provider.config
+
+        # 基本格式校验
+        if not isinstance(config, dict):
+            errors.append("Config must be a JSON object")
+
+        # 检查必要字段（可选）
+        if "models" not in config:
+            errors.append("Missing required field: models")
+
+    except Exception as e:
+        errors.append(f"Config error: {e}")
+
+    return {
+        "valid": len(errors) == 0,
+        "errors": errors
+    }
+
+
+def cli_file() -> str:
+    """CLI: 获取配置文件路径"""
+    provider = get_provider()
+    return provider.config_path
