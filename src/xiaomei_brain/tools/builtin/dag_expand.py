@@ -30,7 +30,7 @@ def create_dag_tools(dag: "DAGSummaryGraph") -> list[Tool]:
             top_k: 最多返回几个相关摘要，默认为3
         """
         # 1. 搜索相关摘要
-        nodes = dag.search(keyword, limit=top_k)
+        nodes = dag.search(keyword, limit=top_k, session_id=session_id)
         if not nodes:
             return f"没有找到与「{keyword}」相关的历史摘要。"
 
@@ -66,7 +66,7 @@ def create_dag_tools(dag: "DAGSummaryGraph") -> list[Tool]:
             session_id: 会话ID
             limit: 最多返回几条摘要
         """
-        nodes = dag.search(keyword, limit=limit)
+        nodes = dag.search(keyword, limit=limit, session_id=session_id)
         if not nodes:
             return f"没有找到与「{keyword}」相关的摘要。"
 

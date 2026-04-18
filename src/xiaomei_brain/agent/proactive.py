@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 from typing import Any, Callable
 
-from xiaomei_brain.reminder import ReminderManager
+from xiaomei_brain.agent.reminder import ReminderManager
 
 logger = logging.getLogger(__name__)
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import os
@@ -137,6 +138,22 @@ class LLMClient:
             "Content-Type": "application/json",
         }
 
+        # 计时：记录每次 LLM 调用的耗时
+        _t0 = time.time()
+        _msg_preview = (api_messages[0].get("content") or "")[:40] if api_messages else ""
+        _has_tools = bool(tools)
+        # _full_prompt = (api_messages[0].get("content") or "") if api_messages else ""  # 调试用
+
+        def _llm_log(success: bool, detail: str = ""):
+            elapsed = time.time() - _t0
+            status = "OK" if success else "ERR"
+            ts = datetime.datetime.now().strftime("%H:%M:%S")
+            logger.info(
+                "[LLM %s] %s model=%s msgs=%d tools=%s elapsed=%.2fs %s %s",
+                status, ts, self.model, len(api_messages), _has_tools, elapsed, _msg_preview, detail,
+            )
+            # logger.info("[LLM PROMPT]\n%s", _full_prompt)  # 调试用
+
         last_error = None
         for attempt in range(self.max_retries + 1):
             try:
@@ -158,6 +175,7 @@ class LLMClient:
                         time.sleep(retry_after)
                         continue
                     else:
+                        _llm_log(False, f"http_{response.status_code}_retries_exhausted")
                         raise LLMError(
                             f"API returned {response.status_code} after {self.max_retries} retries: {response.text[:200]}",
                             retryable=False,
@@ -171,6 +189,7 @@ class LLMClient:
                 if "choices" not in data or not data["choices"]:
                     raise LLMError(f"Invalid API response: no choices field", retryable=True)
 
+                _llm_log(True)
                 return self._parse_response(data)
 
             except requests.Timeout:
@@ -180,6 +199,8 @@ class LLMClient:
                     logger.warning("Timeout, retrying in %ds (attempt %d/%d)", backoff, attempt + 1, self.max_retries)
                     time.sleep(backoff)
                     continue
+                _llm_log(False, f"timeout({self.timeout}s)")
+                raise last_error
 
             except requests.ConnectionError as e:
                 last_error = LLMError(f"Connection error: {e}", retryable=True)
@@ -188,10 +209,15 @@ class LLMClient:
                     logger.warning("Connection error, retrying in %ds (attempt %d/%d)", backoff, attempt + 1, self.max_retries)
                     time.sleep(backoff)
                     continue
+                _llm_log(False, "conn_err")
+                raise last_error
 
             except requests.RequestException as e:
+                _llm_log(False, f"req_err:{e}")
                 raise LLMError(f"API request failed: {e}", retryable=False)
 
+        # Exhausted retries
+        _llm_log(False, "retries_exhausted")
         raise last_error or LLMError("Unknown error after retries", retryable=False)
 
     @staticmethod

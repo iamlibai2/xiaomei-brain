@@ -13,7 +13,13 @@ from xiaomei_brain.config import Config
 from xiaomei_brain.llm import LLMClient
 from xiaomei_brain.memory import MemoryStore, EpisodicMemory
 from xiaomei_brain.memory.layers import WorkingMemory
-from xiaomei_brain.session import SessionManager
+from xiaomei_brain.memory.self_model import SelfModel
+from xiaomei_brain.memory.conversation_db import ConversationDB
+from xiaomei_brain.memory.dag import DAGSummaryGraph
+from xiaomei_brain.memory.context_assembler import ContextAssembler
+from xiaomei_brain.memory.longterm import LongTermMemory
+from xiaomei_brain.memory.extractor import MemoryExtractor
+from xiaomei_brain.agent.session import SessionManager
 from xiaomei_brain.tools.registry import ToolRegistry
 
 
@@ -153,7 +159,8 @@ class AgentManager:
 
             # Create agent directory and talent.md
             talent_path = self._talent_path(agent_id)
-            if talent_content:
+            if talent_content and not os.path.exists(talent_path):
+                # Only create from config if talent.md doesn't exist yet
                 os.makedirs(os.path.dirname(talent_path), exist_ok=True)
                 with open(talent_path, "w", encoding="utf-8") as f:
                     f.write(talent_content)
@@ -262,12 +269,13 @@ class AgentManager:
         os.makedirs(agent_dir, exist_ok=True)
 
         talent_path = self._talent_path(agent_id)
-        if config.talent_content:
-            with open(talent_path, "w", encoding="utf-8") as f:
-                f.write(config.talent_content)
-        elif self._get_global_config() and self._get_global_config().system_prompt:
-            with open(talent_path, "w", encoding="utf-8") as f:
-                f.write(self._get_global_config().system_prompt)
+        if not os.path.exists(talent_path):
+            if config.talent_content:
+                with open(talent_path, "w", encoding="utf-8") as f:
+                    f.write(config.talent_content)
+            elif self._get_global_config() and self._get_global_config().system_prompt:
+                with open(talent_path, "w", encoding="utf-8") as f:
+                    f.write(self._get_global_config().system_prompt)
 
         instance = AgentInstance(
             id=agent_id,
@@ -309,11 +317,11 @@ class AgentManager:
 
         tools = ToolRegistry()
 
-        from .tools.builtin import (
+        from xiaomei_brain.tools.builtin import (
             shell_tool, read_file_tool, write_file_tool,
             tts_tools, music_tools, image_tools, websearch_tools, webget_tools,
         )
-        from .tools.builtin.memory import create_memory_tools
+        from xiaomei_brain.tools.builtin.memory import create_memory_tools
 
         tools.register(shell_tool)
         tools.register(read_file_tool)
@@ -322,7 +330,7 @@ class AgentManager:
         if global_config.tts_enabled:
             tts_api_key = global_config.tts_api_key or api_key
             if tts_api_key:
-                from .speech import TTSProvider, VoiceConfig, AudioConfig
+                from xiaomei_brain.speech import TTSProvider, VoiceConfig, AudioConfig
                 voice_config = VoiceConfig(
                     voice_id=global_config.tts_voice_id,
                     speed=global_config.tts_speed,
@@ -348,7 +356,7 @@ class AgentManager:
         if global_config.music_enabled:
             music_api_key = global_config.music_api_key or global_config.tts_api_key or api_key
             if music_api_key:
-                from .speech import MusicProvider, MusicAudioConfig
+                from xiaomei_brain.speech import MusicProvider, MusicAudioConfig
                 music_provider = MusicProvider(
                     api_key=music_api_key,
                     base_url=global_config.music_base_url,
@@ -364,7 +372,7 @@ class AgentManager:
         if global_config.image_enabled:
             image_api_key = global_config.image_api_key or global_config.tts_api_key or api_key
             if image_api_key:
-                from .image import ImageProvider, ImageConfig
+                from xiaomei_brain.image import ImageProvider, ImageConfig
                 image_provider = ImageProvider(
                     api_key=image_api_key,
                     base_url=global_config.image_base_url,
@@ -374,13 +382,13 @@ class AgentManager:
                 tools.register(image_tools.image_generate_tool)
 
         if global_config.web_search_enabled and global_config.baidu_api_key:
-            from .websearch import BaiduSearchProvider
+            from xiaomei_brain.websearch import BaiduSearchProvider
             web_search_provider = BaiduSearchProvider(api_key=global_config.baidu_api_key)
             websearch_tools.set_search_provider(web_search_provider)
             tools.register(websearch_tools.web_search_tool)
 
         if global_config.web_get_enabled:
-            from .webget import WebGetProvider
+            from xiaomei_brain.webget import WebGetProvider
             web_get_provider = WebGetProvider()
             webget_tools.set_get_provider(web_get_provider)
             tools.register(webget_tools.web_get_tool)
@@ -408,6 +416,33 @@ class AgentManager:
         agent.episodic_memory = episodic_memory
         agent.session_manager = session_manager
         agent.working_memory = working_memory
+
+        # Load SelfModel from talent.md (if exists)
+        talent_path = self._talent_path(agent.id)
+        if os.path.exists(talent_path):
+            self_model = SelfModel.load(talent_path)
+            if self_model and (self_model.purpose_seed.identity or self_model.seed_text):
+                agent.self_model = self_model
+
+        # Initialize ConversationDB (SQLite, parallel with JSONL)
+        db_path = os.path.join(self._memory_dir(agent.id), "brain.db")
+        agent.conversation_db = ConversationDB(db_path)
+
+        # Initialize DAG Summary Graph and Context Assembler
+        dag = DAGSummaryGraph(db_path, llm_client=llm)
+        agent.context_assembler = ContextAssembler(
+            conversation_db=agent.conversation_db,
+            dag=dag,
+            self_model=agent.self_model,
+        )
+
+        # Initialize Long-term Memory and Extractor
+        agent.longterm_memory = LongTermMemory(db_path)
+        agent.memory_extractor = MemoryExtractor(
+            llm_client=llm,
+            longterm_memory=agent.longterm_memory,
+            conversation_db=agent.conversation_db,
+        )
 
         return agent
 

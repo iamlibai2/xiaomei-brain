@@ -117,9 +117,6 @@ ACTION|类别|内容
 
 直接输出，无需解释："""
 
-# [废弃] 已合并到 EVERY_TURN_EXTRACT_PROMPT，一次 LLM 调用完成提取+决策
-CONFLICT_RESOLUTION_PROMPT = """[废弃]"""
-
 
 class MemoryExtractor:
     """Memory extractor — extracts memories from conversations.
@@ -325,91 +322,6 @@ class MemoryExtractor:
             else:
                 lines.append(f"[{role}] {content[:200]}")
         return "\n".join(lines)
-
-    def _resolve(
-        self,
-        new_content: str,
-        user_id: str,
-        source: str,
-        tags: list[str] | None,
-        importance: float,
-    ) -> tuple[str, int | None]:
-        """Resolve new memory against existing ones. Returns (action, memory_id)."""
-        import re
-
-        similar = self.ltm.recall(new_content, user_id=user_id, top_k=5)
-        if not similar:
-            memory_id = self.ltm.store(
-                content=new_content,
-                source=source,
-                tags=tags,
-                importance=importance,
-                user_id=user_id,
-            )
-            logger.info("[Memory RESOLVE] ADD #%d: %.50s", memory_id, new_content)
-            return ("ADD", memory_id)
-
-        existing_text = "\n".join(
-            f"- [{m['id']}] {m['content']}" for m in similar
-        )
-        prompt = CONFLICT_RESOLUTION_PROMPT.format(
-            existing_memories=existing_text,
-            new_memory=new_content,
-        )
-        resp = self.llm.chat(messages=[{"role": "user", "content": prompt}])
-        decision_text = (resp.content or "").strip()
-
-        m = re.search(
-            r"ACTION:\s*(ADD|UPDATE|MERGE|DELETE|NOOP)", decision_text, re.IGNORECASE
-        )
-        action = m.group(1).upper() if m else "ADD"
-        old = similar[0]
-
-        if action == "ADD":
-            memory_id = self.ltm.store(
-                content=new_content,
-                source=source,
-                tags=tags,
-                importance=importance,
-                user_id=user_id,
-            )
-            logger.info("[Memory RESOLVE] ADD #%d: %.50s", memory_id, new_content)
-        elif action == "UPDATE":
-            self.ltm.save_history(old["id"], old["content"], "UPDATE")
-            self.ltm.update_content(old["id"], new_content)
-            logger.info(
-                "[Memory RESOLVE] UPDATE #%d: %.50s", old["id"], new_content
-            )
-            return (action, old["id"])
-        elif action == "MERGE":
-            merged = self._llm_merge(old["content"], new_content)
-            self.ltm.save_history(old["id"], old["content"], "MERGE")
-            self.ltm.update_content(old["id"], merged)
-            logger.info(
-                "[Memory RESOLVE] MERGE #%d: %.50s", old["id"], merged
-            )
-            return (action, old["id"])
-        elif action == "DELETE":
-            self.ltm.save_history(old["id"], old["content"], "DELETE")
-            self.ltm.soft_delete(old["id"])
-            memory_id = self.ltm.store(
-                content=new_content,
-                source=source,
-                tags=tags,
-                importance=importance,
-                user_id=user_id,
-            )
-            logger.info(
-                "[Memory RESOLVE] DELETE old #%d, ADD new #%d",
-                old["id"],
-                memory_id,
-            )
-            return (action, memory_id)
-        else:  # NOOP
-            logger.info("[Memory RESOLVE] NOOP: %.50s", new_content)
-            return ("NOOP", None)
-
-        return (action, memory_id)
 
     def _llm_merge(self, old_content: str, new_content: str) -> str:
         """Merge two memories using LLM. Returns plain text, no markdown."""

@@ -165,11 +165,30 @@ class LongTermMemory:
         except Exception as e:
             logger.warning("[LanceDB] Failed to add memory #%d: %s", memory_id, e)
 
+    def _update_lance(self, memory_id: int, new_content: str, user_id: str) -> None:
+        """Update a memory vector in LanceDB: delete old + add new."""
+        try:
+            table = self._get_lance_table()
+            # Delete old entry
+            table.delete(f"id = {memory_id}")
+            # Add updated entry
+            vector = self._embed(new_content)
+            import pyarrow as pa
+            data = pa.table({
+                "id": [memory_id],
+                "vector": [vector],
+                "user_id": [user_id],
+            })
+            table.add(data)
+            logger.debug("[LanceDB] Updated memory #%d", memory_id)
+        except Exception as e:
+            logger.warning("[LanceDB] Failed to update memory #%d: %s", memory_id, e)
+
     # ── SQLite ──────────────────────────────────────────────────
 
     def _get_conn(self) -> sqlite3.Connection:
         if self._conn is None:
-            self._conn = sqlite3.connect(str(self.db_path))
+            self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA foreign_keys=ON")
@@ -308,9 +327,13 @@ class LongTermMemory:
         query_vector = self._embed(query)
         table = self._get_lance_table()
 
+        # Validate user_id to prevent SQL injection in where clause
+        # user_id comes from internal agent context, but we validate anyway
+        safe_user_id = self._safe_user_id(user_id)
+
         # Search with user_id filter — overfetch then re-rank
         results = table.search(query_vector) \
-            .where(f"user_id = '{user_id}' OR user_id = 'global'") \
+            .where(f"user_id = '{safe_user_id}' OR user_id = 'global'") \
             .limit(top_k * 3) \
             .to_pandas()
 
@@ -331,21 +354,30 @@ class LongTermMemory:
         # Build results with combined score = similarity * importance_boost
         # LanceDB cosine distance: 0 = identical, 2 = opposite
         # similarity = 1 - distance/2
+        if not rows:
+            return []
+
+        # Batch fetch tags (N+1 fix)
+        tag_map = self._get_tags_batch([r["id"] for r in rows])
+
+        # Batch update access counts (N+1 fix)
+        now = time.time()
+        conn.executemany(
+            "UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
+            [(now, r["id"]) for r in rows],
+        )
+        conn.commit()
+
         result = []
         for r in rows:
             d = dict(r)
-            d["tags"] = self._get_tags(d["id"])
+            d["tags"] = tag_map.get(d["id"], [])
             distance = distances.get(d["id"], 1.0)
             similarity = max(0.0, 1.0 - distance / 2)
             d["score"] = round(similarity, 3)
             # Combined score: semantic similarity weighted by importance
             d["_rank_score"] = similarity * (0.5 + 0.5 * d["importance"])
             result.append(d)
-            conn.execute(
-                "UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
-                (time.time(), d["id"]),
-            )
-        conn.commit()
 
         # Sort by combined rank score
         result.sort(key=lambda x: x["_rank_score"], reverse=True)
@@ -365,19 +397,31 @@ class LongTermMemory:
 
         result = []
         seen_ids = set()
+        unique_rows = []
         for r in rows:
-            if r["id"] in seen_ids:
-                continue
-            seen_ids.add(r["id"])
+            if r["id"] not in seen_ids:
+                seen_ids.add(r["id"])
+                unique_rows.append(r)
+
+        if not unique_rows:
+            return []
+
+        # Batch fetch tags (N+1 fix)
+        tag_map = self._get_tags_batch([r["id"] for r in unique_rows])
+
+        # Batch update access counts (N+1 fix)
+        now = time.time()
+        conn.executemany(
+            "UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
+            [(now, r["id"]) for r in unique_rows],
+        )
+        conn.commit()
+
+        for r in unique_rows:
             d = dict(r)
-            d["tags"] = self._get_tags(d["id"])
+            d["tags"] = tag_map.get(d["id"], [])
             d["score"] = 0.0  # keyword match, no semantic score
             result.append(d)
-            conn.execute(
-                "UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
-                (time.time(), d["id"]),
-            )
-        conn.commit()
         return result
 
     def search_by_tags(
@@ -429,10 +473,21 @@ class LongTermMemory:
         conn.commit()
 
     def update_content(self, memory_id: int, new_content: str) -> None:
-        """Update memory content directly (used for UPDATE/MERGE)."""
+        """Update memory content in both SQLite and LanceDB (used for UPDATE/MERGE)."""
         conn = self._get_conn()
+
+        # Get user_id for LanceDB re-indexing
+        row = conn.execute(
+            "SELECT user_id FROM memories WHERE id = ?", (memory_id,)
+        ).fetchone()
+        user_id = row["user_id"] if row else "global"
+
+        # Update SQLite
         conn.execute("UPDATE memories SET content = ? WHERE id = ?", (new_content, memory_id))
         conn.commit()
+
+        # Re-index in LanceDB: delete old + add new vector
+        self._update_lance(memory_id, new_content, user_id)
 
     def soft_delete(self, memory_id: int) -> None:
         """Mark a memory as deleted without removing the row."""
@@ -509,6 +564,36 @@ class LongTermMemory:
             "SELECT tag FROM memory_tags WHERE memory_id = ?", (memory_id,)
         ).fetchall()
         return [r[0] for r in rows]
+
+    def _get_tags_batch(self, memory_ids: list[int]) -> dict[int, list[str]]:
+        """Batch fetch tags for multiple memory IDs. Returns {memory_id: [tags]}."""
+        if not memory_ids:
+            return {}
+        conn = self._get_conn()
+        placeholders = ",".join("?" * len(memory_ids))
+        rows = conn.execute(
+            f"SELECT memory_id, tag FROM memory_tags WHERE memory_id IN ({placeholders})",
+            memory_ids,
+        ).fetchall()
+        result: dict[int, list[str]] = {mid: [] for mid in memory_ids}
+        for row in rows:
+            result[row["memory_id"]].append(row["tag"])
+        return result
+
+    # ── Security helpers ───────────────────────────────────────
+
+    def _safe_user_id(self, user_id: str) -> str:
+        """Validate user_id for safe use in LanceDB where clause.
+
+        Allows alphanumeric, Chinese characters, Korean, Cyrillic,
+        underscores, hyphens, and spaces. Blocks SQL injection chars.
+        """
+        import re
+        if not re.fullmatch(r"[\w\u4e00-\u9fff\u3040-\u30ff\u0400-\u04ff\s\-]+", user_id):
+            # Unsafe characters detected — fall back to safe default
+            logger.warning("[Security] Unsafe user_id '%s', using 'global'", user_id)
+            return "global"
+        return user_id
 
     # ── Keyword fallback helpers ────────────────────────────────
 

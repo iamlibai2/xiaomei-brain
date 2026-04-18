@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -39,12 +40,13 @@ class ConversationDB:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn: sqlite3.Connection | None = None
         self._cleared_at: dict[str, float] = {}  # session_id → cleared_at timestamp
+        self._cleared_at_lock = threading.Lock()
         self._init_db()
         logger.info("ConversationDB initialized: %s", self.db_path)
 
     def _get_conn(self) -> sqlite3.Connection:
         if self._conn is None:
-            self._conn = sqlite3.connect(str(self.db_path))
+            self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA foreign_keys=ON")
@@ -210,13 +212,15 @@ class ConversationDB:
 
     def clear_context(self, session_id: str) -> None:
         """Mark a session as cleared — get_recent will only return messages after this point."""
-        self._cleared_at[session_id] = time.time()
+        with self._cleared_at_lock:
+            self._cleared_at[session_id] = time.time()
 
     def get_recent(self, n: int = 20, session_id: str | None = None) -> list[dict[str, Any]]:
         """Get the most recent N messages (respecting clear boundaries)."""
         conn = self._get_conn()
         if session_id:
-            cleared_at = self._cleared_at.get(session_id, 0.0)
+            with self._cleared_at_lock:
+                cleared_at = self._cleared_at.get(session_id, 0.0)
             rows = conn.execute(
                 "SELECT * FROM messages WHERE session_id = ? AND created_at > ? ORDER BY created_at DESC LIMIT ?",
                 (session_id, cleared_at, n),

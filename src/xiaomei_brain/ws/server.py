@@ -680,9 +680,9 @@ def _build_agent_from_instance(agent_instance: Any) -> Any:
     from xiaomei_brain.memory import ConversationLogger
     from xiaomei_brain.memory.dream import DreamProcessor
     from xiaomei_brain.memory.scheduler import DreamScheduler
-    from xiaomei_brain.reminder import ReminderManager
-    from xiaomei_brain.proactive import ProactiveEngine
-    from xiaomei_brain.context_extractor import ContextExtractor
+    from xiaomei_brain.agent.reminder import ReminderManager
+    from xiaomei_brain.agent.proactive import ProactiveEngine
+    from xiaomei_brain.agent.context_extractor import ContextExtractor
 
     cfg = _global_config
     agent_dir = agent_instance.agent_dir()

@@ -12,6 +12,7 @@ A math problem doesn't require knowing who I am.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 from .conversation_db import ConversationDB, estimate_tokens
@@ -39,6 +40,8 @@ class ContextAssembler:
         self.dag = dag
         self.self_model = self_model
         self.longterm = longterm_memory
+        self._compact_locks: dict[str, threading.Lock] = {}  # per-session compaction locks
+        self._locks_lock = threading.Lock()
 
     # 触发压缩的消息数（攒够8条未摘要消息时压缩）
     MESSAGES_PER_COMPACT = 8
@@ -64,11 +67,23 @@ class ContextAssembler:
             return self._assemble_daily(max_tokens, session_id, user_input, user_id)
 
     def _auto_compact(self, session_id: str) -> None:
-        """检查并触发 DAG 压缩。"""
-        unsummarized = self.dag.get_unsummarized_messages(session_id, limit=100)
-        if len(unsummarized) >= self.MESSAGES_PER_COMPACT:
-            msgs_to_compact = unsummarized[: self.MESSAGES_PER_COMPACT]
-            try:
+        """检查并触发 DAG 压缩（线程安全）。
+
+        每个 session 有独立的锁，避免多线程同时压缩同一 session。
+        """
+        with self._locks_lock:
+            lock = self._compact_locks.get(session_id)
+            if lock is None:
+                lock = threading.Lock()
+                self._compact_locks[session_id] = lock
+
+        if not lock.acquire(blocking=False):
+            return  # Another thread is already compacting this session
+
+        try:
+            unsummarized = self.dag.get_unsummarized_messages(session_id, limit=100)
+            if len(unsummarized) >= self.MESSAGES_PER_COMPACT:
+                msgs_to_compact = unsummarized[: self.MESSAGES_PER_COMPACT]
                 node = self.dag.compact(
                     session_id,
                     [m["id"] for m in msgs_to_compact],
@@ -79,8 +94,10 @@ class ContextAssembler:
                         "[DAG] Auto compact: %d messages → summary #%d (depth=%d)",
                         len(msgs_to_compact), node.id, node.depth,
                     )
-            except Exception as e:
-                logger.warning("[DAG] Auto compact failed: %s", e)
+        except Exception as e:
+            logger.warning("[DAG] Auto compact failed: %s", e)
+        finally:
+            lock.release()
 
     def _assemble_flow(
         self, max_tokens: int, session_id: str | None,

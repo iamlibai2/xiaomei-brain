@@ -62,7 +62,7 @@ class DAGSummaryGraph:
 
     def _get_conn(self) -> sqlite3.Connection:
         if self._conn is None:
-            self._conn = sqlite3.connect(str(self.db_path))
+            self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA foreign_keys=ON")
@@ -352,29 +352,57 @@ class DAGSummaryGraph:
             ).fetchall()
             return [dict(r) for r in rows]
 
-    def search(self, keyword: str, limit: int = 10) -> list[DAGNode]:
-        """Search summaries by keyword (LIKE for CJK)."""
+    def search(
+        self, keyword: str, limit: int = 10, session_id: str | None = None,
+    ) -> list[DAGNode]:
+        """Search summaries by keyword (LIKE for CJK).
+
+        Args:
+            keyword: 搜索关键词
+            limit: 返回数量上限
+            session_id: 可选，按 session 过滤（为空则搜所有 session）
+        """
+        import re
         conn = self._get_conn()
         has_cjk = any("\u4e00" <= c <= "\u9fff" for c in keyword)
 
+        # Validate session_id to prevent SQL injection in FTS5 query path
+        safe_sid = None
+        if session_id:
+            if re.fullmatch(r"[\w\-\s]+", session_id):
+                safe_sid = session_id
+            else:
+                logger.warning("[DAG] Invalid session_id '%s', ignoring filter", session_id)
+
+        # Build WHERE clause with optional session filter
+        where_clause = "WHERE content LIKE ?"
+        params: list[Any] = [f"%{keyword}%"]
+        if safe_sid:
+            where_clause += " AND session_id = ?"
+            params.append(safe_sid)
+
         if has_cjk:
             rows = conn.execute(
-                "SELECT * FROM summaries WHERE content LIKE ? ORDER BY created_at DESC LIMIT ?",
-                (f"%{keyword}%", limit),
+                f"SELECT * FROM summaries {where_clause} ORDER BY created_at DESC LIMIT ?",
+                params + [limit],
             ).fetchall()
         else:
             try:
+                if safe_sid:
+                    fts_where = f"WHERE summaries_fts MATCH ? AND session_id = '{safe_sid}'"
+                else:
+                    fts_where = "WHERE summaries_fts MATCH ?"
                 rows = conn.execute(
-                    """SELECT s.* FROM summaries s
+                    f"""SELECT s.* FROM summaries s
                        JOIN summaries_fts fts ON s.id = fts.rowid
-                       WHERE summaries_fts MATCH ?
+                       {fts_where}
                        ORDER BY rank LIMIT ?""",
-                    (f'"{keyword}"', limit),
+                    [f'"{keyword}"', limit],
                 ).fetchall()
             except Exception:
                 rows = conn.execute(
-                    "SELECT * FROM summaries WHERE content LIKE ? ORDER BY created_at DESC LIMIT ?",
-                    (f"%{keyword}%", limit),
+                    f"SELECT * FROM summaries {where_clause} ORDER BY created_at DESC LIMIT ?",
+                    params + [limit],
                 ).fetchall()
 
         return [self._row_to_node(r) for r in rows]

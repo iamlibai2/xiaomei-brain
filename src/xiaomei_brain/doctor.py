@@ -249,7 +249,7 @@ class Doctor:
     def check_sessions_dir(self) -> Section:
         sec = Section("Sessions")
         cfg = self.config
-        from xiaomei_brain.session import SessionManager
+        from xiaomei_brain.agent.session import SessionManager
         sm = SessionManager(session_dir=cfg.memory_dir)
         sessions = sm.list_sessions()
         sec.checks.append(self._ok("sessions", f"{len(sessions)} saved session(s)"))
