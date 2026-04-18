@@ -1,0 +1,566 @@
+"""LongTermMemory: vector-semantic long-term memory with LanceDB.
+
+Architecture:
+- SQLite (brain.db): metadata storage — content, source, importance, tags, user_id
+- LanceDB (memory/lancedb/): vector index — semantic search via embedding
+
+Recall uses semantic similarity (not keyword matching), solving the
+fundamental problem of CJK text where "我叫什么" cannot match "用户叫李白"
+via LIKE/FTS5, but vector similarity can bridge the gap.
+
+Embedding model: shibing624/text2vec-base-chinese (768d, Chinese-optimized)
+Falls back to all-MiniLM-L6-v2 if Chinese model unavailable.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import sqlite3
+import time
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# Default embedding model — Chinese-optimized
+DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"
+FALLBACK_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+
+
+class LongTermMemory:
+    """Vector-semantic long-term memory — SQLite metadata + LanceDB vector index."""
+
+    VALID_SOURCES = {"immediate", "periodic", "dream", "manual", "insight"}
+
+    def __init__(
+        self,
+        db_path: str | Path,
+        embedding_model: str | None = None,
+    ) -> None:
+        self.db_path = Path(db_path)
+        self._conn: sqlite3.Connection | None = None
+        self._init_tables()
+
+        # Embedding model (lazy load)
+        self._embedding_model_name = embedding_model or DEFAULT_EMBEDDING_MODEL
+        self._embedder: Any = None
+
+        # LanceDB (lazy open)
+        self._lance_dir = self.db_path.parent / "lancedb"
+        self._lance_db: Any = None
+        self._lance_table: Any = None
+
+    # ── Embedding ───────────────────────────────────────────────
+
+    def _get_embedder(self) -> Any:
+        """Lazy-load the embedding model."""
+        if self._embedder is not None:
+            return self._embedder
+
+        # Ensure HF mirror is used for BGE-M3 (PEFT adapter needs huggingface.co)
+        os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+        os.environ.setdefault("HF_HUB_OFFLINE", "0")
+
+        from sentence_transformers import SentenceTransformer
+
+        try:
+            logger.info("Loading embedding model: %s", self._embedding_model_name)
+            self._embedder = SentenceTransformer(self._embedding_model_name)
+            logger.info("Embedding model loaded: %s", self._embedding_model_name)
+        except Exception as e:
+            if self._embedding_model_name != FALLBACK_EMBEDDING_MODEL:
+                logger.warning(
+                    "Failed to load %s, falling back to %s: %s",
+                    self._embedding_model_name, FALLBACK_EMBEDDING_MODEL, e,
+                )
+                self._embedding_model_name = FALLBACK_EMBEDDING_MODEL
+                self._embedder = SentenceTransformer(FALLBACK_EMBEDDING_MODEL)
+            else:
+                raise
+
+        return self._embedder
+
+    def _embed(self, text: str) -> list[float]:
+        """Embed a single text string."""
+        model = self._get_embedder()
+        vector = model.encode(text, normalize_embeddings=True, show_progress_bar=False)
+        return vector.tolist()
+
+    def _embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """Embed multiple texts."""
+        model = self._get_embedder()
+        vectors = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
+        return vectors.tolist()
+
+    # ── LanceDB ─────────────────────────────────────────────────
+
+    def _get_lance_table(self) -> Any:
+        """Lazy-open LanceDB table, create if not exists or dimension changed."""
+        if self._lance_table is not None:
+            return self._lance_table
+
+        import lancedb
+
+        self._lance_db = lancedb.connect(str(self._lance_dir))
+        expected_dim = self._get_embedding_dim()
+
+        # Check if table exists and has matching dimension
+        existing_tables = self._lance_db.table_names()
+        if "memories" in existing_tables:
+            tbl = self._lance_db.open_table("memories")
+            # Verify schema dimension matches expected model dimension
+            actual_schema = tbl.to_arrow().schema
+            vector_field = actual_schema.field("vector")
+            # vector field type is pa.list_(pa.float32(), N) → FixedSizeListType
+            actual_dim_size = vector_field.type.list_size
+
+            if actual_dim_size != expected_dim:
+                logger.warning(
+                    "[LanceDB] Dimension mismatch: table=%d vs model=%d. "
+                    "Dropping table and rebuilding.",
+                    actual_dim_size, expected_dim,
+                )
+                self._lance_db.drop_table("memories")
+                existing_tables = []
+            else:
+                self._lance_table = tbl
+                logger.info("LanceDB opened: %s", self._lance_dir)
+                return self._lance_table
+
+        # Create new table
+        import pyarrow as pa
+        schema = pa.schema([
+            pa.field("id", pa.int64()),
+            pa.field("vector", pa.list_(pa.float32(), expected_dim)),
+            pa.field("user_id", pa.string()),
+        ])
+        self._lance_table = self._lance_db.create_table("memories", schema=schema)
+        logger.info("LanceDB created: %s (dim=%d)", self._lance_dir, expected_dim)
+        return self._lance_table
+
+    def _get_embedding_dim(self) -> int:
+        """Get embedding dimension by running a test embedding."""
+        model = self._get_embedder()
+        # Newer sentence-transformers renamed this method
+        if hasattr(model, "get_embedding_dimension"):
+            return model.get_embedding_dimension()
+        return model.get_sentence_embedding_dimension()
+
+    def _add_to_lance(self, memory_id: int, content: str, user_id: str) -> None:
+        """Add a memory vector to LanceDB."""
+        try:
+            vector = self._embed(content)
+            table = self._get_lance_table()
+            import pyarrow as pa
+
+            data = pa.table({
+                "id": [memory_id],
+                "vector": [vector],
+                "user_id": [user_id],
+            })
+            table.add(data)
+            logger.debug("[LanceDB] Added memory #%d", memory_id)
+        except Exception as e:
+            logger.warning("[LanceDB] Failed to add memory #%d: %s", memory_id, e)
+
+    # ── SQLite ──────────────────────────────────────────────────
+
+    def _get_conn(self) -> sqlite3.Connection:
+        if self._conn is None:
+            self._conn = sqlite3.connect(str(self.db_path))
+            self._conn.row_factory = sqlite3.Row
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA foreign_keys=ON")
+        return self._conn
+
+    def _init_tables(self) -> None:
+        conn = self._get_conn()
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS memories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL DEFAULT 'global',
+                content TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'manual',
+                importance REAL DEFAULT 0.5,
+                access_count INTEGER DEFAULT 0,
+                last_accessed REAL DEFAULT 0,
+                created_at REAL NOT NULL,
+                status TEXT DEFAULT 'active'
+            );
+
+            CREATE TABLE IF NOT EXISTS memory_tags (
+                memory_id INTEGER NOT NULL,
+                tag TEXT NOT NULL,
+                FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE,
+                PRIMARY KEY (memory_id, tag)
+            );
+
+            CREATE TABLE IF NOT EXISTS memory_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                memory_id INTEGER NOT NULL,
+                old_content TEXT NOT NULL,
+                event TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_memories_user_id ON memories(user_id);
+            CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(source);
+            CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance);
+            CREATE INDEX IF NOT EXISTS idx_memory_tags_tag ON memory_tags(tag);
+
+            CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
+                USING fts5(content, content='memories', content_rowid='id');
+
+            CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories
+            BEGIN
+                INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories
+            BEGIN
+                INSERT INTO memories_fts(memories_fts, rowid, content)
+                VALUES ('delete', old.id, old.content);
+            END;
+        """)
+
+        # Migrate existing rows: add status column if missing (existing DB)
+        try:
+            conn.execute("ALTER TABLE memories ADD COLUMN status TEXT DEFAULT 'active'")
+        except Exception:
+            pass  # Column already exists
+
+        conn.commit()
+
+    # ── Public API ──────────────────────────────────────────────
+
+    def store(
+        self,
+        content: str,
+        source: str = "manual",
+        tags: list[str] | None = None,
+        importance: float = 0.5,
+        user_id: str = "global",
+    ) -> int:
+        """Store a memory entry. Returns the ID."""
+        logger.info(
+            "[Memory STORE] user=%s | %s | source=%s | imp=%.2f | tags=%s",
+            user_id, content[:50], source, importance, tags,
+        )
+        source = source if source in self.VALID_SOURCES else "manual"
+        conn = self._get_conn()
+
+        cur = conn.execute(
+            """INSERT INTO memories (user_id, content, source, importance, created_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (user_id, content, source, importance, time.time()),
+        )
+        memory_id = cur.lastrowid
+
+        if tags:
+            for tag in tags:
+                conn.execute(
+                    "INSERT OR IGNORE INTO memory_tags (memory_id, tag) VALUES (?, ?)",
+                    (memory_id, tag),
+                )
+
+        conn.commit()
+
+        # Add to LanceDB (async-friendly, don't block on failure)
+        self._add_to_lance(memory_id, content, user_id)
+
+        logger.info(
+            "Stored memory #%d [user=%s] [%s] imp=%.2f: %.50s",
+            memory_id, user_id, source, importance, content,
+        )
+        return memory_id
+
+    def recall(
+        self, query: str, user_id: str = "global", top_k: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Recall memories by semantic similarity.
+
+        Uses LanceDB vector search for semantic matching, then enriches
+        results with full metadata from SQLite.
+
+        Falls back to keyword search if LanceDB is unavailable.
+        """
+        logger.info(
+            "[Memory RECALL] user=%s query='%s' top_k=%d",
+            user_id, query, top_k,
+        )
+
+        # Try vector search first
+        try:
+            return self._vector_recall(query, user_id, top_k)
+        except Exception as e:
+            logger.warning(
+                "[Memory RECALL] Vector search failed, falling back to keywords: %s", e,
+            )
+            return self._keyword_recall(query, user_id, top_k)
+
+    def _vector_recall(
+        self, query: str, user_id: str, top_k: int,
+    ) -> list[dict[str, Any]]:
+        """Semantic recall using LanceDB vector search."""
+        query_vector = self._embed(query)
+        table = self._get_lance_table()
+
+        # Search with user_id filter — overfetch then re-rank
+        results = table.search(query_vector) \
+            .where(f"user_id = '{user_id}' OR user_id = 'global'") \
+            .limit(top_k * 3) \
+            .to_pandas()
+
+        if results.empty:
+            return []
+
+        conn = self._get_conn()
+        mem_ids = results["id"].tolist()
+        distances = dict(zip(results["id"].tolist(), results["_distance"].tolist()))
+
+        # Fetch full metadata from SQLite (exclude soft-deleted)
+        placeholders = ",".join("?" * len(mem_ids))
+        rows = conn.execute(
+            f"""SELECT * FROM memories WHERE id IN ({placeholders}) AND status != 'deleted'""",
+            mem_ids,
+        ).fetchall()
+
+        # Build results with combined score = similarity * importance_boost
+        # LanceDB cosine distance: 0 = identical, 2 = opposite
+        # similarity = 1 - distance/2
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["tags"] = self._get_tags(d["id"])
+            distance = distances.get(d["id"], 1.0)
+            similarity = max(0.0, 1.0 - distance / 2)
+            d["score"] = round(similarity, 3)
+            # Combined score: semantic similarity weighted by importance
+            d["_rank_score"] = similarity * (0.5 + 0.5 * d["importance"])
+            result.append(d)
+            conn.execute(
+                "UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
+                (time.time(), d["id"]),
+            )
+        conn.commit()
+
+        # Sort by combined rank score
+        result.sort(key=lambda x: x["_rank_score"], reverse=True)
+        # Remove internal field
+        for r in result:
+            r.pop("_rank_score", None)
+
+        return result[:top_k]
+
+    def _keyword_recall(
+        self, query: str, user_id: str, top_k: int,
+    ) -> list[dict[str, Any]]:
+        """Fallback keyword recall using LIKE."""
+        conn = self._get_conn()
+        keywords = self._extract_keywords(query)
+        rows = self._search_by_keywords(conn, keywords, user_id, top_k)
+
+        result = []
+        seen_ids = set()
+        for r in rows:
+            if r["id"] in seen_ids:
+                continue
+            seen_ids.add(r["id"])
+            d = dict(r)
+            d["tags"] = self._get_tags(d["id"])
+            d["score"] = 0.0  # keyword match, no semantic score
+            result.append(d)
+            conn.execute(
+                "UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
+                (time.time(), d["id"]),
+            )
+        conn.commit()
+        return result
+
+    def search_by_tags(
+        self, tags: list[str], user_id: str = "global", match_all: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Search memories by tags for a specific user."""
+        conn = self._get_conn()
+        if match_all:
+            placeholders = ",".join("?" * len(tags))
+            rows = conn.execute(
+                f"""SELECT m.* FROM memories m
+                    WHERE (m.user_id = ? OR m.user_id = 'global')
+                      AND m.status != 'deleted'
+                      AND m.id IN (
+                          SELECT memory_id FROM memory_tags
+                          WHERE tag IN ({placeholders})
+                          GROUP BY memory_id
+                          HAVING COUNT(DISTINCT tag) = ?
+                      )
+                    ORDER BY m.importance DESC""",
+                [user_id] + tags + [len(tags)],
+            ).fetchall()
+        else:
+            placeholders = ",".join("?" * len(tags))
+            rows = conn.execute(
+                f"""SELECT DISTINCT m.* FROM memories m
+                    JOIN memory_tags mt ON m.id = mt.memory_id
+                    WHERE (m.user_id = ? OR m.user_id = 'global')
+                      AND m.status != 'deleted'
+                      AND mt.tag IN ({placeholders})
+                    ORDER BY m.importance DESC""",
+                [user_id] + tags,
+            ).fetchall()
+
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["tags"] = self._get_tags(d["id"])
+            result.append(d)
+        return result
+
+    def update_importance(self, memory_id: int, delta: float) -> None:
+        """Adjust importance by delta (can be negative)."""
+        conn = self._get_conn()
+        conn.execute(
+            "UPDATE memories SET importance = MAX(0, MIN(1, importance + ?)) WHERE id = ?",
+            (delta, memory_id),
+        )
+        conn.commit()
+
+    def update_content(self, memory_id: int, new_content: str) -> None:
+        """Update memory content directly (used for UPDATE/MERGE)."""
+        conn = self._get_conn()
+        conn.execute("UPDATE memories SET content = ? WHERE id = ?", (new_content, memory_id))
+        conn.commit()
+
+    def soft_delete(self, memory_id: int) -> None:
+        """Mark a memory as deleted without removing the row."""
+        conn = self._get_conn()
+        conn.execute("UPDATE memories SET status = 'deleted' WHERE id = ?", (memory_id,))
+        conn.commit()
+
+    def save_history(self, memory_id: int, old_content: str, event: str) -> None:
+        """Save memory change history for auditing."""
+        conn = self._get_conn()
+        conn.execute(
+            "INSERT INTO memory_history (memory_id, old_content, event, created_at) VALUES (?, ?, ?, ?)",
+            (memory_id, old_content, event, time.time()),
+        )
+        conn.commit()
+
+    def decay(self, days: int = 30) -> int:
+        """Reduce importance of memories not accessed in N days."""
+        conn = self._get_conn()
+        cutoff = time.time() - days * 86400
+        cur = conn.execute(
+            """UPDATE memories SET importance = importance * 0.9
+               WHERE last_accessed < ? AND last_accessed > 0""",
+            (cutoff,),
+        )
+        conn.commit()
+        return cur.rowcount
+
+    def get_all_tags(self) -> list[str]:
+        """Get all unique tags across all users."""
+        conn = self._get_conn()
+        rows = conn.execute("SELECT DISTINCT tag FROM memory_tags ORDER BY tag").fetchall()
+        return [r[0] for r in rows]
+
+    def get_recent(
+        self, n: int = 10, user_id: str = "global",
+    ) -> list[dict[str, Any]]:
+        """Get most recently stored memories for a user (incl. global)."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT * FROM memories
+               WHERE (user_id = ? OR user_id = 'global')
+                 AND status != 'deleted'
+               ORDER BY created_at DESC LIMIT ?""",
+            (user_id, n),
+        ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["tags"] = self._get_tags(d["id"])
+            result.append(d)
+        return result
+
+    def count(self, user_id: str | None = None) -> int:
+        """Total memory count, optionally filtered by user."""
+        conn = self._get_conn()
+        if user_id:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM memories WHERE user_id = ? OR user_id = 'global'",
+                (user_id,),
+            ).fetchone()
+        else:
+            row = conn.execute("SELECT COUNT(*) FROM memories").fetchone()
+        return row[0] if row else 0
+
+    def close(self) -> None:
+        if self._conn:
+            self._conn.close()
+            self._conn = None
+
+    def _get_tags(self, memory_id: int) -> list[str]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT tag FROM memory_tags WHERE memory_id = ?", (memory_id,)
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    # ── Keyword fallback helpers ────────────────────────────────
+
+    def _extract_keywords(self, query: str) -> list[str]:
+        """Extract search keywords from a query string (fallback only)."""
+        import re
+
+        keywords = [query]
+        cjk_segments = re.findall(r'[\u4e00-\u9fff]{2,}', query)
+        keywords.extend(cjk_segments)
+
+        for seg in cjk_segments:
+            for i in range(len(seg) - 1):
+                pair = seg[i:i+2]
+                keywords.append(pair)
+
+        seen = set()
+        unique = []
+        for kw in keywords:
+            if kw not in seen:
+                seen.add(kw)
+                unique.append(kw)
+        return unique
+
+    def _search_by_keywords(
+        self, conn: sqlite3.Connection, keywords: list[str],
+        user_id: str, top_k: int,
+    ) -> list[sqlite3.Row]:
+        """Keyword-based search (fallback when LanceDB unavailable)."""
+        all_rows = []
+        for keyword in keywords:
+            has_cjk = any("\u4e00" <= c <= "\u9fff" for c in keyword)
+            if has_cjk:
+                try:
+                    rows = conn.execute(
+                        """SELECT m.* FROM memories m
+                           WHERE (m.user_id = ? OR m.user_id = 'global')
+                             AND m.status != 'deleted'
+                             AND m.content LIKE ?
+                           ORDER BY m.importance DESC, m.created_at DESC
+                           LIMIT ?""",
+                        (user_id, f"%{keyword}%", top_k * 2),
+                    ).fetchall()
+                    all_rows.extend(rows)
+                except Exception:
+                    pass
+
+        seen = {}
+        for r in all_rows:
+            rid = r["id"]
+            if rid not in seen:
+                seen[rid] = r
+
+        sorted_rows = sorted(seen.values(), key=lambda r: r["importance"], reverse=True)
+        return sorted_rows[:top_k]

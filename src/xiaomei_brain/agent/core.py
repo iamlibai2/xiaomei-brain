@@ -2,23 +2,32 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import logging
+import time
 from typing import Any, Generator
 
 from xiaomei_brain.config import Config
-from xiaomei_brain.context import ContextManager
-from xiaomei_brain.context_extractor import ContextExtractor
+# [deprecated imports] — kept for backward compatibility
+from xiaomei_brain.agent.context import ContextManager              # deprecated: use ContextAssembler + DAG
+from xiaomei_brain.agent.context_extractor import ContextExtractor  # deprecated
 from xiaomei_brain.llm import LLMClient
-from xiaomei_brain.memory.store import MemoryStore
-from xiaomei_brain.memory.conversation import ConversationLogger
+from xiaomei_brain.memory.store import MemoryStore                  # deprecated: use LongTermMemory
+from xiaomei_brain.memory.conversation import ConversationLogger    # deprecated: use ConversationDB
+from xiaomei_brain.memory.conversation_db import ConversationDB
 from xiaomei_brain.memory.dream import DreamProcessor
-from xiaomei_brain.memory.episodic import EpisodicMemory
-from xiaomei_brain.memory.layers import WorkingMemory, WorkingMemoryItem
+from xiaomei_brain.memory.episodic import EpisodicMemory           # deprecated: to be migrated
+from xiaomei_brain.memory.layers import WorkingMemory, WorkingMemoryItem  # deprecated: to be migrated
 from xiaomei_brain.memory.scheduler import DreamScheduler
-from xiaomei_brain.proactive import ProactiveEngine, ProactiveMessage
-from xiaomei_brain.reminder import ReminderManager
-from xiaomei_brain.session import SessionManager
+from xiaomei_brain.memory.self_model import SelfModel
+from xiaomei_brain.memory.dag import DAGSummaryGraph
+from xiaomei_brain.memory.context_assembler import ContextAssembler, determine_mode
+from xiaomei_brain.memory.longterm import LongTermMemory
+from xiaomei_brain.memory.extractor import MemoryExtractor
+from xiaomei_brain.agent.proactive import ProactiveEngine, ProactiveMessage
+from xiaomei_brain.agent.reminder import ReminderManager
+from xiaomei_brain.agent.session import SessionManager
 from xiaomei_brain.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -32,10 +41,11 @@ class Agent:
     2. If LLM requests tool calls → execute tools → feed results back → repeat
     3. If LLM returns text → return to user
 
-    Features:
-    - Context window management (sliding window + summarization)
-    - Streaming output support
-    - Dream system for offline memory extraction
+    Memory architecture (two paths):
+    - **New (preferred)**: ContextAssembler + DAG + LongTermMemory + ConversationDB
+      Context is assembled from DB each turn, self.messages only tracks current ReAct loop.
+    - **Old (deprecated)**: ContextManager (sliding window) + MemoryStore + ConversationLogger
+      Still functional but not recommended for new code.
     """
 
     def __init__(
@@ -59,24 +69,32 @@ class Agent:
         self.tools = tools
         self.system_prompt = system_prompt
         self.max_steps = max_steps
-        self.memory = memory
-        self.conversation_logger = conversation_logger
-        self.dream_scheduler = dream_scheduler
-        self.episodic_memory = episodic_memory
-        self.proactive_engine = proactive_engine
-        self.reminder_manager = reminder_manager
-        self.working_memory = WorkingMemory()
-        self.messages: list[dict[str, Any]] = []
 
-        # Context management: auto-create if not provided
-        self.context = context_manager or ContextManager(
+        # ── Old architecture (deprecated, kept for backward compatibility) ──
+        self.memory = memory                        # [deprecated] use LongTermMemory
+        self.conversation_logger = conversation_logger  # [deprecated] use ConversationDB
+        self.episodic_memory = episodic_memory      # [deprecated] to be migrated to LongTermMemory
+        self.working_memory = WorkingMemory()       # [deprecated] to be migrated
+        self.context = context_manager or ContextManager(  # [deprecated] use ContextAssembler + DAG
             max_tokens=context_max_tokens,
             recent_turns=context_recent_turns,
             llm_client=llm,
         )
+        self.context_extractor = context_extractor  # [deprecated]
 
-        # Background context extractor (unified reminder + working memory extraction)
-        self.context_extractor = context_extractor
+        # ── New memory architecture ──────────────────────
+        self.self_model: SelfModel | None = None
+        self.conversation_db: ConversationDB | None = None
+        self.context_assembler: ContextAssembler | None = None
+        self.longterm_memory: LongTermMemory | None = None
+        self.memory_extractor: MemoryExtractor | None = None
+
+        # ── Shared state ──────────────────────────────────
+        self.dream_scheduler = dream_scheduler
+        self.proactive_engine = proactive_engine
+        self.reminder_manager = reminder_manager
+        self.messages: list[dict[str, Any]] = []
+        self.user_id: str = "global"  # 当前用户身份，在 context_assembler 中使用
 
     def run(self, user_input: str) -> str:
         """Run the agent and return the final response (non-streaming).
@@ -102,11 +120,25 @@ class Agent:
         Yields:
             Text chunks of the final response.
         """
+        # ── New memory architecture: self.messages only tracks current turn ──
+        # ContextAssembler provides full history from DB + DAG + LongTermMemory,
+        # so self.messages only needs the current ReAct loop's messages.
+        if self.context_assembler and self.conversation_db:
+            self.messages = []
+
         self.messages.append({"role": "user", "content": user_input})
 
         # Log conversation turn
+        # [deprecated] ConversationLogger — use ConversationDB instead
         if self.conversation_logger:
             self.conversation_logger.log("user", user_input)
+
+        if self.conversation_db:
+            self.conversation_db.log(
+                session_id=self._current_session_id(),
+                role="user",
+                content=user_input,
+            )
 
         # Notify scheduler of activity
         if self.dream_scheduler:
@@ -127,15 +159,35 @@ class Agent:
         if self.reminder_manager:
             due_reminders = self.reminder_manager.check_due()
 
-        # Build effective system prompt with memory
-        effective_prompt = self._build_effective_prompt(user_input)
+        # Determine operational mode
+        mode = determine_mode(user_input)
+
+        # Build effective system prompt — only needed for old architecture
+        # [deprecated] ContextAssembler handles system prompt for new arch
+        if not (self.context_assembler and self.conversation_db):
+            effective_prompt = self._build_effective_prompt(user_input)
+        else:
+            effective_prompt = ""
 
         openai_tools = self.tools.to_openai_tools() if self.tools.list_tools() else None
 
         for step in range(self.max_steps):
-            # Build full message list and compress if needed
-            all_messages = [{"role": "system", "content": effective_prompt}] + self.messages
-            all_messages = self._manage_context(all_messages)
+            if self.context_assembler and self.conversation_db:
+                # New arch: ContextAssembler provides SelfModel + DAG summaries +
+                # LongTermMemory + recent messages from DB.
+                # self.messages only has current turn's ReAct loop messages.
+                all_messages = self.context_assembler.assemble(
+                    user_input=user_input,
+                    max_tokens=4000,
+                    mode=mode,
+                    session_id=self._current_session_id(),
+                    user_id=self.user_id,
+                )
+                all_messages.extend(self.messages)
+            else:
+                # [deprecated] Old arch: ContextManager sliding window compression
+                all_messages = [{"role": "system", "content": effective_prompt}] + self.messages
+                all_messages = self._manage_context(all_messages)
 
             logger.debug("Step %d: calling LLM", step + 1)
 
@@ -172,6 +224,16 @@ class Agent:
                         logger.error("Tool error: %s", e)
 
                     logger.info("Tool result: %s", result[:200])
+
+                    # Log tool call and result to SQLite
+                    if self.conversation_db:
+                        self.conversation_db.log(
+                            session_id=self._current_session_id(),
+                            role="tool",
+                            content=result,
+                            tool_name=tc.name,
+                            tool_call_id=tc.id,
+                        )
                     self.messages.append(
                         {
                             "role": "tool",
@@ -186,8 +248,16 @@ class Agent:
                     self.messages.append({"role": "assistant", "content": content})
 
                     # Log assistant response
+                    # [deprecated] ConversationLogger — use ConversationDB instead
                     if self.conversation_logger:
                         self.conversation_logger.log("assistant", content)
+
+                    if self.conversation_db:
+                        self.conversation_db.log(
+                            session_id=self._current_session_id(),
+                            role="assistant",
+                            content=content,
+                        )
 
                     # Stream the response
                     if stream_chunks:
@@ -202,6 +272,13 @@ class Agent:
                         # Fallback to fast heuristic if no context extractor
                         self.working_memory.advance_turn()
                         self._heuristic_extract_working_memory(user_input)
+
+                    # Immediate memory extraction (keyword-triggered)
+                    if self.memory_extractor and self.memory_extractor.check_immediate(user_input):
+                        try:
+                            self.memory_extractor.extract_immediate(user_input, content)
+                        except Exception as e:
+                            logger.debug("Immediate extraction error: %s", e)
 
                     return
                 else:
@@ -241,28 +318,32 @@ class Agent:
    - 如果记忆内容与当前对话无关，忽略即可
 """
 
+    # [deprecated] Use ContextAssembler instead. Still needed when context_assembler is not configured.
     def _build_effective_prompt(self, user_input: str) -> str:
         """Build system prompt with injected memory context."""
-        effective_prompt = self.system_prompt
+        # Use SelfModel rendering if available, otherwise fallback to system_prompt
+        if self.self_model:
+            effective_prompt = self.self_model.to_system_prompt(mode="daily")
+        else:
+            effective_prompt = self.system_prompt
 
-        # Inject long-term memory (semantic search results)
-        if self.memory:
-            logger.info("Memory enabled, searching for: %r", user_input)
-            results = self.memory.search(user_input, top_k=3)
-            if results:
-                memory_context = "\n\n## 用户档案与对话回忆\n以下是关于用户的历史信息，不是你自己的信息：\n"
-                for r in results:
-                    logger.info(
-                        "Injecting memory: %s (score=%.4f, %d chars)",
-                        r.topic, r.score, len(r.content),
-                    )
-                    memory_context += f"### {r.topic}\n{r.content}\n\n"
-                effective_prompt += memory_context
-                logger.info("Injected %d memory results into prompt", len(results))
-            else:
-                logger.info("No relevant memories found for query")
+        # Inject long-term memory from SQLite (new system, Phase 4)
+        if self.longterm_memory:
+            ltm_results = self.longterm_memory.recall(user_input, top_k=3)
+            logger.info("[Memory INJECT] query='%s' → %d results", user_input[:30], len(ltm_results))
+            if ltm_results:
+                ltm_context = "\n\n## 长期记忆\n"
+                for r in ltm_results:
+                    tags = ", ".join(r.get("tags", []))
+                    ltm_context += f"- [{r.get('source', '')}] {r['content']}"
+                    if tags:
+                        ltm_context += f" (#{tags})"
+                    ltm_context += "\n"
+                    logger.info("  → [%s] %s", r.get("source", ""), r["content"][:50])
+                effective_prompt += ltm_context
 
-            # Append memory usage instructions
+        # Append memory usage instructions
+        if self.longterm_memory:
             effective_prompt += self.MEMORY_INSTRUCTIONS
 
         # Inject working memory (current session context)
@@ -281,6 +362,7 @@ class Agent:
 
         return effective_prompt
 
+    # [deprecated] Use DAG summary graph instead. Still needed when context_assembler is not configured.
     def _manage_context(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Compress conversation history if it exceeds the token budget."""
         if not self.context.should_compress(messages):
@@ -339,6 +421,23 @@ class Agent:
             "Content-Type": "application/json",
         }
 
+        # 计时：流式调用
+        import datetime as _dt
+        _t0 = time.time()
+        _msg_preview = (api_messages[0].get("content") or "")[:40] if api_messages else ""
+        _has_tools = bool(tools)
+        # _full_prompt = (api_messages[0].get("content") or "") if api_messages else ""  # 调试用
+
+        def _log(success: bool, detail: str = ""):
+            elapsed = time.time() - _t0
+            status = "OK" if success else "ERR"
+            ts = _dt.datetime.now().strftime("%H:%M:%S")
+            logger.info(
+                "[LLM %s STREAM] %s model=%s msgs=%d tools=%s elapsed=%.2fs %s %s",
+                status, ts, self.llm.model, len(api_messages), _has_tools, elapsed, _msg_preview, detail,
+            )
+            # logger.info("[LLM PROMPT]\n%s", _full_prompt)  # 调试用
+
         response = req.post(
             f"{self.llm.base_url}/chat/completions",
             headers=headers,
@@ -353,51 +452,55 @@ class Agent:
         tool_calls_acc: dict[int, dict] = {}  # index -> {id, name, arguments}
         finish_reason = ""
 
-        for line in response.iter_lines():
-            if not line:
-                continue
-            # Decode bytes to string (UTF-8)
-            if isinstance(line, bytes):
+        try:
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                # Decode bytes to string (UTF-8)
+                if isinstance(line, bytes):
+                    try:
+                        line = line.decode("utf-8")
+                    except UnicodeDecodeError:
+                        line = line.decode("utf-8", errors="replace")
+                if not line.startswith("data: "):
+                    continue
+                data = line[6:]
+                if data.strip() == "[DONE]":
+                    break
+
                 try:
-                    line = line.decode("utf-8")
-                except UnicodeDecodeError:
-                    line = line.decode("utf-8", errors="replace")
-            if not line.startswith("data: "):
-                continue
-            data = line[6:]
-            if data.strip() == "[DONE]":
-                break
+                    chunk = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
 
-            try:
-                chunk = json.loads(data)
-            except json.JSONDecodeError:
-                continue
+                choice = chunk.get("choices", [{}])[0]
+                delta = choice.get("delta", {})
+                finish_reason = choice.get("finish_reason", "") or finish_reason
 
-            choice = chunk.get("choices", [{}])[0]
-            delta = choice.get("delta", {})
-            finish_reason = choice.get("finish_reason", "") or finish_reason
+                # Collect content; skip chunks that carry reasoning_content (thinking only)
+                if "content" in delta and delta["content"] and not delta.get("reasoning_content"):
+                    content_parts.append(delta["content"])
 
-            # Collect content; skip chunks that carry reasoning_content (thinking only)
-            if "content" in delta and delta["content"] and not delta.get("reasoning_content"):
-                content_parts.append(delta["content"])
-
-            # Collect tool calls
-            if "tool_calls" in delta:
-                for tc_delta in delta["tool_calls"]:
-                    idx = tc_delta.get("index", 0)
-                    if idx not in tool_calls_acc:
-                        tool_calls_acc[idx] = {
-                            "id": "",
-                            "name": "",
-                            "arguments": "",
-                        }
-                    if tc_delta.get("id"):
-                        tool_calls_acc[idx]["id"] = tc_delta["id"]
-                    fn = tc_delta.get("function", {})
-                    if fn.get("name"):
-                        tool_calls_acc[idx]["name"] = fn["name"]
-                    if fn.get("arguments"):
-                        tool_calls_acc[idx]["arguments"] += fn["arguments"]
+                # Collect tool calls
+                if "tool_calls" in delta:
+                    for tc_delta in delta["tool_calls"]:
+                        idx = tc_delta.get("index", 0)
+                        if idx not in tool_calls_acc:
+                            tool_calls_acc[idx] = {
+                                "id": "",
+                                "name": "",
+                                "arguments": "",
+                            }
+                        if tc_delta.get("id"):
+                            tool_calls_acc[idx]["id"] = tc_delta["id"]
+                        fn = tc_delta.get("function", {})
+                        if fn.get("name"):
+                            tool_calls_acc[idx]["name"] = fn["name"]
+                        if fn.get("arguments"):
+                            tool_calls_acc[idx]["arguments"] += fn["arguments"]
+        except Exception as e:
+            _log(False, f"stream_err:{e}")
+            raise
 
         # Build final ChatResponse
         from .llm import ChatResponse, ToolCall
@@ -418,7 +521,27 @@ class Agent:
             finish_reason=finish_reason,
         )
 
+        _log(True)
         return chat_response, content_parts if not tool_calls else None
+
+    def load_self_model(self, talent_path: str) -> None:
+        """Load SelfModel from talent.md at startup."""
+        self.self_model = SelfModel.load(talent_path)
+        if self.self_model and self.self_model.purpose_seed.identity:
+            logger.info("SelfModel loaded: %s", self.self_model.purpose_seed.identity[:50])
+        elif self.self_model and self.self_model.seed_text:
+            logger.info("SelfModel loaded (legacy format)")
+
+    def save_self_model(self, talent_path: str) -> None:
+        """Save SelfModel to talent.md at shutdown."""
+        if self.self_model:
+            self.self_model.save(talent_path)
+
+    def _current_session_id(self) -> str:
+        """Get current session identifier for ConversationDB."""
+        # Use date-based session ID if no session manager
+        from datetime import datetime
+        return datetime.now().strftime("%Y-%m-%d")
 
     def start_dream_scheduler(self) -> None:
         """Start the background dream scheduler and proactive engine."""

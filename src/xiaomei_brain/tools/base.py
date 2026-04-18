@@ -22,16 +22,40 @@ class Tool:
 
 
 def _python_type_to_json_schema(py_type: Any) -> dict[str, Any]:
-    """Convert Python type annotation to JSON Schema."""
+    """Convert Python type annotation to JSON Schema.
+
+    Handles both direct types (int, str) and stringified annotations
+    from 'from __future__ import annotations' (PEP 563).
+    """
+    # Resolve stringified type names (from PEP 563 postponed annotations)
+    if isinstance(py_type, str):
+        py_type = _resolve_annotated_type(py_type)
+
     type_map = {
         str: {"type": "string"},
         int: {"type": "integer"},
         float: {"type": "number"},
         bool: {"type": "boolean"},
+        list: {"type": "array"},
     }
     if py_type in type_map:
         return type_map[py_type]
     return {"type": "string"}
+
+
+def _resolve_annotated_type(type_str: str) -> Any:
+    """Resolve a stringified type annotation to actual type.
+
+    E.g. 'int' -> int, 'str' -> str, 'List[int]' -> list[int]
+    """
+    import typing
+    type_map = {"int": int, "str": str, "float": float, "bool": bool, "list": list}
+    if type_str in type_map:
+        return type_map[type_str]
+    try:
+        return eval(type_str, {"typing": typing})
+    except Exception:
+        return str
 
 
 def tool(name: str | None = None, description: str | None = None) -> Callable:
