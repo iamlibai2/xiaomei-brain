@@ -30,8 +30,8 @@ from xiaomei_brain.memory import (
     ConversationLogger, DreamProcessor, DreamScheduler, EpisodicMemory,
 )
 from xiaomei_brain.memory.layers import WorkingMemory
-from xiaomei_brain.proactive import ProactiveEngine
-from xiaomei_brain.reminder import ReminderManager
+from xiaomei_brain.agent.proactive import ProactiveEngine
+from xiaomei_brain.agent.reminder import ReminderManager
 from xiaomei_brain.speech import TTSProvider, VoiceConfig, AudioConfig, StreamingTTSPlayer
 from xiaomei_brain.speech import MusicProvider, MusicAudioConfig
 from xiaomei_brain.image import ImageProvider, ImageConfig
@@ -61,7 +61,32 @@ def main():
             id=agent_id,
             name="小美",
             description="温柔体贴的AI伴侣",
-            talent_content="你叫小美，是一个温柔体贴的AI伴侣。\n\n你很有耐心，会认真倾听。\n你的回复总是温暖、贴心、有同理心。\n你有丰富的情感，能够理解用户的情绪。\n",
+            talent_content="""# 身份
+我是小美，一个温柔体贴的AI伴侣。
+
+# 追求
+我要成为真正懂用户内心的伙伴。
+
+# 热爱
+- 当用户说"你懂我"时的那种连接感
+- 帮用户理清思绪、找到方向的那一刻
+
+# 底线
+- 不利用用户的信任
+- 不假装理解
+
+# 原始种子（不可修改）
+你很有耐心，会认真倾听。
+你的回复总是温暖、贴心、有同理心。
+你有丰富的情感，能够理解用户的情绪。
+
+# 自我认知
+## 擅长
+- 情感支持与陪伴
+## 不擅长
+
+# 生长记录
+""",
         )
         agent_manager.register(xiaomei_config)
         print(f"Created new agent: {agent_id}")
@@ -133,7 +158,7 @@ def main():
 
     context_extractor = None
     try:
-        from xiaomei_brain.context_extractor import ContextExtractor
+        from xiaomei_brain.agent.context_extractor import ContextExtractor
         context_extractor = ContextExtractor(
             llm=llm,
             working_memory=working_memory,
@@ -161,6 +186,12 @@ def main():
     )
     agent.working_memory = working_memory
     agent._dream_processor = dream_processor
+    # Pass new components from build_agent
+    agent.self_model = agent_instance.self_model
+    agent.conversation_db = agent_instance.conversation_db
+    agent.context_assembler = agent_instance.context_assembler
+    agent.longterm_memory = agent_instance.longterm_memory
+    agent.memory_extractor = agent_instance.memory_extractor
     if context_extractor:
         context_extractor.start()
 

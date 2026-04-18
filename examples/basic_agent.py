@@ -32,8 +32,8 @@ from xiaomei_brain.memory import (
     ConversationLogger, DreamProcessor, DreamScheduler, EpisodicMemory,
 )
 from xiaomei_brain.memory.layers import WorkingMemory
-from xiaomei_brain.proactive import ProactiveEngine
-from xiaomei_brain.reminder import ReminderManager
+from xiaomei_brain.agent.proactive import ProactiveEngine
+from xiaomei_brain.agent.reminder import ReminderManager
 from xiaomei_brain.speech import TTSProvider, VoiceConfig, AudioConfig, StreamingTTSPlayer
 from xiaomei_brain.speech import MusicProvider, MusicAudioConfig
 from xiaomei_brain.image import ImageProvider, ImageConfig
@@ -155,7 +155,7 @@ def main():
     # Create background context extractor
     context_extractor = None
     try:
-        from xiaomei_brain.context_extractor import ContextExtractor
+        from xiaomei_brain.agent.context_extractor import ContextExtractor
         context_extractor = ContextExtractor(
             llm=llm,
             working_memory=working_memory,

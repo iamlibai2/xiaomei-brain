@@ -63,9 +63,9 @@ from xiaomei_brain.memory import (
     ConversationLogger, DreamProcessor, DreamScheduler, EpisodicMemory,
 )
 from xiaomei_brain.memory.layers import WorkingMemory
-from xiaomei_brain.proactive import ProactiveEngine
-from xiaomei_brain.reminder import ReminderManager
-from xiaomei_brain.session import SessionManager
+from xiaomei_brain.agent.proactive import ProactiveEngine
+from xiaomei_brain.agent.reminder import ReminderManager
+from xiaomei_brain.agent.session import SessionManager
 from xiaomei_brain.speech import TTSProvider, VoiceConfig, AudioConfig
 from xiaomei_brain.tools.builtin import (
     shell_tool, read_file_tool, write_file_tool,
@@ -159,7 +159,7 @@ class AgentGateway(Gateway):
 
         context_extractor = None
         try:
-            from xiaomei_brain.context_extractor import ContextExtractor
+            from xiaomei_brain.agent.context_extractor import ContextExtractor
             context_extractor = ContextExtractor(
                 llm=llm,
                 working_memory=working_memory,
