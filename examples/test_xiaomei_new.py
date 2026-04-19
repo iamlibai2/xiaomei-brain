@@ -3,7 +3,6 @@
 import logging
 import os
 import sys
-import threading
 import time
 
 # HuggingFace：国内镜像 + 优先用本地缓存，不每次联网校验
@@ -27,6 +26,8 @@ def main():
     from xiaomei_brain.memory.context_assembler import ContextAssembler, determine_mode
     from xiaomei_brain.memory.longterm import LongTermMemory
     from xiaomei_brain.memory.extractor import MemoryExtractor
+    from xiaomei_brain.memory.dream import DreamProcessor, DreamScheduler
+    from xiaomei_brain.memory.dream import make_reinforce_job, make_extract_job
     from xiaomei_brain.tools.registry import ToolRegistry
     from xiaomei_brain.tools.builtin.dag_expand import create_dag_tools
 
@@ -86,26 +87,14 @@ def main():
     session_id = "main"
     current_user = "global"
 
-    # ── 定时提取线程 ──────────────────────────────────────────────
-    periodic_running = True
+    # ── Dream Scheduler ───────────────────────────────────────────────
+    processor = DreamProcessor(conversation_db, memory_extractor)
+    processor.add_job(*make_reinforce_job(longterm_memory))
+    processor.add_job(*make_extract_job(memory_extractor, current_user))
 
-    def periodic_extractor():
-        while periodic_running:
-            time.sleep(2 * 60)
-            if not periodic_running:
-                break
-            try:
-                ids = memory_extractor.extract_periodic(
-                    interval_minutes=2, user_id=current_user,
-                )
-                if ids:
-                    print(f"\n[Periodic] 定时提取了 {len(ids)} 条记忆 (user={current_user})\n")
-            except Exception as e:
-                logger.debug("[Periodic] 提取失败: %s", e)
-
-    pt = threading.Thread(target=periodic_extractor, daemon=True)
-    pt.start()
-    print(f"[Periodic] 定时提取线程已启动（每2分钟）")
+    scheduler = DreamScheduler(processor, idle_threshold=5 * 60)
+    scheduler.start()
+    print(f"[Dream] Scheduler started (reinforce + extract, idle=5min)")
     print()
 
     # ── 对话循环 ─────────────────────────────────────────────────
@@ -133,7 +122,11 @@ def main():
         if not user_input:
             continue
         if user_input.lower() in ("q", "quit", "exit"):
+            scheduler.stop()
             break
+
+        # Reset idle timer on activity
+        scheduler.touch()
 
         # ── 命令处理 ──────────────────────────────────────────────
         result = commands.execute(
