@@ -76,6 +76,24 @@ class ConversationDB:
 
             CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts
                 USING fts5(content, content='messages', content_rowid='id');
+
+            -- 程序记忆：工具调用记录（procedure memory）
+            CREATE TABLE IF NOT EXISTS tool_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL DEFAULT 'global',
+                session_id TEXT NOT NULL DEFAULT '',
+                tool_name TEXT NOT NULL,
+                args TEXT,
+                result TEXT,
+                created_at REAL NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_tool_history_user
+                ON tool_history(user_id);
+            CREATE INDEX IF NOT EXISTS idx_tool_history_tool
+                ON tool_history(tool_name);
+            CREATE INDEX IF NOT EXISTS idx_tool_history_session
+                ON tool_history(session_id, created_at);
         """)
 
         # FTS5 triggers (sync inserts/updates/deletes)
@@ -98,6 +116,32 @@ class ConversationDB:
         for sql in triggers:
             conn.execute(sql)
         conn.commit()
+
+    def store_tool(
+        self,
+        tool_name: str,
+        args: dict[str, Any] | None = None,
+        result: str | None = None,
+        user_id: str = "global",
+        session_id: str = "",
+    ) -> int:
+        """Store a tool invocation in procedure memory. Returns the row id."""
+        conn = self._get_conn()
+        cur = conn.execute(
+            """INSERT INTO tool_history
+               (user_id, session_id, tool_name, args, result, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                user_id,
+                session_id,
+                tool_name,
+                json.dumps(args or {}, ensure_ascii=False) if args else None,
+                (result or "")[:2000],  # truncate
+                time.time(),
+            ),
+        )
+        conn.commit()
+        return cur.lastrowid  # type: ignore[return-value]
 
     def log(
         self,

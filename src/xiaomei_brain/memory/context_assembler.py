@@ -215,6 +215,14 @@ class ContextAssembler:
             if memory_text:
                 system_content += "\n\n" + memory_text
 
+            # 2b. 记忆关联链 — 注入因果/时序等语义关系（reflect 模式专用）
+            if remaining > 300:
+                chain_text = self._recall_relation_chain(
+                    user_input, user_id, depth=2,
+                )
+                if chain_text:
+                    system_content += "\n\n" + chain_text
+
         if system_content:
             messages.append({"role": "system", "content": system_content})
             remaining -= estimate_tokens(system_content)
@@ -299,6 +307,64 @@ class ContextAssembler:
             "[Memory] Recalled %d memories (min_str=%.2f) for query='%s' user=%s",
             len(memories), min_strength, user_input[:30], user_id,
         )
+        return "\n".join(lines)
+
+    def _recall_relation_chain(
+        self,
+        user_input: str,
+        user_id: str = "global",
+        depth: int = 2,
+    ) -> str:
+        """Recall relation chains between memories for context enrichment.
+
+        Finds memories related to the query, then traverses their relation
+        graph (up to `depth` hops) and formats the chain as text.
+
+        Only available in reflect mode where multi-hop reasoning is valuable.
+        """
+        if self.longterm is None:
+            return ""
+
+        # Find memories related to query
+        seed_memories = self.longterm.recall(user_input, user_id=user_id, top_k=5)
+        if not seed_memories:
+            return ""
+
+        chain_map: dict[int, dict] = {}  # memory_id -> chain entry (dedup)
+        for seed in seed_memories:
+            seed_id = seed["id"]
+            if seed_id in chain_map:
+                continue
+            chain = self.longterm.get_relation_chain(seed_id, depth=depth)
+            for item in chain:
+                mid = item["memory_id"]
+                if mid not in chain_map:
+                    chain_map[mid] = item
+
+        if not chain_map:
+            return ""
+
+        # Format as "记忆关联链"
+        lines = ["<记忆关联链>"]
+        lines.append("以下记忆与当前对话存在语义关联（因果/时序等），可帮助你理解上下文脉络：")
+
+        for mid, item in chain_map.items():
+            content = item.get("content", "")
+            rel_type = item.get("relation_type", "?")
+            hop = item.get("hop", "?")
+            if not content:
+                continue
+            rel_label = {
+                "causal": "因果",
+                "temporal": "时序",
+                "contrast": "对比",
+                "contains": "包含",
+            }.get(rel_type, rel_type)
+            lines.append(f"- [跳{hop}] {content} （{rel_label}）")
+
+        lines.append("</记忆关联链>")
+        logger.info("[Relations] Chain: %d related memories for query='%s'",
+                    len(chain_map), user_input[:30])
         return "\n".join(lines)
 
     def _summaries_to_text(

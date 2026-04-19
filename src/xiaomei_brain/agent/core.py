@@ -234,6 +234,14 @@ class Agent:
                             tool_name=tc.name,
                             tool_call_id=tc.id,
                         )
+                        # Procedure memory: record tool invocation (no LLM call)
+                        self.conversation_db.store_tool(
+                            tool_name=tc.name,
+                            args=tc.arguments,
+                            result=str(result)[:500],
+                            user_id=self.user_id,
+                            session_id=self._current_session_id(),
+                        )
                     self.messages.append(
                         {
                             "role": "tool",

@@ -26,7 +26,8 @@ def main():
     from xiaomei_brain.memory.context_assembler import ContextAssembler, determine_mode
     from xiaomei_brain.memory.longterm import LongTermMemory
     from xiaomei_brain.memory.extractor import MemoryExtractor
-    from xiaomei_brain.memory.dream import DreamProcessor, DreamScheduler
+    from xiaomei_brain.memory.dream import DreamProcessor
+    from xiaomei_brain.memory.scheduler import DreamScheduler
     from xiaomei_brain.memory.dream import make_reinforce_job, make_extract_job
     from xiaomei_brain.tools.registry import ToolRegistry
     from xiaomei_brain.tools.builtin.dag_expand import create_dag_tools
@@ -92,9 +93,9 @@ def main():
     processor.add_job(*make_reinforce_job(longterm_memory))
     processor.add_job(*make_extract_job(memory_extractor, current_user))
 
-    scheduler = DreamScheduler(processor, idle_threshold=5 * 60)
+    scheduler = DreamScheduler(processor, idle_threshold=10)
     scheduler.start()
-    print(f"[Dream] Scheduler started (reinforce + extract, idle=5min)")
+    print(f"[Dream] Scheduler started (reinforce + extract, idle=10s)")
     print()
 
     # ── 对话循环 ─────────────────────────────────────────────────

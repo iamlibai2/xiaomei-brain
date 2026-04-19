@@ -267,6 +267,26 @@ class LongTermMemory:
                 INSERT INTO memories_fts(memories_fts, rowid, content)
                 VALUES ('delete', old.id, old.content);
             END;
+
+            -- 语义关系表：记忆之间的边（支持Neo4j将来迁移）
+            CREATE TABLE IF NOT EXISTS memory_relations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_memory_id INTEGER NOT NULL,
+                to_memory_id INTEGER NOT NULL,
+                relation_type TEXT NOT NULL,
+                context TEXT,
+                created_at REAL NOT NULL,
+                FOREIGN KEY (from_memory_id) REFERENCES memories(id) ON DELETE CASCADE,
+                FOREIGN KEY (to_memory_id) REFERENCES memories(id) ON DELETE CASCADE,
+                UNIQUE(from_memory_id, to_memory_id, relation_type)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_relations_from
+                ON memory_relations(from_memory_id);
+            CREATE INDEX IF NOT EXISTS idx_relations_to
+                ON memory_relations(to_memory_id);
+            CREATE INDEX IF NOT EXISTS idx_relations_type
+                ON memory_relations(relation_type);
         """)
 
         # Migrate existing rows: add status column if missing (existing DB)
@@ -574,6 +594,227 @@ class LongTermMemory:
             (memory_id, old_content, event, time.time()),
         )
         conn.commit()
+
+    # ── Semantic Relations (Graph Memory) ───────────────────────────
+
+    # Relation types: 因果:causal, 时序:temporal, 对比:contrast, 包含:contains
+    VALID_RELATION_TYPES = {"causal", "temporal", "contrast", "contains"}
+
+    def add_relation(
+        self,
+        from_memory_id: int,
+        to_memory_id: int,
+        relation_type: str,
+        context: str | None = None,
+    ) -> int | None:
+        """Add a semantic relation between two memories.
+
+        Args:
+            from_memory_id: Source memory ID
+            to_memory_id: Target memory ID
+            relation_type: One of causal, temporal, contrast, contains
+            context: Optional description of the relation
+
+        Returns:
+            Relation row ID, or None if failed/already exists
+        """
+        if relation_type not in self.VALID_RELATION_TYPES:
+            logger.warning("[Relations] Invalid relation_type: %s", relation_type)
+            return None
+
+        if from_memory_id == to_memory_id:
+            logger.warning("[Relations] Self-reference ignored: #%d", from_memory_id)
+            return None
+
+        conn = self._get_conn()
+        try:
+            cur = conn.execute(
+                """INSERT OR IGNORE INTO memory_relations
+                   (from_memory_id, to_memory_id, relation_type, context, created_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (from_memory_id, to_memory_id, relation_type, context, time.time()),
+            )
+            conn.commit()
+            if cur.rowcount > 0:
+                rel_id = cur.lastrowid
+                logger.info(
+                    "[Relations] #%d --%s--> #%d (rel=#%d)",
+                    from_memory_id, relation_type, to_memory_id, rel_id,
+                )
+                return rel_id
+            else:
+                logger.debug("[Relations] Relation already exists: #%d --%s--> #%d",
+                              from_memory_id, relation_type, to_memory_id)
+                return None
+        except Exception as e:
+            logger.warning("[Relations] Failed to add: %s", e)
+            return None
+
+    def get_related(
+        self,
+        memory_id: int,
+        relation_type: str | None = None,
+        direction: str = "both",
+    ) -> list[dict[str, Any]]:
+        """Get memories related to a given memory.
+
+        Args:
+            memory_id: The memory ID to find relations for
+            relation_type: Filter by specific type (optional)
+            direction: "both" (default), "outgoing" (from->to), "incoming" (to->from)
+
+        Returns:
+            List of related memory dicts with {id, content, relation_type, context}
+        """
+        conn = self._get_conn()
+
+        if direction == "outgoing":
+            where = "r.from_memory_id = ?"
+            params = [memory_id]
+        elif direction == "incoming":
+            where = "r.to_memory_id = ?"
+            params = [memory_id]
+        else:
+            where = "(r.from_memory_id = ? OR r.to_memory_id = ?)"
+            params = [memory_id, memory_id]
+
+        if relation_type:
+            where += " AND r.relation_type = ?"
+            params.append(relation_type)
+
+        # Fetch relation rows
+        rel_rows = conn.execute(
+            f"""SELECT r.id as rel_id, r.from_memory_id, r.to_memory_id,
+                       r.relation_type, r.context
+                FROM memory_relations r
+                WHERE {where}""",
+            params,
+        ).fetchall()
+
+        if not rel_rows:
+            return []
+
+        # Collect all "other" memory IDs
+        other_ids: set[int] = set()
+        rel_data: list[dict] = []
+        for rr in rel_rows:
+            rd = dict(rr)
+            if rd["from_memory_id"] == memory_id:
+                rd["direction"] = "outgoing"
+                rd["other_id"] = rd["to_memory_id"]
+            else:
+                rd["direction"] = "incoming"
+                rd["other_id"] = rd["from_memory_id"]
+            rel_data.append(rd)
+            other_ids.add(rd["other_id"])
+
+        # Batch fetch related memory content
+        placeholders = ",".join("?" * len(other_ids))
+        mem_rows = conn.execute(
+            f"""SELECT id, user_id, content, created_at, importance
+                FROM memories
+                WHERE id IN ({placeholders}) AND status != '{STATUS_EXTINCT}'""",
+            list(other_ids),
+        ).fetchall()
+        mem_map = {r["id"]: dict(r) for r in mem_rows}
+
+        # Merge
+        result = []
+        for rd in rel_data:
+            other = mem_map.get(rd["other_id"])
+            if other:
+                rd["memory_id"] = other["id"]
+                rd["content"] = other["content"]
+                rd["user_id"] = other["user_id"]
+                rd["created_at"] = other["created_at"]
+                rd["importance"] = other["importance"]
+                result.append(rd)
+        return result
+
+    def get_relation_chain(
+        self,
+        memory_id: int,
+        depth: int = 2,
+        relation_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get a chain of related memories up to N hops.
+
+        Args:
+            memory_id: Starting memory ID
+            depth: Max hops (2 or 3 recommended)
+            relation_type: Optional filter by relation type
+
+        Returns:
+            List of {memory_id, content, path, relation_chain} dicts
+        """
+        if depth < 1:
+            return []
+
+        conn = self._get_conn()
+        visited: set[int] = {memory_id}
+        frontier: set[int] = {memory_id}
+        chain: list[dict[str, Any]] = []
+
+        for hop in range(depth):
+            next_frontier: set[int] = set()
+            if not frontier:
+                break
+
+            placeholders = ",".join("?" * len(frontier))
+            type_filter = f"AND r.relation_type = '{relation_type}'" if relation_type else ""
+
+            rows = conn.execute(
+                f"""SELECT r.from_memory_id, r.to_memory_id,
+                           r.relation_type, r.context
+                    FROM memory_relations r
+                    WHERE (r.from_memory_id IN ({placeholders})
+                           OR r.to_memory_id IN ({placeholders}))
+                      {type_filter}""",
+                list(frontier) + list(frontier),
+            ).fetchall()
+
+            if not rows:
+                break
+
+            # Collect other side IDs
+            next_ids: set[int] = set()
+            for rr in rows:
+                from_id, to_id = rr["from_memory_id"], rr["to_memory_id"]
+                other_id = to_id if from_id in frontier else from_id
+                if other_id in visited:
+                    continue
+                next_ids.add(other_id)
+
+            # Batch fetch memory content for this hop
+            if next_ids:
+                mem_placeholders = ",".join("?" * len(next_ids))
+                mem_rows = conn.execute(
+                    f"""SELECT id, content FROM memories
+                        WHERE id IN ({mem_placeholders})
+                          AND status != '{STATUS_EXTINCT}'""",
+                    list(next_ids),
+                ).fetchall()
+                mem_map = {r["id"]: r["content"] for r in mem_rows}
+
+                for rr in rows:
+                    from_id, to_id = rr["from_memory_id"], rr["to_memory_id"]
+                    other_id = to_id if from_id in frontier else from_id
+                    if other_id in visited:
+                        continue
+                    visited.add(other_id)
+                    next_frontier.add(other_id)
+                    content = mem_map.get(other_id, "")
+                    chain.append({
+                        "memory_id": other_id,
+                        "content": content,
+                        "relation_type": rr["relation_type"],
+                        "context": rr["context"],
+                        "hop": hop + 1,
+                    })
+
+            frontier = next_frontier
+
+        return chain
 
     # ── Memory Strength & Dream Reinforcement ──────────────────────
 
