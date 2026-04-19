@@ -11,8 +11,6 @@ from typing import Any
 
 from xiaomei_brain.config import Config
 from xiaomei_brain.llm import LLMClient
-from xiaomei_brain.memory import MemoryStore, EpisodicMemory
-from xiaomei_brain.memory.layers import WorkingMemory
 from xiaomei_brain.memory.self_model import SelfModel
 from xiaomei_brain.memory.conversation_db import ConversationDB
 from xiaomei_brain.memory.dag import DAGSummaryGraph
@@ -44,10 +42,18 @@ class AgentInstance:
     # Core components (per-instance independent)
     llm: LLMClient | None = None
     tools: ToolRegistry | None = None
-    memory: MemoryStore | None = None
-    episodic_memory: EpisodicMemory | None = None
     session_manager: SessionManager | None = None
-    working_memory: WorkingMemory | None = None
+
+    # Memory system (新架构)
+    conversation_db: "ConversationDB" = None  # type: ignore[assignment]
+    context_assembler: "ContextAssembler" = None  # type: ignore[assignment]
+    longterm_memory: "LongTermMemory" = None  # type: ignore[assignment]
+    memory_extractor: "MemoryExtractor" = None  # type: ignore[assignment]
+
+    # [deprecated] 旧记忆系统，保留仅用于向后兼容
+    memory: Any = None
+    episodic_memory: Any = None
+    working_memory: Any = None
 
     # Agent-specific config overrides (optional)
     provider: str = ""
@@ -321,8 +327,6 @@ class AgentManager:
             shell_tool, read_file_tool, write_file_tool,
             tts_tools, music_tools, image_tools, websearch_tools, webget_tools,
         )
-        from xiaomei_brain.tools.builtin.memory import create_memory_tools
-
         tools.register(shell_tool)
         tools.register(read_file_tool)
         tools.register(write_file_tool)
@@ -393,29 +397,13 @@ class AgentManager:
             webget_tools.set_get_provider(web_get_provider)
             tools.register(webget_tools.web_get_tool)
 
-        memory = MemoryStore(
-            memory_dir=self._memory_dir(agent.id),
-            max_topics=global_config.memory_max_topics,
-            max_topic_chars=global_config.memory_max_topic_chars,
-            min_score=global_config.memory_similarity_threshold,
-        )
-        episodic_memory = EpisodicMemory(memory_dir=self._memory_dir(agent.id))
-
-        for mem_tool in create_memory_tools(memory, episodic_memory):
-            tools.register(mem_tool)
-
         if register_tools_fn:
             register_tools_fn(tools)
 
         session_manager = SessionManager(session_dir=self._sessions_dir(agent.id))
-        working_memory = WorkingMemory()
 
-        agent.llm = llm
-        agent.tools = tools
-        agent.memory = memory
-        agent.episodic_memory = episodic_memory
-        agent.session_manager = session_manager
-        agent.working_memory = working_memory
+        # ── 新记忆系统初始化 ────────────────────────────────────────────────
+        db_path = os.path.join(self._memory_dir(agent.id), "brain.db")
 
         # Load SelfModel from talent.md (if exists)
         talent_path = self._talent_path(agent.id)
@@ -424,25 +412,37 @@ class AgentManager:
             if self_model and (self_model.purpose_seed.identity or self_model.seed_text):
                 agent.self_model = self_model
 
-        # Initialize ConversationDB (SQLite, parallel with JSONL)
-        db_path = os.path.join(self._memory_dir(agent.id), "brain.db")
+        # ConversationDB (SQLite, 原始消息一字不差)
         agent.conversation_db = ConversationDB(db_path)
 
-        # Initialize DAG Summary Graph and Context Assembler
+        # DAG 摘要图 + LongTermMemory (必须在 dag_tools 前创建)
         dag = DAGSummaryGraph(db_path, llm_client=llm)
+        agent.longterm_memory = LongTermMemory(db_path)
+
+        # ContextAssembler 注入 longterm_memory (供 recall_memories 使用)
         agent.context_assembler = ContextAssembler(
             conversation_db=agent.conversation_db,
             dag=dag,
             self_model=agent.self_model,
+            longterm_memory=agent.longterm_memory,
         )
 
-        # Initialize Long-term Memory and Extractor
-        agent.longterm_memory = LongTermMemory(db_path)
+        # MemoryExtractor (需要 dag + longterm_memory)
         agent.memory_extractor = MemoryExtractor(
             llm_client=llm,
             longterm_memory=agent.longterm_memory,
             conversation_db=agent.conversation_db,
         )
+
+        # 注册 DAG 工具（含 extinct 记忆搜索和唤醒）
+        from xiaomei_brain.tools.builtin.dag_expand import create_dag_tools
+        for dag_tool in create_dag_tools(dag, agent.longterm_memory):
+            tools.register(dag_tool)
+
+        # ── 赋值 ─────────────────────────────────────────────────────────
+        agent.llm = llm
+        agent.tools = tools
+        agent.session_manager = session_manager
 
         return agent
 
