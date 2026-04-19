@@ -21,6 +21,15 @@ from .self_model import SelfModel
 
 logger = logging.getLogger(__name__)
 
+# ── Memory Strength Injection Thresholds ────────────────────────
+
+# effective_strength >= 此值才注入上下文
+# daily 模式只注入 L1/L2 (>= 0.6)
+INJECT_STRENGTH_DAILY = 0.6
+
+# reflect 模式注入 L1/L2/L3 (>= 0.4)
+INJECT_STRENGTH_REFLECT = 0.4
+
 
 class ContextAssembler:
     """Dynamic context assembler with mode-aware loading."""
@@ -144,8 +153,13 @@ class ContextAssembler:
                 system_content += "\n\n" + summary_text
 
         # 3. Long-term memory recall — append to system prompt
+        #    只注入 effective_strength >= INJECT_STRENGTH_DAILY (L1/L2) 的记忆
         if user_input and self.longterm and remaining > 200:
-            memory_text = self._recall_memories(user_input, user_id, max_results=5)
+            memory_text = self._recall_memories(
+                user_input, user_id,
+                max_results=8,
+                min_strength=INJECT_STRENGTH_DAILY,
+            )
             if memory_text:
                 system_content += "\n\n" + memory_text
 
@@ -191,8 +205,13 @@ class ContextAssembler:
                 system_content += "\n\n" + summary_text
 
         # 2. Long-term memory recall — more memories in reflect mode
+        #    注入 effective_strength >= INJECT_STRENGTH_REFLECT (L1/L2/L3) 的记忆
         if user_input and self.longterm and remaining > 200:
-            memory_text = self._recall_memories(user_input, user_id, max_results=10)
+            memory_text = self._recall_memories(
+                user_input, user_id,
+                max_results=15,
+                min_strength=INJECT_STRENGTH_REFLECT,
+            )
             if memory_text:
                 system_content += "\n\n" + memory_text
 
@@ -237,12 +256,31 @@ class ContextAssembler:
 
     def _recall_memories(
         self, user_input: str, user_id: str = "global", max_results: int = 5,
+        min_strength: float = 0.0,
     ) -> str:
-        """Recall relevant long-term memories and format as text."""
+        """Recall relevant long-term memories and format as text.
+
+        Args:
+            user_input: query for semantic recall
+            user_id: user identifier
+            max_results: overfetch count (will filter by strength)
+            min_strength: minimum effective_strength to include (0.0 = no filter)
+        """
         if self.longterm is None:
             return ""
 
-        memories = self.longterm.recall(user_input, user_id=user_id, top_k=max_results)
+        # Overfetch then filter by strength (L1/L2 for daily, L1-L3 for reflect)
+        all_memories = self.longterm.recall(user_input, user_id=user_id, top_k=max_results * 3)
+        if not all_memories:
+            return ""
+
+        # Filter by min_strength threshold
+        memories = [m for m in all_memories if m.get("effective_strength", 0) >= min_strength]
+
+        # Sort: first by effective_strength desc, then by score desc
+        memories.sort(key=lambda m: (m.get("effective_strength", 0), m.get("score", 0)), reverse=True)
+        memories = memories[:max_results]
+
         if not memories:
             return ""
 
@@ -250,15 +288,16 @@ class ContextAssembler:
         lines.append("以下是你的长期记忆，当用户问及相关信息时，你必须主动引用这些记忆来回答，不要说'你不记得'或让用户自己回答。")
         for m in memories:
             content = m.get("content", "")
-            importance = m.get("importance", 0.5)
+            eff_str = m.get("effective_strength", 0)
+            level = self.longterm._get_strength_level(eff_str) if hasattr(self.longterm, '_get_strength_level') else "?"
             tags = m.get("tags", [])
             tag_str = ",".join(tags) if tags else ""
-            lines.append(f"- {content}  [{tag_str}] (重要度:{importance:.1f})")
+            lines.append(f"- [{level} {eff_str:.2f}] {content}  [{tag_str}]")
         lines.append("</长期记忆>")
 
         logger.info(
-            "[Memory] Recalled %d memories for query='%s' user=%s",
-            len(memories), user_input[:30], user_id,
+            "[Memory] Recalled %d memories (min_str=%.2f) for query='%s' user=%s",
+            len(memories), min_strength, user_input[:30], user_id,
         )
         return "\n".join(lines)
 
