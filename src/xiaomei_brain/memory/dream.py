@@ -1,227 +1,104 @@
-"""Dream processor: retrospectively extracts and consolidates memories from conversations.
+"""Dream processor: unified dream jobs for memory consolidation.
 
-The "dream" mechanism:
-1. Read unprocessed conversation logs
-2. Use LLM to extract noteworthy information → long-term memory (topics)
-3. Extract episodic memories → episodic memory (events)
-4. Semantic dedup with existing memories (merge if similar)
-5. Save new/updated memories
-6. Mark logs as processed
+Two job types:
+- extract:  LLM extraction from conversation logs  (extract + dedup → LongTermMemory)
+- reinforce: strength reinforcement for low-strength memories (LongTermMemory.dream_reinforce)
+
+Each job is a simple callable: () -> DreamResult
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+import time
+from dataclasses import dataclass, field
 
-if TYPE_CHECKING:
-    from ..llm import LLMClient
-
-from .conversation import ConversationLogger
-from .episodic import EpisodicMemory
-from .store import MemoryStore
+from .conversation_db import ConversationDB
+from .extractor import MemoryExtractor
 
 logger = logging.getLogger(__name__)
 
-DREAM_EXTRACTION_PROMPT = """你是一个记忆提取器。从以下对话记录中，提取关于**用户**的值得长期记住的信息。
 
-提取规则：
-- 只提取关于用户的信息：用户的事实、偏好、重要决定、个人经历
-- 不要提取关于AI助手自身的信息
-- 用第三人称"用户"来描述，明确信息主体是用户
-- 忽略寒暄、情绪表达、无实质内容的对话
-- 每条记忆用以下格式输出：
-  TOPIC: 主题名（简短英文，用-连接）
-  CONTENT: 记忆内容（markdown格式，以"用户"开头描述）
-- 如果没有值得记住的信息，只回复 EMPTY
-- 多条记忆之间用 --- 分隔
-
-对话记录：
-{conversation}"""
-
-DREAM_MERGE_PROMPT = """你是一个记忆合并器。将新提取的信息与已有记忆合并。
-
-合并规则：
-- 保留已有记忆中的所有信息
-- 追加新信息中不重复的内容
-- 如果新信息与已有信息矛盾，用新信息替换旧信息
-- 输出合并后的完整 markdown 内容
-
-已有记忆：
-{existing}
-
-新信息：
-{new}"""
+@dataclass
+class DreamResult:
+    """Result of a single dream job."""
+    job: str
+    saved: int = 0
+    reinforced: int = 0
+    extinct: int = 0
+    errors: int = 0
+    details: str = ""
 
 
 class DreamProcessor:
-    """Processes conversation logs into long-term and episodic memories during 'dream' cycles."""
+    """Unified dream processor — runs all dream jobs in sequence."""
 
     def __init__(
         self,
-        llm: LLMClient,
-        memory: MemoryStore,
-        conversation_logger: ConversationLogger,
-        episodic_memory: EpisodicMemory | None = None,
+        conversation_db: ConversationDB,
+        memory_extractor: MemoryExtractor,
     ) -> None:
-        self.llm = llm
-        self.memory = memory
-        self.conversation_logger = conversation_logger
-        self.episodic_memory = episodic_memory
-        logger.info("DreamProcessor initialized (episodic=%s)", episodic_memory is not None)
+        self.conversation_db = conversation_db
+        self.extractor = memory_extractor
+        self._jobs: list[tuple[str, callable]] = []
 
-    def dream(self) -> list[str]:
-        """Run a full dream cycle: extract → dedup → save.
+    def add_job(self, name: str, fn: callable) -> None:
+        """Register a dream job: (name, callable)."""
+        self._jobs.append((name, fn))
+        logger.debug("[Dream] Registered job '%s'", name)
 
-        Returns:
-            List of topics that were saved or updated.
-        """
-        unprocessed = self.conversation_logger.get_unprocessed_logs()
-        if not unprocessed:
-            logger.info("Dream: no unprocessed logs, nothing to do")
-            return []
-
-        logger.info("Dream: processing %d log files", len(unprocessed))
-        all_saved: list[str] = []
-
-        for log_path in unprocessed:
-            entries = self.conversation_logger.read_log(log_path)
-            if not entries:
-                self.conversation_logger.mark_processed(log_path)
-                continue
-
-            # Format conversation for LLM
-            conversation = self._format_conversation(entries)
-            logger.info("Dream: processing %s (%d entries)", log_path, len(entries))
-
-            # Extract memories via LLM
-            extracted = self._extract_memories(conversation)
-            if not extracted:
-                logger.info("Dream: no memories extracted from %s", log_path)
-                self.conversation_logger.mark_processed(log_path)
-                continue
-
-            # Dedup and save each extracted memory
-            for topic, content in extracted:
-                saved_topic = self._dedup_and_save(topic, content)
-                all_saved.append(saved_topic)
-
-            # Extract episodic memories (events/narratives)
-            if self.episodic_memory:
-                episode = self.episodic_memory.extract_and_save(conversation, self.llm)
-                if episode:
-                    logger.info("Dream: extracted episode '%s'", episode.summary)
-
-            self.conversation_logger.mark_processed(log_path)
-            logger.info("Dream: processed %s, saved %d memories", log_path, len(extracted))
-
-        logger.info("Dream cycle complete, total saved/updated: %d", len(all_saved))
-        return all_saved
-
-    def _format_conversation(self, entries: list[dict]) -> str:
-        """Format conversation entries into readable text."""
-        lines = []
-        for entry in entries:
-            role = entry["role"]
-            content = entry["content"][:500]  # Truncate very long messages
-            lines.append(f"[{role}] {content}")
-        return "\n".join(lines)
-
-    def _extract_memories(self, conversation: str) -> list[tuple[str, str]]:
-        """Use LLM to extract memories from conversation text.
+    def dream(self) -> list[DreamResult]:
+        """Run all registered dream jobs sequentially.
 
         Returns:
-            List of (topic, content) tuples.
+            List of DreamResult, one per job (in registration order).
         """
-        prompt = DREAM_EXTRACTION_PROMPT.format(conversation=conversation)
-        try:
-            response = self.llm.chat(
-                messages=[{"role": "user", "content": prompt}],
-                tools=None,
-            )
-        except Exception as e:
-            logger.error("Dream extraction LLM call failed: %s", e)
-            return []
+        results: list[DreamResult] = []
 
-        text = response.content or ""
-        if text.strip() == "EMPTY":
-            return []
+        for name, fn in self._jobs:
+            t0 = time.time()
+            try:
+                result = fn()
+                if isinstance(result, DreamResult):
+                    results.append(result)
+                elif result is None:
+                    results.append(DreamResult(job=name, details="(no result)"))
+                else:
+                    results.append(DreamResult(job=name, details=str(result)))
+            except Exception as e:
+                logger.error("[Dream] Job '%s' failed: %s", name, e)
+                results.append(DreamResult(job=name, errors=1, details=str(e)))
 
-        # Parse the structured output
-        return self._parse_extracted(text)
+            elapsed = time.time() - t0
+            logger.info("[Dream] Job '%s' done in %.1fs", name, elapsed)
 
-    def _parse_extracted(self, text: str) -> list[tuple[str, str]]:
-        """Parse LLM output into (topic, content) pairs."""
-        results = []
-        blocks = text.strip().split("---")
-
-        for block in blocks:
-            block = block.strip()
-            if not block:
-                continue
-
-            topic = None
-            content_lines = []
-            in_content = False
-
-            for line in block.split("\n"):
-                line = line.strip()
-                if line.upper().startswith("TOPIC:"):
-                    topic = line.split(":", 1)[1].strip()
-                    in_content = False
-                elif line.upper().startswith("CONTENT:"):
-                    content_start = line.split(":", 1)[1].strip()
-                    if content_start:
-                        content_lines.append(content_start)
-                    in_content = True
-                elif in_content:
-                    content_lines.append(line)
-
-            if topic and content_lines:
-                content = "\n".join(content_lines).strip()
-                results.append((topic, content))
-
-        logger.info("Parsed %d memory extracts", len(results))
         return results
 
-    def _dedup_and_save(self, topic: str, content: str) -> str:
-        """Check for semantic duplicates and save or merge.
 
-        Returns:
-            The topic name that was saved/updated.
-        """
-        # Search for similar existing memories
-        results = self.memory.search(content, top_k=1)
-        SIMILARITY_THRESHOLD = 0.75
+# ── Pre-built job factories ────────────────────────────────────────────────
 
-        if results and results[0].score >= SIMILARITY_THRESHOLD:
-            # Similar memory exists — merge
-            existing_topic = results[0].topic
-            existing_content = results[0].content
-            logger.info(
-                "Dream: found similar memory '%s' (score=%.3f), merging",
-                existing_topic,
-                results[0].score,
-            )
-            merged = self._merge_memories(existing_content, content)
-            self.memory.save(existing_topic, merged)
-            return existing_topic
-        else:
-            # New memory — save directly
-            self.memory.save(topic, content)
-            logger.info("Dream: saved new memory '%s'", topic)
-            return topic
 
-    def _merge_memories(self, existing: str, new: str) -> str:
-        """Use LLM to merge two memory contents."""
-        prompt = DREAM_MERGE_PROMPT.format(existing=existing, new=new)
+def make_reinforce_job(ltm) -> tuple[str, callable]:
+    """记忆强化 job — 扫描低 strength 记忆，强化 + extinct 处理。"""
+    def job() -> DreamResult:
+        r = ltm.dream_reinforce()
+        return DreamResult(
+            job="reinforce",
+            reinforced=r.get("reinforced", 0),
+            extinct=r.get("extinct", 0),
+            errors=r.get("errors", 0),
+            details=f"reinforced={r.get('reinforced',0)} extinct={r.get('extinct',0)}",
+        )
+    return ("reinforce", job)
+
+
+def make_extract_job(extractor: MemoryExtractor, user_id: str) -> tuple[str, callable]:
+    """对话日志提取 job — 从 conversation_db 读原始消息，LLM 提取记忆。"""
+    def job() -> DreamResult:
         try:
-            response = self.llm.chat(
-                messages=[{"role": "user", "content": prompt}],
-                tools=None,
-            )
-            return response.content or existing
+            ids = extractor.extract_dream(user_id=user_id)
+            return DreamResult(job="extract", saved=len(ids) if ids else 0)
         except Exception as e:
-            logger.error("Dream merge LLM call failed: %s", e)
-            # Fallback: simple append
-            return existing + "\n\n## 补充\n" + new
+            logger.warning("[Dream extract] failed: %s", e)
+            return DreamResult(job="extract", errors=1, details=str(e))
+    return ("extract", job)
