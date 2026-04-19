@@ -309,7 +309,7 @@ class NostromoTerminal:
             )
 
             tools = ToolRegistry()
-            for dag_tool in create_dag_tools(self.dag):
+            for dag_tool in create_dag_tools(self.dag, self.ltm):
                 tools.register(dag_tool)
 
             self.agent = Agent(

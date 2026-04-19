@@ -556,7 +556,12 @@ class LongTermMemory:
         self._update_lance(memory_id, new_content, user_id)
 
     def soft_delete(self, memory_id: int) -> None:
-        """Mark a memory as deleted without removing the row."""
+        """Mark a memory as deleted without removing the row.
+
+        Used for conflict resolution (DELETE action) — completely inaccessible,
+        not searchable, not awakenable. Different from 'extinct' status which
+        preserves memories for potential awakening.
+        """
         conn = self._get_conn()
         conn.execute("UPDATE memories SET status = 'deleted' WHERE id = ?", (memory_id,))
         conn.commit()
@@ -706,6 +711,106 @@ class LongTermMemory:
             logger.debug("[LanceDB] Deleted memory #%d from vector index", memory_id)
         except Exception as e:
             logger.warning("[LanceDB] Failed to delete memory #%d: %s", memory_id, e)
+
+    def awaken_memory(self, memory_id: int) -> bool:
+        """唤醒一条 extinct 记忆，恢复为 active 状态。
+
+        适用场景：用户通过 dag_expand 等工具看到 extinct 记忆后，选择唤醒。
+
+        恢复后：
+        - status = 'active'
+        - strength = 0.3（L5痕迹状态恢复，低于 L4 阈值）
+        - last_strengthen = now（重置衰减计时）
+        - 重新 embed 向量到 LanceDB
+
+        Returns:
+            True if awakened, False if memory not found or not extinct.
+        """
+        conn = self._get_conn()
+        now = time.time()
+
+        # 只能唤醒 extinct 状态的记忆
+        row = conn.execute(
+            "SELECT * FROM memories WHERE id = ? AND status = ?",
+            (memory_id, STATUS_EXTINCT),
+        ).fetchone()
+
+        if not row:
+            logger.warning("[Memory] awaken failed: #%d not extinct or not found", memory_id)
+            return False
+
+        content = row["content"]
+        user_id = row["user_id"]
+
+        # 恢复为 active，strength 从 0 起步（重置衰减）
+        conn.execute(
+            "UPDATE memories SET status = ?, strength = ?, last_strengthen = ? WHERE id = ?",
+            (STATUS_ACTIVE, 0.3, now, memory_id),
+        )
+        conn.commit()
+
+        # 重新 embed 向量到 LanceDB
+        self._add_to_lance(memory_id, content, user_id)
+
+        logger.info(
+            "[Memory] Awakened #%d: strength=0.3, status=active (was extinct, content='%.50s')",
+            memory_id, content,
+        )
+        return True
+
+    def search_extinct(
+        self, keyword: str, user_id: str = "global", limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """搜索 extinct 记忆（供 dag_expand 等工具使用）。
+
+        extinct 记忆不参与语义召回，但可以通过 keyword 搜索找到。
+        返回给调用方后，由调用方决定是否唤醒。
+
+        Returns:
+            list of extinct memory dicts (id, content, created_at, tags, etc.)
+        """
+        conn = self._get_conn()
+        has_cjk = any("\u4e00" <= c <= "\u9fff" for c in keyword)
+
+        if has_cjk:
+            rows = conn.execute(
+                """SELECT * FROM memories
+                   WHERE status = ?
+                     AND (user_id = ? OR user_id = 'global')
+                     AND content LIKE ?
+                   ORDER BY created_at DESC LIMIT ?""",
+                (STATUS_EXTINCT, user_id, f"%{keyword}%", limit),
+            ).fetchall()
+        else:
+            safe_kw = keyword.replace('"', '""')
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT m.* FROM memories m
+                    JOIN memories_fts fts ON m.id = fts.rowid
+                    WHERE m.status = ?
+                      AND (m.user_id = ? OR m.user_id = 'global')
+                      AND memories_fts MATCH ?
+                    ORDER BY m.created_at DESC LIMIT ?
+                    """,
+                    (STATUS_EXTINCT, user_id, f'"{safe_kw}"', limit),
+                ).fetchall()
+            except Exception:
+                rows = conn.execute(
+                    """SELECT * FROM memories
+                       WHERE status = ?
+                         AND (user_id = ? OR user_id = 'global')
+                         AND content LIKE ?
+                       ORDER BY created_at DESC LIMIT ?""",
+                    (STATUS_EXTINCT, user_id, f"%{keyword}%", limit),
+                ).fetchall()
+
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["tags"] = self._get_tags(d["id"])
+            result.append(d)
+        return result
 
     def decay(self, days: int = 30) -> int:
         """Reduce importance of memories not accessed in N days."""

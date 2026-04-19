@@ -47,8 +47,8 @@ def main():
     # ── ToolRegistry ───────────────────────────────────────────
     tools = ToolRegistry()
 
-    # 注册 DAG expand tools
-    for dag_tool in create_dag_tools(dag):
+    # 注册 DAG expand tools（含 extinct 记忆搜索和唤醒）
+    for dag_tool in create_dag_tools(dag, longterm_memory):
         tools.register(dag_tool)
 
     # ── Agent ───────────────────────────────────────────────────
