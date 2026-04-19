@@ -28,6 +28,28 @@ logger = logging.getLogger(__name__)
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"
 FALLBACK_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
+# ── Memory Strength Constants ──────────────────────────────────
+
+# 指数衰减底数: strength(t) = strength_0 * base^(elapsed_hours)
+# 0.9995 ≈ 10天从1.0衰减到0.87
+STRENGTH_DECAY_BASE = 0.9995
+
+# 梦境强化幅度（可配置测试参数）
+MEMORY_REINFORCE_BOOST = 0.1
+
+# 五级阈值
+STRENGTH_L1 = 0.8   # 活跃
+STRENGTH_L2 = 0.6   # 可用
+STRENGTH_L3 = 0.4   # 模糊
+STRENGTH_L4 = 0.2   # 痕迹
+
+# extinct 判定：超过此天数未召回才标记 extinct
+MEMORY_EXTINCT_DAYS = 30
+
+# status 值
+STATUS_ACTIVE = "active"
+STATUS_EXTINCT = "extinct"
+
 
 class LongTermMemory:
     """Vector-semantic long-term memory — SQLite metadata + LanceDB vector index."""
@@ -206,7 +228,9 @@ class LongTermMemory:
                 access_count INTEGER DEFAULT 0,
                 last_accessed REAL DEFAULT 0,
                 created_at REAL NOT NULL,
-                status TEXT DEFAULT 'active'
+                status TEXT DEFAULT 'active',
+                strength REAL DEFAULT 1.0,
+                last_strengthen REAL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS memory_tags (
@@ -251,6 +275,24 @@ class LongTermMemory:
         except Exception:
             pass  # Column already exists
 
+        # Migration: add strength/last_strengthen if missing (existing DB)
+        cursor = conn.execute("PRAGMA table_info(memories)")
+        columns = {row[1] for row in cursor.fetchall()}
+        if "strength" not in columns:
+            conn.execute("ALTER TABLE memories ADD COLUMN strength REAL DEFAULT 1.0")
+        if "last_strengthen" not in columns:
+            conn.execute("ALTER TABLE memories ADD COLUMN last_strengthen REAL DEFAULT 0")
+
+        # Migration: initialize last_strengthen for existing memories (set to created_at)
+        cursor2 = conn.execute("SELECT COUNT(*) FROM memories WHERE last_strengthen = 0")
+        count = cursor2.fetchone()[0]
+        if count > 0:
+            conn.execute("UPDATE memories SET last_strengthen = created_at WHERE last_strengthen = 0")
+
+        # Add strength/status indexes
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_strength ON memories(strength)")
+
         conn.commit()
 
     # ── Public API ──────────────────────────────────────────────
@@ -270,11 +312,12 @@ class LongTermMemory:
         )
         source = source if source in self.VALID_SOURCES else "manual"
         conn = self._get_conn()
+        now = time.time()
 
         cur = conn.execute(
-            """INSERT INTO memories (user_id, content, source, importance, created_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            (user_id, content, source, importance, time.time()),
+            """INSERT INTO memories (user_id, content, source, importance, created_at, strength, last_strengthen)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, content, source, importance, now, 1.0, now),
         )
         memory_id = cur.lastrowid
 
@@ -344,16 +387,13 @@ class LongTermMemory:
         mem_ids = results["id"].tolist()
         distances = dict(zip(results["id"].tolist(), results["_distance"].tolist()))
 
-        # Fetch full metadata from SQLite (exclude soft-deleted)
+        # Fetch full metadata from SQLite (exclude extinct)
         placeholders = ",".join("?" * len(mem_ids))
         rows = conn.execute(
-            f"""SELECT * FROM memories WHERE id IN ({placeholders}) AND status != 'deleted'""",
+            f"""SELECT * FROM memories WHERE id IN ({placeholders}) AND status != '{STATUS_EXTINCT}'""",
             mem_ids,
         ).fetchall()
 
-        # Build results with combined score = similarity * importance_boost
-        # LanceDB cosine distance: 0 = identical, 2 = opposite
-        # similarity = 1 - distance/2
         if not rows:
             return []
 
@@ -372,11 +412,23 @@ class LongTermMemory:
         for r in rows:
             d = dict(r)
             d["tags"] = tag_map.get(d["id"], [])
+
+            # 计算 effective_strength（只读衰减，不写回）
+            stored_strength = d.get("strength", 1.0)
+            last_strengthen = d.get("last_strengthen", d.get("created_at", now))
+            elapsed_hours = (now - last_strengthen) / 3600.0
+            effective_strength = stored_strength * (STRENGTH_DECAY_BASE ** elapsed_hours)
+            d["effective_strength"] = round(effective_strength, 4)
+
+            # LanceDB cosine distance: 0 = identical, 2 = opposite
             distance = distances.get(d["id"], 1.0)
             similarity = max(0.0, 1.0 - distance / 2)
             d["score"] = round(similarity, 3)
-            # Combined score: semantic similarity weighted by importance
-            d["_rank_score"] = similarity * (0.5 + 0.5 * d["importance"])
+
+            # Combined rank: semantic similarity × strength boost × importance boost
+            strength_boost = 0.5 + 0.5 * effective_strength
+            importance_boost = 0.5 + 0.5 * d["importance"]
+            d["_rank_score"] = similarity * strength_boost * importance_boost
             result.append(d)
 
         # Sort by combined rank score
@@ -420,8 +472,22 @@ class LongTermMemory:
         for r in unique_rows:
             d = dict(r)
             d["tags"] = tag_map.get(d["id"], [])
+
+            # 计算 effective_strength（只读衰减，不写回）
+            stored_strength = d.get("strength", 1.0)
+            last_strengthen = d.get("last_strengthen", d.get("created_at", now))
+            elapsed_hours = (now - last_strengthen) / 3600.0
+            effective_strength = stored_strength * (STRENGTH_DECAY_BASE ** elapsed_hours)
+            d["effective_strength"] = round(effective_strength, 4)
+
             d["score"] = 0.0  # keyword match, no semantic score
+            d["_rank_score"] = (0.5 + 0.5 * effective_strength) * (0.5 + 0.5 * d["importance"])
             result.append(d)
+
+        # Sort by rank score
+        result.sort(key=lambda x: x["_rank_score"], reverse=True)
+        for r in result:
+            r.pop("_rank_score", None)
         return result
 
     def search_by_tags(
@@ -434,7 +500,7 @@ class LongTermMemory:
             rows = conn.execute(
                 f"""SELECT m.* FROM memories m
                     WHERE (m.user_id = ? OR m.user_id = 'global')
-                      AND m.status != 'deleted'
+                      AND m.status != '{STATUS_EXTINCT}'
                       AND m.id IN (
                           SELECT memory_id FROM memory_tags
                           WHERE tag IN ({placeholders})
@@ -450,7 +516,7 @@ class LongTermMemory:
                 f"""SELECT DISTINCT m.* FROM memories m
                     JOIN memory_tags mt ON m.id = mt.memory_id
                     WHERE (m.user_id = ? OR m.user_id = 'global')
-                      AND m.status != 'deleted'
+                      AND m.status != '{STATUS_EXTINCT}'
                       AND mt.tag IN ({placeholders})
                     ORDER BY m.importance DESC""",
                 [user_id] + tags,
@@ -504,6 +570,143 @@ class LongTermMemory:
         )
         conn.commit()
 
+    # ── Memory Strength & Dream Reinforcement ──────────────────────
+
+    def _effective_strength(self, stored_strength: float, last_strengthen: float, now: float) -> float:
+        """计算 effective_strength: 指数衰减（只读，不写回）"""
+        elapsed_hours = (now - last_strengthen) / 3600.0
+        return stored_strength * (STRENGTH_DECAY_BASE ** elapsed_hours)
+
+    def _get_strength_level(self, strength: float) -> str:
+        """返回 strength 对应的级别名称（L1~L5）"""
+        if strength >= STRENGTH_L1:
+            return "L1"
+        elif strength >= STRENGTH_L2:
+            return "L2"
+        elif strength >= STRENGTH_L3:
+            return "L3"
+        elif strength >= STRENGTH_L4:
+            return "L4"
+        else:
+            return "L5"
+
+    def dream_reinforce(
+        self,
+        user_id: str | None = None,
+        boost: float | None = None,
+        batch_size: int = 50,
+    ) -> dict[str, int]:
+        """梦境记忆强化任务。
+
+        扫描 strength < 0.7 的记忆，进行强化或降级处理。
+
+        处理逻辑：
+        - L3/L4 记忆（0.2 <= strength < 0.4）：强化 + 重新 embed 向量
+        - L5 记忆（strength < 0.2）超过30天未召回：标记 extinct
+
+        Args:
+            user_id: 可选，只强化指定用户的记忆；None = 所有用户
+            boost: 强化幅度系数，默认 MEMORY_REINFORCE_BOOST (0.1)
+            batch_size: 每批处理数量
+
+        Returns:
+            {"reinforced": N, "extinct": M, "errors": K}
+        """
+        boost = boost if boost is not None else MEMORY_REINFORCE_BOOST
+        conn = self._get_conn()
+        now = time.time()
+
+        # 扫描条件：status=active, strength < 0.7, last_strengthen > 24h前（避免重复强化）
+        reinforce_cutoff = now - 24 * 3600
+        if user_id:
+            safe_uid = self._safe_user_id(user_id)
+            where_user = f"AND user_id = '{safe_uid}'"
+        else:
+            where_user = ""
+
+        rows = conn.execute(
+            f"""SELECT * FROM memories
+                WHERE status = ?
+                  AND strength < 0.7
+                  AND last_strengthen < ?
+                  {where_user}
+                ORDER BY strength ASC
+                LIMIT ?""",
+            (STATUS_ACTIVE, reinforce_cutoff, batch_size),
+        ).fetchall()
+
+        reinforced = 0
+        extinct = 0
+        errors = 0
+
+        for row in rows:
+            mid = row["id"]
+            try:
+                current_strength = row["strength"]
+                last_accessed = row["last_accessed"]
+                content = row["content"]
+                row_user_id = row["user_id"]
+
+                # 计算 effective_strength
+                effective = self._effective_strength(current_strength, row["last_strengthen"], now)
+
+                if effective < STRENGTH_L4:
+                    # L4/L5: 强化 + 重新 embed
+                    new_strength = current_strength + boost * (1.0 - current_strength)
+                    new_strength = min(0.95, new_strength)  # 上限0.95，保留强化空间
+
+                    conn.execute(
+                        "UPDATE memories SET strength = ?, last_strengthen = ? WHERE id = ?",
+                        (new_strength, now, mid),
+                    )
+
+                    # 重新 embed 向量（解决向量漂移）
+                    self._update_lance(mid, content, row_user_id)
+                    reinforced += 1
+
+                    # 检查是否应该标记 extinct
+                    if new_strength < STRENGTH_L4 and (now - last_accessed) > MEMORY_EXTINCT_DAYS * 86400:
+                        conn.execute(
+                            "UPDATE memories SET status = ? WHERE id = ?",
+                            (STATUS_EXTINCT, mid),
+                        )
+                        self._delete_from_lance(mid)
+                        extinct += 1
+                        logger.info(
+                            "[Dream] Memory #%d marked extinct (strength=%.3f, last_accessed=%dd ago)",
+                            mid, new_strength, int((now - last_accessed) / 86400),
+                        )
+                else:
+                    # L3 (0.4 <= effective < 0.7): 只强化，不重新 embed（节省向量计算）
+                    new_strength = current_strength + boost * (1.0 - current_strength)
+                    new_strength = min(0.95, new_strength)
+                    conn.execute(
+                        "UPDATE memories SET strength = ?, last_strengthen = ? WHERE id = ?",
+                        (new_strength, now, mid),
+                    )
+                    reinforced += 1
+
+            except Exception as e:
+                logger.warning("[Dream] Failed to reinforce memory #%d: %s", mid, e)
+                errors += 1
+
+        conn.commit()
+
+        logger.info(
+            "[Dream] Reinforce done: reinforced=%d extinct=%d errors=%d",
+            reinforced, extinct, errors,
+        )
+        return {"reinforced": reinforced, "extinct": extinct, "errors": errors}
+
+    def _delete_from_lance(self, memory_id: int) -> None:
+        """从 LanceDB 删除记忆向量（不删 SQLite）"""
+        try:
+            table = self._get_lance_table()
+            table.delete(f"id = {memory_id}")
+            logger.debug("[LanceDB] Deleted memory #%d from vector index", memory_id)
+        except Exception as e:
+            logger.warning("[LanceDB] Failed to delete memory #%d: %s", memory_id, e)
+
     def decay(self, days: int = 30) -> int:
         """Reduce importance of memories not accessed in N days."""
         conn = self._get_conn()
@@ -528,9 +731,9 @@ class LongTermMemory:
         """Get most recently stored memories for a user (incl. global)."""
         conn = self._get_conn()
         rows = conn.execute(
-            """SELECT * FROM memories
+            f"""SELECT * FROM memories
                WHERE (user_id = ? OR user_id = 'global')
-                 AND status != 'deleted'
+                 AND status != '{STATUS_EXTINCT}'
                ORDER BY created_at DESC LIMIT ?""",
             (user_id, n),
         ).fetchall()
@@ -629,9 +832,9 @@ class LongTermMemory:
             if has_cjk:
                 try:
                     rows = conn.execute(
-                        """SELECT m.* FROM memories m
+                        f"""SELECT m.* FROM memories m
                            WHERE (m.user_id = ? OR m.user_id = 'global')
-                             AND m.status != 'deleted'
+                             AND m.status != '{STATUS_EXTINCT}'
                              AND m.content LIKE ?
                            ORDER BY m.importance DESC, m.created_at DESC
                            LIMIT ?""",
