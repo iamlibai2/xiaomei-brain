@@ -92,6 +92,7 @@ class LLMClient:
 
         Preserves tool_calls (assistant) and tool_call_id (tool) fields
         which are required for multi-turn tool-calling conversations.
+        Merges consecutive messages with the same role (required by MiniMax).
         """
         result = []
         for msg in messages:
@@ -104,19 +105,32 @@ class LLMClient:
                 api_msg["tool_call_id"] = msg["tool_call_id"]
             if msg.get("name"):
                 api_msg["name"] = msg["name"]
-            result.append(api_msg)
+
+            # Merge consecutive same-role messages (MiniMax requires role alternation)
+            if result and result[-1]["role"] == api_msg["role"] and not api_msg.get("tool_calls"):
+                # Concatenate content
+                prev_content = result[-1].get("content", "")
+                new_content = api_msg.get("content", "")
+                if prev_content and new_content:
+                    result[-1]["content"] = prev_content + "\n" + new_content
+                elif new_content:
+                    result[-1]["content"] = new_content
+            else:
+                result.append(api_msg)
         return result
 
     def chat(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
+        log_level: int | None = None,
     ) -> ChatResponse:
         """Send messages and get a response with automatic retry.
 
         Args:
             messages: List of message dicts with role and content.
             tools: Optional list of tool definitions in OpenAI format.
+            log_level: Override log level for this call (e.g. logging.DEBUG).
 
         Returns:
             ChatResponse with content and/or tool_calls.
@@ -148,7 +162,9 @@ class LLMClient:
             elapsed = time.time() - _t0
             status = "OK" if success else "ERR"
             ts = datetime.datetime.now().strftime("%H:%M:%S")
-            logger.info(
+            level = log_level if log_level is not None else logging.INFO
+            logger.log(
+                level,
                 "[LLM %s] %s model=%s msgs=%d tools=%s elapsed=%.2fs %s %s",
                 status, ts, self.model, len(api_messages), _has_tools, elapsed, _msg_preview, detail,
             )

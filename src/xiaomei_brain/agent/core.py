@@ -1,51 +1,29 @@
-"""Core Agent implementation with ReAct loop, context management, and dream system."""
+"""Core Agent implementation with ReAct loop and new memory architecture."""
 
 from __future__ import annotations
 
-import datetime
 import json
 import logging
 import time
 from typing import Any, Generator
 
-from xiaomei_brain.config import Config
-# [deprecated imports] — kept for backward compatibility
-from xiaomei_brain.agent.context import ContextManager              # deprecated: use ContextAssembler + DAG
-from xiaomei_brain.agent.context_extractor import ContextExtractor  # deprecated
 from xiaomei_brain.llm import LLMClient
-from xiaomei_brain.memory.store import MemoryStore                  # deprecated: use LongTermMemory
-from xiaomei_brain.memory.conversation import ConversationLogger    # deprecated: use ConversationDB
 from xiaomei_brain.memory.conversation_db import ConversationDB
-from xiaomei_brain.memory.dream import DreamProcessor
-from xiaomei_brain.memory.episodic import EpisodicMemory           # deprecated: to be migrated
-from xiaomei_brain.memory.layers import WorkingMemory, WorkingMemoryItem  # deprecated: to be migrated
-from xiaomei_brain.memory.scheduler import DreamScheduler
 from xiaomei_brain.memory.self_model import SelfModel
-from xiaomei_brain.memory.dag import DAGSummaryGraph
 from xiaomei_brain.memory.context_assembler import ContextAssembler, determine_mode
 from xiaomei_brain.memory.longterm import LongTermMemory
 from xiaomei_brain.memory.extractor import MemoryExtractor
-from xiaomei_brain.agent.proactive import ProactiveEngine, ProactiveMessage
-from xiaomei_brain.agent.reminder import ReminderManager
-from xiaomei_brain.agent.session import SessionManager
 from xiaomei_brain.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
 
 class Agent:
-    """An AI Agent that reasons, acts, and dreams.
+    """An AI Agent that reasons and acts via ReAct loop.
 
-    Implements the ReAct (Reason-Act-Observe) loop:
-    1. Send user input + conversation history to LLM
-    2. If LLM requests tool calls → execute tools → feed results back → repeat
-    3. If LLM returns text → return to user
-
-    Memory architecture (two paths):
-    - **New (preferred)**: ContextAssembler + DAG + LongTermMemory + ConversationDB
-      Context is assembled from DB each turn, self.messages only tracks current ReAct loop.
-    - **Old (deprecated)**: ContextManager (sliding window) + MemoryStore + ConversationLogger
-      Still functional but not recommended for new code.
+    Memory architecture:
+    - ContextAssembler + DAG + LongTermMemory + ConversationDB
+    - Context is assembled from DB each turn, self.messages only tracks current ReAct loop.
     """
 
     def __init__(
@@ -54,33 +32,11 @@ class Agent:
         tools: ToolRegistry,
         system_prompt: str = "You are a helpful assistant.",
         max_steps: int = 10,
-        memory: MemoryStore | None = None,
-        conversation_logger: ConversationLogger | None = None,
-        dream_scheduler: DreamScheduler | None = None,
-        context_manager: ContextManager | None = None,
-        episodic_memory: EpisodicMemory | None = None,
-        proactive_engine: ProactiveEngine | None = None,
-        reminder_manager: ReminderManager | None = None,
-        context_max_tokens: int = 4000,
-        context_recent_turns: int = 6,
-        context_extractor: ContextExtractor | None = None,
     ) -> None:
         self.llm = llm
         self.tools = tools
         self.system_prompt = system_prompt
         self.max_steps = max_steps
-
-        # ── Old architecture (deprecated, kept for backward compatibility) ──
-        self.memory = memory                        # [deprecated] use LongTermMemory
-        self.conversation_logger = conversation_logger  # [deprecated] use ConversationDB
-        self.episodic_memory = episodic_memory      # [deprecated] to be migrated to LongTermMemory
-        self.working_memory = WorkingMemory()       # [deprecated] to be migrated
-        self.context = context_manager or ContextManager(  # [deprecated] use ContextAssembler + DAG
-            max_tokens=context_max_tokens,
-            recent_turns=context_recent_turns,
-            llm_client=llm,
-        )
-        self.context_extractor = context_extractor  # [deprecated]
 
         # ── New memory architecture ──────────────────────
         self.self_model: SelfModel | None = None
@@ -89,22 +45,11 @@ class Agent:
         self.longterm_memory: LongTermMemory | None = None
         self.memory_extractor: MemoryExtractor | None = None
 
-        # ── Shared state ──────────────────────────────────
-        self.dream_scheduler = dream_scheduler
-        self.proactive_engine = proactive_engine
-        self.reminder_manager = reminder_manager
         self.messages: list[dict[str, Any]] = []
-        self.user_id: str = "global"  # 当前用户身份，在 context_assembler 中使用
+        self.user_id: str = "global"
 
     def run(self, user_input: str) -> str:
-        """Run the agent and return the final response (non-streaming).
-
-        Args:
-            user_input: The user's message.
-
-        Returns:
-            The agent's final text response.
-        """
+        """Run the agent and return the final response (non-streaming)."""
         chunks = list(self.stream(user_input))
         return "".join(chunks)
 
@@ -113,26 +58,13 @@ class Agent:
 
         Yields text chunks as the LLM generates them.
         Tool calls are handled transparently; only final text is yielded.
-
-        Args:
-            user_input: The user's message.
-
-        Yields:
-            Text chunks of the final response.
         """
-        # ── New memory architecture: self.messages only tracks current turn ──
-        # ContextAssembler provides full history from DB + DAG + LongTermMemory,
-        # so self.messages only needs the current ReAct loop's messages.
-        if self.context_assembler and self.conversation_db:
-            self.messages = []
+        # self.messages tracks current ReAct loop's intermediate steps
+        # (assistant tool_calls + tool results). User message is NOT included
+        # here because ContextAssembler._fresh_tail() reads it from DB.
+        self.messages = []
 
-        self.messages.append({"role": "user", "content": user_input})
-
-        # Log conversation turn
-        # [deprecated] ConversationLogger — use ConversationDB instead
-        if self.conversation_logger:
-            self.conversation_logger.log("user", user_input)
-
+        # Log user message to DB immediately so _fresh_tail() can pick it up
         if self.conversation_db:
             self.conversation_db.log(
                 session_id=self._current_session_id(),
@@ -140,62 +72,32 @@ class Agent:
                 content=user_input,
             )
 
-        # Notify scheduler of activity
-        if self.dream_scheduler:
-            self.dream_scheduler.touch()
-
-        # Notify proactive engine of activity
-        if self.proactive_engine:
-            self.proactive_engine.touch()
-
-        # Fast pattern-based reminder extraction (non-blocking)
-        if self.reminder_manager:
-            new_reminders = self.reminder_manager.extract_from_message(user_input, use_llm=False)
-            if new_reminders:
-                logger.info("Extracted %d reminders from message", len(new_reminders))
-
-        # Check for due reminders and inject into system prompt context
-        due_reminders = []
-        if self.reminder_manager:
-            due_reminders = self.reminder_manager.check_due()
-
         # Determine operational mode
         mode = determine_mode(user_input)
 
-        # Build effective system prompt — only needed for old architecture
-        # [deprecated] ContextAssembler handles system prompt for new arch
-        if not (self.context_assembler and self.conversation_db):
-            effective_prompt = self._build_effective_prompt(user_input)
-        else:
-            effective_prompt = ""
-
         openai_tools = self.tools.to_openai_tools() if self.tools.list_tools() else None
 
+        # Base context: assembled once at the start (system + DAG + memories + recent tail)
+        base_context = self.context_assembler.assemble(
+            user_input=user_input,
+            max_tokens=4000,
+            mode=mode,
+            session_id=self._current_session_id(),
+            user_id=self.user_id,
+        )
+
         for step in range(self.max_steps):
-            if self.context_assembler and self.conversation_db:
-                # New arch: ContextAssembler provides SelfModel + DAG summaries +
-                # LongTermMemory + recent messages from DB.
-                # self.messages only has current turn's ReAct loop messages.
-                all_messages = self.context_assembler.assemble(
-                    user_input=user_input,
-                    max_tokens=4000,
-                    mode=mode,
-                    session_id=self._current_session_id(),
-                    user_id=self.user_id,
-                )
-                all_messages.extend(self.messages)
-            else:
-                # [deprecated] Old arch: ContextManager sliding window compression
-                all_messages = [{"role": "system", "content": effective_prompt}] + self.messages
-                all_messages = self._manage_context(all_messages)
+            # Reuse base context + append current ReAct loop messages
+            all_messages = list(base_context) + self.messages
+
+            # Clean surrogate characters from all message content before sending to LLM
+            all_messages = self._clean_messages(all_messages)
 
             logger.debug("Step %d: calling LLM", step + 1)
 
-            # Try streaming first, fall back to non-streaming
             response, stream_chunks = self._call_llm(all_messages, openai_tools)
 
             if response.has_tool_calls:
-                # Process tool calls
                 self.messages.append(
                     {
                         "role": "assistant",
@@ -214,7 +116,6 @@ class Agent:
                     }
                 )
 
-                # Execute each tool call
                 for tc in response.tool_calls:
                     logger.info("Tool call: %s(%s)", tc.name, tc.arguments)
                     try:
@@ -225,7 +126,6 @@ class Agent:
 
                     logger.info("Tool result: %s", result[:200])
 
-                    # Log tool call and result to SQLite
                     if self.conversation_db:
                         self.conversation_db.log(
                             session_id=self._current_session_id(),
@@ -250,15 +150,9 @@ class Agent:
                         }
                     )
             else:
-                # LLM returned final text response
                 content = response.content or ""
                 if content:
                     self.messages.append({"role": "assistant", "content": content})
-
-                    # Log assistant response
-                    # [deprecated] ConversationLogger — use ConversationDB instead
-                    if self.conversation_logger:
-                        self.conversation_logger.log("assistant", content)
 
                     if self.conversation_db:
                         self.conversation_db.log(
@@ -273,21 +167,6 @@ class Agent:
                     else:
                         yield content
 
-                    # Update working memory from this turn (background, non-blocking)
-                    if self.context_extractor:
-                        self.context_extractor.add_turn(user_input, content)
-                    else:
-                        # Fallback to fast heuristic if no context extractor
-                        self.working_memory.advance_turn()
-                        self._heuristic_extract_working_memory(user_input)
-
-                    # Immediate memory extraction (keyword-triggered)
-                    if self.memory_extractor and self.memory_extractor.check_immediate(user_input):
-                        try:
-                            self.memory_extractor.extract_immediate(user_input, content)
-                        except Exception as e:
-                            logger.debug("Immediate extraction error: %s", e)
-
                     return
                 else:
                     logger.warning("LLM returned empty content with no tool calls")
@@ -296,105 +175,14 @@ class Agent:
 
         yield "Agent reached maximum steps without producing a final answer."
 
-    # Instructions appended to system prompt when memory tools are available
-    MEMORY_INSTRUCTIONS = """
-
-## 记忆系统使用指南
-
-你拥有记忆系统，可以主动读取和写入长期记忆：
-
-1. **何时保存记忆** (使用 memory_save)：
-   - 用户告诉你关于你的信息（名字、年龄、性格等）
-   - 用户分享了与你的重要经历
-   - 用户纠正了你之前的错误
-   - 用户说"记住"、"帮我记一下"
-
-2. **保存格式（重要）**：
-   - 用第一人称"我"来保存记忆
-   - 例如：用户说"你28岁" → 保存为"我今年28岁"
-   - 例如：用户说"你喜欢看电影" → 保存为"我喜欢看电影"
-   - 记忆是你自己的人生经历，不是用户的
-
-3. **何时搜索记忆** (使用 memory_search)：
-   - 用户问关于你的问题
-   - 需要确认之前说过什么
-
-4. **如何使用注入的记忆**：
-   - 上方记忆是你自己的经历，用第一人称表述
-   - 当被问"你"相关问题时，从记忆中找"我"的信息来回答
-   - 自然地运用这些信息
-   - 如果记忆内容与当前对话无关，忽略即可
-"""
-
-    # [deprecated] Use ContextAssembler instead. Still needed when context_assembler is not configured.
-    def _build_effective_prompt(self, user_input: str) -> str:
-        """Build system prompt with injected memory context."""
-        # Use SelfModel rendering if available, otherwise fallback to system_prompt
-        if self.self_model:
-            effective_prompt = self.self_model.to_system_prompt(mode="daily")
-        else:
-            effective_prompt = self.system_prompt
-
-        # Inject long-term memory from SQLite (new system, Phase 4)
-        if self.longterm_memory:
-            ltm_results = self.longterm_memory.recall(user_input, top_k=3)
-            logger.info("[Memory INJECT] query='%s' → %d results", user_input[:30], len(ltm_results))
-            if ltm_results:
-                ltm_context = "\n\n## 长期记忆\n"
-                for r in ltm_results:
-                    tags = ", ".join(r.get("tags", []))
-                    ltm_context += f"- [{r.get('source', '')}] {r['content']}"
-                    if tags:
-                        ltm_context += f" (#{tags})"
-                    ltm_context += "\n"
-                    logger.info("  → [%s] %s", r.get("source", ""), r["content"][:50])
-                effective_prompt += ltm_context
-
-        # Append memory usage instructions
-        if self.longterm_memory:
-            effective_prompt += self.MEMORY_INSTRUCTIONS
-
-        # Inject working memory (current session context)
-        wm_context = self.working_memory.to_context_string()
-        if wm_context:
-            effective_prompt += f"\n\n## 当前会话上下文\n{wm_context}"
-
-        # Inject recent episodic memories
-        if self.episodic_memory:
-            recent_episodes = self.episodic_memory.recent(days=7, limit=2)
-            if recent_episodes:
-                ep_context = "\n\n## 近期事件\n"
-                for ep in recent_episodes:
-                    ep_context += f"- {ep.summary}\n"
-                effective_prompt += ep_context
-
-        return effective_prompt
-
-    # [deprecated] Use DAG summary graph instead. Still needed when context_assembler is not configured.
-    def _manage_context(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Compress conversation history if it exceeds the token budget."""
-        if not self.context.should_compress(messages):
-            return messages
-
-        logger.info("Context exceeds budget, compressing...")
-        compressed = self.context.compress(messages)
-
-        # Update self.messages to match compressed version (exclude system msg)
-        self.messages = [m for m in compressed if m.get("role") != "system"]
-
-        return compressed
+    # ── LLM calling ──────────────────────────────────────────────
 
     def _call_llm(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
     ) -> tuple[Any, list[str] | None]:
-        """Call LLM with streaming support.
-
-        Returns:
-            Tuple of (ChatResponse, stream_chunks or None)
-        """
-        # Try streaming API first
+        """Call LLM with streaming support."""
         try:
             return self._call_llm_streaming(messages, tools)
         except Exception as e:
@@ -407,11 +195,7 @@ class Agent:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
     ) -> tuple[Any, list[str] | None]:
-        """Call LLM using streaming API.
-
-        Returns:
-            Tuple of (ChatResponse, collected text chunks)
-        """
+        """Call LLM using streaming API."""
         import requests as req
 
         api_messages = self.llm._build_messages(messages)
@@ -429,12 +213,10 @@ class Agent:
             "Content-Type": "application/json",
         }
 
-        # 计时：流式调用
         import datetime as _dt
         _t0 = time.time()
         _msg_preview = (api_messages[0].get("content") or "")[:40] if api_messages else ""
         _has_tools = bool(tools)
-        # _full_prompt = (api_messages[0].get("content") or "") if api_messages else ""  # 调试用
 
         def _log(success: bool, detail: str = ""):
             elapsed = time.time() - _t0
@@ -444,7 +226,6 @@ class Agent:
                 "[LLM %s STREAM] %s model=%s msgs=%d tools=%s elapsed=%.2fs %s %s",
                 status, ts, self.llm.model, len(api_messages), _has_tools, elapsed, _msg_preview, detail,
             )
-            # logger.info("[LLM PROMPT]\n%s", _full_prompt)  # 调试用
 
         response = req.post(
             f"{self.llm.base_url}/chat/completions",
@@ -457,14 +238,15 @@ class Agent:
 
         # Parse SSE stream
         content_parts = []
-        tool_calls_acc: dict[int, dict] = {}  # index -> {id, name, arguments}
+        stream_parts = []  # filtered parts for streaming output (no thinking)
+        tool_calls_acc: dict[int, dict] = {}
         finish_reason = ""
+        in_think = False  # track <think> blocks across chunks
 
         try:
             for line in response.iter_lines():
                 if not line:
                     continue
-                # Decode bytes to string (UTF-8)
                 if isinstance(line, bytes):
                     try:
                         line = line.decode("utf-8")
@@ -485,11 +267,29 @@ class Agent:
                 delta = choice.get("delta", {})
                 finish_reason = choice.get("finish_reason", "") or finish_reason
 
-                # Collect content; skip chunks that carry reasoning_content (thinking only)
                 if "content" in delta and delta["content"] and not delta.get("reasoning_content"):
                     content_parts.append(delta["content"])
+                    # Filter <think> blocks for streaming output
+                    text = delta["content"]
+                    if in_think:
+                        end_idx = text.find("</think>")
+                        if end_idx != -1:
+                            in_think = False
+                            text = text[end_idx + 8:]
+                        else:
+                            text = ""
+                    if not in_think:
+                        start_idx = text.find("<think")
+                        if start_idx != -1:
+                            end_idx = text.find("</think>", start_idx)
+                            if end_idx != -1:
+                                text = text[:start_idx] + text[end_idx + 8:]
+                            else:
+                                text = text[:start_idx]
+                                in_think = True
+                    if text:
+                        stream_parts.append(text)
 
-                # Collect tool calls
                 if "tool_calls" in delta:
                     for tc_delta in delta["tool_calls"]:
                         idx = tc_delta.get("index", 0)
@@ -511,9 +311,14 @@ class Agent:
             raise
 
         # Build final ChatResponse
-        from .llm import ChatResponse, ToolCall
+        from xiaomei_brain.llm import ChatResponse, ToolCall
 
         content = self.llm._strip_thinking("".join(content_parts))
+        # Clean surrogate characters from LLM output
+        try:
+            content = content.encode("utf-8", "surrogatepass").decode("utf-8", "replace")
+        except Exception:
+            pass
         tool_calls = []
         for idx in sorted(tool_calls_acc):
             tc = tool_calls_acc[idx]
@@ -530,7 +335,25 @@ class Agent:
         )
 
         _log(True)
-        return chat_response, content_parts if not tool_calls else None
+        return chat_response, stream_parts if not tool_calls else None
+
+    # ── Helpers ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _clean_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Clean surrogate characters from message content."""
+        cleaned = []
+        for m in messages:
+            m = dict(m)  # shallow copy
+            content = m.get("content")
+            if isinstance(content, str):
+                try:
+                    content = content.encode("utf-8", "surrogatepass").decode("utf-8", "replace")
+                except Exception:
+                    pass
+                m["content"] = content
+            cleaned.append(m)
+        return cleaned
 
     def load_self_model(self, talent_path: str) -> None:
         """Load SelfModel from talent.md at startup."""
@@ -547,196 +370,5 @@ class Agent:
 
     def _current_session_id(self) -> str:
         """Get current session identifier for ConversationDB."""
-        # Use date-based session ID if no session manager
         from datetime import datetime
         return datetime.now().strftime("%Y-%m-%d")
-
-    def start_dream_scheduler(self) -> None:
-        """Start the background dream scheduler and proactive engine."""
-        if self.dream_scheduler:
-            self.dream_scheduler.start()
-            logger.info("Dream scheduler started")
-        if self.proactive_engine:
-            self.proactive_engine.start()
-            logger.info("Proactive engine started")
-
-    def stop_dream_scheduler(self) -> None:
-        """Stop the background dream scheduler and proactive engine."""
-        if self.proactive_engine:
-            self.proactive_engine.stop()
-        if self.dream_scheduler:
-            self.dream_scheduler.stop()
-            logger.info("Dream scheduler stopped")
-
-    def trigger_dream(self) -> list[str]:
-        """Manually trigger a dream cycle."""
-        if not self.memory:
-            logger.warning("No memory store, cannot dream")
-            return []
-
-        if self.conversation_logger and hasattr(self, '_dream_processor'):
-            saved = self._dream_processor.dream()
-            # Notify proactive engine about dream results
-            if saved and self.proactive_engine:
-                self.proactive_engine.notify_dream_result(saved)
-            return saved
-
-        logger.warning("Dream system not fully configured")
-        return []
-
-    def get_proactive_messages(self) -> list[ProactiveMessage]:
-        """Get pending proactive messages (e.g., from background checks)."""
-        if self.proactive_engine:
-            return self.proactive_engine.get_pending_messages()
-        return []
-
-    def check_return_greeting(self) -> str | None:
-        """Check if user returned after being away and generate a greeting.
-
-        Returns:
-            Greeting text or None.
-        """
-        if not self.proactive_engine:
-            return None
-        msg = self.proactive_engine.generate_return_message()
-        if msg:
-            self.proactive_engine.touch()  # Reset idle timer
-            return msg.text
-        return None
-
-    def reset(self) -> None:
-        """Clear conversation history and context."""
-        self.messages = []
-        self.context.reset()
-        self.working_memory.clear()
-
-    def save_session(self, session_manager: SessionManager, session_id: str | None = None, **kwargs) -> str:
-        """Save current session state to disk.
-
-        Returns:
-            Session ID.
-        """
-        wm_items = {
-            k: {"value": v.value, "importance": v.importance, "source_turn": v.source_turn}
-            for k, v in self.working_memory.all_items().items()
-        }
-        return session_manager.save(
-            session_id=session_id,
-            messages=self.messages,
-            context_summary=self.context.summary,
-            working_memory_items=wm_items,
-        )
-
-    def load_session(self, session_manager: SessionManager, session_id: str) -> bool:
-        """Load session state from disk.
-
-        Returns:
-            True if session was loaded successfully.
-        """
-        state = session_manager.load(session_id)
-        if not state:
-            return False
-
-        self.messages = state.get("messages", [])
-        self.context._summary = state.get("context_summary", "")
-        self.context._summarized_count = len(self.messages)
-
-        # Restore working memory
-        wm_data = state.get("working_memory", {})
-        self.working_memory.clear()
-        for key, item in wm_data.items():
-            self.working_memory.update(
-                key=key,
-                value=item.get("value", ""),
-                importance=item.get("importance", 0.5),
-            )
-
-        logger.info("Restored session %s: %d messages", session_id, len(self.messages))
-        return True
-
-    # Prompt for LLM-driven working memory extraction
-    WM_EXTRACTION_PROMPT = """从以下对话中提取短期上下文信息，输出 JSON 格式。
-
-提取规则：
-- 只提取当前对话中值得记住的上下文
-- 包括：用户当前情绪、讨论话题、用户提到的个人事实、待办事项
-- 每个字段是字符串，没有则为空字符串
-
-输出格式：
-{{"user_mood": "情绪描述", "current_topic": "话题", "personal_fact": "个人事实", "pending_action": "待办事项"}}
-
-如果没有值得提取的信息，输出：
-{{"user_mood": "", "current_topic": "", "personal_fact": "", "pending_action": ""}}
-
-用户: {user_input}
-助手: {assistant_response}"""
-
-    def _update_working_memory(self, user_input: str, assistant_response: str) -> None:
-        """Extract key information from the latest turn into working memory.
-
-        Uses fast heuristic rules by default (no extra API call).
-        LLM extraction is available but not used in the hot path.
-        """
-        self.working_memory.advance_turn()
-
-        # Fast path: heuristic rules (no API call)
-        self._heuristic_extract_working_memory(user_input)
-
-    def _llm_extract_working_memory(self, user_input: str, assistant_response: str) -> dict | None:
-        """Use LLM to extract working memory items."""
-        if not self.llm:
-            return None
-
-        try:
-            prompt = self.WM_EXTRACTION_PROMPT.format(
-                user_input=user_input[:300],
-                assistant_response=assistant_response[:300],
-            )
-            response = self.llm.chat(
-                messages=[{"role": "user", "content": prompt}],
-                tools=None,
-            )
-            text = (response.content or "").strip()
-            if not text:
-                return None
-
-            # Parse JSON
-            if "```json" in text:
-                text = text.split("```json")[1].split("```")[0].strip()
-            elif "```" in text:
-                text = text.split("```")[1].split("```")[0].strip()
-
-            result = json.loads(text)
-            if isinstance(result, dict):
-                return result
-        except Exception as e:
-            logger.debug("LLM working memory extraction failed: %s", e)
-        return None
-
-    def _heuristic_extract_working_memory(self, user_input: str) -> None:
-        """Fallback: simple keyword-based working memory extraction."""
-        user_lower = user_input.lower()
-
-        # Detect topic
-        topic_keywords = {
-            "旅游": "travel", "旅行": "travel", "日本": "travel", "泰国": "travel",
-            "做菜": "cooking", "食物": "cooking", "吃": "cooking", "做饭": "cooking",
-            "工作": "work", "上班": "work", "公司": "work",
-            "心情": "mood", "难过": "mood", "开心": "mood", "累": "mood",
-            "家里": "family", "老公": "family", "孩子": "family",
-        }
-        for keyword, topic in topic_keywords.items():
-            if keyword in user_lower:
-                current = self.working_memory.get("current_topic") or ""
-                if topic not in current:
-                    self.working_memory.update("current_topic", topic, importance=0.6)
-
-        # Detect mood
-        mood_indicators = {
-            "难过": "sad", "不开心": "sad", "烦": "annoyed", "累": "tired",
-            "开心": "happy", "高兴": "happy", "好玩": "amused",
-            "孤独": "lonely", "无聊": "bored", "想": "missing",
-        }
-        for indicator, mood in mood_indicators.items():
-            if indicator in user_lower:
-                self.working_memory.update("user_mood", mood, importance=0.8)

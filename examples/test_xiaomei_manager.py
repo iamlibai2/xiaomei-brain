@@ -21,11 +21,9 @@ def main():
     sys.path.insert(0, "src")
 
     from xiaomei_brain.agent.agent_manager import AgentManager
-    from xiaomei_brain.agent.core import Agent
     from xiaomei_brain.memory.dream import DreamProcessor
     from xiaomei_brain.memory.scheduler import DreamScheduler
     from xiaomei_brain.memory.dream import make_reinforce_job, make_extract_job
-    from xiaomei_brain.agent.commands import CommandRegistry
 
     base_dir = os.path.expanduser("~/.xiaomei-brain")
     agent_id = "xiaomei"
@@ -61,14 +59,7 @@ def main():
     print(f"[Dream] Scheduler started (reinforce + extract, idle=1800s)")
     print()
 
-    # ── CommandRegistry ──────────────────────────────────────────────
-    commands = CommandRegistry(
-        conversation_db=agent_instance.conversation_db,
-        dag=agent_instance.context_assembler.dag if agent_instance.context_assembler else None,
-        longterm_memory=agent_instance.longterm_memory,
-        memory_extractor=agent_instance.memory_extractor,
-        context_assembler=agent_instance.context_assembler,
-    )
+    # commands 已由 AgentManager 初始化在 agent_instance.commands
 
     # ── 对话循环 ─────────────────────────────────────────────────
     session_id = "main"
@@ -104,7 +95,7 @@ def main():
         scheduler.touch()
 
         # 命令处理
-        result = commands.execute(
+        result = agent_instance.commands.execute(
             user_input,
             user_id=current_user,
             session_id=session_id,
@@ -112,7 +103,7 @@ def main():
         if result:
             if user_input == "context":
                 query = input("  模拟查询(回呼跳过): ").strip() or "你好"
-                result = commands.execute(
+                result = agent_instance.commands.execute(
                     "context",
                     user_id=current_user,
                     session_id=session_id,
@@ -126,46 +117,19 @@ def main():
                     session_id = result.session_id
             continue
 
-        # Agent 对话
-        agent_instance.llm  # just reference
-
-        # 构建 Agent 实例（方便 stream）
-        # AgentManager 返回的是 AgentInstance，这里转成 Agent
-        agent = Agent(
-            llm=agent_instance.llm,
-            tools=agent_instance.tools,
-            system_prompt="",
-            max_steps=10,
-        )
-        agent.self_model = agent_instance.self_model
-        agent.conversation_db = agent_instance.conversation_db
-        agent.context_assembler = agent_instance.context_assembler
-        agent.longterm_memory = agent_instance.longterm_memory
-        agent.memory_extractor = agent_instance.memory_extractor
-        agent.user_id = current_user
-
+        # Agent 对话（chat 内部自动记忆提取）
         print("Agent: ", end="", flush=True)
         try:
-            response_chunks = []
-            for chunk in agent.stream(user_input):
-                print(chunk, end="", flush=True)
-                response_chunks.append(chunk)
-            print()
-            content = "".join(response_chunks)
-        except Exception as e:
-            content = f"[错误] {e}"
-            print(content)
-            continue
-
-        # 记忆提取
-        try:
-            ids = agent_instance.memory_extractor.extract_every_turn(
-                user_input, content, user_id=current_user,
+            content = agent_instance.chat(
+                user_input,
+                session_id=session_id,
+                user_id=current_user,
+                on_chunk=lambda c: print(c, end="", flush=True),
             )
-            if ids:
-                print(f"  [记忆] 提取了 {len(ids)} 条记忆")
+            print()
         except Exception as e:
-            logger.debug("提取失败: %s", e)
+            print(f"[错误] {e}")
+            continue
 
     agent_instance.conversation_db.close()
     print("Bye!")

@@ -93,7 +93,7 @@ def main():
     processor.add_job(*make_reinforce_job(longterm_memory))
     processor.add_job(*make_extract_job(memory_extractor, current_user))
 
-    scheduler = DreamScheduler(processor, idle_threshold=10)
+    scheduler = DreamScheduler(processor, idle_threshold=1800)
     scheduler.start()
     print(f"[Dream] Scheduler started (reinforce + extract, idle=10s)")
     print()

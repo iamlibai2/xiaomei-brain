@@ -18,6 +18,7 @@ from xiaomei_brain.memory.context_assembler import ContextAssembler
 from xiaomei_brain.memory.longterm import LongTermMemory
 from xiaomei_brain.memory.extractor import MemoryExtractor
 from xiaomei_brain.agent.session import SessionManager
+from xiaomei_brain.agent.commands import CommandRegistry
 from xiaomei_brain.tools.registry import ToolRegistry
 
 
@@ -50,10 +51,8 @@ class AgentInstance:
     longterm_memory: "LongTermMemory" = None  # type: ignore[assignment]
     memory_extractor: "MemoryExtractor" = None  # type: ignore[assignment]
 
-    # [deprecated] 旧记忆系统，保留仅用于向后兼容
-    memory: Any = None
-    episodic_memory: Any = None
-    working_memory: Any = None
+    # Command registry
+    commands: "CommandRegistry" = None  # type: ignore[assignment]
 
     # Agent-specific config overrides (optional)
     provider: str = ""
@@ -76,6 +75,58 @@ class AgentInstance:
         if self.talent_path:
             return os.path.dirname(self.talent_path)
         return ""
+
+    def chat(
+        self,
+        user_input: str,
+        session_id: str = "main",
+        user_id: str = "global",
+        on_chunk=None,
+    ) -> str:
+        """Run a full conversation turn: stream + memory extraction.
+
+        Args:
+            on_chunk: Optional callback ``f(chunk: str)`` invoked for each
+                streaming chunk.  When provided the caller can print chunks
+                in real-time; when omitted the response is collected silently.
+
+        Returns the full response text.
+        """
+        from xiaomei_brain.agent.core import Agent
+
+        # Build Agent with all components from this instance
+        agent = Agent(
+            llm=self.llm,
+            tools=self.tools,
+            system_prompt="",
+            max_steps=10,
+        )
+        agent.self_model = getattr(self, "self_model", None)
+        agent.conversation_db = self.conversation_db
+        agent.context_assembler = self.context_assembler
+        agent.longterm_memory = self.longterm_memory
+        agent.memory_extractor = self.memory_extractor
+        agent.user_id = user_id
+
+        # Run ReAct loop with streaming
+        chunks = []
+        for chunk in agent.stream(user_input):
+            chunks.append(chunk)
+            if on_chunk:
+                on_chunk(chunk)
+
+        content = "".join(chunks)
+
+        # Extract memory after each turn
+        if self.memory_extractor:
+            try:
+                self.memory_extractor.extract_every_turn(
+                    user_input, content, user_id=user_id,
+                )
+            except Exception:
+                pass
+
+        return content
 
 
 @dataclass
@@ -438,6 +489,15 @@ class AgentManager:
         from xiaomei_brain.tools.builtin.dag_expand import create_dag_tools
         for dag_tool in create_dag_tools(dag, agent.longterm_memory):
             tools.register(dag_tool)
+
+        # ── CommandRegistry ──────────────────────────────────────────────
+        agent.commands = CommandRegistry(
+            conversation_db=agent.conversation_db,
+            dag=agent.context_assembler.dag if agent.context_assembler else None,
+            longterm_memory=agent.longterm_memory,
+            memory_extractor=agent.memory_extractor,
+            context_assembler=agent.context_assembler,
+        )
 
         # ── 赋值 ─────────────────────────────────────────────────────────
         agent.llm = llm

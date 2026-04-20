@@ -6,7 +6,7 @@ from .agent_manager import AgentManager, AgentInstance
 from .context import ContextManager
 from .context_extractor import ContextExtractor
 from .reminder import ReminderManager
-from .proactive import ProactiveEngine, ProactiveMessage
+from .proactive_output import ProactiveOutput, ProactiveTrigger, ProactiveMessage
 
 __all__ = [
     "Agent",
@@ -17,6 +17,7 @@ __all__ = [
     "ContextManager",
     "ContextExtractor",
     "ReminderManager",
-    "ProactiveEngine",
+    "ProactiveOutput",
+    "ProactiveTrigger",
     "ProactiveMessage",
 ]

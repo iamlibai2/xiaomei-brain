@@ -681,7 +681,6 @@ def _build_agent_from_instance(agent_instance: Any) -> Any:
     from xiaomei_brain.memory.dream import DreamProcessor
     from xiaomei_brain.memory.scheduler import DreamScheduler
     from xiaomei_brain.agent.reminder import ReminderManager
-    from xiaomei_brain.agent.proactive import ProactiveEngine
     from xiaomei_brain.agent.context_extractor import ContextExtractor
 
     cfg = _global_config
@@ -703,16 +702,6 @@ def _build_agent_from_instance(agent_instance: Any) -> Any:
     dream_scheduler = DreamScheduler(dream_processor=dream_processor, idle_threshold=cfg.dream_idle_threshold)
     reminder_manager = ReminderManager(memory_dir=memory_dir, llm_client=agent_instance.llm)
 
-    def on_proactive_message(msg):
-        pass
-
-    proactive_engine = ProactiveEngine(
-        llm_client=agent_instance.llm,
-        reminder_manager=reminder_manager,
-        on_message=on_proactive_message,
-        away_threshold=cfg.proactive_away_threshold,
-    )
-
     context_extractor = ContextExtractor(
         llm=agent_instance.llm,
         working_memory=working_mem,
@@ -731,7 +720,6 @@ def _build_agent_from_instance(agent_instance: Any) -> Any:
         conversation_logger=conversation_logger,
         dream_scheduler=dream_scheduler,
         episodic_memory=episodic,
-        proactive_engine=proactive_engine,
         reminder_manager=reminder_manager,
         context_max_tokens=cfg.context_max_tokens,
         context_recent_turns=cfg.context_recent_turns,

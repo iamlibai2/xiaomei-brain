@@ -5,7 +5,7 @@ from xiaomei_brain.agent import (
     Agent, AgentSession, SessionManager,
     AgentManager, AgentInstance,
     ContextManager, ContextExtractor,
-    ReminderManager, ProactiveEngine, ProactiveMessage,
+    ReminderManager, ProactiveOutput, ProactiveTrigger, ProactiveMessage,
 )
 
 # Tools
@@ -29,7 +29,7 @@ __all__ = [
     "Agent", "AgentSession", "SessionManager",
     "AgentManager", "AgentInstance",
     "ContextManager", "ContextExtractor",
-    "ReminderManager", "ProactiveEngine", "ProactiveMessage",
+    "ReminderManager", "ProactiveOutput", "ProactiveTrigger", "ProactiveMessage",
     # Tools
     "Tool", "tool", "ToolRegistry",
     # LLM

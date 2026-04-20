@@ -81,9 +81,9 @@ class LongTermMemory:
         if self._embedder is not None:
             return self._embedder
 
-        # Ensure HF mirror is used for BGE-M3 (PEFT adapter needs huggingface.co)
+        # Use local cache only — avoid any network check when model is cached
         os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-        os.environ.setdefault("HF_HUB_OFFLINE", "0")
+        os.environ["HF_HUB_OFFLINE"] = "1"
 
         from sentence_transformers import SentenceTransformer
 
@@ -326,6 +326,12 @@ class LongTermMemory:
         user_id: str = "global",
     ) -> int:
         """Store a memory entry. Returns the ID."""
+        # Clean surrogate characters from content
+        try:
+            content = content.encode("utf-8", "surrogatepass").decode("utf-8", "replace")
+        except Exception:
+            content = content.replace("\udc00", "").replace("\ud800", "")
+
         logger.info(
             "[Memory STORE] user=%s | %s | source=%s | imp=%.2f | tags=%s",
             user_id, content[:50], source, importance, tags,
@@ -369,6 +375,12 @@ class LongTermMemory:
 
         Falls back to keyword search if LanceDB is unavailable.
         """
+        # Clean surrogate characters from query
+        try:
+            query = query.encode("utf-8", "surrogatepass").decode("utf-8", "replace")
+        except Exception:
+            query = query.replace("\udc00", "").replace("\ud800", "")
+
         logger.info(
             "[Memory RECALL] user=%s query='%s' top_k=%d",
             user_id, query, top_k,
