@@ -3,8 +3,6 @@
 from .core import Agent
 from .session import SessionManager, AgentSession
 from .agent_manager import AgentManager, AgentInstance
-from .context import ContextManager
-from .context_extractor import ContextExtractor
 from .reminder import ReminderManager
 from .proactive_output import ProactiveOutput, ProactiveTrigger, ProactiveMessage
 
@@ -14,8 +12,6 @@ __all__ = [
     "AgentSession",
     "AgentManager",
     "AgentInstance",
-    "ContextManager",
-    "ContextExtractor",
     "ReminderManager",
     "ProactiveOutput",
     "ProactiveTrigger",

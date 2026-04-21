@@ -1,0 +1,34 @@
+# Config files with secrets
+config.json
+*.local.json
+
+# Logs
+*.log
+logs/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyc
+
+# Environment
+.env
+.env.*
+
+# Database
+*.db
+*.sqlite
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+
+# TensorFlow / ML models (large)
+*.h5
+*.pt
+*.pth
+*.onnx

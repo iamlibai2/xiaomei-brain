@@ -9,8 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from xiaomei_brain.config import Config
-from xiaomei_brain.llm import LLMClient
+from xiaomei_brain.base.config import Config
+from xiaomei_brain.base.llm import LLMClient
 from xiaomei_brain.memory.self_model import SelfModel
 from xiaomei_brain.memory.conversation_db import ConversationDB
 from xiaomei_brain.memory.dag import DAGSummaryGraph
@@ -116,15 +116,6 @@ class AgentInstance:
                 on_chunk(chunk)
 
         content = "".join(chunks)
-
-        # Extract memory after each turn
-        if self.memory_extractor:
-            try:
-                self.memory_extractor.extract_every_turn(
-                    user_input, content, user_id=user_id,
-                )
-            except Exception:
-                pass
 
         return content
 
@@ -385,7 +376,13 @@ class AgentManager:
         if global_config.tts_enabled:
             tts_api_key = global_config.tts_api_key or api_key
             if tts_api_key:
-                from xiaomei_brain.speech import TTSProvider, VoiceConfig, AudioConfig
+                from xiaomei_brain.tools.provider import (
+    TTSProvider, VoiceConfig, AudioConfig,
+    MusicProvider, MusicAudioConfig,
+    ImageProvider, ImageConfig,
+    BaiduSearchProvider,
+    WebGetProvider,
+)
                 voice_config = VoiceConfig(
                     voice_id=global_config.tts_voice_id,
                     speed=global_config.tts_speed,
@@ -411,7 +408,6 @@ class AgentManager:
         if global_config.music_enabled:
             music_api_key = global_config.music_api_key or global_config.tts_api_key or api_key
             if music_api_key:
-                from xiaomei_brain.speech import MusicProvider, MusicAudioConfig
                 music_provider = MusicProvider(
                     api_key=music_api_key,
                     base_url=global_config.music_base_url,
@@ -427,7 +423,6 @@ class AgentManager:
         if global_config.image_enabled:
             image_api_key = global_config.image_api_key or global_config.tts_api_key or api_key
             if image_api_key:
-                from xiaomei_brain.image import ImageProvider, ImageConfig
                 image_provider = ImageProvider(
                     api_key=image_api_key,
                     base_url=global_config.image_base_url,
@@ -437,13 +432,11 @@ class AgentManager:
                 tools.register(image_tools.image_generate_tool)
 
         if global_config.web_search_enabled and global_config.baidu_api_key:
-            from xiaomei_brain.websearch import BaiduSearchProvider
             web_search_provider = BaiduSearchProvider(api_key=global_config.baidu_api_key)
             websearch_tools.set_search_provider(web_search_provider)
             tools.register(websearch_tools.web_search_tool)
 
         if global_config.web_get_enabled:
-            from xiaomei_brain.webget import WebGetProvider
             web_get_provider = WebGetProvider()
             webget_tools.set_get_provider(web_get_provider)
             tools.register(webget_tools.web_get_tool)
@@ -468,7 +461,11 @@ class AgentManager:
 
         # DAG 摘要图 + LongTermMemory (必须在 dag_tools 前创建)
         dag = DAGSummaryGraph(db_path, llm_client=llm)
-        agent.longterm_memory = LongTermMemory(db_path)
+        agent.longterm_memory = LongTermMemory(
+            db_path,
+            embedding_model=global_config.embedding_model or None,
+            embedding_fallback=global_config.embedding_fallback or None,
+        )
 
         # ContextAssembler 注入 longterm_memory (供 recall_memories 使用)
         agent.context_assembler = ContextAssembler(
