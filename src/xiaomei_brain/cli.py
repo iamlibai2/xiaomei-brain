@@ -26,7 +26,7 @@ def get_config_path() -> str:
 
 def cmd_get(path: str = "") -> None:
     """获取配置值"""
-    from .config_provider import ConfigProvider
+    from xiaomei_brain.base.config_provider import ConfigProvider
 
     config_path = get_config_path()
     provider = ConfigProvider(config_path)
@@ -41,7 +41,7 @@ def cmd_set(path: str, value: str) -> None:
         path: 配置路径，如 "xiaomei_brain.tts.enabled"
         value: JSON 字符串或普通字符串
     """
-    from .config_provider import ConfigProvider
+    from xiaomei_brain.base.config_provider import ConfigProvider
 
     # 尝试解析 JSON
     try:
@@ -64,7 +64,7 @@ def cmd_set(path: str, value: str) -> None:
 
 def cmd_validate() -> None:
     """验证配置格式"""
-    from .config_provider import ConfigProvider
+    from xiaomei_brain.base.config_provider import ConfigProvider
 
     config_path = get_config_path()
     errors = []

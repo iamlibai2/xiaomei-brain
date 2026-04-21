@@ -61,32 +61,35 @@ ACTION|类别|内容
 # [实时对话用] 提取+决策合并一次完成
 # LLM 输出格式: ACTION|类别|内容  （ACTION = ADD/UPDATE/MERGE/NOOP）
 # RELATES: from_content|--type-->|to_content
-EVERY_TURN_EXTRACT_PROMPT = """你是记忆提取系统。从对话中提炼关于"用户"的重要信息，并判断如何处理。
+# [实时对话用] 只从用户输入提取（助手回复仅作语境参考，不直接提取）
+# LLM 输出格式: ACTION|类别|内容  （ACTION = ADD/UPDATE/MERGE/NOOP）
+# RELATES: from_content|--type-->|to_content
+EVERY_TURN_EXTRACT_PROMPT = """你是记忆提取系统。**只从用户输入中提炼信息**，助手回复仅作语境参考。
 
 【已有记忆】（供参考）
 {recent_memories}
 
-【对话上下文】
+【对话语境】
 {context}
 
-【当前轮次】
-用户：{user_input}
-助手：{assistant_response}
+【当前用户输入】
+{user_input}
 
 【提炼规则】
-- 只关注"用户"的相关信息，用"用户..."表述
-- 只提取客观事实，不提取推测、解读、可能性（如"可能想被陪伴""似乎很开心"）
-- 不要复制助手回复
-- 忽略临时性闲聊和一次性行为（如"用户反复说了你好"）
+- **只从"当前用户输入"中提炼**，不从助手回复复制信息
+- 关于用户用"用户..."，关于小美用"我..."
+- 只提取用户在当前输入中**直接表达**的事实、偏好、经历
+- 不提取助手回复中的内容（即便助手说出了用户信息）
+- 忽略临时性闲聊、无信息量的客套话
 - 对每条记忆，判断处理方式：
   * ADD: 全新的重要信息
   * UPDATE: 已有记忆的更新版本
   * MERGE: 可合并的同类信息（如两个偏好）
   * NOOP: 无意义/重复/推测，无需存储
-- 仔细对比【已有记忆】，语义重复或被包含的用 UPDATE/NOOP，不要重复 ADD
+- 仔细对比【已有记忆】，语义重复或被包含的用 UPDATE/NOOP
 - 如果新记忆与已有记忆有语义关联，在处理行之后输出 RELATES 行
 - 关系类型: causal(因果), temporal(时序), contrast(对比), contains(包含)
-- 如果没有值得提炼的内容，输出：无
+- 如果用户输入中没有值得提炼的内容，输出：无
 
 输出格式（每条一行）：
 ACTION|类别|内容
@@ -95,10 +98,9 @@ RELATES|<新记忆内容片段>|--<关系类型-->|<已有记忆内容片段>
 例如：
 ADD|事实|用户叫李四
 RELATES|用户叫李四|--causal-->|用户上周刚搬家
+NOOP|事实|用户说了你好（无信息量）
 ADD|偏好|用户喜欢川菜
-UPDATE|偏好|用户改名叫王五
-NOOP|事实|用户今天说了你好
-NOOP|情感|用户可能只是想被陪伴（推测，不是事实）
+NOOP|偏好|用户可能喜欢川菜（推测，不是用户直接说的）
 
 直接输出，无需解释："""
 
@@ -125,6 +127,31 @@ DREAM_EXTRACT_PROMPT = """你是小美的内心反思系统。在以下对话中
 ACTION|类别|内容
 
 直接输出，无需解释："""
+
+# [合并模式用] MEMORY block 格式指令（追加到 system prompt）
+# LLM 已通过 system prompt 持有上下文，这里只给格式指令
+MEMORY_DECISION_PROMPT = """
+
+## 记忆决策
+
+每次回复后，根据对话内容判断是否需要提取用户相关的长期记忆。
+
+**规则**：
+- 只关注用户直接表达的事实、偏好、经历，用"用户..."表述
+- 不要复制回复中的内容，只提取用户输入中表达的信息
+- 判断处理方式：ADD（全新）、UPDATE（更新旧记忆）、MERGE（合并同类）、NOOP（无意义/重复/推测）
+
+**输出格式**（没有值得提炼的内容则不输出任何 MEMORY 块）：
+<MEMORY>
+ACTION|类别|内容
+</MEMORY>
+
+示例：
+<MEMORY>
+ADD|事实|用户叫李四
+ADD|偏好|用户喜欢川菜
+NOOP|事实|用户今天说了你好
+</MEMORY>"""
 
 
 class MemoryExtractor:
@@ -408,17 +435,22 @@ class MemoryExtractor:
                 relates_lines.append(line)
                 continue
 
-            # 解析 ACTION|tag|content 格式
-            parts = line.split("|", 2)  # split at most 2 times
-            if len(parts) < 3:
+            # Parse all ACTION|tag|content lines (支持多行)
+            # 先把多行合并，再逐行解析
+            all_parts = line.split("|")
+            if len(all_parts) >= 3 and all_parts[0].strip().upper() in ("ADD", "UPDATE", "MERGE", "DELETE", "NOOP"):
+                action = all_parts[0].strip().upper()
+                tag = all_parts[1].strip()
+                content = "|".join(all_parts[2:]).strip()
+            elif len(all_parts) < 3:
                 # 兼容旧格式（无 ACTION 前缀）
                 tag = "事实"
-                content = parts[1].strip() if len(parts) == 2 else parts[0].strip()
+                content = all_parts[1].strip() if len(all_parts) == 2 else all_parts[0].strip()
                 action = "ADD"
             else:
-                action = parts[0].strip().upper()
-                tag = parts[1].strip()
-                content = parts[2].strip()
+                tag = "事实"
+                content = "|".join(all_parts[1:]).strip()
+                action = "ADD"
 
             # 清理 markdown
             content = re.sub(r'\*\*(.*?)\*\*', r'\1', content)
@@ -563,3 +595,46 @@ class MemoryExtractor:
                 "[Relations] Skip: from_id=%s to_id=%s",
                 from_memory_id, to_memory_id,
             )
+
+    # ── 合并模式：解析 MEMORY block ─────────────────────────────────────
+
+    @staticmethod
+    def extract_memory_block(content: str) -> tuple[str, str]:
+        """从 LLM 回复内容中提取 MEMORY block。
+
+        Returns:
+            (memory_block, clean_content) — block 为空则表示无有效决策
+        """
+        if not content:
+            return "", ""
+        m_start = content.rfind("<MEMORY>")
+        if m_start == -1:
+            return "", content
+        m_end = content.rfind("</MEMORY>")
+        if m_end == -1:
+            return "", content
+        block = content[m_start + 8:m_end].strip()
+        clean = content[:m_start].strip()
+        return block, clean
+
+    def execute_block(self, memory_block: str, user_id: str = "global") -> list[int]:
+        """执行 MEMORY block（合并模式，无需调 LLM）。
+
+        判断是否有有效 ACTION，有则执行，无则跳过。
+        """
+        block_clean = memory_block.strip()
+        if not block_clean:
+            return []
+
+        # 检查是否有有效 ACTION 行（排除 ACTION|无）
+        has_valid = False
+        for line in block_clean.split("\n"):
+            stripped = line.strip().upper()
+            if stripped.startswith("ACTION|") and len(stripped) > 7 and not stripped.startswith("ACTION|无"):
+                has_valid = True
+                break
+
+        if not has_valid:
+            return []
+
+        return self._execute_actions(memory_block, source="merged", user_id=user_id)

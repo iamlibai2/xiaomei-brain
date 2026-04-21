@@ -65,7 +65,7 @@ async def _handle_openclaw_method(
     conn_id: str,
 ) -> Any:
     """处理 OpenClaw Gateway 协议方法"""
-    from xiaomei_brain.config_provider import get_provider
+    from xiaomei_brain.base.config_provider import get_provider
 
     provider = get_provider()
 
@@ -412,7 +412,7 @@ def _get_session(session_id: str) -> dict | None:
 
 async def _handle_rpc(method: str, params: dict) -> dict:
     """Handle JSON-RPC config methods (xiaomei-brain 内部格式)"""
-    from xiaomei_brain.config_provider import get_provider
+    from xiaomei_brain.base.config_provider import get_provider
 
     provider = get_provider()
     try:

@@ -24,7 +24,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Default embedding model — Chinese-optimized
+# Default embedding models (used when Config doesn't specify)
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"
 FALLBACK_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
@@ -60,6 +60,7 @@ class LongTermMemory:
         self,
         db_path: str | Path,
         embedding_model: str | None = None,
+        embedding_fallback: str | None = None,
     ) -> None:
         self.db_path = Path(db_path)
         self._conn: sqlite3.Connection | None = None
@@ -67,6 +68,7 @@ class LongTermMemory:
 
         # Embedding model (lazy load)
         self._embedding_model_name = embedding_model or DEFAULT_EMBEDDING_MODEL
+        self._embedding_fallback = embedding_fallback or FALLBACK_EMBEDDING_MODEL
         self._embedder: Any = None
 
         # LanceDB (lazy open)
@@ -92,13 +94,13 @@ class LongTermMemory:
             self._embedder = SentenceTransformer(self._embedding_model_name)
             logger.info("Embedding model loaded: %s", self._embedding_model_name)
         except Exception as e:
-            if self._embedding_model_name != FALLBACK_EMBEDDING_MODEL:
+            if self._embedding_model_name != self._embedding_fallback:
                 logger.warning(
                     "Failed to load %s, falling back to %s: %s",
-                    self._embedding_model_name, FALLBACK_EMBEDDING_MODEL, e,
+                    self._embedding_model_name, self._embedding_fallback, e,
                 )
-                self._embedding_model_name = FALLBACK_EMBEDDING_MODEL
-                self._embedder = SentenceTransformer(FALLBACK_EMBEDDING_MODEL)
+                self._embedding_model_name = self._embedding_fallback
+                self._embedder = SentenceTransformer(self._embedding_fallback)
             else:
                 raise
 

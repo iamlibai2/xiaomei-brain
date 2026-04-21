@@ -185,7 +185,7 @@ class Doctor:
             sec.checks.append(self._ok("baidu_api_key", "configured"))
 
         try:
-            from .websearch import BaiduSearchProvider
+            from xiaomei_brain.tools.provider import BaiduSearchProvider
             provider = BaiduSearchProvider(api_key=cfg.baidu_api_key)
             results = provider.search(query="test", count=1)
             if results:
@@ -206,7 +206,7 @@ class Doctor:
             return sec
 
         try:
-            from .webget import WebGetProvider
+            from xiaomei_brain.tools.provider import WebGetProvider
             provider = WebGetProvider()
             result = provider.fetch("https://www.baidu.com", extract_mode="text", max_chars=500)
             if result.status == 200:

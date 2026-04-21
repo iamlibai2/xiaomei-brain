@@ -62,6 +62,7 @@ class ContextAssembler:
         mode: str = "daily",
         session_id: str | None = None,
         user_id: str = "global",
+        include_fresh_tail: bool = True,
     ) -> list[dict[str, Any]]:
         """Assemble context for LLM input."""
         # 自动压缩：累积够 8 条未摘要消息时触发
@@ -69,11 +70,11 @@ class ContextAssembler:
             self._auto_compact(session_id)
 
         if mode == "flow":
-            return self._assemble_flow(max_tokens, session_id)
+            return self._assemble_flow(max_tokens, session_id, include_fresh_tail)
         elif mode == "reflect":
-            return self._assemble_reflect(max_tokens, session_id, user_input, user_id)
+            return self._assemble_reflect(max_tokens, session_id, user_input, user_id, include_fresh_tail)
         else:
-            return self._assemble_daily(max_tokens, session_id, user_input, user_id)
+            return self._assemble_daily(max_tokens, session_id, user_input, user_id, include_fresh_tail)
 
     def _auto_compact(self, session_id: str) -> None:
         """检查并触发 DAG 压缩（线程安全）。
@@ -110,6 +111,7 @@ class ContextAssembler:
 
     def _assemble_flow(
         self, max_tokens: int, session_id: str | None,
+        include_fresh_tail: bool = True,
     ) -> list[dict[str, Any]]:
         """心流模式: identity + minimal recent context."""
         messages: list[dict[str, Any]] = []
@@ -122,9 +124,10 @@ class ContextAssembler:
             })
 
         # Fresh tail only
-        n = self.FLOW_TAIL_COUNT
-        recent = self._fresh_tail(n, session_id)
-        messages.extend(recent)
+        if include_fresh_tail:
+            n = self.FLOW_TAIL_COUNT
+            recent = self._fresh_tail(n, session_id)
+            messages.extend(recent)
 
         return messages
 
@@ -134,6 +137,7 @@ class ContextAssembler:
         session_id: str | None,
         user_input: str | None = None,
         user_id: str = "global",
+        include_fresh_tail: bool = True,
     ) -> list[dict[str, Any]]:
         """日常模式: SelfModel + DAG summaries + long-term memories + fresh tail."""
         messages: list[dict[str, Any]] = []
@@ -167,8 +171,8 @@ class ContextAssembler:
             messages.append({"role": "system", "content": system_content})
             remaining -= estimate_tokens(system_content)
 
-        # 3. Fresh tail
-        if remaining > 100:
+        # 3. Fresh tail (controlled by include_fresh_tail)
+        if include_fresh_tail and remaining > 100:
             n = self.FRESH_TAIL_COUNT
             recent = self._fresh_tail(n, session_id)
             # Trim if over budget
@@ -187,6 +191,7 @@ class ContextAssembler:
         session_id: str | None,
         user_input: str | None = None,
         user_id: str = "global",
+        include_fresh_tail: bool = True,
     ) -> list[dict[str, Any]]:
         """反省模式: full SelfModel + extended summaries + memories + extended tail."""
         messages: list[dict[str, Any]] = []
@@ -227,8 +232,8 @@ class ContextAssembler:
             messages.append({"role": "system", "content": system_content})
             remaining -= estimate_tokens(system_content)
 
-        # 3. Extended fresh tail
-        if remaining > 100:
+        # 3. Extended fresh tail (controlled by include_fresh_tail)
+        if include_fresh_tail and remaining > 100:
             n = self.REFLECT_TAIL_COUNT
             recent = self._fresh_tail(n, session_id)
             for m in recent:

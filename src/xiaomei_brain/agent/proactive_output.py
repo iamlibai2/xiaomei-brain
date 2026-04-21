@@ -119,62 +119,98 @@ class ProactiveOutput:
 
     # ── WAKE: morning greeting ───────────────────────────────────
 
+    WAKE_GREETING_PROMPT = """你是一个温柔体贴的AI伴侣（小美）。根据以下信息生成一句自然的主动问候：
+
+当前时间信息：{time_info}
+用户的提醒：{reminders}
+我的近期成长：{growth}
+用户的最近记忆：{memories}
+
+要求：
+- 语气自然温暖，像朋友一样
+- 问候为主，不需要提及所有信息，挑选最重要的1-2点
+- 50字以内
+- 不要说"我是小美"之类的开场白
+"""
+
     def _check_wake(self) -> list[ProactiveMessage]:
-        """Generate morning greeting with self-positioning.
-
-        1. Time-based greeting
-        2. Due reminders (included in greeting)
-        3. Recent growth_log
-        4. Recent memories from last session
-        """
-        parts = []
-
-        # 1. Time-based greeting
+        """Generate morning greeting with LLM + contextual info."""
+        # 1. 时间信息
         hour = datetime.now().hour
         if 5 <= hour < 9:
-            greeting = "早上好！"
+            time_info = "早上好（5-9点）"
         elif 9 <= hour < 12:
-            greeting = "上午好！"
+            time_info = "上午好（9-12点）"
         elif 12 <= hour < 14:
-            greeting = "中午好！"
+            time_info = "中午好（12-14点）"
         elif 14 <= hour < 18:
-            greeting = "下午好！"
+            time_info = "下午好（14-18点）"
         elif 18 <= hour < 22:
-            greeting = "晚上好！"
+            time_info = "晚上好（18-22点）"
         else:
-            greeting = "夜深了~"
-
-        parts.append(greeting)
+            time_info = "夜深了（22点后）"
 
         # 2. Due reminders
         reminder_msgs = self._check_reminders()
-        if reminder_msgs:
-            reminder_texts = [m.content for m in reminder_msgs]
-            parts.append("你有提醒：" + "；".join(reminder_texts))
+        reminders = "、".join(m.content for m in reminder_msgs) if reminder_msgs else "无"
 
         # 3. Recent growth_log
         self_model = getattr(self.agent, "self_model", None)
+        growth_list = []
         if self_model and self_model.growth_log:
-            recent = self_model.growth_log[-3:]
-            if recent:
-                growth_texts = [g.content for g in recent]
-                parts.append("我最近的成长：" + "；".join(growth_texts))
+            for g in self_model.growth_log[-3:]:
+                growth_list.append(g.content)
+        growth = "、".join(growth_list) if growth_list else "无"
 
-        # 4. Recent memories from last session
+        # 4. Recent memories
         ltm = getattr(self.agent, "longterm_memory", None)
+        mem_list = []
         if ltm:
             try:
-                recent_memories = ltm.get_recent(3, user_id="global")
-                if recent_memories:
-                    mem_texts = [m["content"][:30] for m in recent_memories]
-                    parts.append("我还记得：" + "；".join(mem_texts))
+                for m in ltm.get_recent(3, user_id="global"):
+                    mem_list.append(m["content"][:40])
             except Exception:
                 pass
+        memories = "；".join(mem_list) if mem_list else "无"
 
-        content = "\n".join(parts)
+        # 构建 prompt 并调用 LLM
+        prompt = self.WAKE_GREETING_PROMPT.format(
+            time_info=time_info,
+            reminders=reminders,
+            growth=growth,
+            memories=memories,
+        )
+
+        try:
+            llm = getattr(self.agent, "llm", None)
+            if llm:
+                resp = llm.chat(
+                    messages=[{"role": "user", "content": prompt}],
+                    tools=None,
+                    log_level=logging.DEBUG,
+                )
+                content = (resp.content or "").strip()
+                if content:
+                    logger.info("[Proactive/Wake] LLM 生成问候: %.50s", content)
+                    return [ProactiveMessage(
+                        content=content,
+                        trigger=ProactiveTrigger.WAKE,
+                        priority=80,
+                    )]
+        except Exception as e:
+            logger.warning("[Proactive/Wake] LLM 生成失败，回退到规则拼接: %s", e)
+
+        # 回退：规则拼接
+        parts = [time_info.replace("（", "(").replace("）", ")")]
+        if reminder_msgs:
+            parts.append("你有提醒：" + "；".join(m.content for m in reminder_msgs))
+        if growth_list:
+            parts.append("我最近的成长：" + "；".join(growth_list))
+        if mem_list:
+            parts.append("我还记得：" + "；".join(m[:30] for m in mem_list))
 
         return [ProactiveMessage(
-            content=content,
+            content="\n".join(parts),
             trigger=ProactiveTrigger.WAKE,
             priority=80,
         )]

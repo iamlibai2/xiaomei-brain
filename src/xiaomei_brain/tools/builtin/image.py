@@ -90,7 +90,7 @@ def image_generate(
 )
 def image_list_options() -> str:
     """List available image options."""
-    from ...image import get_available_models, get_available_aspect_ratios, get_available_styles
+    from xiaomei_brain.tools.provider.image import get_available_models, get_available_aspect_ratios, get_available_styles
 
     models = get_available_models()
     ratios = get_available_aspect_ratios()

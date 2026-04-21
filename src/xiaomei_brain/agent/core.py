@@ -7,12 +7,12 @@ import logging
 import time
 from typing import Any, Generator
 
-from xiaomei_brain.llm import LLMClient
+from xiaomei_brain.base.llm import LLMClient
 from xiaomei_brain.memory.conversation_db import ConversationDB
 from xiaomei_brain.memory.self_model import SelfModel
 from xiaomei_brain.memory.context_assembler import ContextAssembler, determine_mode
 from xiaomei_brain.memory.longterm import LongTermMemory
-from xiaomei_brain.memory.extractor import MemoryExtractor
+from xiaomei_brain.memory.extractor import MemoryExtractor, MEMORY_DECISION_PROMPT
 from xiaomei_brain.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -60,11 +60,11 @@ class Agent:
         Tool calls are handled transparently; only final text is yielded.
         """
         # self.messages tracks current ReAct loop's intermediate steps
-        # (assistant tool_calls + tool results). User message is NOT included
-        # here because ContextAssembler._fresh_tail() reads it from DB.
+        # (assistant tool_calls + tool results). Fresh tail is loaded from DB once,
+        # not from base_context, so ReAct can accumulate tool calls without losing context.
         self.messages = []
 
-        # Log user message to DB immediately so _fresh_tail() can pick it up
+        # Log user message to DB
         if self.conversation_db:
             self.conversation_db.log(
                 session_id=self._current_session_id(),
@@ -77,25 +77,50 @@ class Agent:
 
         openai_tools = self.tools.to_openai_tools() if self.tools.list_tools() else None
 
-        # Base context: assembled once at the start (system + DAG + memories + recent tail)
+        # Base context: system + DAG + long-term memories (NO fresh tail)
+        # Fresh tail is loaded separately into self.messages
         base_context = self.context_assembler.assemble(
             user_input=user_input,
             max_tokens=4000,
             mode=mode,
             session_id=self._current_session_id(),
             user_id=self.user_id,
+            include_fresh_tail=False,
         )
 
+        # Load fresh tail from DB into self.messages (only happens once per chat() call)
+        if self.conversation_db:
+            recent = self.conversation_db.get_recent(
+                self.context_assembler.FRESH_TAIL_COUNT,
+                session_id=self._current_session_id(),
+            )
+            self.messages = [
+                {"role": m.get("role", "user"), "content": m.get("content", "")}
+                for m in recent
+                if m.get("role") in ("user", "assistant", "tool")
+            ]
+
+        # Append memory decision prompt to the system message
+        if base_context and base_context[0].get("role") == "system":
+            base_context[0] = dict(base_context[0])
+            base_context[0]["content"] = base_context[0]["content"] + MEMORY_DECISION_PROMPT
+
         for step in range(self.max_steps):
-            # Reuse base context + append current ReAct loop messages
-            all_messages = list(base_context) + self.messages
+            # All steps: [system prompt] + accumulated self.messages
+            all_messages = [base_context[0]] + self.messages
 
             # Clean surrogate characters from all message content before sending to LLM
             all_messages = self._clean_messages(all_messages)
 
             logger.debug("Step %d: calling LLM", step + 1)
 
+            # Log full LLM input before sending
+            self._log_llm_call(step + 1, all_messages, openai_tools)
+
             response, stream_chunks = self._call_llm(all_messages, openai_tools)
+
+            # Log full LLM output after receiving
+            self._log_llm_call(step + 1, all_messages, openai_tools, response.content if response else None)
 
             if response.has_tool_calls:
                 self.messages.append(
@@ -152,20 +177,29 @@ class Agent:
             else:
                 content = response.content or ""
                 if content:
-                    self.messages.append({"role": "assistant", "content": content})
+                    # Extract and execute memory decision from response (<MEMORY> block)
+                    memory_block, clean_content = "", content
+                    if hasattr(self, "memory_extractor") and self.memory_extractor:
+                        memory_block, clean_content = self.memory_extractor.extract_memory_block(content)
+                        if memory_block:
+                            self.memory_extractor.execute_block(memory_block, user_id=self.user_id)
+
+                    # Use clean content for display and logging
+                    display_content = clean_content or content
+                    self.messages.append({"role": "assistant", "content": display_content})
 
                     if self.conversation_db:
                         self.conversation_db.log(
                             session_id=self._current_session_id(),
                             role="assistant",
-                            content=content,
+                            content=display_content,
                         )
 
-                    # Stream the response
+                    # Stream the response (strip MEMORY block from streamed chunks)
                     if stream_chunks:
-                        yield from stream_chunks
+                        yield from self._strip_memory_stream(stream_chunks)
                     else:
-                        yield content
+                        yield display_content
 
                     return
                 else:
@@ -200,6 +234,18 @@ class Agent:
 
         api_messages = self.llm._build_messages(messages)
 
+        # Debug: log message structure before sending
+        logger.debug(
+            "[LLM] api_messages count=%d roles=%s",
+            len(api_messages),
+            [m.get("role") for m in api_messages],
+        )
+        for i, m in enumerate(api_messages):
+            content = m.get("content", "")
+            logger.debug("[LLM] msg[%d] role=%s content_len=%d content_preview=%s",
+                         i, m.get("role"), len(content) if content else 0,
+                         (content or "")[:80].replace("\n", "\\n"))
+
         payload = {
             "model": self.llm.model,
             "messages": api_messages,
@@ -222,9 +268,10 @@ class Agent:
             elapsed = time.time() - _t0
             status = "OK" if success else "ERR"
             ts = _dt.datetime.now().strftime("%H:%M:%S")
+            detail_clean = detail.replace("\n", "\\n")[:80] if detail else ""
             logger.info(
-                "[LLM %s STREAM] %s model=%s msgs=%d tools=%s elapsed=%.2fs %s %s",
-                status, ts, self.llm.model, len(api_messages), _has_tools, elapsed, _msg_preview, detail,
+                "[LLM %s STREAM] %s model=%s msgs=%d tools=%s elapsed=%.2fs %s",
+                status, ts, self.llm.model, len(api_messages), _has_tools, elapsed, detail_clean,
             )
 
         response = req.post(
@@ -234,6 +281,16 @@ class Agent:
             timeout=60,
             stream=True,
         )
+        if response.status_code >= 400:
+            logger.warning(
+                "[LLM STREAM DEBUG] HTTP %d | msgs=%d roles=%s | msg0_len=%d | tools=%s | payload_msgs=%s",
+                response.status_code,
+                len(api_messages),
+                [m.get("role") for m in api_messages],
+                len(api_messages[0].get("content", "") if api_messages else ""),
+                bool(tools),
+                [(m.get("role"), len(m.get("content",""))) for m in api_messages],
+            )
         response.raise_for_status()
 
         # Parse SSE stream
@@ -311,7 +368,7 @@ class Agent:
             raise
 
         # Build final ChatResponse
-        from xiaomei_brain.llm import ChatResponse, ToolCall
+        from xiaomei_brain.base.llm import ChatResponse, ToolCall
 
         content = self.llm._strip_thinking("".join(content_parts))
         # Clean surrogate characters from LLM output
@@ -338,6 +395,18 @@ class Agent:
         return chat_response, stream_parts if not tool_calls else None
 
     # ── Helpers ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _strip_memory_stream(chunks: list[str]) -> Generator[str, None, None]:
+        """Strip <MEMORY> blocks from streaming chunks.
+
+        Joins chunks and strips MEMORY block using the same logic as extract_memory_block.
+        Yields in a streaming manner for compatibility.
+        """
+        full_text = "".join(chunks)
+        _, clean = MemoryExtractor.extract_memory_block(full_text)
+        if clean:
+            yield clean
 
     @staticmethod
     def _clean_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -367,6 +436,30 @@ class Agent:
         """Save SelfModel to talent.md at shutdown."""
         if self.self_model:
             self.self_model.save(talent_path)
+
+    def _log_llm_call(self, step: int, messages: list[dict], tools: list | None, response_text: str | None = None) -> None:
+        """Log complete LLM input/output for debugging."""
+        sep = "=" * 80
+        logger.info("\n%s", sep)
+        logger.info("[LLM CALL] Step %d | %d msgs | tools=%s", step, len(messages), bool(tools))
+        for i, m in enumerate(messages):
+            role = m.get("role", "?")
+            content = m.get("content", "")
+            tc = m.get("tool_calls")
+            tc_id = m.get("tool_call_id", "")
+            logger.info("--- msg[%d] role=%s tc=%s tc_id=%s content_len=%d ---", i, role, bool(tc), tc_id[:20] if tc_id else "", len(content) if content else 0)
+            logger.info("%s", (content or "")[:2000])
+            if tc:
+                import json
+                logger.info("tool_calls: %s", json.dumps(tc, ensure_ascii=False, indent=2)[:500])
+        if tools:
+            import json
+            logger.info("--- tools ---")
+            logger.info("%s", json.dumps(tools, ensure_ascii=False, indent=2)[:1000])
+        if response_text is not None:
+            logger.info("--- response (len=%d) ---", len(response_text))
+            logger.info("%s", response_text[:2000])
+        logger.info("%s\n", sep)
 
     def _current_session_id(self) -> str:
         """Get current session identifier for ConversationDB."""

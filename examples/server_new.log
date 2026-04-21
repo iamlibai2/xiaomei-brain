@@ -1,0 +1,292 @@
+2026-04-15 15:52:42,686 - xiaomei_brain.config - INFO - Using JSON config file: config.json
+2026-04-15 15:52:42,687 - __main__ - INFO - [START] Config loaded: provider=minimax, model=MiniMax-M2.7
+2026-04-15 15:52:42,688 - __main__ - INFO - [START] AgentManager initialized: /home/iamlibai/.xiaomei-brain
+2026-04-15 15:52:42,688 - __main__ - INFO - [START] Available agents: xiaomei, xiaoming
+2026-04-15 15:52:42,689 - __main__ - INFO - [START] Loaded 2 bindings
+2026-04-15 15:52:42,689 - xiaomei_brain.channels.gateway - INFO - Added feishu channel
+2026-04-15 15:52:42,689 - __main__ - INFO - [GATEWAY] Added Feishu channel (account: default)
+2026-04-15 15:52:42,689 - xiaomei_brain.channels.gateway - INFO - Added feishu channel
+2026-04-15 15:52:42,689 - __main__ - INFO - [GATEWAY] Added Feishu channel (account: xiaomei)
+2026-04-15 15:52:42,689 - __main__ - INFO - [START] Preloading default agent...
+2026-04-15 15:52:42,689 - xiaomei_brain.config - INFO - Using JSON config file: config.json
+2026-04-15 15:52:42,694 - xiaomei_brain.memory.store - INFO - MemoryStore initialized, dir=/home/iamlibai/.xiaomei-brain/agents/default/memory, max_topics=100, chunk_size=500
+2026-04-15 15:52:42,694 - xiaomei_brain.memory.episodic - INFO - EpisodicMemory initialized, dir=/home/iamlibai/.xiaomei-brain/agents/default/memory/episodes
+2026-04-15 15:52:42,694 - xiaomei_brain.session - INFO - SessionManager initialized, dir=/home/iamlibai/.xiaomei-brain/agents/default/sessions
+2026-04-15 15:52:42,694 - __main__ - INFO - [START] Loading embedding model...
+2026-04-15 15:52:42,694 - xiaomei_brain.memory.search - INFO - Loading embedding model: all-MiniLM-L6-v2
+2026-04-15 15:52:50,109 - xiaomei_brain.memory.search - INFO - Embedding model loaded successfully
+2026-04-15 15:52:50,496 - __main__ - INFO - [START] Embedding model loaded
+2026-04-15 15:52:50,496 - __main__ - INFO - [START] Building memory index...
+2026-04-15 15:52:50,498 - xiaomei_brain.memory.search - INFO - Chunked vector index built with 11 chunks
+2026-04-15 15:52:50,498 - xiaomei_brain.memory.store - INFO - Loaded index cache (4 topics, 11 chunks)
+2026-04-15 15:52:50,499 - __main__ - INFO - [START] Memory index built (4 topics)
+2026-04-15 15:52:50,499 - __main__ - INFO - [START] Starting 2 channels...
+2026-04-15 15:52:50,499 - xiaomei_brain.channels.gateway - INFO - Starting 2 channels...
+2026-04-15 15:52:50,499 - xiaomei_brain.channels.gateway - INFO - Starting feishu channel...
+2026-04-15 15:52:50,499 - xiaomei_brain.channels.feishu - INFO - [START] FeishuChannel.start() 开始
+2026-04-15 15:52:50,499 - xiaomei_brain.channels.feishu - INFO - [START] app_id=cli_a94e759197badbc3
+2026-04-15 15:52:50,499 - xiaomei_brain.channels.feishu - INFO - [START] 创建 _process_messages 协程任务
+2026-04-15 15:52:50,499 - xiaomei_brain.channels.feishu - INFO - [START] 创建 WebSocket daemon 线程
+2026-04-15 15:52:50,499 - xiaomei_brain.channels.feishu - INFO - [START][WS-THREAD] WebSocket 线程开始
+2026-04-15 15:52:50,499 - xiaomei_brain.channels.feishu - INFO - [START] WebSocket 线程已启动 (daemon=True)
+2026-04-15 15:52:50,500 - xiaomei_brain.channels.feishu - INFO - [START][WS-THREAD] WebSocket client 创建成功，调用 start()...
+2026-04-15 15:52:50,500 - xiaomei_brain.channels.feishu - INFO - [START] FeishuChannel.start() 完成
+2026-04-15 15:52:50,501 - xiaomei_brain.channels.gateway - INFO - feishu channel started
+2026-04-15 15:52:50,501 - xiaomei_brain.channels.gateway - INFO - Starting feishu channel...
+2026-04-15 15:52:50,501 - xiaomei_brain.channels.feishu - INFO - [START] FeishuChannel.start() 开始
+2026-04-15 15:52:50,501 - xiaomei_brain.channels.feishu - INFO - [START] app_id=cli_a94e644263b89bc3
+2026-04-15 15:52:50,501 - xiaomei_brain.channels.feishu - INFO - [START] 创建 _process_messages 协程任务
+2026-04-15 15:52:50,501 - xiaomei_brain.channels.feishu - INFO - [START] 创建 WebSocket daemon 线程
+2026-04-15 15:52:50,501 - xiaomei_brain.channels.feishu - INFO - [START][WS-THREAD] WebSocket 线程开始
+2026-04-15 15:52:50,502 - xiaomei_brain.channels.feishu - INFO - [START][WS-THREAD] WebSocket client 创建成功，调用 start()...
+[Lark] [2026-04-15 15:52:50,502] [ERROR] connect failed, err: This event loop is already running
+2026-04-15 15:52:50,502 - xiaomei_brain.channels.feishu - INFO - [START] WebSocket 线程已启动 (daemon=True)
+2026-04-15 15:52:50,502 - xiaomei_brain.channels.feishu - INFO - [START] FeishuChannel.start() 完成
+2026-04-15 15:52:50,502 - xiaomei_brain.channels.gateway - INFO - feishu channel started
+2026-04-15 15:52:50,502 - __main__ - INFO - [START] All channels started
+2026-04-15 15:52:50,502 - __main__ - INFO - [START] TTS enabled: voice=female-tianmei
+2026-04-15 15:52:50,502 - Lark - ERROR - connect failed, err: This event loop is already running
+2026-04-15 15:52:50,502 - xiaomei_brain.channels.feishu - ERROR - [START][WS-THREAD] WebSocket error: This event loop is already running
+Traceback (most recent call last):
+  File "/home/iamlibai/workspace/python_env_common/lib/python3.13/site-packages/lark_oapi/ws/client.py", line 114, in start
+    loop.run_until_complete(self._connect())
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/home/iamlibai/.local/share/uv/python/cpython-3.13.12-linux-x86_64-gnu/lib/python3.13/asyncio/base_events.py", line 701, in run_until_complete
+    self._check_running()
+    ~~~~~~~~~~~~~~~~~~~^^
+  File "/home/iamlibai/.local/share/uv/python/cpython-3.13.12-linux-x86_64-gnu/lib/python3.13/asyncio/base_events.py", line 637, in _check_running
+    raise RuntimeError('This event loop is already running')
+RuntimeError: This event loop is already running
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/iamlibai/workspace/claude-project/xiaomei-brain/src/xiaomei_brain/channels/feishu.py", line 79, in run_ws
+    self._ws_client.start()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/iamlibai/workspace/python_env_common/lib/python3.13/site-packages/lark_oapi/ws/client.py", line 120, in start
+    loop.run_until_complete(self._disconnect())
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/home/iamlibai/.local/share/uv/python/cpython-3.13.12-linux-x86_64-gnu/lib/python3.13/asyncio/base_events.py", line 701, in run_until_complete
+    self._check_running()
+    ~~~~~~~~~~~~~~~~~~~^^
+  File "/home/iamlibai/.local/share/uv/python/cpython-3.13.12-linux-x86_64-gnu/lib/python3.13/asyncio/base_events.py", line 637, in _check_running
+    raise RuntimeError('This event loop is already running')
+RuntimeError: This event loop is already running
+2026-04-15 15:52:50,503 - xiaomei_brain.memory.conversation - INFO - ConversationLogger initialized, dir=/home/iamlibai/.xiaomei-brain/agents/default/memory/conversations
+2026-04-15 15:52:50,505 - xiaomei_brain.memory.dream - INFO - DreamProcessor initialized (episodic=True)
+2026-04-15 15:52:50,505 - xiaomei_brain.memory.scheduler - INFO - DreamScheduler initialized, idle_threshold=300s, check_interval=60s
+2026-04-15 15:52:50,505 - xiaomei_brain.channels.feishu - INFO - [START][WS-THREAD] WebSocket 线程结束
+2026-04-15 15:52:50,506 - xiaomei_brain.reminder - INFO - ReminderManager initialized, 0 reminders loaded
+2026-04-15 15:52:50,506 - xiaomei_brain.proactive - INFO - ProactiveEngine initialized, away_threshold=3600s
+2026-04-15 15:52:50,506 - xiaomei_brain.context_extractor - INFO - ContextExtractor initialized, msg_interval=5, time_interval=120s
+2026-04-15 15:52:50,506 - xiaomei_brain.context - INFO - ContextManager initialized, max_tokens=4000, recent_turns=6
+2026-04-15 15:52:50,506 - xiaomei_brain.memory.scheduler - INFO - DreamScheduler started
+2026-04-15 15:52:50,506 - xiaomei_brain.agent - INFO - Dream scheduler started
+2026-04-15 15:52:50,506 - xiaomei_brain.proactive - INFO - ProactiveEngine started
+2026-04-15 15:52:50,506 - xiaomei_brain.agent - INFO - Proactive engine started
+2026-04-15 15:52:50,506 - xiaomei_brain.context_extractor - INFO - ContextExtractor started
+2026-04-15 15:52:50,506 - __main__ - INFO - ============================================================
+2026-04-15 15:52:50,507 - __main__ - INFO - [START] xiaomei-brain Unified Gateway
+2026-04-15 15:52:50,507 - __main__ - INFO - ============================================================
+2026-04-15 15:52:50,507 - __main__ - INFO - [START] WebSocket: ws://0.0.0.0:8765/ws
+2026-04-15 15:52:50,507 - __main__ - INFO - [START] Health:    http://0.0.0.0:8765/health
+2026-04-15 15:52:50,507 - __main__ - INFO - [START] Agent:     minimax/MiniMax-M2.7
+2026-04-15 15:52:50,507 - __main__ - INFO - [START] Channels:  feishu, feishu
+2026-04-15 15:52:50,507 - __main__ - INFO - [START] Base dir:  /home/iamlibai/.xiaomei-brain
+2026-04-15 15:52:50,507 - __main__ - INFO - ============================================================
+2026-04-15 15:52:50,544 - xiaomei_brain.channels.feishu - INFO - [STEP 2] _process_messages 协程已启动
+2026-04-15 15:52:50,545 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+[Lark] [2026-04-15 15:52:51,377] [INFO] connected to wss://msg-frontier.feishu.cn/ws/v2?fpid=493&aid=552564&device_id=7628890810574884034&access_key=e7e4928c50845495a2e46716535be2de&service_id=33554678&ticket=5ebce271-ee5e-4ecb-996d-d6d4f071359c [conn_id=7628890810574884034]
+2026-04-15 15:52:51,377 - Lark - INFO - connected to wss://msg-frontier.feishu.cn/ws/v2?fpid=493&aid=552564&device_id=7628890810574884034&access_key=e7e4928c50845495a2e46716535be2de&service_id=33554678&ticket=5ebce271-ee5e-4ecb-996d-d6d4f071359c [conn_id=7628890810574884034]
+2026-04-15 15:52:51,549 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:52:52,549 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:52:53,550 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:52:54,550 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:52:55,551 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:52:56,551 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:52:57,552 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:52:58,552 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:52:59,553 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:00,553 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:01,554 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:02,554 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:03,555 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:04,558 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:05,567 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:06,568 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:07,568 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:08,569 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:09,569 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:10,570 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:11,580 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:12,590 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:13,600 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:14,601 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:15,601 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:16,603 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:17,603 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:18,604 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:19,606 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:20,609 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:21,610 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:22,612 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:23,613 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:24,614 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:25,614 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:26,614 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:27,615 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:28,615 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:29,616 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:30,617 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:31,618 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:32,618 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:33,618 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:34,619 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:35,621 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:36,622 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:37,627 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:38,632 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:39,632 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:40,633 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:41,633 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:42,635 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:43,638 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:44,639 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:45,641 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:46,642 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:47,643 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:48,644 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:49,644 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:50,645 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:51,646 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:52,647 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:53,649 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:54,652 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:55,652 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:56,652 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:57,655 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:58,655 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:53:59,655 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:00,656 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:01,656 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:02,657 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:03,657 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:04,658 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:05,658 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:06,659 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:07,660 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:08,662 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:09,663 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:10,664 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:11,665 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:12,665 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:13,666 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:14,666 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:15,667 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:16,668 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:17,675 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:18,682 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:19,690 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:20,690 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:21,691 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:22,691 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:23,692 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:24,701 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:25,725 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:26,732 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:27,747 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:28,748 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:29,749 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:30,749 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:31,749 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:32,750 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:33,750 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:34,751 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:35,752 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:36,752 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:37,753 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:38,753 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:39,754 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:40,761 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:41,780 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:42,787 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:43,787 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:44,788 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:45,788 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:46,791 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:47,791 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:48,804 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:49,823 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:50,833 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:51,834 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:52,834 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:53,835 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:54,838 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:55,839 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:56,851 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:57,857 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:58,868 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:54:59,868 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:00,868 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:01,869 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:02,870 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:03,870 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:04,871 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:05,871 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:06,872 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:07,872 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:08,872 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:09,873 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:10,873 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:11,874 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:12,874 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:13,874 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:14,875 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:15,876 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:16,878 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:17,879 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:18,882 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:19,885 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:20,890 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:21,891 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:22,894 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:23,895 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:24,901 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:25,912 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:26,913 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:27,916 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:28,922 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:29,924 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:30,924 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:31,927 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:32,928 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:33,938 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:34,944 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:35,945 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:36,946 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:37,946 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:38,947 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:39,950 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:40,957 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:41,963 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:42,965 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:43,966 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:44,966 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:45,967 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:46,969 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:47,971 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:48,972 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:49,973 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:50,975 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:51,986 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:52,987 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:53,993 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:54,997 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:55,998 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:57,003 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:58,003 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:55:59,006 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:56:00,009 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:56:01,010 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0
+2026-04-15 15:56:02,010 - xiaomei_brain.channels.feishu - INFO - [STEP 2] 等待从队列获取消息，队列大小: 0

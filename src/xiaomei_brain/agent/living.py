@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable
 
-from xiaomei_brain.agent.proactive_output import ProactiveOutput, ProactiveTrigger
+from xiaomei_brain.agent.proactive_output import ProactiveOutput, ProactiveTrigger, ProactiveMessage
 
 logger = logging.getLogger(__name__)
 
@@ -258,6 +258,8 @@ class AgentLiving:
                 user_id=msg.user_id,
                 on_chunk=self.on_chat_chunk,
             )
+            if self.on_chat_chunk:
+                print()  # 换行，避免后续日志接在输出后面
             logger.info("[Living] Response: %s", content[:80].replace("\n", "\\n"))
         except Exception as e:
             logger.error("[Living] Chat failed: %s", e)
@@ -283,8 +285,13 @@ class AgentLiving:
 
     # ── Proactive output ─────────────────────────────────────────
 
-    def _send_proactive(self, msg: Any) -> None:
-        """Send a proactive message to channels."""
+    def _send_proactive(self, msg: ProactiveMessage) -> None:
+        """Send a proactive message to CLI (console) channel only.
+
+        Proactive messages go to console, not to external channels (feishu/ws).
+        External channels are handled by their own channel integrations.
+        """
+        # Always log to conversation DB as assistant message
         if self.agent.conversation_db:
             try:
                 self.agent.conversation_db.log(
@@ -295,6 +302,7 @@ class AgentLiving:
             except Exception:
                 pass
 
+        # Print to CLI console if on_proactive callback is set
         if self.on_proactive:
             try:
                 self.on_proactive(msg)
