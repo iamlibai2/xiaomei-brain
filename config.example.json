@@ -1,0 +1,24 @@
+{
+  "llm": {
+    "provider": "zhipu",
+    "model": "glm-4-flash",
+    "api_key": "YOUR_API_KEY_HERE",
+    "base_url": "https://open.bigmodel.cn/api/paas/v4"
+  },
+  "embedding": {
+    "model": "BAAI/bge-m3",
+    "dimension": 1024
+  },
+  "agent": {
+    "idle_threshold": 1800,
+    "dream_interval": 3600,
+    "session_timeout": 7200
+  },
+  "memory": {
+    "lancedb_path": "~/.xiaomei-brain/agents/{agent_id}/memory/lancedb",
+    "conversation_db_path": "~/.xiaomei-brain/agents/{agent_id}/memory/brain.db"
+  },
+  "consciousness": {
+    "inner_thought_interval": 300
+  }
+}
