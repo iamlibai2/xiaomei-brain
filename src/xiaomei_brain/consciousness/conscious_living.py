@@ -128,6 +128,7 @@ class ConsciousLiving:
             "flame": self._cmd_show_flame,
             "tick": self._cmd_tick_count,
             "think": self._cmd_show_inner_thought,
+            "identity": self._cmd_show_identity,
         }
 
         # 回调
@@ -616,6 +617,68 @@ class ConsciousLiving:
             for i, thought in enumerate(si.inner_thought_history[-3:]):
                 print(f"  [{i}] {thought[:80]}", flush=True)
 
+        print(">>> 用户: ", end="", flush=True)
+
+    def _cmd_show_identity(self) -> None:
+        """显示意识全景（完整身份分层）"""
+        logger.info("[CLI] 执行命令: identity")
+        si = self.consciousness.get_self_image()
+
+        print("\n" + "=" * 50, flush=True)
+        print("       意识全景", flush=True)
+        print("=" * 50, flush=True)
+
+        # L0: 先天身份
+        print("\n【L0: 先天身份】（不可变）", flush=True)
+        print(f"  名字: {si.identity}", flush=True)
+        print(f"  诞生: {si.birth_date}", flush=True)
+        print(f"  基础性格: {si.base_personality}", flush=True)
+
+        # L1: 基础特质
+        print("\n【L1: 基础特质】（极难变）", flush=True)
+        for trait in si.core_traits:
+            print(f"  - {trait}", flush=True)
+
+        # L2: 价值观
+        print("\n【L2: 价值观】（缓慢变化）", flush=True)
+        for value in si.values:
+            print(f"  - {value}", flush=True)
+
+        # L3: 社会身份
+        print("\n【L3: 社会身份】（动态变化）", flush=True)
+        print(f"  当前角色: {si.role}", flush=True)
+        print(f"  关系状态: {si.relationship_status}", flush=True)
+        print(f"  关系深度: {si.relationship_depth:.2f}", flush=True)
+        print(f"  用户信任: {si.user_trust_level:.2f}", flush=True)
+
+        # L4: 状态身份
+        print("\n【L4: 状态身份】（实时变化）", flush=True)
+        print(f"  当前心情: {si.current_mood}", flush=True)
+        print(f"  能量水平: {si.energy_level:.2f}", flush=True)
+        print(f"  注意力: {si.attention_focus}", flush=True)
+
+        # 火焰状态
+        print("\n【火焰状态】", flush=True)
+        print(f"  燃烧时长: {int(si.consciousness_age)}秒 ({int(si.consciousness_age/3600)}小时)", flush=True)
+        print(f"  Agent状态: {si.agent_state}", flush=True)
+        print(f"  用户空闲: {int(si.user_idle_duration)}秒", flush=True)
+        print(f"  记忆数量: {si.memory_count}", flush=True)
+        print(f"  累积变化: {len(si.accumulated_changes)}条", flush=True)
+
+        # 内在感知
+        print("\n【内在感知】", flush=True)
+        if si.inner_thought:
+            print(f"  当前想法: {si.inner_thought[:100]}", flush=True)
+        else:
+            print(f"  当前想法: （无）", flush=True)
+        print(f"  历史想法: {len(si.inner_thought_history)}条", flush=True)
+
+        # 梦境
+        if si.last_dream_summary:
+            print("\n【最近梦境】", flush=True)
+            print(f"  {si.last_dream_summary[:150]}", flush=True)
+
+        print("\n" + "-" * 50, flush=True)
         print(">>> 用户: ", end="", flush=True)
 
     # ── Hooks ────────────────────────────────────────────────────
