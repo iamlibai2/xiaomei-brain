@@ -236,7 +236,7 @@ class Consciousness:
 
     # ── L0: 火焰骨架维护 ─────────────────────────────────────────
 
-    def tick_L0(self) -> FlameState:
+    def tick_L0(self, agent_state: str | None = None) -> FlameState:
         """火焰骨架维护，每秒运行。
 
         不假装涌现意识，只维护火焰状态：
@@ -245,10 +245,20 @@ class Consciousness:
         - 记录状态变化（累积到 accumulated_changes）
         - 不返回"假装的意识"
 
+        Args:
+            agent_state: ConsciousLiving 当前状态（可选，用于存在感知）
+
         Returns:
             FlameState: 火焰骨架状态（影子状态，不是真正的意识）
         """
         perception = self._sense()
+
+        # 存在感知：如果传入 agent_state，更新感知数据
+        if agent_state:
+            perception["agent_state"] = agent_state
+            # 同时直接更新 SelfImage，确保状态立即反映
+            self.self_image.agent_state = agent_state
+
         self.perception_buffer.append(perception)
         self._l0_count += 1
         self._consciousness_age += self.L0_INTERVAL

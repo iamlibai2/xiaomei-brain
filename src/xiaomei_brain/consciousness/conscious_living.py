@@ -290,11 +290,16 @@ class ConsciousLiving:
     # ── Flame heartbeat ──────────────────────────────────────────
 
     def _tick_flame(self) -> None:
-        """火焰骨架心跳（每秒）"""
+        """火焰骨架心跳（每秒）
+
+        核心存在感知：
+        - agent_state：我正在运行吗？
+        - consciousness_age：火焰燃烧了多久？
+        """
         self._tick_count += 1
 
-        # L0：火焰骨架维护
-        flame_state = self.consciousness.tick_L0()
+        # L0：火焰骨架维护（传入当前状态用于存在感知）
+        flame_state = self.consciousness.tick_L0(agent_state=self.state.value)
 
         # L1：每60秒检测异常
         if self._tick_count >= 60:
