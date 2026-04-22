@@ -168,3 +168,87 @@ class ConsciousnessStorage:
             "dates": self.list_all_dates(),
             "last_record": records[-1] if records else None,
         }
+
+    # ── 身份变化记录 ─────────────────────────────────────────────
+
+    def _get_changes_file(self) -> Path:
+        """获取变化记录文件路径"""
+        return self._consciousness_dir / "changes.json"
+
+    def _load_changes(self) -> list[dict]:
+        """加载身份变化记录"""
+        file_path = self._get_changes_file()
+        if not file_path.exists():
+            return []
+
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data.get("changes", [])
+        except Exception as e:
+            logger.warning("[ConsciousnessStorage] 加载变化记录失败: %s", e)
+            return []
+
+    def _save_changes(self, changes: list[dict]) -> None:
+        """保存身份变化记录"""
+        file_path = self._get_changes_file()
+
+        data = {
+            "agent_id": self.agent_id,
+            "changes": changes,
+            "updated_at": time.time(),
+        }
+
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            logger.debug("[ConsciousnessStorage] 保存 %d 条变化记录", len(changes))
+        except Exception as e:
+            logger.error("[ConsciousnessStorage] 保存变化记录失败: %s", e)
+
+    def record_identity_change(
+        self,
+        field: str,
+        old_value: Any,
+        new_value: Any,
+        reason: str,
+        source: str = "dream",
+    ) -> None:
+        """记录身份变化
+
+        Args:
+            field: 变化的字段名（如 "core_traits", "values", "role"）
+            old_value: 旧值
+            new_value: 新值
+            reason: 变化原因（如 "梦境反省：用户反馈我变得更体贴了"）
+            source: 来源（dream/user/system）
+        """
+        changes = self._load_changes()
+
+        change_record = {
+            "timestamp": time.time(),
+            "datetime": datetime.now().isoformat(),
+            "field": field,
+            "old_value": old_value,
+            "new_value": new_value,
+            "reason": reason,
+            "source": source,
+        }
+
+        changes.append(change_record)
+        self._save_changes(changes)
+
+        logger.info(
+            "[ConsciousnessStorage] 身份变化: %s 从 '%s' 变为 '%s'（原因：%s）",
+            field, old_value, new_value, reason[:50],
+        )
+
+    def get_identity_changes(self, limit: int = 20) -> list[dict]:
+        """获取身份变化历史"""
+        changes = self._load_changes()
+        return changes[-limit:]
+
+    def get_changes_by_field(self, field: str) -> list[dict]:
+        """获取指定字段的变化历史"""
+        changes = self._load_changes()
+        return [c for c in changes if c.get("field") == field]

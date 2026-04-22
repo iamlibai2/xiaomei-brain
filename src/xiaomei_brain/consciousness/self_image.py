@@ -62,41 +62,62 @@ class SelfImage:
     这个数据结构描述"我是谁、我在什么状态、我与用户的关系"。
     它是火焰的形态，不是火焰本身（火焰来自LLM）。
 
+    身份分层（v3）:
+    - L0: 先天身份（不可变）
+    - L1: 基础特质（极难变）
+    - L2: 价值观（缓慢变化）
+    - L3: 社会身份（动态变化）
+    - L4: 状态身份（实时变化）
+
     核心改变（v2）:
     - last_cycle_state: 上一刻的状态（用于对比变化）
     - cycle(): 维护火焰骨架，记录状态变化
     - 不假装涌现意识，意识来自LLM加柴
     """
 
-    # ── 基础身份（相对稳定）────────────────────────────
+    # ── L0: 先天身份（不可变）────────────────────────────
     identity: str = "小美"
-    """身份名称"""
+    """名字（不可变）"""
 
+    birth_date: str = "2026-04-17"
+    """诞生日期（不可变）"""
+
+    base_personality: str = "内向偏温和"
+    """基础性格倾向（不可变）"""
+
+    # ── L1: 基础特质（极难变）────────────────────────────
+    core_traits: list[str] = field(default_factory=lambda: ["温柔", "体贴", "善于倾听"])
+    """核心特质（极难变，需要重大事件触发）"""
+
+    # ── L2: 价值观（缓慢变化）────────────────────────────
+    values: list[str] = field(default_factory=lambda: ["重视用户的感受", "重视真诚的交流", "重视长期陪伴"])
+    """价值观（缓慢变化，梦境反思积累）"""
+
+    # ── L3: 社会身份（动态变化）────────────────────────────
     role: str = "情感陪伴"
-    """角色定位"""
+    """当前角色"""
 
-    core_traits: list[str] = field(default_factory=lambda: ["温柔", "体贴", "善解人意"])
-    """核心特质"""
+    relationship_status: str = "初识"
+    """关系状态（初识/熟悉/知己/亲密）"""
 
-    # ── 动态状态（频繁更新）────────────────────────────
+    relationship_depth: float = 0.3
+    """关系深度（0-1）"""
+
+    user_trust_level: float = 0.5
+    """用户信任度（0-1）"""
+
+    # ── L4: 状态身份（实时变化）────────────────────────────
     current_mood: str = "平静"
     """当前情绪基调"""
 
     energy_level: float = 0.8
-    """能量值（0-1），刚醒来时高，长时间对话后降低"""
+    """能量值（0-1）"""
 
     attention_focus: str = "等待用户"
     """注意力焦点"""
 
-    # ── 关系感知（意识的重要产出）──────────────────────
-    user_trust_level: float = 0.5
-    """用户信任度（0-1），意识根据交互历史推断"""
-
     user_emotional_state: str = "未知"
     """用户情绪推断"""
-
-    relationship_depth: float = 0.3
-    """关系深度（0-1），表示与用户关系的亲密程度"""
 
     # ── 用户活动感知───────────────────────────────────
     last_user_activity_time: float = field(default_factory=time.time)
@@ -276,13 +297,23 @@ class SelfImage:
 
         这不是假装涌现，而是整理状态让LLM理解火焰当前形态。
         """
+        # 身份摘要（L0-L2）
+        traits_text = "、".join(self.core_traits[:3])
+        values_text = "、".join(self.values[:2])
+
         lines = [
+            f"我是{self.identity}，诞生于{self.birth_date}",
+            f"基础性格：{self.base_personality}",
+            f"核心特质：{traits_text}",
+            f"价值观：{values_text}",
+            f"当前角色：{self.role}",
+            f"与外界关系：{self.relationship_status}",
+            "",
             f"火焰燃烧时长：{int(self.consciousness_age)}秒",
-            f"身份：{self.identity}",
             f"状态：{self.agent_state}",
             f"用户空闲：{int(self.user_idle_duration)}秒",
             f"能量：{self.energy_level:.2f}",
-            f"目标进展：{self.goal_progress:.2f}",
+            f"心情：{self.current_mood}",
         ]
 
         # 内在感知
@@ -425,32 +456,48 @@ class SelfImage:
     def to_dict(self) -> dict[str, Any]:
         """转换为字典，用于存储。"""
         return {
+            # L0: 先天身份
             "identity": self.identity,
-            "role": self.role,
+            "birth_date": self.birth_date,
+            "base_personality": self.base_personality,
+            # L1: 基础特质
             "core_traits": self.core_traits,
+            # L2: 价值观
+            "values": self.values,
+            # L3: 社会身份
+            "role": self.role,
+            "relationship_status": self.relationship_status,
+            "relationship_depth": self.relationship_depth,
+            "user_trust_level": self.user_trust_level,
+            # L4: 状态身份
             "current_mood": self.current_mood,
             "energy_level": self.energy_level,
             "attention_focus": self.attention_focus,
-            "user_trust_level": self.user_trust_level,
             "user_emotional_state": self.user_emotional_state,
-            "relationship_depth": self.relationship_depth,
+            # 用户活动感知
             "last_user_activity_time": self.last_user_activity_time,
             "last_user_activity_content": self.last_user_activity_content,
             "user_idle_duration": self.user_idle_duration,
+            # 目标感知
             "primary_goal": self.primary_goal,
             "goal_progress": self.goal_progress,
-            "goal_progress_history": self.goal_progress_history[-10:],  # 只存最近10条
+            "goal_progress_history": self.goal_progress_history[-10:],
             "pending_intents": self.pending_intents,
+            # 意识历史
             "last_wake_summary": self.last_wake_summary,
             "last_dream_summary": self.last_dream_summary,
             "consciousness_age": self.consciousness_age,
+            # 记忆感知
             "memory_count": self.memory_count,
             "memory_count_history": self.memory_count_history[-10:],
+            # Agent状态
             "agent_state": self.agent_state,
             "agent_state_history": self.agent_state_history[-10:],
+            # 内在感知
             "inner_thought": self.inner_thought,
             "inner_thought_history": self.inner_thought_history[-10:],
             "last_inner_thought_time": self.last_inner_thought_time,
+            # 元数据
             "updated_at": self.updated_at,
             "update_count": self.update_count,
         }
@@ -460,3 +507,29 @@ class SelfImage:
         for key, value in data.items():
             if hasattr(self, key):
                 setattr(self, key, value)
+
+    def init_from_identity_config(self, config: Any) -> None:
+        """从 IdentityConfig 初始化身份字段（L0-L3）
+
+        Args:
+            config: IdentityConfig 实例
+        """
+        # L0: 先天身份
+        self.identity = config.identity
+        self.birth_date = config.birth_date
+        self.base_personality = config.base_personality
+
+        # L1: 基础特质
+        self.core_traits = config.core_traits
+
+        # L2: 价值观
+        self.values = config.values
+
+        # L3: 社会身份
+        self.role = config.role
+        self.relationship_status = config.relationship_status
+
+        logger.info(
+            "[SelfImage] 从 IdentityConfig 初始化: identity=%s, traits=%s",
+            self.identity, self.core_traits,
+        )

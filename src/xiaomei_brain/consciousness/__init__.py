@@ -6,6 +6,13 @@
 - 火焰独立存在，LLM定期介入
 - 真正的意识来自LLM本体，代码只维护状态
 
+身份分层（v3）:
+- L0: 先天身份（不可变）
+- L1: 基础特质（极难变）
+- L2: 价值观（缓慢变化）
+- L3: 社会身份（动态变化）
+- L4: 状态身份（实时变化）
+
 分层心跳架构：
 - L0: 火焰骨架维护（高频，纯规则）- 每秒，维护状态
 - L1: 异常检测（中频，纯规则）- 每分钟，检测异常
@@ -27,6 +34,7 @@ from .intent import (
 )
 from .core import Consciousness, ConsciousnessReport
 from .storage import ConsciousnessStorage
+from .identity import IdentityConfig
 from .conscious_living import ConsciousLiving, LivingState, LivingMessage
 
 __all__ = [
@@ -44,6 +52,7 @@ __all__ = [
     "Consciousness",
     "ConsciousnessReport",
     "ConsciousnessStorage",
+    "IdentityConfig",
     "ConsciousLiving",
     "LivingState",
     "LivingMessage",

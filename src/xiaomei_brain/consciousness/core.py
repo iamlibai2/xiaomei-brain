@@ -25,6 +25,7 @@ from typing import Any
 
 from .self_image import SelfImage, FlameState
 from .intent import Intent, IntentType, create_wait_intent, create_greet_intent, create_reflect_intent, create_dream_intent, create_care_intent
+from .identity import IdentityConfig
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +178,19 @@ class Consciousness:
 
         # 存储回调
         self._storage: Any | None = None
+
+        # 从 IdentityConfig 初始化身份（L0-L3）
+        self._init_from_identity_config()
+
+    def _init_from_identity_config(self) -> None:
+        """从 identity.md 配置初始化身份字段"""
+        agent_id = "xiaomei"  # 默认
+        if self.agent and hasattr(self.agent, "agent_id"):
+            agent_id = self.agent.agent_id
+
+        config = IdentityConfig.load(agent_id)
+        self.self_image.init_from_identity_config(config)
+        logger.info("[Consciousness] 从 IdentityConfig 初始化完成")
 
     def set_storage(self, storage: Any) -> None:
         """设置意识存储"""
