@@ -53,7 +53,7 @@ def main():
     living.on_proactive = on_proactive
     living.on_chat_chunk = on_chat_chunk
 
-    print("测试命令: intent, fuel, flame, tick")
+    print("测试命令: intent, fuel, flame, tick, think")
     print("Agent命令: db, memory, dag")
     print("输入 exit 或 quit 退出")
     print()

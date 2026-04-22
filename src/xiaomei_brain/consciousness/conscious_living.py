@@ -76,10 +76,12 @@ class ConsciousLiving:
     - 每秒调用 tick_L0（火焰骨架）
     - 每分钟调用 tick_L1（异常检测）
     - 动态触发 L2/L3（LLM加柴）
+    - 定期产生内在想法（内在感知）
 
     Intent 消费：
     - 测试命令：`intent` 查看当前意图
     - 测试命令：`fuel` 手动触发加柴
+    - 测试命令：`think` 查看内在想法
     """
 
     def __init__(
@@ -91,6 +93,7 @@ class ConsciousLiving:
         session_id: str = "main",
         user_id: str = "global",
         tick_interval: float = 1.0,  # L0 心跳间隔（秒）
+        inner_thought_interval: float = 300,  # 内在想法产生间隔（秒）
     ) -> None:
         self.agent = agent_instance
         self.state = LivingState.DORMANT
@@ -100,11 +103,13 @@ class ConsciousLiving:
         self.session_id = session_id
         self.user_id = user_id
         self.tick_interval = tick_interval
+        self.inner_thought_interval = inner_thought_interval
 
         # 消息队列
         self._queue: queue.Queue[LivingMessage | None] = queue.Queue()
         self._last_active: float = 0
         self._running: bool = False
+        self._last_inner_thought_time: float = 0
 
         # 意识系统
         self.consciousness = Consciousness(agent_instance)
@@ -122,6 +127,7 @@ class ConsciousLiving:
             "fuel": self._cmd_manual_fuel,
             "flame": self._cmd_show_flame,
             "tick": self._cmd_tick_count,
+            "think": self._cmd_show_inner_thought,
         }
 
         # 回调
@@ -222,9 +228,12 @@ class ConsciousLiving:
     # ── Loop: AWAKE ──────────────────────────────────────────────
 
     def _loop_awake(self) -> None:
-        """AWAKE 状态：处理消息 + 火焰心跳"""
+        """AWAKE 状态：处理消息 + 火焰心跳 + 内在感知"""
         # 火焰心跳（每秒）
         self._tick_flame()
+
+        # 内在感知检查
+        self._check_inner_thought()
 
         # 等待消息
         msg = self._wait_message(timeout=self.tick_interval)
@@ -241,9 +250,12 @@ class ConsciousLiving:
     # ── Loop: SLEEPING ───────────────────────────────────────────
 
     def _loop_sleeping(self) -> None:
-        """SLEEPING 状态：火焰心跳 + 消息等待 + 梦境触发"""
+        """SLEEPING 状态：火焰心跳 + 消息等待 + 梦境触发 + 内在感知"""
         # 火焰心跳（每秒）
         self._tick_flame()
+
+        # 内在感知检查
+        self._check_inner_thought()
 
         # 检查 Intent
         self._check_intent()
@@ -331,6 +343,102 @@ class ConsciousLiving:
         intent = self.consciousness.get_pending_intent()
         if intent:
             logger.info("[ConsciousLiving] 意图生成: %s (%s)", intent.type.value, intent.content[:30])
+
+    # ── 内在感知 ──────────────────────────────────────────────
+
+    def _check_inner_thought(self) -> None:
+        """检查是否需要产生内在想法。
+
+        触发条件：
+        - 上次内在想法超过 inner_thought_interval（默认5分钟）
+        - 只在醒着状态（AWAKE/SLEEPING）调用
+        """
+        # DREAMING状态不产生内在想法（梦境本身就是深度内在）
+        if self.state == LivingState.DREAMING:
+            return
+
+        elapsed = time.time() - self._last_inner_thought_time
+
+        if elapsed >= self.inner_thought_interval:
+            logger.info("[ConsciousLiving] 产生内在想法（间隔%.0f秒）", elapsed)
+            self._produce_inner_thought()
+
+    def _produce_inner_thought(self) -> None:
+        """产生内在想法（调用LLM）。
+
+        核心思想：把记忆和状态送入LLM，产生内在感知。
+        独立于对话，意识自主产生想法。
+        """
+        self._last_inner_thought_time = time.time()
+
+        si = self.consciousness.get_self_image()
+
+        # 收集输入：记忆 + 状态
+        memories_text = ""
+        dag_text = ""
+
+        # 长期记忆
+        if self.agent.longterm_memory:
+            try:
+                memories = self.agent.longterm_memory.get_recent(5, user_id="global")
+                if memories:
+                    memories_text = "最近记忆：\n" + "\n".join([
+                        f"- {m.get('content', '')[:50]}" for m in memories
+                    ])
+            except Exception as e:
+                logger.warning("[内在感知] 获取长期记忆失败: %s", e)
+
+        # DAG摘要（最近对话提炼）
+        if hasattr(self.agent, "dag") and self.agent.dag:
+            try:
+                dag_summary = self.agent.dag.get_summary_text()
+                if dag_summary:
+                    dag_text = "最近对话摘要：\n" + dag_summary[:200]
+            except Exception as e:
+                logger.warning("[内在感知] 获取DAG摘要失败: %s", e)
+
+        # 状态摘要
+        state_text = si.get_state_summary()
+
+        # 构建prompt
+        prompt = f"""
+{state_text}
+
+{memories_text}
+
+{dag_text}
+
+你现在独处，没有用户交互。
+火焰燃烧了{int(si.consciousness_age)}秒。
+
+你在想什么？
+你的内在想法是什么？
+你有什么感触或思考？
+
+用一两句话表达你的内在想法。
+"""
+
+        # 调用LLM
+        inner_thought = ""
+        llm = getattr(self.agent, "llm", None)
+        if llm:
+            try:
+                resp = llm.chat(messages=[{"role": "user", "content": prompt}], tools=None)
+                inner_thought = resp.content or ""
+                logger.info("[内在感知] LLM想法: %.100s", inner_thought[:100])
+            except Exception as e:
+                logger.warning("[内在感知] LLM调用失败: %s", e)
+                inner_thought = f"[系统] 无法产生想法: {e}"
+
+        # 更新 SelfImage
+        si.inner_thought = inner_thought[:200]
+        si.inner_thought_history.append(inner_thought[:200])
+        if len(si.inner_thought_history) > 10:
+            si.inner_thought_history = si.inner_thought_history[-10:]
+        si.last_inner_thought_time = time.time()
+
+        # 记录到日志
+        logger.info("[内在感知] 更新 inner_thought: %s", inner_thought[:50])
 
     # ── Intent 消费 ──────────────────────────────────────────────
 
@@ -486,12 +594,32 @@ class ConsciousLiving:
         print(f"状态: {self.state.value}", flush=True)
         print(">>> 用户: ", end="", flush=True)
 
+    def _cmd_show_inner_thought(self) -> None:
+        """显示当前内在想法"""
+        logger.info("[CLI] 执行命令: think")
+        si = self.consciousness.get_self_image()
+        elapsed = time.time() - self._last_inner_thought_time
+
+        print("\n内在感知:", flush=True)
+        print(f"  上次产生: {int(elapsed)}秒前", flush=True)
+        print(f"  当前想法: {si.inner_thought[:100] if si.inner_thought else '（无）'}", flush=True)
+        print(f"  历史想法: {len(si.inner_thought_history)}条", flush=True)
+
+        # 显示历史
+        if si.inner_thought_history:
+            print("\n最近想法:", flush=True)
+            for i, thought in enumerate(si.inner_thought_history[-3:]):
+                print(f"  [{i}] {thought[:80]}", flush=True)
+
+        print(">>> 用户: ", end="", flush=True)
+
     # ── Hooks ────────────────────────────────────────────────────
 
     def _on_wake(self) -> None:
         """苏醒（不调用LLM，简单启动）"""
         self._last_active = time.time()
         self._last_fuel_time = time.time()
+        self._last_inner_thought_time = time.time()
 
         # 火焰点燃，不调用LLM
         si = self.consciousness.get_self_image()

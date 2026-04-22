@@ -131,6 +131,16 @@ class SelfImage:
     consciousness_age: float = 0.0
     """意识运行时长（秒）"""
 
+    # ── 内在感知（核心新增）───────────────────────────────
+    inner_thought: str = ""
+    """当前内在想法（定期LLM产生，独立于对话）"""
+
+    inner_thought_history: list[str] = field(default_factory=list)
+    """内在想法历史（最近10条）"""
+
+    last_inner_thought_time: float = 0.0
+    """上次产生内在想法的时间"""
+
     # ── 记忆感知───────────────────────────────────────
     memory_count: int = 0
     """长期记忆数量"""
@@ -274,6 +284,10 @@ class SelfImage:
             f"能量：{self.energy_level:.2f}",
             f"目标进展：{self.goal_progress:.2f}",
         ]
+
+        # 内在感知
+        if self.inner_thought:
+            lines.append(f"当前内在想法：{self.inner_thought[:80]}")
 
         # 累积的变化
         if self.accumulated_changes:
@@ -434,6 +448,9 @@ class SelfImage:
             "memory_count_history": self.memory_count_history[-10:],
             "agent_state": self.agent_state,
             "agent_state_history": self.agent_state_history[-10:],
+            "inner_thought": self.inner_thought,
+            "inner_thought_history": self.inner_thought_history[-10:],
+            "last_inner_thought_time": self.last_inner_thought_time,
             "updated_at": self.updated_at,
             "update_count": self.update_count,
         }
