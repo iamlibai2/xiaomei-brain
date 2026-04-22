@@ -17,8 +17,15 @@ import sys
 import os
 import threading
 import time
+import logging
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+
+# 设置日志（显示 CLI 和 ConsciousLiving 的日志）
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
+)
 
 from xiaomei_brain.agent.agent_manager import AgentManager
 from xiaomei_brain.consciousness.conscious_living import ConsciousLiving
@@ -54,7 +61,7 @@ def main():
     # 后台运行 ConsciousLiving
     thread = threading.Thread(target=living.run, daemon=True)
     thread.start()
-    time.sleep(2)  # 等待启动
+    time.sleep(2)  # 等待启动完成
 
     # 主线程：用户输入
     try:

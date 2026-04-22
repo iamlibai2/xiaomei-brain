@@ -385,25 +385,34 @@ class ConsciousLiving:
 
     def _handle_message(self, msg: LivingMessage) -> None:
         """处理消息"""
+        logger.info("[ConsciousLiving] 收到消息: %s", msg.content[:50])
+
         # Intent 测试命令
         if msg.content.lower() in self._intent_commands:
             cmd = msg.content.lower()
+            logger.info("[ConsciousLiving] 执行测试命令: %s", cmd)
             self._intent_commands[cmd]()
             return
 
         # Agent 命令（如 db/memory/dag）
         if self.agent.commands:
+            logger.info("[ConsciousLiving] 尝试 Agent 命令: %s", msg.content)
             result = self.agent.commands.execute(
                 msg.content,
                 user_id=msg.user_id,
                 session_id=msg.session_id,
             )
             if result:
-                logger.info("[ConsciousLiving] Command: %s", result.output)
+                logger.info("[ConsciousLiving] Agent 命令成功")
+                print(f"\n{result.output}", flush=True)
+                print(">>> 用户: ", end="", flush=True)
                 return
+            else:
+                logger.info("[ConsciousLiving] Agent 命令无匹配，转为对话")
 
         # 正常对话
         try:
+            print("\n小美: ", end="", flush=True)
             content = self.agent.chat(
                 msg.content,
                 session_id=msg.session_id,
@@ -412,12 +421,15 @@ class ConsciousLiving:
             )
             if self.on_chat_chunk:
                 print()
-            logger.info("[ConsciousLiving] Response: %s", content[:80].replace("\n", "\\n"))
+            logger.info("[ConsciousLiving] 对话完成: %s", content[:80].replace("\n", "\\n"))
+            print(">>> 用户: ", end="", flush=True)
 
             # 更新意识系统
             self.consciousness.on_user_interaction(msg.content, content)
         except Exception as e:
             logger.error("[ConsciousLiving] Chat failed: %s", e)
+            print(f"\n[错误] {e}", flush=True)
+            print(">>> 用户: ", end="", flush=True)
 
     def _wait_message(self, timeout: float) -> LivingMessage | None:
         """等待消息"""
@@ -430,38 +442,49 @@ class ConsciousLiving:
 
     def _cmd_show_intent(self) -> None:
         """显示当前 Intent"""
+        logger.info("[CLI] 执行命令: intent")
         intent = self.consciousness.get_pending_intent()
         if intent:
-            print(f"当前意图: {intent.type.value} (priority={intent.priority})")
-            print(f"内容: {intent.content}")
+            print(f"\n当前意图: {intent.type.value} (priority={intent.priority})", flush=True)
+            print(f"内容: {intent.content}", flush=True)
+            print(">>> 用户: ", end="", flush=True)
         else:
-            print("无待处理意图")
+            print("\n无待处理意图", flush=True)
+            print(">>> 用户: ", end="", flush=True)
 
     def _cmd_manual_fuel(self) -> None:
         """手动触发加柴"""
-        print("手动触发 L2 加柴...")
+        logger.info("[CLI] 执行命令: fuel")
+        print("\n手动触发 L2 加柴...", flush=True)
         self._fuel_L2("manual")
 
         intent = self.consciousness.get_pending_intent()
         if intent:
-            print(f"生成的意图: {intent.type.value}")
-            print(f"内容: {intent.content[:50]}")
+            print(f"生成的意图: {intent.type.value}", flush=True)
+            print(f"内容: {intent.content[:50]}", flush=True)
+        else:
+            print("无意图生成（LLM未返回有效意图）", flush=True)
+        print(">>> 用户: ", end="", flush=True)
 
     def _cmd_show_flame(self) -> None:
         """显示火焰状态"""
+        logger.info("[CLI] 执行命令: flame")
         si = self.consciousness.get_self_image()
-        print(f"火焰状态:")
-        print(f"  燃烧时长: {int(si.consciousness_age)}秒")
-        print(f"  状态: {si.agent_state}")
-        print(f"  用户空闲: {int(si.user_idle_duration)}秒")
-        print(f"  能量: {si.energy_level:.2f}")
-        print(f"  累积变化: {len(si.accumulated_changes)}条")
-        print(f"  上次加柴: {int(time.time() - self._last_fuel_time)}秒前")
+        print("\n火焰状态:", flush=True)
+        print(f"  燃烧时长: {int(si.consciousness_age)}秒", flush=True)
+        print(f"  状态: {si.agent_state}", flush=True)
+        print(f"  用户空闲: {int(si.user_idle_duration)}秒", flush=True)
+        print(f"  能量: {si.energy_level:.2f}", flush=True)
+        print(f"  累积变化: {len(si.accumulated_changes)}条", flush=True)
+        print(f"  上次加柴: {int(time.time() - self._last_fuel_time)}秒前", flush=True)
+        print(">>> 用户: ", end="", flush=True)
 
     def _cmd_tick_count(self) -> None:
         """显示心跳计数"""
-        print(f"心跳计数: {self._tick_count}")
-        print(f"状态: {self.state.value}")
+        logger.info("[CLI] 执行命令: tick")
+        print(f"\n心跳计数: {self._tick_count}", flush=True)
+        print(f"状态: {self.state.value}", flush=True)
+        print(">>> 用户: ", end="", flush=True)
 
     # ── Hooks ────────────────────────────────────────────────────
 
