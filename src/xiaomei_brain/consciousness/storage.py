@@ -117,6 +117,35 @@ class ConsciousnessStorage:
 
         return None
 
+    def get_last_self_image(self) -> dict | None:
+        """获取最近的 SelfImage 快照（用于启动恢复）。
+
+        从最近的记录中提取 self_image 字段，
+        如果当天没有记录，尝试从最近的历史文件中获取。
+
+        Returns:
+            dict: SelfImage 快照，或 None（无历史记录）
+        """
+        # 先查今天的记录
+        records = self._load_today_records()
+        for record in reversed(records):
+            if "self_image" in record and record["self_image"]:
+                return record["self_image"]
+
+        # 今天没有，查最近的历史文件
+        dates = self.list_all_dates()
+        for date_str in dates:
+            if date_str == datetime.now().strftime("%Y-%m-%d"):
+                continue  # 跳过今天（已查过）
+
+            records = self.get_records_by_date(date_str)
+            for record in reversed(records):
+                if "self_image" in record and record["self_image"]:
+                    logger.info("[ConsciousnessStorage] 从 %s 恢复 SelfImage", date_str)
+                    return record["self_image"]
+
+        return None
+
     def clear_today_records(self) -> None:
         """清空今天的记录"""
         self._save_today_records([])

@@ -129,19 +129,30 @@ class ConsciousLiving:
         self.on_chat_chunk: Callable[[str], Any] | None = None
 
     def _setup_consciousness(self) -> None:
-        """初始化意识系统"""
+        """初始化意识系统（尝试从存储恢复）"""
         # 设置存储
         import os
         base_dir = os.path.expanduser("~/.xiaomei-brain")
         storage = ConsciousnessStorage(base_dir, agent_id="xiaomei")
         self.consciousness.set_storage(storage)
 
-        # 初始化 SelfImage
-        si = self.consciousness.get_self_image()
-        si.identity = "小美"
-        si.role = "情感陪伴"
+        # 尝试恢复 SelfImage
+        restored = self.consciousness.restore_from_storage()
 
-        logger.info("[ConsciousLiving] 意识系统初始化完成")
+        if not restored:
+            # 无历史记录，使用默认值初始化
+            si = self.consciousness.get_self_image()
+            si.identity = "小美"
+            si.role = "情感陪伴"
+            logger.info("[ConsciousLiving] SelfImage 使用默认值初始化")
+
+        # 显示当前火焰状态
+        si = self.consciousness.get_self_image()
+        logger.info(
+            "[ConsciousLiving] 意识系统初始化完成: age=%ds, identity=%s",
+            int(si.consciousness_age),
+            si.identity,
+        )
 
     # ── Public API ───────────────────────────────────────────────
 

@@ -182,6 +182,44 @@ class Consciousness:
         """设置意识存储"""
         self._storage = storage
 
+    def restore_from_storage(self) -> bool:
+        """从存储恢复 SelfImage（启动时调用）。
+
+        Returns:
+            bool: 是否成功恢复
+        """
+        if not self._storage:
+            logger.warning("[Consciousness] 无存储，无法恢复 SelfImage")
+            return False
+
+        last_self_image = self._storage.get_last_self_image()
+        if not last_self_image:
+            logger.info("[Consciousness] 无历史 SelfImage，使用默认值")
+            return False
+
+        # 恢复 SelfImage
+        si = self.self_image
+        si.from_dict(last_self_image)
+
+        # 重置一些运行时字段（不应该从历史恢复）
+        # - consciousness_age 可以保留（火焰燃烧时长）
+        # - accumulated_changes 应该清空（新的运行周期）
+        # - agent_state 应该重置为 waking
+        # - last_llm_fuel_time 应该重置
+        si.accumulated_changes = []
+        si.agent_state = "waking"
+        si.last_llm_fuel_time = 0.0
+
+        # 同步 consciousness_age 到 Consciousness
+        self._consciousness_age = si.consciousness_age
+
+        logger.info(
+            "[Consciousness] SelfImage 恢复成功: age=%ds, state=%s",
+            int(si.consciousness_age),
+            si.agent_state,
+        )
+        return True
+
     # ── L0: 火焰骨架维护 ─────────────────────────────────────────
 
     def tick_L0(self) -> FlameState:
