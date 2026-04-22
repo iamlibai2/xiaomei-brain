@@ -27,6 +27,7 @@ from .intent import (
 )
 from .core import Consciousness, ConsciousnessReport
 from .storage import ConsciousnessStorage
+from .conscious_living import ConsciousLiving, LivingState, LivingMessage
 
 __all__ = [
     "SelfImage",
@@ -43,4 +44,7 @@ __all__ = [
     "Consciousness",
     "ConsciousnessReport",
     "ConsciousnessStorage",
+    "ConsciousLiving",
+    "LivingState",
+    "LivingMessage",
 ]
