@@ -199,6 +199,11 @@ class ConsciousLiving:
         self._queue.put_nowait(None)
 
     @property
+    def is_running(self) -> bool:
+        """是否正在运行"""
+        return self._running
+
+    @property
     def living_state(self) -> str:
         """返回当前状态（供 Consciousness._sense() 使用）"""
         return self.state.value

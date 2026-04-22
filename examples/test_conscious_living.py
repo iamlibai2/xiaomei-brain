@@ -76,6 +76,8 @@ def test_conscious_living():
     ]
 
     for msg, wait in test_messages:
+        if not living.is_running:
+            break
         print(f"\n>>> 用户: {msg}")
         living.put_message(msg)
         time.sleep(wait)
