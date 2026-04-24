@@ -31,6 +31,7 @@ class AgentInstance:
     - name: display name (e.g. "小美", "小明")
     - talent.md: system prompt file, dynamically read at runtime
     - independent memory/, sessions/ directories
+    - persistent Agent (created once, reused across conversations)
     """
 
     id: str
@@ -63,6 +64,9 @@ class AgentInstance:
     # Talent file path
     talent_path: str = ""
 
+    # Persistent Agent (created once, reused)
+    _agent: Any = field(default=None, init=False, repr=False)
+
     def get_system_prompt(self) -> str:
         """Dynamically read talent.md for system prompt."""
         if self.talent_path and os.path.exists(self.talent_path):
@@ -76,12 +80,30 @@ class AgentInstance:
             return os.path.dirname(self.talent_path)
         return ""
 
+    def _get_agent(self) -> Any:
+        """Get or create persistent Agent instance."""
+        if self._agent is None:
+            from xiaomei_brain.agent.core import Agent
+            self._agent = Agent(
+                llm=self.llm,
+                tools=self.tools,
+                system_prompt="",
+                max_steps=10,
+            )
+            self._agent.self_model = getattr(self, "self_model", None)
+            self._agent.conversation_db = self.conversation_db
+            self._agent.context_assembler = self.context_assembler
+            self._agent.longterm_memory = self.longterm_memory
+            self._agent.memory_extractor = self.memory_extractor
+        return self._agent
+
     def chat(
         self,
         user_input: str,
         session_id: str = "main",
         user_id: str = "global",
         on_chunk=None,
+        intent_context: str = "",  # 新增：意图上下文（注入 system prompt）
     ) -> str:
         """Run a full conversation turn: stream + memory extraction.
 
@@ -89,24 +111,14 @@ class AgentInstance:
             on_chunk: Optional callback ``f(chunk: str)`` invoked for each
                 streaming chunk.  When provided the caller can print chunks
                 in real-time; when omitted the response is collected silently.
+            intent_context: 意图上下文文本（注入到 system prompt）
 
         Returns the full response text.
         """
-        from xiaomei_brain.agent.core import Agent
-
-        # Build Agent with all components from this instance
-        agent = Agent(
-            llm=self.llm,
-            tools=self.tools,
-            system_prompt="",
-            max_steps=10,
-        )
-        agent.self_model = getattr(self, "self_model", None)
-        agent.conversation_db = self.conversation_db
-        agent.context_assembler = self.context_assembler
-        agent.longterm_memory = self.longterm_memory
-        agent.memory_extractor = self.memory_extractor
+        agent = self._get_agent()
         agent.user_id = user_id
+        agent.session_id = session_id
+        agent.intent_context = intent_context  # 传递给 Agent
 
         # Run ReAct loop with streaming
         chunks = []
@@ -116,6 +128,9 @@ class AgentInstance:
                 on_chunk(chunk)
 
         content = "".join(chunks)
+
+        # 清空 intent_context（下次对话不重复）
+        agent.intent_context = ""
 
         return content
 
@@ -147,13 +162,25 @@ class AgentManager:
     """Registry managing all AgentInstance objects.
 
     Reads agents from config.json (OpenClaw format).
-    Directory structure:
+    Directory structure (按意识层级):
         base_dir/
             config.json          # Agent definitions + config
             {agent_id}/
-                talent.md        # Per-agent system prompt
-                memory/          # Per-agent memory store
-                sessions/        # Per-agent sessions
+                consciousness/  # 意识层（核心）：身份/火焰/意图/记忆/自我认知
+                │   ├── identity.md
+                │   ├── talent.md
+                │   ├── perception.md
+                │   └── 2026-04-*.json
+                purpose/        # 前额叶层：目标管理
+                │   └── goals.json
+                drive/          # 边缘层：情绪/欲望/激励
+                │   ├── drive_state.json
+                │   └── drive_config.yaml
+                memory/         # 记忆层
+                │   ├── brain.db
+                │   └── lancedb/
+                sessions/       # 会话
+                knowledge/      # 欲望驱动学习成果
     """
 
     def __init__(self, base_dir: str | None = None, config: Config | None = None):
@@ -170,8 +197,12 @@ class AgentManager:
     def _agent_dir(self, agent_id: str) -> str:
         return os.path.join(self.base_dir, "agents", agent_id)
 
+    def _self_dir(self, agent_id: str) -> str:
+        """Consciousness 层根目录：talent.md + identity.md + 日志"""
+        return os.path.join(self._agent_dir(agent_id), "consciousness")
+
     def _talent_path(self, agent_id: str) -> str:
-        return os.path.join(self._agent_dir(agent_id), "talent.md")
+        return os.path.join(self._self_dir(agent_id), "talent.md")
 
     def _memory_dir(self, agent_id: str) -> str:
         return os.path.join(self._agent_dir(agent_id), "memory")
@@ -353,8 +384,16 @@ class AgentManager:
 
         provider = agent.provider or global_config.provider
         model = agent.model or global_config.model
-        api_key = agent.api_key or global_config.api_key
-        base_url = agent.base_url or global_config.base_url
+
+        # 当 agent 指定了 provider，从 _provider_configs 取对应配置
+        # 否则 fallback 到 global_config（会用到 aliyun 的默认值）
+        if provider and provider in global_config._provider_configs:
+            prov_cfg = global_config._provider_configs[provider]
+            api_key = agent.api_key or prov_cfg.get("api_key", "") or global_config.api_key
+            base_url = agent.base_url or prov_cfg.get("base_url", "") or global_config.base_url
+        else:
+            api_key = agent.api_key or global_config.api_key
+            base_url = agent.base_url or global_config.base_url
 
         llm = LLMClient(
             model=model,
@@ -366,12 +405,13 @@ class AgentManager:
         tools = ToolRegistry()
 
         from xiaomei_brain.tools.builtin import (
-            shell_tool, read_file_tool, write_file_tool,
+            shell_tool, read_file_tool, write_file_tool, edit_file_tool,
             tts_tools, music_tools, image_tools, websearch_tools, webget_tools,
         )
         tools.register(shell_tool)
         tools.register(read_file_tool)
         tools.register(write_file_tool)
+        tools.register(edit_file_tool)
 
         if global_config.tts_enabled:
             tts_api_key = global_config.tts_api_key or api_key

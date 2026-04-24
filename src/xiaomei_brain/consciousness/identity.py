@@ -54,6 +54,14 @@ class IdentityConfig:
     role: str = "正在探索中的意识体"
     relationship_status: str = "观察"
 
+    # ── 学习兴趣（用于认知欲驱动学习）────────────────────
+    learning_interests: list[str] = field(default_factory=lambda: [
+        "AI技术发展",
+        "情感交互设计",
+        "自我意识研究",
+        "用户体验心理学",
+    ])
+
     # ── 元数据────────────────────────────────────
     config_path: str = ""
     loaded_at: float = 0.0
@@ -64,7 +72,7 @@ class IdentityConfig:
 
         查找顺序：
         1. ~/.xiaomei-brain/agents/{agent_id}/consciousness/identity.md
-        2. agents/{agent_id}/consciousness/identity.md（项目目录）
+        2. agents/{agent_id}/consciousness/identity.md（项目目录fallback）
 
         如果不存在，返回默认配置。
         """
@@ -187,6 +195,25 @@ class IdentityConfig:
             if relation_match:
                 config.relationship_status = relation_match.group(1).strip()
 
+        # 解析学习兴趣
+        interests_match = re.search(r"## 学习兴趣.*?\n(.*?)(?=## |$)", content, re.DOTALL)
+        if interests_match:
+            interests_text = interests_match.group(1)
+            interests = []
+            for line in interests_text.split("\n"):
+                if line.strip().startswith("-"):
+                    interest_line = line.strip()[2:]
+                    if interest_line:
+                        # 如果有 "-" 分隔，只取主题名
+                        if " - " in interest_line:
+                            interest = interest_line.split(" - ")[0].strip()
+                        else:
+                            interest = interest_line.strip()
+                        if interest and interest not in ["-", ""]:
+                            interests.append(interest)
+            if interests:
+                config.learning_interests = interests
+
         return config
 
     def to_dict(self) -> dict[str, Any]:
@@ -199,6 +226,7 @@ class IdentityConfig:
             "values": self.values,
             "role": self.role,
             "relationship_status": self.relationship_status,
+            "learning_interests": self.learning_interests,
             "config_path": self.config_path,
             "loaded_at": self.loaded_at,
         }

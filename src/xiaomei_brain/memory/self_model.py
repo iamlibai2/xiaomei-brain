@@ -62,6 +62,7 @@ class SelfModel:
     habits: list[dict[str, Any]] = field(default_factory=list)
     emotional_baseline: dict[str, Any] = field(default_factory=dict)
     growth_log: list[GrowthEntry] = field(default_factory=list)
+    personality: str = ""               # 人格类型（如 ISTP），完整文本
 
     # ── Serialization ───────────────────────────────────────────
 
@@ -153,6 +154,10 @@ class SelfModel:
                     lines.append(f"- {c}")
             lines.append("")
 
+        # 人格
+        if self.personality:
+            lines.append(f"# 人格\n{self.personality}\n")
+
         return "\n".join(lines).strip() + "\n"
 
     @classmethod
@@ -204,6 +209,10 @@ class SelfModel:
             model.seed_text = sections["原始种子（不可修改）"].strip()
         elif "原始种子" in sections:
             model.seed_text = sections["原始种子"].strip()
+
+        # 人格（完整提取，不做子解析）
+        if "人格" in sections:
+            model.personality = sections["人格"].strip()
 
         # 自我认知
         if "自我认知" in sections:
@@ -282,6 +291,9 @@ class SelfModel:
 
         if self.purpose_seed.boundaries:
             lines.append("我的底线：" + "、".join(self.purpose_seed.boundaries))
+
+        if self.personality:
+            lines.append(f"我的人格：{self.personality}")
 
         # Add self-cognition highlights
         strengths = self.self_cognition.get("擅长", [])
