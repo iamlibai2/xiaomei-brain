@@ -147,12 +147,6 @@ def main():
 
             living.put_message(msg)
 
-            # Process all pending messages synchronously
-            while True:
-                m = living._wait_message(timeout=0)
-                if m is None:
-                    break
-                living._handle_message(m)
     except KeyboardInterrupt:
         print("\n正在停止...")
         living.stop()

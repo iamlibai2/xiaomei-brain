@@ -1,16 +1,12 @@
 """
 Intent Understanding - 用户意图理解 + 目标分解
 
-分析用户输入，提取：
-- 意图类型：TASK/QUERY/CHAT/CLARIFICATION
-- 目标：新建/关联/修改
-- 子目标：自动分解（如果是 TASK）
-- 置信度
+两阶段设计：
+1. 第1次LLM：判断意图类型（TASK/QUERY/CHAT/CLARIFICATION）
+2. 第2次LLM：如果是TASK，分解子目标
 
 流程：
-用户输入 → LLM 分析 → IntentResult（含子目标） → PurposeEngine 处理
-
-合并优化：一次 LLM 调用完成意图识别 + 目标分解
+用户输入 → 意图判断 → 目标分解（仅TASK） → IntentResult → PurposeEngine 处理
 """
 
 import logging
@@ -81,100 +77,51 @@ class IntentResult:
         return self.intent_type == IntentType.QUERY
 
 
-INTENT_PROMPT = """
-分析用户输入，提取意图和目标，并自动分解子目标。
+INTENT_CLASSIFY_PROMPT = """
+分析用户输入，判断意图类型。
 
 【当前状态】
 存在意义：{meaning}
 当前目标：{current_goal}
-当前目标深度：{current_goal_depth}（0=顶层目标，1=一级子目标/已拆解，2=二级子目标/不可再拆）
+当前目标深度：{current_goal_depth}（0=顶层目标，1=一级子目标/已拆解）
 待执行目标：{pending_goals}
-最大分解深度：{max_depth}
 
 【用户输入】
 {user_input}
 
-请分析：
-1. 意图类型（intent_type）：
-   - task: 用户要求执行某个任务
-   - query: 用户提出问题
-   - chat: 闲聊，无明确任务
-   - clarification: 澄清之前的对话
+请判断意图类型（intent_type），只需返回一个类型：
 
-2. 目标信息（如果 intent_type 是 task）：
-   - description: 目标描述（一句话）
-   - goal_type: executable（可执行）
-   - relation: 与现有目标的关系
-     - new: 新目标
-     - sub_goal_of: 是某目标的子目标（需指定 target_goal_id）
-     - modifies: 修改某目标（需指定 target_goal_id）
-
-3. 子目标分解（仅当任务需要时）：
-   - 复杂任务（涉及多步骤、选择、计划）才需要分解为 2-4 个子目标
-   - **单步操作不需要分解**，直接返回空 sub_goals：
-     - 清空/删除/重置类："清空记忆"、"删除所有记录"、"重置设置"
-     - 简单查询："查看状态"、"显示列表"
-     - 单一执行："执行备份"、"开始同步"
-   - 子目标应该有逻辑顺序，每个用一句话描述
-
-4. 置信度（confidence）：0.0-1.0
+- task: 用户要求执行某个任务（如：帮我做X、开发X、做个X）
+- query: 用户提出问题（如：X是什么、怎么做X、如何X）
+- chat: 闲聊，无明确任务目的
+- clarification: 请求解释或细化已有的目标
 
 重要规则：
-- **clarification 的准确定义（极其重要）**：
-  - clarification = 用户在请求解释、细化、或修改**已有的、正在讨论的**目标
-  - 典型问句：以"什么/哪个/怎么/为何/能否详细说说"开头，或明确要求解释某目标
-  - 例如："ERP是什么"、"目标具体要怎么做"、"为什么要分这几步"
-  - **明确的任务请求（要做什么）永远不是 clarification**
-  - 例如："帮我做一个ERP"、"开发一个网站"、"做个博客" → task
-  - 当前目标深度>=1 时，用户消息一定是当前子目标的澄清/细化，intent_type 为 clarification
-  - 当前目标深度=0 时，只有明确在问"某目标是什么/怎么做"的才是 clarification
-- **软件开发/项目类请求 → 必须是 task（极其重要）**
-  - 关键词：做个X、开发X、做个软件/应用/小程序/网站/系统、帮我做、帮我写、帮我开发
-  - 即使涉及写代码，也是复杂多步骤工作（需求分析→设计→编码→测试），必须归类为 task
-  - 置信度 0.7-0.9，不要给低分
-- **简单操作（单次工具调用即可完成）→ 分类为 query，而不是 task**
-  - 例如：搜索网页、翻译单词、查天气、读文件、执行单条shell命令
-  - 这些不需要目标分解，Agent 在对话中直接调用工具即可
-- **极简指令处理**：
-  - 用户输入非常简短且 imperative（祈使句），如"随便"、"快写"、"开始"、"做了"
-  - 但"帮我做X"（X≥3字）不是极简指令，是完整任务请求，必须归类为 task
-- **停止/放弃已有目标（极其重要）**：
-  - 如果用户要求停止、放弃、取消、中止某个已在执行的任务 → relation=modifies，target_goal_id=匹配的已有目标
-  - 关键词模式：别[X]了、停止[X]、取消[X]、不做[X]了、算了[X]、中止[X]
-  - 例："别写ERP了" → 匹配现有ERP目标，relation=modifies，目标是"停止ERP开发"
-  - 例："取消这个任务" → 匹配当前执行中的目标，relation=modifies
-  - 只有当没有匹配的已有目标时，才创建新的"停止X"目标
+- **停止/放弃已有目标 → task**（如"别做X了"、"取消这个任务"）
+- **明确的任务请求 → task**（如"帮我做一个ERP"、"开发一个网站"）
+- **以"什么/怎么/如何/为什么"开头 → query**（如"ERP是什么"）
+- **当前有活跃目标时，用户消息是关于当前目标的细化/解释 → clarification**
 
-5. 确认信息（关键）：如果第一个子目标涉及需要用户选择的参数，
-   请填写 confirm_question 和 confirm_options。
-   适用场景（不限于此）：
-   - 技术栈选择：子目标如"确定技术栈"
-   - 开发语言选择：子目标如"选择开发语言"
-   - 数据库选择：子目标如"确定数据库方案"
-   - 框架选择：子目标如"选择后端框架"
-   - 文章风格/字数：子目标如"确认文章风格和篇幅"
-   - 设计方向：子目标如"确认设计方案"
-   - 任何需要用户拍板的参数
+返回 JSON：
+{{"intent_type": "task/query/chat/clarification", "confidence": 0.0-1.0, "reasoning": "判断理由", "goal_description": "目标描述（仅task时有）"}}
+"""
 
-   格式示例：
-   "confirm_question": "请选择开发技术栈：",
-   "confirm_options": ["Python/Flask", "Python/Django", "Java/Spring", "Go/Gin"]
 
-   如果第一个子目标不涉及选择，confirm_question 设为空字符串，
-   confirm_options 设为空数组。
+GOAL_DECOMPOSE_PROMPT = """
+给定一个目标，将其分解为子目标。
 
-返回 JSON 格式：
-{{
-  "intent_type": "task/query/chat/clarification",
-  "goals": [{{"description": "...", "goal_type": "executable"}}],
-  "sub_goals": ["子目标1", "子目标2", "子目标3"],
-  "relation": "new/sub_goal_of/modifies/none",
-  "target_goal_id": "xxx",
-  "confidence": 0.8,
-  "reasoning": "用户说...",
-  "confirm_question": "请选择开发技术栈：",
-  "confirm_options": ["Python/Flask", "Python/Django", "Java/Spring"]
-}}
+【目标】
+{goal_description}
+
+分解原则：
+- 涉及技术选择（语言/框架/数据库/方案）的 → 必须有对应的"确认X"子目标
+- 复杂项目 → 按"了解需求 → 制定计划 → 执行 → 验收"顺序分解
+- 单步操作（清空/删除/重置/简单查询）→ 返回空数组，不分解
+
+返回 JSON：
+{{"sub_goals": ["子目标1", "子目标2"]}}
+如果不需要分解：
+{{"sub_goals": []}}
 """
 
 
@@ -183,6 +130,61 @@ class IntentUnderstanding:
 
     def __init__(self, llm_client: Any = None):
         self.llm = llm_client
+
+    def understand_intent_type(
+        self,
+        user_input: str,
+        meaning: str,
+        current_goal: str,
+        current_goal_depth: int = 0,
+        pending_goals: str = "",
+    ) -> dict:
+        """第1次LLM调用：判断意图类型。
+
+        返回：
+            {"intent_type": IntentType, "confidence": float,
+             "reasoning": str, "goal_description": str}
+        """
+        if not self.llm:
+            logger.warning("[Intent] 无 LLM，使用规则分析")
+            return self._rule_classify(user_input)
+
+        prompt = INTENT_CLASSIFY_PROMPT.format(
+            meaning=meaning,
+            current_goal=current_goal or "无",
+            current_goal_depth=current_goal_depth,
+            pending_goals=pending_goals or "无",
+            user_input=user_input,
+        )
+
+        try:
+            response = self.llm.chat([{"role": "user", "content": prompt}])
+            text = response.content if hasattr(response, "content") else str(response)
+            return self._parse_classify_response(text)
+        except Exception as e:
+            logger.warning(f"[Intent] 意图判断失败: {e}")
+            return self._rule_classify(user_input)
+
+    def decompose_goal(self, goal_description: str) -> list[str]:
+        """第2次LLM调用：目标分解。
+
+        返回：子目标描述列表（空列表=单步任务）
+        """
+        if not self.llm:
+            # 无LLM时用规则判断是否需要分解
+            return self._rule_should_decompose(goal_description)
+
+        prompt = GOAL_DECOMPOSE_PROMPT.format(
+            goal_description=goal_description,
+        )
+
+        try:
+            response = self.llm.chat([{"role": "user", "content": prompt}])
+            text = response.content if hasattr(response, "content") else str(response)
+            return self._parse_decompose_response(text)
+        except Exception as e:
+            logger.warning(f"[Intent] 目标分解失败: {e}")
+            return []
 
     def understand(
         self,
@@ -193,57 +195,55 @@ class IntentUnderstanding:
         pending_goals: str = "",
     ) -> IntentResult:
         """
-        分析用户输入，提取意图
-
-        user_input: 用户消息
-        meaning: 存在意义摘要
-        current_goal: 当前活跃目标描述
-        current_goal_depth: 当前目标深度（0=顶层，1=一级子目标，2=二级）
-        pending_goals: 待执行目标列表描述
-
-        返回：IntentResult
+        分析用户输入，提取意图。两阶段LLM：
+        1. 判断意图类型
+        2. 如果是TASK，分解子目标
         """
-        if not self.llm:
-            logger.warning("[IntentUnderstanding] 无 LLM，使用规则分析")
-            return self._rule_analyze(user_input, current_goal)
-
-        # 构建 prompt
-        prompt = INTENT_PROMPT.format(
-            meaning=meaning,
-            current_goal=current_goal or "无",
-            current_goal_depth=current_goal_depth,
-            max_depth=Goal.MAX_DEPTH,
-            pending_goals=pending_goals or "无",
-            user_input=user_input,
+        # 第1次LLM：判断意图类型
+        type_info = self.understand_intent_type(
+            user_input, meaning, current_goal, current_goal_depth, pending_goals
         )
 
-        try:
-            # 调用 LLM
-            if hasattr(self.llm, "chat"):
-                messages = [{"role": "user", "content": prompt}]
-                response = self.llm.chat(messages)
-                if response and hasattr(response, "content"):
-                    text = response.content
-                else:
-                    text = str(response)
-            else:
-                text = str(self.llm.call(prompt))
+        intent_type = type_info["intent_type"]
+        confidence = type_info["confidence"]
+        reasoning = type_info["reasoning"]
+        goal_description = type_info.get("goal_description", "")
 
-            # 解析结果
-            result = self._parse_response(text)
+        logger.info(
+            f"[Intent] 意图判断: type={intent_type.value}, "
+            f"confidence={confidence:.2f}, goal={goal_description[:30] if goal_description else 'none'}"
+        )
 
-            logger.info(
-                f"[IntentUnderstanding] 分析完成: "
-                f"type={result.intent_type.value}, "
-                f"goals={len(result.goals)}, "
-                f"confidence={result.confidence:.2f}"
+        # 非TASK，不需要分解
+        if intent_type != IntentType.TASK:
+            return IntentResult(
+                intent_type=intent_type,
+                confidence=confidence,
+                reasoning=reasoning,
             )
 
-            return result
+        # 第2次LLM：分解子目标
+        sub_goals = self.decompose_goal(goal_description) if goal_description else []
 
-        except Exception as e:
-            logger.warning(f"[IntentUnderstanding] LLM 分析失败: {e}")
-            return self._rule_analyze(user_input, current_goal)
+        # 构造目标
+        goal = Goal(
+            description=goal_description,
+            goal_type=GoalType.EXECUTABLE,
+            status=GoalStatus.PENDING,
+        )
+
+        logger.info(
+            f"[Intent] 目标分解: {len(sub_goals)}个子目标"
+        )
+
+        return IntentResult(
+            intent_type=intent_type,
+            goals=[goal],
+            sub_goals=sub_goals,
+            relation=GoalRelation.NEW,
+            confidence=confidence,
+            reasoning=reasoning,
+        )
 
     def _parse_response(self, response: str) -> IntentResult:
         """解析 LLM 返回"""
@@ -319,6 +319,70 @@ class IntentUnderstanding:
         except Exception as e:
             logger.warning(f"[IntentUnderstanding] JSON 解析失败: {e}")
             return IntentResult(intent_type=IntentType.CHAT)
+
+    def _parse_classify_response(self, response: str) -> dict:
+        """解析第1次LLM返回的意图分类结果"""
+        import json
+        json_match = re.search(r"\{[\s\S]*\}", response)
+        if not json_match:
+            return self._rule_classify("")
+        try:
+            data = json.loads(json_match.group())
+            return {
+                "intent_type": IntentType(data.get("intent_type", "chat")),
+                "confidence": float(data.get("confidence", 0.5)),
+                "reasoning": data.get("reasoning", ""),
+                "goal_description": data.get("goal_description", ""),
+            }
+        except Exception:
+            return self._rule_classify("")
+
+    def _parse_decompose_response(self, response: str) -> list[str]:
+        """解析第2次LLM返回的子目标分解结果"""
+        import json
+        json_match = re.search(r"\{[\s\S]*\}", response)
+        if not json_match:
+            return []
+        try:
+            data = json.loads(json_match.group())
+            subs = data.get("sub_goals", [])
+            return subs if isinstance(subs, list) else []
+        except Exception:
+            return []
+
+    def _rule_classify(self, user_input: str) -> dict:
+        """规则分析（后备）：只返回意图分类信息，不做分解"""
+        import re
+        task_keywords = ["帮我", "开发", "做一个", "设计", "搭建", "实现", "开发"]
+        simple_keywords = ["写.*文件", "读.*文件", "搜索", "翻译", "执行", "运行"]
+        query_keywords = ["是什么", "为什么", "怎么", "如何", "？"]
+
+        for pattern in simple_keywords:
+            if re.search(pattern, user_input):
+                return {"intent_type": IntentType.QUERY, "confidence": 0.7,
+                        "reasoning": f"简单操作: {pattern}", "goal_description": ""}
+
+        for kw in task_keywords:
+            if kw in user_input:
+                desc = user_input.replace(kw, "").strip()[:50]
+                return {"intent_type": IntentType.TASK, "confidence": 0.6,
+                        "reasoning": f"任务关键词: {kw}", "goal_description": desc}
+
+        for kw in query_keywords:
+            if kw in user_input:
+                return {"intent_type": IntentType.QUERY, "confidence": 0.5,
+                        "reasoning": f"问题关键词: {kw}", "goal_description": ""}
+
+        return {"intent_type": IntentType.CHAT, "confidence": 0.3,
+                "reasoning": "无明确意图", "goal_description": ""}
+
+    def _rule_should_decompose(self, goal_description: str) -> list[str]:
+        """规则判断：是否需要分解（后备，无LLM时）"""
+        single_step = ["清空", "删除", "重置", "查看", "显示", "查询", "备份", "同步"]
+        for kw in single_step:
+            if kw in goal_description:
+                return []
+        return [f"执行{goal_description}"]
 
     def _rule_analyze(
         self,

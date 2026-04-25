@@ -112,6 +112,7 @@ class ConsciousLiving:
         self._last_active: float = 0
         self._running: bool = False
         self._cancel_requested: bool = False  # Ctrl+C 取消当前动作
+        self._chatting = False  # 防止重复调用 _run_chat
 
         # Drive 系统（边缘系统）
         agent_id = "xiaomei"
@@ -580,6 +581,11 @@ class ConsciousLiving:
             logger.debug("[ConsciousLiving] 忽略空消息")
             return
 
+        # 防止重复调用（_run_chat 进行中）
+        if self._chatting:
+            logger.info("[ConsciousLiving] 聊天进行中，忽略新消息: %s", msg.content[:30])
+            return
+
         logger.info("[ConsciousLiving] 收到消息: %s", msg.content[:50])
 
         # 重置取消标志（新消息来了，之前的取消失效）
@@ -676,6 +682,8 @@ class ConsciousLiving:
                 self._pending_confirm_msg = msg
                 self._pending_confirm_intent = intent_result
                 return
+            # _handle_task_intent 内部已调用 _run_chat，防止重复调用
+            return
 
         # 构建 intent_context（注入 system prompt）
         intent_context = self._build_intent_context(intent_result)
@@ -833,26 +841,10 @@ class ConsciousLiving:
                 if sub_goals:
                     self.purpose.set_current(sub_goals[0].id)
                     print(f"[目标] 当前执行: {sub_goals[0].description[:40]}", flush=True)
-
-                    # 检查是否需要用户确认（两 Tier）
-                    # Tier 1: LLM 结构化输出（最佳，有具体选项）
-                    # Tier 2: 本地关键字回退（第一个子目标含"确定/选择/确认/讨论"等词）
-                    confirm_info = self._build_confirm_info(
-                        sub_goals[0], intent_result,
-                    )
-                    if confirm_info:
-                        self._pending_confirm = confirm_info
-                        self._waiting_confirm = True
-                        # 通知上层渲染选择框（TUI/CLI 各自实现）
-                        if self.on_confirm_required:
-                            self.on_confirm_required(confirm_info)
-                        else:
-                            # 默认：直接 print 选择框（CLI 场景）
-                            print(f"\n[确认] {confirm_info['question']}")
-                            for i, opt in enumerate(confirm_info['options']):
-                                print(f"  [{i+1}] {opt}")
-                            print("  [0] 自定义输入")
-                        return  # 暂停，等待用户选择
+                    # 直接执行，由LLM处理需要的用户输入
+                    new_intent = self._build_intent_context_for_goal(sub_goals[0])
+                    self._run_chat(msg, new_intent)
+                    return
             else:
                 # 无子目标 = 单步任务，直接执行
                 self.purpose.set_current(new_goal.id)
@@ -990,13 +982,7 @@ class ConsciousLiving:
         if next_goal:
             print(f"[目标] 继续执行: {next_goal.description[:40]}", flush=True)
 
-            # 如果下一个子目标是纯确认型（描述以"确认"开头），跳过 LLM 执行
-            # 这类子目标只需要输出确认信息，不需要再次调用 LLM
-            if next_goal.description.startswith("确认"):
-                print(f"小美: {next_goal.description}，等待你的下一步指示。", flush=True)
-                return
-
-            # 为新目标构建 intent_context（current 已指向新目标）
+            # 直接执行，由LLM处理需要的用户输入
             new_intent = self._build_intent_context_for_goal(next_goal)
             proceed_msg = LivingMessage(
                 content="继续执行",
@@ -1023,6 +1009,7 @@ class ConsciousLiving:
     def _run_chat(self, msg: LivingMessage, intent_context: str = "") -> None:
         """执行对话（统一的 chat 入口）"""
         def run():
+            self._chatting = True
             try:
                 print("\n小美: ", end="", flush=True)
                 cs = self._get_consciousness_state()
@@ -1069,6 +1056,8 @@ class ConsciousLiving:
                 logger.error("[ConsciousLiving] Chat failed: %s", e)
                 print(f"\n[错误] {e}", flush=True)
                 self._print_prompt()
+            finally:
+                self._chatting = False
 
         run()
 
