@@ -3,14 +3,14 @@
 import pytest
 
 from xiaomei_brain import Agent, ToolRegistry
-from xiaomei_brain.llm import LLMClient
+from xiaomei_brain.base.llm import LLMClient
 from unittest.mock import Mock, patch
 
 
 @pytest.fixture
 def mock_llm():
     """Create a mock LLM client."""
-    with patch("xiaomei_brain.llm.OpenAI") as mock:
+    with patch("xiaomei_brain.base.llm.OpenAI") as mock:
         mock.return_value.chat.completions.create.return_value.choices = [
             Mock(message=Mock(content="Hello!", tool_calls=None), finish_reason="stop")
         ]

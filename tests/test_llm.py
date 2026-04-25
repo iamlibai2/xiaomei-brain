@@ -3,13 +3,13 @@
 import pytest
 from unittest.mock import Mock, patch
 
-from xiaomei_brain.llm import LLMClient, ChatResponse
+from xiaomei_brain.base.llm import LLMClient, ChatResponse
 
 
 @pytest.fixture
 def mock_requests():
     """Mock requests library."""
-    with patch("xiaomei_brain.llm.requests") as mock:
+    with patch("xiaomei_brain.base.llm.requests") as mock:
         yield mock
 
 
