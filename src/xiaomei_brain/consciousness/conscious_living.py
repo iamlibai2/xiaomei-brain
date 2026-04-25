@@ -715,7 +715,7 @@ class ConsciousLiving:
         Returns:
             IntentResult: 意图分析结果
         """
-        # `/` 前缀 = 明确的任务指令，跳过 LLM 分析直接构造 task
+        # `/` 前缀 = 明确的任务指令，跳过意图分类，直接做目标分解
         if user_input.startswith("/"):
             from xiaomei_brain.purpose.intent import IntentType, GoalRelation
             task_text = user_input[1:].strip()
@@ -724,14 +724,16 @@ class ConsciousLiving:
                 goal_type=GoalType.EXECUTABLE,
                 status=GoalStatus.PENDING,
             )
+            # 直接调用第二阶段 LLM：分解目标（跳过第一阶段意图分类）
+            sub_descriptions = self.intent_understanding.decompose_goal(task_text)
             return IntentResult(
                 intent_type=IntentType.TASK,
                 goals=[goal],
-                sub_goals=[],
+                sub_goals=sub_descriptions,
                 relation=GoalRelation.NEW,
                 target_goal_id=None,
                 confidence=1.0,
-                reasoning=f"指令以 / 开头，明确的任务请求：{task_text[:50]}",
+                reasoning=f"指令以 / 开头，明确的任务请求，跳过意图分类直接分解目标：{task_text[:50]}",
             )
 
         # 获取 Purpose 状态（作为上下文）
