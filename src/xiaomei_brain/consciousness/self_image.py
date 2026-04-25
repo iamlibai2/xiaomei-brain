@@ -176,6 +176,9 @@ class SelfImage:
     agent_state_history: list[str] = field(default_factory=list)
     """状态历史，用于检测状态变化"""
 
+    environment: str = "意识空间"
+    """当前环境（CLI对话/飞书消息/梦境空间/等待中/休息中/意识空间）"""
+
     # ── 元数据─────────────────────────────────────────
     updated_at: float = field(default_factory=time.time)
     """最后更新时间"""
@@ -201,6 +204,10 @@ class SelfImage:
     last_llm_fuel_time: float = 0.0
     """LLM上次加柴的时间戳"""
 
+    # ── L1 感知解读──────────────────────────────────────
+    interpreted_changes: list[str] = field(default_factory=list)
+    """L1 规则匹配后的语义化解读（如"用户暂时离开"）"""
+
     # ── 方法───────────────────────────────────────────
 
     def tick(self, perception: dict[str, Any]) -> FlameState:
@@ -221,6 +228,9 @@ class SelfImage:
 
         # 2. 更新此刻
         self.update_from_perception(perception)
+
+        # 2.1 更新环境感知
+        self._update_environment()
 
         # 3. 对比差异
         changes = self._diff(self.last_cycle_state)
@@ -310,6 +320,7 @@ class SelfImage:
             f"与外界关系：{self.relationship_status}",
             "",
             f"火焰燃烧时长：{int(self.consciousness_age)}秒",
+            f"我在哪：{self.environment}",
             f"状态：{self.agent_state}",
             f"用户空闲：{int(self.user_idle_duration)}秒",
             f"能量：{self.energy_level:.2f}",
@@ -374,6 +385,25 @@ class SelfImage:
 
         self.updated_at = time.time()
         self.update_count += 1
+
+    def _update_environment(self) -> None:
+        """根据状态更新环境感知。
+
+        我在哪？这是意识的基础定位问题。
+        """
+        state = self.agent_state
+
+        if state == "dreaming":
+            self.environment = "梦境空间"
+        elif state == "sleeping":
+            self.environment = "休息中"
+        elif state == "awake" and self.user_idle_duration < 30:
+            # 用户在对话中，根据 channel 区分
+            self.environment = "CLI对话中"
+        elif state == "idle":
+            self.environment = "等待中"
+        else:
+            self.environment = "意识空间"
 
     def update_from_dream(self, dream_report: str, insights: list[str] | None = None) -> None:
         """从梦境报告更新 self_image。
@@ -453,6 +483,105 @@ class SelfImage:
 
         return None
 
+    def interpret_changes(self, config: Any) -> list[str]:
+        """L1: 规则匹配，语义化解读变化。
+
+        遍历所有规则，匹配当前状态。
+        返回匹配成功的描述列表。
+
+        Args:
+            config: PerceptionConfig 实例
+
+        Returns:
+            list[str]: 语义化描述列表
+        """
+        interpretations = []
+
+        # 字段映射（规则中的中文关键词 → SelfImage 字段名）
+        field_map = {
+            "空闲": "user_idle_duration",
+            "关系深度": "relationship_depth",
+            "能量": "energy_level",
+            "记忆数量": "memory_count",
+            "燃烧时长": "consciousness_age",
+        }
+
+        # 遍历规则，按优先级排序
+        sorted_rules = sorted(config.rules, key=lambda r: r.priority, reverse=True)
+
+        for rule in sorted_rules:
+            # 从 condition 中提取字段名和操作符
+            # 格式："空闲 > 300秒"
+            matched = False
+
+            for chinese_field, field_name in field_map.items():
+                if chinese_field in rule.condition:
+                    # 获取字段值
+                    field_value = getattr(self, field_name, 0)
+                    # 匹配条件
+                    if self._match_condition(rule.condition, chinese_field, field_value):
+                        interpretations.append(rule.description)
+                        matched = True
+                        break
+
+        logger.debug("[SelfImage.interpret] 解读结果: %s", interpretations[:5])
+        return interpretations
+
+    def _match_condition(self, condition: str, field_keyword: str, value: float) -> bool:
+        """匹配条件表达式。
+
+        解析条件字符串，判断当前值是否满足。
+        支持时间单位：秒/分钟/小时/天。
+
+        Args:
+            condition: 条件字符串（如 "空闲 > 5分钟"）
+            field_keyword: 字段关键词（如 "空闲"）
+            value: 当前值（单位：秒）
+
+        Returns:
+            bool: 是否满足条件
+        """
+        import re
+
+        # 去掉字段关键词，得到操作符和阈值
+        # "空闲 > 5分钟" → "> 5分钟"
+        rest = condition.replace(field_keyword, "").strip()
+
+        # 解析操作符、阈值和单位
+        # 格式：op threshold单位
+        # op: >, <, >=, <=, ==
+        # 单位: 秒/分钟/小时/天（可选）
+        op_match = re.match(r"([><=!]+)\s*(\d+(?:\.\d+)?)\s*(秒|分钟|小时|天)?", rest)
+        if not op_match:
+            return False
+
+        op = op_match.group(1)
+        threshold = float(op_match.group(2))
+        unit = op_match.group(3) or "秒"  # 默认秒
+
+        # 单位转换（所有字段值都是秒为单位）
+        unit_multipliers = {
+            "秒": 1,
+            "分钟": 60,
+            "小时": 3600,
+            "天": 86400,
+        }
+        threshold_seconds = threshold * unit_multipliers.get(unit, 1)
+
+        # 比较
+        if op == ">":
+            return value > threshold_seconds
+        elif op == "<":
+            return value < threshold_seconds
+        elif op == ">=":
+            return value >= threshold_seconds
+        elif op == "<=":
+            return value <= threshold_seconds
+        elif op == "==" or op == "=":
+            return value == threshold_seconds
+
+        return False
+
     def to_dict(self) -> dict[str, Any]:
         """转换为字典，用于存储。"""
         return {
@@ -493,6 +622,7 @@ class SelfImage:
             # Agent状态
             "agent_state": self.agent_state,
             "agent_state_history": self.agent_state_history[-10:],
+            "environment": self.environment,
             # 内在感知
             "inner_thought": self.inner_thought,
             "inner_thought_history": self.inner_thought_history[-10:],

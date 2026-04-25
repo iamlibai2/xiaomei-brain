@@ -212,6 +212,7 @@ class Agent:
 
         # ── Intent context (from ConsciousLiving) ──────────────────────
         self.intent_context: str = ""  # 意图上下文（注入 system prompt）
+        self._last_all_messages: list[dict[str, Any]] = []  # 缓存最近一次发给 LLM 的完整上下文
 
     def run(self, user_input: str, consciousness_state: dict | None = None) -> str:
         """Run the agent and return the final response (non-streaming)."""
@@ -256,7 +257,7 @@ class Agent:
         # Base context: system + DAG + long-term memories (NO fresh tail)
         base_context = self.context_assembler.assemble(
             user_input=user_input,
-            max_tokens=4000,
+            max_tokens=10000,
             mode=mode,
             session_id=self.session_id,
             user_id=self.user_id,
@@ -274,19 +275,21 @@ class Agent:
 
         # Clean up compressed messages from self.messages (delegate to DAG)
         if self.context_assembler and self.context_assembler.dag:
-            old_count = len(self.messages)
             self.messages = self.context_assembler.dag.filter_compressed_messages(
                 self.messages, self.session_id,
             )
-            if len(self.messages) < old_count:
-                logger.info(
-                    "[Agent] Cleaned %d compressed messages, %d remain fresh",
-                    old_count - len(self.messages), len(self.messages),
-                )
 
         for step in range(self.max_steps):
             # All steps: [system prompt] + accumulated self.messages
             all_messages = [base_context[0]] + self.messages
+
+            # Remove orphaned tool messages (tool without preceding assistant tool_calls)
+            # This fixes cases where tool messages were loaded from DB but the corresponding
+            # assistant(tool_calls) was filtered out by DAG compression
+            all_messages = self._strip_orphaned_tool_messages(all_messages)
+
+            # 缓存当前完整上下文（供 context 命令使用）
+            self._last_all_messages = all_messages
 
             # Append MEMORY_DECISION_PROMPT to the last user message (MiniMax follows user message better)
             appended = False
@@ -308,24 +311,37 @@ class Agent:
             response, stream_chunks = self._call_llm(all_messages, openai_tools)
 
             if response.has_tool_calls:
+                tool_calls_data = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": json.dumps(tc.arguments),
+                        },
+                    }
+                    for tc in response.tool_calls
+                ]
                 msg: dict[str, Any] = {
                     "role": "assistant",
                     "content": response.content,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.name,
-                                "arguments": json.dumps(tc.arguments),
-                            },
-                        }
-                        for tc in response.tool_calls
-                    ],
+                    "tool_calls": tool_calls_data,
                 }
                 if response.reasoning_content:
                     msg["reasoning_content"] = response.reasoning_content
                 self.messages.append(msg)
+
+                # 存 assistant(tool_calls) 到 DB，tool_calls + reasoning_content 存入 metadata
+                if self.conversation_db:
+                    meta = {"tool_calls": tool_calls_data}
+                    if response.reasoning_content:
+                        meta["reasoning_content"] = response.reasoning_content
+                    self.conversation_db.log(
+                        session_id=self.session_id,
+                        role="assistant",
+                        content=response.content or "",
+                        metadata=meta,
+                    )
 
                 for tc in response.tool_calls:
                     # Collapsed display + buffer storage
@@ -389,10 +405,14 @@ class Agent:
                     display_content = clean_content or content
                     assistant_msg_id = None
                     if self.conversation_db:
+                        meta = {}
+                        if response.reasoning_content:
+                            meta["reasoning_content"] = response.reasoning_content
                         assistant_msg_id = self.conversation_db.log(
                             session_id=self.session_id,
                             role="assistant",
                             content=display_content,
+                            metadata=meta if meta else None,
                         )
                     msg: dict[str, Any] = {"role": "assistant", "content": display_content, "id": assistant_msg_id}
                     if response.reasoning_content:
@@ -438,18 +458,6 @@ class Agent:
 
         api_messages = self.llm._build_messages(messages)
 
-        # Debug: log message structure before sending
-        logger.debug(
-            "[LLM] api_messages count=%d roles=%s",
-            len(api_messages),
-            [m.get("role") for m in api_messages],
-        )
-        for i, m in enumerate(api_messages):
-            content = m.get("content", "")
-            logger.debug("[LLM] msg[%d] role=%s content_len=%d content_preview=%s",
-                         i, m.get("role"), len(content) if content else 0,
-                         (content or "")[:80].replace("\n", "\\n"))
-
         payload = {
             "model": self.llm.model,
             "messages": api_messages,
@@ -457,6 +465,19 @@ class Agent:
         }
         if tools:
             payload["tools"] = tools
+
+        # DeepSeek thinking mode: once any message has reasoning_content,
+        # ALL subsequent assistant messages must also include it.
+        # This fixes the "reasoning_content must be passed back" 400 error
+        # when agent.messages has a message with reasoning_content but the
+        # subsequent assistant messages don't.
+        last_rc = None
+        for m in payload["messages"]:
+            if m.get("reasoning_content"):
+                last_rc = m["reasoning_content"]
+            elif m.get("role") == "assistant" and last_rc is not None:
+                if not m.get("reasoning_content"):
+                    m["reasoning_content"] = last_rc
 
         headers = {
             "Authorization": f"Bearer {self.llm.api_key}",
@@ -639,6 +660,42 @@ class Agent:
         _, clean = MemoryExtractor.extract_memory_block(full_text)
         if clean:
             yield clean
+
+    @staticmethod
+    def _strip_orphaned_tool_messages(
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Remove tool messages whose preceding assistant doesn't have tool_calls.
+
+        This handles cases where:
+        - tool messages exist in agent.messages but the corresponding
+          assistant(tool_calls) was filtered out by DAG compression
+        - tool messages were loaded from DB but their assistant was not persisted
+        """
+        result = []
+        i = 0
+        while i < len(messages):
+            m = messages[i]
+            if m.get("role") == "tool":
+                # Check if the preceding message is an assistant with matching tool_call_id
+                tc_id = m.get("tool_call_id", "")
+                valid = False
+                if tc_id and result and result[-1].get("role") == "assistant":
+                    assistant_tcs = result[-1].get("tool_calls", [])
+                    for tc in assistant_tcs:
+                        if tc.get("id") == tc_id:
+                            valid = True
+                            break
+                if not valid:
+                    logger.debug(
+                        "[Agent] Stripped orphaned tool message: tc_id=%s",
+                        tc_id,
+                    )
+                    i += 1
+                    continue
+            result.append(m)
+            i += 1
+        return result
 
     @staticmethod
     def _clean_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

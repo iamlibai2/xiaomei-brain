@@ -442,6 +442,66 @@ class DAGSummaryGraph:
 
         return [dict(r) for r in rows]
 
+    def filter_compressed_messages(
+        self, messages: list[dict[str, Any]], session_id: str,
+    ) -> list[dict[str, Any]]:
+        """从消息列表中剔除已被 DAG 摘要压缩的消息。
+
+        保证 tool_calls + tool 配对完整性：
+        如果 assistant(tool_calls) 被压缩，它后面的 tool 消息也一起移除。
+
+        Args:
+            messages: 原始消息列表（来自 conversation_db.get_recent）
+            session_id: 会话 ID
+
+        Returns:
+            仅保留未压缩的消息列表
+        """
+        unsummarized = self.get_unsummarized_messages(session_id, limit=100)
+        unsummarized_ids = {m["id"] for m in unsummarized if m.get("id")}
+        if not unsummarized_ids:
+            return messages  # 没有摘要，全保留
+
+        # 构建 summarized_ids（被压缩的消息 ID）
+        summarized_ids = set()
+        for m in messages:
+            msg_id = m.get("id")
+            if msg_id is not None and msg_id not in unsummarized_ids:
+                summarized_ids.add(msg_id)
+
+        # 收集被压缩的 assistant 的 tool_call_ids
+        compressed_tool_call_ids: set[str] = set()
+        for m in messages:
+            msg_id = m.get("id")
+            if msg_id is not None and msg_id not in unsummarized_ids:
+                if m.get("role") == "assistant" and m.get("tool_calls"):
+                    for tc in m["tool_calls"]:
+                        tc_id = tc.get("id", "")
+                        if tc_id:
+                            compressed_tool_call_ids.add(tc_id)
+
+        result = []
+        for m in messages:
+            msg_id = m.get("id")
+            # 有 reasoning_content 的消息：
+            # - 如果同时被压缩了（进了 summarized_ids），跳过（摘要已代替原始消息）
+            # - 如果未被压缩，保留（DeepSeek 思考模式必须传回 API）
+            if m.get("reasoning_content"):
+                if msg_id in summarized_ids:
+                    # 已被压缩，摘要已代替原始消息，跳过避免重复
+                    continue
+                result.append(m)
+                continue
+            # 按 id 过滤：被压缩的移除
+            if msg_id is not None and msg_id not in unsummarized_ids:
+                continue
+            # tool 消息：如果它所属的 assistant 被压缩了，也移除
+            if m.get("role") == "tool" and m.get("tool_call_id") in compressed_tool_call_ids:
+                continue
+            result.append(m)
+
+        return result
+
     def close(self) -> None:
         if self._conn:
             self._conn.close()

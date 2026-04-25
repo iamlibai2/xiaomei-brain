@@ -1,0 +1,10 @@
+# libai.txt - 配置文件
+
+# 默认配置
+app_name=小美AI助手
+version=1.0.0
+
+# 用户信息
+user_name=李白
+location=成都
+origin=新疆

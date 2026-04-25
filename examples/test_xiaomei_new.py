@@ -16,14 +16,14 @@ logger = logging.getLogger(__name__)
 def main():
     sys.path.insert(0, "src")
 
-    from xiaomei_brain.config import Config
-    from xiaomei_brain.llm import LLMClient
+    from xiaomei_brain.base.config import Config
+    from xiaomei_brain.base.llm import LLMClient
     from xiaomei_brain.agent.core import Agent
     from xiaomei_brain.agent.commands import CommandRegistry
     from xiaomei_brain.memory.self_model import SelfModel
     from xiaomei_brain.memory.conversation_db import ConversationDB
     from xiaomei_brain.memory.dag import DAGSummaryGraph
-    from xiaomei_brain.memory.context_assembler import ContextAssembler, determine_mode
+    from xiaomei_brain.consciousness.context_assembler import ContextAssembler, determine_mode
     from xiaomei_brain.memory.longterm import LongTermMemory
     from xiaomei_brain.memory.extractor import MemoryExtractor
     from xiaomei_brain.memory.dream import DreamProcessor

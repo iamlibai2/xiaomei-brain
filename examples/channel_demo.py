@@ -3,8 +3,8 @@
 import asyncio
 import logging
 from xiaomei_brain.channels import Gateway, FeishuChannel, InboundMsg, OutboundMsg
-from xiaomei_brain.agent_manager import AgentManager
-from xiaomei_brain.config import Config
+from xiaomei_brain.agent.agent_manager import AgentManager
+from xiaomei_brain.base.config import Config
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)

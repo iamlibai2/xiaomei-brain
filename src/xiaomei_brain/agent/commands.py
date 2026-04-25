@@ -54,12 +54,14 @@ class CommandRegistry:
         longterm_memory: Any = None,
         memory_extractor: Any = None,
         context_assembler: Any = None,
+        agent_instance: Any = None,
     ) -> None:
         self.db = conversation_db
         self.dag = dag
         self.ltm = longterm_memory
         self.extractor = memory_extractor
         self.assembler = context_assembler
+        self.agent_instance = agent_instance
 
     def execute(
         self,
@@ -102,9 +104,10 @@ class CommandRegistry:
             return self._cmd_memory(user_id)
 
         # ── Context inspection ──────────────────────────────────
-        if cmd == "context":
+        if cmd == "context" or cmd.startswith("context "):
+            query_arg = query or cmd[8:].strip() or None
             return self._cmd_context(
-                query=query or "你好",
+                query=query_arg or "你好",
                 user_id=user_id,
                 session_id=session_id,
             )
@@ -131,6 +134,8 @@ class CommandRegistry:
         # ── DAG search ──────────────────────────────────────────
         if cmd.startswith("dag "):
             keyword = cmd[4:].strip()
+            # Remove angle brackets if present (user might type "dag <关键词>")
+            keyword = keyword.replace("<", "").replace(">", "")
             return self._cmd_dag(keyword, session_id)
         if cmd == "dag":
             return CommandResult(output="用法: dag <关键词>")
@@ -196,25 +201,18 @@ class CommandRegistry:
         )
 
     def _cmd_context(self, query: str, user_id: str, session_id: str) -> CommandResult:
-        """Inspect assembled context for a given query."""
-        if not self.assembler:
-            return CommandResult(output="(ContextAssembler 未配置)")
+        """Show last LLM context (exact copy of what was sent)."""
+        if not self.agent_instance:
+            return CommandResult(output="(Agent 未配置)")
 
-        from xiaomei_brain.memory.context_assembler import determine_mode
+        agent = self.agent_instance._get_agent()
+        all_messages = agent._last_all_messages or agent.messages
+        if not all_messages:
+            return CommandResult(output="(上下文为空)")
 
-        mode = determine_mode(query)
-        debug_text = self.assembler.debug_assemble(
-            user_input=query,
-            max_tokens=4000,
-            mode=mode,
-            session_id=session_id,
-            user_id=user_id,
-        )
+        debug_text = self.assembler.debug_assemble(all_messages)
 
-        return CommandResult(
-            output=debug_text,
-            data={"mode": mode, "query": query},
-        )
+        return CommandResult(output=debug_text)
 
     def _cmd_clear(self, session_id: str) -> CommandResult:
         """Clear current session context (data preserved, just invisible to assembler)."""
@@ -357,7 +355,7 @@ class CommandRegistry:
             "  memory        查看最近长期记忆",
             "  clear         清空当前会话上下文（数据保留）",
             "  new           新建会话",
-            "  context       查看完整上下文 (需提供query参数)",
+            "  context       查看完整上下文（自动用最近用户消息查询）",
             "  summarize     手动触发DAG压缩",
             "  periodic      手动触发定时记忆提取",
             "  dream         手动触发梦境深度提取",

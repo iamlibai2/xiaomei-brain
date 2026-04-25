@@ -536,6 +536,7 @@ class AgentManager:
             longterm_memory=agent.longterm_memory,
             memory_extractor=agent.memory_extractor,
             context_assembler=agent.context_assembler,
+            agent_instance=agent,
         )
 
         # ── 赋值 ─────────────────────────────────────────────────────────

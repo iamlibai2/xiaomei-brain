@@ -41,7 +41,7 @@ def test_conscious_living():
     agent = manager.build_agent("xiaomei")
 
     print("=== 创建 ConsciousLiving ===")
-    living = ConsciousLiving(agent, idle_threshold=60, dream_interval=120)
+    living = ConsciousLiving(agent, idle_threshold=60)
 
     # 设置回调
     def on_proactive(content):
@@ -62,6 +62,7 @@ def test_conscious_living():
     print("  fuel - 手动触发加柴")
     print("  flame - 显示火焰状态")
     print("  tick - 显示心跳计数")
+    print("  identity - 显示身份全景")
     print("  其他 - 正常对话")
     print()
 
@@ -69,6 +70,7 @@ def test_conscious_living():
     test_messages = [
         ("flame", 5),   # 显示火焰状态，等5秒
         ("tick", 3),    # 显示心跳计数
+        ("identity", 5),  # 显示身份全景（验证 IdentityConfig）
         ("你好", 30),   # 正常对话（LLM调用需要时间）
         ("intent", 3),  # 查看意图
         ("fuel", 15),   # 手动加柴（LLM调用）
@@ -78,7 +80,7 @@ def test_conscious_living():
     for msg, wait in test_messages:
         if not living.is_running:
             break
-        print(f"\n>>> 用户: {msg}")
+        print(f"\n> {msg}")
         living.put_message(msg)
         time.sleep(wait)
 
@@ -110,7 +112,6 @@ def test_dynamic_fuel():
     living = ConsciousLiving(
         agent,
         idle_threshold=30,  # 30秒空闲进入睡眠
-        dream_interval=60,  # 60秒触发梦境
     )
 
     living.on_proactive = lambda c: print(f"\n[主动] {c}\n")

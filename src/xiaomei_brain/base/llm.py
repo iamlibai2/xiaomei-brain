@@ -44,6 +44,7 @@ class ChatResponse:
     content: str | None
     tool_calls: list[ToolCall] = field(default_factory=list)
     finish_reason: str = ""
+    reasoning_content: str | None = None  # DeepSeek thinking mode 推理过程
 
     @property
     def has_tool_calls(self) -> bool:
@@ -207,24 +208,7 @@ class LLMClient:
     # region 私有方法
 
     def _build_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """将内部消息格式转换为 API 格式，并合并相邻同角色消息。
-
-        为什么需要合并：
-        - MiniMax 等平台要求消息角色交替（user → assistant → user），
-          连续相同角色的消息会导致 400 错误。
-        - 合并规则：连续同 role、无 tool_calls 的消息，内容拼接。
-
-        保留的字段：
-        - tool_calls（assistant 消息）：多轮工具调用必需
-        - tool_call_id（tool 消息）：关联工具调用结果必需
-        - name（function 角色）：函数调用者标识
-
-        Args:
-            messages: 内部格式消息列表。
-
-        Returns:
-            API 格式消息列表。
-        """
+        """将内部消息格式转换为 API 格式（移除内部字段）。"""
         result = []
         for msg in messages:
             api_msg: dict[str, Any] = {"role": msg["role"]}
@@ -237,6 +221,10 @@ class LLMClient:
             if msg.get("tool_calls"):
                 api_msg["tool_calls"] = msg["tool_calls"]
 
+            # reasoning_content（DeepSeek thinking mode 必须原样传回）
+            if msg.get("reasoning_content"):
+                api_msg["reasoning_content"] = msg["reasoning_content"]
+
             # 工具结果（tool 消息携带）
             if msg.get("tool_call_id"):
                 api_msg["tool_call_id"] = msg["tool_call_id"]
@@ -245,20 +233,7 @@ class LLMClient:
             if msg.get("name"):
                 api_msg["name"] = msg["name"]
 
-            # 合并相邻的同角色消息（跳过有 tool_calls 的消息，它们不能合并）
-            if (
-                result
-                and result[-1]["role"] == api_msg["role"]
-                and not api_msg.get("tool_calls")
-            ):
-                prev = result[-1].get("content", "")
-                new = api_msg.get("content", "")
-                if prev and new:
-                    result[-1]["content"] = prev + "\n" + new
-                elif new:
-                    result[-1]["content"] = new
-            else:
-                result.append(api_msg)
+            result.append(api_msg)
 
         return result
 
@@ -291,21 +266,21 @@ class LLMClient:
         """
         url = f"{self.base_url}/chat/completions"
         t0 = time.time()
-        msg_preview = (payload.get("messages", [{}])[0].get("content") or "")[:40]
+        msg_preview = ""
         has_tools = "tools" in payload
 
         def log_request(success: bool, detail: str = ""):
             """记录单次 LLM 调用结果。"""
             elapsed = time.time() - t0
-            status = "OK" if success else "ERR"
             ts = datetime.datetime.now().strftime("%H:%M:%S")
-            level = log_level if log_level is not None else logging.INFO
-            logger.log(
-                level,
-                "[LLM %s] %s model=%s msgs=%d tools=%s elapsed=%.2fs %s %s",
-                status, ts, self.model, len(payload.get("messages", [])),
+            msg = "%s model=%s msgs=%d tools=%s elapsed=%.2fs %s %s" % (
+                ts, self.model, len(payload.get("messages", [])),
                 has_tools, elapsed, msg_preview, detail,
             )
+            if success:
+                logger.info("\033[91m[LLM OK] %s\033[0m", msg)
+            else:
+                logger.info("[LLM ERR] %s", msg)
 
         last_error: LLMError | None = None
 
@@ -478,6 +453,7 @@ class LLMClient:
             content=content,
             tool_calls=tool_calls,
             finish_reason=choice.get("finish_reason", ""),
+            reasoning_content=message.get("reasoning_content"),
         )
 
     # endregion

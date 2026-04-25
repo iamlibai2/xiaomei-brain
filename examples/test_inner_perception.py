@@ -28,12 +28,8 @@ def main():
     manager = AgentManager()
     agent = manager.build_agent("xiaomei")
 
-    # 创建 ConsciousLiving（缩短内在感知间隔到10秒）
-    living = ConsciousLiving(
-        agent,
-        inner_thought_interval=10,  # 10秒一次
-        dream_interval=60,          # 梦境间隔缩短
-    )
+    # 创建 ConsciousLiving
+    living = ConsciousLiving(agent)
 
     # 后台运行
     thread = threading.Thread(target=living.run, daemon=True)

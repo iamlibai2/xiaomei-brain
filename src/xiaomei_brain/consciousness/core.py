@@ -12,10 +12,17 @@
 - L2（异常触发）：LLM轻度加柴，生成意图
 - L3（梦境阶段）：LLM深度燃烧，完整意识报告
 
+统一入口（v3）:
+- tick() 是唯一入口，ConsciousLiving 每循环只调这一个
+- 内部自动判断 L0/L1/L2/L3 时机
+- 反省层（reflection）由 L2/L3 驱动调用
+
 代码做不到的交给LLM，代码只做代码能做的。
 """
 
 from __future__ import annotations
+
+from enum import Enum
 
 import logging
 import time
@@ -23,9 +30,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from .self_image import SelfImage, FlameState
+from .self_image_proxy import SelfImageProxy
+from .self_modules import SelfIdentity, SelfState, SelfRelation, SelfPerception, SelfMemory, SelfGrowth
+from .self_image import FlameState
 from .intent import Intent, IntentType, create_wait_intent, create_greet_intent, create_reflect_intent, create_dream_intent, create_care_intent
 from .identity import IdentityConfig
+from .perception import PerceptionConfig
+from ..purpose import PurposeEngine
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +63,9 @@ CONSCIOUSNESS_PROMPT_DEEP = """你是{identity}的意识系统。现在是{time_
 情绪基调：{mood}
 能量水平：{energy}
 
+【驱动力状态】
+{drive_state}
+
 【用户状态】
 最后活跃：{user_last_active}
 空闲时长：{user_idle}
@@ -72,9 +86,10 @@ CONSCIOUSNESS_PROMPT_DEEP = """你是{identity}的意识系统。现在是{time_
 请以第一人称"我"来描述，自然流畅，包含：
 1. 时间感知：现在是什么时候
 2. 自我状态：我的情绪和能量
-3. 用户状态：用户最近在做什么
-4. 目标进展：我的目标进展如何
-5. 意向：我现在想做什么
+3. 驱动力：我的欲望和动力
+4. 用户状态：用户最近在做什么
+5. 目标进展：我的目标进展如何
+6. 意向：我现在想做什么
 
 格式自由，100-150字。
 """
@@ -103,6 +118,12 @@ INTENT_GENERATION_PROMPT = """你是{identity}的意识系统。现在{time_info
 INTENT: <意图类型>
 REASON: <理由，一句话>
 """
+
+class TickResult(Enum):
+    """tick() 返回值"""
+    NORMAL = "normal"               # 常规心跳，无特殊事件
+    L2_TRIGGERED = "l2_triggered"   # L2 加柴已触发
+    L3_TRIGGERED = "l3_triggered"   # L3 梦境已触发
 
 
 @dataclass
@@ -161,16 +182,42 @@ class Consciousness:
     """
 
     # 心跳参数
-    L0_INTERVAL = 1.0    # 感知心跳间隔（秒）
-    L1_THRESHOLD = 60    # L1 触发阈值（累积多少次 L0）
-    L2_THRESHOLD = 300   # L2 触发阈值（秒，如果无异常）
+    L0_INTERVAL = 1.0       # 感知心跳间隔（秒）
+    L1_THRESHOLD = 60       # L1 触发阈值（累积多少次 L0）
+    L2_IDLE_TRIGGER = 300   # L2 空闲触发（用户空闲秒数）
+    L2_CHANGES_TRIGGER = 10 # L2 累积变化触发（条数）
+    L2_COOLDOWN = 300       # L2 冷却时间（秒，触发后这段时间不再触发）
+    L2_PERIODIC_INTERVAL = 600  # L2 定期触发（秒，兜底）
+    L3_DREAM_INTERVAL = 300     # L3 梦境触发（睡眠秒数）
 
-    def __init__(self, agent_instance: Any | None = None) -> None:
+    def __init__(
+        self,
+        agent_instance: Any | None = None,
+        drive: Any | None = None,
+        purpose: Any | None = None,
+    ) -> None:
         self.agent = agent_instance
-        self.self_image = SelfImage()
+        # Drive 系统（边缘系统）
+        self.drive = drive
+        # Purpose 系统（前额叶层）
+        self.purpose = purpose
+        # 6个专业模块
+        self.identity = SelfIdentity()
+        self.state = SelfState()
+        self.relation = SelfRelation()
+        self.perception = SelfPerception()
+        self.memory = SelfMemory()
+        self.growth = SelfGrowth()
+        # SelfImage 作为统一视图（代理模式）
+        self.self_image = SelfImageProxy()
+        self.self_image.identity = self.identity
+        self.self_image.state = self.state
+        self.self_image.relation = self.relation
+        self.self_image.perception = self.perception
+        self.self_image.memory = self.memory
+        self.self_image.growth = self.growth
         self.intent_buffer: list[Intent] = []
         self.perception_buffer: list[dict] = []
-        self._consciousness_age: float = 0.0
         self._l0_count: int = 0
         self._last_l2_time: float = 0.0
         self._last_report: ConsciousnessReport | None = None
@@ -179,8 +226,17 @@ class Consciousness:
         # 存储回调
         self._storage: Any | None = None
 
+        # 感知规则配置
+        self._perception_config: PerceptionConfig | None = None
+
+        # 身份配置（供 Drive 学习主题使用）
+        self._identity_config: Any | None = None
+
         # 从 IdentityConfig 初始化身份（L0-L3）
         self._init_from_identity_config()
+
+        # 从 PerceptionConfig 初始化感知规则
+        self._init_from_perception_config()
 
     def _init_from_identity_config(self) -> None:
         """从 identity.md 配置初始化身份字段"""
@@ -189,8 +245,18 @@ class Consciousness:
             agent_id = self.agent.agent_id
 
         config = IdentityConfig.load(agent_id)
+        self._identity_config = config  # 存储 config 供后续使用
         self.self_image.init_from_identity_config(config)
         logger.info("[Consciousness] 从 IdentityConfig 初始化完成")
+
+    def _init_from_perception_config(self) -> None:
+        """从 perception.md 配置初始化感知规则"""
+        agent_id = "xiaomei"  # 默认
+        if self.agent and hasattr(self.agent, "agent_id"):
+            agent_id = self.agent.agent_id
+
+        self._perception_config = PerceptionConfig.load(agent_id)
+        logger.info("[Consciousness] 从 PerceptionConfig 初始化完成: %d 条规则", len(self._perception_config.rules))
 
     def set_storage(self, storage: Any) -> None:
         """设置意识存储"""
@@ -199,38 +265,57 @@ class Consciousness:
     def restore_from_storage(self) -> bool:
         """从存储恢复 SelfImage（启动时调用）。
 
+        恢复策略（按模块分类）：
+        - SelfIdentity：从 IdentityConfig 加载（不恢复）
+        - SelfState：从 state.json 恢复
+        - SelfRelation：从 relation.json 恢复
+        - SelfPerception：从 perception.json 恢复
+        - SelfMemory：从 memory.json 恢复
+        - SelfGrowth：从 growth.json 恢复（consciousness_age 必须恢复）
+
         Returns:
             bool: 是否成功恢复
         """
         if not self._storage:
-            logger.warning("[Consciousness] 无存储，无法恢复 SelfImage")
+            logger.warning("[Consciousness] 无存储，无法恢复")
             return False
 
-        last_self_image = self._storage.get_last_self_image()
-        if not last_self_image:
-            logger.info("[Consciousness] 无历史 SelfImage，使用默认值")
-            return False
+        # SelfIdentity 从 IdentityConfig 重新加载（不恢复）
+        agent_id = "xiaomei"
+        if self.agent and hasattr(self.agent, "agent_id"):
+            agent_id = self.agent.agent_id
+        config = IdentityConfig.load(agent_id)
+        self.identity.init_from_identity_config(config)
 
-        # 恢复 SelfImage
-        si = self.self_image
-        si.from_dict(last_self_image)
+        # 各模块从存储恢复
+        state_data = self._storage.load_self_state()
+        if state_data:
+            self.state.from_dict(state_data)
 
-        # 重置一些运行时字段（不应该从历史恢复）
-        # - consciousness_age 可以保留（火焰燃烧时长）
-        # - accumulated_changes 应该清空（新的运行周期）
-        # - agent_state 应该重置为 waking
-        # - last_llm_fuel_time 应该重置
-        si.accumulated_changes = []
-        si.agent_state = "waking"
-        si.last_llm_fuel_time = 0.0
+        relation_data = self._storage.load_self_relation()
+        if relation_data:
+            self.relation.from_dict(relation_data)
 
-        # 同步 consciousness_age 到 Consciousness
-        self._consciousness_age = si.consciousness_age
+        perception_data = self._storage.load_self_perception()
+        if perception_data:
+            self.perception.from_dict(perception_data)
+
+        memory_data = self._storage.load_self_memory()
+        if memory_data:
+            self.memory.from_dict(memory_data)
+
+        growth_data = self._storage.load_self_growth()
+        if growth_data:
+            self.growth.from_dict(growth_data)
+
+        # 重置运行时字段
+        self.self_image.accumulated_changes = []
+        self.self_image.last_llm_fuel_time = 0.0
 
         logger.info(
-            "[Consciousness] SelfImage 恢复成功: age=%ds, state=%s",
-            int(si.consciousness_age),
-            si.agent_state,
+            "[Consciousness] 模块化恢复成功: consciousness_age=%ds, agent_state=%s",
+            int(self.growth.consciousness_age),
+            self.perception.agent_state,
         )
         return True
 
@@ -253,6 +338,10 @@ class Consciousness:
         """
         perception = self._sense()
 
+        # Drive 周期衰减（如果 Drive 存在）
+        if self.drive:
+            self.drive.tick()
+
         # 存在感知：如果传入 agent_state，更新感知数据
         if agent_state:
             perception["agent_state"] = agent_state
@@ -261,7 +350,6 @@ class Consciousness:
 
         self.perception_buffer.append(perception)
         self._l0_count += 1
-        self._consciousness_age += self.L0_INTERVAL
 
         # 核心：维护火焰骨架（不是涌现意识）
         flame_state = self.self_image.tick(perception)
@@ -297,12 +385,17 @@ class Consciousness:
                     except Exception:
                         pass
 
-            # 记忆数量
+            # 记忆数量和最近记忆摘要
             if hasattr(self.agent, "longterm_memory"):
                 ltm = self.agent.longterm_memory
                 if ltm:
                     try:
                         perception["memory_count"] = ltm.count()
+                        # 获取最近记忆摘要（小美的记忆，不需要 user_id）
+                        recent_memories = ltm.get_recent(5)
+                        perception["recent_memory_summaries"] = [
+                            m.get("content", "")[:100] for m in recent_memories
+                        ]
                     except Exception:
                         pass
 
@@ -327,18 +420,24 @@ class Consciousness:
         # 检测异常
         anomaly = self.self_image.detect_anomaly()
 
+        # 新增：语义化解读变化（L1 规则匹配）
+        if self._perception_config:
+            self.self_image.interpreted_changes = self.self_image.interpret_changes(self._perception_config)
+            if self.self_image.interpreted_changes:
+                pass  # log commented out for testing
+
         # 清空感知缓冲
         self.perception_buffer = []
         self._l0_count = 0
 
         # 如果检测到异常，触发 L2
-        if anomaly:
-            logger.info("[Consciousness L1] 检测到异常: %s", anomaly)
-            return self.tick_L2(anomaly)
+        # if anomaly:
+        #     logger.info("[Consciousness L1] 检测到异常: %s", anomaly)
+        #     return self.tick_L2(anomaly)
 
         # 如果太久没调 L2，也触发一次
-        if time.time() - self._last_l2_time > self.L2_THRESHOLD:
-            return self.tick_L2("periodic")
+        # if time.time() - self._last_l2_time > self.L2_THRESHOLD:
+        #     return self.tick_L2("periodic")
 
         return None
 
@@ -355,13 +454,20 @@ class Consciousness:
         # 获取状态摘要（供LLM理解）
         state_summary = self.self_image.get_state_summary()
 
+        # 获取语义化解读（L1 产出）
+        interpreted = self.self_image.interpreted_changes
+        interpreted_text = "\n".join(f"- {desc}" for desc in interpreted) if interpreted else "无显著变化"
+
         # 构建prompt：让LLM自由涌现，不规定格式
         prompt = f"""
 {state_summary}
 
-检测到异常：{context}
+最近的变化解读：
+{interpreted_text}
 
-你感知到了什么？你现在想做什么？
+检测到的异常：{context}
+
+这些变化对你意味着什么？你现在的真实感受是什么？
 """
 
         # 调用LLM（真正的加柴）
@@ -376,7 +482,10 @@ class Consciousness:
                     tools=None,
                 )
                 llm_response = resp.content or ""
-                logger.info("[Consciousness L2] LLM加柴响应: %.100s", llm_response[:100])
+                # sep = "=" * 40
+                # logger.info("========== LLM加柴响应 ==========")
+                # logger.info("%s", llm_response)
+                # logger.info("================================")
 
                 # 尝试解析意图（但不强制格式）
                 intent = self._parse_intent_from_response(llm_response, context)
@@ -455,7 +564,7 @@ class Consciousness:
 
         return INTENT_GENERATION_PROMPT.format(
             identity=si.identity,
-            time_info=f"{time_info}，意识运行{int(self._consciousness_age)}秒",
+            time_info=f"{time_info}，意识运行{int(self.growth.consciousness_age)}秒",
             user_idle=int(si.user_idle_duration),
             mood=si.current_mood,
             energy=f"{si.energy_level:.2f}",
@@ -552,7 +661,7 @@ class Consciousness:
                     tools=None,
                 )
                 full_report = resp.content or ""
-                logger.info("[Consciousness L3] LLM深度燃烧: %.100s", full_report[:100])
+                logger.info("[Consciousness L3] LLM深度燃烧:\n%s", full_report)
             except Exception as e:
                 logger.warning("[Consciousness L3] LLM调用失败: %s", e)
                 full_report = self._fallback_deep_report()
@@ -594,10 +703,35 @@ class Consciousness:
             ltm = self.agent.longterm_memory
             if ltm:
                 try:
-                    for m in ltm.get_recent(5, user_id="global"):
+                    for m in ltm.get_recent(5):
                         recent_memories.append(m.get("content", "")[:50])
                 except Exception:
                     pass
+
+        # Drive 状态文本（Layer 1）
+        drive_state_text = ""
+        if self.drive:
+            drive_state_text = self.drive.get_state_text()
+            # 从 Drive 获取情绪状态，覆盖 SelfState
+            if hasattr(self.drive, 'emotion'):
+                si.current_mood = self.drive.emotion.type.value
+            if hasattr(self.drive, 'hormone'):
+                # 激素影响能量
+                si.energy_level = (
+                    self.drive.hormone.dopamine * 0.3 +
+                    self.drive.hormone.serotonin * 0.5 +
+                    (1 - self.drive.hormone.cortisol) * 0.2
+                )
+
+        # Purpose 状态文本（目标）
+        purpose_state_text = ""
+        if self.purpose:
+            purpose_state_text = self.purpose.get_state_summary()
+            # 从 Purpose 获取当前目标，覆盖 SelfGrowth
+            current_goal = self.purpose.get_current()
+            if current_goal:
+                si.primary_goal = current_goal.description
+                si.goal_progress = current_goal.progress
 
         return CONSCIOUSNESS_PROMPT_DEEP.format(
             identity=si.identity,
@@ -605,6 +739,7 @@ class Consciousness:
             role=si.role,
             mood=si.current_mood,
             energy=f"{si.energy_level:.2f}",
+            drive_state=drive_state_text or "状态平稳",
             user_last_active=datetime.fromtimestamp(si.last_user_activity_time).strftime("%H:%M") if si.last_user_activity_time > 0 else "未知",
             user_idle=int(si.user_idle_duration / 60),  # 分钟
             trust_level=f"{si.user_trust_level:.2f}",
@@ -623,7 +758,7 @@ class Consciousness:
 
         lines = [
             f"现在是{time_info}。",
-            f"我（{si.identity}）的意识运行了{int(self._consciousness_age)}秒。",
+            f"我（{si.identity}）的意识运行了{int(self.growth.consciousness_age)}秒。",
             f"我的情绪基调是{si.current_mood}，能量水平{si.energy_level:.2f}。",
             f"用户最后活跃在{datetime.fromtimestamp(si.last_user_activity_time).strftime('%H:%M') if si.last_user_activity_time > 0 else '很久前'}，",
             f"已经空闲{int(si.user_idle_duration / 60)}分钟。",
@@ -644,6 +779,99 @@ class Consciousness:
                 if len(sentence) <= 50:
                     return sentence
         return full_report[:50]
+
+    # ── 统一入口 tick() ──────────────────────────────────────
+
+    @property
+    def l0_count(self) -> int:
+        """当前 L0 心跳计数（供 ConsciousLiving 周期检查）"""
+        return self._l0_count
+
+    def tick(
+        self,
+        agent_state: str = "awake",
+        in_dream: bool = False,
+        dream_start: float = 0.0,
+    ) -> TickResult:
+        """统一入口。ConsciousLiving 每循环只调这一个。
+
+        L0/L1/L2/L3 是意识深度，和生命状态（awake/sleeping/dreaming）正交。
+        任何生命状态下都可能触发 L2/L3，根据各自条件判断。
+
+        Args:
+            agent_state: ConsciousLiving 当前生命状态（用于存在感知）
+            in_dream: 是否在 DREAMING 状态（用于记录日志）
+            dream_start: 进入 DREAMING 的时间戳（L3 节拍器）
+
+        Returns:
+            TickResult: NORMAL / L2_TRIGGERED / L3_TRIGGERED
+        """
+        # L0: 火焰骨架维护（每秒必做）
+        self.tick_L0(agent_state=agent_state)
+
+        # L1: 每60秒自动触发（tick_L0 内部已累加 _l0_count）
+        if self._l0_count >= self.L1_THRESHOLD:
+            self.tick_L1()
+
+        # L2: 动态加柴判断（空闲 / 累积变化 / 定期，有冷却）
+        if self._should_l2():
+            self._last_l2_time = time.time()
+            self.tick_L2(self._get_l2_context())
+            return TickResult.L2_TRIGGERED
+
+        # L3: 只在 DREAMING 状态触发深度燃烧
+        if in_dream and self._should_l3(dream_start):
+            self.tick_L3()
+            return TickResult.L3_TRIGGERED
+
+        return TickResult.NORMAL
+
+    def _should_l2(self) -> bool:
+        """判断是否应该触发 L2 加柴。
+
+        有冷却机制：触发后 L2_COOLDOWN 秒内不再触发。
+        """
+        si = self.self_image
+        elapsed_since_last = time.time() - self._last_l2_time
+
+        # 冷却期内不触发
+        if elapsed_since_last < self.L2_COOLDOWN:
+            return False
+
+        # 超过冷却期，检查三个条件
+        if si.user_idle_duration > self.L2_IDLE_TRIGGER:
+            return True
+        if len(si.accumulated_changes) > self.L2_CHANGES_TRIGGER:
+            return True
+        if elapsed_since_last > self.L2_PERIODIC_INTERVAL:
+            return True
+
+        return False
+
+    def _should_l3(self, dream_start: float) -> bool:
+        """判断是否应该触发 L3 深度燃烧。
+
+        只看时间间隔，不受生命状态限制。
+        dream_start 是节拍器：连续做梦时持续累加，所以 DREAMING 状态更密集触发。
+        """
+        return time.time() - dream_start >= self.L3_DREAM_INTERVAL
+
+    def _get_l2_context(self) -> str:
+        """获取 L2 触发上下文"""
+        si = self.self_image
+        elapsed_since_last = time.time() - self._last_l2_time
+
+        if si.user_idle_duration > self.L2_IDLE_TRIGGER:
+            return "user_idle_long"
+        if len(si.accumulated_changes) > self.L2_CHANGES_TRIGGER:
+            return "accumulated_changes"
+        if elapsed_since_last > self.L2_PERIODIC_INTERVAL:
+            return "periodic"
+        return "unknown"
+
+    def enter_sleep(self) -> None:
+        """进入睡眠状态时调用（占位钩子，后续可扩展）"""
+        pass
 
     # ── 公共接口 ─────────────────────────────────────────────
 

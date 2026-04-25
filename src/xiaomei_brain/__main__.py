@@ -20,6 +20,7 @@ def cmd_run(agent_id: str, attach_cli: bool = False) -> None:
 
     from xiaomei_brain.agent.agent_manager import AgentManager
     from xiaomei_brain.agent.living import AgentLiving
+    from xiaomei_brain.base.llm import get_llm_call_count
 
     base_dir = os.path.expanduser("~/.xiaomei-brain")
     manager = AgentManager(base_dir=base_dir)
@@ -42,21 +43,13 @@ def cmd_run(agent_id: str, attach_cli: bool = False) -> None:
         living.on_sleep = lambda: print("[阶段] SLEEPING - 空闲中，等待...")
         living.on_dream = lambda: print("[阶段] DREAMING - 梦境处理中...")
         living.on_dream_end = lambda: print("[阶段] DREAMING 完成，返回 SLEEPING")
-        _chunk_count = [0]
-        def _print_chunk(chunk):
-            _chunk_count[0] += 1
-            import sys
-            sys.stderr.write(f"[CHUNK #{_chunk_count[0]}] ")
-            sys.stderr.write(repr(chunk[:30]))
-            sys.stderr.write("\n")
-            print(chunk, end="", flush=True)
-        living.on_chat_chunk = _print_chunk
+        living.on_chat_chunk = lambda chunk: print(chunk, end="", flush=True)
 
         # 手动触发启动流程（CLI 模式不走 living.run() 的循环）
         living.state = AgentState.WAKING
         living._on_wake()  # 触发 proactive.check(WAKE) + 问候 + 记忆
         living.state = AgentState.AWAKE
-        print("[阶段] AWAKE - 准备就绪")
+        print(f"[阶段] AWAKE - 准备就绪 | LLM calls: {get_llm_call_count()}")
         print("输入消息跟小美对话 (q退出):")
         while True:
             try:
@@ -98,6 +91,9 @@ def cmd_run(agent_id: str, attach_cli: bool = False) -> None:
                     break
                 living._handle_message(msg)
                 living._last_active = __import__("time").time()
+
+            # 打印 LLM 调用次数到"输入框下方"
+            print(f"\033[1A\033[K[LLM calls: {get_llm_call_count()}]")  # 光标上移1行，清行，打印计数
     else:
         living.run()
 

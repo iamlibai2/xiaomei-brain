@@ -252,3 +252,79 @@ class ConsciousnessStorage:
         """获取指定字段的变化历史"""
         changes = self._load_changes()
         return [c for c in changes if c.get("field") == field]
+
+    # ── 模块化存储（Self 系统）────────────────────────────────────────────
+
+    def _get_module_file(self, module_name: str) -> Path:
+        """获取模块存储文件路径"""
+        return self._consciousness_dir / f"{module_name}.json"
+
+    def _load_json(self, file_path: Path) -> dict:
+        """加载 JSON 文件"""
+        if not file_path.exists():
+            return {}
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning("[ConsciousnessStorage] 加载 %s 失败: %s", file_path, e)
+            return {}
+
+    def _save_json(self, file_path: Path, data: dict) -> None:
+        """保存 JSON 文件"""
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            logger.debug("[ConsciousnessStorage] 保存 %s", file_path)
+        except Exception as e:
+            logger.error("[ConsciousnessStorage] 保存 %s 失败: %s", file_path, e)
+
+    # SelfState 存储
+    def save_self_state(self, state_data: dict) -> None:
+        """保存 SelfState"""
+        data = {"agent_id": self.agent_id, "updated_at": time.time(), **state_data}
+        self._save_json(self._get_module_file("state"), data)
+
+    def load_self_state(self) -> dict:
+        """加载 SelfState"""
+        return self._load_json(self._get_module_file("state"))
+
+    # SelfPerception 存储
+    def save_self_perception(self, perception_data: dict) -> None:
+        """保存 SelfPerception"""
+        data = {"agent_id": self.agent_id, "updated_at": time.time(), **perception_data}
+        self._save_json(self._get_module_file("perception"), data)
+
+    def load_self_perception(self) -> dict:
+        """加载 SelfPerception"""
+        return self._load_json(self._get_module_file("perception"))
+
+    # SelfRelation 存储
+    def save_self_relation(self, relation_data: dict) -> None:
+        """保存 SelfRelation"""
+        data = {"agent_id": self.agent_id, "updated_at": time.time(), **relation_data}
+        self._save_json(self._get_module_file("relation"), data)
+
+    def load_self_relation(self) -> dict:
+        """加载 SelfRelation"""
+        return self._load_json(self._get_module_file("relation"))
+
+    # SelfMemory 存储
+    def save_self_memory(self, memory_data: dict) -> None:
+        """保存 SelfMemory"""
+        data = {"agent_id": self.agent_id, "updated_at": time.time(), **memory_data}
+        self._save_json(self._get_module_file("memory"), data)
+
+    def load_self_memory(self) -> dict:
+        """加载 SelfMemory"""
+        return self._load_json(self._get_module_file("memory"))
+
+    # SelfGrowth 存储
+    def save_self_growth(self, growth_data: dict) -> None:
+        """保存 SelfGrowth"""
+        data = {"agent_id": self.agent_id, "updated_at": time.time(), **growth_data}
+        self._save_json(self._get_module_file("growth"), data)
+
+    def load_self_growth(self) -> dict:
+        """加载 SelfGrowth"""
+        return self._load_json(self._get_module_file("growth"))

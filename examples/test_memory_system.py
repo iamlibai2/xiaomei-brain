@@ -193,7 +193,7 @@ def test_mode_determination():
     print("Mode Determination")
     print("=" * 60)
 
-    from xiaomei_brain.memory.context_assembler import determine_mode
+    from xiaomei_brain.consciousness.context_assembler import determine_mode
 
     cases = [
         ("算1+1等于几", "flow"),
@@ -228,7 +228,7 @@ def test_context_assembler():
 
     from xiaomei_brain.memory.conversation_db import ConversationDB
     from xiaomei_brain.memory.dag import DAGSummaryGraph
-    from xiaomei_brain.memory.context_assembler import ContextAssembler
+    from xiaomei_brain.consciousness.context_assembler import ContextAssembler
     from xiaomei_brain.memory.self_model import SelfModel
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -272,7 +272,7 @@ def test_full_integration():
     from xiaomei_brain.memory.conversation_db import ConversationDB
     from xiaomei_brain.memory.longterm import LongTermMemory
     from xiaomei_brain.memory.dag import DAGSummaryGraph
-    from xiaomei_brain.memory.context_assembler import ContextAssembler
+    from xiaomei_brain.consciousness.context_assembler import ContextAssembler
     from xiaomei_brain.memory.self_model import SelfModel
 
     with tempfile.TemporaryDirectory() as tmpdir:

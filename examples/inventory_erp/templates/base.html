@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}库存管理系统{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <a href="{{ url_for('index') }}">📦 库存管理系统</a>
+            </div>
+            <ul class="nav-menu">
+                <li><a href="{{ url_for('index') }}">🏠 首页</a></li>
+                <li><a href="{{ url_for('product_list') }}">📋 商品管理</a></li>
+                <li><a href="{{ url_for('stock_records') }}">📊 库存记录</a></li>
+                <li><a href="{{ url_for('low_stock_alerts') }}" class="alert-link">⚠️ 低库存预警</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <div class="container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }}">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </div>
+
+    <footer class="footer">
+        <p>库存管理系统 v1.0 | © 2024</p>
+    </footer>
+
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

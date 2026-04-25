@@ -3,13 +3,13 @@ os.environ.setdefault('HF_ENDPOINT', 'https://hf-mirror.com')
 os.environ.setdefault('HF_HUB_OFFLINE', '1')
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 
-from xiaomei_brain.config import Config
-from xiaomei_brain.llm import LLMClient
+from xiaomei_brain.base.config import Config
+from xiaomei_brain.base.llm import LLMClient
 from xiaomei_brain.agent.core import Agent
 from xiaomei_brain.memory.self_model import SelfModel
 from xiaomei_brain.memory.conversation_db import ConversationDB
 from xiaomei_brain.memory.dag import DAGSummaryGraph
-from xiaomei_brain.memory.context_assembler import ContextAssembler
+from xiaomei_brain.consciousness.context_assembler import ContextAssembler
 from xiaomei_brain.memory.longterm import LongTermMemory
 from xiaomei_brain.memory.extractor import MemoryExtractor
 from xiaomei_brain.tools.registry import ToolRegistry

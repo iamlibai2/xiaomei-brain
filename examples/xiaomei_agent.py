@@ -56,7 +56,7 @@ def main():
 
     # 确保 xiaomei agent 存在（首次运行需要）
     if agent_manager.get(agent_id) is None:
-        from xiaomei_brain.agent_manager import AgentConfig
+        from xiaomei_brain.agent.agent_manager import AgentConfig
         xiaomei_config = AgentConfig(
             id=agent_id,
             name="小美",

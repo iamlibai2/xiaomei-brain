@@ -37,7 +37,7 @@ class ContextAssembler:
     Memory layer provides pure retrieval; this class assembles based on consciousness state.
     """
 
-    FRESH_TAIL_COUNT = 20
+    FRESH_TAIL_COUNT = 40
     FLOW_TAIL_COUNT = 4
     REFLECT_TAIL_COUNT = 12
     MESSAGES_PER_COMPACT = 8
@@ -173,12 +173,15 @@ class ContextAssembler:
         if include_fresh_tail and remaining > 100:
             n = self.FRESH_TAIL_COUNT
             recent = self._fresh_tail(n, session_id)
-            for m in recent:
+            # 倒序遍历：优先保留最新消息，从新往旧放
+            tail = []
+            for m in reversed(recent):
                 tokens = estimate_tokens(m.get("content", ""))
                 if remaining - tokens < 50:
-                    break
-                messages.append(m)
+                    continue
+                tail.append(m)
                 remaining -= tokens
+            messages.extend(reversed(tail))
 
         return messages
 
@@ -225,12 +228,15 @@ class ContextAssembler:
         if include_fresh_tail and remaining > 100:
             n = self.REFLECT_TAIL_COUNT
             recent = self._fresh_tail(n, session_id)
-            for m in recent:
+            # 倒序遍历：优先保留最新消息
+            tail = []
+            for m in reversed(recent):
                 tokens = estimate_tokens(m.get("content", ""))
                 if remaining - tokens < 50:
-                    break
-                messages.append(m)
+                    continue
+                tail.append(m)
                 remaining -= tokens
+            messages.extend(reversed(tail))
 
         return messages
 
@@ -380,6 +386,32 @@ class ContextAssembler:
         lines.append("</记忆关联链>")
         logger.info("[Relations] Chain: %d related memories for query='%s'",
                     len(chain_map), user_input[:30])
+        return "\n".join(lines)
+
+    def debug_assemble(
+        self,
+        all_messages: list[dict[str, Any]],
+    ) -> str:
+        """Return human-readable debug view of cached LLM context.
+
+        Uses the exact messages from the last stream() call — no re-assembly.
+        """
+        total = 0
+        lines = [f"=== 上下文 ({len(all_messages)}条消息) ===", ""]
+        for i, m in enumerate(all_messages):
+            role = m.get("role", "?")
+            content = m.get("content", "")
+            tokens = estimate_tokens(content)
+            total += tokens
+            if role == "system":
+                lines.append(f"──── system ({tokens}t) ────")
+                lines.append(content)
+                lines.append(f"──── end system ────")
+                lines.append("")
+            else:
+                preview = content[:80] + ("..." if len(content) > 80 else "")
+                lines.append(f"[{i}] {role} ({tokens}t): {preview}")
+        lines.append(f"=== 总计 {total} tokens ===")
         return "\n".join(lines)
 
     def _summaries_to_text(self, summaries: list) -> str:

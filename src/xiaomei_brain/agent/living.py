@@ -71,12 +71,16 @@ class AgentLiving:
         idle_threshold: float = 1800,       # seconds before SLEEPING
         dream_interval: float = 300,        # seconds between dream cycles
         idle_short: float = 30,             # seconds before IDLE
+        session_id: str = "main",           # fixed session for entire lifecycle
+        user_id: str = "global",            # fixed user for entire lifecycle
     ) -> None:
         self.agent = agent_instance
         self.state = AgentState.DORMANT
         self.idle_threshold = idle_threshold
         self.dream_interval = dream_interval
         self.idle_short = idle_short
+        self.session_id = session_id
+        self.user_id = user_id
 
         self._queue: queue.Queue[LivingMessage | None] = queue.Queue()
         self._last_active: float = 0
@@ -101,15 +105,15 @@ class AgentLiving:
     def put_message(
         self,
         content: str,
-        user_id: str = "global",
-        session_id: str = "main",
+        user_id: str | None = None,
+        session_id: str | None = None,
         source: str = "",
     ) -> None:
         """Push a message into the living agent's queue (thread-safe)."""
         msg = LivingMessage(
             content=content,
-            user_id=user_id,
-            session_id=session_id,
+            user_id=user_id or self.user_id,
+            session_id=session_id or self.session_id,
             source=source,
         )
         self._queue.put_nowait(msg)
@@ -295,7 +299,7 @@ class AgentLiving:
         if self.agent.conversation_db:
             try:
                 self.agent.conversation_db.log(
-                    session_id="main",
+                    session_id=self.session_id,
                     role="assistant",
                     content=f"[主动] {msg.content}",
                 )
@@ -318,6 +322,27 @@ class AgentLiving:
         self._last_active = time.time()
         if self.on_wake:
             self.on_wake()
+
+        # Load fresh_tail from DB into Agent.messages (agent wakes up with recent context)
+        agent = self.agent._get_agent()
+        agent.session_id = self.session_id
+        agent.user_id = self.user_id
+        if self.agent.conversation_db:
+            recent = self.agent.conversation_db.get_recent(
+                self.agent.context_assembler.FRESH_TAIL_COUNT,
+                session_id=self.session_id,
+            )
+            # Load messages, but skip tool messages (they need tool_calls from assistant which DB doesn't store)
+            agent.messages = []
+            for m in recent:
+                role = m.get("role", "user")
+                if role in ("user", "assistant"):
+                    agent.messages.append({
+                        "role": role,
+                        "content": m.get("content", ""),
+                        "id": m.get("id"),
+                    })
+            logger.info("[Living] Loaded %d messages from DB into Agent.messages", len(agent.messages))
 
         messages = self.proactive.check(ProactiveTrigger.WAKE)
         for msg in messages:

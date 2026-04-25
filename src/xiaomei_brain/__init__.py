@@ -17,7 +17,7 @@ from xiaomei_brain.base.config import Config
 
 # Memory
 from xiaomei_brain.memory import (
-    DreamProcessor, DreamScheduler,
+    DreamProcessor,
 )
 
 __all__ = [
@@ -30,5 +30,5 @@ __all__ = [
     # LLM
     "LLMClient", "LLMError", "Config",
     # Memory
-    "DreamProcessor", "DreamScheduler",
+    "DreamProcessor",
 ]

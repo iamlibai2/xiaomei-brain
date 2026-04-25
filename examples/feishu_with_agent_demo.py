@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 from xiaomei_brain.channels.feishu import FeishuChannel
 from xiaomei_brain.channels.types import InboundMsg, OutboundMsg
 from xiaomei_brain.agent import Agent
-from xiaomei_brain.llm import LLMClient
-from xiaomei_brain.config import Config
+from xiaomei_brain.base.llm import LLMClient
+from xiaomei_brain.base.config import Config
 from xiaomei_brain.tools.registry import ToolRegistry
 
 

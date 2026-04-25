@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -66,54 +67,148 @@ class LongTermMemory:
         self._conn: sqlite3.Connection | None = None
         self._init_tables()
 
-        # Embedding model (lazy load)
+        # Embedding model (lazy load, 远程服务器优先)
         self._embedding_model_name = embedding_model or DEFAULT_EMBEDDING_MODEL
         self._embedding_fallback = embedding_fallback or FALLBACK_EMBEDDING_MODEL
         self._embedder: Any = None
+        self._embed_lock = threading.Lock()
+
+        # Remote embedding server（常驻进程，跨进程复用模型）
+        # 设置 EMBED_SERVER_URL 环境变量覆盖默认地址
+        self._embed_server_url = os.environ.get(
+            "EMBED_SERVER_URL", "http://127.0.0.1:18765"
+        )
+        self._remote_available: bool | None = None  # None=未检测, True/False
+        self._remote_dim: int | None = None  # 远程服务器返回的向量维度
 
         # LanceDB (lazy open)
         self._lance_dir = self.db_path.parent / "lancedb"
         self._lance_db: Any = None
         self._lance_table: Any = None
 
+        # Background warmup: start loading embedding model now
+        # (已移除 — 远程服务器覆盖了模型加载场景)
+
+    # ── Embedding ───────────────────────────────────────────────
+
     # ── Embedding ───────────────────────────────────────────────
 
     def _get_embedder(self) -> Any:
-        """Lazy-load the embedding model."""
+        """Lazy-load the embedding model (thread-safe).
+
+        仅在远程服务器不可用时调用。
+        """
         if self._embedder is not None:
             return self._embedder
 
-        # Use local cache only — avoid any network check when model is cached
-        os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-        os.environ["HF_HUB_OFFLINE"] = "1"
+        with self._embed_lock:
+            if self._embedder is not None:
+                return self._embedder
 
-        from sentence_transformers import SentenceTransformer
+            # Use local cache only — avoid any network check when model is cached
+            os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+            os.environ["HF_HUB_OFFLINE"] = "1"
 
+            from sentence_transformers import SentenceTransformer
+
+            try:
+                logger.info("Loading embedding model: %s", self._embedding_model_name)
+                self._embedder = SentenceTransformer(self._embedding_model_name)
+                logger.info("Embedding model loaded: %s", self._embedding_model_name)
+            except Exception as e:
+                if self._embedding_model_name != self._embedding_fallback:
+                    logger.warning(
+                        "Failed to load %s, falling back to %s: %s",
+                        self._embedding_model_name, self._embedding_fallback, e,
+                    )
+                    self._embedding_model_name = self._embedding_fallback
+                    self._embedder = SentenceTransformer(self._embedding_fallback)
+                else:
+                    raise
+
+            return self._embedder
+
+    # ── Remote Embedding Server ──────────────────────────────────
+
+    def _check_remote(self) -> bool:
+        """检测远程 embedding 服务器是否可用，缓存向量维度。"""
         try:
-            logger.info("Loading embedding model: %s", self._embedding_model_name)
-            self._embedder = SentenceTransformer(self._embedding_model_name)
-            logger.info("Embedding model loaded: %s", self._embedding_model_name)
-        except Exception as e:
-            if self._embedding_model_name != self._embedding_fallback:
-                logger.warning(
-                    "Failed to load %s, falling back to %s: %s",
-                    self._embedding_model_name, self._embedding_fallback, e,
+            import urllib.request
+            url = f"{self._embed_server_url}/health"
+            resp = urllib.request.urlopen(url, timeout=2)
+            if resp.status == 200:
+                data = json.loads(resp.read())
+                self._remote_dim = data.get("dim")
+                logger.info(
+                    "[Embed] Remote server available at %s (dim=%s)",
+                    self._embed_server_url, self._remote_dim,
                 )
-                self._embedding_model_name = self._embedding_fallback
-                self._embedder = SentenceTransformer(self._embedding_fallback)
-            else:
-                raise
+                return True
+            return False
+        except Exception as e:
+            logger.debug("[Embed] Remote server not available: %s", e)
+            return False
 
-        return self._embedder
+    def _remote_embed(self, text: str) -> list[float]:
+        """通过远程服务器 embedding（单条）。"""
+        import urllib.request
+        data = json.dumps({"text": text}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{self._embed_server_url}/embed",
+            data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read())
+        return result["vector"]
+
+    def _remote_embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """通过远程服务器 embedding（批量）。"""
+        import urllib.request
+        data = json.dumps({"texts": texts}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{self._embed_server_url}/embed",
+            data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            result = json.loads(resp.read())
+        return result["vectors"]
+
+    # ── Embedding ───────────────────────────────────────────────
 
     def _embed(self, text: str) -> list[float]:
-        """Embed a single text string."""
+        """Embed a single text string.
+
+        优先走远程服务器（常驻进程），回退本地加载。
+        """
+        if self._remote_available is None:
+            self._remote_available = self._check_remote()
+        if self._remote_available:
+            try:
+                return self._remote_embed(text)
+            except Exception as e:
+                logger.warning("[Embed] Remote failed, falling back to local: %s", e)
+                self._remote_available = False
+
         model = self._get_embedder()
         vector = model.encode(text, normalize_embeddings=True, show_progress_bar=False)
         return vector.tolist()
 
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
-        """Embed multiple texts."""
+        """Embed multiple texts.
+
+        优先走远程服务器（常驻进程），回退本地加载。
+        """
+        if self._remote_available is None:
+            self._remote_available = self._check_remote()
+        if self._remote_available:
+            try:
+                return self._remote_embed_batch(texts)
+            except Exception as e:
+                logger.warning("[Embed] Remote batch failed, falling back to local: %s", e)
+                self._remote_available = False
+
         model = self._get_embedder()
         vectors = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
         return vectors.tolist()
@@ -165,9 +260,15 @@ class LongTermMemory:
         return self._lance_table
 
     def _get_embedding_dim(self) -> int:
-        """Get embedding dimension by running a test embedding."""
+        """Get embedding dimension — remote first, local fallback."""
+        # Remote server already cached the dimension
+        if self._remote_available is None:
+            self._remote_available = self._check_remote()
+        if self._remote_available and self._remote_dim is not None:
+            return self._remote_dim
+
+        # Fall back to local model
         model = self._get_embedder()
-        # Newer sentence-transformers renamed this method
         if hasattr(model, "get_embedding_dimension"):
             return model.get_embedding_dimension()
         return model.get_sentence_embedding_dimension()
@@ -334,7 +435,7 @@ class LongTermMemory:
         except Exception:
             content = content.replace("\udc00", "").replace("\ud800", "")
 
-        logger.info(
+        logger.debug(
             "[Memory STORE] user=%s | %s | source=%s | imp=%.2f | tags=%s",
             user_id, content[:50], source, importance, tags,
         )
@@ -396,6 +497,55 @@ class LongTermMemory:
                 "[Memory RECALL] Vector search failed, falling back to keywords: %s", e,
             )
             return self._keyword_recall(query, user_id, top_k)
+
+    def get_important(
+        self, user_id: str = "global", top_k: int = 20, min_strength: float = 0.0,
+    ) -> list[dict[str, Any]]:
+        """按重要性取回记忆（不依赖语义搜索，属于"应该永远记得"的）。
+
+        排序依据：strength * importance（考虑时间衰减），
+        保证重要度高的记忆不会因与查询不相关而被完全遗漏。
+
+        Returns:
+            list[dict]: 每个 dict 含 content/effective_strength/importance/tags 等字段
+        """
+        import sqlite3
+        import time as _time
+
+        db_path = str(self.db_path)
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        now = _time.time()
+
+        rows = conn.execute("""
+            SELECT * FROM memories
+            WHERE (user_id = ? OR user_id = 'global')
+              AND status != 'extinct'
+            ORDER BY strength * importance DESC
+            LIMIT ?
+        """, (user_id, top_k * 2)).fetchall()
+
+        memories = []
+        for row in rows:
+            d = dict(row)
+            d["tags"] = self._get_tags(d["id"])
+            stored_strength = d.get("strength", 1.0)
+            last_strengthen = d.get("last_strengthen", d.get("created_at", now))
+            elapsed_hours = (now - last_strengthen) / 3600.0
+            d["effective_strength"] = round(stored_strength * (STRENGTH_DECAY_BASE ** elapsed_hours), 4)
+            d["score"] = 0.0  # no semantic score
+            # Rank by importance: weight effective_strength heavily
+            d["_rank_score"] = d["effective_strength"] * (0.5 + 0.5 * d.get("importance", 0.5))
+
+            if d["effective_strength"] >= min_strength:
+                memories.append(d)
+
+        memories.sort(key=lambda m: m["_rank_score"], reverse=True)
+        for m in memories:
+            m.pop("_rank_score", None)
+
+        conn.close()
+        return memories[:top_k]
 
     def _vector_recall(
         self, query: str, user_id: str, top_k: int,
@@ -978,16 +1128,15 @@ class LongTermMemory:
         return [r[0] for r in rows]
 
     def get_recent(
-        self, n: int = 10, user_id: str = "global",
+        self, n: int = 10,
     ) -> list[dict[str, Any]]:
-        """Get most recently stored memories for a user (incl. global)."""
+        """Get most recently stored memories for the agent itself (小美的记忆)."""
         conn = self._get_conn()
         rows = conn.execute(
             f"""SELECT * FROM memories
-               WHERE (user_id = ? OR user_id = 'global')
-                 AND status != '{STATUS_EXTINCT}'
+               WHERE status != '{STATUS_EXTINCT}'
                ORDER BY created_at DESC LIMIT ?""",
-            (user_id, n),
+            (n,),
         ).fetchall()
         result = []
         for r in rows:

@@ -177,6 +177,8 @@ class ConversationDB:
             ),
         )
         conn.commit()
+        # Log saved message
+        logger.debug("[DB] Saved #%d [%s] %s (%d chars)", cur.lastrowid, session_id, role, len(content) if content else 0)
         return cur.lastrowid  # type: ignore[return-value]
 
     def query(

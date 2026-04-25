@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block title %}库存记录 - 库存管理系统{% endblock %}
+
+{% block content %}
+<div class="card fade-in">
+    <div class="card-header">
+        <h1 class="card-title">📊 库存记录</h1>
+    </div>
+    
+    {% if records %}
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>时间</th>
+                    <th>商品</th>
+                    <th>SKU</th>
+                    <th>类型</th>
+                    <th>数量</th>
+                    <th>单号/备注</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for record in records %}
+                <tr>
+                    <td>{{ record.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                    <td><strong>{{ record.product.name }}</strong></td>
+                    <td><code>{{ record.product.sku }}</code></td>
+                    <td>
+                        {% if record.transaction_type == 'in' %}
+                            <span class="badge badge-success">📥 入库</span>
+                        {% else %}
+                            <span class="badge badge-danger">📤 出库</span>
+                        {% endif %}
+                    </td>
+                    <td class="{% if record.transaction_type == 'in' %}low-stock{% endif %}"
+                        style="color: {% if record.transaction_type == 'in' %}var(--success-color){% else %}var(--danger-color){% endif %};">
+                        {% if record.transaction_type == 'in' %}+{% else %}-{% endif %}{{ record.quantity }}
+                    </td>
+                    <td>{{ record.reference or '-' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <div style="text-align: center; margin-top: 2rem; color: #6b7280;">
+        显示最近 {{ records|length }} 条记录
+    </div>
+    
+    {% else %}
+    <div class="empty-state">
+        <div class="empty-state-icon">📋</div>
+        <div class="empty-state-text">暂无库存记录</div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
