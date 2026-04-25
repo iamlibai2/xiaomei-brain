@@ -217,6 +217,46 @@ class PurposeEngine:
 
         return sorted_candidates[0]
 
+    def get_next_sibling(self, goal_id: str) -> Optional[Goal]:
+        """获取同父目标的下一个待执行子目标。
+
+        在同父目标的子目标列表中，找到当前目标之后的第一个 PENDING 子目标。
+        用于 apply_proceed/apply_skip 后正确切换子目标。
+        """
+        goal = self.goals.get(goal_id)
+        if not goal:
+            return None
+
+        parent_id = goal.parent_id
+        if not parent_id:
+            # 没有父目标，退化为普通 get_next
+            return self.get_next()
+
+        # 获取同父的所有子目标
+        siblings = self.get_sub_goals(parent_id)
+        if not siblings:
+            return None
+
+        # 按创建顺序排列（子目标分解时是有序的）
+        siblings_sorted = sorted(siblings, key=lambda g: g.created_at)
+
+        # 找到当前目标的位置
+        current_idx = -1
+        for i, sg in enumerate(siblings_sorted):
+            if sg.id == goal_id:
+                current_idx = i
+                break
+
+        if current_idx == -1:
+            return None
+
+        # 找下一个 PENDING 的
+        for sg in siblings_sorted[current_idx + 1:]:
+            if sg.is_pending():
+                return sg
+
+        return None
+
     def complete_current(self, success: bool = True) -> None:
         """
         完成当前目标

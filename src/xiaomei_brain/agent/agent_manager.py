@@ -14,7 +14,7 @@ from xiaomei_brain.base.llm import LLMClient
 from xiaomei_brain.memory.self_model import SelfModel
 from xiaomei_brain.memory.conversation_db import ConversationDB
 from xiaomei_brain.memory.dag import DAGSummaryGraph
-from xiaomei_brain.memory.context_assembler import ContextAssembler
+from xiaomei_brain.consciousness.context_assembler import ContextAssembler
 from xiaomei_brain.memory.longterm import LongTermMemory
 from xiaomei_brain.memory.extractor import MemoryExtractor
 from xiaomei_brain.agent.session import SessionManager
@@ -103,7 +103,8 @@ class AgentInstance:
         session_id: str = "main",
         user_id: str = "global",
         on_chunk=None,
-        intent_context: str = "",  # 新增：意图上下文（注入 system prompt）
+        intent_context: str = "",
+        consciousness_state: dict | None = None,
     ) -> str:
         """Run a full conversation turn: stream + memory extraction.
 
@@ -112,6 +113,7 @@ class AgentInstance:
                 streaming chunk.  When provided the caller can print chunks
                 in real-time; when omitted the response is collected silently.
             intent_context: 意图上下文文本（注入到 system prompt）
+            consciousness_state: 意识状态 dict，用于决定上下文模式
 
         Returns the full response text.
         """
@@ -122,7 +124,7 @@ class AgentInstance:
 
         # Run ReAct loop with streaming
         chunks = []
-        for chunk in agent.stream(user_input):
+        for chunk in agent.stream(user_input, consciousness_state=consciousness_state):
             chunks.append(chunk)
             if on_chunk:
                 on_chunk(chunk)

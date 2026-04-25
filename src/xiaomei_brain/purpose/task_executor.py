@@ -105,6 +105,13 @@ def build_intent_context(purpose, intent_result, chosen_by_user: bool = False) -
         f"进度：{len(completed_subs)}/{len(sub_goals)} 子目标已完成",
     ])
 
+    # 用户已确认的选择：直接使用，不要再问用户
+    confirmed_answer = active_sub.metadata.get("answer")
+    if confirmed_answer:
+        context_lines.append("")
+        context_lines.append(f"【已确认】用户已选择：{confirmed_answer}")
+        context_lines.append("直接使用上述选择执行，不要再询问用户。")
+
     # 子目标列表（已完成标记，方便 Agent 了解全局）
     if sub_goals:
         context_lines.append("")
@@ -171,7 +178,7 @@ def update_goal_progress(purpose, drive, status: str) -> Optional[str]:
             drive.on_goal_completed(active_sub.progress)
 
         # 切换到下一个子目标
-        next_sub = purpose.get_next()
+        next_sub = purpose.get_next_sibling(active_sub.id)
         status_msg = None
         if next_sub:
             purpose.set_current(next_sub.id)
@@ -259,7 +266,7 @@ def apply_skip(purpose, goal_id: str) -> dict:
         return {"status_msg": None, "new_goal_id": None}
 
     purpose.goals[goal.id].complete()
-    next_sub = purpose.get_next()
+    next_sub = purpose.get_next_sibling(goal.id)
     if next_sub:
         purpose.set_current(next_sub.id)
         return {
@@ -273,8 +280,29 @@ def apply_skip(purpose, goal_id: str) -> dict:
         }
 
 
-def apply_proceed(purpose, goal_id: str, answer: str) -> None:
-    """处理"执行"选择：更新目标描述标记已确认"""
+def apply_proceed(purpose, goal_id: str, answer: str) -> dict:
+    """处理"执行"选择：完成当前子目标，推进到下一个子目标。
+
+    Returns:
+        {"status_msg": str, "new_goal_id": str | None}
+      - new_goal_id: 下一个激活的子目标 id（None 表示无更多子目标）
+    """
     goal = purpose.goals.get(goal_id)
-    if goal:
-        goal.description = f"{goal.description[:60]}（确认）"
+    if not goal:
+        return {"status_msg": None, "new_goal_id": None}
+
+    goal.metadata["answer"] = answer  # 存储用户的选择
+    purpose.goals[goal.id].complete()
+
+    next_sub = purpose.get_next_sibling(goal.id)
+    if next_sub:
+        purpose.set_current(next_sub.id)
+        return {
+            "status_msg": f"[目标] 完成，激活下一个: {next_sub.description[:40]}",
+            "new_goal_id": next_sub.id,
+        }
+    else:
+        return {
+            "status_msg": "[目标] 所有子目标已完成",
+            "new_goal_id": None,
+        }

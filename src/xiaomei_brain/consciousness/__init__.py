@@ -20,7 +20,9 @@
 - L3: LLM深度燃烧（极低频，完整LLM）- 梦境阶段
 """
 
-from .self_image import SelfImage, FlameState
+from .self_image import FlameState
+from .self_image_proxy import SelfImageProxy
+from .self_modules import SelfIdentity, SelfState, SelfRelation, SelfPerception, SelfMemory, SelfGrowth
 from .intent import (
     Intent,
     IntentType,
@@ -35,11 +37,21 @@ from .intent import (
 from .core import Consciousness, ConsciousnessReport
 from .storage import ConsciousnessStorage
 from .identity import IdentityConfig
+from .perception import PerceptionConfig, PerceptionRule
 from .conscious_living import ConsciousLiving, LivingState, LivingMessage
 
 __all__ = [
-    "SelfImage",
+    # 保持向后兼容
+    "SelfImageProxy",
     "FlameState",
+    # 新增模块
+    "SelfIdentity",
+    "SelfState",
+    "SelfRelation",
+    "SelfPerception",
+    "SelfMemory",
+    "SelfGrowth",
+    # Intent
     "Intent",
     "IntentType",
     "create_wait_intent",
@@ -49,10 +61,14 @@ __all__ = [
     "create_reflect_intent",
     "create_dream_intent",
     "create_care_intent",
+    # Core
     "Consciousness",
     "ConsciousnessReport",
     "ConsciousnessStorage",
     "IdentityConfig",
+    "PerceptionConfig",
+    "PerceptionRule",
+    # Living
     "ConsciousLiving",
     "LivingState",
     "LivingMessage",

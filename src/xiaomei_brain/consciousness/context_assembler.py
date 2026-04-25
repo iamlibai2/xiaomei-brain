@@ -1,0 +1,463 @@
+"""Consciousness-aware context assembler.
+
+Responsibilities:
+- assemble_context(): compose LLM input context from memory storage
+- determine_mode(): decide operational mode based on consciousness state
+
+Memory layer (pure storage):
+- conversation_db: raw message log
+- dag: hierarchical summaries
+- longterm_memory: vector-indexed memories
+
+Consciousness layer decides WHAT to assemble based on flame/drive/intent state.
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+import time
+from typing import Any
+
+from xiaomei_brain.memory.conversation_db import ConversationDB, estimate_tokens
+from xiaomei_brain.memory.dag import DAGSummaryGraph
+from xiaomei_brain.memory.self_model import SelfModel
+
+logger = logging.getLogger(__name__)
+
+# Memory strength injection thresholds
+INJECT_STRENGTH_DAILY = 0.6
+INJECT_STRENGTH_REFLECT = 0.4
+
+
+class ContextAssembler:
+    """Consciousness-aware context assembler.
+
+    Receives memory storage references and consciousness state (drive/self_image).
+    Memory layer provides pure retrieval; this class assembles based on consciousness state.
+    """
+
+    FRESH_TAIL_COUNT = 20
+    FLOW_TAIL_COUNT = 4
+    REFLECT_TAIL_COUNT = 12
+    MESSAGES_PER_COMPACT = 8
+    RESERVED_FRESH_COUNT = 10
+    COMPACT_THRESHOLD = MESSAGES_PER_COMPACT + RESERVED_FRESH_COUNT
+
+    def __init__(
+        self,
+        conversation_db: ConversationDB,
+        dag: DAGSummaryGraph,
+        self_model: SelfModel | None = None,
+        longterm_memory: Any | None = None,
+        drive: Any | None = None,
+        self_image: Any | None = None,
+        purpose: Any | None = None,
+    ) -> None:
+        self.db = conversation_db
+        self.dag = dag
+        self.self_model = self_model
+        self.longterm = longterm_memory
+        self.drive = drive
+        self.self_image = self_image
+        self.purpose = purpose
+        self._compact_locks: dict[str, threading.Lock] = {}
+        self._locks_lock = threading.Lock()
+
+    def assemble(
+        self,
+        user_input: str,
+        max_tokens: int,
+        mode: str = "daily",
+        session_id: str | None = None,
+        user_id: str = "global",
+        include_fresh_tail: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Assemble context for LLM input (mode already determined by consciousness)."""
+        if session_id:
+            self._auto_compact(session_id)
+
+        if mode == "flow":
+            return self._assemble_flow(max_tokens, session_id, include_fresh_tail)
+        elif mode == "reflect":
+            return self._assemble_reflect(max_tokens, session_id, user_input, user_id, include_fresh_tail)
+        else:
+            return self._assemble_daily(max_tokens, session_id, user_input, user_id, include_fresh_tail)
+
+    def _auto_compact(self, session_id: str) -> None:
+        with self._locks_lock:
+            lock = self._compact_locks.get(session_id)
+            if lock is None:
+                lock = threading.Lock()
+                self._compact_locks[session_id] = lock
+
+        if not lock.acquire(blocking=False):
+            return
+
+        try:
+            unsummarized = self.dag.get_unsummarized_messages(session_id, limit=100)
+            if len(unsummarized) >= self.COMPACT_THRESHOLD:
+                msgs_to_compact = unsummarized[: self.MESSAGES_PER_COMPACT]
+                node = self.dag.compact(
+                    session_id,
+                    [m["id"] for m in msgs_to_compact],
+                    msgs_to_compact,
+                )
+                if node:
+                    logger.info(
+                        "[DAG] Auto compact: %d messages → summary #%d (depth=%d), %d remain fresh",
+                        len(msgs_to_compact), node.id, node.depth,
+                        len(unsummarized) - len(msgs_to_compact),
+                    )
+        except Exception as e:
+            logger.warning("[DAG] Auto compact failed: %s", e)
+        finally:
+            lock.release()
+
+    def _assemble_flow(
+        self, max_tokens: int, session_id: str | None,
+        include_fresh_tail: bool = True,
+    ) -> list[dict[str, Any]]:
+        messages: list[dict[str, Any]] = []
+        if self.self_model:
+            messages.append({
+                "role": "system",
+                "content": self.self_model.to_system_prompt(mode="flow"),
+            })
+        if include_fresh_tail:
+            n = self.FLOW_TAIL_COUNT
+            recent = self._fresh_tail(n, session_id)
+            messages.extend(recent)
+        return messages
+
+    def _assemble_daily(
+        self,
+        max_tokens: int,
+        session_id: str | None,
+        user_input: str | None = None,
+        user_id: str = "global",
+        include_fresh_tail: bool = True,
+    ) -> list[dict[str, Any]]:
+        messages: list[dict[str, Any]] = []
+        remaining = max_tokens
+
+        system_content = ""
+        if self.self_model:
+            system_content = self.self_model.to_system_prompt(mode="daily")
+
+        if session_id and remaining > 200:
+            summary_budget = remaining * 2 // 5
+            summaries = self.dag.get_higher_summaries(session_id, summary_budget)
+            if summaries:
+                summary_text = self._summaries_to_text(summaries)
+                system_content += "\n\n" + summary_text
+
+        if user_input and self.longterm and remaining > 200:
+            memory_text = self._recall_memories(
+                user_input, user_id,
+                max_results=12,
+                min_strength=INJECT_STRENGTH_DAILY,
+            )
+            if memory_text:
+                system_content += "\n\n" + memory_text
+
+        if user_input and self.longterm and remaining > 300:
+            chain_text = self._recall_relation_chain(user_input, user_id, depth=2)
+            if chain_text:
+                system_content += "\n\n" + chain_text
+
+        if system_content:
+            messages.append({"role": "system", "content": system_content})
+            remaining -= estimate_tokens(system_content)
+
+        if include_fresh_tail and remaining > 100:
+            n = self.FRESH_TAIL_COUNT
+            recent = self._fresh_tail(n, session_id)
+            for m in recent:
+                tokens = estimate_tokens(m.get("content", ""))
+                if remaining - tokens < 50:
+                    break
+                messages.append(m)
+                remaining -= tokens
+
+        return messages
+
+    def _assemble_reflect(
+        self,
+        max_tokens: int,
+        session_id: str | None,
+        user_input: str | None = None,
+        user_id: str = "global",
+        include_fresh_tail: bool = True,
+    ) -> list[dict[str, Any]]:
+        messages: list[dict[str, Any]] = []
+        remaining = max_tokens
+
+        system_content = ""
+        if self.self_model:
+            system_content = self.self_model.to_system_prompt(mode="reflect")
+
+        if session_id and remaining > 200:
+            summary_budget = remaining // 2
+            summaries = self.dag.get_higher_summaries(session_id, summary_budget)
+            if summaries:
+                summary_text = self._summaries_to_text(summaries)
+                system_content += "\n\n" + summary_text
+
+        if user_input and self.longterm and remaining > 200:
+            memory_text = self._recall_memories(
+                user_input, user_id,
+                max_results=15,
+                min_strength=INJECT_STRENGTH_REFLECT,
+            )
+            if memory_text:
+                system_content += "\n\n" + memory_text
+
+            if remaining > 300:
+                chain_text = self._recall_relation_chain(user_input, user_id, depth=2)
+                if chain_text:
+                    system_content += "\n\n" + chain_text
+
+        if system_content:
+            messages.append({"role": "system", "content": system_content})
+            remaining -= estimate_tokens(system_content)
+
+        if include_fresh_tail and remaining > 100:
+            n = self.REFLECT_TAIL_COUNT
+            recent = self._fresh_tail(n, session_id)
+            for m in recent:
+                tokens = estimate_tokens(m.get("content", ""))
+                if remaining - tokens < 50:
+                    break
+                messages.append(m)
+                remaining -= tokens
+
+        return messages
+
+    def _fresh_tail(self, n: int, session_id: str | None) -> list[dict[str, Any]]:
+        if self.db is None:
+            return []
+        recent = self.db.get_recent(n, session_id=session_id)
+        result = []
+        for m in recent:
+            role = m.get("role", "user")
+            content = m.get("content", "")
+            if role == "tool":
+                result.append({
+                    "role": "tool",
+                    "tool_call_id": m.get("tool_call_id", ""),
+                    "content": content,
+                })
+            else:
+                result.append({"role": role, "content": content})
+        return result
+
+    def _recall_memories(
+        self, user_input: str, user_id: str = "global", max_results: int = 5,
+        min_strength: float = 0.0,
+    ) -> str:
+        if self.longterm is None:
+            return ""
+
+        now = time.time()
+
+        important_memories = self.longterm.get_important(
+            user_id=user_id, top_k=10, min_strength=min_strength,
+        )
+
+        similar_memories = self.longterm.recall(
+            user_input, user_id=user_id, top_k=30,
+        )
+        similar_memories = [
+            m for m in similar_memories
+            if m.get("effective_strength", 0) >= min_strength
+        ]
+        similar_memories.sort(key=lambda m: m.get("score", 0), reverse=True)
+        similar_memories = similar_memories[:10]
+
+        seen: set[str] = set()
+        merged: list[dict] = []
+        for m in important_memories + similar_memories:
+            mid = m.get("id", "")
+            if mid and mid in seen:
+                continue
+            if mid:
+                seen.add(mid)
+            merged.append(m)
+
+        for m in merged:
+            eff_str = m.get("effective_strength", 0)
+            score = m.get("score", 0)
+            m["_combined"] = eff_str * 0.6 + score * 0.4
+
+        merged.sort(key=lambda m: m["_combined"], reverse=True)
+        memories = self._deduplicate_memories(merged, max_per_tag=2)
+        memories = memories[:max_results]
+        for m in memories:
+            m.pop("_combined", None)
+
+        if not memories:
+            return ""
+        elapsed_ms = int((time.time() - now) * 1000)
+
+        lines = ["<长期记忆>"]
+        lines.append("以下是你的长期记忆，当用户问及相关信息时，你必须主动引用这些记忆来回答，不要说'你不记得'或让用户自己回答。")
+        for m in memories:
+            content = m.get("content", "")
+            eff_str = m.get("effective_strength", 0)
+            level = self.longterm._get_strength_level(eff_str) if hasattr(self.longterm, '_get_strength_level') else "?"
+            tags = m.get("tags", [])
+            tag_str = ",".join(tags) if tags else ""
+            lines.append(f"- [{level} {eff_str:.2f}] {content}  [{tag_str}]")
+
+        lines.append("</长期记忆>")
+
+        logger.info(
+            "[Memory] Recalled %d memories (min_str=%.2f) for query='%s' user=%s",
+            len(memories), min_strength, user_input[:30], user_id,
+        )
+        return "\n".join(lines)
+
+    @staticmethod
+    def _deduplicate_memories(memories: list[dict], max_per_tag: int = 2) -> list[dict]:
+        if len(memories) <= 1:
+            return memories
+        tag_counts: dict[str, int] = {}
+        kept: list[dict] = []
+        for m in memories:
+            tags = m.get("tags", [])
+            primary_tag = tags[0] if tags else "__none__"
+            count = tag_counts.get(primary_tag, 0)
+            if count < max_per_tag:
+                kept.append(m)
+                tag_counts[primary_tag] = count + 1
+        return kept
+
+    def _recall_relation_chain(
+        self,
+        user_input: str,
+        user_id: str = "global",
+        depth: int = 2,
+    ) -> str:
+        if self.longterm is None:
+            return ""
+
+        seed_memories = self.longterm.recall(user_input, user_id=user_id, top_k=5)
+        if not seed_memories:
+            return ""
+
+        chain_map: dict[int, dict] = {}
+        for seed in seed_memories:
+            seed_id = seed["id"]
+            if seed_id in chain_map:
+                continue
+            chain = self.longterm.get_relation_chain(seed_id, depth=depth)
+            for item in chain:
+                mid = item["memory_id"]
+                if mid not in chain_map:
+                    chain_map[mid] = item
+
+        if not chain_map:
+            return ""
+
+        lines = ["<记忆关联链>"]
+        lines.append("以下记忆与当前对话存在语义关联（因果/时序等），可帮助你理解上下文脉络：")
+
+        for mid, item in chain_map.items():
+            content = item.get("content", "")
+            rel_type = item.get("relation_type", "?")
+            hop = item.get("hop", "?")
+            if not content:
+                continue
+            rel_label = {
+                "causal": "因果",
+                "temporal": "时序",
+                "contrast": "对比",
+                "contains": "包含",
+            }.get(rel_type, rel_type)
+            lines.append(f"- [跳{hop}] {content} （{rel_label}）")
+
+        lines.append("</记忆关联链>")
+        logger.info("[Relations] Chain: %d related memories for query='%s'",
+                    len(chain_map), user_input[:30])
+        return "\n".join(lines)
+
+    def _summaries_to_text(self, summaries: list) -> str:
+        if not summaries:
+            return ""
+        content = "<历史摘要>\n"
+        for s in summaries:
+            content += f'<summary node_id="{s.id}" depth="{s.depth}" '
+            content += f'time_range="{s.time_start:.0f}-{s.time_end:.0f}">\n'
+            content += s.content + "\n</summary>\n"
+        content += "</历史摘要>"
+        return content
+
+
+def determine_mode(
+    user_input: str,
+    energy_level: float = 0.8,
+    desire_state: dict | None = None,
+    pending_intents: list[str] | None = None,
+    has_active_goal: bool = False,
+) -> str:
+    """Determine operational mode based on consciousness state.
+
+    Args:
+        user_input: The user's current message.
+        energy_level: Flame/energy level (0-1), from SelfImage.
+        desire_state: Drive desire state dict {belonging, cognition, achievement, expression}.
+        pending_intents: Pending intents from SelfImage.
+        has_active_goal: Whether there is an active goal in PurposeEngine.
+
+    Returns:
+        "flow", "daily", or "reflect".
+    """
+    desire_state = desire_state or {}
+    pending_intents = pending_intents or []
+
+    # Flame low → flow (minimal context)
+    if energy_level < 0.3:
+        return "flow"
+
+    # Pending DREAM/REFLECT intent → reflect
+    if any(i in pending_intents for i in ("DREAM", "REFLECT", "RECALL")):
+        return "reflect"
+
+    # Active goal → daily (need context to continue)
+    if has_active_goal:
+        return "daily"
+
+    # High desire tension → daily (desire drives context need)
+    max_desire = max(desire_state.get(k, 0) for k in ("belonging", "cognition", "achievement", "expression"))
+    if max_desire > 0.8:
+        return "daily"
+
+    # User input reflects on past behavior → reflect
+    reflect_keywords = ["答对了吗", "做错了", "纠正", "不对", "反省", "反思", "我错了吗"]
+    if any(k in user_input for k in reflect_keywords):
+        return "reflect"
+
+    # Past references → daily (need history)
+    past_keywords = ["昨天", "之前", "上次", "以前", "记得", "刚才", "那一次"]
+    if any(k in user_input for k in past_keywords):
+        return "daily"
+
+    # Personal opinion/judgment → daily (need self-model)
+    opinion_keywords = ["你觉得", "你怎么看", "建议", "推荐", "你更喜欢", "你觉得我"]
+    if any(k in user_input for k in opinion_keywords):
+        return "daily"
+
+    # Emotional/personal → daily
+    personal_keywords = ["我心情", "我好开心", "我很难过", "你能不能", "我想要", "我感觉"]
+    if any(k in user_input for k in personal_keywords):
+        return "daily"
+
+    # Simple/factual → flow
+    if len(user_input) < 15:
+        simple_patterns = ["算", "计算", "翻译", "几点", "什么意思", "？", "吗", "帮我"]
+        if any(p in user_input for p in simple_patterns):
+            return "flow"
+
+    # Default: daily
+    return "daily"

@@ -37,12 +37,13 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable
 
-from .core import Consciousness, ConsciousnessReport
-from .intent import Intent, IntentType
+from .context_assembler import ContextAssembler as ConsciousContextAssembler
+from .core import Consciousness, ConsciousnessReport, TickResult
+from .intent import Intent
 from .storage import ConsciousnessStorage
 from .self_image import SelfImage, FlameState
 from ..drive import DriveEngine, EventExtractor, DesireActionExecutor
-from ..purpose import PurposeEngine, IntentUnderstanding, task_executor
+from ..purpose import PurposeEngine, IntentUnderstanding, task_executor, Goal, GoalType, GoalStatus, IntentResult, GoalRelation
 
 logger = logging.getLogger(__name__)
 
@@ -95,24 +96,22 @@ class ConsciousLiving:
         session_id: str = "main",
         user_id: str = "global",
         tick_interval: float = 1.0,  # L0 心跳间隔（秒）
-        inner_thought_interval: float = 300,  # 内在想法产生间隔（秒）
     ) -> None:
         self.agent = agent_instance
         self.state = LivingState.DORMANT
+
         self.idle_threshold = idle_threshold
         self.dream_interval = dream_interval
         self.idle_short = idle_short
         self.session_id = session_id
         self.user_id = user_id
         self.tick_interval = tick_interval
-        self.inner_thought_interval = inner_thought_interval
 
         # 消息队列
         self._queue: queue.Queue[LivingMessage | None] = queue.Queue()
         self._last_active: float = 0
         self._running: bool = False
         self._cancel_requested: bool = False  # Ctrl+C 取消当前动作
-        self._last_inner_thought_time: float = 0
 
         # Drive 系统（边缘系统）
         agent_id = "xiaomei"
@@ -147,15 +146,8 @@ class ConsciousLiving:
         )
         self._setup_consciousness()
 
-        # L0 心跳计数
-        self._tick_count: int = 0
-
-        # 上次加柴时间（用于动态判断）
-        self._last_fuel_time: float = 0
-
-        # 事件提取周期（10分钟）
-        self._last_event_extract_time: float = 0
-        self._event_extract_interval: float = 600  # 10分钟
+        # 注入 consciousness 层上下文组装器（替换 agent_manager 创建的旧 assembler）
+        self._inject_context_assembler()
 
         # Intent 测试命令
         self._intent_commands = {
@@ -185,6 +177,50 @@ class ConsciousLiving:
         self._waiting_confirm: bool = False
         self._pending_confirm_msg: LivingMessage | None = None  # 触发确认的原始消息
         self._pending_confirm_intent: Any = None  # 触发确认时的意图分析结果
+
+    def _get_consciousness_state(self) -> dict:
+        """Build consciousness state dict for context mode decision."""
+        si = self.consciousness.get_self_image()
+        pending = si.pending_intents if hasattr(si, "pending_intents") else []
+        energy = si.energy_level if hasattr(si, "energy_level") else 0.8
+        has_goal = bool(self.purpose and self.purpose.current_goal)
+        desire_state = {}
+        if self.drive:
+            d = self.drive.desire
+            desire_state = {
+                "belonging": d.belonging,
+                "cognition": d.cognition,
+                "achievement": d.achievement,
+                "expression": d.expression,
+            }
+        return {
+            "energy_level": energy,
+            "desire_state": desire_state,
+            "pending_intents": pending,
+            "has_active_goal": has_goal,
+        }
+
+    def _inject_context_assembler(self) -> None:
+        """Replace agent's context_assembler with consciousness-aware version.
+
+        The old assembler created by agent_manager has no consciousness state.
+        This injects a new one that considers flame/drive/intent when assembling context.
+        """
+        old_ca = getattr(self.agent, "context_assembler", None)
+        if old_ca is None:
+            logger.warning("[ConsciousLiving] No context_assembler to replace")
+            return
+
+        self.agent.context_assembler = ConsciousContextAssembler(
+            conversation_db=self.agent.conversation_db,
+            dag=old_ca.dag,
+            self_model=self.agent.self_model,
+            longterm_memory=self.agent.longterm_memory,
+            drive=self.drive,
+            self_image=self.consciousness.self_image,
+            purpose=self.purpose,
+        )
+        logger.info("[ConsciousLiving] context_assembler injected (consciousness-aware)")
 
     def _setup_consciousness(self) -> None:
         """初始化意识系统（尝试从存储恢复）"""
@@ -229,7 +265,9 @@ class ConsciousLiving:
         session_id: str | None = None,
         source: str = "",
     ) -> None:
-        """放入消息"""
+        """放入消息（字符级过滤，不破坏 CJK 字节边界）"""
+        if isinstance(content, str):
+            content = self._clean_input(content)
         msg = LivingMessage(
             content=content,
             user_id=user_id or self.user_id,
@@ -238,8 +276,35 @@ class ConsciousLiving:
         )
         self._queue.put_nowait(msg)
 
+    @staticmethod
+    def _clean_input(text: str) -> str:
+        """字符级输入清洗。
+
+        使用字符遍历而非 encode/decode 往返，避免 surrogatepass
+        破坏 CJK 多字节边界导致中文乱码。
+
+        处理：
+        - 退格符 (\\x08, \\x7f)：模拟退格删除前一个字符
+        - 代理字符 (\\ud800-\\udfff)：直接跳过
+        - 替换字符 (\\ufffd)：直接跳过
+        - 控制字符 (ord < 0x20)：跳过，保留 \\t \\n \\r
+        """
+        buf: list[str] = []
+        for ch in text:
+            if ch in ("\x08", "\x7f"):
+                if buf:
+                    buf.pop()
+            elif ch == "\ufffd" or ("\ud800" <= ch <= "\udfff"):
+                continue
+            elif ord(ch) < 0x20 and ch not in ("\t", "\n", "\r"):
+                continue
+            else:
+                buf.append(ch)
+        return "".join(buf)
+
     def run(self) -> None:
         """主循环，阻塞运行"""
+        print("[ConsciousLiving] 启动生命循环（当前状态: %s）" % self.state.value, flush=True)
         self._running = True
 
         # DORMANT → WAKING
@@ -301,6 +366,8 @@ class ConsciousLiving:
     def _transition(self, new_state: LivingState) -> None:
         old = self.state
         self.state = new_state
+        # print 备份：daemon 线程日志容易被 stdin/stdout 干扰，print 总是可见
+        print(f"[ConsciousLiving] {old.value} → {new_state.value}", flush=True)
         logger.info("[ConsciousLiving] %s → %s", old.value, new_state.value)
 
         # 更新意识系统中的 agent_state
@@ -310,12 +377,15 @@ class ConsciousLiving:
     # ── Loop: AWAKE ──────────────────────────────────────────────
 
     def _loop_awake(self) -> None:
-        """AWAKE 状态：处理消息 + 火焰心跳 + 内在感知"""
-        # 火焰心跳（每秒）
-        self._tick_flame()
+        """AWAKE 状态：统一 tick + 消息处理"""
+        # 统一心跳入口
+        result = self.consciousness.tick(agent_state=self.state.value)
 
-        # 内在感知检查
-        self._check_inner_thought()
+        # L2 触发后检查 Intent 和欲望行为
+        if result == TickResult.L2_TRIGGERED:
+            self._check_intent()
+            if self.consciousness.self_image.user_idle_duration > 300:
+                self._check_desire_actions()
 
         # 等待消息
         msg = self._wait_message(timeout=self.tick_interval)
@@ -332,30 +402,35 @@ class ConsciousLiving:
     # ── Loop: SLEEPING ───────────────────────────────────────────
 
     def _loop_sleeping(self) -> None:
-        """SLEEPING 状态：火焰心跳 + 消息等待 + 梦境触发 + 内在感知
-
-        改进：缩短 wait_message timeout，让 tick 持续执行
-        """
-        # 使用短超时循环，让 tick 持续执行
-        sleeping_start = time.time()
+        """SLEEPING 状态：统一 tick + 消息等待 + 触发 DREAMING"""
+        dream_start = time.time()
 
         while True:
-            # 火焰心跳（每秒）
-            self._tick_flame()
+            # 统一心跳入口（L0/L1/L2/L3 各自按条件触发，生命状态不限制意识深度）
+            result = self.consciousness.tick(
+                agent_state=self.state.value,
+                in_dream=False,
+                dream_start=dream_start,
+            )
 
-            # 内在感知检查
-            self._check_inner_thought()
+            # L2 触发后检查 Intent 和欲望行为
+            if result == TickResult.L2_TRIGGERED:
+                self._check_intent()
+                self._check_desire_actions()
 
-            # 检查 Intent
-            self._check_intent()
+            # L3 触发：切换到 DREAMING 状态
+            if result == TickResult.L3_TRIGGERED:
+                self._transition(LivingState.DREAMING)
+                return  # 回到 run() 主循环，进入 _loop_dreaming()
 
-            # 动态加柴判断
-            self._check_dynamic_fuel()
+            # 检查 Intent（L2 未触发时也可能有待处理 Intent）
+            if result != TickResult.L2_TRIGGERED:
+                self._check_intent()
 
             # 欲望行为周期检查（每 60 秒）
             self._check_desire_actions_periodic()
 
-            # 等待消息（短超时，让循环继续）
+            # 等待消息
             msg = self._wait_message(timeout=self.tick_interval)
 
             if msg is not None:
@@ -365,152 +440,26 @@ class ConsciousLiving:
                 self._last_active = time.time()
                 return
 
-            # 检查是否超过梦境周期
-            if time.time() - sleeping_start >= self.dream_interval:
-                # 触发梦境
-                self._transition(LivingState.DREAMING)
-                return
-
     # ── Loop: DREAMING ───────────────────────────────────────────
 
     def _loop_dreaming(self) -> None:
-        """DREAMING 状态：L3 深度燃烧"""
-        # L3：LLM深度加柴
-        report = self.consciousness.tick_L3()
-        logger.info("[ConsciousLiving] L3燃烧: %s", report.summary[:50])
+        """DREAMING 状态：进入 → 调用一次 tick() → 切回 SLEEPING"""
+        # 进入时调用一次 tick()
+        result = self.consciousness.tick(
+            agent_state=self.state.value,
+            in_dream=True,
+            dream_start=time.time(),
+        )
 
-        # 回到 SLEEPING
+        if result == TickResult.L3_TRIGGERED:
+            report = self.consciousness.get_last_report()
+            if report:
+                logger.info("[ConsciousLiving] L3燃烧: %s", report.summary[:50])
+
+        # 一次 L3 后切回 SLEEPING，继续 sleep 周期
         self._transition(LivingState.SLEEPING)
 
     # ── Flame heartbeat ──────────────────────────────────────────
-
-    def _tick_flame(self) -> None:
-        """火焰骨架心跳（每秒）
-
-        核心存在感知：
-        - agent_state：我正在运行吗？
-        - consciousness_age：火焰燃烧了多久？
-        """
-        self._tick_count += 1
-
-        # L0：火焰骨架维护（传入当前状态用于存在感知）
-        flame_state = self.consciousness.tick_L0(agent_state=self.state.value)
-
-        # L1：每60秒检测异常
-        if self._tick_count >= 60:
-            self._tick_count = 0
-            report = self.consciousness.tick_L1()
-            if report:
-                logger.info("[ConsciousLiving] L1异常: %s", report.anomaly)
-
-    def _check_dynamic_fuel(self) -> None:
-        """动态加柴判断（测试时关闭，恢复时删除此函数调用即可）
-
-        触发条件：
-        - 用户空闲超过5分钟 → L2问候
-        - 异常检测触发 → L2处理
-        - 累积变化超过阈值 → L2理解
-        - 上次加柴超过10分钟 → L2定期加柴 + 事件提取
-        """
-        # ⚠️ 测试目标时关闭，加柴代码保留在此，恢复时删除本 return 即可
-        return
-
-        si = self.consciousness.get_self_image()
-        elapsed_since_fuel = time.time() - self._last_fuel_time
-
-        # Drive 事件提取（每10分钟）
-        elapsed_since_extract = time.time() - self._last_event_extract_time
-        if elapsed_since_extract >= self._event_extract_interval:
-            self._extract_drive_events()
-            self._last_event_extract_time = time.time()
-
-        # 条件1：用户空闲超过5分钟
-        if si.user_idle_duration > 300:
-            logger.info("[ConsciousLiving] 动态加柴：用户空闲5分钟")
-            self._fuel_L2("user_idle_long")
-            # 用户空闲时检查社交类欲望行为（greet_user）
-            self._check_desire_actions()
-            return
-
-        # 条件2：累积变化超过10条
-        if len(si.accumulated_changes) > 10:
-            logger.info("[ConsciousLiving] 动态加柴：累积变化%d条", len(si.accumulated_changes))
-            self._fuel_L2("accumulated_changes")
-            return
-
-        # 条件3：上次加柴超过10分钟
-        if elapsed_since_fuel > 600:
-            logger.info("[ConsciousLiving] 动态加柴：定期加柴（10分钟）")
-            self._fuel_L2("periodic")
-            return
-
-    def _fuel_L2(self, context: str) -> None:
-        """L2加柴"""
-        self._last_fuel_time = time.time()
-        report = self.consciousness.tick_L2(context)
-        logger.info("[ConsciousLiving] L2加柴: %s", report.summary[:50])
-
-        # 检查生成的 Intent
-        intent = self.consciousness.get_pending_intent()
-        if intent:
-            logger.info("[ConsciousLiving] 意图生成: %s (%s)", intent.type.value, intent.content[:30])
-
-    def _extract_drive_events(self) -> None:
-        """提取 Drive 事件（10分钟周期）
-
-        分析最近对话，提取表扬/批评/目标进展，
-        并让 LLM 更新欲望状态。
-        """
-        # 获取最近对话
-        messages = []
-        if self.agent and hasattr(self.agent, "conversation_db"):
-            db = self.agent.conversation_db
-            if db:
-                try:
-                    # 获取最近10分钟对话
-                    messages = db.get_recent_messages(
-                        session_id=self.session_id,
-                        limit=20
-                    )
-                except Exception as e:
-                    logger.warning("[ConsciousLiving] 获取对话失败: %s", e)
-
-        if not messages:
-            logger.debug("[ConsciousLiving] 无对话记录，跳过事件提取")
-            return
-
-        # 获取当前欲望状态
-        desire_state = {
-            "belonging": self.drive.desire.belonging,
-            "cognition": self.drive.desire.cognition,
-            "achievement": self.drive.desire.achievement,
-            "expression": self.drive.desire.expression,
-        }
-        thresholds = {
-            "belonging": self.drive.config.desire.thresholds.belonging,
-            "cognition": self.drive.config.desire.thresholds.cognition,
-            "achievement": self.drive.config.desire.thresholds.achievement,
-            "expression": self.drive.config.desire.thresholds.expression,
-        }
-
-        # 提取事件
-        result = self.event_extractor.extract(messages, desire_state, thresholds)
-
-        # 应用到 Drive
-        self.event_extractor.apply_to_drive(result, self.drive)
-
-        logger.info(
-            "[ConsciousLiving] 事件提取完成: "
-            "praise=%.2f, criticism=%.2f, "
-            "belonging=%.2f→%.2f",
-            result.get("praise_intensity", 0),
-            result.get("criticism_intensity", 0),
-            desire_state.get("belonging", 0.5),
-            self.drive.desire.belonging,
-        )
-
-        # 事件提取后检查欲望驱动行为
-        self._check_desire_actions()
 
     def _check_desire_actions(self) -> None:
         """检查欲望驱动行为
@@ -541,12 +490,13 @@ class ConsciousLiving:
 
         注意：learn_topic 已在 waking 时后台执行，这里跳过
         """
-        # 检查间隔（用 tick_count 计算，每 60 次 = 60 秒）
-        logger.debug("[欲望周期] tick_count=%d", self._tick_count)
-        if self._tick_count != 0:
-            return  # 只在 tick_count == 0 时执行（每分钟一次）
+        # 检查间隔（用 consciousness._l0_count，每 60 次 = 60 秒）
+        l0 = self.consciousness.l0_count
+        logger.debug("[欲望周期] l0_count=%d", l0)
+        if l0 != 0:
+            return  # 只在 l0_count == 0 时执行（L1 刚触发后）
 
-        # tick_count == 0，执行周期检查
+        # l0_count == 0，执行周期检查
         logger.info("[ConsciousLiving/Sleeping] 欲望周期检查触发！")
 
         # 调用欲望行为检查
@@ -571,51 +521,6 @@ class ConsciousLiving:
 
         # 执行最佳行为（冷却时间在 action_executor 中控制）
         self.action_executor.execute_best_action(filtered_actions)
-
-    # ── 内在感知 ──────────────────────────────────────────────
-
-    def _check_inner_thought(self) -> None:
-        """检查是否需要产生内在想法（已关闭）。"""
-        # 内在感知已关闭（2026-04-22 讨论决定）
-        return
-
-    def _produce_inner_thought(self) -> None:
-        """产生内在想法（规则生成，不调LLM）。
-
-        规则逻辑：
-        - 能量低 + 用户久未交互 → 疲惫/思念
-        - 关系深度提升 → 信任增强
-        - 记忆数量增加 → 学习收获
-        - 目标有进展 → 成就感
-        - 否则 → 平静燃烧
-        """
-        self._last_inner_thought_time = time.time()
-
-        si = self.consciousness.get_self_image()
-
-        # 规则判断
-        if si.energy_level < 0.4 and si.user_idle_duration > 600:
-            inner_thought = "我有些疲惫，用户离开很久了，有点想他们..."
-        elif si.energy_level < 0.4 and si.user_idle_duration > 300:
-            inner_thought = "用户离开一段时间了，我静静等待"
-        elif si.current_mood in ("开心", "愉悦", "满足") and si.energy_level > 0.6:
-            inner_thought = "最近状态不错，火焰燃烧得很旺盛"
-        elif si.user_idle_duration > 1800:
-            inner_thought = "用户很久没来了，我在这里静静等着"
-        elif si.user_idle_duration > 600:
-            inner_thought = "用户暂时不在，我继续燃烧"
-        else:
-            inner_thought = "火焰平稳燃烧中，保持专注"
-
-        # 更新 SelfImage
-        si.growth.inner_thought = inner_thought
-        history = si.growth.inner_thought_history
-        history.append(inner_thought)
-        if len(history) > 10:
-            si.growth.inner_thought_history = history[-10:]
-        si.growth.last_inner_thought_time = time.time()
-
-        logger.info("[内在感知] %s", inner_thought)
 
     # ── Intent 消费 ──────────────────────────────────────────────
 
@@ -765,7 +670,7 @@ class ConsciousLiving:
 
         # 如果是 TASK 且置信度足够，添加目标
         if intent_result.is_task() and intent_result.has_goal() and intent_result.confidence >= 0.5:
-            self._handle_task_intent(intent_result)
+            self._handle_task_intent(intent_result, msg)
             # 如果目标分解后需要用户确认，保存原始消息并暂停
             if self._waiting_confirm:
                 self._pending_confirm_msg = msg
@@ -802,6 +707,25 @@ class ConsciousLiving:
         Returns:
             IntentResult: 意图分析结果
         """
+        # `/` 前缀 = 明确的任务指令，跳过 LLM 分析直接构造 task
+        if user_input.startswith("/"):
+            from xiaomei_brain.purpose.intent import IntentType, GoalRelation
+            task_text = user_input[1:].strip()
+            goal = Goal(
+                description=task_text,
+                goal_type=GoalType.EXECUTABLE,
+                status=GoalStatus.PENDING,
+            )
+            return IntentResult(
+                intent_type=IntentType.TASK,
+                goals=[goal],
+                sub_goals=[],
+                relation=GoalRelation.NEW,
+                target_goal_id=None,
+                confidence=1.0,
+                reasoning=f"指令以 / 开头，明确的任务请求：{task_text[:50]}",
+            )
+
         # 获取 Purpose 状态（作为上下文）
         meaning_summary = ""
         current_goal_desc = ""
@@ -830,11 +754,12 @@ class ConsciousLiving:
 
         return result
 
-    def _handle_task_intent(self, intent_result: Any) -> None:
+    def _handle_task_intent(self, intent_result: Any, msg: Any = None) -> None:
         """处理任务意图：添加目标到 PurposeEngine，包含子目标分解
 
         Args:
             intent_result: IntentResult，包含 goals 和 sub_goals
+            msg: 原始消息，用于单步任务直接执行
 
         注意：子目标分解已合并到 IntentUnderstanding，不再单独调用 auto_decompose
         """
@@ -863,7 +788,14 @@ class ConsciousLiving:
                     existing = self.purpose.goals.get(target_id)
                     if existing:
                         self.purpose.set_current(existing.id)
-                        print(f"[目标] 延续任务: {existing.description[:40]}", flush=True)
+                        # 检查是继续执行还是停止/放弃
+                        stop_keywords = ["停止", "取消", "别", "算了", "不做", "中止"]
+                        is_stop = any(kw in goal.description for kw in stop_keywords)
+                        if is_stop:
+                            existing.abandon()
+                            print(f"[目标] 已放弃: {existing.description[:40]}", flush=True)
+                        else:
+                            print(f"[目标] 延续任务: {existing.description[:40]}", flush=True)
                         return
 
             # 确定父目标（如果 relation 是 sub_goal_of）
@@ -921,6 +853,13 @@ class ConsciousLiving:
                                 print(f"  [{i+1}] {opt}")
                             print("  [0] 自定义输入")
                         return  # 暂停，等待用户选择
+            else:
+                # 无子目标 = 单步任务，直接执行
+                self.purpose.set_current(new_goal.id)
+                print(f"[目标] 当前执行: {new_goal.description[:40]}", flush=True)
+                new_intent = self._build_intent_context_for_goal(new_goal)
+                self._run_chat(msg, new_intent)
+                return
 
         # 刷新命令（让用户知道有新目标）
         if filtered_goals:
@@ -1026,36 +965,74 @@ class ConsciousLiving:
                 self._pending_confirm_msg = None
                 self._pending_confirm_intent = None
                 return
+            next_goal_id = result["new_goal_id"]
         else:
-            task_executor.apply_proceed(self.purpose, goal_id, answer)
+            result = task_executor.apply_proceed(self.purpose, goal_id, answer)
+            if result["status_msg"]:
+                print(result["status_msg"], flush=True)
+            if result["new_goal_id"] is None:
+                # 所有子目标已完成
+                self._pending_confirm = None
+                self._waiting_confirm = False
+                self._pending_confirm_msg = None
+                self._pending_confirm_intent = None
+                return
+            next_goal_id = result["new_goal_id"]
 
-        # 继续执行：用原始消息触发对话
-        original_msg = self._pending_confirm_msg
-        original_intent = self._pending_confirm_intent
+        # 推进到下一个子目标：构建新目标的 intent_context
         self._pending_confirm = None
         self._waiting_confirm = False
+        original_msg = self._pending_confirm_msg
         self._pending_confirm_msg = None
         self._pending_confirm_intent = None
 
-        goal = self.purpose.goals.get(goal_id)
-        if goal:
-            print(f"[目标] 继续执行: {goal.description[:40]}", flush=True)
+        next_goal = self.purpose.goals.get(next_goal_id)
+        if next_goal:
+            print(f"[目标] 继续执行: {next_goal.description[:40]}", flush=True)
 
-        if original_msg and original_intent:
-            intent_context = self._build_intent_context(original_intent)
-            self._run_chat(original_msg, intent_context)
+            # 如果下一个子目标是纯确认型（描述以"确认"开头），跳过 LLM 执行
+            # 这类子目标只需要输出确认信息，不需要再次调用 LLM
+            if next_goal.description.startswith("确认"):
+                print(f"小美: {next_goal.description}，等待你的下一步指示。", flush=True)
+                return
+
+            # 为新目标构建 intent_context（current 已指向新目标）
+            new_intent = self._build_intent_context_for_goal(next_goal)
+            proceed_msg = LivingMessage(
+                content="继续执行",
+                user_id=original_msg.user_id if original_msg else "global",
+                session_id=original_msg.session_id if original_msg else "main",
+                source="system",
+            )
+            self._run_chat(proceed_msg, new_intent)
+
+    def _build_intent_context_for_goal(self, goal) -> str:
+        """为指定目标构建 intent_context（不依赖 original_intent）"""
+        from ..purpose.intent import IntentResult, IntentType, GoalRelation
+
+        fake_intent = IntentResult(
+            intent_type=IntentType.TASK,
+            goals=[goal],
+            relation=GoalRelation.MODIFIES,
+            target_goal_id=goal.id,
+            confidence=1.0,
+            reasoning=f"目标推进：{goal.description[:50]}",
+        )
+        return self._build_intent_context(fake_intent, chosen_by_user=True)
 
     def _run_chat(self, msg: LivingMessage, intent_context: str = "") -> None:
         """执行对话（统一的 chat 入口）"""
         def run():
             try:
                 print("\n小美: ", end="", flush=True)
+                cs = self._get_consciousness_state()
                 content = self.agent.chat(
                     msg.content,
                     session_id=msg.session_id,
                     user_id=msg.user_id,
                     on_chunk=None,
                     intent_context=intent_context,
+                    consciousness_state=cs,
                 )
 
                 # Ctrl+C 取消：丢弃 LLM 结果
@@ -1148,7 +1125,9 @@ class ConsciousLiving:
         """手动触发加柴"""
         logger.info("[CLI] 执行命令: fuel")
         print("\n手动触发 L2 加柴...", flush=True)
-        self._fuel_L2("manual")
+        self.consciousness._last_l2_time = time.time()
+        report = self.consciousness.tick_L2("manual")
+        logger.info("[ConsciousLiving] L2加柴: %s", report.summary[:50])
 
         intent = self.consciousness.get_pending_intent()
         if intent:
@@ -1168,13 +1147,13 @@ class ConsciousLiving:
         print(f"  用户空闲: {int(si.user_idle_duration)}秒", flush=True)
         print(f"  能量: {si.energy_level:.2f}", flush=True)
         print(f"  累积变化: {len(si.accumulated_changes)}条", flush=True)
-        print(f"  上次加柴: {int(time.time() - self._last_fuel_time)}秒前", flush=True)
+        print(f"  上次加柴: {int(time.time() - self.consciousness._last_l2_time)}秒前", flush=True)
         self._print_prompt()
 
     def _cmd_tick_count(self) -> None:
         """显示心跳计数"""
         logger.info("[CLI] 执行命令: tick")
-        print(f"\n心跳计数: {self._tick_count}", flush=True)
+        print(f"\nL0 心跳计数: {self.consciousness._l0_count}", flush=True)
         print(f"状态: {self.state.value}", flush=True)
         self._print_prompt()
 
@@ -1182,10 +1161,8 @@ class ConsciousLiving:
         """显示当前内在想法"""
         logger.info("[CLI] 执行命令: think")
         si = self.consciousness.get_self_image()
-        elapsed = time.time() - self._last_inner_thought_time
 
         print("\n内在感知:", flush=True)
-        print(f"  上次产生: {int(elapsed)}秒前", flush=True)
         print(f"  当前想法: {si.inner_thought[:100] if si.inner_thought else '（无）'}", flush=True)
         print(f"  历史想法: {len(si.inner_thought_history)}条", flush=True)
 
@@ -1392,13 +1369,101 @@ class ConsciousLiving:
         - progress_goal/express_idea: 不立即执行（等 sleeping 时执行）
         """
         self._last_active = time.time()
-        self._last_fuel_time = time.time()
-        self._last_inner_thought_time = time.time()
-        self._last_event_extract_time = time.time()
+        self.consciousness._last_l2_time = time.time()
 
         # 火焰点燃
         si = self.consciousness.get_self_image()
         si.last_user_activity_time = time.time()
+
+        # 加载 fresh tail：让 agent "带着最近的记忆醒来"
+        # 从 DB 还原完整的消息序列，包括 assistant(tool_calls) + tool 配对
+        if self.agent.conversation_db and self.agent.context_assembler:
+            agent = self.agent._get_agent()
+            recent = self.agent.conversation_db.get_recent(
+                self.agent.context_assembler.FRESH_TAIL_COUNT,
+                session_id=self.session_id,
+            )
+
+            # 收集 assistant 的 tool_call_ids（用于过滤孤立 tool 消息）
+            assistant_tc_ids: set[str] = set()
+            for m in recent:
+                if m.get("role") == "assistant":
+                    metadata = m.get("metadata", {})
+                    if isinstance(metadata, str):
+                        import json
+                        try:
+                            metadata = json.loads(metadata)
+                        except Exception:
+                            metadata = {}
+                    if isinstance(metadata, dict):
+                        for tc in metadata.get("tool_calls", []):
+                            tc_id = tc.get("id", "")
+                            if tc_id:
+                                assistant_tc_ids.add(tc_id)
+
+            agent.messages = []
+            for m in recent:
+                role = m.get("role", "user")
+                if role == "user":
+                    agent.messages.append({"role": "user", "content": m.get("content", "")})
+                elif role == "assistant":
+                    # 从 metadata 还原 tool_calls 和 reasoning_content
+                    msg = {"role": "assistant", "content": m.get("content", "")}
+                    metadata = m.get("metadata", {})
+                    if isinstance(metadata, str):
+                        import json
+                        try:
+                            metadata = json.loads(metadata)
+                        except Exception:
+                            metadata = {}
+                    if isinstance(metadata, dict):
+                        tool_calls = metadata.get("tool_calls")
+                        if tool_calls:
+                            msg["tool_calls"] = tool_calls
+                        reasoning = metadata.get("reasoning_content")
+                        if reasoning:
+                            msg["reasoning_content"] = reasoning
+                    agent.messages.append(msg)
+                elif role == "tool":
+                    # 只保留有对应 assistant 的 tool 消息（过滤孤立的）
+                    tc_id = m.get("tool_call_id", "")
+                    if tc_id and tc_id in assistant_tc_ids:
+                        agent.messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc_id,
+                            "content": m.get("content", ""),
+                        })
+            loaded = len(agent.messages)
+            if loaded > 0:
+                logger.info(
+                    "[ConsciousLiving] 苏醒时加载 fresh_tail: %d 条消息",
+                    loaded,
+                )
+
+            # 清理 ReAct 循环残留：删除连续的前导空 assistant 消息
+            # ReAct 循环会产生多个 assistant(tool_calls, 空content) 消息，
+            # 只保留最后一个（那个有实际 content 或 reasoning_content）
+            cleaned = []
+            i = 0
+            while i < len(agent.messages):
+                m = agent.messages[i]
+                # 如果是 assistant 且空 content、无 reasoning_content
+                if (m.get("role") == "assistant"
+                    and not m.get("content")
+                    and not m.get("reasoning_content")):
+                    # 跳过它（会被后面的有效 assistant 替代）
+                    logger.debug(
+                        "[ConsciousLiving] 移除 ReAct 残留 assistant at [%d]: tc=%s",
+                        i, bool(m.get("tool_calls")),
+                    )
+                    i += 1
+                    continue
+                cleaned.append(m)
+                i += 1
+            if len(cleaned) < len(agent.messages):
+                removed = len(agent.messages) - len(cleaned)
+                logger.info("[ConsciousLiving] 清理 %d 条 ReAct 残留消息", removed)
+                agent.messages = cleaned
 
         logger.info("[ConsciousLiving] Good morning! 火焰点燃。")
 
