@@ -179,6 +179,61 @@ def list_tool_calls(n: int = 5) -> None:
         print(f"  [{rec.index}] {rec.name}  {tag} {r}", flush=True)
 
 
+def scrub_tool_calls_incomplete(messages: list[dict]) -> list[dict]:
+    """
+    清理消息列表中不完整的 tool_calls。
+
+    DeepSeek 等 API 要求：如果 assistant 有 tool_calls，
+    则必须有对应数量的 tool 响应消息。
+    streaming 中途失败会导致 tool_calls 残缺，引发 400。
+
+    处理逻辑：
+    1. 收集所有 assistant 的 tool_call_ids
+    2. 收集所有有对应 tool 响应的 tool_call_ids
+    3. 如果 assistant 的 tool_calls 中任何一个缺失响应，剥离整个 tool_calls 字段
+
+    Args:
+        messages: OpenAI 格式消息列表
+
+    Returns:
+        清理后的消息列表（原列表不变，返回新列表）
+    """
+    if not messages:
+        return messages
+
+    # 第一遍：收集 assistant 的 tool_call_ids
+    assistant_tc_ids: set[str] = set()
+    for m in messages:
+        if m.get("role") == "assistant":
+            for tc in m.get("tool_calls", []):
+                tc_id = tc.get("id", "")
+                if tc_id:
+                    assistant_tc_ids.add(tc_id)
+
+    # 第二遍：收集有对应 tool 响应的 tool_call_ids
+    tool_response_ids: set[str] = set()
+    for m in messages:
+        if m.get("role") == "tool":
+            tc_id = m.get("tool_call_id", "")
+            if tc_id and tc_id in assistant_tc_ids:
+                tool_response_ids.add(tc_id)
+
+    # 第三遍：重建消息列表，剥离不完整的 tool_calls
+    result: list[dict] = []
+    for m in messages:
+        msg = dict(m)
+        if msg.get("role") == "assistant":
+            tool_calls = msg.get("tool_calls", [])
+            if tool_calls:
+                missing = [tc for tc in tool_calls if tc.get("id") not in tool_response_ids]
+                if missing:
+                    # 剥离不完整的 tool_calls，保留 content
+                    del msg["tool_calls"]
+        result.append(msg)
+
+    return result
+
+
 class Agent:
     """An AI Agent that reasons and acts via ReAct loop.
 
@@ -287,6 +342,10 @@ class Agent:
             # This fixes cases where tool messages were loaded from DB but the corresponding
             # assistant(tool_calls) was filtered out by DAG compression
             all_messages = self._strip_orphaned_tool_messages(all_messages)
+
+            # Scrub incomplete tool_calls: assistant has tool_calls but missing tool responses
+            # This fixes 400 errors from DeepSeek when streaming failed mid-way
+            all_messages = scrub_tool_calls_incomplete(all_messages)
 
             # 缓存当前完整上下文（供 context 命令使用）
             self._last_all_messages = all_messages

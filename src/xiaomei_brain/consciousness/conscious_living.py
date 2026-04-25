@@ -1373,7 +1373,7 @@ class ConsciousLiving:
                 session_id=self.session_id,
             )
 
-            # 收集 assistant 的 tool_call_ids（用于过滤孤立 tool 消息）
+            # 第一遍：收集 assistant 的 tool_call_ids（用于过滤孤立 tool 消息）
             assistant_tc_ids: set[str] = set()
             for m in recent:
                 if m.get("role") == "assistant":
@@ -1390,14 +1390,14 @@ class ConsciousLiving:
                             if tc_id:
                                 assistant_tc_ids.add(tc_id)
 
-            agent.messages = []
+            # 第二遍：重建消息列表，从 DB metadata 恢复 tool_calls / reasoning_content
+            restored: list[dict] = []
             for m in recent:
                 role = m.get("role", "user")
                 if role == "user":
-                    agent.messages.append({"role": "user", "content": m.get("content", "")})
+                    restored.append({"role": "user", "content": m.get("content", "")})
                 elif role == "assistant":
-                    # 从 metadata 还原 tool_calls 和 reasoning_content
-                    msg = {"role": "assistant", "content": m.get("content", "")}
+                    msg: dict[str, Any] = {"role": "assistant", "content": m.get("content", "")}
                     metadata = m.get("metadata", {})
                     if isinstance(metadata, str):
                         import json
@@ -1406,53 +1406,49 @@ class ConsciousLiving:
                         except Exception:
                             metadata = {}
                     if isinstance(metadata, dict):
-                        tool_calls = metadata.get("tool_calls")
-                        if tool_calls:
-                            msg["tool_calls"] = tool_calls
-                        reasoning = metadata.get("reasoning_content")
-                        if reasoning:
-                            msg["reasoning_content"] = reasoning
-                    agent.messages.append(msg)
+                        if metadata.get("tool_calls"):
+                            msg["tool_calls"] = metadata["tool_calls"]
+                        if metadata.get("reasoning_content"):
+                            msg["reasoning_content"] = metadata["reasoning_content"]
+                    restored.append(msg)
                 elif role == "tool":
-                    # 只保留有对应 assistant 的 tool 消息（过滤孤立的）
                     tc_id = m.get("tool_call_id", "")
                     if tc_id and tc_id in assistant_tc_ids:
-                        agent.messages.append({
+                        restored.append({
                             "role": "tool",
                             "tool_call_id": tc_id,
                             "content": m.get("content", ""),
                         })
-            loaded = len(agent.messages)
-            if loaded > 0:
-                logger.info(
-                    "[ConsciousLiving] 苏醒时加载 fresh_tail: %d 条消息",
-                    loaded,
+
+            # 第三遍：清理不完整的 tool_calls（防止 DeepSeek 400）
+            # 使用公用方法，剥离 assistant 有 tool_calls 但缺少 tool 响应的残缺记录
+            from xiaomei_brain.agent.core import scrub_tool_calls_incomplete
+            before = len(restored)
+            restored = scrub_tool_calls_incomplete(restored)
+            if len(restored) < before:
+                logger.warning(
+                    "[ConsciousLiving] 剥离了 %d 条不完整 tool_calls 消息",
+                    before - len(restored),
                 )
 
-            # 清理 ReAct 循环残留：删除连续的前导空 assistant 消息
-            # ReAct 循环会产生多个 assistant(tool_calls, 空content) 消息，
-            # 只保留最后一个（那个有实际 content 或 reasoning_content）
+            # 第四遍：清理 ReAct 循环残留的空 assistant 消息
             cleaned = []
             i = 0
-            while i < len(agent.messages):
-                m = agent.messages[i]
-                # 如果是 assistant 且空 content、无 reasoning_content
+            while i < len(restored):
+                m = restored[i]
                 if (m.get("role") == "assistant"
                     and not m.get("content")
                     and not m.get("reasoning_content")):
-                    # 跳过它（会被后面的有效 assistant 替代）
-                    logger.debug(
-                        "[ConsciousLiving] 移除 ReAct 残留 assistant at [%d]: tc=%s",
-                        i, bool(m.get("tool_calls")),
-                    )
                     i += 1
                     continue
                 cleaned.append(m)
                 i += 1
-            if len(cleaned) < len(agent.messages):
-                removed = len(agent.messages) - len(cleaned)
-                logger.info("[ConsciousLiving] 清理 %d 条 ReAct 残留消息", removed)
-                agent.messages = cleaned
+            if len(cleaned) < len(restored):
+                logger.info("[ConsciousLiving] 清理 %d 条 ReAct 残留消息", len(restored) - len(cleaned))
+
+            agent.messages = cleaned
+            if agent.messages:
+                logger.info("[ConsciousLiving] 苏醒时加载 fresh_tail: %d 条消息", len(agent.messages))
 
         logger.info("[ConsciousLiving] Good morning! 火焰点燃。")
 
