@@ -59,7 +59,20 @@ def build_intent_context(purpose, intent_result, chosen_by_user: bool = False) -
     Returns:
         str: 上下文文本，空字符串表示无特殊上下文
     """
-    if not intent_result or not intent_result.is_task():
+    if not intent_result:
+        return ""
+
+    # CHAT 闲聊：返回回应风格建议
+    if intent_result.is_chat() and intent_result.response_guidance:
+        lines = [
+            "【闲聊回应建议】",
+            intent_result.response_guidance,
+            "",
+            "（按上述风格自然回应即可，不要生硬）",
+        ]
+        return "\n".join(lines)
+
+    if not intent_result.is_task():
         return ""
 
     # 找到当前正在执行的子目标

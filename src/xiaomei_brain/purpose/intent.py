@@ -59,6 +59,7 @@ class IntentResult:
     reasoning: str = ""
     confirm_question: str = ""            # 需要用户确认的问题
     confirm_options: list[str] = field(default_factory=list)  # 选项列表
+    response_guidance: str = ""           # CHAT 类型的回应风格建议
 
     def has_goal(self) -> bool:
         """是否有目标"""
@@ -75,6 +76,10 @@ class IntentResult:
     def is_query(self) -> bool:
         """是否是提问"""
         return self.intent_type == IntentType.QUERY
+
+    def is_chat(self) -> bool:
+        """是否是闲聊"""
+        return self.intent_type == IntentType.CHAT
 
 
 INTENT_CLASSIFY_PROMPT = """
@@ -102,8 +107,14 @@ INTENT_CLASSIFY_PROMPT = """
 - **以"什么/怎么/如何/为什么"开头 → query**（如"ERP是什么"）
 - **当前有活跃目标时，用户消息是关于当前目标的细化/解释 → clarification**
 
+【闲聊回应建议】（仅 chat 类型需要）
+如果 intent_type 为 chat，请额外提供"回应风格建议"：
+- 应该用什么语气/风格回应？（如：轻松随意、温暖关心、幽默调侃、简洁干脆）
+- 建议的回应方式？（如：分享相关经历、反问用户、简短肯定+转移话题）
+- 是否需要引导到目标？（当前有活跃目标时，可以简短带一句）
+
 返回 JSON：
-{{"intent_type": "task/query/chat/clarification", "confidence": 0.0-1.0, "reasoning": "判断理由", "goal_description": "目标描述（仅task时有）"}}
+{{"intent_type": "task/query/chat/clarification", "confidence": 0.0-1.0, "reasoning": "判断理由", "goal_description": "目标描述（仅task时有）", "response_guidance": "回应风格建议（仅chat时有，其他类型填空字符串）"}}
 """
 
 
@@ -220,6 +231,7 @@ class IntentUnderstanding:
                 intent_type=intent_type,
                 confidence=confidence,
                 reasoning=reasoning,
+                response_guidance=type_info.get("response_guidance", ""),
             )
 
         # 第2次LLM：分解子目标
@@ -243,6 +255,7 @@ class IntentUnderstanding:
             relation=GoalRelation.NEW,
             confidence=confidence,
             reasoning=reasoning,
+            response_guidance=type_info.get("response_guidance", ""),
         )
 
     def _parse_response(self, response: str) -> IntentResult:
@@ -333,6 +346,7 @@ class IntentUnderstanding:
                 "confidence": float(data.get("confidence", 0.5)),
                 "reasoning": data.get("reasoning", ""),
                 "goal_description": data.get("goal_description", ""),
+                "response_guidance": data.get("response_guidance", ""),
             }
         except Exception:
             return self._rule_classify("")
