@@ -1422,7 +1422,7 @@ class ConsciousLiving:
 
             # 第三遍：清理不完整的 tool_calls（防止 DeepSeek 400）
             # 使用公用方法，剥离 assistant 有 tool_calls 但缺少 tool 响应的残缺记录
-            from xiaomei_brain.agent.core import scrub_tool_calls_incomplete
+            from xiaomei_brain.base.message_utils import scrub_tool_calls_incomplete
             before = len(restored)
             restored = scrub_tool_calls_incomplete(restored)
             if len(restored) < before:
