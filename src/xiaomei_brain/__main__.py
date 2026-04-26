@@ -66,14 +66,8 @@ def cmd_run(agent_id: str, attach_cli: bool = False) -> None:
                 print()
                 break
 
-            user_input = raw_input
-
-            # 移除 UTF-16LE 编码异常混入的孤立 Trail 字节（\udc80~\udcff）
-            # WSL/WSL2 终端输入法在某些键位下会残留这类字节
-            user_input = "".join(
-                c for c in user_input
-                if not ("\udc80" <= c <= "\udcff")
-            ).strip()
+            from xiaomei_brain.agent.message_utils import clean_input
+            user_input = clean_input(raw_input).strip()
 
             if not user_input:
                 continue

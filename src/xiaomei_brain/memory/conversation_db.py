@@ -299,6 +299,71 @@ class ConversationDB:
         ).fetchall()
         return [r[0] for r in rows]
 
+    def export_session(self, session_id: str | None = None, n: int = 200) -> str:
+        """Export session messages as Markdown.
+
+        Args:
+            session_id: Session to export. If None, uses most recent session.
+            n: Max number of messages to export.
+
+        Returns:
+            Markdown formatted conversation.
+        """
+        conn = self._get_conn()
+
+        if session_id is None:
+            row = conn.execute(
+                "SELECT session_id FROM messages ORDER BY created_at DESC LIMIT 1"
+            ).fetchone()
+            if not row:
+                return "# 会话导出\n\n(无消息)"
+            session_id = row[0]
+
+        rows = conn.execute(
+            """SELECT role, content, tool_name, created_at
+               FROM messages
+               WHERE session_id = ? AND content IS NOT NULL AND content != ''
+               ORDER BY created_at ASC LIMIT ?""",
+            (session_id, n),
+        ).fetchall()
+
+        if not rows:
+            return f"# 会话导出: {session_id}\n\n(无消息)"
+
+        lines = [
+            f"# 会话导出: {session_id}",
+            f"共 {len(rows)} 条消息",
+            "",
+        ]
+
+        for r in rows:
+            role = r["role"]
+            content = r["content"]
+            tool_name = r["tool_name"]
+
+            # Skip tool messages (too noisy for export)
+            if role == "tool":
+                continue
+
+            if role == "user":
+                lines.append(f"### You")
+                lines.append("")
+                lines.append(content)
+            elif role == "assistant":
+                if tool_name:
+                    lines.append(f"### 小美 (tool: {tool_name})")
+                else:
+                    lines.append("### 小美")
+                lines.append("")
+                lines.append(content)
+            elif role == "system":
+                lines.append("---")
+                lines.append(f"*System: {content[:200]}...*" if len(content) > 200 else f"*System: {content}*")
+                lines.append("---")
+            lines.append("")
+
+        return "\n".join(lines)
+
     def close(self) -> None:
         """Close the database connection."""
         if self._conn:

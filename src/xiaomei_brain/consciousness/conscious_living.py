@@ -162,6 +162,7 @@ class ConsciousLiving:
             "drive": self._cmd_show_drive,
             "purpose": self._cmd_show_purpose,
             "tool": self._cmd_tool_expand,
+            "export": self._cmd_export,
         }
 
         # 回调
@@ -280,25 +281,8 @@ class ConsciousLiving:
 
     @staticmethod
     def _clean_input(text: str) -> str:
-        """字符级输入清洗。
-
-        只过滤控制字符和代理字符，不做退格模拟。
-        终端/TUI/WebSocket 已在客户端完成编辑，退格无需服务端重复处理。
-        """
-        buf: list[str] = []
-        for ch in text:
-            cp = ord(ch)
-            # 代理字符（\ud800-\udfff）：跳过
-            if 0xD800 <= cp <= 0xDFFF:
-                continue
-            # 替换字符：跳过
-            if cp == 0xFFFD:
-                continue
-            # 控制字符（不含 \t \n \r）：跳过
-            if cp < 0x20 and ch not in ("\t", "\n", "\r"):
-                continue
-            buf.append(ch)
-        return "".join(buf)
+        from xiaomei_brain.agent.message_utils import clean_input
+        return clean_input(text)
 
     def run(self) -> None:
         """主循环，阻塞运行"""
@@ -588,34 +572,36 @@ class ConsciousLiving:
         # 重置取消标志（新消息来了，之前的取消失效）
         self._cancel_requested = False
 
-        # Intent 测试命令（支持带参数，如 "tool 3"）
-        parts = msg.content.strip().split(None, 1)
+        # 命令检测（支持 `/cmd` 和裸 `cmd` 两种写法）
+        raw = msg.content.strip()
+        if raw.startswith("/"):
+            raw = raw[1:].strip()
+        parts = raw.split(None, 1)
         cmd = parts[0].lower()
         cmd_args = parts[1] if len(parts) > 1 else ""
+
+        # Intent 测试命令（如 "intent"、"tool 3"）
         if cmd in self._intent_commands:
             logger.info("[ConsciousLiving] 执行测试命令: %s %s", cmd, cmd_args)
             handler = self._intent_commands[cmd]
-            if cmd_args and handler == self._cmd_tool_expand:
-                self._cmd_tool_expand(cmd_args)
+            if cmd_args and handler in (self._cmd_tool_expand, self._cmd_export):
+                handler(cmd_args)
             else:
                 handler()
             return
 
         # Agent 命令（如 db/memory/dag）
         if self.agent.commands:
-            logger.info("[ConsciousLiving] 尝试 Agent 命令: %s", msg.content)
             result = self.agent.commands.execute(
-                msg.content,
+                raw,
                 user_id=msg.user_id,
                 session_id=msg.session_id,
             )
             if result:
-                logger.info("[ConsciousLiving] Agent 命令成功")
+                logger.info("[ConsciousLiving] Agent 命令: %s", raw)
                 print(f"\n{result.output}", flush=True)
                 self._print_prompt()
                 return
-            else:
-                logger.info("[ConsciousLiving] Agent 命令无匹配，转为对话")
 
         # "继续"检测：列出活跃任务让用户选
         if self.purpose and self._is_continue_statement(msg.content):
@@ -723,8 +709,8 @@ class ConsciousLiving:
         Returns:
             IntentResult: 意图分析结果
         """
-        # `/` 前缀 = 明确的任务指令，跳过意图分类，直接做目标分解
-        if user_input.startswith("/"):
+        # `!` 前缀 = 明确的任务指令，跳过意图分类，直接做目标分解
+        if user_input.startswith("!"):
             from xiaomei_brain.purpose.intent import IntentType, GoalRelation
             task_text = user_input[1:].strip()
             goal = Goal(
@@ -741,7 +727,7 @@ class ConsciousLiving:
                 relation=GoalRelation.NEW,
                 target_goal_id=None,
                 confidence=1.0,
-                reasoning=f"指令以 / 开头，明确的任务请求，跳过意图分类直接分解目标：{task_text[:50]}",
+                reasoning=f"指令以 ! 开头，明确的任务请求，跳过意图分类直接分解目标：{task_text[:50]}",
             )
 
         # 获取 Purpose 状态（作为上下文）
@@ -1466,7 +1452,7 @@ class ConsciousLiving:
 
     def _cmd_tool_expand(self, args: str = "") -> None:
         """展开工具调用详情: tool [N] 或 tool list"""
-        from xiaomei_brain.agent.core import expand_tool_call, list_tool_calls
+        from xiaomei_brain.agent.cli_display import expand_tool_call, list_tool_calls
 
         logger.info("[CLI] 执行命令: tool %s", args)
 
@@ -1480,6 +1466,30 @@ class ConsciousLiving:
             except ValueError:
                 print(f"  用法: tool <编号> | tool list", flush=True)
 
+        self._print_prompt()
+
+    def _cmd_export(self, session_id: str | None = None) -> None:
+        """导出当前会话为 Markdown: export [session_id]"""
+        logger.info("[CLI] 执行命令: export %s", session_id or "")
+        if not self.agent or not self.agent.conversation_db:
+            print("\n(ConversationDB 未配置)", flush=True)
+            self._print_prompt()
+            return
+
+        sid = session_id or self.session_id
+        md = self.agent.conversation_db.export_session(sid)
+
+        # 写文件
+        import datetime as _dt
+        ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_dir = os.path.expanduser("~/.xiaomei-brain/exports")
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, f"session_{sid}_{ts}.md")
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(md)
+
+        print(f"\n[导出] {out_path}", flush=True)
+        print(f"[导出] {md.count(chr(10))} 行 Markdown", flush=True)
         self._print_prompt()
 
     # ── Hooks ────────────────────────────────────────────────────

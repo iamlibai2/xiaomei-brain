@@ -432,6 +432,7 @@ def determine_mode(
     desire_state: dict | None = None,
     pending_intents: list[str] | None = None,
     has_active_goal: bool = False,
+    recent_has_tool_calls: bool = False,
 ) -> str:
     """Determine operational mode based on consciousness state.
 
@@ -441,12 +442,20 @@ def determine_mode(
         desire_state: Drive desire state dict {belonging, cognition, achievement, expression}.
         pending_intents: Pending intents from SelfImage.
         has_active_goal: Whether there is an active goal in PurposeEngine.
+        recent_has_tool_calls: Whether recent exchanges involved tool calls.
 
     Returns:
         "flow", "daily", or "reflect".
     """
     desire_state = desire_state or {}
     pending_intents = pending_intents or []
+
+    # ── Context continuity: don't drop to flow mid-stream ──
+    # If we were just doing multi-step work (tool calls), even a short
+    # follow-up like "继续" or "然后呢" should stay in daily mode.
+    # Otherwise context gets stripped and the agent forgets what it was doing.
+    if recent_has_tool_calls:
+        return "daily"
 
     # Flame low → flow (minimal context)
     if energy_level < 0.3:

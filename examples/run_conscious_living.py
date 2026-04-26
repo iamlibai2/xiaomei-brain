@@ -2,13 +2,6 @@
 
 启动带意识的 Agent，支持交互对话和测试命令。
 
-测试命令：
-  intent - 显示当前意图
-  fuel - 手动触发 L2 加柴
-  flame - 显示火焰状态
-  tick - 显示心跳计数
-  exit/quit - 退出
-
 Usage:
     PYTHONPATH=src python3 examples/run_conscious_living.py
 """
@@ -18,11 +11,12 @@ import os
 import threading
 import time
 import logging
+import readline
+import atexit
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-# 日志输出到 stderr
-import sys
+# ── 日志：输出到 stderr ──────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
@@ -30,8 +24,7 @@ logging.basicConfig(
     stream=sys.stderr,
 )
 
-
-# 关键模块：显示所有日志
+# ── 关键模块：完全放行 ──────────────────────────────────────
 KEY_MODULES = {
     "xiaomei_brain.consciousness.conscious_living",
     "xiaomei_brain.purpose",
@@ -40,7 +33,7 @@ KEY_MODULES = {
     "xiaomei_brain.agent.agent_manager",
 }
 
-# 噪音模块：合并重复日志（同类日志只显示一次）
+# ── 噪音模块：3秒内同类日志只显示一次 ───────────────────────
 NOISE_MODULES = {
     "xiaomei_brain.memory.longterm",
     "xiaomei_brain.consciousness.context_assembler",
@@ -53,106 +46,207 @@ NOISE_MODULES = {
     "xiaomei_brain.ws",
 }
 
-# 重复日志去重：同类消息在 3 秒内只显示一次
-import time as _time
 _last_log: dict[str, float] = {}
-_LOG_DEDUP_INTERVAL = 3.0  # 秒
+_LOG_DEDUP_INTERVAL = 3.0
+
 
 class NoiseFilter(logging.Filter):
     def filter(self, record):
         module = record.name
-        # 关键模块完全放行
         for key in KEY_MODULES:
             if module.startswith(key):
                 return True
-        # 噪音模块去重
         for noise in NOISE_MODULES:
             if module.startswith(noise):
-                # 生成去重 key（使用模块名+消息前50字符）
                 msg_short = record.getMessage()[:80]
                 dedup_key = f"{module}:{msg_short}"
-                now = _time.time()
+                now = time.time()
                 last = _last_log.get(dedup_key, 0)
                 if now - last < _LOG_DEDUP_INTERVAL:
-                    return False  # 重复，屏蔽
+                    return False
                 _last_log[dedup_key] = now
                 return True
-        # 其他模块默认放行
         return True
 
-root_logger = logging.getLogger()
-root_logger.addFilter(NoiseFilter())
+
+logging.getLogger().addFilter(NoiseFilter())
 
 from xiaomei_brain.agent.agent_manager import AgentManager
 from xiaomei_brain.consciousness.conscious_living import ConsciousLiving
+from xiaomei_brain.memory.conversation_db import estimate_tokens
+
+# ── ❯ 提示符 ───────────────────────────────────────────────
+PROMPT = "You: "
+
+# ── Tab 命令补齐 ───────────────────────────────────────────
+_COMMANDS = [
+    "/intent", "/fuel", "/flame", "/tick", "/think", "/identity",
+    "/drive", "/purpose",
+    "/db", "/memory", "/context", "/dag", "/summarize", "/periodic", "/dream",
+    "/tool ", "/tool list",
+    "/export",
+    "/help", "/exit", "/quit",
+    "/clear", "/new", "/users",
+]
+
+
+def _completer(text: str, state: int) -> str | None:
+    matches = [c for c in _COMMANDS if c.startswith(text)]
+    if state < len(matches):
+        return matches[state]
+    return None
+
+
+# ── readline 历史 ──────────────────────────────────────────
+_HIST_PATH = os.path.expanduser("~/.xiaomei-brain/cli_history")
+if os.path.exists(_HIST_PATH):
+    try:
+        readline.read_history_file(_HIST_PATH)
+    except Exception:
+        pass
+atexit.register(lambda: readline.write_history_file(_HIST_PATH))
+readline.parse_and_bind("tab: complete")
+readline.set_completer(_completer)
+
+
+# ── Token 估算 ─────────────────────────────────────────────
+def _count_context_tokens(all_messages) -> int:
+    """估算消息列表的总 token 数（CJK * 1.5 + ASCII / 4）"""
+    total = 0
+    for m in all_messages:
+        content = m.get("content", "")
+        if isinstance(content, str):
+            total += estimate_tokens(content)
+        for tc in m.get("tool_calls", []):
+            args = str(tc.get("function", {}).get("arguments", ""))
+            total += estimate_tokens(args)
+    return total
+
+
+def _status_line(living) -> str:
+    """生成提示符上方的状态行"""
+    parts = []
+
+    # 目标
+    purpose = living.purpose
+    if purpose and purpose.current_goal:
+        g = purpose.current_goal
+        # 子目标进度
+        if g.parent_id:
+            siblings = purpose.get_sub_goals(g.parent_id)
+            done = sum(1 for s in siblings if s.is_completed())
+            total = len(siblings)
+            bar_w = 8
+            filled = int(bar_w * done / total) if total else 0
+            bar = "█" * filled + "░" * (bar_w - filled)
+            parts.append(f"\033[36m{g.description[:25]}\033[0m {bar} {done}/{total}")
+        else:
+            parts.append(f"\033[36m{g.description[:25]}\033[0m")
+
+    # 火焰
+    if hasattr(living, 'consciousness') and living.consciousness:
+        si = living.consciousness.get_self_image()
+        if si:
+            parts.append(f"🔥{si.agent_state} e:{si.energy_level:.1f}")
+
+    # Drive
+    drive = getattr(living, 'drive', None)
+    if drive and hasattr(drive, 'desire'):
+        d = drive.desire
+        parts.append(f"b:{d.belonging:.1f} c:{d.cognition:.1f}")
+
+    if not parts:
+        return ""
+    return "  ".join(parts)
 
 
 def main():
     print("\n" + "=" * 50)
-    print("       ConsciousLiving CLI")
+    print("       \033[36mConsciousLiving\033[0m CLI")
     print("=" * 50 + "\n")
 
-    # 创建 Agent
     manager = AgentManager()
     agent = manager.build_agent("xiaomei")
-
-    # 创建 ConsciousLiving
     living = ConsciousLiving(agent)
 
-    # 设置回调
+    # ── 回调 ────────────────────────────────────────────────
+    _stream_lock = threading.Lock()
+
     def on_proactive(content):
-        print(f"\n[主动消息] {content}\n> ", end="", flush=True)
+        with _stream_lock:
+            print(f"\n\033[33m[小美]\033[0m {content}\n", end="", flush=True)
 
     def on_chat_chunk(chunk):
-        print(chunk, end="", flush=True)
+        with _stream_lock:
+            print(chunk, end="", flush=True)
 
     living.on_proactive = on_proactive
     living.on_chat_chunk = on_chat_chunk
 
-    print("测试命令: intent | fuel | flame | tick | think | identity")
-    print("Agent命令: db    | memory | dag")
-    print("工具展开: tool <编号> | tool list")
+    print("命令: /intent | /fuel | /flame | /tick | /identity")
+    print("存储: /db | /memory | /context | /dag")
+    print("任务: !描述 (直接创建目标)")
+    print()
+    print("工具: tool <N> | tool list")
+    print("管理: drive | purpose | clear | new | users")
     print()
 
-    # 后台运行 ConsciousLiving
+    # ── 后台启动 ────────────────────────────────────────────
     thread = threading.Thread(target=living.run, daemon=True)
     thread.start()
-    time.sleep(2)  # 等待启动完成
+    time.sleep(2)
 
-    _last_cancel_time: float = 0.0
     _DOUBLE_PRESS_WINDOW = 2.0
+    _last_interrupt = 0.0
 
     try:
         while living.is_running:
             try:
-                msg = input("\nYou: ")
+                status = _status_line(living)
+                if status:
+                    print(f"\n{status}", flush=True)
+                msg = input(f"{PROMPT}")
             except (KeyboardInterrupt, EOFError):
                 print()
                 now = time.time()
-                if now - _last_cancel_time < _DOUBLE_PRESS_WINDOW:
-                    print("强制退出")
+                if now - _last_interrupt < _DOUBLE_PRESS_WINDOW:
+                    print("\033[31m强制退出\033[0m")
                     living.stop()
                     break
-                _last_cancel_time = now
+                _last_interrupt = now
                 living.cancel()
-                print("[取消] 正在中断当前动作... (再次 Ctrl+C 退出)")
+                print("\033[90m[取消] 已中断当前操作 (再次 Ctrl+C 退出)\033[0m")
                 continue
 
+            msg = msg.strip()
             if msg.lower() in ("exit", "quit", "stop"):
-                print("正在停止...")
+                print("\033[90m正在停止...\033[0m")
                 living.stop()
                 break
-            if not msg.strip():
+            if not msg:
                 continue
 
             living.put_message(msg)
 
+            # 等待 chat 完成（_chatting 由 living 线程管理）
+            while living._chatting:
+                time.sleep(0.1)
+
+            # ── Token 用量 ─────────────────────────────────
+            try:
+                all_msgs = agent._get_agent()._last_all_messages
+                if all_msgs:
+                    tokens = _count_context_tokens(all_msgs)
+                    print(f"\033[90m[上下文 ~{tokens} tokens]\033[0m", end="", flush=True)
+            except Exception:
+                pass
+
     except KeyboardInterrupt:
-        print("\n正在停止...")
+        print("\n\033[90m正在停止...\033[0m")
         living.stop()
 
     thread.join(timeout=5)
-    print("已停止")
+    print("\033[90m已停止\033[0m")
 
 
 if __name__ == "__main__":

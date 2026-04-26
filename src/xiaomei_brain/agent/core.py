@@ -14,20 +14,25 @@ from xiaomei_brain.consciousness.context_assembler import ContextAssembler, dete
 from xiaomei_brain.memory.longterm import LongTermMemory
 from xiaomei_brain.memory.extractor import MemoryExtractor, MEMORY_DECISION_PROMPT
 from xiaomei_brain.tools.registry import ToolRegistry
+from xiaomei_brain.agent.message_utils import (
+    strip_memory_stream, strip_orphaned_tool_messages,
+    strip_orphaned_assistant_tool_calls, clean_messages,
+)
 
 logger = logging.getLogger(__name__)
 
 
-# ── Tool call buffer: 折叠展示 + 命令展开 ──────────────────────
-from collections import deque
-from dataclasses import dataclass, field as dc_field
+# ── Tool call buffer: 追踪工具调用，支持编号索引 ─────────────────
 
-_TOOL_BUFFER_MAX = 20  # 保留最近 N 次工具调用
+from collections import deque
+from dataclasses import dataclass
+
+_TOOL_BUFFER_MAX = 20
 
 
 @dataclass
 class ToolCallRecord:
-    index: int          # 全局递增编号
+    index: int
     name: str
     arguments: dict
     result: str
@@ -62,179 +67,6 @@ class ToolCallBuffer:
 
 # 全局单例
 tool_call_buffer = ToolCallBuffer()
-
-
-def _print_tool_call(idx: int, name: str, arguments: dict) -> None:
-    """折叠展示工具调用。"""
-    _KEY_ARGS = ("path", "query", "command", "url", "topic", "filename")
-    parts = []
-    for k in _KEY_ARGS:
-        if k in arguments:
-            v = str(arguments[k])
-            if len(v) > 60:
-                v = v[:57] + "..."
-            parts.append(f'{k}="{v}"')
-    args_str = ", ".join(parts) if parts else f"...({len(arguments)} args)"
-    print(f"  \033[36m▶ [{idx}] {name}({args_str})\033[0m", flush=True)
-
-
-def _print_tool_result(idx: int, result: str) -> None:
-    """折叠展示工具结果：显示前5行 + 总行数。"""
-    r = str(result)
-    is_error = r.lower().startswith("error")
-    tag = "\033[31m✗\033[0m" if is_error else "\033[32m✓\033[0m"
-    lines = r.split("\n")
-    total = len(lines)
-    preview_count = 5
-
-    if total <= preview_count:
-        # 输出短，全部显示
-        for line in lines:
-            if len(line) > 200:
-                line = line[:197] + "..."
-            print(f"  {tag} {line}", flush=True)
-    else:
-        # 显示前5行
-        for line in lines[:preview_count]:
-            if len(line) > 200:
-                line = line[:197] + "..."
-            print(f"  {tag} {line}", flush=True)
-        # 最后一行显示总行数
-        print(f"  \033[90m  ...共 {total} 行\033[0m", flush=True)
-
-
-def _print_edit_diff(idx: int, name: str, arguments: dict, result: str) -> None:
-    """Print Claude-style edit diff for edit_file tool results."""
-    import json
-    try:
-        data = json.loads(result)
-    except Exception:
-        _print_tool_result(idx, result)
-        return
-    if "error" in data:
-        _print_tool_result(idx, result)
-        return
-
-    file_path = data.get("file_path", "")
-    added_count = data.get("added_count", 0)
-    removed_count = data.get("removed_count", 0)
-    removed_content = data.get("removed_content", [])
-    added_content = data.get("added_content", [])
-    base_line = data.get("base_line", 0)
-
-    action = "Update"
-    print(f"\033[36m● {action}({file_path})\033[0m")
-    print(f"  ⎿  Added {added_count} line(s), removed {removed_count} line(s)")
-
-    # Compute how many context lines to show around the change
-    prev_context = 2
-    after_context = 2
-
-    # Read file to get surrounding context
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            file_lines = f.read().splitlines()
-    except Exception:
-        _print_tool_result(idx, result)
-        return
-
-    ctx_before = max(0, base_line - prev_context - 1)  # 0-indexed
-    ctx_after = min(len(file_lines), base_line - 1 + len(added_content) + after_context)
-    line_num_width = len(str(max(ctx_after, base_line + max(len(removed_content), len(added_content)))))
-
-    # ── lines before change ──
-    for i in range(ctx_before, base_line - 1):
-        if i < len(file_lines):
-            text = file_lines[i]
-            if len(text) > 120:
-                text = text[:117] + "..."
-            print(f"    {i + 1:>{line_num_width}}  {text}", flush=True)
-
-    # ── removed lines (red) ──
-    for offset, text in enumerate(removed_content):
-        ln = base_line + offset
-        if len(text) > 120:
-            text = text[:117] + "..."
-        print(f"  \033[31m- {ln:>{line_num_width}}  {text}\033[0m", flush=True)
-
-    # ── added lines (green) ──
-    for offset, text in enumerate(added_content):
-        ln = base_line + offset
-        if len(text) > 120:
-            text = text[:117] + "..."
-        print(f"  \033[32m+ {ln:>{line_num_width}}  {text}\033[0m", flush=True)
-
-    # ── lines after change ──
-    after_start = base_line - 1 + len(added_content)
-    for i in range(after_start, ctx_after):
-        if i < len(file_lines):
-            text = file_lines[i]
-            if len(text) > 120:
-                text = text[:117] + "..."
-            print(f"    {i + 1:>{line_num_width}}  {text}", flush=True)
-
-    print(flush=True)
-
-
-def _print_write_result(idx: int, name: str, arguments: dict, result: str) -> None:
-    """Print file creation result with preview (like edit diff for new files)."""
-    file_path = arguments.get("path", arguments.get("file_path", ""))
-    content = arguments.get("content", "")
-
-    if not file_path or not content:
-        _print_tool_result(idx, result)
-        return
-
-    lines = content.split("\n")
-    total = len(lines)
-    action = "Create"
-    print(f"\033[36m● {action}({file_path})\033[0m")
-    print(f"  ⎿  Wrote {total} lines")
-
-    preview_count = min(5, total)
-    line_num_width = len(str(total))
-    for i in range(preview_count):
-        text = lines[i]
-        if len(text) > 120:
-            text = text[:117] + "..."
-        print(f"  \033[32m+ {i + 1:>{line_num_width}}  {text}\033[0m", flush=True)
-
-    if total > preview_count:
-        print(f"  \033[90m  ...共 {total} 行\033[0m", flush=True)
-
-    print(flush=True)
-
-
-def expand_tool_call(index: int) -> None:
-    """展开指定编号的工具调用详情。"""
-    rec = tool_call_buffer.get(index)
-    if not rec:
-        print(f"  未找到工具调用 #{index}，最近编号: {tool_call_buffer.last_index}", flush=True)
-        return
-    print(f"\n  ┌── 工具调用 #{rec.index} ──", flush=True)
-    print(f"  │ 工具: {rec.name}", flush=True)
-    print(f"  │ 参数:", flush=True)
-    for k, v in rec.arguments.items():
-        val = str(v)
-        print(f"  │   {k} = {val}", flush=True)
-    print(f"  │ 结果:", flush=True)
-    for line in rec.result.splitlines():
-        print(f"  │   {line}", flush=True)
-    print(f"  └──", flush=True)
-
-
-def list_tool_calls(n: int = 5) -> None:
-    """列出最近 N 次工具调用。"""
-    records = tool_call_buffer.recent(n)
-    if not records:
-        print("  暂无工具调用记录", flush=True)
-        return
-    for rec in records:
-        r = rec.result.replace("\n", " ").strip()
-        if len(r) > 50:
-            r = r[:47] + "..."
-        tag = "\033[31m✗\033[0m" if r.lower().startswith("error") else "\033[32m✓\033[0m"
-        print(f"  [{rec.index}] {rec.name}  {tag} {r}", flush=True)
 
 
 class Agent:
@@ -302,12 +134,18 @@ class Agent:
 
         # Determine operational mode (consciousness-aware)
         cs = consciousness_state or {}
+        # Check recent messages for tool calls (context continuity)
+        recent_tool_calls = any(
+            m.get("role") == "tool" or m.get("tool_calls")
+            for m in self.messages[-5:]
+        )
         mode = determine_mode(
             user_input,
             energy_level=cs.get("energy_level", 0.8),
             desire_state=cs.get("desire_state", {}),
             pending_intents=cs.get("pending_intents", []),
             has_active_goal=cs.get("has_active_goal", False),
+            recent_has_tool_calls=recent_tool_calls,
         )
 
         openai_tools = self.tools.to_openai_tools() if self.tools.list_tools() else None
@@ -330,6 +168,7 @@ class Agent:
             enhanced_content = system_content + "\n" + self.intent_context
             base_context[0] = {"role": "system", "content": enhanced_content}
             logger.info("[Agent] 注入 intent_context: len=%d", len(self.intent_context))
+            logger.info("[Agent] intent_context 内容:\n%s", self.intent_context)
 
         # Clean up compressed messages from self.messages (delegate to DAG)
         if self.context_assembler and self.context_assembler.dag:
@@ -337,14 +176,10 @@ class Agent:
                 self.messages, self.session_id,
             )
 
-        # 动态工作提示：根据上一步操作变换
-        _HINTS = {
-            "write_file": "📝 编撰文档中...",
-            "edit_file": "🔧 修改代码中...",
-            "shell": "⚡ 运行命令中...",
-            "web_search": "🔍 搜索资料中...",
-            "read_file": "📖 阅读文件中...",
-        }
+        from xiaomei_brain.agent.cli_display import (
+            get_hint, print_tool_call, print_tool_result,
+            print_edit_diff, print_write_result,
+        )
         _last_tool = ""
 
         for step in range(self.max_steps):
@@ -352,9 +187,9 @@ class Agent:
             all_messages = [base_context[0]] + self.messages
 
             # Remove orphaned tool messages (tool without preceding assistant tool_calls)
-            # This fixes cases where tool messages were loaded from DB but the corresponding
-            # assistant(tool_calls) was filtered out by DAG compression
-            all_messages = self._strip_orphaned_tool_messages(all_messages)
+            # and orphaned assistant(tool_calls) (tool responses missing after DAG compression)
+            all_messages = strip_orphaned_tool_messages(all_messages)
+            all_messages = strip_orphaned_assistant_tool_calls(all_messages)
 
             # 缓存当前完整上下文（供 context 命令使用）
             self._last_all_messages = all_messages
@@ -378,13 +213,14 @@ class Agent:
                         all_messages[i] = dict(all_messages[i])
                         all_messages[i]["content"] = all_messages[i]["content"] + "\n\n" + self.intent_context
                         logger.info("[Agent] appended intent_context to user msg[%d], len=%d", i, len(self.intent_context))
+                        logger.info("[Agent] intent_context 内容:\n%s", self.intent_context)
                         break
 
             # Clean surrogate characters from all message content before sending to LLM
-            all_messages = self._clean_messages(all_messages)
+            all_messages = clean_messages(all_messages)
 
             logger.debug("Step %d: calling LLM", step + 1)
-            hint = _HINTS.get(_last_tool, "💭 思考中...")
+            hint = get_hint(_last_tool)
             print(hint, flush=True)
 
             response, stream_chunks = self._call_llm(all_messages, openai_tools)
@@ -425,7 +261,7 @@ class Agent:
                 for tc in response.tool_calls:
                     # Collapsed display + buffer storage
                     idx = tool_call_buffer.add(tc.name, tc.arguments, "")  # placeholder
-                    _print_tool_call(idx, tc.name, tc.arguments)
+                    print_tool_call(idx, tc.name, tc.arguments)
                     _last_tool = tc.name
                     logger.debug("Tool call: %s(%s)", tc.name, tc.arguments)
                     try:
@@ -440,11 +276,11 @@ class Agent:
                         rec.result = str(result)
 
                     if tc.name == "edit_file":
-                        _print_edit_diff(idx, tc.name, tc.arguments, result)
+                        print_edit_diff(idx, tc.name, tc.arguments, result)
                     elif tc.name == "write_file":
-                        _print_write_result(idx, tc.name, tc.arguments, result)
+                        print_write_result(idx, tc.name, tc.arguments, result)
                     else:
-                        _print_tool_result(idx, result)
+                        print_tool_result(idx, result)
                     logger.debug("Tool result: %s", result[:200])
 
                     if self.conversation_db:
@@ -503,7 +339,7 @@ class Agent:
 
                     # Stream the response (filter MEMORY block from stream)
                     if stream_chunks:
-                        yield from self._strip_memory_stream(stream_chunks)
+                        yield from strip_memory_stream(stream_chunks)
                     else:
                         yield display_content
 
@@ -747,70 +583,6 @@ class Agent:
         return chat_response, stream_parts if not tool_calls else None
 
     # ── Helpers ──────────────────────────────────────────────────
-
-    @staticmethod
-    def _strip_memory_stream(chunks: list[str]) -> Generator[str, None, None]:
-        """Strip <MEMORY> blocks from streaming chunks.
-
-        Joins chunks and strips MEMORY block using the same logic as extract_memory_block.
-        Yields in a streaming manner for compatibility.
-        """
-        full_text = "".join(chunks)
-        _, clean = MemoryExtractor.extract_memory_block(full_text)
-        if clean:
-            yield clean
-
-    @staticmethod
-    def _strip_orphaned_tool_messages(
-        messages: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        """Remove tool messages whose preceding assistant doesn't have tool_calls.
-
-        This handles cases where:
-        - tool messages exist in agent.messages but the corresponding
-          assistant(tool_calls) was filtered out by DAG compression
-        - tool messages were loaded from DB but their assistant was not persisted
-        """
-        result = []
-        i = 0
-        while i < len(messages):
-            m = messages[i]
-            if m.get("role") == "tool":
-                # Check if the preceding message is an assistant with matching tool_call_id
-                tc_id = m.get("tool_call_id", "")
-                valid = False
-                if tc_id and result and result[-1].get("role") == "assistant":
-                    assistant_tcs = result[-1].get("tool_calls", [])
-                    for tc in assistant_tcs:
-                        if tc.get("id") == tc_id:
-                            valid = True
-                            break
-                if not valid:
-                    logger.debug(
-                        "[Agent] Stripped orphaned tool message: tc_id=%s",
-                        tc_id,
-                    )
-                    i += 1
-                    continue
-            result.append(m)
-            i += 1
-        return result
-
-    @staticmethod
-    def _clean_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Clean surrogate characters from message content."""
-        cleaned = []
-        for m in messages:
-            m = dict(m)  # shallow copy
-            content = m.get("content")
-            if isinstance(content, str):
-                try:
-                    content = content.encode("utf-8", "surrogatepass").decode("utf-8", "replace")
-                except Exception:
-                    pass
-                m["content"] = content
-            cleaned.append(m)
-        return cleaned
 
     def load_self_model(self, talent_path: str) -> None:
         """Load SelfModel from talent.md at startup."""
