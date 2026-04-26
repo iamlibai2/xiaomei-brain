@@ -43,7 +43,8 @@ from .intent import Intent
 from .storage import ConsciousnessStorage
 from .self_image import SelfImage, FlameState
 from ..drive import DriveEngine, EventExtractor, DesireActionExecutor
-from ..purpose import PurposeEngine, IntentUnderstanding, task_executor, Goal, GoalType, GoalStatus, IntentResult, GoalRelation, IntentType
+from ..purpose import PurposeEngine, IntentUnderstanding, task_executor, Goal, GoalType, GoalStatus, IntentResult, GoalRelation, IntentType as PurposeIntentType
+from .intent import IntentType as ConsciousIntentType
 
 logger = logging.getLogger(__name__)
 
@@ -532,13 +533,13 @@ class ConsciousLiving:
             return
 
         # 根据 Intent 类型执行不同动作
-        if intent.type == IntentType.GREET:
+        if intent.type == ConsciousIntentType.GREET:
             self._execute_greet_intent(intent)
-        elif intent.type == IntentType.CARE:
+        elif intent.type == ConsciousIntentType.CARE:
             self._execute_care_intent(intent)
-        elif intent.type == IntentType.REFLECT:
+        elif intent.type == ConsciousIntentType.REFLECT:
             self._execute_reflect_intent(intent)
-        elif intent.type == IntentType.ACT:
+        elif intent.type == ConsciousIntentType.ACT:
             self._execute_act_intent(intent)
         else:
             logger.debug("[ConsciousLiving] Intent暂不执行: %s", intent.type.value)
@@ -629,7 +630,7 @@ class ConsciousLiving:
                 print(f"[目标] 延续任务: {goals[0].description[:40]}", flush=True)
                 from xiaomei_brain.purpose.intent import IntentResult, IntentType, GoalRelation
                 fake_intent = IntentResult(
-                    intent_type=IntentType.TASK,
+                    intent_type=PurposeIntentType.TASK,
                     goals=[goals[0]],
                     relation=GoalRelation.MODIFIES,
                     target_goal_id=goals[0].id,
@@ -727,7 +728,7 @@ class ConsciousLiving:
             # 直接调用第二阶段 LLM：分解目标（跳过第一阶段意图分类）
             sub_descriptions = self.intent_understanding.decompose_goal(task_text)
             return IntentResult(
-                intent_type=IntentType.TASK,
+                intent_type=PurposeIntentType.TASK,
                 goals=[goal],
                 sub_goals=sub_descriptions,
                 relation=GoalRelation.NEW,
@@ -899,7 +900,7 @@ class ConsciousLiving:
                     if original_msg:
                         from xiaomei_brain.purpose.intent import IntentResult, IntentType, GoalRelation
                         fake_intent = IntentResult(
-                            intent_type=IntentType.TASK,
+                            intent_type=PurposeIntentType.TASK,
                             goals=[goal],
                             relation=GoalRelation.MODIFIES,
                             target_goal_id=goal_id,
@@ -999,7 +1000,7 @@ class ConsciousLiving:
         from ..purpose.intent import IntentResult, IntentType, GoalRelation
 
         fake_intent = IntentResult(
-            intent_type=IntentType.TASK,
+            intent_type=PurposeIntentType.TASK,
             goals=[goal],
             relation=GoalRelation.MODIFIES,
             target_goal_id=goal.id,
