@@ -72,6 +72,21 @@ def build_intent_context(purpose, intent_result, chosen_by_user: bool = False) -
         ]
         return "\n".join(lines)
 
+    # CLARIFICATION / QUERY：也要推进目标，告知当前子目标
+    if intent_result.is_task():
+        pass  # 继续往下走，提取子目标
+    elif purpose and purpose.get_active_goals():
+        # 有活跃子目标，告知 LLM 回答后推进目标
+        active = purpose.get_active_goals()[0] if purpose.get_active_goals() else None
+        if active:
+            lines = [
+                f"【当前任务】{active.description}",
+                "回答用户问题后，请在回复末尾加上进度标签：",
+                "<PROGRESS>completed</PROGRESS>",
+                "（这会使系统自动推进到下一个子目标）",
+            ]
+            return "\n".join(lines)
+    # 无活跃目标时，clarification/query 不需要特殊上下文
     if not intent_result.is_task():
         return ""
 
