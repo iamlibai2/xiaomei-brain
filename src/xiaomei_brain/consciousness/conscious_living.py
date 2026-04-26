@@ -885,7 +885,11 @@ class ConsciousLiving:
                     self._pending_confirm_msg = None
                     if original_msg:
                         intent_result = self._analyze_intent(original_msg.content)
-                        self._run_chat(original_msg, self._build_intent_context(intent_result))
+                        # 如果是 TASK，走完整的目标创建流程
+                        if intent_result.is_task() and intent_result.has_goal() and intent_result.confidence >= 0.5:
+                            self._handle_task_intent(intent_result, original_msg)
+                        else:
+                            self._run_chat(original_msg, self._build_intent_context(intent_result))
                     return
                 if 1 <= idx <= len(confirm["goal_ids"]):
                     goal_id = confirm["goal_ids"][idx - 1]

@@ -203,26 +203,41 @@ def update_goal_progress(purpose, drive, status: str) -> Optional[str]:
     if not current:
         return None
 
-    # 获取当前活跃的子目标
-    sub_goals = purpose.get_sub_goals(current.id)
-    logger.info(
-        "[Progress Debug] get_sub_goals(%s) count=%d list=%s",
-        current.id[:8], len(sub_goals),
-        [(sg.id[:8], sg.description[:30], sg.status.value) for sg in sub_goals],
-    )
-    active_sub = None
-    for sg in sub_goals:
-        if sg.is_active():
-            active_sub = sg
-            break
+    # 如果 current 有 parent_id，说明当前执行的是子目标层级
+    # active_sub = current 本身，siblings 从同一个 parent 的 children 中找
+    if current.parent_id:
+        # 当前是一个子目标
+        active_sub = current
+        # 获取所有兄弟子目标（同parent的children）
+        siblings = purpose.get_sub_goals(current.parent_id)
+        logger.info(
+            "[Progress Debug] sub_goal mode: active=%s siblings=%d list=%s",
+            active_sub.description[:30],
+            len(siblings),
+            [(sg.id[:8], sg.description[:30], sg.status.value) for sg in siblings],
+        )
+    else:
+        # 当前是主目标，找它的 children
+        sub_goals = purpose.get_sub_goals(current.id)
+        logger.info(
+            "[Progress Debug] main_goal mode: sub_goals=%d list=%s",
+            len(sub_goals),
+            [(sg.id[:8], sg.description[:30], sg.status.value) for sg in sub_goals],
+        )
+        active_sub = None
+        for sg in sub_goals:
+            if sg.is_active():
+                active_sub = sg
+                break
 
-    if not active_sub:
-        # 没有活跃子目标，激活第一个 pending
-        pending_subs = [sg for sg in sub_goals if sg.is_pending()]
-        if pending_subs:
-            purpose.set_current(pending_subs[0].id)
-            logger.info("[Progress] 激活第一个子目标: %s", pending_subs[0].description[:30])
-        return None
+        if not active_sub:
+            # 没有活跃子目标，激活第一个 pending
+            pending_subs = [sg for sg in sub_goals if sg.is_pending()]
+            if pending_subs:
+                purpose.set_current(pending_subs[0].id)
+                logger.info("[Progress] 激活第一个子目标: %s", pending_subs[0].description[:30])
+            return None
+        siblings = sub_goals
 
     if status == "completed":
         # 完成当前子目标
@@ -240,13 +255,16 @@ def update_goal_progress(purpose, drive, status: str) -> Optional[str]:
             logger.info("[Progress] 子目标完成，切换到下一个: %s", next_sub.description[:30])
             status_msg = f"[进度] 子目标完成，下一个: {next_sub.description[:40]}"
 
-        # 检查主目标是否完成（所有子目标完成）
-        completed_subs = [sg for sg in sub_goals if sg.is_completed()]
-        if len(completed_subs) == len(sub_goals):
-            main_goal = current
-            purpose.goals[main_goal.id].complete()
-            logger.info("[Progress] 主目标完成: %s", main_goal.description[:30])
-            status_msg = f"[目标] 主目标已完成: {main_goal.description[:40]}"
+        # 检查主目标是否完成（所有 siblings 完成）
+        completed_subs = [sg for sg in siblings if sg.is_completed()]
+        if len(completed_subs) == len(siblings):
+            # 找主目标：如果 current 是子目标，parent 是主目标；否则 current 是主目标
+            main_goal_id = current.parent_id if current.parent_id else current.id
+            main_goal = purpose.goals.get(main_goal_id)
+            if main_goal:
+                main_goal.complete()
+                logger.info("[Progress] 主目标完成: %s", main_goal.description[:30])
+                status_msg = f"[目标] 主目标已完成: {main_goal.description[:40]}"
 
         return status_msg
 
