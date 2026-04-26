@@ -689,6 +689,9 @@ class ConsciousLiving:
         # 构建 intent_context（注入 system prompt）
         intent_context = self._build_intent_context(intent_result)
 
+        # 调试：输出 intent_context 到 JSON 文件
+        self._log_intent_context(intent_result, intent_context, msg.content)
+
         # 执行对话
         self._run_chat(msg, intent_context)
 
@@ -1008,6 +1011,37 @@ class ConsciousLiving:
             reasoning=f"目标推进：{goal.description[:50]}",
         )
         return self._build_intent_context(fake_intent, chosen_by_user=True)
+
+    def _log_intent_context(self, intent_result: Any, intent_context: str, user_input: str = "") -> None:
+        """调试：输出 intent_context 到 JSON 文件"""
+        import json, time, os
+        log_dir = os.path.expanduser("~/.xiaomei-brain/logs")
+        os.makedirs(log_dir, exist_ok=True)
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+
+        # 提取活跃目标信息
+        active_goal = None
+        if self.purpose:
+            active = self.purpose.get_active_goals()
+            if active:
+                active_goal = active[0].description
+
+        data = {
+            "timestamp": timestamp,
+            "user_input": user_input,
+            "intent_type": intent_result.intent_type.value if hasattr(intent_result, "intent_type") else str(intent_result.intent_type),
+            "confidence": intent_result.confidence if hasattr(intent_result, "confidence") else 0,
+            "active_goal": active_goal,
+            "intent_context": intent_context,
+            "response_guidance": getattr(intent_result, "response_guidance", ""),
+        }
+        log_path = os.path.join(log_dir, f"intent_context_{timestamp}.json")
+        try:
+            with open(log_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            logger.debug("[ConsciousLiving] intent_context 已写入: %s", log_path)
+        except Exception as e:
+            logger.warning("[ConsciousLiving] 写入 intent_context 失败: %s", e)
 
     def _run_chat(self, msg: LivingMessage, intent_context: str = "") -> None:
         """执行对话（统一的 chat 入口）"""
