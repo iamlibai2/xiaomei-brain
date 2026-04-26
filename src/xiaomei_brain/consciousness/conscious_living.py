@@ -43,7 +43,7 @@ from .intent import Intent
 from .storage import ConsciousnessStorage
 from .self_image import SelfImage, FlameState
 from ..drive import DriveEngine, EventExtractor, DesireActionExecutor
-from ..purpose import PurposeEngine, IntentUnderstanding, task_executor, Goal, GoalType, GoalStatus, IntentResult, GoalRelation
+from ..purpose import PurposeEngine, IntentUnderstanding, task_executor, Goal, GoalType, GoalStatus, IntentResult, GoalRelation, IntentType
 
 logger = logging.getLogger(__name__)
 
