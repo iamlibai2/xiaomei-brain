@@ -654,6 +654,23 @@ class Agent:
         )
 
         _log(True)
+
+        # Save response alongside request log
+        try:
+            with open(_log_file, "r+", encoding="utf-8") as _f:
+                _log_data = json.load(_f)
+                _log_data["response"] = {
+                    "content": content,
+                    "tool_calls": [{"name": tc.name, "arguments": tc.arguments} for tc in tool_calls],
+                    "finish_reason": finish_reason,
+                    "reasoning_content": "".join(reasoning_parts) if reasoning_parts else None,
+                }
+                _f.seek(0)
+                _f.truncate()
+                json.dump(_log_data, _f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
         return chat_response, stream_parts if not tool_calls else None
 
     # ── Helpers ──────────────────────────────────────────────────
