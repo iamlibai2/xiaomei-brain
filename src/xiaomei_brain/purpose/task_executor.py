@@ -192,11 +192,24 @@ def update_goal_progress(purpose, drive, status: str) -> Optional[str]:
         return None
 
     current = purpose.get_current()
+    logger.info(
+        "[Progress Debug] get_current() id=%s desc=%s parent_id=%s depth=%d status=%s",
+        current.id[:8] if current else "None",
+        current.description[:40] if current else "None",
+        current.parent_id[:8] if current and current.parent_id else "None",
+        current.depth if current else -1,
+        current.status.value if current else "None",
+    )
     if not current:
         return None
 
     # 获取当前活跃的子目标
     sub_goals = purpose.get_sub_goals(current.id)
+    logger.info(
+        "[Progress Debug] get_sub_goals(%s) count=%d list=%s",
+        current.id[:8], len(sub_goals),
+        [(sg.id[:8], sg.description[:30], sg.status.value) for sg in sub_goals],
+    )
     active_sub = None
     for sg in sub_goals:
         if sg.is_active():
