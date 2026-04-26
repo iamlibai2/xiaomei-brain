@@ -528,7 +528,7 @@ class ConsciousLiving:
     def _check_intent(self) -> None:
         """检查并消费 Intent"""
         intent = self.consciousness.get_pending_intent()
-        if not intent:
+        if not intent or not getattr(intent, "type", None):
             return
 
         # 根据 Intent 类型执行不同动作
