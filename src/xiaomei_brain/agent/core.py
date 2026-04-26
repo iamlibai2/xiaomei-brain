@@ -303,6 +303,15 @@ class Agent:
             if not appended:
                 logger.warning("[Memory] No user message found to append MEMORY_DECISION_PROMPT")
 
+            # Append intent_context to the last user message (same reason as MEMORY)
+            if self.intent_context:
+                for i in range(len(all_messages) - 1, -1, -1):
+                    if all_messages[i].get("role") == "user":
+                        all_messages[i] = dict(all_messages[i])
+                        all_messages[i]["content"] = all_messages[i]["content"] + "\n\n" + self.intent_context
+                        logger.info("[Agent] appended intent_context to user msg[%d], len=%d", i, len(self.intent_context))
+                        break
+
             # Clean surrogate characters from all message content before sending to LLM
             all_messages = self._clean_messages(all_messages)
 
