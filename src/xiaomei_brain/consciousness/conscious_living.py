@@ -282,26 +282,22 @@ class ConsciousLiving:
     def _clean_input(text: str) -> str:
         """字符级输入清洗。
 
-        使用字符遍历而非 encode/decode 往返，避免 surrogatepass
-        破坏 CJK 多字节边界导致中文乱码。
-
-        处理：
-        - 退格符 (\\x08, \\x7f)：模拟退格删除前一个字符
-        - 代理字符 (\\ud800-\\udfff)：直接跳过
-        - 替换字符 (\\ufffd)：直接跳过
-        - 控制字符 (ord < 0x20)：跳过，保留 \\t \\n \\r
+        只过滤控制字符和代理字符，不做退格模拟。
+        终端/TUI/WebSocket 已在客户端完成编辑，退格无需服务端重复处理。
         """
         buf: list[str] = []
         for ch in text:
-            if ch in ("\x08", "\x7f"):
-                if buf:
-                    buf.pop()
-            elif ch == "\ufffd" or ("\ud800" <= ch <= "\udfff"):
+            cp = ord(ch)
+            # 代理字符（\ud800-\udfff）：跳过
+            if 0xD800 <= cp <= 0xDFFF:
                 continue
-            elif ord(ch) < 0x20 and ch not in ("\t", "\n", "\r"):
+            # 替换字符：跳过
+            if cp == 0xFFFD:
                 continue
-            else:
-                buf.append(ch)
+            # 控制字符（不含 \t \n \r）：跳过
+            if cp < 0x20 and ch not in ("\t", "\n", "\r"):
+                continue
+            buf.append(ch)
         return "".join(buf)
 
     def run(self) -> None:
@@ -640,12 +636,20 @@ class ConsciousLiving:
                 self._run_chat(msg, self._build_intent_context(fake_intent, chosen_by_user=True))
                 return
             elif len(goals) > 1:
-                # 多个活跃目标，让用户选
+                # 多个活跃目标，让用户选（按描述去重）
+                seen = set()
+                options = []
+                goal_ids = []
+                for g in goals:
+                    if g.description not in seen:
+                        seen.add(g.description)
+                        options.append(g.description)
+                        goal_ids.append(g.id)
                 confirm_info = {
                     "type": "continue_goal",
                     "question": "要继续哪个任务？",
-                    "options": [g.description for g in goals],
-                    "goal_ids": [g.id for g in goals],
+                    "options": options,
+                    "goal_ids": goal_ids,
                 }
                 self._pending_confirm = confirm_info
                 self._waiting_confirm = True
@@ -846,7 +850,7 @@ class ConsciousLiving:
                 # 激活第一个子目标（一个任务一个任务依次进行）
                 if sub_goals:
                     self.purpose.set_current(sub_goals[0].id)
-                    print(f"[目标] 当前执行: {sub_goals[0].description[:40]}", flush=True)
+                    self._print_sub_goal_progress(sub_goals[0], sub_goals)
                     # 直接执行，由LLM处理需要的用户输入
                     new_intent = self._build_intent_context_for_goal(sub_goals[0])
                     self._run_chat(msg, new_intent)
@@ -878,18 +882,11 @@ class ConsciousLiving:
             if inp.isdigit():
                 idx = int(inp)
                 if idx == 0:
-                    # 都不选，走正常意图分析
-                    original_msg = self._pending_confirm_msg
+                    # 都不选，清空确认状态，等用户输入新内容
                     self._pending_confirm = None
                     self._waiting_confirm = False
                     self._pending_confirm_msg = None
-                    if original_msg:
-                        intent_result = self._analyze_intent(original_msg.content)
-                        # 如果是 TASK，走完整的目标创建流程
-                        if intent_result.is_task() and intent_result.has_goal() and intent_result.confidence >= 0.5:
-                            self._handle_task_intent(intent_result, original_msg)
-                        else:
-                            self._run_chat(original_msg, self._build_intent_context(intent_result))
+                    self._print_prompt()
                     return
                 if 1 <= idx <= len(confirm["goal_ids"]):
                     goal_id = confirm["goal_ids"][idx - 1]
@@ -1064,6 +1061,9 @@ class ConsciousLiving:
                 while True:
                     print("\n小美: ", end="", flush=True)
                     cs = self._get_consciousness_state()
+                    from xiaomei_brain.agent.core import tool_call_buffer
+                    t0 = time.time()
+                    tc_before = tool_call_buffer.last_index
                     content = self.agent.chat(
                         current_msg.content,
                         session_id=current_msg.session_id,
@@ -1072,6 +1072,8 @@ class ConsciousLiving:
                         intent_context=current_context,
                         consciousness_state=cs,
                     )
+                    elapsed = time.time() - t0
+                    tc_count = tool_call_buffer.last_index - tc_before
 
                     # Ctrl+C 取消：丢弃 LLM 结果
                     if self._cancel_requested:
@@ -1103,6 +1105,10 @@ class ConsciousLiving:
                     _pad2 = (_w - len(_label2)) // 2
                     print("=" * _pad2 + _label2 + "=" * _pad2, flush=True)
 
+                    # 本轮耗时
+                    tc_str = f"，{tc_count}次工具调用" if tc_count else ""
+                    print(f"\033[90m[本轮耗时 {elapsed:.1f}s{tc_str}]\033[0m", flush=True)
+
                     # 更新意识系统
                     self.consciousness.on_user_interaction(current_msg.content, display_content)
 
@@ -1121,7 +1127,8 @@ class ConsciousLiving:
                         session_id=msg.session_id,
                         source="system",
                     )
-                    print(f"\n[目标] → {next_goal.description[:40]}", flush=True)
+                    siblings = self.purpose.get_sub_goals(next_goal.parent_id)
+                    self._print_sub_goal_progress(next_goal, siblings)
 
             except Exception as e:
                 logger.error("[ConsciousLiving] Chat failed: %s", e)
@@ -1131,6 +1138,21 @@ class ConsciousLiving:
                 self._chatting = False
 
         run()
+
+    @staticmethod
+    def _progress_bar(completed: int, total: int, width: int = 10) -> str:
+        """生成进度条：████░░░░░░"""
+        if total == 0:
+            return ""
+        filled = int(width * completed / total)
+        return "█" * filled + "░" * (width - filled)
+
+    def _print_sub_goal_progress(self, goal, siblings: list) -> None:
+        """打印子目标进度条。"""
+        completed = sum(1 for g in siblings if g.is_completed())
+        total = len(siblings)
+        bar = self._progress_bar(completed, total)
+        print(f"[目标] {bar} {completed}/{total}  {goal.description[:40]}", flush=True)
 
     def _should_auto_advance(self, progress_status: str | None) -> bool:
         """检查 PurposeEngine 是否已自动推进到新的子目标。

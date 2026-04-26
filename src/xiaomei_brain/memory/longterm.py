@@ -1128,15 +1128,15 @@ class LongTermMemory:
         return [r[0] for r in rows]
 
     def get_recent(
-        self, n: int = 10,
+        self, n: int = 10, user_id: str = "global",
     ) -> list[dict[str, Any]]:
-        """Get most recently stored memories for the agent itself (小美的记忆)."""
+        """Get most recently stored memories, optionally filtered by user."""
         conn = self._get_conn()
         rows = conn.execute(
             f"""SELECT * FROM memories
-               WHERE status != '{STATUS_EXTINCT}'
+               WHERE status != '{STATUS_EXTINCT}' AND user_id = ?
                ORDER BY created_at DESC LIMIT ?""",
-            (n,),
+            (user_id, n),
         ).fetchall()
         result = []
         for r in rows:

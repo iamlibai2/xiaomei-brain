@@ -8,6 +8,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import atexit
+import os
+import readline
 import logging
 import os
 import sys
@@ -50,7 +53,12 @@ def cmd_run(agent_id: str, attach_cli: bool = False) -> None:
         living._on_wake()  # 触发 proactive.check(WAKE) + 问候 + 记忆
         living.state = AgentState.AWAKE
         print(f"[阶段] AWAKE - 准备就绪 | LLM calls: {get_llm_call_count()}")
-        print("输入消息跟小美对话 (q退出):")
+        # 启用 readline 历史（上下键翻历史）
+        hist_path = os.path.expanduser("~/.xiaomei-brain/cli_history")
+        if os.path.exists(hist_path):
+            readline.read_history_file(hist_path)
+        atexit.register(readline.write_history_file, hist_path)
+        print("输入消息跟小美对话 (q退出，↑↓翻历史):")
         while True:
             try:
                 raw_input = input("You: ")
@@ -58,17 +66,7 @@ def cmd_run(agent_id: str, attach_cli: bool = False) -> None:
                 print()
                 break
 
-            # 清理控制字符 + 退格处理
-            buf: list[str] = []
-            for ch in raw_input:
-                if ch == "\x08" or ch == "\x7f":
-                    if buf:
-                        buf.pop()
-                elif ord(ch) < 0x20 and ch not in ("\t", "\n", "\r"):
-                    pass
-                else:
-                    buf.append(ch)
-            user_input = "".join(buf)
+            user_input = raw_input
 
             # 移除 UTF-16LE 编码异常混入的孤立 Trail 字节（\udc80~\udcff）
             # WSL/WSL2 终端输入法在某些键位下会残留这类字节

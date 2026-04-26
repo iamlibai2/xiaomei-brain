@@ -103,10 +103,12 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
         with open(full_path, "w", encoding="utf-8") as f:
             f.write(new_content)
 
-        # Compute line numbers for the replaced region
+        # Compute line numbers and content for the replaced region
         idx = original.find(old_string)
         if idx < 0:
             added_l, removed_l = [], []
+            removed_content, added_content = [], []
+            base = 0
         else:
             # base = line number where old_string starts (1-based)
             # count("\n") = number of full lines the string spans
@@ -115,6 +117,8 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
             base = original[:idx].count("\n") + 1
             removed_l = list(range(base, base + old_string.count("\n") + (0 if old_string.endswith("\n") else 1)))
             added_l = list(range(base, base + new_string.count("\n") + (0 if new_string.endswith("\n") else 1))) if new_string else []
+            removed_content = old_string.split("\n")
+            added_content = new_string.split("\n") if new_string else []
 
         return json.dumps({
             "file_path": full_path,
@@ -122,6 +126,9 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
             "removed_lines": removed_l,
             "added_count": len(added_l),
             "removed_count": len(removed_l),
+            "removed_content": removed_content,
+            "added_content": added_content,
+            "base_line": base,
         }, ensure_ascii=False)
 
     except Exception as e:

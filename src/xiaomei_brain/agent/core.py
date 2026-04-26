@@ -79,14 +79,28 @@ def _print_tool_call(idx: int, name: str, arguments: dict) -> None:
 
 
 def _print_tool_result(idx: int, result: str) -> None:
-    """折叠展示工具结果。"""
+    """折叠展示工具结果：显示前5行 + 总行数。"""
     r = str(result)
     is_error = r.lower().startswith("error")
     tag = "\033[31m✗\033[0m" if is_error else "\033[32m✓\033[0m"
-    one_line = r.replace("\n", " ").strip()
-    if len(one_line) > 80:
-        one_line = one_line[:77] + "..."
-    print(f"  {tag} {one_line}", flush=True)
+    lines = r.split("\n")
+    total = len(lines)
+    preview_count = 5
+
+    if total <= preview_count:
+        # 输出短，全部显示
+        for line in lines:
+            if len(line) > 200:
+                line = line[:197] + "..."
+            print(f"  {tag} {line}", flush=True)
+    else:
+        # 显示前5行
+        for line in lines[:preview_count]:
+            if len(line) > 200:
+                line = line[:197] + "..."
+            print(f"  {tag} {line}", flush=True)
+        # 最后一行显示总行数
+        print(f"  \033[90m  ...共 {total} 行\033[0m", flush=True)
 
 
 def _print_edit_diff(idx: int, name: str, arguments: dict, result: str) -> None:
@@ -102,47 +116,91 @@ def _print_edit_diff(idx: int, name: str, arguments: dict, result: str) -> None:
         return
 
     file_path = data.get("file_path", "")
-    added = data.get("added_lines", [])
-    removed = data.get("removed_lines", [])
     added_count = data.get("added_count", 0)
     removed_count = data.get("removed_count", 0)
+    removed_content = data.get("removed_content", [])
+    added_content = data.get("added_content", [])
+    base_line = data.get("base_line", 0)
 
     action = "Update"
     print(f"\033[36m● {action}({file_path})\033[0m")
-    print(f"  ⎿  Added {added_count} lines, removed {removed_count} lines")
+    print(f"  ⎿  Added {added_count} line(s), removed {removed_count} line(s)")
 
-    # Show context lines around changes
-    all_changed = sorted(set(added + removed))
-    if not all_changed:
-        _print_tool_result(idx, result)
-        return
+    # Compute how many context lines to show around the change
+    prev_context = 2
+    after_context = 2
 
-    # Read file to get line content
+    # Read file to get surrounding context
     try:
         with open(file_path, "r", encoding="utf-8") as f:
-            lines = f.read().splitlines()
+            file_lines = f.read().splitlines()
     except Exception:
         _print_tool_result(idx, result)
         return
 
-    # Determine context window
-    ctx_start = max(0, all_changed[0] - 2)
-    ctx_end = min(len(lines), all_changed[-1] + 3)
-    line_num_width = len(str(ctx_end))
+    ctx_before = max(0, base_line - prev_context - 1)  # 0-indexed
+    ctx_after = min(len(file_lines), base_line - 1 + len(added_content) + after_context)
+    line_num_width = len(str(max(ctx_after, base_line + max(len(removed_content), len(added_content)))))
 
-    for i in range(ctx_start, ctx_end):
-        lineno = i + 1
-        marker = ""
-        prefix = " "
-        if lineno in added:
-            marker = "+"
-            prefix = "\033[32m"
-        elif lineno in removed:
-            marker = "-"
-            prefix = "\033[31m"
-        suffix = "\033[0m"
-        line_text = lines[i] if i < len(lines) else ""
-        print(f"  {prefix}{marker} {lineno:>{line_num_width}}  {line_text}{suffix}", flush=True)
+    # ── lines before change ──
+    for i in range(ctx_before, base_line - 1):
+        if i < len(file_lines):
+            text = file_lines[i]
+            if len(text) > 120:
+                text = text[:117] + "..."
+            print(f"    {i + 1:>{line_num_width}}  {text}", flush=True)
+
+    # ── removed lines (red) ──
+    for offset, text in enumerate(removed_content):
+        ln = base_line + offset
+        if len(text) > 120:
+            text = text[:117] + "..."
+        print(f"  \033[31m- {ln:>{line_num_width}}  {text}\033[0m", flush=True)
+
+    # ── added lines (green) ──
+    for offset, text in enumerate(added_content):
+        ln = base_line + offset
+        if len(text) > 120:
+            text = text[:117] + "..."
+        print(f"  \033[32m+ {ln:>{line_num_width}}  {text}\033[0m", flush=True)
+
+    # ── lines after change ──
+    after_start = base_line - 1 + len(added_content)
+    for i in range(after_start, ctx_after):
+        if i < len(file_lines):
+            text = file_lines[i]
+            if len(text) > 120:
+                text = text[:117] + "..."
+            print(f"    {i + 1:>{line_num_width}}  {text}", flush=True)
+
+    print(flush=True)
+
+
+def _print_write_result(idx: int, name: str, arguments: dict, result: str) -> None:
+    """Print file creation result with preview (like edit diff for new files)."""
+    file_path = arguments.get("path", arguments.get("file_path", ""))
+    content = arguments.get("content", "")
+
+    if not file_path or not content:
+        _print_tool_result(idx, result)
+        return
+
+    lines = content.split("\n")
+    total = len(lines)
+    action = "Create"
+    print(f"\033[36m● {action}({file_path})\033[0m")
+    print(f"  ⎿  Wrote {total} lines")
+
+    preview_count = min(5, total)
+    line_num_width = len(str(total))
+    for i in range(preview_count):
+        text = lines[i]
+        if len(text) > 120:
+            text = text[:117] + "..."
+        print(f"  \033[32m+ {i + 1:>{line_num_width}}  {text}\033[0m", flush=True)
+
+    if total > preview_count:
+        print(f"  \033[90m  ...共 {total} 行\033[0m", flush=True)
 
     print(flush=True)
 
@@ -279,6 +337,16 @@ class Agent:
                 self.messages, self.session_id,
             )
 
+        # 动态工作提示：根据上一步操作变换
+        _HINTS = {
+            "write_file": "📝 编撰文档中...",
+            "edit_file": "🔧 修改代码中...",
+            "shell": "⚡ 运行命令中...",
+            "web_search": "🔍 搜索资料中...",
+            "read_file": "📖 阅读文件中...",
+        }
+        _last_tool = ""
+
         for step in range(self.max_steps):
             # All steps: [system prompt] + accumulated self.messages
             all_messages = [base_context[0]] + self.messages
@@ -316,6 +384,8 @@ class Agent:
             all_messages = self._clean_messages(all_messages)
 
             logger.debug("Step %d: calling LLM", step + 1)
+            hint = _HINTS.get(_last_tool, "💭 思考中...")
+            print(hint, flush=True)
 
             response, stream_chunks = self._call_llm(all_messages, openai_tools)
 
@@ -356,6 +426,7 @@ class Agent:
                     # Collapsed display + buffer storage
                     idx = tool_call_buffer.add(tc.name, tc.arguments, "")  # placeholder
                     _print_tool_call(idx, tc.name, tc.arguments)
+                    _last_tool = tc.name
                     logger.debug("Tool call: %s(%s)", tc.name, tc.arguments)
                     try:
                         result = self.tools.execute(tc.name, **tc.arguments)
@@ -370,6 +441,8 @@ class Agent:
 
                     if tc.name == "edit_file":
                         _print_edit_diff(idx, tc.name, tc.arguments, result)
+                    elif tc.name == "write_file":
+                        _print_write_result(idx, tc.name, tc.arguments, result)
                     else:
                         _print_tool_result(idx, result)
                     logger.debug("Tool result: %s", result[:200])
