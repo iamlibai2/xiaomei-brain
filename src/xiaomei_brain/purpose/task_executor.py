@@ -96,30 +96,26 @@ def build_intent_context(purpose, intent_result, chosen_by_user: bool = False) -
         return ""
 
     # 找到当前正在执行的子目标
-    active_sub = None
-    active_subs = purpose.get_active_goals()
-    for g in active_subs:
-        if g.parent_id:
-            active_sub = g
-            break
-
-    # 没有活跃子目标，尝试获取主目标作为后备
-    if not active_sub:
-        current = purpose.get_current()
-        if current and current.parent_id is None:
-            active_sub = current
-
-    if not active_sub:
+    current = purpose.get_current()
+    if not current:
         return ""
 
-    # 获取子目标列表（用于显示进度）
-    main_goal = None
-    for g in purpose.goals.values():
-        if g.id == active_sub.parent_id:
-            main_goal = g
-            break
-    if not main_goal:
-        main_goal = purpose.get_current()
+    # 当前是子目标（有 parent_id），直接用它
+    if current.parent_id:
+        active_sub = current
+        main_goal = purpose.goals.get(current.parent_id)
+    else:
+        # 当前是主目标，找它的活跃子目标
+        active_sub = None
+        sub_goals = purpose.get_sub_goals(current.id)
+        for sg in sub_goals:
+            if sg.is_active():
+                active_sub = sg
+                break
+        main_goal = current
+
+    if not active_sub:
+        active_sub = current
 
     sub_goals = purpose.get_sub_goals(main_goal.id) if main_goal else []
     completed_subs = [sg for sg in sub_goals if sg.is_completed()]
