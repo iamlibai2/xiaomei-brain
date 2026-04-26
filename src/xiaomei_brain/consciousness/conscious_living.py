@@ -1002,6 +1002,15 @@ class ConsciousLiving:
             )
             self._run_chat(proceed_msg, new_intent)
 
+    def _get_current_sub_goal(self):
+        """获取当前活跃的子目标（有 parent_id 的），用于自动推进"""
+        if not self.purpose:
+            return None
+        current = self.purpose.get_current()
+        if current and current.parent_id and current.is_active():
+            return current
+        return None
+
     def _build_intent_context_for_goal(self, goal) -> str:
         """为指定目标构建 intent_context（不依赖 original_intent）"""
         from ..purpose.intent import IntentResult, IntentType, GoalRelation
@@ -1048,56 +1057,78 @@ class ConsciousLiving:
             logger.warning("[ConsciousLiving] 写入 intent_context 失败: %s", e)
 
     def _run_chat(self, msg: LivingMessage, intent_context: str = "") -> None:
-        """执行对话（统一的 chat 入口）"""
+        """执行对话（统一的 chat 入口），自动推进连续子目标"""
         def run():
             self._chatting = True
             try:
-                print("\n小美: ", end="", flush=True)
-                cs = self._get_consciousness_state()
-                content = self.agent.chat(
-                    msg.content,
-                    session_id=msg.session_id,
-                    user_id=msg.user_id,
-                    on_chunk=None,
-                    intent_context=intent_context,
-                    consciousness_state=cs,
-                )
+                current_msg = msg
+                current_intent = intent_context
+                max_loops = 20  # 防止死循环
 
-                # Ctrl+C 取消：丢弃 LLM 结果
-                if self._cancel_requested:
-                    logger.info("[ConsciousLiving] LLM 结果已丢弃（取消请求）")
-                    print("\n[取消] 已中断", flush=True)
+                for _ in range(max_loops):
+                    print("\n小美: ", end="", flush=True)
+                    cs = self._get_consciousness_state()
+                    content = self.agent.chat(
+                        current_msg.content,
+                        session_id=current_msg.session_id,
+                        user_id=current_msg.user_id,
+                        on_chunk=None,
+                        intent_context=current_intent,
+                        consciousness_state=cs,
+                    )
+
+                    # Ctrl+C 取消：丢弃 LLM 结果
+                    if self._cancel_requested:
+                        logger.info("[ConsciousLiving] LLM 结果已丢弃（取消请求）")
+                        print("\n[取消] 已中断", flush=True)
+                        self._print_prompt()
+                        return
+
+                    # 解析进度标签
+                    progress_status = self._parse_progress_tag(content)
+                    logger.info(
+                        "[Progress Tag] status=%s active_sub=%s",
+                        progress_status,
+                        self.purpose.get_active_goals()[0].description[:30] if self.purpose and self.purpose.get_active_goals() else "none",
+                    )
+                    if progress_status and self.purpose:
+                        self._update_goal_progress(progress_status)
+
+                    # 移除进度标签
+                    display_content = self._remove_progress_tag(content)
+
+                    # 打印 LLM 输出分隔标记
+                    _w = 138
+                    _label = " LLM output "
+                    _pad = (_w - len(_label)) // 2
+                    print("\n" + "=" * _pad + _label + "=" * _pad, flush=True)
+                    print(display_content, flush=True)
+                    _label2 = " LLM output-end "
+                    _pad2 = (_w - len(_label2)) // 2
+                    print("=" * _pad2 + _label2 + "=" * _pad2, flush=True)
+
+                    logger.info("[ConsciousLiving] 对话完成")
                     self._print_prompt()
-                    return
 
-                # 解析进度标签
-                progress_status = self._parse_progress_tag(content)
-                logger.info(
-                    "[Progress Tag] status=%s active_sub=%s",
-                    progress_status,
-                    self.purpose.get_active_goals()[0].description[:30] if self.purpose and self.purpose.get_active_goals() else "none",
-                )
-                if progress_status and self.purpose:
-                    self._update_goal_progress(progress_status)
+                    # 更新意识系统
+                    self.consciousness.on_user_interaction(current_msg.content, display_content)
 
-                # 移除进度标签
-                display_content = self._remove_progress_tag(content)
-
-                # 打印 LLM 输出分隔标记
-                _w = 138
-                _label = " LLM output "
-                _pad = (_w - len(_label)) // 2
-                print("\n" + "=" * _pad + _label + "=" * _pad, flush=True)
-                print(display_content, flush=True)
-                _label2 = " LLM output-end "
-                _pad2 = (_w - len(_label2)) // 2
-                print("=" * _pad2 + _label2 + "=" * _pad2, flush=True)
-
-                logger.info("[ConsciousLiving] 对话完成")
-                self._print_prompt()
-
-                # 更新意识系统
-                self.consciousness.on_user_interaction(msg.content, display_content)
+                    # 如果子目标完成，自动推进到下一个
+                    if progress_status == "completed" and self.purpose and not self._cancel_requested:
+                        next_sub = self._get_current_sub_goal()
+                        if next_sub:
+                            logger.info(
+                                "[ConsciousLiving] 自动推进到下一个子目标: %s",
+                                next_sub.description[:40],
+                            )
+                            current_intent = self._build_intent_context_for_goal(next_sub)
+                            current_msg = LivingMessage(
+                                content=f"继续执行下一个子目标：{next_sub.description[:40]}",
+                                session_id=msg.session_id,
+                                user_id=msg.user_id,
+                            )
+                            continue
+                    break
             except Exception as e:
                 logger.error("[ConsciousLiving] Chat failed: %s", e)
                 print(f"\n[错误] {e}", flush=True)

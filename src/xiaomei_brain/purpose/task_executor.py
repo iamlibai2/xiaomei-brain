@@ -240,12 +240,8 @@ def update_goal_progress(purpose, drive, status: str) -> Optional[str]:
         siblings = sub_goals
 
     if status == "completed":
-        # 完成当前子目标
-        purpose.complete_current()
-
-        # 通知 Drive（触发多巴胺）
-        if drive:
-            drive.on_goal_completed(active_sub.progress)
+        # 完成当前子目标（不触发 get_next 切换）
+        purpose.complete_goal(active_sub.id)
 
         # 切换到下一个子目标
         next_sub = purpose.get_next_sibling(active_sub.id)

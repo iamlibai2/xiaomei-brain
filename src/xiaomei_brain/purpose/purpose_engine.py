@@ -217,6 +217,16 @@ class PurposeEngine:
 
         return sorted_candidates[0]
 
+    def complete_goal(self, goal_id: str) -> None:
+        """完成指定目标（不切换 current_goal）"""
+        goal = self.goals.get(goal_id)
+        if not goal:
+            return
+        goal.complete()
+        logger.info("[PurposeEngine] 目标完成: %s", goal.description[:30])
+        if self.drive:
+            self.drive.on_goal_completed(goal.progress)
+
     def get_next_sibling(self, goal_id: str) -> Optional[Goal]:
         """获取同父目标的下一个待执行子目标。
 
