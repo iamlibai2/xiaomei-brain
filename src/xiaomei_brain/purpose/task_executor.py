@@ -82,7 +82,7 @@ def build_intent_context(purpose, intent_result, chosen_by_user: bool = False) -
             lines = [
                 f"【当前任务】{active.description}",
                 "回答用户问题后，请在回复末尾加上进度标签：",
-                "<PROGRESS>completed</PROGRESS>",
+                '{"progress": "completed"}',
                 "（这会使系统自动推进到下一个子目标）",
             ]
             return "\n".join(lines)
@@ -153,8 +153,8 @@ def build_intent_context(purpose, intent_result, chosen_by_user: bool = False) -
     context_lines.append("")
     context_lines.append(
         "【重要】对话结束后，必须输出进度标签：\n"
-        "  - 当前子目标已完成 → <PROGRESS>completed</PROGRESS>\n"
-        "  - 当前子目标未完成 → <PROGRESS>in_progress</PROGRESS>"
+        "  - 当前子目标已完成 → {\"progress\": \"completed\"}\n"
+        "  - 当前子目标未完成 → {\"progress\": \"in_progress\"}"
     )
 
     return "\n".join(context_lines)

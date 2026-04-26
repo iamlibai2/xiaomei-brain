@@ -1111,7 +1111,7 @@ class ConsciousLiving:
             "completed" | "in_progress" | None
         """
         import re
-        match = re.search(r"<PROGRESS>(completed|in_progress)</PROGRESS>", content)
+        match = re.search(r'\{\s*"progress"\s*:\s*"(completed|in_progress)"\s*\}', content)
         if match:
             return match.group(1)
         return None
@@ -1126,7 +1126,7 @@ class ConsciousLiving:
             清理后的内容
         """
         import re
-        return re.sub(r"<PROGRESS>(completed|in_progress)</PROGRESS>", "", content).strip()
+        return re.sub(r'\{\s*"progress"\s*:\s*"(completed|in_progress)"\s*\}', "", content).strip()
 
     def _update_goal_progress(self, status: str) -> None:
         status_msg = task_executor.update_goal_progress(self.purpose, self.drive, status)
