@@ -8,7 +8,6 @@ import time
 from typing import Any, Generator
 
 from xiaomei_brain.base.llm import LLMClient
-from xiaomei_brain.base.message_utils import scrub_tool_calls_incomplete
 from xiaomei_brain.memory.conversation_db import ConversationDB
 from xiaomei_brain.memory.self_model import SelfModel
 from xiaomei_brain.consciousness.context_assembler import ContextAssembler, determine_mode
@@ -288,10 +287,6 @@ class Agent:
             # This fixes cases where tool messages were loaded from DB but the corresponding
             # assistant(tool_calls) was filtered out by DAG compression
             all_messages = self._strip_orphaned_tool_messages(all_messages)
-
-            # Scrub incomplete tool_calls: assistant has tool_calls but missing tool responses
-            # This fixes 400 errors from DeepSeek when streaming failed mid-way
-            all_messages = scrub_tool_calls_incomplete(all_messages)
 
             # 缓存当前完整上下文（供 context 命令使用）
             self._last_all_messages = all_messages
