@@ -1068,6 +1068,11 @@ class ConsciousLiving:
 
                 # 解析进度标签
                 progress_status = self._parse_progress_tag(content)
+                logger.info(
+                    "[Progress Tag] status=%s active_sub=%s",
+                    progress_status,
+                    self.purpose.get_active_goals()[0].description[:30] if self.purpose and self.purpose.get_active_goals() else "none",
+                )
                 if progress_status and self.purpose:
                     self._update_goal_progress(progress_status)
 
