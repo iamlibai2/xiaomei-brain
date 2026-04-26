@@ -81,8 +81,12 @@ def build_intent_context(purpose, intent_result, chosen_by_user: bool = False) -
         if active:
             lines = [
                 f"【当前任务】{active.description}",
-                "回答用户问题后，请在回复末尾加上进度标签：",
-                '{"progress": "completed"}',
+                "回答用户问题后，请在回复末尾加上进度块：",
+                "",
+                "<PROGRESS>",
+                '{"status": "completed"}',
+                "</PROGRESS>",
+                "",
                 "（这会使系统自动推进到下一个子目标）",
             ]
             return "\n".join(lines)
@@ -149,12 +153,22 @@ def build_intent_context(purpose, intent_result, chosen_by_user: bool = False) -
             active_mark = " →进行中" if sg.id == active_sub.id else ""
             context_lines.append(f"  {status_mark}{active_mark} {sg.description[:40]}")
 
-    # 进度输出要求（强制）
+    # 进度输出要求（XML 格式，和 MEMORY 块同级）
     context_lines.append("")
     context_lines.append(
-        "【重要】对话结束后，必须输出进度标签：\n"
-        "  - 当前子目标已完成 → {\"progress\": \"completed\"}\n"
-        "  - 当前子目标未完成 → {\"progress\": \"in_progress\"}"
+        "【重要】先正常回复用户，回复完成后，再在末尾输出进度块：\n"
+        "\n"
+        "<PROGRESS>\n"
+        "{\"status\": \"completed\"}  ← 当前子目标已完成时\n"
+        "</PROGRESS>\n"
+        "\n"
+        "或\n"
+        "\n"
+        "<PROGRESS>\n"
+        "{\"status\": \"in_progress\"}  ← 当前子目标未完成时（如只做了反问/澄清）\n"
+        "</PROGRESS>\n"
+        "\n"
+        "如果用户输入中没有值得推进的内容，输出：无需推进"
     )
 
     return "\n".join(context_lines)

@@ -1107,7 +1107,7 @@ class ConsciousLiving:
         return task_executor.build_intent_context(self.purpose, intent_result, chosen_by_user=chosen_by_user)
 
     def _parse_progress_tag(self, content: str) -> str | None:
-        """解析进度标签
+        """解析进度标签（XML 格式 <PROGRESS>...</PROGRESS>）
 
         Args:
             content: Agent 输出内容
@@ -1116,7 +1116,10 @@ class ConsciousLiving:
             "completed" | "in_progress" | None
         """
         import re
-        match = re.search(r'\{\s*"progress"\s*:\s*"(completed|in_progress)"\s*\}', content)
+        match = re.search(
+            r'<PROGRESS>\s*\{\s*"status"\s*:\s*"(completed|in_progress)"\s*\}\s*</PROGRESS>',
+            content,
+        )
         if match:
             return match.group(1)
         return None
@@ -1131,7 +1134,11 @@ class ConsciousLiving:
             清理后的内容
         """
         import re
-        return re.sub(r'\{\s*"progress"\s*:\s*"(completed|in_progress)"\s*\}', "", content).strip()
+        return re.sub(
+            r'<PROGRESS>\s*\{\s*"status"\s*:\s*"(completed|in_progress)"\s*\}\s*</PROGRESS>',
+            "",
+            content,
+        ).strip()
 
     def _update_goal_progress(self, status: str) -> None:
         status_msg = task_executor.update_goal_progress(self.purpose, self.drive, status)
