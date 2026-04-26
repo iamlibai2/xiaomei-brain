@@ -170,10 +170,11 @@ class PurposeEngine:
             logger.warning(f"[PurposeEngine] 目标不存在: {goal_id}")
             return
 
-        # 先暂停当前目标
+        # 先暂停当前目标（只重置 ACTIVE 状态的目标，保护 COMPLETED/ABANDONED）
         if self.current_goal:
-            self.current_goal.status = GoalStatus.PENDING
-            self.pending_queue.append(self.current_goal.id)
+            if self.current_goal.is_active():
+                self.current_goal.status = GoalStatus.PENDING
+                self.pending_queue.append(self.current_goal.id)
 
         # 激活新目标
         goal = self.goals[goal_id]

@@ -1048,56 +1048,81 @@ class ConsciousLiving:
             logger.warning("[ConsciousLiving] 写入 intent_context 失败: %s", e)
 
     def _run_chat(self, msg: LivingMessage, intent_context: str = "") -> None:
-        """执行对话（统一的 chat 入口）"""
+        """执行对话（统一的 chat 入口）。
+
+        PurposeEngine 驱动的子目标自动推进：
+        - 每次 ReAct 只执行当前子目标（由 intent_context 约束）
+        - 子目标完成后，PurposeEngine 自动推进到下一个子目标
+        - 循环直到：无更多子目标 / 需要用户输入 / 用户中断
+        """
         def run():
             self._chatting = True
             try:
-                print("\n小美: ", end="", flush=True)
-                cs = self._get_consciousness_state()
-                content = self.agent.chat(
-                    msg.content,
-                    session_id=msg.session_id,
-                    user_id=msg.user_id,
-                    on_chunk=None,
-                    intent_context=intent_context,
-                    consciousness_state=cs,
-                )
+                current_msg = msg
+                current_context = intent_context
 
-                # Ctrl+C 取消：丢弃 LLM 结果
-                if self._cancel_requested:
-                    logger.info("[ConsciousLiving] LLM 结果已丢弃（取消请求）")
-                    print("\n[取消] 已中断", flush=True)
-                    self._print_prompt()
-                    return
+                while True:
+                    print("\n小美: ", end="", flush=True)
+                    cs = self._get_consciousness_state()
+                    content = self.agent.chat(
+                        current_msg.content,
+                        session_id=current_msg.session_id,
+                        user_id=current_msg.user_id,
+                        on_chunk=None,
+                        intent_context=current_context,
+                        consciousness_state=cs,
+                    )
 
-                # 解析进度标签
-                progress_status = self._parse_progress_tag(content)
-                logger.info(
-                    "[Progress Tag] status=%s active_sub=%s",
-                    progress_status,
-                    self.purpose.get_active_goals()[0].description[:30] if self.purpose and self.purpose.get_active_goals() else "none",
-                )
-                if progress_status and self.purpose:
-                    self._update_goal_progress(progress_status)
+                    # Ctrl+C 取消：丢弃 LLM 结果
+                    if self._cancel_requested:
+                        logger.info("[ConsciousLiving] LLM 结果已丢弃（取消请求）")
+                        print("\n[取消] 已中断", flush=True)
+                        self._print_prompt()
+                        return
 
-                # 移除进度标签
-                display_content = self._remove_progress_tag(content)
+                    # 解析进度标签
+                    progress_status = self._parse_progress_tag(content)
+                    logger.info(
+                        "[Progress Tag] status=%s active_sub=%s",
+                        progress_status,
+                        self.purpose.get_active_goals()[0].description[:30] if self.purpose and self.purpose.get_active_goals() else "none",
+                    )
+                    if progress_status and self.purpose:
+                        self._update_goal_progress(progress_status)
 
-                # 打印 LLM 输出分隔标记
-                _w = 138
-                _label = " LLM output "
-                _pad = (_w - len(_label)) // 2
-                print("\n" + "=" * _pad + _label + "=" * _pad, flush=True)
-                print(display_content, flush=True)
-                _label2 = " LLM output-end "
-                _pad2 = (_w - len(_label2)) // 2
-                print("=" * _pad2 + _label2 + "=" * _pad2, flush=True)
+                    # 移除进度标签
+                    display_content = self._remove_progress_tag(content)
 
-                logger.info("[ConsciousLiving] 对话完成")
-                self._print_prompt()
+                    # 打印 LLM 输出分隔标记
+                    _w = 138
+                    _label = " LLM output "
+                    _pad = (_w - len(_label)) // 2
+                    print("\n" + "=" * _pad + _label + "=" * _pad, flush=True)
+                    print(display_content, flush=True)
+                    _label2 = " LLM output-end "
+                    _pad2 = (_w - len(_label2)) // 2
+                    print("=" * _pad2 + _label2 + "=" * _pad2, flush=True)
 
-                # 更新意识系统
-                self.consciousness.on_user_interaction(msg.content, display_content)
+                    # 更新意识系统
+                    self.consciousness.on_user_interaction(current_msg.content, display_content)
+
+                    # PurposeEngine 自动推进检查
+                    if not self._should_auto_advance(progress_status):
+                        logger.info("[ConsciousLiving] 对话完成")
+                        self._print_prompt()
+                        return
+
+                    # 构建下一个子目标的上下文
+                    next_goal = self.purpose.get_current()
+                    current_context = self._build_intent_context_for_goal(next_goal)
+                    current_msg = LivingMessage(
+                        content=f"[系统] 子目标：{next_goal.description}",
+                        user_id=msg.user_id,
+                        session_id=msg.session_id,
+                        source="system",
+                    )
+                    print(f"\n[目标] → {next_goal.description[:40]}", flush=True)
+
             except Exception as e:
                 logger.error("[ConsciousLiving] Chat failed: %s", e)
                 print(f"\n[错误] {e}", flush=True)
@@ -1106,6 +1131,41 @@ class ConsciousLiving:
                 self._chatting = False
 
         run()
+
+    def _should_auto_advance(self, progress_status: str | None) -> bool:
+        """检查 PurposeEngine 是否已自动推进到新的子目标。
+
+        条件：
+        - 当前子目标标记为 completed（而非 in_progress）
+        - PurposeEngine 的 get_current() 返回一个活跃的子目标
+        - 该子目标尚未开始执行（progress == 0，即新激活的）
+        """
+        if progress_status != "completed":
+            return False
+
+        if self._cancel_requested:
+            return False
+
+        if not self.purpose:
+            return False
+
+        current = self.purpose.get_current()
+        if not current:
+            return False
+
+        # 必须是子目标（有 parent_id）
+        if not current.parent_id:
+            return False
+
+        # 必须是活跃状态（刚被 update_goal_progress 激活）
+        if not current.is_active():
+            return False
+
+        # progress > 0 表示已在执行中（in_progress），应该等待用户输入
+        if current.progress > 0:
+            return False
+
+        return True
 
     def _build_intent_context(self, intent_result: Any, chosen_by_user: bool = False) -> str:
         return task_executor.build_intent_context(self.purpose, intent_result, chosen_by_user=chosen_by_user)

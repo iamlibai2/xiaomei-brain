@@ -67,7 +67,7 @@ class Config:
     base_url: str = ""
 
     # Agent behavior
-    max_steps: int = 10
+    max_steps: int = 20
     system_prompt: str = "You are a helpful assistant."
 
     # Context management

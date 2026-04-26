@@ -88,7 +88,7 @@ class AgentInstance:
                 llm=self.llm,
                 tools=self.tools,
                 system_prompt="",
-                max_steps=10,
+                max_steps=20,
             )
             self._agent.self_model = getattr(self, "self_model", None)
             self._agent.conversation_db = self.conversation_db
