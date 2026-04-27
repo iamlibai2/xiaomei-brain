@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any
+from typing import Any, Callable
 
 from xiaomei_brain.memory.conversation_db import ConversationDB, estimate_tokens
 from xiaomei_brain.memory.dag import DAGSummaryGraph
@@ -42,7 +42,7 @@ class ContextAssembler:
     REFLECT_TAIL_COUNT = 12
     MESSAGES_PER_COMPACT = 8
     RESERVED_FRESH_COUNT = 10
-    COMPACT_THRESHOLD = MESSAGES_PER_COMPACT + RESERVED_FRESH_COUNT
+    COMPACT_TOKEN_RATIO = 0.5  # 未摘要消息 token 占比超过此值触发压缩
 
     def __init__(
         self,
@@ -61,6 +61,7 @@ class ContextAssembler:
         self.drive = drive
         self.self_image = self_image
         self.purpose = purpose
+        self.on_compact: Callable[[dict], None] | None = None
         self._compact_locks: dict[str, threading.Lock] = {}
         self._locks_lock = threading.Lock()
 
@@ -75,7 +76,7 @@ class ContextAssembler:
     ) -> list[dict[str, Any]]:
         """Assemble context for LLM input (mode already determined by consciousness)."""
         if session_id:
-            self._auto_compact(session_id)
+            self._auto_compact(session_id, max_tokens)
 
         if mode == "flow":
             return self._assemble_flow(max_tokens, session_id, include_fresh_tail)
@@ -84,7 +85,7 @@ class ContextAssembler:
         else:
             return self._assemble_daily(max_tokens, session_id, user_input, user_id, include_fresh_tail)
 
-    def _auto_compact(self, session_id: str) -> None:
+    def _auto_compact(self, session_id: str, max_tokens: int) -> None:
         with self._locks_lock:
             lock = self._compact_locks.get(session_id)
             if lock is None:
@@ -96,8 +97,32 @@ class ContextAssembler:
 
         try:
             unsummarized = self.dag.get_unsummarized_messages(session_id, limit=100)
-            if len(unsummarized) >= self.COMPACT_THRESHOLD:
+            if not unsummarized:
+                return
+
+            # 按 token 占比判断是否触发压缩
+            unsummarized_tokens = sum(
+                estimate_tokens(m["content"]) for m in unsummarized
+            )
+            threshold = int(max_tokens * self.COMPACT_TOKEN_RATIO)
+
+            if unsummarized_tokens >= threshold:
                 msgs_to_compact = unsummarized[: self.MESSAGES_PER_COMPACT]
+                compact_tokens = sum(
+                    estimate_tokens(m["content"]) for m in msgs_to_compact
+                )
+                remaining_tokens = unsummarized_tokens - compact_tokens
+
+                if self.on_compact:
+                    self.on_compact({
+                        "before_count": len(unsummarized),
+                        "before_tokens": unsummarized_tokens,
+                        "compact_count": len(msgs_to_compact),
+                        "compact_tokens": compact_tokens,
+                        "remaining_count": len(unsummarized) - len(msgs_to_compact),
+                        "remaining_tokens": remaining_tokens,
+                    })
+
                 node = self.dag.compact(
                     session_id,
                     [m["id"] for m in msgs_to_compact],
@@ -105,9 +130,12 @@ class ContextAssembler:
                 )
                 if node:
                     logger.info(
-                        "[DAG] Auto compact: %d messages → summary #%d (depth=%d), %d remain fresh",
-                        len(msgs_to_compact), node.id, node.depth,
+                        "[DAG] Auto compact: %d msgs (%d tokens) → summary #%d (depth=%d), "
+                        "%d msgs (%d tokens) remain fresh",
+                        len(msgs_to_compact), compact_tokens,
+                        node.id, node.depth,
                         len(unsummarized) - len(msgs_to_compact),
+                        remaining_tokens,
                     )
         except Exception as e:
             logger.warning("[DAG] Auto compact failed: %s", e)

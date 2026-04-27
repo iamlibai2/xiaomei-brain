@@ -134,6 +134,17 @@ def build_intent_context(purpose, intent_result, chosen_by_user: bool = False) -
 
     # 子目标列表（已完成标记，方便 Agent 了解全局）
     if sub_goals:
+        # 已完成子目标的产出摘要
+        completed_with_output = [
+            sg for sg in completed_subs
+            if sg.metadata.get("output")
+        ]
+        if completed_with_output:
+            context_lines.append("")
+            context_lines.append("【已完成子目标】")
+            for sg in completed_with_output:
+                context_lines.append(f"  ✓ {sg.description[:30]} → {sg.metadata['output'][:100]}")
+
         context_lines.append("")
         context_lines.append("【全局进度】")
         for sg in sub_goals:
@@ -147,13 +158,13 @@ def build_intent_context(purpose, intent_result, chosen_by_user: bool = False) -
         "【重要】先正常回复用户，回复完成后，再在末尾输出进度块：\n"
         "\n"
         "<PROGRESS>\n"
-        "{\"status\": \"completed\"}  ← 当前子目标已完成时\n"
+        '{"status": "completed", "summary": "一句话总结本子目标的产出"}  ← 当前子目标已完成时\n'
         "</PROGRESS>\n"
         "\n"
         "或\n"
         "\n"
         "<PROGRESS>\n"
-        "{\"status\": \"in_progress\"}  ← 当前子目标未完成时（如只做了反问/澄清）\n"
+        '{"status": "in_progress"}  ← 当前子目标未完成时（如只做了反问/澄清）\n'
         "</PROGRESS>\n"
         "\n"
         "如果用户输入中没有值得推进的内容，输出：无需推进"
@@ -363,3 +374,65 @@ def apply_proceed(purpose, goal_id: str, answer: str) -> dict:
             "status_msg": "[目标] 所有子目标已完成",
             "new_goal_id": None,
         }
+
+
+def handle_sub_goal_error(purpose, goal_id: str, error_message: str = "") -> dict:
+    """处理子目标执行异常：记录错误计数，超阈值则放弃并推进。
+
+    Args:
+        purpose: PurposeEngine 实例
+        goal_id: 出错的子目标 id
+        error_message: 错误详情
+
+    Returns:
+        {"action": "retry" | "abandon" | "none",
+         "error_count": int,
+         "status_msg": str | None,
+         "next_goal_id": str | None}
+    """
+    if not purpose:
+        return {"action": "none", "error_count": 0, "status_msg": None, "next_goal_id": None}
+
+    goal = purpose.goals.get(goal_id)
+    if not goal or not goal.parent_id:
+        return {"action": "none", "error_count": 0, "status_msg": None, "next_goal_id": None}
+
+    error_count = goal.metadata.get("error_count", 0) + 1
+    goal.metadata["error_count"] = error_count
+
+    # 记录错误详情
+    import time
+    errors = goal.metadata.setdefault("errors", [])
+    errors.append({
+        "count": error_count,
+        "message": error_message[:200],
+        "time": time.time(),
+    })
+
+    if error_count >= 3:
+        goal.abandon()
+        purpose.save()
+        next_sub = purpose.get_next_sibling(goal.id)
+        if next_sub:
+            purpose.set_current(next_sub.id)
+            return {
+                "action": "abandon",
+                "error_count": error_count,
+                "status_msg": f"[放弃] {goal.description[:30]} 连续失败3次，跳过 → {next_sub.description[:30]}",
+                "next_goal_id": next_sub.id,
+            }
+        else:
+            purpose.current_goal = None
+            return {
+                "action": "abandon",
+                "error_count": error_count,
+                "status_msg": f"[放弃] {goal.description[:30]} 连续失败3次，无更多子目标",
+                "next_goal_id": None,
+            }
+
+    return {
+        "action": "retry",
+        "error_count": error_count,
+        "status_msg": f"[重试] {goal.description[:30]} 第{error_count}次失败，下次重试",
+        "next_goal_id": None,
+    }

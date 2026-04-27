@@ -514,6 +514,11 @@ class PurposeEngine:
         """获取子目标"""
         return [g for g in self.goals.values() if g.parent_id == parent_id]
 
+    def store_sub_goal_output(self, goal_id: str, output: str) -> None:
+        """存储子目标产出摘要"""
+        if goal_id in self.goals:
+            self.goals[goal_id].metadata["output"] = output
+
     def get_state_summary(self) -> str:
         """生成状态摘要（供 LLM 使用）"""
         lines = []

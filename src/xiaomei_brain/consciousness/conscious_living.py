@@ -99,6 +99,12 @@ class ConsciousLiving:
         tick_interval: float = 1.0,  # L0 心跳间隔（秒）
     ) -> None:
         self.agent = agent_instance
+
+        # 包装 LLM 客户端：自动控制上下文总 token 量
+        from ..agent.context_guard import ContextGuard
+        if not isinstance(self.agent.llm, ContextGuard):
+            self.agent.llm = ContextGuard(self.agent.llm, max_tokens=80000)
+
         self.state = LivingState.DORMANT
 
         self.idle_threshold = idle_threshold
@@ -211,7 +217,7 @@ class ConsciousLiving:
             logger.warning("[ConsciousLiving] No context_assembler to replace")
             return
 
-        self.agent.context_assembler = ConsciousContextAssembler(
+        assembler = ConsciousContextAssembler(
             conversation_db=self.agent.conversation_db,
             dag=old_ca.dag,
             self_model=self.agent.self_model,
@@ -220,6 +226,17 @@ class ConsciousLiving:
             self_image=self.consciousness.self_image,
             purpose=self.purpose,
         )
+
+        # 上下文压缩通知
+        def _on_compact(stats: dict) -> None:
+            print(
+                f"\n\033[90m[压缩] {stats['compact_count']}条消息 → 摘要 "
+                f"({stats['compact_tokens']//1000}k → {stats['remaining_tokens']//1000}k)\033[0m",
+                flush=True,
+            )
+
+        assembler.on_compact = _on_compact
+        self.agent.context_assembler = assembler
         logger.info("[ConsciousLiving] context_assembler injected (consciousness-aware)")
 
     def _setup_consciousness(self) -> None:
@@ -695,6 +712,7 @@ class ConsciousLiving:
     # ── Intent Understanding ─────────────────────────────────────────
 
     @staticmethod
+    @staticmethod
     def _is_continue_statement(text: str) -> bool:
         """检测是否是以"继续"开头的延续语句"""
         patterns = ("继续", "接着做", "还做", "再做", "延续", "持续")
@@ -1069,14 +1087,31 @@ class ConsciousLiving:
                         return
 
                     # 解析进度标签
-                    progress_status = self._parse_progress_tag(content)
+                    progress_data = self._parse_progress_tag(content)
                     logger.info(
-                        "[Progress Tag] status=%s active_sub=%s",
-                        progress_status,
+                        "[Progress Tag] data=%s active_sub=%s",
+                        progress_data,
                         self.purpose.get_active_goals()[0].description[:30] if self.purpose and self.purpose.get_active_goals() else "none",
                     )
-                    if progress_status and self.purpose:
-                        self._update_goal_progress(progress_status)
+                    if progress_data and self.purpose:
+                        # 先记下当前子目标 ID（update_goal_progress 会切换 current）
+                        completing_goal_id = None
+                        if progress_data.get("status") == "completed":
+                            current = self.purpose.get_current()
+                            if current:
+                                completing_goal_id = current.id
+
+                        self._update_goal_progress(progress_data["status"])
+
+                        # 存储子目标产出摘要（用完成前的 goal_id）
+                        if progress_data.get("status") == "completed":
+                            summary = progress_data.get("summary", "")
+                            if summary and completing_goal_id:
+                                self.purpose.store_sub_goal_output(completing_goal_id, summary)
+                                logger.info("[Progress] 存储子目标产出: %s", summary[:50])
+
+                        # 增量持久化：状态变更后立即保存，防止崩溃丢失
+                        self.purpose.save()
 
                     # 移除进度标签
                     display_content = self._remove_progress_tag(content)
@@ -1099,7 +1134,7 @@ class ConsciousLiving:
                     self.consciousness.on_user_interaction(current_msg.content, display_content)
 
                     # PurposeEngine 自动推进检查
-                    if not self._should_auto_advance(progress_status):
+                    if not self._should_auto_advance(progress_data):
                         logger.info("[ConsciousLiving] 对话完成")
                         self._print_prompt()
                         return
@@ -1118,7 +1153,18 @@ class ConsciousLiving:
 
             except Exception as e:
                 logger.error("[ConsciousLiving] Chat failed: %s", e)
-                print(f"\n[错误] {e}", flush=True)
+                print(f"\n\033[31m[错误] {e}\033[0m", flush=True)
+
+                # 子目标错误处理
+                if self.purpose:
+                    goal = self.purpose.get_current()
+                    if goal:
+                        result = task_executor.handle_sub_goal_error(
+                            self.purpose, goal.id, str(e),
+                        )
+                        if result["status_msg"]:
+                            print(f"\033[33m{result['status_msg']}\033[0m", flush=True)
+
                 self._print_prompt()
             finally:
                 self._chatting = False
@@ -1140,7 +1186,7 @@ class ConsciousLiving:
         bar = self._progress_bar(completed, total)
         print(f"[目标] {bar} {completed}/{total}  {goal.description[:40]}", flush=True)
 
-    def _should_auto_advance(self, progress_status: str | None) -> bool:
+    def _should_auto_advance(self, progress_data: dict | None) -> bool:
         """检查 PurposeEngine 是否已自动推进到新的子目标。
 
         条件：
@@ -1148,7 +1194,7 @@ class ConsciousLiving:
         - PurposeEngine 的 get_current() 返回一个活跃的子目标
         - 该子目标尚未开始执行（progress == 0，即新激活的）
         """
-        if progress_status != "completed":
+        if not progress_data or progress_data.get("status") != "completed":
             return False
 
         if self._cancel_requested:
@@ -1178,22 +1224,26 @@ class ConsciousLiving:
     def _build_intent_context(self, intent_result: Any, chosen_by_user: bool = False) -> str:
         return task_executor.build_intent_context(self.purpose, intent_result, chosen_by_user=chosen_by_user)
 
-    def _parse_progress_tag(self, content: str) -> str | None:
-        """解析进度标签（XML 格式 <PROGRESS>...</PROGRESS>）
+    def _parse_progress_tag(self, content: str) -> dict | None:
+        """解析进度标签（XML 格式 <PROGRESS>{...}</PROGRESS>）
 
         Args:
             content: Agent 输出内容
 
         Returns:
-            "completed" | "in_progress" | None
+            {"status": "completed|in_progress", "summary": "..."} | None
         """
+        import json
         import re
         match = re.search(
-            r'<PROGRESS>\s*\{\s*"status"\s*:\s*"(completed|in_progress)"\s*\}\s*</PROGRESS>',
-            content,
+            r'<PROGRESS>\s*(\{.*?\})\s*</PROGRESS>',
+            content, re.DOTALL,
         )
         if match:
-            return match.group(1)
+            try:
+                return json.loads(match.group(1))
+            except json.JSONDecodeError:
+                return None
         return None
 
     def _remove_progress_tag(self, content: str) -> str:
@@ -1207,9 +1257,9 @@ class ConsciousLiving:
         """
         import re
         return re.sub(
-            r'<PROGRESS>\s*\{\s*"status"\s*:\s*"(completed|in_progress)"\s*\}\s*</PROGRESS>',
+            r'<PROGRESS>\s*\{.*?\}\s*</PROGRESS>',
             "",
-            content,
+            content, flags=re.DOTALL,
         ).strip()
 
     def _update_goal_progress(self, status: str) -> None:
