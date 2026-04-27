@@ -291,6 +291,48 @@ class ConversationDB:
             row = conn.execute("SELECT COUNT(*) FROM messages").fetchone()
         return row[0] if row else 0
 
+    def get_today_code_stats(self) -> dict[str, int]:
+        """Count lines added/removed by file tools today.
+
+        Reads tool_history for write_file and edit_file calls since
+        midnight local time. Returns {"added": N, "removed": M}.
+        """
+        import json
+        from datetime import datetime
+
+        conn = self._get_conn()
+        today_start = datetime.now().replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ).timestamp()
+
+        rows = conn.execute(
+            """SELECT tool_name, args, result FROM tool_history
+               WHERE created_at >= ? AND tool_name IN ('write_file', 'edit_file')""",
+            (today_start,),
+        ).fetchall()
+
+        added = 0
+        removed = 0
+        for r in rows:
+            if r["tool_name"] == "write_file":
+                try:
+                    args = json.loads(r["args"] or "{}")
+                    content = args.get("content", "")
+                    if content:
+                        # Count lines: number of \n + 1 (for the last line)
+                        added += content.count("\n") + 1
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            elif r["tool_name"] == "edit_file":
+                try:
+                    result = json.loads(r["result"] or "{}")
+                    added += result.get("added_count", 0)
+                    removed += result.get("removed_count", 0)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+        return {"added": added, "removed": removed}
+
     def get_session_ids(self) -> list[str]:
         """Get all distinct session IDs."""
         conn = self._get_conn()

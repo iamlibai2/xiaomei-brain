@@ -128,6 +128,20 @@ class LLMClient:
         if not self.model:
             raise ValueError("model 不能为空")
 
+    def set_model(self, model: str, base_url: str | None = None, api_key: str | None = None) -> None:
+        """切换模型（无需重启，下次 API 调用生效）。
+
+        Args:
+            model: 新模型名称
+            base_url: 可选，切换 API 端点
+            api_key: 可选，切换 API 密钥
+        """
+        self.model = model
+        if base_url:
+            self.base_url = base_url
+        if api_key:
+            self.api_key = api_key
+
     # region 公共接口
 
     def chat(

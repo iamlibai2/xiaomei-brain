@@ -167,8 +167,7 @@ class Agent:
             # Append intent_context to system prompt
             enhanced_content = system_content + "\n" + self.intent_context
             base_context[0] = {"role": "system", "content": enhanced_content}
-            logger.info("[Agent] 注入 intent_context: len=%d", len(self.intent_context))
-            logger.info("[Agent] intent_context 内容:\n%s", self.intent_context)
+            logger.debug("[Agent] injected intent_context: len=%d", len(self.intent_context))
 
         # Clean up compressed messages from self.messages (delegate to DAG)
         if self.context_assembler and self.context_assembler.dag:
@@ -212,8 +211,7 @@ class Agent:
                     if all_messages[i].get("role") == "user":
                         all_messages[i] = dict(all_messages[i])
                         all_messages[i]["content"] = all_messages[i]["content"] + "\n\n" + self.intent_context
-                        logger.info("[Agent] appended intent_context to user msg[%d], len=%d", i, len(self.intent_context))
-                        logger.info("[Agent] intent_context 内容:\n%s", self.intent_context)
+                        logger.debug("[Agent] appended intent_context to user msg[%d], len=%d", i, len(self.intent_context))
                         break
 
             # Clean surrogate characters from all message content before sending to LLM

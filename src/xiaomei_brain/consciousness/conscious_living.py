@@ -114,6 +114,7 @@ class ConsciousLiving:
         self._running: bool = False
         self._cancel_requested: bool = False  # Ctrl+C 取消当前动作
         self._chatting = False  # 防止重复调用 _run_chat
+        self._command_done = threading.Event()  # 命令处理完成信号
 
         # Drive 系统（边缘系统）
         agent_id = "xiaomei"
@@ -151,19 +152,15 @@ class ConsciousLiving:
         # 注入 consciousness 层上下文组装器（替换 agent_manager 创建的旧 assembler）
         self._inject_context_assembler()
 
-        # Intent 测试命令
-        self._intent_commands = {
-            "intent": self._cmd_show_intent,
-            "fuel": self._cmd_manual_fuel,
-            "flame": self._cmd_show_flame,
-            "tick": self._cmd_tick_count,
-            "think": self._cmd_show_inner_thought,
-            "identity": self._cmd_show_identity,
-            "drive": self._cmd_show_drive,
-            "purpose": self._cmd_show_purpose,
-            "tool": self._cmd_tool_expand,
-            "export": self._cmd_export,
-        }
+        # Intent 测试命令 — 从 living_commands 注册表加载
+        from .living_commands import COMMAND_REGISTRY, list_commands as _list_cmds
+        self._list_commands = lambda: _list_cmds(self)
+        self._intent_commands = {}
+        self._commands_taking_args: set = set()
+        for name, (handler, takes_args) in COMMAND_REGISTRY.items():
+            self._intent_commands[name] = lambda a="", h=handler: h(self, a)
+            if takes_args:
+                self._commands_taking_args.add(handler)
 
         # 回调
         self.on_proactive: Callable[[Any], Any] | None = None
@@ -577,17 +574,19 @@ class ConsciousLiving:
         if raw.startswith("/"):
             raw = raw[1:].strip()
         parts = raw.split(None, 1)
-        cmd = parts[0].lower()
+        cmd = parts[0].lower() if parts else ""
         cmd_args = parts[1] if len(parts) > 1 else ""
 
-        # Intent 测试命令（如 "intent"、"tool 3"）
+        # 输入 `/` 列出所有命令
+        if not cmd:
+            self._list_commands()
+            self._command_done.set()
+            return
         if cmd in self._intent_commands:
             logger.info("[ConsciousLiving] 执行测试命令: %s %s", cmd, cmd_args)
             handler = self._intent_commands[cmd]
-            if cmd_args and handler in (self._cmd_tool_expand, self._cmd_export):
-                handler(cmd_args)
-            else:
-                handler()
+            handler(cmd_args)
+            self._command_done.set()
             return
 
         # Agent 命令（如 db/memory/dag）
@@ -601,6 +600,7 @@ class ConsciousLiving:
                 logger.info("[ConsciousLiving] Agent 命令: %s", raw)
                 print(f"\n{result.output}", flush=True)
                 self._print_prompt()
+                self._command_done.set()
                 return
 
         # "继续"检测：列出活跃任务让用户选
@@ -1216,281 +1216,6 @@ class ConsciousLiving:
         status_msg = task_executor.update_goal_progress(self.purpose, self.drive, status)
         if status_msg:
             print(f"\n{status_msg}", flush=True)
-
-    # ── Intent 测试命令 ──────────────────────────────────────────
-
-    def _cmd_show_intent(self) -> None:
-        """显示当前 Intent"""
-        logger.info("[CLI] 执行命令: intent")
-        intent = self.consciousness.get_pending_intent()
-        if intent:
-            print(f"\n当前意图: {intent.type.value} (priority={intent.priority})", flush=True)
-            print(f"内容: {intent.content}", flush=True)
-            self._print_prompt()
-        else:
-            print("\n无待处理意图", flush=True)
-            self._print_prompt()
-
-    def _cmd_manual_fuel(self) -> None:
-        """手动触发加柴"""
-        logger.info("[CLI] 执行命令: fuel")
-        print("\n手动触发 L2 加柴...", flush=True)
-        self.consciousness._last_l2_time = time.time()
-        report = self.consciousness.tick_L2("manual")
-        logger.info("[ConsciousLiving] L2加柴: %s", report.summary[:50])
-
-        intent = self.consciousness.get_pending_intent()
-        if intent:
-            print(f"生成的意图: {intent.type.value}", flush=True)
-            print(f"内容: {intent.content[:50]}", flush=True)
-        else:
-            print("无意图生成（LLM未返回有效意图）", flush=True)
-        self._print_prompt()
-
-    def _cmd_show_flame(self) -> None:
-        """显示火焰状态"""
-        logger.info("[CLI] 执行命令: flame")
-        si = self.consciousness.get_self_image()
-        print("\n火焰状态:", flush=True)
-        print(f"  燃烧时长: {int(si.consciousness_age)}秒", flush=True)
-        print(f"  状态: {si.agent_state}", flush=True)
-        print(f"  用户空闲: {int(si.user_idle_duration)}秒", flush=True)
-        print(f"  能量: {si.energy_level:.2f}", flush=True)
-        print(f"  累积变化: {len(si.accumulated_changes)}条", flush=True)
-        print(f"  上次加柴: {int(time.time() - self.consciousness._last_l2_time)}秒前", flush=True)
-        self._print_prompt()
-
-    def _cmd_tick_count(self) -> None:
-        """显示心跳计数"""
-        logger.info("[CLI] 执行命令: tick")
-        print(f"\nL0 心跳计数: {self.consciousness._l0_count}", flush=True)
-        print(f"状态: {self.state.value}", flush=True)
-        self._print_prompt()
-
-    def _cmd_show_inner_thought(self) -> None:
-        """显示当前内在想法"""
-        logger.info("[CLI] 执行命令: think")
-        si = self.consciousness.get_self_image()
-
-        print("\n内在感知:", flush=True)
-        print(f"  当前想法: {si.inner_thought[:100] if si.inner_thought else '（无）'}", flush=True)
-        print(f"  历史想法: {len(si.inner_thought_history)}条", flush=True)
-
-        # 显示历史
-        if si.inner_thought_history:
-            print("\n最近想法:", flush=True)
-            for i, thought in enumerate(si.inner_thought_history[-3:]):
-                print(f"  [{i}] {thought[:80]}", flush=True)
-
-        self._print_prompt()
-
-    def _cmd_show_identity(self) -> None:
-        """显示意识全景（完整身份分层）"""
-        logger.info("[CLI] 执行命令: identity")
-        si = self.consciousness.get_self_image()
-
-        print("\n" + "=" * 50, flush=True)
-        print("       意识全景", flush=True)
-        print("=" * 50, flush=True)
-
-        # L0: 先天身份
-        print("\n【L0: 先天身份】（不可变）", flush=True)
-        print(f"  名字: {si.identity}", flush=True)
-        print(f"  诞生: {si.birth_date}", flush=True)
-        print(f"  基础性格: {si.base_personality}", flush=True)
-
-        # L1: 基础特质
-        print("\n【L1: 基础特质】（极难变）", flush=True)
-        for trait in si.core_traits:
-            print(f"  - {trait}", flush=True)
-
-        # L2: 价值观
-        print("\n【L2: 价值观】（缓慢变化）", flush=True)
-        for value in si.values:
-            print(f"  - {value}", flush=True)
-
-        # L3: 社会身份
-        print("\n【L3: 社会身份】（动态变化）", flush=True)
-        print(f"  当前角色: {si.role}", flush=True)
-        print(f"  关系状态: {si.relationship_status}", flush=True)
-        print(f"  关系深度: {si.relationship_depth:.2f}", flush=True)
-        print(f"  用户信任: {si.user_trust_level:.2f}", flush=True)
-
-        # L4: 状态身份
-        print("\n【L4: 状态身份】（实时变化）", flush=True)
-        print(f"  当前心情: {si.current_mood}", flush=True)
-        print(f"  能量水平: {si.energy_level:.2f}", flush=True)
-        print(f"  注意力: {si.attention_focus}", flush=True)
-
-        # 我在哪
-        print("\n【我在哪】", flush=True)
-        print(f"  当前环境: {si.environment}", flush=True)
-
-        # 火焰状态
-        print("\n【火焰状态】", flush=True)
-        print(f"  燃烧时长: {int(si.consciousness_age)}秒 ({int(si.consciousness_age/3600)}小时)", flush=True)
-        print(f"  Agent状态: {si.agent_state}", flush=True)
-        print(f"  用户空闲: {int(si.user_idle_duration)}秒", flush=True)
-        print(f"  记忆数量: {si.memory_count}", flush=True)
-        print(f"  累积变化: {len(si.accumulated_changes)}条", flush=True)
-
-        # 内在感知
-        print("\n【内在感知】", flush=True)
-        if si.inner_thought:
-            print(f"  当前想法: {si.inner_thought[:100]}", flush=True)
-        else:
-            print(f"  当前想法: （无）", flush=True)
-        print(f"  历史想法: {len(si.inner_thought_history)}条", flush=True)
-
-        # 梦境
-        if si.last_dream_summary:
-            print("\n【最近梦境】", flush=True)
-            print(f"  {si.last_dream_summary[:150]}", flush=True)
-
-        print("\n" + "-" * 50, flush=True)
-        self._print_prompt()
-
-    def _cmd_show_drive(self) -> None:
-        """显示 Drive 状态"""
-        logger.info("[CLI] 执行命令: drive")
-
-        print("\n" + "=" * 50, flush=True)
-        print("       Drive 状态（边缘系统）", flush=True)
-        print("=" * 50, flush=True)
-
-        # 情绪
-        print("\n【情绪状态】", flush=True)
-        print(f"  类型: {self.drive.emotion.type.value}", flush=True)
-        print(f"  强度: {self.drive.emotion.intensity:.2f}", flush=True)
-
-        # 激素
-        print("\n【激素状态】", flush=True)
-        print(f"  多巴胺: {self.drive.hormone.dopamine:.2f}（动力）", flush=True)
-        print(f"  血清素: {self.drive.hormone.serotonin:.2f}（满足）", flush=True)
-        print(f"  皮质醇: {self.drive.hormone.cortisol:.2f}（压力）", flush=True)
-        print(f"  催产素: {self.drive.hormone.oxytocin:.2f}（连接）", flush=True)
-
-        # 欲望
-        print("\n【欲望状态】", flush=True)
-        print(f"  归属欲: {self.drive.desire.belonging:.2f}（阈值 {self.drive.config.desire.thresholds.belonging:.2f})", flush=True)
-        print(f"  认知欲: {self.drive.desire.cognition:.2f}（阈值 {self.drive.config.desire.thresholds.cognition:.2f})", flush=True)
-        print(f"  成就欲: {self.drive.desire.achievement:.2f}（阈值 {self.drive.config.desire.thresholds.achievement:.2f})", flush=True)
-        print(f"  表达欲: {self.drive.desire.expression:.2f}（阈值 {self.drive.config.desire.thresholds.expression:.2f})", flush=True)
-
-        # 激励
-        print("\n【激励状态】", flush=True)
-        print(f"  动力水平: {self.drive.motivation.motivation_level:.2f}", flush=True)
-        print(f"  预期奖励: {self.drive.motivation.expected_reward:.2f}", flush=True)
-
-        # 欲望驱动行为检查
-        print("\n【欲望驱动】", flush=True)
-        actions = self.drive.check_desire_actions()
-        if actions:
-            for a in actions:
-                print(f"  {a['type']}: 优先级 {a['priority']:.2f}", flush=True)
-                print(f"    原因: {a['reason']}", flush=True)
-        else:
-            print("  （无触发行为）", flush=True)
-
-        print("\n" + "-" * 50, flush=True)
-        self._print_prompt()
-
-    def _cmd_show_purpose(self) -> None:
-        """显示 Purpose 状态"""
-        logger.info("[CLI] 执行命令: purpose")
-
-        print("\n" + "=" * 50, flush=True)
-        print("       Purpose 状态（前额叶层）", flush=True)
-        print("=" * 50, flush=True)
-
-        # 存在意义
-        print("\n【存在意义】", flush=True)
-        print(f"  我是: {self.purpose.meaning.identity}", flush=True)
-        print(f"  价值观: {', '.join(self.purpose.meaning.values[:3])}", flush=True)
-        print(f"  底线: {', '.join(self.purpose.meaning.constraints[:2])}", flush=True)
-
-        # 当前主目标（如果有）
-        current = self.purpose.get_current()
-        if current and current.parent_id is None:
-            print("\n【当前主目标】", flush=True)
-            print(f"  {current.description}", flush=True)
-            print(f"  状态: {current.status.value} | 进度: {current.progress:.0%}", flush=True)
-
-            # 子目标详情
-            sub_goals = self.purpose.get_sub_goals(current.id)
-            if sub_goals:
-                completed = [sg for sg in sub_goals if sg.is_completed()]
-                print(f"\n  【子目标】({len(completed)}/{len(sub_goals)} 已完成)", flush=True)
-                for i, sg in enumerate(sub_goals, 1):
-                    if sg.is_completed():
-                        status = "✓"
-                    elif sg.is_active():
-                        status = "→"
-                    else:
-                        status = "○"
-                    print(f"    {status} {i}. {sg.description[:35]}", flush=True)
-
-        # 待执行目标（不含子目标）
-        print("\n【待执行目标】", flush=True)
-        pending = self.purpose.get_pending_goals()
-        # 过滤掉子目标
-        main_pending = [g for g in pending if g.parent_id is None and g.id != (current.id if current else None)]
-        if main_pending:
-            for i, g in enumerate(main_pending[:5], 1):
-                priority = self.purpose.calculate_priority(g)
-                print(f"  {i}. {g.description[:40]} (优先级 {priority:.2f})", flush=True)
-        else:
-            print("  （无待执行目标）", flush=True)
-
-        # 已完成目标统计
-        completed = self.purpose.get_completed_goals()
-        main_completed = [g for g in completed if g.parent_id is None]
-        print(f"\n【已完成主目标】 {len(main_completed)}个", flush=True)
-
-        print("\n" + "-" * 50, flush=True)
-        self._print_prompt()
-
-    def _cmd_tool_expand(self, args: str = "") -> None:
-        """展开工具调用详情: tool [N] 或 tool list"""
-        from xiaomei_brain.agent.cli_display import expand_tool_call, list_tool_calls
-
-        logger.info("[CLI] 执行命令: tool %s", args)
-
-        if not args or args.strip() == "list":
-            print("\n【最近工具调用】", flush=True)
-            list_tool_calls(10)
-        else:
-            try:
-                idx = int(args.strip())
-                expand_tool_call(idx)
-            except ValueError:
-                print(f"  用法: tool <编号> | tool list", flush=True)
-
-        self._print_prompt()
-
-    def _cmd_export(self, session_id: str | None = None) -> None:
-        """导出当前会话为 Markdown: export [session_id]"""
-        logger.info("[CLI] 执行命令: export %s", session_id or "")
-        if not self.agent or not self.agent.conversation_db:
-            print("\n(ConversationDB 未配置)", flush=True)
-            self._print_prompt()
-            return
-
-        sid = session_id or self.session_id
-        md = self.agent.conversation_db.export_session(sid)
-
-        # 写文件
-        import datetime as _dt
-        ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-        out_dir = os.path.expanduser("~/.xiaomei-brain/exports")
-        os.makedirs(out_dir, exist_ok=True)
-        out_path = os.path.join(out_dir, f"session_{sid}_{ts}.md")
-        with open(out_path, "w", encoding="utf-8") as f:
-            f.write(md)
-
-        print(f"\n[导出] {out_path}", flush=True)
-        print(f"[导出] {md.count(chr(10))} 行 Markdown", flush=True)
-        self._print_prompt()
 
     # ── Hooks ────────────────────────────────────────────────────
 

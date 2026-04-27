@@ -76,15 +76,15 @@ from xiaomei_brain.consciousness.conscious_living import ConsciousLiving
 from xiaomei_brain.memory.conversation_db import estimate_tokens
 
 # ── ❯ 提示符 ───────────────────────────────────────────────
-PROMPT = "You: "
+PROMPT = "> "
 
 # ── Tab 命令补齐 ───────────────────────────────────────────
 _COMMANDS = [
     "/intent", "/fuel", "/flame", "/tick", "/think", "/identity",
-    "/drive", "/purpose",
+    "/drive", "/purpose", "/plan",
     "/db", "/memory", "/context", "/dag", "/summarize", "/periodic", "/dream",
     "/tool ", "/tool list",
-    "/export",
+    "/export", "/model",
     "/help", "/exit", "/quit",
     "/clear", "/new", "/users",
 ]
@@ -106,6 +106,9 @@ if os.path.exists(_HIST_PATH):
         pass
 atexit.register(lambda: readline.write_history_file(_HIST_PATH))
 readline.parse_and_bind("tab: complete")
+readline.parse_and_bind("set input-meta on")
+readline.parse_and_bind("set output-meta on")
+readline.parse_and_bind("set convert-meta off")
 readline.set_completer(_completer)
 
 
@@ -131,7 +134,6 @@ def _status_line(living) -> str:
     purpose = living.purpose
     if purpose and purpose.current_goal:
         g = purpose.current_goal
-        # 子目标进度
         if g.parent_id:
             siblings = purpose.get_sub_goals(g.parent_id)
             done = sum(1 for s in siblings if s.is_completed())
@@ -139,9 +141,9 @@ def _status_line(living) -> str:
             bar_w = 8
             filled = int(bar_w * done / total) if total else 0
             bar = "█" * filled + "░" * (bar_w - filled)
-            parts.append(f"\033[36m{g.description[:25]}\033[0m {bar} {done}/{total}")
+            parts.append(f"{g.description[:25]} {bar} {done}/{total}")
         else:
-            parts.append(f"\033[36m{g.description[:25]}\033[0m")
+            parts.append(g.description[:25])
 
     # 火焰
     if hasattr(living, 'consciousness') and living.consciousness:
@@ -154,6 +156,26 @@ def _status_line(living) -> str:
     if drive and hasattr(drive, 'desire'):
         d = drive.desire
         parts.append(f"b:{d.belonging:.1f} c:{d.cognition:.1f}")
+
+    # 今日代码量
+    try:
+        db = getattr(living.agent, 'conversation_db', None)
+        if db:
+            stats = db.get_today_code_stats()
+            if stats["added"] or stats["removed"]:
+                parts.append(f"code:+{stats['added']}/-{stats['removed']}")
+    except Exception:
+        pass
+
+    # 上下文 token
+    try:
+        core = living.agent._get_agent()
+        msgs = getattr(core, '_last_all_messages', None)
+        if msgs:
+            tokens = _count_context_tokens(msgs)
+            parts.append(f"上下文:{tokens//1000}k")
+    except Exception:
+        pass
 
     if not parts:
         return ""
@@ -204,7 +226,14 @@ def main():
             try:
                 status = _status_line(living)
                 if status:
-                    print(f"\n{status}", flush=True)
+                    print(f"\n\033[90m{status}\033[0m", flush=True)
+                # 98% 宽度实心线
+                try:
+                    cols = os.get_terminal_size().columns
+                    bar_w = os.get_terminal_size().columns
+                except Exception:
+                    bar_w = 78
+                print("\033[90m" + "─" * bar_w + "\033[0m")
                 msg = input(f"{PROMPT}")
             except (KeyboardInterrupt, EOFError):
                 print()
@@ -226,20 +255,18 @@ def main():
             if not msg:
                 continue
 
+            living._command_done.clear()
             living.put_message(msg)
+
+            # 命令消息：等 living 线程处理完再刷新
+            if msg.startswith("/"):
+                living._command_done.wait(timeout=3)
 
             # 等待 chat 完成（_chatting 由 living 线程管理）
             while living._chatting:
                 time.sleep(0.1)
 
-            # ── Token 用量 ─────────────────────────────────
-            try:
-                all_msgs = agent._get_agent()._last_all_messages
-                if all_msgs:
-                    tokens = _count_context_tokens(all_msgs)
-                    print(f"\033[90m[上下文 ~{tokens} tokens]\033[0m", end="", flush=True)
-            except Exception:
-                pass
+            # ── Token 用量移到了状态栏 ─────────────────────
 
     except KeyboardInterrupt:
         print("\n\033[90m正在停止...\033[0m")
