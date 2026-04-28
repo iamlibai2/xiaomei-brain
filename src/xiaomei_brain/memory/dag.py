@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from xiaomei_brain.prompts import DAG_SUMMARIZE_PROMPT
+
 logger = logging.getLogger(__name__)
 
 
@@ -542,11 +544,7 @@ class DAGSummaryGraph:
             return None
 
         try:
-            prompt = (
-                "请用简洁的几句话总结以下对话，每句一个核心信息，用第三人称。"
-                "只写事实，不写推测或风险提示。不超过200字。\n\n"
-                f"{formatted}"
-            )
+            prompt = DAG_SUMMARIZE_PROMPT.format(content=formatted)
             response = self.llm.chat(
                 messages=[{"role": "user", "content": prompt}],
                 tools=None,

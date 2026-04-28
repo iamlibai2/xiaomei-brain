@@ -8,8 +8,15 @@ Goal 数据结构 - 目标树节点
 
 目标状态：
 - PENDING → ACTIVE → COMPLETED
-              ↓
-          ABANDONED
+              ↓         ↑
+          ABANDONED  PAUSED
+
+Task 类型（独立认知实体）：
+- EXECUTION: 有明确交付物
+- LEARNING: 知识/技能获取
+- REFLECTION: 反省/自省
+- RELATIONSHIP: 关系维护
+- EXPLORATION: 探索调研
 """
 
 from dataclasses import dataclass, field
@@ -32,6 +39,16 @@ class GoalStatus(Enum):
     ACTIVE = "active"         # 当前执行中
     COMPLETED = "completed"   # 已完成
     ABANDONED = "abandoned"   # 已放弃
+    PAUSED = "paused"         # 已暂停（保留认知快照，可恢复）
+
+
+class TaskType(Enum):
+    """Task 类型 — 决定处理策略"""
+    EXECUTION = "execution"          # 有明确交付物，需要子目标拆解
+    LEARNING = "learning"            # 知识/技能获取，轻量子目标可选
+    REFLECTION = "reflection"        # 反省/自省，内部处理
+    RELATIONSHIP = "relationship"    # 关系维护，跨对话持久关注
+    EXPLORATION = "exploration"      # 探索调研，信息收集
 
 
 @dataclass
@@ -115,6 +132,29 @@ class Goal:
         self.status = GoalStatus.ABANDONED
         self.updated_at = time.time()
 
+    def pause(self, context_cache: str = "") -> None:
+        """暂停目标，保存认知快照"""
+        self.status = GoalStatus.PAUSED
+        if context_cache:
+            self.metadata["context_cache"] = context_cache
+        self.updated_at = time.time()
+
+    def is_paused(self) -> bool:
+        """是否暂停"""
+        return self.status == GoalStatus.PAUSED
+
+    def get_context_cache(self) -> str:
+        """获取认知快照"""
+        return self.metadata.get("context_cache", "")
+
+    def get_task_type(self) -> "TaskType":
+        """获取 Task 类型（默认 execution）"""
+        val = self.metadata.get("task_type", "execution")
+        try:
+            return TaskType(val)
+        except ValueError:
+            return TaskType.EXECUTION
+
     def reinforce(self) -> None:
         """用户再次提到，增加强化次数"""
         self.reinforcement_count += 1
@@ -143,6 +183,7 @@ class Goal:
             GoalStatus.ACTIVE: "进行中",
             GoalStatus.COMPLETED: "已完成",
             GoalStatus.ABANDONED: "已放弃",
+            GoalStatus.PAUSED: "暂停中",
         }.get(self.status, "未知")
 
         type_str = {

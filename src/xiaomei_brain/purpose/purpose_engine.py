@@ -28,6 +28,9 @@ from .meaning import Meaning
 from .goal import Goal, GoalType, GoalStatus
 from .persistence import PurposeStorage
 
+# 集中化提示词
+from xiaomei_brain.prompts import GOAL_LLM_DECOMPOSE_PROMPT
+
 logger = logging.getLogger(__name__)
 
 
@@ -46,18 +49,25 @@ class PurposeEngine:
         agent_id: str = "xiaomei",
         llm_client: Any = None,
         drive: Any = None,
+        load: bool = True,
     ):
+        """初始化 Purpose 引擎
+
+        Args:
+            agent_id: Agent ID
+            llm_client: LLM 客户端
+            drive: Drive 引擎引用
+            load: 是否加载数据（False = 纯结构创建，支持"生命存在但无意识"）
+        """
         self.agent_id = agent_id
         self.llm = llm_client
         self.drive = drive
+        self._loaded = False  # 标记是否已加载
 
         # 存储
         self.storage = PurposeStorage(agent_id)
 
-        # 存在意义（从 identity.md 或存储加载）
-        self.meaning = self._load_meaning()
-
-        # 目标树
+        # 目标树（空结构）
         self.goals: dict[str, Goal] = {}
 
         # 当前活跃目标
@@ -66,17 +76,18 @@ class PurposeEngine:
         # 待执行队列
         self.pending_queue: list[str] = []
 
-        # 从存储恢复
-        self._restore_from_storage()
+        # 加载数据
+        if load:
+            self.meaning = self._load_meaning()
+            self._restore_from_storage()
+            self._init_strategic_goal()
+            self._loaded = True
 
-        # 初始化战略目标（根）
-        self._init_strategic_goal()
-
-        logger.info(
-            f"[PurposeEngine] 初始化完成: "
-            f"goals={len(self.goals)}, "
-            f"meaning={self.meaning.identity}"
-        )
+            logger.info(
+                f"[PurposeEngine] 初始化完成: "
+                f"goals={len(self.goals)}, "
+                f"meaning={self.meaning.identity if self.meaning else 'none'}"
+            )
 
     # ========== 初始化 ==========
 
@@ -127,6 +138,23 @@ class PurposeEngine:
             strategic_goal = Goal()
             strategic_goal.from_dict(strategic_data)
             self.goals["meaning-root"] = strategic_goal
+
+    def load(self) -> None:
+        """手动加载数据（支持延迟初始化）"""
+        if self._loaded:
+            logger.info("[PurposeEngine] 已加载，跳过")
+            return
+
+        self.meaning = self._load_meaning()
+        self._restore_from_storage()
+        self._init_strategic_goal()
+        self._loaded = True
+
+        logger.info(
+            f"[PurposeEngine] 加载完成: "
+            f"goals={len(self.goals)}, "
+            f"meaning={self.meaning.identity if self.meaning else 'none'}"
+        )
 
     # ========== 目标管理 ==========
 
@@ -396,16 +424,7 @@ class PurposeEngine:
 
     def _llm_decompose(self, goal: Goal) -> list[str]:
         """LLM 分解目标"""
-        prompt = f"""请将以下目标分解为 2-4 个子目标：
-
-目标：{goal.description}
-
-要求：
-- 子目标应该是具体可执行的步骤
-- 子目标之间有逻辑顺序
-- 每个子目标用一句话描述
-
-只输出子目标列表，每行一个，不要其他解释。"""
+        prompt = GOAL_LLM_DECOMPOSE_PROMPT.format(goal_description=goal.description)
 
         try:
             if hasattr(self.llm, "chat"):
@@ -519,6 +538,57 @@ class PurposeEngine:
         if goal_id in self.goals:
             self.goals[goal_id].metadata["output"] = output
 
+    def pause_goal(self, goal_id: str, context_cache: str = "") -> Optional[Goal]:
+        """暂停目标，保存认知快照。同时暂停其所有活跃子目标。
+
+        Returns:
+            被暂停的目标，None 表示不存在
+        """
+        goal = self.goals.get(goal_id)
+        if not goal:
+            return None
+
+        # 暂停所有活跃子目标
+        for sub in self.get_sub_goals(goal_id):
+            if sub.is_active():
+                sub.status = GoalStatus.PAUSED
+                sub.updated_at = time.time()
+
+        goal.pause(context_cache)
+        if self.current_goal and self.current_goal.id == goal_id:
+            self.current_goal = None
+        self.save()
+        logger.info("[Purpose] 暂停目标: %s", goal.description[:40])
+        return goal
+
+    def resume_goal(self, goal_id: str) -> Optional[Goal]:
+        """恢复暂停的目标。激活目标及其第一个 pending 子目标。
+
+        Returns:
+            被恢复的目标，None 表示不存在
+        """
+        goal = self.goals.get(goal_id)
+        if not goal:
+            return None
+
+        self.set_current(goal_id)
+        logger.info("[Purpose] 恢复目标: %s", goal.description[:40])
+        return goal
+
+    def get_active_tasks(self) -> list[Goal]:
+        """获取所有活跃的顶层 Task（parent_id=None, EXECUTABLE, ACTIVE）"""
+        return [g for g in self.goals.values()
+                if g.parent_id is None
+                and g.goal_type == GoalType.EXECUTABLE
+                and g.is_active()]
+
+    def get_paused_tasks(self) -> list[Goal]:
+        """获取所有暂停的顶层 Task"""
+        return [g for g in self.goals.values()
+                if g.parent_id is None
+                and g.goal_type == GoalType.EXECUTABLE
+                and g.is_paused()]
+
     def get_state_summary(self) -> str:
         """生成状态摘要（供 LLM 使用）"""
         lines = []
@@ -549,7 +619,3 @@ class PurposeEngine:
         """保存到文件"""
         self.storage.save_goals(self.goals)
         self.storage.save_meaning(self.meaning)
-
-    def load(self) -> None:
-        """从文件加载"""
-        self._restore_from_storage()

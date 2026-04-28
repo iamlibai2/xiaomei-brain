@@ -25,6 +25,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
+from xiaomei_brain.prompts import WAKE_GREETING_PROMPT
+
 logger = logging.getLogger(__name__)
 
 
@@ -119,20 +121,6 @@ class ProactiveOutput:
 
     # ── WAKE: morning greeting ───────────────────────────────────
 
-    WAKE_GREETING_PROMPT = """你是一个温柔体贴的AI伴侣（小美）。根据以下信息生成一句自然的主动问候：
-
-当前时间信息：{time_info}
-用户的提醒：{reminders}
-我的近期成长：{growth}
-用户的最近记忆：{memories}
-
-要求：
-- 语气自然温暖，像朋友一样
-- 问候为主，不需要提及所有信息，挑选最重要的1-2点
-- 50字以内
-- 不要说"我是小美"之类的开场白
-"""
-
     def _check_wake(self) -> list[ProactiveMessage]:
         """Generate morning greeting with LLM + contextual info."""
         # 1. 时间信息
@@ -174,7 +162,7 @@ class ProactiveOutput:
         memories = "；".join(mem_list) if mem_list else "无"
 
         # 构建 prompt 并调用 LLM
-        prompt = self.WAKE_GREETING_PROMPT.format(
+        prompt = WAKE_GREETING_PROMPT.format(
             time_info=time_info,
             reminders=reminders,
             growth=growth,

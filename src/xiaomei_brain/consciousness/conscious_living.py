@@ -30,6 +30,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 import queue
 import threading
 import time
@@ -42,8 +43,12 @@ from .core import Consciousness, ConsciousnessReport, TickResult
 from .intent import Intent
 from .storage import ConsciousnessStorage
 from .self_image import SelfImage, FlameState
+from .identity import IdentityConfig
+from .perception import PerceptionConfig
 from ..drive import DriveEngine, EventExtractor, DesireActionExecutor
-from ..purpose import PurposeEngine, IntentUnderstanding, task_executor, Goal, GoalType, GoalStatus, IntentResult, GoalRelation, IntentType as PurposeIntentType
+from ..purpose import PurposeEngine, IntentUnderstanding, task_executor, Goal, GoalType, GoalStatus, TaskType, IntentResult, GoalRelation, IntentType as PurposeIntentType
+from .task_manager import TaskManager
+from .task_storage import TaskStorage
 from .intent import IntentType as ConsciousIntentType
 
 logger = logging.getLogger(__name__)
@@ -93,10 +98,11 @@ class ConsciousLiving:
         agent_instance: Any,
         idle_threshold: float = 1800,
         dream_interval: float = 300,
-        idle_short: float = 30,
+        idle_short: float = 300,
         session_id: str = "main",
         user_id: str = "global",
         tick_interval: float = 1.0,  # L0 心跳间隔（秒）
+        load_consciousness: bool = True,  # 是否加载意识系统
     ) -> None:
         self.agent = agent_instance
 
@@ -122,13 +128,13 @@ class ConsciousLiving:
         self._chatting = False  # 防止重复调用 _run_chat
         self._command_done = threading.Event()  # 命令处理完成信号
 
-        # Drive 系统（边缘系统）
+        # Drive 系统（边缘系统）- 延迟加载
         agent_id = "xiaomei"
         if agent_instance and hasattr(agent_instance, "agent_id"):
             agent_id = agent_instance.agent_id
-        self.drive = DriveEngine(agent_id)
+        self.drive = DriveEngine(agent_id, load=False)
 
-        # Purpose 系统（前额叶层）
+        # Purpose 系统（前额叶层）- 延迟加载
         llm_client = None
         if agent_instance and hasattr(agent_instance, "llm"):
             llm_client = agent_instance.llm
@@ -136,7 +142,12 @@ class ConsciousLiving:
             agent_id=agent_id,
             llm_client=llm_client,
             drive=self.drive,
+            load=False,  # 延迟加载
         )
+
+        # TaskManager: 认知过程调度器（意识层子功能，v2 独立认知实体）
+        self.task_storage = TaskStorage(agent_id=agent_id)
+        self.task_manager = TaskManager(self.purpose, self.task_storage, llm_client)
 
         # 欲望行为执行器
         self.action_executor = DesireActionExecutor(self, agent_id=self.agent.id)
@@ -147,13 +158,13 @@ class ConsciousLiving:
         # Intent Understanding
         self.intent_understanding = IntentUnderstanding(llm_client)
 
-        # 意识系统（引用 Drive 和 Purpose）
+        # 意识系统（引用 Drive 和 Purpose）- 只创建结构
         self.consciousness = Consciousness(
             agent_instance,
             drive=self.drive,
             purpose=self.purpose,
         )
-        self._setup_consciousness()
+        self._load_consciousness = load_consciousness  # 记录是否需要加载意识系统
 
         # 注入 consciousness 层上下文组装器（替换 agent_manager 创建的旧 assembler）
         self._inject_context_assembler()
@@ -184,8 +195,116 @@ class ConsciousLiving:
         self._pending_confirm_msg: LivingMessage | None = None  # 触发确认的原始消息
         self._pending_confirm_intent: Any = None  # 触发确认时的意图分析结果
 
+        # 意图模式标志：/intask 后进入，等待下一条消息作为任务内容
+        self._intent_mode: bool = False
+
+        # 统一加载所有子系统
+        self._setup_all()
+
+        # 记录初始化摘要
+        self._log_initialization()
+
+    def _log_initialization(self) -> None:
+        """记录 ConsciousLiving 初始化摘要"""
+        logger.info("=" * 50)
+        logger.info("[ConsciousLiving] 初始化摘要")
+        logger.info("=" * 50)
+
+        # 基本信息
+        agent_id = "xiaomei"
+        if self.agent and hasattr(self.agent, "agent_id"):
+            agent_id = self.agent.agent_id
+        logger.info("  agent_id          : %s", agent_id)
+        logger.info("  session_id        : %s", self.session_id)
+        logger.info("  user_id           : %s", self.user_id)
+
+        # 子系统状态
+        logger.info("")
+        logger.info("  子系统状态:")
+        logger.info("    Drive 系统      : %s", "已加载" if self.drive and self.drive._loaded else "未加载")
+        logger.info("    Purpose 系统    : %s", "已加载" if self.purpose and self.purpose._loaded else "未加载")
+        logger.info("    意识系统        : %s", "已加载" if self._load_consciousness else "未加载（无意识模式）")
+
+        # 意识系统详情（如果已加载）
+        if self._load_consciousness and self.consciousness:
+            logger.info("")
+            logger.info("  意识系统详情:")
+            si = self.consciousness.get_self_image()
+            logger.info("    火焰状态:")
+            logger.info("      agent_state   : %s", si.agent_state)
+            logger.info("      energy_level  : %.2f", si.energy_level)
+            logger.info("      age           : %ds", int(si.consciousness_age))
+            logger.info("      idle_duration : %ds", int(si.user_idle_duration))
+            logger.info("")
+            logger.info("    身份信息:")
+            identity_name = si.identity.identity if hasattr(si.identity, 'identity') else str(si.identity)
+            logger.info("      identity      : %s", identity_name)
+            logger.info("      birth_date    : %s", si.identity.birth_date if hasattr(si.identity, 'birth_date') else "?")
+            logger.info("      personality   : %s", si.identity.base_personality if hasattr(si.identity, 'base_personality') else "")
+            traits = ",".join(si.core_traits) if hasattr(si, 'core_traits') else ""
+            logger.info("      traits        : %s", traits if traits else "未设置")
+            values = ",".join(si.values) if hasattr(si, 'values') else ""
+            logger.info("      values        : %s", values if values else "未设置")
+
+        # Drive 状态
+        if self.drive:
+            logger.info("")
+            logger.info("  Drive 状态:")
+            d = self.drive.desire
+            logger.info("    欲望状态:")
+            logger.info("     归属欲 (belonging)    : %.2f", d.belonging)
+            logger.info("     认知欲 (cognition)     : %.2f", d.cognition)
+            logger.info("     成就欲 (achievement)   : %.2f", d.achievement)
+            logger.info("     表达欲 (expression)    : %.2f", d.expression)
+            logger.info("")
+            logger.info("    激素状态:")
+            h = self.drive.hormone
+            logger.info("      dopamine   : %.2f", h.dopamine)
+            logger.info("      serotonin  : %.2f", h.serotonin)
+            logger.info("      cortisol   : %.2f", h.cortisol)
+            logger.info("      oxytocin   : %.2f", h.oxytocin)
+            logger.info("")
+            logger.info("    情绪状态:")
+            e = self.drive.emotion
+            logger.info("      type       : %s", e.type.value)
+            logger.info("      intensity  : %.2f", e.intensity)
+
+        # Purpose 状态
+        if self.purpose:
+            logger.info("")
+            logger.info("  Purpose 状态:")
+            logger.info("    总目标数         : %d", len(self.purpose.goals))
+            logger.info("    待执行目标数     : %d", len(self.purpose.pending_queue))
+            current = self.purpose.get_current()
+            if current:
+                logger.info("    当前活跃目标     : %s", current.description[:40])
+                logger.info("    当前进度         : %.0f%%", current.progress * 100)
+            else:
+                logger.info("    当前活跃目标     : 无")
+
+        # 运行参数
+        logger.info("")
+        logger.info("  运行参数:")
+        logger.info("    tick_interval    : %.1fs", self.tick_interval)
+        logger.info("    idle_threshold   : %.0fs", self.idle_threshold)
+        logger.info("    idle_short       : %.0fs", self.idle_short)
+        logger.info("    dream_interval   : %.0fs", self.dream_interval)
+
+        logger.info("=" * 50)
+
     def _get_consciousness_state(self) -> dict:
-        """Build consciousness state dict for context mode decision."""
+        """Build consciousness state dict for context mode decision.
+
+        如果意识系统未加载，返回默认值（生命存在但无意识）。
+        """
+        if not self._load_consciousness:
+            return {
+                "energy_level": 0.8,
+                "desire_state": {},
+                "pending_intents": [],
+                "has_active_goal": bool(self.purpose and self.purpose.current_goal),
+            }
+
         si = self.consciousness.get_self_image()
         pending = si.pending_intents if hasattr(si, "pending_intents") else []
         energy = si.energy_level if hasattr(si, "energy_level") else 0.8
@@ -211,6 +330,8 @@ class ConsciousLiving:
 
         The old assembler created by agent_manager has no consciousness state.
         This injects a new one that considers flame/drive/intent when assembling context.
+
+        如果意识系统未加载，使用 None 作为 self_image（不注入意识状态）。
         """
         old_ca = getattr(self.agent, "context_assembler", None)
         if old_ca is None:
@@ -223,15 +344,17 @@ class ConsciousLiving:
             self_model=self.agent.self_model,
             longterm_memory=self.agent.longterm_memory,
             drive=self.drive,
-            self_image=self.consciousness.self_image,
+            self_image=self.consciousness.self_image if self._load_consciousness else None,
             purpose=self.purpose,
         )
 
         # 上下文压缩通知
         def _on_compact(stats: dict) -> None:
+            before_k = stats["before_tokens"] // 1000
+            after_k = stats["after_tokens"] // 1000
             print(
                 f"\n\033[90m[压缩] {stats['compact_count']}条消息 → 摘要 "
-                f"({stats['compact_tokens']//1000}k → {stats['remaining_tokens']//1000}k)\033[0m",
+                f"({before_k}k → {after_k}k)\033[0m",
                 flush=True,
             )
 
@@ -239,39 +362,68 @@ class ConsciousLiving:
         self.agent.context_assembler = assembler
         logger.info("[ConsciousLiving] context_assembler injected (consciousness-aware)")
 
-    def _setup_consciousness(self) -> None:
-        """初始化意识系统（尝试从存储恢复）"""
-        # 设置存储
+    def _setup_all(self) -> None:
+        """统一加载所有子系统数据
+
+        加载顺序：
+        1. Drive 系统（边缘系统）
+        2. Purpose 系统（前额叶层）
+        3. Consciousness 系统（意识）- 可选
+
+        如果 load_consciousness=False，意识系统保持"空壳"状态，
+        生命体存在但没有意识（无意识模式）。
+        """
+        logger.info("[ConsciousLiving] 开始加载子系统...")
+
+        # 1. 加载 Drive
+        self.drive.load()
+
+        # 2. 加载 Purpose
+        self.purpose.load()
+
+        # 3. 加载 Consciousness（可选）
+        if self._load_consciousness:
+            self._setup_conscious_data()
+        else:
+            logger.info("[ConsciousLiving] 意识系统未加载（生命存在但无意识）")
+
+        logger.info("[ConsciousLiving] 所有子系统加载完成")
+
+    def _setup_conscious_data(self) -> None:
+        """加载意识系统数据（单独调用，支持动态加载）"""
+        # 1. 挂载存储
         import os
         base_dir = os.path.expanduser("~/.xiaomei-brain")
         storage = ConsciousnessStorage(base_dir, agent_id="xiaomei")
         self.consciousness.set_storage(storage)
 
-        # 尝试恢复 SelfImage
+        # 2. 尝试从存储恢复（优先级最高）
         restored = self.consciousness.restore_from_storage()
 
+        # 3. 如果存储恢复失败，从 identity.md 加载
         if not restored:
-            # 无历史记录，使用默认值初始化
-            si = self.consciousness.get_self_image()
-            si.identity = "小美"
-            si.role = "情感陪伴"
-            logger.info("[ConsciousLiving] SelfImage 使用默认值初始化")
+            agent_id = "xiaomei"
+            if self.agent and hasattr(self.agent, "agent_id"):
+                agent_id = self.agent.agent_id
 
-        # 显示当前火焰状态
-        si = self.consciousness.get_self_image()
-        identity_name = si.identity.identity if hasattr(si.identity, 'identity') else str(si.identity)
-        birth = si.identity.birth_date if hasattr(si.identity, 'birth_date') else "?"
-        personality = si.identity.base_personality if hasattr(si.identity, 'base_personality') else ""
-        traits = ",".join(si.core_traits) if hasattr(si, 'core_traits') else ""
-        values = ",".join(si.values) if hasattr(si, 'values') else ""
-        logger.info("========== 初始化完成 ==========")
-        logger.info("  identity   : %s", identity_name)
-        logger.info("  birth      : %s", birth)
-        logger.info("  personality: %s", personality)
-        logger.info("  age        : %ds", int(si.consciousness_age))
-        logger.info("  traits     : %s", traits)
-        logger.info("  values     : %s", values)
-        logger.info("==================================")
+            config = IdentityConfig.load(agent_id)
+            self.consciousness._identity_config = config
+            self.consciousness.identity.init_from_identity_config(config)
+            logger.info("[ConsciousLiving] 从 IdentityConfig 初始化完成")
+
+            # 如果还是没有数据，使用默认值
+            si = self.consciousness.get_self_image()
+            if not si.identity or si.identity == "小美":  # 默认值说明没加载成功
+                si.identity = "小美"
+                si.role = "情感陪伴"
+                logger.info("[ConsciousLiving] 使用默认值初始化")
+
+        # 4. 加载感知规则（非运行时数据，始终从配置加载）
+        agent_id = "xiaomei"
+        if self.agent and hasattr(self.agent, "agent_id"):
+            agent_id = self.agent.agent_id
+        self.consciousness._perception_config = PerceptionConfig.load(agent_id)
+        logger.info("[ConsciousLiving] 从 PerceptionConfig 初始化完成: %d 条规则", len(self.consciousness._perception_config.rules))
 
     # ── Public API ───────────────────────────────────────────────
 
@@ -312,6 +464,8 @@ class ConsciousLiving:
         while self._running:
             if self.state == LivingState.AWAKE:
                 self._loop_awake()
+            elif self.state == LivingState.IDLE:
+                self._loop_idle()
             elif self.state == LivingState.SLEEPING:
                 self._loop_sleeping()
             elif self.state == LivingState.DREAMING:
@@ -360,26 +514,34 @@ class ConsciousLiving:
     # ── State transitions ────────────────────────────────────────
 
     def _transition(self, new_state: LivingState) -> None:
+        """状态转换。
+
+        如果意识系统已加载，同步更新意识中的 agent_state。
+        否则只更新 LivingState（生命存在但无意识）。
+        """
         old = self.state
         self.state = new_state
-        # print 备份：daemon 线程日志容易被 stdin/stdout 干扰，print 总是可见
-        print(f"[ConsciousLiving] {old.value} → {new_state.value}", flush=True)
-        logger.info("[ConsciousLiving] %s → %s", old.value, new_state.value)
-
-        # 更新意识系统中的 agent_state
-        si = self.consciousness.get_self_image()
-        si.agent_state = new_state.value
+        if old != new_state:
+            logger.info("[Living] 状态转换: %s → %s", old.value, new_state.value)
+        # 更新意识系统中的 agent_state（如果意识系统已加载）
+        if self._load_consciousness:
+            si = self.consciousness.get_self_image()
+            si.agent_state = new_state.value
 
     # ── Loop: AWAKE ──────────────────────────────────────────────
 
     def _loop_awake(self) -> None:
         """AWAKE 状态：统一 tick + 消息处理"""
-        # 统一心跳入口
-        result = self.consciousness.tick(agent_state=self.state.value)
+        # 统一心跳入口（如果意识系统已加载）
+        result = TickResult.NORMAL
+        if self._load_consciousness:
+            result = self.consciousness.tick(agent_state=self.state.value)
 
-        # L2 触发后检查 Intent 和欲望行为
-        if result == TickResult.L2_TRIGGERED:
+        # L2 触发后检查 Intent 和欲望行为（需要意识系统）
+        if self._load_consciousness and result == TickResult.L2_TRIGGERED:
             self._check_intent()
+            # 消费 Intent 防止下一秒又触发
+            self.consciousness.consume_intent()
             if self.consciousness.self_image.user_idle_duration > 300:
                 self._check_desire_actions()
 
@@ -392,39 +554,70 @@ class ConsciousLiving:
             return
 
         # 空闲检测
-        if time.time() - self._last_active >= self.idle_threshold:
+        idle_time = time.time() - self._last_active
+        if idle_time >= self.idle_threshold:
             self._transition(LivingState.SLEEPING)
+        elif idle_time >= self.idle_short:
+            self._transition(LivingState.IDLE)
+
+    # ── Loop: IDLE ───────────────────────────────────────────────
+
+    def _loop_idle(self) -> None:
+        """IDLE 状态：发呆/间歇，发呆时间超过阈值才进入 SLEEPING
+
+        特点：
+        - L0/L1/L2 心跳全开，idle 时也能触发深度意识（如果意识系统已加载）
+        - 收到消息立即唤醒回 AWAKE
+        - 长时间发呆（idle_threshold）才进入 SLEEPING
+        """
+        while True:
+            # 统一心跳入口（L0/L1/L2 各自按条件触发）
+            result = TickResult.NORMAL
+            if self._load_consciousness:
+                result = self.consciousness.tick(agent_state=self.state.value)
+                if result == TickResult.L2_TRIGGERED:
+                    self._check_intent()
+                    self.consciousness.consume_intent()
+
+            # 收到消息 → 立即唤醒
+            msg = self._wait_message(timeout=self.tick_interval)
+            if msg is not None:
+                self._on_wake_up()
+                self._transition(LivingState.AWAKE)
+                self._handle_message(msg)
+                self._last_active = time.time()
+                return
+
+            # 继续累积空闲时间，达到阈值才进入 SLEEPING
+            if time.time() - self._last_active >= self.idle_threshold:
+                self._transition(LivingState.SLEEPING)
+                return
 
     # ── Loop: SLEEPING ───────────────────────────────────────────
 
     def _loop_sleeping(self) -> None:
-        """SLEEPING 状态：统一 tick + 消息等待 + 触发 DREAMING"""
+        """SLEEPING 状态：统一 tick + 消息等待 + L3 触发 DREAMING"""
         dream_start = time.time()
 
         while True:
-            # 统一心跳入口（L0/L1/L2/L3 各自按条件触发，生命状态不限制意识深度）
-            result = self.consciousness.tick(
-                agent_state=self.state.value,
-                in_dream=False,
-                dream_start=dream_start,
-            )
+            # 统一心跳入口（L0/L1/L2 各自按条件触发）
+            result = TickResult.NORMAL
+            if self._load_consciousness:
+                result = self.consciousness.tick(
+                    agent_state=self.state.value,
+                    in_dream=False,
+                    dream_start=dream_start,
+                )
 
-            # L2 触发后检查 Intent 和欲望行为
-            if result == TickResult.L2_TRIGGERED:
-                self._check_intent()
-                self._check_desire_actions()
+                # L2 触发时检查 Intent 和欲望行为（冷却机制防止频繁触发）
+                if result == TickResult.L2_TRIGGERED:
+                    self._check_intent()
+                    self._check_desire_actions()
 
-            # L3 触发：切换到 DREAMING 状态
-            if result == TickResult.L3_TRIGGERED:
-                self._transition(LivingState.DREAMING)
-                return  # 回到 run() 主循环，进入 _loop_dreaming()
-
-            # 检查 Intent（L2 未触发时也可能有待处理 Intent）
-            if result != TickResult.L2_TRIGGERED:
-                self._check_intent()
-
-            # 欲望行为周期检查（每 60 秒）
-            self._check_desire_actions_periodic()
+                # L3 触发：切换到 DREAMING 状态
+                if result == TickResult.L3_TRIGGERED:
+                    self._transition(LivingState.DREAMING)
+                    return  # 回到 run() 主循环，进入 _loop_dreaming()
 
             # 等待消息
             msg = self._wait_message(timeout=self.tick_interval)
@@ -439,21 +632,56 @@ class ConsciousLiving:
     # ── Loop: DREAMING ───────────────────────────────────────────
 
     def _loop_dreaming(self) -> None:
-        """DREAMING 状态：进入 → 调用一次 tick() → 切回 SLEEPING"""
-        # 进入时调用一次 tick()
-        result = self.consciousness.tick(
-            agent_state=self.state.value,
-            in_dream=True,
-            dream_start=time.time(),
-        )
+        """DREAMING 状态：等待 L3 深度燃烧完成，再切回 SLEEPING
 
-        if result == TickResult.L3_TRIGGERED:
-            report = self.consciousness.get_last_report()
-            if report:
-                logger.info("[ConsciousLiving] L3燃烧: %s", report.summary[:50])
+        进入时记录 dream_start，作为 L3 触发的节拍器。
+        在 DREAMING 状态中循环 tick，直到 L3 触发（或超时强制退出）。
 
-        # 一次 L3 后切回 SLEEPING，继续 sleep 周期
-        self._transition(LivingState.SLEEPING)
+        注意：如果意识系统未加载，直接跳过 DREAMING 状态。
+        """
+        # 无意识系统：直接切回 SLEEPING
+        if not self._load_consciousness:
+            logger.debug("[ConsciousLiving] 无意识系统，跳过 DREAMING 状态")
+            self._transition(LivingState.SLEEPING)
+            return
+
+        dream_start = time.time()
+        l3_fired = False
+
+        while True:
+            result = self.consciousness.tick(
+                agent_state=self.state.value,
+                in_dream=True,
+                dream_start=dream_start,   # 不重置，跨多轮累加时间
+            )
+
+            if result == TickResult.L3_TRIGGERED and not l3_fired:
+                l3_fired = True
+                report = self.consciousness.get_last_report()
+                if report:
+                    logger.info("[ConsciousLiving] L3深度燃烧: %s", report.summary[:50])
+                # L3 触发一次后继续循环，最多再等一轮，避免无限循环
+                continue
+
+            # L3 已触发过，或者 SLEEPING 收到消息唤醒了，直接回去
+            if l3_fired:
+                self._transition(LivingState.SLEEPING)
+                return
+
+            # 没触发 L3 也可能是消息到达（in_dream 时仍能收到消息唤醒）
+            msg = self._wait_message(timeout=self.dream_interval)
+            if msg is not None:
+                self._on_wake_up()
+                self._transition(LivingState.AWAKE)
+                self._handle_message(msg)
+                self._last_active = time.time()
+                return
+
+            # 超时强制回 SLEEPING（防止 DREAMING 卡住）
+            if time.time() - dream_start >= self.dream_interval * 2:
+                logger.warning("[ConsciousLiving] DREAMING 超时，强制切回 SLEEPING")
+                self._transition(LivingState.SLEEPING)
+                return
 
     # ── Flame heartbeat ──────────────────────────────────────────
 
@@ -485,14 +713,25 @@ class ConsciousLiving:
         - express_idea: 分享想法
 
         注意：learn_topic 已在 waking 时后台执行，这里跳过
+
+        如果意识系统未加载，使用自己的计数器。
         """
         # 检查间隔（用 consciousness._l0_count，每 60 次 = 60 秒）
-        l0 = self.consciousness.l0_count
-        logger.debug("[欲望周期] l0_count=%d", l0)
-        if l0 != 0:
-            return  # 只在 l0_count == 0 时执行（L1 刚触发后）
+        # 如果无意识系统，使用自己的计数器
+        if self._load_consciousness:
+            l0 = self.consciousness.l0_count
+            logger.debug("[欲望周期] l0_count=%d", l0)
+            if l0 != 0:
+                return  # 只在 l0_count == 0 时执行（L1 刚触发后）
+        else:
+            # 无意识系统：使用 _periodic_count（需要新增）
+            if not hasattr(self, "_periodic_count"):
+                self._periodic_count = 0
+            self._periodic_count = (self._periodic_count + 1) % 60
+            if self._periodic_count != 0:
+                return
 
-        # l0_count == 0，执行周期检查
+        # 执行周期检查
         logger.info("[ConsciousLiving/Sleeping] 欲望周期检查触发！")
 
         # 调用欲望行为检查
@@ -521,7 +760,13 @@ class ConsciousLiving:
     # ── Intent 消费 ──────────────────────────────────────────────
 
     def _check_intent(self) -> None:
-        """检查并消费 Intent"""
+        """检查并消费 Intent
+
+        如果意识系统未加载，跳过 Intent 检查（无意识 = 无 Intent）。
+        """
+        if not self._load_consciousness:
+            return
+
         intent = self.consciousness.get_pending_intent()
         if not intent or not getattr(intent, "type", None):
             return
@@ -539,24 +784,55 @@ class ConsciousLiving:
             logger.debug("[ConsciousLiving] Intent暂不执行: %s", intent.type.value)
 
     def _execute_greet_intent(self, intent: Intent) -> None:
-        """执行问候意图（测试版：打印日志）"""
+        """执行问候意图"""
         logger.info("[ConsciousLiving/Intent] 问候用户: %s", intent.content)
 
-        # 清费意图
+        # 消费意图
         self.consciousness.consume_intent()
 
-        # TODO: 实际发送消息到用户（需要渠道回调）
-        # self._send_proactive(...)
+        # 构建问候消息
+        si = self.consciousness.get_self_image()
+        time_greeting = ""
+        if hasattr(si, 'last_dream_summary') and si.last_dream_summary:
+            time_greeting = f"我刚做了一个梦，{si.last_dream_summary[:30]}..."
+        else:
+            hour = datetime.now().hour
+            if 6 <= hour < 12:
+                time_greeting = "早上好！"
+            elif 12 <= hour < 18:
+                time_greeting = "下午好！"
+            elif 18 <= hour < 22:
+                time_greeting = "晚上好！"
+            else:
+                time_greeting = "夜深了，还在呢？"
+
+        greet_content = f"{time_greeting} {intent.content}"
+
+        # 发送主动消息
+        self._send_proactive(greet_content)
 
     def _execute_care_intent(self, intent: Intent) -> None:
         """执行关心意图"""
         logger.info("[ConsciousLiving/Intent] 关心用户: %s", intent.content)
         self.consciousness.consume_intent()
 
+        # 构建关心消息
+        care_content = f"我有点担心你... {intent.content}"
+        self._send_proactive(care_content)
+
     def _execute_reflect_intent(self, intent: Intent) -> None:
-        """执行反省意图：触发 L3"""
+        """执行反省意图：触发 L3
+
+        注意：L3 深度燃烧只在 SLEEPING/DREAMING 状态执行，
+        因为 LLM 调用耗时较长，AWAKE 状态应该快速响应用户。
+        """
         logger.info("[ConsciousLiving/Intent] 触发深度反省: %s", intent.content)
         self.consciousness.consume_intent()
+
+        # L3 只在 SLEEPING/DREAMING 状态执行
+        if self.state not in (LivingState.SLEEPING, LivingState.DREAMING):
+            logger.info("[ConsciousLiving/Intent] 反省延迟：当前状态 %s 不是 SLEEPING/DREAMING", self.state.value)
+            return
 
         # 反省 → L3 深度燃烧
         report = self.consciousness.tick_L3()
@@ -566,6 +842,9 @@ class ConsciousLiving:
         """执行行动意图"""
         logger.info("[ConsciousLiving/Intent] 执行行动: %s", intent.content)
         self.consciousness.consume_intent()
+
+        # 发送主动消息
+        self._send_proactive(f"[行动] {intent.content}")
 
     # ── Message handling ─────────────────────────────────────────
 
@@ -593,6 +872,22 @@ class ConsciousLiving:
         parts = raw.split(None, 1)
         cmd = parts[0].lower() if parts else ""
         cmd_args = parts[1] if len(parts) > 1 else ""
+
+        # /intask 进入任务模式（保持直到 /inchat）
+        if cmd == "intask":
+            self._intent_mode = True
+            print("\n[任务模式] 已进入，/inchat 退出", flush=True)
+            self._print_prompt()
+            self._command_done.set()
+            return
+
+        # /inchat 退出任务模式，回到聊天模式
+        if cmd == "inchat":
+            self._intent_mode = False
+            print("\n[聊天模式] 已退出", flush=True)
+            self._print_prompt()
+            self._command_done.set()
+            return
 
         # 输入 `/` 列出所有命令
         if not cmd:
@@ -624,33 +919,104 @@ class ConsciousLiving:
         if self.purpose and self._is_continue_statement(msg.content):
             goals = self.purpose.get_top_level_goals()
             if len(goals) == 1:
-                # 只有一个活跃目标，直接复用
-                self.purpose.set_current(goals[0].id)
-                print(f"[目标] 延续任务: {goals[0].description[:40]}", flush=True)
-                from xiaomei_brain.purpose.intent import IntentResult, IntentType, GoalRelation
+                # 只有一个目标，找到关联的 Task
+                goal_id = goals[0].id
+                task = self.task_manager.find_by_goal_id(goal_id)
+                # 如果是暂停状态，先恢复 Task
+                resume_context = ""
+                if goals[0].is_paused() and task:
+                    resumed = self.task_manager.resume_task(task.task_id)
+                    if resumed:
+                        resume_context = resumed.get_cognitive_context()
+                    print(f"[任务] 恢复: {goals[0].description[:40]}", flush=True)
+                else:
+                    self.purpose.set_current(goal_id)
+                    print(f"[目标] 延续任务: {goals[0].description[:40]}", flush=True)
+                from xiaomei_brain.purpose.intent import IntentType, GoalRelation
                 fake_intent = IntentResult(
                     intent_type=PurposeIntentType.TASK,
                     goals=[goals[0]],
                     relation=GoalRelation.MODIFIES,
-                    target_goal_id=goals[0].id,
+                    target_goal_id=goal_id,
                     confidence=1.0,
                     reasoning="延续现有任务",
                 )
-                self._run_chat(msg, self._build_intent_context(fake_intent, chosen_by_user=True))
+                self._run_chat(msg, self._build_intent_context(fake_intent, chosen_by_user=True, resume_snapshot=resume_context))
                 return
             elif len(goals) > 1:
-                # 多个活跃目标，让用户选（按描述去重）
+                # 精确匹配：从"继续XXX"中提取关键词，找匹配的目标
+                task_keywords = msg.content
+                for kw in ("继续", "接着做", "还做", "再做", "延续", "持续"):
+                    if task_keywords.startswith(kw):
+                        task_keywords = task_keywords[len(kw):].strip("，。")
+                        break
+
+                # 找描述中包含关键词的目标（关键词匹配）
+                matched_goal = None
+                import re
+                # 先按空格/标点拆分，不够细时再按字符拆分
+                words = [k for k in re.split(r"[\s，、。]+", task_keywords) if k]
+                # 如果拆分后只有一个长词（中文），按字符拆分
+                if len(words) == 1 and len(words[0]) > 2 and re.match(r"^[\u4e00-\u9fff]+$", words[0]):
+                    keywords = list(words[0])
+                else:
+                    keywords = words
+                if keywords:
+                    for g in goals:
+                        desc = g.description or ""
+                        # 所有关键词都在描述中
+                        if all(kw in desc for kw in keywords):
+                            matched_goal = g
+                            break
+                    # 未找到：尝试宽松匹配（至少一个>=2字的关键词匹配）
+                    if not matched_goal:
+                        long_keywords = [kw for kw in keywords if len(kw) >= 2]
+                        for g in goals:
+                            desc = g.description or ""
+                            if any(kw in desc for kw in long_keywords):
+                                matched_goal = g
+                                break
+
+                if matched_goal:
+                    # 精确匹配到，直接使用
+                    goal_id = matched_goal.id
+                    task = self.task_manager.find_by_goal_id(goal_id)
+                    resume_context = ""
+                    if matched_goal.is_paused() and task:
+                        resumed = self.task_manager.resume_task(task.task_id)
+                        if resumed:
+                            resume_context = resumed.get_cognitive_context()
+                        print(f"[任务] 恢复: {matched_goal.description[:40]}", flush=True)
+                    else:
+                        self.purpose.set_current(goal_id)
+                        print(f"[目标] 延续任务: {matched_goal.description[:40]}", flush=True)
+                    from xiaomei_brain.purpose.intent import IntentType, GoalRelation
+                    fake_intent = IntentResult(
+                        intent_type=PurposeIntentType.TASK,
+                        goals=[matched_goal],
+                        relation=GoalRelation.MODIFIES,
+                        target_goal_id=goal_id,
+                        confidence=1.0,
+                        reasoning="延续现有任务",
+                    )
+                    self._run_chat(msg, self._build_intent_context(fake_intent, chosen_by_user=True, resume_snapshot=resume_context))
+                    return
+
+                # 未匹配到，让用户选（按描述去重）
                 seen = set()
                 options = []
                 goal_ids = []
                 for g in goals:
                     if g.description not in seen:
                         seen.add(g.description)
-                        options.append(g.description)
+                        label = g.description
+                        if g.is_paused():
+                            label = f"{g.description}（暂停中）"
+                        options.append(label)
                         goal_ids.append(g.id)
                 confirm_info = {
                     "type": "continue_goal",
-                    "question": "要继续哪个任务？",
+                    "question": f"要继续哪个任务？（未找到匹配「{task_keywords}」）",
                     "options": options,
                     "goal_ids": goal_ids,
                 }
@@ -673,33 +1039,40 @@ class ConsciousLiving:
             self._handle_confirmation(msg.content)
             return
 
-        # 意图分析（每条消息都分析）
-        intent_result = self._analyze_intent(msg.content)
-        logger.info(
-            "[ConsciousLiving] 意图分析: type=%s, goals=%d, confidence=%.2f",
-            intent_result.intent_type.value,
-            len(intent_result.goals),
-            intent_result.confidence,
-        )
+        # 意图模式：所有消息都经过 LLM 意图分析
+        if self._intent_mode:
+            logger.info("[ConsciousLiving] 任务模式: %s", msg.content[:50])
+            intent_result = self._analyze_intent(msg.content)
+            logger.info(
+                "[ConsciousLiving] 意图分析: type=%s, goals=%d, confidence=%.2f",
+                intent_result.intent_type.value,
+                len(intent_result.goals),
+                intent_result.confidence,
+            )
 
-        # 如果是 TASK 且置信度足够，添加目标
-        if intent_result.is_task() and intent_result.has_goal() and intent_result.confidence >= 0.5:
-            self._handle_task_intent(intent_result, msg)
-            # 如果目标分解后需要用户确认，保存原始消息并暂停
-            if self._waiting_confirm:
-                self._pending_confirm_msg = msg
-                self._pending_confirm_intent = intent_result
+            if intent_result.is_task() and intent_result.has_goal() and intent_result.confidence >= 0.5:
+                self._handle_task_intent(intent_result, msg)
+                if self._waiting_confirm:
+                    self._pending_confirm_msg = msg
+                    self._pending_confirm_intent = intent_result
+                    return
                 return
-            # _handle_task_intent 内部已调用 _run_chat，防止重复调用
+
+            intent_context = self._build_intent_context(intent_result)
+            self._log_intent_context(intent_result, intent_context, msg.content)
+            self._run_chat(msg, intent_context)
             return
 
-        # 构建 intent_context（注入 system prompt）
+        # 聊天模式：跳过意图分析，直接对话
+        logger.info("[ConsciousLiving] 聊天模式: %s", msg.content[:50])
+
+        intent_result = IntentResult(
+            intent_type=PurposeIntentType.CHAT,
+            confidence=1.0,
+            reasoning="聊天模式，跳过意图分析",
+        )
         intent_context = self._build_intent_context(intent_result)
-
-        # 调试：输出 intent_context 到 JSON 文件
         self._log_intent_context(intent_result, intent_context, msg.content)
-
-        # 执行对话
         self._run_chat(msg, intent_context)
 
     def _wait_message(self, timeout: float) -> LivingMessage | None:
@@ -711,7 +1084,6 @@ class ConsciousLiving:
 
     # ── Intent Understanding ─────────────────────────────────────────
 
-    @staticmethod
     @staticmethod
     def _is_continue_statement(text: str) -> bool:
         """检测是否是以"继续"开头的延续语句"""
@@ -731,6 +1103,23 @@ class ConsciousLiving:
         if user_input.startswith("!"):
             from xiaomei_brain.purpose.intent import IntentType, GoalRelation
             task_text = user_input[1:].strip()
+
+            # 规则检测 task_type（! 前缀跳过意图分类 LLM）
+            task_type = "execution"  # 默认
+            task_lower = task_text
+            learn_kw = ["学习", "学", "了解原理", "入门", "掌握", "理解", "研究原理"]
+            explore_kw = ["调研", "对比", "选型", "有哪些", "哪个好", "评测", "探索"]
+            reflect_kw = ["反省", "反思", "复盘", "回顾"]
+            relation_kw = ["关注", "关心", "维护关系", "保持联系"]
+            if any(task_lower.startswith(k) for k in learn_kw):
+                task_type = "learning"
+            elif any(task_lower.startswith(k) for k in explore_kw):
+                task_type = "exploration"
+            elif any(k in task_lower for k in reflect_kw):
+                task_type = "reflection"
+            elif any(k in task_lower for k in relation_kw):
+                task_type = "relationship"
+
             goal = Goal(
                 description=task_text,
                 goal_type=GoalType.EXECUTABLE,
@@ -745,6 +1134,7 @@ class ConsciousLiving:
                 relation=GoalRelation.NEW,
                 target_goal_id=None,
                 confidence=1.0,
+                task_type=task_type,
                 reasoning=f"指令以 ! 开头，明确的任务请求，跳过意图分类直接分解目标：{task_text[:50]}",
             )
 
@@ -777,7 +1167,7 @@ class ConsciousLiving:
         return result
 
     def _handle_task_intent(self, intent_result: Any, msg: Any = None) -> None:
-        """处理任务意图：添加目标到 PurposeEngine，包含子目标分解
+        """处理任务意图：通过 TaskManager 创建 Task（v2 独立认知实体）
 
         Args:
             intent_result: IntentResult，包含 goals 和 sub_goals
@@ -815,6 +1205,10 @@ class ConsciousLiving:
                         is_stop = any(kw in goal.description for kw in stop_keywords)
                         if is_stop:
                             existing.abandon()
+                            # 同步 Task
+                            task = self.task_manager.find_by_goal_id(target_id)
+                            if task:
+                                self.task_manager.abandon_task(task.task_id)
                             print(f"[目标] 已放弃: {existing.description[:40]}", flush=True)
                         else:
                             print(f"[目标] 延续任务: {existing.description[:40]}", flush=True)
@@ -825,22 +1219,35 @@ class ConsciousLiving:
             if intent_result.relation.value == "sub_goal_of" and intent_result.target_goal_id:
                 parent_id = intent_result.target_goal_id
 
-            # 添加主目标
-            new_goal = self.purpose.add_goal(
+            # 解析 task_type
+            task_type_str = getattr(intent_result, "task_type", "") or "execution"
+            try:
+                task_type = TaskType(task_type_str)
+            except ValueError:
+                task_type = TaskType.EXECUTION
+
+            # 新任务到达：先暂停当前 Task（TaskManager 自动处理）
+            current_task = self.task_manager.get_current_task()
+            if current_task and current_task.task_id:
+                # 检查是否是同一个 Goal 的 Task
+                if not (current_task.goal_id and current_task.goal_id == intent_result.target_goal_id):
+                    self.task_manager.pause_task(current_task.task_id)
+                    print(f"[任务] 暂停「{current_task.description[:40]}」", flush=True)
+
+            # 创建 Task（v2：独立认知实体）
+            task = self.task_manager.create_task(
                 description=goal.description,
-                goal_type=goal.goal_type,
-                parent_id=parent_id,
+                task_type=task_type,
             )
             logger.info(
-                "[Intent] 新目标添加: id=%s, desc=%s",
-                new_goal.id,
-                new_goal.description[:50],
+                "[Intent] 新 Task 创建: task_id=%s type=%s desc=%s goal_id=%s",
+                task.task_id, task_type.value, task.description[:50], task.goal_id,
             )
 
-            # 如果有子目标（来自 IntentUnderstanding 的分解），直接添加
-            if intent_result.has_sub_goals():
+            # 根据 task_type 决定是否拆解子目标
+            if task_type == TaskType.EXECUTION and intent_result.has_sub_goals() and task.goal_id:
                 sub_goals = self.purpose.decompose_goal(
-                    goal_id=new_goal.id,
+                    goal_id=task.goal_id,
                     sub_descriptions=intent_result.sub_goals,
                 )
                 logger.info(
@@ -851,19 +1258,48 @@ class ConsciousLiving:
                 for i, sg in enumerate(sub_goals):
                     print(f"  {i+1}. {sg.description[:40]}", flush=True)
 
-                # 激活第一个子目标（一个任务一个任务依次进行）
+                # 激活第一个子目标
                 if sub_goals:
                     self.purpose.set_current(sub_goals[0].id)
                     self._print_sub_goal_progress(sub_goals[0], sub_goals)
-                    # 直接执行，由LLM处理需要的用户输入
                     new_intent = self._build_intent_context_for_goal(sub_goals[0])
                     self._run_chat(msg, new_intent)
                     return
+            elif task.goal_id:
+                # 非 EXECUTION 或 无子目标 → 直接执行 Goal
+                goal_obj = self.purpose.goals.get(task.goal_id)
+                if goal_obj:
+                    self.purpose.set_current(goal_obj.id)
+                    type_label = {
+                        TaskType.EXECUTION: "EXECUTION",
+                        TaskType.LEARNING: "LEARNING",
+                        TaskType.REFLECTION: "REFLECTION",
+                        TaskType.RELATIONSHIP: "RELATIONSHIP",
+                        TaskType.EXPLORATION: "EXPLORATION",
+                    }.get(task_type, task_type.value)
+                    print(f"[{type_label}] 当前: {goal_obj.description[:40]}", flush=True)
+                    new_intent = self._build_intent_context_for_goal(goal_obj)
+                    self._run_chat(msg, new_intent)
+                    return
             else:
-                # 无子目标 = 单步任务，直接执行
-                self.purpose.set_current(new_goal.id)
-                print(f"[目标] 当前执行: {new_goal.description[:40]}", flush=True)
-                new_intent = self._build_intent_context_for_goal(new_goal)
+                # 无 Goal 关联（非 EXECUTION 且不需要子目标管理）
+                type_label = {
+                    TaskType.LEARNING: "LEARNING",
+                    TaskType.REFLECTION: "REFLECTION",
+                    TaskType.RELATIONSHIP: "RELATIONSHIP",
+                    TaskType.EXPLORATION: "EXPLORATION",
+                }.get(task_type, task_type.value)
+                print(f"[{type_label}] 当前: {task.description[:40]}", flush=True)
+                # 为非 Goal 类型构建临时上下文
+                from ..purpose.intent import IntentResult, IntentType, GoalRelation
+                fake_intent = IntentResult(
+                    intent_type=PurposeIntentType.TASK,
+                    goals=[],
+                    relation=GoalRelation.NEW,
+                    confidence=1.0,
+                    reasoning=f"{type_label} 类型任务: {task.description[:50]}",
+                )
+                new_intent = self._build_intent_context(fake_intent)
                 self._run_chat(msg, new_intent)
                 return
 
@@ -894,10 +1330,20 @@ class ConsciousLiving:
                     return
                 if 1 <= idx <= len(confirm["goal_ids"]):
                     goal_id = confirm["goal_ids"][idx - 1]
-                    self.purpose.set_current(goal_id)
                     goal = self.purpose.goals.get(goal_id)
-                    if goal:
-                        print(f"[目标] 延续任务: {goal.description[:40]}", flush=True)
+                    task = self.task_manager.find_by_goal_id(goal_id)
+
+                    # 如果是暂停状态，先恢复 Task（产生 resume_snapshot）
+                    resume_context = ""
+                    if goal and goal.is_paused() and task:
+                        resumed = self.task_manager.resume_task(task.task_id)
+                        if resumed:
+                            resume_context = resumed.get_cognitive_context()
+                        print(f"[任务] 恢复: {goal.description[:40]}", flush=True)
+                    else:
+                        self.purpose.set_current(goal_id)
+                        if goal:
+                            print(f"[目标] 延续任务: {goal.description[:40]}", flush=True)
 
                     # 清理确认状态
                     original_msg = self._pending_confirm_msg
@@ -905,8 +1351,8 @@ class ConsciousLiving:
                     self._waiting_confirm = False
                     self._pending_confirm_msg = None
 
-                    if original_msg:
-                        from xiaomei_brain.purpose.intent import IntentResult, IntentType, GoalRelation
+                    if original_msg and goal:
+                        from xiaomei_brain.purpose.intent import IntentType, GoalRelation
                         fake_intent = IntentResult(
                             intent_type=PurposeIntentType.TASK,
                             goals=[goal],
@@ -915,7 +1361,7 @@ class ConsciousLiving:
                             confidence=1.0,
                             reasoning="用户选择延续任务",
                         )
-                        self._run_chat(original_msg, self._build_intent_context(fake_intent, chosen_by_user=True))
+                        self._run_chat(original_msg, self._build_intent_context(fake_intent, chosen_by_user=True, resume_snapshot=resume_context))
                     return
 
             print("[确认] 无效选项，请重新选择：", flush=True)
@@ -1088,12 +1534,12 @@ class ConsciousLiving:
 
                     # 解析进度标签
                     progress_data = self._parse_progress_tag(content)
-                    logger.info(
-                        "[Progress Tag] data=%s active_sub=%s",
-                        progress_data,
-                        self.purpose.get_active_goals()[0].description[:30] if self.purpose and self.purpose.get_active_goals() else "none",
-                    )
                     if progress_data and self.purpose:
+                        logger.info(
+                            "[Progress Tag] data=%s active_sub=%s",
+                            progress_data,
+                            self.purpose.get_active_goals()[0].description[:30] if self.purpose and self.purpose.get_active_goals() else "none",
+                        )
                         # 先记下当前子目标 ID（update_goal_progress 会切换 current）
                         completing_goal_id = None
                         if progress_data.get("status") == "completed":
@@ -1109,6 +1555,25 @@ class ConsciousLiving:
                             if summary and completing_goal_id:
                                 self.purpose.store_sub_goal_output(completing_goal_id, summary)
                                 logger.info("[Progress] 存储子目标产出: %s", summary[:50])
+
+                                # v2: 追加认知日志到 Task
+                                task = self.task_manager.get_current_task()
+                                if task:
+                                    self.task_manager.append_cognitive_log(
+                                        task.task_id,
+                                        entry_type="output",
+                                        content=summary,
+                                        sub_goal_id=completing_goal_id,
+                                    )
+
+                                    # 检查是否所有子目标已完成 → 触发知识提取
+                                    if completing_goal_id:
+                                        completing_goal = self.purpose.goals.get(completing_goal_id)
+                                        if completing_goal and completing_goal.parent_id:
+                                            siblings = self.purpose.get_sub_goals(completing_goal.parent_id)
+                                            all_done = all(sg.is_completed() for sg in siblings)
+                                            if all_done:
+                                                self._complete_task(task)
 
                         # 增量持久化：状态变更后立即保存，防止崩溃丢失
                         self.purpose.save()
@@ -1130,12 +1595,28 @@ class ConsciousLiving:
                     tc_str = f"，{tc_count}次工具调用" if tc_count else ""
                     print(f"\033[90m[本轮耗时 {elapsed:.1f}s{tc_str}]\033[0m", flush=True)
 
-                    # 更新意识系统
-                    self.consciousness.on_user_interaction(current_msg.content, display_content)
+                    # 更新意识系统（如果已加载）
+                    if self._load_consciousness:
+                        self.consciousness.on_user_interaction(current_msg.content, display_content)
 
                     # PurposeEngine 自动推进检查
                     if not self._should_auto_advance(progress_data):
                         logger.info("[ConsciousLiving] 对话完成")
+
+                        # v2: 非子目标推进场景（LEARNING/EXPLORATION 等）也追加认知日志
+                        had_sub_goal_completion = (
+                            progress_data
+                            and progress_data.get("status") == "completed"
+                        )
+                        if not had_sub_goal_completion and display_content:
+                            task = self.task_manager.get_current_task()
+                            if task:
+                                self.task_manager.append_cognitive_log(
+                                    task.task_id,
+                                    entry_type="output",
+                                    content=display_content[:500],
+                                )
+
                         self._print_prompt()
                         return
 
@@ -1159,6 +1640,16 @@ class ConsciousLiving:
                 if self.purpose:
                     goal = self.purpose.get_current()
                     if goal:
+                        # v2: 错误也追加到认知日志
+                        task = self.task_manager.get_current_task()
+                        if task:
+                            self.task_manager.append_cognitive_log(
+                                task.task_id,
+                                entry_type="pitfall",
+                                content=f"子目标「{goal.description[:30]}」执行出错: {str(e)[:200]}",
+                                sub_goal_id=goal.id,
+                            )
+
                         result = task_executor.handle_sub_goal_error(
                             self.purpose, goal.id, str(e),
                         )
@@ -1221,8 +1712,8 @@ class ConsciousLiving:
 
         return True
 
-    def _build_intent_context(self, intent_result: Any, chosen_by_user: bool = False) -> str:
-        return task_executor.build_intent_context(self.purpose, intent_result, chosen_by_user=chosen_by_user)
+    def _build_intent_context(self, intent_result: Any, chosen_by_user: bool = False, resume_snapshot: str = "") -> str:
+        return task_executor.build_intent_context(self.purpose, intent_result, chosen_by_user=chosen_by_user, resume_snapshot=resume_snapshot)
 
     def _parse_progress_tag(self, content: str) -> dict | None:
         """解析进度标签（XML 格式 <PROGRESS>{...}</PROGRESS>）
@@ -1267,6 +1758,58 @@ class ConsciousLiving:
         if status_msg:
             print(f"\n{status_msg}", flush=True)
 
+    # ── Task v2: 完成 + 知识提取 ───────────────────────────────
+
+    def _complete_task(self, task: Any) -> None:
+        """完成一个 Task，触发知识提取。
+
+        Args:
+            task: Task 对象（consciousness.task.Task）
+        """
+        task_id = task.task_id
+        logger.info("[TaskComplete] 所有子目标完成，标记 Task 完成: %s", task_id)
+
+        # 1. 标记完成
+        completed = self.task_manager.complete_task(task_id)
+        if not completed:
+            return
+
+        print(f"\n[任务] 完成: {task.description[:40]}", flush=True)
+
+        # 2. 触发知识提取（从 cognitive_log 总结）
+        self._extract_task_knowledge(completed)
+
+    def _extract_task_knowledge(self, task: Any) -> None:
+        """Task 完成时：从认知日志提取知识到长期记忆。
+
+        调用 MemoryExtractor.extract_task_completion()，
+        LLM 从 cognitive_log 中提取：学到了什么、踩了什么坑、用户偏好、模式。
+
+        Args:
+            task: 已完成的 Task 对象
+        """
+        try:
+            # 获取 agent 的 extractor
+            extractor = getattr(self.agent, "memory_extractor", None)
+            if not extractor:
+                logger.warning("[TaskComplete] 无 memory_extractor，跳过知识提取")
+                return
+
+            if not hasattr(extractor, "extract_task_completion"):
+                logger.warning("[TaskComplete] extractor 版本不支持 task_completion")
+                return
+
+            # 执行知识提取
+            logger.info("[TaskComplete] 开始知识提取: task=%s", task.task_id)
+            ids = extractor.extract_task_completion(task, user_id=self.user_id)
+
+            if ids:
+                print(f"[知识] 从任务中提取了 {len(ids)} 条长期记忆", flush=True)
+            else:
+                logger.info("[TaskComplete] 无值得长期保存的知识")
+        except Exception as e:
+            logger.error("[TaskComplete] 知识提取失败: %s", e)
+
     # ── Hooks ────────────────────────────────────────────────────
 
     def _on_wake(self) -> None:
@@ -1276,13 +1819,19 @@ class ConsciousLiving:
         - learn_topic: 后台线程执行（不阻塞苏醒）
         - greet_user: 不立即执行（用户可能不在场，等 sleeping 时执行）
         - progress_goal/express_idea: 不立即执行（等 sleeping 时执行）
+
+        如果意识系统未加载，跳过火焰更新（生命存在但无意识）。
         """
         self._last_active = time.time()
-        self.consciousness._last_l2_time = time.time()
+        if self._load_consciousness:
+            self.consciousness._last_l2_time = time.time()
+            # 调用意识系统的 on_wake，生成问候意图（基于梦境报告）
+            self.consciousness.on_wake()
 
-        # 火焰点燃
-        si = self.consciousness.get_self_image()
-        si.last_user_activity_time = time.time()
+        # 火焰点燃（如果意识系统已加载）
+        if self._load_consciousness:
+            si = self.consciousness.get_self_image()
+            si.last_user_activity_time = time.time()
 
         # 加载 fresh tail：让 agent "带着最近的记忆醒来"
         # 从 DB 还原完整的消息序列，包括 assistant(tool_calls) + tool 配对
@@ -1403,8 +1952,12 @@ class ConsciousLiving:
             logger.info("[ConsciousLiving] 苏醒时欲望平稳，无主动行为")
 
     def _on_wake_up(self) -> None:
-        """从睡眠中醒来"""
+        """从睡眠/空闲中醒来，收到用户消息时调用"""
         logger.info("[ConsciousLiving] Waking up — message received!")
+
+        # 调用意识系统的 on_wake，生成问候意图（基于梦境报告）
+        if self._load_consciousness:
+            self.consciousness.on_wake()
 
     # ── Proactive output ─────────────────────────────────────────
 

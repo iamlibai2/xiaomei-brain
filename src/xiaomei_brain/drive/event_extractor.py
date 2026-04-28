@@ -13,55 +13,10 @@ import logging
 import re
 from typing import Any
 
+# 集中化提示词
+from xiaomei_brain.prompts import EVENT_EXTRACT_PROMPT
+
 logger = logging.getLogger(__name__)
-
-
-# 事件提取提示词模板
-EVENT_EXTRACT_PROMPT = """
-分析最近对话，提取以下信息：
-
-【事件分析】
-分析用户对小美的态度和行为，提取事件（强度 0.0-1.0）：
-- praise_intensity: 用户表扬/认可的强度（正面反馈）
-- criticism_intensity: 用户批评/不满的强度（负面反馈）
-- goal_progress: 目标进展评估（如果讨论了任务或目标）
-
-【欲望变化】
-根据对话内容，建议欲望变化（delta -0.3 到 +0.3）：
-- belonging_delta: 归属欲变化
-  - 用户积极互动、表达好感 → 降低（满足）
-  - 用户冷淡、长时间不回复 → 增加（缺失）
-- cognition_delta: 认知欲变化
-  - 学到新知识、解决疑惑 → 降低（满足）
-  - 遇到不懂的话题、被问到不知道的 → 增加（缺失）
-- achievement_delta: 成就欲变化
-  - 完成任务、解决问题 → 降低（满足）
-  - 任务受阻、遇到困难 → 增加（挫折）
-- expression_delta: 表达欲变化
-  - 成功表达想法、被理解 → 降低（满足）
-  - 有想法但没机会表达 → 增加（缺失）
-
-【当前欲望状态】
-- 归属欲：{belonging:.2f}（阈值 {belonging_threshold:.2f}）
-- 认知欲：{cognition:.2f}（阈值 {cognition_threshold:.2f}）
-- 成就欲：{achievement:.2f}（阈值 {achievement_threshold:.2f}）
-- 表达欲：{expression:.2f}（阈值 {expression_threshold:.2f}）
-
-【最近对话】
-{messages}
-
-请返回 JSON 格式：
-{
-  "praise_intensity": 0.0-1.0,
-  "criticism_intensity": 0.0-1.0,
-  "goal_progress": 0.0-1.0,
-  "belonging_delta": -0.3 到 +0.3,
-  "cognition_delta": -0.3 到 +0.3,
-  "achievement_delta": -0.3 到 +0.3,
-  "expression_delta": -0.3 到 +0.3,
-  "summary": "一句话总结分析结果"
-}
-"""
 
 
 class EventExtractor:

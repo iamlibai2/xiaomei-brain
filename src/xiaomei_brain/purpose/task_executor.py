@@ -45,7 +45,7 @@ def build_confirm_info(sub_goal, intent_result) -> dict | None:
     }
 
 
-def build_intent_context(purpose, intent_result, chosen_by_user: bool = False) -> str:
+def build_intent_context(purpose, intent_result, chosen_by_user: bool = False, resume_snapshot: str = "") -> str:
     """构建 LLM 上下文（当前子目标 + 全局进度）
 
     核心原则：Agent 只知道当前执行的子目标，不暴露完整目标树
@@ -55,6 +55,7 @@ def build_intent_context(purpose, intent_result, chosen_by_user: bool = False) -
         purpose: PurposeEngine 实例
         intent_result: IntentResult
         chosen_by_user: True 表示用户从"继续"列表中明确选择了此任务
+        resume_snapshot: 任务恢复时的认知快照（来自 TaskManager）
 
     Returns:
         str: 上下文文本，空字符串表示无特殊上下文
@@ -112,6 +113,11 @@ def build_intent_context(purpose, intent_result, chosen_by_user: bool = False) -
     completed_subs = [sg for sg in sub_goals if sg.is_completed()]
 
     context_lines = []
+
+    # 任务恢复：注入认知快照
+    if resume_snapshot:
+        context_lines.append(resume_snapshot)
+        context_lines.append("")
 
     # 用户明确选择的任务：告知 Agent 不要再问选择
     if chosen_by_user:

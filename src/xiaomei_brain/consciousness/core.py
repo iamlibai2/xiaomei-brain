@@ -37,6 +37,7 @@ from .intent import Intent, IntentType, create_wait_intent, create_greet_intent,
 from .identity import IdentityConfig
 from .perception import PerceptionConfig
 from ..purpose import PurposeEngine
+from ..prompts import CONSCIOUSNESS_PROMPT_DEEP, INTENT_GENERATION_PROMPT, L2_TICK_PROMPT, L3_TICK_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -51,73 +52,7 @@ CONSCIOUSNESS_PROMPT_LIGHT = """你是{identity}。现在{time_info}。
 30字以内，第一人称。只输出这句话，不要其他内容。
 """
 
-CONSCIOUSNESS_PROMPT_DEEP = """你是{identity}的意识系统。现在是{time_info}。
 
-请生成一份完整的意识报告，描述你现在的感知状态。
-
-以下是你能感知到的信息：
-
-【我的基础状态】
-身份：{identity}
-角色：{role}
-情绪基调：{mood}
-能量水平：{energy}
-
-【驱动力状态】
-{drive_state}
-
-【用户状态】
-最后活跃：{user_last_active}
-空闲时长：{user_idle}
-信任度：{trust_level}
-关系深度：{relationship_depth}
-
-【目标感知】
-首要目标：{goal}
-目标进展：{goal_progress}
-
-【记忆状态】
-长期记忆数量：{memory_count}
-最近记忆：{recent_memories}
-
-【异常检测】
-当前异常：{anomaly}
-
-请以第一人称"我"来描述，自然流畅，包含：
-1. 时间感知：现在是什么时候
-2. 自我状态：我的情绪和能量
-3. 驱动力：我的欲望和动力
-4. 用户状态：用户最近在做什么
-5. 目标进展：我的目标进展如何
-6. 意向：我现在想做什么
-
-格式自由，100-150字。
-"""
-
-INTENT_GENERATION_PROMPT = """你是{identity}的意识系统。现在{time_info}。
-
-基于当前状态，判断你想做什么（生成意图）。
-
-当前状态：
-- 用户空闲时长：{user_idle}秒
-- 情绪基调：{mood}
-- 能量水平：{energy}
-- 目标进展：{goal_progress}
-- 检测到的异常：{anomaly}
-
-可选意图：
-1. wait - 等待，暂无行动
-2. greet - 想问候用户（用户长时间没说话时）
-3. care - 想关心用户（用户状态异常时）
-4. reflect - 想反省（目标偏离、关系退化时）
-5. dream - 想进入梦境（需要深度思考时）
-
-请选择一个意图并说明理由。
-
-输出格式（一行）：
-INTENT: <意图类型>
-REASON: <理由，一句话>
-"""
 
 class TickResult(Enum):
     """tick() 返回值"""
@@ -226,17 +161,11 @@ class Consciousness:
         # 存储回调
         self._storage: Any | None = None
 
-        # 感知规则配置
-        self._perception_config: PerceptionConfig | None = None
-
         # 身份配置（供 Drive 学习主题使用）
         self._identity_config: Any | None = None
 
-        # 从 IdentityConfig 初始化身份（L0-L3）
-        self._init_from_identity_config()
-
-        # 从 PerceptionConfig 初始化感知规则
-        self._init_from_perception_config()
+        # 感知规则配置（供状态解读使用）
+        self._perception_config: PerceptionConfig | None = None
 
     def _init_from_identity_config(self) -> None:
         """从 identity.md 配置初始化身份字段"""
@@ -751,6 +680,21 @@ class Consciousness:
             anomaly=si.detect_anomaly() or "无",
         )
 
+    def _fallback_light_report(self) -> ConsciousnessReport:
+        """规则生成轻度报告（不适合 L3 时的 fallback）"""
+        si = self.self_image
+        time_info = datetime.now().strftime("%H:%M")
+        summary = f"现在是{time_info}，意识清醒，L3 延迟执行。"
+
+        return ConsciousnessReport(
+            trigger="wake",
+            depth="light",
+            summary=summary,
+            full_report=summary,
+            self_image_snapshot=si.to_dict(),
+            anomaly=None,
+        )
+
     def _fallback_deep_report(self) -> str:
         """规则生成深度报告（LLM 失败时）"""
         si = self.self_image
@@ -813,23 +757,26 @@ class Consciousness:
         if self._l0_count >= self.L1_THRESHOLD:
             self.tick_L1()
 
-        # L2: 动态加柴判断（空闲 / 累积变化 / 定期，有冷却）
-        if self._should_l2():
+        # L2: 动态加柴判断（空闲 / 累积变化(仅SLEEPING) / 定期，有冷却）
+        if self._should_l2(agent_state):
             self._last_l2_time = time.time()
-            self.tick_L2(self._get_l2_context())
+            self.tick_L2(self._get_l2_context(agent_state))
             return TickResult.L2_TRIGGERED
 
-        # L3: 只在 DREAMING 状态触发深度燃烧
-        if in_dream and self._should_l3(dream_start):
+        # L3: 只在 DREAMING 状态触发深度燃烧（用 agent_state 而非 in_dream，确保只有真正在做梦时才触发）
+        if agent_state == "dreaming" and self._should_l3(dream_start):
             self.tick_L3()
             return TickResult.L3_TRIGGERED
 
         return TickResult.NORMAL
 
-    def _should_l2(self) -> bool:
+    def _should_l2(self, agent_state: str = "awake") -> bool:
         """判断是否应该触发 L2 加柴。
 
         有冷却机制：触发后 L2_COOLDOWN 秒内不再触发。
+
+        accumulated_changes 只在 SLEEPING 中触发（对话中的变化不触发主动行为）。
+        AWAKE 中只有 idle 和定期触发有意义。
         """
         si = self.self_image
         elapsed_since_last = time.time() - self._last_l2_time
@@ -838,10 +785,11 @@ class Consciousness:
         if elapsed_since_last < self.L2_COOLDOWN:
             return False
 
-        # 超过冷却期，检查三个条件
+        # 超过冷却期，检查条件
         if si.user_idle_duration > self.L2_IDLE_TRIGGER:
             return True
-        if len(si.accumulated_changes) > self.L2_CHANGES_TRIGGER:
+        # accumulated_changes 只在 SLEEPING 中有意义（安静时累积的变化才触发主动行为）
+        if agent_state == "sleeping" and len(si.accumulated_changes) > self.L2_CHANGES_TRIGGER:
             return True
         if elapsed_since_last > self.L2_PERIODIC_INTERVAL:
             return True
@@ -856,14 +804,14 @@ class Consciousness:
         """
         return time.time() - dream_start >= self.L3_DREAM_INTERVAL
 
-    def _get_l2_context(self) -> str:
+    def _get_l2_context(self, agent_state: str = "awake") -> str:
         """获取 L2 触发上下文"""
         si = self.self_image
         elapsed_since_last = time.time() - self._last_l2_time
 
         if si.user_idle_duration > self.L2_IDLE_TRIGGER:
             return "user_idle_long"
-        if len(si.accumulated_changes) > self.L2_CHANGES_TRIGGER:
+        if agent_state == "sleeping" and len(si.accumulated_changes) > self.L2_CHANGES_TRIGGER:
             return "accumulated_changes"
         if elapsed_since_last > self.L2_PERIODIC_INTERVAL:
             return "periodic"
@@ -947,5 +895,9 @@ class Consciousness:
             logger.info("[Consciousness] 苏醒，使用梦境报告")
             return report
 
-        # 没有梦境报告，需要生成
-        return self.tick_L3()
+        # 没有梦境报告，需要生成（只在 DREAMING/SLEEPING 状态执行 L3）
+        if self.perception.agent_state in ("dreaming", "sleeping"):
+            return self.tick_L3()
+        logger.warning("[Consciousness.on_wake] 当前状态 %s 不适合 L3 深度燃烧，跳过",
+                       self.perception.agent_state)
+        return self._fallback_light_report()

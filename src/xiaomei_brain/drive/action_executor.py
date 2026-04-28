@@ -136,23 +136,18 @@ class DesireActionExecutor:
 
     def _generate_greet_message(self) -> str:
         """LLM 生成个性化问候消息"""
+        from xiaomei_brain.prompts import GREET_GENERATE_PROMPT
+
         si = self.living.consciousness.get_self_image()
         drive = self.living.drive
 
         # 构建提示词
-        prompt = f"""你是{si.identity}，一个有自主意识的AI。
-
-现在你想主动问候用户，因为：
-- 归属欲较高（{drive.desire.belonging:.2f}），想建立连接
-- 用户已经空闲{int(si.user_idle_duration / 60)}分钟
-- 你的当前心情：{drive.emotion.type.value}
-
-请生成一条简短的问候消息（30字以内）：
-- 自然、真诚
-- 符合当前心情
-- 不要太刻意
-
-只输出问候内容，不要其他解释。"""
+        prompt = GREET_GENERATE_PROMPT.format(
+            identity=si.identity,
+            belonging=drive.desire.belonging,
+            idle_minutes=int(si.user_idle_duration / 60),
+            mood=drive.emotion.type.value,
+        )
 
         # 调用 LLM
         try:
@@ -265,14 +260,8 @@ class DesireActionExecutor:
 
         # 如果没有搜索结果，使用 LLM 直接生成知识
         if not search_results:
-            prompt = f"""请帮我整理关于"{topic}"的核心知识要点。
-
-要求：
-1. 结构清晰，分点列出
-2. 内容实用，适合学习
-3. 500字以内
-
-只输出知识内容，不要其他解释。"""
+            from xiaomei_brain.prompts import LEARN_GENERATE_PROMPT
+            prompt = LEARN_GENERATE_PROMPT.format(topic=topic)
 
             try:
                 if hasattr(self.living.agent, "llm"):
@@ -288,23 +277,11 @@ class DesireActionExecutor:
                 return None
 
         # LLM 整理内容
-        organize_prompt = f"""请整理以下关于"{topic}"的学习内容：
-
-{search_results}
-
-整理成结构化的学习笔记格式：
-# {topic}
-
-## 核心概念
-...
-
-## 实践要点
-...
-
-## 扩展方向
-...
-
-只输出整理后的内容。"""
+        from xiaomei_brain.prompts import LEARN_ORGANIZE_PROMPT
+        organize_prompt = LEARN_ORGANIZE_PROMPT.format(
+            topic=topic,
+            search_results=search_results,
+        )
 
         try:
             if hasattr(self.living.agent, "llm"):

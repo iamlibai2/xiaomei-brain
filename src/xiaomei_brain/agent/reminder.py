@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
+from xiaomei_brain.prompts import REMINDER_EXTRACTION_PROMPT
+
 logger = logging.getLogger(__name__)
 
 
@@ -45,29 +47,6 @@ class Reminder:
             source=data.get("source", ""),
             fired=data.get("fired", False),
         )
-
-
-REMINDER_EXTRACTION_PROMPT = """从以下用户消息中提取有时间约束的事项。
-
-判断标准：
-- 用户提到了某个具体时间要做的事（考试、面试、约会、出行等）
-- 用户说了"明天"、"后天"、"下周一"等相对时间
-- 用户说了具体的日期
-
-如果有，输出 JSON：
-{{
-  "reminders": [
-    {{
-      "text": "事项描述",
-      "relative_time": "相对时间表达（如：明天、下周五）"
-    }}
-  ]
-}}
-
-如果没有时间相关事项，输出：
-{{"reminders": []}}
-
-用户消息：{message}"""
 
 
 class ReminderManager:

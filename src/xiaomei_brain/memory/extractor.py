@@ -16,151 +16,17 @@ from typing import Any
 from .conversation_db import ConversationDB
 from .longterm import LongTermMemory
 
+# 集中化提示词
+from xiaomei_brain.prompts import (
+    IMMEDIATE_EXTRACT_PROMPT,
+    PERIODIC_EXTRACT_PROMPT,
+    EVERY_TURN_EXTRACT_PROMPT,
+    DREAM_EXTRACT_PROMPT,
+    TASK_COMPLETION_PROMPT,
+    MEMORY_DECISION_PROMPT,
+)
+
 logger = logging.getLogger(__name__)
-
-# Prompts — memories about user use "用户...", memories about Xiaomei use "我..."
-
-# [废弃] 旧提取 prompt，已被 EVERY_TURN_EXTRACT_PROMPT 替代
-IMMEDIATE_EXTRACT_PROMPT = """从以下对话中提取值得长期记住的信息。
-
-规则：
-- 关于用户的信息，用"用户..."表述（如：用户叫张三）
-- 关于小美自己的信息，用"我..."表述
-每条信息一行，格式：类别|内容
-类别可以是：偏好、事实、经验、教训
-
-用户输入中没有值得提取的信息时，输出：无
-
-用户：{user_input}
-助手：{assistant_response}"""
-
-# [定时批处理用] 提取+决策合并一次完成
-PERIODIC_EXTRACT_PROMPT = """从对话片段中提炼值得长期记住的信息，并判断如何处理。
-
-【已有记忆】（供参考）
-{recent_memories}
-
-【对话片段】
-{messages}
-
-【提炼规则】
-- 关于用户用"用户..."，关于小美用"我..."
-- 只提取确实重要和有价值的内容
-- 对每条记忆判断处理方式：
-  * ADD: 全新信息
-  * UPDATE: 已有记忆的更新
-  * MERGE: 可合并的同类信息
-  * NOOP: 无意义/重复，无需存储
-- 如果没有值得提炼的内容，输出：无
-
-输出格式（每条一行）：
-ACTION|类别|内容
-
-直接输出，无需解释："""
-
-# [实时对话用] 提取+决策合并一次完成
-# LLM 输出格式: ACTION|类别|内容  （ACTION = ADD/UPDATE/MERGE/NOOP）
-# RELATES: from_content|--type-->|to_content
-# [实时对话用] 只从用户输入提取（助手回复仅作语境参考，不直接提取）
-# LLM 输出格式: ACTION|类别|内容  （ACTION = ADD/UPDATE/MERGE/NOOP）
-# RELATES: from_content|--type-->|to_content
-EVERY_TURN_EXTRACT_PROMPT = """你是记忆提取系统。**只从用户输入中提炼信息**，助手回复仅作语境参考。
-
-【已有记忆】（供参考）
-{recent_memories}
-
-【对话语境】
-{context}
-
-【当前用户输入】
-{user_input}
-
-【提炼规则】
-- **只从"当前用户输入"中提炼**，不从助手回复复制信息
-- 关于用户用"用户..."，关于小美用"我..."
-- 只提取用户在当前输入中**直接表达**的事实、偏好、经历
-- 不提取助手回复中的内容（即便助手说出了用户信息）
-- 忽略临时性闲聊、无信息量的客套话
-- 对每条记忆，判断处理方式：
-  * ADD: 全新的重要信息
-  * UPDATE: 已有记忆的更新版本
-  * MERGE: 可合并的同类信息（如两个偏好）
-  * NOOP: 无意义/重复/推测，无需存储
-- 仔细对比【已有记忆】，语义重复或被包含的用 UPDATE/NOOP
-- 如果新记忆与已有记忆有语义关联，在 relations 字段建立关联
-- 关系类型: causal(因果), temporal(时序), contrast(对比), contains(包含)
-- 如果用户输入中没有值得提炼的内容，输出：{}
-
-输出格式（JSON，无解释文本）：
-{{"relations": [{{"from": "新记忆内容", "type": "causal", "to": "已有记忆内容"}}], "actions": [{{"type": "ADD", "tag": "偏好", "content": "用户喜欢川菜"}}]}}
-
-例如：
-{{"relations": [{{"from": "用户叫李四", "type": "causal", "to": "用户上周刚搬家"}}], "actions": [{{"type": "ADD", "tag": "事实", "content": "用户叫李四"}}]}}
-{{"relations": [], "actions": [{{"type": "ADD", "tag": "偏好", "content": "用户喜欢川菜"}}, {{"type": "NOOP", "tag": "事实", "content": "用户说了你好"}}]}}
-{{"relations": [{{"from": "用户喜欢MacBook", "type": "causal", "to": "用户买新电脑"}}, {{"from": "屏幕清晰", "type": "contains", "to": "用户喜欢MacBook"}}], "actions": [{{"type": "ADD", "tag": "偏好", "content": "用户喜欢MacBook"}}, {{"type": "UPDATE", "tag": "偏好", "content": "用户对屏幕印象深刻"}}, {{"type": "NOOP", "tag": "事实", "content": "用户说谢谢"}}]}}
-
-直接输出 JSON，无需解释："""
-
-# [梦境用] 提取+决策合并一次完成
-DREAM_EXTRACT_PROMPT = """你是小美的内心反思系统。在以下对话中，提炼关于"小美自己"的重要信息，并判断如何处理。
-
-【已有记忆】（供参考）
-{recent_memories}
-
-【今日对话】
-{messages}
-
-【提炼规则】
-- 只关注"小美自己"的内在收获，用"我..."表述
-- 包括：经验、教训、洞察、新的自我认知
-- 判断处理方式：
-  * ADD: 全新体悟
-  * UPDATE: 已有认知的更新
-  * MERGE: 可合并的同类体悟
-  * NOOP: 无意义/重复
-- 如果没有值得提炼的内容，输出：无
-
-输出格式（每条一行）：
-ACTION|类别|内容
-
-直接输出，无需解释："""
-
-# [合并模式用] MEMORY block 格式指令（追加到 system prompt）
-# LLM 已通过 system prompt 持有上下文，这里只给格式指令
-MEMORY_DECISION_PROMPT = """
-
-## 记忆决策
-
-**重要：请先正常回复用户，回复完成后，再在末尾输出 MEMORY 块。**
-
-判断是否需要提取相关的长期记忆。
-
-**规则**：
-- 只关注直接表达的事实、偏好、经历，用"用户..."表述
-- 不要复制回复中的内容，只提取输入中表达的信息
-- 如果新记忆与已有记忆有语义关联，在 relations 字段建立关联
-- 关系类型: causal(因果), temporal(时序), contrast(对比), contains(包含)
-- 判断处理方式：ADD（全新）、UPDATE（更新旧记忆）、MERGE（合并同类）、NOOP（无意义/重复/推测）
-- 如果用户输入中没有值得提炼的内容，输出：无
-
-**输出格式**（先回复用户，再在末尾输出 MEMORY 块）：
-
-你的正常回复内容...
-
-<MEMORY>
-{{"relations": [{{"from": "新记忆内容", "type": "causal", "to": "已有记忆内容"}}], "actions": [{{"type": "ADD", "tag": "偏好", "content": "用户喜欢川菜"}}]}}
-</MEMORY>
-
-
-示例：
-好的，我记住了你喜欢川菜！
-
-<MEMORY>
-{{"relations": [{{"from": "用户叫李四", "type": "causal", "to": "用户上周刚搬家"}}, {{"from": "用户喜欢MacBook", "type": "causal", "to": "用户买新电脑"}}], "actions": [{{"type": "ADD", "tag": "偏好", "content": "用户喜欢川菜"}}]}}
-</MEMORY>
-
-"""
-
 
 class MemoryExtractor:
     """Memory extractor — extracts memories from conversations.
@@ -308,9 +174,12 @@ class MemoryExtractor:
         user_input: str,
         assistant_response: str,
         user_id: str = "global",
-        context_turns: int = 6,
     ) -> list[int]:
         """每轮对话后调用。一次 LLM 调用完成提取+决策。
+
+        同时从用户输入和助手回复中提取：
+        - 用户输入 → 用户的事实/偏好/经历
+        - 助手回复 → 小美学到的经验/教训/决策/自我认知
 
         Args:
             user_input: 当前用户输入
@@ -322,10 +191,6 @@ class MemoryExtractor:
             return []
 
         try:
-            # 获取最近 context_turns 条消息作为上下文
-            recent = self.db.get_recent(context_turns, session_id=None) if self.db else []
-            context_text = self._format_messages(recent) if recent else "（无历史上下文）"
-
             # 获取已有记忆供 LLM 参考（做决策用）
             recent_memories = ""
             if self.ltm:
@@ -336,7 +201,6 @@ class MemoryExtractor:
                     )
 
             prompt = EVERY_TURN_EXTRACT_PROMPT.format(
-                context=context_text,
                 recent_memories=recent_memories or "（无已有记忆）",
                 user_input=user_input[:500],
                 assistant_response=assistant_response[:500],
@@ -594,20 +458,20 @@ class MemoryExtractor:
             logger.debug("[Relations JSON] Invalid type: %s", relation_type)
             return
 
-        # 找 from_memory_id
+        # 找 from_memory_id（只找最匹配的1个用于建立关系）
         from_memory_id: int | None = None
         for snippet, mid in content_to_id.items():
             if from_content[:30] in snippet or snippet[:30] in from_content[:30]:
                 from_memory_id = mid
                 break
         if from_memory_id is None:
-            similar = self.ltm.recall(from_content, user_id=user_id, top_k=3)
+            similar = self.ltm.recall(from_content, user_id=user_id, top_k=1)
             if similar:
                 from_memory_id = similar[0]["id"]
 
-        # 找 to_memory_id
+        # 找 to_memory_id（只找最匹配的1个用于建立关系）
         to_memory_id: int | None = None
-        similar_to = self.ltm.recall(to_content, user_id=user_id, top_k=3)
+        similar_to = self.ltm.recall(to_content, user_id=user_id, top_k=1)
         if similar_to:
             to_memory_id = similar_to[0]["id"]
 
@@ -819,13 +683,13 @@ class MemoryExtractor:
 
         if from_memory_id is None:
             # 降级：从 to_content 的相似记忆反推，或直接 recall from_content
-            similar = self.ltm.recall(from_content, user_id=user_id, top_k=3)
+            similar = self.ltm.recall(from_content, user_id=user_id, top_k=1)
             if similar:
                 from_memory_id = similar[0]["id"]
 
-        # 找 to_memory_id：recall
+        # 找 to_memory_id：recall（只找最匹配的1个用于建立关系）
         to_memory_id: int | None = None
-        similar_to = self.ltm.recall(to_content, user_id=user_id, top_k=3)
+        similar_to = self.ltm.recall(to_content, user_id=user_id, top_k=1)
         if similar_to:
             to_memory_id = similar_to[0]["id"]
 
@@ -928,3 +792,108 @@ class MemoryExtractor:
             return []
 
         return self._execute_actions(memory_block, source="merged", user_id=user_id)
+
+    # ── Task 完成提取 ─────────────────────────────────────────────
+
+    def extract_task_completion(
+        self,
+        task: Any,  # Task from consciousness.task
+        user_id: str = "global",
+    ) -> list[int]:
+        """Task 完成时：从认知日志中提取经验/模式/用户洞察。
+
+        调用 LLM 总结 cognitive_log + artifacts，提取值得长期保存的知识：
+        1. 学到的技术/经验 → tag=经验
+        2. 踩了什么坑 → tag=教训
+        3. 对用户的新发现 → tag=用户洞察
+        4. 可复用的模式 → tag=模式
+        5. 自我的变化/成长 → tag=自我认知
+
+        Args:
+            task: Task 对象（consciousness.task.Task）
+            user_id: 用户标识
+
+        Returns:
+            新创建的记忆 ID 列表
+        """
+        if not self.ltm or not self.llm:
+            return []
+
+        try:
+            # 格式化认知日志
+            log_text = self._format_cognitive_log(task.cognitive_log)
+            if not log_text:
+                logger.info("[TaskComplete] 无认知日志，跳过知识提取")
+                return []
+
+            # 格式化产出物
+            artifact_text = self._format_artifacts(task.artifacts)
+
+            # 获取已有记忆供参考
+            recent_memories = ""
+            existing = self.ltm.get_recent(15, user_id=user_id)
+            if existing:
+                recent_memories = "\n".join(
+                    f"- [{m['id']}] {m['content']}" for m in existing
+                )
+
+            prompt = TASK_COMPLETION_PROMPT.format(
+                task_description=task.description,
+                task_type=task.type.value,
+                cognitive_log=log_text,
+                artifacts=artifact_text,
+                recent_memories=recent_memories or "（无已有记忆）",
+            )
+
+            result = self.llm.chat(
+                messages=[{"role": "user", "content": prompt}],
+                tools=None,
+                log_level=logging.DEBUG,
+            )
+
+            ids = self._execute_actions(
+                result.content or "", source="task_completion", user_id=user_id,
+            )
+
+            if ids:
+                logger.info(
+                    "[TaskComplete] 从 Task「%s」提取了 %d 条记忆",
+                    task.description[:40], len(ids),
+                )
+            else:
+                logger.info(
+                    "[TaskComplete] Task「%s」无值得长期保存的知识",
+                    task.description[:40],
+                )
+            return ids
+        except Exception as e:
+            logger.error("[TaskComplete] 知识提取失败: %s", e)
+            return []
+
+    @staticmethod
+    def _format_cognitive_log(log: list) -> str:
+        """格式化认知日志为文本"""
+        if not log:
+            return ""
+        lines = []
+        type_labels = {
+            "decision":  "决策",
+            "discovery": "发现",
+            "pitfall":   "踩坑",
+            "output":    "产出",
+            "note":      "备注",
+        }
+        for entry in log:
+            label = type_labels.get(entry.entry_type, entry.entry_type)
+            lines.append(f"[{label}] {entry.content}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_artifacts(artifacts: list[dict]) -> str:
+        """格式化产出物列表为文本"""
+        if not artifacts:
+            return "（无产出物）"
+        lines = []
+        for a in artifacts:
+            lines.append(f"  - {a.get('path', '?')} ({a.get('role', 'output')})")
+        return "\n".join(lines)

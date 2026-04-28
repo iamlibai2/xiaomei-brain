@@ -3,7 +3,8 @@
 启动带意识的 Agent，支持交互对话和测试命令。
 
 Usage:
-    PYTHONPATH=src python3 examples/run_conscious_living.py
+    PYTHONPATH=src python3 examples/run_conscious_living.py [--no-consciousness]
+    PYTHONPATH=src python3 examples/run_conscious_living.py -n  # 无意识模式
 """
 
 import sys
@@ -13,6 +14,7 @@ import time
 import logging
 import readline
 import atexit
+import argparse
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -145,8 +147,8 @@ def _status_line(living) -> str:
         else:
             parts.append(g.description[:25])
 
-    # 火焰
-    if hasattr(living, 'consciousness') and living.consciousness:
+    # 火焰（仅当意识系统已加载时显示）
+    if hasattr(living, '_load_consciousness') and living._load_consciousness:
         si = living.consciousness.get_self_image()
         if si:
             parts.append(f"🔥{si.agent_state} e:{si.energy_level:.1f}")
@@ -183,13 +185,24 @@ def _status_line(living) -> str:
 
 
 def main():
+    parser = argparse.ArgumentParser(description="ConsciousLiving CLI")
+    parser.add_argument(
+        "-n", "--no-consciousness",
+        action="store_true",
+        help="生命存在但无意识（无意识模式）"
+    )
+    args = parser.parse_args()
+
     print("\n" + "=" * 50)
     print("       \033[36mConsciousLiving\033[0m CLI")
+    print("=" * 50)
+    if args.no_consciousness:
+        print("       \033[33m[无意识模式]\033[0m")
     print("=" * 50 + "\n")
 
     manager = AgentManager()
     agent = manager.build_agent("xiaomei")
-    living = ConsciousLiving(agent)
+    living = ConsciousLiving(agent, load_consciousness=not args.no_consciousness)
 
     # ── 回调 ────────────────────────────────────────────────
     _stream_lock = threading.Lock()
