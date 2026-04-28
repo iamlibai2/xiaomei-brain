@@ -16,6 +16,7 @@ from .state import (
     HormoneState,
     MotivationState,
     DesireState,
+    EnergyState,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ class DriveStorage:
         hormone: HormoneState,
         motivation: MotivationState,
         desire: DesireState,
+        energy: EnergyState | None = None,
     ) -> None:
         """保存 Drive 状态到 JSON 文件"""
         data = {
@@ -46,6 +48,8 @@ class DriveStorage:
             "motivation": motivation.to_dict(),
             "desire": desire.to_dict(),
         }
+        if energy:
+            data["energy"] = energy.to_dict()
 
         try:
             with open(self.state_file, "w", encoding="utf-8") as f:
@@ -60,6 +64,7 @@ class DriveStorage:
         hormone: HormoneState,
         motivation: MotivationState,
         desire: DesireState,
+        energy: EnergyState | None = None,
     ) -> bool:
         """
         从 JSON 文件加载 Drive 状态
@@ -78,6 +83,8 @@ class DriveStorage:
             hormone.from_dict(data.get("hormone", {}))
             motivation.from_dict(data.get("motivation", {}))
             desire.from_dict(data.get("desire", {}))
+            if energy:
+                energy.from_dict(data.get("energy", {}))
 
             logger.info(f"[DriveStorage] 状态已加载: {self.state_file}")
             return True

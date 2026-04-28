@@ -353,7 +353,9 @@ class Consciousness:
         if self._perception_config:
             self.self_image.interpreted_changes = self.self_image.interpret_changes(self._perception_config)
             if self.self_image.interpreted_changes:
-                pass  # log commented out for testing
+                logger.info("[Consciousness L1] 检测到 %d 个变化: %s",
+                           len(self.self_image.interpreted_changes),
+                           self.self_image.interpreted_changes[:3])
 
         # 清空感知缓冲
         self.perception_buffer = []
@@ -411,6 +413,11 @@ class Consciousness:
                     tools=None,
                 )
                 llm_response = resp.content or ""
+
+                # LLM 调用消耗能量（轻度）
+                if self.drive:
+                    self.drive.consume_energy(0.02)
+
                 # sep = "=" * 40
                 # logger.info("========== LLM加柴响应 ==========")
                 # logger.info("%s", llm_response)
@@ -591,6 +598,10 @@ class Consciousness:
                 )
                 full_report = resp.content or ""
                 logger.info("[Consciousness L3] LLM深度燃烧:\n%s", full_report)
+
+                # L3 深度燃烧消耗更多能量
+                if self.drive:
+                    self.drive.consume_energy(0.1)
             except Exception as e:
                 logger.warning("[Consciousness L3] LLM调用失败: %s", e)
                 full_report = self._fallback_deep_report()
@@ -598,10 +609,20 @@ class Consciousness:
         # 提取摘要（不强制格式）
         summary = self._extract_summary(full_report)
 
-        # 更新火焰状态
+        # 更新火焰状态（内存）
         self.self_image.last_dream_summary = summary
-        self.self_image.energy_level = 0.9  # 燃烧后能量恢复
+        # 燃烧后能量恢复（通过 Drive）
+        if self.drive:
+            self.drive.restore_energy(0.2)
+        self.self_image.energy_level = self.drive.energy.level if self.drive else 0.9
         self.self_image.clear_accumulated_changes()
+
+        # 同步到 SelfGrowth（持久化）
+        self.growth.update_dream_summary(summary)
+
+        # 保存 SelfGrowth（last_dream_summary 持久化）
+        if self._storage:
+            self._storage.save_self_growth(self.growth.to_dict())
 
         # 生成报告
         report = ConsciousnessReport(
@@ -644,13 +665,9 @@ class Consciousness:
             # 从 Drive 获取情绪状态，覆盖 SelfState
             if hasattr(self.drive, 'emotion'):
                 si.current_mood = self.drive.emotion.type.value
-            if hasattr(self.drive, 'hormone'):
-                # 激素影响能量
-                si.energy_level = (
-                    self.drive.hormone.dopamine * 0.3 +
-                    self.drive.hormone.serotonin * 0.5 +
-                    (1 - self.drive.hormone.cortisol) * 0.2
-                )
+            if hasattr(self.drive, 'energy'):
+                # 能量从 Drive 的 EnergyState 同步（由激素派生）
+                si.energy_level = self.drive.energy.level
 
         # Purpose 状态文本（目标）
         purpose_state_text = ""
@@ -755,16 +772,19 @@ class Consciousness:
 
         # L1: 每60秒自动触发（tick_L0 内部已累加 _l0_count）
         if self._l0_count >= self.L1_THRESHOLD:
+            logger.info("[Consciousness] L1 触发（异常检测，_l0_count=%d）", self._l0_count)
             self.tick_L1()
 
         # L2: 动态加柴判断（空闲 / 累积变化(仅SLEEPING) / 定期，有冷却）
         if self._should_l2(agent_state):
+            logger.info("[Consciousness] L2 触发（轻度加柴，agent_state=%s）", agent_state)
             self._last_l2_time = time.time()
             self.tick_L2(self._get_l2_context(agent_state))
             return TickResult.L2_TRIGGERED
 
         # L3: 只在 DREAMING 状态触发深度燃烧（用 agent_state 而非 in_dream，确保只有真正在做梦时才触发）
         if agent_state == "dreaming" and self._should_l3(dream_start):
+            logger.info("[Consciousness] L3 触发（深度燃烧）")
             self.tick_L3()
             return TickResult.L3_TRIGGERED
 
@@ -787,13 +807,21 @@ class Consciousness:
 
         # 超过冷却期，检查条件
         if si.user_idle_duration > self.L2_IDLE_TRIGGER:
+            logger.info("[Consciousness._should_l2] 空闲触发: %d秒 > %d秒",
+                       int(si.user_idle_duration), self.L2_IDLE_TRIGGER)
             return True
         # accumulated_changes 只在 SLEEPING 中有意义（安静时累积的变化才触发主动行为）
         if agent_state == "sleeping" and len(si.accumulated_changes) > self.L2_CHANGES_TRIGGER:
+            logger.info("[Consciousness._should_l2] 累积变化触发: %d条 > %d条",
+                       len(si.accumulated_changes), self.L2_CHANGES_TRIGGER)
             return True
         if elapsed_since_last > self.L2_PERIODIC_INTERVAL:
+            logger.info("[Consciousness._should_l2] 定期触发: %d秒 > %d秒",
+                       int(elapsed_since_last), self.L2_PERIODIC_INTERVAL)
             return True
 
+        logger.debug("[Consciousness._should_l2] 未触发: 空闲=%d, 累积=%d, 间隔=%d",
+                    int(si.user_idle_duration), len(si.accumulated_changes), int(elapsed_since_last))
         return False
 
     def _should_l3(self, dream_start: float) -> bool:
@@ -877,8 +905,20 @@ class Consciousness:
         """
         si = self.self_image
 
+        # 优先级：内存 > SelfGrowth > Storage.get_last_dream_summary()
+        dream_summary = si.last_dream_summary or self.growth.last_dream_summary
+        if not dream_summary and self._storage:
+            dream_summary = self._storage.get_last_dream_summary()
+            if dream_summary:
+                logger.info("[Consciousness.on_wake] 从存储恢复 dream_summary: %s...", dream_summary[:50])
+
+        logger.info("[Consciousness.on_wake] dream_summary=%s, agent_state=%s, growth_dream=%s",
+                    "有" if dream_summary else "无",
+                    self.perception.agent_state,
+                    "有" if self.growth.last_dream_summary else "无")
+
         # 如果有梦境报告，直接使用
-        if si.last_dream_summary:
+        if dream_summary:
             report = ConsciousnessReport(
                 trigger="wake",
                 depth="light",
@@ -889,8 +929,12 @@ class Consciousness:
             self._last_report = report
 
             # 生成问候意图
-            greet_intent = create_greet_intent(si.last_dream_summary[:50], priority=80)
+            greet_intent = create_greet_intent(dream_summary[:50], priority=80)
             self.intent_buffer.append(greet_intent)
+
+            # 同步到 self_image（如果是从 growth 恢复的）
+            if not si.last_dream_summary:
+                si.last_dream_summary = dream_summary
 
             logger.info("[Consciousness] 苏醒，使用梦境报告")
             return report

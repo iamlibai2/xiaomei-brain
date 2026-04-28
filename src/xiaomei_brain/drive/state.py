@@ -160,6 +160,48 @@ class DesireState:
 
 
 @dataclass
+class EnergyState:
+    """
+    能量状态 - 综合身心状态
+
+    由激素状态派生：
+    - dopamine ↑ → 能量 ↑
+    - serotonin ↑ → 能量 ↑
+    - cortisol ↑ → 能量 ↓
+    - norepinephrine ↑ → 能量 ↑
+
+    消耗/恢复：
+    - 对话/LLM调用 → 消耗
+    - 睡眠/休息 → 恢复
+    """
+    level: float = 0.8
+    last_updated: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict:
+        return {
+            "level": self.level,
+            "last_updated": self.last_updated,
+        }
+
+    def from_dict(self, data: dict) -> None:
+        self.level = data.get("level", 0.8)
+        self.last_updated = data.get("last_updated", time.time())
+
+    def update_from_hormones(self, dopamine: float, serotonin: float, cortisol: float, norepinephrine: float) -> None:
+        """从激素状态计算能量（每分钟调用）"""
+        # 公式：dopamine和血清素提升，cortisol降低，去甲肾提升
+        raw = (
+            dopamine * 0.3
+            + serotonin * 0.25
+            - cortisol * 0.35
+            + norepinephrine * 0.1
+        )
+        # 归一化到 0.1-0.95 范围（永远不全满也不全空）
+        self.level = max(0.1, min(0.95, raw))
+        self.last_updated = time.time()
+
+
+@dataclass
 class DriveSignals:
     """
     输出给其他层的信号
@@ -173,6 +215,7 @@ class DriveSignals:
     hormone: HormoneState = field(default_factory=HormoneState)
     motivation: MotivationState = field(default_factory=MotivationState)
     desire: DesireState = field(default_factory=DesireState)
+    energy: EnergyState = field(default_factory=EnergyState)
 
     # 汇总指标
     stress_level: float = 0.0      # 压力水平（皮质醇）
@@ -182,3 +225,9 @@ class DriveSignals:
         """计算派生指标"""
         self.stress_level = self.hormone.cortisol
         self.satisfaction_level = self.hormone.serotonin
+        self.energy.update_from_hormones(
+            self.hormone.dopamine,
+            self.hormone.serotonin,
+            self.hormone.cortisol,
+            self.hormone.norepinephrine,
+        )

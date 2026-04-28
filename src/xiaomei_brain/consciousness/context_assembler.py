@@ -96,7 +96,11 @@ class ContextAssembler:
             return
 
         try:
-            unsummarized = self.dag.get_unsummarized_messages(session_id, limit=100)
+            # 只压缩最近 2 小时的消息，避免处理历史积压
+            unsummarized = self.dag.get_unsummarized_messages(
+                session_id, limit=100,
+                since=time.time() - 7200,
+            )
             if not unsummarized:
                 return
 
@@ -113,27 +117,31 @@ class ContextAssembler:
                 )
                 remaining_tokens = unsummarized_tokens - compact_tokens
 
-                if self.on_compact:
-                    self.on_compact({
-                        "before_count": len(unsummarized),
-                        "before_tokens": unsummarized_tokens,
-                        "compact_count": len(msgs_to_compact),
-                        "compact_tokens": compact_tokens,
-                        "remaining_count": len(unsummarized) - len(msgs_to_compact),
-                        "remaining_tokens": remaining_tokens,
-                    })
-
                 node = self.dag.compact(
                     session_id,
                     [m["id"] for m in msgs_to_compact],
                     msgs_to_compact,
                 )
                 if node:
+                    # 压缩后计算摘要大小，展示真正的"压缩前 → 压缩后"
+                    summary_tokens = estimate_tokens(node.content)
+                    after_tokens = remaining_tokens + summary_tokens
+
+                    if self.on_compact:
+                        self.on_compact({
+                            "compact_count": len(msgs_to_compact),
+                            "before_tokens": unsummarized_tokens,
+                            "after_tokens": after_tokens,
+                            "summary_tokens": summary_tokens,
+                            "remaining_count": len(unsummarized) - len(msgs_to_compact),
+                            "remaining_tokens": remaining_tokens,
+                        })
+
                     logger.info(
-                        "[DAG] Auto compact: %d msgs (%d tokens) → summary #%d (depth=%d), "
+                        "[DAG] Auto compact: %d msgs (%d tokens) → summary #%d (depth=%d, %d tokens), "
                         "%d msgs (%d tokens) remain fresh",
                         len(msgs_to_compact), compact_tokens,
-                        node.id, node.depth,
+                        node.id, node.depth, summary_tokens,
                         len(unsummarized) - len(msgs_to_compact),
                         remaining_tokens,
                     )

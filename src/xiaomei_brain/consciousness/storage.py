@@ -328,3 +328,12 @@ class ConsciousnessStorage:
     def load_self_growth(self) -> dict:
         """加载 SelfGrowth"""
         return self._load_json(self._get_module_file("growth"))
+
+    def save_self_image(self, self_image_data: dict) -> None:
+        """保存 SelfImage 关键状态"""
+        data = {"agent_id": self.agent_id, "updated_at": time.time(), **self_image_data}
+        self._save_json(self._get_module_file("self_image"), data)
+
+    def load_self_image(self) -> dict:
+        """加载 SelfImage"""
+        return self._load_json(self._get_module_file("self_image"))

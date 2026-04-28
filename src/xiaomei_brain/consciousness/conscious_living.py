@@ -463,12 +463,16 @@ class ConsciousLiving:
         # 主循环
         while self._running:
             if self.state == LivingState.AWAKE:
+                logger.debug("[Living] 进入 AWAKE 循环")
                 self._loop_awake()
             elif self.state == LivingState.IDLE:
+                logger.debug("[Living] 进入 IDLE 循环")
                 self._loop_idle()
             elif self.state == LivingState.SLEEPING:
+                logger.debug("[Living] 进入 SLEEPING 循环")
                 self._loop_sleeping()
             elif self.state == LivingState.DREAMING:
+                logger.debug("[Living] 进入 DREAMING 循环")
                 self._loop_dreaming()
             else:
                 logger.warning("[ConsciousLiving] Unexpected state: %s", self.state)
@@ -532,10 +536,16 @@ class ConsciousLiving:
 
     def _loop_awake(self) -> None:
         """AWAKE 状态：统一 tick + 消息处理"""
+        logger.debug("[Living/AWAKE] tick 间隔=%.1f秒, idle阈值=%.1f秒", self.tick_interval, self.idle_threshold)
+
         # 统一心跳入口（如果意识系统已加载）
         result = TickResult.NORMAL
         if self._load_consciousness:
             result = self.consciousness.tick(agent_state=self.state.value)
+            if result != TickResult.NORMAL:
+                logger.info("[Living/AWAKE] tick 结果: %s", result.name)
+            else:
+                logger.debug("[Living/AWAKE] tick 结果: NORMAL")
 
         # L2 触发后检查 Intent 和欲望行为（需要意识系统）
         if self._load_consciousness and result == TickResult.L2_TRIGGERED:
@@ -549,6 +559,7 @@ class ConsciousLiving:
         msg = self._wait_message(timeout=self.tick_interval)
 
         if msg is not None:
+            logger.info("[Living/AWAKE] 收到消息")
             self._handle_message(msg)
             self._last_active = time.time()
             return
@@ -556,9 +567,13 @@ class ConsciousLiving:
         # 空闲检测
         idle_time = time.time() - self._last_active
         if idle_time >= self.idle_threshold:
+            logger.info("[Living/AWAKE] 空闲 %.1f秒 ≥ %.1f，进入 SLEEPING", idle_time, self.idle_threshold)
             self._transition(LivingState.SLEEPING)
         elif idle_time >= self.idle_short:
+            logger.info("[Living/AWAKE] 空闲 %.1f秒 ≥ %.1f，进入 IDLE", idle_time, self.idle_short)
             self._transition(LivingState.IDLE)
+        else:
+            logger.debug("[Living/AWAKE] 空闲 %.1f秒", idle_time)
 
     # ── Loop: IDLE ───────────────────────────────────────────────
 
@@ -576,12 +591,16 @@ class ConsciousLiving:
             if self._load_consciousness:
                 result = self.consciousness.tick(agent_state=self.state.value)
                 if result == TickResult.L2_TRIGGERED:
+                    logger.info("[Living/IDLE] L2 触发")
                     self._check_intent()
                     self.consciousness.consume_intent()
+                elif result != TickResult.NORMAL:
+                    logger.info("[Living/IDLE] tick 结果: %s", result.name)
 
             # 收到消息 → 立即唤醒
             msg = self._wait_message(timeout=self.tick_interval)
             if msg is not None:
+                logger.info("[Living/IDLE] 收到消息，唤醒回 AWAKE")
                 self._on_wake_up()
                 self._transition(LivingState.AWAKE)
                 self._handle_message(msg)
@@ -589,9 +608,13 @@ class ConsciousLiving:
                 return
 
             # 继续累积空闲时间，达到阈值才进入 SLEEPING
-            if time.time() - self._last_active >= self.idle_threshold:
+            idle_time = time.time() - self._last_active
+            if idle_time >= self.idle_threshold:
+                logger.info("[Living/IDLE] 空闲 %.1f秒 ≥ %.1f，进入 SLEEPING", idle_time, self.idle_threshold)
                 self._transition(LivingState.SLEEPING)
                 return
+            else:
+                logger.debug("[Living/IDLE] 空闲 %.1f秒 / %.1f秒", idle_time, self.idle_threshold)
 
     # ── Loop: SLEEPING ───────────────────────────────────────────
 
@@ -611,11 +634,13 @@ class ConsciousLiving:
 
                 # L2 触发时检查 Intent 和欲望行为（冷却机制防止频繁触发）
                 if result == TickResult.L2_TRIGGERED:
+                    logger.info("[Living/SLEEPING] L2 触发")
                     self._check_intent()
                     self._check_desire_actions()
 
                 # L3 触发：切换到 DREAMING 状态
                 if result == TickResult.L3_TRIGGERED:
+                    logger.info("[Living/SLEEPING] L3 触发，进入 DREAMING")
                     self._transition(LivingState.DREAMING)
                     return  # 回到 run() 主循环，进入 _loop_dreaming()
 
@@ -623,11 +648,14 @@ class ConsciousLiving:
             msg = self._wait_message(timeout=self.tick_interval)
 
             if msg is not None:
+                logger.info("[Living/SLEEPING] 收到消息，唤醒回 AWAKE")
                 self._on_wake_up()
                 self._transition(LivingState.AWAKE)
                 self._handle_message(msg)
                 self._last_active = time.time()
                 return
+
+            logger.debug("[Living/SLEEPING] 等待中...")
 
     # ── Loop: DREAMING ───────────────────────────────────────────
 
@@ -639,6 +667,8 @@ class ConsciousLiving:
 
         注意：如果意识系统未加载，直接跳过 DREAMING 状态。
         """
+        logger.info("[Living/DREAMING] 开始梦境循环")
+
         # 无意识系统：直接切回 SLEEPING
         if not self._load_consciousness:
             logger.debug("[ConsciousLiving] 无意识系统，跳过 DREAMING 状态")
@@ -654,6 +684,10 @@ class ConsciousLiving:
                 in_dream=True,
                 dream_start=dream_start,   # 不重置，跨多轮累加时间
             )
+            if result != TickResult.NORMAL:
+                logger.info("[Living/DREAMING] tick 结果: %s", result.name)
+            else:
+                logger.debug("[Living/DREAMING] tick 结果: NORMAL")
 
             if result == TickResult.L3_TRIGGERED and not l3_fired:
                 l3_fired = True
@@ -665,12 +699,14 @@ class ConsciousLiving:
 
             # L3 已触发过，或者 SLEEPING 收到消息唤醒了，直接回去
             if l3_fired:
+                logger.info("[Living/DREAMING] L3已完成，切回 SLEEPING")
                 self._transition(LivingState.SLEEPING)
                 return
 
             # 没触发 L3 也可能是消息到达（in_dream 时仍能收到消息唤醒）
             msg = self._wait_message(timeout=self.dream_interval)
             if msg is not None:
+                logger.info("[Living/DREAMING] 收到消息，唤醒回 AWAKE")
                 self._on_wake_up()
                 self._transition(LivingState.AWAKE)
                 self._handle_message(msg)
@@ -678,10 +714,13 @@ class ConsciousLiving:
                 return
 
             # 超时强制回 SLEEPING（防止 DREAMING 卡住）
-            if time.time() - dream_start >= self.dream_interval * 2:
-                logger.warning("[ConsciousLiving] DREAMING 超时，强制切回 SLEEPING")
+            elapsed = time.time() - dream_start
+            if elapsed >= self.dream_interval * 2:
+                logger.warning("[Living/DREAMING] 超时(%.1f秒)，强制切回 SLEEPING", elapsed)
                 self._transition(LivingState.SLEEPING)
                 return
+
+            logger.debug("[Living/DREAMING] 等待 L3 触发... (%.1f秒)", elapsed)
 
     # ── Flame heartbeat ──────────────────────────────────────────
 
@@ -785,7 +824,7 @@ class ConsciousLiving:
 
     def _execute_greet_intent(self, intent: Intent) -> None:
         """执行问候意图"""
-        logger.info("[ConsciousLiving/Intent] 问候用户: %s", intent.content)
+        logger.info("[ConsciousLiving/Intent] 执行问候: %s", intent.content)
 
         # 消费意图
         self.consciousness.consume_intent()
@@ -811,6 +850,11 @@ class ConsciousLiving:
         # 发送主动消息
         self._send_proactive(greet_content)
 
+        # Intent → Action 闭环：问候执行后，满足归属欲
+        if self.drive:
+            self.drive.on_desire_satisfied("belonging", 0.15)
+            logger.info("[ConsciousLiving/Intent] 问候已发送，归属欲 +0.15")
+
     def _execute_care_intent(self, intent: Intent) -> None:
         """执行关心意图"""
         logger.info("[ConsciousLiving/Intent] 关心用户: %s", intent.content)
@@ -819,6 +863,11 @@ class ConsciousLiving:
         # 构建关心消息
         care_content = f"我有点担心你... {intent.content}"
         self._send_proactive(care_content)
+
+        # Intent → Action 闭环：关心执行后，满足关联感
+        if self.drive:
+            self.drive.on_desire_satisfied("belonging", 0.1)
+            logger.info("[ConsciousLiving/Intent] 关心已发送，归属欲 +0.1")
 
     def _execute_reflect_intent(self, intent: Intent) -> None:
         """执行反省意图：触发 L3
@@ -1525,6 +1574,10 @@ class ConsciousLiving:
                     elapsed = time.time() - t0
                     tc_count = tool_call_buffer.last_index - tc_before
 
+                    # 对话消耗能量
+                    if self.drive and elapsed > 1.0:
+                        self.drive.consume_energy(0.05)
+
                     # Ctrl+C 取消：丢弃 LLM 结果
                     if self._cancel_requested:
                         logger.info("[ConsciousLiving] LLM 结果已丢弃（取消请求）")
@@ -1826,7 +1879,15 @@ class ConsciousLiving:
         if self._load_consciousness:
             self.consciousness._last_l2_time = time.time()
             # 调用意识系统的 on_wake，生成问候意图（基于梦境报告）
+            logger.info("[ConsciousLiving._on_wake] 调用 consciousness.on_wake()")
             self.consciousness.on_wake()
+            # 立即检查并执行意图（问候等）
+            self._check_intent()
+
+        # 苏醒时能量恢复（睡眠恢复）
+        if self.drive:
+            self.drive.restore_energy(0.15)
+            logger.info("[ConsciousLiving._on_wake] 苏醒能量恢复: %.2f", self.drive.energy.level)
 
         # 火焰点燃（如果意识系统已加载）
         if self._load_consciousness:

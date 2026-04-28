@@ -411,8 +411,13 @@ class DAGSummaryGraph:
 
     def get_unsummarized_messages(
         self, session_id: str, limit: int = 20,
+        since: float | None = None,
     ) -> list[dict[str, Any]]:
-        """Get messages not yet covered by any leaf summary."""
+        """Get messages not yet covered by any leaf summary.
+
+        Args:
+            since: If set, only return messages with created_at >= since (UNIX timestamp).
+        """
         conn = self._get_conn()
 
         # Get all message IDs that are already in summaries
@@ -425,21 +430,28 @@ class DAGSummaryGraph:
             ids = json.loads(r["message_ids"])
             summarized_ids.update(ids)
 
+        # Build time filter
+        time_clause = ""
+        time_params: list[Any] = []
+        if since is not None:
+            time_clause = " AND created_at >= ?"
+            time_params = [since]
+
         # Get recent messages not in summaries
         if summarized_ids:
             placeholders = ",".join("?" * len(summarized_ids))
             rows = conn.execute(
                 f"""SELECT * FROM messages
-                    WHERE session_id = ? AND id NOT IN ({placeholders})
+                    WHERE session_id = ? AND id NOT IN ({placeholders}){time_clause}
                     ORDER BY created_at ASC LIMIT ?""",
-                [session_id] + list(summarized_ids) + [limit],
+                [session_id] + list(summarized_ids) + time_params + [limit],
             ).fetchall()
         else:
             rows = conn.execute(
-                """SELECT * FROM messages
-                   WHERE session_id = ?
+                f"""SELECT * FROM messages
+                   WHERE session_id = ?{time_clause}
                    ORDER BY created_at ASC LIMIT ?""",
-                (session_id, limit),
+                [session_id] + time_params + [limit],
             ).fetchall()
 
         return [dict(r) for r in rows]
@@ -453,29 +465,43 @@ class DAGSummaryGraph:
         如果 assistant(tool_calls) 被压缩，它后面的 tool 消息也一起移除。
 
         Args:
-            messages: 原始消息列表（来自 conversation_db.get_recent）
+            messages: 原始消息列表（来自 self.messages）
             session_id: 会话 ID
 
         Returns:
             仅保留未压缩的消息列表
         """
-        unsummarized = self.get_unsummarized_messages(session_id, limit=100)
-        unsummarized_ids = {m["id"] for m in unsummarized if m.get("id")}
-        if not unsummarized_ids:
-            return messages  # 没有摘要，全保留
+        if not messages:
+            return messages
 
-        # 构建 summarized_ids（被压缩的消息 ID）
-        summarized_ids = set()
-        for m in messages:
-            msg_id = m.get("id")
-            if msg_id is not None and msg_id not in unsummarized_ids:
-                summarized_ids.add(msg_id)
+        # 获取所有已被摘要覆盖的消息 ID（从 summaries 表直接查询）
+        conn = self._get_conn()
+        summary_rows = conn.execute(
+            "SELECT message_ids FROM summaries WHERE session_id = ? AND depth = 0",
+            (session_id,),
+        ).fetchall()
+        all_summarized_ids: set[int] = set()
+        for r in summary_rows:
+            all_summarized_ids.update(json.loads(r["message_ids"]))
 
-        # 收集被压缩的 assistant 的 tool_call_ids
+        if not all_summarized_ids:
+            return messages  # 没有任何摘要，全保留
+
+        # 输入消息中需要检查的 ID 列表
+        input_ids = [m["id"] for m in messages if m.get("id") is not None]
+        if not input_ids:
+            return messages
+
+        # 只标记那些确认在摘要中的消息 ID 为"已压缩"
+        summarized_ids = {mid for mid in input_ids if mid in all_summarized_ids}
+
+        if not summarized_ids:
+            return messages  # 输入消息都不在摘要中，全保留
+
+        # 收集被压缩的 assistant 的 tool_call_ids（用于配对保护）
         compressed_tool_call_ids: set[str] = set()
         for m in messages:
-            msg_id = m.get("id")
-            if msg_id is not None and msg_id not in unsummarized_ids:
+            if m.get("id") in summarized_ids:
                 if m.get("role") == "assistant" and m.get("tool_calls"):
                     for tc in m["tool_calls"]:
                         tc_id = tc.get("id", "")
@@ -485,17 +511,18 @@ class DAGSummaryGraph:
         result = []
         for m in messages:
             msg_id = m.get("id")
-            # 有 reasoning_content 的消息：
-            # - 如果同时被压缩了（进了 summarized_ids），跳过（摘要已代替原始消息）
-            # - 如果未被压缩，保留（DeepSeek 思考模式必须传回 API）
+            # 无 id 的消息不在 DB 中，保留（新构造的 system 指令等）
+            if msg_id is None:
+                result.append(m)
+                continue
+            # reasoning_content 消息：确认在摘要中才移除
             if m.get("reasoning_content"):
                 if msg_id in summarized_ids:
-                    # 已被压缩，摘要已代替原始消息，跳过避免重复
                     continue
                 result.append(m)
                 continue
-            # 按 id 过滤：被压缩的移除
-            if msg_id is not None and msg_id not in unsummarized_ids:
+            # 确认在摘要中的才移除（而非"不在 unsummarized_ids 中"）
+            if msg_id in summarized_ids:
                 continue
             # tool 消息：如果它所属的 assistant 被压缩了，也移除
             if m.get("role") == "tool" and m.get("tool_call_id") in compressed_tool_call_ids:

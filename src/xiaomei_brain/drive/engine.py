@@ -19,6 +19,7 @@ from .state import (
     HormoneState,
     MotivationState,
     DesireState,
+    EnergyState,
     DriveSignals,
 )
 from .config import DriveConfig, load_drive_config, create_default_config_file
@@ -39,8 +40,16 @@ class DriveEngine:
     5. 提供状态信号供其他层使用
     """
 
-    def __init__(self, agent_id: str = "xiaomei", base_dir: str | Path = None):
+    def __init__(self, agent_id: str = "xiaomei", base_dir: str | Path = None, load: bool = True):
+        """初始化 Drive 引擎
+
+        Args:
+            agent_id: Agent ID
+            base_dir: 基础目录
+            load: 是否加载数据（False = 纯结构创建，支持"生命存在但无意识"）
+        """
         self.agent_id = agent_id
+        self._loaded = False  # 标记是否已加载
 
         # 配置
         if base_dir is None:
@@ -53,7 +62,7 @@ class DriveEngine:
             create_default_config_file(config_path)
         self.config = load_drive_config(config_path)
 
-        # 状态
+        # 状态（默认值）
         self.emotion = EmotionalState()
         self.hormone = HormoneState()
         self.motivation = MotivationState()
@@ -64,14 +73,19 @@ class DriveEngine:
             cognition=self.config.desire.cognition,
             expression=self.config.desire.expression,
         )
+        self.energy = EnergyState()
 
         # 存储
         self.storage = DriveStorage(agent_id)
-        self._restore_from_storage()
 
         # 时间追踪
         self.last_minute_tick = time.time()
         self.last_hour_tick = time.time()
+
+        # 加载数据
+        if load:
+            self._restore_from_storage()
+            self._loaded = True
 
         logger.info(
             f"[DriveEngine] 初始化完成: "
@@ -84,7 +98,7 @@ class DriveEngine:
     def _restore_from_storage(self) -> None:
         """从存储恢复状态"""
         success = self.storage.load(
-            self.emotion, self.hormone, self.motivation, self.desire
+            self.emotion, self.hormone, self.motivation, self.desire, self.energy
         )
         if success:
             logger.info(
@@ -93,6 +107,21 @@ class DriveEngine:
                 f"cortisol={self.hormone.cortisol:.2f}, "
                 f"belonging={self.desire.belonging:.2f}"
             )
+
+    def load(self) -> None:
+        """手动加载数据（支持延迟初始化）"""
+        if self._loaded:
+            logger.info("[DriveEngine] 已加载，跳过")
+            return
+
+        self._restore_from_storage()
+        self._loaded = True
+
+        logger.info(
+            f"[DriveEngine] 加载完成: "
+            f"desire.belonging={self.desire.belonging:.2f}, "
+            f"desire.cognition={self.desire.cognition:.2f}"
+        )
 
     # ========== 事件输入（增量更新）==========
 
@@ -282,6 +311,30 @@ class DriveEngine:
             elif desire_type == "expression":
                 self.hormone.dopamine = min(1.0, self.hormone.dopamine + amount * 0.05)
 
+    # ========== 能量管理 ==========
+
+    def consume_energy(self, delta: float = 0.05) -> None:
+        """
+        消耗能量（对话/LLM调用/主动行为）
+
+        Args:
+            delta: 消耗量，默认 0.05
+        """
+        self.energy.level = max(0.0, self.energy.level - delta)
+        self.energy.last_updated = time.time()
+        logger.debug("[DriveEngine] 能量消耗: %.2f → %.2f", delta, self.energy.level)
+
+    def restore_energy(self, delta: float = 0.1) -> None:
+        """
+        恢复能量（睡眠/休息）
+
+        Args:
+            delta: 恢复量，默认 0.1
+        """
+        self.energy.level = min(0.95, self.energy.level + delta)
+        self.energy.last_updated = time.time()
+        logger.debug("[DriveEngine] 能量恢复: +%.2f → %.2f", delta, self.energy.level)
+
     # ========== LLM 更新欲望 ==========
 
     def update_desire_from_llm(self, analysis: dict) -> None:
@@ -381,6 +434,7 @@ class DriveEngine:
             hormone=self.hormone,
             motivation=self.motivation,
             desire=self.desire,
+            energy=self.energy,
         )
         signals.compute_derived()
         return signals
@@ -492,7 +546,7 @@ class DriveEngine:
     def save(self) -> None:
         """保存状态到文件"""
         self.storage.save(
-            self.emotion, self.hormone, self.motivation, self.desire
+            self.emotion, self.hormone, self.motivation, self.desire, self.energy
         )
 
     def reset(self) -> None:
