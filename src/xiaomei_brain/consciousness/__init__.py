@@ -39,6 +39,9 @@ from .storage import ConsciousnessStorage
 from .identity import IdentityConfig
 from .perception import PerceptionConfig, PerceptionRule
 from .conscious_living import ConsciousLiving, LivingState, LivingMessage
+from .action_item import ActionItem, ActionType
+from .rules import Rule, RULES
+from .action_dispatcher import ActionDispatcher, ActionExecutor
 
 __all__ = [
     # 保持向后兼容
@@ -72,4 +75,11 @@ __all__ = [
     "ConsciousLiving",
     "LivingState",
     "LivingMessage",
+    # ActionDispatcher
+    "ActionItem",
+    "ActionType",
+    "Rule",
+    "RULES",
+    "ActionDispatcher",
+    "ActionExecutor",
 ]

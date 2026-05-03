@@ -215,7 +215,199 @@ class LLMClient:
             logger.debug("tool_calls: %s", json.dumps([{"id": tc.id, "name": tc.name, "args": tc.arguments} for tc in resp.tool_calls], ensure_ascii=False, indent=2)[:500])
         logger.debug("=" * 80 + "\n")
         # ── End response ──────────────────────────────────────────
+
+        # Save request + response to JSON log
+        self._save_llm_log(payload, {
+            "content": resp.content,
+            "tool_calls": [{"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in resp.tool_calls],
+            "finish_reason": resp.finish_reason,
+            "reasoning_content": resp.reasoning_content,
+        })
+
         return resp
+
+    def chat_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> tuple[ChatResponse, list[str] | None]:
+        """Send messages and stream the response (SSE).
+
+        Returns:
+            (ChatResponse, display_chunks | None)
+            display_chunks is a list of text chunks for real-time output;
+            reasoning content is prepended with ANSI dim formatting.
+            None when there are tool_calls and no display content.
+        """
+        import datetime as _dt
+        import os as _os
+
+        api_messages = self._build_messages(messages)
+
+        payload = {
+            "model": self.model,
+            "messages": api_messages,
+            "stream": True,
+        }
+        if tools:
+            payload["tools"] = tools
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        # Save payload to JSONL log
+        self._save_llm_log(payload)
+
+        _t0 = time.time()
+        _msg_preview = (api_messages[0].get("content") or "")[:40] if api_messages else ""
+        _has_tools = bool(tools)
+
+        def _log(success: bool, detail: str = ""):
+            elapsed = time.time() - _t0
+            ts = _dt.datetime.now().strftime("%H:%M:%S")
+            detail_clean = detail.replace("\n", "\\n")[:80] if detail else ""
+            msg = "%s model=%s msgs=%d tools=%s elapsed=%.2fs %s" % (
+                ts, self.model, len(api_messages), _has_tools, elapsed, detail_clean,
+            )
+            if success:
+                logger.info("\033[91m[LLM OK STREAM] %s\033[0m", msg)
+            else:
+                logger.info("[LLM ERR STREAM] %s", msg)
+
+        response = requests.post(
+            f"{self.base_url}/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=self.timeout,
+            stream=True,
+        )
+        if response.status_code >= 400:
+            logger.warning(
+                "[LLM STREAM DEBUG] HTTP %d | msgs=%d roles=%s | msg0_len=%d | tools=%s",
+                response.status_code,
+                len(api_messages),
+                [m.get("role") for m in api_messages],
+                len(api_messages[0].get("content", "") if api_messages else ""),
+                bool(tools),
+            )
+        response.raise_for_status()
+
+        # Parse SSE stream
+        content_parts: list[str] = []
+        stream_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        tool_calls_acc: dict[int, dict] = {}
+        finish_reason = ""
+        in_think = False
+
+        try:
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                if isinstance(line, bytes):
+                    try:
+                        line = line.decode("utf-8")
+                    except UnicodeDecodeError:
+                        line = line.decode("utf-8", errors="replace")
+                if not line.startswith("data: "):
+                    continue
+                data = line[6:]
+                if data.strip() == "[DONE]":
+                    break
+
+                try:
+                    chunk = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+
+                choice = chunk.get("choices", [{}])[0]
+                delta = choice.get("delta", {})
+                finish_reason = choice.get("finish_reason", "") or finish_reason
+
+                if delta.get("reasoning_content"):
+                    reasoning_parts.append(delta["reasoning_content"])
+
+                if "content" in delta and delta["content"] and not delta.get("reasoning_content"):
+                    content_parts.append(delta["content"])
+                    text = delta["content"]
+                    if in_think:
+                        end_idx = text.find("</think>")
+                        if end_idx != -1:
+                            in_think = False
+                            text = text[end_idx + 8:]
+                        else:
+                            text = ""
+                    if not in_think:
+                        start_idx = text.find("<think")
+                        if start_idx != -1:
+                            end_idx = text.find("</think>", start_idx)
+                            if end_idx != -1:
+                                text = text[:start_idx] + text[end_idx + 8:]
+                            else:
+                                text = text[:start_idx]
+                                in_think = True
+                    if text:
+                        stream_parts.append(text)
+
+                if "tool_calls" in delta and delta["tool_calls"]:
+                    for tc_delta in delta["tool_calls"]:
+                        idx = tc_delta.get("index", 0)
+                        if idx not in tool_calls_acc:
+                            tool_calls_acc[idx] = {"id": "", "name": "", "arguments": ""}
+                        if tc_delta.get("id"):
+                            tool_calls_acc[idx]["id"] = tc_delta["id"]
+                        fn = tc_delta.get("function", {})
+                        if fn.get("name"):
+                            tool_calls_acc[idx]["name"] = fn["name"]
+                        if fn.get("arguments"):
+                            tool_calls_acc[idx]["arguments"] += fn["arguments"] or ""
+        except Exception as e:
+            _log(False, f"stream_err:{e}")
+            raise
+
+        # Build display stream: reasoning first (dimmed), then response
+        display_stream: list[str] = []
+        if reasoning_parts:
+            reasoning_text = "".join(reasoning_parts).strip()
+            if reasoning_text:
+                display_stream.append("\n\033[2m" + reasoning_text + "\033[0m\n\n")
+
+        content = self._strip_thinking("".join(content_parts))
+        try:
+            content = content.encode("utf-8", "surrogatepass").decode("utf-8", "replace")
+        except Exception:
+            pass
+
+        tool_calls = []
+        for idx in sorted(tool_calls_acc):
+            tc = tool_calls_acc[idx]
+            try:
+                args = json.loads(tc["arguments"]) if tc["arguments"] else {}
+            except json.JSONDecodeError:
+                args = {}
+            tool_calls.append(ToolCall(id=tc["id"], name=tc["name"], arguments=args))
+
+        chat_response = ChatResponse(
+            content=content,
+            tool_calls=tool_calls,
+            finish_reason=finish_reason,
+            reasoning_content="".join(reasoning_parts) if reasoning_parts else None,
+        )
+
+        _log(True)
+
+        # Save response to JSONL log
+        self._save_llm_log(payload, {
+            "content": content,
+            "tool_calls": [{"name": tc.name, "arguments": tc.arguments} for tc in tool_calls],
+            "finish_reason": finish_reason,
+            "reasoning_content": "".join(reasoning_parts) if reasoning_parts else None,
+        })
+
+        display_stream.extend(stream_parts)
+        return chat_response, display_stream if (display_stream or not tool_calls) else None
 
     # endregion
 
@@ -249,7 +441,48 @@ class LLMClient:
 
             result.append(api_msg)
 
+        # DeepSeek thinking mode: 所有 assistant 消息必须有 reasoning_content。
+        # 跨模型消息（如 MiniMax 产生的）不含此字段，补占位符满足格式要求。
+        if "deepseek" in self.model.lower():
+            for m in result:
+                if m.get("role") == "assistant" and "reasoning_content" not in m:
+                    m["reasoning_content"] = " "  # 非空占位，空字符串会被 API 拒绝
+
         return result
+
+    # ── LLM 日志（JSONL 格式）─────────────────────────────────
+
+    def _save_llm_log(self, payload: dict[str, Any], response: dict[str, Any] | None = None) -> None:
+        """保存 LLM 请求/响应为 JSONL 格式日志。
+
+        每条 LLM 调用追加到当天的 JSONL 文件：
+        ~/.xiaomei-brain/logs/YYYYMMDD.jsonl
+        便于回放完整的工具调用链，全天检索方便。
+        """
+        import os as _os
+        import datetime as _dt
+
+        _log_dir = _os.path.expanduser("~/.xiaomei-brain/logs")
+        _os.makedirs(_log_dir, exist_ok=True)
+
+        now = _dt.datetime.now()
+        _log_file = _os.path.join(_log_dir, f"{now.strftime('%Y%m%d')}.jsonl")
+
+        try:
+            entry = {
+                "timestamp": now.isoformat(),
+                "model": payload.get("model", self.model),
+                "payload": {
+                    "messages": payload.get("messages", []),
+                    "tools": payload.get("tools"),
+                },
+                "response": response,
+            }
+            with open(_log_file, "a", encoding="utf-8") as _f:
+                _f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            logger.debug("[LLM] Logged to %s", _log_file)
+        except Exception as _e:
+            logger.warning("[LLM] Failed to save log: %s", _e)
 
     def _request_with_retry(
         self,

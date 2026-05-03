@@ -24,7 +24,8 @@ from .state import (
 from .config import DriveConfig, load_drive_config
 from .engine import DriveEngine
 from .storage import DriveStorage
-from .event_extractor import EventExtractor
+# EventExtractor 已废弃：功能合并到 Consciousness.tick_L2()，后续集中清理
+# from .event_extractor import EventExtractor
 from .action_executor import DesireActionExecutor
 
 __all__ = [
@@ -38,6 +39,6 @@ __all__ = [
     "load_drive_config",
     "DriveEngine",
     "DriveStorage",
-    "EventExtractor",
+    # "EventExtractor",  # 已废弃：功能合并到 Consciousness.tick_L2()
     "DesireActionExecutor",
 ]

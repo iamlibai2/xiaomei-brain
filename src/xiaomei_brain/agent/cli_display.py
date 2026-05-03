@@ -178,7 +178,7 @@ def expand_tool_call(index: int, tool_call_buffer: Any = None) -> None:
     print(f"\n  ┌── 工具调用 #{rec.index} ──", flush=True)
     print(f"  │ 工具: {rec.name}", flush=True)
     print(f"  │ 参数:", flush=True)
-    for k, v in rec.arguments.items():
+    for k, v in (rec.arguments or {}).items():
         val = str(v)
         print(f"  │   {k} = {val}", flush=True)
     print(f"  │ 结果:", flush=True)

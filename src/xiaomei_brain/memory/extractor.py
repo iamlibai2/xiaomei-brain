@@ -750,6 +750,61 @@ class MemoryExtractor:
         clean = (content[:m_start] + content[m_end + 9:]).strip()
         return block, clean
 
+    def extract_think_block(self, content: str) -> tuple[dict | None, str]:
+        """从 LLM 回复内容中提取 THINK block，解析 JSON 并清洗回复内容。
+
+        Returns:
+            (think_dict, clean_content) — dict 为 None 表示无有效 block
+            think_dict: {"timestamp": str, "user_input_summary": str, "raw_stream": str, "feeling_tags": list}
+        """
+        if not content:
+            return None, content
+
+        t_start = content.rfind("<think>")
+        if t_start == -1:
+            return None, content
+
+        # The  content is always on the same line as the closing tag,
+        # right after the JSON ends with }. Find  on same line as }
+        line_start = content.rfind("\n", t_start) + 1
+        line_end = content.find("\n", line_start)
+        if line_end == -1:
+            line_end = len(content)
+
+        line = content[line_start:line_end]
+        tag_pos = line.find("")
+        if tag_pos == -1:
+            # Fallback: scan for  within first 200 chars after JSON ends
+            block = content[t_start:t_start+300]
+            json_end = block.rfind("}")
+            if json_end != -1:
+                after = block[json_end+1:]
+                tag_pos_in_after = after.find("")
+                if tag_pos_in_after != -1:
+                    t_end = t_start + json_end + 1 + tag_pos_in_after
+                else:
+                    return None, content
+            else:
+                return None, content
+        else:
+            t_end = line_start + tag_pos
+
+        block = content[t_start + 7:t_end].strip()
+        clean = (content[:t_start] + content[t_end + 8:]).strip()
+
+        json_start = block.find("{")
+        json_end = block.rfind("}")
+        if json_start == -1 or json_end == -1:
+            return None, clean
+
+        json_str = block[json_start:json_end + 1]
+        try:
+            import json
+            data = json.loads(json_str)
+            return data, clean
+        except json.JSONDecodeError:
+            return None, clean
+
     def execute_block(self, memory_block: str, user_id: str = "global") -> list[int]:
         """执行 MEMORY block（合并模式，无需调 LLM）。
 

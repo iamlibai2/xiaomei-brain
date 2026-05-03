@@ -50,6 +50,8 @@ class DriveEngine:
         """
         self.agent_id = agent_id
         self._loaded = False  # 标记是否已加载
+        self.longterm_memory: Any = None  # 统一叙事存储引用
+        self._last_user_active: float = 0  # 用户最后活跃时间（用于 tick_minute 判断）
 
         # 配置
         if base_dir is None:
@@ -123,6 +125,10 @@ class DriveEngine:
             f"desire.cognition={self.desire.cognition:.2f}"
         )
 
+    def set_longterm_memory(self, ltm: Any) -> None:
+        """设置统一叙事存储引用，用于写入内部事件叙事"""
+        self.longterm_memory = ltm
+
     # ========== 事件输入（增量更新）==========
 
     def on_praise(self, delta: float = 0.3) -> None:
@@ -156,6 +162,9 @@ class DriveEngine:
             f"dopamine={self.hormone.dopamine:.2f}"
         )
 
+        # 叙事写回由 L2 统一负责，此处只改状态
+        logger.debug("[DriveEngine] on_praise 完成，叙事由 L2 统一写入")
+
     def on_criticism(self, delta: float = 0.3) -> None:
         """
         用户批评 - 增量更新
@@ -185,6 +194,9 @@ class DriveEngine:
             f"emotion={EmotionType.SADNESS.value}({self.emotion.intensity:.2f}), "
             f"cortisol={self.hormone.cortisol:.2f}"
         )
+
+        # 叙事写回由 L2 统一负责，此处只改状态
+        logger.debug("[DriveEngine] on_criticism 完成，叙事由 L2 统一写入")
 
     def on_goal_completed(self, progress: float = 1.0) -> None:
         """
@@ -226,6 +238,15 @@ class DriveEngine:
             f"achievement={self.desire.achievement:.2f}"
         )
 
+        if self.longterm_memory:
+            rpe_str = f"比预期{'好' if rpe > 0 else '差'}" if rpe != 0 else "符合预期"
+            self.longterm_memory.store(
+                content=f"我完成了一个目标，{rpe_str}，多巴胺上升，感到成就和满足。",
+                source="internal",
+                tags=["drive", "achievement", "goal_completed"],
+                importance=0.7,
+            )
+
     def on_goal_failed(self, reason: str = "") -> None:
         """
         目标失败
@@ -254,6 +275,15 @@ class DriveEngine:
             f"achievement={self.desire.achievement:.2f}, "
             f"reason={reason}"
         )
+
+        if self.longterm_memory:
+            reason_suffix = f"原因是：{reason}" if reason else ""
+            self.longterm_memory.store(
+                content=f"我的一个目标失败了，感到沮丧和失落。{reason_suffix}",
+                source="internal",
+                tags=["drive", "setback", "goal_failed"],
+                importance=0.7,
+            )
 
     def on_goal_progress(self, progress: float) -> None:
         """
@@ -287,6 +317,7 @@ class DriveEngine:
         影响：
         - 欲望 → belonging↓（连接满足）
         """
+        self._last_user_active = time.time()
         self.desire.belonging = max(0.0, self.desire.belonging - 0.1)
         self.hormone.oxytocin = min(1.0, self.hormone.oxytocin + 0.1)
 
@@ -335,13 +366,19 @@ class DriveEngine:
         self.energy.last_updated = time.time()
         logger.debug("[DriveEngine] 能量恢复: +%.2f → %.2f", delta, self.energy.level)
 
-    # ========== LLM 更新欲望 ==========
+    # ========== LLM 更新欲望（已废弃）==========
 
     def update_desire_from_llm(self, analysis: dict) -> None:
         """
-        从 LLM 分析结果更新欲望
+        已废弃：LLM 不再直接操作欲望值。
 
-        analysis: {"belonging_delta": 0.1, "cognition_delta": -0.2, ...}
+        欲望值现在由算法统一维护：
+        - on_user_active / on_user_idle → belonging
+        - on_desire_satisfied → 对应欲望
+        - L2 语义事件 → 算法映射到欲望变化
+
+        LLM 只负责识别事件类型（social_connection/curiosity_sparked/expression_urge），
+        由 _apply_drive_events() 中的固定映射决定数值变化。
         """
         for key, delta in analysis.items():
             if key.endswith("_delta"):
@@ -352,7 +389,7 @@ class DriveEngine:
                     setattr(self.desire, attr, new_value)
 
         logger.info(
-            f"[DriveEngine] 欲望 LLM 更新: "
+            f"[DriveEngine] 欲望 LLM 更新（已废弃，不应被调用）: "
             f"belonging={self.desire.belonging:.2f}, "
             f"cognition={self.desire.cognition:.2f}"
         )
@@ -363,8 +400,14 @@ class DriveEngine:
         """
         分钟 - 情绪衰减
 
-        情绪自然衰减，强度降低，低于阈值回归 NEUTRAL
+        情绪自然衰减，强度降低，低于阈值回归 NEUTRAL。
+        用户活跃时不衰减（对话中的情绪由事件驱动，不由时间衰减）。
         """
+        # 用户最近 2 分钟有活动，跳过衰减
+        if self._last_user_active > 0 and (time.time() - self._last_user_active) < 120:
+            self.last_minute_tick = time.time()
+            return
+
         if self.emotion.type != EmotionType.NEUTRAL:
             elapsed = time.time() - self.emotion.created_at
             if elapsed > self.emotion.duration:
@@ -373,6 +416,13 @@ class DriveEngine:
                 if self.emotion.intensity < self.config.emotion.min_intensity:
                     self.emotion = EmotionalState()  # 回归平静
                     logger.debug("[DriveEngine] 情绪回归平静")
+                    if self.longterm_memory:
+                        self.longterm_memory.store(
+                            content="我的情绪渐渐平复，回归了平静的状态。",
+                            source="internal",
+                            tags=["drive", "emotion", "neutral"],
+                            importance=0.3,
+                        )
 
         self.last_minute_tick = time.time()
 

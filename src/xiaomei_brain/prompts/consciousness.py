@@ -30,6 +30,9 @@ CONSCIOUSNESS_PROMPT_DEEP = """你是{identity}的意识系统。现在是{time_
 长期记忆数量：{memory_count}
 最近记忆：{recent_memories}
 
+【内部叙事】
+近期内在体验：{internal_narratives}
+
 【异常检测】
 当前异常：{anomaly}
 

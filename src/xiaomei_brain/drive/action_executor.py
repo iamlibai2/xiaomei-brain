@@ -322,23 +322,122 @@ source: desire_driven_learning
     # ========== 目标类行为 ==========
 
     def _do_progress_goal(self, action: dict) -> bool:
+        """推进目标（欲望驱动，成就欲 > 0.6）。
+
+        AWAKE  → 发送主动提醒，不打扰用户
+        SLEEPING / DREAMING → 自动推进任务
         """
-        推进目标
+        living = self.living
 
-        当前：简单记录意图
-        后续：与 Purpose 层配合，实际推进目标
-        """
-        si = self.living.consciousness.get_self_image()
+        # 获取当前 Task（优先）或 Purpose 目标
+        task = living.task_manager.get_current_task()
+        goal = living.purpose.get_current() if living.purpose else None
 
-        # 记录内在想法
-        if si.primary_goal:
-            thought = f"我想继续推进目标：{si.primary_goal}"
-            si.inner_thought = thought
-            logger.info(f"[ActionExecutor] 目标推进意图: {thought}")
-            return True
+        if not task and not goal:
+            logger.debug("[ActionExecutor] 无任务/目标，跳过")
+            return False
 
-        logger.debug("[ActionExecutor] 无目标，跳过")
-        return False
+        # 判断当前状态
+        state = living.state.value if hasattr(living, 'state') else 'awake'
+
+        if state in ('sleeping', 'dreaming'):
+            return self._auto_progress_goal(task, goal)
+        else:
+            return self._remind_progress_goal(task, goal)
+
+    def _auto_progress_goal(self, task, goal) -> bool:
+        """SLEEPING/DREAMING：自动推进目标"""
+        living = self.living
+
+        # 恢复暂停的 Task
+        if task and task.is_paused():
+            living.task_manager.resume_task(task.task_id)
+            logger.info("[ActionExecutor] 恢复 Task: %s", task.description[:40])
+
+        # 如果没有 Task 但有 Goal，创建 Task
+        if not task and goal:
+            from xiaomei_brain.purpose.goal import TaskType
+            task = living.task_manager.create_task(
+                description=goal.description,
+                task_type=TaskType.EXECUTION,
+            )
+            logger.info("[ActionExecutor] 创建 Task: %s", task.description[:40])
+
+        # 确保目标有活跃的子目标
+        goal_obj = living.purpose.get_current() if living.purpose else None
+        if not goal_obj:
+            logger.debug("[ActionExecutor] 无活跃目标，跳过")
+            return False
+
+        # 找到第一个未完成的子目标，没有子目标则直接用目标本身
+        sub_goals = living.purpose.get_sub_goals(goal_obj.id) if living.purpose else []
+        active_sub = None
+        for sg in sub_goals:
+            if not sg.is_completed():
+                active_sub = sg
+                break
+
+        if not active_sub:
+            # 所有子目标都完成了，检查父目标
+            if goal_obj.is_completed():
+                logger.info("[ActionExecutor] 目标已完成: %s", goal_obj.description[:40])
+                if task:
+                    living.task_manager.complete_task(task.task_id)
+                living.drive.on_desire_satisfied("achievement", 0.3)
+                return True
+            # 没有子目标且目标未完成，直接用目标本身
+            active_sub = goal_obj
+
+        # 激活子目标
+        if active_sub.id != goal_obj.id:
+            living.purpose.set_current(active_sub.id)
+
+        # 构建上下文并执行
+        from ..consciousness.conscious_living import LivingMessage
+        msg = LivingMessage(
+            content=f"[系统] 成就欲驱动，自动推进目标: {goal_obj.description[:40]}",
+            user_id="system",
+            session_id="auto",
+            source="system",
+        )
+
+        intent_context = living._build_intent_context_for_goal(active_sub)
+        logger.info("[ActionExecutor] 自动执行: goal=%s sub=%s",
+                    goal_obj.description[:40], active_sub.description[:40])
+
+        living._run_chat(msg, intent_context)
+
+        # 执行后满足成就欲
+        living.drive.on_desire_satisfied("achievement", 0.3)
+        return True
+
+    def _remind_progress_goal(self, task, goal) -> bool:
+        """AWAKE：提醒用户有未完成任务"""
+        living = self.living
+
+        if not living.on_proactive:
+            return False
+
+        si = living.consciousness.get_self_image()
+        if si.user_idle_duration < 60:
+            return False  # 用户活跃中，不打扰
+
+        # 生成提醒消息
+        desc = ""
+        if task:
+            desc = task.description[:60]
+        elif goal:
+            desc = goal.description[:60]
+
+        if desc:
+            msg = f"想起来之前的「{desc}」还没完成，要继续吗？回复'继续'我就开始。"
+            living.on_proactive(msg)
+            logger.info("[ActionExecutor] 目标提醒: %s", desc)
+
+        # 提醒本身满足了一部分成就欲
+        living.drive.on_desire_satisfied("achievement", 0.1)
+        si.inner_thought = f"我想继续推进目标：{desc}"
+        return True
 
     # ========== 表达类行为 ==========
 

@@ -344,6 +344,16 @@ class SelfGrowth:
     last_inner_thought_time: float = 0.0
     """上次产生内在想法时间"""
 
+    # 自我感知（L1 消化内部叙事产出，纯规则）
+    emotional_trajectory: str = ""
+    """情绪轨迹：上升/下降/平稳/波动"""
+
+    goal_rhythm: str = ""
+    """目标节奏：高效推进/停滞/规划中/无目标"""
+
+    consciousness_rhythm: str = ""
+    """意识节律：思维活跃/宁静/深度思考不足/无数据"""
+
     # 梦境摘要
     last_wake_summary: str = ""
     """最近苏醒时的意识报告"""
@@ -360,6 +370,9 @@ class SelfGrowth:
             "inner_thought": self.inner_thought,
             "inner_thought_history": self.inner_thought_history[-10:],
             "last_inner_thought_time": self.last_inner_thought_time,
+            "emotional_trajectory": self.emotional_trajectory,
+            "goal_rhythm": self.goal_rhythm,
+            "consciousness_rhythm": self.consciousness_rhythm,
             "last_wake_summary": self.last_wake_summary,
             "last_dream_summary": self.last_dream_summary,
         }
@@ -368,6 +381,7 @@ class SelfGrowth:
         for key in [
             "consciousness_age", "primary_goal", "goal_progress",
             "inner_thought", "last_inner_thought_time",
+            "emotional_trajectory", "goal_rhythm", "consciousness_rhythm",
             "last_wake_summary", "last_dream_summary",
         ]:
             if key in data:

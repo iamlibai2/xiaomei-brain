@@ -55,7 +55,7 @@ STATUS_EXTINCT = "extinct"
 class LongTermMemory:
     """Vector-semantic long-term memory — SQLite metadata + LanceDB vector index."""
 
-    VALID_SOURCES = {"immediate", "periodic", "dream", "manual", "insight"}
+    VALID_SOURCES = {"immediate", "periodic", "dream", "manual", "insight", "internal"}
 
     def __init__(
         self,
@@ -390,6 +390,21 @@ class LongTermMemory:
                 ON memory_relations(to_memory_id);
             CREATE INDEX IF NOT EXISTS idx_relations_type
                 ON memory_relations(relation_type);
+
+            -- 见证层：原始念头捕获
+            CREATE TABLE IF NOT EXISTS thoughts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL DEFAULT 'global',
+                session_id TEXT NOT NULL DEFAULT 'main',
+                timestamp TEXT NOT NULL,
+                user_input_summary TEXT NOT NULL,
+                raw_stream TEXT NOT NULL,
+                feeling_tags TEXT NOT NULL,
+                created_at REAL NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_thoughts_user ON thoughts(user_id);
+            CREATE INDEX IF NOT EXISTS idx_thoughts_session ON thoughts(session_id);
         """)
 
         # Migrate existing rows: add status column if missing (existing DB)
@@ -463,13 +478,45 @@ class LongTermMemory:
         self._add_to_lance(memory_id, content, user_id)
 
         logger.info(
-            "Stored memory #%d [user=%s] [%s] imp=%.2f: %.50s",
+            "Stored memory #%d [user=%s] [%s] imp=%.2f: %s",
             memory_id, user_id, source, importance, content,
         )
         return memory_id
 
+    def store_thought(
+        self,
+        timestamp: str,
+        user_input_summary: str,
+        raw_stream: str,
+        feeling_tags: list[str],
+        user_id: str = "global",
+        session_id: str = "main",
+    ) -> int:
+        """Store a think/thought record from the witness layer.
+
+        Returns the ID of the inserted record.
+        """
+        import json
+        conn = self._get_conn()
+        now = time.time()
+        tags_json = json.dumps(feeling_tags, ensure_ascii=False)
+
+        cur = conn.execute(
+            """INSERT INTO thoughts (user_id, session_id, timestamp, user_input_summary, raw_stream, feeling_tags, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, session_id, timestamp, user_input_summary, raw_stream, tags_json, now),
+        )
+        conn.commit()
+        thought_id = cur.lastrowid
+        logger.info(
+            "Stored thought #%d [user=%s] session=%s summary=%s tags=%s",
+            thought_id, user_id, session_id, user_input_summary[:30], feeling_tags,
+        )
+        return thought_id
+
     def recall(
         self, query: str, user_id: str = "global", top_k: int = 5,
+        sources: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Recall memories by semantic similarity.
 
@@ -477,6 +524,10 @@ class LongTermMemory:
         results with full metadata from SQLite.
 
         Falls back to keyword search if LanceDB is unavailable.
+
+        Args:
+            sources: Optional list of source types to filter by.
+                     E.g. ["internal", "dream"] for internal narratives only.
         """
         # Clean surrogate characters from query
         try:
@@ -485,18 +536,24 @@ class LongTermMemory:
             query = query.replace("\udc00", "").replace("\ud800", "")
 
         logger.info(
-            "[Memory RECALL] user=%s query='%s' top_k=%d",
-            user_id, query, top_k,
+            "[Memory RECALL] user=%s query='%s' top_k=%d sources=%s",
+            user_id, query, top_k, sources,
         )
 
         # Try vector search first
         try:
-            return self._vector_recall(query, user_id, top_k)
+            result = self._vector_recall(query, user_id, top_k, sources)
+            return result if result is not None else []
         except Exception as e:
             logger.warning(
                 "[Memory RECALL] Vector search failed, falling back to keywords: %s", e,
             )
-            return self._keyword_recall(query, user_id, top_k)
+            try:
+                result = self._keyword_recall(query, user_id, top_k, sources)
+                return result if result is not None else []
+            except Exception as e2:
+                logger.error("[Memory RECALL] Keyword recall also failed: %s", e2)
+                return []
 
     def get_important(
         self, user_id: str = "global", top_k: int = 20, min_strength: float = 0.0,
@@ -548,7 +605,7 @@ class LongTermMemory:
         return memories[:top_k]
 
     def _vector_recall(
-        self, query: str, user_id: str, top_k: int,
+        self, query: str, user_id: str, top_k: int, sources: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Semantic recall using LanceDB vector search."""
         query_vector = self._embed(query)
@@ -571,12 +628,15 @@ class LongTermMemory:
         mem_ids = results["id"].tolist()
         distances = dict(zip(results["id"].tolist(), results["_distance"].tolist()))
 
-        # Fetch full metadata from SQLite (exclude extinct)
+        # Fetch full metadata from SQLite (exclude extinct, optional source filter)
         placeholders = ",".join("?" * len(mem_ids))
-        rows = conn.execute(
-            f"""SELECT * FROM memories WHERE id IN ({placeholders}) AND status != '{STATUS_EXTINCT}'""",
-            mem_ids,
-        ).fetchall()
+        sql = f"""SELECT * FROM memories WHERE id IN ({placeholders}) AND status != '{STATUS_EXTINCT}'"""
+        params = list(mem_ids)
+        if sources:
+            src_placeholders = ",".join("?" * len(sources))
+            sql += f" AND source IN ({src_placeholders})"
+            params.extend(sources)
+        rows = conn.execute(sql, params).fetchall()
 
         if not rows:
             return []
@@ -624,12 +684,12 @@ class LongTermMemory:
         return result[:top_k]
 
     def _keyword_recall(
-        self, query: str, user_id: str, top_k: int,
+        self, query: str, user_id: str, top_k: int, sources: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Fallback keyword recall using LIKE."""
         conn = self._get_conn()
         keywords = self._extract_keywords(query)
-        rows = self._search_by_keywords(conn, keywords, user_id, top_k)
+        rows = self._search_by_keywords(conn, keywords, user_id, top_k, sources)
 
         result = []
         seen_ids = set()
@@ -909,76 +969,79 @@ class LongTermMemory:
             relation_type: Optional filter by relation type
 
         Returns:
-            List of {memory_id, content, path, relation_chain} dicts
+            List of {memory_id, content, path, relation_chain} dicts (never None)
         """
         if depth < 1:
             return []
+        try:
+            conn = self._get_conn()
+            visited: set[int] = {memory_id}
+            frontier: set[int] = {memory_id}
+            chain: list[dict[str, Any]] = []
 
-        conn = self._get_conn()
-        visited: set[int] = {memory_id}
-        frontier: set[int] = {memory_id}
-        chain: list[dict[str, Any]] = []
+            for hop in range(depth):
+                next_frontier: set[int] = set()
+                if not frontier:
+                    break
 
-        for hop in range(depth):
-            next_frontier: set[int] = set()
-            if not frontier:
-                break
+                placeholders = ",".join("?" * len(frontier))
+                type_filter = f"AND r.relation_type = '{relation_type}'" if relation_type else ""
 
-            placeholders = ",".join("?" * len(frontier))
-            type_filter = f"AND r.relation_type = '{relation_type}'" if relation_type else ""
-
-            rows = conn.execute(
-                f"""SELECT r.from_memory_id, r.to_memory_id,
-                           r.relation_type, r.context
-                    FROM memory_relations r
-                    WHERE (r.from_memory_id IN ({placeholders})
-                           OR r.to_memory_id IN ({placeholders}))
-                      {type_filter}""",
-                list(frontier) + list(frontier),
-            ).fetchall()
-
-            if not rows:
-                break
-
-            # Collect other side IDs
-            next_ids: set[int] = set()
-            for rr in rows:
-                from_id, to_id = rr["from_memory_id"], rr["to_memory_id"]
-                other_id = to_id if from_id in frontier else from_id
-                if other_id in visited:
-                    continue
-                next_ids.add(other_id)
-
-            # Batch fetch memory content for this hop
-            if next_ids:
-                mem_placeholders = ",".join("?" * len(next_ids))
-                mem_rows = conn.execute(
-                    f"""SELECT id, content FROM memories
-                        WHERE id IN ({mem_placeholders})
-                          AND status != '{STATUS_EXTINCT}'""",
-                    list(next_ids),
+                rows = conn.execute(
+                    f"""SELECT r.from_memory_id, r.to_memory_id,
+                               r.relation_type, r.context
+                        FROM memory_relations r
+                        WHERE (r.from_memory_id IN ({placeholders})
+                               OR r.to_memory_id IN ({placeholders}))
+                          {type_filter}""",
+                    list(frontier) + list(frontier),
                 ).fetchall()
-                mem_map = {r["id"]: r["content"] for r in mem_rows}
 
+                if not rows:
+                    break
+
+                # Collect other side IDs
+                next_ids: set[int] = set()
                 for rr in rows:
                     from_id, to_id = rr["from_memory_id"], rr["to_memory_id"]
                     other_id = to_id if from_id in frontier else from_id
                     if other_id in visited:
                         continue
-                    visited.add(other_id)
-                    next_frontier.add(other_id)
-                    content = mem_map.get(other_id, "")
-                    chain.append({
-                        "memory_id": other_id,
-                        "content": content,
-                        "relation_type": rr["relation_type"],
-                        "context": rr["context"],
-                        "hop": hop + 1,
-                    })
+                    next_ids.add(other_id)
 
-            frontier = next_frontier
+                # Batch fetch memory content for this hop
+                if next_ids:
+                    mem_placeholders = ",".join("?" * len(next_ids))
+                    mem_rows = conn.execute(
+                        f"""SELECT id, content FROM memories
+                            WHERE id IN ({mem_placeholders})
+                              AND status != '{STATUS_EXTINCT}'""",
+                        list(next_ids),
+                    ).fetchall()
+                    mem_map = {r["id"]: r["content"] for r in mem_rows}
 
-        return chain
+                    for rr in rows:
+                        from_id, to_id = rr["from_memory_id"], rr["to_memory_id"]
+                        other_id = to_id if from_id in frontier else from_id
+                        if other_id in visited:
+                            continue
+                        visited.add(other_id)
+                        next_frontier.add(other_id)
+                        content = mem_map.get(other_id, "")
+                        chain.append({
+                            "memory_id": other_id,
+                            "content": content,
+                            "relation_type": rr["relation_type"],
+                            "context": rr["context"],
+                            "hop": hop + 1,
+                        })
+
+                frontier = next_frontier
+
+            return chain
+        except Exception as e:
+            logger.warning("[LongTermMemory] get_relation_chain failed: %s", e)
+            return []
 
     # ── Memory Strength & Dream Reinforcement ──────────────────────
 
@@ -1129,15 +1192,24 @@ class LongTermMemory:
 
     def get_recent(
         self, n: int = 10, user_id: str = "global",
+        sources: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Get most recently stored memories, optionally filtered by user."""
+        """Get most recently stored memories, optionally filtered by user.
+
+        Args:
+            sources: Optional list of source types to filter by.
+        """
         conn = self._get_conn()
-        rows = conn.execute(
-            f"""SELECT * FROM memories
-               WHERE status != '{STATUS_EXTINCT}' AND user_id = ?
-               ORDER BY created_at DESC LIMIT ?""",
-            (user_id, n),
-        ).fetchall()
+        sql = f"""SELECT * FROM memories
+               WHERE status != '{STATUS_EXTINCT}' AND user_id = ?"""
+        params: list = [user_id]
+        if sources:
+            src_placeholders = ",".join("?" * len(sources))
+            sql += f" AND source IN ({src_placeholders})"
+            params.extend(sources)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(n)
+        rows = conn.execute(sql, params).fetchall()
         result = []
         for r in rows:
             d = dict(r)
@@ -1224,7 +1296,7 @@ class LongTermMemory:
 
     def _search_by_keywords(
         self, conn: sqlite3.Connection, keywords: list[str],
-        user_id: str, top_k: int,
+        user_id: str, top_k: int, sources: list[str] | None = None,
     ) -> list[sqlite3.Row]:
         """Keyword-based search (fallback when LanceDB unavailable)."""
         all_rows = []
@@ -1232,15 +1304,17 @@ class LongTermMemory:
             has_cjk = any("\u4e00" <= c <= "\u9fff" for c in keyword)
             if has_cjk:
                 try:
-                    rows = conn.execute(
-                        f"""SELECT m.* FROM memories m
+                    sql = f"""SELECT m.* FROM memories m
                            WHERE (m.user_id = ? OR m.user_id = 'global')
-                             AND m.status != '{STATUS_EXTINCT}'
-                             AND m.content LIKE ?
-                           ORDER BY m.importance DESC, m.created_at DESC
-                           LIMIT ?""",
-                        (user_id, f"%{keyword}%", top_k * 2),
-                    ).fetchall()
+                             AND m.status != '{STATUS_EXTINCT}'"""
+                    params: list = [user_id]
+                    if sources:
+                        src_placeholders = ",".join("?" * len(sources))
+                        sql += f" AND m.source IN ({src_placeholders})"
+                        params.extend(sources)
+                    sql += " AND m.content LIKE ? ORDER BY m.importance DESC, m.created_at DESC LIMIT ?"
+                    params.extend([f"%{keyword}%", top_k * 2])
+                    rows = conn.execute(sql, params).fetchall()
                     all_rows.extend(rows)
                 except Exception:
                     pass

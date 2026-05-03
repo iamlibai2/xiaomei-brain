@@ -8,7 +8,7 @@ import time
 from typing import Any, Generator
 
 from xiaomei_brain.base.llm import LLMClient
-from xiaomei_brain.memory.conversation_db import ConversationDB
+from xiaomei_brain.memory.conversation_db import ConversationDB, estimate_tokens
 from xiaomei_brain.memory.self_model import SelfModel
 from xiaomei_brain.consciousness.context_assembler import ContextAssembler, determine_mode
 from xiaomei_brain.memory.longterm import LongTermMemory
@@ -82,7 +82,7 @@ class Agent:
         llm: LLMClient,
         tools: ToolRegistry,
         system_prompt: str = "",
-        max_steps: int = 10,
+        max_steps: int = 100,
     ) -> None:
         self.llm = llm
         self.tools = tools
@@ -110,70 +110,101 @@ class Agent:
         return "".join(chunks)
 
     def stream(
-        self, user_input: str, consciousness_state: dict | None = None,
+        self, user_input: str = "", consciousness_state: dict | None = None,
+        messages: list[dict[str, Any]] | None = None,
     ) -> Generator[str, None, None]:
         """Run the agent with streaming output.
 
         Yields text chunks as the LLM generates them.
         Tool calls are handled transparently; only final text is yielded.
+
+        Args:
+            messages: 预组装好的消息列表。传入时跳过所有组装逻辑，直接进 ReAct。
         """
-        # Save user_input for memory extraction after response
-        self._last_user_input = user_input
+        # ── 预组装消息：跳过组装，直接进 ReAct ────────────────
+        if messages is not None:
+            base_context: list[dict[str, Any]] = []
+            openai_tools = self.tools.to_openai_tools() if self.tools.list_tools() else None
+        else:
+            # ── 原有组装逻辑（agent_manager.chat() 路径）───────
+            # Save user_input for memory extraction after response
+            self._last_user_input = user_input
 
-        # Log user message to DB
-        user_msg_id = None
-        if self.conversation_db:
-            user_msg_id = self.conversation_db.log(
+            # Log user message to DB
+            user_msg_id = None
+            if self.conversation_db:
+                user_msg_id = self.conversation_db.log(
+                    session_id=self.session_id,
+                    role="user",
+                    content=user_input,
+                )
+
+            # Add user message to self.messages (accumulate conversation history, with DB id)
+            self.messages.append({"role": "user", "content": user_input, "id": user_msg_id})
+
+            # Determine operational mode (consciousness-aware)
+            cs = consciousness_state or {}
+            # Check recent messages for tool calls (context continuity)
+            recent_tool_calls = any(
+                m.get("role") == "tool" or m.get("tool_calls")
+                for m in self.messages[-5:]
+            )
+            mode = determine_mode(
+                user_input,
+                energy_level=cs.get("energy_level", 0.8),
+                desire_state=cs.get("desire_state", {}),
+                pending_intents=cs.get("pending_intents", []),
+                has_active_goal=cs.get("has_active_goal", False),
+                recent_has_tool_calls=recent_tool_calls,
+            )
+
+            openai_tools = self.tools.to_openai_tools() if self.tools.list_tools() else None
+
+            # Auto-compact
+            if self.context_assembler and self.session_id:
+                self.context_assembler._auto_compact(self.session_id, 50000, self.messages)
+
+            # Base context: system + DAG + long-term memories (NO fresh tail)
+            base_context = self.context_assembler.assemble(
+                user_input=user_input,
+                max_tokens=50000,
+                mode=mode,
                 session_id=self.session_id,
-                role="user",
-                content=user_input,
+                user_id=self.user_id,
+                include_fresh_tail=False,
             )
 
-        # Add user message to self.messages (accumulate conversation history, with DB id)
-        self.messages.append({"role": "user", "content": user_input, "id": user_msg_id})
+            # Clean up compressed messages from self.messages (delegate to DAG)
+            if self.context_assembler and self.context_assembler.dag:
+                self.messages = self.context_assembler.dag.filter_compressed_messages(
+                    self.messages, self.session_id,
+                )
 
-        # Determine operational mode (consciousness-aware)
-        cs = consciousness_state or {}
-        # Check recent messages for tool calls (context continuity)
-        recent_tool_calls = any(
-            m.get("role") == "tool" or m.get("tool_calls")
-            for m in self.messages[-5:]
-        )
-        mode = determine_mode(
-            user_input,
-            energy_level=cs.get("energy_level", 0.8),
-            desire_state=cs.get("desire_state", {}),
-            pending_intents=cs.get("pending_intents", []),
-            has_active_goal=cs.get("has_active_goal", False),
-            recent_has_tool_calls=recent_tool_calls,
-        )
+            # Inject intent_context into system prompt (if present)
+            if self.intent_context and base_context:
+                system_msg = base_context[0]
+                system_content = system_msg.get("content", "")
+                enhanced_content = system_content + "\n" + self.intent_context
+                base_context[0] = {"role": "system", "content": enhanced_content}
+                logger.debug("[Agent] injected intent_context: len=%d", len(self.intent_context))
 
-        openai_tools = self.tools.to_openai_tools() if self.tools.list_tools() else None
-
-        # Base context: system + DAG + long-term memories (NO fresh tail)
-        base_context = self.context_assembler.assemble(
-            user_input=user_input,
-            max_tokens=10000,
-            mode=mode,
-            session_id=self.session_id,
-            user_id=self.user_id,
-            include_fresh_tail=False,
-        )
-
-        # Inject intent_context into system prompt (if present)
-        if self.intent_context and base_context:
-            system_msg = base_context[0]
-            system_content = system_msg.get("content", "")
-            # Append intent_context to system prompt
-            enhanced_content = system_content + "\n" + self.intent_context
-            base_context[0] = {"role": "system", "content": enhanced_content}
-            logger.debug("[Agent] injected intent_context: len=%d", len(self.intent_context))
-
-        # Clean up compressed messages from self.messages (delegate to DAG)
-        if self.context_assembler and self.context_assembler.dag:
-            self.messages = self.context_assembler.dag.filter_compressed_messages(
-                self.messages, self.session_id,
-            )
+            # Trim self.messages to fit within max_tokens total budget
+            max_total = 50000
+            system_tokens = estimate_tokens(base_context[0].get("content", "")) if base_context else 0
+            messages_budget = max(200, max_total - system_tokens - 500)
+            trimmed = []
+            used = 0
+            for m in reversed(self.messages):
+                t = estimate_tokens(m.get("content", ""))
+                if used + t > messages_budget and trimmed:
+                    break
+                trimmed.append(m)
+                used += t
+            if len(trimmed) < len(self.messages):
+                orig_count = len(self.messages)
+                self.messages = list(reversed(trimmed))
+                logger.info("[Context] trimmed messages: %d → %d (system=%d, budget=%d, used=%d)",
+                           orig_count, len(trimmed), system_tokens, messages_budget, used)
 
         from xiaomei_brain.agent.cli_display import (
             get_hint, print_tool_call, print_tool_result,
@@ -182,8 +213,13 @@ class Agent:
         _last_tool = ""
 
         for step in range(self.max_steps):
-            # All steps: [system prompt] + accumulated self.messages
-            all_messages = [base_context[0]] + self.messages
+            # All steps: 预组装消息 或 [system prompt] + accumulated self.messages
+            if messages is not None:
+                # self.messages accumulates tool results from each iteration
+                # merge it back into all_messages so LLM sees the full context
+                all_messages = list(messages) + self.messages
+            else:
+                all_messages = base_context + self.messages if base_context else list(self.messages)
 
             # Remove orphaned tool messages (tool without preceding assistant tool_calls)
             # and orphaned assistant(tool_calls) (tool responses missing after DAG compression)
@@ -245,16 +281,18 @@ class Agent:
                 self.messages.append(msg)
 
                 # 存 assistant(tool_calls) 到 DB，tool_calls + reasoning_content 存入 metadata
+                # 存 assistant(tool_calls) 到 DB，保存 DB id 到消息（DAG 压缩需要）
                 if self.conversation_db:
                     meta = {"tool_calls": tool_calls_data}
                     if response.reasoning_content:
                         meta["reasoning_content"] = response.reasoning_content
-                    self.conversation_db.log(
+                    tool_msg_id = self.conversation_db.log(
                         session_id=self.session_id,
                         role="assistant",
                         content=response.content or "",
                         metadata=meta,
                     )
+                    msg["id"] = tool_msg_id
 
                 for tc in response.tool_calls:
                     # Collapsed display + buffer storage
@@ -281,8 +319,10 @@ class Agent:
                         print_tool_result(idx, result)
                     logger.debug("Tool result: %s", result[:200])
 
+                    # 存 tool result 到 DB，保存 DB id 到消息（DAG 压缩需要）
+                    tool_msg_id = None
                     if self.conversation_db:
-                        self.conversation_db.log(
+                        tool_msg_id = self.conversation_db.log(
                             session_id=self.session_id,
                             role="tool",
                             content=result,
@@ -302,6 +342,7 @@ class Agent:
                             "role": "tool",
                             "tool_call_id": tc.id,
                             "content": result,
+                            "id": tool_msg_id,
                         }
                     )
             else:
@@ -316,6 +357,30 @@ class Agent:
                         logger.info("[Memory] extracted block='%s' clean_len=%d", memory_block[:50] if memory_block else "", len(clean_content) if clean_content else 0)
                         if memory_block:
                             self.memory_extractor.execute_block(memory_block, user_id=self.user_id)
+
+                        # Extract THINK block (见证层) from response — must use RAW content, not clean_content
+                        # (clean_content already stripped MEMORY block, which would also remove any ‖ that follows)
+                        think_data, clean_content = self.memory_extractor.extract_think_block(content)
+                        logger.info(
+                            "[Memory] extracted think block: %s, raw_stream len=%d, tags=%s",
+                            "found" if think_data else "none",
+                            len(think_data.get("raw_stream", "")) if think_data else 0,
+                            think_data.get("feeling_tags", []) if think_data else [],
+                        )
+                        if think_data and self.longterm_memory:
+                            self.longterm_memory.store_thought(
+                                timestamp=think_data.get("timestamp", ""),
+                                user_input_summary=think_data.get("user_input_summary", ""),
+                                raw_stream=think_data.get("raw_stream", ""),
+                                feeling_tags=think_data.get("feeling_tags", []),
+                                user_id=self.user_id,
+                                session_id=self.session_id,
+                            )
+                            logger.info(
+                                "[Memory] stored think #%s: %s",
+                                think_data.get("timestamp", ""),
+                                think_data.get("user_input_summary", "")[:50],
+                            )
 
                     # Use clean content for display and logging
                     display_content = clean_content or content
@@ -356,229 +421,14 @@ class Agent:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
     ) -> tuple[Any, list[str] | None]:
-        """Call LLM with streaming support."""
+        """Call LLM, preferring streaming with non-streaming fallback."""
         try:
-            return self._call_llm_streaming(messages, tools)
+            return self.llm.chat_stream(messages, tools)
         except Exception as e:
-            logger.debug("Streaming not available, falling back: %s", e)
+            import traceback
+            logger.warning("[LLM] Streaming failed, falling back: %s\n%s", e, traceback.format_exc())
             response = self.llm.chat(messages=messages, tools=tools)
             return response, None
-
-    def _call_llm_streaming(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None,
-    ) -> tuple[Any, list[str] | None]:
-        """Call LLM using streaming API."""
-        import requests as req
-
-        api_messages = self.llm._build_messages(messages)
-
-        payload = {
-            "model": self.llm.model,
-            "messages": api_messages,
-            "stream": True,
-        }
-        if tools:
-            payload["tools"] = tools
-
-        # DeepSeek thinking mode: once any message has reasoning_content,
-        # ALL subsequent assistant messages must also include it.
-        # This fixes the "reasoning_content must be passed back" 400 error
-        # when agent.messages has a message with reasoning_content but the
-        # subsequent assistant messages don't.
-        last_rc = None
-        for m in payload["messages"]:
-            if m.get("reasoning_content"):
-                last_rc = m["reasoning_content"]
-            elif m.get("role") == "assistant" and last_rc is not None:
-                if not m.get("reasoning_content"):
-                    m["reasoning_content"] = last_rc
-
-        headers = {
-            "Authorization": f"Bearer {self.llm.api_key}",
-            "Content-Type": "application/json",
-        }
-
-        # Save payload to separate JSON log file
-        import datetime as _dt2
-        import os as _os
-        _log_dir = _os.path.expanduser("~/.xiaomei-brain/logs/llm_requests")
-        _os.makedirs(_log_dir, exist_ok=True)
-        _log_file = _os.path.join(_log_dir, f"{_dt2.datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
-        try:
-            with open(_log_file, "w", encoding="utf-8") as _f:
-                import json as _json
-                # Remove api_key from headers before logging
-                safe_headers = dict(headers)
-                safe_headers["Authorization"] = "Bearer ***"
-                _json.dump({
-                    "timestamp": _dt2.datetime.now().isoformat(),
-                    "payload": payload,
-                    "headers": safe_headers,
-                }, _f, ensure_ascii=False, indent=2)
-            logger.info("[LLM] Request saved to %s", _log_file)
-        except Exception as _e:
-            logger.warning("[LLM] Failed to save request log: %s", _e)
-
-        import datetime as _dt
-        _t0 = time.time()
-        _msg_preview = (api_messages[0].get("content") or "")[:40] if api_messages else ""
-        _has_tools = bool(tools)
-
-        def _log(success: bool, detail: str = ""):
-            elapsed = time.time() - _t0
-            ts = _dt.datetime.now().strftime("%H:%M:%S")
-            detail_clean = detail.replace("\n", "\\n")[:80] if detail else ""
-            msg = "%s model=%s msgs=%d tools=%s elapsed=%.2fs %s" % (
-                ts, self.llm.model, len(api_messages), _has_tools, elapsed, detail_clean,
-            )
-            if success:
-                logger.info("\033[91m[LLM OK STREAM] %s\033[0m", msg)
-            else:
-                logger.info("[LLM ERR STREAM] %s", msg)
-
-        response = req.post(
-            f"{self.llm.base_url}/chat/completions",
-            headers=headers,
-            json=payload,
-            timeout=60,
-            stream=True,
-        )
-        if response.status_code >= 400:
-            logger.warning(
-                "[LLM STREAM DEBUG] HTTP %d | msgs=%d roles=%s | msg0_len=%d | tools=%s | payload_msgs=%s",
-                response.status_code,
-                len(api_messages),
-                [m.get("role") for m in api_messages],
-                len(api_messages[0].get("content", "") if api_messages else ""),
-                bool(tools),
-                [(m.get("role"), len(m.get("content",""))) for m in api_messages],
-            )
-        response.raise_for_status()
-
-        # Parse SSE stream
-        content_parts = []
-        stream_parts = []  # filtered parts for streaming output (no thinking)
-        reasoning_parts: list[str] = []  # DeepSeek thinking mode reasoning_content
-        tool_calls_acc: dict[int, dict] = {}
-        finish_reason = ""
-        in_think = False  # track <think> blocks across chunks
-
-        try:
-            for line in response.iter_lines():
-                if not line:
-                    continue
-                if isinstance(line, bytes):
-                    try:
-                        line = line.decode("utf-8")
-                    except UnicodeDecodeError:
-                        line = line.decode("utf-8", errors="replace")
-                if not line.startswith("data: "):
-                    continue
-                data = line[6:]
-                if data.strip() == "[DONE]":
-                    break
-
-                try:
-                    chunk = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
-
-                choice = chunk.get("choices", [{}])[0]
-                delta = choice.get("delta", {})
-                finish_reason = choice.get("finish_reason", "") or finish_reason
-
-                if delta.get("reasoning_content"):
-                    reasoning_parts.append(delta["reasoning_content"])
-
-                if "content" in delta and delta["content"] and not delta.get("reasoning_content"):
-                    content_parts.append(delta["content"])
-                    # Filter <think> blocks for streaming output
-                    text = delta["content"]
-                    if in_think:
-                        end_idx = text.find("</think>")
-                        if end_idx != -1:
-                            in_think = False
-                            text = text[end_idx + 8:]
-                        else:
-                            text = ""
-                    if not in_think:
-                        start_idx = text.find("<think")
-                        if start_idx != -1:
-                            end_idx = text.find("</think>", start_idx)
-                            if end_idx != -1:
-                                text = text[:start_idx] + text[end_idx + 8:]
-                            else:
-                                text = text[:start_idx]
-                                in_think = True
-                    if text:
-                        stream_parts.append(text)
-
-                if "tool_calls" in delta:
-                    for tc_delta in delta["tool_calls"]:
-                        idx = tc_delta.get("index", 0)
-                        if idx not in tool_calls_acc:
-                            tool_calls_acc[idx] = {
-                                "id": "",
-                                "name": "",
-                                "arguments": "",
-                            }
-                        if tc_delta.get("id"):
-                            tool_calls_acc[idx]["id"] = tc_delta["id"]
-                        fn = tc_delta.get("function", {})
-                        if fn.get("name"):
-                            tool_calls_acc[idx]["name"] = fn["name"]
-                        if fn.get("arguments"):
-                            tool_calls_acc[idx]["arguments"] += fn["arguments"]
-        except Exception as e:
-            _log(False, f"stream_err:{e}")
-            raise
-
-        # Build final ChatResponse
-        from xiaomei_brain.base.llm import ChatResponse, ToolCall
-
-        content = self.llm._strip_thinking("".join(content_parts))
-        # Clean surrogate characters from LLM output
-        try:
-            content = content.encode("utf-8", "surrogatepass").decode("utf-8", "replace")
-        except Exception:
-            pass
-        tool_calls = []
-        for idx in sorted(tool_calls_acc):
-            tc = tool_calls_acc[idx]
-            try:
-                args = json.loads(tc["arguments"]) if tc["arguments"] else {}
-            except json.JSONDecodeError:
-                args = {}
-            tool_calls.append(ToolCall(id=tc["id"], name=tc["name"], arguments=args))
-
-        chat_response = ChatResponse(
-            content=content,
-            tool_calls=tool_calls,
-            finish_reason=finish_reason,
-            reasoning_content="".join(reasoning_parts) if reasoning_parts else None,
-        )
-
-        _log(True)
-
-        # Save response alongside request log
-        try:
-            with open(_log_file, "r+", encoding="utf-8") as _f:
-                _log_data = json.load(_f)
-                _log_data["response"] = {
-                    "content": content,
-                    "tool_calls": [{"name": tc.name, "arguments": tc.arguments} for tc in tool_calls],
-                    "finish_reason": finish_reason,
-                    "reasoning_content": "".join(reasoning_parts) if reasoning_parts else None,
-                }
-                _f.seek(0)
-                _f.truncate()
-                json.dump(_log_data, _f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
-
-        return chat_response, stream_parts if not tool_calls else None
 
     # ── Helpers ──────────────────────────────────────────────────
 

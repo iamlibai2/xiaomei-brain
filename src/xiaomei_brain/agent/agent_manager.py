@@ -88,7 +88,7 @@ class AgentInstance:
                 llm=self.llm,
                 tools=self.tools,
                 system_prompt="",
-                max_steps=20,
+                max_steps=100,
             )
             self._agent.self_model = getattr(self, "self_model", None)
             self._agent.conversation_db = self.conversation_db
@@ -528,6 +528,11 @@ class AgentManager:
         from xiaomei_brain.tools.builtin.dag_expand import create_dag_tools
         for dag_tool in create_dag_tools(dag, agent.longterm_memory):
             tools.register(dag_tool)
+
+        # 注册见证层工具（搜索历史念头）
+        from xiaomei_brain.tools.builtin.thought_search import create_thought_tools
+        for thought_tool in create_thought_tools(agent.longterm_memory):
+            tools.register(thought_tool)
 
         # ── CommandRegistry ──────────────────────────────────────────────
         agent.commands = CommandRegistry(

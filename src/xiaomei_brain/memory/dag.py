@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from xiaomei_brain.prompts import DAG_SUMMARIZE_PROMPT
+from xiaomei_brain.prompts import DAG_SUMMARIZE_PROMPT, DAG_PROMOTE_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +221,7 @@ class DAGSummaryGraph:
             # Summarize the batch
             if self.llm:
                 combined = "\n\n---\n\n".join(contents)
-                summary_text = self._llm_summarize(combined)
+                summary_text = self._llm_summarize(combined, DAG_PROMOTE_PROMPT)
             else:
                 summary_text = self._simple_summarize("\n".join(contents))
 
@@ -279,39 +279,47 @@ class DAGSummaryGraph:
     ) -> list[DAGNode]:
         """Get the highest-level summaries for context assembly.
 
-        Starts from highest depth, works down until token budget exhausted.
+        Collects all orphan summaries across all depths, ranks them by
+        importance (depth weight + recency + content richness), then
+        fills the token budget with the highest-scoring ones.
         """
+        import math
         conn = self._get_conn()
 
-        # Find max depth
-        row = conn.execute(
-            "SELECT MAX(depth) FROM summaries WHERE session_id = ?",
+        # Collect all orphan summaries (parent_id IS NULL) across all depths
+        rows = conn.execute(
+            """SELECT * FROM summaries
+               WHERE session_id = ? AND parent_id IS NULL
+               ORDER BY depth DESC""",
             (session_id,),
-        ).fetchone()
-        max_depth = row[0] if row and row[0] is not None else -1
+        ).fetchall()
 
-        if max_depth < 0:
+        if not rows:
             return []
+
+        now = time.time()
+        candidates: list[tuple[float, DAGNode]] = []
+
+        for r in rows:
+            node = self._row_to_node(r)
+            # Composite score: depth weight + recency + content richness
+            hours_ago = max(0, (now - node.created_at) / 3600)
+            recency = 1.0 / (1.0 + hours_ago)           # 0..1, newer = higher
+            content_score = math.log(node.token_count + 1) / 10  # richer = higher
+            depth_weight = node.depth * 0.3              # higher depth = broader context
+            score = depth_weight + recency + content_score
+            candidates.append((score, node))
+
+        # Sort by score descending
+        candidates.sort(key=lambda x: x[0], reverse=True)
 
         result: list[DAGNode] = []
         used_tokens = 0
 
-        for depth in range(max_depth, -1, -1):
-            rows = conn.execute(
-                """SELECT * FROM summaries
-                   WHERE session_id = ? AND depth = ? AND parent_id IS NULL
-                   ORDER BY created_at DESC""",
-                (session_id, depth),
-            ).fetchall()
-
-            for r in rows:
-                node = self._row_to_node(r)
-                if used_tokens + node.token_count <= max_tokens:
-                    result.append(node)
-                    used_tokens += node.token_count
-
-                if used_tokens >= max_tokens:
-                    return result
+        for _score, node in candidates:
+            if used_tokens + node.token_count <= max_tokens:
+                result.append(node)
+                used_tokens += node.token_count
 
         return result
 
@@ -376,12 +384,23 @@ class DAGSummaryGraph:
             else:
                 logger.warning("[DAG] Invalid session_id '%s', ignoring filter", session_id)
 
-        # Build WHERE clause with optional session filter
-        where_clause = "WHERE content LIKE ?"
-        params: list[Any] = [f"%{keyword}%"]
+        # Split keyword into terms and search each (OR logic) to avoid
+        # requiring consecutive substring match when multiple terms are given.
+        terms = keyword.split()
+        if len(terms) == 1:
+            terms_like = [f"%{keyword}%"]
+        else:
+            terms_like = [f"%{t}%" for t in terms]
+
+        # Build WHERE clause: (content LIKE term1) OR (content LIKE term2) ...
         if safe_sid:
-            where_clause += " AND session_id = ?"
-            params.append(safe_sid)
+            like_clauses = " OR ".join(["content LIKE ?"] * len(terms_like))
+            where_clause = f"WHERE ({like_clauses}) AND session_id = ?"
+            params = terms_like + [safe_sid]
+        else:
+            like_clauses = " OR ".join(["content LIKE ?"] * len(terms_like))
+            where_clause = f"WHERE {like_clauses}"
+            params = list(terms_like)
 
         if has_cjk:
             rows = conn.execute(
@@ -565,13 +584,19 @@ class DAGSummaryGraph:
                 lines.append(f"[{role}] {content}")
         return "\n".join(lines)
 
-    def _llm_summarize(self, formatted: str) -> str | None:
-        """Use LLM to generate a summary."""
+    def _llm_summarize(self, formatted: str, prompt_template: str | None = None) -> str | None:
+        """Use LLM to generate a summary.
+
+        Args:
+            formatted: Formatted message content to summarize.
+            prompt_template: Optional prompt template (defaults to DAG_SUMMARIZE_PROMPT).
+        """
         if not self.llm:
             return None
 
         try:
-            prompt = DAG_SUMMARIZE_PROMPT.format(content=formatted)
+            template = prompt_template or DAG_SUMMARIZE_PROMPT
+            prompt = template.format(content=formatted)
             response = self.llm.chat(
                 messages=[{"role": "user", "content": prompt}],
                 tools=None,

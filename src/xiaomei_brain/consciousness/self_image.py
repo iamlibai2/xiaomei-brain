@@ -119,6 +119,18 @@ class SelfImage:
     user_emotional_state: str = "未知"
     """用户情绪推断"""
 
+    # ── Drive 层状态（由 ActionDispatcher 统一写入）────────────────
+    desire_belonging: float = 0.0
+    desire_cognition: float = 0.0
+    desire_achievement: float = 0.0
+    desire_expression: float = 0.0
+    emotion_type: str = "平静"
+    emotion_intensity: float = 0.0
+    dopamine: float = 0.5
+    serotonin: float = 0.5
+    cortisol: float = 0.0
+    oxytocin: float = 0.5
+
     # ── 用户活动感知───────────────────────────────────
     last_user_activity_time: float = field(default_factory=time.time)
     """用户最后活跃时间（初始化为当前时间，避免初始idle过大）"""
@@ -129,6 +141,9 @@ class SelfImage:
     user_idle_duration: float = 0.0
     """用户空闲时长（秒）"""
 
+    recent_conversations: list[dict] = field(default_factory=list)
+    """最近对话记录（role + content），供主动消息生成使用"""
+
     # ── 目标感知───────────────────────────────────────
     primary_goal: str = "建立信任"
     """当前首要目标"""
@@ -136,11 +151,14 @@ class SelfImage:
     goal_progress: float = 0.0
     """目标进展（0-1）"""
 
+    current_goal_depth: int = 0
+    """当前目标层级深度"""
+
     goal_progress_history: list[float] = field(default_factory=list)
     """目标进展历史，用于检测偏离"""
 
-    pending_intents: list[str] = field(default_factory=list)
-    """待处理意图列表"""
+    intent_buffer: list[str] = field(default_factory=list)
+    """意图缓冲区（待消费的动作列表）"""
 
     # ── 意识历史摘要───────────────────────────────────
     last_wake_summary: str = ""
@@ -442,6 +460,14 @@ class SelfImage:
 
         self.updated_at = time.time()
         self.update_count += 1
+
+    def update_recent_conversations(self, conversations: list[dict]) -> None:
+        """更新最近对话记录（供主动消息生成使用）。
+
+        Args:
+            conversations: [{role: str, content: str}, ...] 格式
+        """
+        self.recent_conversations = conversations[-10:] if len(conversations) > 10 else conversations
 
     def detect_anomaly(self) -> str | None:
         """检测异常状态。

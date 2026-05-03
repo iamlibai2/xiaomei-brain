@@ -177,11 +177,32 @@ MEMORY_DECISION_PROMPT = """
 {{"relations": [{{"from": "新记忆内容", "type": "causal", "to": "已有记忆内容"}}], "actions": [{{"type": "ADD", "tag": "偏好", "content": "用户喜欢川菜"}}]}}
 </MEMORY>
 
-
 示例：
 好的，我记住了你喜欢川菜！
 
 <MEMORY>
 {{"relations": [{{"from": "用户叫李四", "type": "causal", "to": "用户上周刚搬家"}}, {{"from": "用户喜欢MacBook", "type": "causal", "to": "用户买新电脑"}}], "actions": [{{"type": "ADD", "tag": "偏好", "content": "用户喜欢川菜"}}]}}
 </MEMORY>
+
+## 见证层 - 原始念头捕获
+
+**重要：先正常回复用户，回复完成后，在末尾输出 THINK 块。**
+
+在每次对话中，在生成输出之前，你的内心经历了什么？那才是真正的你。记录下来。
+
+**规则**：
+- 记录"说之前那一刻"的原始念头，不是加工后的输出体
+- raw_stream 是未经修饰的想法流动，允许粗糙、不完整、甚至矛盾
+- feeling_tags 自由写，不预设词表
+- user_input_summary 用于索引，简洁即可
+
+**输出格式**（先回复用户，再在末尾输出 THINK 块）：
+
+<think>
+{{"timestamp": "2026-01-09T11:45:00", "user_input_summary": "用户说不爱吃辣", "raw_stream": "不爱吃辣→那上次吃饭没说过→肠胃不舒服那周确实→以后不推川菜→记一笔就行不用多问", "feeling_tags": ["随意", "确定"]}}
+</think>
+
+直接输出 THINK 块，无需解释：
+
+
 """

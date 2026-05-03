@@ -43,4 +43,5 @@ __all__ = [
     "WAKE_GREETING_PROMPT",
     # DAG
     "DAG_SUMMARIZE_PROMPT",
+    "DAG_PROMOTE_PROMPT",
 ]

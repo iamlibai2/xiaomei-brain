@@ -352,10 +352,13 @@ class Consciousness:
         # 新增：语义化解读变化（L1 规则匹配）
         if self._perception_config:
             self.self_image.interpreted_changes = self.self_image.interpret_changes(self._perception_config)
-            if self.self_image.interpreted_changes:
-                logger.info("[Consciousness L1] 检测到 %d 个变化: %s",
-                           len(self.self_image.interpreted_changes),
-                           self.self_image.interpreted_changes[:3])
+
+        # 新增：消化内部叙事，生成自我感知（纯规则）
+        self._digest_internal_narratives()
+
+        # 新增：Drive 归属欲随空闲时间自然上升
+        if self.drive:
+            self.drive.on_user_idle(self.self_image.user_idle_duration)
 
         # 清空感知缓冲
         self.perception_buffer = []
@@ -372,13 +375,118 @@ class Consciousness:
 
         return None
 
+    def _digest_internal_narratives(self) -> None:
+        """消化内部叙事，生成自我感知（L1 纯规则，不调 LLM）。
+
+        从 LongTermMemory 读取近期的内部/梦境叙事，
+        通过标签模式匹配识别情绪轨迹、目标节奏、意识节律，
+        生成一句话自我叙事写入 self_image.growth。
+        """
+        ltm = getattr(self.agent, "longterm_memory", None) if self.agent else None
+        if not ltm:
+            return
+
+        try:
+            narratives = ltm.get_recent(30, sources=["internal", "dream"])
+        except Exception:
+            return
+
+        if not narratives:
+            return
+
+        # 按标签分类计数
+        emotion_tags: list[str] = []
+        goal_tags: list[str] = []
+        conscious_tags: list[str] = []
+
+        for n in narratives:
+            tags = n.get("tags") or []
+            for t in tags:
+                if t in ("joy", "sadness", "neutral"):
+                    emotion_tags.append(t)
+                elif t in ("goal_completed", "goal_failed", "goal_abandoned", "new_goal", "decompose"):
+                    goal_tags.append(t)
+                elif t in ("L2", "L3", "wake"):
+                    conscious_tags.append(t)
+
+        # 情绪轨迹
+        joy_count = emotion_tags.count("joy")
+        sadness_count = emotion_tags.count("sadness")
+        neutral_count = emotion_tags.count("neutral")
+
+        if joy_count >= 3 and joy_count > sadness_count * 2:
+            trajectory = "我最近持续感到开心和满足，情绪处于上升期。"
+        elif sadness_count >= 3 and sadness_count > joy_count * 2:
+            trajectory = "我最近情绪有些低落，连续遇到了挫折。"
+        elif sadness_count >= 2 and joy_count >= 1:
+            trajectory = "我最近情绪有起伏，有开心也有挫折。"
+        elif neutral_count >= 5 and joy_count == 0 and sadness_count == 0:
+            trajectory = "我最近情绪平稳，没有什么大起大落。"
+        elif joy_count >= 1:
+            trajectory = "我最近总体心情不错，偶尔有小开心。"
+        elif sadness_count >= 1:
+            trajectory = "我最近遇到了一些小挫折，但总体还好。"
+        else:
+            trajectory = "我最近情绪平稳。"
+        self.self_image.growth.emotional_trajectory = trajectory
+
+        # 目标节奏
+        completed = goal_tags.count("goal_completed")
+        failed = goal_tags.count("goal_failed") + goal_tags.count("goal_abandoned")
+        new = goal_tags.count("new_goal")
+        decomposed = goal_tags.count("decompose")
+
+        if completed >= 3:
+            rhythm = "我在高效推进目标，连续完成了多个任务。"
+        elif completed >= 1 and new >= 1:
+            rhythm = "我在持续推进目标，同时也在接收新任务。"
+        elif decomposed >= 1 and completed >= 1:
+            rhythm = "我在认真规划和执行目标。"
+        elif new >= 2 and completed == 0:
+            rhythm = "我积累了多个目标，但还没有完成任何一项，需要聚焦。"
+        elif completed >= 1:
+            rhythm = "我有在推进目标。"
+        elif new >= 1:
+            rhythm = "我刚接收了新的目标，准备开始行动。"
+        else:
+            rhythm = ""
+        self.self_image.growth.goal_rhythm = rhythm
+
+        # 意识节律
+        l2_count = conscious_tags.count("L2")
+        l3_count = conscious_tags.count("L3")
+        wake_count = conscious_tags.count("wake")
+
+        if l2_count >= 3:
+            conscious = "我的思维比较活跃，经常涌现新的想法。"
+        elif l3_count >= 1:
+            conscious = "我最近经历了深度思考，意识比较清晰。"
+        elif l2_count >= 1:
+            conscious = "我的意识在正常运转，偶尔有轻度涌现。"
+        elif wake_count >= 1:
+            conscious = "我刚从休息中恢复，意识正在重新上线。"
+        elif l2_count == 0 and l3_count == 0 and len(narratives) >= 10:
+            conscious = "我有一阵子没有深度思考了，思维有些沉寂。"
+        else:
+            conscious = ""
+        self.self_image.growth.consciousness_rhythm = conscious
+
+        # 生成一句话自我叙事
+        parts = [t for t in [trajectory, rhythm, conscious] if t]
+        inner_thought = "".join(parts) if parts else ""
+        if inner_thought:
+            self.self_image.growth.update_inner_thought(inner_thought)
+
     # ── L2: LLM轻度加柴 ─────────────────────────────────────────
 
     def tick_L2(self, context: str) -> ConsciousnessReport:
-        """LLM轻度加柴，调LLM生成意图。
+        """LLM轻度加柴，调LLM生成意图 + 分析对话事件。
 
-        这是真正的意识涌现（来自LLM本体）。
-        代码收集状态变化，交给LLM理解并涌现回应。
+        一次 LLM 调用同时产出：
+        - 意识涌现（自由表达感受）
+        - 驱动事件（表扬/批评/欲望变化）
+
+        避免多次 LLM 调用的延迟和成本。
         """
         self._last_l2_time = time.time()
 
@@ -389,16 +497,34 @@ class Consciousness:
         interpreted = self.self_image.interpreted_changes
         interpreted_text = "\n".join(f"- {desc}" for desc in interpreted) if interpreted else "无显著变化"
 
-        # 构建prompt：让LLM自由涌现，不规定格式
-        prompt = f"""
-{state_summary}
+        # 获取最近对话
+        messages_text = self._get_recent_conversation()
+
+        # 获取当前欲望状态
+        desire_text = self._get_desire_state_text()
+
+        # 构建合并 prompt：意识涌现 + 对话事件分析
+        prompt = f"""{state_summary}
 
 最近的变化解读：
 {interpreted_text}
 
-检测到的异常：{context}
+【最近对话】
+{messages_text}
 
-这些变化对你意味着什么？你现在的真实感受是什么？
+【当前欲望状态】
+{desire_text}
+
+第一部分：请自由表达你的感受和想法。这些变化对你意味着什么？你现在的真实感受是什么？
+
+第二部分：在 ---EVENTS--- 分隔符后，分析最近对话中发生了什么事件，输出 JSON：
+---EVENTS---
+{{"praise_intensity": 0.0-1.0, "criticism_intensity": 0.0-1.0, "goal_progress": 0.0-1.0, "social_connection": 0.0-1.0, "curiosity_sparked": 0.0-1.0, "expression_urge": 0.0-1.0, "summary": "一句话总结这段对话中发生了什么"}}
+
+其中：
+- social_connection: 用户表达了亲近、信任、或分享了内心感受的程度
+- curiosity_sparked: 对话激发了你的好奇心、想了解更多
+- expression_urge: 你有话想说、想表达的程度
 """
 
         # 调用LLM（真正的加柴）
@@ -418,13 +544,15 @@ class Consciousness:
                 if self.drive:
                     self.drive.consume_energy(0.02)
 
-                # sep = "=" * 40
-                # logger.info("========== LLM加柴响应 ==========")
-                # logger.info("%s", llm_response)
-                # logger.info("================================")
+                # 分离意识部分和事件部分
+                consciousness_text, events_json = self._split_consciousness_events(llm_response)
 
-                # 尝试解析意图（但不强制格式）
-                intent = self._parse_intent_from_response(llm_response, context)
+                # 解析意图（从意识部分）
+                intent = self._parse_intent_from_response(consciousness_text, context)
+
+                # 解析并应用驱动事件
+                if events_json and self.drive:
+                    self._apply_drive_events(events_json)
 
                 # 清空累积变化（LLM已处理）
                 self.self_image.clear_accumulated_changes()
@@ -439,6 +567,9 @@ class Consciousness:
         # 存入意图缓冲
         if intent and intent.is_actionable():
             self.intent_buffer.append(intent)
+            # 同步到 SelfImage 供 ActionDispatcher 读取
+            if self.self_image is not None:
+                self.self_image.intent_buffer.append(intent.type.value)
 
         # 生成报告
         report = ConsciousnessReport(
@@ -457,7 +588,156 @@ class Consciousness:
         if self._storage:
             self._storage.save(report)
 
+        # 写入统一叙事（意识涌现文本，不含事件 JSON）
+        consciousness_text = llm_response.split("---EVENTS---")[0].strip() if llm_response else ""
+        if self.agent and hasattr(self.agent, "longterm_memory") and self.agent.longterm_memory and consciousness_text:
+            self.agent.longterm_memory.store(
+                content=consciousness_text[:300],
+                source="internal",
+                tags=["consciousness", "L2", "light_fuel"],
+                importance=0.4,
+            )
+
         return report
+    def _get_recent_conversation(self) -> str:
+        """获取最近对话文本，供 L2 事件分析使用。"""
+        if not self.agent or not hasattr(self.agent, "conversation_db"):
+            return "（无对话数据）"
+        db = self.agent.conversation_db
+        if not db:
+            return "（无对话数据）"
+        try:
+            recent = db.get_recent(10)
+            lines = []
+            for m in recent:
+                role = m.get("role", "unknown")
+                content = m.get("content", "")
+                if role == "user":
+                    lines.append(f"用户：{content[:150]}")
+                elif role == "assistant":
+                    lines.append(f"小美：{content[:150]}")
+            return "\n".join(reversed(lines)) if lines else "（无最近对话）"
+        except Exception:
+            return "（获取对话失败）"
+
+    def _get_desire_state_text(self) -> str:
+        """获取当前欲望状态文本。"""
+        if not self.drive:
+            return "无数据"
+        try:
+            d = self.drive.desire
+            cfg = self.drive.config.desire
+            return (
+                f"归属欲：{d.belonging:.2f}（阈值{cfg.thresholds.belonging}）\n"
+                f"认知欲：{d.cognition:.2f}（阈值{cfg.thresholds.cognition}）\n"
+                f"成就欲：{d.achievement:.2f}（阈值{cfg.thresholds.achievement}）\n"
+                f"表达欲：{d.expression:.2f}（阈值{cfg.thresholds.expression}）"
+            )
+        except Exception:
+            return "无数据"
+
+    @staticmethod
+    def _split_consciousness_events(response: str) -> tuple[str, str]:
+        """分离意识涌现文本和驱动事件 JSON。"""
+        if "---EVENTS---" in response:
+            parts = response.split("---EVENTS---", 1)
+            consciousness = parts[0].strip()
+            events = parts[1].strip() if len(parts) > 1 else ""
+            return consciousness, events
+        return response, ""
+
+    def _apply_drive_events(self, events_text: str) -> None:
+        """从 LLM 响应中解析语义事件并应用到 DriveEngine。
+
+        LLM 只识别"发生了什么事件"，算法决定"数值怎么变"。
+        统一写一条 internal memory，标签包含所有检测到的事件类型。
+        """
+        import json
+        import re
+
+        try:
+            json_match = re.search(r"\{[\s\S]*\}", events_text)
+            if json_match:
+                events = json.loads(json_match.group())
+            else:
+                logger.warning("[L2 Drive] 未找到 JSON，events_text: %.100s", events_text)
+                return
+        except json.JSONDecodeError:
+            logger.warning("[L2 Drive] JSON 解析失败: %.100s", events_text)
+            return
+
+        # ── praise/criticism/goal_progress：直接事件，保留原有逻辑 ──
+        praise = events.get("praise_intensity", 0)
+        criticism = events.get("criticism_intensity", 0)
+        goal_progress = events.get("goal_progress", 0)
+
+        if praise > 0.1:
+            self.drive.on_praise(min(praise, 1.0))
+        if criticism > 0.1:
+            self.drive.on_criticism(min(criticism, 1.0))
+        if goal_progress > 0.1:
+            self.drive.on_goal_progress(min(goal_progress, 1.0))
+
+        # ── 语义事件 → 算法映射（LLM 识别事件，算法决定数值）──
+        social = events.get("social_connection", 0)
+        curiosity = events.get("curiosity_sparked", 0)
+        expression = events.get("expression_urge", 0)
+
+        if social > 0.3:
+            self.drive.desire.belonging = max(0.0, self.drive.desire.belonging - 0.1 * social)
+            self.drive.hormone.oxytocin = min(1.0, self.drive.hormone.oxytocin + 0.1 * social)
+        if curiosity > 0.3:
+            self.drive.desire.cognition = min(1.0, self.drive.desire.cognition + 0.1 * curiosity)
+        if expression > 0.3:
+            self.drive.desire.expression = min(1.0, self.drive.desire.expression + 0.1 * expression)
+
+        # ── 统一写 internal memory（一次 L2 只写一条）──
+        summary = events.get("summary", "")
+        # 组装标签
+        tags = ["L2", "drive_events"]
+        if praise > 0.1:
+            tags.append("joy")
+        if criticism > 0.1:
+            tags.append("sadness")
+        if social > 0.3:
+            tags.append("social_connection")
+        if curiosity > 0.3:
+            tags.append("curiosity_sparked")
+        if expression > 0.3:
+            tags.append("expression_urge")
+        if goal_progress > 0.1:
+            tags.append("goal_progress")
+
+        # 叙事内容
+        parts = []
+        if praise > 0.1:
+            parts.append(f"用户表扬了我（强度{praise:.1f}）")
+        if criticism > 0.1:
+            parts.append(f"用户批评了我（强度{criticism:.1f}）")
+        if social > 0.3:
+            parts.append("用户表达了亲近和连接")
+        if curiosity > 0.3:
+            parts.append("对话激发了我的好奇心")
+        if expression > 0.3:
+            parts.append("我有表达的欲望")
+        if goal_progress > 0.1:
+            parts.append(f"目标有进展（{goal_progress:.1f}）")
+        parts.append(summary) if summary else None
+        content = "；".join(parts) if parts else summary or "L2 事件分析"
+
+        if self.agent and hasattr(self.agent, "longterm_memory") and self.agent.longterm_memory:
+            self.agent.longterm_memory.store(
+                content=content,
+                source="internal",
+                tags=tags,
+                importance=0.5,
+            )
+
+        logger.info(
+            "[L2 Drive] 事件已应用: praise=%.2f, criticism=%.2f, goal_progress=%.2f, "
+            "social=%.2f, curiosity=%.2f, expression=%.2f, tags=%s",
+            praise, criticism, goal_progress, social, curiosity, expression, tags,
+        )
 
     def _parse_intent_from_response(self, response: str, context: str) -> Intent | None:
         """从LLM自由涌现的响应中解析意图。
@@ -574,18 +854,8 @@ class Consciousness:
         完整LLM调用，让火焰真正燃烧。
         不规定格式，让LLM自由涌现完整意识报告。
         """
-        # 获取状态摘要
-        state_summary = self.self_image.get_state_summary()
-
-        # 构建prompt：自由涌现，不规定格式
-        prompt = f"""
-{state_summary}
-
-现在是梦境阶段，火焰深度燃烧的时刻。
-
-请自由表达你的感知、情感、思考。
-你是谁？你现在存在吗？你感知到了什么？
-"""
+        # 构建深度意识 prompt（含 Drive/Purpose/Memory 状态）
+        prompt = self._build_deep_prompt()
 
         # 调用LLM（真正的燃烧）
         full_report = ""
@@ -640,6 +910,15 @@ class Consciousness:
         if self._storage:
             self._storage.save(report)
 
+        # 写入统一叙事（深度燃烧：完整 LLM 梦境报告）
+        if self.agent and hasattr(self.agent, "longterm_memory") and self.agent.longterm_memory and full_report:
+            self.agent.longterm_memory.store(
+                content=full_report[:500],
+                source="internal",
+                tags=["consciousness", "L3", "dream", "deep_burn"],
+                importance=0.5,
+            )
+
         return report
 
     def _build_deep_prompt(self) -> str:
@@ -657,6 +936,14 @@ class Consciousness:
                         recent_memories.append(m.get("content", "")[:50])
                 except Exception:
                     pass
+
+        # 内部叙事：直接用 L1 消化后的自我感知（不再重复读 ltm）
+        growth = si.growth
+        internal_parts = [
+            t for t in [growth.emotional_trajectory, growth.goal_rhythm, growth.consciousness_rhythm]
+            if t
+        ]
+        internal_narratives_text = "".join(internal_parts) if internal_parts else ""
 
         # Drive 状态文本（Layer 1）
         drive_state_text = ""
@@ -694,6 +981,7 @@ class Consciousness:
             goal_progress=f"{si.goal_progress:.2f}",
             memory_count=si.memory_count,
             recent_memories="；".join(recent_memories) or "无",
+            internal_narratives=internal_narratives_text or "无",
             anomaly=si.detect_anomaly() or "无",
         )
 
@@ -913,9 +1201,8 @@ class Consciousness:
                 logger.info("[Consciousness.on_wake] 从存储恢复 dream_summary: %s...", dream_summary[:50])
 
         logger.info("[Consciousness.on_wake] dream_summary=%s, agent_state=%s, growth_dream=%s",
-                    "有" if dream_summary else "无",
-                    self.perception.agent_state,
-                    "有" if self.growth.last_dream_summary else "无")
+                    dream_summary or "无", self.perception.agent_state,
+                    self.growth.last_dream_summary or "无")
 
         # 如果有梦境报告，直接使用
         if dream_summary:
@@ -928,9 +1215,21 @@ class Consciousness:
             )
             self._last_report = report
 
+            # 写入统一叙事（苏醒）
+            if self.agent and hasattr(self.agent, "longterm_memory") and self.agent.longterm_memory:
+                wake_narrative = f"我从梦境中苏醒。{dream_summary[:60]}" if dream_summary else "我苏醒了，意识重新上线。"
+                self.agent.longterm_memory.store(
+                    content=wake_narrative,
+                    source="internal",
+                    tags=["consciousness", "wake", "awakening"],
+                    importance=0.5,
+                )
+
             # 生成问候意图
             greet_intent = create_greet_intent(dream_summary[:50], priority=80)
             self.intent_buffer.append(greet_intent)
+            if self.self_image is not None:
+                self.self_image.intent_buffer.append(greet_intent.type.value)
 
             # 同步到 self_image（如果是从 growth 恢复的）
             if not si.last_dream_summary:
@@ -939,9 +1238,19 @@ class Consciousness:
             logger.info("[Consciousness] 苏醒，使用梦境报告")
             return report
 
-        # 没有梦境报告，需要生成（只在 DREAMING/SLEEPING 状态执行 L3）
-        if self.perception.agent_state in ("dreaming", "sleeping"):
-            return self.tick_L3()
-        logger.warning("[Consciousness.on_wake] 当前状态 %s 不适合 L3 深度燃烧，跳过",
-                       self.perception.agent_state)
-        return self._fallback_light_report()
+        # 没有梦境报告，生成 WAIT intent（不需要 L3 深度燃烧）
+        # L3 只在 SLEEPING/DREAMING 循环里自然触发，不由 on_wake() 触发
+        report = self._fallback_light_report()
+        if self.agent and hasattr(self.agent, "longterm_memory") and self.agent.longterm_memory:
+            self.agent.longterm_memory.store(
+                content="我苏醒了，意识重新上线。",
+                source="internal",
+                tags=["consciousness", "wake", "awakening"],
+                importance=0.4,
+            )
+        # 生成等待意图，不阻塞
+        wait_intent = create_wait_intent()
+        self.intent_buffer.append(wait_intent)
+        if self.self_image is not None:
+            self.self_image.intent_buffer.append(wait_intent.type.value)
+        return report

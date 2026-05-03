@@ -63,6 +63,7 @@ class PurposeEngine:
         self.llm = llm_client
         self.drive = drive
         self._loaded = False  # 标记是否已加载
+        self.longterm_memory: Any = None  # 统一叙事存储引用
 
         # 存储
         self.storage = PurposeStorage(agent_id)
@@ -156,6 +157,10 @@ class PurposeEngine:
             f"meaning={self.meaning.identity if self.meaning else 'none'}"
         )
 
+    def set_longterm_memory(self, ltm: Any) -> None:
+        """设置统一叙事存储引用，用于写入内部事件叙事"""
+        self.longterm_memory = ltm
+
     # ========== 目标管理 ==========
 
     def add_goal(
@@ -190,6 +195,17 @@ class PurposeEngine:
             self.set_current(goal.id)
 
         logger.info(f"[PurposeEngine] 目标添加: {goal.description[:30]}")
+
+        if self.longterm_memory:
+            type_names = {GoalType.EXECUTABLE: "执行目标", GoalType.PHASE: "阶段目标", GoalType.STRATEGIC: "战略目标"}
+            type_name = type_names.get(goal_type, "目标")
+            self.longterm_memory.store(
+                content=f"我接收到了一个新的{type_name}：{description}",
+                source="internal",
+                tags=["purpose", "goal", "new_goal"],
+                importance=0.6,
+            )
+
         return goal
 
     def set_current(self, goal_id: str) -> None:
@@ -322,6 +338,23 @@ class PurposeEngine:
             if self.drive:
                 self.drive.on_goal_failed(reason="用户放弃")
 
+        # 写入内部叙事
+        if self.longterm_memory:
+            if success:
+                self.longterm_memory.store(
+                    content=f"我完成了目标'{goal.description}'，感到很有成就感。",
+                    source="internal",
+                    tags=["purpose", "achievement", "goal_completed"],
+                    importance=0.7,
+                )
+            else:
+                self.longterm_memory.store(
+                    content=f"我放弃了目标'{goal.description}'。",
+                    source="internal",
+                    tags=["purpose", "setback", "goal_abandoned"],
+                    importance=0.5,
+                )
+
         # 自动切换到下一个目标
         self.current_goal = None
         next_goal = self.get_next()
@@ -397,6 +430,15 @@ class PurposeEngine:
         logger.info(
             f"[PurposeEngine] 目标分解: {parent.description[:20]} → {len(sub_goals)}个子目标"
         )
+
+        if self.longterm_memory:
+            self.longterm_memory.store(
+                content=f"我把目标'{parent.description}'分解为{len(sub_goals)}个子目标来逐步完成。",
+                source="internal",
+                tags=["purpose", "planning", "decompose"],
+                importance=0.5,
+            )
+
         return sub_goals
 
     def auto_decompose(self, goal_id: str) -> list[Goal]:

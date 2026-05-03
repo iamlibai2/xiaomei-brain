@@ -48,6 +48,8 @@ def strip_memory_stream(chunks: list[str]) -> Generator[str, None, None]:
     Joins chunks and strips MEMORY block using the same logic as extract_memory_block.
     Yields in a streaming manner for compatibility.
     """
+    if not chunks:
+        return
     full_text = "".join(chunks)
     _, clean = MemoryExtractor.extract_memory_block(full_text)
     if clean:

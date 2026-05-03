@@ -26,6 +26,16 @@ logging.basicConfig(
     stream=sys.stderr,
 )
 
+# 同时写到 xiaomei.log（DEBUG 级别，应有尽有）
+_log_dir = os.path.expanduser("~/.xiaomei-brain/logs")
+os.makedirs(_log_dir, exist_ok=True)
+_file_handler = logging.FileHandler(os.path.join(_log_dir, "xiaomei.log"), encoding="utf-8")
+_file_handler.setLevel(logging.DEBUG)
+_file_handler.setFormatter(logging.Formatter(
+    "%(asctime)s [%(name)s] %(levelname)s %(message)s", datefmt="%H:%M:%S"
+))
+logging.getLogger().addHandler(_file_handler)
+
 # ── 关键模块：完全放行 ──────────────────────────────────────
 KEY_MODULES = {
     "xiaomei_brain.consciousness.conscious_living",
@@ -100,7 +110,9 @@ def _completer(text: str, state: int) -> str | None:
 
 
 # ── readline 历史 ──────────────────────────────────────────
-_HIST_PATH = os.path.expanduser("~/.xiaomei-brain/cli_history")
+_HIST_DIR = os.path.expanduser("~/.xiaomei-brain/logs")
+os.makedirs(_HIST_DIR, exist_ok=True)
+_HIST_PATH = os.path.join(_HIST_DIR, "cli_history")
 if os.path.exists(_HIST_PATH):
     try:
         readline.read_history_file(_HIST_PATH)
@@ -204,6 +216,9 @@ def main():
     agent = manager.build_agent("xiaomei")
     living = ConsciousLiving(agent, load_consciousness=not args.no_consciousness)
 
+    # 上下文组装开关：False 时跳过 DAG/长期记忆/system prompt，只保留原始消息
+    living.assemble_context = True
+
     # ── 回调 ────────────────────────────────────────────────
     _stream_lock = threading.Lock()
 
@@ -285,7 +300,11 @@ def main():
         print("\n\033[90m正在停止...\033[0m")
         living.stop()
 
-    thread.join(timeout=5)
+    try:
+        thread.join(timeout=5)
+    except KeyboardInterrupt:
+        print("\n\033[90m强制中断，等待线程退出...\033[0m")
+        thread.join(timeout=2)
     print("\033[90m已停止\033[0m")
 
 

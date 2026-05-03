@@ -43,6 +43,7 @@ class ContextAssembler:
     MESSAGES_PER_COMPACT = 8
     RESERVED_FRESH_COUNT = 10
     COMPACT_TOKEN_RATIO = 0.5  # 未摘要消息 token 占比超过此值触发压缩
+    COMPACT_THRESHOLD = MESSAGES_PER_COMPACT + RESERVED_FRESH_COUNT  # 未摘要消息条数超过此值也触发
 
     def __init__(
         self,
@@ -64,6 +65,8 @@ class ContextAssembler:
         self.on_compact: Callable[[dict], None] | None = None
         self._compact_locks: dict[str, threading.Lock] = {}
         self._locks_lock = threading.Lock()
+        self._narrative_cache: str | None = None
+        self._narrative_cache_time: float = 0
 
     def assemble(
         self,
@@ -75,9 +78,6 @@ class ContextAssembler:
         include_fresh_tail: bool = True,
     ) -> list[dict[str, Any]]:
         """Assemble context for LLM input (mode already determined by consciousness)."""
-        if session_id:
-            self._auto_compact(session_id, max_tokens)
-
         if mode == "flow":
             return self._assemble_flow(max_tokens, session_id, include_fresh_tail)
         elif mode == "reflect":
@@ -85,7 +85,7 @@ class ContextAssembler:
         else:
             return self._assemble_daily(max_tokens, session_id, user_input, user_id, include_fresh_tail)
 
-    def _auto_compact(self, session_id: str, max_tokens: int) -> None:
+    def _auto_compact(self, session_id: str, max_tokens: int, messages: list[dict] | None = None) -> None:
         with self._locks_lock:
             lock = self._compact_locks.get(session_id)
             if lock is None:
@@ -96,24 +96,28 @@ class ContextAssembler:
             return
 
         try:
-            # 只压缩最近 2 小时的消息，避免处理历史积压
-            unsummarized = self.dag.get_unsummarized_messages(
-                session_id, limit=100,
-                since=time.time() - 7200,
-            )
+            if messages is not None:
+                # 基于当前上下文消息判断，不查 DB
+                unsummarized = self._unsummarized_from_messages(session_id, messages)
+            else:
+                # 兼容旧路径：查 DB
+                unsummarized = self.dag.get_unsummarized_messages(
+                    session_id, limit=100,
+                    since=time.time() - 7200,
+                )
             if not unsummarized:
                 return
 
             # 按 token 占比判断是否触发压缩
             unsummarized_tokens = sum(
-                estimate_tokens(m["content"]) for m in unsummarized
+                estimate_tokens(m.get("content") or "") for m in unsummarized
             )
             threshold = int(max_tokens * self.COMPACT_TOKEN_RATIO)
 
-            if unsummarized_tokens >= threshold:
+            if unsummarized_tokens >= threshold or len(unsummarized) >= self.COMPACT_THRESHOLD:
                 msgs_to_compact = unsummarized[: self.MESSAGES_PER_COMPACT]
                 compact_tokens = sum(
-                    estimate_tokens(m["content"]) for m in msgs_to_compact
+                    estimate_tokens(m.get("content") or "") for m in msgs_to_compact
                 )
                 remaining_tokens = unsummarized_tokens - compact_tokens
 
@@ -146,9 +150,24 @@ class ContextAssembler:
                         remaining_tokens,
                     )
         except Exception as e:
-            logger.warning("[DAG] Auto compact failed: %s", e)
+            import traceback
+            logger.warning("[DAG] Auto compact failed: %s\n%s", e, traceback.format_exc())
         finally:
             lock.release()
+
+    def _unsummarized_from_messages(self, session_id: str, messages: list[dict]) -> list[dict]:
+        """从 self.messages 中找出未被 DAG 摘要覆盖的消息（不查 messages 表）。"""
+        import json
+        conn = self.dag._get_conn()
+        rows = conn.execute(
+            "SELECT message_ids FROM summaries WHERE session_id = ? AND depth = 0",
+            (session_id,),
+        ).fetchall()
+        summarized_ids = set()
+        for r in rows:
+            summarized_ids.update(json.loads(r["message_ids"]))
+
+        return [m for m in messages if m.get("id") and m["id"] not in summarized_ids]
 
     def _assemble_flow(
         self, max_tokens: int, session_id: str | None,
@@ -182,7 +201,7 @@ class ContextAssembler:
             system_content = self.self_model.to_system_prompt(mode="daily")
 
         if session_id and remaining > 200:
-            summary_budget = remaining * 2 // 5
+            summary_budget = remaining // 5
             summaries = self.dag.get_higher_summaries(session_id, summary_budget)
             if summaries:
                 summary_text = self._summaries_to_text(summaries)
@@ -237,7 +256,7 @@ class ContextAssembler:
             system_content = self.self_model.to_system_prompt(mode="reflect")
 
         if session_id and remaining > 200:
-            summary_budget = remaining // 2
+            summary_budget = remaining // 5
             summaries = self.dag.get_higher_summaries(session_id, summary_budget)
             if summaries:
                 summary_text = self._summaries_to_text(summaries)
@@ -305,11 +324,11 @@ class ContextAssembler:
 
         important_memories = self.longterm.get_important(
             user_id=user_id, top_k=10, min_strength=min_strength,
-        )
+        ) or []
 
         similar_memories = self.longterm.recall(
             user_input, user_id=user_id, top_k=30,
-        )
+        ) or []
         similar_memories = [
             m for m in similar_memories
             if m.get("effective_strength", 0) >= min_strength
@@ -348,7 +367,7 @@ class ContextAssembler:
             content = m.get("content", "")
             eff_str = m.get("effective_strength", 0)
             level = self.longterm._get_strength_level(eff_str) if hasattr(self.longterm, '_get_strength_level') else "?"
-            tags = m.get("tags", [])
+            tags = m.get("tags") or []
             tag_str = ",".join(tags) if tags else ""
             lines.append(f"- [{level} {eff_str:.2f}] {content}  [{tag_str}]")
 
@@ -367,7 +386,7 @@ class ContextAssembler:
         tag_counts: dict[str, int] = {}
         kept: list[dict] = []
         for m in memories:
-            tags = m.get("tags", [])
+            tags = m.get("tags") or []
             primary_tag = tags[0] if tags else "__none__"
             count = tag_counts.get(primary_tag, 0)
             if count < max_per_tag:
@@ -394,6 +413,8 @@ class ContextAssembler:
             if seed_id in chain_map:
                 continue
             chain = self.longterm.get_relation_chain(seed_id, depth=depth)
+            if not chain:
+                continue
             for item in chain:
                 mid = item["memory_id"]
                 if mid not in chain_map:
@@ -449,6 +470,43 @@ class ContextAssembler:
                 lines.append(f"[{i}] {role} ({tokens}t): {preview}")
         lines.append(f"=== 总计 {total} tokens ===")
         return "\n".join(lines)
+
+    def _recall_internal_narratives(self) -> str:
+        """回取近期内部叙事（情绪/目标/意识事件的统一时间线）。
+
+        缓存 5 分钟，避免每次对话都向量搜索。
+        """
+        if self.longterm is None:
+            return ""
+        # 缓存：5 分钟内不重复查询
+        now = time.time()
+        if self._narrative_cache is not None and (now - self._narrative_cache_time) < 300:
+            return self._narrative_cache
+        try:
+            narratives = self.longterm.recall(
+                "最近内部体验 情绪 目标 意识",
+                sources=["internal", "dream"],
+                user_id="global",
+                top_k=10,
+            )
+        except Exception:
+            return self._narrative_cache or ""
+        if not narratives:
+            self._narrative_cache = ""
+            self._narrative_cache_time = now
+            return ""
+        lines = ["<内部叙事>"]
+        lines.append("以下是你的近期内在体验，记录了你作为意识体的情绪、目标进展和意识活动：")
+        for n in narratives:
+            content = n.get("content", "")[:120]
+            tags = n.get("tags") or []
+            tag_str = ",".join(tags[:3]) if tags else ""
+            lines.append(f"- {content}  [{tag_str}]")
+        lines.append("</内部叙事>")
+        result = "\n".join(lines)
+        self._narrative_cache = result
+        self._narrative_cache_time = now
+        return result
 
     def _summaries_to_text(self, summaries: list) -> str:
         if not summaries:

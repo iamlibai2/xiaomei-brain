@@ -50,8 +50,41 @@ class SelfImageProxy:
         self.accumulated_changes: list[dict] = []
         self.last_llm_fuel_time: float = 0.0
         self.interpreted_changes: list[str] = []
-        self.pending_intents: list[str] = []
+        self.pending_intents: list[str] = []  # 兼容旧名（读操作返回 intent_buffer）
+        self.intent_buffer: list[str] = []    # 新名字（ActionDispatcher 用）
         self.last_flame_state: FlameState | None = None
+
+        # ── Drive 层状态（供 ActionDispatcher 读取）────────────────
+        # 四大欲望
+        self.desire_belonging: float = 0.0
+        self.desire_cognition: float = 0.0
+        self.desire_achievement: float = 0.0
+        self.desire_expression: float = 0.0
+        # 情绪与激素
+        self.emotion_type: str = "平静"
+        self.emotion_intensity: float = 0.0
+        self.dopamine: float = 0.5
+        self.serotonin: float = 0.5
+        self.cortisol: float = 0.0
+        self.oxytocin: float = 0.5
+        # 目标深度
+        self.current_goal_depth: int = 0
+
+        # ── 最近对话（供主动消息生成）─────────────────────
+        self.recent_conversations: list[dict] = []
+
+    def update_recent_conversations(self, conversations: list[dict]) -> None:
+        """更新最近对话记录（供主动消息生成）"""
+        self.recent_conversations = conversations[-10:] if len(conversations) > 10 else conversations
+
+    @property
+    def pending_intents(self) -> list[str]:
+        """兼容旧名：返回 intent_buffer"""
+        return self.intent_buffer
+
+    @pending_intents.setter
+    def pending_intents(self, value: list[str]) -> None:
+        self.intent_buffer = value
 
     # ── 兼容属性代理 ────────────────────────────────
 
@@ -94,6 +127,10 @@ class SelfImageProxy:
     @property
     def current_mood(self) -> str:
         return self.state.current_mood
+
+    @current_mood.setter
+    def current_mood(self, value: str) -> None:
+        self.state.current_mood = value
 
     @property
     def energy_level(self) -> float:
@@ -300,8 +337,13 @@ class SelfImageProxy:
             f"心情：{self.state.current_mood}",
         ]
 
-        if self.growth.inner_thought:
-            lines.append(f"当前内在想法：{self.growth.inner_thought[:80]}")
+        # 自我感知（L1 消化内部叙事产出）
+        if self.growth.emotional_trajectory:
+            lines.append(f"情绪轨迹：{self.growth.emotional_trajectory}")
+        if self.growth.goal_rhythm:
+            lines.append(f"目标节奏：{self.growth.goal_rhythm}")
+        if self.growth.consciousness_rhythm:
+            lines.append(f"意识节律：{self.growth.consciousness_rhythm}")
 
         # 最近记忆摘要
         if self.memory.recent_memory_summaries:
@@ -514,6 +556,19 @@ class SelfImageProxy:
             "last_llm_fuel_time": self.last_llm_fuel_time,
             "interpreted_changes": self.interpreted_changes,
             "pending_intents": self.pending_intents,
+            "intent_buffer": self.intent_buffer,
+            # Drive 层状态
+            "desire_belonging": self.desire_belonging,
+            "desire_cognition": self.desire_cognition,
+            "desire_achievement": self.desire_achievement,
+            "desire_expression": self.desire_expression,
+            "emotion_type": self.emotion_type,
+            "emotion_intensity": self.emotion_intensity,
+            "dopamine": self.dopamine,
+            "serotonin": self.serotonin,
+            "cortisol": self.cortisol,
+            "oxytocin": self.oxytocin,
+            "current_goal_depth": self.current_goal_depth,
         }
 
     def from_dict(self, data: dict) -> None:
@@ -603,6 +658,32 @@ class SelfImageProxy:
             self.interpreted_changes = data["interpreted_changes"]
         if "pending_intents" in data:
             self.pending_intents = data["pending_intents"]
+        if "intent_buffer" in data:
+            self.intent_buffer = data["intent_buffer"]
+
+        # Drive 层状态
+        if "desire_belonging" in data:
+            self.desire_belonging = data["desire_belonging"]
+        if "desire_cognition" in data:
+            self.desire_cognition = data["desire_cognition"]
+        if "desire_achievement" in data:
+            self.desire_achievement = data["desire_achievement"]
+        if "desire_expression" in data:
+            self.desire_expression = data["desire_expression"]
+        if "emotion_type" in data:
+            self.emotion_type = data["emotion_type"]
+        if "emotion_intensity" in data:
+            self.emotion_intensity = data["emotion_intensity"]
+        if "dopamine" in data:
+            self.dopamine = data["dopamine"]
+        if "serotonin" in data:
+            self.serotonin = data["serotonin"]
+        if "cortisol" in data:
+            self.cortisol = data["cortisol"]
+        if "oxytocin" in data:
+            self.oxytocin = data["oxytocin"]
+        if "current_goal_depth" in data:
+            self.current_goal_depth = data["current_goal_depth"]
 
     def init_from_identity_config(self, config: Any) -> None:
         """从 IdentityConfig 初始化身份字段（L0-L3）"""
