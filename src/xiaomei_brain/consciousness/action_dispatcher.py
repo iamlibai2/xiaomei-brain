@@ -274,7 +274,7 @@ class ActionDispatcher:
         """
         self._queue.clear()
         idle_dur = getattr(self_image, "user_idle_duration", 0)
-        logger.info("[ActionDispatcher.tick] idle_duration=%.1fs, checking rules...", idle_dur)
+        # logger.info("[ActionDispatcher.tick] idle_duration=%.1fs, checking rules...", idle_dur)
 
         if not self._rules_loaded:
             from .rules import _init_rules, RULES
@@ -305,7 +305,7 @@ class ActionDispatcher:
             logger.info("[ActionDispatcher] 规则匹配: %s → %s (priority=%.2f)",
                         rule.cooldown_key, item.reason, item.priority)
 
-        logger.info("[ActionDispatcher.tick] matched %d items", len(self._queue))
+        # logger.info("[ActionDispatcher.tick] matched %d items", len(self._queue))
         return list(self._queue)
 
     def process_queue(self) -> None:

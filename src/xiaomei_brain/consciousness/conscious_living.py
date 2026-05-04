@@ -83,15 +83,22 @@ class ConsciousLiving(Living):
         user_id: str = "global",
         tick_interval: float = 1.0,  # L0 心跳间隔（秒）
         load_consciousness: bool = True,  # 是否加载意识系统
+        config: Any | None = None,  # LivingConfig
     ) -> None:
+        # 读取 LivingConfig
+        if config is None:
+            from .config import LivingConfig
+            config = LivingConfig()
+        self._config = config
+
         super().__init__(
             agent_instance=agent_instance,
-            idle_threshold=idle_threshold,
-            dream_interval=dream_interval,
-            idle_short=idle_short,
+            idle_threshold=idle_threshold or config.living.idle_threshold,
+            dream_interval=dream_interval or config.living.dream_interval,
+            idle_short=idle_short or config.living.idle_short,
             session_id=session_id,
             user_id=user_id,
-            tick_interval=tick_interval,
+            tick_interval=tick_interval or config.living.tick_interval,
         )
 
         # 包装 LLM 客户端：自动控制上下文总 token 量
@@ -104,9 +111,6 @@ class ConsciousLiving(Living):
         if agent_instance and hasattr(agent_instance, "agent_id"):
             agent_id = agent_instance.agent_id
         self.drive = DriveEngine(agent_id, load=False)
-
-        # ActionDispatcher 上次触发时间（每 60 秒检查一次主动行为）
-        self._last_action_dispatch: float = time.time()
 
         # Purpose 系统（前额叶层）- 延迟加载
         llm_client = None
@@ -140,6 +144,16 @@ class ConsciousLiving(Living):
         )
         self._load_consciousness = load_consciousness
 
+        # DreamEngine（梦境总控）- 在 consciousness 创建之后
+        from .dream import DreamEngine
+        self._dream_engine = DreamEngine(
+            consciousness=self.consciousness,
+            drive=self.drive,
+            ltm=getattr(self.agent, 'longterm_memory', None),
+            extractor=getattr(self.agent, 'memory_extractor', None),
+            llm=getattr(self.agent, 'llm', None),
+        )
+
         # 命令注册表 — 从 living_commands 加载（测试/调试/系统操作）
         from .living_commands import COMMAND_REGISTRY, list_commands as _list_cmds
         self._list_commands = lambda: _list_cmds(self)
@@ -158,13 +172,18 @@ class ConsciousLiving(Living):
 
         # ActionDispatcher 初始化（接入外部引用）
         from .rules import _init_rules, RULES
-        _init_rules()
+        drive_config = getattr(self.drive, '_config', None)
+        _init_rules(drive_config=drive_config, living_config=self._config)
         self._dispatcher.load_rules(RULES)
         self._dispatcher.inject_conscious_living(self)
         self._dispatcher.inject_action_executor(self.action_executor)
 
         # 记录初始化摘要
         self._log_initialization()
+
+        # 注册周期任务
+        self.register_periodic("heartbeat", self._config.living.tick_interval, self._heartbeat)
+        self.register_periodic("surge", self._config.living.surge_interval, self._surge)
 
     def _log_initialization(self) -> None:
         """记录 ConsciousLiving 初始化摘要"""
@@ -288,26 +307,26 @@ class ConsciousLiving(Living):
         }
 
     def _inject_context_assembler(self) -> None:
-        """Replace agent's context_assembler with consciousness-aware version.
+        """创建 consciousness-aware 的 ContextAssembler 并注入 agent。
 
-        The old assembler created by agent_manager has no consciousness state.
-        This injects a new one that considers flame/drive/intent when assembling context.
-
-        如果意识系统未加载，使用 None 作为 self_image（不注入意识状态）。
+        agent_manager 不再创建 ContextAssembler，由本方法统一创建。
         """
         old_ca = getattr(self.agent, "context_assembler", None)
-        if old_ca is None:
-            logger.warning("[ConsciousLiving] No context_assembler to replace")
+        dag = getattr(self.agent, "_dag", None) or (old_ca.dag if old_ca else None)
+
+        if dag is None:
+            logger.warning("[ConsciousLiving] No DAG available, skip context_assembler injection")
             return
 
         assembler = ConsciousContextAssembler(
             conversation_db=self.agent.conversation_db,
-            dag=old_ca.dag,
+            dag=dag,
             self_model=self.agent.self_model,
             longterm_memory=self.agent.longterm_memory,
             drive=self.drive,
             self_image=self.consciousness.self_image if self._load_consciousness else None,
             purpose=self.purpose,
+            config=self._config,
         )
 
         # 上下文压缩通知
@@ -322,6 +341,10 @@ class ConsciousLiving(Living):
 
         assembler.on_compact = _on_compact
         self.agent.context_assembler = assembler
+        # 同步 CommandRegistry 的 assembler 引用
+        # CommandRegistry.__init__ 存储 context_assembler 参数为 self.assembler
+        if self.agent.commands:
+            self.agent.commands.assembler = assembler
         logger.info("[ConsciousLiving] context_assembler injected (consciousness-aware)")
 
     def _setup_all(self) -> None:
@@ -404,68 +427,60 @@ class ConsciousLiving(Living):
 
     # ── Hook: 心跳 ───────────────────────────────────────────────
 
-    def _heartbeat(self, state: LivingState, **kwargs) -> str:
-        """每 tick 调用。处理意识 tick + Intent/欲望检查。
+    def _heartbeat(self, state: LivingState) -> None:
+        """每 tick 调用（1秒一次）。处理意识 L0-L3 tick。
 
-        Returns:
-            HEARTBEAT_NORMAL 或 HEARTBEAT_DREAM。
+        设置 self._heartbeat_result 供基类读取。
+
+        注意：DREAMING 状态由 _loop_dreaming() 全权处理，不经过此 heartbeat。
         """
         if not self._load_consciousness:
-            return HEARTBEAT_NORMAL
+            return
 
-        if state == LivingState.DREAMING:
-            result = self.consciousness.tick(
-                agent_state=state.value,
-                in_dream=True,
-                dream_start=kwargs.get("dream_start", time.time()),
-            )
-            if result == TickResult.L3_TRIGGERED:
-                report = self.consciousness.get_last_report()
-                if report:
-                    logger.info("[ConsciousLiving] L3深度燃烧: %s", report.summary[:50])
-                return HEARTBEAT_DREAM
-            # ActionDispatcher 每 60 秒检查（DREAMING 状态也需要）
-            now = time.time()
-            if now - self._last_action_dispatch >= 60:
-                self._update_recent_conversations()
-                si = self.consciousness.get_self_image()
-                self._dispatcher.tick(si)
-                self._dispatcher.process_queue()
-                self._last_action_dispatch = now
-            return HEARTBEAT_NORMAL
-
-        dream_start = kwargs.get("dream_start")
-        tick_kwargs: dict[str, Any] = {"agent_state": state.value}
-        if dream_start is not None:
-            tick_kwargs["in_dream"] = False
-            tick_kwargs["dream_start"] = dream_start
-
-        result = self.consciousness.tick(**tick_kwargs)
-
-        # ActionDispatcher 每 60 秒检查主动行为（L1 节奏）
-        now = time.time()
-        if now - self._last_action_dispatch >= 60:
-            # 更新最近对话（供 ActionDispatcher 生成个性化问候）
-            self._update_recent_conversations()
-            si = self.consciousness.get_self_image()
-            self._dispatcher.tick(si)
-            self._dispatcher.process_queue()
-            self._last_action_dispatch = now
-        return HEARTBEAT_NORMAL
-
-        dream_start = kwargs.get("dream_start")
+        result = self.consciousness.tick(agent_state=state.value)
 
         # L2 触发后同步 Drive 数据（供养 SelfImage）
         if result == TickResult.L2_TRIGGERED:
             self._sync_self_image_from_subsystems()
 
         if result == TickResult.L3_TRIGGERED and state == LivingState.SLEEPING:
-            return HEARTBEAT_DREAM
+            self._heartbeat_result = HEARTBEAT_DREAM
 
-        return HEARTBEAT_NORMAL
+    def _surge(self, state: LivingState) -> None:
+        """每分钟调用。ActionDispatcher 统一检查主动行为。"""
+        self._update_recent_conversations()
+        if self._load_consciousness:
+            si = self.consciousness.get_self_image()
+            self._dispatcher.tick(si)
+            self._dispatcher.process_queue()
 
     def _should_skip_dreaming(self) -> bool:
         return not self._load_consciousness
+
+    def _loop_dreaming(self) -> None:
+        """DREAMING 状态循环：运行 DreamEngine。"""
+        logger.info("[ConsciousLiving] 进入 DREAMING，运行 DreamEngine")
+
+        if self._should_skip_dreaming():
+            self._transition(LivingState.SLEEPING)
+            return
+
+        # 运行 DreamEngine（串行执行：情绪整理→记忆强化→L3燃烧→反省）
+        try:
+            report = self._dream_engine.run()
+            logger.info(
+                "[ConsciousLiving] DreamEngine 完成: 强化%d条, 提取%d条, 摘要: %s",
+                report.memories_reinforced,
+                report.memories_extracted,
+                report.summary[:50] if report.summary else "",
+            )
+        except Exception as e:
+            logger.error("[ConsciousLiving] DreamEngine 运行失败: %s", e)
+
+        # DreamEngine 完成后生成后续意图（已在 run() 内部写入 intent_buffer）
+        # 这里不做额外处理
+
+        self._transition(LivingState.SLEEPING)
 
     # ── SelfImage 同步 ───────────────────────────────────────
 
@@ -482,8 +497,6 @@ class ConsciousLiving(Living):
             recent = [{"role": r.get("role", ""), "content": r.get("content", "")} for r in rows]
 
         si.update_recent_conversations(recent)
-        logger.info("[ConsciousLiving] 更新 recent_conversations: session=%s, count=%d",
-                    self.session_id, len(recent))
 
     def _sync_self_image_from_subsystems(self) -> None:
         """将 Drive / Purpose 层状态同步到 SelfImage（统一视图）"""
@@ -1544,7 +1557,7 @@ class ConsciousLiving(Living):
         if self.agent.conversation_db and self.agent.context_assembler:
             agent = self.agent._get_agent()
             recent = self.agent.conversation_db.get_recent(
-                self.agent.context_assembler.FRESH_TAIL_COUNT,
+                self._config.context.fresh_tail_count,
                 session_id=self.session_id,
             )
 
@@ -1636,36 +1649,6 @@ class ConsciousLiving(Living):
                 logger.info("[ConsciousLiving] 苏醒时加载 fresh_tail: %d 条消息", len(agent.messages))
 
         logger.info("[ConsciousLiving] Good morning! 火焰点燃。")
-
-        # 检查欲望状态
-        actions = self.drive.check_desire_actions()
-
-        if actions:
-            logger.info(
-                "[ConsciousLiving] 苏醒时欲望检查: %d 个候选行为",
-                len(actions)
-            )
-            for a in actions[:3]:
-                logger.info("  - %s (优先级 %.2f)", a["type"], a["priority"])
-
-            # 检查是否有学习行为（放后台执行）
-            for action in actions:
-                if action["type"] == "learn_topic":
-                    # 学习放后台线程，不阻塞苏醒
-                    def run_learn():
-                        try:
-                            logger.info("[后台学习] 开始执行...")
-                            self.action_executor.execute(action)
-                            logger.info("[后台学习] 完成")
-                        except Exception as e:
-                            logger.warning("[后台学习] 失败: %s", e)
-
-                    thread = threading.Thread(target=run_learn, daemon=True)
-                    thread.start()
-                    logger.info("[ConsciousLiving] 学习行为已放入后台线程")
-                    break  # 只执行一个学习
-        else:
-            logger.info("[ConsciousLiving] 苏醒时欲望平稳，无主动行为")
 
     def _on_wake_up(self) -> None:
         """从 IDLE 收到消息唤醒，直接切 AWAKE 处理。
