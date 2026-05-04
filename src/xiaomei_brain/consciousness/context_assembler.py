@@ -25,10 +25,6 @@ from xiaomei_brain.memory.self_model import SelfModel
 
 logger = logging.getLogger(__name__)
 
-# Memory strength injection thresholds
-INJECT_STRENGTH_DAILY = 0.6
-INJECT_STRENGTH_REFLECT = 0.4
-
 
 class ContextAssembler:
     """Consciousness-aware context assembler.
@@ -36,14 +32,6 @@ class ContextAssembler:
     Receives memory storage references and consciousness state (drive/self_image).
     Memory layer provides pure retrieval; this class assembles based on consciousness state.
     """
-
-    FRESH_TAIL_COUNT = 40
-    FLOW_TAIL_COUNT = 4
-    REFLECT_TAIL_COUNT = 12
-    MESSAGES_PER_COMPACT = 8
-    RESERVED_FRESH_COUNT = 10
-    COMPACT_TOKEN_RATIO = 0.5  # 未摘要消息 token 占比超过此值触发压缩
-    COMPACT_THRESHOLD = MESSAGES_PER_COMPACT + RESERVED_FRESH_COUNT  # 未摘要消息条数超过此值也触发
 
     def __init__(
         self,
@@ -54,6 +42,7 @@ class ContextAssembler:
         drive: Any | None = None,
         self_image: Any | None = None,
         purpose: Any | None = None,
+        config: Any | None = None,
     ) -> None:
         self.db = conversation_db
         self.dag = dag
@@ -67,6 +56,14 @@ class ContextAssembler:
         self._locks_lock = threading.Lock()
         self._narrative_cache: str | None = None
         self._narrative_cache_time: float = 0
+
+        # 从 LivingConfig 读取参数
+        if config is None:
+            from .config import LivingConfig
+            config = LivingConfig()
+        self._living_cfg = config  # 完整配置引用
+        self._ctx_cfg = config.context
+        self._kw_cfg = config.keywords
 
     def assemble(
         self,
@@ -103,7 +100,7 @@ class ContextAssembler:
                 # 兼容旧路径：查 DB
                 unsummarized = self.dag.get_unsummarized_messages(
                     session_id, limit=100,
-                    since=time.time() - 7200,
+                    since=time.time() - self._ctx_cfg.compact_time_window,
                 )
             if not unsummarized:
                 return
@@ -112,10 +109,11 @@ class ContextAssembler:
             unsummarized_tokens = sum(
                 estimate_tokens(m.get("content") or "") for m in unsummarized
             )
-            threshold = int(max_tokens * self.COMPACT_TOKEN_RATIO)
+            threshold = int(max_tokens * self._ctx_cfg.compact_token_ratio)
 
-            if unsummarized_tokens >= threshold or len(unsummarized) >= self.COMPACT_THRESHOLD:
-                msgs_to_compact = unsummarized[: self.MESSAGES_PER_COMPACT]
+            compact_threshold = self._ctx_cfg.messages_per_compact + self._ctx_cfg.reserved_fresh_count
+            if unsummarized_tokens >= threshold or len(unsummarized) >= compact_threshold:
+                msgs_to_compact = unsummarized[: self._ctx_cfg.messages_per_compact]
                 compact_tokens = sum(
                     estimate_tokens(m.get("content") or "") for m in msgs_to_compact
                 )
@@ -180,7 +178,7 @@ class ContextAssembler:
                 "content": self.self_model.to_system_prompt(mode="flow"),
             })
         if include_fresh_tail:
-            n = self.FLOW_TAIL_COUNT
+            n = self._ctx_cfg.flow_tail_count
             recent = self._fresh_tail(n, session_id)
             messages.extend(recent)
         return messages
@@ -210,8 +208,8 @@ class ContextAssembler:
         if user_input and self.longterm and remaining > 200:
             memory_text = self._recall_memories(
                 user_input, user_id,
-                max_results=12,
-                min_strength=INJECT_STRENGTH_DAILY,
+                max_results=self._ctx_cfg.daily_max_memories,
+                min_strength=self._ctx_cfg.daily_min_strength,
             )
             if memory_text:
                 system_content += "\n\n" + memory_text
@@ -226,7 +224,7 @@ class ContextAssembler:
             remaining -= estimate_tokens(system_content)
 
         if include_fresh_tail and remaining > 100:
-            n = self.FRESH_TAIL_COUNT
+            n = self._ctx_cfg.fresh_tail_count
             recent = self._fresh_tail(n, session_id)
             # 倒序遍历：优先保留最新消息，从新往旧放
             tail = []
@@ -265,8 +263,8 @@ class ContextAssembler:
         if user_input and self.longterm and remaining > 200:
             memory_text = self._recall_memories(
                 user_input, user_id,
-                max_results=15,
-                min_strength=INJECT_STRENGTH_REFLECT,
+                max_results=self._ctx_cfg.reflect_max_memories,
+                min_strength=self._ctx_cfg.reflect_min_strength,
             )
             if memory_text:
                 system_content += "\n\n" + memory_text
@@ -281,7 +279,7 @@ class ContextAssembler:
             remaining -= estimate_tokens(system_content)
 
         if include_fresh_tail and remaining > 100:
-            n = self.REFLECT_TAIL_COUNT
+            n = self._ctx_cfg.reflect_tail_count
             recent = self._fresh_tail(n, session_id)
             # 倒序遍历：优先保留最新消息
             tail = []
@@ -527,6 +525,7 @@ def determine_mode(
     pending_intents: list[str] | None = None,
     has_active_goal: bool = False,
     recent_has_tool_calls: bool = False,
+    config: Any | None = None,
 ) -> str:
     """Determine operational mode based on consciousness state.
 
@@ -537,22 +536,26 @@ def determine_mode(
         pending_intents: Pending intents from SelfImage.
         has_active_goal: Whether there is an active goal in PurposeEngine.
         recent_has_tool_calls: Whether recent exchanges involved tool calls.
+        config: LivingConfig instance (uses defaults if not provided).
 
     Returns:
         "flow", "daily", or "reflect".
     """
+    if config is None:
+        from .config import LivingConfig
+        config = LivingConfig()
+    kw = config.keywords
+    cc = config.consciousness
+
     desire_state = desire_state or {}
     pending_intents = pending_intents or []
 
     # ── Context continuity: don't drop to flow mid-stream ──
-    # If we were just doing multi-step work (tool calls), even a short
-    # follow-up like "继续" or "然后呢" should stay in daily mode.
-    # Otherwise context gets stripped and the agent forgets what it was doing.
     if recent_has_tool_calls:
         return "daily"
 
     # Flame low → flow (minimal context)
-    if energy_level < 0.3:
+    if energy_level < cc.energy_low_threshold:
         return "flow"
 
     # Pending DREAM/REFLECT intent → reflect
@@ -569,29 +572,24 @@ def determine_mode(
         return "daily"
 
     # User input reflects on past behavior → reflect
-    reflect_keywords = ["答对了吗", "做错了", "纠正", "不对", "反省", "反思", "我错了吗"]
-    if any(k in user_input for k in reflect_keywords):
+    if any(k in user_input for k in kw.reflect_keywords):
         return "reflect"
 
     # Past references → daily (need history)
-    past_keywords = ["昨天", "之前", "上次", "以前", "记得", "刚才", "那一次"]
-    if any(k in user_input for k in past_keywords):
+    if any(k in user_input for k in kw.past_keywords):
         return "daily"
 
     # Personal opinion/judgment → daily (need self-model)
-    opinion_keywords = ["你觉得", "你怎么看", "建议", "推荐", "你更喜欢", "你觉得我"]
-    if any(k in user_input for k in opinion_keywords):
+    if any(k in user_input for k in kw.opinion_keywords):
         return "daily"
 
     # Emotional/personal → daily
-    personal_keywords = ["我心情", "我好开心", "我很难过", "你能不能", "我想要", "我感觉"]
-    if any(k in user_input for k in personal_keywords):
+    if any(k in user_input for k in kw.personal_keywords):
         return "daily"
 
     # Simple/factual → flow
-    if len(user_input) < 15:
-        simple_patterns = ["算", "计算", "翻译", "几点", "什么意思", "？", "吗", "帮我"]
-        if any(p in user_input for p in simple_patterns):
+    if len(user_input) < config.context.short_input_threshold:
+        if any(p in user_input for p in kw.simple_patterns):
             return "flow"
 
     # Default: daily

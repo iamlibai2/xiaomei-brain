@@ -92,13 +92,36 @@ def _record_fired(key: str) -> None:
 RULES: list[Rule] = []
 
 
-def _init_rules() -> None:
-    """初始化规则表（延迟导入避免循环依赖）"""
+def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
+    """初始化规则表（延迟导入避免循环依赖）
+
+    Args:
+        drive_config: DriveConfig 实例，提供欲望阈值。
+        living_config: LivingConfig 实例，提供冷却时间、触发阈值等。
+    """
     global RULES
     if RULES:
         return
 
     from .action_item import ActionItem, ActionType
+    from .config import LivingConfig
+
+    cfg = living_config or LivingConfig()
+    ac = cfg.action
+    cc = cfg.consciousness
+
+    # 欲望阈值（从 DriveConfig 读取，或用默认值）
+    if drive_config and hasattr(drive_config, 'desire') and hasattr(drive_config.desire, 'thresholds'):
+        t = drive_config.desire.thresholds
+        thr_belonging = t.belonging
+        thr_cognition = t.cognition
+        thr_achievement = t.achievement
+        thr_expression = t.expression
+    else:
+        thr_belonging = 0.7
+        thr_cognition = 0.8
+        thr_achievement = 0.6
+        thr_expression = 0.7
 
     # ── Intent 驱动 ─────────────────────────────────────
 
@@ -114,7 +137,7 @@ def _init_rules() -> None:
                 cooldown_key="intent_greet",
                 metadata={"intent_type": "GREET"},
             ))
-            .cooldown("intent_greet", 3600)
+            .cooldown("intent_greet", ac.intent_greet_cooldown)
     )
 
     # CARE 意图 → 主动关心
@@ -129,7 +152,7 @@ def _init_rules() -> None:
                 cooldown_key="intent_care",
                 metadata={"intent_type": "CARE"},
             ))
-            .cooldown("intent_care", 1800)
+            .cooldown("intent_care", ac.intent_care_cooldown)
     )
 
     # REFLECT 意图 → 触发 L3 深度燃烧
@@ -144,7 +167,7 @@ def _init_rules() -> None:
                 cooldown_key="intent_reflect",
                 metadata={"intent_type": "REFLECT"},
             ))
-            .cooldown("intent_reflect", 7200)
+            .cooldown("intent_reflect", ac.intent_reflect_cooldown)
     )
 
     # ACT 意图 → 主动行动
@@ -159,29 +182,29 @@ def _init_rules() -> None:
                 cooldown_key="intent_act",
                 metadata={"intent_type": "ACT"},
             ))
-            .cooldown("intent_act", 3600)
+            .cooldown("intent_act", ac.intent_act_cooldown)
     )
 
     # ── Desire 驱动 ─────────────────────────────────────
 
-    # 用户空闲 2 分钟 → 主动问候
+    # 用户空闲 → 主动问候
     RULES.append(
-        Rule.when(lambda si: getattr(si, "user_idle_duration", 0) > 120)
+        Rule.when(lambda si, t=ac.idle_trigger_seconds: getattr(si, "user_idle_duration", 0) > t)
             .then(ActionItem(
                 action_type=ActionType.PROACTIVE,
                 priority=0.7,
                 content="",
-                reason="用户空闲超过 2 分钟",
+                reason=f"用户空闲超过 {int(ac.idle_trigger_seconds)} 秒",
                 source="idle",
                 cooldown_key="idle_greet",
-                metadata={"source": "idle", "idle_duration": 120},
+                metadata={"source": "idle", "idle_duration": ac.idle_trigger_seconds},
             ))
-            .cooldown("idle_greet", 300)
+            .cooldown("idle_greet", ac.idle_greet_cooldown)
     )
 
-    # 归属欲 > 0.7 → 问候行为
+    # 归属欲 → 问候行为
     RULES.append(
-        Rule.when(lambda si: _get_drive_facet(si).belonging > 0.7)
+        Rule.when(lambda si, t=thr_belonging: _get_drive_facet(si).belonging > t)
             .then(ActionItem(
                 action_type=ActionType.PROACTIVE,
                 priority=0.6,
@@ -189,14 +212,14 @@ def _init_rules() -> None:
                 reason="归属欲强（想念用户）",
                 source="desire",
                 cooldown_key="desire_greet",
-                metadata={"desire_type": "belonging", "threshold": 0.7},
+                metadata={"desire_type": "belonging", "threshold": thr_belonging},
             ))
-            .cooldown("desire_greet", 3600)
+            .cooldown("desire_greet", ac.desire_greet_cooldown)
     )
 
-    # 认知欲 > 0.8 → 学习行为
+    # 认知欲 → 学习行为
     RULES.append(
-        Rule.when(lambda si: _get_drive_facet(si).cognition > 0.8)
+        Rule.when(lambda si, t=thr_cognition: _get_drive_facet(si).cognition > t)
             .then(ActionItem(
                 action_type=ActionType.TOOL,
                 priority=0.5,
@@ -204,14 +227,14 @@ def _init_rules() -> None:
                 reason="认知欲强（想学习新知识）",
                 source="desire",
                 cooldown_key="desire_learn",
-                metadata={"desire_type": "cognition", "threshold": 0.8},
+                metadata={"desire_type": "cognition", "threshold": thr_cognition},
             ))
-            .cooldown("desire_learn", 7200)
+            .cooldown("desire_learn", ac.desire_learn_cooldown)
     )
 
-    # 成就欲 > 0.6 → 推进目标
+    # 成就欲 → 推进目标
     RULES.append(
-        Rule.when(lambda si: _get_drive_facet(si).achievement > 0.6)
+        Rule.when(lambda si, t=thr_achievement: _get_drive_facet(si).achievement > t)
             .then(ActionItem(
                 action_type=ActionType.TOOL,
                 priority=0.5,
@@ -219,14 +242,14 @@ def _init_rules() -> None:
                 reason="成就欲强（想完成目标）",
                 source="desire",
                 cooldown_key="desire_achievement",
-                metadata={"desire_type": "achievement", "threshold": 0.6},
+                metadata={"desire_type": "achievement", "threshold": thr_achievement},
             ))
-            .cooldown("desire_achievement", 3600)
+            .cooldown("desire_achievement", ac.desire_achievement_cooldown)
     )
 
-    # 表达欲 > 0.7 → 分享想法
+    # 表达欲 → 分享想法
     RULES.append(
-        Rule.when(lambda si: _get_drive_facet(si).expression > 0.7)
+        Rule.when(lambda si, t=thr_expression: _get_drive_facet(si).expression > t)
             .then(ActionItem(
                 action_type=ActionType.PROACTIVE,
                 priority=0.5,
@@ -234,16 +257,16 @@ def _init_rules() -> None:
                 reason="表达欲强（想分享想法）",
                 source="desire",
                 cooldown_key="desire_express",
-                metadata={"desire_type": "expression", "threshold": 0.7},
+                metadata={"desire_type": "expression", "threshold": thr_expression},
             ))
-            .cooldown("desire_express", 3600)
+            .cooldown("desire_express", ac.desire_express_cooldown)
     )
 
     # ── System 触发 ─────────────────────────────────────
 
     # 能量极低 → 触发休息提示
     RULES.append(
-        Rule.when(lambda si: _get_consciousness_facet(si).energy_level < 0.3)
+        Rule.when(lambda si, t=cc.energy_low_threshold: _get_consciousness_facet(si).energy_level < t)
             .then(ActionItem(
                 action_type=ActionType.NOTIFY,
                 priority=0.4,

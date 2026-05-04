@@ -51,6 +51,9 @@ def build_context(
         m.get("role") == "tool" or m.get("tool_calls")
         for m in agent.messages[-5:]
     )
+    # 获取 LivingConfig
+    cfg = getattr(agent.context_assembler, '_living_cfg', None) if agent.context_assembler else None
+
     mode = determine_mode(
         user_input,
         energy_level=cs.get("energy_level", 0.8),
@@ -58,6 +61,7 @@ def build_context(
         pending_intents=cs.get("pending_intents", []),
         has_active_goal=cs.get("has_active_goal", False),
         recent_has_tool_calls=recent_tool_calls,
+        config=cfg,
     )
 
     # 4. DAG auto-compact

@@ -1,43 +1,45 @@
-"""Dream processor: unified dream jobs for memory consolidation.
+"""Memory jobs: 梦境记忆处理任务。
+
+移自 memory/dream.py，DreamProcessor 类已废弃删除。
+保留 ReinforceJob 和 ExtractJob。
 
 Job types:
-- ReinforceJob:  strength reinforcement for low-strength memories
-- ExtractJob:     LLM extraction from conversation logs → long-term memory
-
-Each job is self-contained — no delegation to longterm.py dream_reinforce().
+- ReinforceJob:  低 strength 记忆强化 + extinct 处理
+- ExtractJob:     LLM 从今日对话提取新记忆
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .longterm import LongTermMemory
-    from .extractor import MemoryExtractor
-    from .conversation_db import ConversationDB
+    from ...memory.longterm import LongTermMemory
+    from ...memory.extractor import MemoryExtractor
+    from ...memory.conversation_db import ConversationDB
 
 logger = logging.getLogger(__name__)
 
 
-# ── Constants (copied from longterm.py for self-containment) ───────────
+# ── Constants ─────────────────────────────────────────────────
 
 STRENGTH_DECAY_BASE = 0.9995
 STRENGTH_L4 = 0.2
-STRENGTH_L3 = 0.4
 MEMORY_REINFORCE_BOOST = 0.1
 MEMORY_EXTINCT_DAYS = 30
 STATUS_ACTIVE = "active"
 STATUS_EXTINCT = "extinct"
 
 
-# ── Result type ──────────────────────────────────────────────────────────
+# ── DreamResult ─────────────────────────────────────────────
 
 @dataclass
 class DreamResult:
+    """Job 执行结果"""
     job: str
     saved: int = 0
     reinforced: int = 0
@@ -46,56 +48,10 @@ class DreamResult:
     details: str = ""
 
 
-# ── Dream Processor ────────────────────────────────────────────────────────
-
-class DreamProcessor:
-    """Unified dream processor — runs all dream jobs in sequence."""
-
-    def __init__(
-        self,
-        conversation_db: "ConversationDB",
-        memory_extractor: "MemoryExtractor",
-    ) -> None:
-        self.conversation_db = conversation_db
-        self.extractor = memory_extractor
-        self._jobs: list[tuple[str, callable]] = []
-
-    def add_job(self, name: str, fn: callable) -> None:
-        """Register a dream job: (name, callable returning DreamResult)."""
-        self._jobs.append((name, fn))
-        logger.debug("[Dream] Registered job '%s'", name)
-
-    def dream(self) -> list[DreamResult]:
-        """Run all registered dream jobs sequentially."""
-        results: list[DreamResult] = []
-
-        for name, fn in self._jobs:
-            t0 = time.time()
-            try:
-                result = fn()
-                if isinstance(result, DreamResult):
-                    results.append(result)
-                elif result is None:
-                    results.append(DreamResult(job=name, details="(no result)"))
-                else:
-                    results.append(DreamResult(job=name, details=str(result)))
-            except Exception as e:
-                logger.error("[Dream] Job '%s' failed: %s", name, e)
-                results.append(DreamResult(job=name, errors=1, details=str(e)))
-
-            elapsed = time.time() - t0
-            logger.info("[Dream] Job '%s' done in %.1fs", name, elapsed)
-
-        return results
-
-
-# ── Reinforce Job ─────────────────────────────────────────────────────────
+# ── ReinforceJob ────────────────────────────────────────────
 
 class ReinforceJob:
-    """记忆强化 job — 扫描低 strength 记忆，强化 + extinct 处理。
-
-    实际逻辑，不委托给 longterm.py。
-    """
+    """记忆强化 job — 扫描低 strength 记忆，强化 + extinct 处理。"""
 
     def __init__(
         self,
@@ -110,7 +66,7 @@ class ReinforceJob:
         self.batch_size = batch_size
 
     def run(self) -> DreamResult:
-        """Execute reinforcement scan."""
+        """执行强化扫描。"""
         conn = self.ltm._get_conn()
         now = time.time()
         reinforce_cutoff = now - 24 * 3600
@@ -145,12 +101,10 @@ class ReinforceJob:
                 row_user_id = row["user_id"]
                 last_strengthen = row["last_strengthen"]
 
-                # 计算 effective_strength（指数衰减）
                 elapsed_hours = (now - last_strengthen) / 3600.0
                 effective = current_strength * (STRENGTH_DECAY_BASE ** elapsed_hours)
 
                 if effective < STRENGTH_L4:
-                    # L4/L5: 强化 + 重新 embed
                     new_strength = current_strength + self.boost * (1.0 - current_strength)
                     new_strength = min(0.95, new_strength)
 
@@ -161,7 +115,6 @@ class ReinforceJob:
                     self.ltm._update_lance(mid, content, row_user_id)
                     reinforced += 1
 
-                    # 检查是否应该标记 extinct
                     if new_strength < STRENGTH_L4 and (now - last_accessed) > MEMORY_EXTINCT_DAYS * 86400:
                         conn.execute(
                             "UPDATE memories SET status = ? WHERE id = ?",
@@ -170,11 +123,10 @@ class ReinforceJob:
                         self.ltm._delete_from_lance(mid)
                         extinct += 1
                         logger.info(
-                            "[Dream] Memory #%d extinct (strength=%.3f, last_accessed=%dd ago)",
+                            "[ReinforceJob] Memory #%d extinct (strength=%.3f, last_accessed=%dd ago)",
                             mid, new_strength, int((now - last_accessed) / 86400),
                         )
                 else:
-                    # L3: 只强化，不重新 embed
                     new_strength = current_strength + self.boost * (1.0 - current_strength)
                     new_strength = min(0.95, new_strength)
                     conn.execute(
@@ -184,13 +136,13 @@ class ReinforceJob:
                     reinforced += 1
 
             except Exception as e:
-                logger.warning("[Dream] Failed to reinforce #%d: %s", mid, e)
+                logger.warning("[ReinforceJob] Failed to reinforce #%d: %s", mid, e)
                 errors += 1
 
         conn.commit()
 
         logger.info(
-            "[Dream] Reinforce: reinforced=%d extinct=%d errors=%d",
+            "[ReinforceJob] reinforced=%d extinct=%d errors=%d",
             reinforced, extinct, errors,
         )
         return DreamResult(
@@ -202,13 +154,10 @@ class ReinforceJob:
         )
 
 
-# ── Extract Job ────────────────────────────────────────────────────────────
+# ── ExtractJob ──────────────────────────────────────────────
 
 class ExtractJob:
-    """对话提取 job — 从 conversation_db 读当天消息，LLM 深度提取记忆。
-
-    实际逻辑，不委托给 extractor.extract_dream()。
-    """
+    """对话提取 job — 从 conversation_db 读当天消息，LLM 深度提取记忆。"""
 
     DREAM_EXTRACT_PROMPT = """你是一个记忆提取器。从以下对话记录中，提取关于**用户**的值得长期记住的信息。
 
@@ -237,7 +186,7 @@ class ExtractJob:
         self.user_id = user_id
 
     def run(self) -> DreamResult:
-        """Execute dream-mode extraction of today's conversations."""
+        """从今日对话提取新记忆。"""
         if not self.extractor.llm or not self.extractor.ltm or not self.extractor.db:
             return DreamResult(job="extract", errors=1, details="missing dependencies")
 
@@ -251,7 +200,6 @@ class ExtractJob:
 
         formatted = self._format_messages(messages)
 
-        # 获取已有记忆供 LLM 参考
         recent_memories = ""
         existing = self.extractor.ltm.get_recent(10, user_id=self.user_id)
         if existing:
@@ -269,18 +217,16 @@ class ExtractJob:
             )
             text = result.content or ""
         except Exception as e:
-            logger.error("[Dream extract] LLM call failed: %s", e)
+            logger.error("[ExtractJob] LLM call failed: %s", e)
             return DreamResult(job="extract", errors=1, details=str(e))
 
         if text.strip() == "EMPTY":
             return DreamResult(job="extract", saved=0, details="EMPTY response")
 
-        # 解析 ADD 指令并存储
         saved = self._execute_adds(text)
         return DreamResult(job="extract", saved=saved)
 
     def _format_messages(self, messages: list[dict]) -> str:
-        """Format conversation messages for LLM."""
         lines = []
         for m in messages:
             role = m.get("role", "user")
@@ -289,14 +235,10 @@ class ExtractJob:
         return "\n".join(lines)
 
     def _execute_adds(self, text: str) -> int:
-        """Parse LLM output, execute ADD for each memory."""
-        import re
-
         ltm = self.extractor.ltm
         user_id = self.user_id
         saved = 0
 
-        # 匹配 ADD: 开头的内容行
         for line in text.split("\n"):
             line = line.strip()
             if not line.upper().startswith("ADD:"):
@@ -304,7 +246,6 @@ class ExtractJob:
             content = line[4:].strip()
             if not content:
                 continue
-            # 去除 Markdown 列表标记
             content = re.sub(r"^[-*]\s*", "", content).strip()
             if not content or len(content) < 5:
                 continue
@@ -317,22 +258,8 @@ class ExtractJob:
                 )
                 if mid:
                     saved += 1
-                    logger.debug("[Dream extract] stored #%d: %.50s", mid, content)
+                    logger.debug("[ExtractJob] stored #%d: %.50s", mid, content)
             except Exception as e:
-                logger.warning("[Dream extract] store failed: %s", e)
+                logger.warning("[ExtractJob] store failed: %s", e)
 
         return saved
-
-
-# ── Job factory functions ──────────────────────────────────────────────────
-
-def make_reinforce_job(ltm: "LongTermMemory", **kwargs) -> tuple[str, callable]:
-    """记忆强化 job factory."""
-    job = ReinforceJob(ltm, **kwargs)
-    return ("reinforce", lambda: job.run())
-
-
-def make_extract_job(extractor: "MemoryExtractor", user_id: str = "global") -> tuple[str, callable]:
-    """对话提取 job factory."""
-    job = ExtractJob(extractor, user_id=user_id)
-    return ("extract", lambda: job.run())

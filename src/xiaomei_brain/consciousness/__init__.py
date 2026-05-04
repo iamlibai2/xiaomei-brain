@@ -42,6 +42,8 @@ from .conscious_living import ConsciousLiving, LivingState, LivingMessage
 from .action_item import ActionItem, ActionType
 from .rules import Rule, RULES
 from .action_dispatcher import ActionDispatcher, ActionExecutor
+from .config import LivingConfig
+from .dream import DreamEngine, DreamReport, EmotionProcessor, MemoryOrganizer, DreamStorage
 
 __all__ = [
     # 保持向后兼容
@@ -82,4 +84,12 @@ __all__ = [
     "RULES",
     "ActionDispatcher",
     "ActionExecutor",
+    # Config
+    "LivingConfig",
+    # Dream
+    "DreamEngine",
+    "DreamReport",
+    "EmotionProcessor",
+    "MemoryOrganizer",
+    "DreamStorage",
 ]

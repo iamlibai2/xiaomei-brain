@@ -509,13 +509,8 @@ class AgentManager:
             embedding_fallback=global_config.embedding_fallback or None,
         )
 
-        # ContextAssembler 注入 longterm_memory (供 recall_memories 使用)
-        agent.context_assembler = ContextAssembler(
-            conversation_db=agent.conversation_db,
-            dag=dag,
-            self_model=agent.self_model,
-            longterm_memory=agent.longterm_memory,
-        )
+        # DAG 引用保存（ConsciousLiving 创建 ContextAssembler 时需要）
+        agent._dag = dag
 
         # MemoryExtractor (需要 dag + longterm_memory)
         agent.memory_extractor = MemoryExtractor(
@@ -537,10 +532,10 @@ class AgentManager:
         # ── CommandRegistry ──────────────────────────────────────────────
         agent.commands = CommandRegistry(
             conversation_db=agent.conversation_db,
-            dag=agent.context_assembler.dag if agent.context_assembler else None,
+            dag=dag,
             longterm_memory=agent.longterm_memory,
             memory_extractor=agent.memory_extractor,
-            context_assembler=agent.context_assembler,
+            context_assembler=None,  # ConsciousLiving 会注入
             agent_instance=agent,
         )
 

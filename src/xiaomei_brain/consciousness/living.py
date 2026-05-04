@@ -1,7 +1,7 @@
 """Living: 纯生命周期管理基类。
 
-状态机 + 消息队列 + 主循环，不包含任何意识/Drive/Purpose 逻辑。
-ConsciousLiving 继承此类，通过 hook 方法注入意识行为。
+状态机 + 消息队列 + 主循环 + 注册式周期任务，不包含任何意识/Drive/Purpose 逻辑。
+ConsciousLiving 继承此类，通过 register_periodic() 注册周期任务。
 
 状态流转：
     DORMANT → WAKING → AWAKE ⇄ IDLE → SLEEPING → DREAMING → SLEEPING ...
@@ -13,7 +13,7 @@ import logging
 import queue
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable
 
@@ -48,21 +48,35 @@ HEARTBEAT_NORMAL = "normal"
 HEARTBEAT_DREAM = "dream"          # 触发 DREAMING 状态切换
 
 
+# ── Periodic Task ───────────────────────────────────────────────────────
+
+@dataclass
+class PeriodicTask:
+    """注册式周期任务"""
+    name: str
+    interval: float
+    handler: Callable[[LivingState], Any]
+    last_fired: float = 0.0
+
+
 # ── Living ──────────────────────────────────────────────────────────────
 
 class Living:
     """纯生命周期管理。
 
-    提供：状态机、消息队列、主循环、4 个状态循环。
+    提供：状态机、消息队列、主循环、4 个状态循环、注册式周期任务。
     不包含：意识、Drive、Purpose、Intent、聊天。
 
     Hook 方法（子类覆盖）：
-    - _heartbeat(state, **kwargs) → str
     - _handle_message(msg) → None
     - _on_wake()
     - _on_wake_up()
     - _on_stop()
     - _on_transition(old, new)
+    - _get_heartbeat_result() → str
+
+    周期任务注册：
+    - register_periodic(name, interval, handler)
     """
 
     def __init__(
@@ -93,6 +107,10 @@ class Living:
         self._chatting = False
         self._command_done = threading.Event()
 
+        # 周期任务
+        self._periodic_tasks: list[PeriodicTask] = []
+        self._heartbeat_result: str = HEARTBEAT_NORMAL
+
         # 回调
         self.on_proactive: Callable[[Any], Any] | None = None
         self.on_chat_chunk: Callable[[str], Any] | None = None
@@ -109,6 +127,42 @@ class Living:
 
         # 意图模式
         self._intent_mode: bool = False
+
+    # ── Periodic task registration ──────────────────────────────────
+
+    def register_periodic(
+        self, name: str, interval: float, handler: Callable[[LivingState], Any],
+    ) -> None:
+        """注册周期任务。
+
+        Args:
+            name: 任务名称（唯一标识，用于日志）
+            interval: 触发间隔（秒）
+            handler: 回调函数，接收 LivingState 参数
+        """
+        # 同名任务替换
+        self._periodic_tasks = [t for t in self._periodic_tasks if t.name != name]
+        self._periodic_tasks.append(PeriodicTask(name=name, interval=interval, handler=handler))
+        logger.info("[Living] 注册周期任务: %s (间隔%.1fs)", name, interval)
+
+    def _tick_periodic(self, state: LivingState) -> None:
+        """在每个状态循环中调用，触发到期的周期任务。"""
+        now = time.time()
+        for task in self._periodic_tasks:
+            if now - task.last_fired >= task.interval:
+                try:
+                    task.handler(state)
+                    task.last_fired = now
+                except Exception as e:
+                    logger.warning("[Living] 周期任务 %s 出错: %s", task.name, e)
+
+    def _get_heartbeat_result(self) -> str:
+        """子类覆盖：返回心跳结果（HEARTBEAT_NORMAL / HEARTBEAT_DREAM）。
+
+        ConsciousLiving 在 _heartbeat() 中设置 self._heartbeat_result，
+        此方法供基类循环读取。
+        """
+        return self._heartbeat_result
 
     # ── Public API ──────────────────────────────────────────────────
 
@@ -214,7 +268,8 @@ class Living:
         logger.debug("[Living/AWAKE] tick 间隔=%.1f秒, idle阈值=%.1f秒",
                      self.tick_interval, self.idle_threshold)
 
-        self._heartbeat(self.state)
+        self._heartbeat_result = HEARTBEAT_NORMAL
+        self._tick_periodic(self.state)
 
         msg = self._wait_message(timeout=self.tick_interval)
         if msg is not None:
@@ -237,7 +292,8 @@ class Living:
 
     def _loop_idle(self) -> None:
         while True:
-            self._heartbeat(self.state)
+            self._heartbeat_result = HEARTBEAT_NORMAL
+            self._tick_periodic(self.state)
 
             msg = self._wait_message(timeout=self.tick_interval)
             if msg is not None:
@@ -261,9 +317,10 @@ class Living:
         dream_start = time.time()
 
         while True:
-            result = self._heartbeat(self.state, dream_start=dream_start)
+            self._heartbeat_result = HEARTBEAT_NORMAL
+            self._tick_periodic(self.state)
 
-            if result == HEARTBEAT_DREAM:
+            if self._get_heartbeat_result() == HEARTBEAT_DREAM:
                 logger.info("[Living/SLEEPING] 触发 DREAMING")
                 self._transition(LivingState.DREAMING)
                 return
@@ -290,11 +347,10 @@ class Living:
         l3_fired = False
 
         while True:
-            result = self._heartbeat(
-                self.state, in_dream=True, dream_start=dream_start,
-            )
+            self._heartbeat_result = HEARTBEAT_NORMAL
+            self._tick_periodic(self.state)
 
-            if result == HEARTBEAT_DREAM and not l3_fired:
+            if self._get_heartbeat_result() == HEARTBEAT_DREAM and not l3_fired:
                 l3_fired = True
                 continue
 
@@ -322,14 +378,6 @@ class Living:
 
     def _should_skip_dreaming(self) -> bool:
         return False
-
-    def _heartbeat(self, state: LivingState, **kwargs) -> str:
-        """每个 tick 周期调用。子类覆盖实现意识/Drive tick。
-
-        Returns:
-            HEARTBEAT_NORMAL 或 HEARTBEAT_DREAM。
-        """
-        return HEARTBEAT_NORMAL
 
     def _handle_message(self, msg: LivingMessage) -> None:
         """处理收到的消息。子类必须覆盖。"""
