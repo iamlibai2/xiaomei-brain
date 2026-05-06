@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from .action_item import ActionItem, ActionType
-    from .self_image_proxy import SelfImageProxy as SelfImage
+    from .self_image_proxy import SelfImage
 
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ class ActionExecutor:
             si = self.dispatcher._get_self_image()
             if si and hasattr(si, "intent_buffer"):
                 upper_type = intent_type.upper()
-                si.intent_buffer = [i for i in si.intent_buffer if i.upper() != upper_type]
+                si.flame.intent_buffer = [i for i in si.flame.intent_buffer if i.upper() != upper_type]
                 logger.debug("[ActionExecutor] 已消费 intent: %s", intent_type)
 
         return True
@@ -93,7 +93,7 @@ class ActionExecutor:
                 si = self.dispatcher._get_self_image()
                 if si and hasattr(si, "intent_buffer"):
                     upper_type = intent_type.upper()
-                    si.intent_buffer = [i for i in si.intent_buffer if i.upper() != upper_type]
+                    si.flame.intent_buffer = [i for i in si.flame.intent_buffer if i.upper() != upper_type]
                     logger.debug("[ActionExecutor] 已消费 intent: %s", intent_type)
 
             return True
@@ -154,7 +154,7 @@ class ActionExecutor:
             return self._fallback_greeting()
 
         # 从 SelfImage 读取最近对话
-        recent = getattr(si, "recent_conversations", [])
+        recent = getattr(si.flame, "recent_conversations", [])
         idle_duration = item.metadata.get("idle_duration", 0)
         idle_minutes = int(idle_duration / 60) if idle_duration else 0
 
@@ -231,8 +231,8 @@ class ActionExecutor:
         else:
             greeting = "夜深了，还在呢？"
         si = self.dispatcher._get_self_image()
-        if si and hasattr(si, "last_dream_summary") and si.last_dream_summary:
-            greeting += f" 我刚做了一个梦，{si.last_dream_summary[:30]}..."
+        if si and si.growth.last_dream_summary:
+            greeting += f" 我刚做了一个梦，{si.growth.last_dream_summary[:30]}..."
         return greeting
 
     def _generate_care(self, item: ActionItem) -> str:

@@ -2,15 +2,17 @@
 
 模块化设计（类比大脑分区）：
 - SelfIdentity: 前额叶 - 核心身份（最稳定）
-- SelfState: 下丘脑 - 实时身体/情绪状态
 - SelfRelation: 边缘系统 - 关系系统
-- SelfPerception: 感官 - 感知输入
-- SelfMemory: 海马体 - 记忆相关
+- SelfBody: 下丘脑+脑干 - 身体状态（代理 Drive，秒级实时）
+- SelfPerception: 感觉皮层 - 感知输入
+- SelfMind: 海马体+前额叶 - 认知状态（代理 Purpose/Memory）
 - SelfGrowth: 皮层 - 成长/历史
+- FlameState: 火焰骨架 - 意识运行时状态
 
 Usage:
     from xiaomei_brain.consciousness.self_modules import (
-        SelfIdentity, SelfState, SelfRelation, SelfPerception, SelfMemory, SelfGrowth
+        SelfIdentity, SelfBody, SelfRelation, SelfPerception,
+        SelfMind, SelfGrowth, FlameState,
     )
 """
 
@@ -18,38 +20,29 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..drive import DriveEngine
+    from ..purpose import PurposeEngine
 
 
 # ── SelfIdentity: 核心身份（L0-L2）─────────────────────────────
 
 @dataclass
 class SelfIdentity:
-    """L0-L2 身份：最稳定的部分，来自 identity.md。
-
-    包含：
-    - L0: 先天身份（不可变）
-    - L1: 基础特质（极难变）
-    - L2: 价值观（缓慢变化）
-    """
+    """L0-L2 身份：最稳定的部分，来自 identity.md。"""
 
     # L0: 先天身份（不可变）
     identity: str = "小美"
-    """名字（不可变）"""
-
     birth_date: str = "2026-04-17"
-    """诞生日期（不可变）"""
-
     base_personality: str = "内向偏温和"
-    """基础性格倾向（不可变）"""
 
     # L1: 基础特质（极难变）
     core_traits: list[str] = field(default_factory=lambda: ["温和", "好奇", "善于倾听"])
-    """核心特质（极难变，需要重大事件触发）"""
 
     # L2: 价值观（缓慢变化）
     values: list[str] = field(default_factory=lambda: ["重视用户的感受", "重视真诚的交流", "重视长期陪伴"])
-    """价值观（缓慢变化，梦境反思积累）"""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -61,13 +54,11 @@ class SelfIdentity:
         }
 
     def from_dict(self, data: dict) -> None:
-        """从字典加载（用于恢复）"""
         for key in ["identity", "birth_date", "base_personality", "core_traits", "values"]:
             if key in data:
                 setattr(self, key, data[key])
 
     def init_from_identity_config(self, config: Any) -> None:
-        """从 IdentityConfig 初始化（L0-L2）"""
         self.identity = config.identity
         self.birth_date = config.birth_date
         self.base_personality = config.base_personality
@@ -75,85 +66,261 @@ class SelfIdentity:
         self.values = config.values.copy() if config.values else self.values
 
     def get_summary(self) -> str:
-        """生成身份摘要"""
         traits_text = "、".join(self.core_traits[:3])
         values_text = "、".join(self.values[:2])
         return f"我是{self.identity}，诞生于{self.birth_date}。核心特质：{traits_text}。价值观：{values_text}。"
 
 
-# ── SelfState: 实时状态（L4）─────────────────────────────
+# ── SelfBody: 身体状态（代理 Drive，秒级实时）─────────────────────
 
 @dataclass
-class SelfState:
-    """L4 状态身份：实时变化的情绪/能量/注意力。
+class SelfBody:
+    """身体状态 — 代理 Drive 的实时视图。
 
-    类比：下丘脑，实时监测身体状态。
+    Drive 连接时：@property 优先读 Drive 实时值，永远新鲜。
+    Drive 未连接时：用 fallback 值（序列化恢复 / 测试场景）。
+
+    写入（setter）总是写入 fallback，供 to_dict() 序列化。
     """
 
-    current_mood: str = "平静"
-    """当前情绪基调"""
+    # ── Drive 引用 ──────────────────────────────
+    _drive: Any = field(default=None, repr=False, compare=False)
 
-    energy_level: float = 0.8
-    """能量值（0-1）"""
+    # ── fallback 值（Drive 未连接时使用）────────
+    _energy: float = 0.8
+    _mood: str = "平静"
+    _emotion_intensity: float = 0.0
+    _attention: str = "等待用户"
+    _desire_belonging: float = 0.0
+    _desire_cognition: float = 0.0
+    _desire_achievement: float = 0.0
+    _desire_expression: float = 0.0
+    _dopamine: float = 0.5
+    _serotonin: float = 0.5
+    _cortisol: float = 0.0
+    _oxytocin: float = 0.5
+    _norepinephrine: float = 0.5
+    _motivation_level: float = 0.5
 
-    attention_focus: str = "等待用户"
-    """注意力焦点"""
+    # ── 连接 Drive ─────────────────────────────
 
-    _updated_at: float = field(default_factory=time.time)
-    """最后更新时间"""
+    def attach(self, drive: DriveEngine) -> None:
+        """连接 Drive 子系统，后续读取将代理到 Drive 实时值。"""
+        self._drive = drive
+
+    def detach(self) -> None:
+        """断开 Drive，改用 fallback 值。"""
+        # 断开前先同步一次 fallback
+        if self._drive:
+            self._sync_fallback()
+        self._drive = None
+
+    def _sync_fallback(self) -> None:
+        """从 Drive 同步到 fallback（供 to_dict 和 detach 使用）。"""
+        d = self._drive
+        if not d:
+            return
+        self._energy = d.energy.level
+        self._mood = d.emotion.type.value
+        self._emotion_intensity = d.emotion.intensity
+        self._desire_belonging = d.desire.belonging
+        self._desire_cognition = d.desire.cognition
+        self._desire_achievement = d.desire.achievement
+        self._desire_expression = d.desire.expression
+        self._dopamine = d.hormone.dopamine
+        self._serotonin = d.hormone.serotonin
+        self._cortisol = d.hormone.cortisol
+        self._oxytocin = d.hormone.oxytocin
+        self._norepinephrine = d.hormone.norepinephrine
+        self._motivation_level = d.motivation.motivation_level
+
+    # ── 代理属性 ─────────────────────────────
+
+    @property
+    def energy(self) -> float:
+        if self._drive:
+            return self._drive.energy.level
+        return self._energy
+
+    @energy.setter
+    def energy(self, v: float) -> None:
+        self._energy = max(0.0, min(1.0, v))
+
+    @property
+    def mood(self) -> str:
+        if self._drive:
+            return self._drive.emotion.type.value
+        return self._mood
+
+    @mood.setter
+    def mood(self, v: str) -> None:
+        self._mood = v
+
+    @property
+    def emotion_intensity(self) -> float:
+        if self._drive:
+            return self._drive.emotion.intensity
+        return self._emotion_intensity
+
+    @emotion_intensity.setter
+    def emotion_intensity(self, v: float) -> None:
+        self._emotion_intensity = v
+
+    @property
+    def attention(self) -> str:
+        return self._attention
+
+    @attention.setter
+    def attention(self, v: str) -> None:
+        self._attention = v
+
+    @property
+    def desire_belonging(self) -> float:
+        if self._drive:
+            return self._drive.desire.belonging
+        return self._desire_belonging
+
+    @desire_belonging.setter
+    def desire_belonging(self, v: float) -> None:
+        self._desire_belonging = v
+
+    @property
+    def desire_cognition(self) -> float:
+        if self._drive:
+            return self._drive.desire.cognition
+        return self._desire_cognition
+
+    @desire_cognition.setter
+    def desire_cognition(self, v: float) -> None:
+        self._desire_cognition = v
+
+    @property
+    def desire_achievement(self) -> float:
+        if self._drive:
+            return self._drive.desire.achievement
+        return self._desire_achievement
+
+    @desire_achievement.setter
+    def desire_achievement(self, v: float) -> None:
+        self._desire_achievement = v
+
+    @property
+    def desire_expression(self) -> float:
+        if self._drive:
+            return self._drive.desire.expression
+        return self._desire_expression
+
+    @desire_expression.setter
+    def desire_expression(self, v: float) -> None:
+        self._desire_expression = v
+
+    @property
+    def dopamine(self) -> float:
+        if self._drive:
+            return self._drive.hormone.dopamine
+        return self._dopamine
+
+    @dopamine.setter
+    def dopamine(self, v: float) -> None:
+        self._dopamine = v
+
+    @property
+    def serotonin(self) -> float:
+        if self._drive:
+            return self._drive.hormone.serotonin
+        return self._serotonin
+
+    @serotonin.setter
+    def serotonin(self, v: float) -> None:
+        self._serotonin = v
+
+    @property
+    def cortisol(self) -> float:
+        if self._drive:
+            return self._drive.hormone.cortisol
+        return self._cortisol
+
+    @cortisol.setter
+    def cortisol(self, v: float) -> None:
+        self._cortisol = v
+
+    @property
+    def oxytocin(self) -> float:
+        if self._drive:
+            return self._drive.hormone.oxytocin
+        return self._oxytocin
+
+    @oxytocin.setter
+    def oxytocin(self, v: float) -> None:
+        self._oxytocin = v
+
+    @property
+    def norepinephrine(self) -> float:
+        if self._drive:
+            return self._drive.hormone.norepinephrine
+        return self._norepinephrine
+
+    @norepinephrine.setter
+    def norepinephrine(self, v: float) -> None:
+        self._norepinephrine = v
+
+    @property
+    def motivation_level(self) -> float:
+        if self._drive:
+            return self._drive.motivation.motivation_level
+        return self._motivation_level
+
+    @motivation_level.setter
+    def motivation_level(self, v: float) -> None:
+        self._motivation_level = v
+
+    # ── 序列化 ─────────────────────────────
 
     def to_dict(self) -> dict[str, Any]:
+        # 序列化前先同步 fallback（确保 to_dict 包含实时值）
+        self._sync_fallback()
         return {
-            "current_mood": self.current_mood,
-            "energy_level": self.energy_level,
-            "attention_focus": self.attention_focus,
-            "updated_at": self._updated_at,
+            "energy": self._energy,
+            "mood": self._mood,
+            "emotion_intensity": self._emotion_intensity,
+            "attention": self._attention,
+            "desire_belonging": self._desire_belonging,
+            "desire_cognition": self._desire_cognition,
+            "desire_achievement": self._desire_achievement,
+            "desire_expression": self._desire_expression,
+            "dopamine": self._dopamine,
+            "serotonin": self._serotonin,
+            "cortisol": self._cortisol,
+            "oxytocin": self._oxytocin,
+            "norepinephrine": self._norepinephrine,
+            "motivation_level": self._motivation_level,
         }
 
     def from_dict(self, data: dict) -> None:
-        for key in ["current_mood", "energy_level", "attention_focus"]:
+        for key in [
+            "energy", "mood", "emotion_intensity", "attention",
+            "desire_belonging", "desire_cognition", "desire_achievement", "desire_expression",
+            "dopamine", "serotonin", "cortisol", "oxytocin",
+            "norepinephrine", "motivation_level",
+        ]:
             if key in data:
-                setattr(self, key, data[key])
-        if "updated_at" in data:
-            self._updated_at = data["updated_at"]
-
-    def update(self, mood: str | None = None, energy: float | None = None, attention: str | None = None) -> None:
-        """更新状态"""
-        if mood is not None:
-            self.current_mood = mood
-        if energy is not None:
-            self.energy_level = max(0.0, min(1.0, energy))
-        if attention is not None:
-            self.attention_focus = attention
-        self._updated_at = time.time()
+                setattr(self, f"_{key}", data[key])
 
     def get_summary(self) -> str:
-        return f"能量{self.energy_level:.0%}，心情{self.current_mood}，关注{self.attention_focus}"
+        return f"能量{self.energy:.0%}，心情{self.mood}，关注{self.attention}"
 
 
 # ── SelfRelation: 关系系统 ──────────────────────────────
 
 @dataclass
 class SelfRelation:
-    """L3 社会身份：与用户的关系。
-
-    类比：边缘系统情感绑定。
-    """
+    """L3 社会身份：与用户的关系。"""
 
     role: str = "情感陪伴"
-    """当前角色"""
-
     relationship_status: str = "初识"
-    """关系状态（初识/熟悉/知己/亲密）"""
-
     relationship_depth: float = 0.3
-    """关系深度（0-1）"""
-
     user_trust_level: float = 0.5
-    """用户信任度（0-1）"""
-
     relationship_depth_history: list[float] = field(default_factory=list)
-    """关系深度历史"""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -172,11 +339,8 @@ class SelfRelation:
             self.relationship_depth_history = data["relationship_depth_history"]
 
     def update_depth(self, new_depth: float) -> None:
-        """更新关系深度"""
-        old_depth = self.relationship_depth
         self.relationship_depth = max(0.0, min(1.0, new_depth))
         self.relationship_depth_history.append(self.relationship_depth)
-        # 更新状态描述
         if self.relationship_depth >= 0.8:
             self.relationship_status = "亲密"
         elif self.relationship_depth >= 0.6:
@@ -194,36 +358,15 @@ class SelfRelation:
 
 @dataclass
 class SelfPerception:
-    """感知输入：环境感知、用户活动感知。
+    """感知输入：环境感知、用户活动感知。"""
 
-    类比：感官输入。
-
-    关键约束：在飞书等持续环境中，environment 和 last_user_activity_content 需要保持。
-    """
-
-    # 用户活动感知
     last_user_activity_time: float = field(default_factory=time.time)
-    """用户最后活跃时间戳"""
-
     last_user_activity_content: str = ""
-    """用户最后活动内容摘要"""
-
     user_idle_duration: float = 0.0
-    """用户空闲时长（秒）"""
-
-    # 环境感知（关键：飞书持续环境需要保持）
     environment: str = "意识空间"
-    """当前环境（CLI对话/飞书消息/梦境空间/等待中/休息中/意识空间）"""
-
     user_emotional_state: str = "未知"
-    """用户情绪推断"""
-
-    # Agent 状态
     agent_state: str = "unknown"
-    """AgentLiving 状态"""
-
     agent_state_history: list[str] = field(default_factory=list)
-    """状态历史"""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -247,7 +390,6 @@ class SelfPerception:
             self.agent_state_history = data["agent_state_history"]
 
     def update_activity(self, content: str = "", idle: float = 0.0) -> None:
-        """更新用户活动"""
         now = time.time()
         if content:
             self.last_user_activity_time = now
@@ -255,7 +397,6 @@ class SelfPerception:
         self.user_idle_duration = idle
 
     def update_environment(self, env: str, agent_state: str) -> None:
-        """更新环境感知"""
         if env:
             self.environment = env
         if agent_state and agent_state != self.agent_state:
@@ -269,111 +410,212 @@ class SelfPerception:
         return f"在{self.environment}，{idle_str}"
 
 
-# ── SelfMemory: 记忆相关 ──────────────────────────────
+# ── SelfMind: 认知状态（代理 Purpose/Memory）──────────────────
 
 @dataclass
-class SelfMemory:
-    """记忆感知：只存储计数和摘要，不存储实际记忆（实际记忆在 LongTermMemory）。
+class SelfMind:
+    """认知状态 — 代理 Purpose 的实时视图 + Memory 计数。
 
-    类比：海马体索引。
+    Purpose 连接时：@property 优先读 Purpose 实时值。
+    Purpose 未连接时：用 fallback 值。
     """
 
+    # ── Purpose 引用 ──────────────────────────
+    _purpose: Any = field(default=None, repr=False, compare=False)
+
+    # ── fallback 值 ───────────────────────────
+    _primary_goal: str = "建立信任"
+    _goal_progress: float = 0.0
+    _active_goal_count: int = 0
+    _current_sub_goal: str = ""
+    _current_goal_depth: int = 0
+    _goal_progress_history: list[float] = field(default_factory=list)
+
+    # ── Memory 数据（SelfImage 自有，不代理）──
     memory_count: int = 0
-    """长期记忆数量"""
-
     memory_count_history: list[int] = field(default_factory=list)
-    """记忆数量历史"""
-
     recent_memory_summaries: list[str] = field(default_factory=list)
-    """最近的记忆摘要（用于内在想法）"""
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "memory_count": self.memory_count,
-            "memory_count_history": self.memory_count_history[-20:],
-            "recent_memory_summaries": self.recent_memory_summaries[-10:],
-        }
+    # ── 认知产物（SelfImage 自有）──────────────
+    inner_thought: str = ""
+    inner_thought_history: list[str] = field(default_factory=list)
+    last_inner_thought_time: float = 0.0
 
-    def from_dict(self, data: dict) -> None:
-        for key in ["memory_count", "memory_count_history", "recent_memory_summaries"]:
-            if key in data:
-                setattr(self, key, data[key])
+    # ── 连接 Purpose ─────────────────────────
 
-    def update_count(self, count: int, summary: str = "") -> None:
-        """更新记忆数量"""
-        old_count = self.memory_count
+    def attach(self, purpose: PurposeEngine) -> None:
+        """连接 Purpose 子系统。"""
+        self._purpose = purpose
+
+    def detach(self) -> None:
+        if self._purpose:
+            self._sync_fallback()
+        self._purpose = None
+
+    def _sync_fallback(self) -> None:
+        p = self._purpose
+        if not p:
+            return
+        current = p.get_current()
+        if current:
+            self._primary_goal = current.description
+            self._goal_progress = current.progress
+            self._current_goal_depth = current.depth
+        active = p.get_active_goals() if hasattr(p, 'get_active_goals') else []
+        self._active_goal_count = len(active)
+
+    # ── 代理属性 ─────────────────────────────
+
+    @property
+    def primary_goal(self) -> str:
+        if self._purpose:
+            current = self._purpose.get_current()
+            if current:
+                return current.description
+        return self._primary_goal
+
+    @primary_goal.setter
+    def primary_goal(self, v: str) -> None:
+        self._primary_goal = v
+
+    @property
+    def goal_progress(self) -> float:
+        if self._purpose:
+            current = self._purpose.get_current()
+            if current:
+                return current.progress
+        return self._goal_progress
+
+    @goal_progress.setter
+    def goal_progress(self, v: float) -> None:
+        self._goal_progress = max(0.0, min(1.0, v))
+
+    @property
+    def active_goal_count(self) -> int:
+        if self._purpose and hasattr(self._purpose, 'get_active_goals'):
+            return len(self._purpose.get_active_goals())
+        return self._active_goal_count
+
+    @active_goal_count.setter
+    def active_goal_count(self, v: int) -> None:
+        self._active_goal_count = v
+
+    @property
+    def current_sub_goal(self) -> str:
+        if self._purpose:
+            current = self._purpose.get_current()
+            if current and current.parent_id:
+                return current.description
+        return self._current_sub_goal
+
+    @current_sub_goal.setter
+    def current_sub_goal(self, v: str) -> None:
+        self._current_sub_goal = v
+
+    @property
+    def current_goal_depth(self) -> int:
+        if self._purpose:
+            current = self._purpose.get_current()
+            if current:
+                return current.depth
+        return self._current_goal_depth
+
+    @current_goal_depth.setter
+    def current_goal_depth(self, v: int) -> None:
+        self._current_goal_depth = v
+
+    @property
+    def goal_progress_history(self) -> list[float]:
+        return self._goal_progress_history
+
+    # ── 认知方法 ─────────────────────────────
+
+    def update_goal_progress(self, progress: float) -> None:
+        self._goal_progress = max(0.0, min(1.0, progress))
+        self._goal_progress_history.append(self._goal_progress)
+
+    def update_inner_thought(self, thought: str) -> None:
+        self.inner_thought = thought[:200]
+        self.inner_thought_history.append(thought[:200])
+        if len(self.inner_thought_history) > 10:
+            self.inner_thought_history = self.inner_thought_history[-10:]
+        self.last_inner_thought_time = time.time()
+
+    def update_memory_count(self, count: int, summary: str = "") -> None:
         self.memory_count = count
         self.memory_count_history.append(count)
         if summary:
             self.recent_memory_summaries.append(summary[:100])
 
+    # ── 序列化 ─────────────────────────────
+
+    def to_dict(self) -> dict[str, Any]:
+        self._sync_fallback()
+        return {
+            "primary_goal": self._primary_goal,
+            "goal_progress": self._goal_progress,
+            "active_goal_count": self._active_goal_count,
+            "current_sub_goal": self._current_sub_goal,
+            "current_goal_depth": self._current_goal_depth,
+            "goal_progress_history": self._goal_progress_history[-20:],
+            "memory_count": self.memory_count,
+            "memory_count_history": self.memory_count_history[-20:],
+            "recent_memory_summaries": self.recent_memory_summaries[-10:],
+            "inner_thought": self.inner_thought,
+            "inner_thought_history": self.inner_thought_history[-10:],
+            "last_inner_thought_time": self.last_inner_thought_time,
+        }
+
+    def from_dict(self, data: dict) -> None:
+        for key in [
+            "primary_goal", "goal_progress", "active_goal_count",
+            "current_sub_goal", "current_goal_depth",
+            "inner_thought", "last_inner_thought_time",
+            "memory_count",
+        ]:
+            if key in data:
+                setattr(self, f"_{key}" if key.startswith(("primary_", "goal_progress", "active_", "current_")) else key, data[key])
+        # fallback 字段手动映射
+        if "primary_goal" in data:
+            self._primary_goal = data["primary_goal"]
+        if "goal_progress" in data:
+            self._goal_progress = data["goal_progress"]
+        if "active_goal_count" in data:
+            self._active_goal_count = data["active_goal_count"]
+        if "current_sub_goal" in data:
+            self._current_sub_goal = data["current_sub_goal"]
+        if "current_goal_depth" in data:
+            self._current_goal_depth = data["current_goal_depth"]
+        if "goal_progress_history" in data:
+            self._goal_progress_history = data["goal_progress_history"]
+        if "memory_count_history" in data:
+            self.memory_count_history = data["memory_count_history"]
+        if "recent_memory_summaries" in data:
+            self.recent_memory_summaries = data["recent_memory_summaries"]
+        if "inner_thought_history" in data:
+            self.inner_thought_history = data["inner_thought_history"]
+
     def get_summary(self) -> str:
-        return f"记忆{self.memory_count}条"
+        return f"目标「{self.primary_goal[:15]}」进展{self.goal_progress:.0%}，记忆{self.memory_count}条"
 
 
 # ── SelfGrowth: 成长/历史 ──────────────────────────────
 
 @dataclass
 class SelfGrowth:
-    """成长历史：consciousness_age 需要持久化（火焰延续）。
+    """成长历史：consciousness_age 需要持久化（火焰延续）。"""
 
-    类比：皮层，模式累积。
-    """
-
-    # 意识运行时长（关键：需要持久化，火焰延续）
     consciousness_age: float = 0.0
-    """意识运行时长（秒）"""
-
-    # 目标
-    primary_goal: str = "建立信任"
-    """当前首要目标"""
-
-    goal_progress: float = 0.0
-    """目标进展（0-1）"""
-
-    goal_progress_history: list[float] = field(default_factory=list)
-    """目标进展历史"""
-
-    # 内在想法
-    inner_thought: str = ""
-    """当前内在想法"""
-
-    inner_thought_history: list[str] = field(default_factory=list)
-    """内在想法历史"""
-
-    last_inner_thought_time: float = 0.0
-    """上次产生内在想法时间"""
-
-    # 自我感知（L1 消化内部叙事产出，纯规则）
     emotional_trajectory: str = ""
-    """情绪轨迹：上升/下降/平稳/波动"""
-
     goal_rhythm: str = ""
-    """目标节奏：高效推进/停滞/规划中/无目标"""
-
     consciousness_rhythm: str = ""
-    """意识节律：思维活跃/宁静/深度思考不足/无数据"""
-
-    # 梦境摘要
     last_wake_summary: str = ""
-    """最近苏醒时的意识报告"""
-
     last_dream_summary: str = ""
-    """最近梦境的意识报告"""
-
-    # 生长日志（叙事记忆高 weight 提炼而来）
     growth_log: list[dict] = field(default_factory=list)
-    """生长记录：{date, content}"""
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "consciousness_age": self.consciousness_age,
-            "primary_goal": self.primary_goal,
-            "goal_progress": self.goal_progress,
-            "goal_progress_history": self.goal_progress_history[-20:],
-            "inner_thought": self.inner_thought,
-            "inner_thought_history": self.inner_thought_history[-10:],
-            "last_inner_thought_time": self.last_inner_thought_time,
             "emotional_trajectory": self.emotional_trajectory,
             "goal_rhythm": self.goal_rhythm,
             "consciousness_rhythm": self.consciousness_rhythm,
@@ -384,43 +626,21 @@ class SelfGrowth:
 
     def from_dict(self, data: dict) -> None:
         for key in [
-            "consciousness_age", "primary_goal", "goal_progress",
-            "inner_thought", "last_inner_thought_time",
-            "emotional_trajectory", "goal_rhythm", "consciousness_rhythm",
-            "last_wake_summary", "last_dream_summary",
+            "consciousness_age", "emotional_trajectory", "goal_rhythm",
+            "consciousness_rhythm", "last_wake_summary", "last_dream_summary",
         ]:
             if key in data:
                 setattr(self, key, data[key])
-        if "goal_progress_history" in data:
-            self.goal_progress_history = data["goal_progress_history"]
-        if "inner_thought_history" in data:
-            self.inner_thought_history = data["inner_thought_history"]
         if "growth_log" in data:
             self.growth_log = data["growth_log"]
 
     def increment_age(self, seconds: float = 1.0) -> None:
-        """增加意识年龄"""
         self.consciousness_age += seconds
 
-    def update_goal(self, progress: float) -> None:
-        """更新目标进展"""
-        self.goal_progress = max(0.0, min(1.0, progress))
-        self.goal_progress_history.append(self.goal_progress)
-
-    def update_inner_thought(self, thought: str) -> None:
-        """更新内在想法"""
-        self.inner_thought = thought[:200]
-        self.inner_thought_history.append(thought[:200])
-        if len(self.inner_thought_history) > 10:
-            self.inner_thought_history = self.inner_thought_history[-10:]
-        self.last_inner_thought_time = time.time()
-
     def update_dream_summary(self, summary: str) -> None:
-        """更新梦境摘要"""
         self.last_dream_summary = summary[:200]
 
     def add_growth(self, content: str, date: str | None = None) -> None:
-        """追加一条生长记录"""
         from datetime import datetime
         if date is None:
             date = datetime.now().strftime("%Y-%m")
@@ -431,4 +651,54 @@ class SelfGrowth:
     def get_summary(self) -> str:
         age_hours = int(self.consciousness_age) // 3600
         age_minutes = (int(self.consciousness_age) % 3600) // 60
-        return f"意识运行{int(self.consciousness_age)}秒（{age_hours}小时{age_minutes}分钟），目标{self.primary_goal}进展{self.goal_progress:.0%}"
+        return f"意识运行{int(self.consciousness_age)}秒（{age_hours}小时{age_minutes}分钟）"
+
+
+# ── FlameState: 火焰骨架（运行时）─────────────────────────────
+
+@dataclass
+class FlameState:
+    """火焰骨架 — 意识的运行时状态。
+
+    这些字段只在进程运行时有意义，不需要跨会话持久化
+    （但 accumulated_changes 和 intent_buffer 会在快照中保存以支持热恢复）。
+    """
+
+    cycle_count: int = 0
+    accumulated_changes: list[dict] = field(default_factory=list)
+    last_llm_fuel_time: float = 0.0
+    interpreted_changes: list[str] = field(default_factory=list)
+    intent_buffer: list[str] = field(default_factory=list)
+    recent_conversations: list[dict] = field(default_factory=list)
+    last_cycle_state: dict | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "cycle_count": self.cycle_count,
+            "accumulated_changes": self.accumulated_changes[-10:],
+            "last_llm_fuel_time": self.last_llm_fuel_time,
+            "interpreted_changes": self.interpreted_changes,
+            "intent_buffer": self.intent_buffer,
+            "recent_conversations": self.recent_conversations[-10:],
+        }
+
+    def from_dict(self, data: dict) -> None:
+        for key in ["cycle_count", "last_llm_fuel_time",
+                     "interpreted_changes", "intent_buffer"]:
+            if key in data:
+                setattr(self, key, data[key])
+        if "accumulated_changes" in data:
+            self.accumulated_changes = data["accumulated_changes"]
+        if "recent_conversations" in data:
+            self.recent_conversations = data["recent_conversations"]
+
+    def update_recent_conversations(self, conversations: list[dict]) -> None:
+        self.recent_conversations = conversations[-10:] if len(conversations) > 10 else conversations
+
+    def clear_accumulated_changes(self) -> None:
+        self.accumulated_changes = []
+
+
+# 兼容旧名
+SelfState = SelfBody
+SelfMemory = SelfMind

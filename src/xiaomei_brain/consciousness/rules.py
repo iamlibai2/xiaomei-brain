@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
     from .action_item import ActionItem
-    from .self_image_proxy import SelfImageProxy as SelfImage
+    from .self_image_proxy import SelfImage
 
 
 logger = logging.getLogger(__name__)
@@ -189,7 +189,7 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
 
     # 用户空闲 → 主动问候
     RULES.append(
-        Rule.when(lambda si, t=ac.idle_trigger_seconds: getattr(si, "user_idle_duration", 0) > t)
+        Rule.when(lambda si, t=ac.idle_trigger_seconds: si.perception.user_idle_duration > t)
             .then(ActionItem(
                 action_type=ActionType.PROACTIVE,
                 priority=0.7,
@@ -286,30 +286,30 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
 
 def _has_intent(si: SelfImage, intent_type: str) -> bool:
     """检查 SelfImage 是否有指定类型的 pending_intent"""
-    pending = _get_consciousness_facet(si).intent_buffer
+    pending = si.flame.intent_buffer
     return any(i.upper() == intent_type.upper() for i in pending)
 
 
 class _DriveView:
-    """Drive 状态视图，代理 SelfImage 的 Drive 相关字段"""
+    """Drive 状态视图，代理 SelfImage.body 的欲望字段"""
     def __init__(self, si: SelfImage):
         self._si = si
 
     @property
     def belonging(self) -> float:
-        return getattr(self._si, "desire_belonging", 0.0)
+        return self._si.body.desire_belonging
 
     @property
     def cognition(self) -> float:
-        return getattr(self._si, "desire_cognition", 0.0)
+        return self._si.body.desire_cognition
 
     @property
     def achievement(self) -> float:
-        return getattr(self._si, "desire_achievement", 0.0)
+        return self._si.body.desire_achievement
 
     @property
     def expression(self) -> float:
-        return getattr(self._si, "desire_expression", 0.0)
+        return self._si.body.desire_expression
 
 
 class _ConsciousnessView:
@@ -319,15 +319,15 @@ class _ConsciousnessView:
 
     @property
     def energy_level(self) -> float:
-        return getattr(self._si, "energy_level", 0.8)
+        return self._si.body.energy
 
     @property
     def intent_buffer(self) -> list[str]:
-        return getattr(self._si, "intent_buffer", [])
+        return self._si.flame.intent_buffer
 
     @property
     def accumulated_changes(self) -> list[dict]:
-        return getattr(self._si, "accumulated_changes", [])
+        return self._si.flame.accumulated_changes
 
 
 def _get_drive_facet(si: SelfImage):

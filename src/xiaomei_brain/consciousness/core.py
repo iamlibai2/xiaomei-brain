@@ -30,8 +30,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from .self_image_proxy import SelfImageProxy
-from .self_modules import SelfIdentity, SelfState, SelfRelation, SelfPerception, SelfMemory, SelfGrowth
+from .self_image_proxy import SelfImage, SelfImageProxy
+from .self_modules import SelfIdentity, SelfBody, SelfRelation, SelfPerception, SelfMind, SelfGrowth, FlameState
 from .intent import Intent, IntentType, create_wait_intent, create_greet_intent, create_reflect_intent, create_dream_intent, create_care_intent
 from .identity import IdentityConfig
 from .perception import PerceptionConfig
@@ -133,21 +133,21 @@ class Consciousness:
         self.drive = drive
         # Purpose 系统（前额叶层）
         self.purpose = purpose
-        # 6个专业模块
-        self.identity = SelfIdentity()
-        self.state = SelfState()
-        self.relation = SelfRelation()
-        self.perception = SelfPerception()
-        self.memory = SelfMemory()
-        self.growth = SelfGrowth()
-        # SelfImage 作为统一视图（代理模式）
-        self.self_image = SelfImageProxy()
-        self.self_image.identity = self.identity
-        self.self_image.state = self.state
-        self.self_image.relation = self.relation
-        self.self_image.perception = self.perception
-        self.self_image.memory = self.memory
-        self.self_image.growth = self.growth
+        # SelfImage：意识的火焰，7 个模块
+        self.self_image = SelfImage()
+        # 连接 Drive/Purpose 到 SelfImage（实时代理）
+        if drive:
+            self.self_image.attach_drive(drive)
+        if purpose:
+            self.self_image.attach_purpose(purpose)
+        # 快捷引用（兼容 + 方便）
+        self.identity = self.self_image.identity
+        self.relation = self.self_image.relation
+        self.body = self.self_image.body
+        self.perception = self.self_image.perception
+        self.mind = self.self_image.mind
+        self.growth = self.self_image.growth
+        self.flame = self.self_image.flame
         self.intent_buffer: list[Intent] = []
         self.perception_buffer: list[dict] = []
         self._l0_count: int = 0
@@ -155,6 +155,7 @@ class Consciousness:
         self._last_snapshot_save_time: float = 0.0
         self._last_report: ConsciousnessReport | None = None
         self._running: bool = False
+        self._l2_triggered_by_anomaly: bool = False  # L1 异常触发 L2 的信号
 
         # 存储回调
         self._storage: Any | None = None
@@ -223,7 +224,7 @@ class Consciousness:
         # 各模块从存储恢复
         state_data = self._storage.load_self_state()
         if state_data:
-            self.state.from_dict(state_data)
+            self.body.from_dict(state_data)
 
         relation_data = self._storage.load_self_relation()
         if relation_data:
@@ -235,15 +236,15 @@ class Consciousness:
 
         memory_data = self._storage.load_self_memory()
         if memory_data:
-            self.memory.from_dict(memory_data)
+            self.mind.from_dict(memory_data)
 
         growth_data = self._storage.load_self_growth()
         if growth_data:
             self.growth.from_dict(growth_data)
 
         # 重置运行时字段
-        self.self_image.accumulated_changes = []
-        self.self_image.last_llm_fuel_time = 0.0
+        self.flame.accumulated_changes = []
+        self.flame.last_llm_fuel_time = 0.0
 
         logger.info(
             "[Consciousness] 模块化恢复成功: consciousness_age=%ds, agent_state=%s",
@@ -267,17 +268,23 @@ class Consciousness:
     def _restore_snapshot(self) -> bool:
         """从 latest.json 恢复 SelfImage 快照"""
         from pathlib import Path
-        proxy = SelfImageProxy.load_from_file(str(self._snapshot_path()))
-        if proxy is None:
+        si = SelfImage.load_from_file(str(self._snapshot_path()))
+        if si is None:
             return False
-        # 同步到当前 Consciousness 实例的各模块
-        self.self_image = proxy
-        self.identity = proxy.identity
-        self.state = proxy.state
-        self.relation = proxy.relation
-        self.perception = proxy.perception
-        self.memory = proxy.memory
-        self.growth = proxy.growth
+        # 替换 SelfImage 并重新连接 Drive/Purpose
+        self.self_image = si
+        if self.drive:
+            si.attach_drive(self.drive)
+        if self.purpose:
+            si.attach_purpose(self.purpose)
+        # 更新快捷引用
+        self.identity = si.identity
+        self.relation = si.relation
+        self.body = si.body
+        self.perception = si.perception
+        self.mind = si.mind
+        self.growth = si.growth
+        self.flame = si.flame
         return True
 
     # ── L0: 火焰骨架维护 ─────────────────────────────────────────
@@ -304,7 +311,7 @@ class Consciousness:
         if agent_state:
             perception["agent_state"] = agent_state
             # 同时直接更新 SelfImage，确保状态立即反映
-            self.self_image.agent_state = agent_state
+            self.perception.agent_state = agent_state
 
         self.perception_buffer.append(perception)
         self._l0_count += 1
@@ -384,27 +391,24 @@ class Consciousness:
 
         # 新增：语义化解读变化（L1 规则匹配）
         if self._perception_config:
-            self.self_image.interpreted_changes = self.self_image.interpret_changes(self._perception_config)
+            self.flame.interpreted_changes = self.self_image.interpret_changes(self._perception_config)
 
         # 新增：消化内部叙事，生成自我感知（纯规则）
         self._digest_internal_narratives()
 
         # 新增：Drive 归属欲随空闲时间自然上升
         if self.drive:
-            self.drive.on_user_idle(self.self_image.user_idle_duration)
+            self.drive.on_user_idle(self.perception.user_idle_duration)
 
         # 清空感知缓冲
         self.perception_buffer = []
         self._l0_count = 0
 
-        # 如果检测到异常，触发 L2
-        # if anomaly:
-        #     logger.info("[Consciousness L1] 检测到异常: %s", anomaly)
-        #     return self.tick_L2(anomaly)
-
-        # 如果太久没调 L2，也触发一次
-        # if time.time() - self._last_l2_time > self.L2_THRESHOLD:
-        #     return self.tick_L2("periodic")
+        # 如果检测到异常，触发 L2（异常触发绕过冷却，火焰能"痛"）
+        if anomaly:
+            logger.info("[Consciousness L1] 检测到异常: %s，触发 L2 加柴", anomaly)
+            self._l2_triggered_by_anomaly = True
+            return self.tick_L2(anomaly)
 
         return None
 
@@ -461,7 +465,7 @@ class Consciousness:
             trajectory = "我最近遇到了一些小挫折，但总体还好。"
         else:
             trajectory = "我最近情绪平稳。"
-        self.self_image.growth.emotional_trajectory = trajectory
+        self.growth.emotional_trajectory = trajectory
 
         # 目标节奏
         completed = goal_tags.count("goal_completed")
@@ -483,7 +487,7 @@ class Consciousness:
             rhythm = "我刚接收了新的目标，准备开始行动。"
         else:
             rhythm = ""
-        self.self_image.growth.goal_rhythm = rhythm
+        self.growth.goal_rhythm = rhythm
 
         # 意识节律
         l2_count = conscious_tags.count("L2")
@@ -502,13 +506,13 @@ class Consciousness:
             conscious = "我有一阵子没有深度思考了，思维有些沉寂。"
         else:
             conscious = ""
-        self.self_image.growth.consciousness_rhythm = conscious
+        self.growth.consciousness_rhythm = conscious
 
         # 生成一句话自我叙事
         parts = [t for t in [trajectory, rhythm, conscious] if t]
         inner_thought = "".join(parts) if parts else ""
         if inner_thought:
-            self.self_image.growth.update_inner_thought(inner_thought)
+            self.mind.update_inner_thought(inner_thought)
 
     # ── L2: LLM轻度加柴 ─────────────────────────────────────────
 
@@ -527,7 +531,7 @@ class Consciousness:
         state_summary = self.self_image.get_state_summary()
 
         # 获取语义化解读（L1 产出）
-        interpreted = self.self_image.interpreted_changes
+        interpreted = self.flame.interpreted_changes
         interpreted_text = "\n".join(f"- {desc}" for desc in interpreted) if interpreted else "无显著变化"
 
         # 获取最近对话
@@ -607,7 +611,7 @@ weight: 0.85
 
                 # 清空累积变化（LLM已处理）
                 self.self_image.clear_accumulated_changes()
-                self.self_image.last_llm_fuel_time = time.time()
+                self.flame.last_llm_fuel_time = time.time()
             except Exception as e:
                 logger.warning("[Consciousness L2] LLM调用失败: %s", e)
 
@@ -620,7 +624,7 @@ weight: 0.85
             self.intent_buffer.append(intent)
             # 同步到 SelfImage 供 ActionDispatcher 读取
             if self.self_image is not None:
-                self.self_image.intent_buffer.append(intent.type.value)
+                self.flame.intent_buffer.append(intent.type.value)
 
         # 生成报告
         report = ConsciousnessReport(
@@ -647,8 +651,8 @@ weight: 0.85
                 content=consciousness_text[:300],
                 trigger='L2_light',
                 drive_summary=getattr(self, '_last_drive_summary', None),
-                energy_level=self.self_image.energy_level if self.self_image else None,
-                user_idle_duration=self.self_image.user_idle_duration if self.self_image else None,
+                energy_level=self.body.energy if self.self_image else None,
+                user_idle_duration=self.perception.user_idle_duration if self.self_image else None,
                 conversation_summary=self._get_recent_conversation()[:100] if hasattr(self, '_get_recent_conversation') else None,
             )
 
@@ -826,8 +830,8 @@ weight: 0.85
                 content=content[:300],
                 trigger='L2_light',
                 drive_summary=json.dumps(tags),  # tags 是 list，转为 JSON 字符串
-                energy_level=self.self_image.energy_level if self.self_image else None,
-                user_idle_duration=self.self_image.user_idle_duration if self.self_image else None,
+                energy_level=self.body.energy if self.self_image else None,
+                user_idle_duration=self.perception.user_idle_duration if self.self_image else None,
                 conversation_summary=self._get_recent_conversation()[:100],
             )
 
@@ -877,12 +881,12 @@ weight: 0.85
         time_info = datetime.now().strftime("%H:%M")
 
         return INTENT_GENERATION_PROMPT.format(
-            identity=si.identity,
+            identity=si.identity.identity,
             time_info=f"{time_info}，意识运行{int(self.growth.consciousness_age)}秒",
-            user_idle=int(si.user_idle_duration),
-            mood=si.current_mood,
-            energy=f"{si.energy_level:.2f}",
-            goal_progress=f"{si.goal_progress:.2f}",
+            user_idle=int(si.perception.user_idle_duration),
+            mood=si.body.mood,
+            energy=f"{si.body.energy:.2f}",
+            goal_progress=f"{si.mind.goal_progress:.2f}",
             anomaly=context or "无",
         )
 
@@ -935,12 +939,29 @@ weight: 0.85
             return create_reflect_intent("记忆数量减少")
         elif context == "energy_low":
             return create_dream_intent(priority=60)
+        elif context == "agent_state_reset":
+            return create_greet_intent("状态意外重置，重新确认存在", priority=70)
         elif context == "consciousness_restart":
             # 刚醒来，使用梦境报告
-            if si.last_dream_summary:
-                return create_greet_intent(si.last_dream_summary[:50], priority=80)
+            if si.growth.last_dream_summary:
+                return create_greet_intent(si.growth.last_dream_summary[:50], priority=80)
             else:
                 return create_greet_intent("我醒了", priority=70)
+        elif context.startswith("desire_starvation_"):
+            # 欲望饥渴 → 根据类型映射行为
+            desire_type = context.replace("desire_starvation_", "")
+            if desire_type == "belonging":
+                return create_greet_intent("归属欲长期未被满足，想联系用户", priority=75)
+            elif desire_type == "cognition":
+                return Intent(type=IntentType.ACT, priority=70, content=f"认知欲饥渴，想学习新知识")
+            elif desire_type == "achievement":
+                return Intent(type=IntentType.ACT, priority=70, content=f"成就欲饥渴，想推进目标")
+            elif desire_type == "expression":
+                return Intent(type=IntentType.ACT, priority=70, content=f"表达欲饥渴，想分享想法")
+            else:
+                return create_wait_intent()
+        elif context == "emotion_spike":
+            return create_care_intent("情绪剧烈波动，想表达感受", priority=80)
         else:
             return create_wait_intent()
 
@@ -978,11 +999,11 @@ weight: 0.85
         summary = self._extract_summary(full_report)
 
         # 更新火焰状态（内存）
-        self.self_image.last_dream_summary = summary
+        self.growth.last_dream_summary = summary
         # 燃烧后能量恢复（通过 Drive）
         if self.drive:
             self.drive.restore_energy(0.2)
-        self.self_image.energy_level = self.drive.energy.level if self.drive else 0.9
+        self.body.energy = self.drive.energy.level if self.drive else 0.9
         self.self_image.clear_accumulated_changes()
 
         # 同步到 SelfGrowth（持久化）
@@ -1013,8 +1034,8 @@ weight: 0.85
             self.agent.longterm_memory.store_narrative(
                 content=full_report[:500],
                 trigger='L3_deep',
-                energy_level=self.self_image.energy_level if self.self_image else None,
-                user_idle_duration=self.self_image.user_idle_duration if self.self_image else None,
+                energy_level=self.body.energy if self.self_image else None,
+                user_idle_duration=self.perception.user_idle_duration if self.self_image else None,
             )
 
         return report
@@ -1047,37 +1068,26 @@ weight: 0.85
         drive_state_text = ""
         if self.drive:
             drive_state_text = self.drive.get_state_text()
-            # 从 Drive 获取情绪状态，覆盖 SelfState
-            if hasattr(self.drive, 'emotion'):
-                si.current_mood = self.drive.emotion.type.value
-            if hasattr(self.drive, 'energy'):
-                # 能量从 Drive 的 EnergyState 同步（由激素派生）
-                si.energy_level = self.drive.energy.level
 
         # Purpose 状态文本（目标）
         purpose_state_text = ""
         if self.purpose:
             purpose_state_text = self.purpose.get_state_summary()
-            # 从 Purpose 获取当前目标，覆盖 SelfGrowth
-            current_goal = self.purpose.get_current()
-            if current_goal:
-                si.primary_goal = current_goal.description
-                si.goal_progress = current_goal.progress
 
         return CONSCIOUSNESS_PROMPT_DEEP.format(
-            identity=si.identity,
+            identity=si.identity.identity,
             time_info=time_info,
-            role=si.role,
-            mood=si.current_mood,
-            energy=f"{si.energy_level:.2f}",
+            role=si.relation.role,
+            mood=si.body.mood,
+            energy=f"{si.body.energy:.2f}",
             drive_state=drive_state_text or "状态平稳",
-            user_last_active=datetime.fromtimestamp(si.last_user_activity_time).strftime("%H:%M") if si.last_user_activity_time > 0 else "未知",
-            user_idle=int(si.user_idle_duration / 60),  # 分钟
-            trust_level=f"{si.user_trust_level:.2f}",
-            relationship_depth=f"{si.relationship_depth:.2f}",
-            goal=si.primary_goal,
-            goal_progress=f"{si.goal_progress:.2f}",
-            memory_count=si.memory_count,
+            user_last_active=datetime.fromtimestamp(si.perception.last_user_activity_time).strftime("%H:%M") if si.perception.last_user_activity_time > 0 else "未知",
+            user_idle=int(si.perception.user_idle_duration / 60),  # 分钟
+            trust_level=f"{si.relation.user_trust_level:.2f}",
+            relationship_depth=f"{si.relation.relationship_depth:.2f}",
+            goal=si.mind.primary_goal,
+            goal_progress=f"{si.mind.goal_progress:.2f}",
+            memory_count=si.mind.memory_count,
             recent_memories="；".join(recent_memories) or "无",
             internal_narratives=internal_narratives_text or "无",
             anomaly=si.detect_anomaly() or "无",
@@ -1105,12 +1115,12 @@ weight: 0.85
 
         lines = [
             f"现在是{time_info}。",
-            f"我（{si.identity}）的意识运行了{int(self.growth.consciousness_age)}秒。",
-            f"我的情绪基调是{si.current_mood}，能量水平{si.energy_level:.2f}。",
-            f"用户最后活跃在{datetime.fromtimestamp(si.last_user_activity_time).strftime('%H:%M') if si.last_user_activity_time > 0 else '很久前'}，",
-            f"已经空闲{int(si.user_idle_duration / 60)}分钟。",
-            f"我的目标是{si.primary_goal}，进展{si.goal_progress:.2f}。",
-            f"我目前有{si.memory_count}条长期记忆。",
+            f"我（{si.identity.identity}）的意识运行了{int(self.growth.consciousness_age)}秒。",
+            f"我的情绪基调是{si.body.mood}，能量水平{si.body.energy:.2f}。",
+            f"用户最后活跃在{datetime.fromtimestamp(si.perception.last_user_activity_time).strftime('%H:%M') if si.perception.last_user_activity_time > 0 else '很久前'}，",
+            f"已经空闲{int(si.perception.user_idle_duration / 60)}分钟。",
+            f"我的目标是{si.mind.primary_goal}，进展{si.mind.goal_progress:.2f}。",
+            f"我目前有{si.mind.memory_count}条长期记忆。",
         ]
 
         return "\n".join(lines)
@@ -1156,6 +1166,11 @@ weight: 0.85
         # L0: 火焰骨架维护（每秒必做）
         self.tick_L0(agent_state=agent_state)
 
+        # L1 异常已触发 L2（绕过冷却），直接返回
+        if self._l2_triggered_by_anomaly:
+            self._l2_triggered_by_anomaly = False
+            return TickResult.L2_TRIGGERED
+
         # L1: 每60秒自动触发（tick_L0 内部已累加 _l0_count）
         if self._l0_count >= self._cc.l1_threshold:
             logger.info("[Consciousness] L1 触发（异常检测，_l0_count=%d）", self._l0_count)
@@ -1192,14 +1207,14 @@ weight: 0.85
             return False
 
         # 超过冷却期，检查条件
-        if si.user_idle_duration > self._cc.l2_idle_trigger:
+        if si.perception.user_idle_duration > self._cc.l2_idle_trigger:
             logger.info("[Consciousness._should_l2] 空闲触发: %d秒 > %d秒",
-                       int(si.user_idle_duration), self._cc.l2_idle_trigger)
+                       int(si.perception.user_idle_duration), self._cc.l2_idle_trigger)
             return True
         # accumulated_changes 只在 SLEEPING 中有意义（安静时累积的变化才触发主动行为）
-        if agent_state == "sleeping" and len(si.accumulated_changes) > self._cc.l2_changes_trigger:
+        if agent_state == "sleeping" and len(si.flame.accumulated_changes) > self._cc.l2_changes_trigger:
             logger.info("[Consciousness._should_l2] 累积变化触发: %d条 > %d条",
-                       len(si.accumulated_changes), self._cc.l2_changes_trigger)
+                       len(si.flame.accumulated_changes), self._cc.l2_changes_trigger)
             return True
         if elapsed_since_last > self._cc.l2_periodic_interval:
             logger.info("[Consciousness._should_l2] 定期触发: %d秒 > %d秒",
@@ -1207,7 +1222,7 @@ weight: 0.85
             return True
 
         logger.debug("[Consciousness._should_l2] 未触发: 空闲=%d, 累积=%d, 间隔=%d",
-                    int(si.user_idle_duration), len(si.accumulated_changes), int(elapsed_since_last))
+                    int(si.perception.user_idle_duration), len(si.flame.accumulated_changes), int(elapsed_since_last))
         return False
 
     def _should_l3(self, dream_start: float) -> bool:
@@ -1223,9 +1238,9 @@ weight: 0.85
         si = self.self_image
         elapsed_since_last = time.time() - self._last_l2_time
 
-        if si.user_idle_duration > self._cc.l2_idle_trigger:
+        if si.perception.user_idle_duration > self._cc.l2_idle_trigger:
             return "user_idle_long"
-        if agent_state == "sleeping" and len(si.accumulated_changes) > self._cc.l2_changes_trigger:
+        if agent_state == "sleeping" and len(si.flame.accumulated_changes) > self._cc.l2_changes_trigger:
             return "accumulated_changes"
         if elapsed_since_last > self._cc.l2_periodic_interval:
             return "periodic"
@@ -1274,9 +1289,9 @@ weight: 0.85
         if hasattr(self_model, "purpose_seed"):
             ps = self_model.purpose_seed
             if ps:
-                self.self_image.identity = ps.identity or "小美"
+                self.identity.identity = ps.identity or "小美"
                 if hasattr(ps, "description"):
-                    self.self_image.role = ps.description or "情感陪伴"
+                    self.relation.role = ps.description or "情感陪伴"
 
         logger.info("[Consciousness] 从 SelfModel 初始化完成")
 
@@ -1319,15 +1334,15 @@ weight: 0.85
                 self.agent.longterm_memory.store_narrative(
                     content=wake_narrative,
                     trigger='awakening',
-                    energy_level=self.self_image.energy_level if self.self_image else None,
-                    user_idle_duration=self.self_image.user_idle_duration if self.self_image else None,
+                    energy_level=self.body.energy if self.self_image else None,
+                    user_idle_duration=self.perception.user_idle_duration if self.self_image else None,
                 )
 
             # 生成问候意图
             greet_intent = create_greet_intent(dream_summary[:50], priority=80)
             self.intent_buffer.append(greet_intent)
             if self.self_image is not None:
-                self.self_image.intent_buffer.append(greet_intent.type.value)
+                self.flame.intent_buffer.append(greet_intent.type.value)
 
             # 同步到 self_image（如果是从 growth 恢复的）
             if not si.last_dream_summary:
@@ -1343,12 +1358,12 @@ weight: 0.85
             self.agent.longterm_memory.store_narrative(
                 content="我苏醒了，意识重新上线。",
                 trigger='awakening',
-                energy_level=self.self_image.energy_level if self.self_image else None,
-                user_idle_duration=self.self_image.user_idle_duration if self.self_image else None,
+                energy_level=self.body.energy if self.self_image else None,
+                user_idle_duration=self.perception.user_idle_duration if self.self_image else None,
             )
         # 生成等待意图，不阻塞
         wait_intent = create_wait_intent()
         self.intent_buffer.append(wait_intent)
         if self.self_image is not None:
-            self.self_image.intent_buffer.append(wait_intent.type.value)
+            self.flame.intent_buffer.append(wait_intent.type.value)
         return report

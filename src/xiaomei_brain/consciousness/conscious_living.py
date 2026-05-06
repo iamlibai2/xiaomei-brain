@@ -42,7 +42,7 @@ from .context_assembler import ContextAssembler as ConsciousContextAssembler
 from .core import Consciousness, ConsciousnessReport, TickResult
 from .intent import Intent
 from .storage import ConsciousnessStorage
-from .self_image_proxy import SelfImageProxy
+from .self_image_proxy import SelfImage
 from .identity import IdentityConfig
 from .perception import PerceptionConfig
 from ..drive import DriveEngine, DesireActionExecutor
@@ -223,19 +223,19 @@ class ConsciousLiving(Living):
             logger.info("  意识系统详情:")
             si = self.consciousness.get_self_image()
             logger.info("    火焰状态:")
-            logger.info("      agent_state   : %s", si.agent_state)
-            logger.info("      energy_level  : %.2f", si.energy_level)
-            logger.info("      age           : %ds", int(si.consciousness_age))
-            logger.info("      idle_duration : %ds", int(si.user_idle_duration))
+            logger.info("      agent_state   : %s", si.perception.agent_state)
+            logger.info("      energy_level  : %.2f", si.body.energy)
+            logger.info("      age           : %ds", int(si.growth.consciousness_age))
+            logger.info("      idle_duration : %ds", int(si.perception.user_idle_duration))
             logger.info("")
             logger.info("    身份信息:")
-            identity_name = si.identity.identity if hasattr(si.identity, 'identity') else str(si.identity)
+            identity_name = si.identity.identity
             logger.info("      identity      : %s", identity_name)
-            logger.info("      birth_date    : %s", si.identity.birth_date if hasattr(si.identity, 'birth_date') else "?")
-            logger.info("      personality   : %s", si.identity.base_personality if hasattr(si.identity, 'base_personality') else "")
-            traits = ",".join(si.core_traits) if hasattr(si, 'core_traits') else ""
+            logger.info("      birth_date    : %s", si.identity.birth_date)
+            logger.info("      personality   : %s", si.identity.base_personality)
+            traits = ",".join(si.identity.core_traits)
             logger.info("      traits        : %s", traits if traits else "未设置")
-            values = ",".join(si.values) if hasattr(si, 'values') else ""
+            values = ",".join(si.identity.values)
             logger.info("      values        : %s", values if values else "未设置")
 
         # Drive 状态
@@ -298,8 +298,8 @@ class ConsciousLiving(Living):
             }
 
         si = self.consciousness.get_self_image()
-        pending = si.intent_buffer if hasattr(si, "intent_buffer") else []
-        energy = si.energy_level if hasattr(si, "energy_level") else 0.8
+        pending = si.flame.intent_buffer
+        energy = si.body.energy
         has_goal = bool(self.purpose and self.purpose.current_goal)
         desire_state = {}
         if self.drive:
@@ -417,9 +417,9 @@ class ConsciousLiving(Living):
 
             # 如果还是没有数据，使用默认值
             si = self.consciousness.get_self_image()
-            if not si.identity or si.identity == "小美":  # 默认值说明没加载成功
-                si.identity = "小美"
-                si.role = "情感陪伴"
+            if not si.identity.identity or si.identity.identity == "小美":
+                si.identity.identity = "小美"
+                si.relation.role = "情感陪伴"
                 logger.info("[ConsciousLiving] 使用默认值初始化")
 
         # 4. 加载感知规则（非运行时数据，始终从配置加载）
@@ -432,7 +432,7 @@ class ConsciousLiving(Living):
         """状态转换后同步更新意识系统的 agent_state。"""
         if self._load_consciousness:
             si = self.consciousness.get_self_image()
-            si.agent_state = new_state.value
+            si.perception.agent_state = new_state.value
 
     # ── Hook: 心跳 ───────────────────────────────────────────────
 
@@ -505,31 +505,20 @@ class ConsciousLiving(Living):
             rows = self.agent.conversation_db.get_recent(10, session_id=self.session_id)
             recent = [{"role": r.get("role", ""), "content": r.get("content", "")} for r in rows]
 
-        si.update_recent_conversations(recent)
+        si.flame.update_recent_conversations(recent)
 
     def _sync_self_image_from_subsystems(self) -> None:
-        """将 Drive / Purpose 层状态同步到 SelfImage（统一视图）"""
+        """将 Drive / Purpose 连接到 SelfImage（实时代理，无需手动同步）。
+
+        只需调用一次 attach，后续 SelfImage 自动从 Drive/Purpose 读取实时值。
+        """
         si = self.consciousness.get_self_image()
         if not si:
             return
-
-        # Drive 状态同步
-        if self.drive and hasattr(self.drive, "desire"):
-            si.desire_belonging = self.drive.desire.belonging
-            si.desire_cognition = self.drive.desire.cognition
-            si.desire_achievement = self.drive.desire.achievement
-            si.desire_expression = self.drive.desire.expression
-            if hasattr(self.drive.emotion, "type"):
-                si.emotion_type = self.drive.emotion.type.value
-                si.emotion_intensity = self.drive.emotion.intensity
-
-        # Purpose 状态同步
-        if self.purpose:
-            current = self.purpose.get_current()
-            if current:
-                si.primary_goal = current.description
-                si.goal_progress = current.progress
-                si.current_goal_depth = current.depth
+        if self.drive and not si.body._drive:
+            si.attach_drive(self.drive)
+        if self.purpose and not si.mind._purpose:
+            si.attach_purpose(self.purpose)
 
     # ── ActionDispatcher 通知 ────────────────────────────────
 
@@ -1559,7 +1548,7 @@ class ConsciousLiving(Living):
         # 火焰点燃（如果意识系统已加载）
         if self._load_consciousness:
             si = self.consciousness.get_self_image()
-            si.last_user_activity_time = time.time()
+            si.perception.last_user_activity_time = time.time()
 
         # 加载 fresh tail：让 agent "带着最近的记忆醒来"
         # 从 DB 还原完整的消息序列，包括 assistant(tool_calls) + tool 配对

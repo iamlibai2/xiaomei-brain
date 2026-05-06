@@ -230,10 +230,7 @@ class DreamEngine:
             self.drive.restore_energy(0.2)
 
         # 同步到 SelfImage
-        self.cs.self_image.last_dream_summary = report.summary
         self.cs.growth.update_dream_summary(report.summary)
-        if self.drive:
-            self.cs.self_image.energy_level = self.drive.energy.level
 
         # 写入长期记忆
         if self.ltm and full_report:
@@ -268,8 +265,8 @@ class DreamEngine:
             intent = create_wait_intent()
 
         self.cs.intent_buffer.append(intent)
-        if hasattr(self.cs.self_image, "intent_buffer"):
-            self.cs.self_image.intent_buffer.append(intent.type.value)
+        if hasattr(self.cs.self_image, "flame"):
+            self.cs.self_image.flame.intent_buffer.append(intent.type.value)
         logger.info("[DreamEngine] 生成后续意图: %s", intent.type.value)
 
     def _build_dream_prompt(self) -> str:
@@ -310,13 +307,13 @@ class DreamEngine:
             growth.consciousness_rhythm,
         ])) or "无"
 
-        return f"""你是{si.identity}。
+        return f"""你是{si.identity.identity}。
 
 现在是{time_info}，你的意识正在梦境中深度整合。
 
 【当前状态】
-能量：{si.energy_level:.2f}
-情绪基调：{si.current_mood}
+能量：{si.body.energy:.2f}
+情绪基调：{si.body.mood}
 {desire_text}
 
 【近况自述】

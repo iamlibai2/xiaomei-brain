@@ -113,7 +113,7 @@ class DesireActionExecutor:
         si = self.living.consciousness.get_self_image()
 
         # 用户刚活跃，不打扰
-        if si.user_idle_duration < 60:
+        if si.perception.user_idle_duration < 60:
             logger.debug("[ActionExecutor] 用户刚活跃，跳过问候")
             return False
 
@@ -143,9 +143,9 @@ class DesireActionExecutor:
 
         # 构建提示词
         prompt = GREET_GENERATE_PROMPT.format(
-            identity=si.identity,
+            identity=si.identity.identity,
             belonging=drive.desire.belonging,
-            idle_minutes=int(si.user_idle_duration / 60),
+            idle_minutes=int(si.perception.user_idle_duration / 60),
             mood=drive.emotion.type.value,
         )
 
@@ -438,7 +438,7 @@ source: desire_driven_learning
             return False
 
         si = living.consciousness.get_self_image()
-        if si.user_idle_duration < 60:
+        if si.perception.user_idle_duration < 60:
             return False  # 用户活跃中，不打扰
 
         # 生成提醒消息
@@ -455,7 +455,7 @@ source: desire_driven_learning
 
         # 提醒本身满足了一部分成就欲
         living.drive.on_desire_satisfied("achievement", 0.1)
-        si.inner_thought = f"我想继续推进目标：{desc}"
+        si.mind.inner_thought = f"我想继续推进目标：{desc}"
         return True
 
     # ========== 表达类行为 ==========
@@ -470,7 +470,7 @@ source: desire_driven_learning
         """
         si = self.living.consciousness.get_self_image()
 
-        if not si.inner_thought:
+        if not si.mind.inner_thought:
             logger.debug("[ActionExecutor] 无内在想法，跳过")
             return False
 
@@ -479,11 +479,11 @@ source: desire_driven_learning
             return False
 
         # 用户活跃时不打扰
-        if si.user_idle_duration < 30:
+        if si.perception.user_idle_duration < 30:
             return False
 
         # 分享想法
-        message = f"突然想到：{si.inner_thought[:100]}"
+        message = f"突然想到：{si.mind.inner_thought[:100]}"
         self.living.on_proactive(message)
 
         # 满足表达欲

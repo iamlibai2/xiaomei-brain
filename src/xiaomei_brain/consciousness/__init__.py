@@ -20,8 +20,13 @@
 - L3: LLM深度燃烧（极低频，完整LLM）- 梦境阶段
 """
 
-from .self_image_proxy import SelfImageProxy
-from .self_modules import SelfIdentity, SelfState, SelfRelation, SelfPerception, SelfMemory, SelfGrowth
+from .self_image_proxy import SelfImage
+# 兼容旧名
+SelfImageProxy = SelfImage
+from .self_modules import SelfIdentity, SelfBody, SelfRelation, SelfPerception, SelfMind, SelfGrowth, FlameState
+# 兼容旧名
+SelfState = SelfBody
+SelfMemory = SelfMind
 from .intent import (
     Intent,
     IntentType,
@@ -45,15 +50,20 @@ from .config import LivingConfig
 from .dream import DreamEngine, DreamReport, EmotionProcessor, MemoryOrganizer, DreamStorage
 
 __all__ = [
-    # 保持向后兼容
-    "SelfImageProxy",
-    # 新增模块
+    # SelfImage
+    "SelfImage",
+    "SelfImageProxy",  # 兼容旧名
+    # 模块
     "SelfIdentity",
-    "SelfState",
+    "SelfBody",
     "SelfRelation",
     "SelfPerception",
-    "SelfMemory",
+    "SelfMind",
     "SelfGrowth",
+    "FlameState",
+    # 兼容旧名
+    "SelfState",
+    "SelfMemory",
     # Intent
     "Intent",
     "IntentType",

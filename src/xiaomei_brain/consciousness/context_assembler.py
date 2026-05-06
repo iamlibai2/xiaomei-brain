@@ -256,8 +256,8 @@ class ContextAssembler:
 
             # Narrative memories: semantic recall based on current mood/attention
             if self.longterm and remaining > 200 and self.self_image:
-                mood = getattr(self.self_image, "current_mood", "平静") or "平静"
-                focus = getattr(self.self_image, "attention_focus", "") or ""
+                mood = getattr(self.self_image.body, "mood", "平静") or "平静"
+                focus = getattr(self.self_image.body, "attention", "") or ""
                 query = f"心情{mood}，关注{focus}" if focus else f"心情{mood}"
                 narrs = self.longterm.search_narratives(
                     query=query,
@@ -354,8 +354,8 @@ class ContextAssembler:
 
             # Narrative memories: semantic recall for reflect deep context
             if self.longterm and remaining > 200 and self.self_image:
-                mood = getattr(self.self_image, "current_mood", "平静") or "平静"
-                focus = getattr(self.self_image, "attention_focus", "") or ""
+                mood = getattr(self.self_image.body, "mood", "平静") or "平静"
+                focus = getattr(self.self_image.body, "attention", "") or ""
                 query = f"心情{mood}，关注{focus}，反思" if focus else f"心情{mood}，反思"
                 narrs = self.longterm.search_narratives(
                     query=query,
