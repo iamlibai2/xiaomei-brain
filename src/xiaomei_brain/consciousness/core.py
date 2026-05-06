@@ -1202,8 +1202,20 @@ weight: 0.85
         si = self.self_image
         elapsed_since_last = time.time() - self._last_l2_time
 
+        # 能量约束：能量越低，冷却时间越长
+        energy = si.body.energy
+        if energy < 0.15:
+            # 沉寂状态：不主动加柴（火焰微弱，节省能量）
+            logger.debug("[Consciousness._should_l2] 能量沉寂(%.2f)，跳过", energy)
+            return False
+
+        # 动态冷却：能量低时冷却时间翻倍
+        cooldown = self._cc.l2_cooldown
+        if energy < 0.3:
+            cooldown *= 2.0  # 低能量：冷却翻倍，减少加柴频率
+
         # 冷却期内不触发
-        if elapsed_since_last < self._cc.l2_cooldown:
+        if elapsed_since_last < cooldown:
             return False
 
         # 超过冷却期，检查条件

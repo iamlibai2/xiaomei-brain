@@ -271,15 +271,24 @@ class ActionDispatcher:
 
         不执行，只收集。
         执行由 process_queue() 负责。
+
+        能量门控：
+        - energy < silent_threshold (0.15): 禁止所有主动行为（PROACTIVE/TOOL），只允许 NOTIFY
+        - energy < low_threshold (0.3): 只允许 Intent 驱动行为，禁止 Desire/Idle 驱动
         """
         self._queue.clear()
-        idle_dur = getattr(self_image, "user_idle_duration", 0)
-        # logger.info("[ActionDispatcher.tick] idle_duration=%.1fs, checking rules...", idle_dur)
+        idle_dur = getattr(self_image, "perception", None)
+        idle_dur = idle_dur.user_idle_duration if idle_dur else 0
 
         if not self._rules_loaded:
             from .rules import _init_rules, RULES
             _init_rules()
             self.load_rules(RULES)
+
+        # 能量门控
+        energy = self_image.body.energy
+        silent = energy < 0.15   # 沉寂：几乎没能量，只允许通知
+        low = energy < 0.3      # 低能量：禁止欲望/空闲驱动，只允许意图驱动
 
         for rule in self._rules:
             if not rule.enabled():
@@ -294,13 +303,20 @@ class ActionDispatcher:
             if not matched:
                 continue
 
+            # 能量门控：低能量时抑制主动行为
+            item = self._clone_action_item(rule.action_item)
+            if silent and item.action_type.value != "notify":
+                logger.debug("[ActionDispatcher] 能量沉寂(%.2f)，跳过: %s", energy, rule.cooldown_key)
+                continue
+            if low and item.source in ("desire", "idle"):
+                logger.debug("[ActionDispatcher] 能量不足(%.2f)，跳过欲望/空闲行为: %s", energy, rule.cooldown_key)
+                continue
+
             # 检查冷却
             if not self._is_cooldown_ready(rule.cooldown_key, rule.cooldown_seconds):
                 logger.debug("[ActionDispatcher] 规则冷却中: %s", rule.cooldown_key)
                 continue
 
-            # 复制 action_item（避免同一对象重复入队）
-            item = self._clone_action_item(rule.action_item)
             self._queue.append(item)
             logger.info("[ActionDispatcher] 规则匹配: %s → %s (priority=%.2f)",
                         rule.cooldown_key, item.reason, item.priority)
