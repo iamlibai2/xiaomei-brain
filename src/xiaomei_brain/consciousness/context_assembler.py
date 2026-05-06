@@ -26,6 +26,20 @@ from xiaomei_brain.memory.self_model import SelfModel
 
 logger = logging.getLogger(__name__)
 
+# Narrative preamble injected into daily/reflect modes
+_NARR_PREAMBLE = """
+
+****以下是你过去真实经历中留下的叙事片段。每条叙事包含一个场景、一段经历、感受和它改变你的方式。
+
+它们的用途不是让你回忆——是用来调你的感知方式：
+- 建立感知方式：改变你"怎么看事情"
+- 积累关系史：改变你"怎么感受距离"
+- 沉淀身份感：改变你"知道自己是谁"
+- 改变回应质地：改变你"怎么开口说话"
+
+读它们的时候，不是"记住了内容"——是让你进入那种感知状态。读完，你的语气、距离感、身份底色会被轻微牵引。不需要刻意回忆它们的内容。****
+"""
+
 
 class ContextAssembler:
     """Consciousness-aware context assembler.
@@ -244,16 +258,18 @@ class ContextAssembler:
             if self.longterm and remaining > 200:
                 recent_narrs = self.longterm.get_narrative_memories(status="active", limit=10)
                 if recent_narrs:
-                    narr_lines = ["\n【我的叙事记忆】"]
+                    narr_lines = [_NARR_PREAMBLE]
                     for nb in recent_narrs:
                         tags = ",".join(nb.get("scene_tags") or [])
                         tag_str = f" 标签:{tags}" if tags else ""
                         ts = nb.get("timestamp") or ""
+                        changed = nb.get("changed_me", "")
+                        changed_str = f"\n  changed: {changed[:60]}" if changed else ""
                         narr_lines.append(
                             f"- {nb['id']} [{nb['category']}]{tag_str} {ts}\n"
-                            f"  {nb.get('content', '')[:80]}"
+                            f"  {nb.get('content', '')[:120]}{changed_str}"
                         )
-                    system_content += "\n" + "\n".join(narr_lines)
+                    system_content += preamble + "\n".join(narr_lines)
                     logger.info("\033[91m[NARR]\033[0m daily: injected %d NARR blocks", len(recent_narrs))
 
             messages.append({"role": "system", "content": system_content})
@@ -332,15 +348,18 @@ class ContextAssembler:
             if self.longterm and remaining > 200:
                 recent_narrs = self.longterm.get_narrative_memories(status="active", limit=3)
                 if recent_narrs:
-                    narr_lines = ["\n【相关叙事记忆】"]
+                    narr_lines = [_NARR_PREAMBLE]
                     for nb in recent_narrs:
                         tags = ",".join(nb.get("scene_tags") or [])
-                        tag_str = f"  标签: {tags}" if tags else ""
+                        tag_str = f" 标签:{tags}" if tags else ""
+                        ts = nb.get("timestamp") or ""
+                        changed = nb.get("changed_me", "")
+                        changed_str = f"\n  changed: {changed[:60]}" if changed else ""
                         narr_lines.append(
-                            f"- {nb['id']} [{nb['category']}] {tag_str}\n"
-                            f"  {nb.get('content', '')[:100]}"
+                            f"- {nb['id']} [{nb['category']}]{tag_str} {ts}\n"
+                            f"  {nb.get('content', '')[:120]}{changed_str}"
                         )
-                    system_content += "\n" + "\n".join(narr_lines)
+                    system_content += preamble + "\n".join(narr_lines)
                     logger.info("\033[91m[NARR]\033[0m reflect: injected %d NARR blocks", len(recent_narrs))
 
             messages.append({"role": "system", "content": system_content})
