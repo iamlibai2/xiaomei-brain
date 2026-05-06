@@ -796,7 +796,7 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
                (id, category, scene_tags, timestamp, created_at, content, changed_me,
                 weight, status, source, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', 'dream', ?)""",
-            (new_id, "自我定义", json.dumps([scene_tag]), scene_tag, now,
+            (new_id, "自我定义", json.dumps([scene_tag]), None, now,
              merged_content, merged_changed_me, round(avg_weight, 3), now),
         )
         conn.commit()
