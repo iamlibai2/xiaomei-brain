@@ -442,8 +442,28 @@ class LongTermMemory:
                 extracted_procedures TEXT DEFAULT '[]' -- JSON array of procedures
             );
 
-            CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(trigger);
+CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(trigger);
             CREATE INDEX IF NOT EXISTS idx_narratives_created ON consciousness_narratives(created_at);
+
+            -- 叙事记忆表：主动结构化自我叙事（NARR 块）
+            CREATE TABLE IF NOT EXISTS narrative_memories (
+                id TEXT PRIMARY KEY,                      -- NARR-XXX 自动生成
+                category TEXT NOT NULL,                    -- 自我定义/关系定义/边界设定/能力认知
+                scene_tags TEXT DEFAULT '[]',              -- JSON array of scene tags
+                timestamp TEXT,                            -- YYYY-MM-DD 人类可读时间
+                created_at REAL NOT NULL,
+                content TEXT NOT NULL,                     -- 100-200字，第一人称叙事正文
+                feels_like TEXT,                           -- 核心情绪词
+                changed_me TEXT,                           -- "这次经历让我更理解了..."
+                weight REAL DEFAULT 0.8,                    -- 初始0.8~1.0
+                related_narrative_id INTEGER,              -- 关联的 consciousness_narratives.id
+                status TEXT DEFAULT 'active',              -- active/archived/consolidated
+                source TEXT DEFAULT 'L2',                  -- L2/dream/explicit
+                updated_at REAL NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_narrative_category ON narrative_memories(category);
+            CREATE INDEX IF NOT EXISTS idx_narrative_status ON narrative_memories(status);
         """)
 
         # Migrate existing rows: add status column if missing (existing DB)
@@ -647,6 +667,144 @@ class LongTermMemory:
             d["extracted_procedures"] = json.loads(d.get("extracted_procedures", "[]"))
             result.append(d)
         return result
+
+    # ── Narrative Memories (NARR 块) ─────────────────────────────────
+
+    def store_narrative_memory(
+        self,
+        category: str,
+        content: str,
+        scene_tags: list[str] | None = None,
+        feels_like: str | None = None,
+        changed_me: str | None = None,
+        weight: float = 0.8,
+        related_narrative_id: int | None = None,
+        source: str = "L2",
+        timestamp: str | None = None,
+    ) -> str:
+        """Store a structured narrative memory block (NARR).
+
+        Args:
+            category: 自我定义 / 关系定义 / 边界设定 / 能力认知
+            content: 第一人称叙事正文（100-200字）
+            scene_tags: 场景标签列表
+            feels_like: 核心情绪词
+            changed_me: "这次经历让我更理解了..."
+            related_narrative_id: 关联的 consciousness_narratives.id
+            source: L2 / dream / explicit
+            timestamp: YYYY-MM-DD 人类可读时间
+        """
+        import random
+
+        conn = self._get_conn()
+        now = time.time()
+        # 生成 NARR-XXX id
+        nm_id = f"NARR-{int(now * 1000)}-{random.randint(100, 999)}"
+        tags_json = json.dumps(scene_tags or [], ensure_ascii=False)
+
+        cur = conn.execute(
+            """INSERT INTO narrative_memories
+               (id, category, scene_tags, timestamp, created_at, content, feels_like,
+                changed_me, weight, related_narrative_id, source, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (nm_id, category, tags_json, timestamp, now, content, feels_like,
+             changed_me, weight, related_narrative_id, source, now),
+        )
+        conn.commit()
+        logger.info(
+            "\033[91m[NARR]\033[0m Stored %s [%s] weight=%.2f: %s",
+            nm_id, category, weight, content[:30],
+        )
+        return nm_id
+
+    def get_narrative_memories(
+        self,
+        category: str | None = None,
+        status: str = "active",
+        limit: int = 10,
+        since: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get narrative memories, optionally filtered."""
+        conn = self._get_conn()
+        sql = "SELECT * FROM narrative_memories WHERE status = ?"
+        params: list = [status]
+        if category:
+            sql += " AND category = ?"
+            params.append(category)
+        if since:
+            sql += " AND created_at > ?"
+            params.append(since)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+
+        rows = conn.execute(sql, params).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["scene_tags"] = json.loads(d.get("scene_tags", "[]"))
+            result.append(d)
+        return result
+
+    def archive_narrative_memory(self, nm_id: str) -> None:
+        """Archive a narrative memory (soft delete)."""
+        conn = self._get_conn()
+        conn.execute(
+            "UPDATE narrative_memories SET status = 'archived', updated_at = ? WHERE id = ?",
+            (time.time(), nm_id),
+        )
+        conn.commit()
+        logger.info("\033[91m[NARR]\033[0m Archived %s", nm_id)
+
+    def consolidate_narrative_memories(
+        self,
+        scene_tag: str,
+        merged_content: str,
+        merged_changed_me: str,
+    ) -> str:
+        """Consolidate multiple narrative memories with same scene_tag into one.
+
+        Returns the id of the newly created consolidated record.
+        """
+        conn = self._get_conn()
+        now = time.time()
+
+        # 查找所有 active 的同 scene_tag 记录
+        rows = conn.execute(
+            """SELECT id, content, changed_me, weight FROM narrative_memories
+               WHERE scene_tags LIKE ? AND status = 'active'""",
+            (f'%"{scene_tag}"%',),
+        ).fetchall()
+
+        if not rows:
+            return ""
+
+        # 计算平均 weight
+        avg_weight = sum(r[3] for r in rows) / len(rows)
+
+        # 标记旧记录为 consolidated
+        old_ids = [r[0] for r in rows]
+        placeholders = ",".join("?" * len(old_ids))
+        conn.execute(
+            f"UPDATE narrative_memories SET status = 'consolidated', updated_at = ? WHERE id IN ({placeholders})",
+            [now] + old_ids,
+        )
+
+        # 写入合并后的新记录
+        new_id = f"NARR-C-{int(now * 1000)}"
+        cur = conn.execute(
+            """INSERT INTO narrative_memories
+               (id, category, scene_tags, created_at, content, changed_me,
+                weight, status, source, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 'dream', ?)""",
+            (new_id, "自我定义", json.dumps([scene_tag]), now,
+             merged_content, merged_changed_me, avg_weight, now),
+        )
+        conn.commit()
+        logger.info(
+            "\033[91m[NARR]\033[0m Consolidated %d NARRs into %s",
+            len(rows), new_id,
+        )
+        return new_id
 
     def recall(
         self,

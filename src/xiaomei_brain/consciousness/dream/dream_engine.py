@@ -63,6 +63,10 @@ class DreamReport:
     """归档了多少条 procedure"""
     procedures_decayed: int = 0
     """衰减了多少条 procedure"""
+    narratives_archived: int = 0
+    """归档了多少条 narrative"""
+    narratives_consolidated: int = 0
+    """合并了多少条 narrative"""
     emotion_changes: dict = field(default_factory=dict)
     """情绪/欲望变化"""
     elapsed_seconds: float = 0.0
@@ -154,6 +158,19 @@ class DreamEngine:
                 logger.info("[DreamEngine] Procedure巩固: %s", proc_result)
             except Exception as e:
                 logger.warning("[DreamEngine] Procedure巩固失败: %s", e)
+
+        # ── 阶段2.x：Narrative 整合 ─────────────────────
+        if self.ltm:
+            try:
+                from .narrative_jobs import NarrativeConsolidationJob
+                job = NarrativeConsolidationJob(self.ltm)
+                narr_result = job.run()
+                report.narratives_archived = narr_result.archived
+                report.narratives_consolidated = narr_result.consolidated
+                logger.info("[DreamEngine] Narrative巩固: archived=%d consolidated=%d",
+                            narr_result.archived, narr_result.consolidated)
+            except Exception as e:
+                logger.warning("[DreamEngine] Narrative巩固失败: %s", e)
 
         # ── 阶段3：L3 火焰深度燃烧 ─────────────────────
         # 如果已有摘要，直接用；否则调 LLM

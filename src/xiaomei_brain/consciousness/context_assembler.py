@@ -312,6 +312,21 @@ class ContextAssembler:
                     hint = self.procedure_memory.inject_context(matched)
                     system_content += "\n" + hint
 
+            # Narrative memories: inject recent NARR blocks for reflect context
+            if self.longterm and remaining > 200:
+                recent_narrs = self.longterm.get_narrative_memories(status="active", limit=3)
+                if recent_narrs:
+                    narr_lines = ["\n【相关叙事记忆】"]
+                    for nb in recent_narrs:
+                        tags = ",".join(nb.get("scene_tags") or [])
+                        tag_str = f"  标签: {tags}" if tags else ""
+                        narr_lines.append(
+                            f"- {nb['id']} [{nb['category']}] {tag_str}\n"
+                            f"  {nb.get('content', '')[:100]}"
+                        )
+                    system_content += "\n" + "\n".join(narr_lines)
+                    logger.info("\033[91m[NARR]\033[0m reflect: injected %d NARR blocks", len(recent_narrs))
+
             messages.append({"role": "system", "content": system_content})
             remaining -= estimate_tokens(system_content)
 

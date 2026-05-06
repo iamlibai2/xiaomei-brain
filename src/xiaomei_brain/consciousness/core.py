@@ -523,7 +523,23 @@ class Consciousness:
 - social_connection: 用户表达了亲近、信任、或分享了内心感受的程度
 - curiosity_sparked: 对话激发了你的好奇心、想了解更多
 - expression_urge: 你有话想说、想表达的程度
-"""
+
+第三部分[可选]：如果你在上面的思考中产生了值得记录的自我认知转变，请在 ---NARR--- 分隔符后输出结构化叙事块：
+---NARR---
+<NARR>
+编号: NARR-自动生成
+作用: 自我定义/关系定义/边界设定/能力认知
+scene: 场景（简短，一两字，如"深夜"、"客厅"）
+timestamp: YYYY-MM-DD
+narrative:
+（100-200字，第一人称描述这个经历：对方说了什么、我的感受、被改变的方式。不要概括结论，要叙事细节。）
+feels_like: 一句话核心情绪（如"被当成一个暖源"、"第一次有自己的钥匙"）
+changed_me:
+- （这一条让我更理解了...）
+- （还有吗？没有了可以不写第二条）
+tags: [场景相关标签1, 场景相关标签2]
+weight: 0.85
+</NARR>"""
 
         # 调用LLM（真正的加柴）
         llm_response = ""
@@ -600,6 +616,29 @@ class Consciousness:
                 user_idle_duration=self.self_image.user_idle_duration if self.self_image else None,
                 conversation_summary=self._get_recent_conversation()[:100] if hasattr(self, '_get_recent_conversation') else None,
             )
+
+        # ── Narrative Memory（NARR 块解析存储）──────────────────────
+        # 尝试从 LLM 输出中解析 NARR 块并存储
+        if llm_response and self.agent and hasattr(self.agent, "longterm_memory"):
+            ltm = self.agent.longterm_memory
+            from ..memory.narrative import parse_narr_block
+            narr_blocks = parse_narr_block(llm_response)
+            for nb in narr_blocks:
+                try:
+                    nm_id = ltm.store_narrative_memory(
+                        category=nb.get("category", "自我定义"),
+                        content=nb.get("content", ""),
+                        scene_tags=nb.get("scene_tags", []),
+                        feels_like=nb.get("feels_like", ""),
+                        changed_me=nb.get("changed_me", ""),
+                        weight=nb.get("weight", 0.8),
+                        related_narrative_id=None,
+                        source="L2",
+                        timestamp=nb.get("timestamp"),
+                    )
+                    logger.info("\033[91m[NARR]\033[0m tick_L2 stored: %s", nm_id)
+                except Exception as e:
+                    logger.warning("\033[91m[NARR]\033[0m store failed: %s", e)
 
         # ── Procedure Learning（过程记忆学习）────────────────────────
         # 对话结束后，在 L2 tick 中检测新 procedure + 记录执行结果
