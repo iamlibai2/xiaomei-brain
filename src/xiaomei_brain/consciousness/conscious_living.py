@@ -448,7 +448,13 @@ class ConsciousLiving(Living):
         if result == TickResult.L2_TRIGGERED:
             self._sync_self_image_from_subsystems()
 
-        if result == TickResult.L3_TRIGGERED and state == LivingState.SLEEPING:
+        # L3 深度沉思：任何状态都可以发生，不改变生命状态
+        # （像人类沉思，发生在清醒/空闲/睡眠中）
+        if result == TickResult.L3_TRIGGERED:
+            logger.info("[ConsciousLiving] L3 深度沉思完成（%s 状态）", state.value)
+
+        # DREAM 入梦信号：只在 SLEEPING 时触发状态转换
+        if result == TickResult.DREAM_TRIGGERED and state == LivingState.SLEEPING:
             self._heartbeat_result = HEARTBEAT_DREAM
 
     def _surge(self, state: LivingState) -> None:

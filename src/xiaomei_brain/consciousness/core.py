@@ -59,7 +59,8 @@ class TickResult(Enum):
     """tick() 返回值"""
     NORMAL = "normal"               # 常规心跳，无特殊事件
     L2_TRIGGERED = "l2_triggered"   # L2 加柴已触发
-    L3_TRIGGERED = "l3_triggered"   # L3 梦境已触发
+    L3_TRIGGERED = "l3_triggered"   # L3 深度沉思已触发（任何状态）
+    DREAM_TRIGGERED = "dream_triggered"  # 入梦信号（仅 SLEEPING）
 
 
 @dataclass
@@ -156,7 +157,8 @@ class Consciousness:
         self._last_report: ConsciousnessReport | None = None
         self._running: bool = False
         self._l2_triggered_by_anomaly: bool = False  # L1 异常触发 L2 的信号
-        self._sleep_start_time: float = 0.0          # 入睡时间戳（L3 入梦判定）
+        self._sleep_start_time: float = 0.0          # 入睡时间戳（入梦判定）
+        self._last_l3_time: float = 0.0              # 上次 L3 深度沉思时间
 
         # 存储回调
         self._storage: Any | None = None
@@ -1152,15 +1154,16 @@ weight: 0.85
     ) -> TickResult:
         """统一入口。ConsciousLiving 每循环只调这一个。
 
-        L0/L1/L2/L3 是意识深度，和生命状态（awake/sleeping/dreaming）正交。
-        任何生命状态下都可能触发 L2，根据各自条件判断。
-        L3 仅在 SLEEPING 足够久后触发（入梦信号），DREAMING 状态下不触发。
+        意识深度（L0-L3）和生命状态（awake/sleeping/dreaming）正交：
+        - L2: 任何状态都可触发（轻度加柴）
+        - L3: 任何状态都可触发（深度沉思），DREAMING 中由 DreamEngine 处理
+        - DREAM: 仅 SLEEPING 足够久后触发（入梦信号，不是意识深度）
 
         Args:
-            agent_state: ConsciousLiving 当前生命状态（用于存在感知）
+            agent_state: ConsciousLiving 当前生命状态
 
         Returns:
-            TickResult: NORMAL / L2_TRIGGERED / L3_TRIGGERED
+            TickResult: NORMAL / L2_TRIGGERED / L3_TRIGGERED / DREAM_TRIGGERED
         """
         # L0: 火焰骨架维护（每秒必做）
         self.tick_L0(agent_state=agent_state)
@@ -1182,8 +1185,14 @@ weight: 0.85
             self.tick_L2(self._get_l2_context(agent_state))
             return TickResult.L2_TRIGGERED
 
-        # L3: 睡眠时长触发入梦（SLEEPING → DREAMING 的信号）
-        # 不在这里调 tick_L3()，由 DreamEngine 处理深度燃烧
+        # L3: 深度沉思（任何状态，有冷却，DREAMING 中由 DreamEngine 处理）
+        if agent_state != "dreaming" and self._should_l3():
+            logger.info("[Consciousness] L3 触发（深度沉思，agent_state=%s）", agent_state)
+            self._last_l3_time = time.time()
+            self.tick_L3()
+            return TickResult.L3_TRIGGERED
+
+        # DREAM: 入梦信号（仅 SLEEPING 足够久）
         if agent_state == "sleeping":
             if self._sleep_start_time == 0:
                 self._sleep_start_time = time.time()
@@ -1191,7 +1200,7 @@ weight: 0.85
                 sleep_dur = time.time() - self._sleep_start_time
                 self._sleep_start_time = 0
                 logger.info("[Consciousness] 睡眠 %.0fs，触发入梦", sleep_dur)
-                return TickResult.L3_TRIGGERED
+                return TickResult.DREAM_TRIGGERED
         elif agent_state != "dreaming":
             # AWAKE/IDLE 状态，重置睡眠计时
             self._sleep_start_time = 0
@@ -1245,14 +1254,32 @@ weight: 0.85
         return False
 
     def _should_l3(self) -> bool:
-        """判断是否应该触发入梦（基于睡眠时长）。
+        """判断是否应该触发 L3 深度沉思。
 
-        只看睡眠时长，不在 tick() 中调用 tick_L3()，
-        由 DreamEngine 处理深度燃烧。
+        L3 和 DREAMING 正交：任何状态都可触发（像人类沉思），
+        DREAMING 中由 DreamEngine 处理，不走这个路径。
+
+        条件：冷却 + 足够能量 + 累积素材充足。
         """
-        if self._sleep_start_time == 0:
+        # 能量不足，无法深度沉思
+        energy = self.self_image.body.energy
+        if energy < 0.3:
             return False
-        return time.time() - self._sleep_start_time >= self._cc.l3_dream_interval
+
+        # 冷却检查
+        elapsed_since_last = time.time() - self._last_l3_time
+        if elapsed_since_last < self._cc.l3_cooldown:
+            return False
+
+        # 累积变化充足（有素材可深思）
+        if len(self.self_image.flame.accumulated_changes) > 15:
+            return True
+
+        # 定期触发（即使变化不多，也定期深度反思）
+        if elapsed_since_last >= self._cc.l3_cooldown * 2:
+            return True
+
+        return False
 
     def _get_l2_context(self, agent_state: str = "awake") -> str:
         """获取 L2 触发上下文"""
