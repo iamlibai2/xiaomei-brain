@@ -80,7 +80,7 @@ class ReinforceJob:
         rows = conn.execute(
             f"""SELECT * FROM memories
                 WHERE status = ?
-                  AND strength < 0.7
+                  AND strength < 1.0
                   AND last_strengthen < ?
                   {where_user}
                 ORDER BY strength ASC
@@ -167,9 +167,13 @@ class ExtractJob:
 - 用第三人称"用户"来描述，明确信息主体是用户
 - 忽略寒暄、情绪表达、无实质内容的对话
 - 每条记忆用以下格式输出：
-  ADD: 记忆内容（以"用户"开头）
+  ADD: 记忆内容（以"用户"开头） | scenes: 场景1,场景2
 - 如果没有值得记住的信息，只回复 EMPTY
-- 多条记忆之间用 --- 分隔
+- scenes 为可选的场景标签（中文，1~3个），没有就写 scenes: 无
+- 场景标签反映记忆在什么情况下会被唤起，如：工作、旅游、购物、编程等
+- 如果两条记忆有关联，用 RELATES 行描述：
+  RELATES: 记忆1内容|--<类型>-->|记忆2内容
+  类型：causal(因果), temporal(时序), contrast(对比), contains(包含)
 
 已有记忆：
 {recent_memories}
@@ -239,27 +243,204 @@ class ExtractJob:
         user_id = self.user_id
         saved = 0
 
+        # Parse all ADD lines and their optional scene tags
+        add_lines: list[tuple[str, list[str]]] = []  # (content, scene_tags)
+        rel_lines: list[str] = []
+
         for line in text.split("\n"):
             line = line.strip()
-            if not line.upper().startswith("ADD:"):
+            if not line:
                 continue
-            content = line[4:].strip()
-            if not content:
-                continue
-            content = re.sub(r"^[-*]\s*", "", content).strip()
-            if not content or len(content) < 5:
-                continue
+            if line.upper().startswith("ADD:"):
+                content = line[4:].strip()
+                content = re.sub(r"^[-*]\s*", "", content).strip()
+                if not content or len(content) < 5:
+                    continue
+                # Parse optional | scenes: tag
+                scene_tags: list[str] = []
+                if " | " in content:
+                    parts = content.rsplit(" | ", 1)
+                    content = parts[0].strip()
+                    tag_part = parts[1].strip()
+                    if tag_part.startswith("scenes:"):
+                        tag_str = tag_part[7:].strip()
+                        if tag_str and tag_str != "无":
+                            scene_tags = [t.strip() for t in tag_str.split(",") if t.strip()]
+                add_lines.append((content, scene_tags))
+            elif line.upper().startswith("RELATES:"):
+                rel_lines.append(line)
+
+        # Store memories (first pass to get IDs)
+        content_to_id: dict[str, int] = {}
+        for content, scene_tags in add_lines:
             try:
                 mid = ltm.store(
                     content=content,
                     source="dream",
                     importance=0.8,
                     user_id=user_id,
+                    scene_tags=scene_tags if scene_tags else None,
                 )
                 if mid:
                     saved += 1
-                    logger.debug("[ExtractJob] stored #%d: %.50s", mid, content)
+                    content_to_id[content[:30]] = mid
+                    logger.debug("[ExtractJob] stored #%d: %.50s scenes=%s", mid, content, scene_tags)
             except Exception as e:
                 logger.warning("[ExtractJob] store failed: %s", e)
 
+        # Process RELATES lines (second pass)
+        for rel_line in rel_lines:
+            self._execute_relates(rel_line, content_to_id, user_id)
+
         return saved
+
+    def _execute_relates(self, rel_line: str, content_to_id: dict[str, int], user_id: str) -> None:
+        """Parse and execute a RELATES line to create memory relations."""
+        import re
+        ltm = self.extractor.ltm
+
+        # Format: RELATES: 记忆1|--<type>-->|记忆2
+        m = re.match(r'^RELATES:\s*(.+?)\s*\|--([a-zA-Z_]+)-->+\s*\|(.+)$', rel_line, re.IGNORECASE)
+        if not m:
+            m = re.match(r'^RELATES:\s*(.+?)\s*\|<--([a-zA-Z_]+)-->\s*\|(.+)$', rel_line, re.IGNORECASE)
+        if not m:
+            return
+
+        from_content = m.group(1).strip()
+        relation_type = m.group(2).strip().lower()
+        to_content = m.group(3).strip()
+
+        if relation_type not in ltm.VALID_RELATION_TYPES:
+            return
+
+        from_id = None
+        for snippet, mid in content_to_id.items():
+            if from_content[:30] in snippet:
+                from_id = mid
+                break
+        if from_id is None:
+            similar = ltm.recall(from_content, user_id=user_id, top_k=1)
+            if similar:
+                from_id = similar[0]["id"]
+
+        to_id = None
+        similar_to = ltm.recall(to_content, user_id=user_id, top_k=1)
+        if similar_to:
+            to_id = similar_to[0]["id"]
+
+        if from_id and to_id:
+            ltm.add_relation(from_id, to_id, relation_type, weight=0.5)
+
+
+# ── RelationReinforceJob ────────────────────────────────────────────────────
+
+@dataclass
+class RelationReinforceResult:
+    """关系强化结果"""
+    reinforced: int = 0
+    created: int = 0
+    decayed: int = 0
+    dormant: int = 0
+    scene_clustered: int = 0
+    errors: int = 0
+    details: str = ""
+
+
+class RelationReinforceJob:
+    """关系强化 job — 共现→关系加固 + 权重衰减 + 场景聚类。
+
+    在 DREAMING 阶段执行，维护记忆关系的健康度。
+    """
+
+    def __init__(
+        self,
+        ltm: "LongTermMemory",
+        user_id: str | None = None,
+    ) -> None:
+        self.ltm = ltm
+        self.user_id = user_id
+
+    def run(self) -> RelationReinforceResult:
+        """执行关系强化。"""
+        result = RelationReinforceResult()
+
+        try:
+            co_result = self._reinforce_from_co_occurrence()
+            result.reinforced = co_result.get("reinforced", 0)
+            result.created = co_result.get("created", 0)
+
+            decay_result = self.ltm.decay_relation_weights(decay_days=7, decay_factor=0.95)
+            result.decayed = decay_result.get("decayed", 0)
+            result.dormant = decay_result.get("dormant", 0)
+
+            result.details = (
+                f"加固{result.reinforced}条(新建{result.created}条), "
+                f"衰减{result.decayed}条(休眠{result.dormant}条)"
+            )
+        except Exception as e:
+            logger.error("[RelationReinforceJob] 失败: %s", e)
+            result.errors = 1
+            result.details = str(e)
+
+        return result
+
+    def _reinforce_from_co_occurrence(self) -> dict:
+        """从共现记录强化关系权重。"""
+        conn = self.ltm._get_conn()
+        now = time.time()
+        cutoff = now - 7 * 86400
+
+        if self.user_id:
+            rows = conn.execute("""
+                SELECT co.memory_a_id, co.memory_b_id, co.co_count,
+                       rel.id as rel_id, rel.weight as rel_weight, rel.relation_type
+                FROM memory_co_occurrence co
+                JOIN memories m ON m.id = co.memory_a_id
+                LEFT JOIN memory_relations rel
+                    ON rel.from_memory_id = co.memory_a_id
+                   AND rel.to_memory_id = co.memory_b_id
+                WHERE co.last_seen > ?
+                  AND (m.user_id = ? OR m.user_id = 'global')
+                ORDER BY co.co_count DESC
+                LIMIT 50
+            """, (cutoff, self.user_id)).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT co.memory_a_id, co.memory_b_id, co.co_count,
+                       rel.id as rel_id, rel.weight as rel_weight, rel.relation_type
+                FROM memory_co_occurrence co
+                LEFT JOIN memory_relations rel
+                    ON rel.from_memory_id = co.memory_a_id
+                   AND rel.to_memory_id = co.memory_b_id
+                WHERE co.last_seen > ?
+                ORDER BY co.co_count DESC
+                LIMIT 50
+            """, (cutoff,)).fetchall()
+
+        reinforced = 0
+        created = 0
+
+        for row in rows:
+            m_a, m_b = row["memory_a_id"], row["memory_b_id"]
+            co_count = row["co_count"]
+            rel_id = row["rel_id"]
+            rel_weight = row["rel_weight"] if row["rel_weight"] is not None else 0.5
+
+            if rel_id:
+                new_weight = min(0.95, rel_weight + 0.1 * (1 - rel_weight))
+                conn.execute(
+                    "UPDATE memory_relations SET weight = ?, last_reinforced = ? WHERE id = ?",
+                    (new_weight, now, rel_id),
+                )
+                reinforced += 1
+            elif co_count >= 3:
+                conn.execute(
+                    """INSERT OR IGNORE INTO memory_relations
+                       (from_memory_id, to_memory_id, relation_type, context, created_at, weight, last_reinforced)
+                       VALUES (?, ?, 'co_occurrence', 'from:co_occurrence', ?, 0.2, ?)""",
+                    (m_a, m_b, now, now),
+                )
+                created += 1
+
+        conn.commit()
+        return {"reinforced": reinforced, "created": created}

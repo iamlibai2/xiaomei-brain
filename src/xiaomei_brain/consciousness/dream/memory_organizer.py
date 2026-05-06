@@ -27,11 +27,19 @@ class MemoryOrganizeResult:
     reinforced: int = 0
     extinct: int = 0
     extracted: int = 0
+    relations_reinforced: int = 0
+    relations_created: int = 0
+    relations_decayed: int = 0
+    relations_dormant: int = 0
     errors: int = 0
     details: str = ""
 
     def __str__(self) -> str:
-        return f"强化{self.reinforced}条, 沉睡{self.extinct}条, 提取{self.extracted}条"
+        return (
+            f"强化{self.reinforced}条, 沉睡{self.extinct}条, 提取{self.extracted}条, "
+            f"关系加固{self.relations_reinforced}条(新建{self.relations_created}条), "
+            f"衰减{self.relations_decayed}条(休眠{self.relations_dormant}条)"
+        )
 
 
 class MemoryOrganizer:
@@ -76,6 +84,15 @@ class MemoryOrganizer:
             if not result.details:
                 result.details = str(extract_result)
 
+        # 3. 关系强化 + 衰减
+        if self.ltm:
+            rel_result = self._run_relation_reinforce()
+            result.relations_reinforced = rel_result.get("reinforced", 0)
+            result.relations_created = rel_result.get("created", 0)
+            result.relations_decayed = rel_result.get("decayed", 0)
+            result.relations_dormant = rel_result.get("dormant", 0)
+            result.errors += rel_result.get("errors", 0)
+
         logger.info("[MemoryOrganizer] %s", result)
         return result
 
@@ -114,4 +131,25 @@ class MemoryOrganizer:
             }
         except Exception as e:
             logger.error("[MemoryOrganizer] ExtractJob 失败: %s", e)
+            return {"errors": 1, "details": str(e)}
+
+    def _run_relation_reinforce(self) -> dict:
+        """运行关系强化 job"""
+        if not self.ltm:
+            return {}
+
+        try:
+            from .memory_jobs import RelationReinforceJob
+            job = RelationReinforceJob(self.ltm, user_id=self.user_id)
+            res = job.run()
+            return {
+                "reinforced": res.reinforced,
+                "created": res.created,
+                "decayed": res.decayed,
+                "dormant": res.dormant,
+                "errors": res.errors,
+                "details": res.details,
+            }
+        except Exception as e:
+            logger.error("[MemoryOrganizer] RelationReinforceJob 失败: %s", e)
             return {"errors": 1, "details": str(e)}

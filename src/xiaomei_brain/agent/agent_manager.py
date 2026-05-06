@@ -512,6 +512,10 @@ class AgentManager:
         # DAG 引用保存（ConsciousLiving 创建 ContextAssembler 时需要）
         agent._dag = dag
 
+        # ProcedureMemory（过程记忆：学习 + 关键词触发）
+        from xiaomei_brain.memory.procedure import ProcedureMemory
+        agent._procedure_memory = ProcedureMemory(db_path, llm_client=llm)
+
         # MemoryExtractor (需要 dag + longterm_memory)
         agent.memory_extractor = MemoryExtractor(
             llm_client=llm,

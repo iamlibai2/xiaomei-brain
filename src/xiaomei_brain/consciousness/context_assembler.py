@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from datetime import datetime
 from typing import Any, Callable
 
 from xiaomei_brain.memory.conversation_db import ConversationDB, estimate_tokens
@@ -43,6 +44,7 @@ class ContextAssembler:
         self_image: Any | None = None,
         purpose: Any | None = None,
         config: Any | None = None,
+        procedure_memory: Any | None = None,
     ) -> None:
         self.db = conversation_db
         self.dag = dag
@@ -51,6 +53,7 @@ class ContextAssembler:
         self.drive = drive
         self.self_image = self_image
         self.purpose = purpose
+        self.procedure_memory = procedure_memory  # ProcedureMemory instance
         self.on_compact: Callable[[dict], None] | None = None
         self._compact_locks: dict[str, threading.Lock] = {}
         self._locks_lock = threading.Lock()
@@ -194,9 +197,17 @@ class ContextAssembler:
         messages: list[dict[str, Any]] = []
         remaining = max_tokens
 
-        system_content = ""
+        # 当前日期星期时间（供 LLM 判断情境）
+        now = datetime.now()
+        date_str = now.strftime("%Y-%m-%d")
+        weekday_map = ["一", "二", "三", "四", "五", "六", "日"]
+        weekday_str = weekday_map[now.weekday()]
+        time_str = now.strftime("%H:%M")
+        datetime_prefix = f"【当前】{date_str} 星期{weekday_str} {time_str}\n"
+
+        system_content = datetime_prefix
         if self.self_model:
-            system_content = self.self_model.to_system_prompt(mode="daily")
+            system_content += self.self_model.to_system_prompt(mode="daily")
 
         if session_id and remaining > 200:
             summary_budget = remaining // 5
@@ -220,6 +231,15 @@ class ContextAssembler:
                 system_content += "\n\n" + chain_text
 
         if system_content:
+            # Procedure matching: inject available procedures into system prompt
+            if user_input and self.procedure_memory:
+                matched = self.procedure_memory.match(user_input, top_k=3)
+                if matched:
+                    names = [p["name"] for p in matched]
+                    logger.info("\033[91m[Procedure]\033[0m matched for '%s': %s", user_input[:30], names)
+                    hint = self.procedure_memory.inject_context(matched)
+                    system_content += "\n" + hint
+
             messages.append({"role": "system", "content": system_content})
             remaining -= estimate_tokens(system_content)
 
@@ -249,9 +269,17 @@ class ContextAssembler:
         messages: list[dict[str, Any]] = []
         remaining = max_tokens
 
-        system_content = ""
+        # 当前日期星期时间
+        now = datetime.now()
+        date_str = now.strftime("%Y-%m-%d")
+        weekday_map = ["一", "二", "三", "四", "五", "六", "日"]
+        weekday_str = weekday_map[now.weekday()]
+        time_str = now.strftime("%H:%M")
+        datetime_prefix = f"【当前】{date_str} 星期{weekday_str} {time_str}\n"
+
+        system_content = datetime_prefix
         if self.self_model:
-            system_content = self.self_model.to_system_prompt(mode="reflect")
+            system_content += self.self_model.to_system_prompt(mode="reflect")
 
         if session_id and remaining > 200:
             summary_budget = remaining // 5
@@ -275,6 +303,15 @@ class ContextAssembler:
                     system_content += "\n\n" + chain_text
 
         if system_content:
+            # Procedure matching: inject available procedures into system prompt
+            if user_input and self.procedure_memory:
+                matched = self.procedure_memory.match(user_input, top_k=3)
+                if matched:
+                    names = [p["name"] for p in matched]
+                    logger.info("\033[91m[Procedure]\033[0m matched for '%s': %s", user_input[:30], names)
+                    hint = self.procedure_memory.inject_context(matched)
+                    system_content += "\n" + hint
+
             messages.append({"role": "system", "content": system_content})
             remaining -= estimate_tokens(system_content)
 
@@ -355,19 +392,28 @@ class ContextAssembler:
         for m in memories:
             m.pop("_combined", None)
 
+        # Record co-occurrence for all recalled memories (for dream reinforcement)
+        if len(memories) >= 2:
+            recalled_ids = [m["id"] for m in memories if m.get("id")]
+            if recalled_ids:
+                self.longterm.record_co_occurrence(recalled_ids)
+
         if not memories:
             return ""
         elapsed_ms = int((time.time() - now) * 1000)
 
         lines = ["<长期记忆>"]
-        lines.append("以下是你的长期记忆，当用户问及相关信息时，你必须主动引用这些记忆来回答，不要说'你不记得'或让用户自己回答。")
+        lines.append("以下是你的长期记忆，当用户问及相关信息时，你必须主动引用这些记忆来回答，不要说'你不记得'或让用户自己回答。记忆时间格式为 @2026-05-04T12:00:00，可用于时间推理（判断'上周'/'上个月'等）。")
         for m in memories:
             content = m.get("content", "")
             eff_str = m.get("effective_strength", 0)
             level = self.longterm._get_strength_level(eff_str) if hasattr(self.longterm, '_get_strength_level') else "?"
             tags = m.get("tags") or []
             tag_str = ",".join(tags) if tags else ""
-            lines.append(f"- [{level} {eff_str:.2f}] {content}  [{tag_str}]")
+            created_ts = m.get("created_at", 0)
+            time_str = datetime.fromtimestamp(created_ts).strftime("%Y-%m-%dT%H:%M:%S") if created_ts else ""
+            time_part = f" @{time_str}" if time_str else ""
+            lines.append(f"- [{level} {eff_str:.2f}] {content}{time_part}  [{tag_str}]")
 
         lines.append("</长期记忆>")
 

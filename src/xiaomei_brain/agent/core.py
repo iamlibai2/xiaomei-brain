@@ -382,6 +382,13 @@ class Agent:
                                 think_data.get("user_input_summary", "")[:50],
                             )
 
+                    # Extract PROC block (procedure execution tracking)
+                    if hasattr(self, "procedure_memory") and self.procedure_memory and content:
+                        proc_id = self.procedure_memory.extract_procedure_block(content)
+                        if proc_id:
+                            self.procedure_memory.record_execution(proc_id, "success")
+                            logger.info("\033[91m[Procedure]\033[0m recorded execution: %s", proc_id)
+
                     # Use clean content for display and logging
                     display_content = clean_content or content
                     assistant_msg_id = None

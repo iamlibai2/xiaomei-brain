@@ -30,6 +30,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime
 import threading
 import time
@@ -41,7 +42,7 @@ from .context_assembler import ContextAssembler as ConsciousContextAssembler
 from .core import Consciousness, ConsciousnessReport, TickResult
 from .intent import Intent
 from .storage import ConsciousnessStorage
-from .self_image import SelfImage, FlameState
+from .self_image_proxy import SelfImageProxy
 from .identity import IdentityConfig
 from .perception import PerceptionConfig
 from ..drive import DriveEngine, DesireActionExecutor
@@ -91,6 +92,9 @@ class ConsciousLiving(Living):
             config = LivingConfig()
         self._config = config
 
+                # 解析 agent_id（统一来源）
+        self._agent_id = getattr(agent_instance, "id", None) or getattr(agent_instance, "agent_id", "xiaomei")
+
         super().__init__(
             agent_instance=agent_instance,
             idle_threshold=idle_threshold or config.living.idle_threshold,
@@ -106,25 +110,26 @@ class ConsciousLiving(Living):
         if not isinstance(self.agent.llm, ContextGuard):
             self.agent.llm = ContextGuard(self.agent.llm, max_tokens=80000)
 
+        # Drive 系统（边缘系统）-
+        if not isinstance(self.agent.llm, ContextGuard):
+            self.agent.llm = ContextGuard(self.agent.llm, max_tokens=80000)
+
         # Drive 系统（边缘系统）- 延迟加载
-        agent_id = "xiaomei"
-        if agent_instance and hasattr(agent_instance, "agent_id"):
-            agent_id = agent_instance.agent_id
-        self.drive = DriveEngine(agent_id, load=False)
+        self.drive = DriveEngine(self._agent_id, load=False)
 
         # Purpose 系统（前额叶层）- 延迟加载
         llm_client = None
         if agent_instance and hasattr(agent_instance, "llm"):
             llm_client = agent_instance.llm
         self.purpose = PurposeEngine(
-            agent_id=agent_id,
+            agent_id=self._agent_id,
             llm_client=llm_client,
             drive=self.drive,
             load=False,
         )
 
         # TaskManager: 认知过程调度器（意识层子功能，v2 独立认知实体）
-        self.task_storage = TaskStorage(agent_id=agent_id)
+        self.task_storage = TaskStorage(agent_id=self._agent_id)
         self.task_manager = TaskManager(self.purpose, self.task_storage, llm_client)
 
         # 欲望行为执行器
@@ -137,10 +142,12 @@ class ConsciousLiving(Living):
         self._dispatcher = ActionDispatcher()
 
         # 意识系统（引用 Drive 和 Purpose）- 只创建结构
+        cc = self._config.consciousness if self._config else None
         self.consciousness = Consciousness(
             agent_instance,
             drive=self.drive,
             purpose=self.purpose,
+            consciousness_config=cc,
         )
         self._load_consciousness = load_consciousness
 
@@ -152,6 +159,7 @@ class ConsciousLiving(Living):
             ltm=getattr(self.agent, 'longterm_memory', None),
             extractor=getattr(self.agent, 'memory_extractor', None),
             llm=getattr(self.agent, 'llm', None),
+            procedure_memory=getattr(self.agent, '_procedure_memory', None),
         )
 
         # 命令注册表 — 从 living_commands 加载（测试/调试/系统操作）
@@ -169,6 +177,12 @@ class ConsciousLiving(Living):
 
         # 注入 consciousness 层上下文组装器（子系统加载后再替换旧 assembler）
         self._inject_context_assembler()
+
+        # 初始化过程记忆（ProcedureMemory — LLM学习 + 关键词触发）
+        db_path = getattr(self.agent, "db_path", None)
+        if db_path is None:
+            db_path = os.path.expanduser(f"~/.xiaomei-brain/agents/{self._agent_id}/memory/brain.db")
+        self.consciousness.init_procedure_memory(db_path)
 
         # ActionDispatcher 初始化（接入外部引用）
         from .rules import _init_rules, RULES
@@ -192,10 +206,7 @@ class ConsciousLiving(Living):
         logger.info("=" * 50)
 
         # 基本信息
-        agent_id = "xiaomei"
-        if self.agent and hasattr(self.agent, "agent_id"):
-            agent_id = self.agent.agent_id
-        logger.info("  agent_id          : %s", agent_id)
+        logger.info("  agent_id          : %s", self._agent_id)
         logger.info("  session_id        : %s", self.session_id)
         logger.info("  user_id           : %s", self.user_id)
 
@@ -327,6 +338,7 @@ class ConsciousLiving(Living):
             self_image=self.consciousness.self_image if self._load_consciousness else None,
             purpose=self.purpose,
             config=self._config,
+            procedure_memory=getattr(self.agent, "_procedure_memory", None),
         )
 
         # 上下文压缩通知
@@ -386,7 +398,7 @@ class ConsciousLiving(Living):
         # 1. 挂载存储
         import os
         base_dir = os.path.expanduser("~/.xiaomei-brain")
-        storage = ConsciousnessStorage(base_dir, agent_id="xiaomei")
+        storage = ConsciousnessStorage(base_dir, agent_id=self._agent_id)
         self.consciousness.set_storage(storage)
 
         # 2. 尝试从存储恢复（优先级最高）
@@ -394,11 +406,7 @@ class ConsciousLiving(Living):
 
         # 3. 如果存储恢复失败，从 identity.md 加载
         if not restored:
-            agent_id = "xiaomei"
-            if self.agent and hasattr(self.agent, "agent_id"):
-                agent_id = self.agent.agent_id
-
-            config = IdentityConfig.load(agent_id)
+            config = IdentityConfig.load(self._agent_id)
             self.consciousness._identity_config = config
             self.consciousness.identity.init_from_identity_config(config)
             logger.info("[ConsciousLiving] 从 IdentityConfig 初始化完成")
@@ -411,10 +419,7 @@ class ConsciousLiving(Living):
                 logger.info("[ConsciousLiving] 使用默认值初始化")
 
         # 4. 加载感知规则（非运行时数据，始终从配置加载）
-        agent_id = "xiaomei"
-        if self.agent and hasattr(self.agent, "agent_id"):
-            agent_id = self.agent.agent_id
-        self.consciousness._perception_config = PerceptionConfig.load(agent_id)
+        self.consciousness._perception_config = PerceptionConfig.load(self._agent_id)
         logger.info("[ConsciousLiving] 从 PerceptionConfig 初始化完成: %d 条规则", len(self.consciousness._perception_config.rules))
 
     # ── Hook: 状态转换 ───────────────────────────────────────────

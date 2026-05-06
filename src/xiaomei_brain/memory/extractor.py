@@ -370,6 +370,12 @@ class MemoryExtractor:
             action_type = action_item.get("type", "").upper()
             tag = action_item.get("tag", "事实")
             content = action_item.get("content", "").strip()
+            # 解析场景标签，默认 ["日常"]
+            raw_scenes = action_item.get("scenes", [])
+            if isinstance(raw_scenes, list) and raw_scenes:
+                scene_tags = [s.strip() for s in raw_scenes if s and isinstance(s, str)][:3]
+            else:
+                scene_tags = ["日常"]
 
             # 清理 markdown
             content = re.sub(r'\*\*(.*?)\*\*', r'\1', content)
@@ -402,8 +408,9 @@ class MemoryExtractor:
                     memory_id = self.ltm.store(
                         content=content, source=source, tags=[tag],
                         importance=imp, user_id=user_id,
+                        scene_tags=scene_tags,
                     )
-                    logger.info("[Memory ADD JSON] #%d: %.50s", memory_id, content)
+                    logger.info("[Memory ADD JSON] #%d: %.50s scenes=%s", memory_id, content, scene_tags)
                     ids.append(memory_id)
                     if len(content) >= 5:
                         content_to_id[content[:50]] = memory_id
@@ -414,8 +421,9 @@ class MemoryExtractor:
                     memory_id = self.ltm.store(
                         content=content, source=source, tags=[tag],
                         importance=imp, user_id=user_id,
+                        scene_tags=scene_tags,
                     )
-                    logger.info("[Memory ADD JSON(fallback)] #%d: %.50s", memory_id, content)
+                    logger.info("[Memory ADD JSON(fallback)] #%d: %.50s scenes=%s", memory_id, content, scene_tags)
                     ids.append(memory_id)
                     if len(content) >= 5:
                         content_to_id[content[:50]] = memory_id
@@ -548,6 +556,7 @@ class MemoryExtractor:
                     memory_id = self.ltm.store(
                         content=content, source=source, tags=[tag],
                         importance=imp, user_id=user_id,
+                        scene_tags=["日常"],
                     )
                     logger.info("[Memory ADD] #%d: %.50s", memory_id, content)
                     ids.append(memory_id)
@@ -560,6 +569,7 @@ class MemoryExtractor:
                     memory_id = self.ltm.store(
                         content=content, source=source, tags=[tag],
                         importance=imp, user_id=user_id,
+                        scene_tags=["日常"],
                     )
                     logger.info("[Memory ADD(fallback)] #%d: %.50s", memory_id, content)
                     ids.append(memory_id)

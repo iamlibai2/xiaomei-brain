@@ -51,6 +51,18 @@ class DreamReport:
     """强化了多少条记忆"""
     memories_extracted: int = 0
     """提取了多少条新记忆"""
+    relations_reinforced: int = 0
+    """加固了多少条关系"""
+    relations_created: int = 0
+    """新建了多少条关系"""
+    relations_decayed: int = 0
+    """衰减了多少条关系"""
+    relations_dormant: int = 0
+    """休眠了多少条关系"""
+    procedures_archived: int = 0
+    """归档了多少条 procedure"""
+    procedures_decayed: int = 0
+    """衰减了多少条 procedure"""
     emotion_changes: dict = field(default_factory=dict)
     """情绪/欲望变化"""
     elapsed_seconds: float = 0.0
@@ -75,6 +87,7 @@ class DreamEngine:
         extractor: Any | None,
         llm: Any | None,
         storage: DreamStorage | None = None,
+        procedure_memory: Any | None = None,
     ) -> None:
         self.cs = consciousness
         self.drive = drive
@@ -85,6 +98,7 @@ class DreamEngine:
             base_dir="~/.xiaomei-brain",
             agent_id=getattr(consciousness, '_agent_id', 'xiaomei'),
         )
+        self.procedure_memory = procedure_memory
 
         # 子系统
         self.emotion_processor = EmotionProcessor()
@@ -121,9 +135,25 @@ class DreamEngine:
             mem_result = self.memory_organizer.organize()
             report.memories_reinforced = mem_result.reinforced
             report.memories_extracted = mem_result.extracted
+            report.relations_reinforced = mem_result.relations_reinforced
+            report.relations_created = mem_result.relations_created
+            report.relations_decayed = mem_result.relations_decayed
+            report.relations_dormant = mem_result.relations_dormant
         except Exception as e:
             logger.error("[DreamEngine] 记忆整理失败: %s", e)
             report.errors += 1
+
+        # ── 阶段2.5：Procedure 巩固 ──────────────────────
+        if self.procedure_memory:
+            try:
+                from .procedure_jobs import ProcedureConsolidationJob
+                job = ProcedureConsolidationJob(self.procedure_memory)
+                proc_result = job.run()
+                report.procedures_archived = proc_result.archived
+                report.procedures_decayed = proc_result.decayed
+                logger.info("[DreamEngine] Procedure巩固: %s", proc_result)
+            except Exception as e:
+                logger.warning("[DreamEngine] Procedure巩固失败: %s", e)
 
         # ── 阶段3：L3 火焰深度燃烧 ─────────────────────
         # 如果已有摘要，直接用；否则调 LLM

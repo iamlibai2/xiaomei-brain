@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
     from .action_item import ActionItem
-    from .self_image import SelfImage
+    from .self_image_proxy import SelfImageProxy as SelfImage
 
 
 logger = logging.getLogger(__name__)

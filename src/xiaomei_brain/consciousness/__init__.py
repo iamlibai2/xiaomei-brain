@@ -20,7 +20,6 @@
 - L3: LLM深度燃烧（极低频，完整LLM）- 梦境阶段
 """
 
-from .self_image import FlameState
 from .self_image_proxy import SelfImageProxy
 from .self_modules import SelfIdentity, SelfState, SelfRelation, SelfPerception, SelfMemory, SelfGrowth
 from .intent import (
@@ -48,7 +47,6 @@ from .dream import DreamEngine, DreamReport, EmotionProcessor, MemoryOrganizer, 
 __all__ = [
     # 保持向后兼容
     "SelfImageProxy",
-    "FlameState",
     # 新增模块
     "SelfIdentity",
     "SelfState",

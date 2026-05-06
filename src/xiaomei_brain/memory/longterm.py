@@ -333,7 +333,8 @@ class LongTermMemory:
                 created_at REAL NOT NULL,
                 status TEXT DEFAULT 'active',
                 strength REAL DEFAULT 1.0,
-                last_strengthen REAL DEFAULT 0
+                last_strengthen REAL DEFAULT 0,
+                scene_tags TEXT DEFAULT '[]'
             );
 
             CREATE TABLE IF NOT EXISTS memory_tags (
@@ -379,6 +380,8 @@ class LongTermMemory:
                 relation_type TEXT NOT NULL,
                 context TEXT,
                 created_at REAL NOT NULL,
+                weight REAL DEFAULT 0.5,
+                last_reinforced REAL DEFAULT 0,
                 FOREIGN KEY (from_memory_id) REFERENCES memories(id) ON DELETE CASCADE,
                 FOREIGN KEY (to_memory_id) REFERENCES memories(id) ON DELETE CASCADE,
                 UNIQUE(from_memory_id, to_memory_id, relation_type)
@@ -390,6 +393,23 @@ class LongTermMemory:
                 ON memory_relations(to_memory_id);
             CREATE INDEX IF NOT EXISTS idx_relations_type
                 ON memory_relations(relation_type);
+
+            -- 共现表：记录记忆一起被召回的次数（梦境加固用）
+            CREATE TABLE IF NOT EXISTS memory_co_occurrence (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                memory_a_id INTEGER NOT NULL,
+                memory_b_id INTEGER NOT NULL,
+                co_count INTEGER DEFAULT 1,
+                last_seen REAL NOT NULL,
+                FOREIGN KEY (memory_a_id) REFERENCES memories(id) ON DELETE CASCADE,
+                FOREIGN KEY (memory_b_id) REFERENCES memories(id) ON DELETE CASCADE,
+                UNIQUE(memory_a_id, memory_b_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_co_occurrence_a
+                ON memory_co_occurrence(memory_a_id);
+            CREATE INDEX IF NOT EXISTS idx_co_occurrence_b
+                ON memory_co_occurrence(memory_b_id);
 
             -- 见证层：原始念头捕获
             CREATE TABLE IF NOT EXISTS thoughts (
@@ -405,6 +425,25 @@ class LongTermMemory:
 
             CREATE INDEX IF NOT EXISTS idx_thoughts_user ON thoughts(user_id);
             CREATE INDEX IF NOT EXISTS idx_thoughts_session ON thoughts(session_id);
+
+            -- 意识叙事表：LLM 内心独白（与 memories 表分离）
+            CREATE TABLE IF NOT EXISTS consciousness_narratives (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                content TEXT NOT NULL,
+                trigger TEXT NOT NULL,                   -- 'L2_light' / 'L3_deep' / 'awakening' / 'dream'
+                created_at REAL NOT NULL,
+                related_memory_ids TEXT DEFAULT '[]',   -- JSON array of memory_ids
+                drive_summary TEXT,                      -- JSON format drive events
+                energy_level REAL,                       -- SelfImage.energy_level at time
+                user_idle_duration REAL,                 -- user_idle at time
+                conversation_summary TEXT,               -- triggering conversation (100 chars)
+                used_as_reasoning INTEGER DEFAULT 0,
+                used_as_pattern INTEGER DEFAULT 0,
+                extracted_procedures TEXT DEFAULT '[]' -- JSON array of procedures
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(trigger);
+            CREATE INDEX IF NOT EXISTS idx_narratives_created ON consciousness_narratives(created_at);
         """)
 
         # Migrate existing rows: add status column if missing (existing DB)
@@ -427,7 +466,25 @@ class LongTermMemory:
         if count > 0:
             conn.execute("UPDATE memories SET last_strengthen = created_at WHERE last_strengthen = 0")
 
-        # Add strength/status indexes
+        # Migration: add scene_tags if missing (existing DB)
+        cursor3 = conn.execute("PRAGMA table_info(memories)")
+        mem_cols = {row[1] for row in cursor3.fetchall()}
+        if "scene_tags" not in mem_cols:
+            conn.execute("ALTER TABLE memories ADD COLUMN scene_tags TEXT DEFAULT '[]'")
+
+        # Migration: add event_time/valid_until if missing
+        if "event_time" not in mem_cols:
+            conn.execute("ALTER TABLE memories ADD COLUMN event_time REAL DEFAULT NULL")
+        if "valid_until" not in mem_cols:
+            conn.execute("ALTER TABLE memories ADD COLUMN valid_until REAL DEFAULT NULL")
+
+        # Migration: add weight/last_reinforced to memory_relations if missing
+        cursor4 = conn.execute("PRAGMA table_info(memory_relations)")
+        rel_cols = {row[1] for row in cursor4.fetchall()}
+        if "weight" not in rel_cols:
+            conn.execute("ALTER TABLE memory_relations ADD COLUMN weight REAL DEFAULT 0.5")
+        if "last_reinforced" not in rel_cols:
+            conn.execute("ALTER TABLE memory_relations ADD COLUMN last_reinforced REAL DEFAULT 0")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_strength ON memories(strength)")
 
@@ -442,6 +499,9 @@ class LongTermMemory:
         tags: list[str] | None = None,
         importance: float = 0.5,
         user_id: str = "global",
+        scene_tags: list[str] | None = None,
+        event_time: float | None = None,
+        valid_until: float | None = None,
     ) -> int:
         """Store a memory entry. Returns the ID."""
         # Clean surrogate characters from content
@@ -451,17 +511,17 @@ class LongTermMemory:
             content = content.replace("\udc00", "").replace("\ud800", "")
 
         logger.debug(
-            "[Memory STORE] user=%s | %s | source=%s | imp=%.2f | tags=%s",
-            user_id, content[:50], source, importance, tags,
+            "[Memory STORE] user=%s | %s | source=%s | imp=%.2f | tags=%s | scenes=%s",
+            user_id, content[:50], source, importance, tags, scene_tags,
         )
         source = source if source in self.VALID_SOURCES else "manual"
         conn = self._get_conn()
         now = time.time()
 
         cur = conn.execute(
-            """INSERT INTO memories (user_id, content, source, importance, created_at, strength, last_strengthen)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (user_id, content, source, importance, now, 1.0, now),
+            """INSERT INTO memories (user_id, content, source, importance, created_at, strength, last_strengthen, scene_tags, event_time, valid_until)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, content, source, importance, now, 1.0, now, json.dumps(scene_tags or []), event_time, valid_until),
         )
         memory_id = cur.lastrowid
 
@@ -514,9 +574,88 @@ class LongTermMemory:
         )
         return thought_id
 
+    def store_narrative(
+        self,
+        content: str,
+        trigger: str,
+        drive_summary: str | None = None,
+        energy_level: float | None = None,
+        user_idle_duration: float | None = None,
+        conversation_summary: str | None = None,
+        related_memory_ids: list[int] | None = None,
+    ) -> int:
+        """Store a consciousness narrative (LLM internal monologue).
+
+        Args:
+            trigger: 'L2_light' / 'L3_deep' / 'awakening' / 'dream'
+            drive_summary: JSON string of drive events (optional)
+            energy_level: SelfImage.energy_level at time
+            user_idle_duration: user_idle at time
+            conversation_summary: triggering conversation text (100 chars)
+            related_memory_ids: list of memory IDs referenced in narrative
+        """
+        conn = self._get_conn()
+        now = time.time()
+        related_json = json.dumps(related_memory_ids or [], ensure_ascii=False)
+
+        cur = conn.execute(
+            """INSERT INTO consciousness_narratives
+               (content, trigger, created_at, related_memory_ids, drive_summary,
+                energy_level, user_idle_duration, conversation_summary)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (content, trigger, now, related_json, drive_summary,
+             energy_level, user_idle_duration, conversation_summary),
+        )
+        conn.commit()
+        narrative_id = cur.lastrowid
+        logger.info(
+            "Stored narrative #%d [trigger=%s] len=%d: %s",
+            narrative_id, trigger, len(content), content[:50],
+        )
+        return narrative_id
+
+    def get_narratives(
+        self,
+        trigger: str | None = None,
+        limit: int = 10,
+        since: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get consciousness narratives.
+
+        Args:
+            trigger: filter by trigger type ('L2_light', 'L3_deep', etc.)
+            limit: max number of results
+            since: only narratives created after this timestamp
+        """
+        conn = self._get_conn()
+        sql = "SELECT * FROM consciousness_narratives WHERE 1=1"
+        params: list = []
+        if trigger:
+            sql += " AND trigger = ?"
+            params.append(trigger)
+        if since:
+            sql += " AND created_at > ?"
+            params.append(since)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+
+        rows = conn.execute(sql, params).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["related_memory_ids"] = json.loads(d.get("related_memory_ids", "[]"))
+            d["extracted_procedures"] = json.loads(d.get("extracted_procedures", "[]"))
+            result.append(d)
+        return result
+
     def recall(
-        self, query: str, user_id: str = "global", top_k: int = 5,
+        self,
+        query: str,
+        user_id: str = "global",
+        top_k: int = 5,
         sources: list[str] | None = None,
+        scene: str | None = None,
+        time_range: tuple[float, float] | None = None,
     ) -> list[dict[str, Any]]:
         """Recall memories by semantic similarity.
 
@@ -528,6 +667,10 @@ class LongTermMemory:
         Args:
             sources: Optional list of source types to filter by.
                      E.g. ["internal", "dream"] for internal narratives only.
+            scene: Optional scene tag to filter results (e.g. "工作", "成都旅游").
+                   If specified, only returns memories matching this scene.
+            time_range: Optional (start, end) unix timestamps to filter by event_time.
+                        Only returns memories whose event_time falls within this range.
         """
         # Clean surrogate characters from query
         try:
@@ -542,14 +685,14 @@ class LongTermMemory:
 
         # Try vector search first
         try:
-            result = self._vector_recall(query, user_id, top_k, sources)
+            result = self._vector_recall(query, user_id, top_k, sources, scene, time_range)
             return result if result is not None else []
         except Exception as e:
             logger.warning(
                 "[Memory RECALL] Vector search failed, falling back to keywords: %s", e,
             )
             try:
-                result = self._keyword_recall(query, user_id, top_k, sources)
+                result = self._keyword_recall(query, user_id, top_k, sources, scene, time_range)
                 return result if result is not None else []
             except Exception as e2:
                 logger.error("[Memory RECALL] Keyword recall also failed: %s", e2)
@@ -605,7 +748,9 @@ class LongTermMemory:
         return memories[:top_k]
 
     def _vector_recall(
-        self, query: str, user_id: str, top_k: int, sources: list[str] | None = None,
+        self, query: str, user_id: str, top_k: int,
+        sources: list[str] | None = None, scene: str | None = None,
+        time_range: tuple[float, float] | None = None,
     ) -> list[dict[str, Any]]:
         """Semantic recall using LanceDB vector search."""
         query_vector = self._embed(query)
@@ -640,6 +785,26 @@ class LongTermMemory:
 
         if not rows:
             return []
+
+        # Valid time filter: exclude expired memories (valid_until IS NULL OR > now)
+        now = time.time()
+        rows = [r for r in rows if r["valid_until"] is None or (r["valid_until"] or 0) > now]
+
+        if not rows:
+            return []
+
+        # Time range filter: only return memories whose event_time falls in range
+        if time_range:
+            start_time, end_time = time_range
+            rows = [r for r in rows if r["event_time"] and start_time <= r["event_time"] <= end_time]
+            if not rows:
+                return []
+
+        # Scene filter: JSON_FILTER to match scene tag
+        if scene:
+            rows = [r for r in rows if self._match_scene_tag(r.get("scene_tags", "[]"), scene)]
+            if not rows:
+                return []
 
         # Batch fetch tags (N+1 fix)
         tag_map = self._get_tags_batch([r["id"] for r in rows])
@@ -684,7 +849,9 @@ class LongTermMemory:
         return result[:top_k]
 
     def _keyword_recall(
-        self, query: str, user_id: str, top_k: int, sources: list[str] | None = None,
+        self, query: str, user_id: str, top_k: int,
+        sources: list[str] | None = None, scene: str | None = None,
+        time_range: tuple[float, float] | None = None,
     ) -> list[dict[str, Any]]:
         """Fallback keyword recall using LIKE."""
         conn = self._get_conn()
@@ -701,6 +868,31 @@ class LongTermMemory:
 
         if not unique_rows:
             return []
+
+        now = time.time()
+
+        # Valid time filter: exclude expired memories
+        unique_rows = [r for r in unique_rows if r["valid_until"] is None or (r["valid_until"] or 0) > now]
+
+        if not unique_rows:
+            return []
+
+        # Time range filter
+        if time_range:
+            start_time, end_time = time_range
+            unique_rows = [r for r in unique_rows if r["event_time"] and start_time <= r["event_time"] <= end_time]
+            if not unique_rows:
+                return []
+
+        if scene:
+            filtered = []
+            for r in unique_rows:
+                tags_json = r["scene_tags"] if "scene_tags" in r else None
+                if self._match_scene_tag(tags_json or "[]", scene):
+                    filtered.append(r)
+            if not filtered:
+                return []
+            unique_rows = filtered
 
         # Batch fetch tags (N+1 fix)
         tag_map = self._get_tags_batch([r["id"] for r in unique_rows])
@@ -830,6 +1022,7 @@ class LongTermMemory:
         to_memory_id: int,
         relation_type: str,
         context: str | None = None,
+        weight: float = 0.5,
     ) -> int | None:
         """Add a semantic relation between two memories.
 
@@ -838,6 +1031,7 @@ class LongTermMemory:
             to_memory_id: Target memory ID
             relation_type: One of causal, temporal, contrast, contains
             context: Optional description of the relation
+            weight: Initial relation weight (default 0.5)
 
         Returns:
             Relation row ID, or None if failed/already exists
@@ -851,12 +1045,13 @@ class LongTermMemory:
             return None
 
         conn = self._get_conn()
+        now = time.time()
         try:
             cur = conn.execute(
                 """INSERT OR IGNORE INTO memory_relations
-                   (from_memory_id, to_memory_id, relation_type, context, created_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (from_memory_id, to_memory_id, relation_type, context, time.time()),
+                   (from_memory_id, to_memory_id, relation_type, context, created_at, weight, last_reinforced)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (from_memory_id, to_memory_id, relation_type, context, now, weight, now),
             )
             conn.commit()
             if cur.rowcount > 0:
@@ -954,6 +1149,194 @@ class LongTermMemory:
                 rd["importance"] = other["importance"]
                 result.append(rd)
         return result
+
+    def get_related_with_weight(
+        self,
+        memory_id: int,
+        min_weight: float = 0.0,
+        direction: str = "both",
+    ) -> list[dict[str, Any]]:
+        """Get related memories with weight threshold and sorting.
+
+        Args:
+            memory_id: The memory ID to find relations for
+            min_weight: Minimum weight filter (default 0.0)
+            direction: "both" (default), "outgoing", "incoming"
+
+        Returns:
+            List of related memory dicts with weight field
+        """
+        conn = self._get_conn()
+
+        if direction == "outgoing":
+            where = "r.from_memory_id = ?"
+            params = [memory_id]
+        elif direction == "incoming":
+            where = "r.to_memory_id = ?"
+            params = [memory_id]
+        else:
+            where = "(r.from_memory_id = ? OR r.to_memory_id = ?)"
+            params = [memory_id, memory_id]
+
+        where += " AND r.weight >= ?"
+        params.append(min_weight)
+
+        rows = conn.execute(
+            f"""SELECT r.id, r.from_memory_id, r.to_memory_id, r.relation_type,
+                       r.context, r.weight, r.last_reinforced,
+                       CASE WHEN r.from_memory_id = ? THEN r.to_memory_id ELSE r.from_memory_id END as other_id
+                FROM memory_relations r
+                WHERE {where}
+                ORDER BY r.weight DESC""",
+            [memory_id] + params,
+        ).fetchall()
+
+        if not rows:
+            return []
+
+        other_ids = {row["other_id"] for row in rows}
+        placeholders = ",".join("?" * len(other_ids))
+        mem_rows = conn.execute(
+            f"""SELECT id, content, user_id, created_at, importance
+                FROM memories
+                WHERE id IN ({placeholders}) AND status != '{STATUS_EXTINCT}'""",
+            list(other_ids),
+        ).fetchall()
+        mem_map = {r["id"]: dict(r) for r in mem_rows}
+
+        result = []
+        for row in rows:
+            other = mem_map.get(row["other_id"])
+            if other:
+                result.append({
+                    "memory_id": other["id"],
+                    "content": other["content"],
+                    "user_id": other["user_id"],
+                    "created_at": other["created_at"],
+                    "importance": other["importance"],
+                    "relation_type": row["relation_type"],
+                    "context": row["context"],
+                    "weight": row["weight"],
+                    "last_reinforced": row["last_reinforced"],
+                    "direction": "outgoing" if row["from_memory_id"] == memory_id else "incoming",
+                })
+        return result
+
+    def record_co_occurrence(self, memory_ids: list[int]) -> None:
+        """Record co-occurrence of memories (called when recall returns >=2 items).
+
+        Args:
+            memory_ids: List of memory IDs that were recalled together
+        """
+        if len(memory_ids) < 2:
+            return
+
+        conn = self._get_conn()
+        now = time.time()
+        # All pairs from the recalled set
+        pairs = [(min(a, b), max(a, b)) for i, a in enumerate(memory_ids) for b in memory_ids[i + 1:]]
+        for a_id, b_id in pairs:
+            conn.execute(
+                """INSERT INTO memory_co_occurrence (memory_a_id, memory_b_id, co_count, last_seen)
+                   VALUES (?, ?, 1, ?)
+                   ON CONFLICT(memory_a_id, memory_b_id)
+                   DO UPDATE SET co_count = co_count + 1, last_seen = ?""",
+                (a_id, b_id, now, now),
+            )
+        conn.commit()
+
+    def get_co_occurrence(self, memory_id: int, top_n: int = 20) -> list[dict[str, Any]]:
+        """Get most frequently co-occurring memories with this memory.
+
+        Args:
+            memory_id: The memory ID
+            top_n: Number of results to return
+
+        Returns:
+            List of {memory_id, content, co_count, last_seen} dicts
+        """
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT other_id, co_count, last_seen FROM (
+                SELECT CASE WHEN memory_a_id = ? THEN memory_b_id ELSE memory_a_id END as other_id,
+                       co_count, last_seen
+                FROM memory_co_occurrence
+                WHERE memory_a_id = ? OR memory_b_id = ?
+                ORDER BY co_count DESC
+                LIMIT ?
+            ) sub
+            JOIN memories m ON m.id = sub.other_id
+            WHERE m.status != ?""",
+            (memory_id, memory_id, memory_id, top_n, STATUS_EXTINCT),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def reinforce_relation_weight(
+        self,
+        from_memory_id: int,
+        to_memory_id: int,
+        relation_type: str,
+        boost: float = 0.1,
+    ) -> bool:
+        """Reinforce a relation weight (called during dream consolidation).
+
+        Args:
+            from_memory_id: Source memory ID
+            to_memory_id: Target memory ID
+            relation_type: Relation type
+            boost: Weight boost amount (default 0.1)
+
+        Returns:
+            True if updated, False if relation not found
+        """
+        conn = self._get_conn()
+        now = time.time()
+        row = conn.execute(
+            "SELECT weight FROM memory_relations WHERE from_memory_id = ? AND to_memory_id = ? AND relation_type = ?",
+            (from_memory_id, to_memory_id, relation_type),
+        ).fetchone()
+        if not row:
+            return False
+        new_weight = min(0.95, row["weight"] + boost * (1 - row["weight"]))
+        conn.execute(
+            "UPDATE memory_relations SET weight = ?, last_reinforced = ? WHERE from_memory_id = ? AND to_memory_id = ? AND relation_type = ?",
+            (new_weight, now, from_memory_id, to_memory_id, relation_type),
+        )
+        conn.commit()
+        return True
+
+    def decay_relation_weights(self, decay_days: int = 7, decay_factor: float = 0.95) -> dict[str, int]:
+        """Decay all relation weights that haven't been reinforced for decay_days.
+
+        Args:
+            decay_days: Days since last_reinforced to trigger decay (default 7)
+            decay_factor: Multiplier applied to weight (default 0.95)
+
+        Returns:
+            Dict with decayed count and dormant count
+        """
+        conn = self._get_conn()
+        now = time.time()
+        cutoff = now - decay_days * 86400
+        rows = conn.execute(
+            "SELECT id, weight FROM memory_relations WHERE last_reinforced < ? AND weight > 0",
+            (cutoff,),
+        ).fetchall()
+        decayed = 0
+        dormant = 0
+        for row in rows:
+            new_weight = row["weight"] * decay_factor
+            if new_weight < 0.05:
+                new_weight = 0.0
+                dormant += 1
+            else:
+                decayed += 1
+            conn.execute(
+                "UPDATE memory_relations SET weight = ? WHERE id = ?",
+                (new_weight, row["id"]),
+            )
+        conn.commit()
+        return {"decayed": decayed, "dormant": dormant}
 
     def get_relation_chain(
         self,
@@ -1269,7 +1652,29 @@ class LongTermMemory:
             # Unsafe characters detected — fall back to safe default
             logger.warning("[Security] Unsafe user_id '%s', using 'global'", user_id)
             return "global"
-        return user_id
+
+    def _match_scene_tag(self, scene_tags_json: str, scene: str) -> bool:
+        """Check if a scene tag matches the scene_tags JSON array stored in DB.
+
+        - 空数组 [] = 无场景标签，不参与场景过滤（指定 scene 时不匹配）
+        - 有标签 = 必须包含指定 scene 才匹配
+        - 解析失败 = 默认不匹配（安全）
+        """
+        try:
+            tags = json.loads(scene_tags_json) if scene_tags_json else []
+            if not tags:  # [] = no scene tags, does not match when scene is specified
+                return False
+            return scene in tags
+        except Exception:
+            return False  # Parse error → no match (safe default)
+
+    def _safe_sql_name(self, name: str) -> str:
+        """Validate a SQL identifier (table/column name) for safe use."""
+        import re
+        if re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', name):
+            return name
+        logger.warning("[Security] Unsafe SQL name '%s', dropping", name)
+        return ""
 
     # ── Keyword fallback helpers ────────────────────────────────
 

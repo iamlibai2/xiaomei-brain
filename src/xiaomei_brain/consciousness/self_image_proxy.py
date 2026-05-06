@@ -24,7 +24,6 @@ import time
 from typing import Any
 
 from .self_modules import SelfIdentity, SelfState, SelfRelation, SelfPerception, SelfMemory, SelfGrowth
-from .self_image import FlameState
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +51,6 @@ class SelfImageProxy:
         self.interpreted_changes: list[str] = []
         self.pending_intents: list[str] = []  # 兼容旧名（读操作返回 intent_buffer）
         self.intent_buffer: list[str] = []    # 新名字（ActionDispatcher 用）
-        self.last_flame_state: FlameState | None = None
 
         # ── Drive 层状态（供 ActionDispatcher 读取）────────────────
         # 四大欲望
@@ -244,7 +242,7 @@ class SelfImageProxy:
 
     # ── 核心方法 ────────────────────────────────
 
-    def tick(self, perception: dict[str, Any]) -> FlameState:
+    def tick(self, perception: dict[str, Any]) -> None:
         """火焰骨架循环，每秒运行一次。"""
         # 1. 保存上一刻
         self.last_cycle_state = self.to_dict()
@@ -267,18 +265,7 @@ class SelfImageProxy:
                 "changes": changes,
             })
 
-        # 记录火焰状态
-        flame_state = FlameState(
-            timestamp=time.time(),
-            cycle_id=self.cycle_count,
-            consciousness_age=self.consciousness_age,
-            changes=changes,
-        )
-        self.last_flame_state = flame_state
-
         logger.debug("[SelfImageProxy.tick] #%d: age=%ds", self.cycle_count, int(self.consciousness_age))
-
-        return flame_state
 
     def _diff(self, last_state: dict | None) -> dict[str, Any]:
         """对比上一刻和此刻的差异。"""
