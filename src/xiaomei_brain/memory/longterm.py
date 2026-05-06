@@ -793,11 +793,11 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         new_id = f"NARR-C-{int(now * 1000)}"
         cur = conn.execute(
             """INSERT INTO narrative_memories
-               (id, category, scene_tags, created_at, content, changed_me,
+               (id, category, scene_tags, timestamp, created_at, content, changed_me,
                 weight, status, source, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 'dream', ?)""",
-            (new_id, "自我定义", json.dumps([scene_tag]), now,
-             merged_content, merged_changed_me, avg_weight, now),
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', 'dream', ?)""",
+            (new_id, "自我定义", json.dumps([scene_tag]), scene_tag, now,
+             merged_content, merged_changed_me, round(avg_weight, 3), now),
         )
         conn.commit()
         logger.info(
