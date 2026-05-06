@@ -470,6 +470,10 @@ class SelfImage:
             if "pending_intents" in data or "intent_buffer" in data:
                 self.flame.intent_buffer = data.get("intent_buffer", data.get("pending_intents", []))
 
+    def clear_accumulated_changes(self) -> None:
+        """清空累积变化（L2 加柴后调用）。"""
+        self.flame.clear_accumulated_changes()
+
     # ── 文件持久化 ──────────────────────────────────────────
 
     def save_to_file(self, path: str | Path) -> None:

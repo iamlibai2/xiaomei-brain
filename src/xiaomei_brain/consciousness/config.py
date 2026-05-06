@@ -22,8 +22,8 @@ class ConsciousnessConfig:
     l1_threshold: int = 60             # L1 触发阈值（累积 L0 次数）
     l2_idle_trigger: float = 600.0    # L2 空闲触发（用户空闲秒数）
     l2_changes_trigger: int = 10       # L2 累积变化触发（条数）
-    l2_cooldown: float = 6000.0        # L2 冷却时间（秒）
-    l2_periodic_interval: float = 6000.0  # L2 定期触发（秒）
+    l2_cooldown: float = 600.0         # L2 冷却时间（秒）
+    l2_periodic_interval: float = 600.0   # L2 定期触发（秒）
     l3_dream_interval: float = 300.0   # L3 梦境触发（睡眠秒数）
     energy_low_threshold: float = 0.3  # 能量极低阈值
     energy_silent_threshold: float = 0.15  # 能量沉寂阈值（低于此值禁止主动行为）

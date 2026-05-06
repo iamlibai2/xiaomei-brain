@@ -127,7 +127,7 @@ class DreamEngine:
         # 基于已有梦境摘要调整 Drive（如果有的话）
         summary_to_process = (
             prior_summary
-            or getattr(self.cs.self_image, "last_dream_summary", "")
+            or self.cs.self_image.growth.last_dream_summary
         )
         if summary_to_process:
             changes = self.emotion_processor.process(self.drive, summary_to_process)
@@ -177,7 +177,7 @@ class DreamEngine:
         if summary_to_process and not prior_summary:
             # prior_summary 为空但 SelfImage 有 last_dream_summary → 用现成的
             report.summary = summary_to_process
-            report.full_report = getattr(self.cs.self_image, "last_dream_summary", "")
+            report.full_report = self.cs.self_image.growth.last_dream_summary
             logger.info("[DreamEngine] 使用已有梦境摘要: %s", report.summary[:30])
         elif not summary_to_process:
             # 真的需要 LLM 生成

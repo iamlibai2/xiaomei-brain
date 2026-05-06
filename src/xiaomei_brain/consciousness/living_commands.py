@@ -53,11 +53,11 @@ def cmd_show_flame(living: ConsciousLiving, args: str = "") -> None:
     logger.info("[CLI] 执行命令: flame")
     si = living.consciousness.get_self_image()
     print("\n火焰状态:", flush=True)
-    print(f"  燃烧时长: {int(si.consciousness_age)}秒", flush=True)
-    print(f"  状态: {si.agent_state}", flush=True)
-    print(f"  用户空闲: {int(si.user_idle_duration)}秒", flush=True)
-    print(f"  能量: {si.energy_level:.2f}", flush=True)
-    print(f"  累积变化: {len(si.accumulated_changes)}条", flush=True)
+    print(f"  燃烧时长: {int(si.growth.consciousness_age)}秒", flush=True)
+    print(f"  状态: {si.perception.agent_state}", flush=True)
+    print(f"  用户空闲: {int(si.perception.user_idle_duration)}秒", flush=True)
+    print(f"  能量: {si.body.energy:.2f}", flush=True)
+    print(f"  累积变化: {len(si.flame.accumulated_changes)}条", flush=True)
     print(f"  上次加柴: {int(time.time() - living.consciousness._last_l2_time)}秒前", flush=True)
     living._print_prompt()
 
@@ -76,12 +76,12 @@ def cmd_show_inner_thought(living: ConsciousLiving, args: str = "") -> None:
     si = living.consciousness.get_self_image()
 
     print("\n内在感知:", flush=True)
-    print(f"  当前想法: {si.inner_thought[:100] if si.inner_thought else '（无）'}", flush=True)
-    print(f"  历史想法: {len(si.inner_thought_history)}条", flush=True)
+    print(f"  当前想法: {si.mind.inner_thought[:100] if si.mind.inner_thought else '（无）'}", flush=True)
+    print(f"  历史想法: {len(si.mind.inner_thought_history)}条", flush=True)
 
-    if si.inner_thought_history:
+    if si.mind.inner_thought_history:
         print("\n最近想法:", flush=True)
-        for i, thought in enumerate(si.inner_thought_history[-3:]):
+        for i, thought in enumerate(si.mind.inner_thought_history[-3:]):
             print(f"  [{i}] {thought[:80]}", flush=True)
 
     living._print_prompt()
@@ -97,49 +97,49 @@ def cmd_show_identity(living: ConsciousLiving, args: str = "") -> None:
     print("=" * 50, flush=True)
 
     print("\n【L0: 先天身份】（不可变）", flush=True)
-    print(f"  名字: {si.identity}", flush=True)
-    print(f"  诞生: {si.birth_date}", flush=True)
-    print(f"  基础性格: {si.base_personality}", flush=True)
+    print(f"  名字: {si.identity.identity}", flush=True)
+    print(f"  诞生: {si.identity.birth_date}", flush=True)
+    print(f"  基础性格: {si.identity.base_personality}", flush=True)
 
     print("\n【L1: 基础特质】（极难变）", flush=True)
-    for trait in si.core_traits:
+    for trait in si.identity.core_traits:
         print(f"  - {trait}", flush=True)
 
     print("\n【L2: 价值观】（缓慢变化）", flush=True)
-    for value in si.values:
+    for value in si.identity.values:
         print(f"  - {value}", flush=True)
 
     print("\n【L3: 社会身份】（动态变化）", flush=True)
-    print(f"  当前角色: {si.role}", flush=True)
-    print(f"  关系状态: {si.relationship_status}", flush=True)
-    print(f"  关系深度: {si.relationship_depth:.2f}", flush=True)
-    print(f"  用户信任: {si.user_trust_level:.2f}", flush=True)
+    print(f"  当前角色: {si.relation.role}", flush=True)
+    print(f"  关系状态: {si.relation.relationship_status}", flush=True)
+    print(f"  关系深度: {si.relation.relationship_depth:.2f}", flush=True)
+    print(f"  用户信任: {si.relation.user_trust_level:.2f}", flush=True)
 
     print("\n【L4: 状态身份】（实时变化）", flush=True)
-    print(f"  当前心情: {si.current_mood}", flush=True)
-    print(f"  能量水平: {si.energy_level:.2f}", flush=True)
-    print(f"  注意力: {si.attention_focus}", flush=True)
+    print(f"  当前心情: {si.body.mood}", flush=True)
+    print(f"  能量水平: {si.body.energy:.2f}", flush=True)
+    print(f"  注意力: {si.body.attention}", flush=True)
 
     print("\n【我在哪】", flush=True)
-    print(f"  当前环境: {si.environment}", flush=True)
+    print(f"  当前环境: {si.perception.environment}", flush=True)
 
     print("\n【火焰状态】", flush=True)
-    print(f"  燃烧时长: {int(si.consciousness_age)}秒 ({int(si.consciousness_age/3600)}小时)", flush=True)
-    print(f"  Agent状态: {si.agent_state}", flush=True)
-    print(f"  用户空闲: {int(si.user_idle_duration)}秒", flush=True)
-    print(f"  记忆数量: {si.memory_count}", flush=True)
-    print(f"  累积变化: {len(si.accumulated_changes)}条", flush=True)
+    print(f"  燃烧时长: {int(si.growth.consciousness_age)}秒 ({int(si.growth.consciousness_age/3600)}小时)", flush=True)
+    print(f"  Agent状态: {si.perception.agent_state}", flush=True)
+    print(f"  用户空闲: {int(si.perception.user_idle_duration)}秒", flush=True)
+    print(f"  记忆数量: {si.mind.memory_count}", flush=True)
+    print(f"  累积变化: {len(si.flame.accumulated_changes)}条", flush=True)
 
     print("\n【内在感知】", flush=True)
-    if si.inner_thought:
-        print(f"  当前想法: {si.inner_thought[:100]}", flush=True)
+    if si.mind.inner_thought:
+        print(f"  当前想法: {si.mind.inner_thought[:100]}", flush=True)
     else:
         print(f"  当前想法: （无）", flush=True)
-    print(f"  历史想法: {len(si.inner_thought_history)}条", flush=True)
+    print(f"  历史想法: {len(si.mind.inner_thought_history)}条", flush=True)
 
-    if si.last_dream_summary:
+    if si.growth.last_dream_summary:
         print("\n【最近梦境】", flush=True)
-        print(f"  {si.last_dream_summary[:150]}", flush=True)
+        print(f"  {si.growth.last_dream_summary[:150]}", flush=True)
 
     print("\n" + "-" * 50, flush=True)
     living._print_prompt()

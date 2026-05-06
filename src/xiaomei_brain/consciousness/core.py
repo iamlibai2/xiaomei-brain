@@ -156,6 +156,7 @@ class Consciousness:
         self._last_report: ConsciousnessReport | None = None
         self._running: bool = False
         self._l2_triggered_by_anomaly: bool = False  # L1 异常触发 L2 的信号
+        self._sleep_start_time: float = 0.0          # 入睡时间戳（L3 入梦判定）
 
         # 存储回调
         self._storage: Any | None = None
@@ -245,6 +246,7 @@ class Consciousness:
         # 重置运行时字段
         self.flame.accumulated_changes = []
         self.flame.last_llm_fuel_time = 0.0
+        self._sleep_start_time = 0.0
 
         logger.info(
             "[Consciousness] 模块化恢复成功: consciousness_age=%ds, agent_state=%s",
@@ -1147,18 +1149,15 @@ weight: 0.85
     def tick(
         self,
         agent_state: str = "awake",
-        in_dream: bool = False,
-        dream_start: float = 0.0,
     ) -> TickResult:
         """统一入口。ConsciousLiving 每循环只调这一个。
 
         L0/L1/L2/L3 是意识深度，和生命状态（awake/sleeping/dreaming）正交。
-        任何生命状态下都可能触发 L2/L3，根据各自条件判断。
+        任何生命状态下都可能触发 L2，根据各自条件判断。
+        L3 仅在 SLEEPING 足够久后触发（入梦信号），DREAMING 状态下不触发。
 
         Args:
             agent_state: ConsciousLiving 当前生命状态（用于存在感知）
-            in_dream: 是否在 DREAMING 状态（用于记录日志）
-            dream_start: 进入 DREAMING 的时间戳（L3 节拍器）
 
         Returns:
             TickResult: NORMAL / L2_TRIGGERED / L3_TRIGGERED
@@ -1183,11 +1182,19 @@ weight: 0.85
             self.tick_L2(self._get_l2_context(agent_state))
             return TickResult.L2_TRIGGERED
 
-        # L3: 只在 DREAMING 状态触发深度燃烧（用 agent_state 而非 in_dream，确保只有真正在做梦时才触发）
-        if agent_state == "dreaming" and self._should_l3(dream_start):
-            logger.info("[Consciousness] L3 触发（深度燃烧）")
-            self.tick_L3()
-            return TickResult.L3_TRIGGERED
+        # L3: 睡眠时长触发入梦（SLEEPING → DREAMING 的信号）
+        # 不在这里调 tick_L3()，由 DreamEngine 处理深度燃烧
+        if agent_state == "sleeping":
+            if self._sleep_start_time == 0:
+                self._sleep_start_time = time.time()
+            if time.time() - self._sleep_start_time >= self._cc.l3_dream_interval:
+                sleep_dur = time.time() - self._sleep_start_time
+                self._sleep_start_time = 0
+                logger.info("[Consciousness] 睡眠 %.0fs，触发入梦", sleep_dur)
+                return TickResult.L3_TRIGGERED
+        elif agent_state != "dreaming":
+            # AWAKE/IDLE 状态，重置睡眠计时
+            self._sleep_start_time = 0
 
         return TickResult.NORMAL
 
@@ -1237,13 +1244,15 @@ weight: 0.85
                     int(si.perception.user_idle_duration), len(si.flame.accumulated_changes), int(elapsed_since_last))
         return False
 
-    def _should_l3(self, dream_start: float) -> bool:
-        """判断是否应该触发 L3 深度燃烧。
+    def _should_l3(self) -> bool:
+        """判断是否应该触发入梦（基于睡眠时长）。
 
-        只看时间间隔，不受生命状态限制。
-        dream_start 是节拍器：连续做梦时持续累加，所以 DREAMING 状态更密集触发。
+        只看睡眠时长，不在 tick() 中调用 tick_L3()，
+        由 DreamEngine 处理深度燃烧。
         """
-        return time.time() - dream_start >= self._cc.l3_dream_interval
+        if self._sleep_start_time == 0:
+            return False
+        return time.time() - self._sleep_start_time >= self._cc.l3_dream_interval
 
     def _get_l2_context(self, agent_state: str = "awake") -> str:
         """获取 L2 触发上下文"""
@@ -1319,7 +1328,7 @@ weight: 0.85
         si = self.self_image
 
         # 优先级：内存 > SelfGrowth > Storage.get_last_dream_summary()
-        dream_summary = si.last_dream_summary or self.growth.last_dream_summary
+        dream_summary = si.growth.last_dream_summary
         if not dream_summary and self._storage:
             dream_summary = self._storage.get_last_dream_summary()
             if dream_summary:
@@ -1334,8 +1343,8 @@ weight: 0.85
             report = ConsciousnessReport(
                 trigger="wake",
                 depth="light",
-                summary=si.last_wake_summary or si.last_dream_summary[:50],
-                full_report=si.last_dream_summary,
+                summary=si.growth.last_wake_summary or dream_summary[:50],
+                full_report=dream_summary,
                 self_image_snapshot=si.to_dict(),
             )
             self._last_report = report
@@ -1357,8 +1366,8 @@ weight: 0.85
                 self.flame.intent_buffer.append(greet_intent.type.value)
 
             # 同步到 self_image（如果是从 growth 恢复的）
-            if not si.last_dream_summary:
-                si.last_dream_summary = dream_summary
+            if not si.growth.last_dream_summary:
+                si.growth.last_dream_summary = dream_summary
 
             logger.info("[Consciousness] 苏醒，使用梦境报告")
             return report

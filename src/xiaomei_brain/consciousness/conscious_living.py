@@ -110,10 +110,6 @@ class ConsciousLiving(Living):
         if not isinstance(self.agent.llm, ContextGuard):
             self.agent.llm = ContextGuard(self.agent.llm, max_tokens=80000)
 
-        # Drive 系统（边缘系统）-
-        if not isinstance(self.agent.llm, ContextGuard):
-            self.agent.llm = ContextGuard(self.agent.llm, max_tokens=80000)
-
         # Drive 系统（边缘系统）- 延迟加载
         self.drive = DriveEngine(self._agent_id, load=False)
 
@@ -1667,7 +1663,7 @@ class ConsciousLiving(Living):
     # ── Proactive output ─────────────────────────────────────────
 
     def _send_proactive(self, content: str) -> None:
-        """发送主动消息（测试版）"""
+        """发送主动消息"""
         logger.info("[ConsciousLiving/Proactive] %s", content)
 
         if self.agent.conversation_db:
@@ -1682,3 +1678,7 @@ class ConsciousLiving(Living):
 
         if self.on_proactive:
             self.on_proactive(content)
+        else:
+            # CLI 模式：直接打印
+            print(f"\n\033[36m[小美] {content}\033[0m", flush=True)
+            self._print_prompt()

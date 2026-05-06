@@ -163,7 +163,7 @@ def _status_line(living) -> str:
     if hasattr(living, '_load_consciousness') and living._load_consciousness:
         si = living.consciousness.get_self_image()
         if si:
-            parts.append(f"🔥{si.agent_state} e:{si.energy_level:.1f}")
+            parts.append(f"🔥{si.perception.agent_state} e:{si.body.energy:.1f}")
 
     # Drive
     drive = getattr(living, 'drive', None)
