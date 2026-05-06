@@ -27,8 +27,9 @@ class NarrativeConsolidationResult:
 
 
 class NarrativeConsolidationJob:
-    def __init__(self, ltm: Any) -> None:
+    def __init__(self, ltm: Any, consciousness: Any | None = None) -> None:
         self.ltm = ltm
+        self.cs = consciousness
 
     def run(self) -> NarrativeConsolidationResult:
         result = NarrativeConsolidationResult()
@@ -46,6 +47,13 @@ class NarrativeConsolidationJob:
         except Exception as e:
             logger.warning("%s consolidate failed: %s", _P_LOG, e)
             result.errors += 1
+
+        if self.cs:
+            try:
+                self._update_growth_log(result)
+            except Exception as e:
+                logger.warning("%s growth_log update failed: %s", _P_LOG, e)
+                result.errors += 1
 
         logger.info("%s Done: archived=%d consolidated=%d growth=%d",
                     _P_LOG, result.archived, result.consolidated, result.growth_entries)
@@ -116,3 +124,33 @@ class NarrativeConsolidationJob:
             result.consolidated += 1
             logger.info("%s Consolidated %d NARRs with tag '%s'",
                         _P_LOG, len(tag_rows), scene_tag)
+
+    def _update_growth_log(self, result: NarrativeConsolidationResult) -> None:
+        """将高 weight 叙事（> 0.7）的 changed_me 追加到 SelfModel growth_log"""
+        if not self.cs or not hasattr(self.cs, "self_image"):
+            return
+
+        conn = self.ltm._get_conn()
+        rows = conn.execute(
+            """SELECT changed_me, category, scene_tags FROM narrative_memories
+               WHERE status = 'active' AND weight > 0.7 AND changed_me != ''""",
+        ).fetchall()
+
+        if not rows:
+            return
+
+        import json
+        for (changed_me, category, scene_tags_json) in rows:
+            if not changed_me:
+                continue
+            # 拼装 growth 条目内容
+            tags = []
+            try:
+                tags = json.loads(scene_tags_json or "[]")
+            except Exception:
+                pass
+            tag_str = "/".join(tags) if tags else category
+            entry_content = f"[{tag_str}] {changed_me}"
+            self.cs.self_image.add_growth(content=entry_content)
+            result.growth_entries += 1
+            logger.info("%s Growth entry added: %s", _P_LOG, entry_content[:50])

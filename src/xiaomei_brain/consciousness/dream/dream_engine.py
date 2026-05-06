@@ -163,7 +163,7 @@ class DreamEngine:
         if self.ltm:
             try:
                 from .narrative_jobs import NarrativeConsolidationJob
-                job = NarrativeConsolidationJob(self.ltm)
+                job = NarrativeConsolidationJob(self.ltm, self.cs)
                 narr_result = job.run()
                 report.narratives_archived = narr_result.archived
                 report.narratives_consolidated = narr_result.consolidated

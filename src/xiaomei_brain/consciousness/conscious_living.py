@@ -401,10 +401,14 @@ class ConsciousLiving(Living):
         storage = ConsciousnessStorage(base_dir, agent_id=self._agent_id)
         self.consciousness.set_storage(storage)
 
-        # 2. 尝试从存储恢复（优先级最高）
-        restored = self.consciousness.restore_from_storage()
+        # 2. 尝试从快照恢复（latest.json，最完整）
+        restored = self.consciousness._restore_snapshot()
 
-        # 3. 如果存储恢复失败，从 identity.md 加载
+        # 3. 快照恢复失败则用模块文件恢复
+        if not restored:
+            restored = self.consciousness.restore_from_storage()
+
+        # 4. 模块恢复也失败，从 identity.md 加载
         if not restored:
             config = IdentityConfig.load(self._agent_id)
             self.consciousness._identity_config = config

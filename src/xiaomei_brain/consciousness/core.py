@@ -152,6 +152,7 @@ class Consciousness:
         self.perception_buffer: list[dict] = []
         self._l0_count: int = 0
         self._last_l2_time: float = 0.0
+        self._last_snapshot_save_time: float = 0.0
         self._last_report: ConsciousnessReport | None = None
         self._running: bool = False
 
@@ -251,6 +252,34 @@ class Consciousness:
         )
         return True
 
+    def _snapshot_path(self) -> Path:
+        """快照文件路径"""
+        from pathlib import Path
+        return Path.home() / ".xiaomei-brain" / "agents" / self._agent_id / "consciousness" / "latest.json"
+
+    def _save_snapshot(self) -> None:
+        """保存 SelfImage 快照到 latest.json"""
+        try:
+            self.self_image.save_to_file(str(self._snapshot_path()))
+        except Exception as e:
+            logger.warning("[Consciousness] 快照保存失败: %s", e)
+
+    def _restore_snapshot(self) -> bool:
+        """从 latest.json 恢复 SelfImage 快照"""
+        from pathlib import Path
+        proxy = SelfImageProxy.load_from_file(str(self._snapshot_path()))
+        if proxy is None:
+            return False
+        # 同步到当前 Consciousness 实例的各模块
+        self.self_image = proxy
+        self.identity = proxy.identity
+        self.state = proxy.state
+        self.relation = proxy.relation
+        self.perception = proxy.perception
+        self.memory = proxy.memory
+        self.growth = proxy.growth
+        return True
+
     # ── L0: 火焰骨架维护 ─────────────────────────────────────────
 
     def tick_L0(self, agent_state: str | None = None) -> None:
@@ -282,6 +311,12 @@ class Consciousness:
 
         # 核心：维护火焰骨架（不是涌现意识）
         self.self_image.tick(perception)
+
+        # 每 60 秒保存一次快照到 latest.json
+        now = time.time()
+        if self._last_snapshot_save_time == 0 or (now - self._last_snapshot_save_time) >= 60:
+            self._save_snapshot()
+            self._last_snapshot_save_time = now
 
         # 累积到阈值，触发 L1（异常检测）
         if self._l0_count >= self._cc.l1_threshold:

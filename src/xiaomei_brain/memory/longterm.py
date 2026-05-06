@@ -273,6 +273,138 @@ class LongTermMemory:
             return model.get_embedding_dimension()
         return model.get_sentence_embedding_dimension()
 
+    # ── Narrative LanceDB ────────────────────────────────────────
+
+    def _get_narrative_lance_table(self) -> Any:
+        """Lazy-open/create separate LanceDB table for narrative vectors."""
+        if getattr(self, "_narrative_lance_table", None) is not None:
+            return self._narrative_lance_table
+
+        import lancedb
+
+        if self._lance_db is None:
+            self._lance_db = lancedb.connect(str(self._lance_dir))
+
+        expected_dim = self._get_embedding_dim()
+        existing_tables = self._lance_db.table_names()
+
+        if "narratives" in existing_tables:
+            tbl = self._lance_db.open_table("narratives")
+            actual_schema = tbl.to_arrow().schema
+            vector_field = actual_schema.field("vector")
+            actual_dim_size = vector_field.type.list_size
+            if actual_dim_size != expected_dim:
+                logger.warning(
+                    "[LanceDB] Narrative table dimension mismatch: table=%d vs model=%d. "
+                    "Dropping and rebuilding.",
+                    actual_dim_size, expected_dim,
+                )
+                self._lance_db.drop_table("narratives")
+            else:
+                self._narrative_lance_table = tbl
+                logger.info("LanceDB narratives table opened: %s", self._lance_dir)
+                return self._narrative_lance_table
+
+        import pyarrow as pa
+        schema = pa.schema([
+            pa.field("id", pa.string()),
+            pa.field("vector", pa.list_(pa.float32(), expected_dim)),
+            pa.field("user_id", pa.string()),
+        ])
+        self._narrative_lance_table = self._lance_db.create_table("narratives", schema=schema)
+        logger.info("LanceDB narratives table created: %s (dim=%d)", self._lance_dir, expected_dim)
+        return self._narrative_lance_table
+
+    def _add_narrative_vector(self, nm_id: str, content: str, user_id: str) -> None:
+        """Add a narrative vector to LanceDB."""
+        try:
+            vector = self._embed(content)
+            table = self._get_narrative_lance_table()
+            import pyarrow as pa
+
+            data = pa.table({
+                "id": [nm_id],
+                "vector": [vector],
+                "user_id": [user_id],
+            })
+            table.add(data)
+            logger.debug("[LanceDB] Added narrative %s", nm_id)
+        except Exception as e:
+            logger.warning("[LanceDB] Failed to add narrative %s: %s", nm_id, e)
+
+    def _delete_narrative_vector(self, nm_id: str) -> None:
+        """Delete a narrative vector from LanceDB."""
+        try:
+            table = self._get_narrative_lance_table()
+            table.delete(f"id = '{nm_id}'")
+            logger.debug("[LanceDB] Deleted narrative %s", nm_id)
+        except Exception as e:
+            logger.warning("[LanceDB] Failed to delete narrative %s: %s", nm_id, e)
+
+    def search_narratives(
+        self,
+        query: str,
+        user_id: str,
+        top_k: int = 8,
+        category: str | None = None,
+        scene_tag: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Semantic recall for narrative memories using LanceDB vector search.
+
+        Args:
+            query: 当前场景/情绪上下文描述，编码为向量搜索
+            user_id: 多用户隔离
+            top_k: 返回条数
+            category: 可选，按类别过滤
+            scene_tag: 可选，按场景标签过滤
+        """
+        query_vector = self._embed(query)
+        table = self._get_narrative_lance_table()
+
+        safe_user_id = self._safe_user_id(user_id)
+        results = table.search(query_vector) \
+            .where(f"user_id = '{safe_user_id}'") \
+            .limit(top_k * 3) \
+            .to_pandas()
+
+        if results.empty:
+            return []
+
+        conn = self._get_conn()
+        nm_ids = results["id"].tolist()
+        distances = dict(zip(results["id"].tolist(), results["_distance"].tolist()))
+
+        placeholders = ",".join("?" * len(nm_ids))
+        sql = f"SELECT * FROM narrative_memories WHERE id IN ({placeholders}) AND status = 'active'"
+        params = list(nm_ids)
+        if category:
+            sql += " AND category = ?"
+            params.append(category)
+        rows = conn.execute(sql, params).fetchall()
+
+        if not rows:
+            return []
+
+        # scene_tag post-filter
+        if scene_tag:
+            rows = [r for r in rows if self._match_scene_tag(r.get("scene_tags", "[]"), scene_tag)]
+            if not rows:
+                return []
+
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["scene_tags"] = json.loads(d.get("scene_tags", "[]"))
+            # LanceDB cosine distance: 0 = identical, 2 = opposite
+            distance = distances.get(d["id"], 1.0)
+            d["score"] = round(max(0.0, 1.0 - distance / 2), 3)
+            result.append(d)
+
+        result.sort(key=lambda x: x["score"], reverse=True)
+        return result[:top_k]
+
+    # ── Memory LanceDB ───────────────────────────────────────────
+
     def _add_to_lance(self, memory_id: int, content: str, user_id: str) -> None:
         """Add a memory vector to LanceDB."""
         try:
@@ -715,6 +847,11 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
             "\033[91m[NARR]\033[0m Stored %s [%s] weight=%.2f: %s",
             nm_id, category, weight, content[:30],
         )
+
+        # 同时写入向量库（用于语义召回）
+        agent_id = getattr(self, "_agent_id", "xiaomei")
+        self._add_narrative_vector(nm_id, content, agent_id)
+
         return nm_id
 
     def get_narrative_memories(
@@ -753,6 +890,7 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
             (time.time(), nm_id),
         )
         conn.commit()
+        self._delete_narrative_vector(nm_id)
         logger.info("\033[91m[NARR]\033[0m Archived %s", nm_id)
 
     def consolidate_narrative_memories(
@@ -791,6 +929,11 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
             [now] + old_ids,
         )
 
+        # 从向量库删除旧记录
+        agent_id = getattr(self, "_agent_id", "xiaomei")
+        for old_id in old_ids:
+            self._delete_narrative_vector(old_id)
+
         # 写入合并后的新记录
         new_id = f"NARR-C-{int(now * 1000)}"
         cur = conn.execute(
@@ -802,6 +945,10 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
              merged_content, merged_changed_me, round(avg_weight, 3), now),
         )
         conn.commit()
+
+        # 新记录写入向量库
+        self._add_narrative_vector(new_id, merged_content, agent_id)
+
         logger.info(
             "\033[91m[NARR]\033[0m Consolidated %d NARRs into %s",
             len(rows), new_id,

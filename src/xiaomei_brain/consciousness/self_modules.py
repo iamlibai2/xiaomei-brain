@@ -361,6 +361,10 @@ class SelfGrowth:
     last_dream_summary: str = ""
     """最近梦境的意识报告"""
 
+    # 生长日志（叙事记忆高 weight 提炼而来）
+    growth_log: list[dict] = field(default_factory=list)
+    """生长记录：{date, content}"""
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "consciousness_age": self.consciousness_age,
@@ -375,6 +379,7 @@ class SelfGrowth:
             "consciousness_rhythm": self.consciousness_rhythm,
             "last_wake_summary": self.last_wake_summary,
             "last_dream_summary": self.last_dream_summary,
+            "growth_log": self.growth_log[-20:],
         }
 
     def from_dict(self, data: dict) -> None:
@@ -390,6 +395,8 @@ class SelfGrowth:
             self.goal_progress_history = data["goal_progress_history"]
         if "inner_thought_history" in data:
             self.inner_thought_history = data["inner_thought_history"]
+        if "growth_log" in data:
+            self.growth_log = data["growth_log"]
 
     def increment_age(self, seconds: float = 1.0) -> None:
         """增加意识年龄"""
@@ -411,6 +418,15 @@ class SelfGrowth:
     def update_dream_summary(self, summary: str) -> None:
         """更新梦境摘要"""
         self.last_dream_summary = summary[:200]
+
+    def add_growth(self, content: str, date: str | None = None) -> None:
+        """追加一条生长记录"""
+        from datetime import datetime
+        if date is None:
+            date = datetime.now().strftime("%Y-%m")
+        self.growth_log.append({"date": date, "content": content[:200]})
+        if len(self.growth_log) > 50:
+            self.growth_log = self.growth_log[-50:]
 
     def get_summary(self) -> str:
         age_hours = int(self.consciousness_age) // 3600

@@ -31,7 +31,7 @@ class DesireActionExecutor:
     COOLING_TIMES = {
         "greet_user": 3600,      # 问候：1小时冷却
         "express_idea": 1800,    # 表达：30分钟冷却
-        "learn_topic": 0,        # 学习：无冷却，可持续
+        "learn_topic": 7200,     # 学习：2小时冷却，避免重复触发
         "progress_goal": 0,      # 目标：无冷却，可持续
     }
 
@@ -213,23 +213,42 @@ class DesireActionExecutor:
 
         来源优先级：
         1. Purpose 层的当前目标
-        2. identity.md 配置的学习兴趣
+        2. identity.md 配置的学习兴趣（排除最近冷却期内已学的）
+        3. knowledge/ 目录下已有的 .md 文件（按 mtime 从旧到新）
         """
+        cooling_time = self.COOLING_TIMES.get("learn_topic", 0)
+        now = time.time()
+
+        # 从 knowledge/ 目录收集所有可用主题（排除冷却期内修改过的）
+        available_from_files = []
+        if self.knowledge_dir.exists():
+            for f in self.knowledge_dir.glob("*.md"):
+                mtime = f.stat().st_mtime
+                if cooling_time > 0 and (now - mtime) < cooling_time:
+                    continue  # 在冷却期内，跳过
+                available_from_files.append(f.stem)
+
         # 从 Purpose 获取当前目标
         if hasattr(self.living, 'purpose') and self.living.purpose:
             current_goal = self.living.purpose.get_current()
             if current_goal:
-                # 从目标描述提取学习主题
                 return current_goal.description
 
-        # 从 identity.md 配置获取
+        # 从 identity.md 配置获取学习兴趣
         config = self.living.consciousness._identity_config
         if config and hasattr(config, "learning_interests"):
             interests = config.learning_interests
             if interests:
-                # 随机选一个（或轮流）
-                import random
-                return random.choice(interests)
+                # 过滤掉冷却期内已学过的
+                candidates = [i for i in interests if i not in available_from_files or available_from_files]
+                if candidates:
+                    import random
+                    return random.choice(candidates)
+
+        # 从已有知识文件选择最久未更新的
+        if available_from_files:
+            import random
+            return random.choice(available_from_files)
 
         # 默认主题
         return "AI技术发展"

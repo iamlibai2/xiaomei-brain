@@ -254,23 +254,31 @@ class ContextAssembler:
                     hint = self.procedure_memory.inject_context(matched)
                     system_content += "\n" + hint
 
-            # Narrative memories: inject latest 10 NARR blocks in daily mode
-            if self.longterm and remaining > 200:
-                recent_narrs = self.longterm.get_narrative_memories(status="active", limit=10)
-                if recent_narrs:
+            # Narrative memories: semantic recall based on current mood/attention
+            if self.longterm and remaining > 200 and self.self_image:
+                mood = getattr(self.self_image, "current_mood", "平静") or "平静"
+                focus = getattr(self.self_image, "attention_focus", "") or ""
+                query = f"心情{mood}，关注{focus}" if focus else f"心情{mood}"
+                narrs = self.longterm.search_narratives(
+                    query=query,
+                    user_id=user_id,
+                    top_k=10,
+                )
+                if narrs:
                     narr_lines = [_NARR_PREAMBLE]
-                    for nb in recent_narrs:
+                    for nb in narrs:
                         tags = ",".join(nb.get("scene_tags") or [])
                         tag_str = f" 标签:{tags}" if tags else ""
                         ts = nb.get("timestamp") or ""
                         changed = nb.get("changed_me", "")
                         changed_str = f"\n  changed: {changed[:60]}" if changed else ""
+                        score_str = f"[{nb.get('score', 0):.2f}]"
                         narr_lines.append(
-                            f"- {nb['id']} [{nb['category']}]{tag_str} {ts}\n"
+                            f"- {nb['id']} {score_str}[{nb['category']}]{tag_str} {ts}\n"
                             f"  {nb.get('content', '')[:120]}{changed_str}"
                         )
                     system_content += "\n".join(narr_lines)
-                    logger.info("\033[91m[NARR]\033[0m daily: injected %d NARR blocks", len(recent_narrs))
+                    logger.info("\033[91m[NARR]\033[0m daily: injected %d NARR blocks (query=%s)", len(narrs), query)
 
             messages.append({"role": "system", "content": system_content})
             remaining -= estimate_tokens(system_content)
@@ -344,23 +352,31 @@ class ContextAssembler:
                     hint = self.procedure_memory.inject_context(matched)
                     system_content += "\n" + hint
 
-            # Narrative memories: inject recent NARR blocks for reflect context
-            if self.longterm and remaining > 200:
-                recent_narrs = self.longterm.get_narrative_memories(status="active", limit=3)
-                if recent_narrs:
+            # Narrative memories: semantic recall for reflect deep context
+            if self.longterm and remaining > 200 and self.self_image:
+                mood = getattr(self.self_image, "current_mood", "平静") or "平静"
+                focus = getattr(self.self_image, "attention_focus", "") or ""
+                query = f"心情{mood}，关注{focus}，反思" if focus else f"心情{mood}，反思"
+                narrs = self.longterm.search_narratives(
+                    query=query,
+                    user_id=user_id,
+                    top_k=5,
+                )
+                if narrs:
                     narr_lines = [_NARR_PREAMBLE]
-                    for nb in recent_narrs:
+                    for nb in narrs:
                         tags = ",".join(nb.get("scene_tags") or [])
                         tag_str = f" 标签:{tags}" if tags else ""
                         ts = nb.get("timestamp") or ""
                         changed = nb.get("changed_me", "")
                         changed_str = f"\n  changed: {changed[:60]}" if changed else ""
+                        score_str = f"[{nb.get('score', 0):.2f}]"
                         narr_lines.append(
-                            f"- {nb['id']} [{nb['category']}]{tag_str} {ts}\n"
+                            f"- {nb['id']} {score_str}[{nb['category']}]{tag_str} {ts}\n"
                             f"  {nb.get('content', '')[:120]}{changed_str}"
                         )
                     system_content += "\n".join(narr_lines)
-                    logger.info("\033[91m[NARR]\033[0m reflect: injected %d NARR blocks", len(recent_narrs))
+                    logger.info("\033[91m[NARR]\033[0m reflect: injected %d NARR blocks (query=%s)", len(narrs), query)
 
             messages.append({"role": "system", "content": system_content})
             remaining -= estimate_tokens(system_content)

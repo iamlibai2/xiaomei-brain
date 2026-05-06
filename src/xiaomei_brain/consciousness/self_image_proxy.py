@@ -538,6 +538,7 @@ class SelfImageProxy:
             "last_inner_thought_time": self.growth.last_inner_thought_time,
             "last_wake_summary": self.growth.last_wake_summary,
             "last_dream_summary": self.growth.last_dream_summary,
+            "growth_log": self.growth.growth_log[-20:],
             "cycle_count": self.cycle_count,
             "accumulated_changes": self.accumulated_changes[-10:],
             "last_llm_fuel_time": self.last_llm_fuel_time,
@@ -671,6 +672,8 @@ class SelfImageProxy:
             self.oxytocin = data["oxytocin"]
         if "current_goal_depth" in data:
             self.current_goal_depth = data["current_goal_depth"]
+        if "growth_log" in data:
+            self.growth.growth_log = data["growth_log"]
 
     def init_from_identity_config(self, config: Any) -> None:
         """从 IdentityConfig 初始化身份字段（L0-L3）"""
@@ -682,3 +685,49 @@ class SelfImageProxy:
             "[SelfImageProxy] 从 IdentityConfig 初始化: identity=%s, traits=%s",
             self.identity.identity, self.identity.core_traits,
         )
+
+    def add_growth(self, content: str, date: str | None = None) -> None:
+        """追加一条生长记录（供 NarrativeConsolidationJob 调用）"""
+        self.growth.add_growth(content=content, date=date)
+
+    # ── 文件持久化 ────────────────────────────────────────────
+
+    def save_to_file(self, path: str | Path) -> None:
+        """保存完整快照到文件（覆盖写入）"""
+        import json
+        from pathlib import Path
+
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "saved_at": time.time(),
+            **self.to_dict(),
+        }
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        logger.debug("[SelfImageProxy] 快照已保存: %s", p)
+
+    @classmethod
+    def load_from_file(cls, path: str | Path) -> "SelfImageProxy | None":
+        """从文件加载快照，返回新的 SelfImageProxy 实例"""
+        import json
+        from pathlib import Path
+
+        p = Path(path)
+        if not p.exists():
+            logger.debug("[SelfImageProxy] 无快照文件: %s", p)
+            return None
+
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            proxy = cls()
+            proxy.from_dict(data)
+            logger.info(
+                "[SelfImageProxy] 快照已恢复: consciousness_age=%ds, mood=%s",
+                proxy.growth.consciousness_age, proxy.state.current_mood,
+            )
+            return proxy
+        except Exception as e:
+            logger.warning("[SelfImageProxy] 快照加载失败: %s", e)
+            return None

@@ -37,6 +37,9 @@ def _trim_messages(messages: list[dict], max_tokens: int) -> list[dict]:
     第一条消息（system prompt）始终保留。从第二条开始，保留最新的消息，
     丢弃最旧的，直到总 token 数不超预算。
 
+    tool_calls + tool 配对作为原子单元，不能拆分（DeepSeek API 要求
+    tool 消息必须紧跟在 tool_calls 后面）。
+
     Args:
         messages: 完整的消息列表
         max_tokens: token 预算上限
@@ -57,15 +60,41 @@ def _trim_messages(messages: list[dict], max_tokens: int) -> list[dict]:
     available = max_tokens - system_tokens
 
     # 从最新到最旧，累积可保留的消息
-    kept = []
+    # tool_calls + tool 配对视为原子单元，不能拆分
+    kept: list[dict] = []
     running = 0
-    for msg in reversed(messages[1:]):
+    i = len(messages) - 1
+
+    while i >= 1:
+        msg = messages[i]
         msg_tokens = _count_msg_tokens(msg)
+
+        # 如果是 tool 消息，尝试把配对的 tool_calls 也一起纳入
+        if msg.get("role") == "tool":
+            if i - 1 >= 1:
+                prev_msg = messages[i - 1]
+                prev_tokens = _count_msg_tokens(prev_msg)
+                # 只有 tool_calls + tool 连续配对时才视为原子
+                if prev_msg.get("role") == "assistant" and prev_msg.get("tool_calls"):
+                    if running + msg_tokens + prev_tokens <= available:
+                        kept.append(msg)
+                        kept.append(prev_msg)
+                        running += msg_tokens + prev_tokens
+                        i -= 2
+                        continue
+                    else:
+                        # 配对塞不进去，整组丢弃
+                        trimmed = i - 1  # 配对之前的消息都会被删
+                        i = 0
+                        break
+
+        # 普通消息：单独处理
         if running + msg_tokens <= available:
             kept.append(msg)
             running += msg_tokens
         else:
             break
+        i -= 1
 
     trimmed = len(messages) - 1 - len(kept)
     if trimmed > 0:
