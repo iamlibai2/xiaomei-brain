@@ -1210,13 +1210,15 @@ weight: 0.85
     def _should_l2(self, agent_state: str = "awake") -> bool:
         """判断是否应该触发 L2 加柴。
 
-        有冷却机制：触发后 L2_COOLDOWN 秒内不再触发。
-
-        accumulated_changes 只在 SLEEPING 中触发（对话中的变化不触发主动行为）。
-        AWAKE 中只有 idle 和定期触发有意义。
+        只在 AWAKE/IDLE 触发——L2 是轻度加柴，像清醒时的念头。
+        SLEEPING 中不做轻度思考，只有 L3（深度沉思）和 DREAM（入梦）。
         """
         si = self.self_image
         elapsed_since_last = time.time() - self._last_l2_time
+
+        # SLEEPING/DREAMING 中不触发 L2
+        if agent_state in ("sleeping", "dreaming"):
+            return False
 
         # 能量约束：能量越低，冷却时间越长
         energy = si.body.energy
@@ -1239,18 +1241,13 @@ weight: 0.85
             logger.info("[Consciousness._should_l2] 空闲触发: %d秒 > %d秒",
                        int(si.perception.user_idle_duration), self._cc.l2_idle_trigger)
             return True
-        # accumulated_changes 只在 SLEEPING 中有意义（安静时累积的变化才触发主动行为）
-        if agent_state == "sleeping" and len(si.flame.accumulated_changes) > self._cc.l2_changes_trigger:
-            logger.info("[Consciousness._should_l2] 累积变化触发: %d条 > %d条",
-                       len(si.flame.accumulated_changes), self._cc.l2_changes_trigger)
-            return True
         if elapsed_since_last > self._cc.l2_periodic_interval:
             logger.info("[Consciousness._should_l2] 定期触发: %d秒 > %d秒",
                        int(elapsed_since_last), self._cc.l2_periodic_interval)
             return True
 
-        logger.debug("[Consciousness._should_l2] 未触发: 空闲=%d, 累积=%d, 间隔=%d",
-                    int(si.perception.user_idle_duration), len(si.flame.accumulated_changes), int(elapsed_since_last))
+        logger.debug("[Consciousness._should_l2] 未触发: 空闲=%d, 间隔=%d",
+                    int(si.perception.user_idle_duration), int(elapsed_since_last))
         return False
 
     def _should_l3(self) -> bool:

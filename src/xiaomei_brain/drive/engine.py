@@ -464,8 +464,14 @@ class DriveEngine:
     def tick(self) -> None:
         """
         主 tick - 根据时间决定调用分钟/小时衰减
+
+        被动能量恢复：每次 tick 恢复微量能量，防止能量死锁。
+        即使什么都不做，能量也会缓慢回升（~5分钟从0恢复到0.3）。
         """
         now = time.time()
+
+        # 被动能量恢复（每秒 +0.001，5分钟恢复约0.3）
+        self.restore_energy(0.001)
 
         # 分钟衰减
         if now - self.last_minute_tick >= 60:
