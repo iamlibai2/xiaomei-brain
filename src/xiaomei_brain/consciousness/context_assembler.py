@@ -269,7 +269,7 @@ class ContextAssembler:
                             f"- {nb['id']} [{nb['category']}]{tag_str} {ts}\n"
                             f"  {nb.get('content', '')[:120]}{changed_str}"
                         )
-                    system_content += preamble + "\n".join(narr_lines)
+                    system_content += "\n".join(narr_lines)
                     logger.info("\033[91m[NARR]\033[0m daily: injected %d NARR blocks", len(recent_narrs))
 
             messages.append({"role": "system", "content": system_content})
@@ -359,7 +359,7 @@ class ContextAssembler:
                             f"- {nb['id']} [{nb['category']}]{tag_str} {ts}\n"
                             f"  {nb.get('content', '')[:120]}{changed_str}"
                         )
-                    system_content += preamble + "\n".join(narr_lines)
+                    system_content += "\n".join(narr_lines)
                     logger.info("\033[91m[NARR]\033[0m reflect: injected %d NARR blocks", len(recent_narrs))
 
             messages.append({"role": "system", "content": system_content})
