@@ -770,7 +770,7 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
 
         # 查找所有 active 的同 scene_tag 记录
         rows = conn.execute(
-            """SELECT id, content, changed_me, weight FROM narrative_memories
+            """SELECT id, content, changed_me, weight, timestamp FROM narrative_memories
                WHERE scene_tags LIKE ? AND status = 'active'""",
             (f'%"{scene_tag}"%',),
         ).fetchall()
@@ -778,7 +778,9 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         if not rows:
             return ""
 
-        # 计算平均 weight
+        # 计算平均 weight，取最新的 timestamp
+        timestamps = [r[4] for r in rows if r[4]]
+        latest_ts = max(timestamps) if timestamps else None
         avg_weight = sum(r[3] for r in rows) / len(rows)
 
         # 标记旧记录为 consolidated
@@ -796,7 +798,7 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
                (id, category, scene_tags, timestamp, created_at, content, changed_me,
                 weight, status, source, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', 'dream', ?)""",
-            (new_id, "自我定义", json.dumps([scene_tag]), None, now,
+            (new_id, "自我定义", json.dumps([scene_tag]), latest_ts, now,
              merged_content, merged_changed_me, round(avg_weight, 3), now),
         )
         conn.commit()
