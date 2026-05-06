@@ -240,6 +240,22 @@ class ContextAssembler:
                     hint = self.procedure_memory.inject_context(matched)
                     system_content += "\n" + hint
 
+            # Narrative memories: inject latest 10 NARR blocks in daily mode
+            if self.longterm and remaining > 200:
+                recent_narrs = self.longterm.get_narrative_memories(status="active", limit=10)
+                if recent_narrs:
+                    narr_lines = ["\n【我的叙事记忆】"]
+                    for nb in recent_narrs:
+                        tags = ",".join(nb.get("scene_tags") or [])
+                        tag_str = f" 标签:{tags}" if tags else ""
+                        ts = nb.get("timestamp") or ""
+                        narr_lines.append(
+                            f"- {nb['id']} [{nb['category']}]{tag_str} {ts}\n"
+                            f"  {nb.get('content', '')[:80]}"
+                        )
+                    system_content += "\n" + "\n".join(narr_lines)
+                    logger.info("\033[91m[NARR]\033[0m daily: injected %d NARR blocks", len(recent_narrs))
+
             messages.append({"role": "system", "content": system_content})
             remaining -= estimate_tokens(system_content)
 
