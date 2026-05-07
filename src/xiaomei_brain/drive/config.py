@@ -22,7 +22,7 @@ class DesireThresholds:
     belonging: float = 0.7      # 归属欲阈值 → 主动问候
     cognition: float = 0.8      # 认知欲阈值 → 主动学习
     achievement: float = 0.6    # 成就欲阈值 → 推进目标
-    expression: float = 0.7     # 表达欲阈值 → 主动输出
+    expression: float = 0.5     # 表达欲阈值 → 主动输出（初始0.4 + 1次insight=0.5即可触发）
 
 
 @dataclass
@@ -189,7 +189,7 @@ desire:
     belonging: 0.7    # 归属欲 > 0.7 → 可能主动问候
     cognition: 0.8    # 认知欲 > 0.8 → 可能主动学习
     achievement: 0.6  # 成就欲 > 0.6 → 可能推进目标
-    expression: 0.7   # 表达欲 > 0.7 → 可能主动输出
+    expression: 0.5   # 表达欲 > 0.5 → 可能主动输出
 
   # 回升速度（每小时）
   recovery_rate: 0.05

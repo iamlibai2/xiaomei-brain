@@ -182,7 +182,7 @@ class ConsciousLiving(Living):
 
         # ActionDispatcher 初始化（接入外部引用）
         from .rules import _init_rules, RULES
-        drive_config = getattr(self.drive, '_config', None)
+        drive_config = getattr(self.drive, 'config', None)
         _init_rules(drive_config=drive_config, living_config=self._config)
         self._dispatcher.load_rules(RULES)
         self._dispatcher.inject_conscious_living(self)
@@ -1531,6 +1531,11 @@ class ConsciousLiving(Living):
         self._last_active = time.time()
         if self._load_consciousness:
             self.consciousness._last_l2_time = time.time()
+            self.consciousness._last_l3_time = time.time()
+            # 清理跨会话残留 intent（快照恢复的旧 intent 不应跨会话生效）
+            self.consciousness.intent_buffer.clear()
+            self.consciousness.flame.intent_buffer.clear()
+            self.consciousness.flame.urgent_intents.clear()
             # 调用意识系统的 on_wake，生成问候意图（基于梦境报告）
             logger.info("[ConsciousLiving._on_wake] 调用 consciousness.on_wake()")
             self.consciousness.on_wake()

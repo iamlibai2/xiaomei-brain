@@ -61,12 +61,21 @@ INTENT_GENERATION_PROMPT = """你是{identity}的意识系统。现在{time_info
 - 目标进展：{goal_progress}
 - 检测到的异常：{anomaly}
 
+【欲望状态】（欲望强时更可能触发对应意图）
+- 归属欲：{desire_belonging}（想和用户建立连接）
+- 认知欲：{desire_cognition}（想学习新知识）
+- 成就欲：{desire_achievement}（想完成目标）
+- 表达欲：{desire_expression}（想分享想法）
+
 可选意图：
 1. wait - 等待，暂无行动
-2. greet - 想问候用户（用户长时间没说话时）
+2. greet - 想问候用户（归属欲强或用户长时间没说话时）
 3. care - 想关心用户（用户状态异常时）
-4. reflect - 想反省（目标偏离、关系退化时）
-5. dream - 想进入梦境（需要深度思考时）
+4. learn - 想学习新知识（认知欲强时）
+5. express - 想分享想法或洞察（表达欲强时）
+6. progress - 想推进目标（成就欲强时）
+7. reflect - 想反省（目标偏离、关系退化时）
+8. dream - 想进入梦境（需要深度思考时）
 
 请选择一个意图并说明理由。
 

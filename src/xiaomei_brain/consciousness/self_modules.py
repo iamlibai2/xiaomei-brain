@@ -277,23 +277,21 @@ class SelfBody:
     # ── 序列化 ─────────────────────────────
 
     def to_dict(self) -> dict[str, Any]:
-        # 序列化前先同步 fallback（确保 to_dict 包含实时值）
-        self._sync_fallback()
         return {
-            "energy": self._energy,
-            "mood": self._mood,
-            "emotion_intensity": self._emotion_intensity,
-            "attention": self._attention,
-            "desire_belonging": self._desire_belonging,
-            "desire_cognition": self._desire_cognition,
-            "desire_achievement": self._desire_achievement,
-            "desire_expression": self._desire_expression,
-            "dopamine": self._dopamine,
-            "serotonin": self._serotonin,
-            "cortisol": self._cortisol,
-            "oxytocin": self._oxytocin,
-            "norepinephrine": self._norepinephrine,
-            "motivation_level": self._motivation_level,
+            "energy": self.energy,
+            "mood": self.mood,
+            "emotion_intensity": self.emotion_intensity,
+            "attention": self.attention,
+            "desire_belonging": self.desire_belonging,
+            "desire_cognition": self.desire_cognition,
+            "desire_achievement": self.desire_achievement,
+            "desire_expression": self.desire_expression,
+            "dopamine": self.dopamine,
+            "serotonin": self.serotonin,
+            "cortisol": self.cortisol,
+            "oxytocin": self.oxytocin,
+            "norepinephrine": self.norepinephrine,
+            "motivation_level": self.motivation_level,
         }
 
     def from_dict(self, data: dict) -> None:
@@ -341,6 +339,8 @@ class SelfRelation:
     def update_depth(self, new_depth: float) -> None:
         self.relationship_depth = max(0.0, min(1.0, new_depth))
         self.relationship_depth_history.append(self.relationship_depth)
+        if len(self.relationship_depth_history) > 50:
+            self.relationship_depth_history = self.relationship_depth_history[-50:]
         if self.relationship_depth >= 0.8:
             self.relationship_status = "亲密"
         elif self.relationship_depth >= 0.6:
@@ -533,6 +533,8 @@ class SelfMind:
     def update_goal_progress(self, progress: float) -> None:
         self._goal_progress = max(0.0, min(1.0, progress))
         self._goal_progress_history.append(self._goal_progress)
+        if len(self._goal_progress_history) > 50:
+            self._goal_progress_history = self._goal_progress_history[-50:]
 
     def update_inner_thought(self, thought: str) -> None:
         self.inner_thought = thought[:200]
@@ -544,19 +546,22 @@ class SelfMind:
     def update_memory_count(self, count: int, summary: str = "") -> None:
         self.memory_count = count
         self.memory_count_history.append(count)
+        if len(self.memory_count_history) > 30:
+            self.memory_count_history = self.memory_count_history[-30:]
         if summary:
             self.recent_memory_summaries.append(summary[:100])
+            if len(self.recent_memory_summaries) > 20:
+                self.recent_memory_summaries = self.recent_memory_summaries[-20:]
 
     # ── 序列化 ─────────────────────────────
 
     def to_dict(self) -> dict[str, Any]:
-        self._sync_fallback()
         return {
-            "primary_goal": self._primary_goal,
-            "goal_progress": self._goal_progress,
-            "active_goal_count": self._active_goal_count,
-            "current_sub_goal": self._current_sub_goal,
-            "current_goal_depth": self._current_goal_depth,
+            "primary_goal": self.primary_goal,
+            "goal_progress": self.goal_progress,
+            "active_goal_count": self.active_goal_count,
+            "current_sub_goal": self.current_sub_goal,
+            "current_goal_depth": self.current_goal_depth,
             "goal_progress_history": self._goal_progress_history[-20:],
             "memory_count": self.memory_count,
             "memory_count_history": self.memory_count_history[-20:],
@@ -567,33 +572,20 @@ class SelfMind:
         }
 
     def from_dict(self, data: dict) -> None:
-        for key in [
-            "primary_goal", "goal_progress", "active_goal_count",
-            "current_sub_goal", "current_goal_depth",
-            "inner_thought", "last_inner_thought_time",
-            "memory_count",
-        ]:
+        for key in ("primary_goal", "goal_progress", "active_goal_count",
+                     "current_sub_goal", "current_goal_depth"):
             if key in data:
-                setattr(self, f"_{key}" if key.startswith(("primary_", "goal_progress", "active_", "current_")) else key, data[key])
-        # fallback 字段手动映射
-        if "primary_goal" in data:
-            self._primary_goal = data["primary_goal"]
-        if "goal_progress" in data:
-            self._goal_progress = data["goal_progress"]
-        if "active_goal_count" in data:
-            self._active_goal_count = data["active_goal_count"]
-        if "current_sub_goal" in data:
-            self._current_sub_goal = data["current_sub_goal"]
-        if "current_goal_depth" in data:
-            self._current_goal_depth = data["current_goal_depth"]
+                setattr(self, f"_{key}", data[key])
+        for key in ("memory_count", "inner_thought", "last_inner_thought_time"):
+            if key in data:
+                setattr(self, key, data[key])
+        for key in ("memory_count_history", "recent_memory_summaries",
+                     "inner_thought_history"):
+            if key in data:
+                setattr(self, key, data[key])
+        # goal_progress_history is a read-only @property backed by _goal_progress_history
         if "goal_progress_history" in data:
             self._goal_progress_history = data["goal_progress_history"]
-        if "memory_count_history" in data:
-            self.memory_count_history = data["memory_count_history"]
-        if "recent_memory_summaries" in data:
-            self.recent_memory_summaries = data["recent_memory_summaries"]
-        if "inner_thought_history" in data:
-            self.inner_thought_history = data["inner_thought_history"]
 
     def get_summary(self) -> str:
         return f"目标「{self.primary_goal[:15]}」进展{self.goal_progress:.0%}，记忆{self.memory_count}条"
@@ -669,6 +661,7 @@ class FlameState:
     last_llm_fuel_time: float = 0.0
     interpreted_changes: list[str] = field(default_factory=list)
     intent_buffer: list[str] = field(default_factory=list)
+    urgent_intents: set = field(default_factory=set)  # 欲望饥渴触发的紧急意图，dispatch 时绕过冷却
     recent_conversations: list[dict] = field(default_factory=list)
     last_cycle_state: dict | None = None
 
@@ -679,6 +672,7 @@ class FlameState:
             "last_llm_fuel_time": self.last_llm_fuel_time,
             "interpreted_changes": self.interpreted_changes,
             "intent_buffer": self.intent_buffer,
+            "urgent_intents": list(self.urgent_intents),
             "recent_conversations": self.recent_conversations[-10:],
         }
 
@@ -689,6 +683,8 @@ class FlameState:
                 setattr(self, key, data[key])
         if "accumulated_changes" in data:
             self.accumulated_changes = data["accumulated_changes"]
+        if "urgent_intents" in data:
+            self.urgent_intents = set(data["urgent_intents"])
         if "recent_conversations" in data:
             self.recent_conversations = data["recent_conversations"]
 

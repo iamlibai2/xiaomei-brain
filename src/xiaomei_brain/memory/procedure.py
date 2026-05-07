@@ -37,7 +37,7 @@ def _plog(msg: str, *args) -> str:
 _PROCEDURE_LEARN_PROMPT = """你是过程记忆提取专家。分析对话，主动识别可以提炼为标准流程的信息。
 
 【识别范围】
-1. 显式教学：用户说"以后遇到X要先Y"、"记住要...我喜欢先被按头，然后按肩膀，腰要重点按一下，小腿也要按，，最后是脚，"等有过程的语句
+1. 显式教学：用户说"以后遇到X要先Y"、"我喜欢先被按头，然后按肩膀，腰要重点按一下，小腿也要按，，最后是脚，"等有明显过程且可以拆分为三个及以上步骤的语句
 2. 隐式流程：执行了一个多步骤（>=3步）的任务或者工作
 
 【判断标准】
@@ -63,9 +63,18 @@ _PROCEDURE_GENERATE_PROMPT = """对话历史：
 2. description: 一句话描述用途
 3. trigger_config: 关键词粗筛条件
    - type: "any"（满足任一条件即命中）
-   - conditions: 3-5 个条件，每个条件固定 field="user_message"
+   - conditions: 2-5 个条件，每个条件固定 field="user_message"
    - operator 用 "contains"
-   - value 是触发关键词（从对话中提取核心词）
+   - value 是触发关键词
+
+   【关键词选择规则 — 必须严格遵守】
+   a) 每个关键词至少2个汉字，禁止单字词（如"累""茶""梦"）
+   b) 关键词是充分条件：用户说了这句话，就极大概率想执行此流程
+   c) 优先多词短语（2-4字）：如"帮我按摩""泡杯茶""好累啊"，而非单个泛词
+   d) 禁止使用以下高频泛词：今天、明天、心情、分享、试试、喜欢、想要、觉得、知道、记得、看一下、看看、你好、晚安、早安、在吗、怎么、什么、为什么
+   e) 从对话中提取用户真正说了的、能明确指向该流程的具体表达
+   f) 宁可只有2个高质量关键词，也不要凑3-5个泛词
+
 4. steps: 步骤序列（3-6步）
    - id: 递增字符串 "s1", "s2", ...
    - name: 简短步骤名（2-4字）
@@ -155,6 +164,67 @@ def _match_trigger_config(config: dict, user_message: str) -> bool:
         return all(results)
     else:  # any
         return any(results)
+
+
+# ── Trigger keyword validation ──────────────────────────────────
+
+# Keywords that are too generic to be useful triggers (high-frequency daily words)
+_BANNED_TRIGGER_WORDS = {
+    "今天", "明天", "昨天", "心情", "分享", "试试", "喜欢", "想要",
+    "觉得", "知道", "记得", "看一下", "看看", "你好", "晚安", "早安",
+    "在吗", "怎么", "什么", "为什么", "真的", "可能", "应该",
+    "帮忙", "帮我", "需要", "感觉", "一直", "还是", "一点",
+    "最近", "好像", "现在", "下次", "以后", "每次", "一起",
+    "想", "累", "梦", "茶", "歌", "爱", "怕", "忘", "困", "饿",
+}
+
+
+def _validate_trigger_keywords(conditions: list[dict], proc_name: str) -> list[dict]:
+    """Validate and filter trigger keywords.
+
+    Removes single-character keywords and known high-frequency words.
+    Logs warnings for removed keywords.
+    """
+    if not conditions:
+        return conditions
+
+    filtered = []
+    for c in conditions:
+        value = c.get("value", "")
+        if not value:
+            continue
+        # Single CJK character
+        if len(value) < 2:
+            logger.warning(
+                "%s '%s' keyword '%s' removed: single character is too generic",
+                _P_LOG, proc_name, value,
+            )
+            continue
+        # Known high-frequency word
+        if value in _BANNED_TRIGGER_WORDS:
+            logger.warning(
+                "%s '%s' keyword '%s' removed: high-frequency generic word",
+                _P_LOG, proc_name, value,
+            )
+            continue
+        filtered.append(c)
+
+    if len(filtered) < len(conditions):
+        logger.info(
+            "%s '%s' keywords filtered: %d → %d",
+            _P_LOG, proc_name, len(conditions), len(filtered),
+        )
+
+    # If all keywords were filtered, log error but still return the last 2
+    # (better to have suboptimal triggers than skip the procedure entirely)
+    if not filtered:
+        logger.error(
+            "%s '%s' ALL keywords filtered out, keeping original (needs manual review)",
+            _P_LOG, proc_name,
+        )
+        return conditions
+
+    return filtered
 
 
 # ── ProcedureStore ────────────────────────────────────────────────
@@ -457,6 +527,13 @@ class ProcedureLearner:
         if not proc_data.get("name") or not proc_data.get("steps"):
             logger.warning("%s generate returned empty: %s", _P_LOG, resp2.content[:80])
             return []
+
+        # Step 2.5: validate trigger keywords — filter out single-char and generic words
+        trigger_cfg = proc_data.get("trigger_config", {})
+        raw_conditions = trigger_cfg.get("conditions", [])
+        if raw_conditions:
+            validated = _validate_trigger_keywords(raw_conditions, proc_data["name"])
+            proc_data["trigger_config"] = {**trigger_cfg, "conditions": validated}
 
         # Step 3: deduplicate — skip if name or trigger overlap with recent procedure
         new_name = proc_data.get("name", "")

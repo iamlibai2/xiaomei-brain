@@ -191,6 +191,9 @@ class DesireActionExecutor:
             logger.debug("[ActionExecutor] 无学习主题")
             return False
 
+        # 开始探索 → 好奇心上升
+        self.living.drive.on_curiosity(0.1)
+
         # 搜索知识
         knowledge = self._search_and_learn(topic)
 
@@ -240,7 +243,7 @@ class DesireActionExecutor:
             interests = config.learning_interests
             if interests:
                 # 过滤掉冷却期内已学过的
-                candidates = [i for i in interests if i not in available_from_files or available_from_files]
+                candidates = [i for i in interests if i not in available_from_files]
                 if candidates:
                     import random
                     return random.choice(candidates)

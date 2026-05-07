@@ -26,7 +26,7 @@ class ConsciousnessConfig:
     l2_periodic_interval: float = 600.0   # L2 定期触发（秒）
     l3_dream_interval: float = 300.0   # L3 梦境触发（睡眠秒数→入梦）
     l3_cooldown: float = 1800.0       # L3 深度沉思冷却（秒）
-    energy_low_threshold: float = 0.3  # 能量极低阈值
+    energy_low_threshold: float = 0.1  # 能量极低阈值（低于此值用flow最小上下文）
     energy_silent_threshold: float = 0.15  # 能量沉寂阈值（低于此值禁止主动行为）
 
 
@@ -53,6 +53,9 @@ class ActionConfig:
     intent_care_cooldown: float = 1800.0
     intent_reflect_cooldown: float = 7200.0
     intent_act_cooldown: float = 3600.0
+    intent_learn_cooldown: float = 7200.0   # 学习冷却长，避免重复
+    intent_express_cooldown: float = 1800.0  # 表达冷却中等
+    intent_progress_cooldown: float = 3600.0  # 推进目标冷却
 
     # 空闲触发
     idle_trigger_seconds: float = 1800.0  # 用户空闲多少秒触发问候

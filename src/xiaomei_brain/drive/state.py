@@ -222,12 +222,6 @@ class DriveSignals:
     satisfaction_level: float = 0.0 # 满足感（血清素）
 
     def compute_derived(self) -> None:
-        """计算派生指标"""
+        """计算派生指标（只读，不修改 energy 状态）"""
         self.stress_level = self.hormone.cortisol
         self.satisfaction_level = self.hormone.serotonin
-        self.energy.update_from_hormones(
-            self.hormone.dopamine,
-            self.hormone.serotonin,
-            self.hormone.cortisol,
-            self.hormone.norepinephrine,
-        )

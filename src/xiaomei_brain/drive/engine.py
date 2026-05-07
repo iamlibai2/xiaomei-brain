@@ -342,6 +342,34 @@ class DriveEngine:
             elif desire_type == "expression":
                 self.hormone.dopamine = min(1.0, self.hormone.dopamine + amount * 0.05)
 
+    def on_curiosity(self, amount: float = 0.08) -> None:
+        """
+        好奇心被激发（探索/搜索/学习新知识）。
+
+        触发场景：
+        - Agent 调用了 websearch/search 工具
+        - 用户提问涉及未知领域
+        - LLM 分析中产生新的疑问
+
+        影响：认知欲上升
+        """
+        self.desire.cognition = min(1.0, self.desire.cognition + amount)
+        logger.debug("[DriveEngine] 好奇心触发: cognition=%.2f", self.desire.cognition)
+
+    def on_insight(self, amount: float = 0.1) -> None:
+        """
+        产生新的洞察/想法（表达欲上升）。
+
+        触发场景：
+        - L2 tick 生成了有意义的自我认知
+        - L3 深度沉思产生了新的内在叙事
+        - 主动行为中生成了值得分享的想法
+
+        影响：表达欲上升
+        """
+        self.desire.expression = min(1.0, self.desire.expression + amount)
+        logger.debug("[DriveEngine] 洞察触发: expression=%.2f", self.desire.expression)
+
     # ========== 能量管理 ==========
 
     def consume_energy(self, delta: float = 0.05) -> None:
@@ -380,6 +408,14 @@ class DriveEngine:
         LLM 只负责识别事件类型（social_connection/curiosity_sparked/expression_urge），
         由 _apply_drive_events() 中的固定映射决定数值变化。
         """
+        import warnings
+        warnings.warn(
+            "DriveEngine.update_desire_from_llm() 已废弃，不应被调用。"
+            "欲望值由算法统一维护，LLM 只识别事件类型。"
+            "调用将被执行但不会持久化到 L2 叙事。",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         for key, delta in analysis.items():
             if key.endswith("_delta"):
                 attr = key.replace("_delta", "")
@@ -465,13 +501,21 @@ class DriveEngine:
         """
         主 tick - 根据时间决定调用分钟/小时衰减
 
-        被动能量恢复：每次 tick 恢复微量能量，防止能量死锁。
+        被动能量恢复：每次 tick 恢复微量能量，激素调质恢复速度。
         即使什么都不做，能量也会缓慢回升（~5分钟从0恢复到0.3）。
         """
         now = time.time()
 
-        # 被动能量恢复（每秒 +0.001，5分钟恢复约0.3）
-        self.restore_energy(0.001)
+        # 被动能量恢复：基础恢复 + 激素调质
+        # 多巴胺/血清素/去甲肾上腺素促进恢复，皮质醇抑制恢复
+        hormone_factor = (
+            self.hormone.dopamine * 0.3
+            + self.hormone.serotonin * 0.25
+            - self.hormone.cortisol * 0.35
+            + self.hormone.norepinephrine * 0.1
+        )
+        recovery_multiplier = max(0.0, min(2.0, 1.0 + hormone_factor))
+        self.restore_energy(0.001 * recovery_multiplier)
 
         # 分钟衰减
         if now - self.last_minute_tick >= 60:
@@ -543,11 +587,14 @@ class DriveEngine:
             f"  表达欲：{self.desire.expression:.2f}"
         )
 
-    # ========== 欲望驱动行为检查 ==========
+    # ========== 欲望驱动行为检查（已废弃）==========
+    # 注意：欲望决策已迁移到 L2 → intent → ActionDispatcher 路径。
+    # LLM 在意图生成时根据欲望状态综合判断，不再由 Drive 直接触发行为。
+    # 此方法仅供 /drive CLI 命令显示欲望状态用，不会执行任何行为。
 
     def check_desire_actions(self) -> list[dict]:
         """
-        检查欲望是否超过阈值，返回候选行为
+        检查欲望是否超过阈值，返回候选行为（已废弃，仅供显示）。
 
         返回：候选行为列表，按优先级排序
         """

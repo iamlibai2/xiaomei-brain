@@ -150,13 +150,13 @@ class Consciousness:
         self.growth = self.self_image.growth
         self.flame = self.self_image.flame
         self.intent_buffer: list[Intent] = []
-        self.perception_buffer: list[dict] = []
         self._l0_count: int = 0
         self._last_l2_time: float = 0.0
         self._last_snapshot_save_time: float = 0.0
         self._last_report: ConsciousnessReport | None = None
         self._running: bool = False
         self._l2_triggered_by_anomaly: bool = False  # L1 异常触发 L2 的信号
+        self._anomaly_cooldowns: dict[str, float] = {}  # 异常类型 → 上次触发时间
         self._sleep_start_time: float = 0.0          # 入睡时间戳（入梦判定）
         self._last_l3_time: float = 0.0              # 上次 L3 深度沉思时间
 
@@ -317,16 +317,17 @@ class Consciousness:
             # 同时直接更新 SelfImage，确保状态立即反映
             self.perception.agent_state = agent_state
 
-        self.perception_buffer.append(perception)
         self._l0_count += 1
 
         # 核心：维护火焰骨架（不是涌现意识）
         self.self_image.tick(perception)
 
-        # 每 60 秒保存一次快照到 latest.json
+        # 每 60 秒检查一次快照保存（有脏数据才写盘）
         now = time.time()
         if self._last_snapshot_save_time == 0 or (now - self._last_snapshot_save_time) >= 60:
-            self._save_snapshot()
+            if self.self_image._dirty:
+                self._save_snapshot()
+                self.self_image._dirty = False
             self._last_snapshot_save_time = now
 
         # 累积到阈值，触发 L1（异常检测）
@@ -334,49 +335,18 @@ class Consciousness:
             self.tick_L1()
 
     def _sense(self) -> dict[str, Any]:
-        """感知当前状态"""
-        perception = {
+        """感知当前状态（只收集本地可快速计算的数据，不做 IO）。
+
+        设计原则：
+        - 慢 IO（DB 查询）由事件驱动，不轮询
+        - 用户活跃：消息到达时更新 last_user_activity_time
+        - 记忆数量：tick_L1() 每分钟查一次
+        - 最近记忆摘要：tick_L1() 每分钟拉一次
+        """
+        return {
             "timestamp": time.time(),
             "elapsed_seconds": self._cc.l0_interval,
-            "user_active": False,  # 默认不活跃
-            "memory_count": 0,
-            "agent_state": "unknown",  # AgentLiving 状态
         }
-
-        # 如果有 agent，从 agent 获取数据
-        if self.agent:
-            # 用户活跃检测
-            if hasattr(self.agent, "conversation_db"):
-                db = self.agent.conversation_db
-                if db:
-                    try:
-                        recent = db.get_recent(1)
-                        if recent:
-                            last_time = recent[0].get("created_at", 0)
-                            if time.time() - last_time < 60:  # 1分钟内有消息
-                                perception["user_active"] = True
-                    except Exception:
-                        pass
-
-            # 记忆数量和最近记忆摘要
-            if hasattr(self.agent, "longterm_memory"):
-                ltm = self.agent.longterm_memory
-                if ltm:
-                    try:
-                        perception["memory_count"] = ltm.count()
-                        # 获取最近记忆摘要（小美的记忆，不需要 user_id）
-                        recent_memories = ltm.get_recent(5)
-                        perception["recent_memory_summaries"] = [
-                            m.get("content", "")[:100] for m in recent_memories
-                        ]
-                    except Exception:
-                        pass
-
-            # AgentLiving 状态（如果 agent 有 living_state 属性）
-            if hasattr(self.agent, "living_state"):
-                perception["agent_state"] = self.agent.living_state
-
-        return perception
 
     # ── L1: 状态更新 ─────────────────────────────────────────
 
@@ -385,10 +355,32 @@ class Consciousness:
 
         更新 self_image，检测异常。
         如果检测到异常，触发 L2。
+
+        每分钟执行一次，负责：
+        - 汇总 L0 积累的 elapsed_seconds（一次性提升 age）
+        - 惰性计算 user_idle_duration（事件驱动更新 last_user_activity_time）
+        - 慢 IO：单次查询 memory_count + recent_memory_summaries（1次/分钟代替60次/分钟）
         """
-        # 更新 self_image
-        for p in self.perception_buffer:
-            self.self_image.update_from_perception(p)
+        # 汇总 L0 积累的 elapsed_seconds
+        total_elapsed = float(self._l0_count) * self._cc.l0_interval
+        self.self_image.update_from_perception({"elapsed_seconds": total_elapsed})
+
+        # 惰性计算空闲时长（last_user_activity_time 由用户消息/苏醒事件驱动更新）
+        if self.perception.last_user_activity_time > 0:
+            self.perception.user_idle_duration = time.time() - self.perception.last_user_activity_time
+
+        # 慢 IO：每分钟查一次记忆数量（事件驱动成本高、涉及面太广）
+        if self.agent and hasattr(self.agent, "longterm_memory"):
+            ltm = self.agent.longterm_memory
+            if ltm:
+                try:
+                    self.mind.update_memory_count(ltm.count())
+                    recent_memories = ltm.get_recent(5)
+                    self.mind.recent_memory_summaries = [
+                        m.get("content", "")[:100] for m in recent_memories
+                    ]
+                except Exception:
+                    pass
 
         # 检测异常
         anomaly = self.self_image.detect_anomaly()
@@ -404,15 +396,24 @@ class Consciousness:
         if self.drive:
             self.drive.on_user_idle(self.perception.user_idle_duration)
 
-        # 清空感知缓冲
-        self.perception_buffer = []
+        # 重置计数器
         self._l0_count = 0
 
         # 如果检测到异常，触发 L2（异常触发绕过冷却，火焰能"痛"）
+        # 但同类型异常有冷却，防止欲望饥饿等持续状态反复触发 L2
         if anomaly:
-            logger.info("[Consciousness L1] 检测到异常: %s，触发 L2 加柴", anomaly)
-            self._l2_triggered_by_anomaly = True
-            return self.tick_L2(anomaly)
+            now = time.time()
+            cooldown = self._anomaly_cooldowns.get(anomaly, 0)
+            # desire_starvation 类冷却 5 分钟，其他异常冷却 2 分钟
+            anomaly_cooldown_s = 300 if anomaly.startswith("desire_starvation") else 120
+            if now - cooldown < anomaly_cooldown_s:
+                logger.debug("[Consciousness L1] 异常 %s 在冷却中 (%.0fs/%.0fs)，跳过",
+                             anomaly, now - cooldown, anomaly_cooldown_s)
+            else:
+                self._anomaly_cooldowns[anomaly] = now
+                logger.info("[Consciousness L1] 检测到异常: %s，触发 L2 加柴", anomaly)
+                self._l2_triggered_by_anomaly = True
+                return self.tick_L2(anomaly)
 
         return None
 
@@ -567,7 +568,7 @@ class Consciousness:
 - curiosity_sparked: 对话激发了你的好奇心、想了解更多
 - expression_urge: 你有话想说、想表达的程度
 
-第三部分[可选]：如果你在上面的思考中产生了值得记录的自我认知转变，请在 ---NARR--- 分隔符后输出结构化叙事块：
+第三部分[可选]：如果你在上面的思考中产生了值得记录的叙事记忆（叙事记忆是情景记忆的一种高级形式。它不仅包含对具体事件的回忆（如“我昨天去了公园”），还包含了对这些事件的组织、解释和情感评价（如“昨天去公园让我感到很放松，因为最近工作压力太大了，而且昨天和他一起，真好”）），请在 ---NARR--- 分隔符后输出结构化叙事块：
 ---NARR---
 <NARR>
 编号: NARR-自动生成
@@ -607,6 +608,27 @@ weight: 0.85
                 # 解析意图（从意识部分）
                 intent = self._parse_intent_from_response(consciousness_text, context)
 
+                # 异常是欲望饥渴时，强制意图匹配对应欲望（LLM 可能选错）
+                if intent and context.startswith("desire_starvation_"):
+                    desire_type = context.replace("desire_starvation_", "")
+                    expected_map = {
+                        "belonging": IntentType.GREET,
+                        "cognition": IntentType.LEARN,
+                        "achievement": IntentType.PROGRESS,
+                        "expression": IntentType.EXPRESS,
+                    }
+                    expected = expected_map.get(desire_type)
+                    # 无论修正与否，都标记为紧急（dispatch 绕过冷却）
+                    self.flame.urgent_intents.add(
+                        (expected or intent.type).value
+                    )
+                    if expected and intent.type != expected:
+                        logger.info("[Consciousness L2] 意图修正: %s → %s（异常=%s）",
+                                    intent.type.value, expected.value, context)
+                        intent = Intent(type=expected, priority=intent.priority, content=intent.content)
+                    # 标记为紧急：dispatch 时绕过冷却
+                    self.flame.urgent_intents.add(expected.value if expected else intent.type.value)
+
                 # 解析并应用驱动事件
                 if events_json and self.drive:
                     self._apply_drive_events(events_json)
@@ -622,6 +644,8 @@ weight: 0.85
         # 如果LLM失败，用规则生成影子意图
         if not intent:
             intent = self._fallback_intent(context)
+            if intent and context.startswith("desire_starvation_"):
+                self.flame.urgent_intents.add(intent.type.value)
 
         # 存入意图缓冲
         if intent and intent.is_actionable():
@@ -650,6 +674,7 @@ weight: 0.85
         # 写入统一叙事（意识涌现文本，不含事件 JSON）
         # 改用 consciousness_narratives 表存储，与 memories 表分离
         consciousness_text = llm_response.split("---EVENTS---")[0].strip() if llm_response else ""
+        logger.info("[Consciousness L2] 自由表达全文:\n%s", consciousness_text)
         if self.agent and hasattr(self.agent, "longterm_memory") and self.agent.longterm_memory and consciousness_text:
             self.agent.longterm_memory.store_narrative(
                 content=consciousness_text[:300],
@@ -680,6 +705,9 @@ weight: 0.85
                         timestamp=nb.get("timestamp"),
                     )
                     logger.info("\033[91m[NARR]\033[0m tick_L2 stored: %s", nm_id)
+                    # NARR 块存储成功 = 生成了有意义的自我认知 → 表达欲上升
+                    if self.drive:
+                        self.drive.on_insight(0.1)
                 except Exception as e:
                     logger.warning("\033[91m[NARR]\033[0m store failed: %s", e)
 
@@ -783,17 +811,16 @@ weight: 0.85
             self.drive.on_goal_progress(min(goal_progress, 1.0))
 
         # ── 语义事件 → 算法映射（LLM 识别事件，算法决定数值）──
+        # 注意：欲望的消耗只在行为完成时调用 on_desire_satisfied。
+        # LLM 输出的语义字段不直接调欲望，只调整激素/情绪等生理信号。
         social = events.get("social_connection", 0)
         curiosity = events.get("curiosity_sparked", 0)
         expression = events.get("expression_urge", 0)
 
         if social > 0.3:
-            self.drive.desire.belonging = max(0.0, self.drive.desire.belonging - 0.1 * social)
+            # 社交连接 = 归属欲被满足的信号 → 但归属欲消耗由行为完成回调负责
+            # 这里只调整催产素（生理满足感）
             self.drive.hormone.oxytocin = min(1.0, self.drive.hormone.oxytocin + 0.1 * social)
-        if curiosity > 0.3:
-            self.drive.desire.cognition = min(1.0, self.drive.desire.cognition + 0.1 * curiosity)
-        if expression > 0.3:
-            self.drive.desire.expression = min(1.0, self.drive.desire.expression + 0.1 * expression)
 
         # ── 统一写 internal memory（一次 L2 只写一条）──
         summary = events.get("summary", "")
@@ -892,6 +919,10 @@ weight: 0.85
             energy=f"{si.body.energy:.2f}",
             goal_progress=f"{si.mind.goal_progress:.2f}",
             anomaly=context or "无",
+            desire_belonging=f"{si.body.desire_belonging:.2f}",
+            desire_cognition=f"{si.body.desire_cognition:.2f}",
+            desire_achievement=f"{si.body.desire_achievement:.2f}",
+            desire_expression=f"{si.body.desire_expression:.2f}",
         )
 
     def _parse_intent_response(self, response: str) -> Intent | None:
@@ -921,6 +952,9 @@ weight: 0.85
             IntentType.CARE: 75,
             IntentType.REFLECT: 50,
             IntentType.DREAM: 40,
+            IntentType.LEARN: 60,
+            IntentType.EXPRESS: 60,
+            IntentType.PROGRESS: 60,
         }
 
         return Intent(
@@ -957,11 +991,11 @@ weight: 0.85
             if desire_type == "belonging":
                 return create_greet_intent("归属欲长期未被满足，想联系用户", priority=75)
             elif desire_type == "cognition":
-                return Intent(type=IntentType.ACT, priority=70, content=f"认知欲饥渴，想学习新知识")
+                return Intent(type=IntentType.LEARN, priority=70, content="认知欲饥渴，想学习新知识")
             elif desire_type == "achievement":
-                return Intent(type=IntentType.ACT, priority=70, content=f"成就欲饥渴，想推进目标")
+                return Intent(type=IntentType.PROGRESS, priority=70, content="成就欲饥渴，想推进目标")
             elif desire_type == "expression":
-                return Intent(type=IntentType.ACT, priority=70, content=f"表达欲饥渴，想分享想法")
+                return Intent(type=IntentType.EXPRESS, priority=70, content="表达欲饥渴，想分享想法")
             else:
                 return create_wait_intent()
         elif context == "emotion_spike":

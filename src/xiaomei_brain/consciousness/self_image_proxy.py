@@ -49,6 +49,7 @@ class SelfImage:
         self.mind = SelfMind()
         self.growth = SelfGrowth()
         self.flame = FlameState()
+        self._dirty = False  # 有变化时才写盘
 
     # ── 子系统连接 ──────────────────────────────────────────
 
@@ -64,8 +65,8 @@ class SelfImage:
 
     def tick(self, perception: dict[str, Any]) -> None:
         """火焰骨架循环，每秒运行一次。"""
-        # 1. 保存上一刻
-        self.flame.last_cycle_state = self.to_dict()
+        # 1. 保存上一刻快照（只存 diff 需要的 6 个字段）
+        prev = self._snapshot()
         self.flame.cycle_count += 1
 
         # 2. 更新此刻
@@ -73,47 +74,61 @@ class SelfImage:
         self._update_environment()
 
         # 3. 对比差异
-        changes = self._diff(self.flame.last_cycle_state)
+        changes = self._diff(prev)
         if changes:
             self.flame.accumulated_changes.append({
                 "cycle_id": self.flame.cycle_count,
                 "timestamp": time.time(),
                 "changes": changes,
             })
+            if len(self.flame.accumulated_changes) > 30:
+                self.flame.accumulated_changes = self.flame.accumulated_changes[-30:]
+            self._dirty = True
 
         logger.debug("[SelfImage.tick] #%d: age=%ds", self.flame.cycle_count, int(self.growth.consciousness_age))
 
-    def _diff(self, last_state: dict | None) -> dict[str, Any]:
-        """对比上一刻和此刻的差异。"""
-        if not last_state:
+    def _snapshot(self) -> dict[str, float | str]:
+        """轻量快照：只收集 _diff 需要的 6 个字段。"""
+        return {
+            "consciousness_age": self.growth.consciousness_age,
+            "agent_state": self.perception.agent_state,
+            "user_idle_duration": self.perception.user_idle_duration,
+            "energy": self.body.energy,
+            "memory_count": self.mind.memory_count,
+            "goal_progress": self.mind.goal_progress,
+        }
+
+    def _diff(self, last: dict) -> dict[str, Any]:
+        """对比上一刻和此刻的差异（直接读属性，不调 to_dict）。"""
+        if not last:
             return {"first_cycle": True, "message": "火焰刚点燃"}
 
-        current = self.to_dict()
-        diff = {}
+        diff: dict[str, Any] = {}
 
-        age_diff = current.get("consciousness_age", 0) - last_state.get("consciousness_age", 0)
-        if age_diff > 0:
-            diff["time_elapsed"] = age_diff
+        cur_age = self.growth.consciousness_age
+        if cur_age - last["consciousness_age"] > 0:
+            diff["time_elapsed"] = cur_age - last["consciousness_age"]
 
-        if current.get("agent_state") != last_state.get("agent_state"):
-            diff["agent_state_change"] = {
-                "from": last_state.get("agent_state"),
-                "to": current.get("agent_state"),
-            }
+        cur_state = self.perception.agent_state
+        if cur_state != last["agent_state"]:
+            diff["agent_state_change"] = {"from": last["agent_state"], "to": cur_state}
 
-        idle_diff = current.get("user_idle_duration", 0) - last_state.get("user_idle_duration", 0)
+        cur_idle = self.perception.user_idle_duration
+        idle_diff = cur_idle - last["user_idle_duration"]
         if abs(idle_diff) > 10:
             diff["user_idle_change"] = idle_diff
 
-        energy_diff = current.get("energy", 0) - last_state.get("energy", 0)
+        cur_energy = self.body.energy
+        energy_diff = cur_energy - last["energy"]
         if abs(energy_diff) > 0.05:
             diff["energy_change"] = energy_diff
 
-        memory_diff = current.get("memory_count", 0) - last_state.get("memory_count", 0)
-        if memory_diff != 0:
-            diff["memory_change"] = memory_diff
+        cur_mem = self.mind.memory_count
+        if cur_mem != last["memory_count"]:
+            diff["memory_change"] = cur_mem - last["memory_count"]
 
-        goal_diff = current.get("goal_progress", 0) - last_state.get("goal_progress", 0)
+        cur_goal = self.mind.goal_progress
+        goal_diff = cur_goal - last["goal_progress"]
         if abs(goal_diff) > 0.01:
             diff["goal_change"] = goal_diff
 
@@ -122,27 +137,21 @@ class SelfImage:
     # ── 状态更新 ──────────────────────────────────────────
 
     def update_from_perception(self, perception: dict[str, Any]) -> None:
-        """从感知数据更新状态。"""
+        """从感知数据更新状态。
+
+        tick_L0() 每秒调用，只处理本地数据（elapsed_seconds）。
+        tick_L1() 每分钟调用，负责慢 IO（memory_count, idle_duration）。
+        """
         if "elapsed_seconds" in perception:
             self.growth.increment_age(perception["elapsed_seconds"])
-
-        if "user_active" in perception:
-            if perception["user_active"]:
-                self.perception.last_user_activity_time = time.time()
-                self.perception.user_idle_duration = 0.0
-            else:
-                if self.perception.last_user_activity_time > 0:
-                    self.perception.user_idle_duration = time.time() - self.perception.last_user_activity_time
-
-        if "memory_count" in perception:
-            self.mind.update_memory_count(perception["memory_count"])
-
-        if "recent_memory_summaries" in perception:
-            self.mind.recent_memory_summaries = perception["recent_memory_summaries"]
 
         if "agent_state" in perception:
             self.perception.agent_state = perception["agent_state"]
             self.perception.agent_state_history.append(self.perception.agent_state)
+            if len(self.perception.agent_state_history) > 20:
+                self.perception.agent_state_history = self.perception.agent_state_history[-20:]
+
+        self._dirty = True
 
     def _update_environment(self) -> None:
         """根据状态更新环境感知。"""
@@ -165,6 +174,7 @@ class SelfImage:
         self.body.energy = 0.9
         if insights:
             self.mind.update_goal_progress(self.mind.goal_progress)
+        self._dirty = True
 
     def update_from_interaction(self, user_message: str, response: str) -> None:
         """从交互更新状态。"""
@@ -174,6 +184,7 @@ class SelfImage:
         self.body.attention = "与用户对话"
         self.body.energy = max(0.3, self.body.energy - 0.05)
         self.relation.update_depth(self.relation.relationship_depth + 0.02)
+        self._dirty = True
 
     # ── 异常检测 ──────────────────────────────────────────
 
@@ -279,41 +290,34 @@ class SelfImage:
 
         return "\n".join(lines)
 
+    # 中文规则字段 → (属性访问器, 单位)
+    _RULE_FIELDS: dict[str, tuple] = {
+        "空闲":     (lambda s: s.perception.user_idle_duration, 1),
+        "关系深度":  (lambda s: s.relation.relationship_depth, 1),
+        "能量":     (lambda s: s.body.energy, 1),
+        "记忆数量":  (lambda s: s.mind.memory_count, 1),
+        "燃烧时长":  (lambda s: s.growth.consciousness_age, 1),
+    }
+
     def interpret_changes(self, config: Any) -> list[str]:
         """L1: 规则匹配，语义化解读变化。"""
         interpretations = []
-
-        field_map = {
-            "空闲": "user_idle_duration",
-            "关系深度": "relationship_depth",
-            "能量": "energy",
-            "记忆数量": "memory_count",
-            "燃烧时长": "consciousness_age",
-        }
-
         sorted_rules = sorted(config.rules, key=lambda r: r.priority, reverse=True)
 
         for rule in sorted_rules:
-            for chinese_field, field_name in field_map.items():
-                if chinese_field in rule.condition:
-                    field_value = self._get_field_value(field_name)
-                    if self._match_condition(rule.condition, chinese_field, field_value):
-                        interpretations.append(rule.description)
-                        break
+            for chinese_field, (getter, _) in self._RULE_FIELDS.items():
+                if chinese_field not in rule.condition:
+                    continue
+                value = getter(self)
+                if self._match_condition(rule.condition, chinese_field, value):
+                    interpretations.append(rule.description)
+                    break
 
         logger.debug("[SelfImage.interpret] 解读结果: %s", interpretations[:5])
         return interpretations
 
-    def _get_field_value(self, field_name: str) -> float:
-        """获取字段值（支持嵌套路径如 body.energy）。"""
-        path_map = {
-            "user_idle_duration": self.perception.user_idle_duration,
-            "relationship_depth": self.relation.relationship_depth,
-            "energy": self.body.energy,
-            "memory_count": self.mind.memory_count,
-            "consciousness_age": self.growth.consciousness_age,
-        }
-        return path_map.get(field_name, 0)
+    # _get_field_value 已合并到 _RULE_FIELDS，保留别名兼容
+    _get_field_value = None  # type: ignore
 
     @staticmethod
     def _match_condition(condition: str, field_keyword: str, value: float) -> bool:
@@ -353,6 +357,7 @@ class SelfImage:
         self.identity.init_from_identity_config(config)
         self.relation.role = config.role
         self.relation.relationship_status = config.relationship_status
+        self._dirty = True
 
         logger.info(
             "[SelfImage] 从 IdentityConfig 初始化: identity=%s, traits=%s",
@@ -362,6 +367,7 @@ class SelfImage:
     def add_growth(self, content: str, date: str | None = None) -> None:
         """追加一条生长记录。"""
         self.growth.add_growth(content=content, date=date)
+        self._dirty = True
 
     # ── 序列化/反序列化 ──────────────────────────────────────
 
@@ -406,69 +412,13 @@ class SelfImage:
 
     def from_dict(self, data: dict) -> None:
         """从字典恢复。"""
-        # Identity
         self.identity.from_dict(data)
-
-        # Relation
         self.relation.from_dict(data)
-
-        # Body
-        if "body" in data:
-            self.body.from_dict(data["body"])
-        else:
-            # 旧格式兼容：顶层字段
-            for key in ["energy", "mood", "emotion_intensity",
-                        "desire_belonging", "desire_cognition", "desire_achievement", "desire_expression",
-                        "dopamine", "serotonin", "cortisol", "oxytocin",
-                        "attention"]:
-                if key in data:
-                    setattr(self.body, f"_{key}" if key != "attention" else key, data[key])
-
-        # Perception
+        self.body.from_dict(data.get("body", {}))
         self.perception.from_dict(data)
-
-        # Mind
-        if "mind" in data:
-            self.mind.from_dict(data["mind"])
-        else:
-            # 旧格式兼容
-            if "memory_count" in data:
-                self.mind.memory_count = data["memory_count"]
-            if "memory_count_history" in data:
-                self.mind.memory_count_history = data["memory_count_history"]
-            if "primary_goal" in data:
-                self.mind._primary_goal = data["primary_goal"]
-            if "goal_progress" in data:
-                self.mind._goal_progress = data["goal_progress"]
-            if "goal_progress_history" in data:
-                self.mind._goal_progress_history = data["goal_progress_history"]
-            if "inner_thought" in data:
-                self.mind.inner_thought = data["inner_thought"]
-            if "inner_thought_history" in data:
-                self.mind.inner_thought_history = data["inner_thought_history"]
-            if "last_inner_thought_time" in data:
-                self.mind.last_inner_thought_time = data["last_inner_thought_time"]
-            if "current_goal_depth" in data:
-                self.mind._current_goal_depth = data["current_goal_depth"]
-
-        # Growth
+        self.mind.from_dict(data.get("mind", {}))
         self.growth.from_dict(data)
-
-        # Flame
-        if "flame" in data:
-            self.flame.from_dict(data["flame"])
-        else:
-            # 旧格式兼容
-            if "cycle_count" in data:
-                self.flame.cycle_count = data["cycle_count"]
-            if "accumulated_changes" in data:
-                self.flame.accumulated_changes = data["accumulated_changes"]
-            if "last_llm_fuel_time" in data:
-                self.flame.last_llm_fuel_time = data["last_llm_fuel_time"]
-            if "interpreted_changes" in data:
-                self.flame.interpreted_changes = data["interpreted_changes"]
-            if "pending_intents" in data or "intent_buffer" in data:
-                self.flame.intent_buffer = data.get("intent_buffer", data.get("pending_intents", []))
+        self.flame.from_dict(data.get("flame", {}))
 
     def clear_accumulated_changes(self) -> None:
         """清空累积变化（L2 加柴后调用）。"""

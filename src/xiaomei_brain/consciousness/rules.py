@@ -121,7 +121,7 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
         thr_belonging = 0.7
         thr_cognition = 0.8
         thr_achievement = 0.6
-        thr_expression = 0.7
+        thr_expression = 0.5
 
     # ── Intent 驱动 ─────────────────────────────────────
 
@@ -185,7 +185,50 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
             .cooldown("intent_act", ac.intent_act_cooldown)
     )
 
-    # ── Desire 驱动 ─────────────────────────────────────
+    # LEARN 意图 → 主动学习
+    RULES.append(
+        Rule.when(lambda si: _has_intent(si, "LEARN"))
+            .then(ActionItem(
+                action_type=ActionType.TOOL,
+                priority=0.6,
+                content="learn_topic",
+                reason="收到 LEARN 意图",
+                source="intent",
+                cooldown_key="intent_learn",
+                metadata={"intent_type": "LEARN"},
+            ))
+            .cooldown("intent_learn", ac.intent_learn_cooldown)
+    )
+
+    # EXPRESS 意图 → 分享想法
+    RULES.append(
+        Rule.when(lambda si: _has_intent(si, "EXPRESS"))
+            .then(ActionItem(
+                action_type=ActionType.PROACTIVE,
+                priority=0.6,
+                content="",
+                reason="收到 EXPRESS 意图",
+                source="intent",
+                cooldown_key="intent_express",
+                metadata={"intent_type": "EXPRESS"},
+            ))
+            .cooldown("intent_express", ac.intent_express_cooldown)
+    )
+
+    # PROGRESS 意图 → 推进目标
+    RULES.append(
+        Rule.when(lambda si: _has_intent(si, "PROGRESS"))
+            .then(ActionItem(
+                action_type=ActionType.TOOL,
+                priority=0.6,
+                content="progress_goal",
+                reason="收到 PROGRESS 意图",
+                source="intent",
+                cooldown_key="intent_progress",
+                metadata={"intent_type": "PROGRESS"},
+            ))
+            .cooldown("intent_progress", ac.intent_progress_cooldown)
+    )
 
     # 用户空闲 → 主动问候
     RULES.append(
@@ -200,66 +243,6 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
                 metadata={"source": "idle", "idle_duration": ac.idle_trigger_seconds},
             ))
             .cooldown("idle_greet", ac.idle_greet_cooldown)
-    )
-
-    # 归属欲 → 问候行为
-    RULES.append(
-        Rule.when(lambda si, t=thr_belonging: _get_drive_facet(si).belonging > t)
-            .then(ActionItem(
-                action_type=ActionType.PROACTIVE,
-                priority=0.6,
-                content="",
-                reason="归属欲强（想念用户）",
-                source="desire",
-                cooldown_key="desire_greet",
-                metadata={"desire_type": "belonging", "threshold": thr_belonging},
-            ))
-            .cooldown("desire_greet", ac.desire_greet_cooldown)
-    )
-
-    # 认知欲 → 学习行为
-    RULES.append(
-        Rule.when(lambda si, t=thr_cognition: _get_drive_facet(si).cognition > t)
-            .then(ActionItem(
-                action_type=ActionType.TOOL,
-                priority=0.5,
-                content="learn_topic",
-                reason="认知欲强（想学习新知识）",
-                source="desire",
-                cooldown_key="desire_learn",
-                metadata={"desire_type": "cognition", "threshold": thr_cognition},
-            ))
-            .cooldown("desire_learn", ac.desire_learn_cooldown)
-    )
-
-    # 成就欲 → 推进目标
-    RULES.append(
-        Rule.when(lambda si, t=thr_achievement: _get_drive_facet(si).achievement > t)
-            .then(ActionItem(
-                action_type=ActionType.TOOL,
-                priority=0.5,
-                content="progress_goal",
-                reason="成就欲强（想完成目标）",
-                source="desire",
-                cooldown_key="desire_achievement",
-                metadata={"desire_type": "achievement", "threshold": thr_achievement},
-            ))
-            .cooldown("desire_achievement", ac.desire_achievement_cooldown)
-    )
-
-    # 表达欲 → 分享想法
-    RULES.append(
-        Rule.when(lambda si, t=thr_expression: _get_drive_facet(si).expression > t)
-            .then(ActionItem(
-                action_type=ActionType.PROACTIVE,
-                priority=0.5,
-                content="",
-                reason="表达欲强（想分享想法）",
-                source="desire",
-                cooldown_key="desire_express",
-                metadata={"desire_type": "expression", "threshold": thr_expression},
-            ))
-            .cooldown("desire_express", ac.desire_express_cooldown)
     )
 
     # ── System 触发 ─────────────────────────────────────

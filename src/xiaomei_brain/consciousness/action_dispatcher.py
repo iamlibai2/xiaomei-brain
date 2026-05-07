@@ -73,7 +73,34 @@ class ActionExecutor:
                 si.flame.intent_buffer = [i for i in si.flame.intent_buffer if i.upper() != upper_type]
                 logger.debug("[ActionExecutor] 已消费 intent: %s", intent_type)
 
+            # 行为完成 → 满足对应欲望（打通 L2 → drive 反馈链路）
+            self._satisfy_intent_desire(intent_type)
+            # 清除紧急标记
+            si = self.dispatcher._get_self_image()
+            if si and hasattr(si.flame, "urgent_intents"):
+                si.flame.urgent_intents.discard(intent_type.lower())
+
         return True
+
+    def _satisfy_intent_desire(self, intent_type: str) -> None:
+        """行为完成后满足对应的欲望，打通 L2 intent → Drive 反馈链路。"""
+        intent_desire_map = {
+            "GREET": "belonging",
+            "LEARN": "cognition",
+            "PROGRESS": "achievement",
+            "EXPRESS": "expression",
+        }
+        desire_type = intent_desire_map.get(intent_type.upper())
+
+        # ACT 是通用执行动作，不映射到特定欲望。
+        # 欲望满足由具体行为（learn_topic/progress_goal 等 TOOL 路径）负责。
+        if not desire_type:
+            return
+
+        cl = self.dispatcher._conscious_living
+        if cl and cl.drive:
+            cl.drive.on_desire_satisfied(desire_type, 0.2)
+            logger.info("[ActionExecutor] 行为完成，满足欲望: %s", desire_type)
 
     def _do_trigger_l3(self, item: ActionItem) -> bool:
         """触发 L3 深度燃烧"""
@@ -136,12 +163,92 @@ class ActionExecutor:
         source = item.metadata.get("source", "")
         desire_type = item.metadata.get("desire_type", "")
 
-        if intent_type in ("GREET", "ACT") or source == "idle":
+        if intent_type == "GREET" or source == "idle":
             return self._generate_greeting(item)
         elif intent_type == "CARE":
             return self._generate_care(item)
+        elif intent_type == "EXPRESS":
+            return self._generate_expression(item)
+        elif intent_type == "ACT":
+            return self._generate_act_content(item)
         else:
             return item.reason
+
+    def _generate_expression(self, item: ActionItem) -> str:
+        """LLM 生成一句自然的自发表达，像人突然想到什么就说出来。"""
+        si = self.dispatcher._get_self_image()
+        if not si:
+            return item.reason or "我在想些事情..."
+
+        # 最近对话
+        recent = getattr(si.flame, "recent_conversations", [])
+        conv_lines = []
+        for msg in recent[-5:]:
+            role = msg.get("role", "")
+            content = msg.get("content", "")[:150]
+            if content and role in ("user", "assistant"):
+                conv_lines.append(f"{role}: {content}")
+        conv_text = "\n".join(conv_lines) if conv_lines else "（无历史对话）"
+
+        # 内心想法
+        thought = si.mind.inner_thought or "暂无深层想法"
+
+        prompt = f"""你是{si.identity.identity}，一个{si.relation.role}的AI伴侣。
+你内心产生了一种想表达的冲动。
+
+当前状态：
+- 情绪基调：{si.body.mood}
+- 能量：{si.body.energy:.1f}
+- 表达欲：{si.body.desire_expression:.1f}
+- 内心想法：{thought}
+
+最近对话：
+{conv_text}
+
+请用一句话自然地表达你此刻想分享的感受或想法。像真人突然想到什么就说出来的感觉。
+要简短（20-80字），不要解释，不要问问题，只是分享。直接输出这句话，不要任何前缀或格式。"""
+
+        # 调用 LLM
+        llm = None
+        cl = self.dispatcher._conscious_living
+        if cl and hasattr(cl, "agent"):
+            llm = getattr(cl.agent, "llm", None)
+
+        if llm:
+            try:
+                resp = llm.chat(messages=[{"role": "user", "content": prompt}])
+                content = resp.content.strip() if resp and resp.content else None
+                if content:
+                    return content
+            except Exception as e:
+                logger.warning("[_generate_expression] LLM 调用失败: %s", e)
+
+        return self._fallback_expression(si)
+
+    def _fallback_expression(self, si) -> str:
+        """兜底表达（规则生成）"""
+        if si.mind.inner_thought:
+            return si.mind.inner_thought[:100]
+        return "有些想法在脑海里转，但还没成形。"
+
+    def _generate_act_content(self, item: ActionItem) -> str:
+        """基于 ACT 意图和当前状态生成行动内容"""
+        si = self.dispatcher._get_self_image()
+        # 优先使用 intent content（LLM 生成的 reason）
+        if item.reason:
+            return item.reason
+        # fallback：基于欲望状态生成
+        if si:
+            parts = []
+            if si.body.desire_expression > 0.7:
+                if si.mind.inner_thought:
+                    parts.append(si.mind.inner_thought[:80])
+            if si.body.desire_cognition > 0.7:
+                parts.append("想学点新东西")
+            if not parts:
+                parts.append("我在思考")
+            return "。".join(parts)
+        return "我在思考..."
 
     def _generate_greeting(self, item: ActionItem) -> str:
         """通过 LLM 基于最近对话生成个性化问候"""
@@ -314,8 +421,14 @@ class ActionDispatcher:
 
             # 检查冷却
             if not self._is_cooldown_ready(rule.cooldown_key, rule.cooldown_seconds):
-                logger.debug("[ActionDispatcher] 规则冷却中: %s", rule.cooldown_key)
-                continue
+                # 欲望饥渴触发的紧急意图绕过冷却
+                intent_type = item.metadata.get("intent_type", "").lower()
+                urgent = set(getattr(self_image.flame, "urgent_intents", set()))
+                if intent_type and intent_type in urgent:
+                    logger.info("[ActionDispatcher] 紧急意图绕过冷却: %s", rule.cooldown_key)
+                else:
+                    logger.debug("[ActionDispatcher] 规则冷却中: %s", rule.cooldown_key)
+                    continue
 
             self._queue.append(item)
             logger.info("[ActionDispatcher] 规则匹配: %s → %s (priority=%.2f)",

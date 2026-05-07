@@ -38,6 +38,15 @@ class IntentType(Enum):
     CARE = "care"
     """想关心用户"""
 
+    LEARN = "learn"
+    """想学习新知识"""
+
+    EXPRESS = "express"
+    """想分享想法或洞察"""
+
+    PROGRESS = "progress"
+    """想推进目标"""
+
 
 @dataclass
 class Intent:
