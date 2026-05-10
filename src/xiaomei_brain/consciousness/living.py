@@ -40,6 +40,7 @@ class LivingMessage:
     user_id: str = "global"
     session_id: str = "main"
     source: str = ""
+    images: list[str] = field(default_factory=list)  # 图片路径或 URL 列表
 
 
 # ── Heartbeat results ───────────────────────────────────────────────────
@@ -125,9 +126,6 @@ class Living:
         self._pending_confirm_msg: LivingMessage | None = None
         self._pending_confirm_intent: Any = None
 
-        # 意图模式
-        self._intent_mode: bool = False
-
     # ── Periodic task registration ──────────────────────────────────
 
     def register_periodic(
@@ -172,6 +170,7 @@ class Living:
         user_id: str | None = None,
         session_id: str | None = None,
         source: str = "",
+        images: list[str] | None = None,
     ) -> None:
         """放入消息（字符级过滤）"""
         if isinstance(content, str):
@@ -181,6 +180,7 @@ class Living:
             user_id=user_id or self.user_id,
             session_id=session_id or self.session_id,
             source=source,
+            images=images or [],
         )
         self._queue.put_nowait(msg)
 

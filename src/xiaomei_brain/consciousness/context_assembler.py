@@ -81,12 +81,15 @@ class ContextAssembler:
         session_id: str | None = None,
         user_id: str = "global",
         include_fresh_tail: bool = True,
+        intent_context: str = "",
     ) -> list[dict[str, Any]]:
         """Assemble context for LLM input (mode already determined by consciousness)."""
         if mode == "flow":
             return self._assemble_flow(max_tokens, session_id, include_fresh_tail)
         elif mode == "reflect":
             return self._assemble_reflect(max_tokens, session_id, user_input, user_id, include_fresh_tail)
+        elif mode == "task":
+            return self._assemble_task(max_tokens, session_id, user_input, user_id, include_fresh_tail, intent_context)
         else:
             return self._assemble_daily(max_tokens, session_id, user_input, user_id, include_fresh_tail)
 
@@ -385,6 +388,30 @@ class ContextAssembler:
                 remaining -= tokens
             messages.extend(reversed(tail))
 
+        return messages
+
+    def _assemble_task(
+        self,
+        max_tokens: int,
+        session_id: str | None,
+        user_input: str | None = None,
+        user_id: str = "global",
+        include_fresh_tail: bool = True,
+        intent_context: str = "",
+    ) -> list[dict[str, Any]]:
+        """Assemble task-mode context: daily-level context + task constraints.
+
+        Reuses _assemble_daily() for memory/graph assembly, then injects
+        intent_context (current sub-goal, progress, PROGRESS blocks) into
+        the system prompt — no external string concatenation needed.
+        """
+        messages = self._assemble_daily(
+            max_tokens, session_id, user_input, user_id, include_fresh_tail,
+        )
+        if intent_context and messages:
+            system_msg = messages[0]
+            if system_msg.get("role") == "system":
+                system_msg["content"] = system_msg["content"] + "\n" + intent_context
         return messages
 
     def _fresh_tail(
@@ -830,9 +857,9 @@ def determine_mode(
     if any(i in pending_intents for i in ("DREAM", "REFLECT", "RECALL")):
         return "reflect"
 
-    # Active goal → daily (need context to continue)
+    # Active goal → task (task constraints injected by assembler)
     if has_active_goal:
-        return "daily"
+        return "task"
 
     # High desire tension → daily (desire drives context need)
     max_desire = max(desire_state.get(k, 0) for k in ("belonging", "cognition", "achievement", "expression"))

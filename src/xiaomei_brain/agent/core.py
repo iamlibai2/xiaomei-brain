@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any, Generator
+from typing import Any, Callable, Generator
 
 from xiaomei_brain.base.llm import LLMClient
 from xiaomei_brain.memory.conversation_db import ConversationDB, estimate_tokens
@@ -17,6 +17,7 @@ from xiaomei_brain.tools.registry import ToolRegistry
 from xiaomei_brain.agent.message_utils import (
     strip_memory_stream, strip_orphaned_tool_messages,
     strip_orphaned_assistant_tool_calls, clean_messages,
+    append_to_content,
 )
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,7 @@ class Agent:
     def stream(
         self, user_input: str = "", consciousness_state: dict | None = None,
         messages: list[dict[str, Any]] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> Generator[str, None, None]:
         """Run the agent with streaming output.
 
@@ -172,21 +174,10 @@ class Agent:
                 session_id=self.session_id,
                 user_id=self.user_id,
                 include_fresh_tail=False,
+                intent_context=self.intent_context,
             )
 
-            # Clean up compressed messages from self.messages (delegate to DAG)
-            if self.context_assembler and self.context_assembler.dag:
-                self.messages = self.context_assembler.dag.filter_compressed_messages(
-                    self.messages, self.session_id,
-                )
-
-            # Inject intent_context into system prompt (if present)
-            if self.intent_context and base_context:
-                system_msg = base_context[0]
-                system_content = system_msg.get("content", "")
-                enhanced_content = system_content + "\n" + self.intent_context
-                base_context[0] = {"role": "system", "content": enhanced_content}
-                logger.debug("[Agent] injected intent_context: len=%d", len(self.intent_context))
+            # Clean up compressed messages
 
             # Trim self.messages to fit within max_tokens total budget
             max_total = 50000
@@ -211,8 +202,12 @@ class Agent:
             print_edit_diff, print_write_result,
         )
         _last_tool = ""
+        _tool_failure_counts: dict[tuple, int] = {}  # (name, args_json) -> 失败次数
 
         for step in range(self.max_steps):
+            if cancel_check and cancel_check():
+                logger.info("[Agent] ReAct 已取消 (step=%d)", step)
+                break
             # All steps: 预组装消息 或 [system prompt] + accumulated self.messages
             if messages is not None:
                 # self.messages accumulates tool results from each iteration
@@ -234,21 +229,14 @@ class Agent:
             for i in range(len(all_messages) - 1, -1, -1):
                 if all_messages[i].get("role") == "user":
                     all_messages[i] = dict(all_messages[i])
-                    all_messages[i]["content"] = all_messages[i]["content"] + MEMORY_DECISION_PROMPT
+                    all_messages[i]["content"] = append_to_content(all_messages[i]["content"], MEMORY_DECISION_PROMPT)
                     appended = True
-                    logger.info("[Memory] appended MEMORY_DECISION_PROMPT to msg[%d], content_len=%d", i, len(all_messages[i]["content"]))
+                    content_repr = all_messages[i]["content"]
+                    content_len = len(content_repr) if isinstance(content_repr, str) else sum(len(str(p)) for p in content_repr)
+                    logger.info("[Memory] appended MEMORY_DECISION_PROMPT to msg[%d], content_len=%d", i, content_len)
                     break
             if not appended:
                 logger.warning("[Memory] No user message found to append MEMORY_DECISION_PROMPT")
-
-            # Append intent_context to the last user message (same reason as MEMORY)
-            if self.intent_context:
-                for i in range(len(all_messages) - 1, -1, -1):
-                    if all_messages[i].get("role") == "user":
-                        all_messages[i] = dict(all_messages[i])
-                        all_messages[i]["content"] = all_messages[i]["content"] + "\n\n" + self.intent_context
-                        logger.debug("[Agent] appended intent_context to user msg[%d], len=%d", i, len(self.intent_context))
-                        break
 
             # Clean surrogate characters from all message content before sending to LLM
             all_messages = clean_messages(all_messages)
@@ -300,11 +288,32 @@ class Agent:
                     print_tool_call(idx, tc.name, tc.arguments)
                     _last_tool = tc.name
                     logger.debug("Tool call: %s(%s)", tc.name, tc.arguments)
-                    try:
-                        result = self.tools.execute(tc.name, **tc.arguments)
-                    except Exception as e:
-                        result = f"Error executing tool '{tc.name}': {e}"
-                        logger.error("Tool error: %s", e)
+
+                    # 重试检测：同一工具+参数失败超过2次则拦截
+                    call_key = (tc.name, json.dumps(tc.arguments, sort_keys=True))
+                    fail_count = _tool_failure_counts.get(call_key, 0)
+                    if fail_count >= 3:
+                        result = (
+                            f"Blocked retry: {tc.name} with the same arguments has failed "
+                            f"{fail_count} times. Do NOT retry this. Try a different approach "
+                            f"or report the problem to the user."
+                        )
+                        logger.warning("[Agent] 拦截重复失败工具调用(%d次): %s", fail_count, tc.name)
+                    else:
+                        try:
+                            result = self.tools.execute(tc.name, **tc.arguments)
+                        except Exception as e:
+                            result = f"Error executing tool '{tc.name}': {e}"
+                            logger.error("Tool error: %s", e)
+
+                    # 记录失败次数，成功则清除
+                    if isinstance(result, str) and (
+                        result.startswith("Error:") or result.startswith("Blocked")
+                        or "timed out" in result or "failed" in result.lower()
+                    ):
+                        _tool_failure_counts[call_key] = fail_count + 1
+                    else:
+                        _tool_failure_counts.pop(call_key, None)
 
                     # Update buffer with actual result
                     rec = tool_call_buffer.get(idx)

@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from xiaomei_brain.agent.message_utils import estimate_content_tokens
 from xiaomei_brain.consciousness.context_assembler import determine_mode
 from xiaomei_brain.memory.conversation_db import estimate_tokens
 
@@ -21,24 +22,41 @@ def build_context(
     intent_context: str = "",
     max_tokens: int = 50000,
     assemble: bool = True,
+    images: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """组装完整上下文，返回可直接传入 ReAct 引擎的消息列表。
 
     assemble=False 时跳过所有组装（DAG/长期记忆/system prompt），
     只记录消息 + 返回裸消息列表。
+
+    Args:
+        images: 图片路径或 URL 列表（多模态输入）。
+                本地路径自动转为 base64 data URL。
     """
-    # 1. 记录用户消息到 DB
+    # 构建 content（纯文本 或 多模态数组）
+    from xiaomei_brain.agent.message_utils import build_multimodal_content
+
+    images = images or []
+    message_content: str | list[dict] = (
+        build_multimodal_content(user_input, images)
+        if images
+        else user_input
+    )
+
+    # 1. 记录用户消息到 DB（图片信息存入 metadata）
     user_msg_id = None
     if agent.conversation_db:
+        meta = {"images": images} if images else None
         user_msg_id = agent.conversation_db.log(
             session_id=agent.session_id,
             role="user",
-            content=user_input,
+            content=user_input,  # DB 中只存文本
+            metadata=meta,
         )
 
     # 2. 添加到 messages
     agent.messages.append({
-        "role": "user", "content": user_input, "id": user_msg_id,
+        "role": "user", "content": message_content, "id": user_msg_id,
     })
 
     # ── 开关：不组装时直接返回裸消息 ──
@@ -80,14 +98,10 @@ def build_context(
             session_id=agent.session_id,
             user_id=agent.user_id,
             include_fresh_tail=False,
+            intent_context=intent_context,
         )
 
-    # 6. 注入 intent_context 到 system prompt
-    if intent_context and base_context:
-        system_msg = base_context[0]
-        system_content = system_msg.get("content", "")
-        enhanced_content = system_content + "\n" + intent_context
-        base_context[0] = {"role": "system", "content": enhanced_content}
+    # 6. intent_context 已由 assembler 内部注入（_assemble_task），不再外部拼接
 
     # 7. 过滤已压缩消息
     if agent.context_assembler and agent.context_assembler.dag:
@@ -103,7 +117,7 @@ def build_context(
     trimmed: list[dict[str, Any]] = []
     used = 0
     for m in reversed(agent.messages):
-        t = estimate_tokens(m.get("content", ""))
+        t = estimate_content_tokens(m.get("content", ""))
         if used + t > messages_budget and trimmed:
             break
         trimmed.append(m)

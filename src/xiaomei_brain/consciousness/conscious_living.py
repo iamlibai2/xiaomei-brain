@@ -45,7 +45,7 @@ from .storage import ConsciousnessStorage
 from .self_image_proxy import SelfImage
 from .identity import IdentityConfig
 from .perception import PerceptionConfig
-from ..drive import DriveEngine, DesireActionExecutor
+from ..drive import DriveEngine
 from ..purpose import PurposeEngine, IntentUnderstanding, task_executor, Goal, GoalType, GoalStatus, TaskType, IntentResult, GoalRelation, IntentType as PurposeIntentType
 from .task_manager import TaskManager
 from .task_storage import TaskStorage
@@ -77,12 +77,12 @@ class ConsciousLiving(Living):
     def __init__(
         self,
         agent_instance: Any,
-        idle_threshold: float = 1800,
-        dream_interval: float = 300,
-        idle_short: float = 300,
+        idle_threshold: float = 0,
+        dream_interval: float = 0,
+        idle_short: float = 0,
         session_id: str = "main",
         user_id: str = "global",
-        tick_interval: float = 1.0,  # L0 心跳间隔（秒）
+        tick_interval: float = 0,  # L0 心跳间隔（秒）
         load_consciousness: bool = True,  # 是否加载意识系统
         config: Any | None = None,  # LivingConfig
     ) -> None:
@@ -128,8 +128,11 @@ class ConsciousLiving(Living):
         self.task_storage = TaskStorage(agent_id=self._agent_id)
         self.task_manager = TaskManager(self.purpose, self.task_storage, llm_client)
 
-        # 欲望行为执行器
-        self.action_executor = DesireActionExecutor(self, agent_id=self.agent.id)
+        # 任务模式标记：/intask 设置，/inchat 清除
+        # 作用：在尚未创建 Goal 时让 determine_mode() 返回 "task"
+        self._task_mode: bool = False
+
+
 
         # Intent Understanding
         self.intent_understanding = IntentUnderstanding(llm_client)
@@ -186,7 +189,6 @@ class ConsciousLiving(Living):
         _init_rules(drive_config=drive_config, living_config=self._config)
         self._dispatcher.load_rules(RULES)
         self._dispatcher.inject_conscious_living(self)
-        self._dispatcher.inject_action_executor(self.action_executor)
 
         # 记录初始化摘要
         self._log_initialization()
@@ -290,13 +292,13 @@ class ConsciousLiving(Living):
                 "energy_level": 0.8,
                 "desire_state": {},
                 "intent_buffer": [],
-                "has_active_goal": bool(self.purpose and self.purpose.current_goal),
+                "has_active_goal": bool(self.purpose and self.purpose.current_goal) or self._task_mode,
             }
 
         si = self.consciousness.get_self_image()
-        pending = si.flame.intent_buffer
+        pending = si.intent.intent_buffer
         energy = si.body.energy
-        has_goal = bool(self.purpose and self.purpose.current_goal)
+        has_goal = bool(self.purpose and self.purpose.current_goal) or self._task_mode
         desire_state = {}
         if self.drive:
             d = self.drive.desire
@@ -444,10 +446,6 @@ class ConsciousLiving(Living):
 
         result = self.consciousness.tick(agent_state=state.value)
 
-        # L2 触发后同步 Drive 数据（供养 SelfImage）
-        if result == TickResult.L2_TRIGGERED:
-            self._sync_self_image_from_subsystems()
-
         # L3 深度沉思：任何状态都可以发生，不改变生命状态
         # （像人类沉思，发生在清醒/空闲/睡眠中）
         if result == TickResult.L3_TRIGGERED:
@@ -507,20 +505,8 @@ class ConsciousLiving(Living):
             rows = self.agent.conversation_db.get_recent(10, session_id=self.session_id)
             recent = [{"role": r.get("role", ""), "content": r.get("content", "")} for r in rows]
 
-        si.flame.update_recent_conversations(recent)
+        si.perception.recent_conversations = recent[-10:] if len(recent) > 10 else recent
 
-    def _sync_self_image_from_subsystems(self) -> None:
-        """将 Drive / Purpose 连接到 SelfImage（实时代理，无需手动同步）。
-
-        只需调用一次 attach，后续 SelfImage 自动从 Drive/Purpose 读取实时值。
-        """
-        si = self.consciousness.get_self_image()
-        if not si:
-            return
-        if self.drive and not si.body._drive:
-            si.attach_drive(self.drive)
-        if self.purpose and not si.mind._purpose:
-            si.attach_purpose(self.purpose)
 
     # ── ActionDispatcher 通知 ────────────────────────────────
 
@@ -555,17 +541,19 @@ class ConsciousLiving(Living):
         cmd = parts[0].lower() if parts else ""
         cmd_args = parts[1] if len(parts) > 1 else ""
 
-        # /intask 进入任务模式（保持直到 /inchat）
+        # /intask 进入任务模式：设置标记（不创建占位目标），驱动 determine_mode → "task"
         if cmd == "intask":
-            self._intent_mode = True
-            print("\n[任务模式] 已进入，/inchat 退出", flush=True)
+            self._task_mode = True
+            print("\n[任务模式] 已进入，请描述你要做的任务，/inchat 退出", flush=True)
             self._print_prompt()
             self._command_done.set()
             return
 
-        # /inchat 退出任务模式，回到聊天模式
+        # /inchat 退出任务模式：清除标记 + 暂停当前目标
         if cmd == "inchat":
-            self._intent_mode = False
+            self._task_mode = False
+            if self.purpose and self.purpose.current_goal:
+                self.purpose.pause_goal(self.purpose.current_goal.id)
             print("\n[聊天模式] 已退出", flush=True)
             self._print_prompt()
             self._command_done.set()
@@ -601,132 +589,17 @@ class ConsciousLiving(Living):
         if self.drive:
             self.drive.on_user_active()
 
-        # "继续"检测：只在任务模式下触发，聊天模式不拦截
-        if self._intent_mode and self.purpose and self._is_continue_statement(msg.content):
-            goals = self.purpose.get_top_level_goals()
-            if len(goals) == 1:
-                # 只有一个目标，找到关联的 Task
-                goal_id = goals[0].id
-                task = self.task_manager.find_by_goal_id(goal_id)
-                # 如果是暂停状态，先恢复 Task
-                resume_context = ""
-                if goals[0].is_paused() and task:
-                    resumed = self.task_manager.resume_task(task.task_id)
-                    if resumed:
-                        resume_context = resumed.get_cognitive_context()
-                    print(f"[任务] 恢复: {goals[0].description[:40]}", flush=True)
-                else:
-                    self.purpose.set_current(goal_id)
-                    print(f"[目标] 延续任务: {goals[0].description[:40]}", flush=True)
-                from xiaomei_brain.purpose.intent import IntentType, GoalRelation
-                fake_intent = IntentResult(
-                    intent_type=PurposeIntentType.TASK,
-                    goals=[goals[0]],
-                    relation=GoalRelation.MODIFIES,
-                    target_goal_id=goal_id,
-                    confidence=1.0,
-                    reasoning="延续现有任务",
-                )
-                self._run_chat(msg, self._build_intent_context(fake_intent, chosen_by_user=True, resume_snapshot=resume_context))
-                return
-            elif len(goals) > 1:
-                # 精确匹配：从"继续XXX"中提取关键词，找匹配的目标
-                task_keywords = msg.content
-                for kw in ("继续", "接着做", "还做", "再做", "延续", "持续"):
-                    if task_keywords.startswith(kw):
-                        task_keywords = task_keywords[len(kw):].strip("，。")
-                        break
-
-                # 找描述中包含关键词的目标（关键词匹配）
-                matched_goal = None
-                import re
-                # 先按空格/标点拆分，不够细时再按字符拆分
-                words = [k for k in re.split(r"[\s，、。]+", task_keywords) if k]
-                # 如果拆分后只有一个长词（中文），按字符拆分
-                if len(words) == 1 and len(words[0]) > 2 and re.match(r"^[\u4e00-\u9fff]+$", words[0]):
-                    keywords = list(words[0])
-                else:
-                    keywords = words
-                if keywords:
-                    for g in goals:
-                        desc = g.description or ""
-                        # 所有关键词都在描述中
-                        if all(kw in desc for kw in keywords):
-                            matched_goal = g
-                            break
-                    # 未找到：尝试宽松匹配（至少一个>=2字的关键词匹配）
-                    if not matched_goal:
-                        long_keywords = [kw for kw in keywords if len(kw) >= 2]
-                        for g in goals:
-                            desc = g.description or ""
-                            if any(kw in desc for kw in long_keywords):
-                                matched_goal = g
-                                break
-
-                if matched_goal:
-                    # 精确匹配到，直接使用
-                    goal_id = matched_goal.id
-                    task = self.task_manager.find_by_goal_id(goal_id)
-                    resume_context = ""
-                    if matched_goal.is_paused() and task:
-                        resumed = self.task_manager.resume_task(task.task_id)
-                        if resumed:
-                            resume_context = resumed.get_cognitive_context()
-                        print(f"[任务] 恢复: {matched_goal.description[:40]}", flush=True)
-                    else:
-                        self.purpose.set_current(goal_id)
-                        print(f"[目标] 延续任务: {matched_goal.description[:40]}", flush=True)
-                    from xiaomei_brain.purpose.intent import IntentType, GoalRelation
-                    fake_intent = IntentResult(
-                        intent_type=PurposeIntentType.TASK,
-                        goals=[matched_goal],
-                        relation=GoalRelation.MODIFIES,
-                        target_goal_id=goal_id,
-                        confidence=1.0,
-                        reasoning="延续现有任务",
-                    )
-                    self._run_chat(msg, self._build_intent_context(fake_intent, chosen_by_user=True, resume_snapshot=resume_context))
-                    return
-
-                # 未匹配到，让用户选（按描述去重）
-                seen = set()
-                options = []
-                goal_ids = []
-                for g in goals:
-                    if g.description not in seen:
-                        seen.add(g.description)
-                        label = g.description
-                        if g.is_paused():
-                            label = f"{g.description}（暂停中）"
-                        options.append(label)
-                        goal_ids.append(g.id)
-                confirm_info = {
-                    "type": "continue_goal",
-                    "question": f"要继续哪个任务？（未找到匹配「{task_keywords}」）",
-                    "options": options,
-                    "goal_ids": goal_ids,
-                }
-                self._pending_confirm = confirm_info
-                self._waiting_confirm = True
-                self._pending_confirm_msg = msg
-                if self.on_confirm_required:
-                    self.on_confirm_required(confirm_info)
-                else:
-                    print(f"\n[确认] {confirm_info['question']}", flush=True)
-                    for i, opt in enumerate(confirm_info['options']):
-                        print(f"  {i+1}. {opt}", flush=True)
-                    print(f"  0. 都不选", flush=True)
-                    self._print_prompt()
-                return
-            # 无活跃目标，走正常意图分析
+        # "继续"检测：只在有活跃目标时触发
+        if self._handle_continue(msg):
+            return
 
         # 等待确认状态：处理用户的选择
         if self._waiting_confirm and self._pending_confirm:
             self._handle_confirmation(msg.content)
             return
 
-        # 意图模式：所有消息都经过 LLM 意图分析
-        if self._intent_mode:
+        # 有活跃目标时：LLM 意图分析（task 模式）
+        if self.purpose and self.purpose.current_goal:
             logger.info("[ConsciousLiving] 任务模式: %s", msg.content[:50])
             intent_result = self._analyze_intent(msg.content)
             logger.info(
@@ -771,6 +644,124 @@ class ConsciousLiving(Living):
             if text.startswith(p) or text.startswith(f"{p}，") or text.startswith(f"{p}。"):
                 return True
         return False
+
+    # ── "继续" 处理 ──────────────────────────────────────────────
+
+    def _handle_continue(self, msg) -> bool:
+        """处理"继续"语句。返回 True 表示已处理，False 表示无需处理。"""
+        if not (self.purpose and self.purpose.current_goal):
+            return False
+        if not self._is_continue_statement(msg.content):
+            return False
+
+        goals = self.purpose.get_top_level_goals()
+        if not goals:
+            return False
+
+        if len(goals) == 1:
+            self._resume_or_activate_goal(goals[0], msg)
+            return True
+
+        # 多目标：关键词匹配 或 选择菜单
+        matched = self._match_goal_by_keywords(msg.content, goals)
+        if matched:
+            self._resume_or_activate_goal(matched, msg)
+        else:
+            self._show_continue_selection(goals, msg)
+        return True
+
+    def _resume_or_activate_goal(self, goal, msg, chosen_by_user: bool = False) -> None:
+        """恢复暂停的目标或激活它，然后 _run_chat。"""
+        task = self.task_manager.find_by_goal_id(goal.id)
+        resume_context = ""
+        if goal.is_paused() and task:
+            resumed = self.task_manager.resume_task(task.task_id)
+            if resumed:
+                resume_context = resumed.get_cognitive_context()
+            print(f"[任务] 恢复: {goal.description[:40]}", flush=True)
+        else:
+            self.purpose.set_current(goal.id)
+            print(f"[目标] 延续任务: {goal.description[:40]}", flush=True)
+
+        from xiaomei_brain.purpose.intent import IntentType, GoalRelation
+        fake_intent = IntentResult(
+            intent_type=PurposeIntentType.TASK,
+            goals=[goal],
+            relation=GoalRelation.MODIFIES,
+            target_goal_id=goal.id,
+            confidence=1.0,
+            reasoning="延续现有任务",
+        )
+        self._run_chat(msg, self._build_intent_context(
+            fake_intent, chosen_by_user=chosen_by_user, resume_snapshot=resume_context,
+        ))
+
+    def _match_goal_by_keywords(self, text: str, goals: list) -> Any | None:
+        """从"继续XXX"中提取关键词，匹配目标列表。返回匹配的 Goal 或 None。"""
+        task_keywords = text
+        for kw in ("继续", "接着做", "还做", "再做", "延续", "持续"):
+            if task_keywords.startswith(kw):
+                task_keywords = task_keywords[len(kw):].strip("，。")
+                break
+
+        import re
+        words = [k for k in re.split(r"[\s，、。]+", task_keywords) if k]
+        if len(words) == 1 and len(words[0]) > 2 and re.match(r"^[\u4e00-\u9fff]+$", words[0]):
+            keywords = list(words[0])
+        else:
+            keywords = words
+
+        if not keywords:
+            return None
+
+        # 精确匹配：所有关键词都在描述中
+        for g in goals:
+            desc = g.description or ""
+            if all(kw in desc for kw in keywords):
+                return g
+
+        # 宽松匹配：至少一个 >=2 字的关键词匹配
+        long_keywords = [kw for kw in keywords if len(kw) >= 2]
+        for g in goals:
+            desc = g.description or ""
+            if any(kw in desc for kw in long_keywords):
+                return g
+
+        return None
+
+    def _show_continue_selection(self, goals: list, msg) -> None:
+        """显示"继续"选择菜单（多目标无法关键词匹配时）。"""
+        seen = set()
+        options = []
+        goal_ids = []
+        for g in goals:
+            if g.description not in seen:
+                seen.add(g.description)
+                label = g.description
+                if g.is_paused():
+                    label = f"{g.description}（暂停中）"
+                options.append(label)
+                goal_ids.append(g.id)
+
+        confirm_info = {
+            "type": "continue_goal",
+            "question": "要继续哪个任务？",
+            "options": options,
+            "goal_ids": goal_ids,
+        }
+        self._pending_confirm = confirm_info
+        self._waiting_confirm = True
+        self._pending_confirm_msg = msg
+        if self.on_confirm_required:
+            self.on_confirm_required(confirm_info)
+        else:
+            print(f"\n[确认] {confirm_info['question']}", flush=True)
+            for i, opt in enumerate(confirm_info['options']):
+                print(f"  {i+1}. {opt}", flush=True)
+            print(f"  0. 都不选", flush=True)
+            self._print_prompt()
+
+    # ── Intent analysis ──────────────────────────────────────────
 
     def _analyze_intent(self, user_input: str) -> Any:
         """分析用户意图（每条消息都分析）
@@ -846,145 +837,141 @@ class ConsciousLiving(Living):
         return result
 
     def _handle_task_intent(self, intent_result: Any, msg: Any = None) -> None:
-        """处理任务意图：通过 TaskManager 创建 Task（v2 独立认知实体）
-
-        Args:
-            intent_result: IntentResult，包含 goals 和 sub_goals
-            msg: 原始消息，用于单步任务直接执行
-
-        注意：子目标分解已合并到 IntentUnderstanding，不再单独调用 auto_decompose
-        """
-        # 过滤：排除元目标（描述意图识别/目标提取本身的描述）
-        META_GOAL_KEYWORDS = ("意图识别", "目标提取", "子目标分解", "自动分解")
-        filtered_goals = []
-        for g in intent_result.goals:
-            is_meta = any(kw in g.description for kw in META_GOAL_KEYWORDS)
-            if is_meta:
-                logger.info("[Intent] 跳过元目标: %s", g.description[:50])
-                continue
-            filtered_goals.append(g)
-        if not filtered_goals:
-            logger.info("[Intent] 无有效目标，跳过")
+        """处理任务意图：过滤 → MODIFIES 复用 → 创建 Task → 按类型路由。"""
+        goals = self._filter_meta_goals(intent_result.goals)
+        if not goals:
             return
-        for goal in filtered_goals:
-            # 如果是 MODIFIES 关系，复用现有目标，不创建新目标
-            target_id = intent_result.target_goal_id
-            # 如果 LLM 没指定 target_goal_id 但有当前活跃目标，默认修改当前目标
-            if intent_result.relation.value == "modifies":
-                if not target_id and self.purpose.current_goal:
-                    target_id = self.purpose.current_goal.id
-                    logger.info("[Intent] MODIFIES 无 target_goal_id，默认修改当前目标: %s",
-                                self.purpose.current_goal.description[:40])
-                if target_id:
-                    existing = self.purpose.goals.get(target_id)
-                    if existing:
-                        self.purpose.set_current(existing.id)
-                        # 检查是继续执行还是停止/放弃
-                        stop_keywords = ["停止", "取消", "别", "算了", "不做", "中止"]
-                        is_stop = any(kw in goal.description for kw in stop_keywords)
-                        if is_stop:
-                            existing.abandon()
-                            # 同步 Task
-                            task = self.task_manager.find_by_goal_id(target_id)
-                            if task:
-                                self.task_manager.abandon_task(task.task_id)
-                            print(f"[目标] 已放弃: {existing.description[:40]}", flush=True)
-                        else:
-                            print(f"[目标] 延续任务: {existing.description[:40]}", flush=True)
-                        return
+        for goal in goals:
+            if self._try_modify_existing(intent_result, goal):
+                continue
+            task = self._create_task_from_intent(intent_result, goal)
+            self._route_task_by_type(task, intent_result, msg)
 
-            # 确定父目标（如果 relation 是 sub_goal_of）
-            parent_id = None
-            if intent_result.relation.value == "sub_goal_of" and intent_result.target_goal_id:
-                parent_id = intent_result.target_goal_id
-
-            # 解析 task_type
-            task_type_str = getattr(intent_result, "task_type", "") or "execution"
-            try:
-                task_type = TaskType(task_type_str)
-            except ValueError:
-                task_type = TaskType.EXECUTION
-
-            # 新任务到达：先暂停当前 Task（TaskManager 自动处理）
-            current_task = self.task_manager.get_current_task()
-            if current_task and current_task.task_id:
-                # 检查是否是同一个 Goal 的 Task
-                if not (current_task.goal_id and current_task.goal_id == intent_result.target_goal_id):
-                    self.task_manager.pause_task(current_task.task_id)
-                    print(f"[任务] 暂停「{current_task.description[:40]}」", flush=True)
-
-            # 创建 Task（v2：独立认知实体）
-            task = self.task_manager.create_task(
-                description=goal.description,
-                task_type=task_type,
-            )
-            logger.info(
-                "[Intent] 新 Task 创建: task_id=%s type=%s desc=%s goal_id=%s",
-                task.task_id, task_type.value, task.description[:50], task.goal_id,
-            )
-
-            # 根据 task_type 决定是否拆解子目标
-            if task_type == TaskType.EXECUTION and intent_result.has_sub_goals() and task.goal_id:
-                sub_goals = self.purpose.decompose_goal(
-                    goal_id=task.goal_id,
-                    sub_descriptions=intent_result.sub_goals,
-                )
-                logger.info(
-                    "[Intent] 子目标分解完成: %d 个子目标",
-                    len(sub_goals),
-                )
-                print(f"\n[目标] 已分解为 {len(sub_goals)} 个子目标:", flush=True)
-                for i, sg in enumerate(sub_goals):
-                    print(f"  {i+1}. {sg.description[:40]}", flush=True)
-
-                # 激活第一个子目标
-                if sub_goals:
-                    self.purpose.set_current(sub_goals[0].id)
-                    self._print_sub_goal_progress(sub_goals[0], sub_goals)
-                    new_intent = self._build_intent_context_for_goal(sub_goals[0])
-                    self._run_chat(msg, new_intent)
-                    return
-            elif task.goal_id:
-                # 非 EXECUTION 或 无子目标 → 直接执行 Goal
-                goal_obj = self.purpose.goals.get(task.goal_id)
-                if goal_obj:
-                    self.purpose.set_current(goal_obj.id)
-                    type_label = {
-                        TaskType.EXECUTION: "EXECUTION",
-                        TaskType.LEARNING: "LEARNING",
-                        TaskType.REFLECTION: "REFLECTION",
-                        TaskType.RELATIONSHIP: "RELATIONSHIP",
-                        TaskType.EXPLORATION: "EXPLORATION",
-                    }.get(task_type, task_type.value)
-                    print(f"[{type_label}] 当前: {goal_obj.description[:40]}", flush=True)
-                    new_intent = self._build_intent_context_for_goal(goal_obj)
-                    self._run_chat(msg, new_intent)
-                    return
+    @staticmethod
+    def _filter_meta_goals(goals: list) -> list:
+        """过滤元目标（描述意图识别/目标提取本身的描述）。"""
+        META_GOAL_KEYWORDS = ("意图识别", "目标提取", "子目标分解", "自动分解")
+        result = []
+        for g in goals:
+            if not any(kw in g.description for kw in META_GOAL_KEYWORDS):
+                result.append(g)
             else:
-                # 无 Goal 关联（非 EXECUTION 且不需要子目标管理）
-                type_label = {
-                    TaskType.LEARNING: "LEARNING",
-                    TaskType.REFLECTION: "REFLECTION",
-                    TaskType.RELATIONSHIP: "RELATIONSHIP",
-                    TaskType.EXPLORATION: "EXPLORATION",
-                }.get(task_type, task_type.value)
-                print(f"[{type_label}] 当前: {task.description[:40]}", flush=True)
-                # 为非 Goal 类型构建临时上下文
-                from ..purpose.intent import IntentResult, IntentType, GoalRelation
-                fake_intent = IntentResult(
-                    intent_type=PurposeIntentType.TASK,
-                    goals=[],
-                    relation=GoalRelation.NEW,
-                    confidence=1.0,
-                    reasoning=f"{type_label} 类型任务: {task.description[:50]}",
-                )
-                new_intent = self._build_intent_context(fake_intent)
-                self._run_chat(msg, new_intent)
-                return
+                logger.info("[Intent] 跳过元目标: %s", g.description[:50])
+        return result
 
-        # 刷新命令（让用户知道有新目标）
-        if filtered_goals:
-            print(f"\n[目标] 已添加: {filtered_goals[0].description[:40]}", flush=True)
+    def _try_modify_existing(self, intent_result: Any, goal: Any) -> bool:
+        """MODIFIES 关系：复用/停止现有目标。返回 True 表示已处理（无需创建新 Task）。"""
+        if intent_result.relation.value != "modifies":
+            return False
+
+        target_id = intent_result.target_goal_id
+        if not target_id and self.purpose.current_goal:
+            target_id = self.purpose.current_goal.id
+        if not target_id:
+            return False
+
+        existing = self.purpose.goals.get(target_id)
+        if not existing:
+            return False
+
+        self.purpose.set_current(existing.id)
+        stop_keywords = ["停止", "取消", "别", "算了", "不做", "中止"]
+        if any(kw in goal.description for kw in stop_keywords):
+            existing.abandon()
+            task = self.task_manager.find_by_goal_id(target_id)
+            if task:
+                self.task_manager.abandon_task(task.task_id)
+            print(f"[目标] 已放弃: {existing.description[:40]}", flush=True)
+        else:
+            print(f"[目标] 延续任务: {existing.description[:40]}", flush=True)
+        return True
+
+    def _create_task_from_intent(self, intent_result: Any, goal: Any):
+        """暂停当前 Task（如果不同），创建新 Task。"""
+        # 解析 task_type
+        task_type_str = getattr(intent_result, "task_type", "") or "execution"
+        try:
+            task_type = TaskType(task_type_str)
+        except ValueError:
+            task_type = TaskType.EXECUTION
+
+        # 暂停当前 Task
+        current_task = self.task_manager.get_current_task()
+        if current_task and current_task.task_id:
+            if not (current_task.goal_id and current_task.goal_id == intent_result.target_goal_id):
+                self.task_manager.pause_task(current_task.task_id)
+                print(f"[任务] 暂停「{current_task.description[:40]}」", flush=True)
+
+        # 创建新 Task
+        task = self.task_manager.create_task(
+            description=goal.description,
+            task_type=task_type,
+        )
+        self._task_mode = False  # 真实目标已创建，清除 /intask 标记
+        logger.info(
+            "[Intent] 新 Task 创建: task_id=%s type=%s desc=%s goal_id=%s",
+            task.task_id, task_type.value, task.description[:50], task.goal_id,
+        )
+        return task
+
+    def _route_task_by_type(self, task, intent_result: Any, msg: Any = None) -> None:
+        """按 TaskType 路由：EXECUTION→分解子目标 / 其他→直接执行。"""
+        task_type = task.type
+        TYPE_LABEL = {
+            TaskType.EXECUTION: "EXECUTION",
+            TaskType.LEARNING: "LEARNING",
+            TaskType.REFLECTION: "REFLECTION",
+            TaskType.RELATIONSHIP: "RELATIONSHIP",
+            TaskType.EXPLORATION: "EXPLORATION",
+        }
+        type_label = TYPE_LABEL.get(task_type, task_type.value)
+
+        if task_type == TaskType.EXECUTION and intent_result.has_sub_goals() and task.goal_id:
+            self._route_execution_with_sub_goals(task, intent_result, msg)
+        elif task.goal_id:
+            self._route_goal_direct(task, task_type, type_label, msg)
+        else:
+            self._route_no_goal(task, task_type, type_label, msg)
+
+    def _route_execution_with_sub_goals(self, task, intent_result: Any, msg: Any = None) -> None:
+        """EXECUTION 类型 + 有子目标：分解并激活第一个子目标。"""
+        sub_goals = self.purpose.decompose_goal(
+            goal_id=task.goal_id,
+            sub_descriptions=intent_result.sub_goals,
+        )
+        logger.info("[Intent] 子目标分解完成: %d 个子目标", len(sub_goals))
+        print(f"\n[目标] 已分解为 {len(sub_goals)} 个子目标:", flush=True)
+        for i, sg in enumerate(sub_goals):
+            print(f"  {i+1}. {sg.description[:40]}", flush=True)
+
+        if sub_goals:
+            self.purpose.set_current(sub_goals[0].id)
+            self._print_sub_goal_progress(sub_goals[0], sub_goals)
+            new_intent = self._build_intent_context_for_goal(sub_goals[0])
+            self._run_chat(msg, new_intent)
+
+    def _route_goal_direct(self, task, task_type, type_label: str, msg: Any = None) -> None:
+        """有 Goal 关联但无子目标：直接激活 Goal 执行。"""
+        goal_obj = self.purpose.goals.get(task.goal_id)
+        if goal_obj:
+            self.purpose.set_current(goal_obj.id)
+            print(f"[{type_label}] 当前: {goal_obj.description[:40]}", flush=True)
+            new_intent = self._build_intent_context_for_goal(goal_obj)
+            self._run_chat(msg, new_intent)
+
+    def _route_no_goal(self, task, task_type, type_label: str, msg: Any = None) -> None:
+        """无 Goal 关联（非 EXECUTION 类型）：用 Task 描述直接执行。"""
+        print(f"[{type_label}] 当前: {task.description[:40]}", flush=True)
+        from ..purpose.intent import IntentResult, IntentType, GoalRelation
+        fake_intent = IntentResult(
+            intent_type=PurposeIntentType.TASK,
+            goals=[],
+            relation=GoalRelation.NEW,
+            confidence=1.0,
+            reasoning=f"{type_label} 类型任务: {task.description[:50]}",
+        )
+        new_intent = self._build_intent_context(fake_intent)
+        self._run_chat(msg, new_intent)
 
     def _build_confirm_info(self, sub_goal, intent_result) -> dict | None:
         return task_executor.build_confirm_info(sub_goal, intent_result)
@@ -1001,7 +988,6 @@ class ConsciousLiving(Living):
             if inp.isdigit():
                 idx = int(inp)
                 if idx == 0:
-                    # 都不选，清空确认状态，等用户输入新内容
                     self._pending_confirm = None
                     self._waiting_confirm = False
                     self._pending_confirm_msg = None
@@ -1010,39 +996,14 @@ class ConsciousLiving(Living):
                 if 1 <= idx <= len(confirm["goal_ids"]):
                     goal_id = confirm["goal_ids"][idx - 1]
                     goal = self.purpose.goals.get(goal_id)
-                    task = self.task_manager.find_by_goal_id(goal_id)
-
-                    # 如果是暂停状态，先恢复 Task（产生 resume_snapshot）
-                    resume_context = ""
-                    if goal and goal.is_paused() and task:
-                        resumed = self.task_manager.resume_task(task.task_id)
-                        if resumed:
-                            resume_context = resumed.get_cognitive_context()
-                        print(f"[任务] 恢复: {goal.description[:40]}", flush=True)
-                    else:
-                        self.purpose.set_current(goal_id)
-                        if goal:
-                            print(f"[目标] 延续任务: {goal.description[:40]}", flush=True)
-
-                    # 清理确认状态
                     original_msg = self._pending_confirm_msg
+                    # 清理确认状态（在 _run_chat 前，避免递归时状态残留）
                     self._pending_confirm = None
                     self._waiting_confirm = False
                     self._pending_confirm_msg = None
-
                     if original_msg and goal:
-                        from xiaomei_brain.purpose.intent import IntentType, GoalRelation
-                        fake_intent = IntentResult(
-                            intent_type=PurposeIntentType.TASK,
-                            goals=[goal],
-                            relation=GoalRelation.MODIFIES,
-                            target_goal_id=goal_id,
-                            confidence=1.0,
-                            reasoning="用户选择延续任务",
-                        )
-                        self._run_chat(original_msg, self._build_intent_context(fake_intent, chosen_by_user=True, resume_snapshot=resume_context))
+                        self._resume_or_activate_goal(goal, original_msg, chosen_by_user=True)
                     return
-
             print("[确认] 无效选项，请重新选择：", flush=True)
             return
 
@@ -1211,11 +1172,12 @@ class ConsciousLiving(Living):
                         consciousness_state=cs,
                         intent_context=current_context,
                         assemble=getattr(self, "assemble_context", True),
+                        images=getattr(current_msg, "images", None),
                     )
 
                     # 调用 ReAct 引擎
                     chunks = []
-                    for chunk in agent.stream(messages=assembled):
+                    for chunk in agent.stream(messages=assembled, cancel_check=lambda: self._cancel_requested):
                         chunks.append(chunk)
                     content = "".join(chunks)
                     elapsed = time.time() - t0
@@ -1534,15 +1496,15 @@ class ConsciousLiving(Living):
             self.consciousness._last_l3_time = time.time()
             # 清理跨会话残留 intent（快照恢复的旧 intent 不应跨会话生效）
             self.consciousness.intent_buffer.clear()
-            self.consciousness.flame.intent_buffer.clear()
-            self.consciousness.flame.urgent_intents.clear()
+            self.consciousness.intent_slot.intent_buffer.clear()
+            self.consciousness.intent_slot.urgent_intents.clear()
             # 调用意识系统的 on_wake，生成问候意图（基于梦境报告）
             logger.info("[ConsciousLiving._on_wake] 调用 consciousness.on_wake()")
             self.consciousness.on_wake()
             # 先更新最近对话（供 ActionDispatcher 生成个性化问候）
             self._update_recent_conversations()
             # 同步状态后，由 ActionDispatcher 统一分发意图
-            self._sync_self_image_from_subsystems()
+            # Drive/Purpose 已在 SelfImage 构造时连接，无需手动同步
             si = self.consciousness.get_self_image()
             self._dispatcher.tick(si)
             self._dispatcher.process_queue()
