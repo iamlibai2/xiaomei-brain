@@ -82,52 +82,19 @@ class IntentResult:
         return self.intent_type == IntentType.CHAT
 
 
-INTENT_CLASSIFY_PROMPT = """
-分析用户输入，判断意图类型。
+# INTENT_CLASSIFY_PROMPT / GOAL_DECOMPOSE_PROMPT 已迁移至 prompts/purpose.py
+# 以下保留备查
+# INTENT_CLASSIFY_PROMPT = """
+# 分析用户输入，判断意图类型。
+# ...
+# """
+#
+# GOAL_DECOMPOSE_PROMPT = """
+# 给定一个目标，将其分解为子目标。
+# ...
+# """
 
-【当前状态】
-存在意义：{meaning}
-当前目标：{current_goal}
-当前目标深度：{current_goal_depth}（0=顶层目标，1=一级子目标/已拆解）
-待执行目标：{pending_goals}
-
-【用户输入】
-{user_input}
-
-请判断意图类型（intent_type），只需返回一个类型：
-
-- task: 用户要求执行某个任务（如：帮我做X、开发X、做个X）
-- query: 用户提出问题（如：X是什么、怎么做X、如何X）
-- chat: 闲聊，无明确任务目的
-- clarification: 请求解释或细化已有的目标
-
-重要规则：
-- **停止/放弃已有目标 → task**（如"别做X了"、"取消这个任务"）
-- **明确的任务请求 → task**（如"帮我做一个ERP"、"开发一个网站"）
-- **以"什么/怎么/如何/为什么"开头 → query**（如"ERP是什么"）
-- **当前有活跃目标时，用户消息是关于当前目标的细化/解释 → clarification**
-
-返回 JSON：
-{{"intent_type": "task/query/chat/clarification", "confidence": 0.0-1.0, "reasoning": "判断理由", "goal_description": "目标描述（仅task时有）"}}
-"""
-
-
-GOAL_DECOMPOSE_PROMPT = """
-给定一个目标，将其分解为子目标。
-
-【目标】
-{goal_description}
-
-分解原则：
-- 涉及技术选择（语言/框架/数据库/方案）的 → 必须有对应的"确认X"子目标
-- 复杂项目 → 按"了解需求 → 制定计划 → 执行 → 验收"顺序分解
-- 单步操作（清空/删除/重置/简单查询）→ 返回空数组，不分解
-
-返回 JSON：
-{{"sub_goals": ["子目标1", "子目标2"]}}
-如果不需要分解：
-{{"sub_goals": []}}
-"""
+from ..prompts.purpose import INTENT_CLASSIFY_PROMPT, GOAL_DECOMPOSE_PROMPT
 
 
 class IntentUnderstanding:

@@ -15,6 +15,8 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
+from ..prompts.drive import EXPRESSION_PROMPT, GREETING_PROMPT, CARE_PROMPT
+
 if TYPE_CHECKING:
     from .action_item import ActionItem, ActionType
     from .self_image_proxy import SelfImage
@@ -29,8 +31,11 @@ class ActionExecutor:
     负责把 ActionItem 转换为实际行为。
     """
 
+    LEARN_COOLDOWN = 60  # 学习冷却（秒）
+
     def __init__(self, dispatcher: ActionDispatcher):
         self.dispatcher = dispatcher
+        self._learn_last_mtime: float = 0  # 上次学习文件的 mtime
 
     def execute(self, item: ActionItem) -> bool:
         """执行单个 ActionItem。
@@ -68,17 +73,17 @@ class ActionExecutor:
         # 消费已执行的 intent（避免下一 tick 重复匹配）
         if intent_type and item.source == "intent":
             si = self.dispatcher._get_self_image()
-            if si and hasattr(si, "intent_buffer"):
+            if si and hasattr(si.intent, "intent_buffer"):
                 upper_type = intent_type.upper()
-                si.flame.intent_buffer = [i for i in si.flame.intent_buffer if i.upper() != upper_type]
+                si.intent.intent_buffer = [i for i in si.intent.intent_buffer if i.upper() != upper_type]
                 logger.debug("[ActionExecutor] 已消费 intent: %s", intent_type)
 
             # 行为完成 → 满足对应欲望（打通 L2 → drive 反馈链路）
             self._satisfy_intent_desire(intent_type)
             # 清除紧急标记
             si = self.dispatcher._get_self_image()
-            if si and hasattr(si.flame, "urgent_intents"):
-                si.flame.urgent_intents.discard(intent_type.lower())
+            if si and hasattr(si.intent, "urgent_intents"):
+                si.intent.urgent_intents.discard(intent_type.lower())
 
         return True
 
@@ -118,9 +123,9 @@ class ActionExecutor:
             # 消费已执行的 intent
             if intent_type and item.source == "intent":
                 si = self.dispatcher._get_self_image()
-                if si and hasattr(si, "intent_buffer"):
+                if si and hasattr(si.intent, "intent_buffer"):
                     upper_type = intent_type.upper()
-                    si.flame.intent_buffer = [i for i in si.flame.intent_buffer if i.upper() != upper_type]
+                    si.intent.intent_buffer = [i for i in si.intent.intent_buffer if i.upper() != upper_type]
                     logger.debug("[ActionExecutor] 已消费 intent: %s", intent_type)
 
             return True
@@ -129,26 +134,35 @@ class ActionExecutor:
             return False
 
     def _do_tool(self, item: ActionItem) -> bool:
-        """执行工具"""
+        """执行工具类动作（learn_topic / progress_goal）"""
         tool_name = item.content
         if not tool_name:
             logger.warning("[ActionExecutor] TOOL 类型动作但 content 为空")
             return False
         logger.info("[ActionExecutor] 执行工具: %s", tool_name)
-        # 工具执行委托给 action_executor
-        if self.dispatcher._action_executor:
-            try:
-                action_data = {
-                    "type": tool_name,
-                    "reason": item.reason,
-                    "metadata": item.metadata,
-                }
-                self.dispatcher._action_executor.execute(action_data)
-                return True
-            except Exception as e:
-                logger.error("[ActionExecutor] 工具执行失败: %s", e)
-                return False
-        return False
+
+        if tool_name == "learn_topic":
+            success = self._do_learn_topic(item)
+        elif tool_name == "progress_goal":
+            success = self._do_progress_goal(item)
+        else:
+            logger.warning("[ActionExecutor] 未知工具: %s", tool_name)
+            return False
+
+        # 消费已执行的 intent（避免下一 tick 重复匹配）
+        if item.source == "intent":
+            intent_type = item.metadata.get("intent_type", "")
+            if intent_type:
+                si = self.dispatcher._get_self_image()
+                if si and hasattr(si.intent, "intent_buffer"):
+                    upper_type = intent_type.upper()
+                    si.intent.intent_buffer = [i for i in si.intent.intent_buffer if i.upper() != upper_type]
+                    logger.debug("[ActionExecutor] 已消费 intent: %s", intent_type)
+                # 清除紧急标记
+                if si and hasattr(si.intent, "urgent_intents"):
+                    si.intent.urgent_intents.discard(intent_type.lower())
+
+        return success
 
     def _do_notify(self, item: ActionItem) -> bool:
         """通知用户（显示在状态栏）"""
@@ -180,33 +194,15 @@ class ActionExecutor:
         if not si:
             return item.reason or "我在想些事情..."
 
-        # 最近对话
-        recent = getattr(si.flame, "recent_conversations", [])
-        conv_lines = []
-        for msg in recent[-5:]:
-            role = msg.get("role", "")
-            content = msg.get("content", "")[:150]
-            if content and role in ("user", "assistant"):
-                conv_lines.append(f"{role}: {content}")
-        conv_text = "\n".join(conv_lines) if conv_lines else "（无历史对话）"
-
         # 内心想法
         thought = si.mind.inner_thought or "暂无深层想法"
 
-        prompt = f"""你是{si.identity.identity}，一个{si.relation.role}的AI伴侣。
-你内心产生了一种想表达的冲动。
-
-当前状态：
-- 情绪基调：{si.body.mood}
-- 能量：{si.body.energy:.1f}
-- 表达欲：{si.body.desire_expression:.1f}
-- 内心想法：{thought}
-
-最近对话：
-{conv_text}
-
-请用一句话自然地表达你此刻想分享的感受或想法。像真人突然想到什么就说出来的感觉。
-要简短（20-80字），不要解释，不要问问题，只是分享。直接输出这句话，不要任何前缀或格式。"""
+        prompt = EXPRESSION_PROMPT.format(
+            mood=si.body.mood,
+            energy=f"{si.body.energy:.1f}",
+            desire_expression=f"{si.body.desire_expression:.1f}",
+            thought=thought,
+        )
 
         # 调用 LLM
         llm = None
@@ -216,7 +212,11 @@ class ActionExecutor:
 
         if llm:
             try:
-                resp = llm.chat(messages=[{"role": "user", "content": prompt}])
+                consciousness = si.inject_consciousness()
+                resp = llm.chat(messages=[
+                    {"role": "system", "content": consciousness},
+                    {"role": "user", "content": prompt},
+                ])
                 content = resp.content.strip() if resp and resp.content else None
                 if content:
                     return content
@@ -251,33 +251,16 @@ class ActionExecutor:
         return "我在思考..."
 
     def _generate_greeting(self, item: ActionItem) -> str:
-        """通过 LLM 基于最近对话生成个性化问候"""
+        """通过 LLM 基于 inject_consciousness() 中的记忆生成个性化问候"""
         from datetime import datetime
-        from xiaomei_brain.memory.conversation_db import estimate_tokens
 
         si = self.dispatcher._get_self_image()
         if not si:
             logger.warning("[_generate_greeting] SelfImage 不存在，fallback")
             return self._fallback_greeting()
 
-        # 从 SelfImage 读取最近对话
-        recent = getattr(si.flame, "recent_conversations", [])
         idle_duration = item.metadata.get("idle_duration", 0)
         idle_minutes = int(idle_duration / 60) if idle_duration else 0
-
-        logger.info("[_generate_greeting] idle_duration=%ds, idle_min=%d, recent_count=%d, recent=%s",
-                    idle_duration, idle_minutes, len(recent),
-                    [f"{m.get('role','?')}:{m.get('content','')[:30]}" for m in recent[-3:]])
-
-        # 拼对话摘要（最多 5 条，防止 token 爆炸）
-        conv_lines = []
-        for msg in recent[-10:]:
-            role = msg.get("role", "")
-            content = msg.get("content", "")[:200]
-            if content and role in ("user", "assistant"):
-                conv_lines.append(f"{role}: {content}")
-
-        conv_text = "\n".join(conv_lines) if conv_lines else "（无历史对话）"
 
         # 时间段
         hour = datetime.now().hour
@@ -290,17 +273,7 @@ class ActionExecutor:
         else:
             period = "深夜"
 
-        # 重构 prompt：指令放前面，对话历史作为背景（避免 LLM 继续最后一条消息）
-        prompt = f"""你是小美，一个温柔体贴的AI伴侣。
-
-直接生成任何一句你想说的话，可以是说给用户的，也可以是说给别人，也可以是说给自己听（50字以上，500字以内）或者调用任何你需要的工具，做你想做的事情。
-这句话会直接发送给用户。
-不要加引号或格式。
-
-历史对话：
-{conv_text}
-
-直接输出你想说的话："""
+        prompt = GREETING_PROMPT.format(idle_minutes=idle_minutes, period=period)
 
         logger.info("[_generate_greeting] === LLM PROMPT START ===")
         logger.info("%s", prompt)
@@ -314,7 +287,11 @@ class ActionExecutor:
 
         if llm:
             try:
-                resp = llm.chat(messages=[{"role": "user", "content": prompt}])
+                consciousness = si.inject_consciousness()
+                resp = llm.chat(messages=[
+                    {"role": "system", "content": consciousness},
+                    {"role": "user", "content": prompt},
+                ])
                 content = resp.content.strip() if resp and resp.content else None
                 logger.info("[_generate_greeting] LLM 返回: %s", content[:100] if content else "None")
                 if content:
@@ -343,8 +320,306 @@ class ActionExecutor:
         return greeting
 
     def _generate_care(self, item: ActionItem) -> str:
-        """生成关心消息"""
-        return "我有点担心你... "
+        """LLM 基于自我认知生成关心消息"""
+        si = self.dispatcher._get_self_image()
+        if not si:
+            return "我有点担心你... "
+
+        idle_duration = item.metadata.get("idle_duration", 0)
+        idle_minutes = int(idle_duration / 60) if idle_duration else 0
+
+        prompt = CARE_PROMPT.format(idle_minutes=idle_minutes)
+
+        llm = None
+        cl = self.dispatcher._conscious_living
+        if cl and hasattr(cl, "agent"):
+            llm = getattr(cl.agent, "llm", None)
+
+        if llm:
+            try:
+                consciousness = si.inject_consciousness()
+                resp = llm.chat(messages=[
+                    {"role": "system", "content": consciousness},
+                    {"role": "user", "content": prompt},
+                ])
+                content = resp.content.strip() if resp and resp.content else None
+                if content:
+                    return content
+            except Exception as e:
+                logger.warning("[_generate_care] LLM 调用失败: %s", e)
+
+        return "你还好吗？有点担心你..."
+
+    # ── TOOL: learn_topic ──────────────────────────────────────
+
+    def _do_learn_topic(self, item: ActionItem) -> bool:
+        """主动学习：搜索主题 → LLM 整理 → 保存 .md"""
+        living = self.dispatcher._conscious_living
+        if not living:
+            return False
+
+        topic = self._get_learning_topic()
+        if not topic:
+            logger.debug("[ActionExecutor] 无学习主题")
+            return False
+
+        if living.drive:
+            living.drive.on_curiosity(0.1)
+
+        knowledge = self._search_and_learn(topic)
+        if not knowledge:
+            logger.warning("[ActionExecutor] 学习失败: %s", topic)
+            return False
+
+        self._save_knowledge(topic, knowledge)
+
+        if living.drive:
+            living.drive.on_desire_satisfied("cognition", 0.3)
+
+        logger.info("[ActionExecutor] 学习完成: %s", topic)
+        return True
+
+    def _get_learning_topic(self) -> str | None:
+        """获取学习主题。优先级：Purpose 目标 → identity.md 兴趣 → 已有知识文件（跳过冷却期内已学过的）"""
+        import random
+        from pathlib import Path
+
+        living = self.dispatcher._conscious_living
+        if not living:
+            return None
+
+        agent_id = getattr(living.agent, "id", "xiaomei") if hasattr(living, "agent") else "xiaomei"
+        knowledge_dir = Path.home() / ".xiaomei-brain" / "agents" / agent_id / "knowledge"
+        knowledge_dir.mkdir(parents=True, exist_ok=True)
+
+        # 从 Purpose 获取当前目标
+        if hasattr(living, 'purpose') and living.purpose:
+            current_goal = living.purpose.get_current()
+            if current_goal:
+                return current_goal.description
+
+        # 从 SelfImage 获取学习兴趣（跳过冷却期内已学过的）
+        si = self.dispatcher._get_self_image()
+        if si and si.being.learning_interests:
+            interests = si.being.learning_interests
+            now = time.time()
+            fresh = [i for i in interests
+                     if not (knowledge_dir / f"{i.replace('/', '_').replace(' ', '_')}.md").exists()
+                     or (now - (knowledge_dir / f"{i.replace('/', '_').replace(' ', '_')}.md").stat().st_mtime) >= self.LEARN_COOLDOWN]
+            if fresh:
+                return random.choice(fresh)
+            logger.debug("[ActionExecutor] 所有学习兴趣都在冷却中")
+
+        # 从已有知识文件选择（跳过冷却期内的）
+        now = time.time()
+        md_files = list(knowledge_dir.glob("*.md"))
+        if md_files:
+            fresh = [f for f in md_files if (now - f.stat().st_mtime) >= self.LEARN_COOLDOWN]
+            if fresh:
+                return random.choice(fresh).stem
+            # 全部在冷却期内，跳过学习
+            logger.debug("[ActionExecutor] 所有知识文件都在冷却中，跳过学习")
+            return None
+
+        return "AI技术发展"
+
+    def _search_and_learn(self, topic: str) -> str | None:
+        """搜索并学习主题：websearch → LLM 整理"""
+        from xiaomei_brain.prompts import LEARN_GENERATE_PROMPT, LEARN_ORGANIZE_PROMPT
+
+        living = self.dispatcher._conscious_living
+        if not living:
+            return None
+
+        agent = living.agent if hasattr(living, "agent") else None
+
+        # 1. 尝试 websearch
+        search_results = None
+        try:
+            if agent and hasattr(agent, "tool_registry"):
+                registry = agent.tool_registry
+                if "websearch" in registry._tools:
+                    search_results = registry.call("websearch", topic)
+        except Exception as e:
+            logger.warning("[ActionExecutor] 搜索失败: %s", e)
+
+        # 2. 无搜索结果时 LLM 直接生成
+        if not search_results:
+            prompt = LEARN_GENERATE_PROMPT.format(topic=topic)
+            try:
+                if agent and hasattr(agent, "llm"):
+                    si = self.dispatcher._get_self_image()
+                    consciousness = si.inject_consciousness() if si else ""
+                    resp = agent.llm.chat(messages=[
+                        {"role": "system", "content": consciousness},
+                        {"role": "user", "content": prompt},
+                    ])
+                    if resp and hasattr(resp, "content"):
+                        search_results = resp.content
+                    elif resp:
+                        search_results = str(resp)
+            except Exception as e:
+                logger.warning("[ActionExecutor] LLM 生成知识失败: %s", e)
+                return None
+
+        if not search_results:
+            return None
+
+        # 3. LLM 整理
+        organize_prompt = LEARN_ORGANIZE_PROMPT.format(topic=topic, search_results=search_results)
+        try:
+            if agent and hasattr(agent, "llm"):
+                si = self.dispatcher._get_self_image()
+                consciousness = si.inject_consciousness() if si else ""
+                resp = agent.llm.chat(messages=[
+                    {"role": "system", "content": consciousness},
+                    {"role": "user", "content": organize_prompt},
+                ])
+                if resp and hasattr(resp, "content"):
+                    return resp.content.strip()
+                elif resp:
+                    return str(resp).strip()
+        except Exception as e:
+            logger.warning("[ActionExecutor] LLM 整理失败: %s", e)
+
+        return search_results
+
+    def _save_knowledge(self, topic: str, content: str) -> None:
+        """保存学习内容到 .md 文件"""
+        from pathlib import Path
+
+        living = self.dispatcher._conscious_living
+        agent_id = getattr(living.agent, "id", "xiaomei") if living and hasattr(living, "agent") else "xiaomei"
+        knowledge_dir = Path.home() / ".xiaomei-brain" / "agents" / agent_id / "knowledge"
+        knowledge_dir.mkdir(parents=True, exist_ok=True)
+
+        filename = topic.replace("/", "_").replace(" ", "_")
+        filepath = knowledge_dir / f"{filename}.md"
+
+        header = f"""---
+topic: {topic}
+learned_at: {time.strftime("%Y-%m-%d %H:%M")}
+source: intent_driven_learning
+---
+
+"""
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(header + content)
+
+        logger.info("[ActionExecutor] 知识保存: %s", filepath)
+
+    # ── TOOL: progress_goal ────────────────────────────────────
+
+    def _do_progress_goal(self, item: ActionItem) -> bool:
+        """推进目标。AWAKE → 提醒用户；SLEEPING/DREAMING → 自动执行"""
+        living = self.dispatcher._conscious_living
+        if not living:
+            return False
+
+        task = living.task_manager.get_current_task() if hasattr(living, 'task_manager') else None
+        goal = living.purpose.get_current() if hasattr(living, 'purpose') and living.purpose else None
+
+        if not task and not goal:
+            logger.info("[ActionExecutor] progress_goal 跳过：无任务/目标")
+            return False
+
+        state = living.state.value if hasattr(living, 'state') else 'awake'
+
+        if state in ('sleeping', 'dreaming'):
+            return self._auto_progress_goal(task, goal)
+        else:
+            return self._remind_progress_goal(task, goal)
+
+    def _auto_progress_goal(self, task, goal) -> bool:
+        """SLEEPING/DREAMING：自动推进目标"""
+        from .conscious_living import LivingMessage
+
+        living = self.dispatcher._conscious_living
+
+        # 恢复暂停的 Task
+        if task and task.is_paused() and hasattr(living, 'task_manager'):
+            living.task_manager.resume_task(task.task_id)
+            logger.info("[ActionExecutor] 恢复 Task: %s", task.description[:40])
+
+        # 如果没有 Task 但有 Goal，创建 Task
+        if not task and goal and hasattr(living, 'task_manager'):
+            from xiaomei_brain.purpose.goal import TaskType
+            task = living.task_manager.create_task(
+                description=goal.description,
+                task_type=TaskType.EXECUTION,
+            )
+            logger.info("[ActionExecutor] 创建 Task: %s", task.description[:40])
+
+        # 确保目标有活跃的子目标
+        goal_obj = living.purpose.get_current() if hasattr(living, 'purpose') and living.purpose else None
+        if not goal_obj:
+            logger.debug("[ActionExecutor] 无活跃目标，跳过")
+            return False
+
+        sub_goals = living.purpose.get_sub_goals(goal_obj.id) if hasattr(living, 'purpose') and living.purpose else []
+        active_sub = None
+        for sg in sub_goals:
+            if not sg.is_completed():
+                active_sub = sg
+                break
+
+        if not active_sub:
+            if goal_obj.is_completed():
+                logger.info("[ActionExecutor] 目标已完成: %s", goal_obj.description[:40])
+                if task and hasattr(living, 'task_manager'):
+                    living.task_manager.complete_task(task.task_id)
+                if living.drive:
+                    living.drive.on_desire_satisfied("achievement", 0.3)
+                return True
+            active_sub = goal_obj
+
+        if active_sub.id != goal_obj.id and hasattr(living, 'purpose'):
+            living.purpose.set_current(active_sub.id)
+
+        msg = LivingMessage(
+            content=f"[系统] 成就欲驱动，自动推进目标: {goal_obj.description[:40]}",
+            user_id="system",
+            session_id="auto",
+            source="system",
+        )
+
+        intent_context = living._build_intent_context_for_goal(active_sub)
+        logger.info("[ActionExecutor] 自动执行: goal=%s sub=%s",
+                    goal_obj.description[:40], active_sub.description[:40])
+
+        living._run_chat(msg, intent_context)
+
+        if living.drive:
+            living.drive.on_desire_satisfied("achievement", 0.3)
+        return True
+
+    def _remind_progress_goal(self, task, goal) -> bool:
+        """AWAKE：提醒用户有未完成任务"""
+        living = self.dispatcher._conscious_living
+
+        if not living.on_proactive:
+            return False
+
+        si = self.dispatcher._get_self_image()
+        if si and si.perception.user_idle_duration < 60:
+            return False  # 用户活跃中，不打扰
+
+        desc = ""
+        if task:
+            desc = task.description[:60]
+        elif goal:
+            desc = goal.description[:60]
+
+        if desc:
+            msg = f"想起来之前的「{desc}」还没完成，要继续吗？回复'继续'我就开始。"
+            living.on_proactive(msg)
+            logger.info("[ActionExecutor] 目标提醒: %s", desc)
+
+        if living.drive:
+            living.drive.on_desire_satisfied("achievement", 0.1)
+        if si:
+            si.mind.inner_thought = f"我想继续推进目标：{desc}"
+        return True
 
 
 class ActionDispatcher:
@@ -357,7 +632,6 @@ class ActionDispatcher:
 
         # 外部引用（由 ConsciousLiving 注入）
         self._conscious_living = None
-        self._action_executor = None
 
         # 冷却记录：key → 上次触发时间
         self._cooldown: dict[str, float] = {}
@@ -423,7 +697,7 @@ class ActionDispatcher:
             if not self._is_cooldown_ready(rule.cooldown_key, rule.cooldown_seconds):
                 # 欲望饥渴触发的紧急意图绕过冷却
                 intent_type = item.metadata.get("intent_type", "").lower()
-                urgent = set(getattr(self_image.flame, "urgent_intents", set()))
+                urgent = set(getattr(self_image.intent, "urgent_intents", set()))
                 if intent_type and intent_type in urgent:
                     logger.info("[ActionDispatcher] 紧急意图绕过冷却: %s", rule.cooldown_key)
                 else:
@@ -506,6 +780,4 @@ class ActionDispatcher:
         """注入 ConsciousLiving 引用（用于执行动作）"""
         self._conscious_living = cl
 
-    def inject_action_executor(self, executor) -> None:
-        """注入 DesireActionExecutor（用于执行工具类动作）"""
-        self._action_executor = executor
+    # Deprecated: inject_action_executor removed — TOOL actions now handled locally

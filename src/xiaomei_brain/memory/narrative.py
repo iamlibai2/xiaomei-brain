@@ -137,21 +137,9 @@ def _parse_block_fields(block: str) -> dict[str, Any] | None:
 
 def build_narr_prompt_addition(context: str = "") -> str:
     """生成追加到 LLM prompt 的 NARR 块引导文本。"""
-    return """
+    from ..prompts.memory import NARR_BLOCK_INSTRUCTION
 
-[可选] 如果你刚才的思考涉及了值得记录的自我认知转变，请在 monologue 之后追加输出以下格式的 NARR 块：
-
-<NARR>
-编号: NARR-自动生成
-作用: 自我定义/关系定义/边界设定/能力认知
-scene: 场景（简短，如"深夜"、"客厅"）
-timestamp: YYYY-MM-DD
-narrative:
-（100-200字，第一人称描述经历：对方说了什么、我的感受、被改变的方式。不要概括结论，要叙事细节。）
-feels_like: 一句话核心情绪
-changed_me:
-- （这一条让我更理解了...）
-tags: [场景相关标签1, 场景相关标签2]
-weight: 0.85
-</NARR>
-""" + (f"\n\n当前场景参考：{context}" if context else "")
+    result = NARR_BLOCK_INSTRUCTION
+    if context:
+        result += f"\n\n当前场景参考：{context}"
+    return result

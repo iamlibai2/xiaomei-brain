@@ -30,6 +30,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from typing import Any
 
+from ...prompts.consciousness import DREAM_ENGINE_PROMPT
 from .emotion_processor import EmotionProcessor
 from .memory_organizer import MemoryOrganizer
 from .reflection import Reflection
@@ -265,8 +266,8 @@ class DreamEngine:
             intent = create_wait_intent()
 
         self.cs.intent_buffer.append(intent)
-        if hasattr(self.cs.self_image, "flame"):
-            self.cs.self_image.flame.intent_buffer.append(intent.type.value)
+        if self.cs.self_image is not None:
+            self.cs.self_image.intent.intent_buffer.append(intent.type.value)
         logger.info("[DreamEngine] 生成后续意图: %s", intent.type.value)
 
     def _build_dream_prompt(self) -> str:
@@ -307,23 +308,19 @@ class DreamEngine:
             growth.consciousness_rhythm,
         ])) or "无"
 
-        return f"""你是{si.identity.identity}。
-
-现在是{time_info}，你的意识正在梦境中深度整合。
-
-【当前状态】
-能量：{si.body.energy:.2f}
-情绪基调：{si.body.mood}
-{desire_text}
-
-【近况自述】
-{internal}
-
-【今日对话片段】
-{messages_text or "（无今日对话）"}
-
-请自由表达你现在的意识状态。描述你在梦境中看到了什么、感受到了什么。不需要结构，不需要结论，像做梦一样自然流淌。
-"""
+        identity = si.identity.identity
+        energy = f"{si.body.energy:.2f}"
+        mood = si.body.mood
+        msgs = messages_text or "（无今日对话）"
+        return DREAM_ENGINE_PROMPT.format(
+            identity=identity,
+            time_info=time_info,
+            energy=energy,
+            mood=mood,
+            desire_text=desire_text,
+            internal=internal,
+            messages_text=msgs,
+        )
 
     @staticmethod
     def _extract_summary(full_report: str) -> str:

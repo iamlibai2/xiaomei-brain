@@ -32,85 +32,12 @@ def _plog(msg: str, *args) -> str:
     """Format log message with red Procedure tag."""
     return f"{_P_LOG} {msg}" % (args if args else ())
 
-# ── Prompt templates ─────────────────────────────────────────────
-
-_PROCEDURE_LEARN_PROMPT = """你是过程记忆提取专家。分析对话，主动识别可以提炼为标准流程的信息。
-
-【识别范围】
-1. 显式教学：用户说"以后遇到X要先Y"、"我喜欢先被按头，然后按肩膀，腰要重点按一下，小腿也要按，，最后是脚，"等有明显过程且可以拆分为三个及以上步骤的语句
-2. 隐式流程：执行了一个多步骤（>=3步）的任务或者工作
-
-【判断标准】
-- 步骤数：流程是否包含3个以上的明确步骤
-- 可复用性：这个流程下次遇到类似需求是否能用
-- 清晰度：步骤是否足够明确，能写成指引
-
-【输出要求】只输出 JSON，不要解释：
-{{
-  "teach_intent": true/false,
-  "teach_summary": "如果用户明确教了流程，简述内容（无则空字符串）",
-  "task_completion": true/false,
-  "task_summary": "如果识别到一个多步骤流程，简述其内容和步骤（无则空字符串）"
-}}
-"""
-
-_PROCEDURE_GENERATE_PROMPT = """对话历史：
-{conversation_history}
-
-根据以上对话，生成一个标准流程的完整结构：
-
-1. name: 简短名称（5字以内），如"泡龙井茶"、"写工作报告"
-2. description: 一句话描述用途
-3. trigger_config: 关键词粗筛条件
-   - type: "any"（满足任一条件即命中）
-   - conditions: 2-5 个条件，每个条件固定 field="user_message"
-   - operator 用 "contains"
-   - value 是触发关键词
-
-   【关键词选择规则 — 必须严格遵守】
-   a) 每个关键词至少2个汉字，禁止单字词（如"累""茶""梦"）
-   b) 关键词是充分条件：用户说了这句话，就极大概率想执行此流程
-   c) 优先多词短语（2-4字）：如"帮我按摩""泡杯茶""好累啊"，而非单个泛词
-   d) 禁止使用以下高频泛词：今天、明天、心情、分享、试试、喜欢、想要、觉得、知道、记得、看一下、看看、你好、晚安、早安、在吗、怎么、什么、为什么
-   e) 从对话中提取用户真正说了的、能明确指向该流程的具体表达
-   f) 宁可只有2个高质量关键词，也不要凑3-5个泛词
-
-4. steps: 步骤序列（3-6步）
-   - id: 递增字符串 "s1", "s2", ...
-   - name: 简短步骤名（2-4字）
-   - description: 详细描述（LLM 补全，使执行者能照做）
-   - next: 下一个 step id，最后一步为 null
-
-回复格式（只输出 JSON，不要解释）：
-{{
-  "name": "...",
-  "description": "...",
-  "trigger_config": {{"type": "any", "conditions": [{{"field": "user_message", "operator": "contains", "value": "..."}}...]}},
-  "steps": [
-    {{"id": "s1", "name": "...", "description": "...", "next": "s2"}},
-    ...
-  ]
-}}
-"""
-
-_PROCEDURE_MATCH_INFERENCE_PROMPT = """当前正在执行的对话：
-{conversation_summary}
-
-系统中注入的候选 procedures：
-{active_procedures}
-
-判断：
-1. 这段对话中，是否有使用上述任何一条 procedure？
-2. 如果使用了，哪一条？执行结果如何？
-
-回复格式（只输出 JSON）：
-{{
-  "used_procedure_id": "PROC-xxx 或 null",
-  "used_steps": ["s1", "s2", ...] 或 [],
-  "result": "success/failed/interrupted/none",
-  "notes": "判断理由（成功/失败原因）"
-}}
-"""
+# Prompt templates (已迁移至 prompts/memory.py)
+from ..prompts.memory import (
+    PROCEDURE_LEARN_PROMPT as _PROCEDURE_LEARN_PROMPT,
+    PROCEDURE_GENERATE_PROMPT as _PROCEDURE_GENERATE_PROMPT,
+    PROCEDURE_MATCH_INFERENCE_PROMPT as _PROCEDURE_MATCH_INFERENCE_PROMPT,
+)
 
 # ── Response parsing ──────────────────────────────────────────
 

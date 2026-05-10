@@ -20,25 +20,16 @@ import time
 from datetime import datetime
 from typing import Any, Callable
 
+from xiaomei_brain.agent.message_utils import estimate_content_tokens
 from xiaomei_brain.memory.conversation_db import ConversationDB, estimate_tokens
 from xiaomei_brain.memory.dag import DAGSummaryGraph
 from xiaomei_brain.memory.self_model import SelfModel
+from ..prompts.consciousness import NARR_PREAMBLE
 
 logger = logging.getLogger(__name__)
 
 # Narrative preamble injected into daily/reflect modes
-_NARR_PREAMBLE = """
-
-****以下是你过去真实经历中留下的叙事片段。每条叙事包含一个场景、一段经历、感受和它改变你的方式。
-
-它们的用途不是让你回忆——是用来调你的感知方式：
-- 建立感知方式：改变你"怎么看事情"
-- 积累关系史：改变你"怎么感受距离"
-- 沉淀身份感：改变你"知道自己是谁"
-- 改变回应质地：改变你"怎么开口说话"
-
-读它们的时候，不是"记住了内容"——是让你进入那种感知状态。读完，你的语气、距离感、身份底色会被轻微牵引。不需要刻意回忆它们的内容。****
-"""
+_NARR_PREAMBLE = NARR_PREAMBLE  # imported from prompts/
 
 
 class ContextAssembler:
@@ -124,7 +115,7 @@ class ContextAssembler:
 
             # 按 token 占比判断是否触发压缩
             unsummarized_tokens = sum(
-                estimate_tokens(m.get("content") or "") for m in unsummarized
+                estimate_content_tokens(m.get("content")) for m in unsummarized
             )
             threshold = int(max_tokens * self._ctx_cfg.compact_token_ratio)
 
@@ -132,7 +123,7 @@ class ContextAssembler:
             if unsummarized_tokens >= threshold or len(unsummarized) >= compact_threshold:
                 msgs_to_compact = unsummarized[: self._ctx_cfg.messages_per_compact]
                 compact_tokens = sum(
-                    estimate_tokens(m.get("content") or "") for m in msgs_to_compact
+                    estimate_content_tokens(m.get("content")) for m in msgs_to_compact
                 )
                 remaining_tokens = unsummarized_tokens - compact_tokens
 
@@ -289,7 +280,7 @@ class ContextAssembler:
             # 倒序遍历：优先保留最新消息，从新往旧放
             tail = []
             for m in reversed(recent):
-                tokens = estimate_tokens(m.get("content", ""))
+                tokens = estimate_content_tokens(m.get("content"))
                 if remaining - tokens < 50:
                     continue
                 tail.append(m)
@@ -387,7 +378,7 @@ class ContextAssembler:
             # 倒序遍历：优先保留最新消息
             tail = []
             for m in reversed(recent):
-                tokens = estimate_tokens(m.get("content", ""))
+                tokens = estimate_content_tokens(m.get("content"))
                 if remaining - tokens < 50:
                     continue
                 tail.append(m)
@@ -396,22 +387,184 @@ class ContextAssembler:
 
         return messages
 
-    def _fresh_tail(self, n: int, session_id: str | None) -> list[dict[str, Any]]:
+    def _fresh_tail(
+        self, n: int, session_id: str | None,
+        max_burst_rounds: int = 3,
+        max_tool_chars: int = 800,
+    ) -> list[dict[str, Any]]:
+        """Get recent messages with burst-aware tool sampling + dedup + truncation.
+
+        Tool calls happen in **bursts** — many small rounds (1-3 tools each)
+        fired in rapid succession without a user message between them.  A naive
+        ``get_recent(n)`` fills the window with these micro-rounds and pushes
+        conversation history out.
+
+        Strategy:
+        1. Fetch a larger window, identify tool **rounds** (one assistant
+           tool_calls → its results).
+        2. Group consecutive rounds (no user message between) into **bursts**.
+        3. For each burst, keep the **first / middle / last** round in full.
+        4. Deduplicate repeated ``read_file`` results (same file → marked
+           as duplicate, saves 50%+ on re-reads).
+        5. Truncate tool content longer than *max_tool_chars*.
+        6. User messages and assistant text responses are always kept in full.
+        """
+        import json
+
         if self.db is None:
             return []
-        recent = self.db.get_recent(n, session_id=session_id)
+
+        recent = self.db.get_recent(max(n * 3, 120), session_id=session_id)
+
+        # ── Step 1: identify tool rounds ──────────────────────────
+        # round = (assistant_idx, [tool_indices])
+        rounds: list[tuple[int, list[int]]] = []
+        current_asst: int | None = None
+        current_tools: list[int] = []
+
+        def _is_tool_calls(m: dict) -> bool:
+            role = m.get("role", "")
+            content = m.get("content", "")
+            tool_name = m.get("tool_name")
+            if role == "assistant" and not content and not tool_name:
+                try:
+                    meta = json.loads(m.get("metadata", "{}"))
+                    return bool(meta.get("tool_calls"))
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            return False
+
+        for i, m in enumerate(recent):
+            role = m.get("role", "")
+
+            if _is_tool_calls(m):
+                if current_asst is not None:
+                    rounds.append((current_asst, current_tools))
+                current_asst = i
+                current_tools = []
+            elif role == "tool" and current_asst is not None:
+                current_tools.append(i)
+            elif role in ("user", "assistant") and current_asst is not None:
+                rounds.append((current_asst, current_tools))
+                current_asst = None
+                current_tools = []
+
+        if current_asst is not None:
+            rounds.append((current_asst, current_tools))
+
+        # ── Step 2: group rounds into bursts ─────────────────────
+        # A burst ends when a user message or assistant text appears between rounds
+        # Build a map: message index → round index (or None)
+        msg_to_round: dict[int, int | None] = {}
+        for ri, (asst_idx, tids) in enumerate(rounds):
+            msg_to_round[asst_idx] = ri
+            for ti in tids:
+                msg_to_round[ti] = ri
+
+        bursts: list[list[int]] = []  # [[round_idx, ...]]
+        current_burst: list[int] = []
+
+        for ri in range(len(rounds)):
+            asst_idx, tids = rounds[ri]
+            # Check if there's a user message or assistant text between this round
+            # and the previous round
+            if ri > 0:
+                prev_asst, prev_tools = rounds[ri - 1]
+                prev_end = max(prev_tools) if prev_tools else prev_asst
+                gap_msgs = recent[prev_end + 1 : asst_idx]
+                has_break = any(
+                    (m.get("role") == "user") or
+                    (m.get("role") == "assistant" and m.get("content") and not _is_tool_calls(m))
+                    for m in gap_msgs
+                )
+                if has_break:
+                    if current_burst:
+                        bursts.append(current_burst)
+                    current_burst = []
+
+            current_burst.append(ri)
+
+        if current_burst:
+            bursts.append(current_burst)
+
+        # ── Step 3: decide which indices to keep ──────────────────
+        keep: set[int] = set()
+
+        # Always keep user messages and assistant text responses
+        for i, m in enumerate(recent):
+            role = m.get("role", "")
+            content = m.get("content", "")
+            tool_name = m.get("tool_name")
+            if role == "user":
+                keep.add(i)
+            elif role == "assistant" and (content or tool_name):
+                keep.add(i)
+
+        # Per burst: keep first / middle / last round in full
+        for burst in bursts:
+            if len(burst) <= max_burst_rounds:
+                sampled = burst
+            else:
+                sampled = [
+                    burst[0],                        # first round
+                    burst[len(burst) // 2],           # middle round
+                    burst[-1],                        # last round
+                ]
+            for ri in sampled:
+                asst_idx, tids = rounds[ri]
+                keep.add(asst_idx)
+                for ti in tids:
+                    keep.add(ti)
+
+        # ── Step 4: build output (dedup + truncate tools) ─────
+        filtered = [recent[i] for i in sorted(keep)]
+        if len(filtered) > n:
+            filtered = filtered[-n:]
+
         result = []
-        for m in recent:
+        seen_reads: set[str] = set()   # dedup read_file by content prefix
+
+        for m in filtered:
             role = m.get("role", "user")
             content = m.get("content", "")
+            tool_name = m.get("tool_name", "")
+
             if role == "tool":
+                # ── dedup: same file read multiple times ──
+                if tool_name == "read_file" and content:
+                    fingerprint = content[:120]
+                    if fingerprint in seen_reads:
+                        result.append({
+                            "role": "tool",
+                            "tool_call_id": m.get("tool_call_id", ""),
+                            "content": "[同上] 文件内容与前面相同，已省略",
+                        })
+                        continue
+                    seen_reads.add(fingerprint)
+
+                # ── truncate long tool results ──
+                if len(content) > max_tool_chars:
+                    content = content[:max_tool_chars] + f"\n... [截断，原文{len(content)}字符]"
+
                 result.append({
                     "role": "tool",
                     "tool_call_id": m.get("tool_call_id", ""),
                     "content": content,
                 })
+            elif role == "assistant":
+                entry: dict[str, Any] = {"role": role, "content": content}
+                try:
+                    meta = json.loads(m.get("metadata", "{}"))
+                    if meta.get("tool_calls"):
+                        entry["tool_calls"] = meta["tool_calls"]
+                    if meta.get("reasoning_content"):
+                        entry["reasoning_content"] = meta["reasoning_content"]
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                result.append(entry)
             else:
                 result.append({"role": role, "content": content})
+
         return result
 
     def _recall_memories(
@@ -533,10 +686,13 @@ class ContextAssembler:
         if not chain_map:
             return ""
 
+        # 按 hop 优先级排序，限制上限防止记忆膨胀
+        chain_items = sorted(chain_map.values(), key=lambda x: x.get("hop", 99))[:30]
+
         lines = ["<记忆关联链>"]
         lines.append("以下记忆与当前对话存在语义关联（因果/时序等），可帮助你理解上下文脉络：")
 
-        for mid, item in chain_map.items():
+        for item in chain_items:
             content = item.get("content", "")
             rel_type = item.get("relation_type", "?")
             hop = item.get("hop", "?")
@@ -568,7 +724,7 @@ class ContextAssembler:
         for i, m in enumerate(all_messages):
             role = m.get("role", "?")
             content = m.get("content", "")
-            tokens = estimate_tokens(content)
+            tokens = estimate_content_tokens(content)
             total += tokens
             if role == "system":
                 lines.append(f"──── system ({tokens}t) ────")

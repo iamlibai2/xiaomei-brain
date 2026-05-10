@@ -156,30 +156,13 @@ class ReinforceJob:
 
 # ── ExtractJob ──────────────────────────────────────────────
 
+from ...prompts.memory import DREAM_USER_EXTRACT_PROMPT
+
+
 class ExtractJob:
     """对话提取 job — 从 conversation_db 读当天消息，LLM 深度提取记忆。"""
 
-    DREAM_EXTRACT_PROMPT = """你是一个记忆提取器。从以下对话记录中，提取关于**用户**的值得长期记住的信息。
-
-提取规则：
-- 只提取关于用户的信息：用户的事实、偏好、重要决定、个人经历
-- 不要提取关于AI助手自身的信息
-- 用第三人称"用户"来描述，明确信息主体是用户
-- 忽略寒暄、情绪表达、无实质内容的对话
-- 每条记忆用以下格式输出：
-  ADD: 记忆内容（以"用户"开头） | scenes: 场景1,场景2
-- 如果没有值得记住的信息，只回复 EMPTY
-- scenes 为可选的场景标签（中文，1~3个），没有就写 scenes: 无
-- 场景标签反映记忆在什么情况下会被唤起，如：工作、旅游、购物、编程等
-- 如果两条记忆有关联，用 RELATES 行描述：
-  RELATES: 记忆1内容|--<类型>-->|记忆2内容
-  类型：causal(因果), temporal(时序), contrast(对比), contains(包含)
-
-已有记忆：
-{recent_memories}
-
-对话记录：
-{messages}"""
+    DREAM_USER_EXTRACT_PROMPT = DREAM_USER_EXTRACT_PROMPT
 
     def __init__(
         self,
@@ -209,7 +192,7 @@ class ExtractJob:
         if existing:
             recent_memories = "\n".join(f"- {m['content']}" for m in existing)
 
-        prompt = self.DREAM_EXTRACT_PROMPT.format(
+        prompt = self.DREAM_USER_EXTRACT_PROMPT.format(
             messages=formatted,
             recent_memories=recent_memories or "（无已有记忆）",
         )

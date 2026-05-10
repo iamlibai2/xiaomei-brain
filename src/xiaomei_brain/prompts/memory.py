@@ -185,8 +185,139 @@ MEMORY_DECISION_PROMPT = """
 <MEMORY>
 {{"relations": [{{"from": "用户叫李四", "type": "causal", "to": "用户上周刚搬家"}}, {{"from": "用户喜欢MacBook", "type": "causal", "to": "用户买新电脑"}}], "actions": [{{"type": "ADD", "tag": "偏好", "content": "用户喜欢川菜", "scenes": ["美食"]}}]}}
 </MEMORY>
+"""
 
 
+# 来源: memory/procedure.py:37
+# 调用: memory/procedure.py
+# 用途: 过程记忆学习 — 识别可提炼为标准流程的对话
+PROCEDURE_LEARN_PROMPT = """你是过程记忆提取专家。分析对话，主动识别可以提炼为标准流程的信息。
 
+【识别范围】
+1. 显式教学：用户说"以后遇到X要先Y"等有明显过程且可以拆分为三个及以上步骤的语句
+2. 隐式流程：执行了一个多步骤（>=3步）的任务或者工作
 
+【判断标准】
+- 步骤数：流程是否包含3个以上的明确步骤
+- 可复用性：这个流程下次遇到类似需求是否能用
+- 清晰度：步骤是否足够明确，能写成指引
+
+【输出要求】只输出 JSON，不要解释：
+{{
+  "teach_intent": true/false,
+  "teach_summary": "如果用户明确教了流程，简述内容（无则空字符串）",
+  "task_completion": true/false,
+  "task_summary": "如果识别到一个多步骤流程，简述其内容和步骤（无则空字符串）"
+}}
+"""
+
+# 来源: memory/procedure.py:57
+# 调用: memory/procedure.py
+# 用途: 过程记忆生成 — 从对话生成完整流程结构
+PROCEDURE_GENERATE_PROMPT = """对话历史：
+{conversation_history}
+
+根据以上对话，生成一个标准流程的完整结构：
+
+1. name: 简短名称（5字以内），如"泡龙井茶"、"写工作报告"
+2. description: 一句话描述用途
+3. trigger_config: 关键词粗筛条件
+   - type: "any"（满足任一条件即命中）
+   - conditions: 2-5 个条件，每个条件固定 field="user_message"
+   - operator 用 "contains"
+   - value 是触发关键词
+
+   【关键词选择规则 — 必须严格遵守】
+   a) 每个关键词至少2个汉字，禁止单字词（如"累""茶""梦"）
+   b) 关键词是充分条件：用户说了这句话，就极大概率想执行此流程
+   c) 优先多词短语（2-4字）：如"帮我按摩""泡杯茶""好累啊"，而非单个泛词
+   d) 禁止使用以下高频泛词：今天、明天、心情、分享、试试、喜欢、想要、觉得、知道、记得、看一下、看看、你好、晚安、早安、在吗、怎么、什么、为什么
+   e) 从对话中提取用户真正说了的、能明确指向该流程的具体表达
+   f) 宁可只有2个高质量关键词，也不要凑3-5个泛词
+
+4. steps: 步骤序列（3-6步）
+   - id: 递增字符串 "s1", "s2", ...
+   - name: 简短步骤名（2-4字）
+   - description: 详细描述（LLM 补全，使执行者能照做）
+   - next: 下一个 step id，最后一步为 null
+
+回复格式（只输出 JSON，不要解释）：
+{{
+  "name": "...",
+  "description": "...",
+  "trigger_config": {{"type": "any", "conditions": [{{"field": "user_message", "operator": "contains", "value": "..."}}...]}},
+  "steps": [
+    {{"id": "s1", "name": "...", "description": "...", "next": "s2"}},
+    ...
+  ]
+}}
+"""
+
+# 来源: memory/procedure.py:96
+# 调用: memory/procedure.py
+# 用途: 过程记忆匹配推理 — 判断当前对话是否使用了某条 procedure
+PROCEDURE_MATCH_INFERENCE_PROMPT = """当前正在执行的对话：
+{conversation_summary}
+
+系统中注入的候选 procedures：
+{active_procedures}
+
+判断：
+1. 这段对话中，是否有使用上述任何一条 procedure？
+2. 如果使用了，哪一条？执行结果如何？
+
+回复格式（只输出 JSON）：
+{{
+  "used_procedure_id": "PROC-xxx 或 null",
+  "used_steps": ["s1", "s2", ...] 或 [],
+  "result": "success/failed/interrupted/none",
+  "notes": "判断理由（成功/失败原因）"
+}}
+"""
+
+# 来源: consciousness/dream/memory_jobs.py:162
+# 调用: consciousness/dream/memory_jobs.py (ExtractJob.run)
+# 用途: 梦境用户记忆提取 — 从当天对话提取关于用户的信息
+DREAM_USER_EXTRACT_PROMPT = """你是一个记忆提取器。从以下对话记录中，提取关于**用户**的值得长期记住的信息。
+
+提取规则：
+- 只提取关于用户的信息：用户的事实、偏好、重要决定、个人经历
+- 不要提取关于AI助手自身的信息
+- 用第三人称"用户"来描述，明确信息主体是用户
+- 忽略寒暄、情绪表达、无实质内容的对话
+- 每条记忆用以下格式输出：
+  ADD: 记忆内容（以"用户"开头） | scenes: 场景1,场景2
+- 如果没有值得记住的信息，只回复 EMPTY
+- scenes 为可选的场景标签（中文，1~3个），没有就写 scenes: 无
+- 场景标签反映记忆在什么情况下会被唤起，如：工作、旅游、购物、编程等
+- 如果两条记忆有关联，用 RELATES 行描述：
+  RELATES: 记忆1内容|--<类型>-->|记忆2内容
+  类型：causal(因果), temporal(时序), contrast(对比), contains(包含)
+
+已有记忆：
+{recent_memories}
+
+对话记录：
+{messages}"""
+
+# 来源: memory/narrative.py:138 (build_narr_prompt_addition)
+# 调用: memory/narrative.py (追加到 LLM prompt)
+# 用途: NARR 块格式引导 — 教 LLM 输出结构化叙事块
+NARR_BLOCK_INSTRUCTION = """
+
+[可选] 如果你刚才的思考涉及了值得记录的自我认知转变，请在 monologue 之后追加输出以下格式的 NARR 块：
+
+<NARR>
+编号: NARR-自动生成
+作用: 自我定义/关系定义/边界设定/能力认知
+scene: 场景（简短，如"深夜"、"客厅"）
+timestamp: YYYY-MM-DD
+narrative:
+（100-200字，第一人称描述经历：对方说了什么、我的感受、被改变的方式。不要概括结论，要叙事细节。）
+feels_like: 一句话核心情绪
+changed_me:
+- （这一条让我更理解了...）
+tags: [场景相关标签1, 场景相关标签2]
+weight: 0.85
+</NARR>
 """

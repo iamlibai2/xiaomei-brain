@@ -1,5 +1,5 @@
-# 来源: purpose/intent.py:86
-# 调用: purpose/intent.py:164
+# 来源: purpose/intent.py:86 -> 迁移至集中管理
+# 调用: purpose/intent.py:157 (understand_intent_type)
 # 用途: 意图类型分类，输出 JSON
 INTENT_CLASSIFY_PROMPT = """
 分析用户输入，判断意图类型。
@@ -16,12 +16,6 @@ INTENT_CLASSIFY_PROMPT = """
 请判断意图类型（intent_type），只需返回一个类型：
 
 - task: 用户要求执行某个任务（如：帮我做X，开发X、做个X）
-  还需要判断 task_type：
-  - execution: 有明确交付物（开发、搭建、实现，写代码）
-  - learning: 学习知识/技能（学习、了解、掌握、入门）
-  - reflection: 反思/自省（反思、思考自己、审视）
-  - relationship: 关系维护（关心、关注他人状态）
-  - exploration: 探索调研（研究、调研、对比方案、找资料）
 - query: 用户提出问题（如：X是什么、怎么做X、如何X）
 - chat: 闲聊，无明确任务目的
 - clarification: 请求解释或细化已有的目标
@@ -33,11 +27,11 @@ INTENT_CLASSIFY_PROMPT = """
 - **当前有活跃目标时，用户消息是关于当前目标的细化/解释 → clarification**
 
 返回 JSON：
-{{"intent_type": "task/query/chat/clarification", "confidence": 0.0-1.0, "reasoning": "判断理由", "goal_description": "目标描述（仅task时有）", "task_type": "execution/learning/reflection/relationship/exploration（仅task时有）"}}
+{{"intent_type": "task/query/chat/clarification", "confidence": 0.0-1.0, "reasoning": "判断理由", "goal_description": "目标描述（仅task时有）"}}
 """
 
-# 来源: purpose/intent.py:122
-# 调用: purpose/intent.py:189
+# 来源: purpose/intent.py:115 -> 迁移至集中管理
+# 调用: purpose/intent.py:182 (decompose_goal)
 # 用途: 目标分解，输出 JSON
 GOAL_DECOMPOSE_PROMPT = """
 给定一个目标，将其分解为子目标。
@@ -69,3 +63,20 @@ GOAL_LLM_DECOMPOSE_PROMPT = """请将以下目标分解为 2-4 个子目标：
 - 每个子目标用一句话描述
 
 只输出子目标列表，每行一个，不要其他解释。"""
+
+# 来源: purpose/task_executor.py:163 (build_intent_context)
+# 调用: purpose/task_executor.py (追加到任务执行上下文)
+# 用途: PROGRESS 块格式引导 — 教 LLM 输出任务进度
+PROGRESS_BLOCK_INSTRUCTION = """【重要】先正常回复用户，回复完成后，再在末尾输出进度块：
+
+<PROGRESS>
+{"status": "completed", "summary": "一句话总结本子目标的产出"}  ← 当前子目标已完成时
+</PROGRESS>
+
+或
+
+<PROGRESS>
+{"status": "in_progress"}  ← 当前子目标未完成时（如只做了反问/澄清）
+</PROGRESS>
+
+如果用户输入中没有值得推进的内容，输出：无需推进"""
