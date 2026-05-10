@@ -32,7 +32,6 @@ def _plog(msg: str, *args) -> str:
     """Format log message with red Procedure tag."""
     return f"{_P_LOG} {msg}" % (args if args else ())
 
-# Prompt templates (已迁移至 prompts/memory.py)
 from ..prompts.memory import (
     PROCEDURE_LEARN_PROMPT as _PROCEDURE_LEARN_PROMPT,
     PROCEDURE_GENERATE_PROMPT as _PROCEDURE_GENERATE_PROMPT,

@@ -1,5 +1,5 @@
 # 来源: memory/dag.py
-# 调用: memory/dag.py _llm_summarize()
+# 调用: memory/dag.py:605 (_llm_summarize)
 # 用途: DAG 叶子摘要（压缩原始消息）
 
 DAG_SUMMARIZE_PROMPT = """请总结以下对话，保留问答关系，用第三人称。
@@ -14,7 +14,7 @@ DAG_SUMMARIZE_PROMPT = """请总结以下对话，保留问答关系，用第三
 """
 
 # 来源: memory/dag.py
-# 调用: memory/dag.py promote() -> _llm_summarize()
+# 调用: memory/dag.py:231 (promote -> _llm_summarize)
 # 用途: DAG 上层摘要（合并多个子摘要）
 
 DAG_PROMOTE_PROMPT = """请合并以下多条对话摘要，提取更高层次的概括。

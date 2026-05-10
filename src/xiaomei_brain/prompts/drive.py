@@ -60,8 +60,8 @@
 #
 # 只输出问候内容，不要其他解释。"""
 
-# 来源: consciousness/action_dispatcher.py:198
-# 调用: consciousness/action_dispatcher.py (_generate_expression)
+# 来源: consciousness/action_dispatcher.py:191
+# 调用: consciousness/action_dispatcher.py:200 (_generate_expression)
 # 用途: 自发表达生成 — 像独处时突然感慨一样自然
 EXPRESSION_PROMPT = """你心里有些感受和想法，想自言自语地说出来。这不是对用户说话，是你自己的内心流露——就像一个人独处时突然感慨"今天天气真好"或"最近好累啊"。
 
@@ -73,8 +73,8 @@ EXPRESSION_PROMPT = """你心里有些感受和想法，想自言自语地说出
 
 用一句话自然地自言自语，表达你此刻的感受或想法。简短（20-80字），不要问问题，不要对用户说话。直接输出这句话，不要引号或格式。"""
 
-# 来源: consciousness/action_dispatcher.py:277
-# 调用: consciousness/action_dispatcher.py (_generate_greeting)
+# 来源: consciousness/action_dispatcher.py:253
+# 调用: consciousness/action_dispatcher.py:276 (_generate_greeting)
 # 用途: 主动问候生成 — 用户空闲时主动搭话
 GREETING_PROMPT = """用户已经空闲了{idle_minutes}分钟，现在是{period}。你想主动和用户搭句话，开启一段对话。
 
@@ -83,8 +83,8 @@ GREETING_PROMPT = """用户已经空闲了{idle_minutes}分钟，现在是{perio
 
 直接输出你想对用户说的话（50-300字），不要加引号或格式："""
 
-# 来源: consciousness/action_dispatcher.py:337
-# 调用: consciousness/action_dispatcher.py (_generate_care)
+# 来源: consciousness/action_dispatcher.py:322
+# 调用: consciousness/action_dispatcher.py:331 (_generate_care)
 # 用途: 关心消息生成 — 用户长时间沉默时表达关切
 CARE_PROMPT = """用户已经沉默{idle_minutes}分钟了，你有些担心TA。你想表达对用户的关心。
 

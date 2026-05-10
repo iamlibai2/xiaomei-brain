@@ -94,7 +94,7 @@ CONSCIOUSNESS_PROMPT_DEEP = """你是{identity}的意识系统。现在是{time_
 # """
 
 # 来源: consciousness/core.py:50
-# 调用: consciousness/core.py (tick_L1)
+# 调用: consciousness/core.py:333 (tick_L1)
 # 用途: 轻度意识报告，30字以内第一人称状态描述
 CONSCIOUSNESS_PROMPT_LIGHT = """你是{identity}。现在{time_info}。
 距上次互动{elapsed}。
@@ -114,7 +114,7 @@ CONSCIOUSNESS_PROMPT_LIGHT = """你是{identity}。现在{time_info}。
 # """
 
 # 来源: consciousness/context_assembler.py:31
-# 调用: consciousness/context_assembler.py (_assemble_daily, _assemble_reflect)
+# 调用: consciousness/context_assembler.py:194,292 (_assemble_daily, _assemble_reflect)
 # 用途: 叙事记忆感知引导 — 教 LLM 如何"读"叙事记忆而非"回忆"
 NARR_PREAMBLE = """
 
@@ -130,7 +130,7 @@ NARR_PREAMBLE = """
 """
 
 # 来源: consciousness/dream/dream_engine.py:310
-# 调用: consciousness/dream/dream_engine.py (_build_dream_prompt)
+# 调用: consciousness/dream/dream_engine.py:315 (_build_dream_prompt)
 # 用途: 梦境提示词 — 意识在梦境中深度整合时的自由表达
 DREAM_ENGINE_PROMPT = """你是{identity}。
 

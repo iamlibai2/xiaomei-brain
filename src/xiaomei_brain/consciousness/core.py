@@ -39,14 +39,10 @@ from .perception import PerceptionConfig
 from .config import ConsciousnessConfig
 from .memory_window import refresh_memory_window
 from ..purpose import PurposeEngine
-from ..prompts import CONSCIOUSNESS_PROMPT_DEEP, CONSCIOUSNESS_PROMPT_LIGHT  # L2_TICK_PROMPT, L3_TICK_PROMPT 已废弃
+from ..prompts import CONSCIOUSNESS_PROMPT_DEEP, CONSCIOUSNESS_PROMPT_LIGHT
 from ..memory.procedure import ProcedureMemory
 
 logger = logging.getLogger(__name__)
-
-
-# CONSCIOUSNESS_PROMPT_LIGHT 已迁移至 prompts/consciousness.py，通过 import 引入
-
 
 
 class TickResult(Enum):

@@ -81,19 +81,6 @@ class IntentResult:
         """是否是闲聊"""
         return self.intent_type == IntentType.CHAT
 
-
-# INTENT_CLASSIFY_PROMPT / GOAL_DECOMPOSE_PROMPT 已迁移至 prompts/purpose.py
-# 以下保留备查
-# INTENT_CLASSIFY_PROMPT = """
-# 分析用户输入，判断意图类型。
-# ...
-# """
-#
-# GOAL_DECOMPOSE_PROMPT = """
-# 给定一个目标，将其分解为子目标。
-# ...
-# """
-
 from ..prompts.purpose import INTENT_CLASSIFY_PROMPT, GOAL_DECOMPOSE_PROMPT
 
 

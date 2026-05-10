@@ -1,5 +1,5 @@
-# 来源: purpose/intent.py:86 -> 迁移至集中管理
-# 调用: purpose/intent.py:157 (understand_intent_type)
+# 来源: purpose/intent.py:86 (已迁移至 prompts/purpose.py)
+# 调用: purpose/intent.py:124 (understand_intent_type)
 # 用途: 意图类型分类，输出 JSON
 INTENT_CLASSIFY_PROMPT = """
 分析用户输入，判断意图类型。
@@ -30,8 +30,8 @@ INTENT_CLASSIFY_PROMPT = """
 {{"intent_type": "task/query/chat/clarification", "confidence": 0.0-1.0, "reasoning": "判断理由", "goal_description": "目标描述（仅task时有）"}}
 """
 
-# 来源: purpose/intent.py:115 -> 迁移至集中管理
-# 调用: purpose/intent.py:182 (decompose_goal)
+# 来源: purpose/intent.py:115 (已迁移至 prompts/purpose.py)
+# 调用: purpose/intent.py:136 (decompose_goal)
 # 用途: 目标分解，输出 JSON
 GOAL_DECOMPOSE_PROMPT = """
 给定一个目标，将其分解为子目标。
@@ -65,7 +65,7 @@ GOAL_LLM_DECOMPOSE_PROMPT = """请将以下目标分解为 2-4 个子目标：
 只输出子目标列表，每行一个，不要其他解释。"""
 
 # 来源: purpose/task_executor.py:163 (build_intent_context)
-# 调用: purpose/task_executor.py (追加到任务执行上下文)
+# 调用: purpose/task_executor.py:151 (追加到任务执行上下文)
 # 用途: PROGRESS 块格式引导 — 教 LLM 输出任务进度
 PROGRESS_BLOCK_INSTRUCTION = """【重要】先正常回复用户，回复完成后，再在末尾输出进度块：
 
