@@ -39,6 +39,7 @@ GOAL_DECOMPOSE_PROMPT = """
 【目标】
 {goal_description}
 
+{calibration_context}
 分解原则：
 - 涉及技术选择（语言/框架/数据库/方案）的 → 必须有对应的"确认X"子目标
 - 复杂项目 → 按"了解需求 → 制定计划 → 执行 → 验收"顺序分解

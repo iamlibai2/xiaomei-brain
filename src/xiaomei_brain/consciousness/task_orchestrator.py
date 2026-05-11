@@ -59,6 +59,9 @@ class TaskOrchestrator:
         self._pending_confirm_msg: LivingMessage | None = None
         self._pending_confirm_intent: Any = None
 
+        # PACE 等待用户反馈标记
+        self._pace_waiting: bool = False
+
         # PACE 执行器（lazy init，/intask 进入任务模式时创建）
         # 配置 exec_mode: "react" 可强制关闭，用于调试
         self._exec_mode = getattr(config, 'exec_mode', None) if config else None
@@ -106,6 +109,11 @@ class TaskOrchestrator:
 
         ConsciousLiving._handle_message 在完成命令检测后调用此方法。
         """
+        # 用户回复了等待中的 PACE → 清除等待标记，让消息正常流进意图分析
+        if self._pace_waiting:
+            self._pace_waiting = False
+            logger.info("[TaskOrchestrator] 用户回复，PACE 等待结束")
+
         # "继续"检测：只在有活跃目标时触发
         if self._handle_continue(msg):
             return
@@ -372,7 +380,8 @@ class TaskOrchestrator:
                 goal_type=GoalType.EXECUTABLE,
                 status=GoalStatus.PENDING,
             )
-            sub_descriptions = self._intent_understanding.decompose_goal(task_text)
+            calibration_ctx = self._get_calibration_context()
+            sub_descriptions = self._intent_understanding.decompose_goal(task_text, calibration_ctx)
             return IntentResult(
                 intent_type=PurposeIntentType.TASK,
                 goals=[goal],
@@ -400,12 +409,14 @@ class TaskOrchestrator:
             if pending_goals:
                 pending_summary = "; ".join(g.description[:30] for g in pending_goals[:3])
 
+        calibration_ctx = self._get_calibration_context()
         result = self._intent_understanding.understand(
             user_input=user_input,
             meaning=meaning_summary,
             current_goal=current_goal_desc,
             current_goal_depth=current_goal_depth,
             pending_goals=pending_summary,
+            calibration_context=calibration_ctx,
         )
 
         return result
@@ -799,6 +810,25 @@ class TaskOrchestrator:
         # 日常闲聊 → 快速 ReAct
         self._run_react(msg, intent_context)
 
+    def assess_chat(self, content: str, tool_call_count: int = 0, elapsed: float = 0.0) -> list[str]:
+        """对普通 chat 输出做事后规则检测（轻量 PACE-assess 模式）。
+
+        只检测不决策。发现异常只记录日志，不影响对话流程。
+
+        Returns:
+            检测到的异常信号列表（空列表 = 无异常）
+        """
+        if self._pace_runner is None:
+            self._init_pace_runner()
+        return self._pace_runner.assess_only(content, tool_call_count, elapsed)
+
+    def _get_calibration_context(self) -> str:
+        """获取能力校准上下文（从持久化的能力数据加载）。"""
+        from ..metacognition.capability import CapabilityTracker
+        agent_id = getattr(self._config, 'agent_id', self._parent._agent_id) if self._config else self._parent._agent_id
+        tracker = CapabilityTracker(agent_id=agent_id)
+        return tracker.get_calibration_context()
+
     def _init_pace_runner(self) -> None:
         """lazy init PACE 执行器"""
         from ..metacognition import PACERunner
@@ -822,7 +852,13 @@ class TaskOrchestrator:
 
         parent = self._parent
 
+        # 捕获最后一轮 chat 输出（供 assess_chat 事后检测）
+        last_chat_content = ""
+        last_chat_tc = 0
+        last_chat_elapsed = 0.0
+
         def run():
+            nonlocal last_chat_content, last_chat_tc, last_chat_elapsed
             parent._chatting = True
             try:
                 current_msg = msg
@@ -856,6 +892,9 @@ class TaskOrchestrator:
                     content = "".join(chunks)
                     elapsed = time.time() - t0
                     tc_count = tool_call_buffer.last_index - tc_before
+                    last_chat_content = content
+                    last_chat_tc = tc_count
+                    last_chat_elapsed = elapsed
 
                     if self._drive and elapsed > 1.0:
                         self._drive.consume_energy(0.05)
@@ -981,10 +1020,17 @@ class TaskOrchestrator:
 
         run()
 
-    def _run_pace(self, msg: LivingMessage, intent_context: str = "") -> None:
+        # chat 完成后运行轻量 PACE 规则检测（chat 模式质量监控）
+        if last_chat_content and self._exec_mode != "react":
+            self.assess_chat(last_chat_content, last_chat_tc, last_chat_elapsed)
+
+    def _run_pace(self, msg: LivingMessage, intent_context: str = "") -> str:
         """PACE 模式执行：Pause → Assess → Choose → Execute。
 
         委托给 PACERunner.run()，提供必要的回调。
+
+        Returns:
+            PACE 退出原因字符串，同 PACERunner.EXIT_*
         """
         parent = self._parent
 
@@ -1008,6 +1054,7 @@ class TaskOrchestrator:
                 print(f"  0. 取消任务", flush=True)
 
         parent._chatting = True
+        exit_reason = "completed"
         try:
             callbacks = {
                 "print_prompt": parent._print_prompt,
@@ -1023,9 +1070,21 @@ class TaskOrchestrator:
                 "on_confirm": _on_confirm,
                 "_store_checkpoint": lambda ckpt: setattr(self, '_pace_checkpoint', ckpt),
             }
-            self._pace_runner.run(msg, intent_context, callbacks)
+            exit_reason = self._pace_runner.run(msg, intent_context, callbacks)
         finally:
             parent._chatting = False
+
+        # ── 根据退出原因决定后续行为 ──
+        if exit_reason == "waiting_user":
+            self._pace_waiting = True
+            current = self._purpose.get_current() if self._purpose else None
+            goal_desc = current.description[:40] if current else "当前任务"
+            print(f"\n[小美] 正在等待你对「{goal_desc}」的反馈...", flush=True)
+            logger.info("[TaskOrchestrator] PACE 退出: waiting_user, goal=%s", goal_desc)
+        elif exit_reason in ("stuck", "escalated", "error"):
+            logger.info("[TaskOrchestrator] PACE 退出: %s", exit_reason)
+
+        return exit_reason
 
     def _resume_pace(self, checkpoint, answer_context: str, original_msg=None) -> None:
         """从检查点恢复 PACE 执行，注入用户回答。

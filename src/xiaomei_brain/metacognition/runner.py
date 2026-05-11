@@ -16,14 +16,16 @@ PACE = Pause → Assess → Choose → Execute
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Any, Callable
 
 from .types import (
     StepObservation, StepCheckResult, MetaSuggestion, SurpriseType, StuckClass,
 )
-from .rules import detect_surprises, parse_progress_tag, remove_progress_tag
+from .rules import detect_surprises, parse_progress_tag, remove_progress_tag, content_similarity
 from .reviewer import LLMBudget, llm_step_check, llm_post_review, persist_lesson
+from .capability import CapabilityTracker
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,13 @@ class PACERunner:
 
     不修改 TaskOrchestrator._run_react()，作为独立的执行模式存在。
     """
+
+    # PACE 退出原因常量
+    EXIT_COMPLETED = "completed"         # 正常完成
+    EXIT_WAITING_USER = "waiting_user"   # Agent 等待用户反馈
+    EXIT_ESCALATED = "escalated"         # 需要用户介入
+    EXIT_STUCK = "stuck"                 # 无法继续
+    EXIT_ERROR = "error"                 # 执行异常
 
     def __init__(
         self,
@@ -55,6 +64,13 @@ class PACERunner:
         self._resume_step: int | None = None
         self._resume_nudge: str = ""
         self._skip_post_review: bool = False
+        self._exit_reason: str = self.EXIT_COMPLETED
+
+        # 能力校准器
+        self._capability_tracker = CapabilityTracker(agent_id=self._agent_id())
+
+        # 可观测性指标（每次 run() 时创建）
+        self._metrics = None
 
     # ── Public API ──────────────────────────────────────────────────
 
@@ -63,24 +79,30 @@ class PACERunner:
         msg: Any,                    # LivingMessage
         intent_context: str = "",
         callbacks: dict[str, Callable] | None = None,
-    ) -> None:
+    ) -> str:
         """主循环：认知回合制执行。
 
         Args:
             msg: LivingMessage 实例
             intent_context: 意图上下文（注入 system prompt）
-            callbacks: 回调字典，包含：
-                - print_prompt: () -> None
-                - cancel_check: () -> bool
-                - on_user_interaction: (input: str, output: str) -> None
-                - update_recent_conversations: () -> None
-                - assemble_context: bool
-                - get_consciousness_state: () -> dict
+            callbacks: 回调字典
+
+        Returns:
+            退出原因: EXIT_COMPLETED / EXIT_WAITING_USER / EXIT_ESCALATED / EXIT_STUCK / EXIT_ERROR
         """
         cb = callbacks or {}
 
         # 每次任务启动时重置运行状态
         self._skip_post_review = False
+        self._exit_reason = self.EXIT_COMPLETED
+
+        # 创建本次运行的指标跟踪器
+        goal = self._purpose.get_current() if self._purpose else None
+        from .metrics import PACEMetrics
+        self._metrics = PACEMetrics(
+            goal_id=goal.id if goal else "chat",
+            goal_description=goal.description if goal else msg.content[:200],
+        )
 
         cb.get("update_recent_conversations", lambda: None)()
 
@@ -94,11 +116,63 @@ class PACERunner:
             logger.error("[PACERunner] 执行失败: %s\n%s", e, tb)
             print(f"\n\033[31m[元认知错误] {e}\033[0m", flush=True)
             self._handle_exception(e, msg)
+            self._exit_reason = self.EXIT_ERROR
             cb.get("print_prompt", lambda: None)()
         finally:
             if not self._skip_post_review:
                 self._do_post_review(msg)
             self._reset_run_state()
+
+        return self._exit_reason
+
+    def assess_only(
+        self,
+        content: str,
+        tool_call_count: int = 0,
+        elapsed_seconds: float = 0.0,
+    ) -> list[str]:
+        """轻量模式：对单步输出做规则检测，只检测不决策。
+
+        用于普通 chat 模式的质量监控。不影响对话流程，只记录检测到的异常信号。
+
+        Args:
+            content: Agent 的文本输出
+            tool_call_count: 工具调用次数
+            elapsed_seconds: 耗时
+
+        Returns:
+            检测到的异常信号列表（SurpriseType value 字符串列表）
+        """
+        from .rules import parse_progress_tag, remove_progress_tag
+
+        progress_data = parse_progress_tag(content)
+        display_content = remove_progress_tag(content)
+
+        obs = StepObservation(
+            step_index=len(self._observations),
+            goal_description="[chat]",
+            llm_output=display_content,
+            tool_calls=[],
+            tool_call_count=tool_call_count,
+            elapsed_seconds=elapsed_seconds,
+            has_progress_tag=progress_data is not None,
+            progress_status=progress_data.get("status") if progress_data else None,
+            raw_content=content,
+        )
+        obs = detect_surprises(obs, self._observations)
+        self._observations.append(obs)
+
+        if obs.surprises:
+            logger.warning(
+                "[PACE-assess] chat 轮次检测到异常信号: %s",
+                [s.value for s in obs.surprises],
+            )
+
+        # 定期清理 observations（chat 模式下只保留最近 50 条）
+        if len(self._observations) > 50:
+            self._observations = self._observations[-30:]
+
+        return [s.value for s in obs.surprises]
 
     # ── Main Loop ────────────────────────────────────────────────────
 
@@ -127,6 +201,7 @@ class PACERunner:
                 pre = self._pre_check(goal)
                 if pre == "escalate":
                     print(f"\n[元认知] 目标「{goal.description[:40]}」过于模糊，建议澄清后重试。", flush=True)
+                    self._exit_reason = self.EXIT_ESCALATED
                     cb.get("print_prompt", lambda: None)()
                     return
                 elif pre == "clarify":
@@ -145,18 +220,29 @@ class PACERunner:
                             source="system",
                         )
 
+                # 注入历史 lesson
+                if not resume_nudge:  # resume 时不重复注入
+                    lesson_text = self._inject_relevant_lessons(goal.description)
+                    if lesson_text:
+                        if current_context:
+                            current_context = lesson_text + "\n" + current_context
+                        else:
+                            current_context = lesson_text
+
         while True:
             # ── 连续 3 步 EMPTY_RESPONSE → 模型服务可能出问题，立即 escalation ──
             if len(self._observations) >= 3:
                 last3 = self._observations[-3:]
                 if all(SurpriseType.EMPTY_RESPONSE in obs.surprises for obs in last3):
                     print(f"\n[元认知] 连续 3 步空响应，模型服务可能异常，暂停任务。", flush=True)
+                    self._exit_reason = self.EXIT_ERROR
                     cb.get("print_prompt", lambda: None)()
                     return
 
             # ── 子目标重试上限 ──
             if current_goal_retries >= max_retries_per_goal:
                 print(f"\n[元认知] 子目标「{self._current_goal_desc()[:40]}」重试 {current_goal_retries} 次仍未完成，暂停任务。", flush=True)
+                self._exit_reason = self.EXIT_STUCK
                 cb.get("print_prompt", lambda: None)()
                 return
 
@@ -212,6 +298,7 @@ class PACERunner:
                         ckpt = self.save_checkpoint(goal_id, step_index)
                         store_ckpt(ckpt)
                     print("\n[取消] 已中断", flush=True)
+                    self._exit_reason = self.EXIT_STUCK
                     cb.get("print_prompt", lambda: None)()
                     return
 
@@ -238,6 +325,42 @@ class PACERunner:
                 # ── Step Check ──
                 check = self._step_check(obs, step_index)
                 self._observations.append(obs)
+
+                # ── 能力校准埋点 ──
+                if tool_names:
+                    domain = CapabilityTracker.classify_domain(tool_names)
+                    result = (
+                        "failed" if obs.surprises
+                        else ("partial" if tc_count > 5 else "success")
+                    )
+                    self._capability_tracker.record(
+                        domain=domain,
+                        result=result,
+                        surprises=[s.value for s in obs.surprises],
+                        elapsed=elapsed,
+                        retries=current_goal_retries,
+                    )
+
+                # ── 可观测性埋点 ──
+                if self._metrics:
+                    if check.suggestion == MetaSuggestion.ESCALATE:
+                        self._metrics.llm_checks_performed += 1
+                    elif check.suggestion != MetaSuggestion.CONTINUE:
+                        # LLM step_check 参与了判定
+                        if not (
+                            SurpriseType.TOOL_STORM in obs.surprises
+                            or SurpriseType.EMPTY_RESPONSE in obs.surprises
+                            or (SurpriseType.GAVE_UP in obs.surprises
+                                and sum(1 for o in self._observations[-5:]
+                                        if SurpriseType.GAVE_UP in o.surprises) >= 2)
+                        ):
+                            self._metrics.llm_checks_performed += 1
+                    self._metrics.record_step(
+                        surprises=[s.value for s in obs.surprises],
+                        suggestion=check.suggestion.value if check else "CONTINUE",
+                        tool_call_count=tc_count,
+                        elapsed=elapsed,
+                    )
 
                 # ── 展示输出 ──
                 self._print_output(display_content, elapsed, tc_count)
@@ -289,6 +412,7 @@ class PACERunner:
                     last3 = self._observations[-3:]
                     if all(SurpriseType.EMPTY_RESPONSE in o.surprises for o in last3):
                         print(f"\n[元认知] 连续 3 步异常/空响应，模型服务可能异常，暂停任务。", flush=True)
+                        self._exit_reason = self.EXIT_ERROR
                         cb.get("print_prompt", lambda: None)()
                         return
 
@@ -298,6 +422,8 @@ class PACERunner:
 
             # ── 根据 check 结果决定下一步 ──
             if check.suggestion == MetaSuggestion.ESCALATE:
+                if self._metrics:
+                    self._metrics.escalations += 1
                 # 如果有 on_confirm 回调，保存检查点并请求用户确认
                 on_confirm = cb.get("on_confirm")
                 if on_confirm and check.nudge:
@@ -307,10 +433,12 @@ class PACERunner:
                     print(f"\n[元认知] {check.reasoning}", flush=True)
                     on_confirm(checkpoint, check.nudge, confirm_options)
                     self._skip_post_review = True
+                    self._exit_reason = self.EXIT_ESCALATED
                     return
                 # 没有 on_confirm → 直接退出
-                print(f"\n[元认知] {check.reasoning}", flush=True)
+                print(f"\n[元認知] {check.reasoning}", flush=True)
                 print("[元认知] 建议暂停任务，请求用户介入。", flush=True)
+                self._exit_reason = self.EXIT_ESCALATED
                 cb.get("print_prompt", lambda: None)()
                 return
 
@@ -344,6 +472,7 @@ class PACERunner:
                 # 无法推进，退出
                 print(f"\n[元认知] {check.reasoning}", flush=True)
                 print("[元认知] 无法继续推进，等待用户反馈。", flush=True)
+                self._exit_reason = self.EXIT_STUCK
                 cb.get("print_prompt", lambda: None)()
                 return
 
@@ -356,12 +485,23 @@ class PACERunner:
 
             # 判断是否继续推进
             if not self._maybe_auto_advance(progress_data, obs, check):
-                logger.info("[PACERunner] 对话完成")
+                # 如果 Agent 在等待用户，_maybe_auto_advance 已经设置了 _exit_reason
+                # 否则保持 completed（正常完成/无后续子目标）
+                if self._exit_reason == self.EXIT_COMPLETED:
+                    # 兜底检查：Agent 是否隐含在等待用户
+                    if self._detect_refusal_or_waiting(display_content):
+                        self._exit_reason = self.EXIT_WAITING_USER
+                if self._exit_reason == self.EXIT_WAITING_USER and self._metrics:
+                    self._metrics.waiting_user_exits += 1
+                logger.info("[PACERunner] 对话完成 (exit=%s)", self._exit_reason)
                 self._record_step_output(display_content)
                 cb.get("print_prompt", lambda: None)()
                 return
 
             # 推进到下一个子目标
+            if self._metrics:
+                self._metrics.auto_advances += 1
+                self._metrics.sub_goals_completed += 1
             step_index += 1
             current_goal_retries = 0  # 推进到新子目标，重置重试计数
             next_goal = self._purpose.get_current()
@@ -404,6 +544,7 @@ class PACERunner:
         - 描述 < 5 字 → clarify
         - 描述 > 5 字但有具体关键词 → continue
         - 否则 → clarify
+        - 能力校准：如果目标描述涉及 weakness 域 → clarify（提醒谨慎）
         """
         desc = goal.description.strip() if goal else ""
 
@@ -420,6 +561,21 @@ class PACERunner:
                         "安装", "配置", "调试", "测试", "部署", "优化", "翻译", "总结",
                         "write", "create", "search", "fix", "test", "run", "build"}
         if any(w in desc.lower() for w in action_words):
+            # 能力校准：检查是否涉及 weakness 域
+            profile = self._capability_tracker.get_profile()
+            domain_keywords = {
+                "shell_exec": ["shell", "bash", "脚本", "命令行", "终端", "执行"],
+                "file_ops": [],
+                "web_search": [],
+            }
+            for domain in profile.get("weaknesses", []):
+                keywords = domain_keywords.get(domain, [])
+                if keywords and any(kw in desc.lower() for kw in keywords):
+                    logger.info(
+                        "[PACERunner] _pre_check: 目标「%s」涉及 weakness 域 %s，标记为 clarify",
+                        desc[:40], domain,
+                    )
+                    return "clarify"
             return "continue"
 
         return "clarify"
@@ -586,6 +742,21 @@ class PACERunner:
         except Exception as e:
             logger.warning("[PACERunner] post_review 失败: %s", e)
 
+        # ── 持久化可观测性指标 ──
+        if self._metrics:
+            self._metrics.end_time = time.time()
+            self._metrics.total_llm_calls = self._budget._count
+            self._metrics.goal_completed = (
+                self._purpose.get_current() is not None
+                and self._purpose.get_current().is_completed()
+            ) if self._purpose else False
+            agent_id = getattr(self._config, 'agent_id', 'xiaomei') if self._config else 'xiaomei'
+            try:
+                from .metrics import persist_metrics
+                persist_metrics(self._metrics, agent_id)
+            except Exception as e:
+                logger.warning("[PACERunner] metrics 持久化失败: %s", e)
+
     # ── Helpers ──────────────────────────────────────────────────────
 
     def _extract_tool_names(self, buffer, tc_before: int, tc_count: int) -> list[str]:
@@ -689,19 +860,50 @@ class PACERunner:
             return False
         return True
 
+    # Agent 明确拒绝执行/等待用户的关键词 — 此时不应自动完成子目标
+    _WAITING_PATTERNS = [
+        re.compile(p) for p in [
+            r"等用户", r"等.*确认", r"等.*回复", r"等.*反馈",
+            r"停一下", r"停下来", r"先停",
+            r"我不执行", r"不执行这个", r"不能执行",
+            r"我在这儿等着", r"我等着",
+            r"别再推", r"不要再推", r"别把.*当",
+            r"用户还没", r"还没看过", r"还没回复",
+            r"逻辑上不通", r"没有意义",
+        ]
+    ]
+
+    def _detect_refusal_or_waiting(self, text: str) -> bool:
+        """检测 Agent 是否明确表示等待用户或不执行当前子目标。"""
+        if not text:
+            return False
+        return any(p.search(text) for p in self._WAITING_PATTERNS)
+
     def _maybe_auto_advance(self, progress_data: dict | None, obs: StepObservation, check=None) -> bool:
         """判断是否应自动推进子目标。
 
-        三层逻辑：
+        多层逻辑：
         1. 有 PROGRESS completed → 正常推进
-        2. 无 PROGRESS 但无异常且无工具调用 → Agent 做了纯文本确认，自动完成
-        3. 无 PROGRESS 但 LLM check 判定 continue → 信任 LLM 判断，自动完成
+        2. 有 PROGRESS in_progress → 不推进，Agent 表示还没做完
+        3. 无 PROGRESS 但无异常且无工具调用 → Agent 做了纯文本确认，自动完成
+           （但如果 Agent 明确拒绝/等待，不自动完成）
+        4. 无 PROGRESS 但 LLM check 判定 continue → 信任 LLM 判断，自动完成
         """
         if self._should_continue(progress_data):
             return True
+        # 有 PROGRESS in_progress → Agent 明确表示没做完，不推进
+        if progress_data and progress_data.get("status") == "in_progress":
+            logger.info("[PACERunner] PROGRESS=in_progress，Agent 表示未完成，不自动推进")
+            self._exit_reason = self.EXIT_WAITING_USER
+            return False
         # 无 PROGRESS 但也没有意外信号，且没有工具调用 → 视为"确认类"子目标完成
         if not progress_data and not obs.surprises and obs.tool_call_count == 0:
             if obs.llm_output.strip():
+                # 但若 Agent 明确拒绝/等待用户，则不自动完成
+                if self._detect_refusal_or_waiting(obs.llm_output):
+                    logger.info("[PACERunner] 无 PROGRESS 标签但 Agent 明确拒绝/等待用户，不自动完成")
+                    self._exit_reason = self.EXIT_WAITING_USER
+                    return False
                 logger.info("[PACERunner] 无 PROGRESS 标签但无异常，自动完成当前子目标")
                 self._update_goal_progress("completed")
                 return True
@@ -931,11 +1133,71 @@ class PACERunner:
             restored.append(obs)
         return restored
 
+    def _inject_relevant_lessons(self, goal_description: str) -> str:
+        """从历史 lesson 中找到与当前 Goal 相关的，生成注入文本。
+
+        不调用 LLM，纯文件 I/O + token set 相似度匹配。
+
+        Returns:
+            注入文本（空字符串表示没有相关 lesson）
+        """
+        import json
+        from pathlib import Path
+
+        lessons_dir = (
+            Path.home() / ".xiaomei-brain" / "agents"
+            / self._agent_id() / "metacognition" / "lessons"
+        )
+        if not lessons_dir.exists():
+            return ""
+
+        # 收集所有 lesson，计算相似度
+        candidates = []
+        for f in lessons_dir.glob("*.json"):
+            try:
+                data = json.loads(f.read_text())
+                lesson_text = (
+                    data.get("goal_description", "")
+                    + " " + " ".join(data.get("tags", []))
+                )
+                sim = content_similarity(goal_description, lesson_text)
+                if sim > 0.2:  # 低门槛，相关即可
+                    candidates.append((sim, data))
+            except Exception:
+                continue
+
+        if not candidates:
+            return ""
+
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        top = candidates[:3]
+
+        lines = [
+            "\n[历史教训] 以下是以往类似任务的复盘记录，请特别注意避免重复这些错误：",
+        ]
+        for i, (sim, data) in enumerate(top):
+            rating = data.get("rating", "?")
+            lesson = data.get("lesson", "")
+            desc = data.get("goal_description", "")[:60]
+            if lesson:
+                lines.append(
+                    f"\n  经验 {i+1}（相关度: {sim:.2f}, 评级: {rating}）\n"
+                    f"    任务: {desc}\n"
+                    f"    教训: {lesson}"
+                )
+
+        logger.info(
+            "[PACERunner] 注入 %d 条历史 lesson (top sim=%.2f)",
+            len(top), top[0][0] if top else 0,
+        )
+        return "\n".join(lines)
+
     def _reset_run_state(self) -> None:
         """清理单次运行的临时状态"""
         self._resume_step = None
         self._resume_nudge = ""
         self._skip_post_review = False
+        self._exit_reason = self.EXIT_COMPLETED
 
     def _build_confirm_options(self, check: StepCheckResult) -> list[str]:
         """根据障碍类型生成用户确认选项"""

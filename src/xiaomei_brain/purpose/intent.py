@@ -125,7 +125,7 @@ class IntentUnderstanding:
             logger.warning(f"[Intent] 意图判断失败: {e}")
             return self._rule_classify(user_input)
 
-    def decompose_goal(self, goal_description: str) -> list[str]:
+    def decompose_goal(self, goal_description: str, calibration_context: str = "") -> list[str]:
         """第2次LLM调用：目标分解。
 
         返回：子目标描述列表（空列表=单步任务）
@@ -136,6 +136,7 @@ class IntentUnderstanding:
 
         prompt = GOAL_DECOMPOSE_PROMPT.format(
             goal_description=goal_description,
+            calibration_context=calibration_context,
         )
 
         try:
@@ -153,6 +154,7 @@ class IntentUnderstanding:
         current_goal: str,
         current_goal_depth: int = 0,
         pending_goals: str = "",
+        calibration_context: str = "",
     ) -> IntentResult:
         """
         分析用户输入，提取意图。两阶段LLM：
@@ -184,7 +186,7 @@ class IntentUnderstanding:
             )
 
         # 第2次LLM：分解子目标
-        sub_goals = self.decompose_goal(goal_description) if goal_description else []
+        sub_goals = self.decompose_goal(goal_description, calibration_context) if goal_description else []
 
         # 构造目标
         goal = Goal(

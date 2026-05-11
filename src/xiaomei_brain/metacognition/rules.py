@@ -9,8 +9,15 @@ import re
 
 from .types import StepObservation, SurpriseType
 
-# PROGRESS 标签正则
-_PROGRESS_RE = re.compile(r'<PROGRESS\s+status="([^"]*)"(?:\s+summary="([^"]*)")?\s*/>', re.IGNORECASE)
+# PROGRESS 标签正则 — 支持两种格式：
+# 1. XML 属性: <PROGRESS status="completed" summary="..."/>
+# 2. JSON 体:   <PROGRESS>{"status": "completed", "summary": "..."}</PROGRESS>
+_PROGRESS_XML_RE = re.compile(
+    r'<PROGRESS\s+status="([^"]*)"(?:\s+summary="([^"]*)")?\s*/>', re.IGNORECASE
+)
+_PROGRESS_JSON_RE = re.compile(
+    r'<PROGRESS>\s*(\{[^}]*"status"\s*:\s*"([^"]*)"[^}]*\})\s*</PROGRESS>', re.IGNORECASE
+)
 
 
 def detect_surprises(obs: StepObservation, history: list[StepObservation]) -> list[StepObservation]:
@@ -56,21 +63,44 @@ def detect_surprises(obs: StepObservation, history: list[StepObservation]) -> li
 def parse_progress_tag(content: str) -> dict | None:
     """解析 content 中的 PROGRESS 标签。
 
+    支持两种格式：
+    1. XML 属性: <PROGRESS status="completed" summary="..."/>
+    2. JSON 体:   <PROGRESS>{"status": "in_progress"}</PROGRESS>
+
     Returns:
         {"status": "completed"|"in_progress", "summary": "..."} 或 None
     """
-    match = _PROGRESS_RE.search(content)
-    if not match:
-        return None
-    return {
-        "status": match.group(1),
-        "summary": match.group(2) or "",
-    }
+    # 先试 XML 属性格式
+    match = _PROGRESS_XML_RE.search(content)
+    if match:
+        return {
+            "status": match.group(1),
+            "summary": match.group(2) or "",
+        }
+    # 再试 JSON 体格式
+    match = _PROGRESS_JSON_RE.search(content)
+    if match:
+        try:
+            import json
+            data = json.loads(match.group(1))
+            return {
+                "status": data.get("status", ""),
+                "summary": data.get("summary", ""),
+            }
+        except (json.JSONDecodeError, KeyError):
+            # JSON 解析失败，尝试直接从 regex group 取 status
+            return {
+                "status": match.group(2),
+                "summary": "",
+            }
+    return None
 
 
 def remove_progress_tag(content: str) -> str:
     """去掉 PROGRESS 标签，返回纯净输出。"""
-    return _PROGRESS_RE.sub("", content).strip()
+    content = _PROGRESS_XML_RE.sub("", content)
+    content = _PROGRESS_JSON_RE.sub("", content)
+    return content.strip()
 
 
 # ── Rule implementations ──────────────────────────────────────────────
@@ -97,7 +127,7 @@ def _detect_repeated_output(obs: StepObservation, history: list[StepObservation]
     prev = history[-1]
     if not prev.llm_output or not obs.llm_output:
         return False
-    similarity = _content_similarity(prev.llm_output, obs.llm_output)
+    similarity = content_similarity(prev.llm_output, obs.llm_output)
     return similarity > 0.9
 
 
@@ -114,19 +144,47 @@ def _detect_slow_step(obs: StepObservation, history: list[StepObservation]) -> b
     return obs.elapsed_seconds > avg * 3
 
 
-def _content_similarity(text1: str, text2: str) -> float:
+def content_similarity(text1: str, text2: str) -> float:
     """基于 token set 的简单相似度。
 
     将两个文本切词后计算 Jaccard 相似度。
+    中文用字符级 bigram，英文/数字按空白分词。
     """
+    import re
+
     def tokenize(s: str) -> set[str]:
-        # 按空白 + 常见 CJK 字符拆分
         tokens = set()
-        # 按空白分词
+        # 英文/数字部分：按空白分词
         for token in s.split():
             token = token.strip().rstrip(",.!?;:，。！？；：、")
-            if token:
-                tokens.add(token)
+            if not token:
+                continue
+            # 纯 ASCII → 直接加入
+            if token.isascii():
+                tokens.add(token.lower())
+            else:
+                # 含中文 → 字符级 bigram
+                cjk_chars = []
+                ascii_buf = []
+                for ch in token:
+                    if '\u4e00' <= ch <= '\u9fff' or '\u3000' <= ch <= '\u303f':
+                        if ascii_buf:
+                            tokens.add(''.join(ascii_buf).lower())
+                            ascii_buf = []
+                        cjk_chars.append(ch)
+                    else:
+                        if cjk_chars:
+                            for i in range(len(cjk_chars) - 1):
+                                tokens.add(cjk_chars[i] + cjk_chars[i+1])
+                            tokens.update(cjk_chars)  # 单字也作为 token
+                            cjk_chars = []
+                        ascii_buf.append(ch)
+                if cjk_chars:
+                    for i in range(len(cjk_chars) - 1):
+                        tokens.add(cjk_chars[i] + cjk_chars[i+1])
+                    tokens.update(cjk_chars)
+                if ascii_buf:
+                    tokens.add(''.join(ascii_buf).lower())
         return tokens
 
     t1 = tokenize(text1)
@@ -173,6 +231,6 @@ def _detect_gave_up(obs: StepObservation, history: list[StepObservation]) -> boo
     prev_gave_up = SurpriseType.GAVE_UP in getattr(prev, 'surprises', [])
     prev_repeated = SurpriseType.REPEATED_OUTPUT in getattr(prev, 'surprises', [])
     # 或者上一步输出与当前高度相似
-    prev_similar = _content_similarity(prev.llm_output or "", text) > 0.7
+    prev_similar = content_similarity(prev.llm_output or "", text) > 0.7
 
     return prev_gave_up or prev_repeated or prev_similar

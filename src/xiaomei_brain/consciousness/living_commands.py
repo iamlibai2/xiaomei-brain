@@ -415,6 +415,19 @@ def list_commands(living: ConsciousLiving, args: str = "") -> None:
     living._print_prompt()
 
 
+def cmd_pace_stats(living: ConsciousLiving, args: str = "") -> None:
+    """`pace-stats` — 显示 PACE 运行统计报告"""
+    agent_id = getattr(living, "_agent_id", "xiaomei")
+    try:
+        from ..metacognition import generate_report
+        report = generate_report(agent_id)
+        print(f"\n{report}", flush=True)
+    except Exception as e:
+        print(f"\n[PACE Stats] 生成报告失败: {e}", flush=True)
+
+    living._print_prompt()
+
+
 # ── 命令注册表 ──────────────────────────────────────────────────
 
 # 所有 CLI 命令，ConsciousLiving 用此表注册
@@ -431,4 +444,5 @@ COMMAND_REGISTRY: dict[str, tuple] = {
     "model":     (cmd_model,          True),
     "tool":      (cmd_tool_expand,    True),
     "export":    (cmd_export,         True),
+    "pace-stats": (cmd_pace_stats,    False),
 }
