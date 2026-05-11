@@ -301,7 +301,7 @@ class NostromoTerminal:
 
             self.self_model = SelfModel.load(os.path.join(base, "talent.md"))
             self.conversation_db = ConversationDB(db_path)
-            self.dag = DAGSummaryGraph(db_path, llm_client=llm)
+            self.dag = DAGSummaryGraph.for_agent("xiaomei", llm_client=llm)
             self.ltm = LongTermMemory(db_path)
             self.memory_extractor = MemoryExtractor(llm, self.ltm, self.conversation_db)
             self.context_assembler = ContextAssembler(

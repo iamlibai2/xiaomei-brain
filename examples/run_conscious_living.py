@@ -283,8 +283,23 @@ def main():
             if not msg:
                 continue
 
+            # /image <path> [text] — 发送图片
+            images = []
+            if msg.startswith("/image "):
+                parts = msg[7:].strip()
+                space_idx = parts.find(" ")
+                if space_idx > 0:
+                    img_path = parts[:space_idx]
+                    text = parts[space_idx:].strip()
+                else:
+                    img_path = parts
+                    text = ""
+                images.append(img_path)
+                msg = text or "请看这张图片"
+                print(f"[图片] {img_path}")
+
             living._command_done.clear()
-            living.put_message(msg)
+            living.put_message(msg, images=images)
 
             # 命令消息：等 living 线程处理完再刷新
             if msg.startswith("/"):

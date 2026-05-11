@@ -41,7 +41,7 @@ def main():
 
     self_model = SelfModel.load(os.path.join(base, "talent.md"))
     conversation_db = ConversationDB(db_path)
-    dag = DAGSummaryGraph(db_path, llm_client=llm)
+    dag = DAGSummaryGraph.for_agent("xiaomei", llm_client=llm)
     longterm_memory = LongTermMemory(db_path)
     memory_extractor = MemoryExtractor(llm, longterm_memory, conversation_db)
     context_assembler = ContextAssembler(conversation_db, dag, self_model, longterm_memory)

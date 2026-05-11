@@ -50,6 +50,7 @@ class LivingMessage:
     user_id: str = "global"
     session_id: str = "main"
     source: str = ""  # which channel: "cli", "feishu", "websocket", etc.
+    images: list[str] = field(default_factory=list)  # 图片路径或 URL 列表
 
 
 # ── AgentLiving ─────────────────────────────────────────────────────────
@@ -108,6 +109,7 @@ class AgentLiving:
         user_id: str | None = None,
         session_id: str | None = None,
         source: str = "",
+        images: list[str] | None = None,
     ) -> None:
         """Push a message into the living agent's queue (thread-safe)."""
         msg = LivingMessage(
@@ -115,6 +117,7 @@ class AgentLiving:
             user_id=user_id or self.user_id,
             session_id=session_id or self.session_id,
             source=source,
+            images=images or [],
         )
         self._queue.put_nowait(msg)
 

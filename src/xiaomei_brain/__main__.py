@@ -13,6 +13,7 @@ import os
 import readline
 import logging
 import os
+import signal
 import sys
 
 
@@ -38,6 +39,13 @@ def cmd_run(agent_id: str, attach_cli: bool = False) -> None:
 
     living = AgentLiving(instance)
 
+    # ── SIGINT 处理：Ctrl+C 取消 ReAct 循环，不退出程序 ──────────
+    living_ref = living  # 闭包引用
+
+    def _on_sigint(signum, frame):
+        living_ref.cancel()
+        print("\n[Ctrl+C] 正在取消...", flush=True)
+
     if attach_cli:
         from xiaomei_brain.agent.living import AgentState
         living.on_wake = lambda: print("[阶段] WAKING - 初始化中...")
@@ -58,13 +66,22 @@ def cmd_run(agent_id: str, attach_cli: bool = False) -> None:
         if os.path.exists(hist_path):
             readline.read_history_file(hist_path)
         atexit.register(readline.write_history_file, hist_path)
+
+        # 安装 SIGINT handler：ReAct 循环中 Ctrl+C → cancel()
+        signal.signal(signal.SIGINT, _on_sigint)
+
         print("输入消息跟小美对话 (q退出，↑↓翻历史):")
         while True:
+            # 暂时恢复默认 SIGINT，让 input() 正常触发 KeyboardInterrupt
+            signal.signal(signal.SIGINT, signal.SIG_DFL)
             try:
                 raw_input = input("You: ")
             except (KeyboardInterrupt, EOFError):
                 print()
                 break
+            finally:
+                # 重新安装自定义 handler
+                signal.signal(signal.SIGINT, _on_sigint)
 
             from xiaomei_brain.agent.message_utils import clean_input
             user_input = clean_input(raw_input).strip()
@@ -74,7 +91,24 @@ def cmd_run(agent_id: str, attach_cli: bool = False) -> None:
             if user_input.lower() in ("q", "quit", "exit"):
                 break
 
-            living.put_message(user_input, source="cli")
+            # /image <path> [text] — 发送图片
+            images = []
+            if user_input.startswith("/image "):
+                parts = user_input[7:].strip()
+                # 找到图片路径（空格分隔的第一段）
+                # 路径可能包含空格但没引号 → 简化：取第一个"看起来像路径"的部分
+                space_idx = parts.find(" ")
+                if space_idx > 0:
+                    img_path = parts[:space_idx]
+                    text = parts[space_idx:].strip()
+                else:
+                    img_path = parts
+                    text = ""
+                images.append(img_path)
+                user_input = text or "请看这张图片"
+                print(f"[图片] {img_path}")
+
+            living.put_message(user_input, source="cli", images=images)
 
             # Process all pending messages synchronously
             while True:

@@ -502,7 +502,7 @@ class AgentManager:
         agent.conversation_db = ConversationDB(db_path)
 
         # DAG 摘要图 + LongTermMemory (必须在 dag_tools 前创建)
-        dag = DAGSummaryGraph(db_path, llm_client=llm)
+        dag = DAGSummaryGraph.for_agent(agent.id, llm_client=llm)
         agent.longterm_memory = LongTermMemory(
             db_path,
             embedding_model=global_config.embedding_model or None,

@@ -20,12 +20,13 @@ class ConsciousnessConfig:
     """意识系统 L0-L3 参数"""
     l0_interval: float = 1.0          # L0 感知心跳间隔（秒）
     l1_threshold: int = 60             # L1 触发阈值（累积 L0 次数）
-    l2_idle_trigger: float = 600.0    # L2 空闲触发（用户空闲秒数）
+    l2_idle_trigger: float = 120.0    # L2 空闲触发（用户空闲秒数）
     l2_changes_trigger: int = 10       # L2 累积变化触发（条数）
-    l2_cooldown: float = 600.0         # L2 冷却时间（秒）
-    l2_periodic_interval: float = 600.0   # L2 定期触发（秒）
+    l2_cooldown: float = 120.0         # L2 冷却时间（秒）
+    l2_periodic_interval: float = 1800.0  # L2 定期触发（秒）
     l3_dream_interval: float = 300.0   # L3 梦境触发（睡眠秒数→入梦）
     l3_cooldown: float = 1800.0       # L3 深度沉思冷却（秒）
+    l1_anomaly_enabled: bool = False   # L1 异常检测开关（False 时跳过所有异常检测）
     energy_low_threshold: float = 0.1  # 能量极低阈值（低于此值用flow最小上下文）
     energy_silent_threshold: float = 0.15  # 能量沉寂阈值（低于此值禁止主动行为）
 
@@ -37,8 +38,8 @@ class LivingParams:
     """Living 基类参数"""
     tick_interval: float = 1.0         # 心跳间隔（秒）
     surge_interval: float = 60.0       # 涌动间隔（秒）
-    idle_short: float = 300.0          # 短空闲阈值（秒）→ IDLE
-    idle_threshold: float = 1800.0     # 长空闲阈值（秒）→ SLEEPING
+    idle_short: float = 1200.0         # 短空闲阈值（秒）→ IDLE
+    idle_threshold: float = 10800.0    # 长空闲阈值（秒）→ SLEEPING
     dream_interval: float = 300.0      # 梦境间隔（秒）
     max_context_tokens: int = 50000    # 上下文最大 token 数
 

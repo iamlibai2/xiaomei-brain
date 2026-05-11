@@ -430,8 +430,9 @@ class LLMClient:
             if msg.get("tool_calls"):
                 api_msg["tool_calls"] = msg["tool_calls"]
 
-            # reasoning_content（DeepSeek thinking mode 必须原样传回）
-            if msg.get("reasoning_content"):
+            # reasoning_content：仅 GLM 原生支持，其他模型透传可能导致 400
+            # DeepSeek 的 reasoning_content 由下方占位逻辑统一处理
+            if msg.get("reasoning_content") and "glm" in self.model.lower():
                 api_msg["reasoning_content"] = msg["reasoning_content"]
 
             # 工具结果（tool 消息携带）
@@ -684,7 +685,7 @@ class LLMClient:
 
         # 解析工具调用
         tool_calls: list[ToolCall] = []
-        if "tool_calls" in message:
+        if message.get("tool_calls"):
             for tc in message["tool_calls"]:
                 try:
                     args = json.loads(tc.get("function", {}).get("arguments", "{}"))

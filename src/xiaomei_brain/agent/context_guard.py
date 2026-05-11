@@ -15,11 +15,18 @@ logger = logging.getLogger(__name__)
 
 
 def _count_msg_tokens(msg: dict) -> int:
-    """估算单条消息的 token 数。"""
+    """估算单条消息的 token 数（支持 str 和数组 content）。"""
     tokens = 0
     content = msg.get("content", "")
     if isinstance(content, str):
         tokens += estimate_tokens(content)
+    elif isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text":
+                tokens += estimate_tokens(part.get("text", ""))
+            elif isinstance(part, dict) and part.get("type") == "image_url":
+                # 图片按 85 tokens 估算（OpenAI 经验值）
+                tokens += 85
     for tc in msg.get("tool_calls", []):
         args = str(tc.get("function", {}).get("arguments", ""))
         tokens += estimate_tokens(args)

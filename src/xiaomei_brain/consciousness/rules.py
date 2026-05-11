@@ -269,7 +269,7 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
 
 def _has_intent(si: SelfImage, intent_type: str) -> bool:
     """检查 SelfImage 是否有指定类型的 pending_intent"""
-    pending = si.flame.intent_buffer
+    pending = si.intent.intent_buffer
     return any(i.upper() == intent_type.upper() for i in pending)
 
 
@@ -306,11 +306,11 @@ class _ConsciousnessView:
 
     @property
     def intent_buffer(self) -> list[str]:
-        return self._si.flame.intent_buffer
+        return self._si.intent.intent_buffer
 
     @property
     def accumulated_changes(self) -> list[dict]:
-        return self._si.flame.accumulated_changes
+        return self._si.history.accumulated_changes
 
 
 def _get_drive_facet(si: SelfImage):

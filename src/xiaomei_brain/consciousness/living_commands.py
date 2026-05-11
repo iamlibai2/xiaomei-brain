@@ -57,7 +57,7 @@ def cmd_show_flame(living: ConsciousLiving, args: str = "") -> None:
     print(f"  状态: {si.perception.agent_state}", flush=True)
     print(f"  用户空闲: {int(si.perception.user_idle_duration)}秒", flush=True)
     print(f"  能量: {si.body.energy:.2f}", flush=True)
-    print(f"  累积变化: {len(si.flame.accumulated_changes)}条", flush=True)
+    print(f"  累积变化: {len(si.history.accumulated_changes)}条", flush=True)
     print(f"  上次加柴: {int(time.time() - living.consciousness._last_l2_time)}秒前", flush=True)
     living._print_prompt()
 
@@ -128,7 +128,7 @@ def cmd_show_identity(living: ConsciousLiving, args: str = "") -> None:
     print(f"  Agent状态: {si.perception.agent_state}", flush=True)
     print(f"  用户空闲: {int(si.perception.user_idle_duration)}秒", flush=True)
     print(f"  记忆数量: {si.mind.memory_count}", flush=True)
-    print(f"  累积变化: {len(si.flame.accumulated_changes)}条", flush=True)
+    print(f"  累积变化: {len(si.history.accumulated_changes)}条", flush=True)
 
     print("\n【内在感知】", flush=True)
     if si.mind.inner_thought:

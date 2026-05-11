@@ -23,7 +23,10 @@
 from .self_image_proxy import SelfImage
 # 兼容旧名
 SelfImageProxy = SelfImage
-from .self_modules import SelfIdentity, SelfBody, SelfRelation, SelfPerception, SelfMind, SelfGrowth, FlameState
+from .self_modules import (
+    SelfIdentity, SelfBody, SelfRelation, SelfPerception, SelfMind, SelfGrowth,
+    Being, SelfMemorySlot, SelfIntent, SelfHistory,
+)
 # 兼容旧名
 SelfState = SelfBody
 SelfMemory = SelfMind
@@ -47,6 +50,8 @@ from .action_item import ActionItem, ActionType
 from .rules import Rule, RULES
 from .action_dispatcher import ActionDispatcher, ActionExecutor
 from .config import LivingConfig
+from .memory_window import refresh_memory_window
+from .attention import select_attention
 from .dream import DreamEngine, DreamReport, EmotionProcessor, MemoryOrganizer, DreamStorage
 
 __all__ = [
@@ -60,7 +65,10 @@ __all__ = [
     "SelfPerception",
     "SelfMind",
     "SelfGrowth",
-    "FlameState",
+    "Being",
+    "SelfMemorySlot",
+    "SelfIntent",
+    "SelfHistory",
     # 兼容旧名
     "SelfState",
     "SelfMemory",
@@ -94,6 +102,9 @@ __all__ = [
     "ActionExecutor",
     # Config
     "LivingConfig",
+    # MemoryWindow
+    "refresh_memory_window",
+    "select_attention",
     # Dream
     "DreamEngine",
     "DreamReport",

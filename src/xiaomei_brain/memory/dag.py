@@ -56,6 +56,13 @@ class DAGSummaryGraph:
     LEAF_TARGET_TOKENS = 1200   # target tokens for leaf summary
     PROMOTE_THRESHOLD = 4       # number of same-depth nodes before promoting
 
+    @classmethod
+    def for_agent(cls, agent_id: str, llm_client=None) -> "DAGSummaryGraph":
+        """为指定 agent 创建 DAG 实例（标准路径）。"""
+        from pathlib import Path
+        path = Path.home() / ".xiaomei-brain" / "agents" / agent_id / "memory" / "brain.db"
+        return cls(str(path), llm_client=llm_client)
+
     def __init__(self, db_path: str | Path, llm_client=None) -> None:
         self.db_path = Path(db_path)
         self.llm = llm_client

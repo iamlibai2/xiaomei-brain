@@ -29,26 +29,47 @@ def create_dag_tools(
         description=(
             "当用户说'展开'、'详细说说'、'之前聊的'、'具体内容'、'我们讨论过'时**必须调用**。"
             "长期记忆只提供提炼后的结论，本工具可以获取完整的对话细节和原文。"
-            "根据关键词搜索历史摘要并展开到原始对话消息。"
+            "优先使用 node_id 直接展开（上下文中的摘要都带有 node_id）。"
+            "没有 node_id 时用 keyword 搜索。"
             "同时支持搜索已消亡(extinct)的长期记忆，可选择唤醒。"
         ),
     )
     def dag_expand(
-        keyword: str,
+        keyword: str = "",
         session_id: str = "main",
         top_k: int = 3,
+        node_id: int | None = None,
         include_extinct: bool = False,
         awaken_memory_id: int | None = None,
     ) -> str:
         """Search DAG summaries and expand to original messages.
 
         Args:
-            keyword: 关键词，用于搜索相关摘要（如"Python"、"项目"等）
+            keyword: 关键词，用于搜索相关摘要（如"Python"、"项目"等），node_id 为空时使用
             session_id: 会话ID，默认为"main"
             top_k: 最多返回几个相关摘要，默认为3
+            node_id: DAG 摘要的 node_id（上下文中标注），优先使用。传入后直接展开，不搜索
             include_extinct: 是否同时搜索已消亡的长期记忆（extinct），默认False
             awaken_memory_id: 如果用户选择唤醒某条 extinct 记忆，传入其 id
         """
+        # ── Direct expand by node_id ────────────────────────────
+        if node_id is not None:
+            originals = dag.expand(node_id)
+            if not originals:
+                return f"摘要 #{node_id} 不存在或无法展开。"
+            # 获取node信息
+            conn = dag._get_conn()
+            node_row = conn.execute(
+                "SELECT * FROM summaries WHERE id = ?", (node_id,)
+            ).fetchone()
+            node = dag._row_to_node(node_row) if node_row else None
+            depth_str = f" depth={node.depth}" if node else ""
+            results = [f"=== 摘要 #{node_id}{depth_str} 展开 ==="]
+            for msg in originals:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                results.append(f"[{role}] {content[:200]}")
+            return "\n".join(results)
         # ── Awaken extinct memory ────────────────────────────────
         if awaken_memory_id is not None and longterm is not None:
             ok = longterm.awaken_memory(awaken_memory_id)

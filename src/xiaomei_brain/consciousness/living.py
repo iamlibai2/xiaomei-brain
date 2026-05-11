@@ -120,12 +120,6 @@ class Living:
         # CLI 提示符
         self._show_prompt: bool = True
 
-        # 目标确认
-        self._pending_confirm: dict | None = None
-        self._waiting_confirm: bool = False
-        self._pending_confirm_msg: LivingMessage | None = None
-        self._pending_confirm_intent: Any = None
-
     # ── Periodic task registration ──────────────────────────────────
 
     def register_periodic(

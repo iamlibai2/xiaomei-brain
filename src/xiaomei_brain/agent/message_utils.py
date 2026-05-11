@@ -128,7 +128,7 @@ def strip_orphaned_assistant_tool_calls(
 
 
 def clean_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Clean surrogate characters from message content."""
+    """Clean surrogate characters from message content (supports str and array content)."""
     cleaned = []
     for m in messages:
         m = dict(m)  # shallow copy
@@ -139,5 +139,131 @@ def clean_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
             except Exception:
                 pass
             m["content"] = content
+        elif isinstance(content, list):
+            # 多模态 content 数组：只清洗 text 类型的内容
+            cleaned_parts = []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    text = part.get("text", "")
+                    try:
+                        text = text.encode("utf-8", "surrogatepass").decode("utf-8", "replace")
+                    except Exception:
+                        pass
+                    cleaned_parts.append({**part, "text": text})
+                else:
+                    cleaned_parts.append(part)
+            m["content"] = cleaned_parts
         cleaned.append(m)
     return cleaned
+
+
+# ── 图片编码 ────────────────────────────────────────────
+
+import base64
+from pathlib import Path
+
+_IMAGE_MIME_MAP = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+}
+
+
+def image_to_data_url(image_path: str) -> str:
+    """将本地图片文件转为 base64 data URL。
+
+    Args:
+        image_path: 图片文件路径
+
+    Returns:
+        data:image/<type>;base64,<data> 格式的字符串
+
+    Raises:
+        FileNotFoundError: 文件不存在
+        ValueError: 不支持的图片格式
+    """
+    # 处理 Windows 风格路径（WSL 下反斜杠不合法）
+    image_path = image_path.replace("\\", "/")
+    p = Path(image_path).expanduser().resolve()
+    if not p.is_file():
+        # 尝试补前导 / （用户可能漏了绝对路径前缀）
+        if not image_path.startswith("/"):
+            p = Path("/" + image_path).expanduser().resolve()
+    if not p.is_file():
+        raise FileNotFoundError(f"图片不存在: {image_path} → 尝试过: {p}")
+
+    suffix = p.suffix.lower()
+    mime = _IMAGE_MIME_MAP.get(suffix)
+    if not mime:
+        raise ValueError(f"不支持的图片格式: {suffix}，支持: {list(_IMAGE_MIME_MAP.keys())}")
+
+    with open(p, "rb") as f:
+        data = base64.b64encode(f.read()).decode("ascii")
+
+    return f"data:{mime};base64,{data}"
+
+
+def build_multimodal_content(text: str, image_paths: list[str]) -> list[dict]:
+    """构建多模态 content 数组。
+
+    Args:
+        text: 文本内容
+        image_paths: 图片路径或 URL 列表
+
+    Returns:
+        OpenAI 多模态 content 数组: [{"type": "text", "text": ...}, {"type": "image_url", "image_url": {"url": ...}}]
+    """
+    content = [{"type": "text", "text": text}]
+    for img in image_paths:
+        # 如果是 URL（http/https/data），直接使用
+        if img.startswith(("http://", "https://", "data:")):
+            url = img
+        else:
+            url = image_to_data_url(img)
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": url},
+        })
+    return content
+
+
+def estimate_content_tokens(content: str | list[dict] | None) -> int:
+    """估算 content 的 token 数（兼容纯文本和多模态数组）。"""
+    if not content:
+        return 0
+    if isinstance(content, str):
+        from xiaomei_brain.memory.conversation_db import estimate_tokens
+        return estimate_tokens(content)
+    if isinstance(content, list):
+        from xiaomei_brain.memory.conversation_db import estimate_tokens
+        tokens = 0
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text":
+                tokens += estimate_tokens(part.get("text", ""))
+            elif isinstance(part, dict) and part.get("type") == "image_url":
+                tokens += 85  # OpenAI 经验值
+        return tokens
+    return 0
+
+
+def append_to_content(content: str | list[dict], text: str) -> str | list[dict]:
+    """向 content 追加文本（兼容纯文本 和 多模态数组）。
+
+    纯文本 → 字符串拼接。
+    多模态数组 → 找到最后一个 text 类型元素追加文本。
+    """
+    if isinstance(content, str):
+        return content + text
+    if isinstance(content, list):
+        # 从后往前找最后一个 text 类型的元素
+        for part in reversed(content):
+            if isinstance(part, dict) and part.get("type") == "text":
+                part["text"] = part.get("text", "") + text
+                return content
+        # 没有 text 元素，在开头插入一个
+        content.insert(0, {"type": "text", "text": text})
+        return content
+    return content  # fallback

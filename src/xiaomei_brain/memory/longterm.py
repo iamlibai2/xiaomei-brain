@@ -1959,6 +1959,7 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
             # Unsafe characters detected — fall back to safe default
             logger.warning("[Security] Unsafe user_id '%s', using 'global'", user_id)
             return "global"
+        return user_id
 
     def _match_scene_tag(self, scene_tags_json: str, scene: str) -> bool:
         """Check if a scene tag matches the scene_tags JSON array stored in DB.
