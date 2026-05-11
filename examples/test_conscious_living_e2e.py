@@ -1,12 +1,12 @@
-"""ConsciousLiving 端到端测试 — 通过 put_message 发送真实消息，验证 Task v2 集成
+"""ConsciousLiving 端到端测试 — 通过 put_message 发送真实消息，验证 Goal 集成
 
 验证：
   - ! 前缀 + 关键词 → 正确识别 task_type
-  - EXECUTION → 关联 goal_id，子目标推进
-  - LEARNING → goal_id=None
+  - EXECUTION → 子目标推进 + cognitive_log
+  - LEARNING → metadata["task_type"]="learning"
   - EXPLORATION → 正确创建
-  - 存储持久化到磁盘
-  - cognitive_log 在子目标完成时增量追加
+  - cognitive_log 在运行时增量追加
+  - Goal 持久化到 goals.json
 
 用法：
   PYTHONPATH=src python3 examples/test_conscious_living_e2e.py
@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from xiaomei_brain.agent.agent_manager import AgentManager
 from xiaomei_brain.consciousness.conscious_living import ConsciousLiving
+from xiaomei_brain.purpose.goal import TaskType
 
 _output_lines: list[str] = []
 
@@ -84,11 +85,19 @@ def verify(label: str, cond: bool, detail: str = ""):
     print(f"[验证] {icon} {label}  {detail}")
 
 
+def _get_goals_by_type(purpose, task_type_str: str) -> list:
+    """从 PurposeEngine 获取指定 task_type 的 Goal 列表"""
+    return [
+        g for g in purpose.goals.values()
+        if g.metadata.get("task_type") == task_type_str
+    ]
+
+
 # ── main ──────────────────────────────────────────────────────
 
 def main():
     print("╔══════════════════════════════════════════════════════╗")
-    print("║   ConsciousLiving 端到端测试 — Task v2 + 真实 LLM     ║")
+    print("║   ConsciousLiving 端到端测试 — Goal 集成 + 真实 LLM   ║")
     print("╚══════════════════════════════════════════════════════╝")
 
     # ── 初始化 ─────────────────────────────────────────────────
@@ -99,62 +108,65 @@ def main():
     living.on_chat_chunk = on_chunk
     living._show_prompt = False
 
-    # 清理残留数据
-    task_dir = Path.home() / ".xiaomei-brain" / "agents" / "xiaomei" / "tasks"
-    living.task_storage.clear()
+    # 清理残留数据（Goal 层）
     if living.purpose:
         living.purpose.goals.clear()
         living.purpose.current_goal = None
         living.purpose.pending_queue = []
         living.purpose._init_strategic_goal()
         living.purpose.save()
-    # 清理 workspace 残留文件（避免 LLM 看到旧文件混淆上下文）
+    # 清理 workspace 残留文件
     ws_dir = Path.home() / ".xiaomei-brain" / "workspace"
     if ws_dir.exists():
         for f in ws_dir.glob("*.py"):
+            f.unlink()
+    # 清理 pace checkpoints
+    cp_dir = Path.home() / ".xiaomei-brain" / "pace_checkpoints"
+    if cp_dir.exists():
+        for f in cp_dir.glob("*.json"):
             f.unlink()
 
     thread = threading.Thread(target=living.run, daemon=True)
     thread.start()
     time.sleep(5)
     print(f"[初始化] 完成\n")
-    print(f"[Task v2] 存储: {task_dir}")
+    print(f"[Goal] 存储: {Path.home() / '.xiaomei-brain' / 'agents' / 'xiaomei' / 'purpose' / 'goals.json'}")
 
     total_pass = 0
     total_fail = 0
 
+    purpose = living.purpose
+
     # ── 测试 1: LEARNING（轻量，无工具调用） ─────────────────────
     send(living, "!学习Python上下文管理器的原理和使用场景", "测试1: 创建LEARNING任务")
 
-    tasks = living.task_storage.list_all()
-    learn_tasks = [t for t in tasks if t.type.value == "learning"]
-    ok = len(learn_tasks) >= 1
-    verify("LEARNING Task 已创建", ok, f"共 {len(tasks)} 个 Task")
+    learn_goals = _get_goals_by_type(purpose, "learning")
+    ok = len(learn_goals) >= 1
+    verify("LEARNING Goal 已创建", ok, f"共 {len(purpose.goals)} 个 Goal")
     if ok:
         total_pass += 1
     else:
         total_fail += 1
 
-    if learn_tasks:
-        t = learn_tasks[0]
-        print(f"  Task ID: {t.task_id[:12]}")
-        goal_ok = t.goal_id is None
-        verify("goal_id 为 None（LEARNING 不关联 PurposeEngine）", goal_ok,
-               f"goal_id={'None' if t.goal_id is None else t.goal_id[:8]}")
-        if goal_ok:
+    if learn_goals:
+        g = learn_goals[0]
+        print(f"  Goal ID: {g.id}")
+        type_ok = g.get_task_type() == TaskType.LEARNING
+        verify("task_type=learning", type_ok, f"task_type={g.get_task_type().value}")
+        if type_ok:
             total_pass += 1
         else:
             total_fail += 1
 
-        log_ok = len(t.cognitive_log) >= 1
+        log_ok = len(g.cognitive_log) >= 1
         verify("cognitive_log 已增量追加", log_ok,
-               f"{len(t.cognitive_log)} 条")
+               f"{len(g.cognitive_log)} 条")
         if log_ok:
             total_pass += 1
         else:
             total_fail += 1
 
-        for e in t.cognitive_log:
+        for e in g.cognitive_log:
             print(f"    [{e.entry_type}] {e.content[:80]}")
 
     time.sleep(1)
@@ -162,26 +174,25 @@ def main():
     # ── 测试 2: EXPLORATION ──────────────────────────────────────
     send(living, "!对比一下Python的asyncio和threading各自适用什么场景", "测试2: 创建EXPLORATION任务", timeout=120)
 
-    tasks = living.task_storage.list_all()
-    explore_tasks = [t for t in tasks if t.type.value == "exploration"]
-    ok = len(explore_tasks) >= 1
-    verify("EXPLORATION Task 已创建", ok, f"共 {len(tasks)} 个 Task")
+    explore_goals = _get_goals_by_type(purpose, "exploration")
+    ok = len(explore_goals) >= 1
+    verify("EXPLORATION Goal 已创建", ok, f"共 {len(purpose.goals)} 个 Goal")
     if ok:
         total_pass += 1
     else:
         total_fail += 1
 
-    if explore_tasks:
-        t = explore_tasks[0]
-        log_ok = len(t.cognitive_log) >= 1
+    if explore_goals:
+        g = explore_goals[0]
+        log_ok = len(g.cognitive_log) >= 1
         verify("EXPLORATION 有认知日志", log_ok,
-               f"{len(t.cognitive_log)} 条")
+               f"{len(g.cognitive_log)} 条")
         if log_ok:
             total_pass += 1
         else:
             total_fail += 1
 
-        for e in t.cognitive_log:
+        for e in g.cognitive_log:
             print(f"    [{e.entry_type}] {e.content[:80]}")
 
     time.sleep(1)
@@ -189,54 +200,52 @@ def main():
     # ── 测试 3: EXECUTION（有子目标推进） ────────────────────────
     send(living, "!帮我分析闭包的概念并给出3个实际例子", "测试3: 创建EXECUTION任务", timeout=180)
 
-    tasks = living.task_storage.list_all()
-    exec_tasks = [t for t in tasks if t.type.value == "execution"]
-    ok = len(exec_tasks) >= 1
-    verify("EXECUTION Task 已创建", ok)
+    exec_goals = _get_goals_by_type(purpose, "execution")
+    ok = len(exec_goals) >= 1
+    verify("EXECUTION Goal 已创建", ok)
     if ok:
         total_pass += 1
     else:
         total_fail += 1
 
-    if exec_tasks:
-        t = exec_tasks[0]
-        print(f"  Task ID: {t.task_id[:12]}")
-        print(f"  Status: {t.status.value}")
+    if exec_goals:
+        g = exec_goals[0]
+        print(f"  Goal ID: {g.id}")
+        print(f"  Status: {g.status.value}")
 
-        goal_ok = t.goal_id is not None
-        verify("goal_id 关联 PurposeEngine", goal_ok,
-               f"goal_id={t.goal_id[:12] if t.goal_id else 'None'}")
-        if goal_ok:
-            total_pass += 1
+        # 检查子目标
+        subs = purpose.get_sub_goals(g.id)
+        done = sum(1 for s in subs if s.is_completed())
+        print(f"  子目标: {done}/{len(subs)}")
+        for s in subs:
+            icon = {"active": "→", "completed": "✓", "pending": "○"}.get(s.status.value, "?")
+            print(f"    {icon} {s.description[:50]} [{s.status.value}]")
+
+        if subs:
+            progress_ok = done >= 1
+            verify("至少完成1个子目标", progress_ok)
+            if progress_ok:
+                total_pass += 1
+            else:
+                total_fail += 1
         else:
-            total_fail += 1
+            # 无分解型目标：目标本身完成即通过
+            goal_done = g.is_completed()
+            verify("非分解型目标已完成", goal_done, f"status={g.status.value}")
+            if goal_done:
+                total_pass += 1
+            else:
+                total_fail += 1
 
-        if t.goal_id and living.purpose:
-            goal = living.purpose.goals.get(t.goal_id)
-            if goal:
-                subs = living.purpose.get_sub_goals(t.goal_id)
-                done = sum(1 for s in subs if s.is_completed())
-                print(f"  子目标: {done}/{len(subs)}")
-                for s in subs:
-                    icon = {"active": "→", "completed": "✓", "pending": "○"}.get(s.status.value, "?")
-                    print(f"    {icon} {s.description[:50]} [{s.status.value}]")
-
-                progress_ok = done >= 1
-                verify("至少完成1个子目标", progress_ok)
-                if progress_ok:
-                    total_pass += 1
-                else:
-                    total_fail += 1
-
-        log_ok = len(t.cognitive_log) >= 1
+        log_ok = len(g.cognitive_log) >= 1
         verify("cognitive_log 记录了子目标产出", log_ok,
-               f"{len(t.cognitive_log)} 条")
+               f"{len(g.cognitive_log)} 条")
         if log_ok:
             total_pass += 1
         else:
             total_fail += 1
 
-        for e in t.cognitive_log:
+        for e in g.cognitive_log:
             print(f"    [{e.entry_type}] {e.content[:80]}")
 
     # ── 最终存储状态 ───────────────────────────────────────────────
@@ -244,23 +253,35 @@ def main():
     print(f"  最终存储状态")
     print(f"{'─'*60}")
 
-    all_tasks = living.task_storage.list_all()
-    print(f"\n  Tasks: {len(all_tasks)} 个")
-    for t in all_tasks:
-        print(f"  [{t.type.value:14s}] {t.status.value:10s} {t.task_id[:8]} "
-              f"log={len(t.cognitive_log)} art={len(t.artifacts)} "
-              f"goal={t.goal_id[:8] if t.goal_id else 'None':8s} "
-              f"\"{t.description[:50]}\"")
+    all_goals = list(purpose.goals.values())
+    print(f"\n  Goals: {len(all_goals)} 个")
+    for g in all_goals:
+        tt = g.get_task_type().value
+        print(f"  [{tt:14s}] {g.status.value:10s} {g.id:8s} "
+              f"log={len(g.cognitive_log)} art={len(g.artifacts)} "
+              f"\"{g.description[:50]}\"")
 
-    # 文件列表
-    print(f"\n  Task 文件:")
-    for f in sorted(task_dir.glob("task_*.json")):
-        with open(f, "r") as fp:
-            d = json.load(fp)
-        print(f"    {f.name:30s} [{d.get('type','?'):14s}] "
-              f"{d.get('status','?'):10s} "
-              f"log={len(d.get('cognitive_log',[]))} "
-              f"\"{d.get('description','')[:40]}\"")
+    # 检查 goals.json
+    goals_file = Path.home() / ".xiaomei-brain" / "agents" / "xiaomei" / "purpose" / "goals.json"
+    if goals_file.exists():
+        with open(goals_file, "r") as fp:
+            data = json.load(fp)
+        goals_dict = data.get("goals", {})
+        print(f"\n  goals.json: {len(goals_dict)} 个 Goal")
+        for goal_id, gd in goals_dict.items():
+            tt = gd.get("metadata", {}).get("task_type", "?") if isinstance(gd, dict) else "?"
+            has_log = "cognitive_log" in gd
+            print(f"    [{tt:14s}] {gd.get('status','?'):10s} "
+                  f"cognitive_log={'✓' if has_log else '✗'} "
+                  f"\"{gd.get('description','')[:40]}\"")
+
+    # PACE checkpoint
+    cp_dir = Path.home() / ".xiaomei-brain" / "pace_checkpoints"
+    cp_files = list(cp_dir.glob("*.json")) if cp_dir.exists() else []
+    if cp_files:
+        print(f"\n  PACE checkpoints: {len(cp_files)} 个")
+        for f in cp_files:
+            print(f"    {f.name}")
 
     # 总结
     print(f"\n{'='*60}")

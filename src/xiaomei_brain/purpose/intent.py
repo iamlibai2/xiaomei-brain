@@ -57,6 +57,7 @@ class IntentResult:
     target_goal_id: Optional[str] = None
     confidence: float = 0.0
     reasoning: str = ""
+    task_type: str = ""                   # 任务类型（execution/learning/exploration等）
     confirm_question: str = ""            # 需要用户确认的问题
     confirm_options: list[str] = field(default_factory=list)  # 选项列表
     response_guidance: str = ""           # CHAT 类型的回应风格建议

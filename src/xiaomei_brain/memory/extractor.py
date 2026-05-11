@@ -862,10 +862,10 @@ class MemoryExtractor:
 
     def extract_task_completion(
         self,
-        task: Any,  # Task from consciousness.task
+        goal: Any,  # Goal from purpose.goal (with cognitive_log)
         user_id: str = "global",
     ) -> list[int]:
-        """Task 完成时：从认知日志中提取经验/模式/用户洞察。
+        """Goal 完成时：从认知日志中提取经验/模式/用户洞察。
 
         调用 LLM 总结 cognitive_log + artifacts，提取值得长期保存的知识：
         1. 学到的技术/经验 → tag=经验
@@ -875,7 +875,7 @@ class MemoryExtractor:
         5. 自我的变化/成长 → tag=自我认知
 
         Args:
-            task: Task 对象（consciousness.task.Task）
+            goal: Goal 对象（purpose.goal.Goal，含 cognitive_log）
             user_id: 用户标识
 
         Returns:
@@ -886,13 +886,13 @@ class MemoryExtractor:
 
         try:
             # 格式化认知日志
-            log_text = self._format_cognitive_log(task.cognitive_log)
+            log_text = self._format_cognitive_log(goal.cognitive_log)
             if not log_text:
-                logger.info("[TaskComplete] 无认知日志，跳过知识提取")
+                logger.info("[GoalComplete] 无认知日志，跳过知识提取")
                 return []
 
             # 格式化产出物
-            artifact_text = self._format_artifacts(task.artifacts)
+            artifact_text = self._format_artifacts(goal.artifacts)
 
             # 获取已有记忆供参考
             recent_memories = ""
@@ -903,8 +903,8 @@ class MemoryExtractor:
                 )
 
             prompt = TASK_COMPLETION_PROMPT.format(
-                task_description=task.description,
-                task_type=task.type.value,
+                task_description=goal.description,
+                task_type=goal.get_task_type().value,
                 cognitive_log=log_text,
                 artifacts=artifact_text,
                 recent_memories=recent_memories or "（无已有记忆）",
@@ -922,17 +922,17 @@ class MemoryExtractor:
 
             if ids:
                 logger.info(
-                    "[TaskComplete] 从 Task「%s」提取了 %d 条记忆",
-                    task.description[:40], len(ids),
+                    "[GoalComplete] 从 Goal「%s」提取了 %d 条记忆",
+                    goal.description[:40], len(ids),
                 )
             else:
                 logger.info(
-                    "[TaskComplete] Task「%s」无值得长期保存的知识",
-                    task.description[:40],
+                    "[GoalComplete] Goal「%s」无值得长期保存的知识",
+                    goal.description[:40],
                 )
             return ids
         except Exception as e:
-            logger.error("[TaskComplete] 知识提取失败: %s", e)
+            logger.error("[GoalComplete] 知识提取失败: %s", e)
             return []
 
     @staticmethod

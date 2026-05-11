@@ -23,7 +23,7 @@ Purpose 层 - 前额叶层（目的系统）
 """
 
 from .meaning import Meaning
-from .goal import Goal, GoalType, GoalStatus, TaskType
+from .goal import Goal, GoalType, GoalStatus, TaskType, CognitiveLogEntry
 from .purpose_engine import PurposeEngine
 from .persistence import PurposeStorage
 from .intent import IntentUnderstanding, IntentType, IntentResult, GoalRelation
@@ -35,6 +35,7 @@ __all__ = [
     "GoalType",
     "GoalStatus",
     "TaskType",
+    "CognitiveLogEntry",
     "PurposeEngine",
     "PurposeStorage",
     "IntentUnderstanding",

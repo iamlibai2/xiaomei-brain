@@ -52,6 +52,40 @@ class TaskType(Enum):
 
 
 @dataclass
+class CognitiveLogEntry:
+    """认知日志条目 — 增量记录认知过程的关键时刻
+
+    entry_type:
+        - "decision":  关键决策（选了什么方案、为什么）
+        - "discovery": 新发现（了解到什么）
+        - "pitfall":   踩坑记录（遇到什么问题）
+        - "output":    子目标产出
+        - "note":      其他值得记录的认知
+    """
+    entry_type: str
+    content: str
+    timestamp: float = field(default_factory=time.time)
+    sub_goal_id: str | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "entry_type": self.entry_type,
+            "content": self.content,
+            "timestamp": self.timestamp,
+            "sub_goal_id": self.sub_goal_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "CognitiveLogEntry":
+        return cls(
+            entry_type=data.get("entry_type", "note"),
+            content=data.get("content", ""),
+            timestamp=data.get("timestamp", 0),
+            sub_goal_id=data.get("sub_goal_id"),
+        )
+
+
+@dataclass
 class Goal:
     """
     目标 - 目标树的节点
@@ -73,6 +107,8 @@ class Goal:
     updated_at: float = field(default_factory=time.time)
     deadline: Optional[float] = None   # 截止时间（可选）
     metadata: dict = field(default_factory=dict)  # 扩展字段
+    cognitive_log: list = field(default_factory=list)  # list[CognitiveLogEntry]
+    artifacts: list = field(default_factory=list)      # list[dict]
 
     # 最大分解深度（常量）
     MAX_DEPTH = 2
@@ -93,6 +129,8 @@ class Goal:
             "updated_at": self.updated_at,
             "deadline": self.deadline,
             "metadata": self.metadata,
+            "cognitive_log": [e.to_dict() for e in self.cognitive_log],
+            "artifacts": self.artifacts,
         }
 
     def from_dict(self, data: dict) -> None:
@@ -110,6 +148,11 @@ class Goal:
         self.updated_at = data.get("updated_at", time.time())
         self.deadline = data.get("deadline")
         self.metadata = data.get("metadata", {})
+        self.cognitive_log = [
+            CognitiveLogEntry.from_dict(e)
+            for e in data.get("cognitive_log", [])
+        ]
+        self.artifacts = data.get("artifacts", [])
 
     def update_progress(self, delta: float) -> None:
         """更新进度"""
@@ -175,6 +218,68 @@ class Goal:
     def is_abandoned(self) -> bool:
         """是否放弃"""
         return self.status == GoalStatus.ABANDONED
+
+    # ── 认知日志 ─────────────────────────────────
+
+    def append_log(
+        self,
+        entry_type: str,
+        content: str,
+        sub_goal_id: str | None = None,
+    ) -> CognitiveLogEntry:
+        """追加认知日志条目"""
+        entry = CognitiveLogEntry(
+            entry_type=entry_type,
+            content=content,
+            sub_goal_id=sub_goal_id,
+        )
+        self.cognitive_log.append(entry)
+        self.updated_at = time.time()
+        return entry
+
+    # ── 产出物 ───────────────────────────────────
+
+    def add_artifact(self, path: str, role: str = "output") -> None:
+        """注册产出物"""
+        self.artifacts.append({
+            "path": path,
+            "role": role,
+            "created_at": time.time(),
+        })
+        self.updated_at = time.time()
+
+    # ── 认知上下文 ───────────────────────────────
+
+    def get_cognitive_context(self) -> str:
+        """格式化 cognitive_log 为可注入 system prompt 的文本"""
+        if not self.cognitive_log:
+            return ""
+
+        lines = [f"【任务认知日志 — {self.description}】"]
+        lines.append("以下是执行过程中记录的关键认知，帮助你无缝继续：")
+        lines.append("")
+
+        type_labels = {
+            "decision":  "\U0001f4a1 决策",
+            "discovery": "\U0001f50d 发现",
+            "pitfall":   "\u26a0\ufe0f 踩坑",
+            "output":    "\U0001f4e6 产出",
+            "note":      "\U0001f4dd 备注",
+        }
+
+        for entry in self.cognitive_log:
+            label = type_labels.get(entry.entry_type, entry.entry_type)
+            lines.append(f"{label}: {entry.content}")
+
+        if self.artifacts:
+            lines.append("")
+            lines.append("\U0001f4c1 产出物索引：")
+            for a in self.artifacts:
+                lines.append(f"  - {a['path']} ({a['role']})")
+
+        return "\n".join(lines)
+
+    # ── 摘要 ─────────────────────────────────────
 
     def get_summary(self) -> str:
         """生成目标摘要"""

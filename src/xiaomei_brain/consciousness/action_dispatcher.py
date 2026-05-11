@@ -516,39 +516,29 @@ source: intent_driven_learning
         if not living:
             return False
 
-        task = living.task_manager.get_current_task() if hasattr(living, 'task_manager') else None
         goal = living.purpose.get_current() if hasattr(living, 'purpose') and living.purpose else None
 
-        if not task and not goal:
-            logger.info("[ActionExecutor] progress_goal 跳过：无任务/目标")
+        if not goal:
+            logger.info("[ActionExecutor] progress_goal 跳过：无目标")
             return False
 
         state = living.state.value if hasattr(living, 'state') else 'awake'
 
         if state in ('sleeping', 'dreaming'):
-            return self._auto_progress_goal(task, goal)
+            return self._auto_progress_goal(goal)
         else:
-            return self._remind_progress_goal(task, goal)
+            return self._remind_progress_goal(goal)
 
-    def _auto_progress_goal(self, task, goal) -> bool:
+    def _auto_progress_goal(self, goal) -> bool:
         """SLEEPING/DREAMING：自动推进目标"""
         from .conscious_living import LivingMessage
 
         living = self.dispatcher._conscious_living
 
-        # 恢复暂停的 Task
-        if task and task.is_paused() and hasattr(living, 'task_manager'):
-            living.task_manager.resume_task(task.task_id)
-            logger.info("[ActionExecutor] 恢复 Task: %s", task.description[:40])
-
-        # 如果没有 Task 但有 Goal，创建 Task
-        if not task and goal and hasattr(living, 'task_manager'):
-            from xiaomei_brain.purpose.goal import TaskType
-            task = living.task_manager.create_task(
-                description=goal.description,
-                task_type=TaskType.EXECUTION,
-            )
-            logger.info("[ActionExecutor] 创建 Task: %s", task.description[:40])
+        # 恢复暂停的 Goal
+        if goal.is_paused():
+            goal.activate()
+            logger.info("[ActionExecutor] 恢复 Goal: %s", goal.description[:40])
 
         # 确保目标有活跃的子目标
         goal_obj = living.purpose.get_current() if hasattr(living, 'purpose') and living.purpose else None
@@ -566,8 +556,6 @@ source: intent_driven_learning
         if not active_sub:
             if goal_obj.is_completed():
                 logger.info("[ActionExecutor] 目标已完成: %s", goal_obj.description[:40])
-                if task and hasattr(living, 'task_manager'):
-                    living.task_manager.complete_task(task.task_id)
                 if living.drive:
                     living.drive.on_desire_satisfied("achievement", 0.3)
                 return True
@@ -583,17 +571,17 @@ source: intent_driven_learning
             source="system",
         )
 
-        intent_context = living._build_intent_context_for_goal(active_sub)
+        intent_context = living.task_orchestrator._build_intent_context_for_goal(active_sub)
         logger.info("[ActionExecutor] 自动执行: goal=%s sub=%s",
                     goal_obj.description[:40], active_sub.description[:40])
 
-        living._run_chat(msg, intent_context)
+        living.task_orchestrator._run_chat(msg, intent_context)
 
         if living.drive:
             living.drive.on_desire_satisfied("achievement", 0.3)
         return True
 
-    def _remind_progress_goal(self, task, goal) -> bool:
+    def _remind_progress_goal(self, goal) -> bool:
         """AWAKE：提醒用户有未完成任务"""
         living = self.dispatcher._conscious_living
 
@@ -604,11 +592,7 @@ source: intent_driven_learning
         if si and si.perception.user_idle_duration < 60:
             return False  # 用户活跃中，不打扰
 
-        desc = ""
-        if task:
-            desc = task.description[:60]
-        elif goal:
-            desc = goal.description[:60]
+        desc = goal.description[:60] if goal else ""
 
         if desc:
             msg = f"想起来之前的「{desc}」还没完成，要继续吗？回复'继续'我就开始。"

@@ -1,9 +1,7 @@
 """Task 数据模型 — 独立认知实体
 
-Task 不是 Goal 的别名，而是一个自我完备的认知实体：
-- 自己的 ID、生命周期、认知日志
-- 认知日志增量累积（子目标完成时追加）
-- 关联 Goal 子树（只对 EXECUTION 类型）
+DEPRECATED: Task 概念已废弃。cognitive_log / artifacts 已迁移到 purpose.goal.Goal。
+Task/TaskManager/TaskStorage 代码保留但不再使用。
 
 类型 → 处理策略：
 - EXECUTION  → 关联 Goal，委托 PurposeEngine 子目标推进
@@ -14,13 +12,19 @@ Task 不是 Goal 的别名，而是一个自我完备的认知实体：
 
 from __future__ import annotations
 
+import warnings
+warnings.warn(
+    "consciousness.task is deprecated. Use purpose.goal.Goal with cognitive_log instead.",
+    DeprecationWarning, stacklevel=2,
+)
+
 import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from xiaomei_brain.purpose.goal import TaskType
+from xiaomei_brain.purpose.goal import TaskType, CognitiveLogEntry  # re-export for backward compat
 
 
 class TaskStatus(Enum):
@@ -29,40 +33,6 @@ class TaskStatus(Enum):
     PAUSED = "paused"
     COMPLETED = "completed"
     ABANDONED = "abandoned"
-
-
-@dataclass
-class CognitiveLogEntry:
-    """认知日志条目 — 增量记录认知过程的关键时刻
-
-    entry_type:
-        - "decision":  关键决策（选了什么方案、为什么）
-        - "discovery": 新发现（了解到什么）
-        - "pitfall":   踩坑记录（遇到什么问题）
-        - "output":    子目标产出
-        - "note":      其他值得记录的认知
-    """
-    entry_type: str
-    content: str
-    timestamp: float = field(default_factory=time.time)
-    sub_goal_id: str | None = None
-
-    def to_dict(self) -> dict:
-        return {
-            "entry_type": self.entry_type,
-            "content": self.content,
-            "timestamp": self.timestamp,
-            "sub_goal_id": self.sub_goal_id,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict) -> CognitiveLogEntry:
-        return cls(
-            entry_type=data.get("entry_type", "note"),
-            content=data.get("content", ""),
-            timestamp=data.get("timestamp", 0),
-            sub_goal_id=data.get("sub_goal_id"),
-        )
 
 
 @dataclass

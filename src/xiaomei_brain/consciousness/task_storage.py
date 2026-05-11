@@ -1,16 +1,16 @@
 """TaskStorage — Task 持久化存储
 
-遵循 Pattern A（同 PurposeStorage/DriveStorage）：
-- 每个 Task 一个 JSON 文件
-- active_task.json 记录当前活跃的 task_id
-- 错误容忍、UTF-8、indent=2
-
-存储位置：~/.xiaomei-brain/agents/{agent_id}/tasks/
-├── active_task.json
-├── task_<id>.json
+DEPRECATED: TaskStorage 已废弃。Goal 的持久化由 purpose.persistence.PurposeStorage 统一处理。
+代码保留但不再使用。
 """
 
 from __future__ import annotations
+
+import warnings
+warnings.warn(
+    "consciousness.task_storage is deprecated. Goal persistence is handled by purpose.persistence.PurposeStorage.",
+    DeprecationWarning, stacklevel=2,
+)
 
 import json
 import logging

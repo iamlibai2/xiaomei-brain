@@ -1,19 +1,16 @@
 """TaskManager - 认知过程调度器（意识层子功能）
 
-v2：Task 是独立认知实体，有自己的数据模型和存储。
-不再是 PurposeEngine 的薄封装。
-
-职责：
-- 管理 Task 生命周期（创建/暂停/恢复/切换/完成）
-- 委托 PurposeEngine 处理 EXECUTION 类型的子目标推进
-- 认知日志增量累积（子目标完成时追加，不是暂停时才生成）
-- 产出物注册
-
-不负责子目标推进（那是 PurposeEngine 的活）。
-不负责知识提取（那是 Extractor 的活）。
+DEPRECATED: TaskManager 已废弃。生命周期管理已迁移到 purpose.purpose_engine.PurposeEngine，
+cognitive_log 已迁移到 purpose.goal.Goal。代码保留但不再使用。
 """
 
 from __future__ import annotations
+
+import warnings
+warnings.warn(
+    "consciousness.task_manager is deprecated. Use purpose.PurposeEngine with Goal instead.",
+    DeprecationWarning, stacklevel=2,
+)
 
 import logging
 from typing import Any
