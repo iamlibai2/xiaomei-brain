@@ -1,4 +1,17 @@
-"""Consciousness-aware context assembler.
+"""[DEPRECATED] Context assembler — 已由 SelfImage + memory_window 替代。
+
+仍在使用：
+- _auto_compact(): DAG 自动压缩
+- determine_mode(): 模式判定（plan: 移到 consciousness 层）
+
+已废弃（不再调用）：
+- assemble() / _assemble_daily() / _assemble_task() / _assemble_flow() / _assemble_reflect()
+- _fresh_tail() / _recall_memories() / _recall_relation_chain() / _summaries_to_text()
+
+替代路径：
+- 记忆检索 → memory_window.refresh_memory_window() → SelfImage.memory
+- 上下文渲染 → SelfImage.inject_consciousness(mode)
+- 对话尾巴 → ConsciousLiving._on_wake() 加载到 agent.messages
 
 Responsibilities:
 - assemble_context(): compose LLM input context from memory storage
@@ -83,7 +96,10 @@ class ContextAssembler:
         include_fresh_tail: bool = True,
         intent_context: str = "",
     ) -> list[dict[str, Any]]:
-        """Assemble context for LLM input (mode already determined by consciousness)."""
+        """[DEPRECATED] 请使用 SelfImage.inject_consciousness(mode) + memory_window.refresh_memory_window()。
+
+        仅在 context_pipeline 无 self_image 时作为回退路径使用。
+        """
         if mode == "flow":
             return self._assemble_flow(max_tokens, session_id, include_fresh_tail)
         elif mode == "reflect":
