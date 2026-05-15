@@ -298,6 +298,8 @@ class ActionExecutor:
 
         if llm:
             try:
+                # 刷新记忆窗口
+                cl.consciousness._refresh_memory_window()
                 consciousness = si.inject_consciousness()
                 resp = llm.chat(messages=[
                     {"role": "system", "content": consciousness},
@@ -373,6 +375,8 @@ class ActionExecutor:
 
         if llm:
             try:
+                # 刷新记忆窗口
+                cl.consciousness._refresh_memory_window()
                 consciousness = si.inject_consciousness()
                 resp = llm.chat(messages=[
                     {"role": "system", "content": consciousness},
@@ -423,6 +427,8 @@ class ActionExecutor:
 
         if llm:
             try:
+                # 刷新记忆窗口
+                cl.consciousness._refresh_memory_window()
                 consciousness = si.inject_consciousness()
                 resp = llm.chat(messages=[
                     {"role": "system", "content": consciousness},
