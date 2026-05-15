@@ -1,12 +1,13 @@
-"""PACE 层：Pause → Assess → Choose → Execute
+"""Metacognition 层：自我监督与反省。
 
-独立的认知执行模块，与 consciousness/、drive/、purpose/ 平级。
+人脑前额叶的核心功能——停下来，回看，判断，调整。
+不管是"这个任务我做对了吗"还是"我刚才说话合适吗"，本质是同一个机制。
 
-核心组件：
-- PACERunner: PACE 模式执行循环
-- types: SurpriseType / StuckClass / MetaSuggestion / StepObservation / StepCheckResult / TaskLesson
-- rules: 纯规则检测（零 LLM 成本）
-- reviewer: LLM-based 步骤检查 & 复盘
+两个子方向：
+- PACE（向内）：任务执行的元认知 —— 我卡住了吗？策略对吗？
+- SocialPerception（向外）：社交交互的自我监督 —— 用户状态变了吗？我说话合适吗？
+
+与 consciousness/、drive/、purpose/ 平级。
 """
 
 from .runner import PACERunner
@@ -23,10 +24,12 @@ from .rules import detect_surprises, parse_progress_tag, remove_progress_tag
 from .reviewer import LLMBudget, llm_step_check, llm_post_review, persist_lesson
 from .capability import CapabilityTracker
 from .metrics import PACEMetrics, persist_metrics, generate_report
+from .social_perception import SocialPerception
 
 __all__ = [
     "PACERunner",
     "CapabilityTracker",
+    "SocialPerception",
     "PACEMetrics",
     "persist_metrics",
     "generate_report",

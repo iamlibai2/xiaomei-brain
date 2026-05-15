@@ -45,6 +45,7 @@ class ActionExecutor:
         """
         handlers = {
             "proactive": self._do_proactive,
+            "alarm": self._do_alarm,
             "trigger_l3": self._do_trigger_l3,
             "tool": self._do_tool,
             "notify": self._do_notify,
@@ -84,6 +85,91 @@ class ActionExecutor:
             si = self.dispatcher._get_self_image()
             if si and hasattr(si.intent, "urgent_intents"):
                 si.intent.urgent_intents.discard(intent_type.lower())
+
+        return True
+
+    def _do_alarm(self, item: ActionItem) -> bool:
+        """闹钟触发：完整 ReAct 对话（有全部工具）。"""
+        cl = self.dispatcher._conscious_living
+        if not cl:
+            logger.warning("[ActionExecutor] _do_alarm: 未连接 ConsciousLiving")
+            return False
+
+        agent_core = cl.agent._get_agent()
+        consciousness = cl.consciousness
+
+        # 刷新记忆窗口
+        consciousness._refresh_memory_window()
+
+        # 构建消息
+        system_prompt = consciousness.self_image.inject_consciousness()
+        user_msg = (
+            f"你的闹钟响了。\n\n"
+            f"闹钟名称：{item.content or '未命名'}\n"
+            f"触发原因：{item.reason}\n\n"
+            f"你现在可以：\n"
+            f"1. 先感受自己的状态（必要时用 being() 觉察内心）\n"
+            f"2. 按闹钟的提醒执行该做的事（搜索、生成、读文件……你有全部工具）\n"
+            f"3. 完成后决定：这个闹钟还有用吗？需要设新的吗？"
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_msg},
+        ]
+
+        logger.info("[ActionExecutor] 闹钟触发 ReAct: %s", item.content[:80])
+
+        try:
+            # 纯内部 ReAct（不写 DB、不加 MEMORY_PROMPT、不提取记忆）
+            result = agent_core.react_nodb(messages=messages)
+
+            # 后处理：提取 EVENTS/PERCEPTION
+            if result:
+                result_clean, perceptions = consciousness._split_perception(result)
+                if perceptions:
+                    consciousness.mind.social_perceptions.extend(perceptions)
+                    if len(consciousness.mind.social_perceptions) > 20:
+                        consciousness.mind.social_perceptions = consciousness.mind.social_perceptions[-20:]
+
+                consciousness_text, events_json = consciousness._split_consciousness_events(result_clean)
+                if events_json and cl.drive:
+                    consciousness._apply_drive_events(events_json)
+                if consciousness_text:
+                    consciousness.mind.update_inner_thought(consciousness_text[:200])
+
+            # 输出到控制台/渠道
+            if cl.on_proactive:
+                cl.on_proactive(result)
+            else:
+                print(f"\n\033[36m[小美] {result}\033[0m", flush=True)
+
+            if cl.agent.conversation_db:
+                try:
+                    cl.agent.conversation_db.log(
+                        session_id=cl.session_id,
+                        role="assistant",
+                        content=result,
+                    )
+                except Exception:
+                    pass
+
+            # 消费已执行的 ALARM intent（避免 cooldown 过后重复触发）
+            intent_type = item.metadata.get("intent_type", "")
+            if intent_type:
+                si = self.dispatcher._get_self_image()
+                if si and hasattr(si.intent, "intent_buffer"):
+                    upper_type = intent_type.upper()
+                    si.intent.intent_buffer = [i for i in si.intent.intent_buffer if i.upper() != upper_type]
+                    logger.debug("[ActionExecutor] 已消费 intent: %s", intent_type)
+
+            # 消耗能量
+            if cl.drive:
+                cl.drive.consume_energy(0.05)
+
+        except Exception as e:
+            logger.warning("[ActionExecutor] 闹钟 ReAct 失败: %s", e)
+            return False
 
         return True
 

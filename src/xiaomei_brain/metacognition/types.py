@@ -112,3 +112,16 @@ class PACECheckpoint:
     consecutive_empty_count: int = 0
     last_nudge: str = ""
     saved_at: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict:
+        return {
+            "goal_id": self.goal_id,
+            "step_index": self.step_index,
+            "observations_json": self.observations_json,
+            "budget_call_count": self.budget_call_count,
+            "budget_skip_until": self.budget_skip_until,
+            "budget_consecutive_continue": self.budget_consecutive_continue,
+            "consecutive_empty_count": self.consecutive_empty_count,
+            "last_nudge": self.last_nudge,
+            "saved_at": self.saved_at,
+        }

@@ -15,7 +15,7 @@ from xiaomei_brain.memory.longterm import LongTermMemory
 from xiaomei_brain.memory.extractor import MemoryExtractor, MEMORY_DECISION_PROMPT
 from xiaomei_brain.tools.registry import ToolRegistry
 from xiaomei_brain.agent.message_utils import (
-    strip_memory_stream, strip_orphaned_tool_messages,
+    strip_orphaned_tool_messages,
     strip_orphaned_assistant_tool_calls, clean_messages,
     append_to_content,
 )
@@ -104,11 +104,6 @@ class Agent:
         # ── Intent context (from ConsciousLiving) ──────────────────────
         self.intent_context: str = ""  # 意图上下文（注入 system prompt）
         self._last_all_messages: list[dict[str, Any]] = []  # 缓存最近一次发给 LLM 的完整上下文
-
-    def run(self, user_input: str, consciousness_state: dict | None = None) -> str:
-        """Run the agent and return the final response (non-streaming)."""
-        chunks = list(self.stream(user_input, consciousness_state))
-        return "".join(chunks)
 
     def stream(
         self, user_input: str = "", consciousness_state: dict | None = None,
@@ -245,9 +240,15 @@ class Agent:
             hint = get_hint(_last_tool)
             print(hint, flush=True)
 
-            response, stream_chunks = self._call_llm(all_messages, openai_tools)
+            # 真流式：逐个 yield chunk，生成器结束后从 _last_stream_response 取结果
+            gen = self._call_llm(all_messages, openai_tools)
+            stream_chunks: list[str] = []
+            for chunk in gen:
+                stream_chunks.append(chunk)
+                yield chunk
+            response = self.llm._last_stream_response
 
-            if response.has_tool_calls:
+            if response.tool_calls:
                 tool_calls_data = [
                     {
                         "id": tc.id,
@@ -416,12 +417,7 @@ class Agent:
                         msg["reasoning_content"] = response.reasoning_content
                     self.messages.append(msg)
 
-                    # Stream the response (filter MEMORY block from stream)
-                    if stream_chunks:
-                        yield from strip_memory_stream(stream_chunks)
-                    else:
-                        yield display_content
-
+                    # 流式 chunk 已在上层实时 yield，直接返回
                     return
                 else:
                     logger.warning("LLM returned empty content with no tool calls")
@@ -430,21 +426,131 @@ class Agent:
 
         yield "Agent reached maximum steps without producing a final answer."
 
+    def react_nodb(
+        self,
+        messages: list[dict[str, Any]],
+        cancel_check: Callable[[], bool] | None = None,
+        max_steps: int = 5,
+    ) -> str:
+        """纯内部推理 ReAct — 非流式，不写 DB、不加 MEMORY_PROMPT、不提取记忆。
+
+        每轮用 llm.chat() 一发完成，有 tool_calls 就执行继续，没有就返回结果。
+        用于 L2 意图决策、闹钟触发等内部推理场景。
+        """
+        from xiaomei_brain.agent.cli_display import (
+            get_hint, print_tool_call, print_tool_result,
+            print_edit_diff, print_write_result,
+        )
+
+        openai_tools = self.tools.to_openai_tools() if self.tools.list_tools() else None
+        loop_messages: list[dict[str, Any]] = []
+        _last_tool = ""
+        _tool_failure_counts: dict[tuple, int] = {}
+        _idx = 0
+
+        for step in range(max_steps):
+            if cancel_check and cancel_check():
+                logger.info("[Agent] react_nodb 已取消 (step=%d)", step)
+                return ""
+
+            all_messages = list(messages) + loop_messages
+            all_messages = strip_orphaned_tool_messages(all_messages)
+            all_messages = strip_orphaned_assistant_tool_calls(all_messages)
+            all_messages = clean_messages(all_messages)
+
+            hint = get_hint(_last_tool)
+            print(hint, flush=True)
+
+            response = self.llm.chat(messages=all_messages, tools=openai_tools)
+
+            if response.tool_calls:
+                tool_calls_data = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": json.dumps(tc.arguments),
+                        },
+                    }
+                    for tc in response.tool_calls
+                ]
+                loop_messages.append({
+                    "role": "assistant",
+                    "content": response.content,
+                    "tool_calls": tool_calls_data,
+                })
+
+                for tc in response.tool_calls:
+                    _idx += 1
+                    print_tool_call(_idx, tc.name, tc.arguments)
+                    _last_tool = tc.name
+
+                    call_key = (tc.name, json.dumps(tc.arguments, sort_keys=True))
+                    fail_count = _tool_failure_counts.get(call_key, 0)
+                    if fail_count >= 3:
+                        result = (
+                            f"Blocked retry: {tc.name} with the same arguments has failed "
+                            f"{fail_count} times. Do NOT retry this. Try a different approach "
+                            f"or report the problem to the user."
+                        )
+                        logger.warning("[Agent] 拦截重复失败工具调用(%d次): %s", fail_count, tc.name)
+                    else:
+                        try:
+                            result = self.tools.execute(tc.name, **tc.arguments)
+                        except Exception as e:
+                            result = f"Error executing tool '{tc.name}': {e}"
+                            logger.error("Tool error: %s", e)
+
+                    if isinstance(result, str) and (
+                        result.startswith("Error:") or result.startswith("Blocked")
+                        or "timed out" in result or "failed" in result.lower()
+                    ):
+                        _tool_failure_counts[call_key] = fail_count + 1
+                    else:
+                        _tool_failure_counts.pop(call_key, None)
+
+                    if tc.name == "edit_file":
+                        print_edit_diff(_idx, tc.name, tc.arguments, result)
+                    elif tc.name == "write_file":
+                        print_write_result(_idx, tc.name, tc.arguments, result)
+                    else:
+                        print_tool_result(_idx, result)
+
+                    loop_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": result,
+                    })
+            else:
+                return response.content or ""
+
+        return "Agent reached maximum steps without producing a final answer."
+
     # ── LLM calling ──────────────────────────────────────────────
 
     def _call_llm(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
-    ) -> tuple[Any, list[str] | None]:
-        """Call LLM, preferring streaming with non-streaming fallback."""
+    ):
+        """返回真流式生成器，逐个 yield chunk。非流式 fallback 时包装为单元素生成器。
+
+        生成器结束后，通过 self.llm._last_stream_response 获取 ChatResponse。
+        """
+        import traceback
         try:
+            self.llm._reasoning_end_yielded = False
             return self.llm.chat_stream(messages, tools)
         except Exception as e:
-            import traceback
             logger.warning("[LLM] Streaming failed, falling back: %s\n%s", e, traceback.format_exc())
             response = self.llm.chat(messages=messages, tools=tools)
-            return response, None
+            self.llm._last_stream_response = response
+
+            def _gen():
+                if response.content:
+                    yield response.content
+            return _gen()
 
     # ── Helpers ──────────────────────────────────────────────────
 

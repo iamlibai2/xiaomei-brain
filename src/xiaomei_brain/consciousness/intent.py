@@ -47,6 +47,9 @@ class IntentType(Enum):
     PROGRESS = "progress"
     """想推进目标"""
 
+    ALARM = "alarm"
+    """闹钟触发"""
+
 
 @dataclass
 class Intent:

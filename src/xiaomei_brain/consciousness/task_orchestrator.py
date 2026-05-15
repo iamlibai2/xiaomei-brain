@@ -810,17 +810,24 @@ class TaskOrchestrator:
         # 日常闲聊 → 快速 ReAct
         self._run_react(msg, intent_context)
 
-    def assess_chat(self, content: str, tool_call_count: int = 0, elapsed: float = 0.0) -> list[str]:
-        """对普通 chat 输出做事后规则检测（轻量 PACE-assess 模式）。
-
-        只检测不决策。发现异常只记录日志，不影响对话流程。
-
-        Returns:
-            检测到的异常信号列表（空列表 = 无异常）
-        """
+    def assess_chat(
+        self,
+        content: str,
+        tool_call_count: int = 0,
+        elapsed: float = 0.0,
+        user_msg: str = "",
+        tool_names: list[str] | None = None,
+    ) -> None:
+        """收集 chat 执行原始事实，写入 SelfImage，供 L2 时 LLM 自己感知。"""
         if self._pace_runner is None:
             self._init_pace_runner()
-        return self._pace_runner.assess_only(content, tool_call_count, elapsed)
+        raw = self._pace_runner.assess_only(
+            content, tool_call_count, elapsed,
+            user_msg=user_msg, tool_names=tool_names,
+        )
+        parent = self._parent
+        if parent._load_consciousness and parent.consciousness:
+            parent.consciousness.add_pace_reflection(raw)
 
     def _get_calibration_context(self) -> str:
         """获取能力校准上下文（从持久化的能力数据加载）。"""
@@ -852,13 +859,7 @@ class TaskOrchestrator:
 
         parent = self._parent
 
-        # 捕获最后一轮 chat 输出（供 assess_chat 事后检测）
-        last_chat_content = ""
-        last_chat_tc = 0
-        last_chat_elapsed = 0.0
-
         def run():
-            nonlocal last_chat_content, last_chat_tc, last_chat_elapsed
             parent._chatting = True
             try:
                 current_msg = msg
@@ -868,7 +869,11 @@ class TaskOrchestrator:
                 parent._update_recent_conversations()
 
                 while True:
-                    print("\n小美: ", end="", flush=True)
+                    _w = 138
+                    _label = " LLM output "
+                    _pad = (_w - len(_label)) // 2
+                    print("\n" + "=" * _pad + _label + "=" * _pad, flush=True)
+                    print("小美: ", end="", flush=True)
                     cs = parent._get_consciousness_state()
                     from xiaomei_brain.agent.core import tool_call_buffer
                     t0 = time.time()
@@ -887,14 +892,26 @@ class TaskOrchestrator:
                     )
 
                     chunks = []
+                    on_chunk = getattr(parent, "on_chat_chunk", None)
                     for chunk in agent.stream(messages=assembled, cancel_check=lambda: parent._cancel_requested):
                         chunks.append(chunk)
+                        if on_chunk:
+                            on_chunk(chunk)
                     content = "".join(chunks)
                     elapsed = time.time() - t0
                     tc_count = tool_call_buffer.last_index - tc_before
+
+                    # 提取本轮工具调用名称
+                    tool_names = []
+                    for i in range(tc_before + 1, tc_before + tc_count + 1):
+                        rec = tool_call_buffer.get(i)
+                        if rec:
+                            tool_names.append(rec.name)
+
                     last_chat_content = content
                     last_chat_tc = tc_count
                     last_chat_elapsed = elapsed
+                    last_chat_tool_names = tool_names
 
                     if self._drive and elapsed > 1.0:
                         self._drive.consume_energy(0.05)
@@ -946,11 +963,6 @@ class TaskOrchestrator:
 
                     display_content = self._remove_progress_tag(content)
 
-                    _w = 138
-                    _label = " LLM output "
-                    _pad = (_w - len(_label)) // 2
-                    print("\n" + "=" * _pad + _label + "=" * _pad, flush=True)
-                    print(display_content, flush=True)
                     _label2 = " LLM output-end "
                     _pad2 = (_w - len(_label2)) // 2
                     print("=" * _pad2 + _label2 + "=" * _pad2, flush=True)
@@ -1020,9 +1032,8 @@ class TaskOrchestrator:
 
         run()
 
-        # chat 完成后运行轻量 PACE 规则检测（chat 模式质量监控）
-        if last_chat_content and self._exec_mode != "react":
-            self.assess_chat(last_chat_content, last_chat_tc, last_chat_elapsed)
+        # chat 模式：对话本身就是数据，L2 通过 inject_consciousness() 读到
+        # 最近对话和 DAG 摘要，自己能产生"念头"
 
     def _run_pace(self, msg: LivingMessage, intent_context: str = "") -> str:
         """PACE 模式执行：Pause → Assess → Choose → Execute。

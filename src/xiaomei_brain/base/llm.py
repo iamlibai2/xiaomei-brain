@@ -67,6 +67,43 @@ class LLMError(Exception):
 # endregion
 
 
+# ── 流式标签缓冲（模块级，chat_stream 使用）──────────────────────────
+
+# 已知标签前缀（仅真正的 partial，不含完整标签），按长度降序排列
+_TAG_PREFIXES = sorted(
+    ["</MEMORY", "</MEMOR", "</MEMO", "</MEM", "</ME", "</M", "</", "<",
+     "<MEMORY", "<MEMOR", "<MEMO", "<MEM", "<ME", "<M",
+     "</think", "</thin", "</thi", "</th", "</t",
+     "<think", "<thin", "<thi", "<th", "<t"],
+    key=len, reverse=True,
+)
+
+
+def _save_partial_tag(text: str) -> str:
+    """检测 text 末尾是否是一个被截断的标签开头，返回应缓冲的部分。
+
+    用于流式 chunk 边界：当标签（如 <MEMORY>）被分割在两个 chunk 中时，
+    将第一个 chunk 的尾部缓冲拼接第二个 chunk 的前部，确保标签检测不遗漏。
+    """
+    for prefix in _TAG_PREFIXES:
+        if text.endswith(prefix):
+            return prefix
+    return ""
+
+
+def _save_partial_closing_tag(text: str, tag: str) -> str:
+    """检测 text 末尾是否是指定闭合标签的被截断前缀，返回应缓冲的部分。
+
+    用于 in_think/in_memory 为 True 时，检测被分割的闭合标签后缀。
+    例如 tag="</MEMORY>"，text="... </MEM" → 返回 "</MEM"。
+    """
+    for n in range(len(tag) - 1, 0, -1):
+        prefix = tag[:n]
+        if text.endswith(prefix):
+            return prefix
+    return ""
+
+
 class LLMClient:
     """LLM API 客户端，支持智谱AI、火山引擎、OpenAI 等 Provider。
 
@@ -230,14 +267,10 @@ class LLMClient:
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
-    ) -> tuple[ChatResponse, list[str] | None]:
-        """Send messages and stream the response (SSE).
+    ) -> Generator[str, None, None]:
+        """真流式生成器 — 逐个 yield SSE chunk，不再缓冲。
 
-        Returns:
-            (ChatResponse, display_chunks | None)
-            display_chunks is a list of text chunks for real-time output;
-            reasoning content is prepended with ANSI dim formatting.
-            None when there are tool_calls and no display content.
+        生成器结束后，通过 self._last_stream_response 获取 ChatResponse。
         """
         import datetime as _dt
         import os as _os
@@ -295,12 +328,15 @@ class LLMClient:
         response.raise_for_status()
 
         # Parse SSE stream
+        self._reasoning_end_yielded = False
         content_parts: list[str] = []
-        stream_parts: list[str] = []
         reasoning_parts: list[str] = []
         tool_calls_acc: dict[int, dict] = {}
         finish_reason = ""
         in_think = False
+        in_memory = False
+        reasoning_yielded = False
+        _tag_buffer = ""  # 跨 chunk 缓冲：防止标签被分割（如 <MEM 和 ORY>）
 
         try:
             for line in response.iter_lines():
@@ -330,18 +366,26 @@ class LLMClient:
                 finish_reason = choice.get("finish_reason", "") or finish_reason
 
                 if delta.get("reasoning_content"):
-                    reasoning_parts.append(delta["reasoning_content"])
+                    rc = delta["reasoning_content"]
+                    reasoning_parts.append(rc)
+                    if not reasoning_yielded:
+                        yield "\n\033[2m"
+                        reasoning_yielded = True
+                    yield rc
 
                 if "content" in delta and delta["content"] and not delta.get("reasoning_content"):
                     content_parts.append(delta["content"])
-                    text = delta["content"]
+                    text = _tag_buffer + delta["content"]
+                    _tag_buffer = ""
                     if in_think:
                         end_idx = text.find("</think>")
                         if end_idx != -1:
                             in_think = False
                             text = text[end_idx + 8:]
                         else:
-                            text = ""
+                            # 检测被截断的 </think> 后缀（如 </th、</thi 等）
+                            _tag_buffer = _save_partial_closing_tag(text, "</think>")
+                            text = "" if not _tag_buffer else text[:-len(_tag_buffer)]
                     if not in_think:
                         start_idx = text.find("<think")
                         if start_idx != -1:
@@ -351,8 +395,35 @@ class LLMClient:
                             else:
                                 text = text[:start_idx]
                                 in_think = True
+                    # 过滤 <MEMORY> 块（不输出给用户）
+                    if in_memory:
+                        end_idx = text.find("</MEMORY>")
+                        if end_idx != -1:
+                            in_memory = False
+                            text = text[end_idx + 9:]
+                        else:
+                            # 检测被截断的 </MEMORY> 后缀（如 </MEM、</ME 等）
+                            _tag_buffer = _save_partial_closing_tag(text, "</MEMORY>")
+                            text = "" if not _tag_buffer else text[:-len(_tag_buffer)]
+                    if not in_memory:
+                        start_idx = text.find("<MEMORY>")
+                        if start_idx != -1:
+                            end_idx = text.find("</MEMORY>", start_idx)
+                            if end_idx != -1:
+                                text = text[:start_idx] + text[end_idx + 9:]
+                            else:
+                                text = text[:start_idx]
+                                in_memory = True
+                    # 保存可能被分割的标签开头（如 <MEM、</M 等），下一 chunk 拼接后再判断
+                    if text and not in_think and not in_memory:
+                        _tag_buffer = _save_partial_tag(text)
+                        if _tag_buffer:
+                            text = text[:-len(_tag_buffer)]
                     if text:
-                        stream_parts.append(text)
+                        if reasoning_yielded and not getattr(self, '_reasoning_end_yielded', False):
+                            yield "\033[0m\n\n"
+                            self._reasoning_end_yielded = True
+                        yield text
 
                 if "tool_calls" in delta and delta["tool_calls"]:
                     for tc_delta in delta["tool_calls"]:
@@ -370,13 +441,21 @@ class LLMClient:
             _log(False, f"stream_err:{e}")
             raise
 
-        # Build display stream: reasoning first (dimmed), then response
-        display_stream: list[str] = []
-        if reasoning_parts:
-            reasoning_text = "".join(reasoning_parts).strip()
-            if reasoning_text:
-                display_stream.append("\n\033[2m" + reasoning_text + "\033[0m\n\n")
+        # 流结束：冲刷缓冲的截断标签前缀（仅在非抑制状态下）
+        if _tag_buffer and not in_think and not in_memory:
+            yield _tag_buffer
+            _tag_buffer = ""
 
+        # 若推理已开始但从未关闭（模型将所有内容放入 reasoning_content，无 regular content），
+        # 补发 ANSI 重置，防止终端持续灰色
+        if reasoning_yielded and not getattr(self, '_reasoning_end_yielded', False):
+            yield "\033[0m"
+            self._reasoning_end_yielded = True
+
+        # 确保流总是以换行结尾，防止后续 logger 输出粘在最后一行
+        yield "\n"
+
+        # deepseek-v4-flash 等模型偶尔将回复放在 reasoning_content 中，content 为空
         content = self._strip_thinking("".join(content_parts))
         try:
             content = content.encode("utf-8", "surrogatepass").decode("utf-8", "replace")
@@ -399,6 +478,8 @@ class LLMClient:
             reasoning_content="".join(reasoning_parts) if reasoning_parts else None,
         )
 
+        self._last_stream_response = chat_response
+
         _log(True)
 
         # Save response to JSONL log
@@ -408,9 +489,6 @@ class LLMClient:
             "finish_reason": finish_reason,
             "reasoning_content": "".join(reasoning_parts) if reasoning_parts else None,
         })
-
-        display_stream.extend(stream_parts)
-        return chat_response, display_stream if (display_stream or not tool_calls) else None
 
     # endregion
 

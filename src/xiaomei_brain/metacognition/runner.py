@@ -130,49 +130,23 @@ class PACERunner:
         content: str,
         tool_call_count: int = 0,
         elapsed_seconds: float = 0.0,
-    ) -> list[str]:
-        """轻量模式：对单步输出做规则检测，只检测不决策。
+        user_msg: str = "",
+        tool_names: list[str] | None = None,
+    ) -> dict:
+        """收集 chat 执行原始事实，不判断，不做 LLM 调用。
 
-        用于普通 chat 模式的质量监控。不影响对话流程，只记录检测到的异常信号。
-
-        Args:
-            content: Agent 的文本输出
-            tool_call_count: 工具调用次数
-            elapsed_seconds: 耗时
+        L2 时 inject_consciousness() 自然呈现，
+        LLM 自己感知"不对劲"，不需要代码提前判断。
 
         Returns:
-            检测到的异常信号列表（SurpriseType value 字符串列表）
+            {"user_msg": str, "tool_names": [...], "tool_count": int, "elapsed": float}
         """
-        from .rules import parse_progress_tag, remove_progress_tag
-
-        progress_data = parse_progress_tag(content)
-        display_content = remove_progress_tag(content)
-
-        obs = StepObservation(
-            step_index=len(self._observations),
-            goal_description="[chat]",
-            llm_output=display_content,
-            tool_calls=[],
-            tool_call_count=tool_call_count,
-            elapsed_seconds=elapsed_seconds,
-            has_progress_tag=progress_data is not None,
-            progress_status=progress_data.get("status") if progress_data else None,
-            raw_content=content,
-        )
-        obs = detect_surprises(obs, self._observations)
-        self._observations.append(obs)
-
-        if obs.surprises:
-            logger.warning(
-                "[PACE-assess] chat 轮次检测到异常信号: %s",
-                [s.value for s in obs.surprises],
-            )
-
-        # 定期清理 observations（chat 模式下只保留最近 50 条）
-        if len(self._observations) > 50:
-            self._observations = self._observations[-30:]
-
-        return [s.value for s in obs.surprises]
+        return {
+            "user_msg": user_msg,
+            "tool_names": tool_names or [],
+            "tool_count": tool_call_count,
+            "elapsed": elapsed_seconds,
+        }
 
     # ── Main Loop ────────────────────────────────────────────────────
 
@@ -1052,6 +1026,13 @@ class PACERunner:
             last_nudge=last_nudge,
         )
         self._persist_checkpoint(cp)
+
+        # 同步到 Goal，PurposeEngine.save() 时一起落盘
+        if self._purpose:
+            goal = self._purpose.goals.get(goal_id)
+            if goal:
+                goal.pace_checkpoint = cp.to_dict()
+
         return cp
 
     @staticmethod

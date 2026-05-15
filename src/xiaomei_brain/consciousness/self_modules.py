@@ -373,6 +373,9 @@ class SelfMind:
     # ── 目标进展历史（tracking，非 fallback）──
     _goal_progress_history: list[float] = field(default_factory=list)
 
+    # ── 社交感知（L2 第四问产出）──────────────
+    social_perceptions: list[dict] = field(default_factory=list)
+
     # ── 代理属性（只读，实时读 Purpose）──────
 
     @property
@@ -458,6 +461,7 @@ class SelfMind:
             "inner_thought": self.inner_thought,
             "inner_thought_history": self.inner_thought_history[-10:],
             "last_inner_thought_time": self.last_inner_thought_time,
+            "social_perceptions": self.social_perceptions[-10:],
         }
 
     def from_dict(self, data: dict) -> None:
@@ -471,6 +475,8 @@ class SelfMind:
                 setattr(self, key, data[key])
         if "goal_progress_history" in data:
             self._goal_progress_history = data["goal_progress_history"]
+        if "social_perceptions" in data:
+            self.social_perceptions = data["social_perceptions"]
 
     def get_summary(self) -> str:
         return f"目标「{self.primary_goal[:15]}」进展{self.goal_progress:.0%}，记忆{self.memory_count}条"
@@ -501,6 +507,10 @@ class SelfMemorySlot:
     procedures: list[dict] = field(default_factory=list)
     recent_dialog: list[dict] = field(default_factory=list)
     memory_count: int = 0
+
+    # PACE 对话反射：每次 chat 后累积的意外信号（规则 + LLM 反射）
+    # tick_L2() 消费后清空
+    pace_reflections: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {

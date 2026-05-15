@@ -370,6 +370,62 @@ class DriveEngine:
         self.desire.expression = min(1.0, self.desire.expression + amount)
         logger.debug("[DriveEngine] 洞察触发: expression=%.2f", self.desire.expression)
 
+    def apply_social_signal(self, signal_type: str, intensity: float) -> None:
+        """应用社交感知信号到 Drive（情绪/激素/欲望）。
+
+        SocialPerception 识别"用户状态"，Drive 做出生理反应。
+        所有变化通过 SelfImage.body 代理自动反映到中枢。
+
+        Args:
+            signal_type: 信号类型（user_low_mood / user_enthusiastic 等）
+            intensity: 强度 0.0-1.0
+        """
+        from ..metacognition.social_perception import SOCIAL_SIGNAL_MAP
+
+        mapping = SOCIAL_SIGNAL_MAP.get(signal_type)
+        if not mapping:
+            return
+
+        scale = intensity  # LLM 输出的强度直接作为缩放因子
+
+        # 情绪
+        emotion_name = mapping.get("emotion")
+        if emotion_name:
+            from .state import EmotionType
+            try:
+                em = EmotionType(emotion_name)
+                self.emotion.type = em
+                self.emotion.intensity = min(1.0, scale * 0.8)
+                self.emotion.created_at = time.time()
+                self.emotion.duration = self.config.emotion.default_duration
+            except ValueError:
+                pass
+
+        # 激素
+        for key in ("dopamine", "serotonin", "cortisol", "oxytocin", "norepinephrine"):
+            delta = mapping.get(key, 0)
+            if delta:
+                current = getattr(self.hormone, key)
+                setattr(self.hormone, key, max(0.0, min(1.0, current + delta * scale)))
+
+        # 欲望
+        for key in ("belonging", "achievement", "cognition", "expression", "survival"):
+            delta = mapping.get(key, 0)
+            if delta:
+                current = getattr(self.desire, key)
+                setattr(self.desire, key, max(0.0, min(1.0, current + delta * scale)))
+
+        self.hormone.last_updated = time.time()
+        self.desire.last_updated = time.time()
+
+        logger.info(
+            "[DriveEngine] 社交信号: %s (intensity=%.2f) → emotion=%s, "
+            "cortisol=%.2f, oxytocin=%.2f, belonging=%.2f",
+            signal_type, intensity,
+            self.emotion.type.value, self.hormone.cortisol,
+            self.hormone.oxytocin, self.desire.belonging,
+        )
+
     # ========== 能量管理 ==========
 
     def consume_energy(self, delta: float = 0.05) -> None:

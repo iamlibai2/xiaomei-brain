@@ -111,6 +111,14 @@ class ConsciousLiving(Living):
         # Drive 系统（边缘系统）- 延迟加载
         self.drive = DriveEngine(self._agent_id, load=False)
 
+        # CronScheduler（闹钟系统）
+        from ..schedule import CronScheduler
+        self.cron_scheduler = CronScheduler(self._agent_id)
+
+        # 社交感知（Metacognition 层：轮次级自我监督）
+        from ..metacognition import SocialPerception
+        self._social_perception = SocialPerception(interval=3)
+
         # Purpose 系统（前额叶层）- 延迟加载
         llm_client = None
         if agent_instance and hasattr(agent_instance, "llm"):
@@ -146,6 +154,7 @@ class ConsciousLiving(Living):
             drive=self.drive,
             purpose=self.purpose,
             consciousness_config=cc,
+            cron_scheduler=self.cron_scheduler,
         )
         self._load_consciousness = load_consciousness
 
@@ -189,12 +198,80 @@ class ConsciousLiving(Living):
         self._dispatcher.load_rules(RULES)
         self._dispatcher.inject_conscious_living(self)
 
+        # being 工具暂不注册（待反省层"转换器"设计确定后再启用）
+
+        # 注册 cron 工具（闹钟系统：schedule_alarm / list_alarms / cancel_alarm）
+        self._register_cron_tools()
+
         # 记录初始化摘要
         self._log_initialization()
 
         # 注册周期任务
         self.register_periodic("heartbeat", self._config.living.tick_interval, self._heartbeat)
         self.register_periodic("surge", self._config.living.surge_interval, self._surge)
+
+    def _register_being_tool(self) -> None:
+        """注册 being 工具：将 L2 内心觉察暴露为对话中可调用的工具。
+
+        当 LLM 在对话中被用户触动时，可以主动调用 being() 来感受自己的内心，
+        而不是等待周期性的 L2 触发。这让情绪反应变得即时。
+        """
+        try:
+            from ..tools.builtin.being import create_being_tool
+            being_tool = create_being_tool(self.consciousness)
+            if hasattr(self.agent, "tools") and self.agent.tools:
+                self.agent.tools.register(being_tool)
+                logger.info("[ConsciousLiving] being 工具已注册")
+            else:
+                logger.warning("[ConsciousLiving] agent.tools 不可用，being 工具未注册")
+        except Exception as e:
+            logger.warning("[ConsciousLiving] being 工具注册失败: %s", e)
+
+    def _register_cron_tools(self) -> None:
+        """注册闹钟工具：schedule_alarm / list_alarms / cancel_alarm。"""
+        try:
+            from ..schedule import create_cron_tools
+            for cron_tool in create_cron_tools(self.cron_scheduler):
+                if hasattr(self.agent, "tools") and self.agent.tools:
+                    self.agent.tools.register(cron_tool)
+            logger.info("[ConsciousLiving] cron 工具已注册")
+        except Exception as e:
+            logger.warning("[ConsciousLiving] cron 工具注册失败: %s", e)
+
+    def _check_round_alarms(self) -> None:
+        """对话轮次完成后检查轮次闹钟。"""
+        due = self.cron_scheduler.on_round_complete()
+        if not due:
+            return
+        from .intent import Intent, IntentType
+        for job in due:
+            intent = Intent(
+                type=IntentType.ALARM,
+                priority=85,
+                content=f"闹钟「{job.name}」响了。{job.action_hint or job.reason}",
+            )
+            self.consciousness.intent_buffer.append(intent)
+            if self.consciousness.self_image is not None:
+                self.consciousness.intent_slot.intent_buffer.append(intent.type.value)
+            logger.info("[ConsciousLiving] 轮次闹钟触发: %s (每%d轮)", job.name, job.round_interval)
+
+    def _check_round_perception(self) -> None:
+        """轮次感知 → SocialPerception → Drive + SelfImage.mind。
+
+        感知文本 → social_perceptions（给 LLM 读）
+        社交信号 → Drive（情绪/激素/欲望自动代理到 SelfImage.body）
+        """
+        if not self._load_consciousness:
+            return
+        signals = self._social_perception.on_round_complete(
+            conversation_db=getattr(self.agent, "conversation_db", None),
+            llm=getattr(self.agent, "llm", None),
+            session_id=self.session_id,
+            social_perceptions=self.consciousness.mind.social_perceptions,
+        )
+        if signals and self.drive:
+            for s in signals:
+                self.drive.apply_social_signal(s["signal"], s["intensity"])
 
     def _log_initialization(self) -> None:
         """记录 ConsciousLiving 初始化摘要"""
@@ -580,6 +657,11 @@ class ConsciousLiving(Living):
         # 委托给 TaskOrchestrator（"继续"、确认、意图分析、chat）
         self.task_orchestrator.handle_message(msg, self._get_consciousness_state())
         self._print_prompt()
+
+        # 轮次完成：检查轮次闹钟 + 轮次感知
+        if self.cron_scheduler:
+            self._check_round_alarms()
+        self._check_round_perception()
 
     # ── Hooks ────────────────────────────────────────────────────
 

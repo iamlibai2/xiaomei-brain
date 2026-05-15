@@ -230,6 +230,21 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
             .cooldown("intent_progress", ac.intent_progress_cooldown)
     )
 
+    # ALARM 意图 → 闹钟触发（完整 ReAct）
+    RULES.append(
+        Rule.when(lambda si: _has_intent(si, "ALARM"))
+            .then(ActionItem(
+                action_type=ActionType.ALARM,
+                priority=0.85,
+                content="",
+                reason="闹钟到期",
+                source="intent",
+                cooldown_key="intent_alarm",
+                metadata={"intent_type": "ALARM"},
+            ))
+            .cooldown("intent_alarm", 60)
+    )
+
     # 用户空闲 → 主动问候
     RULES.append(
         Rule.when(lambda si, t=ac.idle_trigger_seconds: si.perception.user_idle_duration > t)

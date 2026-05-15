@@ -13,6 +13,7 @@ from typing import Any
 class ActionType(Enum):
     """动作类型"""
     PROACTIVE = "proactive"       # 主动发消息
+    ALARM = "alarm"               # 闹钟触发（完整 ReAct）
     TRIGGER_L3 = "trigger_l3"     # 触发 L3 深度燃烧
     TOOL = "tool"                 # 执行工具
     NOTIFY = "notify"             # 通知用户

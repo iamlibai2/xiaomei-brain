@@ -109,6 +109,7 @@ class Goal:
     metadata: dict = field(default_factory=dict)  # 扩展字段
     cognitive_log: list = field(default_factory=list)  # list[CognitiveLogEntry]
     artifacts: list = field(default_factory=list)      # list[dict]
+    pace_checkpoint: dict | None = None                # 序列化的 PACECheckpoint
 
     # 最大分解深度（常量）
     MAX_DEPTH = 2
@@ -131,6 +132,7 @@ class Goal:
             "metadata": self.metadata,
             "cognitive_log": [e.to_dict() for e in self.cognitive_log],
             "artifacts": self.artifacts,
+            "pace_checkpoint": self.pace_checkpoint,
         }
 
     def from_dict(self, data: dict) -> None:
@@ -153,6 +155,7 @@ class Goal:
             for e in data.get("cognitive_log", [])
         ]
         self.artifacts = data.get("artifacts", [])
+        self.pace_checkpoint = data.get("pace_checkpoint")
 
     def update_progress(self, delta: float) -> None:
         """更新进度"""

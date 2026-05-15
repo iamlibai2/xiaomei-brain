@@ -338,6 +338,10 @@ class SelfImage:
         if m.inner_thought:
             lines.append(f"你上一次想了：{m.inner_thought}")
             lines.append("（这是你之前的思考，不要重复，去找新的角度。）")
+        if m.social_perceptions:
+            lines.append("你之前感觉到的：")
+            for sp in m.social_perceptions[-5:]:
+                lines.append(f"- {sp.get('content', '')}")
 
         # 记忆
         if mem.memory_count or mem.narratives or mem.dag_summaries or mem.important_memories:
@@ -382,6 +386,22 @@ class SelfImage:
                 lines.append("以下是你的历史思考（已过时，不要重复这些想法，仅作背景）：")
                 for i, n in enumerate(mem.internal_narratives[1:], 1):
                     lines.append(f"- 历史思考{i}：{n.get('content', '')}")
+
+        # PACE 执行记录：近期 chat 的原始事实，供你自己感知"不对劲"
+        if mem.pace_reflections:
+            lines.append(
+                "\n****以下是你近期的执行记录。这些是原始事实，"
+                "不是判断——你自己决定\u201c是不是哪里不对劲\u201d。****"
+            )
+            for i, r in enumerate(mem.pace_reflections[-5:], 1):
+                user_msg = r.get("user_msg", "")
+                tool_names = r.get("tool_names", [])
+                tool_count = r.get("tool_count", 0)
+                elapsed = r.get("elapsed", 0)
+                tool_str = "、".join(tool_names) if tool_names else "无"
+                elapsed_str = f"{elapsed:.0f}s" if elapsed else "?"
+                line = f"- 第{i}轮：用户说「{user_msg[:60]}」→ 调用 {tool_str} ×{tool_count}，耗时{elapsed_str}"
+                lines.append(line)
 
         # 意图
         if intent.is_active():

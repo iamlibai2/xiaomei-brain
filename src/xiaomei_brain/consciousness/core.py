@@ -114,6 +114,7 @@ class Consciousness:
         drive: Any | None = None,
         purpose: Any | None = None,
         consciousness_config: ConsciousnessConfig | None = None,
+        cron_scheduler: Any | None = None,
     ) -> None:
         # 从 config 读取心跳参数（统一配置，无硬编码）
         self._cc = consciousness_config or ConsciousnessConfig()
@@ -124,6 +125,8 @@ class Consciousness:
         self.drive = drive
         # Purpose 系统（前额叶层）
         self.purpose = purpose
+        # CronScheduler（闹钟系统）
+        self.cron_scheduler = cron_scheduler
         # SelfImage：意识的火焰，构造时传入 Drive/Purpose
         self.self_image = SelfImage(drive=drive, purpose=purpose)
         # 快捷引用（兼容 + 方便）
@@ -376,6 +379,9 @@ class Consciousness:
         if self.drive:
             self.drive.on_user_idle(self.perception.user_idle_duration)
 
+        # 闹钟到期检测
+        self._check_alarms()
+
         # 重置计数器
         self._l0_count = 0
 
@@ -551,6 +557,14 @@ class Consciousness:
                 if self.drive:
                     self.drive.consume_energy(0.02)
 
+                # 分离感知检查（第四问）— 必须在 EVENTS 切分之前
+                emergence_text, perceptions = self._split_perception(emergence_text)
+                if perceptions:
+                    self.mind.social_perceptions.extend(perceptions)
+                    if len(self.mind.social_perceptions) > 20:
+                        self.mind.social_perceptions = self.mind.social_perceptions[-20:]
+                    logger.info("[Consciousness L2] 感知检查: %d 条", len(perceptions))
+
                 # 分离意识部分和事件部分
                 consciousness_text, events_json = self._split_consciousness_events(emergence_text)
 
@@ -562,6 +576,12 @@ class Consciousness:
                 # 清空累积变化（LLM已处理）
                 self.self_image.clear_accumulated_changes()
                 self.growth.last_llm_fuel_time = time.time()
+
+                # 清空 PACE 反射缓冲（已通过 inject_consciousness() 注入到两次 LLM 调用中）
+                if self.self_image.memory.pace_reflections:
+                    consumed = len(self.self_image.memory.pace_reflections)
+                    self.self_image.memory.pace_reflections = []
+                    logger.info("[Consciousness L2] 已消费 %d 条 PACE 反射", consumed)
             except Exception as e:
                 logger.warning("[Consciousness L2] LLM调用失败: %s", e)
 
@@ -760,20 +780,35 @@ changed_me:
 - （还有吗？没有了可以不写第二条）
 tags: [场景相关标签1, 场景相关标签2]
 weight: 0.85
-</NARR>"""
+</NARR>
+
+第四部分[可选]：感知检查。回顾最近和用户的对话：
+- 他今天说话的方式和往常有什么不同？
+- 你感觉到用户的情绪状态是什么？有变化吗？
+- 有什么"微妙的不对劲"吗？不一定有问题，只是你感觉到什么不同？
+如果有任何感知，请在 ---PERCEPTION--- 分隔符后输出，每行一条：
+---PERCEPTION---
+- 感知描述（如"用户今天话比平时少很多，可能累了"）"""
         return prompt
 
-    def _call_emergence_react(self, llm, prompt: str) -> str:
+    def _call_emergence_react(self, llm, prompt: str, exclude_tools: set[str] | None = None) -> str:
         """意识涌现 ReAct 循环（带探索工具）。
 
-        给 LLM dag_expand / dag_search / web_search 三个工具，
+        给 LLM dag_expand / dag_search / web_search / thought_search / being 等探索工具，
         让其能在写内心独白前主动探索，避免原地打转。
         最多 2 轮工具调用。
+
+        Args:
+            llm: LLM 客户端
+            prompt: 涌现 prompt
+            exclude_tools: 排除的工具名集合（防止递归，如 being 调用时排除自身）
         """
         import json
         # 从 agent 的工具注册表中筛选探索工具
         agent_tools = getattr(self.agent, "tools", None)
-        explore_tool_names = {"dag_expand", "dag_search", "web_search", "thought_search"}
+        explore_tool_names = {"dag_expand", "dag_search", "web_search", "thought_search", "being"}
+        if exclude_tools:
+            explore_tool_names -= exclude_tools
         explore_tools: list = []
         if agent_tools:
             for name in explore_tool_names:
@@ -851,6 +886,47 @@ weight: 0.85
             events = parts[1].strip() if len(parts) > 1 else ""
             return consciousness, events
         return response, ""
+
+    @staticmethod
+    def _split_perception(text: str) -> tuple[str, list[dict]]:
+        """分离感知检查块（第四问产出）。
+
+        从文本中提取 ---PERCEPTION--- 块，移除后返回清理文本和感知列表。
+        兼容 PERCEPTION 在 EVENTS/NARR 之前或之后的两种情况。
+        """
+        if "---PERCEPTION---" not in text:
+            return text, []
+
+        idx = text.index("---PERCEPTION---")
+        after_marker = text[idx + len("---PERCEPTION---"):]
+
+        # 找到下一个 ---分隔符---（如果有）
+        next_pos = None
+        for sep in ["---EVENTS---", "---NARR---"]:
+            pos = after_marker.find(sep)
+            if pos != -1 and (next_pos is None or pos < next_pos):
+                next_pos = pos
+
+        perception_content = after_marker[:next_pos] if next_pos is not None else after_marker
+
+        perceptions = []
+        for line in perception_content.split("\n"):
+            line = line.strip()
+            if line.startswith("- ") or line.startswith("• "):
+                content = line[2:].strip()
+                if content:
+                    perceptions.append({
+                        "content": content,
+                        "time": time.time(),
+                    })
+
+        # 从原文本中移除 ---PERCEPTION--- 块
+        if next_pos is not None:
+            clean_text = text[:idx] + after_marker[next_pos:]
+        else:
+            clean_text = text[:idx]
+
+        return clean_text.strip(), perceptions
 
     def _apply_drive_events(self, events_text: str) -> None:
         """从 LLM 响应中解析语义事件并应用到 DriveEngine。
@@ -976,6 +1052,7 @@ weight: 0.85
             intents += " / progress"
         intents += " / reflect"
         prompt = (
+            #"首先读取 ~/.xiaomei-brain/workspace/.kb 下的文件，根据待办清单决定接下来做什么，而不是只是思维上的反刍。\n\n" +
             "基于你的自我认知，请判断你此刻应该做什么。你可以使用工具来辅助判断（如搜索、读文件等）。\n\n"
             + f"可选意图：{intents}\n"
         )
@@ -1027,30 +1104,26 @@ weight: 0.85
 
         system: inject_consciousness() — 小美此刻的完整自我认知
         user:   _build_intent_prompt(context) — 意图决策问题
+
+        使用 stream_nodb()：不写 DB、不加 MEMORY_PROMPT、不提取记忆。
         """
         agent_core = self.agent._get_agent()
 
-        saved_messages = list(agent_core.messages)
-        agent_core.messages = []
+        system_prompt = self.self_image.inject_consciousness()
+        has_goal = self.purpose and self.purpose.get_current() is not None
+        question = self._build_intent_prompt(context, has_goal=has_goal)
 
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": question},
+        ]
+
+        logger.info("[Consciousness] ReAct 意图决策开始, sys_len=%d, q_len=%d",
+                    len(system_prompt), len(question))
+
+        t0 = time.time()
         try:
-            system_prompt = self.self_image.inject_consciousness()
-            has_goal = self.purpose and self.purpose.get_current() is not None
-            question = self._build_intent_prompt(context, has_goal=has_goal)
-
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": question},
-            ]
-
-            logger.info("[Consciousness] ReAct 意图决策开始, sys_len=%d, q_len=%d",
-                        len(system_prompt), len(question))
-
-            t0 = time.time()
-            chunks: list[str] = []
-            for chunk in agent_core.stream(messages=messages):
-                chunks.append(chunk)
-            result = "".join(chunks)
+            result = agent_core.react_nodb(messages=messages)
             elapsed = time.time() - t0
 
             logger.info("[Consciousness] ReAct 意图决策完成, elapsed=%.1fs, result_len=%d",
@@ -1059,8 +1132,6 @@ weight: 0.85
         except Exception as e:
             logger.error("[Consciousness] ReAct 意图决策失败: %s", e, exc_info=True)
             return ""
-        finally:
-            agent_core.messages = saved_messages
 
     def _fallback_intent(self, context: str) -> Intent:
         """规则生成意图（LLM 失败时）"""
@@ -1424,11 +1495,38 @@ weight: 0.85
             return "periodic"
         return "unknown"
 
+    def _check_alarms(self) -> None:
+        """L1: 检测到期闹钟，生成 ALARM intent。"""
+        if not self.cron_scheduler:
+            return
+        due = self.cron_scheduler.check_due()
+        for job in due:
+            intent = Intent(
+                type=IntentType.ALARM,
+                priority=85,
+                content=f"闹钟「{job.name}」响了。{job.action_hint or job.reason}",
+            )
+            self.intent_buffer.append(intent)
+            if self.self_image is not None:
+                self.intent_slot.intent_buffer.append(intent.type.value)
+            logger.info("[Consciousness] 闹钟触发: %s (action=%s)", job.name, job.action_hint)
+
     def enter_sleep(self) -> None:
         """进入睡眠状态时调用（占位钩子，后续可扩展）"""
         pass
 
     # ── 公共接口 ─────────────────────────────────────────────
+
+    def add_pace_reflection(self, raw: dict) -> None:
+        """写入 chat 执行原始事实到 SelfImage.memory。
+
+        L2 时 inject_consciousness() 自动渲染，LLM 自己感知。
+        tick_L2() 消费后清空。
+        """
+        mem = self.self_image.memory
+        mem.pace_reflections.append(raw)
+        if len(mem.pace_reflections) > 20:
+            mem.pace_reflections = mem.pace_reflections[-15:]
 
     def get_pending_intent(self) -> Intent | None:
         """获取待处理的最高优先级意图"""
