@@ -132,6 +132,25 @@ class PurposeEngine:
                 if g.is_pending()
             ]
 
+            # [DAG] 重建反向依赖索引
+            self._recompute_blocked_by()
+
+    def _recompute_blocked_by(self) -> None:
+        """[DAG] 重新计算所有目标的 blocked_by（反向依赖索引）。
+
+        遍历所有目标的 depends_on 字段，为每个被依赖的目标填充 blocked_by。
+        在 add_goal / complete_goal / 存储恢复后调用。
+        """
+        # 清空所有 blocked_by
+        for g in self.goals.values():
+            g.blocked_by = []
+
+        # 重建反向索引
+        for g in self.goals.values():
+            for dep_id in g.depends_on:
+                if dep_id in self.goals:
+                    self.goals[dep_id].blocked_by.append(g.id)
+
     def _init_strategic_goal(self) -> None:
         """初始化战略目标（根）"""
         if "meaning-root" not in self.goals:
@@ -170,11 +189,16 @@ class PurposeEngine:
         parent_id: Optional[str] = None,
         priority: float = 0.5,
         deadline: Optional[float] = None,
+        depends_on: list[str] | None = None,
     ) -> Goal:
         """
         添加新目标
 
         如果没有活跃目标，自动激活新目标。
+
+        Args:
+            depends_on: [DAG] 前置依赖目标 ID 列表。这些目标必须全部完成，
+                        当前目标才会出现在 get_next() 中。
         """
         goal = Goal(
             description=description,
@@ -182,15 +206,19 @@ class PurposeEngine:
             parent_id=parent_id,
             priority=priority,
             deadline=deadline,
+            depends_on=depends_on or [],
         )
 
         self.goals[goal.id] = goal
+
+        # [DAG] 计算反向依赖：依赖此目标的其他目标
+        self._recompute_blocked_by()
 
         # 添加到 pending 队列
         if goal.is_pending():
             self.pending_queue.append(goal.id)
 
-        # 如果没有活跃目标，激活这个
+        # 如果没有活跃目标且依赖已满足，激活这个
         if self.current_goal is None and goal_type == GoalType.EXECUTABLE:
             self.set_current(goal.id)
 
@@ -237,14 +265,17 @@ class PurposeEngine:
 
     def get_next(self) -> Optional[Goal]:
         """
-        获取下一个要执行的目标
+        获取下一个要执行的目标（DAG 感知）
 
-        按优先级排序，返回最高优先级的 pending 目标
+        按优先级排序，返回最高优先级的 pending 目标，
+        且该目标的所有 depends_on 前置目标都已完成。
+
+        如果所有 pending 目标都被阻塞，返回 None。
         """
         if not self.pending_queue:
             return None
 
-        # 计算优先级并排序
+        # 获取所有 pending 目标
         candidates = [
             self.goals[id] for id in self.pending_queue
             if id in self.goals
@@ -253,9 +284,15 @@ class PurposeEngine:
         if not candidates:
             return None
 
+        # [DAG] 过滤：只保留依赖已满足的目标
+        ready = [g for g in candidates if g.all_deps_satisfied(self.goals)]
+
+        if not ready:
+            return None
+
         # 按优先级排序
         sorted_candidates = sorted(
-            candidates,
+            ready,
             key=lambda g: self.calculate_priority(g),
             reverse=True,
         )
@@ -263,12 +300,19 @@ class PurposeEngine:
         return sorted_candidates[0]
 
     def complete_goal(self, goal_id: str) -> None:
-        """完成指定目标（不切换 current_goal）"""
+        """完成指定目标（不切换 current_goal）。
+
+        [DAG] 完成后重新计算反向依赖，解除下游目标的阻塞。
+        """
         goal = self.goals.get(goal_id)
         if not goal:
             return
         goal.complete()
         logger.info("[PurposeEngine] 目标完成: %s", goal.description[:30])
+
+        # [DAG] 重新计算反向依赖，解除下游阻塞
+        self._recompute_blocked_by()
+
         if self.drive:
             self.drive.on_goal_completed(goal.progress)
 
@@ -443,7 +487,7 @@ class PurposeEngine:
 
     def auto_decompose(self, goal_id: str) -> list[Goal]:
         """
-        LLM 自动分解目标
+        LLM 自动分解目标（DAG 感知）
 
         如果没有 LLM 客户端，使用规则分解
         """
@@ -455,17 +499,97 @@ class PurposeEngine:
         # 尝试 LLM 分解
         if self.llm:
             try:
-                sub_descriptions = self._llm_decompose(goal)
-                if sub_descriptions:
-                    return self.decompose_goal(goal_id, sub_descriptions)
+                sub_items = self._llm_decompose(goal)
+                if sub_items:
+                    return self._create_sub_goals_with_deps(goal_id, sub_items)
             except Exception as e:
                 logger.warning(f"[PurposeEngine] LLM 分解失败: {e}")
 
         # 规则分解（后备）
         return self._rule_decompose(goal_id)
 
-    def _llm_decompose(self, goal: Goal) -> list[str]:
-        """LLM 分解目标"""
+    def _create_sub_goals_with_deps(self, parent_id: str, sub_items: list[dict]) -> list[Goal]:
+        """从 LLM 分解结果（含依赖描述）创建子目标。
+
+        sub_items: [{"description": str, "depends_on_descs": [str]}, ...]
+
+        解析描述到 ID 的映射，设置 depends_on。
+        """
+        parent = self.goals[parent_id]
+
+        # 深度检查
+        if parent.depth >= Goal.MAX_DEPTH:
+            logger.warning(
+                f"[PurposeEngine] 目标已达最大深度 depth={parent.depth}，拒绝再分解"
+            )
+            return []
+
+        # 先创建所有子目标（尚无 depends_on）
+        sub_goals: list[Goal] = []
+        desc_to_id: dict[str, str] = {}  # 描述 → goal ID 映射
+
+        for i, item in enumerate(sub_items):
+            desc = item["description"]
+            priority = parent.priority * 0.8 + (1 - i / len(sub_items)) * 0.2
+
+            sub = self.add_goal(
+                description=desc,
+                goal_type=GoalType.EXECUTABLE,
+                parent_id=parent_id,
+                priority=priority,
+                depends_on=[],  # 先不设依赖
+            )
+            sub.depth = parent.depth + 1
+            sub_goals.append(sub)
+            desc_to_id[desc] = sub.id
+
+        # 第二轮：解析依赖关系
+        for i, item in enumerate(sub_items):
+            dep_descs = item.get("depends_on_descs", [])
+            if not dep_descs:
+                continue
+
+            sub = sub_goals[i]
+            for dep_desc in dep_descs:
+                # 尝试精确匹配或模糊匹配
+                dep_id = desc_to_id.get(dep_desc)
+                if not dep_id:
+                    # 尝试部分匹配
+                    for d, did in desc_to_id.items():
+                        if dep_desc in d or d in dep_desc:
+                            dep_id = did
+                            break
+
+                if dep_id and dep_id != sub.id:
+                    if dep_id not in sub.depends_on:
+                        sub.depends_on.append(dep_id)
+
+        # 重建反向依赖
+        self._recompute_blocked_by()
+
+        logger.info(
+            f"[PurposeEngine] 目标分解(DAG): {parent.description[:20]} → "
+            f"{len(sub_goals)}个子目标, "
+            f"{sum(1 for g in sub_goals if g.depends_on)}个有依赖"
+        )
+
+        if self.longterm_memory:
+            self.longterm_memory.store(
+                content=f"我把目标'{parent.description}'分解为{len(sub_goals)}个子目标来逐步完成。",
+                source="internal",
+                tags=["purpose", "planning", "decompose"],
+                importance=0.5,
+            )
+
+        return sub_goals
+
+    def _llm_decompose(self, goal: Goal) -> list[dict]:
+        """LLM 分解目标，返回带依赖信息的子目标列表。
+
+        Returns:
+            [{"description": str, "depends_on_descs": [str]}, ...]
+            depends_on_descs 是依赖的子目标描述列表（用于后续匹配 ID）
+        """
         prompt = GOAL_LLM_DECOMPOSE_PROMPT.format(goal_description=goal.description)
 
         try:
@@ -477,18 +601,32 @@ class PurposeEngine:
                 else:
                     text = str(response)
 
-                # 解析结果
+                # 解析结果：支持 "<-" 依赖标注
                 lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
-                # 过滤掉编号
-                sub_descriptions = []
-                for line in lines:
-                    # 去掉 "1."、"2." 等编号
-                    if line and len(line) > 2:
-                        if line[0].isdigit() and line[1] in ".、":
-                            line = line[2:].strip()
-                    sub_descriptions.append(line)
+                sub_items: list[dict] = []
 
-                return sub_descriptions[:4]  # 最多 4 个
+                for line in lines:
+                    # 去掉编号 "1."、"2." 等
+                    clean = line
+                    if len(clean) > 2 and clean[0].isdigit() and clean[1] in ".、":
+                        clean = clean[2:].strip()
+
+                    # 解析依赖关系： "子目标描述 <- 依赖描述"
+                    if "<-" in clean:
+                        parts = clean.split("<-", 1)
+                        desc = parts[0].strip()
+                        dep_descs = [d.strip() for d in parts[1].split(",")]
+                    else:
+                        desc = clean
+                        dep_descs = []
+
+                    if desc:
+                        sub_items.append({
+                            "description": desc,
+                            "depends_on_descs": dep_descs,
+                        })
+
+                return sub_items[:4]  # 最多 4 个
 
         except Exception as e:
             logger.warning(f"[PurposeEngine] LLM 分解失败: {e}")

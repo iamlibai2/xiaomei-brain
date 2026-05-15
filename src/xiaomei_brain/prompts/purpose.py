@@ -54,16 +54,23 @@ GOAL_DECOMPOSE_PROMPT = """
 # 来源: purpose/purpose_engine.py:424
 # 调用: purpose/purpose_engine.py:438
 # 用途: LLM 目标分解，输出子目标列表
-GOAL_LLM_DECOMPOSE_PROMPT = """请将以下目标分解为 2-4 个子目标：
+GOAL_LLM_DECOMPOSE_PROMPT = """请将以下目标分解为 2-4 个子目标，并识别依赖关系：
 
 目标：{goal_description}
 
 要求：
 - 子目标应该是具体可执行的步骤
 - 子目标之间有逻辑顺序
+- 如果某些子目标必须在其他子目标完成后才能开始，标注依赖关系
 - 每个子目标用一句话描述
 
-只输出子目标列表，每行一个，不要其他解释。"""
+输出格式（每行一个子目标，依赖关系用 <- 标注）：
+子目标描述
+子目标描述 <- 子目标1描述
+子目标描述
+
+其中 "<- 子目标X描述" 表示该子目标依赖子目标X（子目标X必须先完成）。
+不需要编号。只输出子目标列表，不要其他解释。"""
 
 # 来源: purpose/task_executor.py:163 (build_intent_context)
 # 调用: purpose/task_executor.py:151 (追加到任务执行上下文)

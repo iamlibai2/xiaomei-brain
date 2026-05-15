@@ -133,6 +133,24 @@ class ConsciousLiving(Living):
         # Intent Understanding
         self.intent_understanding = IntentUnderstanding(llm_client)
 
+        # ── [Layer 3] InnerVoice: 统一内心声音 ──
+        from ..metacognition.inner_voice import InnerVoice
+        self._inner_voice = InnerVoice(
+            llm=llm_client,
+            self_image=None,  # 延迟设置（consciousness 创建后）
+            drive=self.drive,
+            purpose=self.purpose,
+        )
+
+        # ── [Layer 2] Experience Memory: 经验记忆 ──
+        from ..memory.experience import ExperienceMemory
+        ltm = getattr(agent_instance, 'longterm_memory', None)
+        self._experience_memory = ExperienceMemory(ltm) if ltm else None
+
+        # ── [Layer 2] Project Mental Model: 项目地图 ──
+        from ..metacognition.project_mental_model import ProjectMentalModel
+        self._project_mental_model = ProjectMentalModel(dag=None)
+
         # TaskOrchestrator: 任务 orchestration（意图分析、任务创建/路由、确认、chat）
         self.task_orchestrator = TaskOrchestrator(
             parent=self,
@@ -142,6 +160,9 @@ class ConsciousLiving(Living):
             intent_understanding=self.intent_understanding,
             config=self._config,
             on_confirm_required=self.on_confirm_required,
+            inner_voice=self._inner_voice,
+            experience_memory=self._experience_memory,
+            project_mental_model=self._project_mental_model,
         )
 
         # ActionDispatcher（统一动作分发）

@@ -99,6 +99,8 @@ class Goal:
     goal_type: GoalType = GoalType.EXECUTABLE
     status: GoalStatus = GoalStatus.PENDING
     parent_id: Optional[str] = None    # 父目标 ID
+    depends_on: list[str] = field(default_factory=list)   # [DAG] 前置依赖目标 ID 列表
+    blocked_by: list[str] = field(default_factory=list)   # [DAG] 被哪些目标阻塞（运行时计算，不持久化）
     priority: float = 0.5              # 用户指定的基础优先级
     progress: float = 0.0              # 进度 0.0-1.0
     reinforcement_count: int = 0       # 用户多次提到的次数
@@ -122,6 +124,7 @@ class Goal:
             "goal_type": self.goal_type.value,
             "status": self.status.value,
             "parent_id": self.parent_id,
+            "depends_on": self.depends_on,
             "priority": self.priority,
             "progress": self.progress,
             "reinforcement_count": self.reinforcement_count,
@@ -142,6 +145,7 @@ class Goal:
         self.goal_type = GoalType(data.get("goal_type", "executable"))
         self.status = GoalStatus(data.get("status", "pending"))
         self.parent_id = data.get("parent_id")
+        self.depends_on = data.get("depends_on", [])
         self.priority = data.get("priority", 0.5)
         self.progress = data.get("progress", 0.0)
         self.reinforcement_count = data.get("reinforcement_count", 0)
@@ -221,6 +225,21 @@ class Goal:
     def is_abandoned(self) -> bool:
         """是否放弃"""
         return self.status == GoalStatus.ABANDONED
+
+    # ── DAG 依赖 ─────────────────────────────────
+
+    def all_deps_satisfied(self, goals: dict) -> bool:
+        """检查所有依赖目标是否都已完成。
+
+        Args:
+            goals: {goal_id: Goal} 字典，用于查找依赖目标的状态
+        """
+        if not self.depends_on:
+            return True
+        return all(
+            dep_id in goals and goals[dep_id].is_completed()
+            for dep_id in self.depends_on
+        )
 
     # ── 认知日志 ─────────────────────────────────
 

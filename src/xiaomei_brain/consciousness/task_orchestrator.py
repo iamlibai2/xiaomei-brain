@@ -41,6 +41,9 @@ class TaskOrchestrator:
         intent_understanding: Any,
         config: Any = None,
         on_confirm_required: Any = None,
+        inner_voice: Any = None,
+        experience_memory: Any = None,
+        project_mental_model: Any = None,
     ) -> None:
         self._parent = parent
         self._purpose = purpose
@@ -49,6 +52,9 @@ class TaskOrchestrator:
         self._intent_understanding = intent_understanding
         self._config = config
         self.on_confirm_required = on_confirm_required
+        self._inner_voice = inner_voice
+        self._experience_memory = experience_memory
+        self._project_mental_model = project_mental_model
 
         # 任务模式标记
         self._task_mode: bool = False
@@ -829,6 +835,23 @@ class TaskOrchestrator:
         if parent._load_consciousness and parent.consciousness:
             parent.consciousness.add_pace_reflection(raw)
 
+    def _invoke_inner_voice_chat_turn(
+        self, user_msg: str, response_len: int, elapsed: float,
+        tools: list[str] | None = None,
+    ) -> None:
+        """对话轮次完成后触发 InnerVoice 内省。"""
+        if not self._inner_voice:
+            return
+        try:
+            self._inner_voice.on_chat_turn(
+                user_msg=user_msg,
+                response_len=response_len,
+                elapsed=elapsed,
+                tools=tools or [],
+            )
+        except Exception as e:
+            logger.debug("[TaskOrchestrator] InnerVoice chat_turn 失败: %s", e)
+
     def _get_calibration_context(self) -> str:
         """获取能力校准上下文（从持久化的能力数据加载）。"""
         from ..metacognition.capability import CapabilityTracker
@@ -844,6 +867,9 @@ class TaskOrchestrator:
             purpose=self._purpose,
             drive=self._drive,
             config=self._config,
+            inner_voice=self._inner_voice,
+            experience_memory=self._experience_memory,
+            project_mental_model=self._project_mental_model,
         )
         logger.info("[TaskOrchestrator] PACERunner 已创建")
 
@@ -989,6 +1015,14 @@ class TaskOrchestrator:
                                     entry_type="output",
                                     content=display_content[:500],
                                 )
+
+                        # ── [Layer 3] InnerVoice: 对话轮次完成后内省 ──
+                        self._invoke_inner_voice_chat_turn(
+                            user_msg=current_msg.content,
+                            response_len=len(display_content),
+                            elapsed=elapsed,
+                            tools=tool_names,
+                        )
 
                         parent._print_prompt()
                         return

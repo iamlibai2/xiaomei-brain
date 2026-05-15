@@ -50,12 +50,18 @@ class PACERunner:
         drive: Any = None,
         config: Any = None,
         consciousness_hub: Any = None,  # 意识中心（用于 on_user_interaction 等）
+        inner_voice: Any = None,     # [Layer 3] InnerVoice 引擎
+        experience_memory: Any = None,  # [Layer 2] 经验记忆
+        project_mental_model: Any = None,  # [Layer 2] 项目心智模型
     ) -> None:
         self._agent_provider = agent_provider
         self._purpose = purpose
         self._drive = drive
         self._config = config
         self._consciousness = consciousness_hub
+        self._inner_voice = inner_voice          # [Layer 3]
+        self._experience_memory = experience_memory   # [Layer 2]
+        self._project_mental_model = project_mental_model  # [Layer 2]
 
         # 运行状态
         self._observations: list[StepObservation] = []
@@ -339,6 +345,21 @@ class PACERunner:
                 # ── 展示输出 ──
                 self._print_output(display_content, elapsed, tc_count)
 
+                # ── [Layer 3] InnerVoice: 步骤结束后自我觉察 ──
+                self._invoke_inner_voice_task_step(
+                    obs, step_index, tool_names,
+                    progress_data, elapsed, tc_count,
+                )
+
+                # ── [Layer 2] Project Mental Model: 记录操作 ──
+                self._record_operation(
+                    description=obs.goal_description,
+                    files_changed=tool_names,
+                    step_index=step_index,
+                    outcome="成功" if not obs.surprises else "有问题",
+                    decision_note=display_content[:200],
+                )
+
                 # 意识交互
                 on_interaction = cb.get("on_user_interaction")
                 if on_interaction:
@@ -513,14 +534,25 @@ class PACERunner:
     def _pre_check(self, goal) -> str:
         """执行前检查目标清晰度。返回 "continue" / "clarify" / "escalate"。
 
-        规则判断（零 LLM）：
-        - 纯问候/闲聊 → continue
-        - 描述 < 5 字 → clarify
-        - 描述 > 5 字但有具体关键词 → continue
-        - 否则 → clarify
-        - 能力校准：如果目标描述涉及 weakness 域 → clarify（提醒谨慎）
+        [Layer 4] 优先使用 can_autonomy() 规则判断（5道检查）。
+        [Layer 2] 如果有类似经验，会通过 can_autonomy 自动考虑。
+        降级时使用原有简单规则判断。
         """
         desc = goal.description.strip() if goal else ""
+
+        # [Layer 4] 自主推进判断（如果可用）
+        try:
+            from .autonomy import can_autonomy
+            blocked = goal.blocked_by if hasattr(goal, 'blocked_by') else []
+            ok, reason = can_autonomy(desc, blocked_by=blocked)
+            if not ok:
+                if "不可逆" in reason or "阻塞" in reason:
+                    return "escalate"
+                else:
+                    return "clarify"
+            # 如果 ok，继续走下面的具体关键词检查
+        except Exception:
+            pass  # 降级到原有逻辑
 
         # 纯问候/闲聊
         trivial = {"你好", "hello", "hi", "在吗", "谢谢", "再见", "好的", "ok", "嗯", "哦"}
@@ -715,6 +747,38 @@ class PACERunner:
                         lesson.total_steps, lesson.total_time)
         except Exception as e:
             logger.warning("[PACERunner] post_review 失败: %s", e)
+
+        # ── [Layer 3] InnerVoice: 子目标完成后反省 ──
+        if self._inner_voice:
+            try:
+                self._inner_voice.on_task_done(
+                    goal_description=goal_desc,
+                    elapsed=task_duration,
+                    steps=len(self._observations),
+                )
+            except Exception as e:
+                logger.debug("[PACERunner] InnerVoice task_done 失败: %s", e)
+
+        # ── [Layer 5] 审查：子目标完成时触发 ──
+        if self._inner_voice and hasattr(self._inner_voice, '_last_reflection'):
+            thought = self._inner_voice.get_last_thought()
+            from .autonomy import should_review, review
+            if should_review(goal_desc, sub_goal_completed=True, inner_voice_signal=thought):
+                try:
+                    agent = self._agent_provider._get_agent()
+                    review_result = review(
+                        description=goal_desc,
+                        files_changed=[
+                            t for obs in self._observations[-10:]
+                            for t in obs.tool_calls
+                        ],
+                        llm=agent.llm,
+                        context=thought,
+                    )
+                    if review_result:
+                        logger.info("[PACERunner] 审查完成: %s", review_result[:80])
+                except Exception as e:
+                    logger.debug("[PACERunner] 审查失败: %s", e)
 
         # ── 持久化可观测性指标 ──
         if self._metrics:
@@ -1172,6 +1236,74 @@ class PACERunner:
             len(top), top[0][0] if top else 0,
         )
         return "\n".join(lines)
+
+    # ── [Layer 3] InnerVoice helpers ─────────────────────────────────
+
+    def _invoke_inner_voice_task_step(
+        self, obs, step_index: int, tool_names: list[str],
+        progress_data: dict | None, elapsed: float, tc_count: int,
+    ) -> None:
+        """TASK_STEP 触发 InnerVoice 自我觉察。"""
+        if not self._inner_voice:
+            return
+
+        try:
+            from .inner_voice import TaskStepContext as IVTaskStepContext
+            surprises_descs = [
+                s.value for s in obs.surprises
+            ] if obs.surprises else []
+            buzz_hints = self._inner_voice.get_buzz_hints(surprises_descs)
+
+            task_ctx = IVTaskStepContext(
+                goal_description=obs.goal_description,
+                step_index=step_index,
+                tool_calls=tool_names,
+                tool_call_count=tc_count,
+                elapsed_seconds=elapsed,
+                output_preview=obs.llm_output[:200] if obs.llm_output else "",
+                progress_status=progress_data.get("status") if progress_data else None,
+            )
+
+            reflection = self._inner_voice.on_task_step(task_ctx, buzz_hints=buzz_hints)
+
+            # [Layer 2] Experience Memory: InnerVoice 识别到重要经验 → 提取
+            if reflection and self._experience_memory:
+                try:
+                    if self._inner_voice.has_experience_to_save():
+                        agent = self._agent_provider._get_agent()
+                        project_id = self._current_goal_id()
+                        self._experience_memory.extract_from_reflection(
+                            reflection_text=reflection.thought,
+                            llm=agent.llm,
+                            project_id=project_id,
+                        )
+                except Exception as e:
+                    logger.debug("[PACERunner] 经验提取失败: %s", e)
+
+        except Exception as e:
+            logger.debug("[PACERunner] InnerVoice task_step 失败: %s", e)
+
+    # ── [Layer 2] Project Mental Model helpers ────────────────────────
+
+    def _record_operation(
+        self, description: str, files_changed: list[str],
+        step_index: int, outcome: str, decision_note: str,
+    ) -> None:
+        """记录操作到 Project Mental Model。"""
+        if not self._project_mental_model:
+            return
+        try:
+            self._project_mental_model.record_operation(
+                description=description,
+                files_changed=files_changed,
+                operation_type="modify",
+                goal_id=self._current_goal_id(),
+                step_index=step_index,
+                outcome=outcome,
+                decision_note=decision_note,
+            )
+        except Exception as e:
+            logger.debug("[PACERunner] 操作记录失败: %s", e)
 
     def _reset_run_state(self) -> None:
         """清理单次运行的临时状态"""
