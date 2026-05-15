@@ -179,6 +179,14 @@ class ConsciousLiving(Living):
         )
         self._load_consciousness = load_consciousness
 
+        # InnerVoice → SelfImage 连接（延迟设置）
+        si = self.consciousness.self_image
+        if self._inner_voice:
+            self._inner_voice._self_image = si
+        # ProjectMentalModel / ExperienceMemory → SelfImage
+        si._project_mental_model = self._project_mental_model
+        si._experience_memory = self._experience_memory
+
         # DreamEngine（梦境总控）- 在 consciousness 创建之后
         from .dream import DreamEngine
         self._dream_engine = DreamEngine(

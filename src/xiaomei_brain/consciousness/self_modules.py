@@ -376,6 +376,9 @@ class SelfMind:
     # ── 社交感知（L2 第四问产出）──────────────
     social_perceptions: list[dict] = field(default_factory=list)
 
+    # ── 内心声音（InnerVoice 反思）─────────────
+    inner_voice: list[dict] = field(default_factory=list)
+
     # ── 代理属性（只读，实时读 Purpose）──────
 
     @property
@@ -462,6 +465,7 @@ class SelfMind:
             "inner_thought_history": self.inner_thought_history[-10:],
             "last_inner_thought_time": self.last_inner_thought_time,
             "social_perceptions": self.social_perceptions[-10:],
+            "inner_voice": self.inner_voice[-10:],
         }
 
     def from_dict(self, data: dict) -> None:
@@ -477,6 +481,8 @@ class SelfMind:
             self._goal_progress_history = data["goal_progress_history"]
         if "social_perceptions" in data:
             self.social_perceptions = data["social_perceptions"]
+        if "inner_voice" in data:
+            self.inner_voice = data["inner_voice"]
 
     def get_summary(self) -> str:
         return f"目标「{self.primary_goal[:15]}」进展{self.goal_progress:.0%}，记忆{self.memory_count}条"
@@ -511,6 +517,12 @@ class SelfMemorySlot:
     # PACE 对话反射：每次 chat 后累积的意外信号（规则 + LLM 反射）
     # tick_L2() 消费后清空
     pace_reflections: list[dict] = field(default_factory=list)
+
+    # ── [Layer 2] 项目心智模型上下文 ──
+    project_map: str = ""
+
+    # ── [Layer 2] 经验记忆召回 ──
+    experience: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {

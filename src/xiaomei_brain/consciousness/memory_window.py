@@ -33,9 +33,8 @@ def refresh_memory_window(
     session_id: str | None = None,
     user_id: str = "global",
 ) -> None:
-    """刷新 SelfImage.memory — 从存储层拉取 7 种记忆并推入。
+    """刷新 SelfImage.memory — 从存储层拉取记忆并推入。
 
-    取法对齐 context_assembler：
     - narratives:          search_narratives(mood+attention, top_k=10)
     - dag_summaries:       get_higher_summaries(session_id)
     - important_memories:  get_important(user_id, top_k=10)
@@ -43,10 +42,9 @@ def refresh_memory_window(
     - relation_chains:     get_relation_chain(depth=2)
     - procedures:          procedure_memory.match(user_query, top_k=3)
     - recent_dialog:       get_recent(n)
-    - internal_narratives: get_narratives(limit=5)  # L2 历史独白
-
-    无 user_input 时，recall/relation_chain/procedures 使用 si.perception
-    中的 last_user_activity_content 作为查询关键词。
+    - internal_narratives: get_narratives(limit=5)
+    - project_map:         ProjectMentalModel.get_context()
+    - experience:          ExperienceMemory.recall(goal_desc, top_k=5)
     """
     mem = si.memory
 
@@ -192,15 +190,38 @@ def refresh_memory_window(
         except Exception as e:
             logger.warning("[MemoryWindow] 内部叙事获取失败: %s", e)
 
+    # ── 9. 项目心智模型 ──────────────────────────────
+    pmm = getattr(si, "_project_mental_model", None)
+    if pmm:
+        try:
+            ctx = pmm.get_context()
+            mem.project_map = ctx or ""
+        except Exception as e:
+            logger.warning("[MemoryWindow] 项目地图获取失败: %s", e)
+
+    # ── 10. 经验记忆 ──────────────────────────────────
+    exp_mem = getattr(si, "_experience_memory", None)
+    if exp_mem:
+        try:
+            purpose = getattr(si.mind, "_purpose", None)
+            current_goal = purpose.get_current() if purpose else None
+            goal_desc = current_goal.description if current_goal else ""
+            if goal_desc:
+                similar = exp_mem.recall(goal_desc, top_k=5)
+                mem.experience = similar or []
+        except Exception as e:
+            logger.warning("[MemoryWindow] 经验记忆获取失败: %s", e)
+
     # ── 汇总 ──────────────────────────────────────────
     mem.memory_count = _count_memories(mem)
 
     logger.info(
         "[MemoryWindow] 刷新完成: narr=%d dag=%d important=%d recalled=%d "
-        "chains=%d proc=%d dialog=%d internal=%d total=%d",
+        "chains=%d proc=%d dialog=%d internal=%d project_map=%d exp=%d total=%d",
         len(mem.narratives), len(mem.dag_summaries), len(mem.important_memories),
         len(mem.recalled_memories), len(mem.relation_chains), len(mem.procedures),
-        len(mem.recent_dialog), len(mem.internal_narratives), mem.memory_count,
+        len(mem.recent_dialog), len(mem.internal_narratives),
+        len(mem.project_map), len(mem.experience), mem.memory_count,
     )
 
 
@@ -231,4 +252,5 @@ def _count_memories(mem) -> int:
         + len(mem.procedures)
         + len(mem.recent_dialog)
         + len(mem.internal_narratives)
+        + len(mem.experience)
     )

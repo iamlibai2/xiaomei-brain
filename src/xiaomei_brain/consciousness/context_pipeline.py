@@ -1,6 +1,7 @@
-"""上下文组装管线：协调 DAG、长期记忆、system prompt，输出最终消息列表。
+"""上下文组装管线：通过 SelfImage + memory_window 统一组装。
 
-供 ConsciousLiving 调用。core.py 不再关心消息怎么来的。
+context_assembler 已废弃——记忆检索由 memory_window 推入 SelfImage，
+渲染由 inject_consciousness(mode) 统一输出。
 """
 
 from __future__ import annotations
@@ -23,15 +24,16 @@ def build_context(
     max_tokens: int = 50000,
     assemble: bool = True,
     images: list[str] | None = None,
+    self_image: Any = None,
 ) -> list[dict[str, Any]]:
     """组装完整上下文，返回可直接传入 ReAct 引擎的消息列表。
 
-    assemble=False 时跳过所有组装（DAG/长期记忆/system prompt），
-    只记录消息 + 返回裸消息列表。
+    assemble=False 时跳过所有组装，只记录消息 + 返回裸消息列表。
 
     Args:
+        self_image: SelfImage 实例。提供时使用 inject_consciousness(mode)
+                    生成 system prompt；不提供时回退到 context_assembler。
         images: 图片路径或 URL 列表（多模态输入）。
-                本地路径自动转为 base64 data URL。
     """
     # 构建 content（纯文本 或 多模态数组）
     from xiaomei_brain.agent.message_utils import build_multimodal_content
@@ -43,14 +45,14 @@ def build_context(
         else user_input
     )
 
-    # 1. 记录用户消息到 DB（图片信息存入 metadata）
+    # 1. 记录用户消息到 DB
     user_msg_id = None
     if agent.conversation_db:
         meta = {"images": images} if images else None
         user_msg_id = agent.conversation_db.log(
             session_id=agent.session_id,
             role="user",
-            content=user_input,  # DB 中只存文本
+            content=user_input,
             metadata=meta,
         )
 
@@ -69,7 +71,6 @@ def build_context(
         m.get("role") == "tool" or m.get("tool_calls")
         for m in agent.messages[-5:]
     )
-    # 获取 LivingConfig
     cfg = getattr(agent.context_assembler, '_living_cfg', None) if agent.context_assembler else None
 
     mode = determine_mode(
@@ -88,9 +89,30 @@ def build_context(
             agent.session_id, max_tokens, agent.messages,
         )
 
-    # 5. 组装上下文：system + DAG + long-term（不含 fresh tail）
-    base_context: list[dict[str, Any]] = []
-    if agent.context_assembler:
+    # 5. 刷新记忆窗口 + 生成 system prompt
+    system_content = ""
+    if self_image is not None:
+        # ── 统一路径：SelfImage + memory_window ──
+        from .memory_window import refresh_memory_window
+
+        # session_id 从 agent 获取
+        session_id = getattr(agent, "session_id", None)
+        refresh_memory_window(
+            self_image,
+            longterm=getattr(agent, "longterm_memory", None),
+            dag=getattr(getattr(agent, "context_assembler", None), "dag", None),
+            conversation_db=getattr(agent, "conversation_db", None),
+            procedure_memory=getattr(agent, "_procedure_memory", None),
+            session_id=session_id,
+            user_id=getattr(agent, "user_id", "global"),
+        )
+        system_content = self_image.inject_consciousness(mode=mode)
+
+        # intent_context: task 模式追加任务约束
+        if intent_context:
+            system_content += "\n" + intent_context
+    elif agent.context_assembler:
+        # ── 回退路径：context_assembler（无 SelfImage 时）──
         base_context = agent.context_assembler.assemble(
             user_input=user_input,
             max_tokens=max_tokens,
@@ -100,19 +122,16 @@ def build_context(
             include_fresh_tail=False,
             intent_context=intent_context,
         )
+        system_content = base_context[0].get("content", "") if base_context else ""
 
-    # 6. intent_context 已由 assembler 内部注入（_assemble_task），不再外部拼接
-
-    # 7. 过滤已压缩消息
+    # 6. 过滤已压缩消息
     if agent.context_assembler and agent.context_assembler.dag:
         agent.messages = agent.context_assembler.dag.filter_compressed_messages(
             agent.messages, agent.session_id,
         )
 
-    # 8. token 裁剪
-    system_tokens = estimate_tokens(
-        base_context[0].get("content", "")
-    ) if base_context else 0
+    # 7. token 裁剪
+    system_tokens = estimate_tokens(system_content) if system_content else 0
     messages_budget = max(200, max_tokens - system_tokens - 500)
     trimmed: list[dict[str, Any]] = []
     used = 0
@@ -124,7 +143,7 @@ def build_context(
         used += t
     agent.messages = list(reversed(trimmed))
 
-    # 9. 返回最终消息列表
-    if base_context:
-        return base_context + agent.messages
+    # 8. 返回最终消息列表
+    if system_content:
+        return [{"role": "system", "content": system_content}] + agent.messages
     return list(agent.messages)

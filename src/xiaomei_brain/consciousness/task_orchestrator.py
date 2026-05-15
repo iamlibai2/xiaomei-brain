@@ -915,6 +915,7 @@ class TaskOrchestrator:
                         intent_context=current_context,
                         assemble=getattr(parent, "assemble_context", True),
                         images=getattr(current_msg, "images", None),
+                        self_image=getattr(getattr(parent, "consciousness", None), "self_image", None),
                     )
 
                     chunks = []

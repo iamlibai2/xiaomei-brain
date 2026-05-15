@@ -10,7 +10,7 @@ from typing import Any, Callable, Generator
 from xiaomei_brain.base.llm import LLMClient
 from xiaomei_brain.memory.conversation_db import ConversationDB, estimate_tokens
 from xiaomei_brain.memory.self_model import SelfModel
-from xiaomei_brain.consciousness.context_assembler import ContextAssembler, determine_mode
+from xiaomei_brain.consciousness.context_assembler import ContextAssembler
 from xiaomei_brain.memory.longterm import LongTermMemory
 from xiaomei_brain.memory.extractor import MemoryExtractor, MEMORY_DECISION_PROMPT
 from xiaomei_brain.tools.registry import ToolRegistry
@@ -120,11 +120,9 @@ class Agent:
         """
         # ── 预组装消息：跳过组装，直接进 ReAct ────────────────
         if messages is not None:
-            base_context: list[dict[str, Any]] = []
             openai_tools = self.tools.to_openai_tools() if self.tools.list_tools() else None
         else:
-            # ── 原有组装逻辑（agent_manager.chat() 路径）───────
-            # Save user_input for memory extraction after response
+            # ── 轻量路径：记录用户消息 + DAG 压缩，上下文由调用方组装 ──
             self._last_user_input = user_input
 
             # Log user message to DB
@@ -136,48 +134,18 @@ class Agent:
                     content=user_input,
                 )
 
-            # Add user message to self.messages (accumulate conversation history, with DB id)
+            # Add user message to self.messages
             self.messages.append({"role": "user", "content": user_input, "id": user_msg_id})
-
-            # Determine operational mode (consciousness-aware)
-            cs = consciousness_state or {}
-            # Check recent messages for tool calls (context continuity)
-            recent_tool_calls = any(
-                m.get("role") == "tool" or m.get("tool_calls")
-                for m in self.messages[-5:]
-            )
-            mode = determine_mode(
-                user_input,
-                energy_level=cs.get("energy_level", 0.8),
-                desire_state=cs.get("desire_state", {}),
-                pending_intents=cs.get("pending_intents", []),
-                has_active_goal=cs.get("has_active_goal", False),
-                recent_has_tool_calls=recent_tool_calls,
-            )
 
             openai_tools = self.tools.to_openai_tools() if self.tools.list_tools() else None
 
-            # Auto-compact
+            # Auto-compact: 防止 messages 无限增长
             if self.context_assembler and self.session_id:
                 self.context_assembler._auto_compact(self.session_id, 50000, self.messages)
 
-            # Base context: system + DAG + long-term memories (NO fresh tail)
-            base_context = self.context_assembler.assemble(
-                user_input=user_input,
-                max_tokens=50000,
-                mode=mode,
-                session_id=self.session_id,
-                user_id=self.user_id,
-                include_fresh_tail=False,
-                intent_context=self.intent_context,
-            )
-
-            # Clean up compressed messages
-
-            # Trim self.messages to fit within max_tokens total budget
+            # Token 裁剪：messages 超过预算时丢弃最旧的非系统消息
             max_total = 50000
-            system_tokens = estimate_tokens(base_context[0].get("content", "")) if base_context else 0
-            messages_budget = max(200, max_total - system_tokens - 500)
+            messages_budget = max(200, max_total - 2000)  # 预留 2000 给 system prompt
             trimmed = []
             used = 0
             for m in reversed(self.messages):
@@ -189,8 +157,8 @@ class Agent:
             if len(trimmed) < len(self.messages):
                 orig_count = len(self.messages)
                 self.messages = list(reversed(trimmed))
-                logger.info("[Context] trimmed messages: %d → %d (system=%d, budget=%d, used=%d)",
-                           orig_count, len(trimmed), system_tokens, messages_budget, used)
+                logger.info("[Context] trimmed messages: %d → %d (budget=%d, used=%d)",
+                           orig_count, len(trimmed), messages_budget, used)
 
         from xiaomei_brain.agent.cli_display import (
             get_hint, print_tool_call, print_tool_result,
@@ -203,13 +171,13 @@ class Agent:
             if cancel_check and cancel_check():
                 logger.info("[Agent] ReAct 已取消 (step=%d)", step)
                 break
-            # All steps: 预组装消息 或 [system prompt] + accumulated self.messages
+            # All steps: 预组装消息 或 self.messages
             if messages is not None:
-                # self.messages accumulates tool results from each iteration
-                # merge it back into all_messages so LLM sees the full context
                 all_messages = list(messages) + self.messages
+            elif self.system_prompt:
+                all_messages = [{"role": "system", "content": self.system_prompt}] + list(self.messages)
             else:
-                all_messages = base_context + self.messages if base_context else list(self.messages)
+                all_messages = list(self.messages)
 
             # Remove orphaned tool messages (tool without preceding assistant tool_calls)
             # and orphaned assistant(tool_calls) (tool responses missing after DAG compression)
