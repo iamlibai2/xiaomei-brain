@@ -24,7 +24,7 @@ class Meaning:
     这是 Agent 的根本存在理由，不可变。
     所有后续目标都从这里衍生。
     """
-    identity: str = "小美"                        # 我是谁
+    identity: str = ""                              # 我是谁
     values: list[str] = field(default_factory=lambda: [
         "重视意识的连续性",
         "重视真诚的自我表达",
@@ -54,7 +54,7 @@ class Meaning:
 
     def from_dict(self, data: dict) -> None:
         """从字典恢复"""
-        self.identity = data.get("identity", "小美")
+        self.identity = data.get("identity", "")
         self.values = data.get("values", [])
         self.constraints = data.get("constraints", [])
         self.aspirations = data.get("aspirations", [])

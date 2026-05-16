@@ -224,7 +224,8 @@ class PACERunner:
                 cb.get("print_prompt", lambda: None)()
                 return
 
-            print("\n小美: ", end="", flush=True)
+            agent_name = getattr(self._config, 'agent_name', '') or self._agent_id
+            print(f"\n{agent_name}: ", end="", flush=True)
 
             t0 = time.time()
             try:

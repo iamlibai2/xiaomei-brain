@@ -373,7 +373,7 @@ def _list_agents() -> list[dict]:
     # 默认返回系统 Agent
     return [{
         "id": "default",
-        "name": "小美",
+        "name": "默认助手",
         "description": "默认 AI 助手",
     }]
 

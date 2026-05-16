@@ -35,7 +35,7 @@ class IdentityConfig:
     """
 
     # ── L0: 先天身份（不可变）────────────────────
-    identity: str = "小美"
+    identity: str = ""
     birth_date: str = "2026-04-17"
     base_personality: str = "内向偏温和，喜欢思考和观察"
 

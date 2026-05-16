@@ -897,7 +897,7 @@ class TaskOrchestrator:
                     _label = " LLM output "
                     _pad = (_w - len(_label)) // 2
                     print("\n" + "=" * _pad + _label + "=" * _pad, flush=True)
-                    print("小美: ", end="", flush=True)
+                    print(f"{parent.agent.name or parent._agent_id}: ", end="", flush=True)
                     cs = parent._get_consciousness_state()
                     from xiaomei_brain.agent.core import tool_call_buffer
                     t0 = time.time()
@@ -1121,7 +1121,7 @@ class TaskOrchestrator:
             self._pace_waiting = True
             current = self._purpose.get_current() if self._purpose else None
             goal_desc = current.description[:40] if current else "当前任务"
-            print(f"\n[小美] 正在等待你对「{goal_desc}」的反馈...", flush=True)
+            print(f"\n[{self._parent.agent.name or self._parent._agent_id}] 正在等待你对「{goal_desc}」的反馈...", flush=True)
             logger.info("[TaskOrchestrator] PACE 退出: waiting_user, goal=%s", goal_desc)
         elif exit_reason in ("stuck", "escalated", "error"):
             logger.info("[TaskOrchestrator] PACE 退出: %s", exit_reason)

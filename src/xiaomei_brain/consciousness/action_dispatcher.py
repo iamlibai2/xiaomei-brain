@@ -127,7 +127,7 @@ class ActionExecutor:
             if cl.on_proactive:
                 cl.on_proactive(result)
             else:
-                print(f"\n\033[36m[小美] {result}\033[0m", flush=True)
+                print(f"\n\033[36m[{self._living.agent.name or self._living._agent_id}] {result}\033[0m", flush=True)
 
             if cl.agent.conversation_db:
                 try:
@@ -259,7 +259,7 @@ class ActionExecutor:
             if cl.on_proactive:
                 cl.on_proactive(clean_result)
             else:
-                print(f"\n\033[36m[小美 WORK] {clean_result}\033[0m", flush=True)
+                print(f"\n\033[36m[{self._living.agent.name or self._living._agent_id} WORK] {clean_result}\033[0m", flush=True)
 
             if cl.agent.conversation_db:
                 try:

@@ -289,7 +289,7 @@ class AgentManager:
 
         instance = AgentInstance(
             id="default",
-            name="小美",
+            name="默认助手",
             description="默认AI助手",
             enabled=True,
             created_at=time.time(),

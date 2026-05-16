@@ -518,7 +518,7 @@ class Consciousness:
                 if role == "user":
                     lines.append(f"用户：{content[:150]}")
                 elif role == "assistant":
-                    lines.append(f"小美：{content[:150]}")
+                    lines.append(f"{self.being.name or '我'}：{content[:150]}")
             return "\n".join(reversed(lines)) if lines else "（无最近对话）"
         except Exception:
             return "（获取对话失败）"

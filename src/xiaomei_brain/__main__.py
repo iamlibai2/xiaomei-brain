@@ -49,7 +49,7 @@ def cmd_run(agent_id: str, attach_cli: bool = False) -> None:
     if attach_cli:
         from xiaomei_brain.agent.living import AgentState
         living.on_wake = lambda: print("[阶段] WAKING - 初始化中...")
-        living.on_proactive = lambda msg: print(f"\n[小美主动] {msg.content}\n")
+        living.on_proactive = lambda msg: print(f"\n[{instance.name or agent_id}主动] {msg.content}\n")
         living.on_wake_up = lambda: print("[阶段] AWAKE - 收到消息唤醒")
         living.on_sleep = lambda: print("[阶段] SLEEPING - 空闲中，等待...")
         living.on_dream = lambda: print("[阶段] DREAMING - 梦境处理中...")
@@ -70,7 +70,7 @@ def cmd_run(agent_id: str, attach_cli: bool = False) -> None:
         # 安装 SIGINT handler：ReAct 循环中 Ctrl+C → cancel()
         signal.signal(signal.SIGINT, _on_sigint)
 
-        print("输入消息跟小美对话 (q退出，↑↓翻历史):")
+        print(f"输入消息跟{instance.name or agent_id}对话 (q退出，↑↓翻历史):")
         while True:
             # 暂时恢复默认 SIGINT，让 input() 正常触发 KeyboardInterrupt
             signal.signal(signal.SIGINT, signal.SIG_DFL)

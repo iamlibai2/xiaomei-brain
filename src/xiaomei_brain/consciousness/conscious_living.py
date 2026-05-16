@@ -850,5 +850,5 @@ class ConsciousLiving(Living):
             self.on_proactive(content)
         else:
             # CLI 模式：直接打印
-            print(f"\n\033[36m[小美] {content}\033[0m", flush=True)
+            print(f"\n\033[36m[{self.agent.name or self._agent_id}] {content}\033[0m", flush=True)
             self._print_prompt()

@@ -395,9 +395,9 @@ class ConversationDB:
                 lines.append(content)
             elif role == "assistant":
                 if tool_name:
-                    lines.append(f"### 小美 (tool: {tool_name})")
+                    lines.append(f"### 助手 (tool: {tool_name})")
                 else:
-                    lines.append("### 小美")
+                    lines.append("### 助手")
                 lines.append("")
                 lines.append(content)
             elif role == "system":
