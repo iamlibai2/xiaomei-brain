@@ -5,7 +5,7 @@ CapabilityTracker 在每次 PACE step 后记录工具调用的执行效果，
 帮助 LLM 在分解时避开 Agent 不擅长的操作。
 
 Usage:
-    tracker = CapabilityTracker(agent_id="xiaomei")
+    tracker = CapabilityTracker(agent_id=agent_id)
     tracker.record("file_ops", "success", [], 5.2, 0)
     profile = tracker.get_profile()
     context = tracker.get_calibration_context()
@@ -69,7 +69,7 @@ class CapabilityTracker:
     # 默认 domain（工具不在映射中时使用）
     DEFAULT_DOMAIN = "other"
 
-    def __init__(self, agent_id: str = "xiaomei") -> None:
+    def __init__(self, agent_id: str = "") -> None:
         self._agent_id = agent_id
         self._records: list[CapabilityRecord] = []
         self._loaded = False

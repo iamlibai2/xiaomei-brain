@@ -120,7 +120,7 @@ class Consciousness:
         self._cc = consciousness_config or ConsciousnessConfig()
 
         self.agent = agent_instance
-        self._agent_id = getattr(agent_instance, "id", None) or getattr(agent_instance, "agent_id", "xiaomei")
+        self._agent_id = getattr(agent_instance, "id", None) or getattr(agent_instance, "agent_id", "")
         # Drive 系统（边缘系统）
         self.drive = drive
         # Purpose 系统（前额叶层）

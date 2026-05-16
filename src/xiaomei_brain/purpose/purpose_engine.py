@@ -76,7 +76,7 @@ class PurposeEngine:
 
     def __init__(
         self,
-        agent_id: str = "xiaomei",
+        agent_id: str = "",
         llm_client: Any = None,
         drive: Any = None,
         load: bool = True,

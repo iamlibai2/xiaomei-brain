@@ -40,7 +40,7 @@ class DriveEngine:
     5. 提供状态信号供其他层使用
     """
 
-    def __init__(self, agent_id: str = "xiaomei", base_dir: str | Path = None, load: bool = True):
+    def __init__(self, agent_id: str = "", base_dir: str | Path = None, load: bool = True):
         """初始化 Drive 引擎
 
         Args:

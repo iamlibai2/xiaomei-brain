@@ -29,7 +29,7 @@ class TaskStorage:
     TASK_PREFIX = "task_"
     TASK_SUFFIX = ".json"
 
-    def __init__(self, agent_id: str = "xiaomei"):
+    def __init__(self, agent_id: str = ""):
         self.agent_id = agent_id
         self.base_dir = Path.home() / ".xiaomei-brain" / "agents" / agent_id / "tasks"
 

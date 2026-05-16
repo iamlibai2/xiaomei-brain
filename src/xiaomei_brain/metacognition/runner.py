@@ -736,7 +736,7 @@ class PACERunner:
                     )
 
             # 持久化
-            agent_id = getattr(self._config, 'agent_id', 'xiaomei') if self._config else 'xiaomei'
+            agent_id = getattr(self._config, 'agent_id', '') if self._config else ''
             persist_lesson(lesson, agent_id)
 
             logger.info("[PACERunner] post_review 完成: steps=%d time=%.1fs",
@@ -784,7 +784,7 @@ class PACERunner:
                 self._purpose.get_current() is not None
                 and self._purpose.get_current().is_completed()
             ) if self._purpose else False
-            agent_id = getattr(self._config, 'agent_id', 'xiaomei') if self._config else 'xiaomei'
+            agent_id = getattr(self._config, 'agent_id', '') if self._config else ''
             try:
                 from .metrics import persist_metrics
                 persist_metrics(self._metrics, agent_id)
@@ -1101,7 +1101,7 @@ class PACERunner:
         return Path.home() / ".xiaomei-brain" / "pace_checkpoints"
 
     def _agent_id(self) -> str:
-        return getattr(self._config, 'agent_id', 'xiaomei') if self._config else 'xiaomei'
+        return getattr(self._config, 'agent_id', '') if self._config else ''
 
     def _checkpoint_path(self, goal_id: str) -> "Path":
         return self._checkpoint_dir() / f"{self._agent_id()}_{goal_id}.json"
@@ -1126,7 +1126,7 @@ class PACERunner:
         logger.info("[PACERunner] checkpoint 已持久化: %s (step=%d)", path, cp.step_index)
 
     @classmethod
-    def load_checkpoint_from_disk(cls, goal_id: str, agent_id: str = "xiaomei") -> "PACECheckpoint | None":
+    def load_checkpoint_from_disk(cls, goal_id: str, agent_id: str = "") -> "PACECheckpoint | None":
         """从磁盘恢复检查点"""
         import json
         from pathlib import Path

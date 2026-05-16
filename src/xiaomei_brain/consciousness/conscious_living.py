@@ -20,7 +20,7 @@ Usage:
     from xiaomei_brain.agent.agent_manager import AgentManager
 
     manager = AgentManager()
-    agent = manager.build_agent("xiaomei")
+    agent = manager.build_agent(agent_id)
 
     living = ConsciousLiving(agent)
     living.put_message("你好")
@@ -90,7 +90,7 @@ class ConsciousLiving(Living):
         self._config = config
 
                 # 解析 agent_id（统一来源）
-        self._agent_id = getattr(agent_instance, "id", None) or getattr(agent_instance, "agent_id", "xiaomei")
+        self._agent_id = getattr(agent_instance, "id", None) or getattr(agent_instance, "agent_id", "")
 
         super().__init__(
             agent_instance=agent_instance,

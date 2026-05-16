@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 class DriveStorage:
     """Drive 状态存储"""
 
-    def __init__(self, agent_id: str = "xiaomei"):
+    def __init__(self, agent_id: str = ""):
         self.agent_id = agent_id
         self.base_dir = Path.home() / ".xiaomei-brain" / "agents" / agent_id / "drive"
         self.state_file = self.base_dir / "drive_state.json"

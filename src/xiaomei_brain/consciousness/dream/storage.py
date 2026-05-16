@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class DreamStorage:
     """梦境报告存储"""
 
-    def __init__(self, base_dir: str, agent_id: str = "xiaomei") -> None:
+    def __init__(self, base_dir: str, agent_id: str = "") -> None:
         self.base_dir = os.path.join(
             os.path.expanduser(base_dir),
             "agents",

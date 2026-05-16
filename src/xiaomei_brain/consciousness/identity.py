@@ -9,7 +9,7 @@
 Usage:
     from xiaomei_brain.consciousness.identity import IdentityConfig
 
-    config = IdentityConfig.load(agent_id="xiaomei")
+    config = IdentityConfig.load(agent_id=agent_id)
     print(config.identity)  # "小美"
     print(config.core_traits)  # ["温和", "好奇", "善于倾听"]
 """
@@ -73,7 +73,7 @@ class IdentityConfig:
     loaded_at: float = 0.0
 
     @classmethod
-    def load(cls, agent_id: str = "xiaomei") -> IdentityConfig:
+    def load(cls, agent_id: str = "") -> IdentityConfig:
         """从 identity.yaml 加载配置
 
         查找顺序：

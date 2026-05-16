@@ -416,7 +416,7 @@ def list_commands(living: ConsciousLiving, args: str = "") -> None:
 
 def cmd_pace_stats(living: ConsciousLiving, args: str = "") -> None:
     """`pace-stats` — 显示 PACE 运行统计报告"""
-    agent_id = getattr(living, "_agent_id", "xiaomei")
+    agent_id = getattr(living, "_agent_id", "")
     try:
         from ..metacognition import generate_report
         report = generate_report(agent_id)

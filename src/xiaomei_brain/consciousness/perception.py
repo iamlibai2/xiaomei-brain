@@ -14,7 +14,7 @@
 Usage:
     from xiaomei_brain.consciousness.perception import PerceptionConfig
 
-    config = PerceptionConfig.load(agent_id="xiaomei")
+    config = PerceptionConfig.load(agent_id=agent_id)
     print(config.rules)  # [PerceptionRule(...), ...]
 """
 
@@ -100,7 +100,7 @@ class PerceptionConfig:
     ]
 
     @classmethod
-    def load(cls, agent_id: str = "xiaomei") -> PerceptionConfig:
+    def load(cls, agent_id: str = "") -> PerceptionConfig:
         """从 perception.md 加载配置。
 
         查找顺序：

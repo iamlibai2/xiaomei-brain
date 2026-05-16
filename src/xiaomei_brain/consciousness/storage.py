@@ -28,7 +28,7 @@ class ConsciousnessStorage:
     每个文件包含当天的所有意识记录。
     """
 
-    def __init__(self, base_dir: str | Path, agent_id: str = "xiaomei") -> None:
+    def __init__(self, base_dir: str | Path, agent_id: str = "") -> None:
         self.base_dir = Path(base_dir)
         self.agent_id = agent_id
         self._ensure_dir()

@@ -849,7 +849,7 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         )
 
         # 同时写入向量库（用于语义召回）
-        agent_id = getattr(self, "_agent_id", "xiaomei")
+        agent_id = getattr(self, "_agent_id", "")
         self._add_narrative_vector(nm_id, content, agent_id)
 
         return nm_id
@@ -930,7 +930,7 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         )
 
         # 从向量库删除旧记录
-        agent_id = getattr(self, "_agent_id", "xiaomei")
+        agent_id = getattr(self, "_agent_id", "")
         for old_id in old_ids:
             self._delete_narrative_vector(old_id)
 

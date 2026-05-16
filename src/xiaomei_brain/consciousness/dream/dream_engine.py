@@ -101,7 +101,7 @@ class DreamEngine:
         self.llm = llm
         self.storage = storage or DreamStorage(
             base_dir="~/.xiaomei-brain",
-            agent_id=getattr(consciousness, '_agent_id', 'xiaomei'),
+            agent_id=getattr(consciousness, '_agent_id', ''),
         )
         self.procedure_memory = procedure_memory
 

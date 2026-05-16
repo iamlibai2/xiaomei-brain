@@ -615,7 +615,7 @@ class ActionExecutor:
         if not living:
             return None
 
-        agent_id = getattr(living.agent, "id", "xiaomei") if hasattr(living, "agent") else "xiaomei"
+        agent_id = getattr(living.agent, "id", "") if hasattr(living, "agent") else ""
         knowledge_dir = Path.home() / ".xiaomei-brain" / "agents" / agent_id / "knowledge"
         knowledge_dir.mkdir(parents=True, exist_ok=True)
 
@@ -716,7 +716,7 @@ class ActionExecutor:
         from pathlib import Path
 
         living = self.dispatcher._conscious_living
-        agent_id = getattr(living.agent, "id", "xiaomei") if living and hasattr(living, "agent") else "xiaomei"
+        agent_id = getattr(living.agent, "id", "") if living and hasattr(living, "agent") else ""
         knowledge_dir = Path.home() / ".xiaomei-brain" / "agents" / agent_id / "knowledge"
         knowledge_dir.mkdir(parents=True, exist_ok=True)
 

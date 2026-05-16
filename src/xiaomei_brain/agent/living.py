@@ -8,7 +8,7 @@ Usage:
     from xiaomei_brain.agent.living import AgentLiving
 
     manager = AgentManager()
-    instance = manager.build_agent("xiaomei")
+    instance = manager.build_agent(agent_id)
 
     living = AgentLiving(instance)
     living.put_message("你好", user_id="张三")

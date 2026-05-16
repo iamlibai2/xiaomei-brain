@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class PurposeStorage:
     """Purpose 持久化存储"""
 
-    def __init__(self, agent_id: str = "xiaomei"):
+    def __init__(self, agent_id: str = ""):
         self.agent_id = agent_id
         self.base_dir = Path.home() / ".xiaomei-brain" / "agents" / agent_id / "purpose"
         self.goals_file = self.base_dir / "goals.json"
