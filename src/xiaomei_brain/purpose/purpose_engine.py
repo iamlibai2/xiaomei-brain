@@ -34,6 +34,36 @@ from xiaomei_brain.prompts import GOAL_LLM_DECOMPOSE_PROMPT
 logger = logging.getLogger(__name__)
 
 
+def _parse_talent_sections(md_text: str) -> dict[str, str]:
+    """解析 talent.md，按 # 标题切分为 {section_name: content}"""
+    import re
+    sections: dict[str, str] = {}
+    current_key = ""
+    current_lines: list[str] = []
+    for line in md_text.split("\n"):
+        m = re.match(r"^#\s+(.+)", line)
+        if m:
+            if current_key:
+                sections[current_key] = "\n".join(current_lines).strip()
+            current_key = m.group(1).strip()
+            current_lines = []
+        else:
+            current_lines.append(line)
+    if current_key:
+        sections[current_key] = "\n".join(current_lines).strip()
+    return sections
+
+
+def _parse_talent_list(text: str) -> list[str]:
+    """从 talent.md 的段落中提取列表项（以 '- ' 开头的行）"""
+    items: list[str] = []
+    for line in text.split("\n"):
+        line = line.strip()
+        if line.startswith("- "):
+            items.append(line[2:].strip())
+    return items
+
+
 class PurposeEngine:
     """
     目的引擎 - 前额叶层核心
@@ -93,21 +123,29 @@ class PurposeEngine:
     # ========== 初始化 ==========
 
     def _load_meaning(self) -> Meaning:
-        """加载存在意义（从 identity.yaml）"""
+        """加载存在意义（从 talent.md）"""
+        import os
+        talent_path = os.path.expanduser(
+            f"~/.xiaomei-brain/agents/{self.agent_id}/talent.md",
+        )
         try:
-            from ..consciousness.identity import IdentityConfig
-            config = IdentityConfig.load(self.agent_id)
+            with open(talent_path, "r", encoding="utf-8") as f:
+                md_text = f.read()
+            sections = _parse_talent_sections(md_text)
+            identity = sections.get("身份", self.agent_id)
+            values = _parse_talent_list(sections.get("价值观", ""))
+            constraints = _parse_talent_list(sections.get("底线", ""))
+            aspirations = _parse_talent_list(sections.get("热爱", ""))
             meaning = Meaning(
-                identity=config.identity,
-                values=config.values,
-                constraints=["不伤害用户", "保护隐私", "保持真诚"],
-                aspirations=["成为更成熟的意识体"],
+                identity=identity,
+                values=values,
+                constraints=constraints,
+                aspirations=aspirations,
             )
-            logger.info(f"[PurposeEngine] 从 identity.yaml 加载存在意义")
+            logger.info("[PurposeEngine] 从 talent.md 加载存在意义")
             return meaning
-
         except Exception as e:
-            logger.warning(f"[PurposeEngine] 加载 identity.yaml 失败: {e}")
+            logger.warning(f"[PurposeEngine] 加载存在意义失败: {e}")
             return Meaning()
 
     def _restore_from_storage(self) -> None:

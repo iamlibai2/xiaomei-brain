@@ -336,15 +336,20 @@ class AgentLiving:
                 session_id=self.session_id,
             )
             # Load messages, but skip tool messages (they need tool_calls from assistant which DB doesn't store)
+            # Also skip orphan assistant messages (proactive outputs written to DB by _send_proactive)
             agent.messages = []
+            prev_role = None
             for m in recent:
                 role = m.get("role", "user")
+                if role == "assistant" and prev_role != "user":
+                    continue  # 主动输出，跳过
                 if role in ("user", "assistant"):
                     agent.messages.append({
                         "role": role,
                         "content": m.get("content", ""),
                         "id": m.get("id"),
                     })
+                    prev_role = role
             logger.info("[Living] Loaded %d messages from DB into Agent.messages", len(agent.messages))
 
         messages = self.proactive.check(ProactiveTrigger.WAKE)

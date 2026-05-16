@@ -167,13 +167,17 @@ class Agent:
         _last_tool = ""
         _tool_failure_counts: dict[tuple, int] = {}  # (name, args_json) -> 失败次数
 
+        # 当 messages 预组装时，self.messages 里已有的消息已经在 messages 中了
+        # 记录此时的长度，后续只拼接 ReAct 循环中新增的消息
+        _pre_count = len(self.messages) if messages is not None else 0
+
         for step in range(self.max_steps):
             if cancel_check and cancel_check():
                 logger.info("[Agent] ReAct 已取消 (step=%d)", step)
                 break
             # All steps: 预组装消息 或 self.messages
             if messages is not None:
-                all_messages = list(messages) + self.messages
+                all_messages = list(messages) + self.messages[_pre_count:]
             elif self.system_prompt:
                 all_messages = [{"role": "system", "content": self.system_prompt}] + list(self.messages)
             else:

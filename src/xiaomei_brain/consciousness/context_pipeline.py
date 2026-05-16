@@ -25,6 +25,7 @@ def build_context(
     assemble: bool = True,
     images: list[str] | None = None,
     self_image: Any = None,
+    force_mode: str = "",
 ) -> list[dict[str, Any]]:
     """组装完整上下文，返回可直接传入 ReAct 引擎的消息列表。
 
@@ -34,6 +35,7 @@ def build_context(
         self_image: SelfImage 实例。提供时使用 inject_consciousness(mode)
                     生成 system prompt；不提供时回退到 context_assembler。
         images: 图片路径或 URL 列表（多模态输入）。
+        force_mode: 强制指定模式（如 "legacy"），非空时跳过 determine_mode()。
     """
     # 构建 content（纯文本 或 多模态数组）
     from xiaomei_brain.agent.message_utils import build_multimodal_content
@@ -73,15 +75,18 @@ def build_context(
     )
     cfg = getattr(agent.context_assembler, '_living_cfg', None) if agent.context_assembler else None
 
-    mode = determine_mode(
-        user_input,
-        energy_level=cs.get("energy_level", 0.8),
-        desire_state=cs.get("desire_state", {}),
-        pending_intents=cs.get("pending_intents", []),
-        has_active_goal=cs.get("has_active_goal", False),
-        recent_has_tool_calls=recent_tool_calls,
-        config=cfg,
-    )
+    if force_mode:
+        mode = force_mode
+    else:
+        mode = determine_mode(
+            user_input,
+            energy_level=cs.get("energy_level", 0.8),
+            desire_state=cs.get("desire_state", {}),
+            pending_intents=cs.get("pending_intents", []),
+            has_active_goal=cs.get("has_active_goal", False),
+            recent_has_tool_calls=recent_tool_calls,
+            config=cfg,
+        )
 
     # 4. DAG auto-compact
     if agent.context_assembler and agent.session_id:
@@ -106,6 +111,7 @@ def build_context(
             session_id=session_id,
             user_id=getattr(agent, "user_id", "global"),
             user_input=user_input,
+            dag_max_tokens=max_tokens // 5,
         )
         system_content = self_image.inject_consciousness(mode=mode)
 

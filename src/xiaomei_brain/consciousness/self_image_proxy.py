@@ -37,6 +37,20 @@ from .self_modules import (
 
 logger = logging.getLogger(__name__)
 
+# ── 记忆强度等级（对齐 LongTermMemory._get_strength_level）──
+
+def _strength_level(strength: float) -> str:
+    """将 effective_strength 转为 L1~L5 等级标签"""
+    if strength >= 0.8:
+        return "L1"
+    elif strength >= 0.6:
+        return "L2"
+    elif strength >= 0.4:
+        return "L3"
+    elif strength >= 0.2:
+        return "L4"
+    return "L5"
+
 
 class SelfImage:
     """意识的火焰 — 所有意识数据的唯一汇聚地。"""
@@ -63,6 +77,7 @@ class SelfImage:
             "daily":   self._assemble_daily,
             "task":    self._assemble_task,
             "reflect": self._assemble_reflect,
+            "legacy":  self._assemble_legacy,
         }
 
     # ── 核心：火焰骨架 tick ─────────────────────────────────
@@ -191,18 +206,6 @@ class SelfImage:
         self.being.update_depth(self.being.relationship_depth + 0.02)
         self._dirty = True
 
-    # ── 身份初始化 ──────────────────────────────────────────
-
-    def init_from_identity_config(self, config: Any) -> None:
-        """从 IdentityConfig 初始化身份字段。"""
-        self.being.init_from_identity_config(config)
-        self._dirty = True
-
-        logger.info(
-            "[SelfImage] 从 IdentityConfig 初始化: name=%s, traits=%s",
-            self.being.name, self.being.traits,
-        )
-
     def add_growth(self, content: str, date: str | None = None) -> None:
         """追加一条生长记录。"""
         self.history.add_event(content=content, date=date)
@@ -329,14 +332,68 @@ class SelfImage:
             + self._render_history()
         )
 
-    # ── Header ─────────────────────────────────────────────
+    def _assemble_legacy(self) -> str:
+        """legacy: 复刻旧 context_assembler._assemble_daily() 输出格式。
+
+        用于测试找回旧版小美。不含身体信号、认知状态、内心声音等新模块。
+        只包含：时间、身份（旧 SelfModel 格式）、DAG摘要、长期记忆、关联链、过程记忆、叙事记忆。
+        """
+        return "\n".join(
+            self._render_header()
+            + self._render_being_legacy()
+            + self._render_memory(legacy=True)
+        )
+
+    # ── Being (Legacy): 旧 SelfModel 格式 ──────────────────────
+
+    def _render_being_legacy(self) -> list[str]:
+        """旧 context_assembler 的 SelfModel 身份渲染格式。
+
+        第一人称，简单平铺：身份 → 追求 → 热爱 → 底线 → 人格 → 擅长 → 成长。
+        """
+        b = self.being
+        h = self.history
+        lines: list[str] = []
+
+        # 身份（来自 talent.md #身份，或 being.name）
+        identity = b.name
+        if b.personality:
+            identity = f"{b.name}，一个{b.personality}的AI伴侣"
+        lines.append(identity)
+
+        # 追求（来自 talent.md #追求）
+        if b.calling:
+            lines.append(f"我的追求：{b.calling}")
+
+        # 热爱（来自 talent.md #热爱）
+        if b.passions:
+            lines.append("我热爱：" + "、".join(b.passions))
+
+        # 底线（来自 talent.md #底线）
+        if b.boundaries:
+            lines.append("我的底线：" + "、".join(b.boundaries))
+
+        # 人格（来自 talent.md #性格）
+        if b.personality:
+            lines.append(f"我的人格：{b.personality}")
+
+        # 擅长（来自 talent.md #擅长）
+        strengths = b.self_cognition.get("擅长", [])
+        if strengths:
+            lines.append("我擅长：" + "、".join(strengths))
+
+        # 最近成长
+        if h.growth_events:
+            recent = [e.get("content", "") for e in h.growth_events[-3:]]
+            lines.append("最近的成长：" + "；".join(recent))
+
+        return lines
 
     def _render_header(self) -> list[str]:
         now = datetime.now()
         weekday_map = ["一", "二", "三", "四", "五", "六", "日"]
         return [
             f"【当前】{now.strftime('%Y-%m-%d')} 星期{weekday_map[now.weekday()]} {now.strftime('%H:%M')}",
-            "[这是你当前的虚拟身体信号，严格按照身体给你的信号，决定你的思想语言和行为]",
         ]
 
     # ── Being: 我是谁 ──────────────────────────────────────
@@ -355,7 +412,7 @@ class SelfImage:
         if b.meaning:
             lines.append(f"你的存在意义是{b.meaning}。")
         if b.calling:
-            lines.append(f"关于你是什么样的人：\n{b.calling[:400]}")
+            lines.append(f"关于你是什么样的人：\n{b.calling[:1500]}")
         if b.passions:
             lines.append(f"你热爱{'，'.join(b.passions[:5])}。")
         if b.boundaries:
@@ -429,50 +486,128 @@ class SelfImage:
 
     # ── Memory: 记忆窗口 ───────────────────────────────────
 
-    def _render_memory(self) -> list[str]:
+    def _render_memory(self, legacy: bool = False) -> list[str]:
         mem = self.memory
-        if not (mem.window_size or mem.narratives or mem.dag_summaries
-                or mem.important_memories or mem.recalled_memories):
+        if legacy:
+            total = (
+                len(mem.dag_summaries) + len(mem.important_memories) + len(mem.recalled_memories)
+                + len(mem.relation_chains) + len(mem.narratives) + len(mem.procedures)
+            )
+        else:
+            total = (
+                len(mem.dag_summaries) + len(mem.important_memories) + len(mem.recalled_memories)
+                + len(mem.relation_chains) + len(mem.narratives) + len(mem.procedures)
+                + len(mem.recent_dialog) + len(mem.internal_narratives)
+            )
+        if total == 0:
             return []
-        lines = [
-            f"\n****以下是你过去的记忆片段。每条记忆包含内容、标签和时间。"
-            f"它们的用途不是让你回忆——是用来调你的感知方式。****",
-            f"你的记忆（{mem.window_size}条）：",
-        ]
+
+        lines = [f"\n****以下是你当前的记忆窗口（{total}条）****"]
+
+        # ── 历史摘要 ────────────────────────────────────
         if mem.dag_summaries:
-            for i, s in enumerate(mem.dag_summaries, 1):
+            lines.append("\n<历史摘要>")
+            for s in mem.dag_summaries:
                 node_id = s.get('id', '')
                 depth = s.get('depth', 0)
-                id_str = f" [node_id={node_id} depth={depth}]" if node_id else ""
-                lines.append(f"- 摘要{i}{id_str}：{s.get('content', '')}")
-        if mem.important_memories:
-            for i, m_item in enumerate(mem.important_memories, 1):
-                lines.append(f"- 重要记忆{i}：{m_item.get('content', '')}")
-        if mem.recalled_memories:
-            for i, m_item in enumerate(mem.recalled_memories, 1):
-                lines.append(f"- 相关记忆{i}：{m_item.get('content', '')}")
-        if mem.narratives:
-            for i, n in enumerate(mem.narratives, 1):
-                lines.append(f"- 叙事{i}：{n.get('content', '')}")
+                content = s.get('content', '')
+                meta = f' node_id="{node_id}" depth="{depth}"' if node_id else ""
+                lines.append(f"<summary{meta}>")
+                lines.append(content)
+                lines.append("</summary>")
+            lines.append("</历史摘要>")
+
+        # ── 长期记忆（重要 + 召回，去重合并）─────────────
+        ltm_items: list[dict] = []
+        seen_ids: set[str] = set()
+        for m in (mem.important_memories or []) + (mem.recalled_memories or []):
+            mid = m.get("id", "")
+            if mid and mid in seen_ids:
+                continue
+            if mid:
+                seen_ids.add(mid)
+            ltm_items.append(m)
+        if ltm_items:
+            lines.append("\n<长期记忆>")
+            lines.append("以下是你的长期记忆，当用户问及相关信息时，你必须主动引用这些记忆来回答，不要说'你不记得'或让用户自己回答。记忆时间格式为 @2026-05-04T12:00:00，可用于时间推理（判断'上周'/'上个月'等）。")
+            for m in ltm_items:
+                content = m.get("content", "")
+                eff_str = m.get("effective_strength", 0)
+                level = _strength_level(eff_str)
+                tags = m.get("tags") or []
+                tag_str = ",".join(tags) if tags else ""
+                created_ts = m.get("created_at", 0)
+                time_str = datetime.fromtimestamp(created_ts).strftime("%Y-%m-%dT%H:%M:%S") if created_ts else ""
+                time_part = f" @{time_str}" if time_str else ""
+                lines.append(f"- [{level} {eff_str:.2f}] {content}{time_part}  [{tag_str}]")
+            lines.append("</长期记忆>")
+
+        # ── 记忆关联链 ──────────────────────────────────
         if mem.relation_chains:
-            chain_items = []
+            _REL_LABEL = {"causal": "因果", "temporal": "时序", "contrast": "对比", "contains": "包含"}
+            lines.append("\n<记忆关联链>")
+            lines.append("以下记忆与当前对话存在语义关联（因果/时序等），可帮助你理解上下文脉络：")
             for c in mem.relation_chains:
                 content = c.get("content", "")
-                rel = c.get("relation_type", "")
-                chain_items.append(f"[{rel}] {content}" if rel else content)
-            for i, text in enumerate(chain_items, 1):
-                lines.append(f"- 记忆关联{i}：{text}")
+                hop = c.get("hop", "?")
+                rel_type = c.get("relation_type", "")
+                rel_label = _REL_LABEL.get(rel_type, rel_type)
+                if content:
+                    lines.append(f"- [跳{hop}] {content} （{rel_label}）")
+            lines.append("</记忆关联链>")
+
+        # ── 叙事记忆 ────────────────────────────────────
+        if mem.narratives:
+            lines.append("\n<叙事记忆>")
+            lines.append("以下是你过去真实经历中留下的叙事片段。每条叙事改变了你感知和回应世界的方式——读它们的时候，不是'记住了内容'，是进入那种感知状态。")
+            for n in mem.narratives:
+                nm_id = n.get("id", "")
+                category = n.get("category", "")
+                scene_tags = n.get("scene_tags", [])
+                scene = scene_tags[0] if scene_tags else ""
+                ts = n.get("timestamp", "")
+                content = n.get("content", "")
+                feels = n.get("feels_like", "")
+                changed = n.get("changed_me", "")
+                weight = n.get("weight", 0)
+                score = n.get("score", 0)
+                header = f"{nm_id} [{category}]"
+                if scene:
+                    header += f" {scene}"
+                if ts:
+                    header += f" @{ts}"
+                header += f" (w:{weight:.2f} s:{score:.2f})"
+                lines.append(f"\n{header}")
+                lines.append(f"  {content}")
+                if feels:
+                    lines.append(f"  feels: {feels}")
+                if changed:
+                    lines.append(f"  changed: {changed[:150]}")
+            lines.append("</叙事记忆>")
+
+        # ── 过程记忆 ────────────────────────────────────
         if mem.procedures:
+            lines.append("\n<过程记忆>")
             for i, p_item in enumerate(mem.procedures, 1):
                 lines.append(f"- 过程{i}：{p_item.get('name', '')}: {p_item.get('content', '')}")
-        if mem.recent_dialog:
-            lines.append("以下是你与用户的最近对话记录：")
+            lines.append("</过程记忆>")
+
+        # ── 最近对话（legacy 模式不包含）───────────────
+        if not legacy and mem.recent_dialog:
+            lines.append("\n<最近对话>")
             for i, d in enumerate(mem.recent_dialog, 1):
                 lines.append(f"- 对话{i}[{d.get('role', '')}]：{d.get('content', '')}")
-        if len(mem.internal_narratives) > 1:
-            lines.append("以下是你的历史思考（已过时，不要重复这些想法，仅作背景）：")
-            for i, n in enumerate(mem.internal_narratives[1:], 1):
-                lines.append(f"- 历史思考{i}：{n.get('content', '')}")
+            lines.append("</最近对话>")
+
+        # ── 历史思考（内部叙事，legacy 模式不包含）─────
+        if not legacy:
+            internal = mem.internal_narratives
+            if internal and len(internal) > 1:
+                lines.append("\n<历史思考>\n（已过时，不要重复这些想法，仅作背景）")
+                for i, n in enumerate(internal[1:], 1):
+                    lines.append(f"- 历史思考{i}：{n.get('content', '')}")
+                lines.append("</历史思考>")
+
         return lines
 
     # ── PACE 执行记录 ──────────────────────────────────────

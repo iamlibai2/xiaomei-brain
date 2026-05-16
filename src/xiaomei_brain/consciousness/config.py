@@ -20,7 +20,7 @@ class ConsciousnessConfig:
     """意识系统 L0-L3 参数"""
     l0_interval: float = 1.0          # L0 感知心跳间隔（秒）
     l1_threshold: int = 60             # L1 触发阈值（累积 L0 次数）
-    l2_idle_trigger: float = 120.0    # L2 空闲触发（用户空闲秒数）
+    l2_idle_trigger: float = 300.0    # L2 空闲触发（用户空闲秒数）
     l2_changes_trigger: int = 10       # L2 累积变化触发（条数）
     l2_cooldown: float = 300.0         # L2 冷却时间（秒）
     l2_periodic_interval: float = 1800.0  # L2 定期触发（秒）

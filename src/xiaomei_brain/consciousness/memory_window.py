@@ -33,6 +33,7 @@ def refresh_memory_window(
     session_id: str | None = None,
     user_id: str = "global",
     user_input: str | None = None,
+    dag_max_tokens: int = 2000,
 ) -> None:
     """刷新 SelfImage.memory — 从存储层拉取记忆并推入。
 
@@ -78,7 +79,7 @@ def refresh_memory_window(
     # ── 2. DAG 摘要 ────────────────────────────────────
     if dag and session_id:
         try:
-            summaries = dag.get_higher_summaries(session_id, max_tokens=2000)
+            summaries = dag.get_higher_summaries(session_id, max_tokens=dag_max_tokens)
             if summaries:
                 mem.dag_summaries = [
                     {"id": s.id, "depth": s.depth, "content": s.content}
