@@ -105,6 +105,7 @@ def build_context(
             procedure_memory=getattr(agent, "_procedure_memory", None),
             session_id=session_id,
             user_id=getattr(agent, "user_id", "global"),
+            user_input=user_input,
         )
         system_content = self_image.inject_consciousness(mode=mode)
 
