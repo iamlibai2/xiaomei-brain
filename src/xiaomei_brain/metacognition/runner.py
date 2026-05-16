@@ -110,8 +110,6 @@ class PACERunner:
             goal_description=goal.description if goal else msg.content[:200],
         )
 
-        cb.get("update_recent_conversations", lambda: None)()
-
         try:
             self._run_loop(msg, intent_context, cb,
                            start_step=self._resume_step or 0,
@@ -364,8 +362,6 @@ class PACERunner:
                 on_interaction = cb.get("on_user_interaction")
                 if on_interaction:
                     on_interaction(current_msg.content, display_content)
-
-                cb.get("update_recent_conversations", lambda: None)()
 
                 # ── 处理进度（复用 PurposeEngine 逻辑） ──
                 self._handle_progress(progress_data, content)

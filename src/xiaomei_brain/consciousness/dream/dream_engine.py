@@ -128,7 +128,7 @@ class DreamEngine:
         # 基于已有梦境摘要调整 Drive（如果有的话）
         summary_to_process = (
             prior_summary
-            or self.cs.self_image.growth.last_dream_summary
+            or self.cs.self_image.history.last_dream_summary
         )
         if summary_to_process:
             changes = self.emotion_processor.process(self.drive, summary_to_process)
@@ -178,7 +178,7 @@ class DreamEngine:
         if summary_to_process and not prior_summary:
             # prior_summary 为空但 SelfImage 有 last_dream_summary → 用现成的
             report.summary = summary_to_process
-            report.full_report = self.cs.self_image.growth.last_dream_summary
+            report.full_report = self.cs.self_image.history.last_dream_summary
             logger.info("[DreamEngine] 使用已有梦境摘要: %s", report.summary[:30])
         elif not summary_to_process:
             # 真的需要 LLM 生成
@@ -231,7 +231,7 @@ class DreamEngine:
             self.drive.restore_energy(0.2)
 
         # 同步到 SelfImage
-        self.cs.growth.update_dream_summary(report.summary)
+        self.cs.history.update_dream_summary(report.summary)
 
         # 写入长期记忆
         if self.ltm and full_report:
@@ -267,7 +267,11 @@ class DreamEngine:
 
         self.cs.intent_buffer.append(intent)
         if self.cs.self_image is not None:
-            self.cs.self_image.intent.intent_buffer.append(intent.type.value)
+            self.cs.self_image.intent.intent_buffer.append({
+                "type": intent.type.value,
+                "reason": getattr(intent, "reason", ""),
+                "priority": getattr(intent, "priority", 0),
+            })
         logger.info("[DreamEngine] 生成后续意图: %s", intent.type.value)
 
     def _build_dream_prompt(self) -> str:
@@ -301,14 +305,14 @@ class DreamEngine:
                 f"表达欲：{d.expression:.2f}"
             )
 
-        growth = si.growth
+        history = si.history
         internal = "".join(filter(None, [
-            growth.emotional_trajectory,
-            growth.goal_rhythm,
-            growth.consciousness_rhythm,
+            history.emotional_trajectory,
+            history.goal_rhythm,
+            history.consciousness_rhythm,
         ])) or "无"
 
-        identity = si.identity.identity
+        identity = si.being.name
         energy = f"{si.body.energy:.2f}"
         mood = si.body.mood
         msgs = messages_text or "（无今日对话）"

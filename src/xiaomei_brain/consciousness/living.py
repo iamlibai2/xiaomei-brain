@@ -146,6 +146,8 @@ class Living:
                     task.handler(state)
                     task.last_fired = now
                 except Exception as e:
+                    import traceback
+                    traceback.print_exc()
                     logger.warning("[Living] 周期任务 %s 出错: %s", task.name, e)
 
     def _get_heartbeat_result(self) -> str:

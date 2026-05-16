@@ -3,7 +3,6 @@ Purpose 持久化
 
 存储：
 - goals.json: 目标树
-- meaning.json: 存在意义（可选，通常从 identity.md 加载）
 
 位置：~/.xiaomei-brain/agents/{agent_id}/purpose/
 """
@@ -12,9 +11,8 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
-from .meaning import Meaning
 from .goal import Goal
 
 logger = logging.getLogger(__name__)
@@ -27,7 +25,6 @@ class PurposeStorage:
         self.agent_id = agent_id
         self.base_dir = Path.home() / ".xiaomei-brain" / "agents" / agent_id / "purpose"
         self.goals_file = self.base_dir / "goals.json"
-        self.meaning_file = self.base_dir / "meaning.json"
 
         # 确保目录存在
         self.base_dir.mkdir(parents=True, exist_ok=True)
@@ -71,36 +68,6 @@ class PurposeStorage:
             logger.warning(f"[PurposeStorage] 加载失败: {e}")
             return {}
 
-    def save_meaning(self, meaning: Meaning) -> None:
-        """保存存在意义"""
-        try:
-            with open(self.meaning_file, "w", encoding="utf-8") as f:
-                json.dump(meaning.to_dict(), f, indent=2, ensure_ascii=False)
-
-            logger.debug(f"[PurposeStorage] 存在意义已保存")
-
-        except Exception as e:
-            logger.warning(f"[PurposeStorage] 保存失败: {e}")
-
-    def load_meaning(self) -> Optional[Meaning]:
-        """加载存在意义"""
-        if not self.meaning_file.exists():
-            return None
-
-        try:
-            with open(self.meaning_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-
-            meaning = Meaning()
-            meaning.from_dict(data)
-
-            logger.info(f"[PurposeStorage] 存在意义已加载")
-            return meaning
-
-        except Exception as e:
-            logger.warning(f"[PurposeStorage] 加载失败: {e}")
-            return None
-
     def exists(self) -> bool:
         """检查存储是否存在"""
         return self.goals_file.exists()
@@ -109,6 +76,4 @@ class PurposeStorage:
         """清除存储"""
         if self.goals_file.exists():
             self.goals_file.unlink()
-        if self.meaning_file.exists():
-            self.meaning_file.unlink()
         logger.info("[PurposeStorage] 存储已清除")

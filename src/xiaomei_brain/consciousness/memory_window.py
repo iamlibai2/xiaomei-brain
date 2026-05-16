@@ -32,9 +32,12 @@ def refresh_memory_window(
     procedure_memory: Any = None,
     session_id: str | None = None,
     user_id: str = "global",
+    user_input: str | None = None,
 ) -> None:
     """刷新 SelfImage.memory — 从存储层拉取记忆并推入。
 
+    - user_input: 当前用户消息，有则直接用于 semantic recall（不再反复咀嚼同一句话）
+    - 无 user_input 时：fallback 到 attention_query 做内省召回
     - narratives:          search_narratives(mood+attention, top_k=10)
     - dag_summaries:       get_higher_summaries(session_id)
     - important_memories:  get_important(user_id, top_k=10)
@@ -57,11 +60,8 @@ def refresh_memory_window(
     )
     si._last_attention_snapshot = attention_snapshot
 
-    # 记忆召回查询词：注意力信号 + 用户最近消息
-    user_query = si.perception.last_user_activity_content or ""
-    memory_query = attention_query
-    if user_query:
-        memory_query = f"{attention_query}，{user_query[:80]}"
+    # 记忆召回查询词：有 user_input 直接用（避免反复咀嚼同一句话），无则用内省信号
+    memory_query = user_input if user_input else attention_query
 
     # ── 1. 叙事记忆 ──────────────────────────────────────
     if longterm:
@@ -164,9 +164,11 @@ def refresh_memory_window(
             logger.warning("[MemoryWindow] 关系记忆获取失败: %s", e)
 
     # ── 6. 过程记忆 ────────────────────────────────────
-    if procedure_memory and memory_query:
+    # procedure 用 user_input（如果有），无则 fallback 到 attention_query
+    proc_query = user_input if user_input else attention_query
+    if procedure_memory and proc_query:
         try:
-            matched = procedure_memory.match(user_query, top_k=3)
+            matched = procedure_memory.match(proc_query, top_k=3)
             mem.procedures = matched or []
         except Exception as e:
             logger.warning("[MemoryWindow] 过程记忆获取失败: %s", e)
@@ -195,7 +197,7 @@ def refresh_memory_window(
     if pmm:
         try:
             ctx = pmm.get_context()
-            mem.project_map = ctx or ""
+            si.mind.project_map = ctx or ""
         except Exception as e:
             logger.warning("[MemoryWindow] 项目地图获取失败: %s", e)
 
@@ -208,12 +210,12 @@ def refresh_memory_window(
             goal_desc = current_goal.description if current_goal else ""
             if goal_desc:
                 similar = exp_mem.recall(goal_desc, top_k=5)
-                mem.experience = similar or []
+                si.mind.experience = similar or []
         except Exception as e:
             logger.warning("[MemoryWindow] 经验记忆获取失败: %s", e)
 
     # ── 汇总 ──────────────────────────────────────────
-    mem.memory_count = _count_memories(mem)
+    mem.window_size = _count_memories(mem)
 
     logger.info(
         "[MemoryWindow] 刷新完成: narr=%d dag=%d important=%d recalled=%d "
@@ -221,7 +223,7 @@ def refresh_memory_window(
         len(mem.narratives), len(mem.dag_summaries), len(mem.important_memories),
         len(mem.recalled_memories), len(mem.relation_chains), len(mem.procedures),
         len(mem.recent_dialog), len(mem.internal_narratives),
-        len(mem.project_map), len(mem.experience), mem.memory_count,
+        len(si.mind.project_map), len(si.mind.experience), mem.window_size,
     )
 
 
@@ -252,5 +254,4 @@ def _count_memories(mem) -> int:
         + len(mem.procedures)
         + len(mem.recent_dialog)
         + len(mem.internal_narratives)
-        + len(mem.experience)
     )

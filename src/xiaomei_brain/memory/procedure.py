@@ -419,7 +419,8 @@ class ProcedureLearner:
                 messages=[{"role": "user", "content": detect_prompt}],
                 tools=None,
             )
-            data = json.loads(resp.content or "{}")
+            raw = (resp.content or "").strip()
+            data = json.loads(raw or "{}")
         except Exception as e:
             logger.warning("%s detect failed: %s", _P_LOG, e)
             return []
@@ -445,7 +446,8 @@ class ProcedureLearner:
                 messages=[{"role": "user", "content": generate_prompt}],
                 tools=None,
             )
-            proc_data = json.loads(resp2.content or "{}")
+            raw2 = (resp2.content or "").strip()
+            proc_data = json.loads(raw2 or "{}")
         except Exception as e:
             logger.warning("%s generate failed: %s", _P_LOG, e)
             return []
@@ -518,7 +520,8 @@ class ProcedureLearner:
                 messages=[{"role": "user", "content": prompt}],
                 tools=None,
             )
-            data = json.loads(resp.content or "{}")
+            raw = (resp.content or "").strip()
+            data = json.loads(raw or "{}")
         except Exception as e:
             logger.warning("%s infer failed: %s", _P_LOG, e)
             return []

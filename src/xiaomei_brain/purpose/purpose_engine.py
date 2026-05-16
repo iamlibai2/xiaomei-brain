@@ -93,13 +93,7 @@ class PurposeEngine:
     # ========== 初始化 ==========
 
     def _load_meaning(self) -> Meaning:
-        """加载存在意义"""
-        # 先从存储加载
-        meaning = self.storage.load_meaning()
-        if meaning:
-            return meaning
-
-        # 从 identity.md 加载
+        """加载存在意义（从 identity.yaml）"""
         try:
             from ..consciousness.identity import IdentityConfig
             config = IdentityConfig.load(self.agent_id)
@@ -109,11 +103,11 @@ class PurposeEngine:
                 constraints=["不伤害用户", "保护隐私", "保持真诚"],
                 aspirations=["成为更成熟的意识体"],
             )
-            logger.info(f"[PurposeEngine] 从 identity.md 加载存在意义")
+            logger.info(f"[PurposeEngine] 从 identity.yaml 加载存在意义")
             return meaning
 
         except Exception as e:
-            logger.warning(f"[PurposeEngine] 加载 identity.md 失败: {e}")
+            logger.warning(f"[PurposeEngine] 加载 identity.yaml 失败: {e}")
             return Meaning()
 
     def _restore_from_storage(self) -> None:
@@ -798,4 +792,3 @@ class PurposeEngine:
     def save(self) -> None:
         """保存到文件"""
         self.storage.save_goals(self.goals)
-        self.storage.save_meaning(self.meaning)

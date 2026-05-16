@@ -115,10 +115,6 @@ class ConsciousLiving(Living):
         from ..schedule import CronScheduler
         self.cron_scheduler = CronScheduler(self._agent_id)
 
-        # 社交感知（Metacognition 层：轮次级自我监督）
-        from ..metacognition import SocialPerception
-        self._social_perception = SocialPerception(interval=3)
-
         # Purpose 系统（前额叶层）- 延迟加载
         llm_client = None
         if agent_instance and hasattr(agent_instance, "llm"):
@@ -281,26 +277,12 @@ class ConsciousLiving(Living):
             )
             self.consciousness.intent_buffer.append(intent)
             if self.consciousness.self_image is not None:
-                self.consciousness.intent_slot.intent_buffer.append(intent.type.value)
+                self.consciousness.intent_slot.intent_buffer.append({
+                    "type": intent.type.value,
+                    "reason": getattr(intent, "reason", ""),
+                    "priority": getattr(intent, "priority", 0),
+                })
             logger.info("[ConsciousLiving] 轮次闹钟触发: %s (每%d轮)", job.name, job.round_interval)
-
-    def _check_round_perception(self) -> None:
-        """轮次感知 → SocialPerception → Drive + SelfImage.mind。
-
-        感知文本 → social_perceptions（给 LLM 读）
-        社交信号 → Drive（情绪/激素/欲望自动代理到 SelfImage.body）
-        """
-        if not self._load_consciousness:
-            return
-        signals = self._social_perception.on_round_complete(
-            conversation_db=getattr(self.agent, "conversation_db", None),
-            llm=getattr(self.agent, "llm", None),
-            session_id=self.session_id,
-            social_perceptions=self.consciousness.mind.social_perceptions,
-        )
-        if signals and self.drive:
-            for s in signals:
-                self.drive.apply_social_signal(s["signal"], s["intensity"])
 
     def _log_initialization(self) -> None:
         """记录 ConsciousLiving 初始化摘要"""
@@ -328,17 +310,17 @@ class ConsciousLiving(Living):
             logger.info("    火焰状态:")
             logger.info("      agent_state   : %s", si.perception.agent_state)
             logger.info("      energy_level  : %.2f", si.body.energy)
-            logger.info("      age           : %ds", int(si.growth.consciousness_age))
+            logger.info("      age           : %ds", int(si.history.consciousness_age))
             logger.info("      idle_duration : %ds", int(si.perception.user_idle_duration))
             logger.info("")
             logger.info("    身份信息:")
-            identity_name = si.identity.identity
+            identity_name = si.being.name
             logger.info("      identity      : %s", identity_name)
-            logger.info("      birth_date    : %s", si.identity.birth_date)
-            logger.info("      personality   : %s", si.identity.base_personality)
-            traits = ",".join(si.identity.core_traits)
+            logger.info("      birth_date    : %s", si.being.birth_date)
+            logger.info("      personality   : %s", si.being.personality)
+            traits = ",".join(si.being.traits)
             logger.info("      traits        : %s", traits if traits else "未设置")
-            values = ",".join(si.identity.values)
+            values = ",".join(si.being.values)
             logger.info("      values        : %s", values if values else "未设置")
 
         # Drive 状态
@@ -435,7 +417,7 @@ class ConsciousLiving(Living):
         assembler = ConsciousContextAssembler(
             conversation_db=self.agent.conversation_db,
             dag=dag,
-            self_model=self.agent.self_model,
+            self_model=getattr(self.agent, "self_model", None),
             longterm_memory=self.agent.longterm_memory,
             drive=self.drive,
             self_image=self.consciousness.self_image if self._load_consciousness else None,
@@ -491,6 +473,12 @@ class ConsciousLiving(Living):
         # 3. 加载 Consciousness（可选）
         if self._load_consciousness:
             self._setup_conscious_data()
+            # restore 可能替换了 SelfImage，重新绑定引用
+            si = self.consciousness.self_image
+            if self._inner_voice:
+                self._inner_voice._self_image = si
+            si._project_mental_model = self._project_mental_model
+            si._experience_memory = self._experience_memory
         else:
             logger.info("[ConsciousLiving] 意识系统未加载（生命存在但无意识）")
 
@@ -511,21 +499,21 @@ class ConsciousLiving(Living):
         if not restored:
             restored = self.consciousness.restore_from_storage()
 
-        # 4. 模块恢复也失败，从 identity.md 加载
+        # 4. 始终从 identity.md 加载身份字段（L0-L3 + 追求/热爱/底线/自我认知）
+        #    restore 只恢复运行时状态（body/mind/history），identity.md 是身份的真源
+        config = IdentityConfig.load(self._agent_id)
+        self.consciousness._identity_config = config
+        self.consciousness.being.init_from_identity_config(config)
         if not restored:
-            config = IdentityConfig.load(self._agent_id)
-            self.consciousness._identity_config = config
-            self.consciousness.identity.init_from_identity_config(config)
             logger.info("[ConsciousLiving] 从 IdentityConfig 初始化完成")
 
-            # 如果还是没有数据，使用默认值
-            si = self.consciousness.get_self_image()
-            if not si.identity.identity or si.identity.identity == "小美":
-                si.identity.identity = "小美"
-                si.relation.role = "情感陪伴"
-                logger.info("[ConsciousLiving] 使用默认值初始化")
+        # 如果还是没有数据，使用默认值
+        si = self.consciousness.get_self_image()
+        if not si.being.name:
+            si.being.name = "小美"
+            logger.info("[ConsciousLiving] 使用默认值初始化")
 
-        # 4. 加载感知规则（非运行时数据，始终从配置加载）
+        # 5. 加载感知规则（非运行时数据，始终从配置加载）
         self.consciousness._perception_config = PerceptionConfig.load(self._agent_id)
         logger.info("[ConsciousLiving] 从 PerceptionConfig 初始化完成: %d 条规则", len(self.consciousness._perception_config.rules))
 
@@ -562,7 +550,6 @@ class ConsciousLiving(Living):
 
     def _surge(self, state: LivingState) -> None:
         """每分钟调用。ActionDispatcher 统一检查主动行为。"""
-        self._update_recent_conversations()
         if self._load_consciousness:
             si = self.consciousness.get_self_image()
             self._dispatcher.tick(si)
@@ -595,23 +582,6 @@ class ConsciousLiving(Living):
         # 这里不做额外处理
 
         self._transition(LivingState.SLEEPING)
-
-    # ── SelfImage 同步 ───────────────────────────────────────
-
-    def _update_recent_conversations(self) -> None:
-        """对话结束后更新 SelfImage 的最近对话记录（供主动消息生成）。"""
-        si = self.consciousness.self_image if self._load_consciousness else None
-        if not si:
-            logger.warning("[_update_recent_conversations] self_image 不存在")
-            return
-
-        recent = []
-        if self.agent.conversation_db:
-            rows = self.agent.conversation_db.get_recent(10, session_id=self.session_id)
-            recent = [{"role": r.get("role", ""), "content": r.get("content", "")} for r in rows]
-
-        si.perception.recent_conversations = recent[-10:] if len(recent) > 10 else recent
-
 
     # ── ActionDispatcher 通知 ────────────────────────────────
 
@@ -687,10 +657,9 @@ class ConsciousLiving(Living):
         self.task_orchestrator.handle_message(msg, self._get_consciousness_state())
         self._print_prompt()
 
-        # 轮次完成：检查轮次闹钟 + 轮次感知
+        # 轮次完成：检查轮次闹钟
         if self.cron_scheduler:
             self._check_round_alarms()
-        self._check_round_perception()
 
     # ── Hooks ────────────────────────────────────────────────────
 
@@ -715,8 +684,6 @@ class ConsciousLiving(Living):
             # 调用意识系统的 on_wake，生成问候意图（基于梦境报告）
             logger.info("[ConsciousLiving._on_wake] 调用 consciousness.on_wake()")
             self.consciousness.on_wake()
-            # 先更新最近对话（供 ActionDispatcher 生成个性化问候）
-            self._update_recent_conversations()
             # 同步状态后，由 ActionDispatcher 统一分发意图
             # Drive/Purpose 已在 SelfImage 构造时连接，无需手动同步
             si = self.consciousness.get_self_image()

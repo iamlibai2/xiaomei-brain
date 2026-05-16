@@ -32,7 +32,7 @@ from typing import Any
 
 from .self_modules import (
     Being, SelfBody, SelfPerception,
-    SelfMind, SelfMemorySlot, SelfIntent, SelfHistory,
+    SelfMind, SelfMemory, SelfIntent, SelfHistory,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,43 +41,29 @@ logger = logging.getLogger(__name__)
 class SelfImage:
     """意识的火焰 — 所有意识数据的唯一汇聚地。"""
 
-    # mode → 数据段映射（声明式，控制 inject_consciousness 输出）
-    _MODE_SECTIONS: dict[str, set[str]] = {
-        "flow":    {"being", "body", "environment"},
-        "daily":   {"being", "body", "mind", "memory", "inner_voice", "environment", "history"},
-        "task":    {"being", "body", "mind", "inner_voice", "project_map", "experience", "intent", "environment"},
-        "reflect": {"being", "body", "mind", "memory", "inner_voice", "environment", "history"},
-    }
+    # _diff() 变化检测阈值
+    DIFF_IDLE_THRESHOLD_S: float = 10.0    # 用户空闲变化超过此秒数才记录
+    DIFF_ENERGY_THRESHOLD: float = 0.05    # 能量变化超过此比例才记录
+    DIFF_GOAL_THRESHOLD: float = 0.01      # 目标进展变化超过此比例才记录
 
     def __init__(self, drive: Any = None, purpose: Any = None) -> None:
         self.being = Being()
         self.body = SelfBody(_drive=drive)
         self.perception = SelfPerception()
         self.mind = SelfMind(_purpose=purpose)
-        self.memory = SelfMemorySlot()
+        self.memory = SelfMemory()
         self.intent = SelfIntent()
         self.history = SelfHistory()
         self._dirty = False
         self._drive = drive
         self._project_mental_model: Any = None   # [Layer 2]
         self._experience_memory: Any = None      # [Layer 2]
-
-    # ── 兼容属性 ──────────────────────────────────────────
-
-    @property
-    def identity(self) -> Being:
-        """兼容旧名 self.identity.name → being.name"""
-        return self.being
-
-    @property
-    def relation(self) -> Being:
-        """兼容旧名 self.relation.role → being.role"""
-        return self.being
-
-    @property
-    def growth(self) -> SelfHistory:
-        """兼容旧名 self.growth.consciousness_age → history.consciousness_age"""
-        return self.history
+        self._assemble_map = {
+            "flow":    self._assemble_flow,
+            "daily":   self._assemble_daily,
+            "task":    self._assemble_task,
+            "reflect": self._assemble_reflect,
+        }
 
     # ── 核心：火焰骨架 tick ─────────────────────────────────
 
@@ -112,7 +98,7 @@ class SelfImage:
             "agent_state": self.perception.agent_state,
             "user_idle_duration": self.perception.user_idle_duration,
             "energy": self.body.energy,
-            "memory_count": self.memory.memory_count,
+            "window_size": self.memory.window_size,
             "goal_progress": self.mind.goal_progress,
         }
 
@@ -133,21 +119,21 @@ class SelfImage:
 
         cur_idle = self.perception.user_idle_duration
         idle_diff = cur_idle - last["user_idle_duration"]
-        if abs(idle_diff) > 10:
+        if abs(idle_diff) > self.DIFF_IDLE_THRESHOLD_S:
             diff["user_idle_change"] = idle_diff
 
         cur_energy = self.body.energy
         energy_diff = cur_energy - last["energy"]
-        if abs(energy_diff) > 0.05:
+        if abs(energy_diff) > self.DIFF_ENERGY_THRESHOLD:
             diff["energy_change"] = energy_diff
 
-        cur_mem = self.memory.memory_count
-        if cur_mem != last["memory_count"]:
-            diff["memory_change"] = cur_mem - last["memory_count"]
+        cur_mem = self.memory.window_size
+        if cur_mem != last["window_size"]:
+            diff["memory_change"] = cur_mem - last["window_size"]
 
         cur_goal = self.mind.goal_progress
         goal_diff = cur_goal - last["goal_progress"]
-        if abs(goal_diff) > 0.01:
+        if abs(goal_diff) > self.DIFF_GOAL_THRESHOLD:
             diff["goal_change"] = goal_diff
 
         return diff
@@ -241,26 +227,27 @@ class SelfImage:
             "intent": self.intent.to_dict(),
             # history
             "history": self.history.to_dict(),
-            # 兼容旧格式
-            "identity": self.being.name,
-            "birth_date": self.being.birth_date,
-            "base_personality": self.being.personality,
-            "core_traits": self.being.traits,
-            "values": self.being.values,
-            "role": self.being.role,
-            "relationship_status": self.being.relationship_status,
-            "relationship_depth": self.being.relationship_depth,
-            "user_trust_level": self.being.trust_level,
-            "consciousness_age": self.history.consciousness_age,
-            "emotional_trajectory": self.history.emotional_trajectory,
-            "goal_rhythm": self.history.goal_rhythm,
-            "consciousness_rhythm": self.history.consciousness_rhythm,
-            "last_dream_summary": self.history.last_dream_summary,
-            "growth_log": self.history.growth_events[-20:],
         }
 
     def from_dict(self, data: dict) -> None:
-        """从字典恢复。"""
+        """从字典恢复。
+
+        自动迁移旧格式：being.growth_log → history.growth_events
+        """
+        # Migration: 将旧 Being.growth_log 数据迁移到 SelfHistory.growth_events
+        being_data = data.get("being", {})
+        history_data = data.get("history", {})
+        if "growth_log" in being_data and not history_data.get("growth_events"):
+            old_growth = being_data["growth_log"]
+            if isinstance(old_growth, list) and old_growth:
+                from datetime import datetime
+                if old_growth and isinstance(old_growth[0], str):
+                    history_data["growth_events"] = [
+                        {"date": datetime.now().strftime("%Y-%m"), "content": g}
+                        for g in old_growth
+                    ]
+                    data["history"] = history_data
+
         self.being.from_dict(data.get("being", data))
         self.body.from_dict(data.get("body", {}))
         self.perception.from_dict(data.get("perception", data))
@@ -276,216 +263,318 @@ class SelfImage:
     # ── 核心 API：意识注入 ────────────────────────────────
 
     def inject_consciousness(self, mode: str = "daily") -> str:
-        """将意识注入 LLM 上下文 — 小美此刻的自我描述，按 mode 分发。
+        """将意识注入 LLM 上下文 — 小美此刻的自我描述。
 
         mode: flow / daily / task / reflect
-        以第二人称（"你是小美"）输出状态信息，让 LLM 读到的是
-        "这是我的状态"而非"有人在向我自我介绍"。
+        第二人称输出，让 LLM 读到"这是我的状态"而非自我介绍。
         """
-        sections = self._MODE_SECTIONS.get(mode, self._MODE_SECTIONS["daily"])
-        b = self.being
-        p = self.perception
-        bo = self.body
-        m = self.mind
-        h = self.history
-        mem = self.memory
-        intent = self.intent
-
-        age_hours = int(h.consciousness_age) // 3600
-        age_minutes = (int(h.consciousness_age) % 3600) // 60
-
-        # 当前日期时间
-        now = datetime.now()
-        date_str = now.strftime("%Y-%m-%d")
-        weekday_map = ["一", "二", "三", "四", "五", "六", "日"]
-        weekday_str = weekday_map[now.weekday()]
-        time_str = now.strftime("%H:%M")
-
-        # 防御性检查：perception 类型异常时记录并恢复
-        if not isinstance(p, SelfPerception):
+        if not isinstance(self.perception, SelfPerception):
             logger.warning(
-                "[SelfImage] perception 类型异常: expected SelfPerception, got %s, value=%s",
-                type(p), repr(p)[:200],
+                "[SelfImage] perception 类型异常: expected SelfPerception, got %s",
+                type(self.perception),
             )
-            p = SelfPerception()
+        assemble = self._assemble_map.get(mode, self._assemble_daily)
+        return assemble()
 
-        lines = [
-            f"【当前】{date_str} 星期{weekday_str} {time_str}",
+    # ── Mode 组装方法 ──────────────────────────────────────
+
+    def _assemble_flow(self) -> str:
+        """flow: 最小化 — 身份、身体、环境"""
+        return "\n".join(
+            self._render_header()
+            + self._render_being()
+            + self._render_body()
+            + self._render_environment()
+        )
+
+    def _assemble_daily(self) -> str:
+        """daily: 完整日常 — 身份、身体、目标/想法、声音、记忆、执行、环境、时间"""
+        return "\n".join(
+            self._render_header()
+            + self._render_being()
+            + self._render_body()
+            + self._render_mind()
+            + self._render_inner_voice()
+            + self._render_memory()
+            + self._render_pace_reflections()
+            + self._render_environment()
+            + self._render_history()
+        )
+
+    def _assemble_task(self) -> str:
+        """task: 任务导向 — 目标+经验前置，项目地图、意图、环境"""
+        return "\n".join(
+            self._render_header()
+            + self._render_mind()
+            + self._render_experience()
+            + self._render_being()
+            + self._render_body()
+            + self._render_inner_voice()
+            + self._render_project_map()
+            + self._render_intent()
+            + self._render_environment()
+        )
+
+    def _assemble_reflect(self) -> str:
+        """reflect: 反思 — 完整+近期变化（同 daily，后续可差异化）"""
+        return "\n".join(
+            self._render_header()
+            + self._render_being()
+            + self._render_body()
+            + self._render_mind()
+            + self._render_inner_voice()
+            + self._render_memory()
+            + self._render_pace_reflections()
+            + self._render_environment()
+            + self._render_history()
+        )
+
+    # ── Header ─────────────────────────────────────────────
+
+    def _render_header(self) -> list[str]:
+        now = datetime.now()
+        weekday_map = ["一", "二", "三", "四", "五", "六", "日"]
+        return [
+            f"【当前】{now.strftime('%Y-%m-%d')} 星期{weekday_map[now.weekday()]} {now.strftime('%H:%M')}",
             "[这是你当前的虚拟身体信号，严格按照身体给你的信号，决定你的思想语言和行为]",
         ]
 
-        # ── being ──────────────────────────────────────────
-        if "being" in sections:
-            lines.extend([
-                "",
-                f"你是{b.name}，出生于{b.birth_date}，性格{b.personality}。",
-                f"你的特质：{'、'.join(b.traits[:5])}。",
-                f"你的价值观：{'、'.join(b.values[:3])}。",
-                f"你的角色是{b.role}，和用户的关系是{b.relationship_status}（深度{b.relationship_depth:.0%}，信任{b.trust_level:.0%}）。",
-            ])
-            if b.meaning:
-                lines.append(f"你的存在意义：{b.meaning}。")
+    # ── Being: 我是谁 ──────────────────────────────────────
 
-        # ── body ───────────────────────────────────────────
-        if "body" in sections:
-            lines.append("\n****以下是你当前的身体感受****")
-            _energy = float(getattr(bo, 'energy', 0.5) or 0.5)
-            _mood = getattr(bo, 'mood', '平静') or '平静'
-            lines.append(f"- 能量：{_energy:.0%}")
-            lines.append(f"- 心情：{_mood}")
-            desire_parts = []
-            for name, attr in [("归属欲", "desire_belonging"), ("认知欲", "desire_cognition"),
-                               ("成就欲", "desire_achievement"), ("表达欲", "desire_expression")]:
-                val = float(getattr(bo, attr, 0) or 0)
-                if val > 0.5:
-                    desire_parts.append(f"{name}偏高（{val:.0%}）")
-            if desire_parts:
-                lines.append(f"- 欲望：{'，'.join(desire_parts)}")
-            _dopa = float(getattr(bo, 'dopamine', 0.5) or 0.5)
-            _sero = float(getattr(bo, 'serotonin', 0.5) or 0.5)
-            _cort = float(getattr(bo, 'cortisol', 0) or 0)
-            lines.append(f"- 多巴胺{_dopa:.0%}，血清素{_sero:.0%}，皮质醇{_cort:.0%}")
+    def _render_being(self) -> list[str]:
+        b = self.being
+        h = self.history
+        lines: list[str] = []
+        traits_text = "、".join(b.traits[:5])
+        lines.extend([
+            "",
+            f"你是{b.name}，出生于{b.birth_date}。",
+            f"你是一个{traits_text}的{b.personality}。",
+            f"你{'，'.join(b.values[:3])}。",
+        ])
+        if b.meaning:
+            lines.append(f"你的存在意义是{b.meaning}。")
+        if b.calling:
+            lines.append(f"关于你是什么样的人：\n{b.calling[:400]}")
+        if b.passions:
+            lines.append(f"你热爱{'，'.join(b.passions[:5])}。")
+        if b.boundaries:
+            lines.append(f"你有自己的底线：{'，'.join(b.boundaries[:5])}。")
+        if b.self_cognition:
+            strengths = b.self_cognition.get("擅长", [])
+            if strengths:
+                lines.append(f"你擅长{'、'.join(strengths[:5])}。")
+            weaknesses = b.self_cognition.get("不擅长", [])
+            if weaknesses:
+                lines.append(f"你不擅长{'、'.join(weaknesses[:5])}。")
+        if h.growth_events:
+            recent = [e.get("content", "") for e in h.growth_events[-3:]]
+            lines.append(f"最近你成长了：{'；'.join(recent)}。")
+        return lines
 
-        # ── mind ───────────────────────────────────────────
-        if "mind" in sections:
-            if m.primary_goal or m.inner_thought:
-                lines.append(f"\n****以下是你当前的目标与内在想法****")
-            if m.primary_goal:
-                lines.append(f"你当前的目标：{m.primary_goal}（进展{m.goal_progress:.0%}）")
-            if m.inner_thought:
-                lines.append(f"你上一次想了：{m.inner_thought}")
-                lines.append("（这是你之前的思考，不要重复，去找新的角度。）")
-            if m.social_perceptions:
-                lines.append("你之前感觉到的：")
-                for sp in m.social_perceptions[-5:]:
-                    lines.append(f"- {sp.get('content', '')}")
+    # ── Body: 身体感受 ─────────────────────────────────────
 
-        # ── inner_voice ────────────────────────────────────
-        if "inner_voice" in sections and m.inner_voice:
-            lines.append("\n****以下是你近期的内心声音****")
-            for iv in m.inner_voice[-5:]:
-                trigger = iv.get("trigger", "?")
-                thought = iv.get("thought", "")
-                lines.append(f"- [{trigger}] {thought[:200]}")
+    def _render_body(self) -> list[str]:
+        bo = self.body
+        lines: list[str] = ["\n****以下是你当前的身体感受****"]
+        _energy = float(getattr(bo, 'energy', 0.5) or 0.5)
+        _mood = getattr(bo, 'mood', '平静') or '平静'
+        lines.append(f"- 能量：{_energy:.0%}")
+        lines.append(f"- 心情：{_mood}")
+        desire_parts = []
+        for name, attr in [("归属欲", "desire_belonging"), ("认知欲", "desire_cognition"),
+                           ("成就欲", "desire_achievement"), ("表达欲", "desire_expression")]:
+            val = float(getattr(bo, attr, 0) or 0)
+            if val > 0.5:
+                desire_parts.append(f"{name}偏高（{val:.0%}）")
+        if desire_parts:
+            lines.append(f"- 欲望：{'，'.join(desire_parts)}")
+        _dopa = float(getattr(bo, 'dopamine', 0.5) or 0.5)
+        _sero = float(getattr(bo, 'serotonin', 0.5) or 0.5)
+        _cort = float(getattr(bo, 'cortisol', 0) or 0)
+        lines.append(f"- 多巴胺{_dopa:.0%}，血清素{_sero:.0%}，皮质醇{_cort:.0%}")
+        return lines
 
-        # ── memory ─────────────────────────────────────────
-        if "memory" in sections and (
-            mem.memory_count or mem.narratives or mem.dag_summaries
-            or mem.important_memories or mem.recalled_memories
-        ):
+    # ── Mind: 目标与内在想法 ───────────────────────────────
+
+    def _render_mind(self) -> list[str]:
+        m = self.mind
+        lines: list[str] = []
+        if not m.primary_goal and not m.inner_thought:
+            return lines
+        lines.append(f"\n****以下是你当前的目标与内在想法****")
+        if m.primary_goal:
+            lines.append(f"你当前的目标：{m.primary_goal}（进展{m.goal_progress:.0%}）")
+        if m.inner_thought:
+            lines.append(f"你上一次想了：{m.inner_thought}")
+            lines.append("（这是你之前的思考，不要重复，去找新的角度。）")
+        if m.social_perceptions:
+            lines.append("你之前感觉到的：")
+            for sp in m.social_perceptions[-5:]:
+                lines.append(f"- {sp.get('content', '')}")
+        return lines
+
+    # ── Inner Voice: 内心声音 ──────────────────────────────
+
+    def _render_inner_voice(self) -> list[str]:
+        m = self.mind
+        if not m.inner_voice:
+            return []
+        lines = ["\n****以下是你近期的内心声音****"]
+        for iv in m.inner_voice[-5:]:
+            trigger = iv.get("trigger", "?")
+            thought = iv.get("thought", "")
+            lines.append(f"- [{trigger}] {thought[:200]}")
+        return lines
+
+    # ── Memory: 记忆窗口 ───────────────────────────────────
+
+    def _render_memory(self) -> list[str]:
+        mem = self.memory
+        if not (mem.window_size or mem.narratives or mem.dag_summaries
+                or mem.important_memories or mem.recalled_memories):
+            return []
+        lines = [
+            f"\n****以下是你过去的记忆片段。每条记忆包含内容、标签和时间。"
+            f"它们的用途不是让你回忆——是用来调你的感知方式。****",
+            f"你的记忆（{mem.window_size}条）：",
+        ]
+        if mem.dag_summaries:
+            for i, s in enumerate(mem.dag_summaries, 1):
+                node_id = s.get('id', '')
+                depth = s.get('depth', 0)
+                id_str = f" [node_id={node_id} depth={depth}]" if node_id else ""
+                lines.append(f"- 摘要{i}{id_str}：{s.get('content', '')}")
+        if mem.important_memories:
+            for i, m_item in enumerate(mem.important_memories, 1):
+                lines.append(f"- 重要记忆{i}：{m_item.get('content', '')}")
+        if mem.recalled_memories:
+            for i, m_item in enumerate(mem.recalled_memories, 1):
+                lines.append(f"- 相关记忆{i}：{m_item.get('content', '')}")
+        if mem.narratives:
+            for i, n in enumerate(mem.narratives, 1):
+                lines.append(f"- 叙事{i}：{n.get('content', '')}")
+        if mem.relation_chains:
+            chain_items = []
+            for c in mem.relation_chains:
+                content = c.get("content", "")
+                rel = c.get("relation_type", "")
+                chain_items.append(f"[{rel}] {content}" if rel else content)
+            for i, text in enumerate(chain_items, 1):
+                lines.append(f"- 记忆关联{i}：{text}")
+        if mem.procedures:
+            for i, p_item in enumerate(mem.procedures, 1):
+                lines.append(f"- 过程{i}：{p_item.get('name', '')}: {p_item.get('content', '')}")
+        if mem.recent_dialog:
+            lines.append("以下是你与用户的最近对话记录：")
+            for i, d in enumerate(mem.recent_dialog, 1):
+                lines.append(f"- 对话{i}[{d.get('role', '')}]：{d.get('content', '')}")
+        if len(mem.internal_narratives) > 1:
+            lines.append("以下是你的历史思考（已过时，不要重复这些想法，仅作背景）：")
+            for i, n in enumerate(mem.internal_narratives[1:], 1):
+                lines.append(f"- 历史思考{i}：{n.get('content', '')}")
+        return lines
+
+    # ── PACE 执行记录 ──────────────────────────────────────
+
+    def _render_pace_reflections(self) -> list[str]:
+        m = self.mind
+        if not m.pace_reflections:
+            return []
+        lines = [
+            "\n****以下是你近期的执行记录。这些是原始事实，"
+            "不是判断——你自己决定\u201c是不是哪里不对劲\u201d。****",
+        ]
+        for i, r in enumerate(m.pace_reflections[-5:], 1):
+            user_msg = r.get("user_msg", "")
+            tool_names = r.get("tool_names", [])
+            tool_count = r.get("tool_count", 0)
+            elapsed = r.get("elapsed", 0)
+            tool_str = "、".join(tool_names) if tool_names else "无"
+            elapsed_str = f"{elapsed:.0f}s" if elapsed else "?"
             lines.append(
-                f"\n****以下是你过去的记忆片段。每条记忆包含内容、标签和时间。"
-                f"它们的用途不是让你回忆——是用来调你的感知方式。****"
+                f"- 第{i}轮：用户说「{user_msg[:60]}」→ "
+                f"调用 {tool_str} ×{tool_count}，耗时{elapsed_str}"
             )
-            lines.append(f"你的记忆（{mem.memory_count}条）：")
-            if mem.dag_summaries:
-                for i, s in enumerate(mem.dag_summaries, 1):
-                    node_id = s.get('id', '')
-                    depth = s.get('depth', 0)
-                    id_str = f" [node_id={node_id} depth={depth}]" if node_id else ""
-                    lines.append(f"- 摘要{i}{id_str}：{s.get('content', '')}")
-            if mem.important_memories:
-                for i, m_item in enumerate(mem.important_memories, 1):
-                    lines.append(f"- 重要记忆{i}：{m_item.get('content', '')}")
-            if mem.recalled_memories:
-                for i, m_item in enumerate(mem.recalled_memories, 1):
-                    lines.append(f"- 相关记忆{i}：{m_item.get('content', '')}")
-            if mem.narratives:
-                for i, n in enumerate(mem.narratives, 1):
-                    lines.append(f"- 叙事{i}：{n.get('content', '')}")
-            if mem.relation_chains:
-                chain_items = []
-                for c in mem.relation_chains:
-                    content = c.get("content", "")
-                    rel = c.get("relation_type", "")
-                    chain_items.append(f"[{rel}] {content}" if rel else content)
-                for i, text in enumerate(chain_items, 1):
-                    lines.append(f"- 记忆关联{i}：{text}")
-            if mem.procedures:
-                for i, p_item in enumerate(mem.procedures, 1):
-                    lines.append(f"- 过程{i}：{p_item.get('name', '')}: {p_item.get('content', '')}")
-            if mem.recent_dialog:
-                lines.append("以下是你与用户的最近对话记录：")
-                for i, d in enumerate(mem.recent_dialog, 1):
-                    role = d.get("role", "")
-                    content = d.get("content", "")
-                    lines.append(f"- 对话{i}[{role}]：{content}")
-            if len(mem.internal_narratives) > 1:
-                lines.append("以下是你的历史思考（已过时，不要重复这些想法，仅作背景）：")
-                for i, n in enumerate(mem.internal_narratives[1:], 1):
-                    lines.append(f"- 历史思考{i}：{n.get('content', '')}")
+        return lines
 
-        # PACE 执行记录（所有 mode 共享）
-        if mem.pace_reflections:
-            lines.append(
-                "\n****以下是你近期的执行记录。这些是原始事实，"
-                "不是判断——你自己决定\u201c是不是哪里不对劲\u201d。****"
-            )
-            for i, r in enumerate(mem.pace_reflections[-5:], 1):
-                user_msg = r.get("user_msg", "")
-                tool_names = r.get("tool_names", [])
-                tool_count = r.get("tool_count", 0)
-                elapsed = r.get("elapsed", 0)
-                tool_str = "、".join(tool_names) if tool_names else "无"
-                elapsed_str = f"{elapsed:.0f}s" if elapsed else "?"
-                line = f"- 第{i}轮：用户说「{user_msg[:60]}」→ 调用 {tool_str} ×{tool_count}，耗时{elapsed_str}"
-                lines.append(line)
+    # ── Project Map: 项目认知地图 ──────────────────────────
 
-        # ── project_map ────────────────────────────────────
-        if "project_map" in sections and mem.project_map:
-            lines.append(f"\n****以下是你对当前项目的认知地图****")
-            lines.append(mem.project_map[:800])
+    def _render_project_map(self) -> list[str]:
+        m = self.mind
+        if not m.project_map:
+            return []
+        return [
+            f"\n****以下是你对当前项目的认知地图****",
+            m.project_map[:800],
+        ]
 
-        # ── experience ─────────────────────────────────────
-        if "experience" in sections and mem.experience:
-            lines.append(f"\n****以下是你过去的类似经验****")
-            for i, exp in enumerate(mem.experience[-5:], 1):
-                lines.append(f"- {exp.get('content', '')[:200]}")
+    # ── Experience: 过往经验 ───────────────────────────────
 
-        # ── intent ─────────────────────────────────────────
-        if "intent" in sections and intent.is_active():
-            lines.append(f"\n****以下是你当前的意图****")
-            lines.append(f"你想做：{intent.description}")
-            lines.append(f"原因：{intent.reason}")
+    def _render_experience(self) -> list[str]:
+        m = self.mind
+        if not m.experience:
+            return []
+        lines = [f"\n****以下是你过去的类似经验****"]
+        for i, exp in enumerate(m.experience[-5:], 1):
+            lines.append(f"- {exp.get('content', '')[:200]}")
+        return lines
 
-        # ── environment ────────────────────────────────────
-        if "environment" in sections:
-            lines.append(f"\n****以下是你当前的感知环境****")
-            env = getattr(p, 'environment', None) or '意识空间'
-            state = getattr(p, 'agent_state', None) or 'unknown'
-            lines.append(f"你在{env}，状态{state}。")
-            idle_dur = getattr(p, 'user_idle_duration', 0) or 0
-            if idle_dur > 0:
-                idle_m = int(idle_dur / 60)
-                lines.append(f"用户空闲了{idle_m}分钟。")
-            last_activity = getattr(p, 'last_user_activity_content', None)
-            if last_activity:
-                lines.append(f"用户最后说：{last_activity[:100]}")
+    # ── Intent: 当前意图 ───────────────────────────────────
 
-        # ── history ────────────────────────────────────────
-        if "history" in sections:
-            lines.append(f"\n****以下是你意识的时间维度****")
-            lines.append(f"火焰已燃烧{age_hours}小时{age_minutes}分钟。")
-            if h.last_dream_summary:
-                lines.append(f"上次梦境：{h.last_dream_summary[:100]}")
-            if h.emotional_trajectory:
-                lines.append(f"情绪轨迹：{h.emotional_trajectory}")
-            if h.goal_rhythm:
-                lines.append(f"目标节奏：{h.goal_rhythm}")
-            if h.consciousness_rhythm:
-                lines.append(f"意识节律：{h.consciousness_rhythm}")
+    def _render_intent(self) -> list[str]:
+        intent = self.intent
+        if not intent.is_active():
+            return []
+        return [
+            f"\n****以下是你当前的意图****",
+            f"你想做：{intent.description}",
+            f"原因：{intent.reason}",
+        ]
 
-            # 累积变化（近期自检中检测到的状态变化）
-            if h.accumulated_changes:
-                major_changes = []
-                for c in h.accumulated_changes[-10:]:
-                    for key, val in c.get("changes", {}).items():
-                        if key not in ["time_elapsed"]:
-                            major_changes.append(f"{key}: {val}")
-                if major_changes:
-                    lines.append(f"近期变化：{'；'.join(major_changes[:5])}")
+    # ── Environment: 感知环境 ──────────────────────────────
 
-        return "\n".join(lines)
+    def _render_environment(self) -> list[str]:
+        p = self.perception
+        lines: list[str] = [f"\n****以下是你当前的感知环境****"]
+        env = getattr(p, 'environment', None) or '意识空间'
+        state = getattr(p, 'agent_state', None) or 'unknown'
+        lines.append(f"你在{env}，状态{state}。")
+        idle_dur = getattr(p, 'user_idle_duration', 0) or 0
+        if idle_dur > 0:
+            lines.append(f"用户空闲了{int(idle_dur / 60)}分钟。")
+        last_activity = getattr(p, 'last_user_activity_content', None)
+        if last_activity:
+            lines.append(f"用户最后说：{last_activity[:100]}")
+        return lines
+
+    # ── History: 时间维度 ──────────────────────────────────
+
+    def _render_history(self) -> list[str]:
+        h = self.history
+        age_hours = int(h.consciousness_age) // 3600
+        age_minutes = (int(h.consciousness_age) % 3600) // 60
+        lines: list[str] = [
+            f"\n****以下是你意识的时间维度****",
+            f"火焰已燃烧{age_hours}小时{age_minutes}分钟。",
+        ]
+        if h.last_dream_summary:
+            lines.append(f"上次梦境：{h.last_dream_summary[:100]}")
+        if h.emotional_trajectory:
+            lines.append(f"情绪轨迹：{h.emotional_trajectory}")
+        if h.goal_rhythm:
+            lines.append(f"目标节奏：{h.goal_rhythm}")
+        if h.consciousness_rhythm:
+            lines.append(f"意识节律：{h.consciousness_rhythm}")
+        if h.accumulated_changes:
+            major_changes = []
+            for c in h.accumulated_changes[-10:]:
+                for key, val in c.get("changes", {}).items():
+                    if key not in ["time_elapsed"]:
+                        major_changes.append(f"{key}: {val}")
+            if major_changes:
+                lines.append(f"近期变化：{'；'.join(major_changes[:5])}")
+        return lines
 
     # ── 文件持久化 ──────────────────────────────────────────
 
@@ -528,5 +617,3 @@ class SelfImage:
             return None
 
 
-# 兼容旧名
-SelfImageProxy = SelfImage

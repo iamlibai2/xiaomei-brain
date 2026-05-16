@@ -53,7 +53,7 @@ def cmd_show_flame(living: ConsciousLiving, args: str = "") -> None:
     logger.info("[CLI] 执行命令: flame")
     si = living.consciousness.get_self_image()
     print("\n火焰状态:", flush=True)
-    print(f"  燃烧时长: {int(si.growth.consciousness_age)}秒", flush=True)
+    print(f"  燃烧时长: {int(si.history.consciousness_age)}秒", flush=True)
     print(f"  状态: {si.perception.agent_state}", flush=True)
     print(f"  用户空闲: {int(si.perception.user_idle_duration)}秒", flush=True)
     print(f"  能量: {si.body.energy:.2f}", flush=True)
@@ -97,23 +97,22 @@ def cmd_show_identity(living: ConsciousLiving, args: str = "") -> None:
     print("=" * 50, flush=True)
 
     print("\n【L0: 先天身份】（不可变）", flush=True)
-    print(f"  名字: {si.identity.identity}", flush=True)
-    print(f"  诞生: {si.identity.birth_date}", flush=True)
-    print(f"  基础性格: {si.identity.base_personality}", flush=True)
+    print(f"  名字: {si.being.name}", flush=True)
+    print(f"  诞生: {si.being.birth_date}", flush=True)
+    print(f"  基础性格: {si.being.personality}", flush=True)
 
     print("\n【L1: 基础特质】（极难变）", flush=True)
-    for trait in si.identity.core_traits:
+    for trait in si.being.traits:
         print(f"  - {trait}", flush=True)
 
     print("\n【L2: 价值观】（缓慢变化）", flush=True)
-    for value in si.identity.values:
+    for value in si.being.values:
         print(f"  - {value}", flush=True)
 
     print("\n【L3: 社会身份】（动态变化）", flush=True)
-    print(f"  当前角色: {si.relation.role}", flush=True)
-    print(f"  关系状态: {si.relation.relationship_status}", flush=True)
-    print(f"  关系深度: {si.relation.relationship_depth:.2f}", flush=True)
-    print(f"  用户信任: {si.relation.user_trust_level:.2f}", flush=True)
+    print(f"  关系状态: {si.being.relationship_status}", flush=True)
+    print(f"  关系深度: {si.being.relationship_depth:.2f}", flush=True)
+    print(f"  用户信任: {si.being.trust_level:.2f}", flush=True)
 
     print("\n【L4: 状态身份】（实时变化）", flush=True)
     print(f"  当前心情: {si.body.mood}", flush=True)
@@ -124,7 +123,7 @@ def cmd_show_identity(living: ConsciousLiving, args: str = "") -> None:
     print(f"  当前环境: {si.perception.environment}", flush=True)
 
     print("\n【火焰状态】", flush=True)
-    print(f"  燃烧时长: {int(si.growth.consciousness_age)}秒 ({int(si.growth.consciousness_age/3600)}小时)", flush=True)
+    print(f"  燃烧时长: {int(si.history.consciousness_age)}秒 ({int(si.history.consciousness_age/3600)}小时)", flush=True)
     print(f"  Agent状态: {si.perception.agent_state}", flush=True)
     print(f"  用户空闲: {int(si.perception.user_idle_duration)}秒", flush=True)
     print(f"  记忆数量: {si.mind.memory_count}", flush=True)
@@ -137,9 +136,9 @@ def cmd_show_identity(living: ConsciousLiving, args: str = "") -> None:
         print(f"  当前想法: （无）", flush=True)
     print(f"  历史想法: {len(si.mind.inner_thought_history)}条", flush=True)
 
-    if si.growth.last_dream_summary:
+    if si.history.last_dream_summary:
         print("\n【最近梦境】", flush=True)
-        print(f"  {si.growth.last_dream_summary[:150]}", flush=True)
+        print(f"  {si.history.last_dream_summary[:150]}", flush=True)
 
     print("\n" + "-" * 50, flush=True)
     living._print_prompt()

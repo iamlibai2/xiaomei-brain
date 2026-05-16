@@ -230,6 +230,21 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
             .cooldown("intent_progress", ac.intent_progress_cooldown)
     )
 
+    # WORK 意图 → 自由工作（完整 ReAct）
+    RULES.append(
+        Rule.when(lambda si: _has_intent(si, "WORK"))
+            .then(ActionItem(
+                action_type=ActionType.WORK,
+                priority=0.65,
+                content="",
+                reason="收到 WORK 意图，自由选择任务工作",
+                source="intent",
+                cooldown_key="intent_work",
+                metadata={"intent_type": "WORK"},
+            ))
+            .cooldown("intent_work", ac.intent_work_cooldown)
+    )
+
     # ALARM 意图 → 闹钟触发（完整 ReAct）
     RULES.append(
         Rule.when(lambda si: _has_intent(si, "ALARM"))
@@ -285,7 +300,7 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
 def _has_intent(si: SelfImage, intent_type: str) -> bool:
     """检查 SelfImage 是否有指定类型的 pending_intent"""
     pending = si.intent.intent_buffer
-    return any(i.upper() == intent_type.upper() for i in pending)
+    return any(i.get("type", "").upper() == intent_type.upper() for i in pending)
 
 
 class _DriveView:
@@ -320,7 +335,7 @@ class _ConsciousnessView:
         return self._si.body.energy
 
     @property
-    def intent_buffer(self) -> list[str]:
+    def intent_buffer(self) -> list[dict]:
         return self._si.intent.intent_buffer
 
     @property

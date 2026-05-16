@@ -5,7 +5,7 @@
 
 两个子方向：
 - PACE（向内）：任务执行的元认知 —— 我卡住了吗？策略对吗？
-- SocialPerception（向外）：社交交互的自我监督 —— 用户状态变了吗？我说话合适吗？
+- InnerVoice（向外+向内）：统一的内心声音 —— 对话后内省、任务步骤后看一眼
 
 与 consciousness/、drive/、purpose/ 平级。
 """
@@ -24,12 +24,10 @@ from .rules import detect_surprises, parse_progress_tag, remove_progress_tag
 from .reviewer import LLMBudget, llm_step_check, llm_post_review, persist_lesson
 from .capability import CapabilityTracker
 from .metrics import PACEMetrics, persist_metrics, generate_report
-from .social_perception import SocialPerception
 
 __all__ = [
     "PACERunner",
     "CapabilityTracker",
-    "SocialPerception",
     "PACEMetrics",
     "persist_metrics",
     "generate_report",

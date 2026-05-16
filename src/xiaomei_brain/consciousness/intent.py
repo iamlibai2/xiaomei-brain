@@ -47,6 +47,9 @@ class IntentType(Enum):
     PROGRESS = "progress"
     """想推进目标"""
 
+    WORK = "work"
+    """想自由工作，按目标 tag 选择任务"""
+
     ALARM = "alarm"
     """闹钟触发"""
 

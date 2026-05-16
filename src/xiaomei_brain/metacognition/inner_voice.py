@@ -1,16 +1,17 @@
 """InnerVoice：统一的内心声音。
 
-不是结构化评测，不是 JSON/enum 输出——是自然语言的自我觉察。
+不是结构化评测——是自然语言的自我觉察 + 结构化 EVENTS JSON 写入 Drive。
 一个方法 `pause()` 处理所有情境（对话后、任务步骤后、安静时）。
 结果自然流入 SelfImage 和 Drive。
 
-与 SocialPerception（保留）的区分：
-- SocialPerception：每N轮定时检测，问"用户状态变了没"
-- InnerVoice：自然节点触发，问"我刚才说话合适吗/方向对吗"
+与 L2 emergence 的分工：
+- InnerVoice：轻量/高频（每≥2轮），快速直觉 + 事件维度写入 Drive
+- L2 emergence：深度/低频（L2 tick），完整自我认知 + EVENTS + NARR + PERCEPTION
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -67,7 +68,14 @@ _CHAT_TURN_PROMPT = (
     "你回应了（{response_len}字，{elapsed:.0f}秒，{tools_info}）\n\n"
     "只是感受——他的状态对吗？你的回应恰当吗？\n"
     "有什么你刚才没注意到的？\n\n"
-    "1-3句话的内心嘟囔。如果没什么特别的感觉，就说\"一切正常\"。"
+    "1-3句话的内心嘟囔。如果没什么特别的感觉，就说\"一切正常\"。\n\n"
+    "最后，在 ---EVENTS--- 分隔符后，用 JSON 描述你感知到的对话事件维度：\n"
+    "---EVENTS---\n"
+    '{{"praise_intensity": 0.0-1.0, "social_connection": 0.0-1.0, '
+    '"expression_urge": 0.0-1.0, "summary": "一句话总结这段对话的感受"}}\n'
+    "其中 social_connection 是用户表达了亲近、信任或分享内心的程度，\n"
+    "expression_urge 是你有话想说、想回应的程度。\n"
+    "如果没有特别的事件，所有值填 0.0。"
 )
 
 _TASK_STEP_PROMPT = (
@@ -95,44 +103,6 @@ _SILENCE_PROMPT = (
 )
 
 
-# ── 社交信号提取（正则，沿用"代码决定数值"原则）─────────────────
-
-_BUZZ_TO_SIGNAL: list[tuple[str, str, float]] = [
-    (r"(低落|沮丧|难过|不开心|情绪不好)", "user_low_mood", 0.5),
-    (r"(兴奋|热情|激动|开心|充满活力)", "user_enthusiastic", 0.5),
-    (r"(冷淡|疏远|敷衍|冷漠|话[很少])", "user_cold", 0.5),
-    (r"(生气|愤怒|不满|烦[躁燥])", "user_angry", 0.5),
-    (r"(压力|焦虑|紧张|疲惫|累[了坏])", "user_stressed", 0.5),
-    (r"(信任|亲近|温暖|依赖|敞开心)", "user_trusting", 0.4),
-]
-
-# 社交信号 → Drive 映射（与 social_perception.py 的 SOCIAL_SIGNAL_MAP 一致）
-_SOCIAL_SIGNAL_MAP: dict[str, dict] = {
-    "user_low_mood": {
-        "emotion": "sadness", "cortisol": +0.08,
-        "belonging": +0.10, "oxytocin": +0.08,
-    },
-    "user_enthusiastic": {
-        "emotion": "joy", "oxytocin": +0.12, "dopamine": +0.08,
-    },
-    "user_cold": {
-        "cortisol": +0.12, "belonging": -0.08, "oxytocin": -0.08,
-    },
-    "user_angry": {
-        "emotion": "fear", "cortisol": +0.15,
-    },
-    "user_happy": {
-        "emotion": "joy", "oxytocin": +0.10, "serotonin": +0.05,
-    },
-    "user_stressed": {
-        "cortisol": +0.10, "norepinephrine": +0.08,
-    },
-    "user_trusting": {
-        "oxytocin": +0.15, "belonging": +0.12, "serotonin": +0.05,
-    },
-}
-
-
 # ── 任务控制信号提取（纯正则，不需要 LLM 产 enum）─────────────────
 
 def _extract_continue_signal(thought: str) -> tuple[bool, str]:
@@ -150,22 +120,6 @@ def _extract_continue_signal(thought: str) -> tuple[bool, str]:
         return True, "retry"
     return True, "continue"
 
-
-def _extract_social_signals(thought: str) -> list[dict]:
-    """从反省文本中提取社交信号。
-
-    Returns:
-        [{"signal": "user_low_mood", "intensity": 0.5}, ...]
-    """
-    signals: list[dict] = []
-    seen: set[str] = set()
-    for pattern, signal_name, intensity in _BUZZ_TO_SIGNAL:
-        if signal_name in seen:
-            continue
-        if re.search(pattern, thought):
-            signals.append({"signal": signal_name, "intensity": intensity})
-            seen.add(signal_name)
-    return signals
 
 
 # ── 经验提取信号 ─────────────────────────────────────────────────────
@@ -215,6 +169,59 @@ class InnerVoice:
         # 最近一次反省（供 should_continue 使用）
         self._last_reflection: Reflection | None = None
 
+    # ── EVENTS 分离 ──────────────────────────────────────────────
+
+    @staticmethod
+    def _split_events(response: str) -> tuple[str, str]:
+        """分离自然语言部分和 ---EVENTS--- JSON。"""
+        if "---EVENTS---" in response:
+            parts = response.split("---EVENTS---", 1)
+            thought = parts[0].strip()
+            events = parts[1].strip() if len(parts) > 1 else ""
+            return thought, events
+        return response.strip(), ""
+
+    def _apply_drive_events(self, events_text: str) -> None:
+        """从 EVENTS JSON 解析维度值并应用到 Drive（与 L2 的 _apply_drive_events 一致）。"""
+        if not self._drive or not events_text:
+            return
+
+        try:
+            json_match = re.search(r"\{[\s\S]*\}", events_text)
+            if json_match:
+                events = json.loads(json_match.group())
+            else:
+                logger.debug("[InnerVoice] EVENTS 未找到 JSON")
+                return
+        except json.JSONDecodeError:
+            logger.debug("[InnerVoice] EVENTS JSON 解析失败: %.100s", events_text)
+            return
+
+        praise = events.get("praise_intensity", 0)
+        social = events.get("social_connection", 0)
+        expression = events.get("expression_urge", 0)
+
+        if praise > 0.1:
+            try:
+                self._drive.on_praise(min(praise, 1.0))
+            except Exception:
+                pass
+        if social > 0.3:
+            try:
+                self._drive.hormone.oxytocin = min(1.0, self._drive.hormone.oxytocin + 0.1 * social)
+            except Exception:
+                pass
+        if expression > 0.3:
+            try:
+                self._drive.desire.expression = min(1.0, self._drive.desire.expression + 0.05 * expression)
+            except Exception:
+                pass
+
+        logger.info(
+            "[InnerVoice] EVENTS: praise=%.2f, social=%.2f, expression=%.2f",
+            praise, social, expression,
+        )
+
     # ── 统一入口 ──────────────────────────────────────────────────
 
     def pause(
@@ -250,14 +257,19 @@ class InnerVoice:
             return None
 
         # 调用 LLM
-        thought = self._call_llm(messages)
-        if not thought:
+        raw_response = self._call_llm(messages)
+        if not raw_response:
             return None
 
-        # 构建 Reflection
+        # 分离自然语言和 EVENTS JSON
+        thought_text, events_json = self._split_events(raw_response)
+        if not thought_text:
+            return None
+
+        # 构建 Reflection（thought 只存自然语言部分）
         reflection = Reflection(
             trigger=trigger,
-            thought=thought,
+            thought=thought_text[:300],
             context_snippet=self._snippet(trigger, context, task_ctx),
         )
 
@@ -266,7 +278,7 @@ class InnerVoice:
         self._update_cooldown(trigger)
 
         # 路由输出
-        self._route_reflection(reflection)
+        self._route_reflection(reflection, events_json)
 
         return reflection
 
@@ -380,19 +392,18 @@ class InnerVoice:
     # ── LLM 调用 ──────────────────────────────────────────────────
 
     def _call_llm(self, messages: list[dict]) -> str | None:
-        """调用 LLM 获取内心声音。"""
+        """调用 LLM 获取内心声音（含 EVENTS JSON）。"""
         if not self._llm:
             return None
         try:
-            response = self._llm.chat(messages, temperature=0.7, max_tokens=120)
+            response = self._llm.chat(messages)
             if response and hasattr(response, "content"):
-                thought = (response.content or "").strip()
-                if not thought:
+                raw = (response.content or "").strip()
+                if not raw:
                     return None
-                # 限制长度
-                if len(thought) > 300:
-                    thought = thought[:300]
-                return thought
+                if len(raw) > 600:
+                    raw = raw[:600]
+                return raw
         except Exception as e:
             logger.warning("[InnerVoice] LLM 调用失败: %s", e)
         return None
@@ -408,11 +419,11 @@ class InnerVoice:
 
     # ── 输出路由 ──────────────────────────────────────────────────
 
-    def _route_reflection(self, reflection: Reflection) -> None:
+    def _route_reflection(self, reflection: Reflection, events_text: str = "") -> None:
         """将反省结果路由到各子系统。
 
-        1. SelfImage.mind.inner_voice（总是）
-        2. Drive 社交信号（CHAT_TURN / SILENCE）
+        1. SelfImage.mind.inner_voice（自然语言，总是）
+        2. Drive 事件维度（CHAT_TURN / SILENCE 时，从 EVENTS JSON 解析）
         3. Purpose cognitive_log（TASK_STEP / TASK_DONE）
         """
         thought = reflection.thought
@@ -433,17 +444,10 @@ class InnerVoice:
             except Exception as e:
                 logger.debug("[InnerVoice] SelfImage 写入失败: %s", e)
 
-        # 2. Drive 社交信号
+        # 2. Drive 事件维度（从 EVENTS JSON 解析，替代旧的正则社交信号）
         if reflection.trigger in (TriggerType.CHAT_TURN, TriggerType.SILENCE):
-            signals = _extract_social_signals(thought)
-            if signals and self._drive:
-                for s in signals:
-                    try:
-                        self._drive.apply_social_signal(
-                            s["signal"], s["intensity"]
-                        )
-                    except Exception as e:
-                        logger.debug("[InnerVoice] Drive 信号失败: %s", e)
+            if events_text:
+                self._apply_drive_events(events_text)
 
         # 3. Purpose cognitive_log
         if reflection.trigger in (TriggerType.TASK_STEP, TriggerType.TASK_DONE):

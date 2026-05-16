@@ -9,7 +9,6 @@ CONSCIOUSNESS_PROMPT_DEEP = """你是{identity}的意识系统。现在是{time_
 
 【我的基础状态】
 身份：{identity}
-角色：{role}
 情绪基调：{mood}
 能量水平：{energy}
 

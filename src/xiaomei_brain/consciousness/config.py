@@ -20,9 +20,9 @@ class ConsciousnessConfig:
     """意识系统 L0-L3 参数"""
     l0_interval: float = 1.0          # L0 感知心跳间隔（秒）
     l1_threshold: int = 60             # L1 触发阈值（累积 L0 次数）
-    l2_idle_trigger: float = 30.0    # L2 空闲触发（用户空闲秒数）
+    l2_idle_trigger: float = 120.0    # L2 空闲触发（用户空闲秒数）
     l2_changes_trigger: int = 10       # L2 累积变化触发（条数）
-    l2_cooldown: float = 120.0         # L2 冷却时间（秒）
+    l2_cooldown: float = 300.0         # L2 冷却时间（秒）
     l2_periodic_interval: float = 1800.0  # L2 定期触发（秒）
     l3_dream_interval: float = 300.0   # L3 梦境触发（睡眠秒数→入梦）
     l3_cooldown: float = 1800.0       # L3 深度沉思冷却（秒）
@@ -54,6 +54,7 @@ class ActionConfig:
     intent_care_cooldown: float = 1800.0
     intent_reflect_cooldown: float = 7200.0
     intent_act_cooldown: float = 3600.0
+    intent_work_cooldown: float = 60.0       # WORK 冷却短，允许频繁工作
     intent_learn_cooldown: float = 7200.0   # 学习冷却长，避免重复
     intent_express_cooldown: float = 1800.0  # 表达冷却中等
     intent_progress_cooldown: float = 3600.0  # 推进目标冷却

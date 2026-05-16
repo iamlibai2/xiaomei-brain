@@ -892,8 +892,6 @@ class TaskOrchestrator:
                 current_context = intent_context
                 agent = parent.agent._get_agent()
 
-                parent._update_recent_conversations()
-
                 while True:
                     _w = 138
                     _label = " LLM output "
@@ -999,8 +997,6 @@ class TaskOrchestrator:
 
                     if parent._load_consciousness:
                         parent.consciousness.on_user_interaction(current_msg.content, display_content)
-
-                    parent._update_recent_conversations()
 
                     if not self._should_auto_advance(progress_data):
                         logger.info("[TaskOrchestrator] 对话完成")
@@ -1110,7 +1106,6 @@ class TaskOrchestrator:
                     if getattr(parent, '_load_consciousness', False) and parent.consciousness
                     else None
                 ),
-                "update_recent_conversations": parent._update_recent_conversations,
                 "assemble_context": getattr(parent, "assemble_context", True),
                 "get_consciousness_state": parent._get_consciousness_state,
                 "on_confirm": _on_confirm,
