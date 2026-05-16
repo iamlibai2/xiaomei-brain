@@ -34,7 +34,6 @@ from typing import Any
 from .self_image_proxy import SelfImage
 from .self_modules import Being, SelfBody, SelfPerception, SelfMind, SelfHistory
 from .intent import Intent, IntentType, create_wait_intent, create_greet_intent, create_reflect_intent, create_dream_intent, create_care_intent
-from .identity import IdentityConfig
 from .perception import PerceptionConfig
 from .config import ConsciousnessConfig
 from .memory_window import refresh_memory_window
@@ -177,13 +176,6 @@ class Consciousness:
             self.agent._procedure_memory = self._procedure_memory
         logger.info("\033[91m[Procedure]\033[0m initialized: %s", db_path)
 
-    def _init_from_identity_config(self) -> None:
-        """从 identity.md 配置初始化身份字段（包含追求/热爱/底线/自我认知）。"""
-        config = IdentityConfig.load(self._agent_id)
-        self._identity_config = config
-        self.self_image.init_from_identity_config(config)
-        logger.info("[Consciousness] 从 IdentityConfig 初始化完成")
-
     def _init_from_perception_config(self) -> None:
         """从 perception.md 配置初始化感知规则"""
         self._perception_config = PerceptionConfig.load(self._agent_id)
@@ -194,18 +186,22 @@ class Consciousness:
         self._storage = storage
 
     def restore_from_storage(self) -> bool:
-        """从 identity.yaml 初始化 SelfImage 身份字段（latest.json 快照不可用时的回退）。
+        """从 talent.md 初始化 SelfImage 身份字段。
 
-        只初始化身份（identity.yaml 是真源），运行时状态从零开始。
+        只初始化身份，运行时状态从零开始。
         """
-        config = IdentityConfig.load(self._agent_id)
-        self.being.init_from_identity_config(config)
+        import os
+        talent_path = os.path.expanduser(
+            f"~/.xiaomei-brain/agents/{self._agent_id}/talent.md",
+        )
+        with open(talent_path, "r", encoding="utf-8") as f:
+            self.being.init_from_talent_md(f.read())
+        logger.info("[Consciousness] 从 talent.md 初始化身份: %s", self.being.name)
 
         self.history.accumulated_changes = []
         self.history.last_llm_fuel_time = 0.0
         self._sleep_start_time = 0.0
 
-        logger.info("[Consciousness] 从 IdentityConfig 初始化身份: %s", self.being.name)
         return True
 
     def _snapshot_path(self) -> Path:
@@ -975,7 +971,7 @@ class Consciousness:
         if hasattr(self_model, "purpose_seed"):
             ps = self_model.purpose_seed
             if ps:
-                self.being.name = ps.identity or "小美"
+                self.being.name = ps.identity or self.being.name
 
         logger.info("[Consciousness] 从 SelfModel 初始化完成")
 

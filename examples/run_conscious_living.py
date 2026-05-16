@@ -3,7 +3,8 @@
 启动带意识的 Agent，支持交互对话和测试命令。
 
 Usage:
-    PYTHONPATH=src python3 examples/run_conscious_living.py [--no-consciousness]
+    PYTHONPATH=src python3 examples/run_conscious_living.py --name xiaomei
+    PYTHONPATH=src python3 examples/run_conscious_living.py --name xiaoming
     PYTHONPATH=src python3 examples/run_conscious_living.py -n  # 无意识模式
 """
 
@@ -199,32 +200,55 @@ def _status_line(living) -> str:
 def main():
     parser = argparse.ArgumentParser(description="ConsciousLiving CLI")
     parser.add_argument(
+        "--name", "-a",
+        default="xiaomei",
+        help="Agent ID to start (e.g. xiaomei, xiaoming)"
+    )
+    parser.add_argument(
         "-n", "--no-consciousness",
         action="store_true",
         help="生命存在但无意识（无意识模式）"
     )
+    parser.add_argument(
+        "--legacy",
+        action="store_true",
+        help="使用旧 context_assembler 格式的上下文注入（找回旧版小美）"
+    )
     args = parser.parse_args()
 
+    agent_id = args.name
+    manager = AgentManager()
+
+    # 验证 agent 是否存在
+    available = [a.id for a in manager.list()]
+    if agent_id not in available:
+        print(f"\033[31m[错误] agent '{agent_id}' 不存在。可用: {', '.join(available)}\033[0m")
+        return
+
+    agent = manager.build_agent(agent_id)
+    agent_name = agent.name or agent_id
+
     print("\n" + "=" * 50)
-    print("       \033[36mConsciousLiving\033[0m CLI")
+    print(f"       \033[36mConsciousLiving\033[0m CLI — \033[1m{agent_name}\033[0m")
     print("=" * 50)
     if args.no_consciousness:
         print("       \033[33m[无意识模式]\033[0m")
+    if args.legacy:
+        print("       \033[33m[Legacy 上下文模式]\033[0m")
     print("=" * 50 + "\n")
 
-    manager = AgentManager()
-    agent = manager.build_agent("xiaomei")
     living = ConsciousLiving(agent, load_consciousness=not args.no_consciousness)
-
-    # 上下文组装开关：False 时跳过 DAG/长期记忆/system prompt，只保留原始消息
     living.assemble_context = True
+
+    if args.legacy:
+        living.force_mode = "legacy"
 
     # ── 回调 ────────────────────────────────────────────────
     _stream_lock = threading.Lock()
 
     def on_proactive(content):
         with _stream_lock:
-            print(f"\n\033[33m[小美]\033[0m {content}\n", end="", flush=True)
+            print(f"\n\033[33m[{agent_name}]\033[0m {content}\n", end="", flush=True)
 
     def on_chat_chunk(chunk):
         with _stream_lock:
@@ -255,14 +279,12 @@ def main():
                 status = _status_line(living)
                 if status:
                     print(f"\n\033[90m{status}\033[0m", flush=True)
-                # 98% 宽度实心线
                 try:
-                    cols = os.get_terminal_size().columns
                     bar_w = os.get_terminal_size().columns
                 except Exception:
                     bar_w = 78
                 print("\033[90m" + "─" * bar_w + "\033[0m")
-                msg = input(f"{PROMPT}")
+                msg = input(f"[{agent_id}] {PROMPT}")
             except (KeyboardInterrupt, EOFError):
                 print()
                 now = time.time()
@@ -308,8 +330,6 @@ def main():
             # 等待 chat 完成（_chatting 由 living 线程管理）
             while living._chatting:
                 time.sleep(0.1)
-
-            # ── Token 用量移到了状态栏 ─────────────────────
 
     except KeyboardInterrupt:
         print("\n\033[90m正在停止...\033[0m")

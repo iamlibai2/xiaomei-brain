@@ -43,7 +43,6 @@ from .core import Consciousness, ConsciousnessReport, TickResult
 from .intent import Intent
 from .storage import ConsciousnessStorage
 from .self_image_proxy import SelfImage
-from .identity import IdentityConfig
 from .perception import PerceptionConfig
 from ..drive import DriveEngine
 from ..purpose import PurposeEngine, IntentUnderstanding
@@ -499,19 +498,18 @@ class ConsciousLiving(Living):
         if not restored:
             restored = self.consciousness.restore_from_storage()
 
-        # 4. 始终从 identity.md 加载身份字段（L0-L3 + 追求/热爱/底线/自我认知）
-        #    restore 只恢复运行时状态（body/mind/history），identity.md 是身份的真源
-        config = IdentityConfig.load(self._agent_id)
-        self.consciousness._identity_config = config
-        self.consciousness.being.init_from_identity_config(config)
-        if not restored:
-            logger.info("[ConsciousLiving] 从 IdentityConfig 初始化完成")
+        # 4. 从 talent.md 加载身份字段（L0-L3 + 追求/热爱/底线/自我认知）
+        import os
+        talent_path = os.path.expanduser(f"~/.xiaomei-brain/agents/{self._agent_id}/talent.md")
+        with open(talent_path, "r", encoding="utf-8") as f:
+            self.consciousness.being.init_from_talent_md(f.read())
+        logger.info("[ConsciousLiving] 从 talent.md 初始化身份")
 
         # 如果还是没有数据，使用默认值
         si = self.consciousness.get_self_image()
         if not si.being.name:
-            si.being.name = "小美"
-            logger.info("[ConsciousLiving] 使用默认值初始化")
+            si.being.name = self._agent_id
+            logger.info("[ConsciousLiving] 使用 agent_id 作为默认名字")
 
         # 5. 加载感知规则（非运行时数据，始终从配置加载）
         self.consciousness._perception_config = PerceptionConfig.load(self._agent_id)
@@ -792,7 +790,25 @@ class ConsciousLiving(Living):
             if len(cleaned) < len(restored):
                 logger.info("[ConsciousLiving] 清理 %d 条 ReAct 残留消息", len(restored) - len(cleaned))
 
-            agent.messages = cleaned
+            # 第五遍：过滤主动输出（没有前置 user 消息的孤立 assistant）
+            # 主动输出通过 _send_proactive() 写入了 conversation_db，恢复时不应进入对话上下文
+            filtered = []
+            prev_role = None
+            for m in cleaned:
+                role = m.get("role", "")
+                if role == "assistant" and not m.get("tool_calls"):
+                    # 前一消息不是 user → 这是主动输出，跳过
+                    if prev_role != "user":
+                        continue
+                filtered.append(m)
+                prev_role = role
+            if len(filtered) < len(cleaned):
+                logger.info(
+                    "[ConsciousLiving] 过滤 %d 条主动输出消息",
+                    len(cleaned) - len(filtered),
+                )
+
+            agent.messages = filtered
             if agent.messages:
                 logger.info("[ConsciousLiving] 苏醒时加载 fresh_tail: %d 条消息", len(agent.messages))
 

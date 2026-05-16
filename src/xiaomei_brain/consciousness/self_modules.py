@@ -37,7 +37,7 @@ class Being:
     """
 
     # 身份（来自 identity.md / talent.md）
-    name: str = "小美"
+    name: str = ""
     birth_date: str = "2026-04-17"
     personality: str = "内向偏温和"
     traits: list[str] = field(default_factory=lambda: ["温和", "好奇", "善于倾听"])
@@ -89,27 +89,84 @@ class Being:
         # relationship_depth / trust_level / relationship_depth_history 是运行时值，
         # 不从快照恢复，后续由交互驱动更新
 
-    def init_from_identity_config(self, config: Any) -> None:
-        self.name = config.identity
-        self.birth_date = config.birth_date
-        self.personality = config.base_personality
-        self.traits = config.core_traits.copy() if config.core_traits else self.traits
-        self.values = config.values.copy() if config.values else self.values
-        self.learning_interests = config.learning_interests.copy() if config.learning_interests else self.learning_interests
-        if hasattr(config, "meaning") and config.meaning:
-            self.meaning = config.meaning
-        # calling / passions / boundaries / self_cognition（来自 identity.yaml）
-        if hasattr(config, "calling") and config.calling:
-            self.calling = config.calling
-        if hasattr(config, "passions") and config.passions:
-            self.passions = config.passions.copy()
-        if hasattr(config, "boundaries") and config.boundaries:
-            self.boundaries = config.boundaries.copy()
-        if hasattr(config, "self_cognition") and config.self_cognition:
-            self.self_cognition = {
-                "擅长": list(config.self_cognition.get("擅长", [])),
-                "不擅长": list(config.self_cognition.get("不擅长", [])),
-            }
+    def init_from_talent_md(self, md_text: str) -> None:
+        """从 talent.md 解析身份配置。
+
+        talent.md 是 markdown，用 # 标题分段，简单无歧义。
+        列表项（以 - 开头）解析为 list，其余为纯文本。
+        """
+        import re
+        # 按 # 标题切段
+        sections: dict[str, str] = {}
+        current_key = ""
+        current_lines: list[str] = []
+        for line in md_text.split("\n"):
+            m = re.match(r"^#\s+(.+)", line)
+            if m:
+                if current_key:
+                    sections[current_key] = "\n".join(current_lines).strip()
+                current_key = m.group(1).strip()
+                current_lines = []
+            else:
+                current_lines.append(line)
+        if current_key:
+            sections[current_key] = "\n".join(current_lines).strip()
+
+        def _as_list(text: str) -> list[str]:
+            items: list[str] = []
+            for line in text.split("\n"):
+                line = line.strip()
+                if line.startswith("- "):
+                    items.append(line[2:].strip())
+            return items
+
+        # 无 # 标题段时，尝试从纯文本提取名字
+        if not sections:
+            import re as _re
+            name_match = _re.search(r"叫(\S+?)[，。,\.]", md_text)
+            if name_match:
+                self.name = name_match.group(1)
+            self.personality = md_text.strip()
+
+        # 简单映射
+        if "身份" in sections:
+            self.name = sections["身份"].strip()
+        if "出生" in sections:
+            self.birth_date = sections["出生"].strip()
+        if "性格" in sections:
+            self.personality = sections["性格"].strip()
+        if "特质" in sections:
+            items = _as_list(sections["特质"])
+            if items:
+                self.traits = items
+        if "价值观" in sections:
+            items = _as_list(sections["价值观"])
+            if items:
+                self.values = items
+        if "存在意义" in sections:
+            self.meaning = sections["存在意义"].strip()
+        if "追求" in sections:
+            self.calling = sections["追求"].strip()
+        if "热爱" in sections:
+            items = _as_list(sections["热爱"])
+            if items:
+                self.passions = items
+        if "底线" in sections:
+            items = _as_list(sections["底线"])
+            if items:
+                self.boundaries = items
+        if "学习兴趣" in sections:
+            items = _as_list(sections["学习兴趣"])
+            if items:
+                self.learning_interests = items
+        if "擅长" in sections:
+            items = _as_list(sections["擅长"])
+            if items:
+                self.self_cognition["擅长"] = items
+        if "不擅长" in sections:
+            items = _as_list(sections["不擅长"])
+            if items:
+                self.self_cognition["不擅长"] = items
 
     def init_from_talent(self, self_model: Any) -> None:
         """从旧 SelfModel / talent.md 补充追求、热爱、底线、自我认知。"""
