@@ -46,6 +46,7 @@ class ActionExecutor:
         handlers = {
             "proactive": self._do_proactive,
             "alarm": self._do_alarm,
+            "work": self._do_work,
             "trigger_l3": self._do_trigger_l3,
             "tool": self._do_tool,
             "notify": self._do_notify,
@@ -63,20 +64,18 @@ class ActionExecutor:
             # 空的 content：由 LLM 生成（通过 intent/content + SelfImage 状态）
             logger.info("[ActionExecutor] 主动消息内容为空，调用 LLM 生成...")
             content = self._generate_proactive_content(item)
-            logger.info("[ActionExecutor] LLM 生成内容: %s", content[:80])
 
         # 执行前先记录要消费的 intent 类型
         intent_type = item.metadata.get("intent_type", "") if item.source == "intent" else ""
 
         self.dispatcher._send_proactive(content)
-        logger.info("[ActionExecutor] 主动消息: %s", content[:50])
 
         # 消费已执行的 intent（避免下一 tick 重复匹配）
         if intent_type and item.source == "intent":
             si = self.dispatcher._get_self_image()
             if si and hasattr(si.intent, "intent_buffer"):
                 upper_type = intent_type.upper()
-                si.intent.intent_buffer = [i for i in si.intent.intent_buffer if i.upper() != upper_type]
+                si.intent.intent_buffer = [i for i in si.intent.intent_buffer if i.get("type", "").upper() != upper_type]
                 logger.debug("[ActionExecutor] 已消费 intent: %s", intent_type)
 
             # 行为完成 → 满足对应欲望（打通 L2 → drive 反馈链路）
@@ -98,7 +97,7 @@ class ActionExecutor:
         agent_core = cl.agent._get_agent()
         consciousness = cl.consciousness
 
-        # 刷新记忆窗口
+        # 刷新记忆窗口（无 user_input，fallback 到 attention_query 做内省召回）
         consciousness._refresh_memory_window()
 
         # 构建消息
@@ -122,21 +121,7 @@ class ActionExecutor:
 
         try:
             # 纯内部 ReAct（不写 DB、不加 MEMORY_PROMPT、不提取记忆）
-            result = agent_core.react_nodb(messages=messages)
-
-            # 后处理：提取 EVENTS/PERCEPTION
-            if result:
-                result_clean, perceptions = consciousness._split_perception(result)
-                if perceptions:
-                    consciousness.mind.social_perceptions.extend(perceptions)
-                    if len(consciousness.mind.social_perceptions) > 20:
-                        consciousness.mind.social_perceptions = consciousness.mind.social_perceptions[-20:]
-
-                consciousness_text, events_json = consciousness._split_consciousness_events(result_clean)
-                if events_json and cl.drive:
-                    consciousness._apply_drive_events(events_json)
-                if consciousness_text:
-                    consciousness.mind.update_inner_thought(consciousness_text[:200])
+            result = agent_core.react_nodb(messages=messages, max_steps=50)
 
             # 输出到控制台/渠道
             if cl.on_proactive:
@@ -160,7 +145,7 @@ class ActionExecutor:
                 si = self.dispatcher._get_self_image()
                 if si and hasattr(si.intent, "intent_buffer"):
                     upper_type = intent_type.upper()
-                    si.intent.intent_buffer = [i for i in si.intent.intent_buffer if i.upper() != upper_type]
+                    si.intent.intent_buffer = [i for i in si.intent.intent_buffer if i.get("type", "").upper() != upper_type]
                     logger.debug("[ActionExecutor] 已消费 intent: %s", intent_type)
 
             # 消耗能量
@@ -173,6 +158,141 @@ class ActionExecutor:
 
         return True
 
+    def _do_work(self, item: ActionItem) -> bool:
+        """自由工作：按目标 tag 选择任务，完整 ReAct 对话。"""
+        cl = self.dispatcher._conscious_living
+        if not cl:
+            logger.warning("[ActionExecutor] _do_work: 未连接 ConsciousLiving")
+            return False
+
+        agent_core = cl.agent._get_agent()
+        consciousness = cl.consciousness
+
+        # 刷新记忆窗口（无 user_input，fallback 到 attention_query）
+        consciousness._refresh_memory_window()
+
+        # 从长期记忆按 tag 直接查目标/任务（不走语义搜索）
+        longterm = getattr(cl.agent, "longterm_memory", None)
+        goal_memories = []
+        if longterm:
+            try:
+                conn = longterm._get_conn()
+                rows = conn.execute(
+                    """SELECT m.* FROM memories m
+                       JOIN memory_tags mt ON m.id = mt.memory_id
+                       WHERE m.user_id = ? AND m.status != 'EXTINCT'
+                       AND mt.tag IN ('目标', '任务')
+                       ORDER BY m.created_at DESC LIMIT 10""",
+                    (cl._agent_id,),
+                ).fetchall()
+                # 合并 tags（m.* 不含 tags，需单独查）
+                ids = [r["id"] for r in rows]
+                tag_map: dict[int, list[str]] = {}
+                if ids:
+                    placeholders = ",".join("?" * len(ids))
+                    tag_rows = conn.execute(
+                        f"SELECT memory_id, tag FROM memory_tags WHERE memory_id IN ({placeholders})",
+                        ids,
+                    ).fetchall()
+                    for tr in tag_rows:
+                        mid = tr["memory_id"]
+                        if mid not in tag_map:
+                            tag_map[mid] = []
+                        tag_map[mid].append(tr["tag"])
+                goal_memories = []
+                for r in rows:
+                    d = dict(r)
+                    d["tags"] = tag_map.get(d["id"], [])
+                    goal_memories.append(d)
+            except Exception as e:
+                logger.warning("[ActionExecutor] 按 tag 查目标记忆失败: %s", e)
+
+        # 构建任务列表
+        task_lines = []
+        if goal_memories:
+            for i, m in enumerate(goal_memories, 1):
+                task_lines.append(f"{i}. {m.get('content', '')[:100]}")
+            task_list_text = "\n".join(task_lines)
+        else:
+            task_list_text = "（暂无待办任务）"
+
+        # 构建 system_prompt + 触发消息
+        # WORK 指令放在 system 层（LLM 知道这是系统指令，不是用户说的）
+        # 触发用 assistant 角色（LLM 看到的是"自己"的内心想法，而非用户在说话）
+        work_instructions = (
+            f"\n\n## 主动工作触发\n\n"
+            f"你的 WORK 意图已被触发。成就欲偏高，你有空闲时间主动推进工作。\n\n"
+            f"待办任务列表：\n{task_list_text}\n\n"
+            f"请：\n"
+            f"1. 先感受自己的状态\n"
+            f"2. 从列表中选择一个任务（或自己想到的任务）\n"
+            f"3. 用全部工具执行它（搜索、读文件、写代码……）\n"
+            f"4. 完成后决定：这个任务完成了吗？需要更新状态吗？\n\n"
+            f"工作完成后，先用一段话总结本次工作的内容和成果（这是你会说给用户听的部分），\n"
+            f"然后在末尾附上 MEMORY 块用于记忆存储：\n"
+            f"<MEMORY>\n"
+            f'{{"relations": [], "actions": [{{"type": "ADD", "tag": "事实", "content": "我完成了...", "scenes": ["工作"]}}]}}\n'
+            f"</MEMORY>"
+        )
+        system_prompt = consciousness.self_image.inject_consciousness() + work_instructions
+        trigger_msg = (
+            f"（收到 WORK 意图，成就欲偏高，我应该主动推进工作了。"
+            f"看看待办列表里有什么可以做的……）"
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "assistant", "content": trigger_msg},
+        ]
+
+        logger.info("[ActionExecutor] WORK 触发 react_nodb，任务数: %d", len(goal_memories))
+
+        try:
+            # 纯内部 ReAct（不污染对话历史，和 _do_alarm / L2 一致）
+            # WORK 场景需要足够步数：写代码、调试等每次工具调用算一步
+            result = agent_core.react_nodb(messages=messages, max_steps=50)
+
+            # 手动内存提取：提取 MEMORY 块，拿到干净文本用于输出
+            clean_result = self._extract_work_memories(agent_core, result)
+
+            # 输出（用去除 MEMORY 块后的干净文本）
+            if cl.on_proactive:
+                cl.on_proactive(clean_result)
+            else:
+                print(f"\n\033[36m[小美 WORK] {clean_result}\033[0m", flush=True)
+
+            if cl.agent.conversation_db:
+                try:
+                    cl.agent.conversation_db.log(
+                        session_id=cl.session_id,
+                        role="assistant",
+                        content=clean_result,
+                    )
+                except Exception:
+                    pass
+
+            # 消费已执行的 WORK intent
+            intent_type = item.metadata.get("intent_type", "")
+            if intent_type:
+                si = self.dispatcher._get_self_image()
+                if si and hasattr(si.intent, "intent_buffer"):
+                    upper_type = intent_type.upper()
+                    si.intent.intent_buffer = [i for i in si.intent.intent_buffer if i.get("type", "").upper() != upper_type]
+                    logger.debug("[ActionExecutor] 已消费 intent: %s", intent_type)
+
+                # 行为完成 → 满足成就欲
+                self._satisfy_intent_desire(intent_type)
+
+            # 消耗能量
+            if cl.drive:
+                cl.drive.consume_energy(0.05)
+
+        except Exception as e:
+            logger.warning("[ActionExecutor] WORK react_nodb 失败: %s", e)
+            return False
+
+        return True
+
     def _satisfy_intent_desire(self, intent_type: str) -> None:
         """行为完成后满足对应的欲望，打通 L2 intent → Drive 反馈链路。"""
         intent_desire_map = {
@@ -180,6 +300,7 @@ class ActionExecutor:
             "LEARN": "cognition",
             "PROGRESS": "achievement",
             "EXPRESS": "expression",
+            "WORK": "achievement",
         }
         desire_type = intent_desire_map.get(intent_type.upper())
 
@@ -192,6 +313,20 @@ class ActionExecutor:
         if cl and cl.drive:
             cl.drive.on_desire_satisfied(desire_type, 0.2)
             logger.info("[ActionExecutor] 行为完成，满足欲望: %s", desire_type)
+
+    def _extract_work_memories(self, agent_core, result: str) -> str:
+        """从 WORK 结果中提取 MEMORY 块并执行，返回去除 MEMORY 块后的干净文本。"""
+        if not result or not hasattr(agent_core, "memory_extractor") or not agent_core.memory_extractor:
+            return result
+        try:
+            memory_block, clean_content = agent_core.memory_extractor.extract_memory_block(result)
+            if memory_block:
+                agent_core.memory_extractor.execute_block(memory_block, user_id=agent_core.user_id)
+                logger.info("[ActionExecutor] WORK 记忆已提取")
+                return clean_content
+        except Exception as e:
+            logger.debug("[ActionExecutor] WORK 记忆提取失败: %s", e)
+        return result
 
     def _do_trigger_l3(self, item: ActionItem) -> bool:
         """触发 L3 深度燃烧"""
@@ -211,7 +346,7 @@ class ActionExecutor:
                 si = self.dispatcher._get_self_image()
                 if si and hasattr(si.intent, "intent_buffer"):
                     upper_type = intent_type.upper()
-                    si.intent.intent_buffer = [i for i in si.intent.intent_buffer if i.upper() != upper_type]
+                    si.intent.intent_buffer = [i for i in si.intent.intent_buffer if i.get("type", "").upper() != upper_type]
                     logger.debug("[ActionExecutor] 已消费 intent: %s", intent_type)
 
             return True
@@ -242,7 +377,7 @@ class ActionExecutor:
                 si = self.dispatcher._get_self_image()
                 if si and hasattr(si.intent, "intent_buffer"):
                     upper_type = intent_type.upper()
-                    si.intent.intent_buffer = [i for i in si.intent.intent_buffer if i.upper() != upper_type]
+                    si.intent.intent_buffer = [i for i in si.intent.intent_buffer if i.get("type", "").upper() != upper_type]
                     logger.debug("[ActionExecutor] 已消费 intent: %s", intent_type)
                 # 清除紧急标记
                 if si and hasattr(si.intent, "urgent_intents"):
@@ -383,7 +518,7 @@ class ActionExecutor:
                     {"role": "user", "content": prompt},
                 ])
                 content = resp.content.strip() if resp and resp.content else None
-                logger.info("[_generate_greeting] LLM 返回: %s", content[:100] if content else "None")
+                logger.debug("[_generate_greeting] LLM 返回: %s", content[:100] if content else "None")
                 if content:
                     return content
             except Exception as e:
@@ -405,8 +540,8 @@ class ActionExecutor:
         else:
             greeting = "夜深了，还在呢？"
         si = self.dispatcher._get_self_image()
-        if si and si.growth.last_dream_summary:
-            greeting += f" 我刚做了一个梦，{si.growth.last_dream_summary[:30]}..."
+        if si and si.history.last_dream_summary:
+            greeting += f" 我刚做了一个梦，{si.history.last_dream_summary[:30]}..."
         return greeting
 
     def _generate_care(self, item: ActionItem) -> str:

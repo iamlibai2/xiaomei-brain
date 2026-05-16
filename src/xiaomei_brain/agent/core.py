@@ -491,9 +491,20 @@ class Agent:
                         "content": result,
                     })
             else:
-                return response.content or ""
+                final_text = response.content or ""
+                if final_text:
+                    print(f"\n{final_text}", flush=True)
+                return final_text
 
-        return "Agent reached maximum steps without producing a final answer."
+        # 步数用尽仍未收敛 → 最后一轮不带工具，基于已有探索做最终输出
+        finish_msg = {"role": "user", "content": "请基于以上探索，直接输出你的最终结论。不要调用工具。"}
+        all_messages = list(messages) + loop_messages + [finish_msg]
+        all_messages = clean_messages(all_messages)
+        resp = self.llm.chat(messages=all_messages, tools=None)
+        final_text = resp.content or ""
+        if final_text:
+            print(f"\n{final_text}", flush=True)
+        return final_text
 
     # ── LLM calling ──────────────────────────────────────────────
 

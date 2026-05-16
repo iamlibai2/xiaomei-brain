@@ -17,8 +17,11 @@ from pathlib import Path
 # Beijing timezone
 BEIJING_TZ = timezone(timedelta(hours=8))
 
-# Paths
-TRANSCRIPT_PATH = Path.home() / ".claude/projects/-home-iamlibai-workspace-claude-project-xiaomei-brain/76485e1a-1c5f-4420-8d92-89cf4024ca8c.jsonl"
+# Paths — 读取多个 JSONL，合并去重
+TRANSCRIPT_PATHS = [
+    Path.home() / ".claude/projects/-home-iamlibai-workspace-claude-project-xiaomei-brain/76485e1a-1c5f-4420-8d92-89cf4024ca8c.jsonl",
+    Path.home() / ".claude/projects/-home-iamlibai-workspace-claude-project-xiaomei-brain/49c380e4-1e4b-46ce-ab42-d95deccce42d.jsonl",
+]
 OUTPUT_DIR = Path("/home/iamlibai/workspace/claude-project/xiaomei-brain/docs/analyze")
 
 
@@ -68,16 +71,6 @@ def extract_text_from_assistant(content_blocks: list) -> str:
 
 
 def main():
-    if not TRANSCRIPT_PATH.exists():
-        print(f"Transcript not found: {TRANSCRIPT_PATH}")
-        return
-
-    print(f"Reading transcript: {TRANSCRIPT_PATH}")
-    with open(TRANSCRIPT_PATH, encoding="utf-8") as f:
-        lines = f.readlines()
-
-    print(f"Total lines: {len(lines)}")
-
     # Collect dialogues grouped by date
     # dialogues[date_str] = [(time_str, role, content), ...]
     dialogues: dict[str, list[tuple[str, str, str]]] = {}
@@ -85,65 +78,76 @@ def main():
     processed = 0
     skipped = 0
 
-    for line in lines:
-        try:
-            data = json.loads(line.strip())
-        except json.JSONDecodeError:
+    for transcript_path in TRANSCRIPT_PATHS:
+        if not transcript_path.exists():
+            print(f"Transcript not found, skipping: {transcript_path}")
             continue
 
-        # Only process user and assistant messages
-        msg_type = data.get("type", "")
-        if msg_type not in ("user", "assistant"):
-            continue
+        print(f"Reading transcript: {transcript_path}")
+        with open(transcript_path, encoding="utf-8") as f:
+            lines = f.readlines()
 
-        # Skip sidechain messages
-        if data.get("isSidechain"):
-            continue
+        print(f"  Total lines: {len(lines)}")
 
-        # Get timestamp
-        ts_str = data.get("timestamp", "")
-        dt = parse_timestamp(ts_str)
-        if not dt:
-            continue
-
-        date_str = dt.strftime("%Y-%m-%d")
-        time_str = dt.strftime("%H:%M:%S")
-
-        msg = data.get("message", {})
-        role = msg.get("role", "")
-        content = msg.get("content", "")
-
-        if msg_type == "user":
-            if not isinstance(content, str):
-                continue
-            # Skip local commands
-            if is_local_command(content):
-                skipped += 1
-                continue
-            if is_bash_output(content):
-                skipped += 1
-                continue
-            # Skip empty content
-            if not content.strip():
-                skipped += 1
+        for line in lines:
+            try:
+                data = json.loads(line.strip())
+            except json.JSONDecodeError:
                 continue
 
-            # Sometimes user "messages" are actually tool results
-            if content.startswith("[{") or '"tool_use_id"' in content[:100]:
-                skipped += 1
+            # Only process user and assistant messages
+            msg_type = data.get("type", "")
+            if msg_type not in ("user", "assistant"):
                 continue
 
-            dialogues.setdefault(date_str, []).append((time_str, "user", content))
-            processed += 1
-
-        elif msg_type == "assistant":
-            text = extract_text_from_assistant(content)
-            if not text.strip():
-                skipped += 1
+            # Skip sidechain messages
+            if data.get("isSidechain"):
                 continue
 
-            dialogues.setdefault(date_str, []).append((time_str, "assistant", text))
-            processed += 1
+            # Get timestamp
+            ts_str = data.get("timestamp", "")
+            dt = parse_timestamp(ts_str)
+            if not dt:
+                continue
+
+            date_str = dt.strftime("%Y-%m-%d")
+            time_str = dt.strftime("%H:%M:%S")
+
+            msg = data.get("message", {})
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+
+            if msg_type == "user":
+                if not isinstance(content, str):
+                    continue
+                # Skip local commands
+                if is_local_command(content):
+                    skipped += 1
+                    continue
+                if is_bash_output(content):
+                    skipped += 1
+                    continue
+                # Skip empty content
+                if not content.strip():
+                    skipped += 1
+                    continue
+
+                # Sometimes user "messages" are actually tool results
+                if content.startswith("[{") or '"tool_use_id"' in content[:100]:
+                    skipped += 1
+                    continue
+
+                dialogues.setdefault(date_str, []).append((time_str, "user", content))
+                processed += 1
+
+            elif msg_type == "assistant":
+                text = extract_text_from_assistant(content)
+                if not text.strip():
+                    skipped += 1
+                    continue
+
+                dialogues.setdefault(date_str, []).append((time_str, "assistant", text))
+                processed += 1
 
     print(f"Processed: {processed}, Skipped: {skipped}")
     print(f"Dates found: {sorted(dialogues.keys())}")

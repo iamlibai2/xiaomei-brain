@@ -21,15 +21,10 @@
 """
 
 from .self_image_proxy import SelfImage
-# 兼容旧名
-SelfImageProxy = SelfImage
 from .self_modules import (
-    SelfIdentity, SelfBody, SelfRelation, SelfPerception, SelfMind, SelfGrowth,
-    Being, SelfMemorySlot, SelfIntent, SelfHistory,
+    Being, SelfBody, SelfPerception, SelfMind,
+    SelfMemory, SelfIntent, SelfHistory,
 )
-# 兼容旧名
-SelfState = SelfBody
-SelfMemory = SelfMind
 from .intent import (
     Intent,
     IntentType,
@@ -57,21 +52,14 @@ from .dream import DreamEngine, DreamReport, EmotionProcessor, MemoryOrganizer, 
 __all__ = [
     # SelfImage
     "SelfImage",
-    "SelfImageProxy",  # 兼容旧名
     # 模块
-    "SelfIdentity",
+    "Being",
     "SelfBody",
-    "SelfRelation",
     "SelfPerception",
     "SelfMind",
-    "SelfGrowth",
-    "Being",
-    "SelfMemorySlot",
+    "SelfMemory",
     "SelfIntent",
     "SelfHistory",
-    # 兼容旧名
-    "SelfState",
-    "SelfMemory",
     # Intent
     "Intent",
     "IntentType",
