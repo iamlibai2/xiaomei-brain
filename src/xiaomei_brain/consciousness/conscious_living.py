@@ -182,6 +182,24 @@ class ConsciousLiving(Living):
         si._project_mental_model = self._project_mental_model
         si._experience_memory = self._experience_memory
 
+        # ── 经验流（统一时间线）──────────────────────────────
+        db_path = getattr(self.agent, "db_path", None)
+        if db_path is None:
+            db_path = os.path.expanduser(
+                f"~/.xiaomei-brain/agents/{self._agent_id}/memory/brain.db"
+            )
+        from ..memory.experience_stream import ExperienceStream
+        exp_stream = ExperienceStream(db_path)
+        # 注入到各子系统
+        self.drive.exp_stream = exp_stream
+        self.consciousness.exp_stream = exp_stream
+        # 注入到 AgentInstance（供 l2_engine 等访问）
+        self.agent.exp_stream = exp_stream
+        # 注入到 Agent 核心（供 core.py stream/react_nodb 使用）
+        agent_core = self.agent._get_agent()
+        agent_core.exp_stream = exp_stream
+        logger.info("[ConsciousLiving] 经验流已创建并注入")
+
         # DreamEngine（梦境总控）- 在 consciousness 创建之后
         from .dream import DreamEngine
         self._dream_engine = DreamEngine(

@@ -34,6 +34,7 @@ def refresh_memory_window(
     user_id: str = "global",
     user_input: str | None = None,
     dag_max_tokens: int = 2000,
+    exp_stream: Any = None,
 ) -> None:
     """刷新 SelfImage.memory — 从存储层拉取记忆并推入。
 
@@ -49,6 +50,7 @@ def refresh_memory_window(
     - internal_narratives: get_narratives(limit=5)
     - project_map:         ProjectMentalModel.get_context()
     - experience:          ExperienceMemory.recall(goal_desc, top_k=5)
+    - experience_timeline: exp_stream.get_recent(limit=50) — 统一经验流
     """
     mem = si.memory
 
@@ -215,16 +217,24 @@ def refresh_memory_window(
         except Exception as e:
             logger.warning("[MemoryWindow] 经验记忆获取失败: %s", e)
 
+    # ── 11. 经验流（统一时间线）────────────────────────
+    if exp_stream:
+        try:
+            mem.experience_timeline = exp_stream.get_recent(limit=50)
+        except Exception as e:
+            logger.warning("[MemoryWindow] 经验流获取失败: %s", e)
+
     # ── 汇总 ──────────────────────────────────────────
     mem.window_size = _count_memories(mem)
 
     logger.info(
         "[MemoryWindow] 刷新完成: narr=%d dag=%d important=%d recalled=%d "
-        "chains=%d proc=%d dialog=%d internal=%d project_map=%d exp=%d total=%d",
+        "chains=%d proc=%d dialog=%d internal=%d project_map=%d exp=%d timeline=%d total=%d",
         len(mem.narratives), len(mem.dag_summaries), len(mem.important_memories),
         len(mem.recalled_memories), len(mem.relation_chains), len(mem.procedures),
         len(mem.recent_dialog), len(mem.internal_narratives),
-        len(si.mind.project_map), len(si.mind.experience), mem.window_size,
+        len(si.mind.project_map), len(si.mind.experience),
+        len(mem.experience_timeline), mem.window_size,
     )
 
 

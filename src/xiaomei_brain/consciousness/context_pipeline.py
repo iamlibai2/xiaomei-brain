@@ -112,6 +112,7 @@ def build_context(
             user_id=getattr(agent, "user_id", "global"),
             user_input=user_input,
             dag_max_tokens=max_tokens // 5,
+            exp_stream=getattr(agent, "exp_stream", None),
         )
         system_content = self_image.inject_consciousness(mode=mode)
 

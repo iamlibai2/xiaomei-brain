@@ -305,6 +305,7 @@ class SelfImage:
             + self._render_inner_voice()
             + self._render_desk()
             + self._render_memory()
+            + self._render_experience_timeline()
             + self._render_pace_reflections()
             + self._render_environment()
             + self._render_history()
@@ -322,6 +323,7 @@ class SelfImage:
             + self._render_desk()
             + self._render_project_map()
             + self._render_intent()
+            + self._render_experience_timeline()
             + self._render_environment()
         )
 
@@ -335,6 +337,7 @@ class SelfImage:
             + self._render_inner_voice()
             + self._render_desk()
             + self._render_memory()
+            + self._render_experience_timeline()
             + self._render_pace_reflections()
             + self._render_environment()
             + self._render_history()
@@ -350,6 +353,7 @@ class SelfImage:
             self._render_header()
             + self._render_being_legacy()
             + self._render_memory(legacy=True)
+            + self._render_experience_timeline()
         )
 
     # ── Being (Legacy): 旧 SelfModel 格式 ──────────────────────
@@ -674,6 +678,30 @@ class SelfImage:
             f"你想做：{intent.description}",
             f"原因：{intent.reason}",
         ]
+
+    # ── Experience Timeline: 统一经验流 ──────────────────────
+
+    def _render_experience_timeline(self) -> list[str]:
+        """将经验流渲染为可读时间线。"""
+        timeline = self.memory.experience_timeline
+        if not timeline:
+            return []
+        lines = ["\n****以下是你近期的经历时间线（统一经验流）****"]
+        for entry in reversed(timeline[-20:]):
+            ts = datetime.fromtimestamp(entry["created_at"]).strftime("%H:%M")
+            type_icons = {
+                "user_msg": "\U0001f465",         # 👥
+                "assistant_msg": "\U0001f916",    # 🤖
+                "tool_exec": "\U0001f527",        # 🔧
+                "internal_thought": "\U0001f4ad", # 💭
+                "internal_action": "\u2699\ufe0f",# ⚙️
+                "drive_event": "\u2764\ufe0f",    # ❤️
+                "dream": "\U0001f31b",            # 🌛
+                "internal_reflection": "\U0001f4cb",# 📋
+            }
+            icon = type_icons.get(entry["type"], "•")
+            lines.append(f"[{ts}] {icon} {entry['content'][:200]}")
+        return lines
 
     # ── Desk: 桌面上下文 ────────────────────────────────────
 

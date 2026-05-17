@@ -121,6 +121,7 @@ class Consciousness:
 
         self.agent = agent_instance
         self._agent_id = getattr(agent_instance, "id", None) or getattr(agent_instance, "agent_id", "")
+        self.exp_stream: Any = None  # 经验流引用（由 ConsciousLiving 注入）
         # Drive 系统（边缘系统）
         self.drive = drive
         # Purpose 系统（前额叶层）
@@ -502,6 +503,7 @@ class Consciousness:
             session_id=session_id,
             user_id=self._agent_id,
             user_input=user_input,
+            exp_stream=self.exp_stream,
         )
 
     def _get_recent_conversation(self) -> str:

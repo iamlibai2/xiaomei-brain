@@ -165,6 +165,19 @@ class ActionExecutor:
                             confidence=0.7,
                         )
 
+            # ── Experience Stream: 记录内部行动 ──
+            if result:
+                es = getattr(cl.agent._get_agent(), "exp_stream", None) if cl.agent else None
+                if es:
+                    try:
+                        es.log(
+                            type="internal_action",
+                            content=f"Alarm「{item.content[:50]}」: {result[:300]}",
+                            importance=0.5,
+                        )
+                    except Exception as e:
+                        logger.debug("[ExpStream] alarm write failed: %s", e)
+
         except Exception as e:
             logger.warning("[ActionExecutor] 闹钟 ReAct 失败: %s", e)
             return False
@@ -302,6 +315,21 @@ class ActionExecutor:
 
             # ── Desk: 把工作结果扔上桌面 ──
             self._drop_work_result_to_desk(clean_result, item)
+
+            # ── Experience Stream: 记录内部行动 ──
+            cl = self.dispatcher._conscious_living
+            if cl and cl.agent:
+                agent_core = cl.agent._get_agent()
+                es = getattr(agent_core, "exp_stream", None)
+                if es and clean_result:
+                    try:
+                        es.log(
+                            type="internal_action",
+                            content=f"Work: {clean_result[:300]}",
+                            importance=0.5,
+                        )
+                    except Exception as e:
+                        logger.debug("[ExpStream] work write failed: %s", e)
 
         except Exception as e:
             logger.warning("[ActionExecutor] WORK react_nodb 失败: %s", e)

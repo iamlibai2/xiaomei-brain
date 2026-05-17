@@ -521,6 +521,7 @@ class SelfMemory:
     relation_chains: list[dict] = field(default_factory=list)
     procedures: list[dict] = field(default_factory=list)
     recent_dialog: list[dict] = field(default_factory=list)
+    experience_timeline: list[dict] = field(default_factory=list)  # 经验流（统一时间线）
     window_size: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -536,6 +537,7 @@ class SelfMemory:
             ],
             "procedures": self.procedures[-3:],
             "recent_dialog_count": len(self.recent_dialog),
+            "experience_timeline_count": len(self.experience_timeline),
             "window_size": self.window_size,
         }
 

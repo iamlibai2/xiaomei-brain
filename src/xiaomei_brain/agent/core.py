@@ -105,6 +105,9 @@ class Agent:
         self.intent_context: str = ""  # 意图上下文（注入 system prompt）
         self._last_all_messages: list[dict[str, Any]] = []  # 缓存最近一次发给 LLM 的完整上下文
 
+        # ── Experience stream (unified timeline, from ConsciousLiving) ──
+        self.exp_stream: Any = None  # ExperienceStream 实例，可选
+
     def stream(
         self, user_input: str = "", consciousness_state: dict | None = None,
         messages: list[dict[str, Any]] | None = None,
@@ -133,6 +136,18 @@ class Agent:
                     role="user",
                     content=user_input,
                 )
+
+            # Co-write to experience stream
+            if self.exp_stream:
+                try:
+                    self.exp_stream.log(
+                        type="user_msg",
+                        content=user_input,
+                        session_id=self.session_id,
+                        related_id=str(user_msg_id) if user_msg_id else "",
+                    )
+                except Exception as e:
+                    logger.debug("[ExpStream] co-write user_msg failed: %s", e)
 
             # Add user message to self.messages
             self.messages.append({"role": "user", "content": user_input, "id": user_msg_id})
@@ -319,6 +334,19 @@ class Agent:
                             user_id=self.user_id,
                             session_id=self.session_id,
                         )
+
+                    # Co-write to experience stream
+                    if self.exp_stream:
+                        try:
+                            self.exp_stream.log(
+                                type="tool_exec",
+                                content=f"{tc.name}: {str(result)[:300]}",
+                                session_id=self.session_id,
+                                related_id=str(tool_msg_id) if tool_msg_id else "",
+                                metadata={"tool_name": tc.name},
+                            )
+                        except Exception as e:
+                            logger.debug("[ExpStream] co-write tool_exec failed: %s", e)
                     self.messages.append(
                         {
                             "role": "tool",
@@ -389,6 +417,18 @@ class Agent:
                         msg["reasoning_content"] = response.reasoning_content
                     self.messages.append(msg)
 
+                    # Co-write to experience stream
+                    if self.exp_stream:
+                        try:
+                            self.exp_stream.log(
+                                type="assistant_msg",
+                                content=display_content,
+                                session_id=self.session_id,
+                                related_id=str(assistant_msg_id) if assistant_msg_id else "",
+                            )
+                        except Exception as e:
+                            logger.debug("[ExpStream] co-write assistant_msg failed: %s", e)
+
                     # 流式 chunk 已在上层实时 yield，直接返回
                     return
                 else:
@@ -403,12 +443,20 @@ class Agent:
         messages: list[dict[str, Any]],
         cancel_check: Callable[[], bool] | None = None,
         max_steps: int = 5,
+        exp_stream: Any = None,
     ) -> str:
         """纯内部推理 ReAct — 非流式，不写 DB、不加 MEMORY_PROMPT、不提取记忆。
 
         每轮用 llm.chat() 一发完成，有 tool_calls 就执行继续，没有就返回结果。
         用于 L2 意图决策、闹钟触发等内部推理场景。
+
+        Args:
+            exp_stream: 可选 ExperienceStream 实例，存在时 co-write 工具执行和最终结果。
+                        不传则 fallback 到 self.exp_stream。
         """
+        if exp_stream is None:
+            exp_stream = getattr(self, "exp_stream", None)
+
         from xiaomei_brain.agent.cli_display import (
             get_hint, print_tool_call, print_tool_result,
             print_edit_diff, print_write_result,
@@ -494,10 +542,32 @@ class Agent:
                         "tool_call_id": tc.id,
                         "content": result,
                     })
+
+                    # Co-write to experience stream (internal tool exec)
+                    if exp_stream:
+                        try:
+                            exp_stream.log(
+                                type="tool_exec",
+                                content=f"{tc.name}: {str(result)[:300]}",
+                                metadata={"tool_name": tc.name},
+                            )
+                        except Exception as e:
+                            logger.debug("[ExpStream] react_nodb tool_exec failed: %s", e)
             else:
                 final_text = response.content or ""
                 if final_text:
                     print(f"\n{final_text}", flush=True)
+
+                # Co-write final result to experience stream
+                if exp_stream and final_text:
+                    try:
+                        exp_stream.log(
+                            type="internal_action",
+                            content=final_text[:500],
+                        )
+                    except Exception as e:
+                        logger.debug("[ExpStream] react_nodb final failed: %s", e)
+
                 return final_text
 
         # 步数用尽仍未收敛 → 最后一轮不带工具，基于已有探索做最终输出
@@ -508,6 +578,17 @@ class Agent:
         final_text = resp.content or ""
         if final_text:
             print(f"\n{final_text}", flush=True)
+
+        # Co-write to experience stream (fallback path)
+        if exp_stream and final_text:
+            try:
+                exp_stream.log(
+                    type="internal_action",
+                    content=final_text[:500],
+                )
+            except Exception as e:
+                logger.debug("[ExpStream] react_nodb fallback failed: %s", e)
+
         return final_text
 
     # ── LLM calling ──────────────────────────────────────────────

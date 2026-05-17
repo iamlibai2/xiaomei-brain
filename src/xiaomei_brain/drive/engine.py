@@ -51,6 +51,7 @@ class DriveEngine:
         self.agent_id = agent_id
         self._loaded = False  # 标记是否已加载
         self.longterm_memory: Any = None  # 统一叙事存储引用
+        self.exp_stream: Any = None  # 经验流引用，用于写入 drive_event
         self._last_user_active: float = 0  # 用户最后活跃时间（用于 tick_minute 判断）
 
         # 配置
@@ -162,6 +163,14 @@ class DriveEngine:
             f"dopamine={self.hormone.dopamine:.2f}"
         )
 
+        # 经验流 co-write
+        if self.exp_stream:
+            self.exp_stream.log(
+                type="drive_event",
+                content=f"用户表扬了我：情绪={EmotionType.JOY.value}，多巴胺={self.hormone.dopamine:.2f}",
+                importance=0.4,
+            )
+
         # 叙事写回由 L2 统一负责，此处只改状态
         logger.debug("[DriveEngine] on_praise 完成，叙事由 L2 统一写入")
 
@@ -194,6 +203,14 @@ class DriveEngine:
             f"emotion={EmotionType.SADNESS.value}({self.emotion.intensity:.2f}), "
             f"cortisol={self.hormone.cortisol:.2f}"
         )
+
+        # 经验流 co-write
+        if self.exp_stream:
+            self.exp_stream.log(
+                type="drive_event",
+                content=f"用户批评了我：情绪={EmotionType.SADNESS.value}，皮质醇={self.hormone.cortisol:.2f}",
+                importance=0.4,
+            )
 
         # 叙事写回由 L2 统一负责，此处只改状态
         logger.debug("[DriveEngine] on_criticism 完成，叙事由 L2 统一写入")
@@ -237,6 +254,14 @@ class DriveEngine:
             f"dopamine={self.hormone.dopamine:.2f}, "
             f"achievement={self.desire.achievement:.2f}"
         )
+
+        # 经验流 co-write
+        if self.exp_stream:
+            self.exp_stream.log(
+                type="drive_event",
+                content=f"目标完成：RPE={rpe:.2f}，多巴胺={self.hormone.dopamine:.2f}，成就欲满足",
+                importance=0.5,
+            )
 
         if self.longterm_memory:
             rpe_str = f"比预期{'好' if rpe > 0 else '差'}" if rpe != 0 else "符合预期"
@@ -299,6 +324,14 @@ class DriveEngine:
         weight = self.config.motivation.expected_update_weight
         self.motivation.expected_reward = self.motivation.expected_reward * (1 - weight) + progress * weight
 
+        # 经验流 co-write
+        if self.exp_stream and progress > 0.3:
+            self.exp_stream.log(
+                type="drive_event",
+                content=f"目标进展：进度={progress:.0%}，RPE={rpe:.2f}",
+                importance=0.3,
+            )
+
     def on_user_idle(self, duration: float) -> None:
         """
         用户长时间空闲
@@ -356,6 +389,13 @@ class DriveEngine:
         self.desire.cognition = min(1.0, self.desire.cognition + amount)
         logger.debug("[DriveEngine] 好奇心触发: cognition=%.2f", self.desire.cognition)
 
+        if self.exp_stream:
+            self.exp_stream.log(
+                type="drive_event",
+                content=f"好奇心被激发：认知欲={self.desire.cognition:.2f}",
+                importance=0.3,
+            )
+
     def on_insight(self, amount: float = 0.1) -> None:
         """
         产生新的洞察/想法（表达欲上升）。
@@ -369,6 +409,13 @@ class DriveEngine:
         """
         self.desire.expression = min(1.0, self.desire.expression + amount)
         logger.debug("[DriveEngine] 洞察触发: expression=%.2f", self.desire.expression)
+
+        if self.exp_stream:
+            self.exp_stream.log(
+                type="drive_event",
+                content=f"产生洞察/想法：表达欲={self.desire.expression:.2f}",
+                importance=0.3,
+            )
 
     def apply_social_signal(self, signal_type: str, intensity: float) -> None:
         """应用社交感知信号到 Drive（情绪/激素/欲望）。

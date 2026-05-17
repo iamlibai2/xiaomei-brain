@@ -164,6 +164,9 @@ class L2Engine:
         # ── Desk: 把 L2 的分析扔上桌面 ─────────────────
         self._drop_to_desk(context, intent, emergence_text)
 
+        # ── Experience Stream: 记录内部思考 ───────────
+        self._log_to_experience_stream(context, intent, emergence_text)
+
         return report
 
     # ── 调用 1：意图决策 ─────────────────────────────────────
@@ -692,3 +695,36 @@ weight: 0.85
                 )
 
         logger.info("[L2 Desk] 已投放 %d 条到桌面", (1 if intent else 0) + (1 if emergence_text else 0))
+
+    def _log_to_experience_stream(self, context: str, intent: Intent | None, emergence_text: str) -> None:
+        """把 L2 的思考写入经验流。"""
+        c = self._c
+        es = getattr(c.agent, "exp_stream", None)
+        if not es:
+            return
+
+        # 意图决策
+        if intent and intent.is_actionable():
+            intent_type = intent.type.value
+            intent_reason = getattr(intent, "content", "")
+            try:
+                es.log(
+                    type="internal_thought",
+                    content=f"L2 意图决策：{intent_type} — {intent_reason}",
+                    importance=0.6,
+                )
+            except Exception as e:
+                logger.debug("[L2 ExpStream] intent write failed: %s", e)
+
+        # 意识涌现摘要
+        if emergence_text:
+            consciousness_text = emergence_text.split("---EVENTS---")[0].strip()
+            if consciousness_text and len(consciousness_text) > 20:
+                try:
+                    es.log(
+                        type="internal_thought",
+                        content=f"内心独白：{consciousness_text[:300]}",
+                        importance=0.6,
+                    )
+                except Exception as e:
+                    logger.debug("[L2 ExpStream] emergence write failed: %s", e)
