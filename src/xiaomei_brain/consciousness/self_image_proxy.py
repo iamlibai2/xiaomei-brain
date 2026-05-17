@@ -34,6 +34,7 @@ from .self_modules import (
     Being, SelfBody, SelfPerception,
     SelfMind, SelfMemory, SelfIntent, SelfHistory,
 )
+from .desk import Desk
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,7 @@ class SelfImage:
         self.memory = SelfMemory()
         self.intent = SelfIntent()
         self.history = SelfHistory()
+        self.desk = Desk(drive=drive, purpose=purpose)
         self._dirty = False
         self._drive = drive
         self._project_mental_model: Any = None   # [Layer 2]
@@ -230,6 +232,8 @@ class SelfImage:
             "intent": self.intent.to_dict(),
             # history
             "history": self.history.to_dict(),
+            # desk
+            "desk": self.desk.to_dict(),
         }
 
     def from_dict(self, data: dict) -> None:
@@ -258,6 +262,7 @@ class SelfImage:
         self.memory.from_dict(data.get("memory", {}))
         self.intent.from_dict(data.get("intent", {}))
         self.history.from_dict(data.get("history", data))
+        self.desk.from_dict(data.get("desk", {}))
 
     def clear_accumulated_changes(self) -> None:
         """清空累积变化（L2 加柴后调用）。"""
@@ -291,13 +296,14 @@ class SelfImage:
         )
 
     def _assemble_daily(self) -> str:
-        """daily: 完整日常 — 身份、身体、目标/想法、声音、记忆、执行、环境、时间"""
+        """daily: 完整日常 — 身份、身体、目标/想法、声音、记忆、执行、环境、时间、桌面"""
         return "\n".join(
             self._render_header()
             + self._render_being()
             + self._render_body()
             + self._render_mind()
             + self._render_inner_voice()
+            + self._render_desk()
             + self._render_memory()
             + self._render_pace_reflections()
             + self._render_environment()
@@ -305,7 +311,7 @@ class SelfImage:
         )
 
     def _assemble_task(self) -> str:
-        """task: 任务导向 — 目标+经验前置，项目地图、意图、环境"""
+        """task: 任务导向 — 目标+经验前置，桌面、项目地图、意图、环境"""
         return "\n".join(
             self._render_header()
             + self._render_mind()
@@ -313,19 +319,21 @@ class SelfImage:
             + self._render_being()
             + self._render_body()
             + self._render_inner_voice()
+            + self._render_desk()
             + self._render_project_map()
             + self._render_intent()
             + self._render_environment()
         )
 
     def _assemble_reflect(self) -> str:
-        """reflect: 反思 — 完整+近期变化（同 daily，后续可差异化）"""
+        """reflect: 反思 — 完整+近期变化+桌面（同 daily，后续可差异化）"""
         return "\n".join(
             self._render_header()
             + self._render_being()
             + self._render_body()
             + self._render_mind()
             + self._render_inner_voice()
+            + self._render_desk()
             + self._render_memory()
             + self._render_pace_reflections()
             + self._render_environment()
@@ -666,6 +674,18 @@ class SelfImage:
             f"你想做：{intent.description}",
             f"原因：{intent.reason}",
         ]
+
+    # ── Desk: 桌面上下文 ────────────────────────────────────
+
+    def _render_desk(self) -> list[str]:
+        """桌面上有什么——任何模块都可以扔上来，任何模块都可以扫一眼。
+
+        不指定接收方，不维护协议。LLM 自己判断哪些跟当前任务相关。
+        """
+        desk_text = self.desk.peek_for_prompt(limit=5)
+        if not desk_text:
+            return []
+        return ["\n****以下是桌面上的上下文（之前的思考/分析/进展，不是记忆）****", desk_text]
 
     # ── Environment: 感知环境 ──────────────────────────────
 

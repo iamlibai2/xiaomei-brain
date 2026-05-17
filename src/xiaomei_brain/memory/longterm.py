@@ -257,6 +257,9 @@ class LongTermMemory:
         ])
         self._lance_table = self._lance_db.create_table("memories", schema=schema)
         logger.info("LanceDB created: %s (dim=%d)", self._lance_dir, expected_dim)
+
+        # Rebuild vectors from SQLite memories（fresh table or first run after brain.db copy）
+        self._rebuild_memories_lancedb()
         return self._lance_table
 
     def _get_embedding_dim(self) -> int:
@@ -281,6 +284,7 @@ class LongTermMemory:
             return self._narrative_lance_table
 
         import lancedb
+        import pyarrow as pa
 
         if self._lance_db is None:
             self._lance_db = lancedb.connect(str(self._lance_dir))
@@ -293,19 +297,32 @@ class LongTermMemory:
             actual_schema = tbl.to_arrow().schema
             vector_field = actual_schema.field("vector")
             actual_dim_size = vector_field.type.list_size
+
+            # Check for schema issues: dimension mismatch or wrong id type
+            id_field = actual_schema.field("id")
+            id_type = id_field.type
+            needs_rebuild = False
             if actual_dim_size != expected_dim:
                 logger.warning(
                     "[LanceDB] Narrative table dimension mismatch: table=%d vs model=%d. "
                     "Dropping and rebuilding.",
                     actual_dim_size, expected_dim,
                 )
+                needs_rebuild = True
+            elif not pa.types.is_string(id_type) and not pa.types.is_large_string(id_type):
+                logger.warning(
+                    "[LanceDB] Narrative table id type is %s, expected string. "
+                    "Dropping and rebuilding.",
+                    id_type,
+                )
+                needs_rebuild = True
+
+            if needs_rebuild:
                 self._lance_db.drop_table("narratives")
             else:
                 self._narrative_lance_table = tbl
                 logger.info("LanceDB narratives table opened: %s", self._lance_dir)
                 return self._narrative_lance_table
-
-        import pyarrow as pa
         schema = pa.schema([
             pa.field("id", pa.string()),
             pa.field("vector", pa.list_(pa.float32(), expected_dim)),
@@ -313,6 +330,9 @@ class LongTermMemory:
         ])
         self._narrative_lance_table = self._lance_db.create_table("narratives", schema=schema)
         logger.info("LanceDB narratives table created: %s (dim=%d)", self._lance_dir, expected_dim)
+
+        # Rebuild vectors from SQLite narrative_memories（fresh table or schema migration）
+        self._rebuild_narrative_lancedb()
         return self._narrative_lance_table
 
     def _add_narrative_vector(self, nm_id: str, content: str, user_id: str) -> None:
@@ -331,6 +351,79 @@ class LongTermMemory:
             logger.debug("[LanceDB] Added narrative %s", nm_id)
         except Exception as e:
             logger.warning("[LanceDB] Failed to add narrative %s: %s", nm_id, e)
+
+    def _rebuild_narrative_lancedb(self) -> None:
+        """Rebuild narrative LanceDB vectors from SQLite narrative_memories.
+
+        Only rebuilds if LanceDB table is empty and SQLite has data.
+        Safe to call on every startup — no-op if already in sync.
+        """
+        table = self._narrative_lance_table
+        if table is None:
+            return
+
+        # Skip if LanceDB already has data（already in sync）
+        try:
+            if table.count_rows() > 0:
+                return
+        except Exception:
+            pass  # count_rows may fail on fresh tables
+
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT id, content, agent_id FROM narrative_memories WHERE status = 'active'"
+            ).fetchall()
+        except Exception:
+            # agent_id column may not exist in older schemas
+            try:
+                rows = conn.execute(
+                    "SELECT id, content FROM narrative_memories WHERE status = 'active'"
+                ).fetchall()
+            except Exception:
+                return
+
+        if not rows:
+            return
+
+        logger.info(
+            "[LanceDB] Rebuilding narrative vectors: %d narratives -> LanceDB", len(rows)
+        )
+
+        batch_size = 32
+        import pyarrow as pa
+
+        for i in range(0, len(rows), batch_size):
+            batch = rows[i : i + batch_size]
+            ids = []
+            contents = []
+            user_ids = []
+            for r in batch:
+                ids.append(r["id"])
+                contents.append(r["content"])
+                user_ids.append(r["agent_id"] if "agent_id" in r.keys() else "global")
+
+            try:
+                vectors = self._embed_batch(contents)
+                data = pa.table({
+                    "id": ids,
+                    "vector": vectors,
+                    "user_id": user_ids,
+                })
+                table.add(data)
+            except Exception as e:
+                logger.warning(
+                    "[LanceDB] Narrative rebuild batch %d-%d failed: %s",
+                    i, i + len(batch), e,
+                )
+
+        logger.info("[LanceDB] Narrative rebuild complete: %d vectors", len(rows))
+
+        # Compact fragments after bulk rebuild
+        try:
+            table.optimize()
+        except Exception:
+            pass
 
     def _delete_narrative_vector(self, nm_id: str) -> None:
         """Delete a narrative vector from LanceDB."""
@@ -440,6 +533,70 @@ class LongTermMemory:
             logger.debug("[LanceDB] Updated memory #%d", memory_id)
         except Exception as e:
             logger.warning("[LanceDB] Failed to update memory #%d: %s", memory_id, e)
+
+    def _rebuild_memories_lancedb(self) -> None:
+        """Rebuild memory LanceDB vectors from SQLite memories.
+
+        Only rebuilds if LanceDB table is empty and SQLite has data.
+        Safe to call on every startup — no-op if already in sync.
+        """
+        table = self._lance_table
+        if table is None:
+            return
+
+        # Skip if LanceDB already has data（already in sync）
+        try:
+            if table.count_rows() > 0:
+                return
+        except Exception:
+            pass
+
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT id, content, user_id FROM memories WHERE status = 'active'"
+        ).fetchall()
+
+        if not rows:
+            return
+
+        logger.info(
+            "[LanceDB] Rebuilding memory vectors: %d memories -> LanceDB", len(rows)
+        )
+
+        batch_size = 32
+        import pyarrow as pa
+
+        for i in range(0, len(rows), batch_size):
+            batch = rows[i : i + batch_size]
+            ids = []
+            contents = []
+            user_ids = []
+            for r in batch:
+                ids.append(r["id"])
+                contents.append(r["content"])
+                user_ids.append(r["user_id"])
+
+            try:
+                vectors = self._embed_batch(contents)
+                data = pa.table({
+                    "id": ids,
+                    "vector": vectors,
+                    "user_id": user_ids,
+                })
+                table.add(data)
+            except Exception as e:
+                logger.warning(
+                    "[LanceDB] Memory rebuild batch %d-%d failed: %s",
+                    i, i + len(batch), e,
+                )
+
+        logger.info("[LanceDB] Memory rebuild complete: %d vectors", len(rows))
+
+        # Compact fragments after bulk rebuild
+        try:
+            table.optimize()
+        except Exception:
+            pass
 
     # ── SQLite ──────────────────────────────────────────────────
 

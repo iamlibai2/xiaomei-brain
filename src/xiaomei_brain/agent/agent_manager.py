@@ -533,6 +533,11 @@ class AgentManager:
         for thought_tool in create_thought_tools(agent.longterm_memory):
             tools.register(thought_tool)
 
+        # 注册记忆搜索工具（"想一想" — 扩散激活）
+        from xiaomei_brain.tools.builtin.memory_search import create_memory_search_tools
+        for ms_tool in create_memory_search_tools(agent.longterm_memory):
+            tools.register(ms_tool)
+
         # ── CommandRegistry ──────────────────────────────────────────────
         agent.commands = CommandRegistry(
             conversation_db=agent.conversation_db,

@@ -136,6 +136,7 @@ class Consciousness:
         self.mind = self.self_image.mind
         self.history = self.self_image.history
         self.intent_slot = self.self_image.intent
+        self.desk = self.self_image.desk
         self.intent_buffer: list[Intent] = []
         self._l0_count: int = 0
         self._last_l2_time: float = 0.0
@@ -230,6 +231,7 @@ class Consciousness:
         self.mind = si.mind
         self.history = si.history
         self.intent_slot = si.intent
+        self.desk = si.desk
         return True
 
     # ── L0: 火焰骨架维护 ─────────────────────────────────────────

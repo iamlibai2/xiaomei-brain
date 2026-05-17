@@ -21,6 +21,7 @@ BEIJING_TZ = timezone(timedelta(hours=8))
 TRANSCRIPT_PATHS = [
     Path.home() / ".claude/projects/-home-iamlibai-workspace-claude-project-xiaomei-brain/76485e1a-1c5f-4420-8d92-89cf4024ca8c.jsonl",
     Path.home() / ".claude/projects/-home-iamlibai-workspace-claude-project-xiaomei-brain/49c380e4-1e4b-46ce-ab42-d95deccce42d.jsonl",
+    Path.home() / ".claude/projects/-home-iamlibai-workspace-claude-project-xiaomei-brain/15162ba7-006e-4e35-af0e-dbd56b73005b.jsonl",
 ]
 OUTPUT_DIR = Path("/home/iamlibai/workspace/claude-project/xiaomei-brain/docs/analyze")
 

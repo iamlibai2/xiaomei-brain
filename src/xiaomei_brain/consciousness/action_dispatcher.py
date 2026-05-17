@@ -152,6 +152,19 @@ class ActionExecutor:
             if cl.drive:
                 cl.drive.consume_energy(0.05)
 
+            # ── Desk: 把闹钟执行结果扔上桌面 ──
+            if result:
+                consciousness = getattr(cl, "consciousness", None)
+                if consciousness:
+                    si = getattr(consciousness, "self_image", None)
+                    if si and hasattr(si, "desk"):
+                        si.desk.drop(
+                            content=f"闹钟「{item.content[:50]}」执行完成：{result[:250]}",
+                            source="action",
+                            intent="work",
+                            confidence=0.7,
+                        )
+
         except Exception as e:
             logger.warning("[ActionExecutor] 闹钟 ReAct 失败: %s", e)
             return False
@@ -287,11 +300,37 @@ class ActionExecutor:
             if cl.drive:
                 cl.drive.consume_energy(0.05)
 
+            # ── Desk: 把工作结果扔上桌面 ──
+            self._drop_work_result_to_desk(clean_result, item)
+
         except Exception as e:
             logger.warning("[ActionExecutor] WORK react_nodb 失败: %s", e)
             return False
 
         return True
+
+    def _drop_work_result_to_desk(self, result: str, item: ActionItem) -> None:
+        """工作完成后把结果扔上桌面。"""
+        cl = self.dispatcher._conscious_living
+        if not cl:
+            return
+        consciousness = getattr(cl, "consciousness", None)
+        if not consciousness:
+            return
+        si = getattr(consciousness, "self_image", None)
+        if not si or not hasattr(si, "desk"):
+            return
+
+        summary = result[:300] if result else ""
+        if summary:
+            si.desk.drop(
+                content=f"Work 完成：{summary}",
+                source="action",
+                intent="work",
+                confidence=0.7,
+            )
+            si.desk.complete_by_source("L2")  # L2 的分析已被消费，标记完成
+            logger.info("[ActionExecutor] Work 结果已投放桌面")
 
     def _satisfy_intent_desire(self, intent_type: str) -> None:
         """行为完成后满足对应的欲望，打通 L2 intent → Drive 反馈链路。"""

@@ -161,6 +161,9 @@ class L2Engine:
             except Exception as e:
                 logger.warning("\033[91m[Procedure]\033[0m L2 learning failed: %s", e)
 
+        # ── Desk: 把 L2 的分析扔上桌面 ─────────────────
+        self._drop_to_desk(context, intent, emergence_text)
+
         return report
 
     # ── 调用 1：意图决策 ─────────────────────────────────────
@@ -656,3 +659,36 @@ weight: 0.85
                     c.drive.on_insight(0.1)
             except Exception as e:
                 logger.warning("\033[91m[NARR]\033[0m store failed: %s", e)
+
+    def _drop_to_desk(self, context: str, intent: Intent | None, emergence_text: str) -> None:
+        """把 L2 的分析结果扔到桌面，供 Action/Chat 取用。"""
+        c = self._c
+        si = c.self_image
+        if not si or not hasattr(si, "desk"):
+            return
+
+        desk = si.desk
+
+        # 1. 意图决策
+        if intent and intent.is_actionable():
+            intent_type = intent.type.value
+            intent_content = getattr(intent, "content", "")
+            desk.drop(
+                content=f"L2 意图决策：{intent_type} — {intent_content}",
+                source="L2",
+                intent=intent_type,
+                confidence=0.8,
+            )
+
+        # 2. 意识涌现摘要（取前 300 字作为上下文）
+        if emergence_text:
+            consciousness_text = emergence_text.split("---EVENTS---")[0].strip()
+            if consciousness_text and len(consciousness_text) > 20:
+                desk.drop(
+                    content=f"L2 内心独白：{consciousness_text[:300]}",
+                    source="L2",
+                    intent="reflect",
+                    confidence=0.6,
+                )
+
+        logger.info("[L2 Desk] 已投放 %d 条到桌面", (1 if intent else 0) + (1 if emergence_text else 0))
