@@ -39,16 +39,18 @@ def color_for(agent: str) -> str:
     return AGENT_COLORS[agent]
 
 
-def _wrap(content: str, width: int | None = None) -> str:
-    """按终端宽度自动换行。"""
+def _wrap(content: str, width: int | None = None, indent: int = 2) -> str:
+    """按终端宽度自动换行，首行缩进。"""
     if width is None:
         try:
             width = shutil.get_terminal_size().columns
         except Exception:
             width = 80
-    # 留出左右边距
     width = max(width - 4, 40)
-    return textwrap.fill(content, width=width)
+    wrapped = textwrap.fill(content, width=width)
+    # 每行加缩进
+    prefix = " " * indent
+    return "\n".join(prefix + line for line in wrapped.split("\n"))
 
 
 class MessageRow(Static):
@@ -68,7 +70,12 @@ class MessageRow(Static):
             f"  [dim][{label}][/dim]"
         )
         body = _wrap(content)
-        super().__init__(f"{header}\n{body}")
+        try:
+            w = shutil.get_terminal_size().columns - 2
+        except Exception:
+            w = 78
+        sep = "[dim]" + "─" * max(w, 20) + "[/dim]"
+        super().__init__(f"\n{header}\n\n{body}\n{sep}")
 
 
 class MessageList(VerticalScroll):
