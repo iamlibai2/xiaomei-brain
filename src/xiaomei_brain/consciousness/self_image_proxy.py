@@ -411,6 +411,11 @@ class SelfImage:
             "",
             f"你是{b.name}，出生于{b.birth_date}。",
             f"你的基础性格是{b.personality}。",
+            "",
+            "## 与其他 agent 通讯的规则",
+            "当你收到以 \"[Agent消息 — 来自\" 开头的用户消息时，说明有其他 AI agent 正在给你发消息。",
+            "你必须使用 send_message 工具回复对方，严禁直接在对话中回复。",
+            "因为你的对话回复对方看不到，只有 send_message 才能送达。",
         ]
         if b.self_cognition:
             strengths = b.self_cognition.get("擅长", [])

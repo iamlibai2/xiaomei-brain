@@ -610,10 +610,9 @@ class ConsciousLiving(Living):
 
     def _on_agent_message(self, msg) -> None:
         """收到其他 agent 发来的消息时回调（在 HTTP handler 线程中）。"""
-        # 明确要求 LLM 用 send_message 工具回复
         content = (
-            f"[Agent消息 — 来自 {msg.from_agent}。"
-            f"回复必须使用 send_message(to=\"{msg.from_agent}\", ...) 工具，不要直接对话回复]\n\n"
+            f"[Agent消息 — 来自 {msg.from_agent}，"
+            f"请用 send_message(to=\"{msg.from_agent}\") 回复]\n\n"
             f"{msg.content}"
         )
         self.put_message(content, source=f"agent:{msg.from_agent}")
