@@ -60,7 +60,7 @@ class DAGSummaryGraph:
     def for_agent(cls, agent_id: str, llm_client=None) -> "DAGSummaryGraph":
         """为指定 agent 创建 DAG 实例（标准路径）。"""
         from pathlib import Path
-        path = Path.home() / ".xiaomei-brain" / "agents" / agent_id / "memory" / "brain.db"
+        path = Path.home() / ".xiaomei-brain" / agent_id / "memory" / "brain.db"
         return cls(str(path), llm_client=llm_client)
 
     def __init__(self, db_path: str | Path, llm_client=None) -> None:

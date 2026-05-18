@@ -1,18 +1,7 @@
-"""AgentLiving: a living agent with lifecycle states.
+"""无意识系统 — AgentLiving：基础生命周期，植物人状态。
 
-Each agent runs as an independent process with its own event loop.
-States cycle between AWAKE (handling messages) and SLEEPING (internal work).
-
-Usage:
-    from xiaomei_brain.agent.agent_manager import AgentManager
-    from xiaomei_brain.agent.living import AgentLiving
-
-    manager = AgentManager()
-    instance = manager.build_agent(agent_id)
-
-    living = AgentLiving(instance)
-    living.put_message("你好", user_id="张三")
-    living.run()   # blocking, runs until stop()
+有状态切换、消息队列、主动输出，但无 SelfImage / Drive / Purpose / 意识分层。
+保留备用。入口：python -m xiaomei_brain run <agent_id> --cli
 """
 
 from __future__ import annotations

@@ -72,6 +72,7 @@ class SelfImage:
         self.desk = Desk(drive=drive, purpose=purpose)
         self._dirty = False
         self._drive = drive
+        self._essence: Any = None               # Essence（底色存储）
         self._project_mental_model: Any = None   # [Layer 2]
         self._experience_memory: Any = None      # [Layer 2]
         self._assemble_map = {
@@ -291,6 +292,7 @@ class SelfImage:
         return "\n".join(
             self._render_header()
             + self._render_being()
+            + self._render_essence()
             + self._render_body()
             + self._render_environment()
         )
@@ -300,6 +302,7 @@ class SelfImage:
         return "\n".join(
             self._render_header()
             + self._render_being()
+            + self._render_essence()
             + self._render_body()
             + self._render_mind()
             + self._render_inner_voice()
@@ -318,6 +321,7 @@ class SelfImage:
             + self._render_mind()
             + self._render_experience()
             + self._render_being()
+            + self._render_essence()
             + self._render_body()
             + self._render_inner_voice()
             + self._render_desk()
@@ -332,6 +336,7 @@ class SelfImage:
         return "\n".join(
             self._render_header()
             + self._render_being()
+            + self._render_essence()
             + self._render_body()
             + self._render_mind()
             + self._render_inner_voice()
@@ -352,6 +357,7 @@ class SelfImage:
         return "\n".join(
             self._render_header()
             + self._render_being_legacy()
+            + self._render_essence()
             + self._render_memory(legacy=True)
             + self._render_experience_timeline()
         )
@@ -361,35 +367,23 @@ class SelfImage:
     def _render_being_legacy(self) -> list[str]:
         """旧 context_assembler 的 SelfModel 身份渲染格式。
 
-        第一人称，简单平铺：身份 → 追求 → 热爱 → 底线 → 人格 → 擅长 → 成长。
+        第一人称，只包含 Being 活字段。底色（追求/热爱/底线/特质/价值观）走 Essence。
         """
         b = self.being
         h = self.history
         lines: list[str] = []
 
-        # 身份（来自 talent.md #身份，或 being.name）
+        # 身份
         identity = b.name
         if b.personality:
             identity = f"{b.name}，一个{b.personality}的AI伴侣"
         lines.append(identity)
 
-        # 追求（来自 talent.md #追求）
-        if b.calling:
-            lines.append(f"我的追求：{b.calling}")
-
-        # 热爱（来自 talent.md #热爱）
-        if b.passions:
-            lines.append("我热爱：" + "、".join(b.passions))
-
-        # 底线（来自 talent.md #底线）
-        if b.boundaries:
-            lines.append("我的底线：" + "、".join(b.boundaries))
-
-        # 人格（来自 talent.md #性格）
+        # 人格
         if b.personality:
             lines.append(f"我的人格：{b.personality}")
 
-        # 擅长（来自 talent.md #擅长）
+        # 擅长
         strengths = b.self_cognition.get("擅长", [])
         if strengths:
             lines.append("我擅长：" + "、".join(strengths))
@@ -413,22 +407,11 @@ class SelfImage:
     def _render_being(self) -> list[str]:
         b = self.being
         h = self.history
-        lines: list[str] = []
-        traits_text = "、".join(b.traits[:5])
-        lines.extend([
+        lines: list[str] = [
             "",
             f"你是{b.name}，出生于{b.birth_date}。",
-            f"你是一个{traits_text}的{b.personality}。",
-            f"你{'，'.join(b.values[:3])}。",
-        ])
-        if b.meaning:
-            lines.append(f"你的存在意义是{b.meaning}。")
-        if b.calling:
-            lines.append(f"关于你是什么样的人：\n{b.calling[:1500]}")
-        if b.passions:
-            lines.append(f"你热爱{'，'.join(b.passions[:5])}。")
-        if b.boundaries:
-            lines.append(f"你有自己的底线：{'，'.join(b.boundaries[:5])}。")
+            f"你的基础性格是{b.personality}。",
+        ]
         if b.self_cognition:
             strengths = b.self_cognition.get("擅长", [])
             if strengths:
@@ -440,6 +423,17 @@ class SelfImage:
             recent = [e.get("content", "") for e in h.growth_events[-3:]]
             lines.append(f"最近你成长了：{'；'.join(recent)}。")
         return lines
+
+    # ── Essence: 底色 ──────────────────────────────────────
+
+    def _render_essence(self) -> list[str]:
+        """渲染底色——不可变的身份基石（原则、价值观、特质、叙事等）。"""
+        if self._essence is None:
+            return []
+        rendered = self._essence.render()
+        if not rendered:
+            return []
+        return [rendered]
 
     # ── Body: 身体感受 ─────────────────────────────────────
 

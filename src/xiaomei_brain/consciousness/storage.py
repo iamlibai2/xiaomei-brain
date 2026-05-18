@@ -21,7 +21,7 @@ class ConsciousnessStorage:
     """意识存储。
 
     存储结构：
-        ~/.xiaomei-brain/agents/{agent_id}/consciousness/
+        ~/.xiaomei-brain/{agent_id}/consciousness/
             2026-04-22.json
             2026-04-21.json
 
@@ -35,7 +35,7 @@ class ConsciousnessStorage:
 
     def _ensure_dir(self) -> None:
         """确保目录存在"""
-        consciousness_dir = self.base_dir / "agents" / self.agent_id / "consciousness"
+        consciousness_dir = self.base_dir / self.agent_id / "consciousness"
         consciousness_dir.mkdir(parents=True, exist_ok=True)
         self._consciousness_dir = consciousness_dir
 

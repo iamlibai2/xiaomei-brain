@@ -4,7 +4,7 @@ Purpose 持久化
 存储：
 - goals.json: 目标树
 
-位置：~/.xiaomei-brain/agents/{agent_id}/purpose/
+位置：~/.xiaomei-brain/{agent_id}/purpose/
 """
 
 import json
@@ -23,7 +23,7 @@ class PurposeStorage:
 
     def __init__(self, agent_id: str = ""):
         self.agent_id = agent_id
-        self.base_dir = Path.home() / ".xiaomei-brain" / "agents" / agent_id / "purpose"
+        self.base_dir = Path.home() / ".xiaomei-brain" / agent_id / "purpose"
         self.goals_file = self.base_dir / "goals.json"
 
         # 确保目录存在

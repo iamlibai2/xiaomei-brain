@@ -194,7 +194,7 @@ class Consciousness:
         """
         import os
         talent_path = os.path.expanduser(
-            f"~/.xiaomei-brain/agents/{self._agent_id}/talent.md",
+            f"~/.xiaomei-brain/{self._agent_id}/talent.md",
         )
         with open(talent_path, "r", encoding="utf-8") as f:
             self.being.init_from_talent_md(f.read())
@@ -209,7 +209,7 @@ class Consciousness:
     def _snapshot_path(self) -> Path:
         """快照文件路径"""
         from pathlib import Path
-        return Path.home() / ".xiaomei-brain" / "agents" / self._agent_id / "consciousness" / "latest.json"
+        return Path.home() / ".xiaomei-brain" / self._agent_id / "consciousness" / "latest.json"
 
     def _save_snapshot(self) -> None:
         """保存 SelfImage 快照到 latest.json"""
@@ -1175,14 +1175,9 @@ def interpret_changes(si: SelfImage, config: Any) -> list[str]:
 
 def build_state_summary(si: SelfImage) -> str:
     """生成状态摘要，供 LLM 加柴时使用。"""
-    traits_text = "、".join(si.being.traits[:3])
-    values_text = "、".join(si.being.values[:2])
-
     lines = [
         f"我是{si.being.name}，诞生于{si.being.birth_date}",
         f"基础性格：{si.being.personality}",
-        f"核心特质：{traits_text}",
-        f"价值观：{values_text}",
         "",
         f"火焰燃烧时长：{int(si.history.consciousness_age)}秒",
         f"我在哪：{si.perception.environment}",

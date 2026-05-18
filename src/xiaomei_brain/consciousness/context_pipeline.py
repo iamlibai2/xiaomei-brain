@@ -91,7 +91,7 @@ def build_context(
     # 4. DAG auto-compact
     if agent.context_assembler and agent.session_id:
         agent.context_assembler._auto_compact(
-            agent.session_id, max_tokens, agent.messages,
+            agent.session_id, max_tokens, None,
         )
 
     # 5. 刷新记忆窗口 + 生成 system prompt

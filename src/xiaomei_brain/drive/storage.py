@@ -2,7 +2,7 @@
 Drive 存储
 
 JSON 文件存储 Drive 状态：
-- 位置：~/.xiaomei-brain/agents/{agent_id}/drive/drive_state.json
+- 位置：~/.xiaomei-brain/{agent_id}/drive/drive_state.json
 - 跨会话持久化
 """
 
@@ -27,7 +27,7 @@ class DriveStorage:
 
     def __init__(self, agent_id: str = ""):
         self.agent_id = agent_id
-        self.base_dir = Path.home() / ".xiaomei-brain" / "agents" / agent_id / "drive"
+        self.base_dir = Path.home() / ".xiaomei-brain" / agent_id / "drive"
         self.state_file = self.base_dir / "drive_state.json"
 
         # 确保目录存在

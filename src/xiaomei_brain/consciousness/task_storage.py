@@ -31,7 +31,7 @@ class TaskStorage:
 
     def __init__(self, agent_id: str = ""):
         self.agent_id = agent_id
-        self.base_dir = Path.home() / ".xiaomei-brain" / "agents" / agent_id / "tasks"
+        self.base_dir = Path.home() / ".xiaomei-brain" / agent_id / "tasks"
 
         # 确保目录存在
         self.base_dir.mkdir(parents=True, exist_ok=True)

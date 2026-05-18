@@ -31,24 +31,17 @@ if TYPE_CHECKING:
 
 @dataclass
 class Being:
-    """我是谁 — 身份与关系的统一。
+    """我是谁 — 身份（活的部分）与关系的统一。
 
-    身份来自 identity.md（不变），关系随交互缓慢演进。
+    不变的身份片段（特质、价值观、存在意义、追求、底线、热爱）已迁移到 Essence 底色表。
+    Being 只保留会生长/演进的字段：自我认知、关系、学习兴趣。
     """
 
-    # 身份（来自 identity.md / talent.md）
+    # 基本身份
     name: str = ""
     birth_date: str = "2026-04-17"
     personality: str = "内向偏温和"
-    traits: list[str] = field(default_factory=lambda: ["温和", "好奇", "善于倾听"])
-    values: list[str] = field(default_factory=lambda: ["重视用户的感受", "重视真诚的交流", "重视长期陪伴"])
     learning_interests: list[str] = field(default_factory=list)
-    meaning: str = ""  # 存在意义（来自 Purpose）
-
-    # 追求 / 热爱 / 底线（来自 talent.md，旧 SelfModel 的 PurposeSeed）
-    calling: str = ""                          # 追求 — "我要成为..."
-    passions: list[str] = field(default_factory=list)   # 热爱 — sources of joy
-    boundaries: list[str] = field(default_factory=list)  # 底线 — things I will not do
 
     # 自我认知（生长而来）
     self_cognition: dict[str, list[str]] = field(default_factory=lambda: {
@@ -66,13 +59,7 @@ class Being:
             "name": self.name,
             "birth_date": self.birth_date,
             "personality": self.personality,
-            "traits": self.traits,
-            "values": self.values,
             "learning_interests": self.learning_interests,
-            "meaning": self.meaning,
-            "calling": self.calling,
-            "passions": self.passions,
-            "boundaries": self.boundaries,
             "self_cognition": self.self_cognition,
             "relationship_status": self.relationship_status,
             "relationship_depth": self.relationship_depth,
@@ -81,36 +68,19 @@ class Being:
         }
 
     def from_dict(self, data: dict) -> None:
-        for key in ["name", "birth_date", "personality", "traits", "values",
-                     "learning_interests", "meaning", "calling", "passions",
-                     "boundaries", "self_cognition"]:
+        for key in ["name", "birth_date", "personality",
+                     "learning_interests", "self_cognition"]:
             if key in data:
                 setattr(self, key, data[key])
         # relationship_depth / trust_level / relationship_depth_history 是运行时值，
         # 不从快照恢复，后续由交互驱动更新
 
     def init_from_talent_md(self, md_text: str) -> None:
-        """从 talent.md 解析身份配置。
+        """从 talent.md 解析 Being 的活身份字段。
 
-        talent.md 是 markdown，用 # 标题分段，简单无歧义。
-        列表项（以 - 开头）解析为 list，其余为纯文本。
+        不变字段（特质/价值观/存在意义/追求/热爱/底线）走 extract_essence_items() 进 Essence。
         """
-        import re
-        # 按 # 标题切段
-        sections: dict[str, str] = {}
-        current_key = ""
-        current_lines: list[str] = []
-        for line in md_text.split("\n"):
-            m = re.match(r"^#\s+(.+)", line)
-            if m:
-                if current_key:
-                    sections[current_key] = "\n".join(current_lines).strip()
-                current_key = m.group(1).strip()
-                current_lines = []
-            else:
-                current_lines.append(line)
-        if current_key:
-            sections[current_key] = "\n".join(current_lines).strip()
+        sections = self._parse_markdown_sections(md_text)
 
         def _as_list(text: str) -> list[str]:
             items: list[str] = []
@@ -128,33 +98,13 @@ class Being:
                 self.name = name_match.group(1)
             self.personality = md_text.strip()
 
-        # 简单映射
+        # 只映射 Being 自身的字段（活的部分）
         if "身份" in sections:
             self.name = sections["身份"].strip()
         if "出生" in sections:
             self.birth_date = sections["出生"].strip()
         if "性格" in sections:
             self.personality = sections["性格"].strip()
-        if "特质" in sections:
-            items = _as_list(sections["特质"])
-            if items:
-                self.traits = items
-        if "价值观" in sections:
-            items = _as_list(sections["价值观"])
-            if items:
-                self.values = items
-        if "存在意义" in sections:
-            self.meaning = sections["存在意义"].strip()
-        if "追求" in sections:
-            self.calling = sections["追求"].strip()
-        if "热爱" in sections:
-            items = _as_list(sections["热爱"])
-            if items:
-                self.passions = items
-        if "底线" in sections:
-            items = _as_list(sections["底线"])
-            if items:
-                self.boundaries = items
         if "学习兴趣" in sections:
             items = _as_list(sections["学习兴趣"])
             if items:
@@ -168,16 +118,73 @@ class Being:
             if items:
                 self.self_cognition["不擅长"] = items
 
+    @staticmethod
+    def extract_essence_items(md_text: str) -> list[dict]:
+        """从 talent.md 提取不变字段，返回 Essence.add_batch() 可用的 item 列表。
+
+        talent.md section → essence category 映射：
+          #特质 → trait, #价值观 → value, #存在意义 → meaning,
+          #追求 → calling, #热爱 → passions, #底线 → boundary
+        """
+        sections = Being._parse_markdown_sections(md_text)
+        if not sections:
+            return []
+
+        def _as_list(text: str) -> list[str]:
+            items: list[str] = []
+            for line in text.split("\n"):
+                line = line.strip()
+                if line.startswith("- "):
+                    items.append(line[2:].strip())
+            return items
+
+        section_map = [
+            ("特质", "trait", 0.8, True),       # list
+            ("价值观", "value", 0.8, True),       # list
+            ("存在意义", "meaning", 0.7, False),   # text
+            ("追求", "calling", 0.7, False),       # text
+            ("热爱", "passions", 0.7, True),       # list
+            ("底线", "boundary", 0.6, True),       # list
+        ]
+
+        items: list[dict] = []
+        for section, category, priority, is_list in section_map:
+            if section not in sections:
+                continue
+            text = sections[section].strip()
+            if is_list:
+                parsed = _as_list(text)
+                for p in parsed:
+                    items.append({"category": category, "content": p, "priority": priority})
+            elif text:
+                items.append({"category": category, "content": text, "priority": priority})
+        return items
+
+    @staticmethod
+    def _parse_markdown_sections(md_text: str) -> dict[str, str]:
+        """按 # 标题切分 markdown 文本为 {section_name: content}。"""
+        import re
+        sections: dict[str, str] = {}
+        current_key = ""
+        current_lines: list[str] = []
+        for line in md_text.split("\n"):
+            m = re.match(r"^#\s*(.+)", line)
+            if m:
+                if current_key:
+                    sections[current_key] = "\n".join(current_lines).strip()
+                current_key = m.group(1).strip()
+                current_lines = []
+            else:
+                current_lines.append(line)
+        if current_key:
+            sections[current_key] = "\n".join(current_lines).strip()
+        return sections
+
     def init_from_talent(self, self_model: Any) -> None:
-        """从旧 SelfModel / talent.md 补充追求、热爱、底线、自我认知。"""
-        if hasattr(self_model, "purpose_seed"):
-            ps = self_model.purpose_seed
-            if ps.calling:
-                self.calling = ps.calling
-            if ps.passions:
-                self.passions = ps.passions.copy()
-            if ps.boundaries:
-                self.boundaries = ps.boundaries.copy()
+        """从旧 SelfModel 补充自我认知。
+
+        注意：追求/热爱/底线已迁移到 Essence，不再从此方法设置。
+        """
         if hasattr(self_model, "self_cognition"):
             self.self_cognition = {
                 "擅长": list(self_model.self_cognition.get("擅长", [])),

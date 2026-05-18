@@ -104,14 +104,14 @@ class PerceptionConfig:
         """从 perception.md 加载配置。
 
         查找顺序：
-        1. ~/.xiaomei-brain/agents/{agent_id}/consciousness/perception.md
+        1. ~/.xiaomei-brain/{agent_id}/consciousness/perception.md
         2. agents/{agent_id}/consciousness/perception.md（项目目录）
 
         如果不存在，返回默认配置。
         """
         # 查找配置文件
         paths = [
-            os.path.expanduser(f"~/.xiaomei-brain/agents/{agent_id}/consciousness/perception.md"),
+            os.path.expanduser(f"~/.xiaomei-brain/{agent_id}/consciousness/perception.md"),
             os.path.join(os.path.dirname(__file__), "..", "..", "..", "agents", agent_id, "consciousness", "perception.md"),
         ]
 

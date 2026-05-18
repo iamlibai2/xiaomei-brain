@@ -100,7 +100,7 @@ def load_drive_config(config_path: str | Path) -> DriveConfig:
     """
     从 YAML 文件加载配置
 
-    配置文件路径：~/.xiaomei-brain/agents/{agent_id}/drive/drive_config.yaml
+    配置文件路径：~/.xiaomei-brain/{agent_id}/drive/drive_config.yaml
 
     如果文件不存在，使用默认配置
     """

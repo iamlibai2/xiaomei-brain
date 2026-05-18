@@ -10,6 +10,7 @@ Usage:
 
 import sys
 import os
+import select
 import threading
 import time
 import logging
@@ -27,15 +28,7 @@ logging.basicConfig(
     stream=sys.stderr,
 )
 
-# 同时写到 xiaomei.log（DEBUG 级别，应有尽有）
-_log_dir = os.path.expanduser("~/.xiaomei-brain/logs")
-os.makedirs(_log_dir, exist_ok=True)
-_file_handler = logging.FileHandler(os.path.join(_log_dir, "xiaomei.log"), encoding="utf-8")
-_file_handler.setLevel(logging.DEBUG)
-_file_handler.setFormatter(logging.Formatter(
-    "%(asctime)s [%(name)s] %(levelname)s %(message)s", datefmt="%H:%M:%S"
-))
-logging.getLogger().addHandler(_file_handler)
+# agent 日志文件 handler — agent_id 已知后添加
 
 # ── 关键模块：完全放行 ──────────────────────────────────────
 KEY_MODULES = {
@@ -88,7 +81,7 @@ from xiaomei_brain.agent.agent_manager import AgentManager
 from xiaomei_brain.consciousness.conscious_living import ConsciousLiving
 from xiaomei_brain.memory.conversation_db import estimate_tokens
 
-# ── ❯ 提示符 ───────────────────────────────────────────────
+# ── 提示符（必须纯 ASCII，WSL 下 readline 无法正确计算中文 prompt 宽度）──
 PROMPT = "> "
 
 # ── Tab 命令补齐 ───────────────────────────────────────────
@@ -110,21 +103,46 @@ def _completer(text: str, state: int) -> str | None:
     return None
 
 
-# ── readline 历史 ──────────────────────────────────────────
-_HIST_DIR = os.path.expanduser("~/.xiaomei-brain/logs")
-os.makedirs(_HIST_DIR, exist_ok=True)
-_HIST_PATH = os.path.join(_HIST_DIR, "cli_history")
-if os.path.exists(_HIST_PATH):
-    try:
-        readline.read_history_file(_HIST_PATH)
-    except Exception:
-        pass
-atexit.register(lambda: readline.write_history_file(_HIST_PATH))
 readline.parse_and_bind("tab: complete")
+readline.parse_and_bind("set enable-bracketed-paste on")  # 消除终端多行粘贴警告
 readline.parse_and_bind("set input-meta on")
 readline.parse_and_bind("set output-meta on")
 readline.parse_and_bind("set convert-meta off")
 readline.set_completer(_completer)
+
+
+# ── 多行粘贴检测 ─────────────────────────────────────────
+def _read_multiline(first_line: str, timeout: float = 0.05) -> str:
+    """检测粘贴多行文本并一次性读取。
+
+    粘贴时 stdin 缓冲区会有多行数据。先读取首行，再用 select 检测
+    是否有更多数据，有则一次性读完并合并。
+    """
+    # select 检测 stdin 是否还有数据
+    r, _, _ = select.select([sys.stdin], [], [], timeout)
+    if not r:
+        return first_line
+
+    # 读取剩余行，拼接
+    lines = [first_line]
+    while True:
+        r, _, _ = select.select([sys.stdin], [], [], timeout)
+        if not r:
+            break
+        line = sys.stdin.readline()
+        if not line:
+            break
+        line = line.rstrip('\n')
+        lines.append(line)
+
+    result = '\n'.join(lines)
+    if len(lines) > 1:
+        # 多行粘贴，加入 history
+        try:
+            readline.add_history(result)
+        except Exception:
+            pass
+    return result
 
 
 # ── Token 估算 ─────────────────────────────────────────────
@@ -217,6 +235,33 @@ def main():
     args = parser.parse_args()
 
     agent_id = args.name
+
+    # ── Per-agent 日志 ────────────────────────────────────────
+    agent_log_dir = os.path.expanduser(f"~/.xiaomei-brain/{agent_id}/logs")
+    os.makedirs(agent_log_dir, exist_ok=True)
+    _file_handler = logging.FileHandler(os.path.join(agent_log_dir, "agent.log"), encoding="utf-8")
+    _file_handler.setLevel(logging.DEBUG)
+    _file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s [%(name)s] %(levelname)s %(message)s", datefmt="%H:%M:%S"
+    ))
+    logging.getLogger().addHandler(_file_handler)
+
+    # LLM 日志 + intent 日志按 agent 分
+    from xiaomei_brain.base.llm import set_log_agent as _set_llm_log
+    from xiaomei_brain.consciousness.task_orchestrator import set_log_agent as _set_intent_log
+    _set_llm_log(agent_id)
+    _set_intent_log(agent_id)
+
+    # CLI 历史
+    _hist_path = os.path.join(agent_log_dir, "cli_history")
+    if os.path.exists(_hist_path):
+        try:
+            readline.read_history_file(_hist_path)
+        except Exception:
+            pass
+    atexit.register(lambda p=_hist_path: readline.write_history_file(p))
+    # ────────────────────────────────────────────────────────
+
     manager = AgentManager()
 
     # 验证 agent 是否存在
@@ -284,7 +329,11 @@ def main():
                 except Exception:
                     bar_w = 78
                 print("\033[90m" + "─" * bar_w + "\033[0m")
-                msg = input(f"[{agent_id}] {PROMPT}")
+                # 用纯 ASCII prompt，中文 agent 名已在状态行显示
+                # WSL 下 readline 无法正确计算中文 prompt 的显示宽度，
+                # 导致回删中文时字节错位，输入内容损坏
+                first_line = input(PROMPT)
+                msg = _read_multiline(first_line)
             except (KeyboardInterrupt, EOFError):
                 print()
                 now = time.time()

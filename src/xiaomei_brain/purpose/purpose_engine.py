@@ -126,7 +126,7 @@ class PurposeEngine:
         """加载存在意义（从 talent.md）"""
         import os
         talent_path = os.path.expanduser(
-            f"~/.xiaomei-brain/agents/{self.agent_id}/talent.md",
+            f"~/.xiaomei-brain/{self.agent_id}/talent.md",
         )
         try:
             with open(talent_path, "r", encoding="utf-8") as f:

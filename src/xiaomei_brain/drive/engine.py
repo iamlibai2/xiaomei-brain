@@ -56,7 +56,7 @@ class DriveEngine:
 
         # 配置
         if base_dir is None:
-            base_dir = Path.home() / ".xiaomei-brain" / "agents" / agent_id
+            base_dir = Path.home() / ".xiaomei-brain" / agent_id
         self.base_dir = Path(base_dir)
 
         drive_dir = self.base_dir / "drive"

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import tempfile
 import os
 
 from ..base import tool
@@ -13,6 +12,23 @@ logger = logging.getLogger(__name__)
 # Global TTS player instance (set by integration code)
 _tts_player = None
 _tts_provider = None
+
+# 默认输出目录（LLM 生成 TTS 音频时如果给相对路径，自动拼接到此目录）
+# 可通过 set_output_base() 按 agent 隔离
+_output_base: str | None = None
+
+
+def _get_output_dir() -> str:
+    """获取 TTS 输出根目录：agent workspace 优先，否则全局 fallback。"""
+    if _output_base:
+        return os.path.join(_output_base, "tts")
+    return os.path.expanduser("~/.xiaomei-brain/global/tts")
+
+
+def set_output_base(base_dir: str) -> None:
+    """设置 per-agent 输出根目录。由 agent_manager.init_agent() 调用。"""
+    global _output_base
+    _output_base = base_dir
 
 
 def set_tts_player(player, provider):
@@ -71,9 +87,11 @@ def tts_speak_to_file(text: str, filename: str = "output.mp3") -> str:
         return "文本为空。"
 
     try:
-        # If filename is relative, save to temp dir
+        # If filename is relative, save to output dir
         if not os.path.isabs(filename):
-            filename = os.path.join(tempfile.gettempdir(), filename)
+            output_dir = _get_output_dir()
+            os.makedirs(output_dir, exist_ok=True)
+            filename = os.path.join(output_dir, filename)
 
         _tts_provider.speak_to_file(text[:10000], filename)
         return f"音频已保存: {filename}"

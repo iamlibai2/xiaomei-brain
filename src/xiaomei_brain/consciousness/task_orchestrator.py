@@ -28,6 +28,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# ── Per-agent intent 日志目录 ────────────────────────────────
+_log_agent_id: str | None = None
+
+
+def set_log_agent(agent_id: str) -> None:
+    """设置当前 agent ID，intent 日志写入 {agent_id}/logs/intent/。"""
+    global _log_agent_id
+    _log_agent_id = agent_id
+
+
+def _get_intent_log_dir() -> str:
+    if _log_agent_id:
+        return f"~/.xiaomei-brain/{_log_agent_id}/logs/intent"
+    return "~/.xiaomei-brain/global/logs/intent"
+
 
 class TaskOrchestrator:
     """任务 orchestration：意图分析、任务创建/路由、确认、chat 执行。"""
@@ -766,7 +781,7 @@ class TaskOrchestrator:
     def _log_intent_context(self, intent_result: Any, intent_context: str, user_input: str = "") -> None:
         """调试：输出 intent_context 到 JSON 文件"""
         import json, os
-        log_dir = os.path.expanduser("~/.xiaomei-brain/logs/intent")
+        log_dir = os.path.expanduser(_get_intent_log_dir())
         os.makedirs(log_dir, exist_ok=True)
         timestamp = time.strftime("%Y%m%d_%H%M%S")
 

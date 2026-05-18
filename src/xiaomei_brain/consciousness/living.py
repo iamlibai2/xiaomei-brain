@@ -243,12 +243,9 @@ class Living:
     # ── Prompt ──────────────────────────────────────────────────────
 
     def _print_prompt(self) -> None:
-        """print 输入提示符"""
+        """print 输入提示符（纯 ASCII，避免 WSL readline 中文宽度计算错误）"""
         if self._show_prompt:
-            import shutil
-            width = shutil.get_terminal_size().columns
-            print("\n" + "─" * width)
-            print("> ", end="", flush=True)
+            print("\n> ", end="", flush=True)
 
     # ── Message wait ────────────────────────────────────────────────
 

@@ -243,7 +243,7 @@ def persist_lesson(lesson: TaskLesson, agent_id: str) -> str | None:
         写入的文件路径，失败返回 None
     """
     try:
-        base = Path.home() / ".xiaomei-brain" / "agents" / agent_id / "metacognition" / "lessons"
+        base = Path.home() / ".xiaomei-brain" / agent_id / "metacognition" / "lessons"
         base.mkdir(parents=True, exist_ok=True)
 
         date_str = datetime.now().strftime("%Y-%m-%d")

@@ -7,18 +7,31 @@ import os
 from ..base import Tool, tool
 
 # 默认输出目录（LLM 写文件时如果给相对路径，自动拼接到此目录）
-# 可通过环境变量 XIAOMEI_OUTPUT_DIR 覆盖
-DEFAULT_OUTPUT_DIR = os.environ.get(
-    "XIAOMEI_OUTPUT_DIR",
-    os.path.expanduser("~/.xiaomei-brain/workspace"),
-)
+# 可通过 set_output_base() 按 agent 隔离
+_output_base: str | None = None
+
+
+def _get_output_dir() -> str:
+    """获取输出根目录：agent workspace 优先，否则全局 fallback。"""
+    if _output_base:
+        return os.path.join(_output_base, "workspace")
+    return os.environ.get(
+        "XIAOMEI_OUTPUT_DIR",
+        os.path.expanduser("~/.xiaomei-brain/global/workspace"),
+    )
+
+
+def set_output_base(base_dir: str) -> None:
+    """设置 per-agent 输出根目录。由 agent_manager.init_agent() 调用。"""
+    global _output_base
+    _output_base = base_dir
 
 
 def _read_file_content(path: str) -> str | None:
     """Read file content. Returns None if not found."""
     try:
         if not os.path.isabs(path):
-            full_path = os.path.join(DEFAULT_OUTPUT_DIR, path)
+            full_path = os.path.join(_get_output_dir(), path)
         else:
             full_path = path
         with open(full_path, "r", encoding="utf-8") as f:
@@ -30,7 +43,7 @@ def _read_file_content(path: str) -> str | None:
 @tool(name="read_file",
       description="Read the contents of a file. "
       "Use a RELATIVE path for files in the workspace directory. "
-      "Example: read_file('hello.py') reads ~/.xiaomei-brain/workspace/hello.py")
+      "Example: read_file('hello.py') reads ~/.xiaomei-brain/global/workspace/hello.py")
 def read_file(path: str) -> str:
     """Read a file and return its contents. Relative paths resolved to workspace dir."""
     content = _read_file_content(path)
@@ -52,7 +65,7 @@ def write_file(path: str, content: str) -> str:
     try:
         # 相对路径 → 拼接到默认输出目录
         if not os.path.isabs(path):
-            full_path = os.path.join(DEFAULT_OUTPUT_DIR, path)
+            full_path = os.path.join(_get_output_dir(), path)
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
         else:
             full_path = path
@@ -86,7 +99,7 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
 
     try:
         if not os.path.isabs(path):
-            full_path = os.path.join(DEFAULT_OUTPUT_DIR, path)
+            full_path = os.path.join(_get_output_dir(), path)
         else:
             full_path = path
 

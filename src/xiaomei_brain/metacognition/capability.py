@@ -39,7 +39,7 @@ class CapabilityRecord:
 class CapabilityTracker:
     """能力校准器。
 
-    持久化到 ~/.xiaomei-brain/agents/{agent_id}/metacognition/capabilities.json
+    持久化到 ~/.xiaomei-brain/{agent_id}/metacognition/capabilities.json
     """
 
     # 工具名 → domain 映射
@@ -227,7 +227,7 @@ class CapabilityTracker:
     # ── Persistence ────────────────────────────────────────────────
 
     def _data_dir(self) -> Path:
-        return Path.home() / ".xiaomei-brain" / "agents" / self._agent_id / "metacognition"
+        return Path.home() / ".xiaomei-brain" / self._agent_id / "metacognition"
 
     def _data_path(self) -> Path:
         return self._data_dir() / "capabilities.json"

@@ -12,6 +12,23 @@ logger = logging.getLogger(__name__)
 # Global image provider instance (set by integration code)
 _image_provider = None
 
+# 默认输出目录（LLM 生成图片时如果给相对路径，自动拼接到此目录）
+# 可通过 set_output_base() 按 agent 隔离
+_output_base: str | None = None
+
+
+def _get_output_dir() -> str:
+    """获取图片输出根目录：agent workspace 优先，否则全局 fallback。"""
+    if _output_base:
+        return os.path.join(_output_base, "images")
+    return os.path.expanduser("~/.xiaomei-brain/global/images")
+
+
+def set_output_base(base_dir: str) -> None:
+    """设置 per-agent 输出根目录。由 agent_manager.init_agent() 调用。"""
+    global _output_base
+    _output_base = base_dir
+
 
 def set_image_provider(provider) -> None:
     """Set the global image provider instance."""
@@ -56,7 +73,7 @@ def image_generate(
     if n < 1:
         n = 1
 
-    output_dir = os.path.expanduser("~/.xiaomei-brain/images")
+    output_dir = _get_output_dir()
     os.makedirs(output_dir, exist_ok=True)
 
     try:

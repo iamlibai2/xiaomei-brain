@@ -5,7 +5,7 @@
 - cron: 循环调度，如 "每周一早9点检查金价"、"每小时检查一次"
 - round: 轮次触发，如 "每3轮对话"（对话完毕后触发）
 
-Storage: ~/.xiaomei-brain/agents/{agent_id}/schedule/crons.json
+Storage: ~/.xiaomei-brain/{agent_id}/schedule/crons.json
 """
 
 from __future__ import annotations
@@ -194,7 +194,7 @@ class CronScheduler:
     def __init__(self, agent_id: str, base_dir: str | Path | None = None):
         self._agent_id = agent_id
         if base_dir is None:
-            base_dir = Path.home() / ".xiaomei-brain" / "agents" / agent_id
+            base_dir = Path.home() / ".xiaomei-brain" / agent_id
         self._base_dir = Path(base_dir)
         self._schedule_dir = self._base_dir / "schedule"
         self._schedule_dir.mkdir(parents=True, exist_ok=True)

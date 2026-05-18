@@ -1187,7 +1187,7 @@ class PACERunner:
         from pathlib import Path
 
         lessons_dir = (
-            Path.home() / ".xiaomei-brain" / "agents"
+            Path.home() / ".xiaomei-brain"
             / self._agent_id() / "metacognition" / "lessons"
         )
         if not lessons_dir.exists():

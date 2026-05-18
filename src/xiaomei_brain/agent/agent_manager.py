@@ -197,7 +197,7 @@ class AgentManager:
         return os.path.join(self.base_dir, "config.json")
 
     def _agent_dir(self, agent_id: str) -> str:
-        return os.path.join(self.base_dir, "agents", agent_id)
+        return os.path.join(self.base_dir, agent_id)
 
     def _self_dir(self, agent_id: str) -> str:
         """Consciousness 层根目录：talent.md + identity.md + 日志"""
@@ -516,6 +516,10 @@ class AgentManager:
         from xiaomei_brain.memory.procedure import ProcedureMemory
         agent._procedure_memory = ProcedureMemory(db_path, llm_client=llm)
 
+        # Essence（底色存储：不可变身份片段，所有 agent 统一）
+        from xiaomei_brain.consciousness.essence import Essence
+        agent._essence = Essence(db_path)
+
         # MemoryExtractor (需要 dag + longterm_memory)
         agent.memory_extractor = MemoryExtractor(
             llm_client=llm,
@@ -547,6 +551,17 @@ class AgentManager:
             context_assembler=None,  # ConsciousLiving 会注入
             agent_instance=agent,
         )
+
+        # ── Per-agent 输出目录隔离 ────────────────────────────────────────
+        agent_base_dir = self._agent_dir(agent.id)
+        from xiaomei_brain.tools.builtin import file_ops
+        file_ops.set_output_base(agent_base_dir)
+        from xiaomei_brain.tools.builtin import image as image_mod
+        image_mod.set_output_base(agent_base_dir)
+        from xiaomei_brain.tools.builtin import music as music_mod
+        music_mod.set_output_base(agent_base_dir)
+        from xiaomei_brain.tools.builtin import tts as tts_mod
+        tts_mod.set_output_base(agent_base_dir)
 
         # ── 赋值 ─────────────────────────────────────────────────────────
         agent.llm = llm

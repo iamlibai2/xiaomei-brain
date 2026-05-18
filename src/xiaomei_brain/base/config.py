@@ -190,7 +190,7 @@ class Config:
         if not self.memory_dir:
             self.memory_dir = os.environ.get(
                 "XIAOMEI_MEMORY_DIR",
-                os.path.expanduser("~/.xiaomei-brain/agents/default/memory"),
+                os.path.expanduser("~/.xiaomei-brain/default/memory"),
             )
 
     def _validate(self) -> None:

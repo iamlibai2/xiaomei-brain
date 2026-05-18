@@ -96,20 +96,12 @@ def cmd_show_identity(living: ConsciousLiving, args: str = "") -> None:
     print("       意识全景", flush=True)
     print("=" * 50, flush=True)
 
-    print("\n【L0: 先天身份】（不可变）", flush=True)
+    print("\n【L0: 先天身份】（不可变，见 Essence 底色）", flush=True)
     print(f"  名字: {si.being.name}", flush=True)
     print(f"  诞生: {si.being.birth_date}", flush=True)
     print(f"  基础性格: {si.being.personality}", flush=True)
 
-    print("\n【L1: 基础特质】（极难变）", flush=True)
-    for trait in si.being.traits:
-        print(f"  - {trait}", flush=True)
-
-    print("\n【L2: 价值观】（缓慢变化）", flush=True)
-    for value in si.being.values:
-        print(f"  - {value}", flush=True)
-
-    print("\n【L3: 社会身份】（动态变化）", flush=True)
+    print("\n【L2: 社会身份】（动态变化）", flush=True)
     print(f"  关系状态: {si.being.relationship_status}", flush=True)
     print(f"  关系深度: {si.being.relationship_depth:.2f}", flush=True)
     print(f"  用户信任: {si.being.trust_level:.2f}", flush=True)
@@ -393,7 +385,7 @@ def cmd_export(living: ConsciousLiving, session_id: str | None = None) -> None:
 
     import datetime as _dt
     ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_dir = os.path.expanduser("~/.xiaomei-brain/exports")
+    out_dir = os.path.expanduser("~/.xiaomei-brain/global/exports")
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, f"session_{sid}_{ts}.md")
     with open(out_path, "w", encoding="utf-8") as f:

@@ -683,7 +683,7 @@ class ActionExecutor:
             return None
 
         agent_id = getattr(living.agent, "id", "") if hasattr(living, "agent") else ""
-        knowledge_dir = Path.home() / ".xiaomei-brain" / "agents" / agent_id / "knowledge"
+        knowledge_dir = Path.home() / ".xiaomei-brain" / agent_id / "knowledge"
         knowledge_dir.mkdir(parents=True, exist_ok=True)
 
         # 从 Purpose 获取当前目标
@@ -784,7 +784,7 @@ class ActionExecutor:
 
         living = self.dispatcher._conscious_living
         agent_id = getattr(living.agent, "id", "") if living and hasattr(living, "agent") else ""
-        knowledge_dir = Path.home() / ".xiaomei-brain" / "agents" / agent_id / "knowledge"
+        knowledge_dir = Path.home() / ".xiaomei-brain" / agent_id / "knowledge"
         knowledge_dir.mkdir(parents=True, exist_ok=True)
 
         filename = topic.replace("/", "_").replace(" ", "_")

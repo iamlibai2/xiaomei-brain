@@ -62,7 +62,7 @@ src/xiaomei_brain/
 ## 多 Agent 架构
 
 - `AgentManager` + `AgentInstance` — 每个 agent 独立身份、记忆、会话
-- `~/.xiaomei-brain/agents/{agent_id}/talent.md` — 系统提示词（编辑即生效）
+- `~/.xiaomei-brain/{agent_id}/talent.md` — 系统提示词（编辑即生效）
 - `build_agent()` — lazy 加载，工具已注册，调用方不要重复注册
 
 ## 记忆系统设计要点

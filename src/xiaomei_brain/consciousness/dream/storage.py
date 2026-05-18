@@ -1,6 +1,6 @@
 """DreamStorage: 梦境报告存储。
 
-存储路径：~/.xiaomei-brain/agents/{agent_id}/dream/
+存储路径：~/.xiaomei-brain/{agent_id}/dream/
 每天一个 JSON 文件。
 """
 
@@ -22,7 +22,6 @@ class DreamStorage:
     def __init__(self, base_dir: str, agent_id: str = "") -> None:
         self.base_dir = os.path.join(
             os.path.expanduser(base_dir),
-            "agents",
             agent_id,
             "dream",
         )

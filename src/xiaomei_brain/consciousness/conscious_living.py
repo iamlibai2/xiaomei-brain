@@ -186,7 +186,7 @@ class ConsciousLiving(Living):
         db_path = getattr(self.agent, "db_path", None)
         if db_path is None:
             db_path = os.path.expanduser(
-                f"~/.xiaomei-brain/agents/{self._agent_id}/memory/brain.db"
+                f"~/.xiaomei-brain/{self._agent_id}/memory/brain.db"
             )
         from ..memory.experience_stream import ExperienceStream
         exp_stream = ExperienceStream(db_path)
@@ -199,6 +199,17 @@ class ConsciousLiving(Living):
         agent_core = self.agent._get_agent()
         agent_core.exp_stream = exp_stream
         logger.info("[ConsciousLiving] 经验流已创建并注入")
+
+        # ── 底色（Essence）—— 由 agent_manager.init_agent() 创建 ──
+        essence = getattr(self.agent, '_essence', None)
+        if essence is not None:
+            self.consciousness.essence = essence
+            agent_core.essence = essence
+            logger.info("[ConsciousLiving] Essence 已关联 (%d 条底色)", essence.count())
+            if self._load_consciousness:
+                self.consciousness.self_image._essence = essence
+        else:
+            logger.warning("[ConsciousLiving] Essence 未找到，底色功能禁用")
 
         # DreamEngine（梦境总控）- 在 consciousness 创建之后
         from .dream import DreamEngine
@@ -230,7 +241,7 @@ class ConsciousLiving(Living):
         # 初始化过程记忆（ProcedureMemory — LLM学习 + 关键词触发）
         db_path = getattr(self.agent, "db_path", None)
         if db_path is None:
-            db_path = os.path.expanduser(f"~/.xiaomei-brain/agents/{self._agent_id}/memory/brain.db")
+            db_path = os.path.expanduser(f"~/.xiaomei-brain/{self._agent_id}/memory/brain.db")
         self.consciousness.init_procedure_memory(db_path)
 
         # ActionDispatcher 初始化（接入外部引用）
@@ -335,10 +346,6 @@ class ConsciousLiving(Living):
             logger.info("      identity      : %s", identity_name)
             logger.info("      birth_date    : %s", si.being.birth_date)
             logger.info("      personality   : %s", si.being.personality)
-            traits = ",".join(si.being.traits)
-            logger.info("      traits        : %s", traits if traits else "未设置")
-            values = ",".join(si.being.values)
-            logger.info("      values        : %s", values if values else "未设置")
 
         # Drive 状态
         if self.drive:
@@ -518,7 +525,7 @@ class ConsciousLiving(Living):
 
         # 4. 从 talent.md 加载身份字段（L0-L3 + 追求/热爱/底线/自我认知）
         import os
-        talent_path = os.path.expanduser(f"~/.xiaomei-brain/agents/{self._agent_id}/talent.md")
+        talent_path = os.path.expanduser(f"~/.xiaomei-brain/{self._agent_id}/talent.md")
         with open(talent_path, "r", encoding="utf-8") as f:
             self.consciousness.being.init_from_talent_md(f.read())
         logger.info("[ConsciousLiving] 从 talent.md 初始化身份")

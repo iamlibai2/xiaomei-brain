@@ -14,6 +14,22 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+# ── Per-agent LLM 日志目录 ──────────────────────────────────
+_log_agent_id: str | None = None
+
+
+def set_log_agent(agent_id: str) -> None:
+    """设置当前 agent ID，LLM 日志写入 {agent_id}/logs/llm/。"""
+    global _log_agent_id
+    _log_agent_id = agent_id
+
+
+def _get_llm_log_dir() -> str:
+    if _log_agent_id:
+        return f"~/.xiaomei-brain/{_log_agent_id}/logs/llm"
+    return "~/.xiaomei-brain/global/logs"
+
+
 # region 数据结构
 
 @dataclass
@@ -538,13 +554,13 @@ class LLMClient:
         """保存 LLM 请求/响应为 JSONL 格式日志。
 
         每条 LLM 调用追加到当天的 JSONL 文件：
-        ~/.xiaomei-brain/logs/YYYYMMDD.jsonl
+        {agent_id}/logs/llm/YYYYMMDD.jsonl（优先）或 global/logs/YYYYMMDD.jsonl（fallback）
         便于回放完整的工具调用链，全天检索方便。
         """
         import os as _os
         import datetime as _dt
 
-        _log_dir = _os.path.expanduser("~/.xiaomei-brain/logs")
+        _log_dir = _os.path.expanduser(_get_llm_log_dir())
         _os.makedirs(_log_dir, exist_ok=True)
 
         now = _dt.datetime.now()
