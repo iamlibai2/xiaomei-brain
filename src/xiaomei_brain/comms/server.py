@@ -12,6 +12,7 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from xiaomei_brain.comms.protocol import AgentMessage
+from xiaomei_brain.comms import _log_to_comms_log
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,7 @@ def _make_handler(inbox, agent_id: str, on_receive):
                     "[Comms] <- %s [%s]: %s",
                     msg.from_agent, msg.type.value, msg.content[:60],
                 )
+                _log_to_comms_log(msg.from_agent, msg.to_agent, msg.type.value, msg.content)
             else:
                 logger.debug("[Comms] <- %s 重复消息 %s", msg.from_agent, msg.msg_id)
 
