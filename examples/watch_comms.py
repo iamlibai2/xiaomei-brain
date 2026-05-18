@@ -2,7 +2,6 @@
 
 Usage:
     PYTHONPATH=src python3 examples/watch_comms.py
-    PYTHONPATH=src python3 examples/watch_comms.py --detail
 """
 
 import os
@@ -40,7 +39,7 @@ def _color_for(agent: str) -> str:
     return _agent_color_map[agent]
 
 
-def _format_line(ts: str, from_agent: str, to_agent: str, msg_type: str, content: str, detail: bool) -> str:
+def _format_line(ts: str, from_agent: str, to_agent: str, msg_type: str, content: str) -> str:
     """格式化单行日志。"""
     from_c = _color_for(from_agent)
     to_c = _color_for(to_agent)
@@ -52,12 +51,7 @@ def _format_line(ts: str, from_agent: str, to_agent: str, msg_type: str, content
     label = type_labels.get(msg_type, msg_type)
     type_tag = f"{COLOR_DIM}[{label}]{COLOR_RESET}"
 
-    # 内容截断
-    display = content
-    if not detail and len(display) > 80:
-        display = display[:77] + "..."
-
-    return f"{COLOR_DIM}{ts}{COLOR_RESET} {arrow} {type_tag} {display}"
+    return f"{COLOR_DIM}{ts}{COLOR_RESET} {arrow} {type_tag} {content}"
 
 
 def _print_header(agents: set[str]) -> None:
@@ -73,11 +67,6 @@ def _print_header(agents: set[str]) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description="群聊监控 — 全局通讯日志实时 viewer")
-    parser.add_argument(
-        "--detail", "-d",
-        action="store_true",
-        help="显示完整消息内容（不截断）",
-    )
     args = parser.parse_args()
 
     agents_seen: set[str] = set()
@@ -115,7 +104,7 @@ def main():
                         # 有新消息时刷新图例
                         _print_header(agents_seen)
                         new_lines = 1
-                    print(_format_line(ts, from_agent, to_agent, msg_type, content, args.detail))
+                    print(_format_line(ts, from_agent, to_agent, msg_type, content))
 
                 pos = f.tell()
         except Exception as e:
