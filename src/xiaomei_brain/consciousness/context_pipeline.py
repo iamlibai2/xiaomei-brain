@@ -15,16 +15,6 @@ from xiaomei_brain.memory.conversation_db import estimate_tokens
 
 logger = logging.getLogger(__name__)
 
-# Agent 消息检测 & 强制通讯规则
-def _is_agent_message(user_input: str) -> bool:
-    return user_input.startswith("[Agent消息")
-
-_AGENT_MSG_RULE = (
-    "!!! 当前消息来自其他 AI agent。"
-    "你不能在对话中直接回复——对方看不到你的对话输出。"
-    "必须先调用 send_message 工具回复，再继续对话。"
-)
-
 
 def build_context(
     agent: Any,
@@ -141,10 +131,6 @@ def build_context(
             intent_context=intent_context,
         )
         system_content = base_context[0].get("content", "") if base_context else ""
-
-    # agent 间消息：在最顶部注入强制规则（替代行为的指令比附加行为更难遵循，必须前置）
-    if _is_agent_message(user_input) and system_content:
-        system_content = _AGENT_MSG_RULE + "\n\n" + system_content
 
     # 6. 过滤已压缩消息
     if agent.context_assembler and agent.context_assembler.dag:

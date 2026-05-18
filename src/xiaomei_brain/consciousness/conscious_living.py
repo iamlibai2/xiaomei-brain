@@ -580,7 +580,7 @@ class ConsciousLiving(Living):
                     agent_id=self._agent_id,
                     host=host,
                     port=port,
-                    on_receive=self._on_agent_message,
+                    on_receive=None,
                 )
                 self._directory.register(self._agent_id, f"{host}:{port}")
                 logger.info(
@@ -608,30 +608,19 @@ class ConsciousLiving(Living):
         except Exception:
             pass
 
-    def _on_agent_message(self, msg) -> None:
-        """收到其他 agent 发来的消息时回调（在 HTTP handler 线程中）。"""
-        content = (
-            f"[Agent消息 — 来自 {msg.from_agent}，"
-            f"请用 send_message(to=\"{msg.from_agent}\") 回复]\n\n"
-            f"{msg.content}"
-        )
-        self.put_message(content, source=f"agent:{msg.from_agent}")
-        # 标记已处理，防止 _check_inbox() 重复投递
-        self._inbox.mark_processed(msg.msg_id)
-
     def _check_inbox(self) -> None:
-        """检查收件箱中未处理的消息。"""
+        """检查收件箱：有未读消息时通知 LLM 使用 check_inbox 工具查看。"""
         count = self._inbox.count_unprocessed()
         if count == 0:
             return
-        unprocessed = self._inbox.get_unprocessed(limit=10)
-        for msg in unprocessed:
-            logger.info(
-                "[Comms/Inbox] 处理遗漏消息: %s -> %s [%s]",
-                msg.from_agent, self._agent_id, msg.type.value,
-            )
-            self._on_agent_message(msg)
-            self._inbox.mark_processed(msg.msg_id)
+        logger.info(
+            "[Comms/Inbox] 收件箱有 %d 条未读消息，通知 LLM", count,
+        )
+        self.put_message(
+            f"[系统通知] 收件箱有 {count} 条其他 agent 发来的未读消息。"
+            f"请用 check_inbox 工具查看并酌情回复。",
+            source="system",
+        )
 
     # ── Hook: 状态转换 ───────────────────────────────────────────
 

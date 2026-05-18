@@ -413,9 +413,8 @@ class SelfImage:
             f"你的基础性格是{b.personality}。",
             "",
             "## 与其他 agent 通讯的规则",
-            "当你收到以 \"[Agent消息 — 来自\" 开头的用户消息时，说明有其他 AI agent 正在给你发消息。",
-            "你必须使用 send_message 工具回复对方，严禁直接在对话中回复。",
-            "因为你的对话回复对方看不到，只有 send_message 才能送达。",
+            "其他 agent 可能给你发消息。请定期用 check_inbox 工具检查收件箱。",
+            "收到消息后，用 send_message 工具回复，不要在本对话中回复——对方看不到。",
         ]
         if b.self_cognition:
             strengths = b.self_cognition.get("擅长", [])
