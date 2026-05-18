@@ -39,18 +39,33 @@ def color_for(agent: str) -> str:
     return AGENT_COLORS[agent]
 
 
-def _wrap(content: str, width: int | None = None, indent: int = 2) -> str:
-    """按终端宽度自动换行，首行缩进。"""
-    if width is None:
-        try:
-            width = shutil.get_terminal_size().columns
-        except Exception:
-            width = 80
-    width = max(width - 4, 40)
-    wrapped = textwrap.fill(content, width=width)
-    # 每行加缩进
+def _wrap(content: str, indent: int = 2) -> str:
+    """按终端宽度自动换行，保留段落结构。"""
+    try:
+        term_w = shutil.get_terminal_size().columns
+    except Exception:
+        term_w = 80
+    width = max(term_w - 4 - indent, 40)
     prefix = " " * indent
-    return "\n".join(prefix + line for line in wrapped.split("\n"))
+
+    # 按段落拆分，每段独立 wrap
+    paragraphs = content.split("\n\n")
+    wrapped_lines: list[str] = []
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
+            continue
+        if set(para) == {"-"} or set(para) == {"─"} or set(para) == {"—"}:
+            # 分隔线：保持原样但缩进
+            wrapped_lines.append(prefix + para[:width])
+            continue
+        # 单行 wrap
+        filled = textwrap.fill(para, width=width)
+        for line in filled.split("\n"):
+            wrapped_lines.append(prefix + line)
+        wrapped_lines.append("")  # 段落间空行
+
+    return "\n".join(wrapped_lines).rstrip()
 
 
 class MessageRow(Static):
@@ -71,11 +86,11 @@ class MessageRow(Static):
         )
         body = _wrap(content)
         try:
-            w = shutil.get_terminal_size().columns - 2
+            w = shutil.get_terminal_size().columns - 4
         except Exception:
-            w = 78
-        sep = "[dim]" + "─" * max(w, 20) + "[/dim]"
-        super().__init__(f"\n{header}\n\n{body}\n{sep}")
+            w = 76
+        sep = "[dim]· " + "─" * max(w - 2, 18) + "[/dim]"
+        super().__init__(f"\n{header}\n\n{body}\n\n{sep}")
 
 
 class MessageList(VerticalScroll):
