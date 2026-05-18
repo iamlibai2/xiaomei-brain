@@ -97,6 +97,7 @@ def main():
                     if len(parts) < 5:
                         continue
                     ts, from_agent, to_agent, msg_type, content = parts
+                    content = content.replace("\\\\", "\\").replace("\\n", "\n")
                     agents_seen.add(from_agent)
                     agents_seen.add(to_agent)
 

@@ -20,8 +20,8 @@ except Exception:
 def _log_to_comms_log(from_agent: str, to_agent: str, msg_type: str, content: str) -> None:
     """写入全局通讯日志（tail -f 可读）。"""
     ts = time.strftime("%H:%M:%S")
-    # 单行内的换行用空格代替，保持一行一条消息
-    clean = content.replace("\n", " ").replace("|", " ")
+    # 保留换行结构，用 \\n 编码（日志一行一条消息）
+    clean = content.replace("|", " ").replace("\\", "\\\\").replace("\n", "\\n")
     line = f"{ts}|{from_agent}|{to_agent}|{msg_type}|{clean}\n"
     try:
         with open(_COMMS_LOG_PATH, "a", encoding="utf-8") as f:

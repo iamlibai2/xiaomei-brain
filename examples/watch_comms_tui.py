@@ -157,6 +157,7 @@ class CommsTUI(App):
                     if len(parts) < 5:
                         continue
                     ts, from_agent, to_agent, msg_type, content = parts
+                    content = content.replace("\\\\", "\\").replace("\\n", "\n")
                     self._agents.add(from_agent)
                     self._agents.add(to_agent)
                     new_count += 1
