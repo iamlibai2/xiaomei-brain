@@ -232,6 +232,12 @@ def main():
         action="store_true",
         help="使用旧 context_assembler 格式的上下文注入（找回旧版小美）"
     )
+    parser.add_argument(
+        "--port", "-p",
+        type=int,
+        default=0,
+        help="通讯端口（0=自动分配, -1=禁用, >0=指定端口）"
+    )
     args = parser.parse_args()
 
     agent_id = args.name
@@ -282,7 +288,26 @@ def main():
         print("       \033[33m[Legacy 上下文模式]\033[0m")
     print("=" * 50 + "\n")
 
-    living = ConsciousLiving(agent, load_consciousness=not args.no_consciousness)
+    # 通讯端口：CLI > config.json > 自动分配
+    comms_port = args.port  # 0=自动, -1=禁用, >0=指定
+    if comms_port == 0:
+        # 从 config.json 读取 per-agent 端口
+        config_json = os.path.expanduser("~/.xiaomei-brain/config.json")
+        if os.path.exists(config_json):
+            try:
+                import json
+                with open(config_json) as f:
+                    data = json.load(f)
+                agents_cfg = data.get("xiaomei_brain", {}).get("agents", {})
+                agent_cfg = agents_cfg.get(agent_id, {})
+                comms_port = agent_cfg.get("comms_port", 0)
+            except Exception:
+                pass
+
+    from xiaomei_brain.consciousness.config import LivingConfig
+    cfg = LivingConfig()
+    cfg.living.comms_port = comms_port
+    living = ConsciousLiving(agent, load_consciousness=not args.no_consciousness, config=cfg)
     living.assemble_context = True
 
     if args.legacy:

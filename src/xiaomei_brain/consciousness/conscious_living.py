@@ -259,6 +259,9 @@ class ConsciousLiving(Living):
         # 记录初始化摘要
         self._log_initialization()
 
+        # Agent 间通讯
+        self._setup_comms(db_path)
+
         # 注册周期任务
         self.register_periodic("heartbeat", self._config.living.tick_interval, self._heartbeat)
         self.register_periodic("surge", self._config.living.surge_interval, self._surge)
@@ -540,6 +543,97 @@ class ConsciousLiving(Living):
         self.consciousness._perception_config = PerceptionConfig.load(self._agent_id)
         logger.info("[ConsciousLiving] 从 PerceptionConfig 初始化完成: %d 条规则", len(self.consciousness._perception_config.rules))
 
+    # ── Agent 间通讯 ───────────────────────────────────────────────
+
+    def _setup_comms(self, db_path: str) -> None:
+        """初始化 agent 间通讯：收件箱 + HTTP 服务器 + 目录注册。"""
+        from xiaomei_brain.comms.inbox import AgentInbox
+        from xiaomei_brain.comms.directory import AgentDirectory
+        from xiaomei_brain.comms.server import start_comms_server_in_thread
+
+        # 收件箱（brain.db）
+        self._inbox = AgentInbox(db_path)
+
+        # 通讯录
+        self._directory = getattr(self.agent, '_directory', None) or AgentDirectory()
+
+        wanted = self._config.living.comms_port
+        host = "0.0.0.0"
+
+        # 确定端口：>0 用指定端口，0 自动分配
+        if wanted > 0:
+            ports_to_try = [wanted]
+        elif wanted == 0:
+            ports_to_try = list(range(18765, 18755, -1))  # 从 18765 递减
+        else:
+            # -1 = 禁用
+            logger.info("[ConsciousLiving] 通讯服务已禁用 (comms_port=%d)", wanted)
+            self._comms_thread = None
+            self._comms_server = None
+            return
+
+        started = False
+        for port in ports_to_try:
+            try:
+                self._comms_thread, self._comms_server = start_comms_server_in_thread(
+                    inbox=self._inbox,
+                    agent_id=self._agent_id,
+                    host=host,
+                    port=port,
+                    on_receive=self._on_agent_message,
+                )
+                self._directory.register(self._agent_id, f"{host}:{port}")
+                logger.info(
+                    "[ConsciousLiving] 通讯服务已启动: %s:%d (agent=%s)",
+                    host, port, self._agent_id,
+                )
+                started = True
+                break
+            except OSError:
+                logger.debug("[ConsciousLiving] 端口 %d 被占用，尝试下一个", port)
+                continue
+
+        if not started:
+            logger.warning(
+                "[ConsciousLiving] 通讯服务启动失败（所有可用端口被占用）。"
+                "Agent 间通讯不可用。"
+            )
+            self._comms_thread = None
+            self._comms_server = None
+
+        # 更新 send_message 工具的 inbox 引用
+        try:
+            from xiaomei_brain.tools.builtin.send_message import set_context
+            set_context(self._agent_id, self._directory, self._inbox)
+        except Exception:
+            pass
+
+    def _on_agent_message(self, msg) -> None:
+        """收到其他 agent 发来的消息时回调（在 HTTP handler 线程中）。"""
+        # 明确要求 LLM 用 send_message 工具回复
+        content = (
+            f"[Agent消息 — 来自 {msg.from_agent}。"
+            f"回复必须使用 send_message(to=\"{msg.from_agent}\", ...) 工具，不要直接对话回复]\n\n"
+            f"{msg.content}"
+        )
+        self.put_message(content, source=f"agent:{msg.from_agent}")
+        # 标记已处理，防止 _check_inbox() 重复投递
+        self._inbox.mark_processed(msg.msg_id)
+
+    def _check_inbox(self) -> None:
+        """检查收件箱中未处理的消息。"""
+        count = self._inbox.count_unprocessed()
+        if count == 0:
+            return
+        unprocessed = self._inbox.get_unprocessed(limit=10)
+        for msg in unprocessed:
+            logger.info(
+                "[Comms/Inbox] 处理遗漏消息: %s -> %s [%s]",
+                msg.from_agent, self._agent_id, msg.type.value,
+            )
+            self._on_agent_message(msg)
+            self._inbox.mark_processed(msg.msg_id)
+
     # ── Hook: 状态转换 ───────────────────────────────────────────
 
     def _on_transition(self, old: LivingState, new_state: LivingState) -> None:
@@ -573,6 +667,7 @@ class ConsciousLiving(Living):
 
     def _surge(self, state: LivingState) -> None:
         """每分钟调用。ActionDispatcher 统一检查主动行为。"""
+        self._check_inbox()
         if self._load_consciousness:
             si = self.consciousness.get_self_image()
             self._dispatcher.tick(si)
@@ -849,7 +944,16 @@ class ConsciousLiving(Living):
         self._transition(LivingState.AWAKE)
 
     def _on_stop(self) -> None:
-        """停止时保存 Drive 和 Purpose 状态。"""
+        """停止时保存状态并关闭通讯服务。"""
+        # 关闭 HTTP 消息服务器
+        server = getattr(self, '_comms_server', None)
+        if server is not None:
+            try:
+                server.shutdown()
+                logger.info("[ConsciousLiving] 通讯服务已关闭")
+            except Exception as e:
+                logger.warning("[ConsciousLiving] 关闭通讯服务失败: %s", e)
+
         if self.drive:
             self.drive.save()
         if self.purpose:

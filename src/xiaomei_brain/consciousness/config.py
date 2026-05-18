@@ -42,6 +42,7 @@ class LivingParams:
     idle_threshold: float = 10800.0    # 长空闲阈值（秒）→ SLEEPING
     dream_interval: float = 3000.0      # 梦境间隔（秒）
     max_context_tokens: int = 50000    # 上下文最大 token 数
+    comms_port: int = 0               # 0=自动分配, -1=禁用, >0=指定端口
 
 
 # ── 欲望行为参数 ────────────────────────────────────────────────────
