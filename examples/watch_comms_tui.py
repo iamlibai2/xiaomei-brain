@@ -5,6 +5,8 @@ Usage:
 """
 
 import os
+import shutil
+import textwrap
 
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
@@ -37,8 +39,20 @@ def color_for(agent: str) -> str:
     return AGENT_COLORS[agent]
 
 
+def _wrap(content: str, width: int | None = None) -> str:
+    """按终端宽度自动换行。"""
+    if width is None:
+        try:
+            width = shutil.get_terminal_size().columns
+        except Exception:
+            width = 80
+    # 留出左右边距
+    width = max(width - 4, 40)
+    return textwrap.fill(content, width=width)
+
+
 class MessageRow(Static):
-    """单条消息行。"""
+    """单条消息。"""
 
     def __init__(self, ts: str, from_agent: str, to_agent: str, msg_type: str, content: str):
         h, m, s = ts.split(":")
@@ -46,7 +60,6 @@ class MessageRow(Static):
         from_color = color_for(from_agent)
         to_color = color_for(to_agent)
 
-        # Rich markup for colored agent names
         header = (
             f"[dim]{h}:{m}:{s}[/dim]  "
             f"[bold {from_color}]{from_agent}[/bold {from_color}]"
@@ -54,8 +67,8 @@ class MessageRow(Static):
             f"[bold {to_color}]{to_agent}[/bold {to_color}]"
             f"  [dim][{label}][/dim]"
         )
-        super().__init__(f"{header}\n{content}")
-        self._ts = ts
+        body = _wrap(content)
+        super().__init__(f"{header}\n{body}")
 
 
 class MessageList(VerticalScroll):
@@ -72,8 +85,8 @@ class CommsTUI(App):
     }
 
     MessageRow {
-        padding: 1 0 0 0;
-        margin: 0;
+        padding: 1 0;
+        margin: 0 0 1 0;
     }
 
     #status {
