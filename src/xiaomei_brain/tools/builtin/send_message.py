@@ -55,3 +55,30 @@ def send_message(to: str, content: str, type: str = "chat") -> str:
 
 
 send_message_tool: Tool = send_message
+
+
+@tool(
+    name="check_inbox",
+    description="检查收件箱中是否有其他 agent 发来的未读消息。返回消息列表。你应该对需要回复的每条消息使用 send_message 工具回复。",
+)
+def check_inbox() -> str:
+    """检查收件箱（主动查看其他 agent 发来的消息）。"""
+    if not _inbox:
+        return "[错误] check_inbox 工具未初始化（缺少 inbox）"
+
+    unprocessed = _inbox.get_unprocessed(limit=10)
+    if not unprocessed:
+        return "收件箱为空，没有未读消息。"
+
+    lines = [f"收件箱中有 {len(unprocessed)} 条未读消息：\n"]
+    for msg in unprocessed:
+        lines.append("---")
+        lines.append(f"来自: {msg.from_agent}")
+        lines.append(f"类型: {msg.type.value}")
+        lines.append(f"内容: {msg.content}")
+        _inbox.mark_processed(msg.msg_id)
+
+    return "\n".join(lines)
+
+
+check_inbox_tool: Tool = check_inbox

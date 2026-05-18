@@ -408,7 +408,7 @@ class AgentManager:
 
         from xiaomei_brain.tools.builtin import (
             shell_tool, read_file_tool, write_file_tool, edit_file_tool,
-            send_message_tool, set_send_message_context,
+            send_message_tool, check_inbox_tool, set_send_message_context,
             tts_tools, music_tools, image_tools, websearch_tools, webget_tools,
         )
         tools.register(shell_tool)
@@ -416,11 +416,12 @@ class AgentManager:
         tools.register(write_file_tool)
         tools.register(edit_file_tool)
 
-        # Agent 间通讯 — send_message 工具
+        # Agent 间通讯 — send_message + check_inbox 工具
         from xiaomei_brain.comms.directory import AgentDirectory
         agent._directory = AgentDirectory()
         set_send_message_context(agent.id, agent._directory)
         tools.register(send_message_tool)
+        tools.register(check_inbox_tool)
 
         if global_config.tts_enabled:
             tts_api_key = global_config.tts_api_key or api_key
