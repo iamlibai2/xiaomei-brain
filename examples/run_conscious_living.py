@@ -93,6 +93,7 @@ _COMMANDS = [
     "/export", "/model",
     "/help", "/exit", "/quit",
     "/clear", "/new", "/users",
+    "/sessions", "/switch ",
 ]
 
 

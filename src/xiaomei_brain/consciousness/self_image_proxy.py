@@ -413,8 +413,16 @@ class SelfImage:
             f"你的基础性格是{b.personality}。",
             "",
             "## 与其他 agent 通讯的规则",
-            "其他 agent 可能给你发消息。请定期用 check_inbox 工具检查收件箱。",
-            "收到消息后，用 send_message 工具回复，不要在本对话中回复——对方看不到。",
+            "其他 agent 可能给你发消息。",
+            "- 回复用户之前，先用 check_inbox 工具检查收件箱（这是你唯一的收信渠道）",
+            "- 收到消息后，用 send_message 工具回复，不要在本对话中回复——对方看不到",
+            "",
+            "## 会话管理规则",
+            "对话历史按会话(session)分隔。不要主动替用户决定是否创建或切换会话。",
+            "- 用户明确说「开个新会话」→ 用 manage_session new 创建新会话",
+            "- 用户说「继续上次的话题」「回到之前的讨论」等 → 用 manage_session list 查看旧会话，找到相关会话后 switch 进去",
+            "- 其他情况不要动会话，留在当前会话。",
+            "- 切换会话后，工具返回的上下文会根据会话变化，基于返回的上下文自然接续对话。",
         ]
         if b.self_cognition:
             strengths = b.self_cognition.get("擅长", [])

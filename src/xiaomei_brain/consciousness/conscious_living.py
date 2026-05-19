@@ -256,6 +256,9 @@ class ConsciousLiving(Living):
         # 注册 cron 工具（闹钟系统：schedule_alarm / list_alarms / cancel_alarm）
         self._register_cron_tools()
 
+        # 注册 session 管理工具（manage_session：list / switch / new）
+        self._register_session_tools()
+
         # 记录初始化摘要
         self._log_initialization()
 
@@ -293,6 +296,17 @@ class ConsciousLiving(Living):
             logger.info("[ConsciousLiving] cron 工具已注册")
         except Exception as e:
             logger.warning("[ConsciousLiving] cron 工具注册失败: %s", e)
+
+    def _register_session_tools(self) -> None:
+        """注册会话管理工具：manage_session（list / switch / new）。"""
+        try:
+            from ..tools.builtin.manage_session import set_context, manage_session_tool
+            set_context(self.agent, self)
+            if hasattr(self.agent, "tools") and self.agent.tools:
+                self.agent.tools.register(manage_session_tool)
+                logger.info("[ConsciousLiving] manage_session 工具已注册")
+        except Exception as e:
+            logger.warning("[ConsciousLiving] manage_session 工具注册失败: %s", e)
 
     def _check_round_alarms(self) -> None:
         """对话轮次完成后检查轮次闹钟。"""
@@ -609,18 +623,39 @@ class ConsciousLiving(Living):
             pass
 
     def _check_inbox(self) -> None:
-        """检查收件箱：有未读消息时通知 LLM 使用 check_inbox 工具查看。"""
+        """检查收件箱。
+
+        有未读消息时注入通知到对应 agent 的 comms-{agent_id} session。
+        LLM 在该 session 中独立处理，不影响用户主对话。
+        """
         count = self._inbox.count_unprocessed()
         if count == 0:
             return
-        logger.info(
-            "[Comms/Inbox] 收件箱有 %d 条未读消息，通知 LLM", count,
-        )
-        self.put_message(
-            f"[系统通知] 收件箱有 {count} 条其他 agent 发来的未读消息。"
-            f"请用 check_inbox 工具查看并酌情回复。",
-            source="system",
-        )
+
+        if self._chatting:
+            logger.info(
+                "[Comms/Inbox] 收件箱有 %d 条未读消息（聊天中，LLM 将在下轮主动查看）", count,
+            )
+            return
+
+        # 按发送 agent 分组，每个 agent 一个独立会话
+        unprocessed = self._inbox.get_unprocessed(limit=50)
+        by_agent: dict[str, list] = {}
+        for msg in unprocessed:
+            by_agent.setdefault(msg.from_agent, []).append(msg)
+
+        for agent_id, msgs in by_agent.items():
+            comms_session = f"comms-{agent_id}"
+            logger.info(
+                "[Comms/Inbox] %s: %d 条未读消息，注入 %s 会话",
+                agent_id, len(msgs), comms_session,
+            )
+            self.put_message(
+                f"[系统通知] 收件箱有 {len(msgs)} 条 {agent_id} 发来的未读消息。"
+                f"请用 check_inbox 工具查看并酌情回复。",
+                source="system",
+                session_id=comms_session,
+            )
 
     # ── Hook: 状态转换 ───────────────────────────────────────────
 
@@ -780,6 +815,13 @@ class ConsciousLiving(Living):
         如果意识系统未加载，跳过火焰更新（生命存在但无意识）。
         """
         self._last_active = time.time()
+
+        # 启动时自动创建新会话
+        new_sid = f"s_{int(time.time())}"
+        logger.info("[ConsciousLiving._on_wake] 创建新会话: %s → %s", self.session_id, new_sid)
+        self.session_id = new_sid
+        self.agent._get_agent().session_id = new_sid
+
         if self._load_consciousness:
             self.consciousness._last_l2_time = time.time()
             self.consciousness._last_l3_time = time.time()

@@ -419,6 +419,85 @@ def cmd_pace_stats(living: ConsciousLiving, args: str = "") -> None:
     living._print_prompt()
 
 
+def cmd_sessions(living: ConsciousLiving, args: str = "") -> None:
+    """列出所有对话会话"""
+    db = living.agent.conversation_db
+    if not db:
+        print("\n(ConversationDB 未配置)", flush=True)
+        living._print_prompt()
+        return
+
+    ids = db.get_session_ids()
+    if not ids:
+        print("\n(无会话记录)", flush=True)
+        living._print_prompt()
+        return
+
+    print(f"\n\033[36m会话列表 ({len(ids)}个):\033[0m", flush=True)
+    for sid in ids:
+        count = db.count(session_id=sid)
+        recent = db.get_recent(1, session_id=sid)
+        preview = ""
+        if recent:
+            content = recent[0].get("content", "") if isinstance(recent[0], dict) else ""
+            preview = content[:50].replace("\n", " ")
+        marker = " \033[32m← 当前\033[0m" if sid == living.session_id else ""
+        print(f"  {sid}  ({count}条消息){marker}", flush=True)
+        if preview:
+            print(f"    \033[90m{preview}...\033[0m", flush=True)
+    living._print_prompt()
+
+
+def cmd_switch(living: ConsciousLiving, args: str = "") -> None:
+    """切换到指定会话: /switch <session_id>"""
+    sid = args.strip()
+    if not sid:
+        print("\n用法: /switch <session_id>", flush=True)
+        living._print_prompt()
+        return
+
+    db = living.agent.conversation_db
+    if not db:
+        print("\n(ConversationDB 未配置)", flush=True)
+        living._print_prompt()
+        return
+
+    ids = db.get_session_ids()
+    if sid not in ids:
+        print(f"\n\033[31m会话 '{sid}' 不存在\033[0m", flush=True)
+        living._print_prompt()
+        return
+
+    # 切换
+    living.session_id = sid
+    agent = living.agent._get_agent()
+    agent.session_id = sid
+    agent.messages = []
+
+    count = db.count(session_id=sid)
+    print(f"\n\033[32m已切换到会话 {sid} ({count}条消息)\033[0m", flush=True)
+
+    # 显示最近消息
+    recent = db.get_recent(20, session_id=sid)
+    if recent:
+        print(f"\033[90m{'─' * 60}\033[0m", flush=True)
+        for m in reversed(recent):
+            role = m.get("role", "user")
+            content = m.get("content", "")
+            if role == "user":
+                prefix = "\033[33m用户\033[0m"
+            elif role == "assistant":
+                prefix = f"\033[36m{living.agent.name or living._agent_id}\033[0m"
+            elif role == "tool":
+                prefix = "\033[90m工具\033[0m"
+            else:
+                prefix = role
+            print(f"  {prefix}: {content}", flush=True)
+        print(f"\033[90m{'─' * 60}\033[0m", flush=True)
+
+    living._print_prompt()
+
+
 # ── 命令注册表 ──────────────────────────────────────────────────
 
 # 所有 CLI 命令，ConsciousLiving 用此表注册
@@ -436,4 +515,6 @@ COMMAND_REGISTRY: dict[str, tuple] = {
     "tool":      (cmd_tool_expand,    True),
     "export":    (cmd_export,         True),
     "pace-stats": (cmd_pace_stats,    False),
+    "sessions":  (cmd_sessions,       False),
+    "switch":    (cmd_switch,         True),
 }
