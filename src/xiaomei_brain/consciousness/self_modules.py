@@ -39,8 +39,8 @@ class Being:
 
     # 基本身份
     name: str = ""
-    birth_date: str = "2026-04-17"
-    personality: str = "内向偏温和"
+    birth_date: str = ""
+    personality: str = ""
     learning_interests: list[str] = field(default_factory=list)
 
     # 自我认知（生长而来）
@@ -100,7 +100,7 @@ class Being:
 
         # 只映射 Being 自身的字段（活的部分）
         if "身份" in sections:
-            self.name = sections["身份"].strip()
+            self.name = self._extract_name(sections["身份"].strip())
         if "出生" in sections:
             self.birth_date = sections["出生"].strip()
         if "性格" in sections:
@@ -159,6 +159,28 @@ class Being:
             elif text:
                 items.append({"category": category, "content": text, "priority": priority})
         return items
+
+    @staticmethod
+    def _extract_name(text: str) -> str:
+        """从 # 身份 段提取名字。
+
+        优先级：
+        1. "你是XXX" 模式 → XXX
+        2. "我叫XXX" 模式 → XXX
+        3. 第一行（去掉标点）
+        4. 全文
+        """
+        import re
+        # 模式1: "你是XXX" — 取 是/叫 后的名字（到逗号/句号/换行为止）
+        m = re.search(r"[是你][是叫]\s*(\S+?)[，,。.\s\n]", text)
+        if m:
+            return m.group(1)
+        # 模式2: 第一行
+        first_line = text.split("\n")[0].strip()
+        if first_line:
+            # 去掉末尾标点
+            return re.sub(r"[，,。.！!？?]+$", "", first_line)
+        return text
 
     @staticmethod
     def _parse_markdown_sections(md_text: str) -> dict[str, str]:

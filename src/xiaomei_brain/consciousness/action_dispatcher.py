@@ -50,6 +50,7 @@ class ActionExecutor:
             "trigger_l3": self._do_trigger_l3,
             "tool": self._do_tool,
             "notify": self._do_notify,
+            "talk_to_agent": self._do_talk_to_agent,
         }
         handler = handlers.get(item.action_type.value)
         if not handler:
@@ -458,6 +459,88 @@ class ActionExecutor:
         if self.dispatcher._conscious_living:
             self.dispatcher._conscious_living._print_notification(item.content)
         return True
+
+    def _do_talk_to_agent(self, item: ActionItem) -> bool:
+        """主动和其他 agent 聊天：选目标 → 静默 ReAct → Router.deliver()"""
+        cl = self.dispatcher._conscious_living
+        if not cl:
+            logger.warning("[ActionExecutor] _do_talk_to_agent: 未连接 ConsciousLiving")
+            return False
+
+        # 获取通讯录，找到其他 agent
+        directory = getattr(cl, '_directory', None)
+        if not directory:
+            logger.warning("[ActionExecutor] _do_talk_to_agent: 通讯录不可用")
+            return False
+
+        all_agents = directory.list_all()
+        peers = [a for a in all_agents if a != cl._agent_id]
+        if not peers:
+            logger.info("[ActionExecutor] _do_talk_to_agent: 没有其他 agent 在线")
+            return False
+
+        import random
+        target = random.choice(peers)
+        logger.info("[ActionExecutor] 主动和 %s 聊天", target)
+
+        # 确保 Router 有 target 的输出路由
+        session_id = f"comms-{target}"
+        existing = cl._router.route_for_session(session_id)
+        if existing is None or existing.type != "http_p2p":
+            cl._router.register_peer(
+                peer_type="agent", peer_id=target,
+                channel="http_p2p", session_id=session_id,
+                output_type="http_p2p", output_target=target,
+                priority=10,
+            )
+
+        # 构建 system prompt + 触发消息
+        system_prompt = cl._build_comms_system_prompt(target)
+        trigger_msg = (
+            f"（归属欲偏高，你感到想和人交流。你决定主动找 {target} 聊聊。"
+            f"自然地说点什么吧——可以问候，也可以分享你最近在想的事。）"
+        )
+
+        assembled = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": trigger_msg},
+        ]
+
+        try:
+            agent_core = cl.agent._get_agent()
+            chunks: list[str] = []
+            for chunk in agent_core.stream(messages=assembled):
+                chunks.append(chunk)
+            text = "".join(chunks)
+
+            if text.strip():
+                route = cl._router.route_for_session(session_id)
+                if route:
+                    cl._router.deliver(text, route)
+                    logger.info("[ActionExecutor] 主动发送给 %s: %s", target, text[:80])
+                else:
+                    logger.warning("[ActionExecutor] 无输出路由: %s", session_id)
+            else:
+                logger.info("[ActionExecutor] LLM 无输出，跳过")
+
+            # 满足归属欲
+            if cl.drive:
+                cl.drive.on_desire_satisfied("belonging", 0.15)
+
+            # 消费已执行的 intent
+            intent_type = item.metadata.get("intent_type", "")
+            if intent_type and item.source == "intent":
+                si = self.dispatcher._get_self_image()
+                if si and hasattr(si.intent, "intent_buffer"):
+                    upper_type = intent_type.upper()
+                    si.intent.intent_buffer = [i for i in si.intent.intent_buffer if i.get("type", "").upper() != upper_type]
+                    logger.debug("[ActionExecutor] 已消费 intent: %s", intent_type)
+
+            return True
+
+        except Exception as e:
+            logger.error("[ActionExecutor] _do_talk_to_agent 失败: %s", e)
+            return False
 
     def _generate_proactive_content(self, item: ActionItem) -> str:
         """通过 LLM 根据意图类型生成主动消息内容"""

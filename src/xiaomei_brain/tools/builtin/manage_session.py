@@ -22,12 +22,17 @@ def _do_switch(session_id: str) -> str:
     """执行会话切换，返回上下文。"""
     db = _agent_instance.conversation_db
     dag = _agent_instance.context_assembler.dag if _agent_instance.context_assembler else None
-    agent = _agent_instance._get_agent()
 
-    # 切换状态
+    # 通过 AttentionLayer 切换会话（保存当前 → 恢复目标）
+    attention = getattr(_living, '_attention', None)
+    if attention:
+        attention.switch_to(session_id)
+    else:
+        agent = _agent_instance._get_agent()
+        agent.session_id = session_id
+        agent.messages = []
+
     _living.session_id = session_id
-    agent.session_id = session_id
-    agent.messages = []
 
     # 加载最近消息
     recent = db.get_recent(10, session_id=session_id)
@@ -127,10 +132,14 @@ def manage_session(action: str) -> str:
     # ── new ──
     if action == "new":
         new_sid = f"s_{int(time.time())}"
+        attention = getattr(_living, '_attention', None)
+        if attention:
+            attention.new_session(new_sid)
+        else:
+            agent = _agent_instance._get_agent()
+            agent.session_id = new_sid
+            agent.messages = []
         _living.session_id = new_sid
-        agent = _agent_instance._get_agent()
-        agent.session_id = new_sid
-        agent.messages = []
         return f"新会话已创建: {new_sid}\n这是一个全新的会话，历史对话已保留在之前的会话中。"
 
     return (

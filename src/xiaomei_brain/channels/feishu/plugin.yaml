@@ -1,0 +1,5 @@
+name: feishu
+version: "1.0.0"
+description: 飞书/Lark 平台对接
+kind: channel
+channel: feishu

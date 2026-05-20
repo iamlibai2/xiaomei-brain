@@ -156,7 +156,6 @@ class PACERunner:
 
     def _run_loop(self, msg, intent_context: str, cb: dict, start_step: int = 0, resume_nudge: str = "") -> None:
         from xiaomei_brain.consciousness.context_pipeline import build_context
-        from xiaomei_brain.agent.core import tool_call_buffer
 
         current_msg = msg
         current_context = intent_context
@@ -230,7 +229,7 @@ class PACERunner:
             t0 = time.time()
             try:
                 cs = cb.get("get_consciousness_state", lambda: {})()
-                tc_before = tool_call_buffer.last_index
+                tc_before = agent.tool_call_buffer.last_index
 
                 agent.user_id = current_msg.user_id
                 agent.session_id = current_msg.session_id
@@ -261,7 +260,7 @@ class PACERunner:
                     chunks.append(chunk)
                 content = "".join(chunks)
                 elapsed = time.time() - t0
-                tc_count = tool_call_buffer.last_index - tc_before
+                tc_count = agent.tool_call_buffer.last_index - tc_before
 
                 # 能耗
                 if self._drive and elapsed > 1.0:
@@ -286,7 +285,7 @@ class PACERunner:
                 display_content = remove_progress_tag(content)
 
                 # 提取工具调用名称
-                tool_names = self._extract_tool_names(tool_call_buffer, tc_before, tc_count)
+                tool_names = self._extract_tool_names(agent.tool_call_buffer, tc_before, tc_count)
 
                 obs = StepObservation(
                     step_index=step_index,

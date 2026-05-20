@@ -18,6 +18,7 @@ class ActionType(Enum):
     TRIGGER_L3 = "trigger_l3"     # 触发 L3 深度燃烧
     TOOL = "tool"                 # 执行工具
     NOTIFY = "notify"             # 通知用户
+    TALK_TO_AGENT = "talk_to_agent"  # 主动和其他 agent 聊天
 
 
 @dataclass

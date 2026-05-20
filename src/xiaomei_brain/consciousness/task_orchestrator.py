@@ -874,6 +874,26 @@ class TaskOrchestrator:
         tracker = CapabilityTracker(agent_id=agent_id)
         return tracker.get_calibration_context()
 
+    @staticmethod
+    def _deliver_response(parent, session_id: str, content: str) -> None:
+        """通过 Router 送达回复到非 CLI 通道（feishu/ws/comms）。"""
+        router = getattr(parent, '_router', None)
+        if not router:
+            logger.warning("[TaskOrchestrator/Deliver] 无 Router，无法送达 session=%s", session_id)
+            return
+
+        route = router.route_for_session(session_id)
+        if route:
+            logger.info(
+                "[TaskOrchestrator/Deliver] session=%s → %s/%s (%d chars)",
+                session_id, route.type, route.target, len(content),
+            )
+            router.deliver(content, route)
+        else:
+            logger.warning(
+                "[TaskOrchestrator/Deliver] 无输出路由: session=%s", session_id,
+            )
+
     def _init_pace_runner(self) -> None:
         """lazy init PACE 执行器"""
         from ..metacognition import PACERunner
@@ -914,9 +934,8 @@ class TaskOrchestrator:
                     print("\n" + "=" * _pad + _label + "=" * _pad, flush=True)
                     print(f"{parent.agent.name or parent._agent_id}: ", end="", flush=True)
                     cs = parent._get_consciousness_state()
-                    from xiaomei_brain.agent.core import tool_call_buffer
                     t0 = time.time()
-                    tc_before = tool_call_buffer.last_index
+                    tc_before = agent.tool_call_buffer.last_index
 
                     agent.user_id = current_msg.user_id
                     agent.session_id = current_msg.session_id
@@ -940,12 +959,12 @@ class TaskOrchestrator:
                             on_chunk(chunk)
                     content = "".join(chunks)
                     elapsed = time.time() - t0
-                    tc_count = tool_call_buffer.last_index - tc_before
+                    tc_count = agent.tool_call_buffer.last_index - tc_before
 
                     # 提取本轮工具调用名称
                     tool_names = []
                     for i in range(tc_before + 1, tc_before + tc_count + 1):
-                        rec = tool_call_buffer.get(i)
+                        rec = agent.tool_call_buffer.get(i)
                         if rec:
                             tool_names.append(rec.name)
 
@@ -1013,6 +1032,15 @@ class TaskOrchestrator:
 
                     if parent._load_consciousness:
                         parent.consciousness.on_user_interaction(current_msg.content, display_content)
+
+                    # ── 非本地会话：通过 Router.deliver() 送达回复 ──
+                    if display_content and current_msg.session_id not in ("main", ""):
+                        logger.info(
+                            "[TaskOrchestrator/Deliver] 尝试送达: session=%s len=%d auto_advance=%s",
+                            current_msg.session_id, len(display_content),
+                            self._should_auto_advance(progress_data),
+                        )
+                        self._deliver_response(parent, current_msg.session_id, display_content)
 
                     if not self._should_auto_advance(progress_data):
                         logger.info("[TaskOrchestrator] 对话完成")

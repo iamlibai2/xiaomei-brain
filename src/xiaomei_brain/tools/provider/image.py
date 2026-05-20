@@ -121,6 +121,10 @@ class ImageProvider:
             json=payload,
             timeout=timeout,
         )
+        if response.status_code == 401:
+            raise RuntimeError(
+                f"图片 API 认证失败（401）。请检查 config.json 中 xiaomei_brain.image.api_key 是否设置了有效的 MiniMax API Key。"
+            )
         response.raise_for_status()
         data = response.json()
 

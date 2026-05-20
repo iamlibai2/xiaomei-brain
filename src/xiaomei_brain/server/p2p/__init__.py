@@ -1,7 +1,4 @@
-"""Agent 间通讯模块。
-
-HTTP + JSON 消息传递，发完即断。支持 chat / assign / query / report。
-"""
+"""P2P 通讯子模块。"""
 
 import logging
 import os
@@ -20,7 +17,6 @@ except Exception:
 def _log_to_comms_log(from_agent: str, to_agent: str, msg_type: str, content: str) -> None:
     """写入全局通讯日志（tail -f 可读）。"""
     ts = time.strftime("%H:%M:%S")
-    # 保留换行结构，用 \\n 编码（日志一行一条消息）
     clean = content.replace("|", " ").replace("\\", "\\\\").replace("\n", "\\n")
     line = f"{ts}|{from_agent}|{to_agent}|{msg_type}|{clean}\n"
     try:

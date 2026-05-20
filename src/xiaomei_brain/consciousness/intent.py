@@ -53,6 +53,9 @@ class IntentType(Enum):
     ALARM = "alarm"
     """闹钟触发"""
 
+    TALK = "talk"
+    """想和其他 agent 聊聊"""
+
 
 @dataclass
 class Intent:

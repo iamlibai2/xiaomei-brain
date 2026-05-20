@@ -44,7 +44,7 @@ from xiaomei_brain.tools.builtin import (
     tts_tools, music_tools, image_tools, websearch_tools, webget_tools,
 )
 from xiaomei_brain.tools.builtin.memory import create_memory_tools
-from xiaomei_brain.ws import create_app
+from xiaomei_brain.gateway.server import create_app
 
 
 def main() -> None:

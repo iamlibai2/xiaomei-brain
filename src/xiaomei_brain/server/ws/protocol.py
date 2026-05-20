@@ -1,9 +1,9 @@
-"""WebSocket protocol message types - OpenClaw compatible."""
+"""WS 协议消息类型与构建（OpenClaw 兼容）。"""
 
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
@@ -47,18 +47,15 @@ def parse_message(data: dict) -> dict:
 
     # OpenClaw 格式
     if msg_type == MsgType.REQ.value:
-        # {"type": "req", "id": "...", "method": "...", "params": {...}}
         msg.setdefault("id", generate_id())
         msg.setdefault("params", {})
         return msg
 
     if msg_type == MsgType.EVENT.value:
-        # {"type": "event", "event": "...", "payload": {...}}
         msg.setdefault("payload", {})
         return msg
 
     if msg_type == MsgType.RES.value:
-        # {"type": "res", "id": "...", "ok": true, "payload": {...}}
         msg.setdefault("ok", True)
         msg.setdefault("payload", {})
         return msg
@@ -95,7 +92,7 @@ def build_msg(msg_type: MsgType | str, **kwargs: Any) -> dict:
     return msg
 
 
-# ── OpenClaw 协议消息构建 ────────────────────────────────────────────────────
+# ── OpenClaw 协议消息构建 ──────────────────────────────
 
 def build_req(method: str, params: dict | None = None, id: str | None = None) -> dict:
     """构建 OpenClaw 请求消息"""
@@ -133,7 +130,7 @@ def build_event(event: str, payload: Any = None, seq: int | None = None) -> dict
     return msg
 
 
-# ── OpenClaw 错误码 ─────────────────────────────────────────────────────────
+# ── OpenClaw 错误码 ────────────────────────────────────
 
 class ErrorCodes:
     INVALID_REQUEST = "INVALID_REQUEST"

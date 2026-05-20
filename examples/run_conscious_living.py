@@ -30,52 +30,7 @@ logging.basicConfig(
 
 # agent 日志文件 handler — agent_id 已知后添加
 
-# ── 关键模块：完全放行 ──────────────────────────────────────
-KEY_MODULES = {
-    "xiaomei_brain.consciousness.conscious_living",
-    "xiaomei_brain.purpose",
-    "xiaomei_brain.drive",
-    "xiaomei_brain.consciousness.core",
-    "xiaomei_brain.agent.agent_manager",
-}
-
-# ── 噪音模块：3秒内同类日志只显示一次 ───────────────────────
-NOISE_MODULES = {
-    "xiaomei_brain.memory.longterm",
-    "xiaomei_brain.consciousness.context_assembler",
-    "xiaomei_brain.memory.conversation_db",
-    "xiaomei_brain.agent.core",
-    "xiaomei_brain.base.llm",
-    "xiaomei_brain.memory.extractor",
-    "sentence_transformers",
-    "xiaomei_brain.tools",
-    "xiaomei_brain.ws",
-}
-
-_last_log: dict[str, float] = {}
-_LOG_DEDUP_INTERVAL = 3.0
-
-
-class NoiseFilter(logging.Filter):
-    def filter(self, record):
-        module = record.name
-        for key in KEY_MODULES:
-            if module.startswith(key):
-                return True
-        for noise in NOISE_MODULES:
-            if module.startswith(noise):
-                msg_short = record.getMessage()[:80]
-                dedup_key = f"{module}:{msg_short}"
-                now = time.time()
-                last = _last_log.get(dedup_key, 0)
-                if now - last < _LOG_DEDUP_INTERVAL:
-                    return False
-                _last_log[dedup_key] = now
-                return True
-        return True
-
-
-logging.getLogger().addFilter(NoiseFilter())
+# 开发中：不做日志过滤，所有模块 INFO 全部输到 stderr
 
 from xiaomei_brain.agent.agent_manager import AgentManager
 from xiaomei_brain.consciousness.conscious_living import ConsciousLiving

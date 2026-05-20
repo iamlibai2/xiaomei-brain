@@ -30,11 +30,67 @@ class L2Engine:
 
     持有 Consciousness 引用，负责 L2 的完整生命周期：
     intent_react → parse → emergence_react → split → apply_drive → store
+
+    拥有独立的 Agent 实例（_l2_agent），与 Layer 1 的 Agent 隔离：
+    - 独立的 messages / session_id / tool_call_buffer
+    - 只注册探索类工具（dag_expand / dag_search / web_search / thought_search / being）
+    - 不写 ConversationDB，不触发记忆提取
     """
+
+    # 探索类工具白名单
+    EXPLORE_TOOL_NAMES: set[str] = {"dag_expand", "dag_search", "web_search", "thought_search", "being"}
 
     def __init__(self, consciousness: Consciousness) -> None:
         self._c = consciousness
         self._last_drive_summary: str | None = None
+        self._l2_agent: Any = None  # 独立 Agent 实例（懒加载）
+
+    # ── L2 独立 Agent ───────────────────────────────────────
+
+    def _get_l2_agent(self) -> Any:
+        """懒加载 L2 专用 Agent 实例。
+
+        与 Layer 1 的 Agent 完全隔离：
+        - 独立的 messages / session_id / tool_call_buffer
+        - 只注册探索类工具
+        - 共享 LLM 客户端（线程安全，只做 HTTP 请求）
+        """
+        if self._l2_agent is not None:
+            return self._l2_agent
+
+        from ..agent.core import Agent
+        from ..tools.registry import ToolRegistry
+
+        c = self._c
+        agent_instance = c.agent  # AgentInstance
+        main_agent = agent_instance._get_agent()  # core Agent
+
+        # 创建探索类工具专用 ToolRegistry
+        l2_tools = ToolRegistry()
+        agent_tools = getattr(agent_instance, "tools", None)
+        if agent_tools:
+            for name in self.EXPLORE_TOOL_NAMES:
+                tool = agent_tools.get(name)
+                if tool:
+                    l2_tools.register(tool)
+                    logger.debug("[L2Engine] 注册工具: %s", name)
+
+        # 创建独立 Agent
+        self._l2_agent = Agent(
+            llm=main_agent.llm,
+            tools=l2_tools,
+            system_prompt="",
+            max_steps=12,
+        )
+        self._l2_agent.session_id = "l2-internal"
+        self._l2_agent.user_id = c._agent_id
+
+        logger.info(
+            "[L2Engine] 独立 Agent 已创建: session=%s, tools=%d",
+            self._l2_agent.session_id,
+            len(l2_tools.list_tools()),
+        )
+        return self._l2_agent
 
     # ── 公共入口 ─────────────────────────────────────────────
 
@@ -172,9 +228,9 @@ class L2Engine:
     # ── 调用 1：意图决策 ─────────────────────────────────────
 
     def _call_intent_react(self, context: str) -> str:
-        """通过 Agent 的 ReAct 循环进行意图决策（带工具）。"""
+        """通过 L2 独立 Agent 的 ReAct 循环进行意图决策（探索类工具，静默）。"""
         c = self._c
-        agent_core = c.agent._get_agent()
+        l2_agent = self._get_l2_agent()
 
         system_prompt = c.self_image.inject_consciousness()
         has_goal = c.purpose and c.purpose.get_current() is not None
@@ -213,7 +269,7 @@ class L2Engine:
 
         t0 = time.time()
         try:
-            result = agent_core.react_nodb(messages=messages, max_steps=12)
+            result = l2_agent.react_nodb(messages=messages, max_steps=12)
             elapsed = time.time() - t0
             logger.info("[Consciousness] ReAct 意图决策完成, elapsed=%.1fs, result_len=%d",
                         elapsed, len(result))
@@ -401,14 +457,16 @@ weight: 0.85
         """意识涌现 ReAct 循环（带探索工具），最多 2 轮工具调用。"""
         from ..tools.registry import ToolRegistry
 
-        agent_tools = getattr(self._c.agent, "tools", None)
-        explore_tool_names = {"dag_expand", "dag_search", "web_search", "thought_search", "being"}
+        # 从 L2 独立 Agent 获取探索类工具
+        l2_agent = self._get_l2_agent()
+        l2_tools = getattr(l2_agent, "tools", None)
+        explore_tool_names = set(self.EXPLORE_TOOL_NAMES)
         if exclude_tools:
             explore_tool_names -= exclude_tools
         explore_tools: list = []
-        if agent_tools:
+        if l2_tools:
             for name in explore_tool_names:
-                tool = agent_tools.get(name)
+                tool = l2_tools.get(name)
                 if tool:
                     explore_tools.append(tool)
 

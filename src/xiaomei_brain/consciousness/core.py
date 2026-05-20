@@ -140,14 +140,16 @@ class Consciousness:
         self.desk = self.self_image.desk
         self.intent_buffer: list[Intent] = []
         self._l0_count: int = 0
-        self._last_l2_time: float = 0.0
+        self._last_l2_time: float = time.time()   # 启动后等冷却才触发 L2
         self._last_snapshot_save_time: float = 0.0
         self._last_report: ConsciousnessReport | None = None
         self._running: bool = False
         self._l2_triggered_by_anomaly: bool = False  # L1 异常触发 L2 的信号
         self._anomaly_cooldowns: dict[str, float] = {}  # 异常类型 → 上次触发时间
         self._sleep_start_time: float = 0.0          # 入睡时间戳（入梦判定）
-        self._last_l3_time: float = 0.0              # 上次 L3 深度沉思时间
+        self._last_l3_time: float = time.time()        # 启动后等冷却才触发 L3
+        self._agent_state: str = "awake"             # 当前生命状态（主循环写入，Layer 2 读取）
+        self._dream_signal: bool = False             # Layer 2 设置的入梦信号（主循环读取）
 
         # 存储回调
         self._storage: Any | None = None
@@ -360,7 +362,7 @@ class Consciousness:
                 self._anomaly_cooldowns[anomaly] = now
                 logger.info("[Consciousness L1] 检测到异常: %s，触发 L2 加柴", anomaly)
                 self._l2_triggered_by_anomaly = True
-                return self.tick_L2(anomaly)
+                return "anomaly_detected"
 
         return None
 
@@ -787,6 +789,17 @@ class Consciousness:
             logger.info("[Consciousness] L1 触发（异常检测，_l0_count=%d）", self._l0_count)
             self.tick_L1()
 
+        return self._tick_above_l1(agent_state)
+
+    def _tick_above_l1(self, agent_state: str = "awake") -> TickResult:
+        """L2/L3/DREAM 调度——L0/L1 已由 Layer 0 线程单独处理。
+
+        Args:
+            agent_state: ConsciousLiving 当前生命状态
+
+        Returns:
+            TickResult: NORMAL / L2_TRIGGERED / L3_TRIGGERED / DREAM_TRIGGERED
+        """
         # L2: 动态加柴判断（空闲 / 累积变化(仅SLEEPING) / 定期，有冷却）
         if self._should_l2(agent_state):
             logger.info("[Consciousness] L2 触发（轻度加柴，agent_state=%s）", agent_state)

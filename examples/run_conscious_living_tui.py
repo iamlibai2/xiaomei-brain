@@ -24,47 +24,8 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
-KEY_MODULES = {
-    "xiaomei_brain.consciousness.conscious_living",
-    "xiaomei_brain.purpose",
-    "xiaomei_brain.drive",
-    "xiaomei_brain.consciousness.core",
-    "xiaomei_brain.agent.agent_manager",
-}
+# 开发中：不做日志过滤，所有模块 INFO 全部输到 stderr
 
-NOISE_MODULES = {
-    "xiaomei_brain.memory.longterm",
-    "xiaomei_brain.consciousness.context_assembler",
-    "xiaomei_brain.memory.conversation_db",
-    "xiaomei_brain.agent.core",
-    "xiaomei_brain.base.llm",
-    "xiaomei_brain.memory.extractor",
-    "sentence_transformers",
-    "xiaomei_brain.tools",
-    "xiaomei_brain.ws",
-}
-
-_last_log: dict[str, float] = {}
-_LOG_DEDUP = 3.0
-
-
-class NoiseFilter(logging.Filter):
-    def filter(self, record):
-        for k in KEY_MODULES:
-            if record.name.startswith(k):
-                return True
-        for n in NOISE_MODULES:
-            if record.name.startswith(n):
-                key = f"{record.name}:{record.getMessage()[:80]}"
-                now = time.time()
-                if now - _last_log.get(key, 0) < _LOG_DEDUP:
-                    return False
-                _last_log[key] = now
-                return True
-        return True
-
-
-logging.getLogger().addFilter(NoiseFilter())
 
 # ── Textual ───────────────────────────────────────────────
 from textual.app import App, ComposeResult

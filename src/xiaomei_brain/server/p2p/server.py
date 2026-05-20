@@ -11,8 +11,8 @@ import logging
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-from xiaomei_brain.comms.protocol import AgentMessage
-from xiaomei_brain.comms import _log_to_comms_log
+from .protocol import AgentMessage
+from . import _log_to_comms_log
 
 logger = logging.getLogger(__name__)
 

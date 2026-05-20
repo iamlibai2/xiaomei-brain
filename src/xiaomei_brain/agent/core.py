@@ -100,6 +100,7 @@ class Agent:
         self.messages: list[dict[str, Any]] = []
         self.user_id: str = "global"
         self.session_id: str = "main"
+        self.tool_call_buffer: ToolCallBuffer = ToolCallBuffer()  # 实例级，每个 Agent 独立
 
         # ── Intent context (from ConsciousLiving) ──────────────────────
         self.intent_context: str = ""  # 意图上下文（注入 system prompt）
@@ -179,6 +180,11 @@ class Agent:
             get_hint, print_tool_call, print_tool_result,
             print_edit_diff, print_write_result,
         )
+        _print = lambda s: print(s, flush=True)
+        _ptc = print_tool_call
+        _ptr = print_tool_result
+        _ped = print_edit_diff
+        _pwr = print_write_result
         _last_tool = ""
         _tool_failure_counts: dict[tuple, int] = {}  # (name, args_json) -> 失败次数
 
@@ -225,7 +231,7 @@ class Agent:
 
             logger.debug("Step %d: calling LLM", step + 1)
             hint = get_hint(_last_tool)
-            print(hint, flush=True)
+            _print(hint)
 
             # 真流式：逐个 yield chunk，生成器结束后从 _last_stream_response 取结果
             gen = self._call_llm(all_messages, openai_tools)
@@ -272,8 +278,8 @@ class Agent:
 
                 for tc in response.tool_calls:
                     # Collapsed display + buffer storage
-                    idx = tool_call_buffer.add(tc.name, tc.arguments, "")  # placeholder
-                    print_tool_call(idx, tc.name, tc.arguments)
+                    idx = self.tool_call_buffer.add(tc.name, tc.arguments, "")  # placeholder
+                    _ptc(idx, tc.name, tc.arguments)
                     _last_tool = tc.name
                     logger.debug("Tool call: %s(%s)", tc.name, tc.arguments)
 
@@ -304,16 +310,16 @@ class Agent:
                         _tool_failure_counts.pop(call_key, None)
 
                     # Update buffer with actual result
-                    rec = tool_call_buffer.get(idx)
+                    rec = self.tool_call_buffer.get(idx)
                     if rec:
                         rec.result = str(result)
 
                     if tc.name == "edit_file":
-                        print_edit_diff(idx, tc.name, tc.arguments, result)
+                        _ped(idx, tc.name, tc.arguments, result)
                     elif tc.name == "write_file":
-                        print_write_result(idx, tc.name, tc.arguments, result)
+                        _pwr(idx, tc.name, tc.arguments, result)
                     else:
-                        print_tool_result(idx, result)
+                        _ptr(idx, result)
                     logger.debug("Tool result: %s", result[:200])
 
                     # 存 tool result 到 DB，保存 DB id 到消息（DAG 压缩需要）
@@ -361,7 +367,6 @@ class Agent:
                     # Extract MEMORY block from response and execute
                     memory_block, clean_content = "", content
                     has_extractor = hasattr(self, "memory_extractor") and self.memory_extractor
-                    logger.info("[Memory] has_extractor=%s content_has_MEMORY=%s", has_extractor, "<MEMORY>" in content)
                     if has_extractor:
                         memory_block, clean_content = self.memory_extractor.extract_memory_block(content)
                         logger.info("[Memory] extracted block='%s' clean_len=%d", memory_block[:50] if memory_block else "", len(clean_content) if clean_content else 0)

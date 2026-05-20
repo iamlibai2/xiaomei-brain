@@ -26,6 +26,7 @@ class ConsciousnessConfig:
     l2_periodic_interval: float = 1800.0  # L2 定期触发（秒）
     l3_dream_interval: float = 300.0   # L3 梦境触发（睡眠秒数→入梦）
     l3_cooldown: float = 1800.0       # L3 深度沉思冷却（秒）
+    l2_check_interval: float = 10.0     # Layer 2 检查间隔（秒）
     l1_anomaly_enabled: bool = False   # L1 异常检测开关（False 时跳过所有异常检测）
     energy_low_threshold: float = 0.1  # 能量极低阈值（低于此值用flow最小上下文）
     energy_silent_threshold: float = 0.15  # 能量沉寂阈值（低于此值禁止主动行为）
@@ -43,6 +44,7 @@ class LivingParams:
     dream_interval: float = 3000.0      # 梦境间隔（秒）
     max_context_tokens: int = 50000    # 上下文最大 token 数
     comms_port: int = 0               # 0=自动分配, -1=禁用, >0=指定端口
+    ws_port: int = -1                 # WebSocket Gateway 端口（-1=禁用, >0=指定端口）
 
 
 # ── 欲望行为参数 ────────────────────────────────────────────────────
@@ -69,6 +71,7 @@ class ActionConfig:
     desire_learn_cooldown: float = 7200.0
     desire_achievement_cooldown: float = 3600.0
     desire_express_cooldown: float = 3600.0
+    desire_talk_to_agent_cooldown: float = 60.0  # 主动和其他 agent 聊天冷却（测试：1分钟）
 
 
 # ── 上下文组装参数 ──────────────────────────────────────────────────

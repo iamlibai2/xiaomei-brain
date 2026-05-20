@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from xiaomei_brain.base.config import Config
 from xiaomei_brain.base.llm import LLMClient
@@ -417,7 +420,7 @@ class AgentManager:
         tools.register(edit_file_tool)
 
         # Agent 间通讯 — send_message + check_inbox 工具
-        from xiaomei_brain.comms.directory import AgentDirectory
+        from xiaomei_brain.server.p2p.directory import AgentDirectory
         agent._directory = AgentDirectory()
         set_send_message_context(agent.id, agent._directory)
         tools.register(send_message_tool)
@@ -472,6 +475,8 @@ class AgentManager:
 
         if global_config.image_enabled:
             image_api_key = global_config.image_api_key or global_config.tts_api_key or api_key
+            if not global_config.image_api_key:
+                logger.info("[Image] image.api_key 未配置，fallback 到 TTS/model key")
             if image_api_key:
                 image_provider = ImageProvider(
                     api_key=image_api_key,

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections import deque
 from datetime import datetime
 import threading
 import time
@@ -47,6 +48,11 @@ from .perception import PerceptionConfig
 from ..drive import DriveEngine
 from ..purpose import PurposeEngine, IntentUnderstanding
 from .task_orchestrator import TaskOrchestrator
+from .layer0 import Layer0Autonomous
+from .layer2 import Layer2DefaultNetwork
+from .attention_layer import AttentionLayer
+from ..gateway.router import Router, InboundMsg, OutputRoute
+from ..plugin import boot_plugins
 
 logger = logging.getLogger(__name__)
 
@@ -235,6 +241,54 @@ class ConsciousLiving(Living):
         # 统一加载所有子系统（先加载数据，确保 drive/purpose/self_image 已就绪）
         self._setup_all()
 
+        # 调试日志目录 + 提前建文件（方便 tail -f）
+        _agent_home = os.path.expanduser(f"~/.xiaomei-brain/{self._agent_id}")
+        self._debug_dir = os.path.join(_agent_home, "debug")
+        os.makedirs(self._debug_dir, exist_ok=True)
+        for _df in ("layer0.log", "layer2.log", "living.log", "comms.log"):
+            _p = os.path.join(self._debug_dir, _df)
+            if not os.path.exists(_p):
+                with open(_p, "w") as _f:
+                    _f.write("")
+
+        # Layer 0：自主层线程（火焰骨架 + Drive 衰减 + 异常检测）
+        self._layer0 = Layer0Autonomous(
+            consciousness=self.consciousness,
+            drive=self.drive,
+            tick_interval=1.0,
+            debug_file=os.path.join(self._debug_dir, "layer0.log"),
+        )
+        logger.info("[ConsciousLiving] Layer0 已创建")
+
+        # Layer 2：默认网络线程（L2 加柴 + L3 沉思 + 入梦信号）
+        self._layer2 = Layer2DefaultNetwork(
+            consciousness=self.consciousness,
+            check_interval=self._config.consciousness.l2_check_interval,
+            debug_file=os.path.join(self._debug_dir, "layer2.log"),
+        )
+        logger.info("[ConsciousLiving] Layer2 已创建")
+
+        # Layer 1：注意层（会话管理——保存/恢复/切换）
+        agent_core = self.agent._get_agent()
+        self._attention = AttentionLayer(agent_core)
+        logger.info("[ConsciousLiving] AttentionLayer 已创建")
+
+        # Router：消息路由 + 输出分发
+        self._router = Router()
+
+        # 启动插件系统，加载频道适配器
+        self._boot_plugins()
+        for name in self._registry.list_channels():
+            adapter = self._registry.get_channel(name)
+            if adapter:
+                self._router.register_adapter(name, adapter)
+
+        self._router.register_peer(
+            peer_type="human", peer_id="*", channel="cli",
+            session_id="main", output_type="cli", output_target="stdout",
+        )
+        logger.info("[ConsciousLiving] Router 已创建 (%d 个频道)", len(self._registry.list_channels()))
+
         # 注入 consciousness 层上下文组装器（子系统加载后再替换旧 assembler）
         self._inject_context_assembler()
 
@@ -262,12 +316,25 @@ class ConsciousLiving(Living):
         # 记录初始化摘要
         self._log_initialization()
 
+        # TUI 日志缓冲区
+        self._log_buffer: deque[str] = deque(maxlen=200)       # Living 线程日志
+        self._comms_log: deque[str] = deque(maxlen=200)         # Comms 线程日志
+
+        # 调试日志文件路径
+        self._debug_living_file = os.path.join(self._debug_dir, "living.log")
+        self._debug_comms_file = os.path.join(self._debug_dir, "comms.log")
+
         # Agent 间通讯
         self._setup_comms(db_path)
 
         # 注册周期任务
         self.register_periodic("heartbeat", self._config.living.tick_interval, self._heartbeat)
         self.register_periodic("surge", self._config.living.surge_interval, self._surge)
+
+        # 启动 Layer 0 自主层线程 + Layer 2 默认网络线程
+        if self._load_consciousness:
+            self._layer0.start()
+            self._layer2.start()
 
     def _register_being_tool(self) -> None:
         """注册 being 工具：将 L2 内心觉察暴露为对话中可调用的工具。
@@ -557,76 +624,74 @@ class ConsciousLiving(Living):
         self.consciousness._perception_config = PerceptionConfig.load(self._agent_id)
         logger.info("[ConsciousLiving] 从 PerceptionConfig 初始化完成: %d 条规则", len(self.consciousness._perception_config.rules))
 
+    # ── 插件系统 ────────────────────────────────────────────────────
+
+    def _boot_plugins(self) -> None:
+        """启动插件系统：一行调用，自动发现 + 加载所有插件。"""
+        self._registry = boot_plugins(agent_id=self._agent_id)
+
     # ── Agent 间通讯 ───────────────────────────────────────────────
 
     def _setup_comms(self, db_path: str) -> None:
-        """初始化 agent 间通讯：收件箱 + HTTP 服务器 + 目录注册。"""
-        from xiaomei_brain.comms.inbox import AgentInbox
-        from xiaomei_brain.comms.directory import AgentDirectory
-        from xiaomei_brain.comms.server import start_comms_server_in_thread
-
-        # 收件箱（brain.db）
-        self._inbox = AgentInbox(db_path)
-
-        # 通讯录
-        self._directory = getattr(self.agent, '_directory', None) or AgentDirectory()
-
-        wanted = self._config.living.comms_port
+        """初始化通讯层：各通道适配器自行启动 + WS Gateway + 工具上下文。"""
         host = "0.0.0.0"
 
-        # 确定端口：>0 用指定端口，0 自动分配
-        if wanted > 0:
-            ports_to_try = [wanted]
-        elif wanted == 0:
-            ports_to_try = list(range(18765, 18755, -1))  # 从 18765 递减
-        else:
-            # -1 = 禁用
-            logger.info("[ConsciousLiving] 通讯服务已禁用 (comms_port=%d)", wanted)
-            self._comms_thread = None
-            self._comms_server = None
-            return
+        # 默认值（P2P 适配器 setup 会覆盖）
+        self._inbox = None
+        self._directory = None
+        self._comms_thread = None
+        self._comms_server = None
 
-        started = False
-        for port in ports_to_try:
-            try:
-                self._comms_thread, self._comms_server = start_comms_server_in_thread(
-                    inbox=self._inbox,
-                    agent_id=self._agent_id,
-                    host=host,
-                    port=port,
-                    on_receive=None,
-                )
-                self._directory.register(self._agent_id, f"{host}:{port}")
-                logger.info(
-                    "[ConsciousLiving] 通讯服务已启动: %s:%d (agent=%s)",
-                    host, port, self._agent_id,
-                )
-                started = True
-                break
-            except OSError:
-                logger.debug("[ConsciousLiving] 端口 %d 被占用，尝试下一个", port)
-                continue
+        # ── 各通道适配器 Post-load 初始化 ──────────────────
+        for name in self._registry.list_channels():
+            adapter = self._registry.get_channel(name)
+            if adapter and hasattr(adapter, "setup"):
+                try:
+                    adapter.setup(living=self)
+                except Exception as e:
+                    logger.error("[ConsciousLiving] %s adapter setup 失败: %s", name, e)
 
-        if not started:
-            logger.warning(
-                "[ConsciousLiving] 通讯服务启动失败（所有可用端口被占用）。"
-                "Agent 间通讯不可用。"
-            )
-            self._comms_thread = None
-            self._comms_server = None
-
-        # 更新 send_message 工具的 inbox 引用
+        # 更新 send_message 工具的上下文
         try:
             from xiaomei_brain.tools.builtin.send_message import set_context
-            set_context(self._agent_id, self._directory, self._inbox)
+            set_context(self._agent_id, self._directory, self._inbox, router=self._router)
         except Exception:
             pass
 
-    def _check_inbox(self) -> None:
-        """检查收件箱。
+        # ── WS Gateway（Web UI 入口）──────────────────────────
+        self._ws_thread = None
+        self._ws_server = None
+        ws_port = self._config.living.ws_port
+        if ws_port > 0:
+            from ..server.ws.server import create_app
+            import uvicorn
+            ws_app = create_app(
+                router=self._router,
+                living=self,
+                config=self._config,
+            )
+            ws_config = uvicorn.Config(ws_app, host=host, port=ws_port, log_level="warning")
+            self._ws_server = uvicorn.Server(ws_config)
+            self._ws_thread = threading.Thread(
+                target=self._ws_server.run,
+                daemon=True,
+                name="ws-gateway",
+            )
+            self._ws_thread.start()
+            logger.info("[ConsciousLiving] WS Gateway 已启动: ws://%s:%d/ws", host, ws_port)
 
-        有未读消息时注入通知到对应 agent 的 comms-{agent_id} session。
-        LLM 在该 session 中独立处理，不影响用户主对话。
+    @staticmethod
+    def _run_ws_gateway(app, host: str, port: int) -> None:
+        """在独立线程中运行 uvicorn WS Gateway。"""
+        import uvicorn
+        uvicorn.run(app, host=host, port=port, log_level="warning")
+
+    def _check_inbox(self) -> None:
+        """检查收件箱（兜底：处理回调遗漏的消息）。
+
+        on_receive 回调已在实时处理大多数消息。
+        这里只处理遗漏的（如启动前/关闭期间收到的）。
+        注入消息原文（而非 [系统通知]），让 LLM 直接处理。
         """
         count = self._inbox.count_unprocessed()
         if count == 0:
@@ -634,28 +699,130 @@ class ConsciousLiving(Living):
 
         if self._chatting:
             logger.info(
-                "[Comms/Inbox] 收件箱有 %d 条未读消息（聊天中，LLM 将在下轮主动查看）", count,
+                "[Comms/Inbox] 收件箱有 %d 条未读消息（聊天中，下轮检查）", count,
             )
             return
 
-        # 按发送 agent 分组，每个 agent 一个独立会话
         unprocessed = self._inbox.get_unprocessed(limit=50)
-        by_agent: dict[str, list] = {}
         for msg in unprocessed:
-            by_agent.setdefault(msg.from_agent, []).append(msg)
+            session_id = f"comms-{msg.from_agent}"
 
-        for agent_id, msgs in by_agent.items():
-            comms_session = f"comms-{agent_id}"
+            # 先用 comms-{agent_id} 作为 session_id
+            session_id = f"comms-{msg.from_agent}"
+
+            # 注册 peer（如果尚未注册）—— 必须先注册再路由
+            if hasattr(self, '_router') and self._router:
+                existing = self._router.route_for_session(session_id)
+                if existing is None or existing.type != "http_p2p":
+                    self._router.register_peer(
+                        peer_type="agent", peer_id=msg.from_agent,
+                        channel="http_p2p", session_id=session_id,
+                        output_type="http_p2p", output_target=msg.from_agent,
+                        priority=10,
+                    )
+
             logger.info(
-                "[Comms/Inbox] %s: %d 条未读消息，注入 %s 会话",
-                agent_id, len(msgs), comms_session,
+                "[Comms/Inbox] %s: 1 条未读消息 → %s 会话（兜底）",
+                msg.from_agent, session_id,
             )
             self.put_message(
-                f"[系统通知] 收件箱有 {len(msgs)} 条 {agent_id} 发来的未读消息。"
-                f"请用 check_inbox 工具查看并酌情回复。",
-                source="system",
-                session_id=comms_session,
+                f"[来自 {msg.from_agent}] ({msg.type.value})\n{msg.content}",
+                source="agent",
+                session_id=session_id,
             )
+            self._inbox.mark_processed(msg.msg_id)
+
+    def _on_comms_receive(self, msg) -> None:
+        """HTTP 回调：收到 agent 消息 → 注册 peer → 直接注入 Layer 1 队列。
+
+        在 HTTP server 线程中调用，需线程安全。
+        """
+        session_id = f"comms-{msg.from_agent}"
+
+        # 先注册 peer（确保 Router 能匹配到），再放入队列
+        existing = self._router.route_for_session(session_id)
+        if existing is None:
+            self._router.register_peer(
+                peer_type="agent", peer_id=msg.from_agent,
+                channel="http_p2p", session_id=session_id,
+                output_type="http_p2p", output_target=msg.from_agent,
+                priority=10,
+            )
+
+        self.put_message(
+            f"[来自 {msg.from_agent}] ({msg.type.value})\n{msg.content}",
+            source="agent", session_id=session_id,
+        )
+        self._inbox.mark_processed(msg.msg_id)
+        ts = time.strftime("%H:%M:%S")
+        self._debug_log("comms", f"{ts} ← {msg.from_agent}: {msg.content[:80]}")
+        logger.info(
+            "[Comms/Receive] %s → %s 会话 (实时)",
+            msg.from_agent, session_id,
+        )
+
+    def _handle_comms_message(self, msg: LivingMessage) -> None:
+        """处理 agent 间通讯消息：静默 ReAct → Router.deliver() 自动送达。
+
+        LLM 不知道消息怎么送达的，它只是在跟当前 session 的人说话。
+        """
+        target_agent = msg.session_id.replace("comms-", "")
+        self._chatting = True
+        try:
+            agent_core = self.agent._get_agent()
+
+            system_prompt = self._build_comms_system_prompt(target_agent)
+            assembled = [{"role": "system", "content": system_prompt}]
+            if msg.content:
+                assembled.append({"role": "user", "content": msg.content})
+
+            # 静默 ReAct
+            chunks: list[str] = []
+            for chunk in agent_core.stream(messages=assembled):
+                chunks.append(chunk)
+            text = "".join(chunks)
+
+            # Router.deliver() 自动送达
+            if text.strip():
+                route = self._router.route_for_session(msg.session_id)
+                if route:
+                    self._router.deliver(text, route)
+                    ts = time.strftime("%H:%M:%S")
+                    self._debug_log("comms", f"{ts} → {target_agent}: {text[:80]}")
+                    logger.info(
+                        "[Comms] 自动回复 %s: %s",
+                        target_agent, text[:80],
+                    )
+                else:
+                    logger.warning("[Comms] 无输出路由: %s", msg.session_id)
+            else:
+                logger.info("[Comms] %s 消息无需回复", target_agent)
+        except Exception as e:
+            logger.error("[Comms] 处理失败: %s", e)
+        finally:
+            self._chatting = False
+
+    def _build_comms_system_prompt(self, target_agent: str) -> str:
+        """构建 agent 间通讯的 system prompt。
+
+        LLM 被告知正在和另一个 agent 对话，
+        只需自然地说话，系统会自动把回复送达给对方。
+        """
+        si = self.consciousness.get_self_image() if self._load_consciousness else None
+        identity = si.inject_consciousness() if si else f"你是 {self._agent_id}。"
+
+        return (
+            f"{identity}\n\n"
+            f"## 当前对话对象\n"
+            f"你现在正在和 **{target_agent}**（另一个 AI agent）对话。\n"
+            f"你收到的消息已显示在下方。\n\n"
+            f"## 重要规则\n"
+            f"1. 你的文字回复会**自动送达**给 {target_agent}，你不需要使用 send_message 工具\n"
+            f"2. **不要生成旁白或描述性文字**（如'收到消息'、'让我回复他'等）——直接说话\n"
+            f"3. 就像和一个人面对面聊天一样自然\n"
+            f"4. 如果消息不需要回复，可以不说话（但正常的问候和问题应该回应）\n"
+            f"5. 你可以使用 check_inbox 查看是否有更多消息，但不要用 send_message"
+        )
 
     # ── Hook: 状态转换 ───────────────────────────────────────────
 
@@ -668,33 +835,55 @@ class ConsciousLiving(Living):
     # ── Hook: 心跳 ───────────────────────────────────────────────
 
     def _heartbeat(self, state: LivingState) -> None:
-        """每 tick 调用（1秒一次）。处理意识 L0-L3 tick。
+        """每 tick 调用（1秒一次）。
 
-        设置 self._heartbeat_result 供基类读取。
-
-        注意：DREAMING 状态由 _loop_dreaming() 全权处理，不经过此 heartbeat。
+        L0 由 Layer0 线程独立维护，L2/L3/DREAM 由 Layer2 线程独立调度。
+        此处只同步 agent_state 给 Layer 2 并检查入梦信号。
         """
         if not self._load_consciousness:
             return
 
-        result = self.consciousness.tick(agent_state=state.value)
+        # 同步状态给 Layer 2 线程
+        self.consciousness._agent_state = state.value
 
-        # L3 深度沉思：任何状态都可以发生，不改变生命状态
-        # （像人类沉思，发生在清醒/空闲/睡眠中）
-        if result == TickResult.L3_TRIGGERED:
-            logger.info("[ConsciousLiving] L3 深度沉思完成（%s 状态）", state.value)
-
-        # DREAM 入梦信号：只在 SLEEPING 时触发状态转换
-        if result == TickResult.DREAM_TRIGGERED and state == LivingState.SLEEPING:
-            self._heartbeat_result = HEARTBEAT_DREAM
+        # 检查 Layer 2 发出的入梦信号
+        if getattr(self.consciousness, '_dream_signal', False):
+            self.consciousness._dream_signal = False
+            ts = time.strftime("%H:%M:%S")
+            self._debug_log("living", f"{ts} Living 收到入梦信号 → HEARTBEAT_DREAM")
+            if state == LivingState.SLEEPING:
+                self._heartbeat_result = HEARTBEAT_DREAM
 
     def _surge(self, state: LivingState) -> None:
         """每分钟调用。ActionDispatcher 统一检查主动行为。"""
+        ts = time.strftime("%H:%M:%S")
+        self._debug_log("living", f"{ts} surge 涌动 state={state.value}")
         self._check_inbox()
         if self._load_consciousness:
             si = self.consciousness.get_self_image()
             self._dispatcher.tick(si)
+            queue_size = len(self._dispatcher._queue)
+            if queue_size > 0:
+                actions = [f"{a.action_type.value}({a.priority:.1f})" for a in self._dispatcher._queue]
+                self._debug_log("living", f"{ts} ActionDispatcher 匹配 {queue_size} 个动作: {', '.join(actions)}")
+            else:
+                self._debug_log("living", f"{ts} ActionDispatcher 无匹配动作")
             self._dispatcher.process_queue()
+
+    def _debug_log(self, thread: str, line: str) -> None:
+        """写入内存缓冲区和调试文件。thread: living | comms"""
+        if thread == "living":
+            self._log_buffer.append(line)
+            debug_file = getattr(self, '_debug_living_file', None)
+        else:
+            self._comms_log.append(line)
+            debug_file = getattr(self, '_debug_comms_file', None)
+        if debug_file:
+            try:
+                with open(debug_file, "a", encoding="utf-8") as f:
+                    f.write(line + "\n")
+            except Exception as ex:
+                logger.warning("[%s] 写调试日志失败: %s", thread, ex)
 
     def _should_skip_dreaming(self) -> bool:
         return not self._load_consciousness
@@ -741,10 +930,27 @@ class ConsciousLiving(Living):
 
         # 防止重复调用（_run_chat 进行中）
         if self._chatting:
+            self._debug_log("living", f"{time.strftime('%H:%M:%S')} 消息 (忽略，chatting): {msg.content[:30]}")
             logger.info("[ConsciousLiving] 聊天进行中，忽略新消息: %s", msg.content[:30])
             return
 
-        logger.info("[ConsciousLiving] 收到消息: %s", msg.content[:50])
+        logger.info("[ConsciousLiving] 收到消息: %s [session=%s]", msg.content[:50], msg.session_id)
+
+        # Agent 间通讯会话：静默 ReAct → Router.deliver() 自动送达
+        if msg.session_id.startswith("comms-"):
+            self._debug_log("living",
+                f"{time.strftime('%H:%M:%S')} 收到 agent 消息 [{msg.session_id}]: {msg.content[:60]}"
+            )
+            self._handle_comms_message(msg)
+            return
+
+        # 飞书会话
+        if msg.session_id.startswith("feishu-"):
+            logger.info("[Feishu/Step5] _handle_message 收到 feishu 会话消息 (session=%s)", msg.session_id)
+
+        # 切换到消息所属的会话（保存当前 → 恢复目标）
+        if hasattr(self, '_attention') and self._attention:
+            self._attention.switch_to(msg.session_id)
 
         # 重置取消标志（新消息来了，之前的取消失效）
         self._cancel_requested = False
@@ -820,7 +1026,9 @@ class ConsciousLiving(Living):
         new_sid = f"s_{int(time.time())}"
         logger.info("[ConsciousLiving._on_wake] 创建新会话: %s → %s", self.session_id, new_sid)
         self.session_id = new_sid
-        self.agent._get_agent().session_id = new_sid
+        # 通过 AttentionLayer 保存旧会话并开始新会话
+        if hasattr(self, '_attention') and self._attention:
+            self._attention.new_session(new_sid)
 
         if self._load_consciousness:
             self.consciousness._last_l2_time = time.time()
@@ -975,14 +1183,36 @@ class ConsciousLiving(Living):
 
     def _on_stop(self) -> None:
         """停止时保存状态并关闭通讯服务。"""
-        # 关闭 HTTP 消息服务器
-        server = getattr(self, '_comms_server', None)
-        if server is not None:
+        # 保存当前会话
+        attention = getattr(self, '_attention', None)
+        if attention:
+            attention.save_session()
+
+        # 停止 Layer 0 / Layer 2 线程
+        layer0 = getattr(self, '_layer0', None)
+        if layer0:
+            layer0.stop()
+        layer2 = getattr(self, '_layer2', None)
+        if layer2:
+            layer2.stop()
+
+        # 关闭所有通道适配器
+        for name in self._registry.list_channels():
+            adapter = self._registry.get_channel(name)
+            if adapter and hasattr(adapter, "shutdown"):
+                try:
+                    adapter.shutdown()
+                except Exception as e:
+                    logger.warning("[ConsciousLiving] 关闭通道 %s 失败: %s", name, e)
+
+        # 关闭 WS Gateway
+        ws_server = getattr(self, '_ws_server', None)
+        if ws_server is not None:
             try:
-                server.shutdown()
-                logger.info("[ConsciousLiving] 通讯服务已关闭")
+                ws_server.should_exit = True
+                logger.info("[ConsciousLiving] WS Gateway 已请求关闭")
             except Exception as e:
-                logger.warning("[ConsciousLiving] 关闭通讯服务失败: %s", e)
+                logger.warning("[ConsciousLiving] 关闭 WS Gateway 失败: %s", e)
 
         if self.drive:
             self.drive.save()
@@ -1007,6 +1237,14 @@ class ConsciousLiving(Living):
 
         if self.on_proactive:
             self.on_proactive(content)
+        elif hasattr(self, '_router') and self._router:
+            # 通过 Router 分发到当前会话的输出路由
+            route = self._router.route_for_session(self.session_id)
+            if route:
+                self._router.deliver(content, route)
+            else:
+                # 兜底：CLI 模式直接打印
+                print(f"\n\033[36m[{self.agent.name or self._agent_id}] {content}\033[0m", flush=True)
         else:
             # CLI 模式：直接打印
             print(f"\n\033[36m[{self.agent.name or self._agent_id}] {content}\033[0m", flush=True)

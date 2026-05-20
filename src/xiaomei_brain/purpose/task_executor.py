@@ -14,7 +14,7 @@
 import logging
 from typing import Any, Optional
 
-from ..prompts.agent import CHAT_STYLE_PROMPT
+
 from ..prompts.purpose import PROGRESS_BLOCK_INSTRUCTION
 
 logger = logging.getLogger(__name__)
@@ -66,9 +66,9 @@ def build_intent_context(purpose, intent_result, chosen_by_user: bool = False, r
     if not intent_result:
         return ""
 
-    # CHAT 闲聊：小美自己的风格定义（不再由意图分析 LLM 代劳）
+    # CHAT 闲聊：不需要特殊上下文（人格由 talent.md/SelfModel 处理）
     if intent_result.is_chat():
-        return CHAT_STYLE_PROMPT
+        return ""
 
     # CLARIFICATION / QUERY：如果无活跃目标，不需要特殊上下文
     # 有活跃目标时，统一走下面的 TASK 强约束上下文（"只执行这一个子目标"）

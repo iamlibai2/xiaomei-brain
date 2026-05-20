@@ -118,7 +118,7 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
         thr_achievement = t.achievement
         thr_expression = t.expression
     else:
-        thr_belonging = 0.7
+        thr_belonging = 0.3
         thr_cognition = 0.8
         thr_achievement = 0.6
         thr_expression = 0.5
@@ -273,6 +273,23 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
                 metadata={"source": "idle", "idle_duration": ac.idle_trigger_seconds},
             ))
             .cooldown("idle_greet", ac.idle_greet_cooldown)
+    )
+
+    # ── Desire 驱动 ─────────────────────────────────────
+
+    # 归属欲高 → 主动和其他 agent 聊天
+    RULES.append(
+        Rule.when(lambda si, t=thr_belonging: _get_drive_facet(si).belonging > t)
+            .then(ActionItem(
+                action_type=ActionType.TALK_TO_AGENT,
+                priority=0.55,
+                content="",
+                reason=f"归属欲偏高 (>{thr_belonging:.1f})，想和其他 agent 交流",
+                source="desire",
+                cooldown_key="desire_talk_to_agent",
+                metadata={"desire_type": "belonging"},
+            ))
+            .cooldown("desire_talk_to_agent", ac.desire_talk_to_agent_cooldown)
     )
 
     # ── System 触发 ─────────────────────────────────────

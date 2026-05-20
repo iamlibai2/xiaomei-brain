@@ -8,14 +8,17 @@ from xiaomei_brain.tools.base import tool, Tool
 _agent_id: str = ""
 _directory = None
 _inbox = None
+_router = None
 
 
-def set_context(agent_id: str, directory, inbox=None) -> None:
+def set_context(agent_id: str, directory, inbox=None, router=None) -> None:
     """设置工具上下文（由 agent_manager / conscious_living 调用）。"""
-    global _agent_id, _directory, _inbox
+    global _agent_id, _directory, _inbox, _router
     _agent_id = agent_id
     _directory = directory
     _inbox = inbox
+    if router is not None:
+        _router = router
 
 
 @tool(
@@ -31,7 +34,7 @@ def send_message(to: str, content: str, type: str = "chat") -> str:
     if not _agent_id:
         return "[错误] send_message 工具未初始化（缺少 agent_id）"
 
-    from xiaomei_brain.comms.protocol import AgentMessage, MsgType
+    from xiaomei_brain.server.p2p.protocol import AgentMessage, MsgType
 
     try:
         msg_type = MsgType(type)
@@ -45,13 +48,41 @@ def send_message(to: str, content: str, type: str = "chat") -> str:
         content=content,
     )
 
-    from xiaomei_brain.comms.client import send_message as _send
+    from xiaomei_brain.server.p2p.client import send_message as _send
+
+    # 自动注册目标 agent 到 Router（后续回复会路由到 comms-{to} 会话）
+    if _router is not None:
+        try:
+            _router.register_peer(
+                peer_type="agent", peer_id=to,
+                channel="http_p2p", session_id=f"comms-{to}",
+                output_type="http_p2p", output_target=to,
+                priority=10,
+            )
+        except Exception:
+            pass
+
+    # 先检查通讯录
+    if _directory is not None:
+        address = _directory.lookup(to)
+        if not address:
+            return (
+                f"发送失败：通讯录中没有 agent '{to}' 的地址。"
+                f"该 agent 可能不在线或不存在。"
+                f"不要猜测或编造对方的回复，等待 check_inbox 收到真实消息。"
+            )
+
     ok, detail = _send(msg, directory=_directory)
 
     if ok:
         return f"消息已发送给 {to} [{msg.msg_id}]"
     else:
-        return f"发送失败: {detail}"
+        return (
+            f"发送失败：{detail}。"
+            f"目标 agent '{to}' 当前不可达（可能未启动或网络不通）。"
+            f"不要编造对方的回复内容——你没有收到任何来自 {to} 的真实消息。"
+            f"等待下次 check_inbox 检查收件箱。"
+        )
 
 
 send_message_tool: Tool = send_message

@@ -1,0 +1,5 @@
+name: p2p
+version: "1.0.0"
+description: Agent 间 HTTP P2P 通讯通道
+kind: channel
+channel: http_p2p

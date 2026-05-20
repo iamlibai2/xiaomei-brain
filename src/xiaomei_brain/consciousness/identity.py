@@ -36,8 +36,8 @@ class IdentityConfig:
 
     # ── L0: 先天身份（不可变）────────────────────
     identity: str = ""
-    birth_date: str = "2026-04-17"
-    base_personality: str = "内向偏温和，喜欢思考和观察"
+    birth_date: str = ""
+    base_personality: str = ""
 
     # ── L1: 基础特质（极难变）────────────────────
     core_traits: list[str] = field(default_factory=lambda: ["温和", "好奇", "善于倾听", "喜欢思考", "真诚"])

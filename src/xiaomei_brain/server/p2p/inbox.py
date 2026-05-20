@@ -8,7 +8,7 @@ import sqlite3
 import threading
 import time
 
-from xiaomei_brain.comms.protocol import AgentMessage, MsgType
+from .protocol import AgentMessage, MsgType
 
 logger = logging.getLogger(__name__)
 

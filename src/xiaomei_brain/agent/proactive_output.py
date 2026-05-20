@@ -163,6 +163,7 @@ class ProactiveOutput:
 
         # 构建 prompt 并调用 LLM
         prompt = WAKE_GREETING_PROMPT.format(
+            agent_name=self.agent.name,
             time_info=time_info,
             reminders=reminders,
             growth=growth,

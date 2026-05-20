@@ -407,11 +407,15 @@ class SelfImage:
     def _render_being(self) -> list[str]:
         b = self.being
         h = self.history
-        lines: list[str] = [
-            "",
-            f"你是{b.name}，出生于{b.birth_date}。",
-            f"你的基础性格是{b.personality}。",
-            "",
+        lines: list[str] = [""]
+        if b.name:
+            lines.append(f"你叫{b.name}。")
+        if b.birth_date:
+            lines.append(f"出生于{b.birth_date}。")
+        if b.personality:
+            lines.append(f"你的基础性格是{b.personality}。")
+        lines.append("")
+        lines.extend([
             "## 与其他 agent 通讯的规则",
             "其他 agent 可能给你发消息。",
             "- 回复用户之前，先用 check_inbox 工具检查收件箱（这是你唯一的收信渠道）",
@@ -423,7 +427,7 @@ class SelfImage:
             "- 用户说「继续上次的话题」「回到之前的讨论」等 → 用 manage_session list 查看旧会话，找到相关会话后 switch 进去",
             "- 其他情况不要动会话，留在当前会话。",
             "- 切换会话后，工具返回的上下文会根据会话变化，基于返回的上下文自然接续对话。",
-        ]
+        ])
         if b.self_cognition:
             strengths = b.self_cognition.get("擅长", [])
             if strengths:

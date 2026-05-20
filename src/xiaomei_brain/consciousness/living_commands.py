@@ -359,13 +359,16 @@ def cmd_tool_expand(living: ConsciousLiving, args: str = "") -> None:
 
     logger.info("[CLI] 执行命令: tool %s", args)
 
+    agent = living.agent._get_agent()
+    tcb = getattr(agent, 'tool_call_buffer', None)
+
     if not args or args.strip() == "list":
         print("\n【最近工具调用】", flush=True)
-        list_tool_calls(10)
+        list_tool_calls(10, tool_call_buffer=tcb)
     else:
         try:
             idx = int(args.strip())
-            expand_tool_call(idx)
+            expand_tool_call(idx, tool_call_buffer=tcb)
         except ValueError:
             print("  用法: tool <编号> | tool list", flush=True)
 
@@ -468,11 +471,15 @@ def cmd_switch(living: ConsciousLiving, args: str = "") -> None:
         living._print_prompt()
         return
 
-    # 切换
+    # 通过 AttentionLayer 切换会话
+    attention = getattr(living, '_attention', None)
+    if attention:
+        attention.switch_to(sid)
+    else:
+        agent = living.agent._get_agent()
+        agent.session_id = sid
+        agent.messages = []
     living.session_id = sid
-    agent = living.agent._get_agent()
-    agent.session_id = sid
-    agent.messages = []
 
     count = db.count(session_id=sid)
     print(f"\n\033[32m已切换到会话 {sid} ({count}条消息)\033[0m", flush=True)

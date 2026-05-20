@@ -1,0 +1,5 @@
+name: ws
+version: "1.0.0"
+description: WebSocket 通道（Web UI 入口）
+kind: channel
+channel: ws

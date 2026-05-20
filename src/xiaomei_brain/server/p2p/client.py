@@ -7,7 +7,7 @@ import logging
 import urllib.request
 import urllib.error
 
-from xiaomei_brain.comms.protocol import AgentMessage
+from .protocol import AgentMessage
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ def send_message(
     """
     # 解析目标地址
     if directory is None:
-        from xiaomei_brain.comms.directory import AgentDirectory
+        from .directory import AgentDirectory
         directory = AgentDirectory()
 
     address = directory.resolve(msg.to_agent)

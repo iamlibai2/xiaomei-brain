@@ -1,4 +1,4 @@
-"""WebSocket connection manager."""
+"""WebSocket 连接管理。"""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ class ConnectionManager:
         self.connections[conn_id] = ws
 
     def unregister(self, conn_id: str) -> None:
-        ws = self.connections.pop(conn_id, None)
+        self.connections.pop(conn_id, None)
         # Remove session mapping
         for sid, cid in list(self.session_to_conn.items()):
             if cid == conn_id:
