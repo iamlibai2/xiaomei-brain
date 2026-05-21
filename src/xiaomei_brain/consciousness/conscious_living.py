@@ -860,13 +860,30 @@ class ConsciousLiving(Living):
         """每 tick 调用（1秒一次）。
 
         L0 由 Layer0 线程独立维护，L2/L3/DREAM 由 Layer2 线程独立调度。
-        此处只同步 agent_state 给 Layer 2 并检查入梦信号。
+        此处同步 agent_state、队列深度给 consciousness，读取 interoception signals。
         """
         if not self._load_consciousness:
             return
 
-        # 同步状态给 Layer 2 线程
+        # 同步状态 + 队列深度给 Layer 2 / consciousness
         self.consciousness._agent_state = state.value
+        self.consciousness._queue_depth = self._queue.qsize()
+
+        # ── 读取 Interoception signals ──
+        sig = getattr(self.consciousness, '_interoception_signals', None)
+        if sig is not None:
+            # 注入给 Living 基类（供限流 read）
+            self._interoception_signals = sig
+
+            # SOS 通道
+            if getattr(sig, 'sos', False) and getattr(sig, 'sos_message', ''):
+                self.send_sos_to_channels(sig.sos_message)
+
+            # 压力事件 → Drive
+            if self.drive and sig.stress_level != "none":
+                self.drive.on_system_stress(sig.stress_level, "interoception")
+            elif self.drive and sig.stress_level == "none":
+                self.drive.on_system_healthy()
 
         # 检查 Layer 2 发出的入梦信号
         if getattr(self.consciousness, '_dream_signal', False):
@@ -1202,6 +1219,32 @@ class ConsciousLiving(Living):
         """
         logger.info("[ConsciousLiving] Waking up — message received!")
         self._transition(LivingState.AWAKE)
+
+    def send_sos_to_channels(self, message: str, channels: list | None = None) -> None:
+        """SOS 紧急推送：绕过 LLM，直接发送到所有可用渠道。"""
+        ts = time.strftime("%H:%M:%S")
+        sos_text = f"[SOS] {ts}\n{message}"
+
+        # 遍历所有注册的渠道适配器直接发送
+        registry = getattr(self, '_registry', None)
+        if registry:
+            sent = False
+            for name in registry.list_channels():
+                if channels and name not in channels:
+                    continue
+                try:
+                    adapter = registry.get_channel(name)
+                    if adapter and hasattr(adapter, 'send_message'):
+                        adapter.send_message(sos_text)
+                        sent = True
+                except Exception as e:
+                    logger.error("[Living SOS] 渠道 %s 推送失败: %s", name, e)
+            if sent:
+                logger.warning("[Living SOS] 已推送到渠道: %.100s", message)
+                return
+
+        # 无渠道时走 stdout
+        print(f"\n\033[91m{sos_text}\033[0m", flush=True)
 
     def _on_stop(self) -> None:
         """停止时保存状态并关闭通讯服务。"""
