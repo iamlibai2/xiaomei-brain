@@ -628,6 +628,31 @@ class DriveEngine:
         if now - self.last_hour_tick >= 3600:
             self.tick_hour()
 
+    # ========== 系统压力事件（内感受 → Drive）==========
+
+    def on_system_stress(self, level: str, source: str) -> None:
+        """系统压力事件 → 皮质醇上升 + 能量下降。
+
+        Args:
+            level: "mild" / "moderate" / "severe"
+            source: 压力来源标识
+        """
+        if level == "mild":
+            self.hormone.cortisol = min(1.0, self.hormone.cortisol + 0.05)
+        elif level == "moderate":
+            self.hormone.cortisol = min(1.0, self.hormone.cortisol + 0.1)
+            self.energy.level = max(0.0, self.energy.level - 0.02)
+            logger.info("[Drive] 中度系统压力: %s", source)
+        elif level == "severe":
+            self.hormone.cortisol = min(1.0, self.hormone.cortisol + 0.2)
+            self.energy.level = max(0.0, self.energy.level - 0.05)
+            logger.warning("[Drive] 严重系统压力!!! %s", source)
+
+    def on_system_healthy(self) -> None:
+        """系统恢复 → 血清素回升 + 能量恢复。"""
+        self.hormone.serotonin = min(1.0, self.hormone.serotonin + 0.02)
+        self.energy.level = min(1.0, self.energy.level + 0.01)
+
     # ========== 输出 ==========
 
     def get_signals(self) -> DriveSignals:

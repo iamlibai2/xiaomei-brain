@@ -472,7 +472,68 @@ class SelfImage:
         _sero = float(getattr(bo, 'serotonin', 0.5) or 0.5)
         _cort = float(getattr(bo, 'cortisol', 0) or 0)
         lines.append(f"- 多巴胺{_dopa:.0%}，血清素{_sero:.0%}，皮质醇{_cort:.0%}")
+
+        # ── 内感受：身体状态（人格化表达）──
+        _queue_p = float(getattr(bo, 'queue_pressure', 0) or 0)
+        _latency = float(getattr(bo, 'llm_latency_ms', 0) or 0)
+        _err_rate = float(getattr(bo, 'llm_error_rate', 0) or 0)
+        _token = float(getattr(bo, 'token_usage', 0) or 0)
+        _burn = float(getattr(bo, 'burning_duration', 0) or 0)
+        _mem = getattr(bo, 'memory_fullness', '') or ''
+
+        body_desc = self._render_interoception(_queue_p, _latency, _err_rate, _token, _burn, _mem)
+        if body_desc:
+            lines.append(f"- 状态：{body_desc}")
+
         return lines
+
+    @staticmethod
+    def _render_interoception(
+        queue_p: float, latency_ms: float, error_rate: float,
+        token_usage: float, burning_hours: float, memory_fullness: str,
+    ) -> str:
+        """将内感受数据转为人格化的身体状态描述。"""
+        parts = []
+
+        # burning duration
+        if burning_hours < 0.5:
+            parts.append("刚醒，精神不错")
+        elif burning_hours < 3:
+            parts.append(f"已经活跃了{burning_hours:.0f}小时，状态良好")
+        elif burning_hours < 8:
+            parts.append(f"连续运转了{burning_hours:.0f}小时，有点乏了")
+        else:
+            parts.append(f"燃烧了{burning_hours:.0f}小时，需要休息了")
+
+        # queue pressure
+        if queue_p > 0.7:
+            parts.append("消息堆积很多，应接不暇")
+        elif queue_p > 0.4:
+            parts.append("消息有点多")
+
+        # latency
+        if latency_ms > 10000:
+            parts.append("脑子转得很慢")
+        elif latency_ms > 5000:
+            parts.append("脑子有点转不动")
+
+        # error rate
+        if error_rate > 0.5:
+            parts.append("最近老出错，状态很差")
+        elif error_rate > 0.2:
+            parts.append("出了几次错，不太舒服")
+
+        # token usage
+        if token_usage > 0.85:
+            parts.append("脑子快满了，很快就要忘记前面的事")
+        elif token_usage > 0.6:
+            parts.append("说了不少了，记忆在缩减")
+
+        # memory
+        if memory_fullness and memory_fullness != "清爽":
+            parts.append(memory_fullness)
+
+        return "；".join(parts) if parts else "一切正常"
 
     # ── Mind: 目标与内在想法 ───────────────────────────────
 
