@@ -155,6 +155,9 @@ class LLMClient:
         provider: str | None = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
         timeout: int = DEFAULT_TIMEOUT,
+        # ── 新增：备用 provider + 内感受 ──
+        fallback_configs: list[dict[str, str]] | None = None,
+        interoception: Any = None,
     ) -> None:
         """初始化 LLM 客户端。
 
@@ -165,6 +168,8 @@ class LLMClient:
             provider: Provider 名称（zhipu / volcengine / openai），用于日志标识。
             max_retries: 最大重试次数，默认 3 次。
             timeout: 请求超时时间（秒），默认 60 秒。
+            fallback_configs: 备用 provider 列表，每项 {"model", "base_url", "api_key", "name"}。
+            interoception: Interoception 实例（供退避/切换/错误记录）。
         """
         self.provider = provider
         self.model = model
@@ -172,6 +177,18 @@ class LLMClient:
         self.api_key = api_key
         self.max_retries = max_retries
         self.timeout = timeout
+
+        # ── 备用 provider ──
+        self._fallback_configs = fallback_configs or []
+        self._fallback_index = -1  # -1 = 主配置
+        self._interoception = interoception
+
+        # ── 最近一次调用追踪 ──
+        self._last_call_latency_ms: float = 0.0
+        self._last_call_error: bool = False
+
+        # ── 退避状态 ──
+        self._backoff_until: float = 0.0
 
         # 参数校验
         if not self.api_key:
@@ -194,6 +211,53 @@ class LLMClient:
             self.base_url = base_url
         if api_key:
             self.api_key = api_key
+
+    # ── 备用 provider ──────────────────────────────────────────
+
+    def _get_active_config(self) -> dict[str, str]:
+        """返回当前生效的 base_url/api_key/model。"""
+        if self._fallback_index >= 0 and self._fallback_index < len(self._fallback_configs):
+            fc = self._fallback_configs[self._fallback_index]
+            return {
+                "model": fc.get("model", self.model),
+                "base_url": fc.get("base_url", self.base_url),
+                "api_key": fc.get("api_key", self.api_key),
+            }
+        return {"model": self.model, "base_url": self.base_url, "api_key": self.api_key}
+
+    def switch_to_fallback(self) -> bool:
+        """切换到下一个备用 provider。返回 True 表示切换成功。"""
+        self._fallback_index += 1
+        if self._fallback_index >= len(self._fallback_configs):
+            logger.error("[LLM] 所有备用 provider 已耗尽")
+            return False
+        cfg = self._fallback_configs[self._fallback_index]
+        logger.warning("[LLM] 切换到备用 provider: %s (model=%s)",
+                       cfg.get("name", "unknown"), cfg.get("model", "unknown"))
+        return True
+
+    def reset_to_primary(self) -> None:
+        """切回主 provider。"""
+        if self._fallback_index >= 0:
+            logger.info("[LLM] 切回主 provider")
+            self._fallback_index = -1
+
+    def apply_backoff(self, seconds: float) -> None:
+        """执行退避睡眠。"""
+        if seconds > 0:
+            self._backoff_until = time.time() + seconds
+            logger.warning("[LLM] 退避 %.1fs", seconds)
+            time.sleep(seconds)
+
+    def _record_call(self, latency_ms: float, is_error: bool) -> None:
+        """记录一次调用结果给 Interoception。"""
+        self._last_call_latency_ms = latency_ms
+        self._last_call_error = is_error
+        if self._interoception:
+            try:
+                self._interoception.record_llm_call(latency_ms, is_error)
+            except Exception:
+                pass
 
     # region 公共接口
 
@@ -678,6 +742,7 @@ class LLMClient:
                     raise LLMError("API 响应缺少 choices 字段", retryable=True)
 
                 log_request(True)
+                self._record_call((time.time() - t0) * 1000, False)
                 return self._parse_response(data)
 
             except requests.Timeout:
@@ -687,6 +752,7 @@ class LLMClient:
                     logger.warning("超时，%.1fs 后重试（第 %d/%d 次）", backoff, attempt + 1, self.max_retries)
                     time.sleep(backoff)
                     continue
+                self._record_call((time.time() - t0) * 1000, True)
                 log_request(False, f"timeout({self.timeout}s)")
                 raise last_error
 
@@ -697,16 +763,19 @@ class LLMClient:
                     logger.warning("连接失败，%.1fs 后重试（第 %d/%d 次）", backoff, attempt + 1, self.max_retries)
                     time.sleep(backoff)
                     continue
+                self._record_call((time.time() - t0) * 1000, True)
                 log_request(False, "conn_err")
                 raise last_error
 
             except requests.RequestException as e:
                 # 其他请求异常（如 401/403/422）不重试
+                self._record_call((time.time() - t0) * 1000, True)
                 log_request(False, f"req_err:{e}")
                 raise LLMError(f"请求失败：{e}", retryable=False)
 
         # 重试次数耗尽（理论上 above for loop 总会 return 或 raise，
         # 这里是为了穷尽所有路径）
+        self._record_call((time.time() - t0) * 1000, True)
         log_request(False, "retries_exhausted")
         raise last_error or LLMError("未知错误", retryable=False)
 

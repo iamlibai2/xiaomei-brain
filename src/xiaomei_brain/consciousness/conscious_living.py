@@ -349,12 +349,12 @@ class ConsciousLiving(Living):
                 "layer2": self._layer2._thread,
             })
 
-            # 内感受：注入 LLM 客户端引用（供记录调用延迟和错误）
+            # 内感受：注入 LLM 客户端引用（穿透 ContextGuard 到底层 LLMClient）
             if hasattr(self.agent, 'llm') and self.agent.llm is not None:
-                self.interoception.set_llm_callback(self.agent.llm)
-                # 将 interoception 反向注入 LLMClient（供退避/切换读取）
+                llm_client = getattr(self.agent.llm, '_llm', self.agent.llm)  # ContextGuard._llm 或裸 LLMClient
+                self.interoception.set_llm_callback(llm_client)
                 try:
-                    self.agent.llm._interoception = self.interoception
+                    llm_client._interoception = self.interoception
                 except Exception:
                     pass
 
