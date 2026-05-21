@@ -252,6 +252,15 @@ class SelfBody:
     _drive: Any = field(default=None, repr=False, compare=False)
     attention: str = "等待用户"  # SelfImage 自管，不代理
 
+    # ── 内感受字段（非代理，由 Interoception.tick() 实时写入）──
+    thread_health: dict = field(default_factory=lambda: {"layer0": True, "layer2": True})
+    queue_pressure: float = 0.0
+    llm_latency_ms: float = 0.0
+    llm_error_rate: float = 0.0
+    token_usage: float = 0.0
+    memory_fullness: str = "清爽"
+    burning_duration: float = 0.0
+
     # ── 代理读取辅助 ──────────────────────────
 
     def _d(self, path: str, default: Any = 0.0) -> Any:
@@ -310,15 +319,37 @@ class SelfBody:
             "oxytocin": self.oxytocin,
             "norepinephrine": self.norepinephrine,
             "motivation_level": self.motivation_level,
+            # ── 内感受字段 ──
+            "thread_health": self.thread_health,
+            "queue_pressure": self.queue_pressure,
+            "llm_latency_ms": self.llm_latency_ms,
+            "llm_error_rate": self.llm_error_rate,
+            "token_usage": self.token_usage,
+            "memory_fullness": self.memory_fullness,
+            "burning_duration": self.burning_duration,
         }
 
     def from_dict(self, data: dict) -> None:
         # 代理字段的数据来自 Drive，不从 JSON 恢复
         if "attention" in data:
             self.attention = data["attention"]
+        # ── 内感受字段从快照恢复 ──
+        for key in (
+            "thread_health", "queue_pressure", "llm_latency_ms",
+            "llm_error_rate", "token_usage", "memory_fullness", "burning_duration",
+        ):
+            if key in data:
+                setattr(self, key, data[key])
 
     def get_summary(self) -> str:
-        return f"能量{self.energy:.0%}，心情{self.mood}，关注{self.attention}"
+        base = f"能量{self.energy:.0%}，心情{self.mood}，关注{self.attention}"
+        if self.llm_latency_ms > 5000:
+            base += "，脑子有点转不动"
+        elif self.queue_pressure > 0.5:
+            base += "，消息有点多"
+        if self.memory_fullness and self.memory_fullness != "清爽":
+            base += f"，{self.memory_fullness}"
+        return base
 
 
 # ── SelfPerception: 感知输入 ──────────────────────────────
