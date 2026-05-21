@@ -39,6 +39,7 @@ class Layer0Autonomous:
         drive: DriveEngine | None = None,
         tick_interval: float = 1.0,
         debug_file: str = "",        # 调试日志文件路径
+        interoception: Any = None,   # Interoception 实例
     ) -> None:
         self._c = consciousness
         self._drive = drive
@@ -47,6 +48,7 @@ class Layer0Autonomous:
         self._thread: threading.Thread | None = None
         self._lock: threading.RLock = threading.RLock()
         self._debug_file = debug_file
+        self._interoception = interoception           # 内感受
 
         # TUI 日志缓冲区
         self._log_buffer: deque[str] = deque(maxlen=200)
@@ -89,11 +91,28 @@ class Layer0Autonomous:
             with self._lock:
                 try:
                     self._c.tick_L0(agent_state=None)
+
+                    # ── 内感受：采集身体指标 + 写入 SelfBody ──
+                    if self._interoception:
+                        queue_depth = getattr(self._c, '_queue_depth', 0)
+                        sig = self._interoception.tick(queue_depth)
+
+                        # 写入 SelfBody（LLM 感知）
+                        body_data = sig.as_body_dict()
+                        si = self._c.get_self_image()
+                        for key, val in body_data.items():
+                            setattr(si.body, key, val)
+
+                        # 信号注入 consciousness（供 Living._heartbeat 读取）
+                        self._c._interoception_signals = sig
+                    # ── 内感受结束 ──
+
                     si = self._c.get_self_image()
                     ts = time.strftime("%H:%M:%S")
                     self._log(
                         f"{ts} L0 tick | energy={si.body.energy:.2f} "
-                        f"mood={si.body.mood} state={si.perception.agent_state}"
+                        f"mood={si.body.mood} state={si.perception.agent_state} "
+                        f"queue={si.body.queue_pressure:.1f} err={si.body.llm_error_rate:.1f}"
                     )
                 except Exception as e:
                     logger.warning("[Layer0] tick_L0 出错: %s", e)

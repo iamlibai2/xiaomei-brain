@@ -181,6 +181,11 @@ class ConsciousLiving(Living):
         )
         self._load_consciousness = load_consciousness
 
+        # ── 内感受（Interoception）—— 身体状态感知 ──
+        from .interoception import Interoception
+        self.interoception = Interoception(burn_start_time=time.time())
+        logger.info("[ConsciousLiving] Interoception 已创建")
+
         # InnerVoice → SelfImage 连接（延迟设置）
         si = self.consciousness.self_image
         if self._inner_voice:
@@ -252,12 +257,13 @@ class ConsciousLiving(Living):
                 with open(_p, "w") as _f:
                     _f.write("")
 
-        # Layer 0：自主层线程（火焰骨架 + Drive 衰减 + 异常检测）
+        # Layer 0：自主层线程（火焰骨架 + Drive 衰减 + 异常检测 + 内感受）
         self._layer0 = Layer0Autonomous(
             consciousness=self.consciousness,
             drive=self.drive,
             tick_interval=1.0,
             debug_file=os.path.join(self._debug_dir, "layer0.log"),
+            interoception=self.interoception,
         )
         logger.info("[ConsciousLiving] Layer0 已创建")
 
@@ -336,6 +342,21 @@ class ConsciousLiving(Living):
         if self._load_consciousness:
             self._layer0.start()
             self._layer2.start()
+
+            # 内感受：注入线程引用（start 后 _thread 才存在）
+            self.interoception.set_threads({
+                "layer0": self._layer0._thread,
+                "layer2": self._layer2._thread,
+            })
+
+            # 内感受：注入 LLM 客户端引用（供记录调用延迟和错误）
+            if hasattr(self.agent, 'llm') and self.agent.llm is not None:
+                self.interoception.set_llm_callback(self.agent.llm)
+                # 将 interoception 反向注入 LLMClient（供退避/切换读取）
+                try:
+                    self.agent.llm._interoception = self.interoception
+                except Exception:
+                    pass
 
     def _register_being_tool(self) -> None:
         """注册 being 工具：将 L2 内心觉察暴露为对话中可调用的工具。
