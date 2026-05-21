@@ -108,6 +108,11 @@ class Living:
         self._chatting = False
         self._command_done = threading.Event()
 
+        # 内感受信号
+        self._interoception_signals: Any = None
+        self._sos_message: str | None = None
+        self._sos_message_time: float = 0.0
+
         # 周期任务
         self._periodic_tasks: list[PeriodicTask] = []
         self._heartbeat_result: str = HEARTBEAT_NORMAL
@@ -167,10 +172,23 @@ class Living:
         session_id: str | None = None,
         source: str = "",
         images: list[str] | None = None,
+        urgent: bool = False,
     ) -> None:
-        """放入消息（字符级过滤）"""
+        """放入消息（字符级过滤）。
+
+        Args:
+            urgent: 设为 True 绕过限流（SOS 等紧急消息）。
+        """
         if isinstance(content, str):
             content = self._clean_input(content)
+
+        # ── 限流检查 ──
+        if not urgent:
+            sig = getattr(self, '_interoception_signals', None)
+            if sig and getattr(sig, 'throttle', False):
+                logger.warning("[Living] 限流激活，丢弃非紧急消息: %.50s", content)
+                return
+
         msg = LivingMessage(
             content=content,
             user_id=user_id or self.user_id,
@@ -212,6 +230,28 @@ class Living:
         self._running = False
         self._queue.put_nowait(None)
         self._on_stop()
+
+    # ── SOS 紧急推送 ───────────────────────────────────────────
+
+    def set_sos_message(self, message: str) -> None:
+        """设置 SOS 消息（由 _heartbeat 调用）。"""
+        self._sos_message = message
+        self._sos_message_time = time.time()
+
+    def get_and_clear_sos(self) -> str | None:
+        """读取并清空 SOS 消息。"""
+        msg = self._sos_message
+        self._sos_message = None
+        return msg
+
+    def send_sos_to_channels(self, message: str, channels: list | None = None) -> None:
+        """直接通过渠道发送 SOS 消息——绕过 LLM，绕过 anti-spam。
+
+        子类（ConsciousLiving）覆盖此方法以访问实际的 channel 列表。
+        基类提供默认实现：通过 stdout 输出。
+        """
+        ts = time.strftime("%H:%M:%S")
+        print(f"\n\033[91m[SOS] {ts} {message}\033[0m", flush=True)
 
     def cancel(self) -> None:
         """请求取消当前动作"""
