@@ -30,6 +30,7 @@ class PluginManifest:
     provides_tools: list[str] = field(default_factory=list)
     provides_hooks: list[str] = field(default_factory=list)
     entry: str = "adapter:register"    # 入口函数路径（模块路径省略前缀部分）
+    config_schema: dict | None = None   # JSON Schema for plugin config（可选）
 
     # 插件所在目录（不来自 yaml，由 loader 填充）
     dir_path: str = ""
@@ -67,6 +68,11 @@ class PluginManifest:
             logger.warning("[Plugin] %s kind=%s 无效，有效值: %s", path, kind, sorted(VALID_KINDS))
             return None
 
+        config_schema = data.get("configSchema")
+        if config_schema is not None and not isinstance(config_schema, dict):
+            logger.warning("[Plugin] %s configSchema 不是 dict，忽略", path)
+            config_schema = None
+
         return cls(
             name=name,
             version=str(data.get("version", "0.0.0")),
@@ -77,6 +83,7 @@ class PluginManifest:
             provides_tools=data.get("provides_tools", []) or [],
             provides_hooks=data.get("provides_hooks", []) or [],
             entry=data.get("entry", "adapter:register"),
+            config_schema=config_schema,
             dir_path=str(path.parent),
         )
 

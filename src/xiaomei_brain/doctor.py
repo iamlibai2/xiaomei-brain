@@ -255,11 +255,97 @@ class Doctor:
         sec.checks.append(self._ok("sessions", f"{len(sessions)} saved session(s)"))
         return sec
 
+    def check_plugins(self) -> Section:
+        """检查插件系统健康状态。不执行插件代码，只读 manifest + config。"""
+        sec = Section("Plugins")
+
+        try:
+            from .plugin import PluginLoader, PluginRegistry
+            from .plugin.bootstrap import _read_raw_config
+        except ImportError as e:
+            sec.checks.append(self._skip("plugins", f"plugin system not available: {e}"))
+            return sec
+
+        registry = PluginRegistry()
+        loader = PluginLoader(registry=registry, config={})
+
+        try:
+            manifests = loader.discover()
+        except Exception as e:
+            sec.checks.append(self._fail("discover", "discovery failed", str(e)))
+            return sec
+
+        # 过滤出内置频道
+        bundled = [m for m in manifests if m.dir_path and "/channels/" in m.dir_path.replace("\\", "/")]
+        external = [m for m in manifests if m not in bundled]
+
+        sec.checks.append(self._ok("bundled", f"{len(bundled)} built-in plugin(s)"))
+        for m in sorted(bundled, key=lambda x: x.name):
+            sec.checks.append(self._ok(f"  {m.name}", f"v{m.version} — {m.kind}"))
+
+        if external:
+            sec.checks.append(self._ok("external", f"{len(external)} external plugin(s)"))
+            for m in sorted(external, key=lambda x: x.name):
+                env_ok = all(os.getenv(ev) for ev in m.requires_env)
+                if env_ok:
+                    sec.checks.append(self._ok(f"  {m.name}", f"v{m.version} — {m.kind}"))
+                else:
+                    missing = [ev for ev in m.requires_env if not os.getenv(ev)]
+                    sec.checks.append(self._warn(
+                        f"  {m.name}",
+                        f"missing env: {', '.join(missing)}"
+                    ))
+
+        # configSchema 校验（不执行插件代码）
+        if not external and not bundled:
+            return sec
+
+        raw_config = _read_raw_config()
+        if raw_config:
+            plugins_cfg = raw_config.get("plugins", {})
+            entries = plugins_cfg.get("entries", {})
+
+            for m in manifests:
+                if not m.config_schema:
+                    continue
+                plugin_cfg = entries.get(m.name, {})
+                try:
+                    import jsonschema
+                    jsonschema.validate(instance=plugin_cfg, schema=m.config_schema)
+                except ImportError:
+                    pass  # jsonschema 未安装时跳过详细校验
+                except Exception as e:
+                    sec.checks.append(self._warn(
+                        f"  {m.name} config",
+                        str(e)
+                    ))
+
+            # 检查 plugins.allow/deny 引用的插件是否存在
+            allow_list = plugins_cfg.get("allow", [])
+            deny_list = plugins_cfg.get("deny", [])
+            known_ids = {m.name for m in manifests}
+
+            for pid in allow_list:
+                if pid not in known_ids:
+                    sec.checks.append(self._warn(
+                        f"plugins.allow",
+                        f"'{pid}' 不在已发现的插件中"
+                    ))
+            for pid in deny_list:
+                if pid not in known_ids:
+                    sec.checks.append(self._warn(
+                        f"plugins.deny",
+                        f"'{pid}' 不在已发现的插件中"
+                    ))
+
+        return sec
+
     # ── Run all checks ──────────────────────────────────────────────
 
     def run(self) -> bool:
         all_checks = [
             self.check_config,
+            self.check_plugins,
             self.check_provider_connectivity,
             self.check_tts,
             self.check_web_search,

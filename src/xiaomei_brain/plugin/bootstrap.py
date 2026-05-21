@@ -29,7 +29,7 @@ def boot_plugins(agent_id: str = "", extra_dirs: list[str] | None = None) -> Plu
     registry = PluginRegistry()
 
     # 从统一配置中提取插件配置
-    plugins_config = _extract_plugins_config()
+    plugins_config = _extract_plugins_config(agent_id)
 
     loader = PluginLoader(
         registry=registry,
@@ -48,12 +48,13 @@ def boot_plugins(agent_id: str = "", extra_dirs: list[str] | None = None) -> Plu
     return registry
 
 
-def _extract_plugins_config() -> dict:
+def _extract_plugins_config(agent_id: str = "") -> dict:
     """从统一 config.json 提取插件配置。
 
     映射规则：
       - plugins.allow / plugins.deny → 启用/禁用特定插件
-      - channels.<name>.accounts.default → 频道插件配置（原样传递）
+      - channels.<name>.accounts.<accountId> → 频道插件配置
+      - bindings → 按 agent_id 过滤 channels（无 bindings 时全加载）
     """
     entries: dict[str, dict] = {}
     allow: list[str] = []
@@ -68,7 +69,7 @@ def _extract_plugins_config() -> dict:
         deny = list(plugins_cfg.get("deny", []))
 
         # ── 频道 → 插件映射（通用，不需要逐频道硬编码）──
-        _map_channel_configs(raw, entries)
+        _map_channel_configs(raw, entries, agent_id)
 
     except Exception as e:
         logger.warning("[Plugin] 读取统一配置失败: %s", e)
@@ -98,19 +99,27 @@ def _read_raw_config() -> dict | None:
     return None
 
 
-def _map_channel_configs(raw: dict | None, entries: dict) -> None:
+def _map_channel_configs(raw: dict | None, entries: dict, agent_id: str = "") -> None:
     """将 config.json channels 节映射到插件 entries（通用，不逐 channel 硬编码）。
 
-    约定：
-      config.json:
+    映射规则：
+      1. 如果 config.json 有 bindings → 只加载绑定了当前 agent 的 channel，
+         使用 binding 中的 accountId 选取对应 account 配置
+      2. 如果 bindings 为空 → 全加载所有 enabled channel（向后兼容），
+         使用 accounts.default
+
+    config.json 格式：
+      {
         "channels": {
           "<name>": {
             "enabled": true,
-            "accounts": { "default": { ... } }
+            "accounts": { "default": { ... }, "<accountId>": { ... } }
           }
-        }
-
-      → entries["<name>"] = accounts.default（原样传递，插件自行解析 key 名）
+        },
+        "bindings": [
+          { "agentId": "xiaomei", "match": { "channel": "feishu", "accountId": "xiaomei" } }
+        ]
+      }
     """
     if not raw:
         return
@@ -118,6 +127,9 @@ def _map_channel_configs(raw: dict | None, entries: dict) -> None:
     channels = raw.get("channels", {})
     if not isinstance(channels, dict):
         return
+
+    bindings: list[dict] = raw.get("bindings", [])
+    _use_bindings = bool(bindings) and bool(agent_id)
 
     for name, channel_cfg in channels.items():
         if not isinstance(channel_cfg, dict):
@@ -129,6 +141,43 @@ def _map_channel_configs(raw: dict | None, entries: dict) -> None:
         if not isinstance(accounts, dict):
             continue
 
-        default_account = accounts.get("default", {})
-        if default_account:
-            entries[name] = dict(default_account)
+        if _use_bindings:
+            # 按 bindings 过滤：找到当前 agent 在这个 channel 上的绑定
+            account_id = _resolve_binding_account(bindings, agent_id, name)
+            if account_id is None:
+                logger.info(
+                    "[Plugin] 跳过 %s（agent %s 无绑定）", name, agent_id,
+                )
+                continue
+            account_cfg = accounts.get(account_id, {})
+            if account_cfg:
+                entries[name] = dict(account_cfg)
+                logger.info(
+                    "[Plugin] %s → account=%s (binding)", name, account_id,
+                )
+        else:
+            # 无 bindings：全加载，使用 default account
+            default_account = accounts.get("default", {})
+            if default_account:
+                entries[name] = dict(default_account)
+
+
+def _resolve_binding_account(bindings: list[dict], agent_id: str, channel: str) -> str | None:
+    """从 bindings 中查找 agent 在指定 channel 上绑定的 accountId。
+
+    Returns:
+        accountId 字符串，无匹配返回 None
+    """
+    for b in bindings:
+        if not isinstance(b, dict):
+            continue
+        if b.get("agentId") != agent_id:
+            continue
+        match = b.get("match", {})
+        if not isinstance(match, dict):
+            continue
+        if match.get("channel") != channel:
+            continue
+        # accountId 省略时视为 "default"
+        return match.get("accountId", "default")
+    return None

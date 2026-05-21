@@ -131,7 +131,7 @@ class PluginLoader:
     # ── Validate ──────────────────────────────────────────────────
 
     def validate(self, manifests: list[PluginManifest]) -> list[PluginManifest]:
-        """验证 manifest：环境变量、allow/deny、重复 ID。"""
+        """验证 manifest：环境变量、allow/deny、config schema、重复 ID。"""
         plugins_config = self.config.get("plugins", {})
         allow_list: list[str] = plugins_config.get("allow", [])
         deny_list: list[str] = plugins_config.get("deny", [])
@@ -156,10 +156,59 @@ class PluginLoader:
                 self.registry.track_plugin(LoadedPlugin(manifest=m, status="error", error=msg))
                 continue
 
+            # configSchema 校验
+            schema_error = self._validate_config_schema(m)
+            if schema_error:
+                logger.warning("[Plugin] %s config schema 校验失败: %s", m.name, schema_error)
+                self.registry.track_plugin(LoadedPlugin(manifest=m, status="error", error=schema_error))
+                continue
+
             enabled.append(m)
             logger.info("[Plugin] %s 验证通过", m.name)
 
         return enabled
+
+    def _validate_config_schema(self, m: PluginManifest) -> str | None:
+        """用 JSON Schema 校验插件配置。
+
+        Returns:
+            None = 通过，str = 错误消息
+        """
+        if not m.config_schema:
+            return None  # 无 schema 则跳过
+
+        plugins_config = self.config.get("plugins", {})
+        entries_config = plugins_config.get("entries", {})
+        plugin_config = entries_config.get(m.name, {})
+
+        # 内置频道走 channels.<name>.accounts.default
+        channels_raw = self.config.get("channels", {})
+        channel_config = {}
+        if isinstance(channels_raw, dict):
+            ch = channels_raw.get(m.name, {})
+            if isinstance(ch, dict):
+                channel_config = ch.get("accounts", {}).get("default", {})
+
+        try:
+            import jsonschema
+            jsonschema.validate(instance=plugin_config, schema=m.config_schema)
+            jsonschema.validate(instance=channel_config, schema=m.config_schema)
+        except ImportError:
+            # jsonschema 未安装时做简单 key 检查
+            if isinstance(m.config_schema, dict):
+                props = m.config_schema.get("properties", {})
+                if isinstance(props, dict):
+                    allowed = set(props.keys())
+                    unknown_plugin = set(plugin_config.keys()) - allowed
+                    unknown_channel = set(channel_config.keys()) - allowed
+                    if unknown_plugin or unknown_channel:
+                        unknown = unknown_plugin | unknown_channel
+                        return f"未知配置键: {', '.join(sorted(unknown))}（允许: {', '.join(sorted(allowed))}）"
+            return None
+        except Exception as e:
+            return f"配置校验失败: {e}"
+
+        return None
 
     # ── Load ─────────────────────────────────────────────────────
 

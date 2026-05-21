@@ -876,7 +876,14 @@ class TaskOrchestrator:
 
     @staticmethod
     def _deliver_response(parent, session_id: str, content: str) -> None:
-        """通过 Router 送达回复到非 CLI 通道（feishu/ws/comms）。"""
+        """通过 Router 送达回复到非 CLI 通道（feishu/ws/comms）。
+
+        外发前 strip ANSI 控制码：CLI 流式输出用 \\033[2m/\\033[0m
+        灰显思维链，但飞书/钉钉不认 ANSI，需清理。
+        """
+        import re
+        content = re.sub(r'\x1b\[[0-9;]*m', '', content)
+
         router = getattr(parent, '_router', None)
         if not router:
             logger.warning("[TaskOrchestrator/Deliver] 无 Router，无法送达 session=%s", session_id)

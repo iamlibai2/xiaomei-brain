@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from collections import deque
 from datetime import datetime
 import threading
@@ -786,7 +787,7 @@ class ConsciousLiving(Living):
             if text.strip():
                 route = self._router.route_for_session(msg.session_id)
                 if route:
-                    self._router.deliver(text, route)
+                    self._router.deliver(re.sub(r'\x1b\[[0-9;]*m', '', text), route)
                     ts = time.strftime("%H:%M:%S")
                     self._debug_log("comms", f"{ts} → {target_agent}: {text[:80]}")
                     logger.info(
@@ -1241,7 +1242,7 @@ class ConsciousLiving(Living):
             # 通过 Router 分发到当前会话的输出路由
             route = self._router.route_for_session(self.session_id)
             if route:
-                self._router.deliver(content, route)
+                self._router.deliver(re.sub(r'\x1b\[[0-9;]*m', '', content), route)
             else:
                 # 兜底：CLI 模式直接打印
                 print(f"\n\033[36m[{self.agent.name or self._agent_id}] {content}\033[0m", flush=True)
