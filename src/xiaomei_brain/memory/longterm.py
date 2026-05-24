@@ -55,7 +55,7 @@ STATUS_EXTINCT = "extinct"
 class LongTermMemory:
     """Vector-semantic long-term memory — SQLite metadata + LanceDB vector index."""
 
-    VALID_SOURCES = {"immediate", "periodic", "dream", "manual", "insight", "internal"}
+    VALID_SOURCES = {"immediate", "periodic", "dream", "manual", "insight", "internal", "learned", "hub"}
 
     def __init__(
         self,
@@ -797,6 +797,18 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_strength ON memories(strength)")
 
+        # ── 知识系统 Phase 1 迁移 ──────────────────────────
+        for col_name, col_def in [
+            ("type", "TEXT DEFAULT 'experience'"),
+            ("confidence", "REAL DEFAULT NULL"),
+            ("skill_domain", "TEXT DEFAULT NULL"),
+        ]:
+            if col_name not in mem_cols:
+                try:
+                    conn.execute(f"ALTER TABLE memories ADD COLUMN {col_name} {col_def}")
+                except sqlite3.OperationalError:
+                    pass  # column already exists
+
         conn.commit()
 
     # ── Public API ──────────────────────────────────────────────
@@ -811,8 +823,17 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         scene_tags: list[str] | None = None,
         event_time: float | None = None,
         valid_until: float | None = None,
+        mem_type: str = "experience",
+        confidence: float | None = None,
+        skill_domain: str | None = None,
     ) -> int:
-        """Store a memory entry. Returns the ID."""
+        """Store a memory entry. Returns the ID.
+
+        Args:
+            mem_type: 'experience' | 'knowledge' | 'skill'
+            confidence: skill confidence (0.0-1.0), only meaningful for type='skill'
+            skill_domain: domain label for skills (e.g. '技术问答')
+        """
         # Clean surrogate characters from content
         try:
             content = content.encode("utf-8", "surrogatepass").decode("utf-8", "replace")
@@ -820,17 +841,17 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
             content = content.replace("\udc00", "").replace("\ud800", "")
 
         logger.debug(
-            "[Memory STORE] user=%s | %s | source=%s | imp=%.2f | tags=%s | scenes=%s",
-            user_id, content[:50], source, importance, tags, scene_tags,
+            "[Memory STORE] user=%s | %s | source=%s | type=%s | imp=%.2f | tags=%s",
+            user_id, content[:50], source, mem_type, importance, tags,
         )
         source = source if source in self.VALID_SOURCES else "manual"
         conn = self._get_conn()
         now = time.time()
 
         cur = conn.execute(
-            """INSERT INTO memories (user_id, content, source, importance, created_at, strength, last_strengthen, scene_tags, event_time, valid_until)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (user_id, content, source, importance, now, 1.0, now, json.dumps(scene_tags or []), event_time, valid_until),
+            """INSERT INTO memories (user_id, content, source, importance, created_at, strength, last_strengthen, scene_tags, event_time, valid_until, type, confidence, skill_domain)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, content, source, importance, now, 1.0, now, json.dumps(scene_tags or []), event_time, valid_until, mem_type, confidence, skill_domain),
         )
         memory_id = cur.lastrowid
 
@@ -847,8 +868,8 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         self._add_to_lance(memory_id, content, user_id)
 
         logger.info(
-            "Stored memory #%d [user=%s] [%s] imp=%.2f: %s",
-            memory_id, user_id, source, importance, content,
+            "Stored memory #%d [user=%s] [%s] type=%s imp=%.2f len=%d",
+            memory_id, user_id, source, mem_type, importance, len(content),
         )
         return memory_id
 
@@ -918,8 +939,8 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         conn.commit()
         narrative_id = cur.lastrowid
         logger.info(
-            "Stored narrative #%d [trigger=%s] len=%d: %s",
-            narrative_id, trigger, len(content), content[:50],
+            "Stored narrative #%d [trigger=%s] len=%d",
+            narrative_id, trigger, len(content),
         )
         return narrative_id
 
