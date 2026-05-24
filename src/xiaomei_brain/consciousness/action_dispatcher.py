@@ -836,7 +836,7 @@ class ActionExecutor:
         return True
 
     def _get_learning_topic(self) -> str | None:
-        """获取学习主题。优先级：Purpose 目标 → identity.md 兴趣 → 已有知识文件（跳过冷却期内已学过的）"""
+        """获取学习主题。优先级：学习队列 → Purpose 目标 → identity.md 兴趣 → 已有知识文件（跳过冷却期内已学过的）"""
         import random
         from pathlib import Path
 
@@ -848,14 +848,24 @@ class ActionExecutor:
         knowledge_dir = Path.home() / ".xiaomei-brain" / agent_id / "knowledge"
         knowledge_dir.mkdir(parents=True, exist_ok=True)
 
-        # 从 Purpose 获取当前目标
+        # 1. 学习需求队列（优先）
+        si = self.dispatcher._get_self_image()
+        if si and hasattr(si.mind, "learning_queue") and si.mind.learning_queue:
+            queue = si.mind.learning_queue
+            queue.sort(key=lambda x: x.get("priority", 0), reverse=True)
+            next_item = queue.pop(0)
+            topic = next_item["topic"]
+            logger.info("[ActionExecutor] 从学习队列取主题: %s (priority=%.1f, source=%s)",
+                        topic, next_item.get("priority", 0), next_item.get("source", ""))
+            return topic
+
+        # 2. Purpose 当前目标
         if hasattr(living, 'purpose') and living.purpose:
             current_goal = living.purpose.get_current()
             if current_goal:
                 return current_goal.description
 
-        # 从 SelfImage 获取学习兴趣（跳过冷却期内已学过的）
-        si = self.dispatcher._get_self_image()
+        # 3. SelfImage 学习兴趣（跳过冷却期内已学过的）
         if si and si.being.learning_interests:
             interests = si.being.learning_interests
             now = time.time()
@@ -866,17 +876,17 @@ class ActionExecutor:
                 return random.choice(fresh)
             logger.debug("[ActionExecutor] 所有学习兴趣都在冷却中")
 
-        # 从已有知识文件选择（跳过冷却期内的）
+        # 4. 已有知识文件轮换
         now = time.time()
         md_files = list(knowledge_dir.glob("*.md"))
         if md_files:
             fresh = [f for f in md_files if (now - f.stat().st_mtime) >= self.LEARN_COOLDOWN]
             if fresh:
                 return random.choice(fresh).stem
-            # 全部在冷却期内，跳过学习
             logger.debug("[ActionExecutor] 所有知识文件都在冷却中，跳过学习")
             return None
 
+        # 5. 兜底
         return "AI技术发展"
 
     def _react_learn(self, topic: str) -> str | None:
