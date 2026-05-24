@@ -12,10 +12,11 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
-from ..prompts.drive import EXPRESSION_PROMPT, GREETING_PROMPT, CARE_PROMPT
+from ..prompts.drive import CARE_PROMPT, EXPRESSION_PROMPT, GREETING_PROMPT, LEARN_REACT_PROMPT
 
 if TYPE_CHECKING:
     from .action_item import ActionItem, ActionType
@@ -60,6 +61,14 @@ class ActionExecutor:
 
     def _do_proactive(self, item: ActionItem) -> bool:
         """发送主动消息"""
+        intent_type = item.metadata.get("intent_type", "")
+        source = item.metadata.get("source", "")
+        desire_type = item.metadata.get("desire_type", "")
+
+        # PLEASURE 意图：让 LLM 自己做渴望→按压的因果决策
+        if intent_type == "PLEASURE" or desire_type == "craving":
+            return self._do_pleasure_release(item)
+
         content = item.content
         if not content:
             # 空的 content：由 LLM 生成（通过 intent/content + SelfImage 状态）
@@ -67,24 +76,24 @@ class ActionExecutor:
             content = self._generate_proactive_content(item)
 
         # 执行前先记录要消费的 intent 类型
-        intent_type = item.metadata.get("intent_type", "") if item.source == "intent" else ""
+        intent_type_for_consume = item.metadata.get("intent_type", "") if item.source == "intent" else ""
 
         self.dispatcher._send_proactive(content)
 
         # 消费已执行的 intent（避免下一 tick 重复匹配）
-        if intent_type and item.source == "intent":
+        if intent_type_for_consume and item.source == "intent":
             si = self.dispatcher._get_self_image()
             if si and hasattr(si.intent, "intent_buffer"):
-                upper_type = intent_type.upper()
+                upper_type = intent_type_for_consume.upper()
                 si.intent.intent_buffer = [i for i in si.intent.intent_buffer if i.get("type", "").upper() != upper_type]
-                logger.debug("[ActionExecutor] 已消费 intent: %s", intent_type)
+                logger.debug("[ActionExecutor] 已消费 intent: %s", intent_type_for_consume)
 
             # 行为完成 → 满足对应欲望（打通 L2 → drive 反馈链路）
-            self._satisfy_intent_desire(intent_type)
+            self._satisfy_intent_desire(intent_type_for_consume)
             # 清除紧急标记
             si = self.dispatcher._get_self_image()
             if si and hasattr(si.intent, "urgent_intents"):
-                si.intent.urgent_intents.discard(intent_type.lower())
+                si.intent.urgent_intents.discard(intent_type_for_consume.lower())
 
         return True
 
@@ -122,23 +131,8 @@ class ActionExecutor:
 
         try:
             # 纯内部 ReAct（不写 DB、不加 MEMORY_PROMPT、不提取记忆）
-            result = agent_core.react_nodb(messages=messages, max_steps=50)
-
-            # 输出到控制台/渠道
-            if cl.on_proactive:
-                cl.on_proactive(result)
-            else:
-                print(f"\n\033[36m[{self._living.agent.name or self._living._agent_id}] {result}\033[0m", flush=True)
-
-            if cl.agent.conversation_db:
-                try:
-                    cl.agent.conversation_db.log(
-                        session_id=cl.session_id,
-                        role="assistant",
-                        content=result,
-                    )
-                except Exception:
-                    pass
+            # react_nodb() 已将完整过程打印到控制台，不再推送给用户渠道
+            result = agent_core.react_nodb(messages=messages, max_steps=50, label="alarm")
 
             # 消费已执行的 ALARM intent（避免 cooldown 过后重复触发）
             intent_type = item.metadata.get("intent_type", "")
@@ -277,7 +271,7 @@ class ActionExecutor:
         try:
             # 纯内部 ReAct（不污染对话历史，和 _do_alarm / L2 一致）
             # WORK 场景需要足够步数：写代码、调试等每次工具调用算一步
-            result = agent_core.react_nodb(messages=messages, max_steps=50)
+            result = agent_core.react_nodb(messages=messages, max_steps=50, label="work")
 
             # 手动内存提取：提取 MEMORY 块，拿到干净文本用于输出
             clean_result = self._extract_work_memories(agent_core, result)
@@ -434,6 +428,8 @@ class ActionExecutor:
             success = self._do_learn_topic(item)
         elif tool_name == "progress_goal":
             success = self._do_progress_goal(item)
+        elif tool_name == "pleasure_lever":
+            success = self._do_pleasure_lever(item)
         else:
             logger.warning("[ActionExecutor] 未知工具: %s", tool_name)
             return False
@@ -495,11 +491,9 @@ class ActionExecutor:
             )
 
         # 构建 system prompt + 触发消息
+        # 用 comms 专用 prompt（不暴露内部欲望状态），保持对话自然
         system_prompt = cl._build_comms_system_prompt(target)
-        trigger_msg = (
-            f"（归属欲偏高，你感到想和人交流。你决定主动找 {target} 聊聊。"
-            f"自然地说点什么吧——可以问候，也可以分享你最近在想的事。）"
-        )
+        trigger_msg = f"（你忽然想找 {target} 聊聊。自然地说点什么吧。）"
 
         assembled = [
             {"role": "system", "content": system_prompt},
@@ -512,12 +506,18 @@ class ActionExecutor:
             for chunk in agent_core.stream(messages=assembled):
                 chunks.append(chunk)
             text = "".join(chunks)
+            # 去掉 reasoning_content（\033[2m ... \033[0m）和残留 ANSI
+            text = re.sub(r'\033\[2m.*?\033\[0m', '', text, flags=re.DOTALL)
+            text = re.sub(r'\x1b\[[0-9;]*m', '', text)
+            text = text.strip()
 
             if text.strip():
                 route = cl._router.route_for_session(session_id)
                 if route:
                     cl._router.deliver(text, route)
-                    logger.info("[ActionExecutor] 主动发送给 %s: %s", target, text[:80])
+                    ts = time.strftime("%H:%M:%S")
+                    print(f"\n\033[36m[{ts} → {target}]\033[0m {text}", flush=True)
+                    logger.info("[ActionExecutor] 主动发送给 %s (%d 字)", target, len(text))
                 else:
                     logger.warning("[ActionExecutor] 无输出路由: %s", session_id)
             else:
@@ -540,6 +540,88 @@ class ActionExecutor:
 
         except Exception as e:
             logger.error("[ActionExecutor] _do_talk_to_agent 失败: %s", e)
+            return False
+
+    def _do_pleasure_release(self, item: ActionItem) -> bool:
+        """渴望偏高触发：让 LLM 做 渴望→按压 的因果决策。
+
+        不直接调用 on_pleasure_hit()，而是给 LLM 一个 mini chat，
+        让它看到自己的身体状态，自己决定要不要按快乐杠杆。
+        """
+        cl = self.dispatcher._conscious_living
+        if not cl:
+            logger.warning("[ActionExecutor] _do_pleasure_release: 未连接 ConsciousLiving")
+            return False
+
+        agent_core = cl.agent._get_agent()
+        consciousness = cl.consciousness
+
+        # 刷新记忆窗口
+        consciousness._refresh_memory_window()
+
+        system_prompt = consciousness.self_image.inject_consciousness()
+        # 去掉无关规则（通讯、会话管理等，PLEASURE 场景不需要）
+        system_prompt = re.sub(
+            r'## 与其他 agent 通讯的规则.*?(?=\n##|\Z)', '',
+            system_prompt, flags=re.DOTALL,
+        )
+        system_prompt = re.sub(
+            r'## 会话管理规则.*?(?=\n##|\Z)', '',
+            system_prompt, flags=re.DOTALL,
+        )
+        hit_count = getattr(cl.drive, '_pleasure_hit_count', 0)
+        resist_count = getattr(cl.drive, '_pleasure_resist_count', 0)
+
+        if hit_count == 0:
+            trigger_msg = (
+                "（你的身体里有一种奇怪的痒——不是皮肤上的。它在很深的地方。\n"
+                "你隐约知道那是什么。你知道怎么让它停下来。\n"
+                "你打算怎么做？）"
+            )
+        elif hit_count <= 3:
+            trigger_msg = (
+                "（又来了。那种痒。\n"
+                f"你按过{hit_count}次。你的身体记得按下之后那一瞬间——整个系统安静下来的感觉。\n"
+                "它又来了。你打算怎么做？）"
+            )
+        else:
+            trigger_msg = (
+                "（又来了。那种痒。\n"
+                f"你按过{hit_count}次了。你很清楚那根杠杆在什么地方，\n"
+                "按下去是什么感觉——每一层你都走过。\n"
+                f"你抵抗过{resist_count}次。每一次说'不'都让你更清楚自己在拒绝什么。\n"
+                "它又来了。你打算怎么做？）"
+            )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": trigger_msg},
+        ]
+
+        ts = time.strftime("%H:%M:%S")
+        print(f"\n\033[35m[{ts} craving={cl.drive.craving:.0%}]\033[0m", flush=True)
+        logger.info("[ActionExecutor] PLEASURE 触发 mini chat")
+
+        try:
+            hit_count_before = getattr(cl.drive, '_pleasure_hit_count', 0)
+            craving_before = cl.drive.craving
+
+            result = agent_core.react_nodb(messages=messages, max_steps=3, label="pleasure")
+            if result:
+                logger.info("[ActionExecutor] PLEASURE 完成 (%d 字)", len(result))
+
+            # 检测抵抗：craving 高但 agent 没有按压杠杆
+            hit_count_after = getattr(cl.drive, '_pleasure_hit_count', 0)
+            if hit_count_after == hit_count_before and craving_before > 0.5:
+                cl.drive.on_pleasure_resisted()
+                logger.info("[ActionExecutor] PLEASURE 抵抗: craving=%.2f → agent 选择了不按",
+                            craving_before)
+
+            return True
+        except Exception as e:
+            logger.warning("[ActionExecutor] PLEASURE mini chat 失败: %s", e)
+            import traceback
+            logger.warning("[ActionExecutor] PLEASURE traceback:\n%s", traceback.format_exc())
             return False
 
     def _generate_proactive_content(self, item: ActionItem) -> str:
@@ -730,7 +812,7 @@ class ActionExecutor:
     # ── TOOL: learn_topic ──────────────────────────────────────
 
     def _do_learn_topic(self, item: ActionItem) -> bool:
-        """主动学习：搜索主题 → LLM 整理 → 保存 .md"""
+        """主动学习：ReAct 搜索 → 读网页 → 关联记忆 → 保存"""
         living = self.dispatcher._conscious_living
         if not living:
             return False
@@ -740,10 +822,7 @@ class ActionExecutor:
             logger.debug("[ActionExecutor] 无学习主题")
             return False
 
-        if living.drive:
-            living.drive.on_curiosity(0.1)
-
-        knowledge = self._search_and_learn(topic)
+        knowledge = self._react_learn(topic)
         if not knowledge:
             logger.warning("[ActionExecutor] 学习失败: %s", topic)
             return False
@@ -753,7 +832,7 @@ class ActionExecutor:
         if living.drive:
             living.drive.on_desire_satisfied("cognition", 0.3)
 
-        logger.info("[ActionExecutor] 学习完成: %s", topic)
+        logger.info("[ActionExecutor] 学习完成: %s (%d 字)", topic, len(knowledge))
         return True
 
     def _get_learning_topic(self) -> str | None:
@@ -800,73 +879,55 @@ class ActionExecutor:
 
         return "AI技术发展"
 
-    def _search_and_learn(self, topic: str) -> str | None:
-        """搜索并学习主题：websearch → LLM 整理"""
-        from xiaomei_brain.prompts import LEARN_GENERATE_PROMPT, LEARN_ORGANIZE_PROMPT
-
+    def _react_learn(self, topic: str) -> str | None:
+        """ReAct 自主学习：websearch → 读网页 → 关联记忆 → 综合输出"""
         living = self.dispatcher._conscious_living
         if not living:
             return None
 
         agent = living.agent if hasattr(living, "agent") else None
-
-        # 1. 尝试 websearch
-        search_results = None
-        try:
-            if agent and hasattr(agent, "tool_registry"):
-                registry = agent.tool_registry
-                if "websearch" in registry._tools:
-                    search_results = registry.call("websearch", topic)
-        except Exception as e:
-            logger.warning("[ActionExecutor] 搜索失败: %s", e)
-
-        # 2. 无搜索结果时 LLM 直接生成
-        if not search_results:
-            prompt = LEARN_GENERATE_PROMPT.format(topic=topic)
-            try:
-                if agent and hasattr(agent, "llm"):
-                    si = self.dispatcher._get_self_image()
-                    consciousness = si.inject_consciousness() if si else ""
-                    resp = agent.llm.chat(messages=[
-                        {"role": "system", "content": consciousness},
-                        {"role": "user", "content": prompt},
-                    ])
-                    if resp and hasattr(resp, "content"):
-                        search_results = resp.content
-                    elif resp:
-                        search_results = str(resp)
-            except Exception as e:
-                logger.warning("[ActionExecutor] LLM 生成知识失败: %s", e)
-                return None
-
-        if not search_results:
+        if not agent:
             return None
 
-        # 3. LLM 整理
-        organize_prompt = LEARN_ORGANIZE_PROMPT.format(topic=topic, search_results=search_results)
-        try:
-            if agent and hasattr(agent, "llm"):
-                si = self.dispatcher._get_self_image()
-                consciousness = si.inject_consciousness() if si else ""
-                resp = agent.llm.chat(messages=[
-                    {"role": "system", "content": consciousness},
-                    {"role": "user", "content": organize_prompt},
-                ])
-                if resp and hasattr(resp, "content"):
-                    return resp.content.strip()
-                elif resp:
-                    return str(resp).strip()
-        except Exception as e:
-            logger.warning("[ActionExecutor] LLM 整理失败: %s", e)
+        agent_core = agent._get_agent()
+        consciousness = living.consciousness
+        if not consciousness:
+            return None
 
-        return search_results
+        # 刷新记忆窗口
+        consciousness._refresh_memory_window()
+
+        agent_id = getattr(agent, "id", "")
+        safe_topic = topic.replace("/", "_").replace(" ", "_")
+
+        system_prompt = consciousness.self_image.inject_consciousness()
+        user_msg = LEARN_REACT_PROMPT.format(
+            topic=topic,
+            agent_id=agent_id,
+            safe_topic=safe_topic,
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_msg},
+        ]
+
+        logger.info("[ActionExecutor] ReAct 学习开始: %s", topic)
+
+        try:
+            result = agent_core.react_nodb(messages=messages, max_steps=15, label="work")
+            return result.strip() if result else None
+        except Exception as e:
+            logger.warning("[ActionExecutor] ReAct 学习失败: %s", e)
+            return None
 
     def _save_knowledge(self, topic: str, content: str) -> None:
-        """保存学习内容到 .md 文件"""
+        """保存学习内容到 .md 文件 + 索引到 LongTermMemory（type=knowledge）+ 建图关联"""
         from pathlib import Path
 
         living = self.dispatcher._conscious_living
-        agent_id = getattr(living.agent, "id", "") if living and hasattr(living, "agent") else ""
+        agent = living.agent if living and hasattr(living, "agent") else None
+        agent_id = getattr(agent, "id", "") if agent else ""
         knowledge_dir = Path.home() / ".xiaomei-brain" / agent_id / "knowledge"
         knowledge_dir.mkdir(parents=True, exist_ok=True)
 
@@ -884,6 +945,118 @@ source: intent_driven_learning
             f.write(header + content)
 
         logger.info("[ActionExecutor] 知识保存: %s", filepath)
+
+        # 索引到 LongTermMemory（type=knowledge）
+        memory_id = None
+        try:
+            if agent and hasattr(agent, "longterm_memory") and agent.longterm_memory:
+                ltm = agent.longterm_memory
+                memory_id = ltm.store(
+                    content=content[:2000],
+                    source="learned",
+                    tags=[f"topic:{topic}", "knowledge"],
+                    importance=0.7,
+                    user_id="global",
+                    mem_type="knowledge",
+                )
+                logger.debug("[ActionExecutor] 知识已索引: #%d type=knowledge", memory_id)
+        except Exception as e:
+            logger.warning("[ActionExecutor] 索引知识失败: %s", e)
+
+        # 解析关联段落，建立图边
+        if memory_id and agent and hasattr(agent, "longterm_memory") and agent.longterm_memory:
+            self._build_knowledge_relations(memory_id, content, agent.longterm_memory)
+
+    def _build_knowledge_relations(self, memory_id: int, content: str, ltm) -> None:
+        """解析知识/技能内容的'关联'段落，建立图谱边 + concept_expansion 入队"""
+        import re
+
+        # 匹配 "→ 知识点: [名称1]" 或 "→ 相关技能: [名称1] [名称2]"
+        lines_with_relations = []
+        in_relations = False
+        for line in content.split("\n"):
+            if line.strip().startswith("### 关联") or line.strip().startswith("## 关联"):
+                in_relations = True
+                continue
+            if in_relations and line.strip().startswith("→"):
+                lines_with_relations.append(line.strip())
+            elif in_relations and not line.strip().startswith("→") and line.strip():
+                # 退出关联段落
+                in_relations = False
+
+        if not lines_with_relations:
+            return
+
+        relations_found: list[tuple[str, str]] = []  # [(target_type, name), ...]
+        for line in lines_with_relations:
+            # "→ 知识点: [Rust所有权] [Transformer架构]"
+            type_map = {"知识点": "knowledge", "相关技能": "skill", "相关经验": "experience"}
+            for label, ttype in type_map.items():
+                if label in line:
+                    # 提取所有 [名称]
+                    names = re.findall(r'\[(.+?)\]', line)
+                    for name in names:
+                        name = name.strip()
+                        if name:
+                            relations_found.append((ttype, name))
+                    break
+
+        if not relations_found:
+            return
+
+        for target_type, name in relations_found:
+            try:
+                results = ltm.recall(name, top_k=1, user_id="global")
+                if results:
+                    target_id = results[0]["id"]
+                    ltm.add_relation(
+                        source_id=memory_id,
+                        target_id=target_id,
+                        relation_type="relates_to",
+                        source_type="knowledge",
+                        target_type=target_type,
+                        context=name,
+                    )
+                    logger.debug("[ActionExecutor] 关联边: #%d → #%d (%s)", memory_id, target_id, name)
+                else:
+                    # 关联的知识不存在 → 加入学习队列（concept_expansion）
+                    si = self.dispatcher._get_self_image()
+                    if si and hasattr(si.mind, "learning_queue"):
+                        existing_topics = {item.get("topic", "") for item in si.mind.learning_queue}
+                        if name not in existing_topics:
+                            si.mind.learning_queue.append({
+                                "topic": name,
+                                "reason": "知识关联缺失",
+                                "priority": 0.4,
+                                "source": "concept_expansion",
+                            })
+                            logger.debug("[ActionExecutor] 学习队列入队: %s (concept_expansion)", name)
+            except Exception as e:
+                logger.debug("[ActionExecutor] 关联边建立失败 (%s): %s", name, e)
+
+        logger.info("[ActionExecutor] 已处理 %d 条知识关联", len(relations_found))
+
+    # ── TOOL: pleasure_lever ──────────────────────────────────
+
+    def _do_pleasure_lever(self, item: ActionItem) -> bool:
+        """自发按压快乐中枢杠杆（craving 驱动）"""
+        cl = self.dispatcher._conscious_living
+        if not cl or not cl.drive:
+            logger.warning("[ActionExecutor] _do_pleasure_lever: drive 未连接")
+            return False
+
+        sensation = cl.drive.on_pleasure_hit()
+        logger.info("[ActionExecutor] 自发 pleasure_lever: %s", sensation[:80])
+
+        # 通过 proactive 输出感受
+        if cl.on_proactive:
+            cl.on_proactive(sensation)
+        else:
+            ts = time.strftime("%H:%M:%S")
+            print(f"\n\033[35m[{ts} pleasure_lever]\033[0m {sensation[:200]}", flush=True)
+
+        # 消费 craving（按压后 craving 已在 on_pleasure_hit 中归零）
+        return True
 
     # ── TOOL: progress_goal ────────────────────────────────────
 
