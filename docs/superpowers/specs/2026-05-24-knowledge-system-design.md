@@ -315,7 +315,54 @@ confidence: 1.0
 
 ---
 
-## 六、Phase 规划
+## 六、学习驱动：需求队列
+
+### 6.1 问题
+
+当前学习触发是"欲望高了随机学一个"——`_get_learning_topic()` 从兴趣列表轮换，与 agent 实际在做什么完全脱节。agent 可能在帮用户排查 Rust 的所有权问题，认知欲触发时却去学了"前端框架对比"。
+
+### 6.2 改法：任务驱动的学习
+
+学习真正的驱动力应该是使用中发现的缺口，不是静态的兴趣列表。
+
+**学习需求队列**（存储在 SelfImage mind 中，内存态）：
+
+```
+learning_queue: [
+  { topic: "LRU缓存算法", reason: "任务盲区", priority: 0.9, source: "task_gap" },
+  { topic: "分布式一致性", reason: "Rust所有权→关联知识缺失", priority: 0.5, source: "concept_expansion" },
+  { topic: "Go goroutine调度", reason: "用户问过后回答不理想", priority: 0.7, source: "user_need" },
+]
+```
+
+**三种入队来源：**
+
+| 来源 | 触发条件 | priority | 示例 |
+|---|---|---|---|
+| `task_gap` | InnerVoice 任务反思发现知识盲区 | 0.7-1.0 | "处理缓存时对 LRU 细节不了解，多花了两轮搜索" |
+| `user_need` | 对话中 agent 回答不上来或回答质量差 | 0.6-0.9 | 用户问 goroutine，回答过于笼统 |
+| `concept_expansion` | 已学知识的"关联"段落指向的知识点缺失 | 0.3-0.5 | Rust所有权→关联了[内存模型]，但内存模型未学 |
+
+**消费逻辑：**
+
+```
+认知欲 > 0.85 → L2 Intent → ActionDispatcher._do_learn_topic()
+  → _get_learning_topic() 改为：
+    1. learning_queue 按 priority 排序，取最高的
+    2. 队列空 → Purpose 当前目标
+    3. 还是没有 → identity.md 兴趣列表
+    4. 兜底 → "AI技术发展"
+  → 学习完成 → 从队列移除 → on_desire_satisfied("cognition")
+```
+
+**入队时机：**
+- `task_gap`：InnerVoice 在执行完成后的反思期识别（现有 period_chat 事件分析可扩展）
+- `user_need`：用户对话后 InnerVoice 社交感知发现"我的回答可能不够好"，提取关键概念
+- `concept_expansion`：`_save_knowledge()` 解析关联段落后，对每个关联的 knowledge 目标做 memory_search，不存在则入队
+
+---
+
+## 七、Phase 规划
 
 ### Phase 1：Bootstrap — 知识可用（当前阶段）
 
@@ -323,6 +370,9 @@ confidence: 1.0
 
 - [ ] `type` 列迁移：`memories` 表新增 type（experience/knowledge/skill），现有记录默认 'experience'
 - [ ] `confidence` / `skill_domain` 列：仅 skill 类型使用
+- [ ] 学习需求队列：SelfImage 中的 learning_queue，task_gap / user_need / concept_expansion 三种入队
+- [ ] `_get_learning_topic()` 改造：从队列优先消费，队列空才兜底
+- [ ] `_save_knowledge()` 修复：传 type="knowledge"，解析关联段落，建图边
 - [ ] 元技能硬编码：出厂自带"技能获取"引导
 - [ ] 从 Hub 拉取技能：用户说"去学 XX" → 元技能驱动 → 搜索 → 拉取 → 存入
 - [ ] 召回升级：三段式输出（经验/知识/技能），context 权重（work/chat）
@@ -348,7 +398,7 @@ confidence: 1.0
 
 ---
 
-## 七、迁移路径
+## 八、迁移路径
 
 ### 对现有系统的影响
 
@@ -374,7 +424,7 @@ confidence: 1.0
 
 ---
 
-## 八、元技能详细规格（Phase 1 实现参考）
+## 九、元技能详细规格（Phase 1 实现参考）
 
 ### 存储位置
 
@@ -403,7 +453,7 @@ confidence: 1.0
 
 ---
 
-## 九、设计决策记录
+## 十、设计决策记录
 
 | 决策 | 选择 | 理由 |
 |---|---|---|
