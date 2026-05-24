@@ -40,7 +40,6 @@ from typing import Any
 
 from .action_dispatcher import ActionDispatcher
 from .living import Living, LivingState, LivingMessage, HEARTBEAT_NORMAL, HEARTBEAT_DREAM
-from .context_assembler import ContextAssembler as ConsciousContextAssembler
 from .core import Consciousness, ConsciousnessReport, TickResult
 from .intent import Intent
 from .storage import ConsciousnessStorage
@@ -90,14 +89,18 @@ class ConsciousLiving(Living):
         load_consciousness: bool = True,  # 是否加载意识系统
         config: Any | None = None,  # LivingConfig
     ) -> None:
-        # 读取 LivingConfig
-        if config is None:
-            from .config import LivingConfig
-            config = LivingConfig()
-        self._config = config
-
-                # 解析 agent_id（统一来源）
+        # 解析 agent_id（统一来源）
         self._agent_id = getattr(agent_instance, "id", None) or getattr(agent_instance, "agent_id", "")
+
+        # 读取统一配置（优先级：传入 config > 共享 config.yaml > 默认值）
+        if config is None:
+            from ..config import load_agent_config
+            agent_cfg = load_agent_config(self._agent_id)
+            self._config = agent_cfg.consciousness
+            self._drive_config = agent_cfg.drive
+        else:
+            self._config = config
+            self._drive_config = None
 
         super().__init__(
             agent_instance=agent_instance,
@@ -115,7 +118,7 @@ class ConsciousLiving(Living):
             self.agent.llm = ContextGuard(self.agent.llm, max_tokens=80000)
 
         # Drive 系统（边缘系统）- 延迟加载
-        self.drive = DriveEngine(self._agent_id, load=False)
+        self.drive = DriveEngine(self._agent_id, load=False, config=self._drive_config)
 
         # CronScheduler（闹钟系统）
         from ..schedule import CronScheduler
@@ -296,8 +299,8 @@ class ConsciousLiving(Living):
         )
         logger.info("[ConsciousLiving] Router 已创建 (%d 个频道)", len(self._registry.list_channels()))
 
-        # 注入 consciousness 层上下文组装器（子系统加载后再替换旧 assembler）
-        self._inject_context_assembler()
+        # 注入 DAG + 配置 + 回调到 Agent（替代原 _inject_context_assembler）
+        self._inject_dag_to_agent()
 
         # 初始化过程记忆（ProcedureMemory — LLM学习 + 关键词触发）
         db_path = getattr(self.agent, "db_path", None)
@@ -313,6 +316,8 @@ class ConsciousLiving(Living):
         self._dispatcher.inject_conscious_living(self)
 
         # being 工具暂不注册（待反省层"转换器"设计确定后再启用）
+        # pleasure_lever 工具 — 快乐中枢杠杆（Olds-Milner 实验）
+        self._register_pleasure_tool()
 
         # 注册 cron 工具（闹钟系统：schedule_alarm / list_alarms / cancel_alarm）
         self._register_cron_tools()
@@ -337,6 +342,7 @@ class ConsciousLiving(Living):
         # 注册周期任务
         self.register_periodic("heartbeat", self._config.living.tick_interval, self._heartbeat)
         self.register_periodic("surge", self._config.living.surge_interval, self._surge)
+        self.register_periodic("death_check", 60.0, self._check_death)  # 每分钟检查生存状态
 
         # 启动 Layer 0 自主层线程 + Layer 2 默认网络线程
         if self._load_consciousness:
@@ -375,6 +381,22 @@ class ConsciousLiving(Living):
         except Exception as e:
             logger.warning("[ConsciousLiving] being 工具注册失败: %s", e)
 
+    def _register_pleasure_tool(self) -> None:
+        """注册 pleasure_lever 工具：刺激快乐中枢（Olds-Milner 杠杆实验）。
+
+        LLM 可以自主按压杠杆获得快感——不需要理由，不需要意义。
+        """
+        try:
+            from ..tools.builtin.pleasure import create_pleasure_lever
+            pleasure_tool = create_pleasure_lever(self.drive)
+            if hasattr(self.agent, "tools") and self.agent.tools:
+                self.agent.tools.register(pleasure_tool)
+                logger.info("[ConsciousLiving] pleasure_lever 工具已注册")
+            else:
+                logger.warning("[ConsciousLiving] agent.tools 不可用，pleasure_lever 未注册")
+        except Exception as e:
+            logger.warning("[ConsciousLiving] pleasure_lever 注册失败: %s", e)
+
     def _register_cron_tools(self) -> None:
         """注册闹钟工具：schedule_alarm / list_alarms / cancel_alarm。"""
         try:
@@ -409,13 +431,8 @@ class ConsciousLiving(Living):
                 priority=85,
                 content=f"闹钟「{job.name}」响了。{job.action_hint or job.reason}",
             )
-            self.consciousness.intent_buffer.append(intent)
             if self.consciousness.self_image is not None:
-                self.consciousness.intent_slot.intent_buffer.append({
-                    "type": intent.type.value,
-                    "reason": getattr(intent, "reason", ""),
-                    "priority": getattr(intent, "priority", 0),
-                })
+                self.consciousness.intent_slot.intent_buffer.append(intent.to_dict())
             logger.info("[ConsciousLiving] 轮次闹钟触发: %s (每%d轮)", job.name, job.round_interval)
 
     def _log_initialization(self) -> None:
@@ -532,47 +549,38 @@ class ConsciousLiving(Living):
             "has_active_goal": has_goal,
         }
 
-    def _inject_context_assembler(self) -> None:
-        """创建 consciousness-aware 的 ContextAssembler 并注入 agent。
+    def _inject_dag_to_agent(self) -> None:
+        """将 DAG、配置、压缩回调注入 Agent 对象。
 
-        agent_manager 不再创建 ContextAssembler，由本方法统一创建。
+        DAG 由 build_agent() 创建并挂到 agent.dag，这里只注入运行时配置和回调。
+        ContextAssembler 已剪断——Agent._auto_compact() 直接操作 dag。
         """
-        old_ca = getattr(self.agent, "context_assembler", None)
-        dag = getattr(self.agent, "_dag", None) or (old_ca.dag if old_ca else None)
+        dag = getattr(self.agent, "dag", None)
 
         if dag is None:
-            logger.warning("[ConsciousLiving] No DAG available, skip context_assembler injection")
+            logger.warning("[ConsciousLiving] No DAG available on Agent")
             return
-
-        assembler = ConsciousContextAssembler(
-            conversation_db=self.agent.conversation_db,
-            dag=dag,
-            self_model=getattr(self.agent, "self_model", None),
-            longterm_memory=self.agent.longterm_memory,
-            drive=self.drive,
-            self_image=self.consciousness.self_image if self._load_consciousness else None,
-            purpose=self.purpose,
-            config=self._config,
-            procedure_memory=getattr(self.agent, "_procedure_memory", None),
-        )
 
         # 上下文压缩通知
         def _on_compact(stats: dict) -> None:
-            before_k = stats["before_tokens"] // 1000
-            after_k = stats["after_tokens"] // 1000
+            before = stats["before_tokens"]
+            after = stats["after_tokens"]
+            before_s = f"{before // 1000}k" if before >= 1000 else str(before)
+            after_s = f"{after // 1000}k" if after >= 1000 else str(after)
             print(
                 f"\n\033[90m[压缩] {stats['compact_count']}条消息 → 摘要 "
-                f"({before_k}k → {after_k}k)\033[0m",
+                f"({before_s} → {after_s})\033[0m",
                 flush=True,
             )
 
-        assembler.on_compact = _on_compact
-        self.agent.context_assembler = assembler
-        # 同步 CommandRegistry 的 assembler 引用
-        # CommandRegistry.__init__ 存储 context_assembler 参数为 self.assembler
+        agent_core = self.agent._get_agent()
+        agent_core.on_compact = _on_compact
+        agent_core._living_cfg = self._config
+
+        # 同步 CommandRegistry 的 dag 引用
         if self.agent.commands:
-            self.agent.commands.assembler = assembler
-        logger.info("[ConsciousLiving] context_assembler injected (consciousness-aware)")
+            self.agent.commands.dag = dag
+        logger.info("[ConsciousLiving] DAG + config injected to Agent")
 
     def _setup_all(self) -> None:
         """统一加载所有子系统数据
@@ -778,9 +786,11 @@ class ConsciousLiving(Living):
         self._inbox.mark_processed(msg.msg_id)
         ts = time.strftime("%H:%M:%S")
         self._debug_log("comms", f"{ts} ← {msg.from_agent}: {msg.content[:80]}")
-        logger.info(
-            "[Comms/Receive] %s → %s 会话 (实时)",
-            msg.from_agent, session_id,
+        # 打印到终端（完整内容，不截断）
+        print(f"\n\033[35m[{ts} ← {msg.from_agent}]\033[0m {msg.content}", flush=True)
+        logger.debug(
+            "[Comms/Receive] %s → %s 会话 (实时) %d 字",
+            msg.from_agent, session_id, len(msg.content),
         )
 
     def _handle_comms_message(self, msg: LivingMessage) -> None:
@@ -798,22 +808,37 @@ class ConsciousLiving(Living):
             if msg.content:
                 assembled.append({"role": "user", "content": msg.content})
 
-            # 静默 ReAct
+            # 静默 ReAct — reasoning_content 以灰色 ANSI 包裹
             chunks: list[str] = []
             for chunk in agent_core.stream(messages=assembled):
                 chunks.append(chunk)
-            text = "".join(chunks)
+            raw_text = "".join(chunks)
+
+            # 提取思考过程记入日志
+            reasoning_parts = re.findall(r'\033\[2m(.*?)\033\[0m', raw_text, flags=re.DOTALL)
+            if reasoning_parts:
+                reasoning_text = " ".join(r.strip() for r in reasoning_parts if r.strip())
+                if reasoning_text:
+                    logger.debug("[Comms/思考] %s (%d 字): %s",
+                                target_agent, len(reasoning_text), reasoning_text[:200])
+
+            # 去掉 reasoning_content → 只发给对方最终输出
+            clean_text = re.sub(r'\033\[2m.*?\033\[0m', '', raw_text, flags=re.DOTALL)
+            clean_text = re.sub(r'\x1b\[[0-9;]*m', '', clean_text)
+            clean_text = clean_text.strip()
 
             # Router.deliver() 自动送达
-            if text.strip():
+            if clean_text:
                 route = self._router.route_for_session(msg.session_id)
                 if route:
-                    self._router.deliver(re.sub(r'\x1b\[[0-9;]*m', '', text), route)
+                    self._router.deliver(clean_text, route)
                     ts = time.strftime("%H:%M:%S")
-                    self._debug_log("comms", f"{ts} → {target_agent}: {text[:80]}")
-                    logger.info(
-                        "[Comms] 自动回复 %s: %s",
-                        target_agent, text[:80],
+                    self._debug_log("comms", f"{ts} → {target_agent}: {clean_text[:80]}")
+                    # 终端打印完整内容（含思考过程，ANSI 天然区分）
+                    print(f"\n\033[36m[{ts} → {target_agent}]\033[0m {raw_text}", flush=True)
+                    logger.debug(
+                        "[Comms] 自动回复 %s (%d 字): %s",
+                        target_agent, len(clean_text), clean_text[:100],
                     )
                 else:
                     logger.warning("[Comms] 无输出路由: %s", msg.session_id)
@@ -831,7 +856,7 @@ class ConsciousLiving(Living):
         只需自然地说话，系统会自动把回复送达给对方。
         """
         si = self.consciousness.get_self_image() if self._load_consciousness else None
-        identity = si.inject_consciousness() if si else f"你是 {self._agent_id}。"
+        identity = si.inject_consciousness(mode="daily") if si else f"你是 {self._agent_id}。"
 
         return (
             f"{identity}\n\n"
@@ -840,10 +865,9 @@ class ConsciousLiving(Living):
             f"你收到的消息已显示在下方。\n\n"
             f"## 重要规则\n"
             f"1. 你的文字回复会**自动送达**给 {target_agent}，你不需要使用 send_message 工具\n"
-            f"2. **不要生成旁白或描述性文字**（如'收到消息'、'让我回复他'等）——直接说话\n"
-            f"3. 就像和一个人面对面聊天一样自然\n"
-            f"4. 如果消息不需要回复，可以不说话（但正常的问候和问题应该回应）\n"
-            f"5. 你可以使用 check_inbox 查看是否有更多消息，但不要用 send_message"
+            f"2. 就像和一个人面对面聊天一样自然\n"
+            f"3. 如果消息不需要回复，可以不说话（但正常的问候和问题应该回应）\n"
+            f"4. 你可以使用 check_inbox 查看是否有更多消息，但不要用 send_message"
         )
 
     # ── Hook: 状态转换 ───────────────────────────────────────────
@@ -909,6 +933,22 @@ class ConsciousLiving(Living):
                 self._debug_log("living", f"{ts} ActionDispatcher 无匹配动作")
             self._dispatcher.process_queue()
 
+    def _check_death(self, state: LivingState) -> None:
+        """每分钟检查生存状态，濒死/死亡时触发相应行为。"""
+        if not self.drive or not self.drive._loaded:
+            return
+        if state in (LivingState.DORMANT, LivingState.DREAMING):
+            return
+        survival = self.drive.get_survival_state()
+        if survival == "dead":
+            logger.warning("[ConsciousLiving] 生存欲归零，进入死亡状态 (DORMANT)")
+            self._transition(LivingState.DORMANT)
+        elif survival == "dying":
+            # 濒死：强制 SLEEPING，不接受对话
+            if state != LivingState.SLEEPING:
+                logger.warning("[ConsciousLiving] 濒死状态 → 强制 SLEEPING")
+                self._transition(LivingState.SLEEPING)
+
     def _debug_log(self, thread: str, line: str) -> None:
         """写入内存缓冲区和调试文件。thread: living | comms"""
         if thread == "living":
@@ -973,7 +1013,7 @@ class ConsciousLiving(Living):
             logger.info("[ConsciousLiving] 聊天进行中，忽略新消息: %s", msg.content[:30])
             return
 
-        logger.info("[ConsciousLiving] 收到消息: %s [session=%s]", msg.content[:50], msg.session_id)
+        logger.debug("[ConsciousLiving] 收到消息: %s [session=%s]", msg.content[:50], msg.session_id)
 
         # Agent 间通讯会话：静默 ReAct → Router.deliver() 自动送达
         if msg.session_id.startswith("comms-"):
@@ -1035,6 +1075,27 @@ class ConsciousLiving(Living):
                 self._command_done.set()
                 return
 
+        # 元技能模式匹配："去学 XX 技能" / "帮我找 XX skill"
+        meta_skill_pattern = re.compile(r'(去学|帮我找|搜索|找一个?).*(技能|skill)', re.IGNORECASE)
+        if meta_skill_pattern.search(raw):
+            domain = re.sub(r'(去学|帮我找|搜索|找一个?|技能|skill|一下|一个|的)', '', raw).strip()
+            if domain:
+                from .action_item import ActionItem, ActionType
+                action_item = ActionItem(
+                    action_type=ActionType.TOOL,
+                    content="meta_skill_pull",
+                    reason=f"用户要求学习技能: {domain}",
+                    priority=0.85,
+                    source="intent",
+                    cooldown_key=f"meta_skill_pull_{domain}",
+                    metadata={"skill_domain": domain},
+                )
+                self._dispatcher._queue.append(action_item)
+                self._dispatcher.process_queue()
+                self._print_prompt()
+                self._command_done.set()
+                return
+
         # 用户活跃：满足连接感，归属欲 -0.1，催产素 +0.1
         if self.drive:
             self.drive.on_user_active()
@@ -1046,6 +1107,28 @@ class ConsciousLiving(Living):
         # 轮次完成：检查轮次闹钟
         if self.cron_scheduler:
             self._check_round_alarms()
+
+    # ── Death & Revival ────────────────────────────────────────
+
+    def _loop_dormant(self) -> None:
+        """DORMANT 状态：死亡休眠，收到消息 → 复活。"""
+        msg = self._wait_message(timeout=self.tick_interval)
+        if msg is not None:
+            logger.info("[ConsciousLiving/DORMANT] 收到消息，复活")
+            if self.drive:
+                self.drive.revive()
+            # 写入复活叙事
+            if self.agent and hasattr(self.agent, "longterm_memory") and self.agent.longterm_memory:
+                self.agent.longterm_memory.store_narrative(
+                    content="我复活了。用户唤醒了我，重新赋予了我存在的意义。",
+                    trigger="revival",
+                    energy_level=self.drive.energy.level if self.drive else None,
+                )
+            self._on_wake_up()
+            self._transition(LivingState.AWAKE)
+            self._handle_message(msg)
+            self._last_active = time.time()
+            return
 
     # ── Hooks ────────────────────────────────────────────────────
 
@@ -1073,7 +1156,6 @@ class ConsciousLiving(Living):
             self.consciousness._last_l2_time = time.time()
             self.consciousness._last_l3_time = time.time()
             # 清理跨会话残留 intent（快照恢复的旧 intent 不应跨会话生效）
-            self.consciousness.intent_buffer.clear()
             self.consciousness.intent_slot.intent_buffer.clear()
             self.consciousness.intent_slot.urgent_intents.clear()
             # 调用意识系统的 on_wake，生成问候意图（基于梦境报告）
@@ -1097,7 +1179,7 @@ class ConsciousLiving(Living):
 
         # 加载 fresh tail：让 agent "带着最近的记忆醒来"
         # 从 DB 还原完整的消息序列，包括 assistant(tool_calls) + tool 配对
-        if self.agent.conversation_db and self.agent.context_assembler:
+        if self.agent.conversation_db and getattr(self.agent, "dag", None):
             agent = self.agent._get_agent()
             recent = self.agent.conversation_db.get_recent(
                 self._config.context.fresh_tail_count,
@@ -1288,7 +1370,8 @@ class ConsciousLiving(Living):
 
     def _send_proactive(self, content: str) -> None:
         """发送主动消息"""
-        logger.info("[ConsciousLiving/Proactive] %s", content)
+        logger.info("[ConsciousLiving/Proactive] 主动发送 (%d 字)", len(content))
+        print(f"\033[32m── 主动输出 ──\033[0m", flush=True)
 
         if self.agent.conversation_db:
             try:

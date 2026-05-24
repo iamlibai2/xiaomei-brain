@@ -16,7 +16,7 @@ import re
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
-from ..prompts.drive import CARE_PROMPT, EXPRESSION_PROMPT, GREETING_PROMPT, LEARN_REACT_PROMPT
+from ..prompts.drive import CARE_PROMPT, EXPRESSION_PROMPT, GREETING_PROMPT, LEARN_REACT_PROMPT, META_SKILL_PROMPT
 
 if TYPE_CHECKING:
     from .action_item import ActionItem, ActionType
@@ -52,6 +52,7 @@ class ActionExecutor:
             "tool": self._do_tool,
             "notify": self._do_notify,
             "talk_to_agent": self._do_talk_to_agent,
+            "meta_skill_pull": self._do_meta_skill_pull,
         }
         handler = handlers.get(item.action_type.value)
         if not handler:
@@ -430,6 +431,8 @@ class ActionExecutor:
             success = self._do_progress_goal(item)
         elif tool_name == "pleasure_lever":
             success = self._do_pleasure_lever(item)
+        elif tool_name == "meta_skill_pull":
+            success = self._do_meta_skill_pull(item)
         else:
             logger.warning("[ActionExecutor] 未知工具: %s", tool_name)
             return False
@@ -1045,6 +1048,95 @@ source: intent_driven_learning
                 logger.debug("[ActionExecutor] 关联边建立失败 (%s): %s", name, e)
 
         logger.info("[ActionExecutor] 已处理 %d 条知识关联", len(relations_found))
+
+    # ── TOOL: meta_skill_pull ──────────────────────────────────
+
+    def _do_meta_skill_pull(self, item: ActionItem) -> bool:
+        """元技能：搜索 Hub → 拉取 SKILL.md → 转换格式 → 存入 LongTermMemory"""
+        living = self.dispatcher._conscious_living
+        if not living:
+            return False
+
+        agent = living.agent if hasattr(living, "agent") else None
+        if not agent:
+            return False
+
+        skill_domain = item.metadata.get("skill_domain", "") if item.metadata else ""
+        if not skill_domain and item.content:
+            skill_domain = item.content
+
+        if not skill_domain:
+            logger.warning("[ActionExecutor] 元技能: 缺少 skill_domain")
+            return False
+
+        # 先检查是否已有类似技能
+        if agent.longterm_memory:
+            existing = agent.longterm_memory.recall(
+                f"技能 {skill_domain}", top_k=3, user_id="global",
+            )
+            high_conf = [m for m in existing if m.get("type") == "skill" and m.get("confidence", 0) > 0.5]
+            if high_conf:
+                logger.info("[ActionExecutor] 元技能: 已有高可信度技能，跳过拉取")
+                self.dispatcher._send_proactive(f"我已经会 {skill_domain} 相关的技能了。")
+                return True
+
+        agent_core = agent._get_agent()
+        consciousness = living.consciousness
+        if not consciousness:
+            return False
+
+        consciousness._refresh_memory_window()
+
+        system_prompt = consciousness.self_image.inject_consciousness()
+        prompt = META_SKILL_PROMPT.format(skill_domain=skill_domain)
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ]
+
+        logger.info("[ActionExecutor] 元技能: 拉取 %s 技能", skill_domain)
+
+        try:
+            result = agent_core.react_nodb(messages=messages, max_steps=15, label="work")
+        except Exception as e:
+            logger.warning("[ActionExecutor] 元技能 ReAct 失败: %s", e)
+            return False
+
+        if not result:
+            return False
+
+        # 存入 LongTermMemory
+        try:
+            if agent and hasattr(agent, "longterm_memory") and agent.longterm_memory:
+                ltm = agent.longterm_memory
+                skill_name = skill_domain  # fallback
+                # Try to extract skill name from result
+                for line in result.split("\n"):
+                    if line.startswith("## ") and "type:" not in line:
+                        skill_name = line[3:].strip()
+                        break
+
+                memory_id = ltm.store(
+                    content=result[:2000],
+                    source="hub",
+                    tags=[f"domain:{skill_domain}", "skill"],
+                    importance=0.6,
+                    user_id="global",
+                    mem_type="skill",
+                    confidence=0.5,
+                    skill_domain=skill_domain,
+                )
+                logger.info("[ActionExecutor] 元技能: 已存入 #%d (%s)", memory_id, skill_name)
+
+                # 解析关联建边
+                self._build_knowledge_relations(memory_id, result, ltm)
+
+                self.dispatcher._send_proactive(f"我学会了 {skill_name} 技能（来自 Hub）")
+                return True
+        except Exception as e:
+            logger.warning("[ActionExecutor] 元技能存储失败: %s", e)
+
+        return False
 
     # ── TOOL: pleasure_lever ──────────────────────────────────
 
