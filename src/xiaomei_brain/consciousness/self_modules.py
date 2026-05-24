@@ -253,12 +253,14 @@ class SelfBody:
     attention: str = "等待用户"  # SelfImage 自管，不代理
 
     # ── 内感受字段（非代理，由 Interoception.tick() 实时写入）──
+    cpu_percent: float = 0.0
+    memory_percent: float = 0.0
     thread_health: dict = field(default_factory=lambda: {"layer0": True, "layer2": True})
     queue_pressure: float = 0.0
     llm_latency_ms: float = 0.0
     llm_error_rate: float = 0.0
     token_usage: float = 0.0
-    memory_fullness: str = "清爽"
+    memory_fullness_pct: float = 0.0
     burning_duration: float = 0.0
 
     # ── 代理读取辅助 ──────────────────────────
@@ -289,6 +291,8 @@ class SelfBody:
     @property
     def desire_expression(self) -> float:  return self._d("desire.expression", 0.0)
     @property
+    def desire_survival(self) -> float:    return self._d("desire.survival", 0.3)
+    @property
     def dopamine(self) -> float:           return self._d("hormone.dopamine", 0.5)
     @property
     def serotonin(self) -> float:          return self._d("hormone.serotonin", 0.5)
@@ -300,6 +304,25 @@ class SelfBody:
     def norepinephrine(self) -> float:     return self._d("hormone.norepinephrine", 0.5)
     @property
     def motivation_level(self) -> float:   return self._d("motivation.motivation_level", 0.5)
+    @property
+    def pleasure_value(self) -> float:     return self._d("pleasure_value", 0.5)
+    @property
+    def craving(self) -> float:            return self._d("craving", 0.0)
+
+    @property
+    def pleasure_ceiling(self) -> float:   return self._d("wear.pleasure_ceiling", 1.0)
+
+    @property
+    def emotional_blunting(self) -> int:   return int(self._d("wear.emotional_blunting", 0))
+
+    @property
+    def oxytocin_gain(self) -> float:      return self._d("wear.oxytocin_gain_coefficient", 1.0)
+
+    @property
+    def energy_baseline(self) -> float:    return self._d("wear.energy_baseline", 0.0)
+
+    @property
+    def energy_recovery_rate(self) -> float: return self._d("wear.energy_recovery_rate", 0.1)
 
     # ── 序列化 ─────────────────────────────
 
@@ -313,19 +336,29 @@ class SelfBody:
             "desire_cognition": self.desire_cognition,
             "desire_achievement": self.desire_achievement,
             "desire_expression": self.desire_expression,
+            "desire_survival": self.desire_survival,
             "dopamine": self.dopamine,
             "serotonin": self.serotonin,
             "cortisol": self.cortisol,
             "oxytocin": self.oxytocin,
             "norepinephrine": self.norepinephrine,
             "motivation_level": self.motivation_level,
+            "pleasure_value": self.pleasure_value,
+            "craving": self.craving,
+            "pleasure_ceiling": self.pleasure_ceiling,
+            "emotional_blunting": self.emotional_blunting,
+            "oxytocin_gain": self.oxytocin_gain,
+            "energy_baseline": self.energy_baseline,
+            "energy_recovery_rate": self.energy_recovery_rate,
             # ── 内感受字段 ──
+            "cpu_percent": self.cpu_percent,
+            "memory_percent": self.memory_percent,
             "thread_health": self.thread_health,
             "queue_pressure": self.queue_pressure,
             "llm_latency_ms": self.llm_latency_ms,
             "llm_error_rate": self.llm_error_rate,
             "token_usage": self.token_usage,
-            "memory_fullness": self.memory_fullness,
+            "memory_fullness_pct": self.memory_fullness_pct,
             "burning_duration": self.burning_duration,
         }
 
@@ -335,8 +368,9 @@ class SelfBody:
             self.attention = data["attention"]
         # ── 内感受字段从快照恢复 ──
         for key in (
-            "thread_health", "queue_pressure", "llm_latency_ms",
-            "llm_error_rate", "token_usage", "memory_fullness", "burning_duration",
+            "cpu_percent", "memory_percent", "thread_health",
+            "queue_pressure", "llm_latency_ms",
+            "llm_error_rate", "token_usage", "memory_fullness_pct", "burning_duration",
         ):
             if key in data:
                 setattr(self, key, data[key])
@@ -344,11 +378,13 @@ class SelfBody:
     def get_summary(self) -> str:
         base = f"能量{self.energy:.0%}，心情{self.mood}，关注{self.attention}"
         if self.llm_latency_ms > 5000:
-            base += "，脑子有点转不动"
-        elif self.queue_pressure > 0.5:
-            base += "，消息有点多"
-        if self.memory_fullness and self.memory_fullness != "清爽":
-            base += f"，{self.memory_fullness}"
+            base += f" (LLM {self.llm_latency_ms:.0f}ms)"
+        if self.queue_pressure > 0.3:
+            base += f" (队列{self.queue_pressure:.0%})"
+        if self.cpu_percent > 40:
+            base += f" (CPU{self.cpu_percent:.0f}%)"
+        if self.memory_percent > 50:
+            base += f" (内存{self.memory_percent:.0f}%)"
         return base
 
 
@@ -441,6 +477,10 @@ class SelfMind:
 
     # ── PACE 执行反射（chat 后累积，L2 消费后清空）──
     pace_reflections: list[dict] = field(default_factory=list)
+
+    # ── 学习需求队列 ───────────────────────────
+    # 每项: { topic, reason, priority, source (task_gap|user_need|concept_expansion) }
+    learning_queue: list[dict] = field(default_factory=list)
 
     # ── 代理属性（只读，实时读 Purpose）──────
 
