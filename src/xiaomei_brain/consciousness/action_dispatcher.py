@@ -272,6 +272,7 @@ class ActionExecutor:
         try:
             # 纯内部 ReAct（不污染对话历史，和 _do_alarm / L2 一致）
             # WORK 场景需要足够步数：写代码、调试等每次工具调用算一步
+            _work_start = time.time()
             result = agent_core.react_nodb(messages=messages, max_steps=50, label="work")
 
             # 手动内存提取：提取 MEMORY 块，拿到干净文本用于输出
@@ -326,6 +327,25 @@ class ActionExecutor:
                         )
                     except Exception as e:
                         logger.debug("[ExpStream] work write failed: %s", e)
+
+            # ── InnerVoice: 任务完成后反思，识别知识盲区 ──
+            _work_elapsed = time.time() - _work_start
+            cl = self.dispatcher._conscious_living
+            if cl and hasattr(cl, "_inner_voice") and cl._inner_voice:
+                # 收集工具使用信息（从 agent_core 的 recent tool calls 中取）
+                _tools_used = []
+                if hasattr(agent_core, "_last_tool_calls"):
+                    _tools_used = list(agent_core._last_tool_calls)[:10]
+                try:
+                    cl._inner_voice.on_task_done(
+                        goal_description=item.content or item.reason or "自主工作",
+                        elapsed=_work_elapsed,
+                        steps=0,  # react_nodb 不暴露步数
+                        tools_used=_tools_used,
+                        result_preview=clean_result[:500] if clean_result else "",
+                    )
+                except Exception as e:
+                    logger.debug("[InnerVoice] task_done 失败: %s", e)
 
         except Exception as e:
             logger.warning("[ActionExecutor] WORK react_nodb 失败: %s", e)

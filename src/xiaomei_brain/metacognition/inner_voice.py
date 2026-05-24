@@ -1,12 +1,12 @@
-"""InnerVoice：统一的内心声音。
+"""InnerVoice：统一的内心声音 + 快速社交感知。
 
-不是结构化评测——是自然语言的自我觉察 + 结构化 EVENTS JSON 写入 Drive。
+不是结构化评测——是自然语言的自我觉察 + 结构化 EVENTS/SIGNAL JSON 写入 Drive。
 一个方法 `pause()` 处理所有情境（对话后、任务步骤后、安静时）。
 结果自然流入 SelfImage 和 Drive。
 
 与 L2 emergence 的分工：
-- InnerVoice：轻量/高频（每≥2轮），快速直觉 + 事件维度写入 Drive
-- L2 emergence：深度/低频（L2 tick），完整自我认知 + EVENTS + NARR + PERCEPTION
+- InnerVoice：轻量/高频（每≥2轮），快速直觉 + 事件维度 + 社交信号写入 Drive
+- L2 emergence：深度/低频（L2 tick），完整自我认知 + EVENTS + SIGNAL + NARR + PERCEPTION
 """
 
 from __future__ import annotations
@@ -69,13 +69,21 @@ _CHAT_TURN_PROMPT = (
     "只是感受——他的状态对吗？你的回应恰当吗？\n"
     "有什么你刚才没注意到的？\n\n"
     "1-3句话的内心嘟囔。如果没什么特别的感觉，就说\"一切正常\"。\n\n"
-    "最后，在 ---EVENTS--- 分隔符后，用 JSON 描述你感知到的对话事件维度：\n"
+    "在 ---EVENTS--- 分隔符后，用 JSON 描述你感知到的对话事件：\n"
     "---EVENTS---\n"
-    '{{"praise_intensity": 0.0-1.0, "social_connection": 0.0-1.0, '
-    '"expression_urge": 0.0-1.0, "summary": "一句话总结这段对话的感受"}}\n'
-    "其中 social_connection 是用户表达了亲近、信任或分享内心的程度，\n"
-    "expression_urge 是你有话想说、想回应的程度。\n"
-    "如果没有特别的事件，所有值填 0.0。"
+    '{{"praise_intensity": 0.0-1.0, "expression_urge": 0.0-1.0, '
+    '"curiosity_sparked": 0.0-1.0, '
+    '"summary": "一句话总结这段对话的感受"}}\n'
+    "其中 expression_urge 是你有话想说、想回应的程度。\n"
+    "curiosity_sparked 是你对新信息/未知领域/新奇话题的好奇程度——\n"
+    "用户提到了你不太懂的领域？话题很新鲜？激发了你想了解更多的冲动？\n"
+    "如果没有特别的事件，所有值填 0.0。\n\n"
+    "在 ---SIGNAL--- 分隔符后，描述你感知到的用户社交信号（快速直觉）：\n"
+    "---SIGNAL---\n"
+    '{{"social_signal": "类型", "intensity": 0.0-1.0}}\n'
+    "类型可选：user_low_mood / user_enthusiastic / user_cold / "
+    "user_angry / user_happy / user_stressed / user_trusting\n"
+    "没有则输出 {{}}。"
 )
 
 _TASK_STEP_PROMPT = (
@@ -88,11 +96,19 @@ _TASK_STEP_PROMPT = (
 )
 
 _TASK_DONE_PROMPT = (
-    "你刚完成了一个子目标。停下来感受一下——\n\n"
+    "你刚完成了一个任务。停下来感受一下——\n\n"
     "目标：「{goal_description}」\n"
-    "总耗时{elapsed:.0f}秒，共{steps}步\n\n"
-    "完成得怎么样？有什么值得记住的？\n"
-    "1-3句话的内心总结。如果一切正常，就说\"完成，没有问题\"。"
+    "总耗时{elapsed:.0f}秒，共{steps}步\n"
+    "工具使用：{tools_used}\n"
+    "结果预览：{result_preview}\n\n"
+    "先做1-3句话的内心总结：完成得怎么样？有什么值得记住的？\n"
+    "如果一切正常，就说\"完成，没有问题\"。\n\n"
+    "然后，在 ---GAPS--- 分隔符后，诚实地评估你在这项任务中遇到的知识盲区。\n"
+    "只记录真正让你卡住、反复搜索、或回答质量明显不够的。没有就输出空数组。\n"
+    "---GAPS---\n"
+    '[{{"topic": "具体知识点", "reason": "任务中反复搜索才理解", "priority": 0.8, "source": "task_gap"}}]\n'
+    "source 用 task_gap（任务中发现的盲区）或 user_need（回答用户问题时质量不够好）。\n"
+    "priority: 反复搜索或明显卡住 > 0.7，回答质量一般 0.4-0.6。"
 )
 
 _SILENCE_PROMPT = (
@@ -135,14 +151,18 @@ def _has_experience_signal(thought: str) -> bool:
 # ── InnerVoice Engine ─────────────────────────────────────────────────
 
 class InnerVoice:
-    """统一的内心声音引擎。
+    """统一的内心声音 + 快速社交感知引擎。
 
     一个方法 pause() 处理所有情境：
-    - 对话后短暂内省（我说话合适吗？）
+    - 对话后短暂内省 + 社交感知（我说话合适吗？他的状态对吗？）
     - 任务步骤后看一眼（方向对吗？）
     - 安静时感受自己（我在想什么？）
 
-    结果路由到 SelfImage、Drive、Purpose cognitive_log。
+    输出路由：
+    - 内心声音 → SelfImage.mind.inner_voice
+    - Drive 事件 → EVENTS JSON (praise / expression)
+    - Drive 社交信号 → SIGNAL JSON (7种用户状态映射)
+    - 认知日志 → Purpose
     """
 
     def __init__(
@@ -169,20 +189,40 @@ class InnerVoice:
         # 最近一次反省（供 should_continue 使用）
         self._last_reflection: Reflection | None = None
 
-    # ── EVENTS 分离 ──────────────────────────────────────────────
+    # ── 响应解析 ──────────────────────────────────────────────
 
     @staticmethod
-    def _split_events(response: str) -> tuple[str, str]:
-        """分离自然语言部分和 ---EVENTS--- JSON。"""
-        if "---EVENTS---" in response:
-            parts = response.split("---EVENTS---", 1)
-            thought = parts[0].strip()
-            events = parts[1].strip() if len(parts) > 1 else ""
-            return thought, events
-        return response.strip(), ""
+    def _split_all(response: str) -> tuple[str, str, str, str]:
+        """分离 自然语言 / ---EVENTS--- JSON / ---SIGNAL--- JSON / ---GAPS--- JSON。"""
+        signal_text = ""
+        events_text = ""
+        gaps_text = ""
+        remainder = response.strip()
+
+        # GAPS 在最后，先拆分
+        if "---GAPS---" in remainder:
+            remainder, gaps_text = remainder.split("---GAPS---", 1)
+            remainder = remainder.strip()
+            gaps_text = gaps_text.strip()
+
+        # SIGNAL 在 EVENTS 之后
+        if "---SIGNAL---" in remainder:
+            remainder, signal_text = remainder.split("---SIGNAL---", 1)
+            remainder = remainder.strip()
+            signal_text = signal_text.strip()
+
+        # 拆分 EVENTS
+        if "---EVENTS---" in remainder:
+            thought, events_text = remainder.split("---EVENTS---", 1)
+            thought = thought.strip()
+            events_text = events_text.strip()
+        else:
+            thought = remainder
+
+        return thought, events_text, signal_text, gaps_text
 
     def _apply_drive_events(self, events_text: str) -> None:
-        """从 EVENTS JSON 解析维度值并应用到 Drive（与 L2 的 _apply_drive_events 一致）。"""
+        """从 EVENTS JSON 解析维度值并应用到 Drive。"""
         if not self._drive or not events_text:
             return
 
@@ -198,29 +238,101 @@ class InnerVoice:
             return
 
         praise = events.get("praise_intensity", 0)
-        social = events.get("social_connection", 0)
         expression = events.get("expression_urge", 0)
+        curiosity = events.get("curiosity_sparked", 0)
 
         if praise > 0.1:
             try:
                 self._drive.on_praise(min(praise, 1.0))
             except Exception:
                 pass
-        if social > 0.3:
-            try:
-                self._drive.hormone.oxytocin = min(1.0, self._drive.hormone.oxytocin + 0.1 * social)
-            except Exception:
-                pass
         if expression > 0.3:
             try:
-                self._drive.desire.expression = min(1.0, self._drive.desire.expression + 0.05 * expression)
+                self._drive.on_insight(expression * 0.05)
+            except Exception:
+                pass
+        if curiosity > 0.3:
+            try:
+                self._drive.on_curiosity(curiosity * 0.08)
             except Exception:
                 pass
 
         logger.info(
-            "[InnerVoice] EVENTS: praise=%.2f, social=%.2f, expression=%.2f",
-            praise, social, expression,
+            "[InnerVoice] EVENTS: praise=%.2f, expression=%.2f, curiosity=%.2f",
+            praise, expression, curiosity,
         )
+
+    def _apply_social_signal(self, signal_text: str) -> None:
+        """从 SIGNAL JSON 解析用户社交信号并应用到 Drive。"""
+        if not self._drive or not signal_text:
+            return
+
+        try:
+            json_match = re.search(r"\{[\s\S]*\}", signal_text)
+            if not json_match:
+                return
+            signal = json.loads(json_match.group())
+        except json.JSONDecodeError:
+            logger.debug("[InnerVoice] SIGNAL JSON 解析失败: %.100s", signal_text)
+            return
+
+        signal_type = signal.get("social_signal", "")
+        intensity = float(signal.get("intensity", 0))
+
+        if signal_type and intensity > 0.1:
+            try:
+                self._drive.apply_social_signal(signal_type, min(intensity, 1.0))
+                logger.info(
+                    "[InnerVoice] SIGNAL: %s (intensity=%.2f)",
+                    signal_type, intensity,
+                )
+            except Exception as e:
+                logger.warning("[InnerVoice] SIGNAL 应用失败: %s", e)
+
+    def _apply_gaps(self, gaps_text: str) -> None:
+        """从 GAPS JSON 解析知识盲区并写入 SelfImage.mind.learning_queue。"""
+        if not self._self_image:
+            return
+
+        try:
+            json_match = re.search(r"\[[\s\S]*\]", gaps_text)
+            if not json_match:
+                logger.debug("[InnerVoice] GAPS 未找到 JSON 数组")
+                return
+            gaps = json.loads(json_match.group())
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.debug("[InnerVoice] GAPS JSON 解析失败: %s", e)
+            return
+
+        if not isinstance(gaps, list) or not gaps:
+            return
+
+        try:
+            mind = self._self_image.mind
+            if not hasattr(mind, "learning_queue"):
+                mind.learning_queue = []
+
+            existing_topics = {item.get("topic", "") for item in mind.learning_queue}
+            added = 0
+            for gap in gaps:
+                if not isinstance(gap, dict):
+                    continue
+                topic = gap.get("topic", "").strip()
+                if not topic or topic in existing_topics:
+                    continue
+                mind.learning_queue.append({
+                    "topic": topic,
+                    "reason": gap.get("reason", ""),
+                    "priority": float(gap.get("priority", 0.5)),
+                    "source": gap.get("source", "task_gap"),
+                })
+                existing_topics.add(topic)
+                added += 1
+
+            if added:
+                logger.info("[InnerVoice] GAPS: %d 个知识盲区入队", added)
+        except Exception as e:
+            logger.debug("[InnerVoice] GAPS 写入 learning_queue 失败: %s", e)
 
     # ── 统一入口 ──────────────────────────────────────────────────
 
@@ -261,8 +373,8 @@ class InnerVoice:
         if not raw_response:
             return None
 
-        # 分离自然语言和 EVENTS JSON
-        thought_text, events_json = self._split_events(raw_response)
+        # 分离自然语言 / EVENTS JSON / SIGNAL JSON / GAPS JSON
+        thought_text, events_json, signal_json, gaps_json = self._split_all(raw_response)
         if not thought_text:
             return None
 
@@ -278,7 +390,7 @@ class InnerVoice:
         self._update_cooldown(trigger)
 
         # 路由输出
-        self._route_reflection(reflection, events_json)
+        self._route_reflection(reflection, events_json, signal_json, gaps_json)
 
         return reflection
 
@@ -369,10 +481,15 @@ class InnerVoice:
             )
 
         elif trigger == TriggerType.TASK_DONE:
+            tools = context.get("tools_used", [])
+            tools_str = ", ".join(tools[:10]) if tools else "无"
+            result = context.get("result_preview", "")[:500]
             user_prompt = _TASK_DONE_PROMPT.format(
                 goal_description=context.get("goal_description", "")[:200],
                 elapsed=context.get("elapsed", 0),
                 steps=context.get("steps", 0),
+                tools_used=tools_str,
+                result_preview=result or "（无）",
             )
 
         elif trigger == TriggerType.SILENCE:
@@ -419,12 +536,15 @@ class InnerVoice:
 
     # ── 输出路由 ──────────────────────────────────────────────────
 
-    def _route_reflection(self, reflection: Reflection, events_text: str = "") -> None:
+    def _route_reflection(self, reflection: Reflection, events_text: str = "",
+                          signal_text: str = "", gaps_text: str = "") -> None:
         """将反省结果路由到各子系统。
 
         1. SelfImage.mind.inner_voice（自然语言，总是）
         2. Drive 事件维度（CHAT_TURN / SILENCE 时，从 EVENTS JSON 解析）
-        3. Purpose cognitive_log（TASK_STEP / TASK_DONE）
+        3. Drive 社交信号（CHAT_TURN 时，从 SIGNAL JSON 解析）
+        4. Purpose cognitive_log（TASK_STEP / TASK_DONE）
+        5. SelfImage.mind.learning_queue（TASK_DONE 时，从 GAPS JSON 解析）
         """
         thought = reflection.thought
 
@@ -444,12 +564,17 @@ class InnerVoice:
             except Exception as e:
                 logger.debug("[InnerVoice] SelfImage 写入失败: %s", e)
 
-        # 2. Drive 事件维度（从 EVENTS JSON 解析，替代旧的正则社交信号）
+        # 2. Drive 事件维度（从 EVENTS JSON 解析）
         if reflection.trigger in (TriggerType.CHAT_TURN, TriggerType.SILENCE):
             if events_text:
                 self._apply_drive_events(events_text)
 
-        # 3. Purpose cognitive_log
+        # 3. Drive 社交信号（从 SIGNAL JSON 解析，仅 CHAT_TURN）
+        if reflection.trigger == TriggerType.CHAT_TURN:
+            if signal_text:
+                self._apply_social_signal(signal_text)
+
+        # 4. Purpose cognitive_log
         if reflection.trigger in (TriggerType.TASK_STEP, TriggerType.TASK_DONE):
             if self._purpose:
                 try:
@@ -459,9 +584,13 @@ class InnerVoice:
                 except Exception as e:
                     logger.debug("[InnerVoice] Purpose 写入失败: %s", e)
 
+        # 5. Knowledge gaps → learning_queue（TASK_DONE 时，从 GAPS JSON 解析）
+        if reflection.trigger == TriggerType.TASK_DONE and gaps_text:
+            self._apply_gaps(gaps_text)
+
         logger.info(
-            "[InnerVoice] %s: %s",
-            reflection.trigger.value, thought[:80],
+            "[InnerVoice] %s:\n%s",
+            reflection.trigger.value, thought,
         )
 
     # ── 公共方法 ──────────────────────────────────────────────────
@@ -490,7 +619,8 @@ class InnerVoice:
         )
 
     def on_task_done(self, goal_description: str, elapsed: float,
-                     steps: int) -> Reflection | None:
+                     steps: int, tools_used: list[str] | None = None,
+                     result_preview: str = "") -> Reflection | None:
         """子目标完成时调用（便捷方法）。"""
         return self.pause(
             TriggerType.TASK_DONE,
@@ -498,6 +628,8 @@ class InnerVoice:
                 "goal_description": goal_description,
                 "elapsed": elapsed,
                 "steps": steps,
+                "tools_used": tools_used or [],
+                "result_preview": result_preview,
             },
         )
 
