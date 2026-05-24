@@ -807,7 +807,18 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
                 try:
                     conn.execute(f"ALTER TABLE memories ADD COLUMN {col_name} {col_def}")
                 except sqlite3.OperationalError:
-                    pass  # column already exists
+                    pass
+
+        # memory_relations 图谱升级
+        for col_name, col_def in [
+            ("source_type", "TEXT NOT NULL DEFAULT 'experience'"),
+            ("target_type", "TEXT NOT NULL DEFAULT 'experience'"),
+        ]:
+            if col_name not in rel_cols:
+                try:
+                    conn.execute(f"ALTER TABLE memory_relations ADD COLUMN {col_name} {col_def}")
+                except sqlite3.OperationalError:
+                    pass
 
         conn.commit()
 
@@ -1823,6 +1834,40 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         conn.commit()
         return {"decayed": decayed, "dormant": dormant}
 
+    def add_relation(
+        self,
+        source_id: int,
+        target_id: int,
+        relation_type: str,
+        source_type: str = "experience",
+        target_type: str = "experience",
+        context: str | None = None,
+    ) -> bool:
+        """Add a relation edge between two memories.
+
+        Uses INSERT OR REPLACE to handle the UNIQUE constraint on
+        (from_memory_id, to_memory_id, relation_type).
+        """
+        conn = self._get_conn()
+        now = time.time()
+        try:
+            conn.execute(
+                """INSERT OR REPLACE INTO memory_relations
+                   (from_memory_id, to_memory_id, source_type, target_type,
+                    relation_type, context, weight, last_reinforced, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 1.0, ?, ?)""",
+                (source_id, target_id, source_type, target_type, relation_type, context, now, now),
+            )
+            conn.commit()
+            logger.debug(
+                "Relation: #%d (%s) --[%s]--> #%d (%s)",
+                source_id, source_type, relation_type, target_id, target_type,
+            )
+            return True
+        except Exception as e:
+            logger.warning("Failed to add relation: %s", e)
+            return False
+
     def get_relation_chain(
         self,
         memory_id: int,
@@ -1857,7 +1902,10 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
 
                 rows = conn.execute(
                     f"""SELECT r.from_memory_id, r.to_memory_id,
-                               r.relation_type, r.context
+                               r.relation_type, r.context,
+                               COALESCE(r.source_type, 'experience') as source_type,
+                               COALESCE(r.target_type, 'experience') as target_type,
+                               COALESCE(r.weight, 0.5) as weight
                         FROM memory_relations r
                         WHERE (r.from_memory_id IN ({placeholders})
                                OR r.to_memory_id IN ({placeholders}))
@@ -1902,6 +1950,9 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
                             "relation_type": rr["relation_type"],
                             "context": rr["context"],
                             "hop": hop + 1,
+                            "weight": rr["weight"] or 1.0,
+                            "source_type": rr["source_type"],
+                            "target_type": rr["target_type"],
                         })
 
                 frontier = next_frontier
