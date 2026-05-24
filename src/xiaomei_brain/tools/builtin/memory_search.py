@@ -90,44 +90,46 @@ def create_memory_search_tools(longterm: "LongTermMemory | None" = None) -> list
                 logger.warning("[MemorySearch] relation chain failed for #%d: %s", seed_id, e)
 
         # ── 3. 排序：种子在前，扩散在后 ──────────────────
-        # 种子按 score 降序，扩散按 hop 升序
         def sort_key(m: dict) -> tuple[int, float]:
             hop = m.get("hop", 0)
             score = m.get("score", 0)
             if hop == 0:
-                return (0, -score)  # 种子：按 score 降序
-            return (hop, -score)    # 扩散：按 hop 升序，同 hop 按 score 降序
+                return (0, -score)
+            return (hop, -score)
 
         all_memories.sort(key=sort_key)
 
-        # ── 4. 格式化输出 ──────────────────────────────
+        # ── 4. 按 type 分拣，三段式输出 ─────────────────
+        import time as _time
+        experiences = [m for m in all_memories if m.get("type") == "experience"]
+        knowledges = [m for m in all_memories if m.get("type") == "knowledge"]
+        skills = [m for m in all_memories if m.get("type") == "skill"]
+
         lines = [f"「{query}」相关的记忆（共 {len(all_memories)} 条）：\n"]
 
-        for i, m in enumerate(all_memories):
-            hop = m.get("hop", 0)
-            content = m.get("content", "")
-            score = m.get("score", 0)
-            rel_type = m.get("relation_type", "")
-            tags = m.get("tags") or m.get("scene_tags") or []
+        if experiences:
+            lines.append("### 相关经验")
+            for m in experiences[:5]:
+                ts = m.get("created_at", 0)
+                date_str = _time.strftime("%Y-%m-%d", _time.localtime(ts)) if ts else "?"
+                lines.append(f"- {date_str}: {m.get('content', '')[:200]}")
+            lines.append("")
 
-            tag_str = f" [{', '.join(tags[:3])}]" if tags else ""
+        if knowledges:
+            lines.append("### 我知道什么")
+            for m in knowledges[:5]:
+                lines.append(f"- {m.get('content', '')[:300]}")
+            lines.append("")
 
-            if hop == 0:
-                # 种子记忆
-                lines.append(
-                    f"### 种子 {m['id']} [score={score:.2f}]{tag_str}\n{content}\n"
-                )
-            else:
-                # 扩散激活
-                seed_content = m.get("_seed_content", "")
-                ctx = m.get("context") or ""
-                rel_label = rel_type if rel_type else "关联"
-                ctx_str = f" ({ctx})" if ctx else ""
-                lines.append(
-                    f"- #{m.get('memory_id', '?')}"
-                    f" [{rel_label}, hop={hop}{ctx_str}]"
-                    f"{tag_str}\n  {content}\n"
-                )
+        if skills:
+            lines.append("### 我会怎么做")
+            for m in skills[:5]:
+                conf = m.get("confidence")
+                if conf is not None:
+                    lines.append(f"- {m.get('content', '')[:200]} (confidence={conf:.2f})")
+                else:
+                    lines.append(f"- {m.get('content', '')[:200]}")
+            lines.append("")
 
         # 清理内部字段
         for m in all_memories:

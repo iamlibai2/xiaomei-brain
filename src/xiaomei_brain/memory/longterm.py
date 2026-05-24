@@ -1152,6 +1152,8 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         sources: list[str] | None = None,
         scene: str | None = None,
         time_range: tuple[float, float] | None = None,
+        context: str = "auto",
+        type_weights: dict[str, float] | None = None,
     ) -> list[dict[str, Any]]:
         """Recall memories by semantic similarity.
 
@@ -1181,14 +1183,14 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
 
         # Try vector search first
         try:
-            result = self._vector_recall(query, user_id, top_k, sources, scene, time_range)
+            result = self._vector_recall(query, user_id, top_k, sources, scene, time_range, context, type_weights)
             return result if result is not None else []
         except Exception as e:
             logger.warning(
                 "[Memory RECALL] Vector search failed, falling back to keywords: %s", e,
             )
             try:
-                result = self._keyword_recall(query, user_id, top_k, sources, scene, time_range)
+                result = self._keyword_recall(query, user_id, top_k, sources, scene, time_range, context, type_weights)
                 return result if result is not None else []
             except Exception as e2:
                 logger.error("[Memory RECALL] Keyword recall also failed: %s", e2)
@@ -1247,6 +1249,8 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         self, query: str, user_id: str, top_k: int,
         sources: list[str] | None = None, scene: str | None = None,
         time_range: tuple[float, float] | None = None,
+        context: str = "auto",
+        type_weights: dict[str, float] | None = None,
     ) -> list[dict[str, Any]]:
         """Semantic recall using LanceDB vector search."""
         query_vector = self._embed(query)
@@ -1334,6 +1338,19 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
             strength_boost = 0.5 + 0.5 * effective_strength
             importance_boost = 0.5 + 0.5 * d["importance"]
             d["_rank_score"] = similarity * strength_boost * importance_boost
+
+            # ── Context-aware type weighting ──
+            weights = {"experience": 1.0, "knowledge": 1.0, "skill": 1.0}
+            if type_weights:
+                weights.update(type_weights)
+            elif context == "work":
+                weights = {"skill": 1.5, "knowledge": 1.3, "experience": 1.0}
+            elif context == "chat":
+                weights = {"skill": 0.8, "knowledge": 1.0, "experience": 1.3}
+            mem_type = d.get("type", "experience")
+            type_boost = weights.get(mem_type, 1.0)
+            d["_rank_score"] *= type_boost
+            d["type"] = mem_type  # ensure type is in the result dict
             result.append(d)
 
         # Sort by combined rank score
@@ -1348,6 +1365,8 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         self, query: str, user_id: str, top_k: int,
         sources: list[str] | None = None, scene: str | None = None,
         time_range: tuple[float, float] | None = None,
+        context: str = "auto",
+        type_weights: dict[str, float] | None = None,
     ) -> list[dict[str, Any]]:
         """Fallback keyword recall using LIKE."""
         conn = self._get_conn()
