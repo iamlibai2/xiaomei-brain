@@ -15,6 +15,7 @@ from .consciousness import *
 from .purpose import *
 from .agent import *
 from .dag import *
+from .pattern import *
 
 __all__ = [
     # Memory
@@ -58,4 +59,6 @@ __all__ = [
     "DAG_PROMOTE_PROMPT",
     # Memory (narrative)
     "NARR_BLOCK_INSTRUCTION",
+    # Pattern
+    "PATTERN_EXTRACT_PROMPT",
 ]
