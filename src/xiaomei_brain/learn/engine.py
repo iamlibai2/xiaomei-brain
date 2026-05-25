@@ -102,6 +102,21 @@ class LearningEngine:
             fresh = [i for i in interests
                      if (now - self._storage.get_last_learned_time(i)) >= LEARN_COOLDOWN]
             if fresh:
+                # 模式加权：topic_cluster 模式给候选主题加分
+                if len(fresh) > 1:
+                    try:
+                        from ..memory.pattern import PatternStorage, PatternInjector
+                        ltm_ref = getattr(self._storage, '_ltm', None)
+                        if ltm_ref:
+                            storage = PatternStorage(ltm_ref)
+                            injector = PatternInjector(storage, ltm_ref)
+                            boosts = injector.boost_learning_topics(fresh)
+                            if boosts:
+                                fresh.sort(key=lambda t: boosts.get(t, 0), reverse=True)
+                                logger.info("[LearningEngine] 模式加权前3: %s",
+                                            str([f"{t}={boosts.get(t, 0):.2f}" for t in fresh[:3]]))
+                    except Exception:
+                        pass
                 return random.choice(fresh)
             logger.debug("[LearningEngine] 所有学习兴趣都在冷却中")
 

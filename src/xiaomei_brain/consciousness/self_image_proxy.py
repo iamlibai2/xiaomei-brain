@@ -73,6 +73,7 @@ class SelfImage:
         self._dirty = False
         self._drive = drive
         self.survival_start_time = time.time()   # 存活倒计时起点
+        self._ltm: Any = None                   # LongTermMemory 引用（供模式记忆渲染）
         self._essence: Any = None               # Essence（底色存储）
         self._project_mental_model: Any = None   # [Layer 2]
         self._experience_memory: Any = None      # [Layer 2]
@@ -83,6 +84,10 @@ class SelfImage:
             "reflect": self._assemble_reflect,
             "legacy":  self._assemble_legacy,
         }
+
+    def set_ltm(self, ltm) -> None:
+        """设置 LongTermMemory 引用，供模式记忆渲染使用。"""
+        self._ltm = ltm
 
     # ── 核心：火焰骨架 tick ─────────────────────────────────
 
@@ -311,6 +316,7 @@ class SelfImage:
             + self._render_memory()
             + self._render_experience_timeline()
             + self._render_pace_reflections()
+            + self._render_patterns()
             + self._render_environment()
             + self._render_history()
         )
@@ -329,6 +335,7 @@ class SelfImage:
             + self._render_project_map()
             + self._render_intent()
             + self._render_experience_timeline()
+            + self._render_patterns()
             + self._render_environment()
         )
 
@@ -941,6 +948,23 @@ class SelfImage:
             if major_changes:
                 lines.append(f"近期变化：{'；'.join(major_changes[:5])}")
         return lines
+
+    # ── Patterns: 模式记忆 ──────────────────────────────────
+
+    def _render_patterns(self) -> list[str]:
+        """渲染模式记忆（注入点1: 系统提示词 top-3 高置信度模式）。"""
+        try:
+            if not self._ltm:
+                return []
+            from ..memory.pattern import PatternStorage, PatternInjector
+            storage = PatternStorage(self._ltm)
+            injector = PatternInjector(storage, self._ltm)
+            rendered = injector.render_system_prompt()
+            if rendered:
+                return ["", rendered]
+        except Exception:
+            pass
+        return []
 
     # ── 文件持久化 ──────────────────────────────────────────
 

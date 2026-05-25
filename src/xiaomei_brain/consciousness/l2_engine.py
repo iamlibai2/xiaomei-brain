@@ -352,6 +352,21 @@ class L2Engine:
             prompt += "如果你判断应该推进工作，选择 work 意图。"
         if context_note:
             prompt += f"\n{context_note}\n"
+
+        # 注入情境相关模式（注入点2）
+        try:
+            ltm_ref = getattr(self._c, 'agent', None)
+            ltm_ref = getattr(ltm_ref, 'longterm_memory', None) if ltm_ref else None
+            if ltm_ref:
+                from ..memory.pattern import PatternStorage, PatternInjector
+                storage = PatternStorage(ltm_ref)
+                injector = PatternInjector(storage, ltm_ref)
+                pattern_line = injector.inject_l2_intent(context)
+                if pattern_line:
+                    prompt += f"\n{pattern_line}\n"
+        except Exception:
+            pass
+
         prompt += "\n如果需要，先执行工具操作。最终输出：\nINTENT: <意图类型>\nREASON: <理由，一句话>\nTOPIC: <学习主题>（仅 LEARN 意图时需要，其他意图不输出此行）"
         return prompt
 

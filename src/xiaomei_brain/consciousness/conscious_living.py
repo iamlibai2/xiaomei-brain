@@ -254,7 +254,14 @@ class ConsciousLiving(Living):
             extractor=getattr(self.agent, 'memory_extractor', None),
             llm=getattr(self.agent, 'llm', None),
             procedure_memory=getattr(self.agent, '_procedure_memory', None),
+            exp_stream=exp_stream,
         )
+
+        # 注入 LTM 到 SelfImage（供模式记忆渲染）
+        ltm = getattr(self.agent, 'longterm_memory', None)
+        if ltm:
+            self.consciousness.self_image.set_ltm(ltm)
+            logger.info("[ConsciousLiving] LTM 已注入到 SelfImage")
 
         # 命令注册表 — 从 living_commands 加载（测试/调试/系统操作）
         from .living_commands import COMMAND_REGISTRY, list_commands as _list_cmds
