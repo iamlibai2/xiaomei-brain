@@ -68,6 +68,8 @@ class DreamReport:
     """归档了多少条 narrative"""
     narratives_consolidated: int = 0
     """合并了多少条 narrative"""
+    patterns_extracted: int = 0
+    """提取/更新了多少条模式"""
     emotion_changes: dict = field(default_factory=dict)
     """情绪/欲望变化"""
     elapsed_seconds: float = 0.0
@@ -93,6 +95,7 @@ class DreamEngine:
         llm: Any | None,
         storage: DreamStorage | None = None,
         procedure_memory: Any | None = None,
+        exp_stream: Any | None = None,
     ) -> None:
         self.cs = consciousness
         self.drive = drive
@@ -104,6 +107,7 @@ class DreamEngine:
             agent_id=getattr(consciousness, '_agent_id', ''),
         )
         self.procedure_memory = procedure_memory
+        self.exp_stream = exp_stream
 
         # 子系统
         self.emotion_processor = EmotionProcessor()
@@ -173,7 +177,26 @@ class DreamEngine:
             except Exception as e:
                 logger.warning("[DreamEngine] Narrative巩固失败: %s", e)
 
-        # ── 阶段3：L3 火焰深度燃烧 ─────────────────────
+        # ── 阶段3：Pattern 提取 ──────────────────────────
+        if self.exp_stream and self.ltm:
+            try:
+                from ...memory.pattern import PatternStorage, PatternExtractor
+                pstorage = PatternStorage(self.ltm)
+                extractor = PatternExtractor(
+                    storage=pstorage,
+                    exp_stream=self.exp_stream,
+                    conversation_db=getattr(
+                        self.extractor, 'db', None,
+                    ) if self.extractor else None,
+                    ltm=self.ltm,
+                )
+                patterns = extractor.extract(self.llm)
+                report.patterns_extracted = len(patterns)
+                logger.info("[DreamEngine] Pattern 提取: %d 条", len(patterns))
+            except Exception as e:
+                logger.warning("[DreamEngine] Pattern 提取失败: %s", e)
+
+        # ── 阶段4：L3 火焰深度燃烧 ─────────────────────
         # 如果已有摘要，直接用；否则调 LLM
         if summary_to_process and not prior_summary:
             # prior_summary 为空但 SelfImage 有 last_dream_summary → 用现成的
