@@ -16,7 +16,7 @@ import re
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
-from ..prompts.drive import CARE_PROMPT, EXPRESSION_PROMPT, GREETING_PROMPT, LEARN_REACT_PROMPT, META_SKILL_PROMPT
+from ..prompts.drive import CARE_PROMPT, EXPRESSION_PROMPT, GREETING_PROMPT
 
 if TYPE_CHECKING:
     from .action_item import ActionItem, ActionType
@@ -32,11 +32,8 @@ class ActionExecutor:
     负责把 ActionItem 转换为实际行为。
     """
 
-    LEARN_COOLDOWN = 60  # 学习冷却（秒）
-
     def __init__(self, dispatcher: ActionDispatcher):
         self.dispatcher = dispatcher
-        self._learn_last_mtime: float = 0  # 上次学习文件的 mtime
 
     def execute(self, item: ActionItem) -> bool:
         """执行单个 ActionItem。
@@ -835,328 +832,26 @@ class ActionExecutor:
     # ── TOOL: learn_topic ──────────────────────────────────────
 
     def _do_learn_topic(self, item: ActionItem) -> bool:
-        """主动学习：ReAct 搜索 → 读网页 → 关联记忆 → 保存"""
-        living = self.dispatcher._conscious_living
-        if not living:
-            return False
-
-        topic = self._get_learning_topic()
-        if not topic:
-            logger.debug("[ActionExecutor] 无学习主题")
-            return False
-
-        knowledge = self._react_learn(topic)
-        if not knowledge:
-            logger.warning("[ActionExecutor] 学习失败: %s", topic)
-            return False
-
-        self._save_knowledge(topic, knowledge)
-
-        if living.drive:
-            living.drive.on_desire_satisfied("cognition", 0.3)
-
-        logger.info("[ActionExecutor] 学习完成: %s (%d 字)", topic, len(knowledge))
-        return True
-
-    def _get_learning_topic(self) -> str | None:
-        """获取学习主题。优先级：学习队列 → Purpose 目标 → identity.md 兴趣 → 已有知识文件（跳过冷却期内已学过的）"""
-        import random
-        from pathlib import Path
-
-        living = self.dispatcher._conscious_living
-        if not living:
-            return None
-
-        agent_id = getattr(living.agent, "id", "") if hasattr(living, "agent") else ""
-        knowledge_dir = Path.home() / ".xiaomei-brain" / agent_id / "knowledge"
-        knowledge_dir.mkdir(parents=True, exist_ok=True)
-
-        # 1. 学习需求队列（优先）
-        si = self.dispatcher._get_self_image()
-        if si and hasattr(si.mind, "learning_queue") and si.mind.learning_queue:
-            queue = si.mind.learning_queue
-            queue.sort(key=lambda x: x.get("priority", 0), reverse=True)
-            next_item = queue.pop(0)
-            topic = next_item["topic"]
-            logger.info("[ActionExecutor] 从学习队列取主题: %s (priority=%.1f, source=%s)",
-                        topic, next_item.get("priority", 0), next_item.get("source", ""))
-            return topic
-
-        # 2. Purpose 当前目标
-        if hasattr(living, 'purpose') and living.purpose:
-            current_goal = living.purpose.get_current()
-            if current_goal:
-                return current_goal.description
-
-        # 3. SelfImage 学习兴趣（跳过冷却期内已学过的）
-        if si and si.being.learning_interests:
-            interests = si.being.learning_interests
-            now = time.time()
-            fresh = [i for i in interests
-                     if not (knowledge_dir / f"{i.replace('/', '_').replace(' ', '_')}.md").exists()
-                     or (now - (knowledge_dir / f"{i.replace('/', '_').replace(' ', '_')}.md").stat().st_mtime) >= self.LEARN_COOLDOWN]
-            if fresh:
-                return random.choice(fresh)
-            logger.debug("[ActionExecutor] 所有学习兴趣都在冷却中")
-
-        # 4. 已有知识文件轮换
-        now = time.time()
-        md_files = list(knowledge_dir.glob("*.md"))
-        if md_files:
-            fresh = [f for f in md_files if (now - f.stat().st_mtime) >= self.LEARN_COOLDOWN]
-            if fresh:
-                return random.choice(fresh).stem
-            logger.debug("[ActionExecutor] 所有知识文件都在冷却中，跳过学习")
-            return None
-
-        # 5. 兜底
-        return "AI技术发展"
-
-    def _react_learn(self, topic: str) -> str | None:
-        """ReAct 自主学习：websearch → 读网页 → 关联记忆 → 综合输出"""
-        living = self.dispatcher._conscious_living
-        if not living:
-            return None
-
-        agent = living.agent if hasattr(living, "agent") else None
-        if not agent:
-            return None
-
-        agent_core = agent._get_agent()
-        consciousness = living.consciousness
-        if not consciousness:
-            return None
-
-        # 刷新记忆窗口
-        consciousness._refresh_memory_window()
-
-        agent_id = getattr(agent, "id", "")
-        safe_topic = topic.replace("/", "_").replace(" ", "_")
-
-        system_prompt = consciousness.self_image.inject_consciousness()
-        user_msg = LEARN_REACT_PROMPT.format(
-            topic=topic,
-            agent_id=agent_id,
-            safe_topic=safe_topic,
-        )
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_msg},
-        ]
-
-        logger.info("[ActionExecutor] ReAct 学习开始: %s", topic)
-
-        try:
-            result = agent_core.react_nodb(messages=messages, max_steps=15, label="work")
-            return result.strip() if result else None
-        except Exception as e:
-            logger.warning("[ActionExecutor] ReAct 学习失败: %s", e)
-            return None
-
-    def _save_knowledge(self, topic: str, content: str) -> None:
-        """保存学习内容到 .md 文件 + 索引到 LongTermMemory（type=knowledge）+ 建图关联"""
-        from pathlib import Path
-
-        living = self.dispatcher._conscious_living
-        agent = living.agent if living and hasattr(living, "agent") else None
-        agent_id = getattr(agent, "id", "") if agent else ""
-        knowledge_dir = Path.home() / ".xiaomei-brain" / agent_id / "knowledge"
-        knowledge_dir.mkdir(parents=True, exist_ok=True)
-
-        filename = topic.replace("/", "_").replace(" ", "_")
-        filepath = knowledge_dir / f"{filename}.md"
-
-        header = f"""---
-topic: {topic}
-learned_at: {time.strftime("%Y-%m-%d %H:%M")}
-source: intent_driven_learning
----
-
-"""
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(header + content)
-
-        logger.info("[ActionExecutor] 知识保存: %s", filepath)
-
-        # 索引到 LongTermMemory（type=knowledge）
-        memory_id = None
-        try:
-            if agent and hasattr(agent, "longterm_memory") and agent.longterm_memory:
-                ltm = agent.longterm_memory
-                memory_id = ltm.store(
-                    content=content[:2000],
-                    source="learned",
-                    tags=[f"topic:{topic}", "knowledge"],
-                    importance=0.7,
-                    user_id="global",
-                    mem_type="knowledge",
-                )
-                logger.debug("[ActionExecutor] 知识已索引: #%d type=knowledge", memory_id)
-        except Exception as e:
-            logger.warning("[ActionExecutor] 索引知识失败: %s", e)
-
-        # 解析关联段落，建立图边
-        if memory_id and agent and hasattr(agent, "longterm_memory") and agent.longterm_memory:
-            self._build_knowledge_relations(memory_id, content, agent.longterm_memory)
-
-    def _build_knowledge_relations(self, memory_id: int, content: str, ltm) -> None:
-        """解析知识/技能内容的'关联'段落，建立图谱边 + concept_expansion 入队"""
-        import re
-
-        # 匹配 "→ 知识点: [名称1]" 或 "→ 相关技能: [名称1] [名称2]"
-        lines_with_relations = []
-        in_relations = False
-        for line in content.split("\n"):
-            if line.strip().startswith("### 关联") or line.strip().startswith("## 关联"):
-                in_relations = True
-                continue
-            if in_relations and line.strip().startswith("→"):
-                lines_with_relations.append(line.strip())
-            elif in_relations and not line.strip().startswith("→") and line.strip():
-                # 退出关联段落
-                in_relations = False
-
-        if not lines_with_relations:
-            return
-
-        relations_found: list[tuple[str, str]] = []  # [(target_type, name), ...]
-        for line in lines_with_relations:
-            # "→ 知识点: [Rust所有权] [Transformer架构]"
-            type_map = {"知识点": "knowledge", "相关技能": "skill", "相关经验": "experience"}
-            for label, ttype in type_map.items():
-                if label in line:
-                    # 提取所有 [名称]
-                    names = re.findall(r'\[(.+?)\]', line)
-                    for name in names:
-                        name = name.strip()
-                        if name:
-                            relations_found.append((ttype, name))
-                    break
-
-        if not relations_found:
-            return
-
-        for target_type, name in relations_found:
-            try:
-                results = ltm.recall(name, top_k=1, user_id="global")
-                if results:
-                    target_id = results[0]["id"]
-                    ltm.add_relation(
-                        source_id=memory_id,
-                        target_id=target_id,
-                        relation_type="relates_to",
-                        source_type="knowledge",
-                        target_type=target_type,
-                        context=name,
-                    )
-                    logger.debug("[ActionExecutor] 关联边: #%d → #%d (%s)", memory_id, target_id, name)
-                else:
-                    # 关联的知识不存在 → 加入学习队列（concept_expansion）
-                    si = self.dispatcher._get_self_image()
-                    if si and hasattr(si.mind, "learning_queue"):
-                        existing_topics = {item.get("topic", "") for item in si.mind.learning_queue}
-                        if name not in existing_topics:
-                            si.mind.learning_queue.append({
-                                "topic": name,
-                                "reason": "知识关联缺失",
-                                "priority": 0.4,
-                                "source": "concept_expansion",
-                            })
-                            logger.debug("[ActionExecutor] 学习队列入队: %s (concept_expansion)", name)
-            except Exception as e:
-                logger.debug("[ActionExecutor] 关联边建立失败 (%s): %s", name, e)
-
-        logger.info("[ActionExecutor] 已处理 %d 条知识关联", len(relations_found))
+        """主动学习 → 委托给 LearningEngine"""
+        engine = getattr(self, "_learn_engine", None)
+        if engine:
+            return engine.learn()
+        return False
 
     # ── TOOL: meta_skill_pull ──────────────────────────────────
 
     def _do_meta_skill_pull(self, item: ActionItem) -> bool:
-        """元技能：搜索 Hub → 拉取 SKILL.md → 转换格式 → 存入 LongTermMemory"""
-        living = self.dispatcher._conscious_living
-        if not living:
+        """元技能拉取 → 委托给 LearningEngine"""
+        engine = getattr(self, "_learn_engine", None)
+        if not engine:
             return False
 
-        agent = living.agent if hasattr(living, "agent") else None
-        if not agent:
-            return False
-
-        skill_domain = item.metadata.get("skill_domain", "") if item.metadata else ""
-        if not skill_domain and item.content:
-            skill_domain = item.content
-
+        skill_domain = (item.metadata or {}).get("skill_domain", "") or item.content
         if not skill_domain:
             logger.warning("[ActionExecutor] 元技能: 缺少 skill_domain")
             return False
 
-        # 先检查是否已有类似技能
-        if agent.longterm_memory:
-            existing = agent.longterm_memory.recall(
-                f"技能 {skill_domain}", top_k=3, user_id="global",
-            )
-            high_conf = [m for m in existing if m.get("type") == "skill" and m.get("confidence", 0) > 0.5]
-            if high_conf:
-                logger.info("[ActionExecutor] 元技能: 已有高可信度技能，跳过拉取")
-                self.dispatcher._send_proactive(f"我已经会 {skill_domain} 相关的技能了。")
-                return True
-
-        agent_core = agent._get_agent()
-        consciousness = living.consciousness
-        if not consciousness:
-            return False
-
-        consciousness._refresh_memory_window()
-
-        system_prompt = consciousness.self_image.inject_consciousness()
-        prompt = META_SKILL_PROMPT.format(skill_domain=skill_domain)
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
-        ]
-
-        logger.info("[ActionExecutor] 元技能: 拉取 %s 技能", skill_domain)
-
-        try:
-            result = agent_core.react_nodb(messages=messages, max_steps=15, label="work")
-        except Exception as e:
-            logger.warning("[ActionExecutor] 元技能 ReAct 失败: %s", e)
-            return False
-
-        if not result:
-            return False
-
-        # 存入 LongTermMemory
-        try:
-            if agent and hasattr(agent, "longterm_memory") and agent.longterm_memory:
-                ltm = agent.longterm_memory
-                skill_name = skill_domain  # fallback
-                # Try to extract skill name from result
-                for line in result.split("\n"):
-                    if line.startswith("## ") and "type:" not in line:
-                        skill_name = line[3:].strip()
-                        break
-
-                memory_id = ltm.store(
-                    content=result[:2000],
-                    source="hub",
-                    tags=[f"domain:{skill_domain}", "skill"],
-                    importance=0.6,
-                    user_id="global",
-                    mem_type="skill",
-                    confidence=0.5,
-                    skill_domain=skill_domain,
-                )
-                logger.info("[ActionExecutor] 元技能: 已存入 #%d (%s)", memory_id, skill_name)
-
-                # 解析关联建边
-                self._build_knowledge_relations(memory_id, result, ltm)
-
-                self.dispatcher._send_proactive(f"我学会了 {skill_name} 技能（来自 Hub）")
-                return True
-        except Exception as e:
-            logger.warning("[ActionExecutor] 元技能存储失败: %s", e)
-
-        return False
+        return engine.pull_meta_skill(skill_domain)
 
     # ── TOOL: pleasure_lever ──────────────────────────────────
 
@@ -1436,4 +1131,6 @@ class ActionDispatcher:
         """注入 ConsciousLiving 引用（用于执行动作）"""
         self._conscious_living = cl
 
-    # Deprecated: inject_action_executor removed — TOOL actions now handled locally
+    def inject_learn_engine(self, engine) -> None:
+        """注入 LearningEngine（替代本地学习方法的委托对象）"""
+        self._executor._learn_engine = engine

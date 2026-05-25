@@ -83,7 +83,15 @@ _CHAT_TURN_PROMPT = (
     '{{"social_signal": "类型", "intensity": 0.0-1.0}}\n'
     "类型可选：user_low_mood / user_enthusiastic / user_cold / "
     "user_angry / user_happy / user_stressed / user_trusting\n"
-    "没有则输出 {{}}。"
+    "没有则输出 {{}}。\n\n"
+    "在 ---GAPS--- 分隔符后，从这段对话中识别你需要学习的东西。不只是你答不上来的——\n"
+    "还包括：用户提到了你不熟的领域？话题暗示了某个值得了解的知识？\n"
+    "用户表达了某种需求，而你如果懂更多就能帮得更好？\n"
+    "总之：这段对话揭示了你什么样的知识缺口或学习机会？没有就输出空数组。\n"
+    "---GAPS---\n"
+    '[{{"topic": "具体知识点或领域", "reason": "为什么需要学", "priority": 0.5-0.9, "source": "user_need"}}]\n'
+    "source 用 user_need。priority: 完全答不上来/用户明确需求 > 0.8，\n"
+    "对话中自然浮现的不熟领域 0.6-0.7，暗示性话题 0.5。"
 )
 
 _TASK_STEP_PROMPT = (
@@ -290,10 +298,7 @@ class InnerVoice:
                 logger.warning("[InnerVoice] SIGNAL 应用失败: %s", e)
 
     def _apply_gaps(self, gaps_text: str) -> None:
-        """从 GAPS JSON 解析知识盲区并写入 SelfImage.mind.learning_queue。"""
-        if not self._self_image:
-            return
-
+        """从 GAPS JSON 解析知识盲区，委托 LearningQueue 入队。"""
         try:
             json_match = re.search(r"\[[\s\S]*\]", gaps_text)
             if not json_match:
@@ -307,6 +312,15 @@ class InnerVoice:
         if not isinstance(gaps, list) or not gaps:
             return
 
+        # 委托 LearningQueue（如果已注入）
+        learn_queue = getattr(self, "_learn_queue", None)
+        if learn_queue is not None:
+            learn_queue.add_from_gaps(gaps)
+            return
+
+        # 降级：直接操作 SelfImage.mind.learning_queue
+        if not self._self_image:
+            return
         try:
             mind = self._self_image.mind
             if not hasattr(mind, "learning_queue"):
@@ -330,7 +344,7 @@ class InnerVoice:
                 added += 1
 
             if added:
-                logger.info("[InnerVoice] GAPS: %d 个知识盲区入队", added)
+                logger.info("[InnerVoice] GAPS: %d 个知识盲区入队（降级模式）", added)
         except Exception as e:
             logger.debug("[InnerVoice] GAPS 写入 learning_queue 失败: %s", e)
 
@@ -584,8 +598,8 @@ class InnerVoice:
                 except Exception as e:
                     logger.debug("[InnerVoice] Purpose 写入失败: %s", e)
 
-        # 5. Knowledge gaps → learning_queue（TASK_DONE 时，从 GAPS JSON 解析）
-        if reflection.trigger == TriggerType.TASK_DONE and gaps_text:
+        # 5. Knowledge gaps → learning_queue（TASK_DONE / CHAT_TURN 时，从 GAPS JSON 解析）
+        if reflection.trigger in (TriggerType.TASK_DONE, TriggerType.CHAT_TURN) and gaps_text:
             self._apply_gaps(gaps_text)
 
         logger.info(

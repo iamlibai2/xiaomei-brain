@@ -650,16 +650,20 @@ class SelfImage:
             for sp in m.social_perceptions[-5:]:
                 lines.append(f"- {sp.get('content', '')}")
         if m.learning_queue:
-            sorted_queue = sorted(m.learning_queue, key=lambda x: x.get("priority", 0), reverse=True)
-            queue_items = []
-            for item in sorted_queue[:5]:
-                source_label = {"task_gap": "任务缺口", "user_need": "用户需求", "concept_expansion": "概念扩展"}.get(
-                    item.get("source", ""), item.get("source", "")
-                )
-                queue_items.append(
-                    f"- [{source_label}] {item['topic']} (priority={item.get('priority', 0):.1f})"
-                )
-            lines.append("学习队列：\n" + "\n".join(queue_items))
+            learn_queue = getattr(self, "_learn_queue", None)
+            if learn_queue is not None:
+                lines.append(learn_queue.render(top_n=5))
+            else:
+                sorted_queue = sorted(m.learning_queue, key=lambda x: x.get("priority", 0), reverse=True)
+                queue_items = []
+                for item in sorted_queue[:5]:
+                    source_label = {"task_gap": "任务缺口", "user_need": "用户需求", "concept_expansion": "概念扩展"}.get(
+                        item.get("source", ""), item.get("source", "")
+                    )
+                    queue_items.append(
+                        f"- [{source_label}] {item['topic']} (priority={item.get('priority', 0):.1f})"
+                    )
+                lines.append("学习队列：\n" + "\n".join(queue_items))
         return lines
 
     # ── Inner Voice: 内心声音 ──────────────────────────────

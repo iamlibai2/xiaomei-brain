@@ -189,13 +189,29 @@ class ConsciousLiving(Living):
         self.interoception = Interoception(burn_start_time=time.time())
         logger.info("[ConsciousLiving] Interoception 已创建")
 
+        # ── 学习子系统 ──────────────────────────────────────
+        from ..learn import LearningQueue, KnowledgeStorage, MetaSkillPuller, LearningEngine
+        ltm = getattr(agent_instance, "longterm_memory", None)
+        agent_id = getattr(agent_instance, "id", "") if agent_instance else self._agent_id
+        self._learn_queue = LearningQueue(si)
+        self._learn_storage = KnowledgeStorage(agent_id, ltm, queue=self._learn_queue)
+        self._learn_meta_skill = MetaSkillPuller(self._learn_storage)
+        self._learn_meta_skill._agent = agent_instance
+        self._learn_meta_skill._consciousness = self.consciousness
+        self._learn_meta_skill._send_proactive = self._send_proactive if hasattr(self, '_send_proactive') else None
+        self._learn_engine = LearningEngine(self, self._learn_queue, self._learn_storage, self._learn_meta_skill)
+
         # InnerVoice → SelfImage 连接（延迟设置）
         si = self.consciousness.self_image
         if self._inner_voice:
             self._inner_voice._self_image = si
+            # learn_queue 注入（替换原始 list 操作）
+            self._inner_voice._learn_queue = self._learn_queue
         # ProjectMentalModel / ExperienceMemory → SelfImage
         si._project_mental_model = self._project_mental_model
         si._experience_memory = self._experience_memory
+        # LearningQueue → SelfImage（供 _render_mind 使用）
+        si._learn_queue = self._learn_queue
 
         # ── 经验流（统一时间线）──────────────────────────────
         db_path = getattr(self.agent, "db_path", None)
@@ -314,6 +330,7 @@ class ConsciousLiving(Living):
         _init_rules(drive_config=drive_config, living_config=self._config)
         self._dispatcher.load_rules(RULES)
         self._dispatcher.inject_conscious_living(self)
+        self._dispatcher.inject_learn_engine(self._learn_engine)
 
         # being 工具暂不注册（待反省层"转换器"设计确定后再启用）
         # pleasure_lever 工具 — 快乐中枢杠杆（Olds-Milner 实验）

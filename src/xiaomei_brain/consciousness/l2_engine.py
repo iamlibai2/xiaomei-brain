@@ -339,7 +339,7 @@ class L2Engine:
             prompt += "如果你判断应该推进工作，选择 work 意图。"
         if context_note:
             prompt += f"\n{context_note}\n"
-        prompt += "\n如果需要，先执行工具操作。最终输出（一行）：\nINTENT: <意图类型>\nREASON: <理由，一句话>"
+        prompt += "\n如果需要，先执行工具操作。最终输出：\nINTENT: <意图类型>\nREASON: <理由，一句话>\nTOPIC: <学习主题>（仅 LEARN 意图时需要，其他意图不输出此行）"
         return prompt
 
     def _parse_intent_response(self, response: str) -> Intent | None:
@@ -356,7 +356,11 @@ class L2Engine:
             return None
 
         reason_match = re.search(r"REASON:\s*(.+)", response)
-        reason = reason_match.group(1) if reason_match else ""
+        reason = reason_match.group(1).strip() if reason_match else ""
+
+        # 解析 LEARN 意图的 TOPIC 字段
+        topic_match = re.search(r"TOPIC:\s*(.+)", response)
+        learn_topic = topic_match.group(1).strip() if topic_match else ""
 
         priority_map = {
             IntentType.WAIT: 10,
@@ -374,6 +378,7 @@ class L2Engine:
             type=intent_type,
             priority=priority_map.get(intent_type, 50),
             content=reason,
+            params={"learn_topic": learn_topic} if learn_topic else {},
         )
 
     def _fallback_intent(self, context: str) -> Intent:
