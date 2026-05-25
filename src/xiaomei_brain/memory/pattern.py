@@ -361,3 +361,110 @@ class PatternExtractor:
             )
 
         return patterns
+
+
+# ── PatternInjector ──────────────────────────────────────
+
+class PatternInjector:
+    """模式注入：五个注入点的检索 + 格式化。
+
+    注入点：
+    1. 系统提示词 — top-3 高置信度模式
+    2. L2 intent  — 语义匹配当前情境
+    3. 对话上下文 — 语义匹配用户消息
+    4. 学习选题   — topic_cluster 加成
+    5. 梦境提取   — 全部已有模式（由 PatternExtractor._gather_existing_patterns 处理）
+    """
+
+    def __init__(self, storage: PatternStorage, ltm) -> None:
+        self._storage = storage
+        self._ltm = ltm
+
+    # ── 注入点 1: 系统提示词 ─────────────────────────────
+
+    def render_system_prompt(self) -> str:
+        """渲染系统提示词中的模式片段。"""
+        top = self._storage.get_top(top_k=3)
+        if not top:
+            return ""
+        lines = ["我注意到："]
+        for p in top:
+            content = p.get("content", "")
+            if content:
+                lines.append(f"· {content}")
+        return "\n".join(lines)
+
+    # ── 注入点 2: L2 intent 决策 ──────────────────────────
+
+    def inject_l2_intent(self, context_description: str) -> str:
+        """为 L2 intent 决策注入情境相关模式（仅1条最相关）。"""
+        if not self._ltm or not context_description:
+            return ""
+        try:
+            results = self._ltm.recall(
+                context_description, top_k=2, user_id="global",
+            )
+            pattern_results = [
+                r for r in results
+                if "pattern" in (r.get("tags", []) or [])
+            ]
+            if not pattern_results:
+                return ""
+            content = pattern_results[0].get("content", "")[:80]
+            logger.info(
+                "[PatternInjector] L2 intent 注入: %s", content,
+            )
+            return f"当前情境相关模式：{content}"
+        except Exception:
+            return ""
+
+    # ── 注入点 3: 对话上下文 ──────────────────────────────
+
+    def inject_context(self, user_message: str) -> str:
+        """为用户消息注入话题相关模式（仅1条最相关）。"""
+        if not self._ltm or not user_message:
+            return ""
+        try:
+            results = self._ltm.recall(
+                user_message, top_k=2, user_id="global",
+            )
+            pattern_results = [
+                r for r in results
+                if "pattern" in (r.get("tags", []) or [])
+            ]
+            if not pattern_results:
+                return ""
+            content = pattern_results[0].get("content", "")[:80]
+            logger.info(
+                "[PatternInjector] 对话上下文注入: %s", content,
+            )
+            return f"\n[话题趋势] {content}"
+        except Exception:
+            return ""
+
+    # ── 注入点 4: 学习选题加权 ────────────────────────────
+
+    def boost_learning_topics(self, candidates: list[str]) -> dict[str, float]:
+        """根据 topic_cluster 模式给候选主题加权。返回 {topic: boost}。"""
+        if not candidates:
+            return {}
+        try:
+            cluster_patterns = self._storage.search_by_tags(
+                ["pattern", "topic_cluster"],
+            )
+            boosts: dict[str, float] = {}
+            for candidate in candidates:
+                boost = 0.0
+                for p in cluster_patterns:
+                    content = p.get("content", "")
+                    confidence = p.get("confidence", 0.5) or 0.5
+                    if candidate in content or any(
+                        keyword in content
+                        for keyword in candidate.split()
+                    ):
+                        boost += confidence * 0.2
+                if boost > 0:
+                    boosts[candidate] = min(boost, 0.5)
+            return boosts
+        except Exception:
+            return {}
