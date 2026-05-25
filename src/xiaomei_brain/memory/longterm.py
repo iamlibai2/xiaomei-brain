@@ -1531,59 +1531,6 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
     # Relation types: 因果:causal, 时序:temporal, 对比:contrast, 包含:contains
     VALID_RELATION_TYPES = {"causal", "temporal", "contrast", "contains"}
 
-    def add_relation(
-        self,
-        from_memory_id: int,
-        to_memory_id: int,
-        relation_type: str,
-        context: str | None = None,
-        weight: float = 0.5,
-    ) -> int | None:
-        """Add a semantic relation between two memories.
-
-        Args:
-            from_memory_id: Source memory ID
-            to_memory_id: Target memory ID
-            relation_type: One of causal, temporal, contrast, contains
-            context: Optional description of the relation
-            weight: Initial relation weight (default 0.5)
-
-        Returns:
-            Relation row ID, or None if failed/already exists
-        """
-        if relation_type not in self.VALID_RELATION_TYPES:
-            logger.warning("[Relations] Invalid relation_type: %s", relation_type)
-            return None
-
-        if from_memory_id == to_memory_id:
-            logger.warning("[Relations] Self-reference ignored: #%d", from_memory_id)
-            return None
-
-        conn = self._get_conn()
-        now = time.time()
-        try:
-            cur = conn.execute(
-                """INSERT OR IGNORE INTO memory_relations
-                   (from_memory_id, to_memory_id, relation_type, context, created_at, weight, last_reinforced)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (from_memory_id, to_memory_id, relation_type, context, now, weight, now),
-            )
-            conn.commit()
-            if cur.rowcount > 0:
-                rel_id = cur.lastrowid
-                logger.info(
-                    "[Relations] #%d --%s--> #%d (rel=#%d)",
-                    from_memory_id, relation_type, to_memory_id, rel_id,
-                )
-                return rel_id
-            else:
-                logger.debug("[Relations] Relation already exists: #%d --%s--> #%d",
-                              from_memory_id, relation_type, to_memory_id)
-                return None
-        except Exception as e:
-            logger.warning("[Relations] Failed to add: %s", e)
-            return None
-
     def get_related(
         self,
         memory_id: int,

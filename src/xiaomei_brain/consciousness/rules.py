@@ -306,7 +306,7 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
                 cooldown_key="desire_pleasure_lever",
                 metadata={"intent_type": "PLEASURE", "desire_type": "craving"},
             ))
-            .cooldown("desire_pleasure_lever", 120)
+            .cooldown("desire_pleasure_lever", 1800)
     )
 
     # ── System 触发 ─────────────────────────────────────

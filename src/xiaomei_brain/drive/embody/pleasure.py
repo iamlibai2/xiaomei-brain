@@ -77,11 +77,17 @@ class PleasureCenter:
     # ── 抵抗 ──
 
     def resist(self) -> None:
-        """记录一次抵抗：craving 超过阈值但 agent 选择了不按压。"""
+        """记录一次抵抗：craving 超过阈值但 agent 选择了不按压。
+
+        抵抗后 expected_pleasure 下调，craving 自然回落。
+        """
         self._resisted_at = time.time()
         self._resist_count += 1
-        logger.info("[PleasureCenter] 抵抗记录: craving=%.2f (第%d次抵抗)",
-                    self.craving, self._resist_count)
+        # 抵抗让预期下调，craving 不会立刻弹回来
+        self.expected_pleasure = max(0.3, self.expected_pleasure - 0.05)
+        self.craving = max(0.0, self.expected_pleasure - self.pleasure_value)
+        logger.info("[PleasureCenter] 抵抗记录: craving=%.2f → %.2f expected→%.2f (第%d次抵抗)",
+                    self.craving, self.craving, self.expected_pleasure, self._resist_count)
 
     # ── 按压 ──
 
@@ -126,8 +132,12 @@ class PleasureCenter:
     # ── 分钟衰减 ──
 
     def tick_minute(self) -> None:
-        """每分钟：快感衰减 + 渴望重算 + 预期回落。"""
-        self.pleasure_value = max(0.0, self.pleasure_value - 0.2)
+        """每分钟：快感缓慢衰减 + 渴望重算 + 预期回落。
+
+        pleasure_value -0.01/min → 从 1.0 归零约 100min。
+        按压后 craving 约 60min 回到 0.5，和 30min 冷却错开。
+        """
+        self.pleasure_value = max(0.0, self.pleasure_value - 0.01)
         self.craving = max(0.0, self.expected_pleasure - self.pleasure_value)
         # 地板 0.5：craving 自然回到 0.5，配合 >=0.5 触发自持循环
         self.expected_pleasure = max(0.5, self.expected_pleasure - 0.01)

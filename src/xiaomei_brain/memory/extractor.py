@@ -726,16 +726,18 @@ class MemoryExtractor:
             logger.debug("[Relations] Skip: self-loop #%d", from_memory_id)
             return
 
-        rel_id = self.ltm.add_relation(
-            from_memory_id=from_memory_id,
-            to_memory_id=to_memory_id,
+        ok = self.ltm.add_relation(
+            source_id=from_memory_id,
+            target_id=to_memory_id,
             relation_type=relation_type,
+            source_type="experience",
+            target_type="experience",
             context=f"from:{from_content[:40]} to:{to_content[:40]}",
         )
-        if rel_id:
+        if ok:
             logger.info(
-                "[Relations] Linked #%d --%s--> #%d (rel=#%d)",
-                from_memory_id, relation_type, to_memory_id, rel_id,
+                "[Relations] Linked #%d --%s--> #%d",
+                from_memory_id, relation_type, to_memory_id,
             )
 
     # ── 合并模式：解析 MEMORY block ─────────────────────────────────────

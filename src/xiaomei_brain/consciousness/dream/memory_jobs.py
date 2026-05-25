@@ -312,7 +312,13 @@ class ExtractJob:
             to_id = similar_to[0]["id"]
 
         if from_id and to_id:
-            ltm.add_relation(from_id, to_id, relation_type, weight=0.5)
+            ltm.add_relation(
+                source_id=from_id,
+                target_id=to_id,
+                relation_type=relation_type,
+                source_type="experience",
+                target_type="experience",
+            )
 
 
 # ── RelationReinforceJob ────────────────────────────────────────────────────

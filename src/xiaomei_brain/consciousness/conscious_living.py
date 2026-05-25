@@ -189,6 +189,8 @@ class ConsciousLiving(Living):
         self.interoception = Interoception(burn_start_time=time.time())
         logger.info("[ConsciousLiving] Interoception 已创建")
 
+        si = self.consciousness.self_image
+
         # ── 学习子系统 ──────────────────────────────────────
         from ..learn import LearningQueue, KnowledgeStorage, MetaSkillPuller, LearningEngine
         ltm = getattr(agent_instance, "longterm_memory", None)
@@ -201,16 +203,13 @@ class ConsciousLiving(Living):
         self._learn_meta_skill._send_proactive = self._send_proactive if hasattr(self, '_send_proactive') else None
         self._learn_engine = LearningEngine(self, self._learn_queue, self._learn_storage, self._learn_meta_skill)
 
-        # InnerVoice → SelfImage 连接（延迟设置）
-        si = self.consciousness.self_image
+        # InnerVoice → SelfImage 连接
         if self._inner_voice:
             self._inner_voice._self_image = si
-            # learn_queue 注入（替换原始 list 操作）
             self._inner_voice._learn_queue = self._learn_queue
-        # ProjectMentalModel / ExperienceMemory → SelfImage
+        # ProjectMentalModel / ExperienceMemory / LearningQueue → SelfImage
         si._project_mental_model = self._project_mental_model
         si._experience_memory = self._experience_memory
-        # LearningQueue → SelfImage（供 _render_mind 使用）
         si._learn_queue = self._learn_queue
 
         # ── 经验流（统一时间线）──────────────────────────────
