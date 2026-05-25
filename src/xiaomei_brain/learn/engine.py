@@ -8,7 +8,6 @@ from __future__ import annotations
 import logging
 import random
 import time
-from pathlib import Path
 
 from ..prompts.drive import LEARN_REACT_PROMPT
 from .queue import LearningQueue
@@ -73,12 +72,7 @@ class LearningEngine:
     # ── 主题选择 ──────────────────────────────────────────
 
     def _select_topic(self) -> str | None:
-        """选择学习主题。优先级：队列 → LEARN intent TOPIC → Purpose → 兴趣 → 已有文件轮换 → 兜底"""
-        agent = self._cl.agent if hasattr(self._cl, "agent") else None
-        agent_id = getattr(agent, "id", "") if agent else ""
-        knowledge_dir = Path.home() / ".xiaomei-brain" / agent_id / "knowledge"
-        knowledge_dir.mkdir(parents=True, exist_ok=True)
-
+        """选择学习主题。优先级：队列 → LEARN intent TOPIC → Purpose → 兴趣 → 已有知识轮换 → 兜底"""
         # 1. 学习队列（优先）
         if self._queue:
             item = self._queue.pop()
@@ -106,24 +100,39 @@ class LearningEngine:
             interests = si.being.learning_interests
             now = time.time()
             fresh = [i for i in interests
-                     if not (knowledge_dir / f"{i.replace('/', '_').replace(' ', '_')}.md").exists()
-                     or (now - (knowledge_dir / f"{i.replace('/', '_').replace(' ', '_')}.md").stat().st_mtime) >= LEARN_COOLDOWN]
+                     if (now - self._storage.get_last_learned_time(i)) >= LEARN_COOLDOWN]
             if fresh:
                 return random.choice(fresh)
             logger.debug("[LearningEngine] 所有学习兴趣都在冷却中")
 
-        # 5. 已有知识文件轮换
+        # 5. 已有知识主题轮换（基于 LTM）
         now = time.time()
-        md_files = list(knowledge_dir.glob("*.md"))
-        if md_files:
-            fresh = [f for f in md_files if (now - f.stat().st_mtime) >= LEARN_COOLDOWN]
+        all_topics = self._get_stored_topics()
+        if all_topics:
+            fresh = [t for t in all_topics
+                     if (now - self._storage.get_last_learned_time(t)) >= LEARN_COOLDOWN]
             if fresh:
-                return random.choice(fresh).stem
-            logger.debug("[LearningEngine] 所有知识文件都在冷却中，跳过学习")
+                return random.choice(fresh)
+            logger.debug("[LearningEngine] 所有知识主题都在冷却中，跳过学习")
             return None
 
         # 6. 兜底
         return "AI技术发展"
+
+    def _get_stored_topics(self) -> list[str]:
+        """从 LTM 获取已存储的知识主题列表。"""
+        try:
+            results = self._storage._ltm.search_by_tags(
+                ["knowledge"], user_id="global",
+            )
+            topics = set()
+            for r in results:
+                for tag in r.get("tags", []):
+                    if tag.startswith("topic:"):
+                        topics.add(tag[6:])
+            return list(topics)
+        except Exception:
+            return []
 
     # ── ReAct 学习 ────────────────────────────────────────
 

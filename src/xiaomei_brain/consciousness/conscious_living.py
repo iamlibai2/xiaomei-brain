@@ -212,6 +212,10 @@ class ConsciousLiving(Living):
         si._experience_memory = self._experience_memory
         si._learn_queue = self._learn_queue
 
+        # LearningQueue → L2Engine（供 LEARN 意图 TOPIC 入队）
+        l2_engine = self.consciousness._get_l2_engine()
+        l2_engine._learn_queue = self._learn_queue
+
         # ── 经验流（统一时间线）──────────────────────────────
         db_path = getattr(self.agent, "db_path", None)
         if db_path is None:

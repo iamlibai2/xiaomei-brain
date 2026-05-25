@@ -53,11 +53,16 @@ class LearningQueue:
 
         existing = {item.get("topic", "") for item in self._queue}
         added = 0
+        added_topics = []
+        skipped_topics = []
         for gap in gaps:
             if not isinstance(gap, dict):
                 continue
             topic = gap.get("topic", "").strip()
-            if not topic or topic in existing:
+            if not topic:
+                continue
+            if topic in existing:
+                skipped_topics.append(topic)
                 continue
             self._queue.append({
                 "topic": topic,
@@ -66,10 +71,13 @@ class LearningQueue:
                 "source": gap.get("source", "task_gap"),
             })
             existing.add(topic)
+            added_topics.append(topic)
             added += 1
 
         if added:
-            logger.info("[LearningQueue] GAPS: %d 个知识盲区入队", added)
+            logger.info("[LearningQueue] GAPS 入队: %d 个 — %s", added, ", ".join(added_topics))
+        if skipped_topics:
+            logger.debug("[LearningQueue] GAPS 去重: %d 个已存在 — %s", len(skipped_topics), ", ".join(skipped_topics[:5]))
         return added
 
     def add(self, topic: str, reason: str = "", priority: float = 0.5,
@@ -93,7 +101,7 @@ class LearningQueue:
             "priority": priority,
             "source": source,
         })
-        logger.debug("[LearningQueue] 入队: %s (priority=%.1f, source=%s)", topic, priority, source)
+        logger.info("[LearningQueue] 入队: %s (priority=%.1f, source=%s)", topic, priority, source)
         return True
 
     # ── 消费 ──────────────────────────────────────────────

@@ -44,6 +44,7 @@ class L2Engine:
         self._c = consciousness
         self._last_drive_summary: str | None = None
         self._l2_agent: Any = None  # 独立 Agent 实例（懒加载）
+        self._learn_queue = None  # LearningQueue（由 ConsciousLiving 注入）
 
     # ── L2 独立 Agent ───────────────────────────────────────
 
@@ -201,6 +202,18 @@ class L2Engine:
         if intent and intent.is_actionable():
             if c.self_image is not None:
                 c.intent_slot.intent_buffer.append(intent.to_dict())
+            # LEARN 意图的 TOPIC 也加入学习队列（持久化，不依赖立即触发）
+            if intent.type == IntentType.LEARN:
+                learn_topic = (intent.params or {}).get("learn_topic", "")
+                if learn_topic and self._learn_queue is not None:
+                    ok = self._learn_queue.add(
+                        topic=learn_topic,
+                        reason=intent.content or "L2 意图决策",
+                        priority=0.7,
+                        source="user_need",
+                    )
+                    if ok:
+                        logger.info("[Consciousness L2] LEARN TOPIC 入队: %s", learn_topic)
 
         # 生成报告
         report = self._build_report(context, emergence_text, intent)
@@ -361,6 +374,9 @@ class L2Engine:
         # 解析 LEARN 意图的 TOPIC 字段
         topic_match = re.search(r"TOPIC:\s*(.+)", response)
         learn_topic = topic_match.group(1).strip() if topic_match else ""
+
+        if intent_type == IntentType.LEARN and learn_topic:
+            logger.info("[Consciousness L2] 意图: LEARN → %s", learn_topic)
 
         priority_map = {
             IntentType.WAIT: 10,

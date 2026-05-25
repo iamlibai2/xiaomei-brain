@@ -297,25 +297,32 @@ class InnerVoice:
             except Exception as e:
                 logger.warning("[InnerVoice] SIGNAL 应用失败: %s", e)
 
-    def _apply_gaps(self, gaps_text: str) -> None:
+    def _apply_gaps(self, gaps_text: str, trigger_label: str = "") -> None:
         """从 GAPS JSON 解析知识盲区，委托 LearningQueue 入队。"""
         try:
             json_match = re.search(r"\[[\s\S]*\]", gaps_text)
             if not json_match:
-                logger.debug("[InnerVoice] GAPS 未找到 JSON 数组")
+                logger.debug("[InnerVoice] GAPS 未找到 JSON 数组 (%s)", trigger_label)
                 return
             gaps = json.loads(json_match.group())
         except (json.JSONDecodeError, ValueError) as e:
-            logger.debug("[InnerVoice] GAPS JSON 解析失败: %s", e)
+            logger.debug("[InnerVoice] GAPS JSON 解析失败 (%s): %s", trigger_label, e)
             return
 
         if not isinstance(gaps, list) or not gaps:
+            logger.debug("[InnerVoice] %s GAPS: 空列表，无知识盲区", trigger_label)
             return
+
+        gap_topics = [g.get("topic", "?") for g in gaps if isinstance(g, dict)]
+        logger.info("[InnerVoice] %s GAPS 识别到 %d 个知识盲区: %s",
+                    trigger_label, len(gap_topics), ", ".join(gap_topics[:5]))
 
         # 委托 LearningQueue（如果已注入）
         learn_queue = getattr(self, "_learn_queue", None)
         if learn_queue is not None:
-            learn_queue.add_from_gaps(gaps)
+            added = learn_queue.add_from_gaps(gaps)
+            if added == 0:
+                logger.info("[InnerVoice] %s GAPS: 全部已存在，跳过", trigger_label)
             return
 
         # 降级：直接操作 SelfImage.mind.learning_queue
@@ -344,7 +351,9 @@ class InnerVoice:
                 added += 1
 
             if added:
-                logger.info("[InnerVoice] GAPS: %d 个知识盲区入队（降级模式）", added)
+                logger.info("[InnerVoice] %s GAPS: %d 个知识盲区入队（降级模式）", trigger_label, added)
+            else:
+                logger.info("[InnerVoice] %s GAPS: 全部已存在，跳过（降级模式）", trigger_label)
         except Exception as e:
             logger.debug("[InnerVoice] GAPS 写入 learning_queue 失败: %s", e)
 
@@ -600,7 +609,7 @@ class InnerVoice:
 
         # 5. Knowledge gaps → learning_queue（TASK_DONE / CHAT_TURN 时，从 GAPS JSON 解析）
         if reflection.trigger in (TriggerType.TASK_DONE, TriggerType.CHAT_TURN) and gaps_text:
-            self._apply_gaps(gaps_text)
+            self._apply_gaps(gaps_text, trigger_label=reflection.trigger.value)
 
         logger.info(
             "[InnerVoice] %s:\n%s",
