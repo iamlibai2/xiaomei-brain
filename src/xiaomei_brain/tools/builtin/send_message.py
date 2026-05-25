@@ -12,11 +12,17 @@ _router = None
 
 
 def set_context(agent_id: str, directory, inbox=None, router=None) -> None:
-    """设置工具上下文（由 agent_manager / conscious_living 调用）。"""
+    """设置工具上下文（由 agent_manager / conscious_living 调用）。
+
+    inbox 和 router 只在显式传入非 None 值时更新，
+    避免 init_agent() 调用 set_send_message_context() 时把 ConsciousLiving
+    已设置好的 inbox/router 清空。
+    """
     global _agent_id, _directory, _inbox, _router
     _agent_id = agent_id
     _directory = directory
-    _inbox = inbox
+    if inbox is not None:
+        _inbox = inbox
     if router is not None:
         _router = router
 
@@ -64,7 +70,7 @@ def send_message(to: str, content: str, type: str = "chat") -> str:
 
     # 先检查通讯录
     if _directory is not None:
-        address = _directory.lookup(to)
+        address = _directory.resolve(to)
         if not address:
             return (
                 f"发送失败：通讯录中没有 agent '{to}' 的地址。"

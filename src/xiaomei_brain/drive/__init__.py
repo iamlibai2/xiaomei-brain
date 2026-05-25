@@ -21,13 +21,9 @@ from .state import (
     DesireState,
     DriveSignals,
 )
-from .config import DriveConfig, load_drive_config
+from .config import DriveConfig
 from .engine import DriveEngine
 from .storage import DriveStorage
-# EventExtractor 已废弃：功能合并到 Consciousness.tick_L2()，后续集中清理
-# from .event_extractor import EventExtractor
-# DesireActionExecutor 已废弃：LEARN/PROGRESS 逻辑已移至 consciousness/action_dispatcher.py 的 ActionExecutor
-# from .action_executor import DesireActionExecutor
 
 __all__ = [
     "EmotionType",
@@ -37,9 +33,6 @@ __all__ = [
     "DesireState",
     "DriveSignals",
     "DriveConfig",
-    "load_drive_config",
     "DriveEngine",
     "DriveStorage",
-    # "EventExtractor",  # 已废弃：功能合并到 Consciousness.tick_L2()
-    # "DesireActionExecutor",  # 已废弃：功能已移至 consciousness/action_dispatcher.py
 ]

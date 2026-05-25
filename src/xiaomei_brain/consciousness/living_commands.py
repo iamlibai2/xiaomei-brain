@@ -155,6 +155,9 @@ def cmd_show_drive(living: ConsciousLiving, args: str = "") -> None:
     print(f"  催产素: {living.drive.hormone.oxytocin:.2f}（连接）", flush=True)
 
     print("\n【欲望状态】", flush=True)
+    _s = living.drive.desire.survival
+    _ss = living.drive.get_survival_state() if hasattr(living.drive, 'get_survival_state') else '?'
+    print(f"  生存欲: {_s:.2f}（{_ss}）", flush=True)
     print(f"  归属欲: {living.drive.desire.belonging:.2f}（阈值 {living.drive.config.desire.thresholds.belonging:.2f})", flush=True)
     print(f"  认知欲: {living.drive.desire.cognition:.2f}（阈值 {living.drive.config.desire.thresholds.cognition:.2f})", flush=True)
     print(f"  成就欲: {living.drive.desire.achievement:.2f}（阈值 {living.drive.config.desire.thresholds.achievement:.2f})", flush=True)

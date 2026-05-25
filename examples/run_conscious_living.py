@@ -260,8 +260,9 @@ def main():
             except Exception:
                 pass
 
-    from xiaomei_brain.consciousness.config import LivingConfig
-    cfg = LivingConfig()
+    from xiaomei_brain.config.agent_config import load_agent_config
+    agent_cfg = load_agent_config(agent_id)
+    cfg = agent_cfg.consciousness  # LivingConfig from config.yaml
     cfg.living.comms_port = comms_port
     living = ConsciousLiving(agent, load_consciousness=not args.no_consciousness, config=cfg)
     living.assemble_context = True

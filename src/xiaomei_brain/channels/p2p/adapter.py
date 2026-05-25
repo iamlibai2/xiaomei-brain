@@ -107,7 +107,7 @@ class HTTPP2PAdapter(ChannelAdapter):
 
         ok, detail = _send(msg, directory=self._directory)
         if ok:
-            logger.info("[HTTPP2PAdapter] -> %s OK [%s]", target, msg.msg_id)
+            logger.debug("[HTTPP2PAdapter] -> %s OK [%s]", target, msg.msg_id)
         else:
             logger.warning("[HTTPP2PAdapter] -> %s 失败: %s", target, detail)
 

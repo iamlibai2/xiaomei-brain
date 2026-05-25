@@ -40,6 +40,8 @@ class DriveStorage:
         motivation: MotivationState,
         desire: DesireState,
         energy: EnergyState | None = None,
+        pleasure_data: dict | None = None,
+        wear_data: dict | None = None,
     ) -> None:
         """保存 Drive 状态到 JSON 文件"""
         data = {
@@ -50,6 +52,10 @@ class DriveStorage:
         }
         if energy:
             data["energy"] = energy.to_dict()
+        if pleasure_data:
+            data["pleasure"] = pleasure_data
+        if wear_data:
+            data["wear"] = wear_data
 
         try:
             with open(self.state_file, "w", encoding="utf-8") as f:
@@ -65,15 +71,18 @@ class DriveStorage:
         motivation: MotivationState,
         desire: DesireState,
         energy: EnergyState | None = None,
-    ) -> bool:
+    ) -> tuple[bool, dict | None, dict | None]:
         """
         从 JSON 文件加载 Drive 状态
 
-        返回：是否成功加载（文件不存在返回 False）
+        返回：(是否成功加载, pleasure_data | None, wear_data | None)
+
+        兼容旧格式：如果文件中是 {pleasure_value, craving, expected_pleasure} 平铺字段，
+        自动转换为 pleasure dict。
         """
         if not self.state_file.exists():
             logger.info(f"[DriveStorage] 状态文件不存在，使用初始值")
-            return False
+            return False, None, None
 
         try:
             with open(self.state_file, "r", encoding="utf-8") as f:
@@ -86,12 +95,24 @@ class DriveStorage:
             if energy:
                 energy.from_dict(data.get("energy", {}))
 
+            # 新格式：pleasure/wear 为嵌套 dict
+            pleasure_data = data.get("pleasure")
+            wear_data = data.get("wear")
+
+            # 向后兼容旧格式：平铺字段 → 转换为 pleasure dict
+            if pleasure_data is None and "pleasure_value" in data:
+                pleasure_data = {
+                    "pleasure_value": data.get("pleasure_value", 0.5),
+                    "craving": data.get("craving", 0.0),
+                    "expected_pleasure": data.get("expected_pleasure", 0.5),
+                }
+
             logger.info(f"[DriveStorage] 状态已加载: {self.state_file}")
-            return True
+            return True, pleasure_data, wear_data
 
         except Exception as e:
             logger.warning(f"[DriveStorage] 加载失败，使用初始值: {e}")
-            return False
+            return False, None, None
 
     def exists(self) -> bool:
         """检查状态文件是否存在"""

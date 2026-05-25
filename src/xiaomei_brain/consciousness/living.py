@@ -183,10 +183,11 @@ class Living:
             content = self._clean_input(content)
 
         # ── 限流检查 ──
-        if not urgent:
+        # human 消息永不丢弃；agent/系统消息在限流时丢弃
+        if source != "human" and not urgent:
             sig = getattr(self, '_interoception_signals', None)
             if sig and getattr(sig, 'throttle', False):
-                logger.warning("[Living] 限流激活，丢弃非紧急消息: %.50s", content)
+                logger.warning("[Living] 限流激活，丢弃非紧急消息(source=%s): %.50s", source, content)
                 return
 
         msg = LivingMessage(
@@ -221,6 +222,8 @@ class Living:
                 self._loop_sleeping()
             elif self.state == LivingState.DREAMING:
                 self._loop_dreaming()
+            elif self.state == LivingState.DORMANT:
+                self._loop_dormant()
             else:
                 logger.warning("[Living] Unexpected state: %s", self.state)
                 time.sleep(1)
@@ -306,7 +309,7 @@ class Living:
 
         msg = self._wait_message(timeout=self.tick_interval)
         if msg is not None:
-            logger.info("[Living/AWAKE] 收到消息")
+            logger.debug("[Living/AWAKE] 收到消息")
             self._handle_message(msg)
             self._last_active = time.time()
             return
@@ -366,6 +369,22 @@ class Living:
                 self._handle_message(msg)
                 self._last_active = time.time()
                 return
+
+    # ── Loop: DORMANT ───────────────────────────────────────────────
+
+    def _loop_dormant(self) -> None:
+        """DORMANT 状态：死亡休眠，等待复活。
+
+        用户发消息 → 复活，transition to AWAKE。
+        """
+        msg = self._wait_message(timeout=self.tick_interval)
+        if msg is not None:
+            logger.info("[Living/DORMANT] 收到消息，复活 → AWAKE")
+            self._on_wake_up()
+            self._transition(LivingState.AWAKE)
+            self._handle_message(msg)
+            self._last_active = time.time()
+            return
 
     # ── Loop: DREAMING ──────────────────────────────────────────────
 

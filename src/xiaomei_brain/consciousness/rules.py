@@ -292,6 +292,23 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
             .cooldown("desire_talk_to_agent", ac.desire_talk_to_agent_cooldown)
     )
 
+    # ── Craving 驱动（快乐中枢渴望）─────────────────────
+
+    # 渴望偏高 → 通过 PROACTIVE 让 LLM 自己做因果决策
+    RULES.append(
+        Rule.when(lambda si: getattr(si.body, 'craving', 0) >= 0.5)
+            .then(ActionItem(
+                action_type=ActionType.PROACTIVE,
+                priority=0.55,
+                content="",
+                reason="快乐中枢渴望偏高，通过意图让 LLM 自己做决策",
+                source="desire",
+                cooldown_key="desire_pleasure_lever",
+                metadata={"intent_type": "PLEASURE", "desire_type": "craving"},
+            ))
+            .cooldown("desire_pleasure_lever", 120)
+    )
+
     # ── System 触发 ─────────────────────────────────────
 
     # 能量极低 → 触发休息提示

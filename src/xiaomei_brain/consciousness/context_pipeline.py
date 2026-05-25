@@ -1,7 +1,7 @@
 """上下文组装管线：通过 SelfImage + memory_window 统一组装。
 
-context_assembler 已废弃——记忆检索由 memory_window 推入 SelfImage，
-渲染由 inject_consciousness(mode) 统一输出。
+记忆检索由 memory_window 推入 SelfImage，渲染由 inject_consciousness(mode) 统一输出。
+DAG 压缩和过滤由 Agent._auto_compact() / agent.dag.filter_compressed_messages() 直接调用。
 """
 
 from __future__ import annotations
@@ -32,8 +32,7 @@ def build_context(
     assemble=False 时跳过所有组装，只记录消息 + 返回裸消息列表。
 
     Args:
-        self_image: SelfImage 实例。提供时使用 inject_consciousness(mode)
-                    生成 system prompt；不提供时回退到 context_assembler。
+        self_image: SelfImage 实例。提供时使用 inject_consciousness(mode) 生成 system prompt。
         images: 图片路径或 URL 列表（多模态输入）。
         force_mode: 强制指定模式（如 "legacy"），非空时跳过 determine_mode()。
     """
@@ -73,7 +72,7 @@ def build_context(
         m.get("role") == "tool" or m.get("tool_calls")
         for m in agent.messages[-5:]
     )
-    cfg = getattr(agent.context_assembler, '_living_cfg', None) if agent.context_assembler else None
+    cfg = getattr(agent, '_living_cfg', None)
 
     if force_mode:
         mode = force_mode
@@ -89,8 +88,8 @@ def build_context(
         )
 
     # 4. DAG auto-compact
-    if agent.context_assembler and agent.session_id:
-        agent.context_assembler._auto_compact(
+    if agent.dag and agent.session_id:
+        agent._auto_compact(
             agent.session_id, max_tokens, None,
         )
 
@@ -105,7 +104,7 @@ def build_context(
         refresh_memory_window(
             self_image,
             longterm=getattr(agent, "longterm_memory", None),
-            dag=getattr(getattr(agent, "context_assembler", None), "dag", None),
+            dag=getattr(agent, "dag", None),
             conversation_db=getattr(agent, "conversation_db", None),
             procedure_memory=getattr(agent, "_procedure_memory", None),
             session_id=session_id,
@@ -115,26 +114,20 @@ def build_context(
             exp_stream=getattr(agent, "exp_stream", None),
         )
         system_content = self_image.inject_consciousness(mode=mode)
+        # 日志：system prompt 中的 DAG 摘要数量
+        dag_count = len(getattr(self_image.memory, 'dag_summaries', [])) if self_image is not None else 0
+        logger.info(
+            "[ContextPipeline] 组装完成: mode=%s system_tokens=%d dag_summaries=%d",
+            mode, estimate_content_tokens(system_content), dag_count,
+        )
 
         # intent_context: task 模式追加任务约束
         if intent_context:
             system_content += "\n" + intent_context
-    elif agent.context_assembler:
-        # ── 回退路径：context_assembler（无 SelfImage 时）──
-        base_context = agent.context_assembler.assemble(
-            user_input=user_input,
-            max_tokens=max_tokens,
-            mode=mode,
-            session_id=agent.session_id,
-            user_id=agent.user_id,
-            include_fresh_tail=False,
-            intent_context=intent_context,
-        )
-        system_content = base_context[0].get("content", "") if base_context else ""
 
     # 6. 过滤已压缩消息
-    if agent.context_assembler and agent.context_assembler.dag:
-        agent.messages = agent.context_assembler.dag.filter_compressed_messages(
+    if agent.dag:
+        agent.messages = agent.dag.filter_compressed_messages(
             agent.messages, agent.session_id,
         )
 

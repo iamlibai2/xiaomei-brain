@@ -321,7 +321,7 @@ class AgentLiving:
         agent.user_id = self.user_id
         if self.agent.conversation_db:
             recent = self.agent.conversation_db.get_recent(
-                self.agent.context_assembler.FRESH_TAIL_COUNT,
+                getattr(self._config.context, 'fresh_tail_count', 40),
                 session_id=self.session_id,
             )
             # Load messages, but skip tool messages (they need tool_calls from assistant which DB doesn't store)

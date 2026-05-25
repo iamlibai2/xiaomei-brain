@@ -138,7 +138,6 @@ class Consciousness:
         self.history = self.self_image.history
         self.intent_slot = self.self_image.intent
         self.desk = self.self_image.desk
-        self.intent_buffer: list[Intent] = []
         self._l0_count: int = 0
         self._last_l2_time: float = time.time()   # 启动后等冷却才触发 L2
         self._last_snapshot_save_time: float = 0.0
@@ -570,9 +569,17 @@ class Consciousness:
         """分离感知检查块 → L2Engine。"""
         return L2Engine._split_perception(text)
 
+    def _split_signal(self, text: str) -> tuple[str, str]:
+        """分离 SIGNAL JSON → L2Engine。"""
+        return L2Engine._split_signal(text)
+
     def _apply_drive_events(self, events_text: str) -> None:
         """应用驱动事件 → L2Engine。"""
         return self._get_l2_engine()._apply_drive_events(events_text)
+
+    def _apply_social_signal(self, signal_text: str) -> None:
+        """应用社交信号到 Drive → L2Engine。"""
+        return self._get_l2_engine()._apply_social_signal(signal_text)
 
     def _build_intent_prompt(self, context: str, has_goal: bool = False, goal_memories: list[dict] | None = None) -> str:
         """构建意图决策 prompt → L2Engine。"""
@@ -611,7 +618,12 @@ class Consciousness:
                     tools=None,
                 )
                 full_report = resp.content or ""
-                logger.info("[Consciousness L3] LLM深度燃烧:\n%s", full_report)
+                logger.debug("[Consciousness L3] LLM深度燃烧 (%d 字):\n%s", len(full_report), full_report)
+                if full_report:
+                    _C_L3 = "\033[31m"  # Red — deepest level
+                    _C_RST = "\033[0m"
+                    print(f"\n{_C_L3}── L3 深度燃烧 ──{_C_RST}", flush=True)
+                    print(f"{_C_L3}{full_report}{_C_RST}", flush=True)
 
                 # L3 深度燃烧消耗更多能量
                 if self.drive:
@@ -682,10 +694,17 @@ class Consciousness:
         ]
         internal_narratives_text = "".join(internal_parts) if internal_parts else ""
 
-        # Drive 状态文本（Layer 1）
+        # Drive 状态（L3 独立 LLM 调用，不经过 system prompt，需直接注入数值）
         drive_state_text = ""
         if self.drive:
-            drive_state_text = self.drive.get_state_text()
+            h = self.drive.hormone
+            d = self.drive.desire
+            drive_state_text = (
+                f"多巴胺{h.dopamine:.2f} 血清素{h.serotonin:.2f} 皮质醇{h.cortisol:.2f} "
+                f"催产素{h.oxytocin:.2f} 去甲肾上腺素{h.norepinephrine:.2f} | "
+                f"欲望：生存{d.survival:.2f} 归属{d.belonging:.2f} 认知{d.cognition:.2f} "
+                f"成就{d.achievement:.2f} 表达{d.expression:.2f}"
+            )
 
         # Purpose 状态文本（目标）
         purpose_state_text = ""
@@ -927,13 +946,8 @@ class Consciousness:
                 priority=85,
                 content=f"闹钟「{job.name}」响了。{job.action_hint or job.reason}",
             )
-            self.intent_buffer.append(intent)
             if self.self_image is not None:
-                self.intent_slot.intent_buffer.append({
-                    "type": intent.type.value,
-                    "reason": getattr(intent, "reason", ""),
-                    "priority": getattr(intent, "priority", 0),
-                })
+                self.intent_slot.intent_buffer.append(intent.to_dict())
             logger.info("[Consciousness] 闹钟触发: %s (action=%s)", job.name, job.action_hint)
 
     def enter_sleep(self) -> None:
@@ -954,24 +968,26 @@ class Consciousness:
             mind.pace_reflections = mind.pace_reflections[-15:]
 
     def get_pending_intent(self) -> Intent | None:
-        """获取待处理的最高优先级意图"""
-        if not self.intent_buffer:
+        """获取待处理的最高优先级意图（从 SelfImage.intent.intent_buffer 派生）。"""
+        buf = self.intent_slot.intent_buffer
+        if not buf:
             return None
-
-        # 按优先级排序
-        sorted_intents = sorted(self.intent_buffer, key=lambda i: i.priority, reverse=True)
-        return sorted_intents[0]
+        sorted_items = sorted(buf, key=lambda d: d.get("priority", 0), reverse=True)
+        return Intent.from_dict(sorted_items[0])
 
     def consume_intent(self) -> Intent | None:
         """消费（取出并删除）最高优先级意图"""
-        intent = self.get_pending_intent()
-        if intent:
-            self.intent_buffer.remove(intent)
-        return intent
+        buf = self.intent_slot.intent_buffer
+        if not buf:
+            return None
+        # 找到最高优先级项的索引
+        best_idx = max(range(len(buf)), key=lambda i: buf[i].get("priority", 0))
+        item = buf.pop(best_idx)
+        return Intent.from_dict(item)
 
     def clear_intents(self) -> None:
         """清空意图缓冲"""
-        self.intent_buffer = []
+        self.intent_slot.intent_buffer.clear()
 
     def get_last_report(self) -> ConsciousnessReport | None:
         """获取最近的意识报告"""
@@ -1039,13 +1055,8 @@ class Consciousness:
 
             # 生成问候意图
             greet_intent = create_greet_intent(dream_summary[:50], priority=80)
-            self.intent_buffer.append(greet_intent)
             if self.self_image is not None:
-                self.intent_slot.intent_buffer.append({
-                    "type": greet_intent.type.value,
-                    "reason": getattr(greet_intent, "reason", ""),
-                    "priority": getattr(greet_intent, "priority", 0),
-                })
+                self.intent_slot.intent_buffer.append(greet_intent.to_dict())
 
             # 同步到 self_image（如果是从 growth 恢复的）
             if not si.history.last_dream_summary:
@@ -1066,13 +1077,8 @@ class Consciousness:
             )
         # 生成等待意图，不阻塞
         wait_intent = create_wait_intent()
-        self.intent_buffer.append(wait_intent)
         if self.self_image is not None:
-            self.intent_slot.intent_buffer.append({
-                "type": wait_intent.type.value,
-                "reason": getattr(wait_intent, "reason", ""),
-                "priority": getattr(wait_intent, "priority", 0),
-            })
+            self.intent_slot.intent_buffer.append(wait_intent.to_dict())
         return report
 
 

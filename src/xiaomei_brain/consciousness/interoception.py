@@ -53,6 +53,10 @@ class InteroceptionSignals:
     # 压力等级（给 Drive）
     stress_level: str = "none"           # none / mild / moderate / severe
 
+    # 硬件指标
+    cpu_percent: float = 0.0
+    memory_percent: float = 0.0
+
     # 身体数据快照（给 SelfBody 写入）
     thread_health: dict[str, bool] = field(default_factory=dict)
     queue_pressure: float = 0.0
@@ -60,18 +64,20 @@ class InteroceptionSignals:
     llm_error_rate: float = 0.0
     llm_consecutive_failures: int = 0
     token_usage: float = 0.0
-    memory_fullness: str = "清爽"
+    memory_fullness_pct: float = 0.0
     burning_duration: float = 0.0
 
     def as_body_dict(self) -> dict[str, Any]:
         """转为 SelfBody 可直接写入的数据字典。"""
         return {
+            "cpu_percent": self.cpu_percent,
+            "memory_percent": self.memory_percent,
             "thread_health": self.thread_health,
             "queue_pressure": self.queue_pressure,
             "llm_latency_ms": self.llm_latency_ms,
             "llm_error_rate": self.llm_error_rate,
             "token_usage": self.token_usage,
-            "memory_fullness": self.memory_fullness,
+            "memory_fullness_pct": self.memory_fullness_pct,
             "burning_duration": self.burning_duration,
         }
 
@@ -92,6 +98,7 @@ class Interoception:
         # LLM 错误追踪（滑动窗口）
         self._llm_error_window: list[tuple[float, bool]] = []  # [(timestamp, is_error)]
         self._llm_error_window_seconds = LLM_ERROR_WINDOW_SECONDS
+        self._last_llm_latency_ms: float = 0.0
 
         # SOS 冷却追踪
         self._sos_last_sent: dict[str, float] = {}       # reason → last sent time
@@ -119,6 +126,7 @@ class Interoception:
         """记录一次 LLM 调用结果（供 LLMClient 调用）。"""
         now = time.time()
         self._llm_error_window.append((now, is_error))
+        self._last_llm_latency_ms = latency_ms
 
         # 清理过期窗口
         cutoff = now - self._llm_error_window_seconds
@@ -137,6 +145,7 @@ class Interoception:
         signals = InteroceptionSignals()
 
         # 1. 采集
+        self._collect_hardware(signals)
         self._collect_thread_health(signals)
         self._collect_queue(signals, queue_depth)
         self._collect_llm(signals)
@@ -156,6 +165,17 @@ class Interoception:
 
     # ── 采集 ──────────────────────────────────────────────────
 
+    def _collect_hardware(self, signals: InteroceptionSignals) -> None:
+        """采集 CPU 和内存使用率（psutil 跨平台）。"""
+        try:
+            import psutil
+            signals.cpu_percent = psutil.cpu_percent(interval=0)
+            signals.memory_percent = psutil.virtual_memory().percent
+        except Exception:
+            # psutil 不可用或无权限时静默降级
+            signals.cpu_percent = 0.0
+            signals.memory_percent = 0.0
+
     def _collect_thread_health(self, signals: InteroceptionSignals) -> None:
         health: dict[str, bool] = {}
         for name, thread in self._threads.items():
@@ -168,6 +188,13 @@ class Interoception:
         ) if self._max_queue_size > 0 else 0.0
 
     def _collect_llm(self, signals: InteroceptionSignals) -> None:
+        # 先清理过期窗口（record_llm_call 也清理，这里兜底：长时间无调用时窗口自动老化）
+        now = time.time()
+        cutoff = now - self._llm_error_window_seconds
+        self._llm_error_window = [
+            (ts, err) for ts, err in self._llm_error_window if ts > cutoff
+        ]
+
         if not self._llm_error_window:
             signals.llm_latency_ms = 0.0
             signals.llm_error_rate = 0.0
@@ -178,8 +205,9 @@ class Interoception:
         errors = sum(1 for _, is_err in self._llm_error_window if is_err)
         signals.llm_error_rate = errors / total if total > 0 else 0.0
 
-        # 最近一次延迟
-        signals.llm_latency_ms = self._llm_error_window[-1][0] if self._llm_error_window else 0.0
+        # 最近一次延迟（时间戳在 [1] 是错误的——那是 is_error 布尔值，用 record 的时间戳）
+        # latency 应从最近一次 record_llm_call 传入的 latency_ms 获取，此处用窗口最新时间戳作为近似
+        signals.llm_latency_ms = self._last_llm_latency_ms
 
         # 连续失败计数（从最近往前数）
         consecutive = 0
@@ -194,15 +222,8 @@ class Interoception:
         signals.burning_duration = (time.time() - self._burn_start_time) / 3600.0
 
     def _collect_memory(self, signals: InteroceptionSignals) -> None:
-        """评估记忆饱和度——当前基于 token_usage 和队列压力作为代理。"""
-        if signals.token_usage > 0.9 or signals.queue_pressure > 0.85:
-            signals.memory_fullness = "脑子要溢出了"
-        elif signals.token_usage > 0.7 or signals.queue_pressure > 0.6:
-            signals.memory_fullness = "有点满"
-        elif signals.token_usage > 0.4:
-            signals.memory_fullness = "正常"
-        else:
-            signals.memory_fullness = "清爽"
+        """评估记忆饱和度——基于 token_usage 和队列压力作为代理。"""
+        signals.memory_fullness_pct = max(signals.token_usage, signals.queue_pressure)
 
     # ── 自愈判断 ──────────────────────────────────────────────
 
@@ -298,12 +319,21 @@ class Interoception:
         score += signals.queue_pressure * 0.2
         score += signals.llm_error_rate * 0.4
         score += (1.0 if not all(signals.thread_health.values()) else 0.0) * 0.4
+        # 硬件压力
+        if signals.memory_percent > 80:
+            score += 0.3
+        elif signals.memory_percent > 60:
+            score += 0.15
+        if signals.cpu_percent > 70:
+            score += 0.2
+        elif signals.cpu_percent > 50:
+            score += 0.08
 
         if score > 0.7:
             signals.stress_level = "severe"
-        elif score > 0.4:
+        elif score >= 0.4:
             signals.stress_level = "moderate"
-        elif score > 0.15:
+        elif score >= 0.15:
             signals.stress_level = "mild"
         else:
             signals.stress_level = "none"

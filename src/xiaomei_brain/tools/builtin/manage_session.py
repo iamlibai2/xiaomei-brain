@@ -21,7 +21,7 @@ def set_context(agent_instance, living) -> None:
 def _do_switch(session_id: str) -> str:
     """执行会话切换，返回上下文。"""
     db = _agent_instance.conversation_db
-    dag = _agent_instance.context_assembler.dag if _agent_instance.context_assembler else None
+    dag = _agent_instance._get_agent().dag
 
     # 通过 AttentionLayer 切换会话（保存当前 → 恢复目标）
     attention = getattr(_living, '_attention', None)

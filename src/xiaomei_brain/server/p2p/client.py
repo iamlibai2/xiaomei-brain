@@ -48,7 +48,7 @@ def send_message(
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode("utf-8")
             if 200 <= resp.status < 300:
-                logger.info("[Comms] -> %s [%s] OK", msg.to_agent, msg.type.value)
+                logger.debug("[Comms] -> %s [%s] OK", msg.to_agent, msg.type.value)
                 return True, body
             return False, f"HTTP {resp.status}: {body[:200]}"
     except urllib.error.URLError as e:

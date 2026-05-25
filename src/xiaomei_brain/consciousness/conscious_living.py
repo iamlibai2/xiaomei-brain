@@ -104,12 +104,12 @@ class ConsciousLiving(Living):
 
         super().__init__(
             agent_instance=agent_instance,
-            idle_threshold=idle_threshold or config.living.idle_threshold,
-            dream_interval=dream_interval or config.living.dream_interval,
-            idle_short=idle_short or config.living.idle_short,
+            idle_threshold=idle_threshold or self._config.living.idle_threshold,
+            dream_interval=dream_interval or self._config.living.dream_interval,
+            idle_short=idle_short or self._config.living.idle_short,
             session_id=session_id,
             user_id=user_id,
-            tick_interval=tick_interval or config.living.tick_interval,
+            tick_interval=tick_interval or self._config.living.tick_interval,
         )
 
         # 包装 LLM 客户端：自动控制上下文总 token 量

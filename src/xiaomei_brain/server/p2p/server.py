@@ -61,9 +61,9 @@ def _make_handler(inbox, agent_id: str, on_receive):
             # 存入收件箱
             ok = inbox.store(msg)
             if ok:
-                logger.info(
-                    "[Comms] <- %s [%s]: %s",
-                    msg.from_agent, msg.type.value, msg.content[:60],
+                logger.debug(
+                    "[Comms] <- %s [%s] (%d chars)",
+                    msg.from_agent, msg.type.value, len(msg.content),
                 )
                 _log_to_comms_log(msg.from_agent, msg.to_agent, msg.type.value, msg.content)
             else:

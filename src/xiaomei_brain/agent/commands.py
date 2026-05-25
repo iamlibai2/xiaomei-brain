@@ -2,7 +2,7 @@
 
 Provides a unified command registry that any interface (CLI, WebSocket,
 Feishu, etc.) can call. Commands operate on the memory subsystems
-(ConversationDB, DAGSummaryGraph, LongTermMemory, ContextAssembler, etc.).
+(ConversationDB, DAGSummaryGraph, LongTermMemory, etc.).
 
 Usage:
     from xiaomei_brain.agent.commands import CommandRegistry
@@ -12,13 +12,11 @@ Usage:
         dag=dag,
         longterm_memory=ltm,
         memory_extractor=extractor,
-        context_assembler=assembler,
     )
 
     # Execute a command
     result = registry.execute("db", user_id="global")
     result = registry.execute("user 张三")  # returns new user_id
-    result = registry.execute("context", query="我有什么爱好", session_id="main", user_id="张三")
 """
 
 from __future__ import annotations
@@ -53,14 +51,12 @@ class CommandRegistry:
         dag: Any = None,
         longterm_memory: Any = None,
         memory_extractor: Any = None,
-        context_assembler: Any = None,
         agent_instance: Any = None,
     ) -> None:
         self.db = conversation_db
         self.dag = dag
         self.ltm = longterm_memory
         self.extractor = memory_extractor
-        self.assembler = context_assembler
         self.agent_instance = agent_instance
 
     def execute(
@@ -138,7 +134,7 @@ class CommandRegistry:
             keyword = keyword.replace("<", "").replace(">", "")
             return self._cmd_dag(keyword, session_id)
         if cmd == "dag":
-            return CommandResult(output="用法: dag <关键词>")
+            return self._cmd_dag_list(session_id)
 
         # ── Periodic extraction ─────────────────────────────────
         if cmd == "periodic":
@@ -210,9 +206,25 @@ class CommandRegistry:
         if not all_messages:
             return CommandResult(output="(上下文为空)")
 
-        debug_text = self.assembler.debug_assemble(all_messages)
+        from xiaomei_brain.agent.message_utils import estimate_content_tokens
 
-        return CommandResult(output=debug_text)
+        total = 0
+        lines = [f"=== 上下文 ({len(all_messages)}条消息) ===", ""]
+        for i, m in enumerate(all_messages):
+            role = m.get("role", "?")
+            content = m.get("content", "")
+            tokens = estimate_content_tokens(content)
+            total += tokens
+            if role == "system":
+                lines.append(f"──── system ({tokens}t) ────")
+                lines.append(content)
+                lines.append(f"──── end system ────")
+                lines.append("")
+            else:
+                preview = content[:80] + ("..." if len(content) > 80 else "")
+                lines.append(f"[{i}] {role} ({tokens}t): {preview}")
+        lines.append(f"=== 总计 {total} tokens ===")
+        return CommandResult(output="\n".join(lines))
 
     def _cmd_clear(self, session_id: str) -> CommandResult:
         """Clear current session context (data preserved, just invisible to assembler)."""
@@ -281,13 +293,42 @@ class CommandRegistry:
 
         return CommandResult(output="\n".join(lines))
 
+    def _cmd_dag_list(self, session_id: str) -> CommandResult:
+        """列出当前会话的所有 DAG 摘要。"""
+        if not self.dag:
+            return CommandResult(output="(DAG 未配置)")
+
+        # 直接查 summaries 表
+        conn = self.dag._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM summaries WHERE session_id = ? AND parent_id IS NULL ORDER BY depth DESC, id",
+            (session_id,),
+        ).fetchall()
+
+        if not rows:
+            return CommandResult(output=f"(会话 {session_id} 暂无摘要)")
+
+        leaf_count = sum(1 for r in rows if r["depth"] == 0)
+        higher_count = sum(1 for r in rows if r["depth"] > 0)
+
+        lines = [f"=== DAG 摘要 ({leaf_count} 叶子 / {higher_count} 高级) ===", ""]
+
+        for r in rows:
+            depth = r["depth"]
+            content = r["content"]
+            lines.append(f"[depth={depth}] #{r['id']}:")
+            lines.append(content)
+            lines.append("")
+
+        return CommandResult(output="\n".join(lines))
+
     def _cmd_dag(self, keyword: str, session_id: str) -> CommandResult:
-        """Search DAG summaries without expanding."""
+        """搜索 DAG 摘要（展开原文）。"""
         if not self.dag:
             return CommandResult(output="(DAG 未配置)")
 
         if not keyword:
-            return CommandResult(output="用法: dag <关键词>")
+            return self._cmd_dag_list(session_id)
 
         nodes = self.dag.search(keyword, limit=5)
         if not nodes:
@@ -295,7 +336,18 @@ class CommandRegistry:
 
         lines = []
         for node in nodes:
-            lines.append(f"- 摘要 #{node.id} [depth={node.depth}]: {node.content[:80]}...")
+            lines.append(f"=== 摘要 #{node.id} [depth={node.depth}] ===")
+            lines.append(node.content)
+            lines.append("--- 原文 ---")
+            originals = self.dag.expand(node.id)
+            if not originals:
+                lines.append("（无原始消息）")
+            else:
+                for msg in originals:
+                    role = msg.get("role", "user")
+                    content = msg.get("content", "")[:200]
+                    lines.append(f"[{role}] {content}")
+            lines.append("")
         return CommandResult(output="\n".join(lines))
 
     def _cmd_periodic(self, user_id: str) -> CommandResult:

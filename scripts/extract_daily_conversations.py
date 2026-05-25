@@ -22,6 +22,7 @@ TRANSCRIPT_PATHS = [
     Path.home() / ".claude/projects/-home-iamlibai-workspace-claude-project-xiaomei-brain/15162ba7-006e-4e35-af0e-dbd56b73005b.jsonl",
     Path.home() / ".claude/projects/-home-iamlibai-workspace-claude-project-xiaomei-brain/49c380e4-1e4b-46ce-ab42-d95deccce42d.jsonl",
     Path.home() / ".claude/projects/-home-iamlibai-workspace-claude-project-xiaomei-brain/76485e1a-1c5f-4420-8d92-89cf4024ca8c.jsonl",
+    Path.home() / ".claude/projects/-home-iamlibai-workspace-claude-project-xiaomei-brain/d81f785c-754c-4658-add3-e110928ae83c.jsonl",
 ]
 OUTPUT_DIR = Path("/home/iamlibai/workspace/claude-project/xiaomei-brain/docs/analyze")
 
@@ -153,35 +154,42 @@ def main():
     print(f"Processed: {processed}, Skipped: {skipped}")
     print(f"Dates found: {sorted(dialogues.keys())}")
 
-    # Write files for each date
+    # Write files for each date — use f.write() for consistent formatting
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     for date_str in sorted(dialogues.keys()):
         filename = f"对话记录_{date_str}.md"
         filepath = OUTPUT_DIR / filename
 
-        # Check if file already exists and has content
-        if filepath.exists() and filepath.stat().st_size > 100:
-            print(f"Skipping {filename} (already exists, {filepath.stat().st_size} bytes)")
-            continue
-
         entries = dialogues[date_str]
-        print(f"Writing {filename}: {len(entries)} entries")
 
-        lines_out = []
-        lines_out.append(f"## {date_str} 对话记录\n")
+        if filepath.exists() and filepath.stat().st_size > 100:
+            # Append new entries (dedup by timestamp + content prefix)
+            import re as _re
+            existing_keys = set()
+            with open(filepath, encoding="utf-8") as ef:
+                for m in _re.finditer(r'\[(\d{2}:\d{2}:\d{2})\]', ef.read()):
+                    existing_keys.add(m.group(1))
+            new_entries = [(t, r, c) for t, r, c in entries if t not in existing_keys]
+            if not new_entries:
+                print(f"Skipping {filename} (no new entries)")
+                continue
+            entries = new_entries
+            print(f"Appending {filename}: {len(entries)} new entries")
+            mode = "a"
+        else:
+            print(f"Writing {filename}: {len(entries)} entries")
+            mode = "w"
 
-        for time_str, role, content in entries:
-            if role == "user":
-                lines_out.append(f"**[{time_str}] 🟥用户**\n")
-            else:
-                lines_out.append(f"**[{time_str}] 🤖助手**\n")
-
-            lines_out.append(content.strip())
-            lines_out.append("\n\n---\n")
-
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines_out))
+        with open(filepath, mode, encoding="utf-8") as f:
+            if mode == "w":
+                f.write(f"## {date_str} 对话记录\n\n")
+            for time_str, role, content in entries:
+                if role == "user":
+                    f.write(f"**[{time_str}] 🟥用户**\n\n")
+                else:
+                    f.write(f"**[{time_str}] 🤖助手**\n\n")
+                f.write(content.strip() + "\n\n---\n\n")
 
         print(f"  -> {filepath} ({filepath.stat().st_size} bytes)")
 

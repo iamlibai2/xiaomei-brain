@@ -17,7 +17,6 @@ from xiaomei_brain.base.llm import LLMClient
 from xiaomei_brain.memory.self_model import SelfModel
 from xiaomei_brain.memory.conversation_db import ConversationDB
 from xiaomei_brain.memory.dag import DAGSummaryGraph
-from xiaomei_brain.consciousness.context_assembler import ContextAssembler
 from xiaomei_brain.memory.longterm import LongTermMemory
 from xiaomei_brain.memory.extractor import MemoryExtractor
 from xiaomei_brain.agent.session import SessionManager
@@ -51,7 +50,6 @@ class AgentInstance:
 
     # Memory system (新架构)
     conversation_db: "ConversationDB" = None  # type: ignore[assignment]
-    context_assembler: "ContextAssembler" = None  # type: ignore[assignment]
     longterm_memory: "LongTermMemory" = None  # type: ignore[assignment]
     memory_extractor: "MemoryExtractor" = None  # type: ignore[assignment]
 
@@ -95,7 +93,7 @@ class AgentInstance:
             )
             self._agent.self_model = getattr(self, "self_model", None)
             self._agent.conversation_db = self.conversation_db
-            self._agent.context_assembler = self.context_assembler
+            self._agent.dag = getattr(self, "dag", None)
             self._agent.longterm_memory = self.longterm_memory
             self._agent.memory_extractor = self.memory_extractor
         return self._agent
@@ -455,7 +453,7 @@ class AgentManager:
                     audio_config=audio_config,
                 )
                 tts_tools.set_tts_player(None, tts_provider)
-                tools.register(tts_tools.tts_speak_tool)
+                # tools.register(tts_tools.tts_speak_tool)  # TTS 未配置，避免误导 agent
                 tools.register(tts_tools.tts_speak_to_file_tool)
 
         if global_config.music_enabled:
@@ -522,8 +520,8 @@ class AgentManager:
             embedding_fallback=global_config.embedding_fallback or None,
         )
 
-        # DAG 引用保存（ConsciousLiving 创建 ContextAssembler 时需要）
-        agent._dag = dag
+        # DAG 直接挂载到 Agent（原通过 context_assembler 间接访问）
+        agent.dag = dag
 
         # ProcedureMemory（过程记忆：学习 + 关键词触发）
         from xiaomei_brain.memory.procedure import ProcedureMemory
@@ -561,7 +559,6 @@ class AgentManager:
             dag=dag,
             longterm_memory=agent.longterm_memory,
             memory_extractor=agent.memory_extractor,
-            context_assembler=None,  # ConsciousLiving 会注入
             agent_instance=agent,
         )
 

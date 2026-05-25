@@ -75,25 +75,32 @@ def create_being_tool(consciousness: Any) -> Tool:
             if not emergence_text.strip():
                 return "此刻内心很安静，没有特别的感受浮现。"
 
-            # 4. 分离感知检查（第四问）
+            # 4. 分离 SIGNAL（社交信号）
+            emergence_text, signal_json = consciousness._split_signal(emergence_text)
+
+            # 5. 分离感知检查（第四问）
             emergence_text, perceptions = consciousness._split_perception(emergence_text)
             if perceptions and consciousness.self_image:
                 consciousness.mind.social_perceptions.extend(perceptions)
                 if len(consciousness.mind.social_perceptions) > 20:
                     consciousness.mind.social_perceptions = consciousness.mind.social_perceptions[-20:]
 
-            # 5. 分离意识部分和事件部分
+            # 6. 分离意识部分和事件部分
             consciousness_text, events_json = consciousness._split_consciousness_events(emergence_text)
 
-            # 6. 应用事件到 Drive（情绪波动）
+            # 7. 应用事件到 Drive（情绪波动）
             if events_json and consciousness.drive:
                 consciousness._apply_drive_events(events_json)
 
-            # 7. 更新内心想法
+            # 8. 应用社交信号到 Drive
+            if signal_json and consciousness.drive:
+                consciousness._apply_social_signal(signal_json)
+
+            # 9. 更新内心想法
             if consciousness_text:
                 consciousness.mind.update_inner_thought(consciousness_text[:200])
 
-            # 8. 消耗少量能量（觉察也是精神活动）
+            # 10. 消耗少量能量（觉察也是精神活动）
             if consciousness.drive:
                 consciousness.drive.consume_energy(0.01)
 

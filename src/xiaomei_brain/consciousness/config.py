@@ -1,16 +1,12 @@
-"""LivingConfig: 意识生命体的统一配置。
+"""LivingConfig: 意识生命体配置结构定义。
 
-所有硬编码的数值阈值、关键词列表集中在此，支持从 YAML 文件加载。
-ConsciousLiving 和各子系统从 LivingConfig 读取配置，不再硬编码。
+实际配置值由 config/agent_config.py 从 config.yaml 加载。
+此处定义 dataclass 结构及默认值（作为 fallback）。
 """
 
 from __future__ import annotations
 
-import logging
-import os
 from dataclasses import dataclass, field
-
-logger = logging.getLogger(__name__)
 
 
 # ── 意识层参数 ──────────────────────────────────────────────────────
@@ -39,7 +35,7 @@ class LivingParams:
     """Living 基类参数"""
     tick_interval: float = 1.0         # 心跳间隔（秒）
     surge_interval: float = 60.0       # 涌动间隔（秒）
-    idle_short: float = 120.0         # 短空闲阈值（秒）→ IDLE
+    idle_short: float = 300.0         # 短空闲阈值（秒）→ IDLE
     idle_threshold: float = 10800.0    # 长空闲阈值（秒）→ SLEEPING
     dream_interval: float = 3000.0      # 梦境间隔（秒）
     max_context_tokens: int = 50000    # 上下文最大 token 数
@@ -135,70 +131,3 @@ class LivingConfig:
     action: ActionConfig = field(default_factory=ActionConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
     keywords: KeywordConfig = field(default_factory=KeywordConfig)
-
-    @classmethod
-    def from_yaml(cls, path: str) -> LivingConfig:
-        """从 YAML 文件加载配置"""
-        try:
-            import yaml
-        except ImportError:
-            logger.warning("[LivingConfig] PyYAML 未安装，使用默认配置")
-            return cls()
-
-        if not os.path.exists(path):
-            logger.info("[LivingConfig] 配置文件不存在: %s，使用默认值", path)
-            return cls()
-
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
-        except Exception as e:
-            logger.warning("[LivingConfig] 加载失败: %s，使用默认值", e)
-            return cls()
-
-        config = cls()
-        _apply_dict(config.consciousness, data.get("consciousness", {}))
-        _apply_dict(config.living, data.get("living", {}))
-        _apply_dict(config.action, data.get("action", {}))
-        _apply_dict(config.context, data.get("context", {}))
-        _apply_dict(config.keywords, data.get("keywords", {}))
-
-        logger.info("[LivingConfig] 已从 %s 加载配置", path)
-        return config
-
-    def save_yaml(self, path: str) -> None:
-        """保存配置到 YAML 文件"""
-        try:
-            import yaml
-        except ImportError:
-            logger.warning("[LivingConfig] PyYAML 未安装，无法保存")
-            return
-
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            yaml.dump(self._to_dict(), f, default_flow_style=False, allow_unicode=True)
-        logger.info("[LivingConfig] 配置已保存到 %s", path)
-
-    def _to_dict(self) -> dict:
-        """转为嵌套字典"""
-        import dataclasses
-        result = {}
-        for fld in dataclasses.fields(self):
-            val = getattr(self, fld.name)
-            if dataclasses.is_dataclass(val):
-                result[fld.name] = dataclasses.asdict(val)
-            else:
-                result[fld.name] = val
-        return result
-
-
-def _apply_dict(obj, data: dict) -> None:
-    """将字典值应用到 dataclass 实例（只覆盖存在的字段）"""
-    import dataclasses
-    for key, value in data.items():
-        if hasattr(obj, key):
-            current = getattr(obj, key)
-            if dataclasses.is_dataclass(current) and isinstance(value, dict):
-                _apply_dict(current, value)
-            else:
-                setattr(obj, key, value)

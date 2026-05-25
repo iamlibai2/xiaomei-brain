@@ -4,20 +4,21 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from typing import Any, Callable, Generator
 
 from xiaomei_brain.base.llm import LLMClient
 from xiaomei_brain.memory.conversation_db import ConversationDB, estimate_tokens
 from xiaomei_brain.memory.self_model import SelfModel
-from xiaomei_brain.consciousness.context_assembler import ContextAssembler
+from xiaomei_brain.memory.dag import DAGSummaryGraph
 from xiaomei_brain.memory.longterm import LongTermMemory
 from xiaomei_brain.memory.extractor import MemoryExtractor, MEMORY_DECISION_PROMPT
 from xiaomei_brain.tools.registry import ToolRegistry
 from xiaomei_brain.agent.message_utils import (
     strip_orphaned_tool_messages,
     strip_orphaned_assistant_tool_calls, clean_messages,
-    append_to_content,
+    append_to_content, estimate_content_tokens,
 )
 
 logger = logging.getLogger(__name__)
@@ -74,7 +75,7 @@ class Agent:
     """An AI Agent that reasons and acts via ReAct loop.
 
     Memory architecture:
-    - ContextAssembler + DAG + LongTermMemory + ConversationDB
+    - DAGSummaryGraph + LongTermMemory + ConversationDB
     - Context is assembled from DB each turn, self.messages only tracks current ReAct loop.
     """
 
@@ -93,7 +94,7 @@ class Agent:
         # ── New memory architecture ──────────────────────
         self.self_model: SelfModel | None = None
         self.conversation_db: ConversationDB | None = None
-        self.context_assembler: ContextAssembler | None = None
+        self.dag: DAGSummaryGraph | None = None
         self.longterm_memory: LongTermMemory | None = None
         self.memory_extractor: MemoryExtractor | None = None
 
@@ -108,6 +109,109 @@ class Agent:
 
         # ── Experience stream (unified timeline, from ConsciousLiving) ──
         self.exp_stream: Any = None  # ExperienceStream 实例，可选
+
+        # ── DAG auto-compact ─────────────────────────────────────────────
+        self._living_cfg: Any = None  # LivingConfig, 由 ConsciousLiving 注入
+        self.on_compact: Callable[[dict], None] | None = None
+        self._compact_locks: dict[str, threading.Lock] = {}
+        self._locks_lock = threading.Lock()
+
+    def _auto_compact(self, session_id: str, max_tokens: int, messages: list[dict] | None = None) -> None:
+        """Auto-compact: 消息积累到阈值时自动压缩为 DAG 叶子摘要。
+
+        原在 ContextAssembler._auto_compact()，搬到 Agent 直接管理。
+        """
+        with self._locks_lock:
+            lock = self._compact_locks.get(session_id)
+            if lock is None:
+                lock = threading.Lock()
+                self._compact_locks[session_id] = lock
+
+        if not lock.acquire(blocking=False):
+            return
+
+        try:
+            if not self.dag:
+                return
+
+            if messages is not None:
+                unsummarized = self._unsummarized_from_messages(session_id, messages)
+            else:
+                cfg = self._get_ctx_cfg()
+                unsummarized = self.dag.get_unsummarized_messages(
+                    session_id, limit=100,
+                    since=time.time() - cfg.get("compact_time_window", 7200.0),
+                )
+            if not unsummarized:
+                return
+
+            cfg = self._get_ctx_cfg()
+            unsummarized_tokens = sum(
+                estimate_content_tokens(m.get("content")) for m in unsummarized
+            )
+            threshold = int(max_tokens * cfg.get("compact_token_ratio", 0.5))
+
+            compact_threshold = cfg.get("messages_per_compact", 8) + cfg.get("reserved_fresh_count", 10)
+            if unsummarized_tokens >= threshold or len(unsummarized) >= compact_threshold:
+                msgs_to_compact = unsummarized[: cfg.get("messages_per_compact", 8)]
+                compact_tokens = sum(
+                    estimate_content_tokens(m.get("content")) for m in msgs_to_compact
+                )
+                remaining_tokens = unsummarized_tokens - compact_tokens
+
+                node = self.dag.compact(
+                    session_id,
+                    [m["id"] for m in msgs_to_compact],
+                    msgs_to_compact,
+                )
+                if node:
+                    summary_tokens = estimate_tokens(node.content)
+                    after_tokens = remaining_tokens + summary_tokens
+
+                    if self.on_compact:
+                        self.on_compact({
+                            "compact_count": len(msgs_to_compact),
+                            "before_tokens": unsummarized_tokens,
+                            "after_tokens": after_tokens,
+                            "summary_tokens": summary_tokens,
+                            "remaining_count": len(unsummarized) - len(msgs_to_compact),
+                            "remaining_tokens": remaining_tokens,
+                        })
+
+                    logger.info(
+                        "[DAG] Auto compact: %d msgs (%d tokens) → summary #%d (depth=%d, %d tokens), "
+                        "%d msgs (%d tokens) remain fresh",
+                        len(msgs_to_compact), compact_tokens,
+                        node.id, node.depth, summary_tokens,
+                        len(unsummarized) - len(msgs_to_compact),
+                        remaining_tokens,
+                    )
+        except Exception as e:
+            import traceback
+            logger.warning("[DAG] Auto compact failed: %s\n%s", e, traceback.format_exc())
+        finally:
+            lock.release()
+
+    def _unsummarized_from_messages(self, session_id: str, messages: list[dict]) -> list[dict]:
+        """从 self.messages 中找出未被 DAG 摘要覆盖的消息。"""
+        if not self.dag:
+            return []
+        import json
+        conn = self.dag._get_conn()
+        rows = conn.execute(
+            "SELECT message_ids FROM summaries WHERE session_id = ? AND depth = 0",
+            (session_id,),
+        ).fetchall()
+        summarized_ids = set()
+        for r in rows:
+            summarized_ids.update(json.loads(r["message_ids"]))
+        return [m for m in messages if m.get("id") and m["id"] not in summarized_ids]
+
+    def _get_ctx_cfg(self) -> dict:
+        """获取 context 配置，兼容无 _living_cfg 的情况。"""
+        if self._living_cfg and hasattr(self._living_cfg, 'context'):
+            return vars(self._living_cfg.context) if hasattr(self._living_cfg.context, '__dict__') else {}
+        return {}
 
     def stream(
         self, user_input: str = "", consciousness_state: dict | None = None,
@@ -156,8 +260,26 @@ class Agent:
             openai_tools = self.tools.to_openai_tools() if self.tools.list_tools() else None
 
             # Auto-compact: 防止 messages 无限增长
-            if self.context_assembler and self.session_id:
-                self.context_assembler._auto_compact(self.session_id, 50000, self.messages)
+            if self.dag and self.session_id:
+                self._auto_compact(self.session_id, 50000, self.messages)
+
+            # 加载 DAG 摘要到 system_prompt（轻量路径无 SelfImage，直接注入）
+            if self.dag and self.session_id:
+                try:
+                    summaries = self.dag.get_higher_summaries(self.session_id, max_tokens=10000)
+                    if summaries:
+                        dag_block = "\n\n<历史摘要>\n"
+                        for s in summaries:
+                            dag_block += f"<summary depth=\"{s.depth}\">{s.content}</summary>\n"
+                        dag_block += "</历史摘要>"
+                        # 去掉旧的 DAG 块再拼接，防止每次调用重复追加
+                        base = (self.system_prompt or "")
+                        marker = "\n\n<历史摘要>"
+                        if marker in base:
+                            base = base[:base.index(marker)]
+                        self.system_prompt = base + dag_block
+                except Exception as e:
+                    logger.warning("[DAG] 加载摘要到 system_prompt 失败: %s", e)
 
             # Token 裁剪：messages 超过预算时丢弃最旧的非系统消息
             max_total = 50000
@@ -443,12 +565,22 @@ class Agent:
 
         yield "Agent reached maximum steps without producing a final answer."
 
+    # ── 颜色标签映射 ──
+    _LABEL_STYLES: dict[str, tuple[str, str]] = {
+        "intent":   ("\033[33m", "意图决策"),   # Yellow
+        "alarm":    ("\033[34m", "闹钟"),        # Blue
+        "pleasure": ("\033[32m", "PLEASURE"),    # Green
+        "work":     ("\033[34m", "自由工作"),    # Blue
+        "comms":    ("\033[35m", "Agent间"),     # Magenta
+    }
+
     def react_nodb(
         self,
         messages: list[dict[str, Any]],
         cancel_check: Callable[[], bool] | None = None,
         max_steps: int = 5,
         exp_stream: Any = None,
+        label: str = "",
     ) -> str:
         """纯内部推理 ReAct — 非流式，不写 DB、不加 MEMORY_PROMPT、不提取记忆。
 
@@ -458,6 +590,7 @@ class Agent:
         Args:
             exp_stream: 可选 ExperienceStream 实例，存在时 co-write 工具执行和最终结果。
                         不传则 fallback 到 self.exp_stream。
+            label: 输出标签（intent/alarm/pleasure/work/comms），控制终端颜色。
         """
         if exp_stream is None:
             exp_stream = getattr(self, "exp_stream", None)
@@ -473,6 +606,9 @@ class Agent:
         _tool_failure_counts: dict[tuple, int] = {}
         _idx = 0
 
+        _color, _label_name = self._LABEL_STYLES.get(label, ("", ""))
+        _reset = "\033[0m"
+
         for step in range(max_steps):
             if cancel_check and cancel_check():
                 logger.info("[Agent] react_nodb 已取消 (step=%d)", step)
@@ -487,6 +623,10 @@ class Agent:
             print(hint, flush=True)
 
             response = self.llm.chat(messages=all_messages, tools=openai_tools)
+
+            # 展示思考过程（ANSI 灰色，不进入后续消息）
+            if response.reasoning_content:
+                print(f"\033[2m{response.reasoning_content}\033[0m", flush=True)
 
             if response.tool_calls:
                 tool_calls_data = [
@@ -561,7 +701,9 @@ class Agent:
             else:
                 final_text = response.content or ""
                 if final_text:
-                    print(f"\n{final_text}", flush=True)
+                    if _label_name:
+                        print(f"\n{_color}── {_label_name} ──{_reset}", flush=True)
+                    print(f"{_color}{final_text}{_reset}", flush=True)
 
                 # Co-write final result to experience stream
                 if exp_stream and final_text:
@@ -582,7 +724,9 @@ class Agent:
         resp = self.llm.chat(messages=all_messages, tools=None)
         final_text = resp.content or ""
         if final_text:
-            print(f"\n{final_text}", flush=True)
+            if _label_name:
+                print(f"\n{_color}── {_label_name} ──{_reset}", flush=True)
+            print(f"{_color}{final_text}{_reset}", flush=True)
 
         # Co-write to experience stream (fallback path)
         if exp_stream and final_text:
