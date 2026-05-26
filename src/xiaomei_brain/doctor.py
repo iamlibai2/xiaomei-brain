@@ -218,39 +218,84 @@ class Doctor:
 
         return sec
 
-    def check_memory_dir(self) -> Section:
+    def check_memory(self) -> Section:
         sec = Section("Memory")
         cfg = self.config
         mem_dir = Path(cfg.memory_dir).expanduser()
+        db_path = mem_dir / "brain.db"
 
-        if mem_dir.exists():
-            if os.access(mem_dir, os.W_OK):
-                topics = list(mem_dir.glob("topics/*.md"))
-                sec.checks.append(self._ok("memory_dir", f"{mem_dir} ({len(topics)} topics)"))
-            else:
-                sec.checks.append(self._fail("memory_dir", "not writable"))
+        # DB file
+        if db_path.exists():
+            sec.checks.append(self._ok("brain.db", str(db_path)))
         else:
-            sec.checks.append(self._warn("memory_dir", f"{mem_dir} does not exist yet", "will be created on first use"))
+            sec.checks.append(self._warn("brain.db", f"{db_path} does not exist yet", "will be created on first use"))
             return sec
 
-        # Check embedding model
+        # Schema version
         try:
-            from .memory import MemoryStore
-            store = MemoryStore(memory_dir=str(mem_dir))
-            vec = store.embedder.embed("hello")
+            import sqlite3
+            conn = sqlite3.connect(str(db_path))
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            tables = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+            ).fetchall()
+            table_names = [r[0] for r in tables]
+            conn.close()
+            sec.checks.append(self._ok("schema", f"version={version}, {len(table_names)} tables"))
+        except Exception as e:
+            sec.checks.append(self._fail("schema", "failed to read", str(e)))
+            return sec
+
+        # Record counts for key tables
+        try:
+            conn = sqlite3.connect(str(db_path))
+            for tbl in ["memories", "messages", "experience_stream", "consciousness_narratives"]:
+                if tbl in table_names:
+                    cnt = conn.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0]
+                    if cnt > 0:
+                        sec.checks.append(self._ok(f"  {tbl}", f"{cnt} rows"))
+            conn.close()
+        except Exception as e:
+            sec.checks.append(self._fail("tables", "failed to query", str(e)))
+
+        # LanceDB
+        lancedb_dir = mem_dir / "lancedb"
+        if lancedb_dir.exists():
+            try:
+                import lancedb
+                db = lancedb.connect(str(lancedb_dir))
+                lancedb_tables = db.table_names()
+                sec.checks.append(self._ok("lancedb", f"{len(lancedb_tables)} table(s)"))
+            except Exception as e:
+                sec.checks.append(self._fail("lancedb", "failed to connect", str(e)))
+        else:
+            sec.checks.append(self._warn("lancedb", f"{lancedb_dir} does not exist yet"))
+
+        # Embedding model
+        try:
+            from xiaomei_brain.memory.longterm import LongTermMemory
+            ltm = LongTermMemory(db_path=str(db_path))
+            embedder = ltm._get_embedder()
+            vec = embedder.embed("hello")
             sec.checks.append(self._ok("embedding", f"{len(vec)}-dim vector"))
         except ImportError:
             sec.checks.append(self._skip("embedding", "sentence_transformers not installed"))
         except Exception as e:
             sec.checks.append(self._fail("embedding", "model failed to load", str(e)))
 
+        # Drive state
+        drive_file = mem_dir.parent / "drive_state.json"
+        if drive_file.exists():
+            sec.checks.append(self._ok("drive_state", str(drive_file)))
+        else:
+            sec.checks.append(self._warn("drive_state", "not found, will be created on first run"))
+
         return sec
 
-    def check_sessions_dir(self) -> Section:
+    def check_sessions(self) -> Section:
         sec = Section("Sessions")
-        cfg = self.config
         from xiaomei_brain.agent.session import SessionManager
-        sm = SessionManager(session_dir=cfg.memory_dir)
+        sm = SessionManager()
         sessions = sm.list_sessions()
         sec.checks.append(self._ok("sessions", f"{len(sessions)} saved session(s)"))
         return sec
@@ -350,8 +395,8 @@ class Doctor:
             self.check_tts,
             self.check_web_search,
             self.check_web_get,
-            self.check_memory_dir,
-            self.check_sessions_dir,
+            self.check_memory,
+            self.check_sessions,
         ]
 
         for check_fn in all_checks:
