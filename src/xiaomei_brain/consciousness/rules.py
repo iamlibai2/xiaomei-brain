@@ -292,6 +292,21 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
             .cooldown("desire_talk_to_agent", ac.desire_talk_to_agent_cooldown)
     )
 
+    # 认知欲高 → 主动学习（从队列或兴趣中选题）
+    RULES.append(
+        Rule.when(lambda si, t=thr_cognition: _get_drive_facet(si).cognition > t)
+            .then(ActionItem(
+                action_type=ActionType.TOOL,
+                priority=0.55,
+                content="learn_topic",
+                reason=f"认知欲偏高 (>{thr_cognition:.1f})，主动学习",
+                source="desire",
+                cooldown_key="desire_learn",
+                metadata={"desire_type": "cognition"},
+            ))
+            .cooldown("desire_learn", ac.desire_learn_cooldown)
+    )
+
     # ── Craving 驱动（快乐中枢渴望）─────────────────────
 
     # 渴望偏高 → 通过 PROACTIVE 让 LLM 自己做因果决策

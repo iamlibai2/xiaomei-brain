@@ -73,7 +73,6 @@ class SelfImage:
         self._dirty = False
         self._drive = drive
         self.survival_start_time = time.time()   # 存活倒计时起点
-        self._ltm: Any = None                   # LongTermMemory 引用（供模式记忆渲染）
         self._essence: Any = None               # Essence（底色存储）
         self._project_mental_model: Any = None   # [Layer 2]
         self._experience_memory: Any = None      # [Layer 2]
@@ -84,10 +83,6 @@ class SelfImage:
             "reflect": self._assemble_reflect,
             "legacy":  self._assemble_legacy,
         }
-
-    def set_ltm(self, ltm) -> None:
-        """设置 LongTermMemory 引用，供模式记忆渲染使用。"""
-        self._ltm = ltm
 
     # ── 核心：火焰骨架 tick ─────────────────────────────────
 
@@ -316,7 +311,6 @@ class SelfImage:
             + self._render_memory()
             + self._render_experience_timeline()
             + self._render_pace_reflections()
-            + self._render_patterns()
             + self._render_environment()
             + self._render_history()
         )
@@ -335,7 +329,6 @@ class SelfImage:
             + self._render_project_map()
             + self._render_intent()
             + self._render_experience_timeline()
-            + self._render_patterns()
             + self._render_environment()
         )
 
@@ -649,9 +642,14 @@ class SelfImage:
         lines.append("\n****以下是你当前的目标与内在想法****")
         if m.primary_goal:
             lines.append(f"你当前的目标：{m.primary_goal}（进展{m.goal_progress:.0%}）")
-        if m.inner_thought:
-            lines.append(f"你上一次想了：{m.inner_thought}")
-            lines.append("（这是你之前的思考，不要重复，去找新的角度。）")
+        if m.inner_thought_history:
+            labels = ["你上一次想了", "你再上一次想了", "你还想过"]
+            recent = m.inner_thought_history[-3:]
+            for i, thought in enumerate(recent):
+                label = labels[min(i, len(labels) - 1)]
+                lines.append(f"{label}：{thought}")
+            if len(recent) > 1:
+                lines.append("（以上是你近期的思考。不要重复，去找新的角度或更深的变化。）")
         if m.social_perceptions:
             lines.append("你之前感觉到的：")
             for sp in m.social_perceptions[-5:]:
@@ -699,7 +697,7 @@ class SelfImage:
             total = (
                 len(mem.dag_summaries) + len(mem.important_memories) + len(mem.recalled_memories)
                 + len(mem.relation_chains) + len(mem.narratives) + len(mem.procedures)
-                + len(mem.recent_dialog) + len(mem.internal_narratives)
+                + len(mem.recent_dialog) + len(mem.internal_narratives) + len(mem.patterns)
             )
         if total == 0:
             return []
@@ -725,6 +723,11 @@ class SelfImage:
         for m in (mem.important_memories or []) + (mem.recalled_memories or []):
             mid = m.get("id", "")
             if mid and mid in seen_ids:
+                continue
+            # 模式记忆有独立的 <模式记忆> 段落，不混入长期记忆
+            tags = m.get("tags") or []
+            mem_type = m.get("type", "")
+            if mem_type == "pattern" or "pattern" in tags:
                 continue
             if mid:
                 seen_ids.add(mid)
@@ -809,6 +812,21 @@ class SelfImage:
                 for i, n in enumerate(internal[1:], 1):
                     lines.append(f"- 历史思考{i}：{n.get('content', '')}")
                 lines.append("</历史思考>")
+
+        # ── 模式记忆（跨时间统计规律）───────────────────
+        if mem.patterns:
+            lines.append("\n<模式记忆>")
+            lines.append("以下是从长期经验中提取的跨时间统计规律。这些模式不是单次记忆，而是反复出现的结构——它们描述的是'通常会发生什么'，在决策时可以用于预测和校准。")
+            for i, p in enumerate(mem.patterns, 1):
+                tags = p.get("tags", []) or []
+                non_pattern = [t for t in tags if t != "pattern"]
+                dim = non_pattern[0] if len(non_pattern) > 0 else ""
+                sub = non_pattern[1] if len(non_pattern) > 1 else ""
+                conf = p.get("confidence", 0) or 0
+                content = p.get("content", "")
+                label = f"{dim}/{sub}" if dim and sub else dim or sub or f"模式{i}"
+                lines.append(f"- [{label}] (置信度{conf:.0%}) {content}")
+            lines.append("</模式记忆>")
 
         return lines
 
@@ -948,23 +966,6 @@ class SelfImage:
             if major_changes:
                 lines.append(f"近期变化：{'；'.join(major_changes[:5])}")
         return lines
-
-    # ── Patterns: 模式记忆 ──────────────────────────────────
-
-    def _render_patterns(self) -> list[str]:
-        """渲染模式记忆（注入点1: 系统提示词 top-3 高置信度模式）。"""
-        try:
-            if not self._ltm:
-                return []
-            from ..memory.pattern import PatternStorage, PatternInjector
-            storage = PatternStorage(self._ltm)
-            injector = PatternInjector(storage, self._ltm)
-            rendered = injector.render_system_prompt()
-            if rendered:
-                return ["", rendered]
-        except Exception:
-            pass
-        return []
 
     # ── 文件持久化 ──────────────────────────────────────────
 

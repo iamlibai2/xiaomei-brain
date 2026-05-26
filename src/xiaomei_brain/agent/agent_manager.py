@@ -1,4 +1,4 @@
-"""Multi-agent management with per-agent identity, memory, and talent.md system prompt."""
+"""Multi-agent management with per-agent identity, memory, and identity.md system prompt."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ class AgentInstance:
     Each instance has:
     - id: unique identifier (e.g. "default", "xiaomei", "xiaoming")
     - name: display name (e.g. "小美", "小明")
-    - talent.md: system prompt file, dynamically read at runtime
+    - identity.md: system prompt file, dynamically read at runtime
     - independent memory/, sessions/ directories
     - persistent Agent (created once, reused across conversations)
     """
@@ -62,23 +62,23 @@ class AgentInstance:
     api_key: str = ""
     base_url: str = ""
 
-    # Talent file path
-    talent_path: str = ""
+    # Identity file path
+    identity_path: str = ""
 
     # Persistent Agent (created once, reused)
     _agent: Any = field(default=None, init=False, repr=False)
 
     def get_system_prompt(self) -> str:
-        """Dynamically read talent.md for system prompt."""
-        if self.talent_path and os.path.exists(self.talent_path):
-            with open(self.talent_path, "r", encoding="utf-8") as f:
+        """Dynamically read identity.md for system prompt."""
+        if self.identity_path and os.path.exists(self.identity_path):
+            with open(self.identity_path, "r", encoding="utf-8") as f:
                 return f.read().strip()
         return ""
 
     def agent_dir(self) -> str:
-        """Return the agent's base directory (directory containing talent.md)."""
-        if self.talent_path:
-            return os.path.dirname(self.talent_path)
+        """Return the agent's base directory (directory containing identity.md)."""
+        if self.identity_path:
+            return os.path.dirname(self.identity_path)
         return ""
 
     def _get_agent(self) -> Any:
@@ -121,11 +121,29 @@ class AgentInstance:
         agent = self._get_agent()
         agent.user_id = user_id
         agent.session_id = session_id
-        agent.intent_context = intent_context  # 传递给 Agent
+
+        # 记录用户消息到 DB
+        user_msg_id = None
+        if agent.conversation_db:
+            user_msg_id = agent.conversation_db.log(
+                session_id=session_id,
+                role="user",
+                content=user_input,
+            )
+        agent.messages.append({"role": "user", "content": user_input, "id": user_msg_id})
+
+        # 构建预组装消息
+        system_prompt = self.get_system_prompt()
+        if intent_context:
+            system_prompt = system_prompt + "\n\n" + intent_context if system_prompt else intent_context
+        assembled = []
+        if system_prompt:
+            assembled.append({"role": "system", "content": system_prompt})
+        assembled.append({"role": "user", "content": user_input})
 
         # Run ReAct loop with streaming
         chunks = []
-        for chunk in agent.stream(user_input, consciousness_state=consciousness_state):
+        for chunk in agent.stream(messages=assembled):
             chunks.append(chunk)
             if on_chunk:
                 on_chunk(chunk)
@@ -154,8 +172,8 @@ class AgentConfig:
     api_key: str = ""
     base_url: str = ""
 
-    # Optional talent.md content (if not provided, defaults to global system_prompt)
-    talent_content: str = ""
+    # Optional identity.md content (if not provided, defaults to global system_prompt)
+    identity_content: str = ""
 
     # Tool config: list of tool names to enable for this agent
     enabled_tools: list[str] | None = None
@@ -171,7 +189,7 @@ class AgentManager:
             {agent_id}/
                 consciousness/  # 意识层（核心）：身份/火焰/意图/记忆/自我认知
                 │   ├── identity.md
-                │   ├── talent.md
+                │   ├── identity.md
                 │   ├── perception.md
                 │   └── 2026-04-*.json
                 purpose/        # 前额叶层：目标管理
@@ -201,11 +219,11 @@ class AgentManager:
         return os.path.join(self.base_dir, agent_id)
 
     def _self_dir(self, agent_id: str) -> str:
-        """Consciousness 层根目录：talent.md + identity.md + 日志"""
+        """Consciousness 层根目录：identity.md + identity.md + 日志"""
         return os.path.join(self._agent_dir(agent_id), "consciousness")
 
-    def _talent_path(self, agent_id: str) -> str:
-        return os.path.join(self._self_dir(agent_id), "talent.md")
+    def _identity_path(self, agent_id: str) -> str:
+        return os.path.join(self._self_dir(agent_id), "identity.md")
 
     def _memory_dir(self, agent_id: str) -> str:
         return os.path.join(self._agent_dir(agent_id), "memory")
@@ -237,15 +255,15 @@ class AgentManager:
 
         for agent_data in agents_list:
             agent_id = agent_data.get("id", "default")
-            talent_content = agent_data.get("talent", "")
+            identity_content = agent_data.get("identity", "")
 
-            # Create agent directory and talent.md
-            talent_path = self._talent_path(agent_id)
-            if talent_content and not os.path.exists(talent_path):
-                # Only create from config if talent.md doesn't exist yet
-                os.makedirs(os.path.dirname(talent_path), exist_ok=True)
-                with open(talent_path, "w", encoding="utf-8") as f:
-                    f.write(talent_content)
+            # Create agent directory and identity.md
+            identity_path = self._identity_path(agent_id)
+            if identity_content and not os.path.exists(identity_path):
+                # Only create from config if identity.md doesn't exist yet
+                os.makedirs(os.path.dirname(identity_path), exist_ok=True)
+                with open(identity_path, "w", encoding="utf-8") as f:
+                    f.write(identity_content)
 
             # Parse model config (e.g., "minimax/MiniMax-M2.7" -> provider, model)
             model_primary = ""
@@ -266,7 +284,7 @@ class AgentManager:
                 avatar=agent_data.get("avatar"),
                 enabled=agent_data.get("enabled", True),
                 created_at=time.time(),
-                talent_path=talent_path,
+                identity_path=identity_path,
                 provider=provider or agent_data.get("provider", ""),
                 model=model or agent_data.get("model", ""),
                 api_key=agent_data.get("api_key", ""),
@@ -280,12 +298,12 @@ class AgentManager:
             return  # default already exists
 
         global_config = self._get_global_config()
-        default_talent = self._talent_path("default")
-        os.makedirs(os.path.dirname(default_talent), exist_ok=True)
+        default_identity = self._identity_path("default")
+        os.makedirs(os.path.dirname(default_identity), exist_ok=True)
 
         if global_config and global_config.system_prompt:
-            if not os.path.exists(default_talent):
-                with open(default_talent, "w", encoding="utf-8") as f:
+            if not os.path.exists(default_identity):
+                with open(default_identity, "w", encoding="utf-8") as f:
                     f.write(global_config.system_prompt)
 
         instance = AgentInstance(
@@ -294,7 +312,7 @@ class AgentManager:
             description="默认AI助手",
             enabled=True,
             created_at=time.time(),
-            talent_path=default_talent,
+            identity_path=default_identity,
         )
         self._agents["default"] = instance
 
@@ -350,13 +368,13 @@ class AgentManager:
         agent_dir = self._agent_dir(agent_id)
         os.makedirs(agent_dir, exist_ok=True)
 
-        talent_path = self._talent_path(agent_id)
-        if not os.path.exists(talent_path):
-            if config.talent_content:
-                with open(talent_path, "w", encoding="utf-8") as f:
-                    f.write(config.talent_content)
+        identity_path = self._identity_path(agent_id)
+        if not os.path.exists(identity_path):
+            if config.identity_content:
+                with open(identity_path, "w", encoding="utf-8") as f:
+                    f.write(config.identity_content)
             elif self._get_global_config() and self._get_global_config().system_prompt:
-                with open(talent_path, "w", encoding="utf-8") as f:
+                with open(identity_path, "w", encoding="utf-8") as f:
                     f.write(self._get_global_config().system_prompt)
 
         instance = AgentInstance(
@@ -366,7 +384,7 @@ class AgentManager:
             avatar=config.avatar,
             enabled=config.enabled,
             created_at=time.time(),
-            talent_path=talent_path,
+            identity_path=identity_path,
             provider=config.provider,
             model=config.model,
             api_key=config.api_key,
@@ -502,10 +520,10 @@ class AgentManager:
         # ── 新记忆系统初始化 ────────────────────────────────────────────────
         db_path = os.path.join(self._memory_dir(agent.id), "brain.db")
 
-        # Load SelfModel from talent.md (if exists)
-        talent_path = self._talent_path(agent.id)
-        if os.path.exists(talent_path):
-            self_model = SelfModel.load(talent_path)
+        # Load SelfModel from identity.md (if exists)
+        identity_path = self._identity_path(agent.id)
+        if os.path.exists(identity_path):
+            self_model = SelfModel.load(identity_path)
             if self_model and (self_model.purpose_seed.identity or self_model.seed_text):
                 agent.self_model = self_model
 

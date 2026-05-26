@@ -51,6 +51,7 @@ def refresh_memory_window(
     - project_map:         ProjectMentalModel.get_context()
     - experience:          ExperienceMemory.recall(goal_desc, top_k=5)
     - experience_timeline: exp_stream.get_recent(limit=50) — 统一经验流
+    - patterns:            search_by_tags(["pattern"]) — top-5 高置信度模式
     """
     mem = si.memory
 
@@ -224,17 +225,26 @@ def refresh_memory_window(
         except Exception as e:
             logger.warning("[MemoryWindow] 经验流获取失败: %s", e)
 
+    # ── 12. 模式记忆（top-5 高置信度）────────────────────
+    if longterm:
+        try:
+            raw_patterns = longterm.search_by_tags(["pattern"], user_id="global")
+            raw_patterns.sort(key=lambda p: p.get("confidence", 0) or 0, reverse=True)
+            mem.patterns = raw_patterns[:5]
+        except Exception as e:
+            logger.warning("[MemoryWindow] 模式记忆获取失败: %s", e)
+
     # ── 汇总 ──────────────────────────────────────────
     mem.window_size = _count_memories(mem)
 
     logger.info(
         "[MemoryWindow] 刷新完成: narr=%d dag=%d important=%d recalled=%d "
-        "chains=%d proc=%d dialog=%d internal=%d project_map=%d exp=%d timeline=%d total=%d",
+        "chains=%d proc=%d dialog=%d internal=%d project_map=%d exp=%d timeline=%d patterns=%d total=%d",
         len(mem.narratives), len(mem.dag_summaries), len(mem.important_memories),
         len(mem.recalled_memories), len(mem.relation_chains), len(mem.procedures),
         len(mem.recent_dialog), len(mem.internal_narratives),
         len(si.mind.project_map), len(si.mind.experience),
-        len(mem.experience_timeline), mem.window_size,
+        len(mem.experience_timeline), len(mem.patterns), mem.window_size,
     )
 
 
@@ -265,4 +275,5 @@ def _count_memories(mem) -> int:
         + len(mem.procedures)
         + len(mem.recent_dialog)
         + len(mem.internal_narratives)
+        + len(mem.patterns)
     )

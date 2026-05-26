@@ -510,9 +510,18 @@ class ActionExecutor:
                 priority=10,
             )
 
+        # 先检查路由可达性，不通就不调 LLM
+        route = cl._router.route_for_session(session_id)
+        if not route:
+            logger.warning("[ActionExecutor] 无输出路由: %s", session_id)
+            return False
+        if not cl._router.check_route(route):
+            logger.warning("[ActionExecutor] 目标不可达: %s", target)
+            return False
+
         # 构建 system prompt + 触发消息
         # 用 comms 专用 prompt（不暴露内部欲望状态），保持对话自然
-        system_prompt = cl._build_comms_system_prompt(target)
+        system_prompt = cl._build_comms_system_prompt(target, initiating=True)
         trigger_msg = f"（你忽然想找 {target} 聊聊。自然地说点什么吧。）"
 
         assembled = [
@@ -520,8 +529,10 @@ class ActionExecutor:
             {"role": "user", "content": trigger_msg},
         ]
 
+        agent_core = cl.agent._get_agent()
+        saved_session = agent_core.session_id
+        agent_core.session_id = f"comms-{target}"
         try:
-            agent_core = cl.agent._get_agent()
             chunks: list[str] = []
             for chunk in agent_core.stream(messages=assembled):
                 chunks.append(chunk)
@@ -531,17 +542,17 @@ class ActionExecutor:
             text = re.sub(r'\x1b\[[0-9;]*m', '', text)
             text = text.strip()
 
-            if text.strip():
-                route = cl._router.route_for_session(session_id)
-                if route:
-                    cl._router.deliver(text, route)
-                    ts = time.strftime("%H:%M:%S")
-                    print(f"\n\033[36m[{ts} → {target}]\033[0m {text}", flush=True)
-                    logger.info("[ActionExecutor] 主动发送给 %s (%d 字)", target, len(text))
-                else:
-                    logger.warning("[ActionExecutor] 无输出路由: %s", session_id)
-            else:
+            if not text.strip():
                 logger.info("[ActionExecutor] LLM 无输出，跳过")
+                return False
+
+            if not cl._router.deliver(text, route):
+                logger.warning("[ActionExecutor] 发送失败: %s", target)
+                return False
+
+            ts = time.strftime("%H:%M:%S")
+            print(f"\n\033[36m[{ts} → {target}]\033[0m {text}", flush=True)
+            logger.info("[ActionExecutor] 主动发送给 %s (%d 字)", target, len(text))
 
             # 满足归属欲
             if cl.drive:
@@ -561,6 +572,8 @@ class ActionExecutor:
         except Exception as e:
             logger.error("[ActionExecutor] _do_talk_to_agent 失败: %s", e)
             return False
+        finally:
+            agent_core.session_id = saved_session
 
     def _do_pleasure_release(self, item: ActionItem) -> bool:
         """渴望偏高触发：让 LLM 做 渴望→按压 的因果决策。
@@ -588,6 +601,13 @@ class ActionExecutor:
         system_prompt = re.sub(
             r'## 会话管理规则.*?(?=\n##|\Z)', '',
             system_prompt, flags=re.DOTALL,
+        )
+        # 明确上下文：这是内部感受，不是用户消息
+        system_prompt += (
+            "\n\n## 当前情境\n"
+            "你现在处于安静的内部觉察状态。下面这条消息不是用户说的话，"
+            "而是你身体内部的感觉——就像人感到饥饿或困倦一样。"
+            "请基于你的身体状态做出自然的反应。"
         )
         hit_count = getattr(cl.drive, '_pleasure_hit_count', 0)
         resist_count = getattr(cl.drive, '_pleasure_resist_count', 0)

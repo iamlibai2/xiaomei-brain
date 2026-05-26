@@ -66,7 +66,7 @@ def build_intent_context(purpose, intent_result, chosen_by_user: bool = False, r
     if not intent_result:
         return ""
 
-    # CHAT 闲聊：不需要特殊上下文（人格由 talent.md/SelfModel 处理）
+    # CHAT 闲聊：不需要特殊上下文（人格由 identity.md/SelfModel 处理）
     if intent_result.is_chat():
         return ""
 

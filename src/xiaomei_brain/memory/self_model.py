@@ -1,11 +1,11 @@
 """SelfModel: Agent's persistent identity across sessions.
 
-Extends talent.md from plain text to structured self-model with:
+Extends identity.md from plain text to structured self-model with:
 - PurposeSeed: identity, calling, passions, boundaries (preset, grows through reflection)
 - Self-cognition: what I'm good at, what I'm not
 - Growth log: reflections and discoveries over time
 
-The talent.md format is backward compatible: old plain-text files are parsed
+The identity.md format is backward compatible: old plain-text files are parsed
 as seed_text with no structure. New structured files use markdown headers.
 """
 
@@ -44,7 +44,7 @@ class GrowthEntry:
 
 @dataclass
 class SelfModel:
-    """Agent's persistent self-model, stored as talent.md.
+    """Agent's persistent self-model, stored as identity.md.
 
     Three rendering modes for system prompt:
     - flow (心流): identity only — minimal, task-focused
@@ -66,8 +66,8 @@ class SelfModel:
 
     # ── Serialization ───────────────────────────────────────────
 
-    def to_talent_md(self) -> str:
-        """Render as structured talent.md markdown."""
+    def to_identity_md(self) -> str:
+        """Render as structured identity.md markdown."""
         lines: list[str] = []
 
         # 身份
@@ -161,8 +161,8 @@ class SelfModel:
         return "\n".join(lines).strip() + "\n"
 
     @classmethod
-    def from_talent_md(cls, content: str) -> SelfModel:
-        """Parse talent.md into SelfModel.
+    def from_identity_md(cls, content: str) -> SelfModel:
+        """Parse identity.md into SelfModel.
 
         Backward compatible: if no structured headers found, treats entire
         content as seed_text and extracts identity from first line.
@@ -322,25 +322,25 @@ class SelfModel:
 
     def _render_reflect(self) -> str:
         """反省模式: full self-model for deep self-awareness."""
-        return self.to_talent_md()
+        return self.to_identity_md()
 
     # ── File I/O ────────────────────────────────────────────────
 
     @classmethod
     def load(cls, path: str | Path) -> SelfModel:
-        """Load SelfModel from talent.md file."""
+        """Load SelfModel from identity.md file."""
         p = Path(path)
         if not p.exists():
-            logger.warning("talent.md not found: %s", p)
+            logger.warning("identity.md not found: %s", p)
             return cls()
         content = p.read_text(encoding="utf-8")
-        return cls.from_talent_md(content)
+        return cls.from_identity_md(content)
 
     def save(self, path: str | Path) -> None:
-        """Save SelfModel to talent.md file."""
+        """Save SelfModel to identity.md file."""
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(self.to_talent_md(), encoding="utf-8")
+        p.write_text(self.to_identity_md(), encoding="utf-8")
         logger.info("SelfModel saved to %s", p)
 
     # ── Growth ──────────────────────────────────────────────────

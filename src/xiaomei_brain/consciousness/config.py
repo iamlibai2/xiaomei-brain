@@ -54,7 +54,7 @@ class ActionConfig:
     intent_reflect_cooldown: float = 7200.0
     intent_act_cooldown: float = 3600.0
     intent_work_cooldown: float = 60.0       # WORK 冷却短，允许频繁工作
-    intent_learn_cooldown: float = 7200.0   # 学习冷却长，避免重复
+    intent_learn_cooldown: float = 300.0    # 学习冷却 5 分钟
     intent_express_cooldown: float = 1800.0  # 表达冷却中等
     intent_progress_cooldown: float = 3600.0  # 推进目标冷却
 
@@ -64,7 +64,7 @@ class ActionConfig:
 
     # 欲望冷却时间（秒）
     desire_greet_cooldown: float = 3600.0
-    desire_learn_cooldown: float = 7200.0
+    desire_learn_cooldown: float = 600.0   # 认知欲驱动学习冷却 10 分钟
     desire_achievement_cooldown: float = 3600.0
     desire_express_cooldown: float = 3600.0
     desire_talk_to_agent_cooldown: float = 60.0  # 主动和其他 agent 聊天冷却（测试：1分钟）

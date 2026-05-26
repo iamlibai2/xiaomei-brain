@@ -191,17 +191,17 @@ class Consciousness:
         self._storage = storage
 
     def restore_from_storage(self) -> bool:
-        """从 talent.md 初始化 SelfImage 身份字段。
+        """从 identity.md 初始化 SelfImage 身份字段。
 
         只初始化身份，运行时状态从零开始。
         """
         import os
-        talent_path = os.path.expanduser(
-            f"~/.xiaomei-brain/{self._agent_id}/talent.md",
+        identity_path = os.path.expanduser(
+            f"~/.xiaomei-brain/{self._agent_id}/consciousness/identity.md",
         )
-        with open(talent_path, "r", encoding="utf-8") as f:
-            self.being.init_from_talent_md(f.read())
-        logger.info("[Consciousness] 从 talent.md 初始化身份: %s", self.being.name)
+        with open(identity_path, "r", encoding="utf-8") as f:
+            self.being.init_from_identity_md(f.read())
+        logger.info("[Consciousness] 从 identity.md 初始化身份: %s", self.being.name)
 
         self.history.accumulated_changes = []
         self.history.last_llm_fuel_time = 0.0

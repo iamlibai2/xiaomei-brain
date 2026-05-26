@@ -175,16 +175,26 @@ class Router:
 
     # ── Delivery ────────────────────────────────────────────
 
-    def deliver(self, text: str, route: OutputRoute) -> None:
-        """将文本分发到指定路由的通道。"""
+    def check_route(self, route: OutputRoute) -> bool:
+        """检查路由是否可达（不发送消息）。"""
+        adapter = self._adapters.get(route.type)
+        if adapter and hasattr(adapter, 'ping'):
+            return adapter.ping(route.target)
+        return True  # 无 ping 方法的 adapter 默认可达
+
+    def deliver(self, text: str, route: OutputRoute) -> bool:
+        """将文本分发到指定路由的通道。返回 True 表示成功。"""
         adapter = self._adapters.get(route.type)
         if adapter:
             try:
                 adapter.send(route.target, text)
+                return True
             except Exception as e:
                 logger.warning("[Router] 分发失败 (%s/%s): %s", route.type, route.target, e)
+                return False
         else:
             logger.debug("[Router] 无适配器: %s", route.type)
+            return False
 
     # ── Internal ────────────────────────────────────────────
 

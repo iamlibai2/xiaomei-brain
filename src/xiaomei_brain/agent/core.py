@@ -98,7 +98,7 @@ class Agent:
         self.longterm_memory: LongTermMemory | None = None
         self.memory_extractor: MemoryExtractor | None = None
 
-        self.messages: list[dict[str, Any]] = []
+        self._messages: dict[str, list[dict[str, Any]]] = {}  # session_id → messages
         self.user_id: str = "global"
         self.session_id: str = "main"
         self.tool_call_buffer: ToolCallBuffer = ToolCallBuffer()  # 实例级，每个 Agent 独立
@@ -115,6 +115,15 @@ class Agent:
         self.on_compact: Callable[[dict], None] | None = None
         self._compact_locks: dict[str, threading.Lock] = {}
         self._locks_lock = threading.Lock()
+
+    @property
+    def messages(self) -> list[dict[str, Any]]:
+        """当前 session 的消息列表（按 self.session_id 分桶）。"""
+        return self._messages.setdefault(self.session_id, [])
+
+    @messages.setter
+    def messages(self, value: list[dict[str, Any]]) -> None:
+        self._messages[self.session_id] = value
 
     def _auto_compact(self, session_id: str, max_tokens: int, messages: list[dict] | None = None) -> None:
         """Auto-compact: 消息积累到阈值时自动压缩为 DAG 叶子摘要。
@@ -214,8 +223,8 @@ class Agent:
         return {}
 
     def stream(
-        self, user_input: str = "", consciousness_state: dict | None = None,
-        messages: list[dict[str, Any]] | None = None,
+        self,
+        messages: list[dict[str, Any]],
         cancel_check: Callable[[], bool] | None = None,
     ) -> Generator[str, None, None]:
         """Run the agent with streaming output.
@@ -224,79 +233,9 @@ class Agent:
         Tool calls are handled transparently; only final text is yielded.
 
         Args:
-            messages: 预组装好的消息列表。传入时跳过所有组装逻辑，直接进 ReAct。
+            messages: 预组装好的消息列表，直接进 ReAct。
         """
-        # ── 预组装消息：跳过组装，直接进 ReAct ────────────────
-        if messages is not None:
-            openai_tools = self.tools.to_openai_tools() if self.tools.list_tools() else None
-        else:
-            # ── 轻量路径：记录用户消息 + DAG 压缩，上下文由调用方组装 ──
-            self._last_user_input = user_input
-
-            # Log user message to DB
-            user_msg_id = None
-            if self.conversation_db:
-                user_msg_id = self.conversation_db.log(
-                    session_id=self.session_id,
-                    role="user",
-                    content=user_input,
-                )
-
-            # Co-write to experience stream
-            if self.exp_stream:
-                try:
-                    self.exp_stream.log(
-                        type="user_msg",
-                        content=user_input,
-                        session_id=self.session_id,
-                        related_id=str(user_msg_id) if user_msg_id else "",
-                    )
-                except Exception as e:
-                    logger.debug("[ExpStream] co-write user_msg failed: %s", e)
-
-            # Add user message to self.messages
-            self.messages.append({"role": "user", "content": user_input, "id": user_msg_id})
-
-            openai_tools = self.tools.to_openai_tools() if self.tools.list_tools() else None
-
-            # Auto-compact: 防止 messages 无限增长
-            if self.dag and self.session_id:
-                self._auto_compact(self.session_id, 50000, self.messages)
-
-            # 加载 DAG 摘要到 system_prompt（轻量路径无 SelfImage，直接注入）
-            if self.dag and self.session_id:
-                try:
-                    summaries = self.dag.get_higher_summaries(self.session_id, max_tokens=10000)
-                    if summaries:
-                        dag_block = "\n\n<历史摘要>\n"
-                        for s in summaries:
-                            dag_block += f"<summary depth=\"{s.depth}\">{s.content}</summary>\n"
-                        dag_block += "</历史摘要>"
-                        # 去掉旧的 DAG 块再拼接，防止每次调用重复追加
-                        base = (self.system_prompt or "")
-                        marker = "\n\n<历史摘要>"
-                        if marker in base:
-                            base = base[:base.index(marker)]
-                        self.system_prompt = base + dag_block
-                except Exception as e:
-                    logger.warning("[DAG] 加载摘要到 system_prompt 失败: %s", e)
-
-            # Token 裁剪：messages 超过预算时丢弃最旧的非系统消息
-            max_total = 50000
-            messages_budget = max(200, max_total - 2000)  # 预留 2000 给 system prompt
-            trimmed = []
-            used = 0
-            for m in reversed(self.messages):
-                t = estimate_tokens(m.get("content", ""))
-                if used + t > messages_budget and trimmed:
-                    break
-                trimmed.append(m)
-                used += t
-            if len(trimmed) < len(self.messages):
-                orig_count = len(self.messages)
-                self.messages = list(reversed(trimmed))
-                logger.info("[Context] trimmed messages: %d → %d (budget=%d, used=%d)",
-                           orig_count, len(trimmed), messages_budget, used)
+        openai_tools = self.tools.to_openai_tools() if self.tools.list_tools() else None
 
         from xiaomei_brain.agent.cli_display import (
             get_hint, print_tool_call, print_tool_result,
@@ -310,21 +249,14 @@ class Agent:
         _last_tool = ""
         _tool_failure_counts: dict[tuple, int] = {}  # (name, args_json) -> 失败次数
 
-        # 当 messages 预组装时，self.messages 里已有的消息已经在 messages 中了
-        # 记录此时的长度，后续只拼接 ReAct 循环中新增的消息
-        _pre_count = len(self.messages) if messages is not None else 0
+        # 记录此时的 messages 长度，后续只拼接 ReAct 循环中新增的消息
+        _pre_count = len(self.messages)
 
         for step in range(self.max_steps):
             if cancel_check and cancel_check():
                 logger.info("[Agent] ReAct 已取消 (step=%d)", step)
                 break
-            # All steps: 预组装消息 或 self.messages
-            if messages is not None:
-                all_messages = list(messages) + self.messages[_pre_count:]
-            elif self.system_prompt:
-                all_messages = [{"role": "system", "content": self.system_prompt}] + list(self.messages)
-            else:
-                all_messages = list(self.messages)
+            all_messages = list(messages) + self.messages[_pre_count:]
 
             # Remove orphaned tool messages (tool without preceding assistant tool_calls)
             # and orphaned assistant(tool_calls) (tool responses missing after DAG compression)
@@ -699,7 +631,7 @@ class Agent:
                         except Exception as e:
                             logger.debug("[ExpStream] react_nodb tool_exec failed: %s", e)
             else:
-                final_text = response.content or ""
+                final_text = response.content or response.reasoning_content or ""
                 if final_text:
                     if _label_name:
                         print(f"\n{_color}── {_label_name} ──{_reset}", flush=True)
@@ -722,7 +654,7 @@ class Agent:
         all_messages = list(messages) + loop_messages + [finish_msg]
         all_messages = clean_messages(all_messages)
         resp = self.llm.chat(messages=all_messages, tools=None)
-        final_text = resp.content or ""
+        final_text = resp.content or resp.reasoning_content or ""
         if final_text:
             if _label_name:
                 print(f"\n{_color}── {_label_name} ──{_reset}", flush=True)
@@ -767,18 +699,18 @@ class Agent:
 
     # ── Helpers ──────────────────────────────────────────────────
 
-    def load_self_model(self, talent_path: str) -> None:
-        """Load SelfModel from talent.md at startup."""
-        self.self_model = SelfModel.load(talent_path)
+    def load_self_model(self, identity_path: str) -> None:
+        """Load SelfModel from identity.md at startup."""
+        self.self_model = SelfModel.load(identity_path)
         if self.self_model and self.self_model.purpose_seed.identity:
             logger.info("SelfModel loaded: %s", self.self_model.purpose_seed.identity[:50])
         elif self.self_model and self.self_model.seed_text:
             logger.info("SelfModel loaded (legacy format)")
 
-    def save_self_model(self, talent_path: str) -> None:
-        """Save SelfModel to talent.md at shutdown."""
+    def save_self_model(self, identity_path: str) -> None:
+        """Save SelfModel to identity.md at shutdown."""
         if self.self_model:
-            self.self_model.save(talent_path)
+            self.self_model.save(identity_path)
 
     def _log_llm_call(self, step: int, messages: list[dict], tools: list | None, response_text: str | None = None) -> None:
         """Log complete LLM input/output for debugging."""

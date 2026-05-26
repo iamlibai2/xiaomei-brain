@@ -257,12 +257,6 @@ class ConsciousLiving(Living):
             exp_stream=exp_stream,
         )
 
-        # 注入 LTM 到 SelfImage（供模式记忆渲染）
-        ltm = getattr(self.agent, 'longterm_memory', None)
-        if ltm:
-            self.consciousness.self_image.set_ltm(ltm)
-            logger.info("[ConsciousLiving] LTM 已注入到 SelfImage")
-
         # 命令注册表 — 从 living_commands 加载（测试/调试/系统操作）
         from .living_commands import COMMAND_REGISTRY, list_commands as _list_cmds
         self._list_commands = lambda: _list_cmds(self)
@@ -664,12 +658,12 @@ class ConsciousLiving(Living):
         if not restored:
             restored = self.consciousness.restore_from_storage()
 
-        # 4. 从 talent.md 加载身份字段（L0-L3 + 追求/热爱/底线/自我认知）
+        # 4. 从 identity.md 加载身份字段（L0-L3 + 追求/热爱/底线/自我认知）
         import os
-        talent_path = os.path.expanduser(f"~/.xiaomei-brain/{self._agent_id}/talent.md")
-        with open(talent_path, "r", encoding="utf-8") as f:
-            self.consciousness.being.init_from_talent_md(f.read())
-        logger.info("[ConsciousLiving] 从 talent.md 初始化身份")
+        identity_path = os.path.expanduser(f"~/.xiaomei-brain/{self._agent_id}/consciousness/identity.md")
+        with open(identity_path, "r", encoding="utf-8") as f:
+            self.consciousness.being.init_from_identity_md(f.read())
+        logger.info("[ConsciousLiving] 从 identity.md 初始化身份")
 
         # 如果还是没有数据，使用默认值
         si = self.consciousness.get_self_image()
@@ -826,14 +820,31 @@ class ConsciousLiving(Living):
         LLM 不知道消息怎么送达的，它只是在跟当前 session 的人说话。
         """
         target_agent = msg.session_id.replace("comms-", "")
+
+        # 先检查目标是否可达，不通就不调 LLM
+        route = self._router.route_for_session(msg.session_id)
+        if route and not self._router.check_route(route):
+            logger.warning("[Comms] 目标不可达: %s", target_agent)
+            return
+
         self._chatting = True
         try:
             agent_core = self.agent._get_agent()
+            # 切换到 comms session，stream() 的 self.messages 自动分桶
+            saved_session = agent_core.session_id
+            agent_core.session_id = f"comms-{target_agent}"
 
             system_prompt = self._build_comms_system_prompt(target_agent)
             assembled = [{"role": "system", "content": system_prompt}]
             if msg.content:
                 assembled.append({"role": "user", "content": msg.content})
+                # 记录 incoming agent 消息到 DB（分桶隔离，不污染主对话）
+                if agent_core.conversation_db:
+                    agent_core.conversation_db.log(
+                        session_id=agent_core.session_id,
+                        role="user",
+                        content=msg.content,
+                    )
 
             # 静默 ReAct — reasoning_content 以灰色 ANSI 包裹
             chunks: list[str] = []
@@ -858,15 +869,17 @@ class ConsciousLiving(Living):
             if clean_text:
                 route = self._router.route_for_session(msg.session_id)
                 if route:
-                    self._router.deliver(clean_text, route)
-                    ts = time.strftime("%H:%M:%S")
-                    self._debug_log("comms", f"{ts} → {target_agent}: {clean_text[:80]}")
-                    # 终端打印完整内容（含思考过程，ANSI 天然区分）
-                    print(f"\n\033[36m[{ts} → {target_agent}]\033[0m {raw_text}", flush=True)
-                    logger.debug(
-                        "[Comms] 自动回复 %s (%d 字): %s",
-                        target_agent, len(clean_text), clean_text[:100],
-                    )
+                    if self._router.deliver(clean_text, route):
+                        ts = time.strftime("%H:%M:%S")
+                        self._debug_log("comms", f"{ts} → {target_agent}: {clean_text[:80]}")
+                        # 终端打印完整内容（含思考过程，ANSI 天然区分）
+                        print(f"\n\033[36m[{ts} → {target_agent}]\033[0m {raw_text}", flush=True)
+                        logger.debug(
+                            "[Comms] 自动回复 %s (%d 字): %s",
+                            target_agent, len(clean_text), clean_text[:100],
+                        )
+                    else:
+                        logger.warning("[Comms] 发送失败: %s", target_agent)
                 else:
                     logger.warning("[Comms] 无输出路由: %s", msg.session_id)
             else:
@@ -874,22 +887,38 @@ class ConsciousLiving(Living):
         except Exception as e:
             logger.error("[Comms] 处理失败: %s", e)
         finally:
+            agent_core.session_id = saved_session
             self._chatting = False
 
-    def _build_comms_system_prompt(self, target_agent: str) -> str:
+    def _build_comms_system_prompt(self, target_agent: str, initiating: bool = False) -> str:
         """构建 agent 间通讯的 system prompt。
 
         LLM 被告知正在和另一个 agent 对话，
         只需自然地说话，系统会自动把回复送达给对方。
+
+        Args:
+            target_agent: 对方 agent ID
+            initiating: True=你主动找对方, False=对方发消息给你（回复模式）
         """
         si = self.consciousness.get_self_image() if self._load_consciousness else None
         identity = si.inject_consciousness(mode="daily") if si else f"你是 {self._agent_id}。"
 
+        if initiating:
+            direction = (
+                f"## 当前对话对象\n"
+                f"你忽然想找 **{target_agent}**（另一个 AI agent）聊聊，于是主动发了条消息过去。\n"
+                f"你的开场白已显示在下方。自然地开始对话。\n\n"
+            )
+        else:
+            direction = (
+                f"## 当前对话对象\n"
+                f"你现在正在和 **{target_agent}**（另一个 AI agent）对话。\n"
+                f"{target_agent} 发来的消息已显示在下方。\n\n"
+            )
+
         return (
             f"{identity}\n\n"
-            f"## 当前对话对象\n"
-            f"你现在正在和 **{target_agent}**（另一个 AI agent）对话。\n"
-            f"你收到的消息已显示在下方。\n\n"
+            f"{direction}"
             f"## 重要规则\n"
             f"1. 你的文字回复会**自动送达**给 {target_agent}，你不需要使用 send_message 工具\n"
             f"2. 就像和一个人面对面聊天一样自然\n"

@@ -75,8 +75,8 @@ class Being:
         # relationship_depth / trust_level / relationship_depth_history 是运行时值，
         # 不从快照恢复，后续由交互驱动更新
 
-    def init_from_talent_md(self, md_text: str) -> None:
-        """从 talent.md 解析 Being 的活身份字段。
+    def init_from_identity_md(self, md_text: str) -> None:
+        """从 identity.md 解析 Being 的活身份字段。
 
         不变字段（特质/价值观/存在意义/追求/热爱/底线）走 extract_essence_items() 进 Essence。
         """
@@ -120,9 +120,9 @@ class Being:
 
     @staticmethod
     def extract_essence_items(md_text: str) -> list[dict]:
-        """从 talent.md 提取不变字段，返回 Essence.add_batch() 可用的 item 列表。
+        """从 identity.md 提取不变字段，返回 Essence.add_batch() 可用的 item 列表。
 
-        talent.md section → essence category 映射：
+        identity.md section → essence category 映射：
           #特质 → trait, #价值观 → value, #存在意义 → meaning,
           #追求 → calling, #热爱 → passions, #底线 → boundary
         """
@@ -202,7 +202,7 @@ class Being:
             sections[current_key] = "\n".join(current_lines).strip()
         return sections
 
-    def init_from_talent(self, self_model: Any) -> None:
+    def init_from_identity(self, self_model: Any) -> None:
         """从旧 SelfModel 补充自我认知。
 
         注意：追求/热爱/底线已迁移到 Essence，不再从此方法设置。
@@ -535,8 +535,8 @@ class SelfMind:
             self._goal_progress_history = self._goal_progress_history[-50:]
 
     def update_inner_thought(self, thought: str) -> None:
-        self.inner_thought = thought[:200]
-        self.inner_thought_history.append(thought[:200])
+        self.inner_thought = thought
+        self.inner_thought_history.append(thought)
         if len(self.inner_thought_history) > 10:
             self.inner_thought_history = self.inner_thought_history[-10:]
         self.last_inner_thought_time = time.time()
@@ -622,6 +622,7 @@ class SelfMemory:
     procedures: list[dict] = field(default_factory=list)
     recent_dialog: list[dict] = field(default_factory=list)
     experience_timeline: list[dict] = field(default_factory=list)  # 经验流（统一时间线）
+    patterns: list[dict] = field(default_factory=list)  # 模式记忆（跨时间统计规律，top-5 高置信度）
     window_size: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -638,6 +639,7 @@ class SelfMemory:
             "procedures": self.procedures[-3:],
             "recent_dialog_count": len(self.recent_dialog),
             "experience_timeline_count": len(self.experience_timeline),
+            "patterns_count": len(self.patterns),
             "window_size": self.window_size,
         }
 

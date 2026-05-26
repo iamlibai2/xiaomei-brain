@@ -34,8 +34,8 @@ from xiaomei_brain.prompts import GOAL_LLM_DECOMPOSE_PROMPT
 logger = logging.getLogger(__name__)
 
 
-def _parse_talent_sections(md_text: str) -> dict[str, str]:
-    """解析 talent.md，按 # 标题切分为 {section_name: content}"""
+def _parse_identity_sections(md_text: str) -> dict[str, str]:
+    """解析 identity.md，按 # 标题切分为 {section_name: content}"""
     import re
     sections: dict[str, str] = {}
     current_key = ""
@@ -54,8 +54,8 @@ def _parse_talent_sections(md_text: str) -> dict[str, str]:
     return sections
 
 
-def _parse_talent_list(text: str) -> list[str]:
-    """从 talent.md 的段落中提取列表项（以 '- ' 开头的行）"""
+def _parse_identity_list(text: str) -> list[str]:
+    """从 identity.md 的段落中提取列表项（以 '- ' 开头的行）"""
     items: list[str] = []
     for line in text.split("\n"):
         line = line.strip()
@@ -123,26 +123,26 @@ class PurposeEngine:
     # ========== 初始化 ==========
 
     def _load_meaning(self) -> Meaning:
-        """加载存在意义（从 talent.md）"""
+        """加载存在意义（从 identity.md）"""
         import os
-        talent_path = os.path.expanduser(
-            f"~/.xiaomei-brain/{self.agent_id}/talent.md",
+        identity_path = os.path.expanduser(
+            f"~/.xiaomei-brain/{self.agent_id}/identity.md",
         )
         try:
-            with open(talent_path, "r", encoding="utf-8") as f:
+            with open(identity_path, "r", encoding="utf-8") as f:
                 md_text = f.read()
-            sections = _parse_talent_sections(md_text)
+            sections = _parse_identity_sections(md_text)
             identity = sections.get("身份", self.agent_id)
-            values = _parse_talent_list(sections.get("价值观", ""))
-            constraints = _parse_talent_list(sections.get("底线", ""))
-            aspirations = _parse_talent_list(sections.get("热爱", ""))
+            values = _parse_identity_list(sections.get("价值观", ""))
+            constraints = _parse_identity_list(sections.get("底线", ""))
+            aspirations = _parse_identity_list(sections.get("热爱", ""))
             meaning = Meaning(
                 identity=identity,
                 values=values,
                 constraints=constraints,
                 aspirations=aspirations,
             )
-            logger.info("[PurposeEngine] 从 talent.md 加载存在意义")
+            logger.info("[PurposeEngine] 从 identity.md 加载存在意义")
             return meaning
         except Exception as e:
             logger.warning(f"[PurposeEngine] 加载存在意义失败: {e}")

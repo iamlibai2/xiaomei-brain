@@ -60,7 +60,13 @@ class HTTPP2PAdapter(ChannelAdapter):
             return
 
         host = "0.0.0.0"
-        ports_to_try = [comms_port] if comms_port > 0 else list(range(18765, 18755, -1))
+        if comms_port > 0:
+            ports_to_try = [comms_port]
+        else:
+            # 按 agent_id 确定性分配固定端口，避免 agent 间端口碰撞
+            import hashlib
+            base = 18765 + (int(hashlib.md5(self._agent_id.encode()).hexdigest(), 16) % 100)
+            ports_to_try = [base]
         from ...server.p2p.server import start_comms_server_in_thread
 
         for port in ports_to_try:
@@ -83,6 +89,24 @@ class HTTPP2PAdapter(ChannelAdapter):
                 continue
         else:
             logger.warning("[HTTPP2PAdapter] P2P 通讯服务启动失败（所有端口被占用）")
+
+    def ping(self, target: str) -> bool:
+        """检查目标 agent 是否可达（不发送消息）。"""
+        if not self._directory:
+            return False
+        address = self._directory.resolve(target)
+        if not address:
+            return False
+        import urllib.request
+        try:
+            req = urllib.request.Request(
+                f"http://{address}/health",
+                method="GET",
+            )
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                return 200 <= resp.status < 300
+        except Exception:
+            return False
 
     def send(self, target: str, text: str) -> None:
         """向目标 agent 发送 HTTP 消息。
