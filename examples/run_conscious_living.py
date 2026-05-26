@@ -284,13 +284,49 @@ def main():
     living.on_proactive = on_proactive
     living.on_chat_chunk = on_chat_chunk
 
-    print("命令: /intent | /fuel | /flame | /tick | /identity")
-    print("存储: /db | /memory | /context | /dag")
-    print("任务: !描述 (直接创建目标)")
-    print()
-    print("工具: tool <N> | tool list")
-    print("管理: drive | purpose | clear | new | users")
-    print()
+    # ── 登录（和 Linux 一样，代码层验证） ──────────────────
+    from xiaomei_brain.contacts.manager import IdentityManager
+    contacts_dir = os.path.expanduser(f"~/.xiaomei-brain/{agent_id}/contacts")
+    identity_mgr = IdentityManager(contacts_dir)
+    ids = identity_mgr.list_ids()
+
+    if not ids:
+        print(f"\n\033[33m没有找到任何身份。请在 {contacts_dir}/identities.yaml 中配置。\033[0m")
+        print("示例：")
+        print("  people:")
+        print("    - id: 博士")
+        print("      name: 博士\n")
+        return
+
+    print(f"\n可用身份: {', '.join(ids)}")
+    user_id = None
+    while not user_id:
+        try:
+            user_id = input("login: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            return
+        if not user_id:
+            continue
+        identity = identity_mgr.resolve(user_id)
+        if identity:
+            display_name = identity["name"]
+            # 设置身份
+            living.user_id = user_id
+            agent_core = agent._get_agent()
+            agent_core.user_id = user_id
+            agent_core.user_display_name = display_name
+            # 加载称呼记忆到 SelfImage
+            if hasattr(living, 'consciousness') and living.consciousness:
+                si = living.consciousness.get_self_image()
+                if si:
+                    si.current_user_name = display_name
+                    ltm = getattr(agent, 'longterm_memory', None)
+                    si.load_preferred_names(user_id, ltm)
+            print(f"你好，{display_name}。\n")
+        else:
+            print(f"\033[31m用户 '{user_id}' 不存在。可用: {', '.join(ids)}\033[0m")
+            user_id = None
 
     # ── 后台启动 ────────────────────────────────────────────
     thread = threading.Thread(target=living.run, daemon=True)

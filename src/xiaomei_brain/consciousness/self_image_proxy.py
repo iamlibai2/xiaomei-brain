@@ -76,7 +76,8 @@ class SelfImage:
         self._essence: Any = None               # Essence（底色存储）
         self._project_mental_model: Any = None   # [Layer 2]
         self._experience_memory: Any = None      # [Layer 2]
-        self.current_user_name: str = ""         # 当前对话者显示名（空=未设置，"这位用户"=陌生人）
+        self.current_user_name: str = ""         # 当前对话者显示名
+        self.preferred_names: list[str] = []     # 从记忆加载的所有称呼（初始化时一次向量召回）
         self._assemble_map = {
             "flow":    self._assemble_flow,
             "daily":   self._assemble_daily,
@@ -84,6 +85,24 @@ class SelfImage:
             "reflect": self._assemble_reflect,
             "legacy":  self._assemble_legacy,
         }
+
+    def load_preferred_names(self, user_id: str, longterm_memory: Any = None) -> None:
+        """初始化时一次向量召回，加载该用户的所有称呼到 preferred_names。
+
+        和人一样——见到张三的第一秒，大脑加载他的名字、绰号、关系，
+        后面聊天不需要每次都重新想一遍。
+        """
+        if not user_id or not longterm_memory:
+            return
+        try:
+            results = longterm_memory.recall(
+                query=f"{user_id} 称呼 名字 叫我",
+                user_id=user_id,
+                top_k=5,
+            )
+            self.preferred_names = [m.get("content", "") for m in results]
+        except Exception:
+            self.preferred_names = []
 
     # ── 核心：火焰骨架 tick ─────────────────────────────────
 
@@ -429,19 +448,15 @@ class SelfImage:
             lines.append(f"你的基础性格是{b.personality}。")
         lines.append("")
 
-        # ── 多用户身份验证 ──
-        if self.current_user_name == "这位用户":
-            lines.extend([
-                "## 身份验证",
-                "当前对话者身份未知。你必须先问：\"你是谁？告诉我你的名字和密码。\"",
-                "对方提供名字和密码后，调用 verify_identity 工具验证身份。",
-                "- 验证通过 → 用对方的名字称呼他，正常对话。",
-                "- 验证失败 → 拒绝继续对话。",
-                "- 对方说自己是新用户 → verify_identity 的 is_new 参数设为 true。",
-                "",
-            ])
-        elif self.current_user_name:
+        # ── 当前对话者 ──
+        if self.current_user_name:
             lines.append(f"你正在和{self.current_user_name}对话。")
+            if self.preferred_names:
+                names_str = "、".join(self.preferred_names[:5])
+                lines.append(f"他让你叫他的称呼有：{names_str}。")
+            lines.append("")
+        else:
+            lines.append("当前对话者还没有说他是谁，你可以自然地问他怎么称呼。")
             lines.append("")
 
         lines.extend([

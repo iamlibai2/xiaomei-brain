@@ -272,9 +272,6 @@ class ConsciousLiving(Living):
         import os as _os
         _contacts_dir = _os.path.join(_os.path.expanduser(f"~/.xiaomei-brain/{self._agent_id}"), "contacts")
         self._identity_mgr = IdentityManager(_contacts_dir)
-        # 设置 verify_identity 工具的 agent 目录
-        from xiaomei_brain.tools.builtin.verify_identity import set_agent_dir
-        set_agent_dir(_os.path.expanduser(f"~/.xiaomei-brain/{self._agent_id}"))
         logger.info("[ConsciousLiving] 身份管理器已初始化")
 
         # 统一加载所有子系统（先加载数据，确保 drive/purpose/self_image 已就绪）
@@ -1094,113 +1091,105 @@ class ConsciousLiving(Living):
         sender_id = msg.session_id  # session_id 兼作 sender_id
         identity_mgr = getattr(self, '_identity_mgr', None)
         if identity_mgr:
-            identity = identity_mgr.get_identity(sender_id)
+            identity = identity_mgr.resolve(msg.user_id) if msg.user_id else None
             if identity:
-                msg.user_id = identity
-                msg.user_display_name = identity_mgr.get_display_name(identity)
-                logger.info("[ConsciousLiving] 身份已绑定: sender=%s → %s (%s)", sender_id, identity, msg.user_display_name)
+                msg.user_display_name = identity_mgr.get_display_name(msg.user_id)
+                logger.debug("[ConsciousLiving] 身份已确认: id=%s", msg.user_id)
             else:
-                msg.user_id = sender_id  # 陌生人，用 sender_id 作为临时身份
-                msg.user_display_name = "这位用户"
-                logger.debug("[ConsciousLiving] 未绑定身份: sender=%s", sender_id)
+                msg.user_display_name = msg.user_display_name or "这位用户"
+                logger.debug("[ConsciousLiving] 身份未确认: sender=%s", sender_id)
         else:
             msg.user_display_name = "这位用户"
 
-        # Push sender_id 供 verify_identity 工具使用
-        from xiaomei_brain.tools.builtin.verify_identity import push_current_sender, pop_current_sender
-        push_current_sender(sender_id)
-        try:
-            # 飞书会话
-            if msg.session_id.startswith("feishu-"):
-                logger.info("[Feishu/Step5] _handle_message 收到 feishu 会话消息 (session=%s)", msg.session_id)
+        # 飞书会话
+        if msg.session_id.startswith("feishu-"):
+            logger.info("[Feishu/Step5] _handle_message 收到 feishu 会话消息 (session=%s)", msg.session_id)
 
-            # 设置 agent.user_id（必须在 AttentionLayer 切换前，确保 save/restore 正确分桶）
-            agent_core = self.agent._get_agent()
-            agent_core.user_id = msg.user_id
-            agent_core.user_display_name = getattr(msg, 'user_display_name', '这位用户')
+        # 设置 agent.user_id（必须在 AttentionLayer 切换前，确保 save/restore 正确分桶）
+        agent_core = self.agent._get_agent()
+        agent_core.user_id = msg.user_id
+        agent_core.user_display_name = getattr(msg, 'user_display_name', '这位用户')
 
-            # 切换到消息所属的会话（保存当前 → 恢复目标）
-            if hasattr(self, '_attention') and self._attention:
-                self._attention.switch_to(msg.session_id)
+        # 切换到消息所属的会话（保存当前 → 恢复目标）
+        if hasattr(self, '_attention') and self._attention:
+            self._attention.switch_to(msg.session_id)
 
-            # 重置取消标志（新消息来了，之前的取消失效）
-            self._cancel_requested = False
+        # 重置取消标志（新消息来了，之前的取消失效）
+        self._cancel_requested = False
 
-            # 命令检测（支持 `/cmd` 和裸 `cmd` 两种写法）
-            raw = msg.content.strip()
-            if raw.startswith("/"):
-                raw = raw[1:].strip()
-            parts = raw.split(None, 1)
-            cmd = parts[0].lower() if parts else ""
-            cmd_args = parts[1] if len(parts) > 1 else ""
+        # 命令检测（支持 `/cmd` 和裸 `cmd` 两种写法）
+        raw = msg.content.strip()
+        if raw.startswith("/"):
+            raw = raw[1:].strip()
+        parts = raw.split(None, 1)
+        cmd = parts[0].lower() if parts else ""
+        cmd_args = parts[1] if len(parts) > 1 else ""
 
-            # /intask /inchat 委托给 TaskOrchestrator
-            if cmd in ("intask", "inchat"):
-                if self.task_orchestrator.handle_command(cmd, cmd_args):
-                    self._print_prompt()
-                    self._command_done.set()
-                return
+        # /intask /inchat 委托给 TaskOrchestrator
+        if cmd in ("intask", "inchat"):
+            if self.task_orchestrator.handle_command(cmd, cmd_args):
+                self._print_prompt()
+                self._command_done.set()
+            return
 
-            # 输入 `/` 列出所有命令
-            if not cmd:
-                self._list_commands()
+        # 输入 `/` 列出所有命令
+        if not cmd:
+            self._list_commands()
+            self._command_done.set()
+            return
+        if cmd in self._intent_commands:
+            logger.info("[ConsciousLiving] 执行测试命令: %s %s", cmd, cmd_args)
+            handler = self._intent_commands[cmd]
+            handler(cmd_args)
+            self._command_done.set()
+            return
+
+        # Agent 命令（如 db/memory/dag）
+        if self.agent.commands:
+            result = self.agent.commands.execute(
+                raw,
+                user_id=msg.user_id,
+                session_id=msg.session_id,
+            )
+            if result:
+                logger.info("[ConsciousLiving] Agent 命令: %s", raw)
+                print(f"\n{result.output}", flush=True)
+                self._print_prompt()
                 self._command_done.set()
                 return
-            if cmd in self._intent_commands:
-                logger.info("[ConsciousLiving] 执行测试命令: %s %s", cmd, cmd_args)
-                handler = self._intent_commands[cmd]
-                handler(cmd_args)
-                self._command_done.set()
-                return
 
-            # Agent 命令（如 db/memory/dag）
-            if self.agent.commands:
-                result = self.agent.commands.execute(
-                    raw,
-                    user_id=msg.user_id,
-                    session_id=msg.session_id,
+        # 元技能模式匹配："去学 XX 技能" / "帮我找 XX skill"
+        meta_skill_pattern = re.compile(r'(去学|帮我找|搜索|找一个?).*(技能|skill)', re.IGNORECASE)
+        if meta_skill_pattern.search(raw):
+            domain = re.sub(r'(去学|帮我找|搜索|找一个?|技能|skill|一下|一个|的)', '', raw).strip()
+            if domain:
+                from .action_item import ActionItem, ActionType
+                action_item = ActionItem(
+                    action_type=ActionType.TOOL,
+                    content="meta_skill_pull",
+                    reason=f"对方要求学习技能: {domain}",
+                    priority=0.85,
+                    source="intent",
+                    cooldown_key=f"meta_skill_pull_{domain}",
+                    metadata={"skill_domain": domain},
                 )
-                if result:
-                    logger.info("[ConsciousLiving] Agent 命令: %s", raw)
-                    print(f"\n{result.output}", flush=True)
-                    self._print_prompt()
-                    self._command_done.set()
-                    return
+                self._dispatcher._queue.append(action_item)
+                self._dispatcher.process_queue()
+                self._print_prompt()
+                self._command_done.set()
+                return
 
-            # 元技能模式匹配："去学 XX 技能" / "帮我找 XX skill"
-            meta_skill_pattern = re.compile(r'(去学|帮我找|搜索|找一个?).*(技能|skill)', re.IGNORECASE)
-            if meta_skill_pattern.search(raw):
-                domain = re.sub(r'(去学|帮我找|搜索|找一个?|技能|skill|一下|一个|的)', '', raw).strip()
-                if domain:
-                    from .action_item import ActionItem, ActionType
-                    action_item = ActionItem(
-                        action_type=ActionType.TOOL,
-                        content="meta_skill_pull",
-                        reason=f"对方要求学习技能: {domain}",
-                        priority=0.85,
-                        source="intent",
-                        cooldown_key=f"meta_skill_pull_{domain}",
-                        metadata={"skill_domain": domain},
-                    )
-                    self._dispatcher._queue.append(action_item)
-                    self._dispatcher.process_queue()
-                    self._print_prompt()
-                    self._command_done.set()
-                    return
+        # 用户活跃：满足连接感，归属欲 -0.1，催产素 +0.1
+        if self.drive:
+            self.drive.on_user_active()
 
-            # 用户活跃：满足连接感，归属欲 -0.1，催产素 +0.1
-            if self.drive:
-                self.drive.on_user_active()
+        # 委托给 TaskOrchestrator（"继续"、确认、意图分析、chat）
+        self.task_orchestrator.handle_message(msg, self._get_consciousness_state())
+        self._print_prompt()
 
-            # 委托给 TaskOrchestrator（"继续"、确认、意图分析、chat）
-            self.task_orchestrator.handle_message(msg, self._get_consciousness_state())
-            self._print_prompt()
-
-            # 轮次完成：检查轮次闹钟
-            if self.cron_scheduler:
-                self._check_round_alarms()
-        finally:
-            pop_current_sender()
+        # 轮次完成：检查轮次闹钟
+        if self.cron_scheduler:
+            self._check_round_alarms()
 
     # ── Death & Revival ────────────────────────────────────────
 

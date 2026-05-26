@@ -572,9 +572,6 @@ class AgentManager:
         for ms_tool in create_memory_search_tools(agent.longterm_memory):
             tools.register(ms_tool)
 
-        # 注册身份验证工具（多用户身份 + 渠道绑定）
-        from xiaomei_brain.tools.builtin.verify_identity import register as _reg_verify
-        _reg_verify(tools)
 
         # ── CommandRegistry ──────────────────────────────────────────────
         agent.commands = CommandRegistry(
