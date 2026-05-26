@@ -267,8 +267,8 @@ class AgentLiving:
                         role="assistant",
                         content=f"[系统] 回复失败：{e}",
                     )
-                except Exception:
-                    pass
+                except Exception as db_e:
+                    logger.error("[Living] DB write after chat failure also failed: %s", db_e)
 
     # ── Queue helpers ────────────────────────────────────────────
 
@@ -295,8 +295,8 @@ class AgentLiving:
                     role="assistant",
                     content=f"[主动] {msg.content}",
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error("[Living] Proactive message DB write failed: %s", e)
 
         # Print to CLI console if on_proactive callback is set
         if self.on_proactive:

@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from xiaomei_brain.base.sqlite_store import SQLiteStore
 from xiaomei_brain.prompts import DAG_SUMMARIZE_PROMPT, DAG_PROMOTE_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -41,7 +42,7 @@ class DAGNode:
     created_at: float
 
 
-class DAGSummaryGraph:
+class DAGSummaryGraph(SQLiteStore):
     """DAG-based hierarchical summary system.
 
     Compression lifecycle:
@@ -64,18 +65,9 @@ class DAGSummaryGraph:
         return cls(str(path), llm_client=llm_client)
 
     def __init__(self, db_path: str | Path, llm_client=None) -> None:
-        self.db_path = Path(db_path)
+        super().__init__(db_path)
         self.llm = llm_client
-        self._conn: sqlite3.Connection | None = None
         self._init_tables()
-
-    def _get_conn(self) -> sqlite3.Connection:
-        if self._conn is None:
-            self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
-            self._conn.row_factory = sqlite3.Row
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA foreign_keys=ON")
-        return self._conn
 
     def _init_tables(self) -> None:
         conn = self._get_conn()
@@ -557,10 +549,6 @@ class DAGSummaryGraph:
 
         return result
 
-    def close(self) -> None:
-        if self._conn:
-            self._conn.close()
-            self._conn = None
 
     # ── Internal ────────────────────────────────────────────────
 

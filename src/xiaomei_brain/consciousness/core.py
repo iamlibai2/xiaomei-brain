@@ -326,8 +326,8 @@ class Consciousness:
                     self.mind.recent_memory_summaries = [
                         m.get("content", "")[:100] for m in recent_memories
                     ]
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("[L1] 记忆更新失败: %s", e)
 
         # 检测异常（可通过 l1_anomaly_enabled 关闭）
         anomaly = detect_anomaly(self.self_image) if self._cc.l1_anomaly_enabled else None
@@ -684,8 +684,8 @@ class Consciousness:
                 try:
                     for m in ltm.get_recent(5):
                         recent_memories.append(m.get("content", "")[:50])
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("[L3] 获取最近记忆失败: %s", e)
 
         # 内部叙事：直接用 L1 消化后的自我感知（不再重复读 ltm）
         internal_parts = [

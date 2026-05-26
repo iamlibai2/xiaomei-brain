@@ -276,8 +276,8 @@ class L2Engine:
                         "content": r["content"],
                         "created_at": r["created_at"],
                     })
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("查询目标相关记忆失败: %s", e)
 
         question = self._build_intent_prompt(context, has_goal=has_goal, goal_memories=goal_memories)
 
@@ -364,8 +364,8 @@ class L2Engine:
                 pattern_line = injector.inject_l2_intent(context)
                 if pattern_line:
                     prompt += f"\n{pattern_line}\n"
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Pattern 注入 L2 intent 失败（将跳过）: %s", e)
 
         prompt += "\n如果需要，先执行工具操作。最终输出：\nINTENT: <意图类型>\nREASON: <理由，一句话>\nTOPIC: <学习主题>（仅 LEARN 意图时需要，其他意图不输出此行）"
         return prompt

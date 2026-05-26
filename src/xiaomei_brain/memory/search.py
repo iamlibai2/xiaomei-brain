@@ -37,15 +37,27 @@ class Embedder:
     def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
         self.model_name = model_name
         self._model: Any = None
+        self._unavailable = False
 
     def _load_model(self) -> Any:
         """Lazy-load the model on first use."""
-        if self._model is None:
-            logger.info("Loading embedding model: %s", self.model_name)
-            from sentence_transformers import SentenceTransformer
+        if self._model is not None:
+            return self._model
+        if self._unavailable:
+            raise RuntimeError("Embedding model unavailable: sentence_transformers not installed")
 
-            self._model = SentenceTransformer(self.model_name)
-            logger.info("Embedding model loaded successfully")
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError:
+            self._unavailable = True
+            logger.warning(
+                "sentence_transformers not installed, embedding features disabled."
+            )
+            raise RuntimeError("sentence_transformers not installed")
+
+        logger.info("Loading embedding model: %s", self.model_name)
+        self._model = SentenceTransformer(self.model_name)
+        logger.info("Embedding model loaded successfully")
         return self._model
 
     def embed(self, text: str) -> list[float]:

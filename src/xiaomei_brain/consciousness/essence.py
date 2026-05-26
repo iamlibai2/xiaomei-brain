@@ -14,11 +14,11 @@
 from __future__ import annotations
 
 import logging
-import os
 import sqlite3
 import time
-from pathlib import Path
 from typing import Any
+
+from xiaomei_brain.base.sqlite_store import SQLiteStore
 
 logger = logging.getLogger(__name__)
 
@@ -37,20 +37,12 @@ VALID_CATEGORIES = {
 }
 
 
-class Essence:
+class Essence(SQLiteStore):
     """底色存储 — agent 的只读本质层。"""
 
-    def __init__(self, db_path: str | Path) -> None:
-        self.db_path = Path(db_path)
-        self._conn: sqlite3.Connection | None = None
-        os.makedirs(self.db_path.parent, exist_ok=True)
+    def __init__(self, db_path: str) -> None:
+        super().__init__(db_path)
         self._init_table()
-
-    def _get_conn(self) -> sqlite3.Connection:
-        if self._conn is None:
-            self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
-            self._conn.row_factory = sqlite3.Row
-        return self._conn
 
     def _init_table(self) -> None:
         conn = self._get_conn()
@@ -195,7 +187,3 @@ class Essence:
 
         return "\n".join(lines)
 
-    def close(self) -> None:
-        if self._conn:
-            self._conn.close()
-            self._conn = None

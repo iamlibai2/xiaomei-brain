@@ -75,8 +75,8 @@ class KnowledgeStorage:
             )
             if results:
                 return float(results[0].get("created_at", 0) or 0)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("[LearningStorage] recall 失败 (topic=%s): %s", topic, e)
 
         # 回退：按标签搜索
         try:
@@ -85,8 +85,8 @@ class KnowledgeStorage:
             )
             if results:
                 return float(results[0].get("created_at", 0) or 0)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("[LearningStorage] search_by_tags 失败 (topic=%s): %s", topic, e)
 
         return 0.0
 

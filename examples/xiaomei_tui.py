@@ -510,7 +510,7 @@ class XiaomeiTUI:
 
         # 追加展开的工具调用详情
         if self._expanded_tool is not None:
-            from xiaomei_brain.agent.core import tool_call_buffer
+            from xiaomei_brain.agent.tool_call_buffer import tool_call_buffer
             rec = tool_call_buffer.get(self._expanded_tool)
             if rec:
                 clean_text += f"\n\n{'─' * 40}"
@@ -598,7 +598,7 @@ class XiaomeiTUI:
             parts.append(("class:status-dim", " --\n\n"))
 
         # 最近工具调用
-        from xiaomei_brain.agent.core import tool_call_buffer
+        from xiaomei_brain.agent.tool_call_buffer import tool_call_buffer
         records = tool_call_buffer.recent(5)
         if records:
             parts.append(("class:status-label", " TOOLS\n"))
@@ -727,7 +727,7 @@ class XiaomeiTUI:
 
     def _expand_last_tool(self) -> None:
         """Ctrl+E: 展开/折叠最后一个工具调用。"""
-        from xiaomei_brain.agent.core import tool_call_buffer
+        from xiaomei_brain.agent.tool_call_buffer import tool_call_buffer
         if self._expanded_tool == tool_call_buffer.last_index:
             self._expanded_tool = None
         elif tool_call_buffer.last_index > 0:
@@ -735,7 +735,7 @@ class XiaomeiTUI:
 
     def _list_tools(self) -> None:
         """列出最近工具调用到对话区。"""
-        from xiaomei_brain.agent.core import tool_call_buffer
+        from xiaomei_brain.agent.tool_call_buffer import tool_call_buffer
         records = tool_call_buffer.recent(10)
         if not records:
             self.output_buffer.add("  暂无工具调用记录", style="class:status-dim")

@@ -321,8 +321,8 @@ class AgentManager:
         if self._global_config is None:
             try:
                 self._global_config = Config.from_json()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("failed to load global config, returning None: %s", e)
         return self._global_config
 
     # ── Public API ───────────────────────────────────────────────────

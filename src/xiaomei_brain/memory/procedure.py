@@ -23,6 +23,8 @@ import sqlite3
 import time
 from typing import Any
 
+from xiaomei_brain.base.sqlite_store import SQLiteStore
+
 logger = logging.getLogger("xiaomei_brain.procedure")
 
 _P_LOG = "\033[91m[Procedure]\033[0m"  # 红色标签
@@ -156,19 +158,11 @@ def _validate_trigger_keywords(conditions: list[dict], proc_name: str) -> list[d
 # ── ProcedureStore ────────────────────────────────────────────────
 
 
-class ProcedureStore:
+class ProcedureStore(SQLiteStore):
     """CRUD operations for procedures table."""
 
     def __init__(self, db_path: str) -> None:
-        self.db_path = db_path
-        self._conn: sqlite3.Connection | None = None
-
-    def _get_conn(self) -> sqlite3.Connection:
-        if self._conn is None:
-            self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
-            self._conn.row_factory = sqlite3.Row
-            self._conn.execute("PRAGMA journal_mode=WAL")
-        return self._conn
+        super().__init__(db_path)
 
     def _init_table(self) -> None:
         conn = self._get_conn()

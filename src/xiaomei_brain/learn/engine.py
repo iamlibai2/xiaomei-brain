@@ -115,8 +115,8 @@ class LearningEngine:
                                 fresh.sort(key=lambda t: boosts.get(t, 0), reverse=True)
                                 logger.info("[LearningEngine] 模式加权前3: %s",
                                             str([f"{t}={boosts.get(t, 0):.2f}" for t in fresh[:3]]))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("[LearningEngine] 模式加权失败: %s", e)
                 return random.choice(fresh)
             logger.debug("[LearningEngine] 所有学习兴趣都在冷却中")
 

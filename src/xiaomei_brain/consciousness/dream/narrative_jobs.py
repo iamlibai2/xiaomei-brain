@@ -91,8 +91,8 @@ class NarrativeConsolidationJob:
             try:
                 tags = json.loads(tags_json or "[]")
                 all_tags.update(tags)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("scene_tags JSON 解析失败: %s", e)
 
         for scene_tag in all_tags:
             # 查找该 scene_tag 下的所有 active 记录
@@ -147,8 +147,8 @@ class NarrativeConsolidationJob:
             tags = []
             try:
                 tags = json.loads(scene_tags_json or "[]")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("scene_tags JSON 解析失败: %s", e)
             tag_str = "/".join(tags) if tags else category
             entry_content = f"[{tag_str}] {changed_me}"
             self.cs.self_image.add_growth(content=entry_content)

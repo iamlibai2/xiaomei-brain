@@ -1,9 +1,12 @@
 """File Watcher - 跨平台文件监听，实现热重载"""
 
+import logging
 import os
 import threading
 import time
 from typing import Callable
+
+logger = logging.getLogger(__name__)
 
 
 class FileWatcher:
@@ -59,8 +62,8 @@ class FileWatcher:
         while self._running:
             try:
                 self._check()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("文件检查失败 (%s): %s", self.path, e)
             time.sleep(self.poll_interval)
 
     def _check(self) -> None:
@@ -82,5 +85,5 @@ class FileWatcher:
             # 触发回调
             try:
                 self.callback()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("文件回调失败 (%s): %s", self.path, e)

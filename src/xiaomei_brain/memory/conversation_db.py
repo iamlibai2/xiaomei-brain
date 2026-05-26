@@ -19,6 +19,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from xiaomei_brain.base.sqlite_store import SQLiteStore
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,25 +36,15 @@ def estimate_tokens(text: str | None) -> int:
     return int(cjk * 1.5 + other / 4)
 
 
-class ConversationDB:
+class ConversationDB(SQLiteStore):
     """SQLite conversation log — word-for-word, never delete."""
 
     def __init__(self, db_path: str | Path) -> None:
-        self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn: sqlite3.Connection | None = None
+        super().__init__(db_path)
         self._cleared_at: dict[str, float] = {}  # session_id → cleared_at timestamp
         self._cleared_at_lock = threading.Lock()
         self._init_db()
         logger.info("ConversationDB initialized: %s", self.db_path)
-
-    def _get_conn(self) -> sqlite3.Connection:
-        if self._conn is None:
-            self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
-            self._conn.row_factory = sqlite3.Row
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA foreign_keys=ON")
-        return self._conn
 
     def _init_db(self) -> None:
         conn = self._get_conn()
@@ -408,8 +400,3 @@ class ConversationDB:
 
         return "\n".join(lines)
 
-    def close(self) -> None:
-        """Close the database connection."""
-        if self._conn:
-            self._conn.close()
-            self._conn = None

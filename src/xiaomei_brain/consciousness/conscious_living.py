@@ -382,8 +382,8 @@ class ConsciousLiving(Living):
                 self.interoception.set_llm_callback(llm_client)
                 try:
                     llm_client._interoception = self.interoception
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("无法设置 _interoception 属性: %s", e)
 
     def _register_being_tool(self) -> None:
         """注册 being 工具：将 L2 内心觉察暴露为对话中可调用的工具。
@@ -706,8 +706,8 @@ class ConsciousLiving(Living):
         try:
             from xiaomei_brain.tools.builtin.send_message import set_context
             set_context(self._agent_id, self._directory, self._inbox, router=self._router)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("[ConsciousLiving] send_message set_context 失败: %s", e)
 
         # ── WS Gateway（Web UI 入口）──────────────────────────
         self._ws_thread = None
@@ -1436,8 +1436,8 @@ class ConsciousLiving(Living):
                     role="assistant",
                     content=content,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("[ConsciousLiving/Proactive] 对话日志写入失败: %s", e)
 
         if self.on_proactive:
             self.on_proactive(content)

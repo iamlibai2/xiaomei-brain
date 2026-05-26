@@ -136,8 +136,8 @@ def clean_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if isinstance(content, str):
             try:
                 content = content.encode("utf-8", "surrogatepass").decode("utf-8", "replace")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("消息内容 surrogate 字符清洗失败（保留原文）: %s", e)
             m["content"] = content
         elif isinstance(content, list):
             # 多模态 content 数组：只清洗 text 类型的内容
@@ -147,8 +147,8 @@ def clean_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     text = part.get("text", "")
                     try:
                         text = text.encode("utf-8", "surrogatepass").decode("utf-8", "replace")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("多模态内容 surrogate 字符清洗失败（保留原文）: %s", e)
                     cleaned_parts.append({**part, "text": text})
                 else:
                     cleaned_parts.append(part)

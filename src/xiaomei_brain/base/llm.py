@@ -256,8 +256,8 @@ class LLMClient:
         if self._interoception:
             try:
                 self._interoception.record_llm_call(latency_ms, is_error)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Interoception record_llm_call failed: %s", e)
 
     # region 公共接口
 
@@ -539,8 +539,8 @@ class LLMClient:
         content = self._strip_thinking("".join(content_parts))
         try:
             content = content.encode("utf-8", "surrogatepass").decode("utf-8", "replace")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Content surrogate cleanup failed: %s", e)
 
         tool_calls = []
         for idx in sorted(tool_calls_acc):

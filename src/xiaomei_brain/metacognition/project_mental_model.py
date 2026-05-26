@@ -13,9 +13,12 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 # ── OperationRecord ────────────────────────────────────────────────────
@@ -269,8 +272,8 @@ class ProjectMentalModel:
             response = llm.chat(messages)
             if response and hasattr(response, "content"):
                 return (response.content or "").strip()[:500]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("LLM project summary failed: %s", e)
 
         return None
 

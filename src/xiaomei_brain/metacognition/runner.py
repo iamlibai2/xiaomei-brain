@@ -547,8 +547,8 @@ class PACERunner:
                 else:
                     return "clarify"
             # 如果 ok，继续走下面的具体关键词检查
-        except Exception:
-            pass  # 降级到原有逻辑
+        except Exception as e:
+            logger.debug("autonomy check unavailable, falling back to keyword logic: %s", e)
 
         # 纯问候/闲聊
         trivial = {"你好", "hello", "hi", "在吗", "谢谢", "再见", "好的", "ok", "嗯", "哦"}

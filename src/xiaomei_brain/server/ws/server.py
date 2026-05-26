@@ -79,8 +79,8 @@ async def ws_endpoint(ws: WebSocket) -> None:
     async def send(msg: dict) -> None:
         try:
             await ws.send_json(msg)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("WebSocket send_json failed: %s", e)
 
     try:
         while True:

@@ -169,7 +169,7 @@ def print_write_result(idx: int, name: str, arguments: dict, result: str) -> Non
 def expand_tool_call(index: int, tool_call_buffer: Any = None) -> None:
     """展开指定编号的工具调用详情。"""
     if tool_call_buffer is None:
-        from xiaomei_brain.agent.core import tool_call_buffer as tcb
+        from xiaomei_brain.agent.tool_call_buffer import tool_call_buffer as tcb
         tool_call_buffer = tcb
     rec = tool_call_buffer.get(index)
     if not rec:
@@ -190,7 +190,7 @@ def expand_tool_call(index: int, tool_call_buffer: Any = None) -> None:
 def list_tool_calls(n: int = 5, tool_call_buffer: Any = None) -> None:
     """列出最近 N 次工具调用。"""
     if tool_call_buffer is None:
-        from xiaomei_brain.agent.core import tool_call_buffer as tcb
+        from xiaomei_brain.agent.tool_call_buffer import tool_call_buffer as tcb
         tool_call_buffer = tcb
     records = tool_call_buffer.recent(n)
     if not records:

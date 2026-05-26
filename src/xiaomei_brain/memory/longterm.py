@@ -20,8 +20,9 @@ import os
 import sqlite3
 import threading
 import time
-from pathlib import Path
 from typing import Any
+
+from xiaomei_brain.base.sqlite_store import SQLiteStore
 
 logger = logging.getLogger(__name__)
 
@@ -52,19 +53,18 @@ STATUS_ACTIVE = "active"
 STATUS_EXTINCT = "extinct"
 
 
-class LongTermMemory:
+class LongTermMemory(SQLiteStore):
     """Vector-semantic long-term memory — SQLite metadata + LanceDB vector index."""
 
     VALID_SOURCES = {"immediate", "periodic", "dream", "manual", "insight", "internal", "learned", "hub"}
 
     def __init__(
         self,
-        db_path: str | Path,
+        db_path: str,
         embedding_model: str | None = None,
         embedding_fallback: str | None = None,
     ) -> None:
-        self.db_path = Path(db_path)
-        self._conn: sqlite3.Connection | None = None
+        super().__init__(db_path)
         self._init_tables()
 
         # Embedding model (lazy load, 远程服务器优先)
@@ -86,12 +86,33 @@ class LongTermMemory:
         self._lance_db: Any = None
         self._lance_table: Any = None
 
-        # Background warmup: start loading embedding model now
-        # (已移除 — 远程服务器覆盖了模型加载场景)
+        # Background warmup: pre-load embedding model in background thread
+        t = threading.Thread(target=self._warmup_embedder, daemon=True)
+        t.start()
 
     # ── Embedding ───────────────────────────────────────────────
 
-    # ── Embedding ───────────────────────────────────────────────
+    def _warmup_embedder(self) -> None:
+        """如果远端 embedding 服务未独立启动，才预加载本地模型。
+        避免 model 已经在远端单独运行时还加载本地副本浪费内存。"""
+        # 设置环境变量，确保 sentence_transformers 离线模式
+        os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+        os.environ["HF_HUB_OFFLINE"] = "1"
+
+        try:
+            from sentence_transformers import SentenceTransformer  # noqa: F401
+            # 先检查远端服务，已独立运行则不加载本地模型
+            if self._check_remote():
+                logger.info("Remote embedding server available, using remote (skip local warmup)")
+                return
+            logger.info("No remote embedding server, pre-loading local model: %s", self._embedding_model_name)
+            self._get_embedder()
+        except ImportError:
+            logger.debug("sentence_transformers not installed, skipping embedder warmup")
+        except RuntimeError:
+            pass  # Will retry on first use
+        except Exception as e:
+            logger.debug("[Embed] warmup failed: %s", e)
 
     def _get_embedder(self) -> Any:
         """Lazy-load the embedding model (thread-safe).
@@ -105,7 +126,7 @@ class LongTermMemory:
             if self._embedder is not None:
                 return self._embedder
 
-            # Use local cache only — avoid any network check when model is cached
+            # 离线模式：避免加载时检查 HuggingFace Hub
             os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
             os.environ["HF_HUB_OFFLINE"] = "1"
 
@@ -366,8 +387,8 @@ class LongTermMemory:
         try:
             if table.count_rows() > 0:
                 return
-        except Exception:
-            pass  # count_rows may fail on fresh tables
+        except Exception as e:
+            logger.debug("[LanceDB] count_rows failed (narratives): %s", e)
 
         conn = self._get_conn()
         try:
@@ -422,8 +443,8 @@ class LongTermMemory:
         # Compact fragments after bulk rebuild
         try:
             table.optimize()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("[LanceDB] optimize failed (narratives): %s", e)
 
     def _delete_narrative_vector(self, nm_id: str) -> None:
         """Delete a narrative vector from LanceDB."""
@@ -548,8 +569,8 @@ class LongTermMemory:
         try:
             if table.count_rows() > 0:
                 return
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("[LanceDB] count_rows failed (memories): %s", e)
 
         conn = self._get_conn()
         rows = conn.execute(
@@ -595,18 +616,10 @@ class LongTermMemory:
         # Compact fragments after bulk rebuild
         try:
             table.optimize()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("[LanceDB] optimize failed (memories): %s", e)
 
     # ── SQLite ──────────────────────────────────────────────────
-
-    def _get_conn(self) -> sqlite3.Connection:
-        if self._conn is None:
-            self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
-            self._conn.row_factory = sqlite3.Row
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA foreign_keys=ON")
-        return self._conn
 
     def _init_tables(self) -> None:
         conn = self._get_conn()
@@ -623,7 +636,14 @@ class LongTermMemory:
                 status TEXT DEFAULT 'active',
                 strength REAL DEFAULT 1.0,
                 last_strengthen REAL DEFAULT 0,
-                scene_tags TEXT DEFAULT '[]'
+                scene_tags TEXT DEFAULT '[]',
+                event_time REAL DEFAULT NULL,
+                valid_until REAL DEFAULT NULL,
+                experience_type TEXT DEFAULT '',
+                project_id TEXT DEFAULT '',
+                type TEXT DEFAULT 'experience',
+                confidence REAL DEFAULT NULL,
+                skill_domain TEXT DEFAULT NULL
             );
 
             CREATE TABLE IF NOT EXISTS memory_tags (
@@ -671,6 +691,8 @@ class LongTermMemory:
                 created_at REAL NOT NULL,
                 weight REAL DEFAULT 0.5,
                 last_reinforced REAL DEFAULT 0,
+                source_type TEXT NOT NULL DEFAULT 'experience',
+                target_type TEXT NOT NULL DEFAULT 'experience',
                 FOREIGN KEY (from_memory_id) REFERENCES memories(id) ON DELETE CASCADE,
                 FOREIGN KEY (to_memory_id) REFERENCES memories(id) ON DELETE CASCADE,
                 UNIQUE(from_memory_id, to_memory_id, relation_type)
@@ -755,72 +777,57 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
             CREATE INDEX IF NOT EXISTS idx_narrative_status ON narrative_memories(status);
         """)
 
-        # Migrate existing rows: add status column if missing (existing DB)
-        try:
-            conn.execute("ALTER TABLE memories ADD COLUMN status TEXT DEFAULT 'active'")
-        except Exception:
-            pass  # Column already exists
+        # ── Schema 迁移（PRAGMA user_version 版本追踪）─────────
+        current_version = conn.execute("PRAGMA user_version").fetchone()[0]
 
-        # Migration: add strength/last_strengthen if missing (existing DB)
-        cursor = conn.execute("PRAGMA table_info(memories)")
-        columns = {row[1] for row in cursor.fetchall()}
-        if "strength" not in columns:
-            conn.execute("ALTER TABLE memories ADD COLUMN strength REAL DEFAULT 1.0")
-        if "last_strengthen" not in columns:
-            conn.execute("ALTER TABLE memories ADD COLUMN last_strengthen REAL DEFAULT 0")
+        if current_version < 1:
+            self._migrate_v1(conn)
 
-        # Migration: initialize last_strengthen for existing memories (set to created_at)
-        cursor2 = conn.execute("SELECT COUNT(*) FROM memories WHERE last_strengthen = 0")
-        count = cursor2.fetchone()[0]
-        if count > 0:
-            conn.execute("UPDATE memories SET last_strengthen = created_at WHERE last_strengthen = 0")
-
-        # Migration: add scene_tags if missing (existing DB)
-        cursor3 = conn.execute("PRAGMA table_info(memories)")
-        mem_cols = {row[1] for row in cursor3.fetchall()}
-        if "scene_tags" not in mem_cols:
-            conn.execute("ALTER TABLE memories ADD COLUMN scene_tags TEXT DEFAULT '[]'")
-
-        # Migration: add event_time/valid_until if missing
-        if "event_time" not in mem_cols:
-            conn.execute("ALTER TABLE memories ADD COLUMN event_time REAL DEFAULT NULL")
-        if "valid_until" not in mem_cols:
-            conn.execute("ALTER TABLE memories ADD COLUMN valid_until REAL DEFAULT NULL")
-
-        # Migration: add weight/last_reinforced to memory_relations if missing
-        cursor4 = conn.execute("PRAGMA table_info(memory_relations)")
-        rel_cols = {row[1] for row in cursor4.fetchall()}
-        if "weight" not in rel_cols:
-            conn.execute("ALTER TABLE memory_relations ADD COLUMN weight REAL DEFAULT 0.5")
-        if "last_reinforced" not in rel_cols:
-            conn.execute("ALTER TABLE memory_relations ADD COLUMN last_reinforced REAL DEFAULT 0")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_strength ON memories(strength)")
 
-        # ── 知识系统 Phase 1 迁移 ──────────────────────────
+        conn.commit()
+
+    def _migrate_v1(self, conn: sqlite3.Connection) -> None:
+        """v0 → v1：memories / memory_relations 补列。"""
+        cursor = conn.execute("PRAGMA table_info(memories)")
+        mem_cols = {row[1] for row in cursor.fetchall()}
+
         for col_name, col_def in [
+            ("status", "TEXT DEFAULT 'active'"),
+            ("strength", "REAL DEFAULT 1.0"),
+            ("last_strengthen", "REAL DEFAULT 0"),
+            ("scene_tags", "TEXT DEFAULT '[]'"),
+            ("event_time", "REAL DEFAULT NULL"),
+            ("valid_until", "REAL DEFAULT NULL"),
             ("type", "TEXT DEFAULT 'experience'"),
             ("confidence", "REAL DEFAULT NULL"),
             ("skill_domain", "TEXT DEFAULT NULL"),
+            ("experience_type", "TEXT DEFAULT ''"),
+            ("project_id", "TEXT DEFAULT ''"),
         ]:
             if col_name not in mem_cols:
-                try:
-                    conn.execute(f"ALTER TABLE memories ADD COLUMN {col_name} {col_def}")
-                except sqlite3.OperationalError:
-                    pass
+                conn.execute(f"ALTER TABLE memories ADD COLUMN {col_name} {col_def}")
 
-        # memory_relations 图谱升级
+        # 初始化 last_strengthen
+        cursor2 = conn.execute("SELECT COUNT(*) FROM memories WHERE last_strengthen = 0")
+        if cursor2.fetchone()[0] > 0:
+            conn.execute("UPDATE memories SET last_strengthen = created_at WHERE last_strengthen = 0")
+
+        cursor3 = conn.execute("PRAGMA table_info(memory_relations)")
+        rel_cols = {row[1] for row in cursor3.fetchall()}
+
         for col_name, col_def in [
+            ("weight", "REAL DEFAULT 0.5"),
+            ("last_reinforced", "REAL DEFAULT 0"),
             ("source_type", "TEXT NOT NULL DEFAULT 'experience'"),
             ("target_type", "TEXT NOT NULL DEFAULT 'experience'"),
         ]:
             if col_name not in rel_cols:
-                try:
-                    conn.execute(f"ALTER TABLE memory_relations ADD COLUMN {col_name} {col_def}")
-                except sqlite3.OperationalError:
-                    pass
+                conn.execute(f"ALTER TABLE memory_relations ADD COLUMN {col_name} {col_def}")
 
-        conn.commit()
+        conn.execute(f"PRAGMA user_version = 1")
+        logger.info("[LongTerm] Schema migrated to v1")
 
     # ── Public API ──────────────────────────────────────────────
 
@@ -1207,12 +1214,9 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         Returns:
             list[dict]: 每个 dict 含 content/effective_strength/importance/tags 等字段
         """
-        import sqlite3
         import time as _time
 
-        db_path = str(self.db_path)
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
+        conn = self._get_conn()
         now = _time.time()
 
         rows = conn.execute("""
@@ -1242,7 +1246,6 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         for m in memories:
             m.pop("_rank_score", None)
 
-        conn.close()
         return memories[:top_k]
 
     def _vector_recall(
@@ -2114,11 +2117,6 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
             row = conn.execute("SELECT COUNT(*) FROM memories").fetchone()
         return row[0] if row else 0
 
-    def close(self) -> None:
-        if self._conn:
-            self._conn.close()
-            self._conn = None
-
     def _get_tags(self, memory_id: int) -> list[str]:
         conn = self._get_conn()
         rows = conn.execute(
@@ -2224,8 +2222,8 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
                     params.extend([f"%{keyword}%", top_k * 2])
                     rows = conn.execute(sql, params).fetchall()
                     all_rows.extend(rows)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("[Recall] Keyword search failed for '%s': %s", keyword[:30], e)
 
         seen = {}
         for r in all_rows:

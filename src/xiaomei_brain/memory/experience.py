@@ -128,22 +128,6 @@ class ExperienceMemory:
             ltm: LongTermMemory 实例
         """
         self._ltm = ltm
-        self._ensure_schema()
-
-    def _ensure_schema(self) -> None:
-        """确保 memories 表有 experience 相关列。"""
-        conn = self._ltm._get_conn()
-        try:
-            conn.execute("ALTER TABLE memories ADD COLUMN experience_type TEXT DEFAULT ''")
-        except Exception:
-            pass  # 列已存在
-
-        try:
-            conn.execute("ALTER TABLE memories ADD COLUMN project_id TEXT DEFAULT ''")
-        except Exception:
-            pass  # 列已存在
-
-        conn.commit()
 
     # ── 存储 ──────────────────────────────────────────────────────
 

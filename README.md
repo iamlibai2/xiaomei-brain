@@ -1,66 +1,114 @@
 # Xiaomei Brain
 
-A general-purpose AI Agent framework built with Python and OpenAI API.
+A multi-agent AI framework inspired by human brain architecture. Agents have memory, consciousness, drive, purpose, and metacognition — not just ReAct loops.
 
-## Features
+## Architecture
 
-- **ReAct Loop**: Reason-Act-Observe pattern for autonomous tool use
-- **Tool System**: Decorator-based tool registration with JSON Schema
-- **Builtin Tools**: Shell commands, file read/write
-- **OpenAI Integration**: Function calling with structured responses
-- **Extensible**: Easy to add custom tools
-
-## Installation
-
-```bash
-# Install dependencies (requires uv or pip)
-pip install -e .
-
-# Or with uv
-uv pip install -e .
+```
+Consciousness (flame skeleton + LLM fuel)
+    └─ SelfImage (identity, body, mind, memory, intent)
+        ├─ Drive (emotion, hormone, motivation, desire)
+        ├─ Purpose (meaning → phase goals → executable goals)
+        ├─ Metacognition (inner voice, social perception, self-review)
+        └─ Memory
+            ├─ ConversationDB (raw logs, never deleted)
+            ├─ DAG Summary (hierarchical compression)
+            ├─ Long-Term (vector search + strength decay)
+            ├─ Experience (context → decision → outcome → lesson)
+            ├─ Procedure (learned workflows)
+            └─ Pattern (statistical behavior patterns)
 ```
 
 ## Quick Start
 
 ```bash
-# Set your OpenAI API key
-export OPENAI_API_KEY="your-api-key"
+# Prerequisites
+source /home/iamlibai/workspace/python_env_common/bin/activate
+uv pip install -e . --break-system-packages
 
-# Run the basic agent
-python examples/basic_agent.py
+# CLI interactive mode (full consciousness)
+PYTHONPATH=src python3 examples/run_conscious_living.py --name xiaomei
+
+# Diagnostics
+PYTHONPATH=src python3 -m xiaomei_brain.doctor
 ```
 
-## Usage
+## LLM Providers
 
-```python
-from xiaomei_brain import Agent, Config, ToolRegistry, LLMClient
-from xiaomei_brain.tools.base import tool
+Supports multiple providers configured via `~/.xiaomei-brain/config.json`:
 
-# Configure
-config = Config()
-llm = LLMClient(model=config.model, api_key=config.api_key)
+- **Zhipu** (GLM series)
+- **MiniMax**
+- **Volcengine** (Doubao)
+- OpenAI-compatible APIs
 
-# Create and register tools
-tools = ToolRegistry()
+## Features
 
-@tool(name="my_tool", description="A custom tool")
-def my_func(x: int) -> str:
-    return str(x * 2)
+### Consciousness System
+- Flame skeleton: code maintains structure, LLM adds fuel
+- 4-layer heartbeat: L0 skeleton maintenance (1s) → L1 anomaly detection (1min) → L2 dynamic fueling (LLM) → L3 deep burn (dream)
+- 13 intent types: WAIT, GREET, REMIND, RECALL, REFLECT, ACT, DREAM, CARE, LEARN, EXPRESS, PROGRESS, WORK, ALARM, TALK
+- SelfImage: unified identity body/mind/memory/intent with context injection
 
-tools.register(my_func)
+### Drive System (Edge)
+- 4 subsystems: Emotion (minute decay), Hormone (hour decay), Motivation (RPE), Desire (tension)
+- Desire-driven behaviors: greet, learn, progress goals, express ideas
+- Cross-session persistence
 
-# Run agent
-agent = Agent(llm=llm, tools=tools)
-response = agent.run("What's 5 * 2?")
-print(response)
-```
+### Purpose System
+- 3-level goal hierarchy: Meaning → Phase Goals → Executable Goals
+- LLM-assisted goal decomposition and intent understanding
+- Priority calculation with deadline and reinforcement weighting
+
+### Memory System
+- Raw conversation logs with FTS5 search
+- Hierarchical DAG summarization (8 messages → leaf → higher)
+- Vector semantic search via LanceDB + BAAI/bge-m3 embeddings
+- Strength decay model (5 levels: active → extinct)
+- Multi-user isolation with shared global knowledge
+- Context → decision → outcome → lesson experience tuples
+
+### Metacognition
+- Inner voice: self-reflection every 2+ turns
+- Social perception: detects user mood changes, maps to Drive signals
+- Self-review: budget-controlled step checking (rule-based + lightweight LLM)
+
+### Plugin System
+- Channel adapters: CLI, Feishu/Lark, DingTalk, WebSocket, P2P
+- One-line plugin bootstrap: `boot_plugins(agent_id)`
+- Gateway router: rule-based message routing, LLM never sees routing logic
+
+### Tools
+- Shell execution, file read/write/edit
+- Web search, web fetch
+- TTS, image generation, music
+- Memory query/management
+- Custom tool registration via decorators
+
+## CLI Commands
+
+Available at runtime: `/flame`, `/tick`, `/intent`, `/fuel`, `/drive`, `/purpose`, `/plan`, `/db`, `/memory`, `/context`, `/dag`, `/dream`, `/tool`, `/export`, `/model`, `/clear`, `/new`, `/users`, `/sessions`, `/switch`.
+
+## Configuration
+
+- `~/.xiaomei-brain/config.json` — agent registry, LLM providers, tool config
+- `~/.xiaomei-brain/{agent_id}/identity.md` — system prompt (edit to take effect immediately)
+- `~/.xiaomei-brain/{agent_id}/perception.md` — perception rules
+- `~/.xiaomei-brain/{agent_id}/drive_config.yaml` — drive parameters
 
 ## Testing
 
 ```bash
-pytest tests/
+# Memory system
+PYTHONPATH=src python3 examples/test_xiaomei_new.py
+
+# Consciousness integration
+PYTHONPATH=src python3 examples/test_conscious_living.py
+
+# WebSocket server
+PYTHONPATH=src python3 examples/ws_server.py
 ```
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE)

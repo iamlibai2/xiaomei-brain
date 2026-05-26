@@ -94,8 +94,8 @@ def _read_raw_config() -> dict | None:
         if p.is_file():
             try:
                 return json.loads(p.read_text(encoding="utf-8"))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("failed to load config from %s, trying next path: %s", p, e)
     return None
 
 

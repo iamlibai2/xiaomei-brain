@@ -288,8 +288,8 @@ class ActionExecutor:
                         role="assistant",
                         content=clean_result,
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("failed to log assistant response to conversation_db: %s", e)
 
             # 消费已执行的 WORK intent
             intent_type = item.metadata.get("intent_type", "")
@@ -705,7 +705,7 @@ class ActionExecutor:
 
         if llm:
             try:
-                # 刷新记忆窗口
+                # 刷新记忆窗口（embedding 未就绪时 fast-fail，不会阻塞）
                 cl.consciousness._refresh_memory_window()
                 consciousness = si.inject_consciousness()
                 resp = llm.chat(messages=[
@@ -782,7 +782,7 @@ class ActionExecutor:
 
         if llm:
             try:
-                # 刷新记忆窗口
+                # 刷新记忆窗口（embedding 未就绪时 fast-fail，不会阻塞）
                 cl.consciousness._refresh_memory_window()
                 consciousness = si.inject_consciousness()
                 resp = llm.chat(messages=[
@@ -834,7 +834,7 @@ class ActionExecutor:
 
         if llm:
             try:
-                # 刷新记忆窗口
+                # 刷新记忆窗口（embedding 未就绪时 fast-fail，不会阻塞）
                 cl.consciousness._refresh_memory_window()
                 consciousness = si.inject_consciousness()
                 resp = llm.chat(messages=[

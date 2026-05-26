@@ -269,8 +269,8 @@ def _to_local_path(raw: str) -> str:
     try:
         from urllib.parse import unquote
         path = unquote(path)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("URL unquote 失败: %s", e)
     return path
 
 

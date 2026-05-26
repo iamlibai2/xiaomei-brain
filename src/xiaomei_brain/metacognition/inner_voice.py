@@ -252,18 +252,18 @@ class InnerVoice:
         if praise > 0.1:
             try:
                 self._drive.on_praise(min(praise, 1.0))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("[InnerVoice] on_praise 失败: %s", e)
         if expression > 0.3:
             try:
                 self._drive.on_insight(expression * 0.05)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("[InnerVoice] on_insight 失败: %s", e)
         if curiosity > 0.3:
             try:
                 self._drive.on_curiosity(curiosity * 0.08)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("[InnerVoice] on_curiosity 失败: %s", e)
 
         logger.info(
             "[InnerVoice] EVENTS: praise=%.2f, expression=%.2f, curiosity=%.2f",

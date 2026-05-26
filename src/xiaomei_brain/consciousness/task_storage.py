@@ -154,8 +154,8 @@ class TaskStorage:
                         data = json.load(f)
                     if data.get("active_task_id") == task_id:
                         af.unlink()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("failed to read active file during task delete: %s", e)
 
             return True
         except Exception as e:
@@ -173,14 +173,14 @@ class TaskStorage:
         for fp in self.base_dir.glob(f"{self.TASK_PREFIX}*{self.TASK_SUFFIX}"):
             try:
                 fp.unlink()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("failed to delete task file during clear: %s", e)
 
         af = self._active_file()
         if af.exists():
             try:
                 af.unlink()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("failed to delete active file during clear: %s", e)
 
         logger.info("[TaskStorage] 存储已清除")

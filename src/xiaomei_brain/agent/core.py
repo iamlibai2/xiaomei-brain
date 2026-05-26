@@ -24,51 +24,7 @@ from xiaomei_brain.agent.message_utils import (
 logger = logging.getLogger(__name__)
 
 
-# ── Tool call buffer: 追踪工具调用，支持编号索引 ─────────────────
-
-from collections import deque
-from dataclasses import dataclass
-
-_TOOL_BUFFER_MAX = 20
-
-
-@dataclass
-class ToolCallRecord:
-    index: int
-    name: str
-    arguments: dict
-    result: str
-
-
-class ToolCallBuffer:
-    """存储最近工具调用详情，支持编号索引和展开。"""
-
-    def __init__(self, maxlen: int = _TOOL_BUFFER_MAX) -> None:
-        self._counter = 0
-        self._records: deque[ToolCallRecord] = deque(maxlen=maxlen)
-
-    def add(self, name: str, arguments: dict, result: str) -> int:
-        self._counter += 1
-        rec = ToolCallRecord(index=self._counter, name=name, arguments=arguments, result=result)
-        self._records.append(rec)
-        return rec.index
-
-    def get(self, index: int) -> ToolCallRecord | None:
-        for r in self._records:
-            if r.index == index:
-                return r
-        return None
-
-    def recent(self, n: int = 5) -> list[ToolCallRecord]:
-        return list(self._records)[-n:]
-
-    @property
-    def last_index(self) -> int:
-        return self._counter
-
-
-# 全局单例
-tool_call_buffer = ToolCallBuffer()
+from xiaomei_brain.agent.tool_call_buffer import ToolCallBuffer, tool_call_buffer
 
 
 class Agent:

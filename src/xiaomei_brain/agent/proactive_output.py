@@ -157,8 +157,8 @@ class ProactiveOutput:
             try:
                 for m in ltm.get_recent(3, user_id="global"):
                     mem_list.append(m["content"][:40])
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("获取近期记忆失败（将跳过）: %s", e)
         memories = "；".join(mem_list) if mem_list else "无"
 
         # 构建 prompt 并调用 LLM

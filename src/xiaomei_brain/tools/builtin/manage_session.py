@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import time
 
 from xiaomei_brain.tools.base import tool, Tool
+
+logger = logging.getLogger(__name__)
 
 # 全局引用，由 conscious_living 在注册时注入
 _agent_instance = None  # AgentInstance
@@ -52,8 +55,8 @@ def _do_switch(session_id: str) -> str:
                 dag_lines.append("<历史摘要>")
                 for s in summaries:
                     dag_lines.append(f"<summary depth=\"{s.depth}\">{s.content[:300]}</summary>")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("加载 DAG 摘要失败（将跳过）: %s", e)
 
     parts = [
         f"已切换到会话 {session_id}。",

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import logging
+
 from xiaomei_brain.tools.base import tool, Tool
+
+logger = logging.getLogger(__name__)
 
 # 全局引用，由 agent_manager 在注册时注入
 _agent_id: str = ""
@@ -65,8 +69,8 @@ def send_message(to: str, content: str, type: str = "chat") -> str:
                 output_type="http_p2p", output_target=to,
                 priority=10,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Router 注册 peer '%s' 失败: %s", to, e)
 
     # 先检查通讯录
     if _directory is not None:

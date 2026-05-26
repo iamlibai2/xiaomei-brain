@@ -15,8 +15,9 @@ import json
 import logging
 import sqlite3
 import time
-from pathlib import Path
 from typing import Any
+
+from xiaomei_brain.base.sqlite_store import SQLiteStore
 
 logger = logging.getLogger(__name__)
 
@@ -60,24 +61,15 @@ CREATE INDEX IF NOT EXISTS idx_exp_stream_session ON experience_stream(session_i
 """
 
 
-class ExperienceStream:
+class ExperienceStream(SQLiteStore):
     """统一经验流 — 小美一切经历的唯一时间线。"""
 
-    def __init__(self, db_path: str | Path) -> None:
-        self.db_path = Path(db_path)
-        self._conn: sqlite3.Connection | None = None
+    def __init__(self, db_path: str) -> None:
+        super().__init__(db_path)
         self._init_tables()
 
-    def _get_conn(self) -> sqlite3.Connection:
-        """获取或创建数据库连接（允许跨线程访问，WAL 模式保证并发安全）。"""
-        if self._conn is None:
-            self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
-            self._conn.row_factory = sqlite3.Row
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA synchronous=NORMAL")
-            self._conn.execute("PRAGMA foreign_keys=ON")
-        return self._conn
+    def _configure_connection(self, conn: sqlite3.Connection) -> None:
+        conn.execute("PRAGMA synchronous=NORMAL")
 
     def _init_tables(self) -> None:
         """创建 experience_stream 表及索引。"""
@@ -344,8 +336,3 @@ class ExperienceStream:
             ).fetchone()[0]
         return conn.execute("SELECT COUNT(*) FROM experience_stream").fetchone()[0]
 
-    def close(self) -> None:
-        """关闭数据库连接。"""
-        if self._conn:
-            self._conn.close()
-            self._conn = None

@@ -155,8 +155,8 @@ def _update_summary(summary_path: Path, metrics: PACEMetrics) -> None:
             loaded = json.loads(summary_path.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
                 summary.update(loaded)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("failed to load summary JSON, using defaults: %s", e)
 
     summary["total_runs"] += 1
     summary["total_steps"] += metrics.total_steps
