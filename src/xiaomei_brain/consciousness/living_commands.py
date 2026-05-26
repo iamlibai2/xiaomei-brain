@@ -462,6 +462,8 @@ def cmd_user(living: ConsciousLiving, args: str = "") -> None:
     living.user_id = identity_id
     agent_core.user_id = identity_id
     agent_core.user_display_name = display_name
+    # 清除上次 LLM 上下文缓存，避免 /context 显示旧用户的上下文
+    agent_core._last_all_messages = []
 
     # 更新 SelfImage + 加载称呼记忆
     if hasattr(living, 'consciousness') and living.consciousness:
