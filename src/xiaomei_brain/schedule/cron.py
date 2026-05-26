@@ -359,10 +359,10 @@ def create_cron_tools(scheduler: CronScheduler) -> list:
             "设完后你会得到一个闹钟 ID，可以用 cancel_alarm 取消。\n"
             "\n"
             "示例：\n"
-            "- schedule_alarm(when=\"8小时后\", reason=\"我困了想睡一会\", action=\"醒来查看用户有没有找我\")\n"
+            "- schedule_alarm(when=\"8小时后\", reason=\"我困了想睡一会\", action=\"醒来看看对方有没有找我\")\n"
             "- schedule_alarm(when=\"每周一早上9点\", reason=\"\", action=\"检查金价\")\n"
             "- schedule_alarm(when=\"明天凌晨零点\", reason=\"\", action=\"限额重置后自动出图\")\n"
-            "- schedule_alarm(when=\"每30分钟\", reason=\"\", action=\"检查一下用户有没有新消息\")\n"
+            "- schedule_alarm(when=\"每30分钟\", reason=\"\", action=\"检查一下对方有没有新消息\")\n"
         ),
     )
     def schedule_alarm(when: str, reason: str = "", action: str = "") -> str:

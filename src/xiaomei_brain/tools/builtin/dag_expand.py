@@ -27,7 +27,7 @@ def create_dag_tools(
     @tool(
         name="dag_expand",
         description=(
-            "当用户说'展开'、'详细说说'、'之前聊的'、'具体内容'、'我们讨论过'时**必须调用**。"
+            "当对方说'展开'、'详细说说'、'之前聊的'、'具体内容'、'我们讨论过'时**必须调用**。"
             "长期记忆只提供提炼后的结论，本工具可以获取完整的对话细节和原文。"
             "优先使用 node_id 直接展开（上下文中的摘要都带有 node_id）。"
             "没有 node_id 时用 keyword 搜索。"
@@ -50,7 +50,7 @@ def create_dag_tools(
             top_k: 最多返回几个相关摘要，默认为3
             node_id: DAG 摘要的 node_id（上下文中标注），优先使用。传入后直接展开，不搜索
             include_extinct: 是否同时搜索已消亡的长期记忆（extinct），默认False
-            awaken_memory_id: 如果用户选择唤醒某条 extinct 记忆，传入其 id
+            awaken_memory_id: 如果对方选择唤醒某条 extinct 记忆，传入其 id
         """
         # ── Direct expand by node_id ────────────────────────────
         if node_id is not None:
@@ -122,7 +122,7 @@ def create_dag_tools(
 
     @tool(
         name="dag_search",
-        description="搜索历史摘要，不展开。当用户只是想知道某话题是否讨论过时使用。",
+        description="搜索历史摘要，不展开。当对方只是想知道某话题是否讨论过时使用。",
     )
     def dag_search(keyword: str, session_id: str = "main", limit: int = 5) -> str:
         """Search DAG summaries without expanding.

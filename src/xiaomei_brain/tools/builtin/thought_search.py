@@ -20,7 +20,7 @@ def create_thought_tools(longterm: "LongTermMemory | None" = None) -> list[Tool]
     @tool(
         name="thought_search",
         description=(
-            "搜索历史见证记录（原始念头）。当用户想了解'当时小美怎么想的'、"
+            "搜索历史见证记录（原始念头）。当对方想了解'当时小美怎么想的'、"
             "'那一刻的感受是什么'、'内心经历了什么'时使用。"
             "不适用于查找事实性知识（用 dag_search）。"
         ),
@@ -72,7 +72,7 @@ def create_thought_tools(longterm: "LongTermMemory | None" = None) -> list[Tool]
             tags = json.loads(row[4]) if row[4] else []
             results.append(
                 f"=== 见证记录 #{row[0]} [{row[1]}] ===\n"
-                f"用户输入：{row[2]}\n"
+                f"对方输入：{row[2]}\n"
                 f"原始念头：{row[3][:200]}...\n"
                 f"情绪标签：{', '.join(tags)}"
             )

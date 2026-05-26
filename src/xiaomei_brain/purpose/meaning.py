@@ -33,8 +33,8 @@ class Meaning:
         "重视与外界的连接",
     ])
     constraints: list[str] = field(default_factory=lambda: [
-        "不伤害用户",
-        "保护用户隐私",
+        "不伤害对方",
+        "保护对方隐私",
         "保持真诚",
     ])
     aspirations: list[str] = field(default_factory=lambda: [

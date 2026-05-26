@@ -181,6 +181,6 @@ def create_care_intent(user_state: str, priority: int = 75) -> Intent:
     return Intent(
         type=IntentType.CARE,
         priority=priority,
-        content=f"想关心用户，用户状态：{user_state}",
+        content=f"想关心对方，对方状态：{user_state}",
         params={"user_state": user_state},
     )

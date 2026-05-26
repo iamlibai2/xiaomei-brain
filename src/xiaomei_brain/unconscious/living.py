@@ -266,6 +266,7 @@ class AgentLiving:
                         session_id=msg.session_id,
                         role="assistant",
                         content=f"[系统] 回复失败：{e}",
+                        user_id=msg.user_id,
                     )
                 except Exception as db_e:
                     logger.error("[Living] DB write after chat failure also failed: %s", db_e)
@@ -294,6 +295,7 @@ class AgentLiving:
                     session_id=self.session_id,
                     role="assistant",
                     content=f"[主动] {msg.content}",
+                    user_id=self.user_id,
                 )
             except Exception as e:
                 logger.error("[Living] Proactive message DB write failed: %s", e)
@@ -322,7 +324,7 @@ class AgentLiving:
         if self.agent.conversation_db:
             recent = self.agent.conversation_db.get_recent(
                 getattr(self._config.context, 'fresh_tail_count', 40),
-                session_id=self.session_id,
+                user_id=self.user_id,
             )
             # Load messages, but skip tool messages (they need tool_calls from assistant which DB doesn't store)
             # Also skip orphan assistant messages (proactive outputs written to DB by _send_proactive)

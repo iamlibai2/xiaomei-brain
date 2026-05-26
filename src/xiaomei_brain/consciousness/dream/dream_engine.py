@@ -281,7 +281,7 @@ class DreamEngine:
             create_wait_intent,
         )
 
-        if any(k in summary for k in ["用户", "想念", "连接", "一起", "陪伴"]):
+        if any(k in summary for k in ["对方", "想念", "连接", "一起", "陪伴"]):
             intent = create_greet_intent(summary[:50], priority=80)
         elif any(k in summary for k in ["目标", "完成", "进展", "失败"]):
             intent = create_reflect_intent(summary[:50], priority=60)

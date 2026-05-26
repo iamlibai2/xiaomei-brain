@@ -412,6 +412,76 @@ def list_commands(living: ConsciousLiving, args: str = "") -> None:
     living._print_prompt()
 
 
+def cmd_user(living: ConsciousLiving, args: str = "") -> None:
+    """切换当前用户身份: /user 查看, /user <名字> 切换"""
+    logger.info("[CLI] 执行命令: user %s", args)
+
+    agent_core = living.agent._get_agent()
+    identity_mgr = getattr(living, '_identity_mgr', None)
+    cli_sender = f"cli-{living._agent_id}"
+
+    name = args.strip()
+
+    if not name:
+        # 显示当前用户和可用身份
+        current_name = getattr(agent_core, 'user_display_name', '未知')
+        current_id = getattr(agent_core, 'user_id', '未知')
+        print(f"\n当前用户: \033[36m{current_name}\033[0m (user_id={current_id})", flush=True)
+
+        if identity_mgr:
+            identities = identity_mgr._identities
+            if identities:
+                print(f"\n\033[36m已知身份 ({len(identities)}个):\033[0m", flush=True)
+                for iid, info in identities.items():
+                    dn = info.get("display_name", iid)
+                    bound = identity_mgr._bindings.get(cli_sender)
+                    marker = " \033[32m← 当前绑定\033[0m" if bound == iid else ""
+                    print(f"  {dn} ({iid}){marker}", flush=True)
+            else:
+                print("\n\033[90m(无已注册身份，用 /user <名字> 直接切换)\033[0m", flush=True)
+        else:
+            print("\n\033[90m(IdentityManager 未初始化)\033[0m", flush=True)
+
+        living._print_prompt()
+        return
+
+    # 切换到指定身份
+    identity_id = None
+    display_name = name
+
+    if identity_mgr:
+        # 先按 identity_id 精确匹配
+        if name in identity_mgr._identities:
+            identity_id = name
+            display_name = identity_mgr.get_display_name(name)
+        else:
+            # 按 display_name 模糊匹配
+            for iid, info in identity_mgr._identities.items():
+                if info.get("display_name", "") == name:
+                    identity_id = iid
+                    display_name = name
+                    break
+
+        if identity_id:
+            # 已注册身份：绑定 CLI sender_id
+            identity_mgr.unbind(cli_sender)
+            identity_mgr.bind(cli_sender, identity_id)
+        else:
+            # 未注册身份：自动创建（CLI 模式不需要密码）
+            identity_mgr.create_identity(name, "", display_name=name)
+            identity_mgr.unbind(cli_sender)
+            identity_mgr.bind(cli_sender, name)
+            identity_id = name
+
+    # 更新 agent 和 living 状态
+    agent_core.user_id = identity_id
+    agent_core.user_display_name = display_name
+    living.user_id = identity_id
+
+    print(f"\n\033[32m已切换到: {display_name}\033[0m (user_id={identity_id})", flush=True)
+    living._print_prompt()
+
+
 def cmd_pace_stats(living: ConsciousLiving, args: str = "") -> None:
     """`pace-stats` — 显示 PACE 运行统计报告"""
     agent_id = getattr(living, "_agent_id", "")
@@ -527,4 +597,5 @@ COMMAND_REGISTRY: dict[str, tuple] = {
     "pace-stats": (cmd_pace_stats,    False),
     "sessions":  (cmd_sessions,       False),
     "switch":    (cmd_switch,         True),
+    "user":      (cmd_user,           True),
 }

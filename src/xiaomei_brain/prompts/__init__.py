@@ -24,7 +24,8 @@ __all__ = [
     "DREAM_EXTRACT_PROMPT",
     "DREAM_USER_EXTRACT_PROMPT",
     "TASK_COMPLETION_PROMPT",
-    "MEMORY_DECISION_PROMPT",
+    "MEMORY_DECISION_PROMPT",  # deprecated, use get_memory_decision_prompt()
+    "get_memory_decision_prompt",
     "IMMEDIATE_EXTRACT_PROMPT",
     "PROCEDURE_LEARN_PROMPT",
     "PROCEDURE_GENERATE_PROMPT",

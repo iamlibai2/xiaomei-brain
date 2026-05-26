@@ -31,15 +31,16 @@ class DAGNode:
 
     id: int
     session_id: str
-    parent_id: int | None
-    depth: int                  # 0=leaf, 1=mid, 2+=higher
-    content: str
-    token_count: int
-    message_ids: list[int]      # source message IDs (for leaf nodes)
-    child_ids: list[int]        # child summary IDs (for non-leaf nodes)
-    time_start: float
-    time_end: float
-    created_at: float
+    user_id: str = "global"
+    parent_id: int | None = None
+    depth: int = 0              # 0=leaf, 1=mid, 2+=higher
+    content: str = ""
+    token_count: int = 0
+    message_ids: list[int] = field(default_factory=list)  # source message IDs (leaf)
+    child_ids: list[int] = field(default_factory=list)    # child summary IDs (non-leaf)
+    time_start: float = 0.0
+    time_end: float = 0.0
+    created_at: float = 0.0
 
 
 class DAGSummaryGraph(SQLiteStore):
@@ -75,6 +76,7 @@ class DAGSummaryGraph(SQLiteStore):
             CREATE TABLE IF NOT EXISTS summaries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT NOT NULL DEFAULT '',
+                user_id TEXT NOT NULL DEFAULT 'global',
                 parent_id INTEGER DEFAULT NULL,
                 depth INTEGER NOT NULL DEFAULT 0,
                 content TEXT NOT NULL,
@@ -108,6 +110,21 @@ class DAGSummaryGraph(SQLiteStore):
         """)
         conn.commit()
 
+        self._migrate(conn)
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        current = self._get_schema_version("dag")
+
+        if current < 1:
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(summaries)")}
+            if "user_id" not in cols:
+                logger.info("[DAG] 迁移 v0→v1: summaries 表添加 user_id 列")
+                conn.execute("ALTER TABLE summaries ADD COLUMN user_id TEXT NOT NULL DEFAULT 'global'")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_summaries_user ON summaries(user_id, created_at)")
+            self._set_schema_version("dag", 1)
+            conn.commit()
+            logger.info("[DAG] 迁移完成: v0 → v1")
+
     def should_compact(self, current_tokens: int, max_tokens: int) -> bool:
         """Check if context has reached compression threshold."""
         return current_tokens >= max_tokens * self.COMPACT_THRESHOLD
@@ -117,6 +134,7 @@ class DAGSummaryGraph(SQLiteStore):
         session_id: str,
         message_ids: list[int],
         messages_content: list[dict[str, Any]],
+        user_id: str = "global",
     ) -> DAGNode | None:
         """Compress specified messages into a leaf summary.
 
@@ -124,6 +142,7 @@ class DAGSummaryGraph(SQLiteStore):
             session_id: Session identifier.
             message_ids: IDs of messages to compress.
             messages_content: List of message dicts with 'role' and 'content'.
+            user_id: User identifier (for cross-session query).
 
         Returns:
             The created DAGNode, or None if LLM not available.
@@ -157,11 +176,12 @@ class DAGSummaryGraph(SQLiteStore):
         conn = self._get_conn()
         cur = conn.execute(
             """INSERT INTO summaries
-               (session_id, parent_id, depth, content, token_count,
+               (session_id, user_id, parent_id, depth, content, token_count,
                 message_ids, child_ids, time_start, time_end, created_at)
-               VALUES (?, NULL, 0, ?, ?, ?, '[]', ?, ?, ?)""",
+               VALUES (?, ?, NULL, 0, ?, ?, ?, '[]', ?, ?, ?)""",
             (
                 session_id,
+                user_id,
                 summary_text,
                 token_count,
                 json.dumps(message_ids),
@@ -175,12 +195,11 @@ class DAGSummaryGraph(SQLiteStore):
         node = DAGNode(
             id=cur.lastrowid,
             session_id=session_id,
-            parent_id=None,
+            user_id=user_id,
             depth=0,
             content=summary_text,
             token_count=token_count,
             message_ids=message_ids,
-            child_ids=[],
             time_start=time_start,
             time_end=time_end,
             created_at=time.time(),
@@ -192,11 +211,11 @@ class DAGSummaryGraph(SQLiteStore):
         )
 
         # Check if we should promote
-        self._check_promote(session_id)
+        self._check_promote(session_id, user_id)
 
         return node
 
-    def promote(self, session_id: str) -> DAGNode | None:
+    def promote(self, session_id: str, user_id: str = "global") -> DAGNode | None:
         """Promote leaf/mid-level summaries to a higher level."""
         conn = self._get_conn()
 
@@ -237,11 +256,12 @@ class DAGSummaryGraph(SQLiteStore):
             new_depth = depth + 1
             cur = conn.execute(
                 """INSERT INTO summaries
-                   (session_id, parent_id, depth, content, token_count,
+                   (session_id, user_id, parent_id, depth, content, token_count,
                     message_ids, child_ids, time_start, time_end, created_at)
-                   VALUES (?, NULL, ?, ?, ?, '[]', ?, ?, ?, ?)""",
+                   VALUES (?, ?, NULL, ?, ?, ?, '[]', ?, ?, ?, ?)""",
                 (
                     session_id,
+                    user_id,
                     new_depth,
                     summary_text,
                     token_count,
@@ -274,24 +294,38 @@ class DAGSummaryGraph(SQLiteStore):
         return None
 
     def get_higher_summaries(
-        self, session_id: str, max_tokens: int = 2000,
+        self, session_id: str = "", user_id: str = "global", max_tokens: int = 2000,
     ) -> list[DAGNode]:
         """Get the highest-level summaries for context assembly.
 
-        Collects all orphan summaries across all depths, ranks them by
-        importance (depth weight + recency + content richness), then
-        fills the token budget with the highest-scoring ones.
+        Collects all orphan summaries across all depths for the given user,
+        optionally filtered by session_id. Ranks them by importance
+        (depth weight + recency + content richness), then fills the
+        token budget with the highest-scoring ones.
+
+        Args:
+            session_id: Optional session filter. If empty, queries across all sessions.
+            user_id: User identifier for cross-session query.
+            max_tokens: Token budget for summaries.
         """
         import math
         conn = self._get_conn()
 
-        # Collect all orphan summaries (parent_id IS NULL) across all depths
-        rows = conn.execute(
-            """SELECT * FROM summaries
-               WHERE session_id = ? AND parent_id IS NULL
-               ORDER BY depth DESC""",
-            (session_id,),
-        ).fetchall()
+        # Collect orphan summaries — filter by user_id, optionally by session_id
+        if session_id:
+            rows = conn.execute(
+                """SELECT * FROM summaries
+                   WHERE user_id = ? AND session_id = ? AND parent_id IS NULL
+                   ORDER BY depth DESC""",
+                (user_id, session_id),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT * FROM summaries
+                   WHERE user_id = ? AND parent_id IS NULL
+                   ORDER BY depth DESC""",
+                (user_id,),
+            ).fetchall()
 
         if not rows:
             return []
@@ -552,7 +586,7 @@ class DAGSummaryGraph(SQLiteStore):
 
     # ── Internal ────────────────────────────────────────────────
 
-    def _check_promote(self, session_id: str) -> None:
+    def _check_promote(self, session_id: str, user_id: str = "global") -> None:
         """Check and promote if enough orphan nodes exist."""
         conn = self._get_conn()
         for depth in range(10):
@@ -562,7 +596,7 @@ class DAGSummaryGraph(SQLiteStore):
                 (session_id, depth),
             ).fetchone()[0]
             if count >= self.PROMOTE_THRESHOLD:
-                self.promote(session_id)
+                self.promote(session_id, user_id)
             else:
                 break
 
@@ -615,6 +649,7 @@ class DAGSummaryGraph(SQLiteStore):
         return DAGNode(
             id=row["id"],
             session_id=row["session_id"],
+            user_id=row["user_id"] if "user_id" in row.keys() else "global",
             parent_id=row["parent_id"],
             depth=row["depth"],
             content=row["content"],

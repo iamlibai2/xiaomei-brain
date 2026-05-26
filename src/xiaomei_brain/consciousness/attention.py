@@ -185,7 +185,7 @@ def _collect_state_signals(perception, signals: list, last: dict) -> None:
         weight = _apply_boosts(min(0.5, idle / 7200), emerged, "user_idle")
         signals.append(AttentionSignal(
             key="user_idle",
-            label=f"用户空闲{idle_m}分钟",
+            label=f"对方空闲{idle_m}分钟",
             weight=weight,
             emerged=emerged,
         ))

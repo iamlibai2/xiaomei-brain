@@ -54,6 +54,7 @@ def build_context(
             session_id=agent.session_id,
             role="user",
             content=user_input,
+            user_id=agent.user_id,
             metadata=meta,
         )
 
@@ -113,6 +114,7 @@ def build_context(
             dag_max_tokens=max_tokens // 5,
             exp_stream=getattr(agent, "exp_stream", None),
         )
+        self_image.current_user_name = getattr(agent, 'user_display_name', '')
         system_content = self_image.inject_consciousness(mode=mode)
         # 日志：system prompt 中的 DAG 摘要数量
         dag_count = len(getattr(self_image.memory, 'dag_summaries', [])) if self_image is not None else 0

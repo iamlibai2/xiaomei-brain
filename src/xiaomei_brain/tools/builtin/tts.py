@@ -40,7 +40,7 @@ def set_tts_player(player, provider):
 
 @tool(
     name="speak",
-    description="将文本转换为语音并播放。适用于用户明确要求朗读、或需要听觉反馈的场景。",
+    description="将文本转换为语音并播放。适用于对方明确要求朗读、或需要听觉反馈的场景。",
 )
 def tts_speak(text: str) -> str:
     """Convert text to speech and play it.

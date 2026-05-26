@@ -13,7 +13,8 @@ from xiaomei_brain.memory.conversation_db import ConversationDB, estimate_tokens
 from xiaomei_brain.memory.self_model import SelfModel
 from xiaomei_brain.memory.dag import DAGSummaryGraph
 from xiaomei_brain.memory.longterm import LongTermMemory
-from xiaomei_brain.memory.extractor import MemoryExtractor, MEMORY_DECISION_PROMPT
+from xiaomei_brain.memory.extractor import MemoryExtractor
+from xiaomei_brain.prompts.memory import get_memory_decision_prompt
 from xiaomei_brain.tools.registry import ToolRegistry
 from xiaomei_brain.agent.message_utils import (
     strip_orphaned_tool_messages,
@@ -54,8 +55,9 @@ class Agent:
         self.longterm_memory: LongTermMemory | None = None
         self.memory_extractor: MemoryExtractor | None = None
 
-        self._messages: dict[str, list[dict[str, Any]]] = {}  # session_id → messages
+        self._messages: dict[str, list[dict[str, Any]]] = {}  # user_id → messages
         self.user_id: str = "global"
+        self.user_display_name: str = "这位用户"  # 当前用户的显示名，identity 绑定后设置
         self.session_id: str = "main"
         self.tool_call_buffer: ToolCallBuffer = ToolCallBuffer()  # 实例级，每个 Agent 独立
 
@@ -74,12 +76,12 @@ class Agent:
 
     @property
     def messages(self) -> list[dict[str, Any]]:
-        """当前 session 的消息列表（按 self.session_id 分桶）。"""
-        return self._messages.setdefault(self.session_id, [])
+        """当前 user_id 的消息列表（按 user_id 分桶，同一用户跨 session 共享）。"""
+        return self._messages.setdefault(self.user_id, [])
 
     @messages.setter
     def messages(self, value: list[dict[str, Any]]) -> None:
-        self._messages[self.session_id] = value
+        self._messages[self.user_id] = value
 
     def _auto_compact(self, session_id: str, max_tokens: int, messages: list[dict] | None = None) -> None:
         """Auto-compact: 消息积累到阈值时自动压缩为 DAG 叶子摘要。
@@ -128,6 +130,7 @@ class Agent:
                     session_id,
                     [m["id"] for m in msgs_to_compact],
                     msgs_to_compact,
+                    user_id=self.user_id,
                 )
                 if node:
                     summary_tokens = estimate_tokens(node.content)
@@ -227,7 +230,8 @@ class Agent:
             for i in range(len(all_messages) - 1, -1, -1):
                 if all_messages[i].get("role") == "user":
                     all_messages[i] = dict(all_messages[i])
-                    all_messages[i]["content"] = append_to_content(all_messages[i]["content"], MEMORY_DECISION_PROMPT)
+                    mem_prompt = get_memory_decision_prompt(self.user_display_name)
+                    all_messages[i]["content"] = append_to_content(all_messages[i]["content"], mem_prompt)
                     appended = True
                     content_repr = all_messages[i]["content"]
                     content_len = len(content_repr) if isinstance(content_repr, str) else sum(len(str(p)) for p in content_repr)
@@ -282,6 +286,7 @@ class Agent:
                         session_id=self.session_id,
                         role="assistant",
                         content=response.content or "",
+                        user_id=self.user_id,
                         metadata=meta,
                     )
                     msg["id"] = tool_msg_id
@@ -339,6 +344,7 @@ class Agent:
                             session_id=self.session_id,
                             role="tool",
                             content=result,
+                            user_id=self.user_id,
                             tool_name=tc.name,
                             tool_call_id=tc.id,
                         )
@@ -360,6 +366,7 @@ class Agent:
                                 session_id=self.session_id,
                                 related_id=str(tool_msg_id) if tool_msg_id else "",
                                 metadata={"tool_name": tc.name},
+                                user_id=self.user_id,
                             )
                         except Exception as e:
                             logger.debug("[ExpStream] co-write tool_exec failed: %s", e)
@@ -425,6 +432,7 @@ class Agent:
                             session_id=self.session_id,
                             role="assistant",
                             content=display_content,
+                            user_id=self.user_id,
                             metadata=meta if meta else None,
                         )
                     msg: dict[str, Any] = {"role": "assistant", "content": display_content, "id": assistant_msg_id}
@@ -440,6 +448,7 @@ class Agent:
                                 content=display_content,
                                 session_id=self.session_id,
                                 related_id=str(assistant_msg_id) if assistant_msg_id else "",
+                                user_id=self.user_id,
                             )
                         except Exception as e:
                             logger.debug("[ExpStream] co-write assistant_msg failed: %s", e)

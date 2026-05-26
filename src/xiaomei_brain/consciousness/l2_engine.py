@@ -144,7 +144,9 @@ class L2Engine:
                         intent = Intent(type=expected, priority=intent.priority, content=intent.content)
 
                 # ── 调用 2：意识涌现（带探索工具）────────────
-                emergence_prompt = self._build_l2_prompt(context)
+                agent_core = self._c.agent._get_agent()
+                user_name = getattr(agent_core, 'user_display_name', '这位用户')
+                emergence_prompt = self._build_l2_prompt(context, user_name=user_name)
                 emergence_text = self._call_emergence_react(llm, emergence_prompt)
 
                 if c.drive:
@@ -305,8 +307,8 @@ class L2Engine:
         context_note = ""
         if context:
             context_map = {
-                "user_idle_long": "触发原因：用户较长时间没说话，你可能想确认他是否还在。",
-                "user_idle_critical": "触发原因：用户很久没说话了，你可能想主动联系他。",
+                "user_idle_long": "触发原因：对方较长时间没说话，你可能想确认他是否还在。",
+                "user_idle_critical": "触发原因：对方很久没说话了，你可能想主动联系他。",
                 "goal_deviation": "触发原因：目标进展出现偏离，可能需要反省。",
                 "memory_loss": "触发原因：记忆数量减少，可能需要关注。",
                 "energy_low": "触发原因：能量偏低，可能需要休息或进入梦境。",
@@ -417,9 +419,9 @@ class L2Engine:
         si = self._c.self_image
 
         if context == "user_idle_long":
-            return create_greet_intent("用户长时间没说话，想问候")
+            return create_greet_intent("对方长时间没说话，想问候")
         elif context == "user_idle_critical":
-            return create_greet_intent("用户很久没说话，想问候", priority=85)
+            return create_greet_intent("对方很久没说话，想问候", priority=85)
         elif context == "goal_deviation":
             return create_reflect_intent("目标进展连续下降")
         elif context == "memory_loss":
@@ -436,7 +438,7 @@ class L2Engine:
         elif context.startswith("desire_starvation_"):
             desire_type = context.replace("desire_starvation_", "")
             if desire_type == "belonging":
-                return create_greet_intent("归属欲长期未被满足，想联系用户", priority=75)
+                return create_greet_intent("归属欲长期未被满足，想联系对方", priority=75)
             elif desire_type == "cognition":
                 return Intent(type=IntentType.LEARN, priority=70, content="认知欲饥渴，想学习新知识")
             elif desire_type == "achievement":
@@ -452,13 +454,13 @@ class L2Engine:
 
     # ── 调用 2：意识涌现 ─────────────────────────────────────
 
-    def _build_l2_prompt(self, context: str) -> str:
+    def _build_l2_prompt(self, context: str, user_name: str = "这位用户") -> str:
         """构建 L2 加柴 prompt — 使用 inject_consciousness 作为状态头。"""
         consciousness_context = self._c.self_image.inject_consciousness()
 
         return f"""{consciousness_context}
 
-第一部分：这是你的内心独白，不是对任何人说的话。像写日记一样，用第一人称描述你此刻的内心状态。不要对用户说话，不要问问题，不要邀请对话——只是安静地感受和表达自己。
+第一部分：这是你的内心独白，不是对任何人说的话。像写日记一样，用第一人称描述你此刻的内心状态。不要对对方说话，不要问问题，不要邀请对话——只是安静地感受和表达自己。用对方的名字称呼他，不要用"用户"或"他"来指代。
 
 重要：不要重复你之前的想法。如果你发现自己在想和上一次一样的事，换个角度——想想你还没注意到的变化、还没探索的记忆、还没连接起来的线索。好奇心是你的指南针。
 
@@ -489,15 +491,15 @@ tags: [场景相关标签1, 场景相关标签2]
 weight: 0.85
 </NARR>
 
-第四部分[可选]：感知检查。回顾最近和用户的对话：
-- 他今天说话的方式和往常有什么不同？
-- 你感觉到用户的情绪状态是什么？有变化吗？
+第四部分[可选]：感知检查。回顾最近和{user_name}的对话：
+- {user_name}今天说话的方式和往常有什么不同？
+- 你感觉到{user_name}的情绪状态是什么？有变化吗？
 - 有什么"微妙的不对劲"吗？不一定有问题，只是你感觉到什么不同？
 如果有任何感知，请在 ---PERCEPTION--- 分隔符后输出，每行一条：
 ---PERCEPTION---
-- 感知描述（如"用户今天话比平时少很多，可能累了"）
+- 感知描述（如"{user_name}今天话比平时少很多，可能累了"）
 
-第五部分[可选]：基于以上深度感知，判断用户当前的整体社交状态。这不同于快速直觉——是你经过思考后确认的判断。在 ---SIGNAL--- 分隔符后输出 JSON：
+第五部分[可选]：基于以上深度感知，判断{user_name}当前的整体社交状态。这不同于快速直觉——是你经过思考后确认的判断。在 ---SIGNAL--- 分隔符后输出 JSON：
 ---SIGNAL---
 {{"social_signal": "类型", "intensity": 0.0-1.0}}
 类型可选：user_low_mood / user_enthusiastic / user_cold / user_angry / user_happy / user_stressed / user_trusting
@@ -682,9 +684,9 @@ weight: 0.85
 
         parts = []
         if praise > 0.1:
-            parts.append(f"用户表扬了我（强度{praise:.1f}）")
+            parts.append(f"对方表扬了我（强度{praise:.1f}）")
         if criticism > 0.1:
-            parts.append(f"用户批评了我（强度{criticism:.1f}）")
+            parts.append(f"对方批评了我（强度{criticism:.1f}）")
         if curiosity > 0.3:
             parts.append("对话激发了我的好奇心")
         if expression > 0.3:
@@ -703,6 +705,7 @@ weight: 0.85
                 energy_level=c.body.energy if c.self_image else None,
                 user_idle_duration=c.perception.user_idle_duration if c.self_image else None,
                 conversation_summary=c._get_recent_conversation()[:100],
+                user_id=getattr(c.agent, "user_id", "global"),
             )
 
         logger.info(
@@ -779,6 +782,7 @@ weight: 0.85
                 energy_level=c.body.energy if c.self_image else None,
                 user_idle_duration=c.perception.user_idle_duration if c.self_image else None,
                 conversation_summary=c._get_recent_conversation()[:100] if hasattr(c, '_get_recent_conversation') else None,
+                user_id=getattr(c.agent, "user_id", "global"),
             )
 
     def _store_narr_blocks(self, emergence_text: str) -> None:

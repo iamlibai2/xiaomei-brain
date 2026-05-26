@@ -78,12 +78,12 @@ class PerceptionConfig:
 
     DEFAULT_RULES = [
         # 用户状态
-        PerceptionRule(category="user", condition="空闲 > 300秒", description="用户长时间没说话", priority=80),
-        PerceptionRule(category="user", condition="空闲 > 60秒", description="用户暂时离开", priority=70),
-        PerceptionRule(category="user", condition="空闲 < 10秒", description="用户正在对话中", priority=60),
+        PerceptionRule(category="user", condition="空闲 > 300秒", description="对方长时间没说话", priority=80),
+        PerceptionRule(category="user", condition="空闲 > 60秒", description="对方暂时离开", priority=70),
+        PerceptionRule(category="user", condition="空闲 < 10秒", description="对方正在对话中", priority=60),
 
         # 关系
-        PerceptionRule(category="relation", condition="关系深度 > 0.7", description="用户信任我", priority=75),
+        PerceptionRule(category="relation", condition="关系深度 > 0.7", description="对方信任我", priority=75),
         PerceptionRule(category="relation", condition="关系深度 < 0.3", description="关系刚开始", priority=65),
 
         # 能量

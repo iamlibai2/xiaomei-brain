@@ -118,7 +118,7 @@ class CommandRegistry:
 
         # ── DAG summarize ───────────────────────────────────────
         if cmd == "summarize":
-            return self._cmd_summarize(session_id)
+            return self._cmd_summarize(session_id, user_id)
 
         # ── DAG expand ─────────────────────────────────────────
         if cmd.startswith("expand "):
@@ -247,7 +247,7 @@ class CommandRegistry:
             session_id=new_session,
         )
 
-    def _cmd_summarize(self, session_id: str) -> CommandResult:
+    def _cmd_summarize(self, session_id: str, user_id: str = "global") -> CommandResult:
         """Manually trigger DAG compression."""
         if not self.dag or not self.db:
             return CommandResult(output="(DAG 或 ConversationDB 未配置)")
@@ -256,7 +256,7 @@ class CommandRegistry:
         if not msgs:
             return CommandResult(output="无消息")
 
-        node = self.dag.compact(session_id, [m["id"] for m in msgs], msgs)
+        node = self.dag.compact(session_id, [m["id"] for m in msgs], msgs, user_id=user_id)
         if node:
             return CommandResult(
                 output=f"摘要: id={node.id} depth={node.depth} tokens={node.token_count}",

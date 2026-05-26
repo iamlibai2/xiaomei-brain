@@ -612,8 +612,8 @@ class TaskOrchestrator:
             question = confirm.get("question", "")
             answer_context = (
                 f"[元认知上下文] 上一步执行遇到问题：「{question}」\n"
-                f"用户的回复：「{answer}」\n"
-                f"请根据用户的回复调整策略继续执行。"
+                f"对方的回复：「{answer}」\n"
+                f"请根据对方的回复调整策略继续执行。"
             )
 
             self._pending_confirm = None
@@ -858,11 +858,14 @@ class TaskOrchestrator:
         if not self._inner_voice:
             return
         try:
+            agent_core = self._parent.agent._get_agent()
+            user_name = getattr(agent_core, 'user_display_name', '这位用户')
             self._inner_voice.on_chat_turn(
                 user_msg=user_msg,
                 response_len=response_len,
                 elapsed=elapsed,
                 tools=tools or [],
+                user_name=user_name,
             )
         except Exception as e:
             logger.debug("[TaskOrchestrator] InnerVoice chat_turn 失败: %s", e)
@@ -946,6 +949,7 @@ class TaskOrchestrator:
 
                     agent.user_id = current_msg.user_id
                     agent.session_id = current_msg.session_id
+                    agent.user_display_name = getattr(current_msg, 'user_display_name', agent.user_display_name)
 
                     assembled = build_context(
                         agent,

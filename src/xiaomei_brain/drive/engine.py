@@ -232,7 +232,7 @@ class DriveEngine:
         if self.exp_stream:
             self.exp_stream.log(
                 type="drive_event",
-                content=f"用户表扬了我：情绪={EmotionType.JOY.value}，多巴胺={self.hormone.dopamine:.2f}",
+                content=f"对方表扬了我：情绪={EmotionType.JOY.value}，多巴胺={self.hormone.dopamine:.2f}",
                 importance=0.4,
             )
 
@@ -279,7 +279,7 @@ class DriveEngine:
         if self.exp_stream:
             self.exp_stream.log(
                 type="drive_event",
-                content=f"用户批评了我：情绪={EmotionType.SADNESS.value}，皮质醇={self.hormone.cortisol:.2f}",
+                content=f"对方批评了我：情绪={EmotionType.SADNESS.value}，皮质醇={self.hormone.cortisol:.2f}",
                 importance=0.4,
             )
 
@@ -1030,7 +1030,7 @@ class DriveEngine:
                 "priority": self.desire.belonging,
                 "desire_type": "belonging",
                 "threshold": thresholds.belonging,
-                "reason": "归属欲较高，想和用户建立连接",
+                "reason": "归属欲较高，想和对方建立连接",
             })
 
         # 认知欲 → 主动学习

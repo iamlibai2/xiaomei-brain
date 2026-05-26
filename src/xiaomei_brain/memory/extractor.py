@@ -23,7 +23,7 @@ from xiaomei_brain.prompts import (
     EVERY_TURN_EXTRACT_PROMPT,
     DREAM_EXTRACT_PROMPT,
     TASK_COMPLETION_PROMPT,
-    MEMORY_DECISION_PROMPT,
+    get_memory_decision_prompt,
 )
 
 logger = logging.getLogger(__name__)

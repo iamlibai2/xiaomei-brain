@@ -109,7 +109,7 @@ def build_intent_context(purpose, intent_result, chosen_by_user: bool = False, r
 
     # 用户明确选择的任务：告知 Agent 不要再问选择
     if chosen_by_user:
-        context_lines.append("【重要】用户已经从多个任务中明确选择了继续这个任务，不要再问用户选择。直接推进即可。")
+        context_lines.append("【重要】对方已经从多个任务中明确选择了继续这个任务，不要再问对方选择。直接推进即可。")
         context_lines.append("")
 
     context_lines.extend([
@@ -123,8 +123,8 @@ def build_intent_context(purpose, intent_result, chosen_by_user: bool = False, r
     confirmed_answer = active_sub.metadata.get("answer")
     if confirmed_answer:
         context_lines.append("")
-        context_lines.append(f"【已确认】用户已选择：{confirmed_answer}")
-        context_lines.append("直接使用上述选择执行，不要再询问用户。")
+        context_lines.append(f"【已确认】对方已选择：{confirmed_answer}")
+        context_lines.append("直接使用上述选择执行，不要再询问对方。")
 
     # 子目标列表（已完成标记，方便 Agent 了解全局）
     if sub_goals:

@@ -412,7 +412,7 @@ class PurposeEngine:
 
             # 通知 Drive
             if self.drive:
-                self.drive.on_goal_failed(reason="用户放弃")
+                self.drive.on_goal_failed(reason="对方放弃")
 
         # 写入内部叙事
         if self.longterm_memory:

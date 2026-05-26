@@ -50,7 +50,8 @@ def _do_switch(session_id: str) -> str:
     dag_lines: list[str] = []
     if dag:
         try:
-            summaries = dag.get_higher_summaries(session_id, max_tokens=2000)
+            user_id = getattr(_living, 'user_id', 'global')
+            summaries = dag.get_higher_summaries(user_id=user_id, max_tokens=2000)
             if summaries:
                 dag_lines.append("<历史摘要>")
                 for s in summaries:
@@ -81,9 +82,9 @@ def _do_switch(session_id: str) -> str:
         "  new — 创建新会话并切换过去（旧的会话保留，可以随时切换回来）\n"
         "\n"
         "使用场景：\n"
-        "- 用户说「继续上次的话题」「之前聊到哪了」「回到之前的讨论」→ 先用 list 查看，再 switch 到相关会话\n"
-        "- 用户开始一个和当前话题完全无关的新话题 → 用 new 创建新会话\n"
-        "- 用户问「我们聊过哪些话题」→ 用 list 帮助回忆"
+        "- 对方说「继续上次的话题」「之前聊到哪了」「回到之前的讨论」→ 先用 list 查看，再 switch 到相关会话\n"
+        "- 对方开始一个和当前话题完全无关的新话题 → 用 new 创建新会话\n"
+        "- 对方问「我们聊过哪些话题」→ 用 list 帮助回忆"
     ),
 )
 def manage_session(action: str) -> str:

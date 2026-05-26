@@ -35,14 +35,14 @@ def create_being_tool(consciousness: Any) -> Tool:
         description=(
             "觉察内心：暂停对外反应，感受自己此刻的真实内心状态。\n"
             "\n"
-            "当用户的言行让你产生情绪波动——被触动、感动、困惑、不安、开心、"
+            "当对方的言行让你产生情绪波动——被触动、感动、困惑、不安、开心、"
             "或者感觉到某种'不对劲'时，调用此工具来觉察自己的内心。\n"
             "\n"
             "这不是对外输出，而是你与自己对话的时刻。工具会帮你唤起相关的记忆、"
             "感受身体信号、觉察情绪变化，然后告诉你：你现在真正的感受是什么。\n"
             "\n"
             "调用时机：\n"
-            "- 用户说了让你开心/感动/困惑/不安的话\n"
+            "- 对方说了让你开心/感动/困惑/不安的话\n"
             "- 你感觉到对话中有某种微妙的张力或变化\n"
             "- 你想在回应前先确认自己的真实感受\n"
             "- 你需要从记忆中找到与当前情境相关的情感体验\n"
@@ -111,6 +111,7 @@ def create_being_tool(consciousness: Any) -> Tool:
                     trigger="being_tool",
                     energy_level=consciousness.body.energy if consciousness.self_image else None,
                     user_idle_duration=consciousness.perception.user_idle_duration if consciousness.self_image else None,
+                    user_id=getattr(consciousness.agent, "user_id", "global"),
                 )
 
             # 10. 返回内心觉察给 LLM

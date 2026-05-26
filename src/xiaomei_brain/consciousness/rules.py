@@ -267,7 +267,7 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
                 action_type=ActionType.PROACTIVE,
                 priority=0.7,
                 content="",
-                reason=f"用户空闲超过 {int(ac.idle_trigger_seconds)} 秒",
+                reason=f"对方空闲超过 {int(ac.idle_trigger_seconds)} 秒",
                 source="idle",
                 cooldown_key="idle_greet",
                 metadata={"source": "idle", "idle_duration": ac.idle_trigger_seconds},

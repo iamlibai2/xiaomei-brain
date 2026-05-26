@@ -57,7 +57,7 @@ class SelfImage:
     """意识的火焰 — 所有意识数据的唯一汇聚地。"""
 
     # _diff() 变化检测阈值
-    DIFF_IDLE_THRESHOLD_S: float = 10.0    # 用户空闲变化超过此秒数才记录
+    DIFF_IDLE_THRESHOLD_S: float = 10.0    # 对方空闲变化超过此秒数才记录
     DIFF_ENERGY_THRESHOLD: float = 0.05    # 能量变化超过此比例才记录
     DIFF_GOAL_THRESHOLD: float = 0.01      # 目标进展变化超过此比例才记录
 
@@ -76,6 +76,7 @@ class SelfImage:
         self._essence: Any = None               # Essence（底色存储）
         self._project_mental_model: Any = None   # [Layer 2]
         self._experience_memory: Any = None      # [Layer 2]
+        self.current_user_name: str = ""         # 当前对话者显示名（空=未设置，"这位用户"=陌生人）
         self._assemble_map = {
             "flow":    self._assemble_flow,
             "daily":   self._assemble_daily,
@@ -206,7 +207,7 @@ class SelfImage:
         self.perception.last_user_activity_time = time.time()
         self.perception.last_user_activity_content = user_message[:50]
         self.perception.user_idle_duration = 0.0
-        self.body.attention = "与用户对话"
+        self.body.attention = "与对方对话"
         self.being.update_depth(self.being.relationship_depth + 0.02)
         self._dirty = True
 
@@ -427,6 +428,22 @@ class SelfImage:
         if b.personality:
             lines.append(f"你的基础性格是{b.personality}。")
         lines.append("")
+
+        # ── 多用户身份验证 ──
+        if self.current_user_name == "这位用户":
+            lines.extend([
+                "## 身份验证",
+                "当前对话者身份未知。你必须先问：\"你是谁？告诉我你的名字和密码。\"",
+                "对方提供名字和密码后，调用 verify_identity 工具验证身份。",
+                "- 验证通过 → 用对方的名字称呼他，正常对话。",
+                "- 验证失败 → 拒绝继续对话。",
+                "- 对方说自己是新用户 → verify_identity 的 is_new 参数设为 true。",
+                "",
+            ])
+        elif self.current_user_name:
+            lines.append(f"你正在和{self.current_user_name}对话。")
+            lines.append("")
+
         lines.extend([
             "## 与其他 agent 通讯的规则",
             "其他 agent 可能给你发消息。",
@@ -434,9 +451,9 @@ class SelfImage:
             "- 收到消息后，用 send_message 工具回复，不要在本对话中回复——对方看不到",
             "",
             "## 会话管理规则",
-            "对话历史按会话(session)分隔。不要主动替用户决定是否创建或切换会话。",
-            "- 用户明确说「开个新会话」→ 用 manage_session new 创建新会话",
-            "- 用户说「继续上次的话题」「回到之前的讨论」等 → 用 manage_session list 查看旧会话，找到相关会话后 switch 进去",
+            "对话历史按会话(session)分隔。不要主动替对方决定是否创建或切换会话。",
+            "- 对方明确说「开个新会话」→ 用 manage_session new 创建新会话",
+            "- 对方说「继续上次的话题」「回到之前的讨论」等 → 用 manage_session list 查看旧会话，找到相关会话后 switch 进去",
             "- 其他情况不要动会话，留在当前会话。",
             "- 切换会话后，工具返回的上下文会根据会话变化，基于返回的上下文自然接续对话。",
         ])
@@ -662,7 +679,7 @@ class SelfImage:
                 sorted_queue = sorted(m.learning_queue, key=lambda x: x.get("priority", 0), reverse=True)
                 queue_items = []
                 for item in sorted_queue[:5]:
-                    source_label = {"task_gap": "任务缺口", "user_need": "用户需求", "concept_expansion": "概念扩展"}.get(
+                    source_label = {"task_gap": "任务缺口", "user_need": "对方需求", "concept_expansion": "概念扩展"}.get(
                         item.get("source", ""), item.get("source", "")
                     )
                     queue_items.append(
@@ -734,7 +751,7 @@ class SelfImage:
             ltm_items.append(m)
         if ltm_items:
             lines.append("\n<长期记忆>")
-            lines.append("以下是你的长期记忆，当用户问及相关信息时，你必须主动引用这些记忆来回答，不要说'你不记得'或让用户自己回答。记忆时间格式为 @2026-05-04T12:00:00，可用于时间推理（判断'上周'/'上个月'等）。")
+            lines.append("以下是你的长期记忆，当对方问及相关信息时，你必须主动引用这些记忆来回答，不要说'你不记得'或让对方自己回答。记忆时间格式为 @2026-05-04T12:00:00，可用于时间推理（判断'上周'/'上个月'等）。")
             for m in ltm_items:
                 content = m.get("content", "")
                 eff_str = m.get("effective_strength", 0)
@@ -848,7 +865,7 @@ class SelfImage:
             tool_str = "、".join(tool_names) if tool_names else "无"
             elapsed_str = f"{elapsed:.0f}s" if elapsed else "?"
             lines.append(
-                f"- 第{i}轮：用户说「{user_msg[:60]}」→ "
+                f"- 第{i}轮：对方说「{user_msg[:60]}」→ "
                 f"调用 {tool_str} ×{tool_count}，耗时{elapsed_str}"
             )
         return lines
@@ -933,10 +950,10 @@ class SelfImage:
         lines.append(f"你在{env}，状态{state}。")
         idle_dur = getattr(p, 'user_idle_duration', 0) or 0
         if idle_dur > 0:
-            lines.append(f"用户空闲了{int(idle_dur / 60)}分钟。")
+            lines.append(f"对方空闲了{int(idle_dur / 60)}分钟。")
         last_activity = getattr(p, 'last_user_activity_content', None)
         if last_activity:
-            lines.append(f"用户最后说：{last_activity[:100]}")
+            lines.append(f"对方最后说：{last_activity[:100]}")
         return lines
 
     # ── History: 时间维度 ──────────────────────────────────

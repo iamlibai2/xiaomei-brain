@@ -88,7 +88,7 @@ def _build_post_review_prompt(task_desc: str, total_steps: int, total_time: floa
 遇到的意外：{surprises_str}
 
 请用 JSON 回答（只返回 JSON）：
-{{"what_worked": ["做得好的点"], "what_failed": ["做得不好的点", "遇到的问题"], "capability_notes": ["关于自己能力的认知，如'我擅长X'、'我不擅长Y'、'Y类任务需要提前问用户'"]}}"""
+{{"what_worked": ["做得好的点"], "what_failed": ["做得不好的点", "遇到的问题"], "capability_notes": ["关于自己能力的认知，如'我擅长X'、'我不擅长Y'、'Y类任务需要提前问对方'"]}}"""
 
 
 # ── LLM caller ─────────────────────────────────────────────────────────

@@ -247,7 +247,7 @@ class ActionExecutor:
             f"2. 从列表中选择一个任务（或自己想到的任务）\n"
             f"3. 用全部工具执行它（搜索、读文件、写代码……）\n"
             f"4. 完成后决定：这个任务完成了吗？需要更新状态吗？\n\n"
-            f"工作完成后，先用一段话总结本次工作的内容和成果（这是你会说给用户听的部分），\n"
+            f"工作完成后，先用一段话总结本次工作的内容和成果（这是你会说给对方听的部分），\n"
             f"然后在末尾附上 MEMORY 块用于记忆存储：\n"
             f"<MEMORY>\n"
             f'{{"relations": [], "actions": [{{"type": "ADD", "tag": "事实", "content": "我完成了...", "scenes": ["工作"]}}]}}\n'
@@ -287,6 +287,7 @@ class ActionExecutor:
                         session_id=cl.session_id,
                         role="assistant",
                         content=clean_result,
+                        user_id=cl.user_id,
                     )
                 except Exception as e:
                     logger.warning("failed to log assistant response to conversation_db: %s", e)
@@ -605,7 +606,7 @@ class ActionExecutor:
         # 明确上下文：这是内部感受，不是用户消息
         system_prompt += (
             "\n\n## 当前情境\n"
-            "你现在处于安静的内部觉察状态。下面这条消息不是用户说的话，"
+            "你现在处于安静的内部觉察状态。下面这条消息不是对方说的话，"
             "而是你身体内部的感觉——就像人感到饥饿或困倦一样。"
             "请基于你的身体状态做出自然的反应。"
         )

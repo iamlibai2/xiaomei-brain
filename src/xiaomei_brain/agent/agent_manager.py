@@ -129,6 +129,7 @@ class AgentInstance:
                 session_id=session_id,
                 role="user",
                 content=user_input,
+                user_id=user_id,
             )
         agent.messages.append({"role": "user", "content": user_input, "id": user_msg_id})
 
@@ -570,6 +571,10 @@ class AgentManager:
         from xiaomei_brain.tools.builtin.memory_search import create_memory_search_tools
         for ms_tool in create_memory_search_tools(agent.longterm_memory):
             tools.register(ms_tool)
+
+        # 注册身份验证工具（多用户身份 + 渠道绑定）
+        from xiaomei_brain.tools.builtin.verify_identity import register as _reg_verify
+        _reg_verify(tools)
 
         # ── CommandRegistry ──────────────────────────────────────────────
         agent.commands = CommandRegistry(

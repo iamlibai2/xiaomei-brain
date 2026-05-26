@@ -250,7 +250,7 @@ class SelfBody:
 
     # ── Drive 引用 ──────────────────────────────
     _drive: Any = field(default=None, repr=False, compare=False)
-    attention: str = "等待用户"  # SelfImage 自管，不代理
+    attention: str = "等待对方"  # SelfImage 自管，不代理
 
     # ── 内感受字段（非代理，由 Interoception.tick() 实时写入）──
     cpu_percent: float = 0.0
@@ -433,7 +433,7 @@ class SelfPerception:
     def get_summary(self) -> str:
         idle_str = f"空闲{int(self.user_idle_duration)}秒"
         if self.last_user_activity_content:
-            return f"在{self.environment}，{idle_str}，最后用户说：{self.last_user_activity_content[:30]}"
+            return f"在{self.environment}，{idle_str}，最后对方说：{self.last_user_activity_content[:30]}"
         return f"在{self.environment}，{idle_str}"
 
 

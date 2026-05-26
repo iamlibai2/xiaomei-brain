@@ -150,6 +150,7 @@ class ContextAssembler:
                     session_id,
                     [m["id"] for m in msgs_to_compact],
                     msgs_to_compact,
+                    user_id=user_id,
                 )
                 if node:
                     # 压缩后计算摘要大小，展示真正的"压缩前 → 压缩后"
@@ -235,7 +236,7 @@ class ContextAssembler:
 
         if session_id and remaining > 200:
             summary_budget = remaining // 5
-            summaries = self.dag.get_higher_summaries(session_id, summary_budget)
+            summaries = self.dag.get_higher_summaries(session_id=session_id, user_id=user_id, max_tokens=summary_budget)
             if summaries:
                 summary_text = self._summaries_to_text(summaries)
                 system_content += "\n\n" + summary_text
@@ -333,7 +334,7 @@ class ContextAssembler:
 
         if session_id and remaining > 200:
             summary_budget = remaining // 5
-            summaries = self.dag.get_higher_summaries(session_id, summary_budget)
+            summaries = self.dag.get_higher_summaries(session_id=session_id, user_id=user_id, max_tokens=summary_budget)
             if summaries:
                 summary_text = self._summaries_to_text(summaries)
                 system_content += "\n\n" + summary_text
@@ -665,7 +666,7 @@ class ContextAssembler:
         elapsed_ms = int((time.time() - now) * 1000)
 
         lines = ["<长期记忆>"]
-        lines.append("以下是你的长期记忆，当用户问及相关信息时，你必须主动引用这些记忆来回答，不要说'你不记得'或让用户自己回答。记忆时间格式为 @2026-05-04T12:00:00，可用于时间推理（判断'上周'/'上个月'等）。")
+        lines.append("以下是你的长期记忆，当对方问及相关信息时，你必须主动引用这些记忆来回答，不要说'你不记得'或让对方自己回答。记忆时间格式为 @2026-05-04T12:00:00，可用于时间推理（判断'上周'/'上个月'等）。")
         for m in memories:
             content = m.get("content", "")
             eff_str = m.get("effective_strength", 0)

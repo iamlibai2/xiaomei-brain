@@ -80,9 +80,9 @@ def refresh_memory_window(
             logger.warning("[MemoryWindow] 叙事记忆获取失败: %s", e)
 
     # ── 2. DAG 摘要 ────────────────────────────────────
-    if dag and session_id:
+    if dag:
         try:
-            summaries = dag.get_higher_summaries(session_id, max_tokens=dag_max_tokens)
+            summaries = dag.get_higher_summaries(user_id=user_id, max_tokens=dag_max_tokens)
             if summaries:
                 mem.dag_summaries = [
                     {"id": s.id, "depth": s.depth, "content": s.content}
@@ -180,7 +180,7 @@ def refresh_memory_window(
     # ── 7. 最近对话 ────────────────────────────────────
     if conversation_db:
         try:
-            recent = conversation_db.get_recent(20, session_id=session_id)
+            recent = conversation_db.get_recent(20, user_id=user_id)
             mem.recent_dialog = [
                 {"role": r.get("role", ""), "content": r.get("content", "")}
                 for r in recent
@@ -191,7 +191,7 @@ def refresh_memory_window(
     # ── 8. 内部叙事（L2 历史独白）────────────────────────
     if longterm:
         try:
-            internal = longterm.get_narratives(limit=5)
+            internal = longterm.get_narratives(limit=5, user_id=user_id)
             mem.internal_narratives = internal or []
         except Exception as e:
             logger.warning("[MemoryWindow] 内部叙事获取失败: %s", e)
@@ -221,7 +221,7 @@ def refresh_memory_window(
     # ── 11. 经验流（统一时间线）────────────────────────
     if exp_stream:
         try:
-            mem.experience_timeline = exp_stream.get_recent(limit=50)
+            mem.experience_timeline = exp_stream.get_recent(limit=50, user_id=user_id)
         except Exception as e:
             logger.warning("[MemoryWindow] 经验流获取失败: %s", e)
 

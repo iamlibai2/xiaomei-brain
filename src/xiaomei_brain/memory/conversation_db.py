@@ -51,6 +51,7 @@ class ConversationDB(SQLiteStore):
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL DEFAULT 'global',
                 session_id TEXT NOT NULL DEFAULT '',
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
@@ -109,7 +110,24 @@ class ConversationDB(SQLiteStore):
         ]
         for sql in triggers:
             conn.execute(sql)
-        conn.commit()
+
+        self._migrate(conn)
+
+    # ── Schema migration ──────────────────────────────────────────
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        current = self._get_schema_version("conversation_db")
+
+        if current < 1:
+            # v0 → v1: 添加 user_id 列
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(messages)")}
+            if "user_id" not in cols:
+                logger.info("[ConversationDB] 迁移 v0→v1: messages 表添加 user_id 列")
+                conn.execute("ALTER TABLE messages ADD COLUMN user_id TEXT NOT NULL DEFAULT 'global'")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id, created_at)")
+            self._set_schema_version("conversation_db", 1)
+            conn.commit()
+            logger.info("[ConversationDB] 迁移完成: v0 → v1")
 
     def store_tool(
         self,
@@ -142,6 +160,7 @@ class ConversationDB(SQLiteStore):
         session_id: str,
         role: str,
         content: str,
+        user_id: str = "global",
         tool_name: str | None = None,
         tool_call_id: str | None = None,
         metadata: dict[str, Any] | None = None,
@@ -156,10 +175,11 @@ class ConversationDB(SQLiteStore):
         token_count = estimate_tokens(content)
         cur = conn.execute(
             """INSERT INTO messages
-               (session_id, role, content, token_count, tool_name,
+               (user_id, session_id, role, content, token_count, tool_name,
                 tool_call_id, metadata, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
+                user_id,
                 session_id,
                 role,
                 content,
@@ -172,7 +192,7 @@ class ConversationDB(SQLiteStore):
         )
         conn.commit()
         # Log saved message
-        logger.debug("[DB] Saved #%d [%s] %s (%d chars)", cur.lastrowid, session_id, role, len(content) if content else 0)
+        logger.debug("[DB] Saved #%d [%s/%s] %s (%d chars)", cur.lastrowid, user_id, session_id, role, len(content) if content else 0)
         return cur.lastrowid  # type: ignore[return-value]
 
     def query(
@@ -255,21 +275,33 @@ class ConversationDB(SQLiteStore):
         with self._cleared_at_lock:
             self._cleared_at[session_id] = time.time()
 
-    def get_recent(self, n: int = 20, session_id: str | None = None) -> list[dict[str, Any]]:
-        """Get the most recent N messages (respecting clear boundaries)."""
+    def get_recent(self, n: int = 20, session_id: str | None = None, user_id: str | None = None) -> list[dict[str, Any]]:
+        """Get the most recent N messages (respecting clear boundaries).
+
+        Filter by session_id, user_id, or both. When neither is given, returns all messages.
+        """
         conn = self._get_conn()
+        clauses = []
+        params: list[Any] = []
+
+        if user_id:
+            clauses.append("user_id = ?")
+            params.append(user_id)
         if session_id:
+            clauses.append("session_id = ?")
+            params.append(session_id)
             with self._cleared_at_lock:
                 cleared_at = self._cleared_at.get(session_id, 0.0)
-            rows = conn.execute(
-                "SELECT * FROM messages WHERE session_id = ? AND created_at > ? ORDER BY created_at DESC LIMIT ?",
-                (session_id, cleared_at, n),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM messages ORDER BY created_at DESC LIMIT ?",
-                (n,),
-            ).fetchall()
+            clauses.append("created_at > ?")
+            params.append(cleared_at)
+
+        where = " AND ".join(clauses) if clauses else "1=1"
+        params.extend([n])
+
+        rows = conn.execute(
+            f"SELECT * FROM messages WHERE {where} ORDER BY created_at DESC LIMIT ?",
+            params,
+        ).fetchall()
         # Return in chronological order
         return [dict(r) for r in reversed(rows)]
 

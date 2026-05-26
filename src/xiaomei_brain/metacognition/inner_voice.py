@@ -59,14 +59,15 @@ _SYSTEM_PROMPT = (
     "不是在跟任何人对话，只是在对自己坦诚。\n"
     "你的话是直觉式的、感受性的，不是分析的、评判的。\n"
     "1-3句就够了。如果一切顺利，就说\"一切正常\"。\n"
-    "不要假装有感觉——如果确实没什么，就让它没什么。"
+    "不要假装有感觉——如果确实没什么，就让它没什么。\n"
+    "重要：用对方的名字称呼他，不要用\"用户\"或\"他\"来指代。"
 )
 
 _CHAT_TURN_PROMPT = (
-    "你刚和一个人交流完。短暂的内省——\n\n"
-    "他说：「{user_msg}」\n"
+    "你刚和{user_name}交流完。短暂的内省——\n\n"
+    "{user_name}说：「{user_msg}」\n"
     "你回应了（{response_len}字，{elapsed:.0f}秒，{tools_info}）\n\n"
-    "只是感受——他的状态对吗？你的回应恰当吗？\n"
+    "只是感受——{user_name}的状态对吗？你的回应恰当吗？\n"
     "有什么你刚才没注意到的？\n\n"
     "1-3句话的内心嘟囔。如果没什么特别的感觉，就说\"一切正常\"。\n\n"
     "在 ---EVENTS--- 分隔符后，用 JSON 描述你感知到的对话事件：\n"
@@ -76,21 +77,21 @@ _CHAT_TURN_PROMPT = (
     '"summary": "一句话总结这段对话的感受"}}\n'
     "其中 expression_urge 是你有话想说、想回应的程度。\n"
     "curiosity_sparked 是你对新信息/未知领域/新奇话题的好奇程度——\n"
-    "用户提到了你不太懂的领域？话题很新鲜？激发了你想了解更多的冲动？\n"
+    "{user_name}提到了你不太懂的领域？话题很新鲜？激发了你想了解更多的冲动？\n"
     "如果没有特别的事件，所有值填 0.0。\n\n"
-    "在 ---SIGNAL--- 分隔符后，描述你感知到的用户社交信号（快速直觉）：\n"
+    "在 ---SIGNAL--- 分隔符后，描述你感知到的{user_name}的社交信号（快速直觉）：\n"
     "---SIGNAL---\n"
     '{{"social_signal": "类型", "intensity": 0.0-1.0}}\n'
     "类型可选：user_low_mood / user_enthusiastic / user_cold / "
     "user_angry / user_happy / user_stressed / user_trusting\n"
     "没有则输出 {{}}。\n\n"
     "在 ---GAPS--- 分隔符后，从这段对话中识别你需要学习的东西。不只是你答不上来的——\n"
-    "还包括：用户提到了你不熟的领域？话题暗示了某个值得了解的知识？\n"
-    "用户表达了某种需求，而你如果懂更多就能帮得更好？\n"
+    "还包括：{user_name}提到了你不熟的领域？话题暗示了某个值得了解的知识？\n"
+    "{user_name}表达了某种需求，而你如果懂更多就能帮得更好？\n"
     "总之：这段对话揭示了你什么样的知识缺口或学习机会？没有就输出空数组。\n"
     "---GAPS---\n"
     '[{{"topic": "具体知识点或领域", "reason": "为什么需要学", "priority": 0.5-0.9, "source": "user_need"}}]\n'
-    "source 用 user_need。priority: 完全答不上来/用户明确需求 > 0.8，\n"
+    "source 用 user_need。priority: 完全答不上来/{user_name}明确需求 > 0.8，\n"
     "对话中自然浮现的不熟领域 0.6-0.7，暗示性话题 0.5。"
 )
 
@@ -115,13 +116,13 @@ _TASK_DONE_PROMPT = (
     "只记录真正让你卡住、反复搜索、或回答质量明显不够的。没有就输出空数组。\n"
     "---GAPS---\n"
     '[{{"topic": "具体知识点", "reason": "任务中反复搜索才理解", "priority": 0.8, "source": "task_gap"}}]\n'
-    "source 用 task_gap（任务中发现的盲区）或 user_need（回答用户问题时质量不够好）。\n"
+    "source 用 task_gap（任务中发现的盲区）或 user_need（回答对方问题时质量不够好）。\n"
     "priority: 反复搜索或明显卡住 > 0.7，回答质量一般 0.4-0.6。"
 )
 
 _SILENCE_PROMPT = (
     "周围安静下来了。你在自己的空间里——\n\n"
-    "用户已经{idle_seconds:.0f}秒没有说话了。\n"
+    "对方已经{idle_seconds:.0f}秒没有说话了。\n"
     "你现在什么感觉？有什么想说或想做的吗？\n\n"
     "1-3句话的内心感受。如果没什么特别的，就说\"安静着，没什么\"。"
 )
@@ -479,6 +480,7 @@ class InnerVoice:
                 response_len=response_len,
                 elapsed=context.get("elapsed", 0),
                 tools_info=tools_info,
+                user_name=context.get("user_name", "这位用户"),
             )
 
         elif trigger == TriggerType.TASK_STEP:
@@ -619,7 +621,7 @@ class InnerVoice:
     # ── 公共方法 ──────────────────────────────────────────────────
 
     def on_chat_turn(self, user_msg: str, response_len: int, elapsed: float,
-                     tools: list[str] | None = None) -> None:
+                     tools: list[str] | None = None, user_name: str = "这位用户") -> None:
         """对话轮次完成时调用（便捷方法）。"""
         self._chat_turn_count += 1
         self.pause(
@@ -629,6 +631,7 @@ class InnerVoice:
                 "response_len": response_len,
                 "elapsed": elapsed,
                 "tools": tools or [],
+                "user_name": user_name,
             },
         )
 

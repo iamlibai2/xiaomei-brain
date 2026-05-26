@@ -523,7 +523,7 @@ class Consciousness:
                 role = m.get("role", "unknown")
                 content = m.get("content", "")
                 if role == "user":
-                    lines.append(f"用户：{content[:150]}")
+                    lines.append(f"对方：{content[:150]}")
                 elif role == "assistant":
                     lines.append(f"{self.being.name or '我'}：{content[:150]}")
             return "\n".join(reversed(lines)) if lines else "（无最近对话）"
@@ -667,6 +667,7 @@ class Consciousness:
                 trigger='L3_deep',
                 energy_level=self.body.energy if self.self_image else None,
                 user_idle_duration=self.perception.user_idle_duration if self.self_image else None,
+                user_id=getattr(self.agent, "user_id", "global"),
             )
 
         return report
@@ -753,7 +754,7 @@ class Consciousness:
             f"现在是{time_info}。",
             f"我（{si.being.name}）的意识运行了{int(self.history.consciousness_age)}秒。",
             f"我的情绪基调是{si.body.mood}，能量水平{si.body.energy:.2f}。",
-            f"用户最后活跃在{datetime.fromtimestamp(si.perception.last_user_activity_time).strftime('%H:%M') if si.perception.last_user_activity_time > 0 else '很久前'}，",
+            f"对方最后活跃在{datetime.fromtimestamp(si.perception.last_user_activity_time).strftime('%H:%M') if si.perception.last_user_activity_time > 0 else '很久前'}，",
             f"已经空闲{int(si.perception.user_idle_duration / 60)}分钟。",
             f"我的目标是{si.mind.primary_goal}，进展{si.mind.goal_progress:.2f}。",
             f"我目前有{si.mind.memory_count}条长期记忆。",
@@ -1051,6 +1052,7 @@ class Consciousness:
                     trigger='awakening',
                     energy_level=self.body.energy if self.self_image else None,
                     user_idle_duration=self.perception.user_idle_duration if self.self_image else None,
+                    user_id=getattr(self.agent, "user_id", "global"),
                 )
 
             # 生成问候意图
@@ -1074,6 +1076,7 @@ class Consciousness:
                 trigger='awakening',
                 energy_level=self.body.energy if self.self_image else None,
                 user_idle_duration=self.perception.user_idle_duration if self.self_image else None,
+                user_id=getattr(self.agent, "user_id", "global"),
             )
         # 生成等待意图，不阻塞
         wait_intent = create_wait_intent()
@@ -1203,7 +1206,7 @@ def build_state_summary(si: SelfImage) -> str:
         f"火焰燃烧时长：{int(si.history.consciousness_age)}秒",
         f"我在哪：{si.perception.environment}",
         f"状态：{si.perception.agent_state}",
-        f"用户空闲：{int(si.perception.user_idle_duration)}秒",
+        f"对方空闲：{int(si.perception.user_idle_duration)}秒",
         f"能量：{si.body.energy:.2f}",
         f"心情：{si.body.mood}",
     ]

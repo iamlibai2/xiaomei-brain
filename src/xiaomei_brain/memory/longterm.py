@@ -748,6 +748,7 @@ class LongTermMemory(SQLiteStore):
                 energy_level REAL,                       -- SelfImage.energy_level at time
                 user_idle_duration REAL,                 -- user_idle at time
                 conversation_summary TEXT,               -- triggering conversation (100 chars)
+                user_id TEXT DEFAULT 'global',           -- 用户隔离：关联的用户标识
                 used_as_reasoning INTEGER DEFAULT 0,
                 used_as_pattern INTEGER DEFAULT 0,
                 extracted_procedures TEXT DEFAULT '[]' -- JSON array of procedures
@@ -777,11 +778,14 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
             CREATE INDEX IF NOT EXISTS idx_narrative_status ON narrative_memories(status);
         """)
 
-        # ── Schema 迁移（PRAGMA user_version 版本追踪）─────────
-        current_version = conn.execute("PRAGMA user_version").fetchone()[0]
+        # ── Schema 迁移（组件级 schema_versions 追踪）─────────
+        current_version = self._get_schema_version("longterm")
 
         if current_version < 1:
             self._migrate_v1(conn)
+
+        if current_version < 2:
+            self._migrate_v2(conn)
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_strength ON memories(strength)")
@@ -826,8 +830,19 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
             if col_name not in rel_cols:
                 conn.execute(f"ALTER TABLE memory_relations ADD COLUMN {col_name} {col_def}")
 
-        conn.execute(f"PRAGMA user_version = 1")
+        self._set_schema_version("longterm", 1)
         logger.info("[LongTerm] Schema migrated to v1")
+
+    def _migrate_v2(self, conn: sqlite3.Connection) -> None:
+        """v1 → v2：consciousness_narratives 添加 user_id 列。"""
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(consciousness_narratives)").fetchall()}
+        if "user_id" not in cols:
+            conn.execute("ALTER TABLE consciousness_narratives ADD COLUMN user_id TEXT DEFAULT 'global'")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_narratives_user ON consciousness_narratives(user_id, created_at)")
+            logger.info("[LongTerm] 迁移: consciousness_narratives 添加 user_id 列")
+
+        self._set_schema_version("longterm", 2)
+        logger.info("[LongTerm] Schema migrated to v2")
 
     # ── Public API ──────────────────────────────────────────────
 
@@ -931,6 +946,7 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         user_idle_duration: float | None = None,
         conversation_summary: str | None = None,
         related_memory_ids: list[int] | None = None,
+        user_id: str = "global",
     ) -> int:
         """Store a consciousness narrative (LLM internal monologue).
 
@@ -941,6 +957,7 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
             user_idle_duration: user_idle at time
             conversation_summary: triggering conversation text (100 chars)
             related_memory_ids: list of memory IDs referenced in narrative
+            user_id: 用户标识（默认 global）
         """
         conn = self._get_conn()
         now = time.time()
@@ -949,16 +966,16 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         cur = conn.execute(
             """INSERT INTO consciousness_narratives
                (content, trigger, created_at, related_memory_ids, drive_summary,
-                energy_level, user_idle_duration, conversation_summary)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                energy_level, user_idle_duration, conversation_summary, user_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (content, trigger, now, related_json, drive_summary,
-             energy_level, user_idle_duration, conversation_summary),
+             energy_level, user_idle_duration, conversation_summary, user_id),
         )
         conn.commit()
         narrative_id = cur.lastrowid
         logger.info(
-            "Stored narrative #%d [trigger=%s] len=%d",
-            narrative_id, trigger, len(content),
+            "Stored narrative #%d [trigger=%s user=%s] len=%d",
+            narrative_id, trigger, user_id, len(content),
         )
         return narrative_id
 
@@ -967,6 +984,7 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         trigger: str | None = None,
         limit: int = 10,
         since: float | None = None,
+        user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Get consciousness narratives.
 
@@ -974,10 +992,14 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
             trigger: filter by trigger type ('L2_light', 'L3_deep', etc.)
             limit: max number of results
             since: only narratives created after this timestamp
+            user_id: filter by user (不传则不过滤)
         """
         conn = self._get_conn()
         sql = "SELECT * FROM consciousness_narratives WHERE 1=1"
         params: list = []
+        if user_id:
+            sql += " AND (user_id = ? OR user_id = 'global')"
+            params.append(user_id)
         if trigger:
             sql += " AND trigger = ?"
             params.append(trigger)
@@ -1221,7 +1243,7 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
 
         rows = conn.execute("""
             SELECT * FROM memories
-            WHERE (user_id = ? OR user_id = 'global')
+            WHERE (user_id = ?)
               AND status != 'extinct'
             ORDER BY strength * importance DESC
             LIMIT ?
@@ -1265,7 +1287,7 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
 
         # Search with user_id filter — overfetch then re-rank
         results = table.search(query_vector) \
-            .where(f"user_id = '{safe_user_id}' OR user_id = 'global'") \
+            .where(f"user_id = '{safe_user_id}'") \
             .limit(top_k * 3) \
             .to_pandas()
 
@@ -2024,7 +2046,7 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
             rows = conn.execute(
                 """SELECT * FROM memories
                    WHERE status = ?
-                     AND (user_id = ? OR user_id = 'global')
+                     AND (user_id = ?)
                      AND content LIKE ?
                    ORDER BY created_at DESC LIMIT ?""",
                 (STATUS_EXTINCT, user_id, f"%{keyword}%", limit),
@@ -2047,7 +2069,7 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
                 rows = conn.execute(
                     """SELECT * FROM memories
                        WHERE status = ?
-                         AND (user_id = ? OR user_id = 'global')
+                         AND (user_id = ?)
                          AND content LIKE ?
                        ORDER BY created_at DESC LIMIT ?""",
                     (STATUS_EXTINCT, user_id, f"%{keyword}%", limit),
@@ -2110,7 +2132,7 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         conn = self._get_conn()
         if user_id:
             row = conn.execute(
-                "SELECT COUNT(*) FROM memories WHERE user_id = ? OR user_id = 'global'",
+                "SELECT COUNT(*) FROM memories WHERE user_id = ?",
                 (user_id,),
             ).fetchone()
         else:

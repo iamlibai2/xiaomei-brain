@@ -371,8 +371,8 @@ class ProcedureMatcher:
             lines.append(f"  步骤：{steps_summary}")
 
         usage = (
-            "\n\n当用户的需求匹配上述某条流程时，可主动按步骤执行。"
-            "步骤是指导而非强制——如情况特殊可调整。执行完成后自然告知用户即可。"
+            "\n\n当对方的需求匹配上述某条流程时，可主动按步骤执行。"
+            "步骤是指导而非强制——如情况特殊可调整。执行完成后自然告知对方即可。"
         )
         return "\n".join(lines) + usage
 

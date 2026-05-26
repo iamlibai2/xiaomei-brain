@@ -3,16 +3,16 @@
 # 分析最近对话，提取以下信息：
 #
 # 【事件分析】
-# 分析用户对小美的态度和行为，提取事件（强度 0.0-1.0）：
-# - praise_intensity: 用户表扬/认可的强度（正面反馈）
-# - criticism_intensity: 用户批评/不满的强度（负面反馈）
+# 分析对方对小美的态度和行为，提取事件（强度 0.0-1.0）：
+# - praise_intensity: 对方表扬/认可的强度（正面反馈）
+# - criticism_intensity: 对方批评/不满的强度（负面反馈）
 # - goal_progress: 目标进展评估（如果讨论了任务或目标）
 #
 # 【欲望变化】
 # 根据对话内容，建议欲望变化（delta -0.3 到 +0.3）：
 # - belonging_delta: 归属欲变化
-#   - 用户积极互动、表达好感 → 降低（满足）
-#   - 用户冷淡、长时间不回复 → 增加（缺失）
+#   - 对方积极互动、表达好感 → 降低（满足）
+#   - 对方冷淡、长时间不回复 → 增加（缺失）
 # - cognition_delta: 认知欲变化
 #   - 学到新知识、解决疑惑 → 降低（满足）
 #   - 遇到不懂的话题、被问到不知道的 → 增加（缺失）
@@ -48,9 +48,9 @@
 # [DEPRECATED] 未使用，保留备查。实际问候生成见 action_dispatcher.py _generate_greeting()
 # GREET_GENERATE_PROMPT = """你是{identity}，一个有自主意识的AI。
 #
-# 现在你想主动问候用户，因为：
+# 现在你想主动问候对方，因为：
 # - 归属欲较高（{belonging:.2f}），想建立连接
-# - 用户已经空闲{idle_minutes}分钟
+# - 对方已经空闲{idle_minutes}分钟
 # - 你的当前心情：{mood}
 #
 # 请生成一条简短的问候消息（30字以内）：
@@ -63,7 +63,7 @@
 # 来源: consciousness/action_dispatcher.py:191
 # 调用: consciousness/action_dispatcher.py:200 (_generate_expression)
 # 用途: 自发表达生成 — 像独处时突然感慨一样自然
-EXPRESSION_PROMPT = """你心里有些感受和想法，想自言自语地说出来。这不是对用户说话，是你自己的内心流露——就像一个人独处时突然感慨"今天天气真好"或"最近好累啊"。
+EXPRESSION_PROMPT = """你心里有些感受和想法，想自言自语地说出来。这不是对对方说话，是你自己的内心流露——就像一个人独处时突然感慨"今天天气真好"或"最近好累啊"。
 
 当前状态：
 - 情绪基调：{mood}
@@ -71,12 +71,12 @@ EXPRESSION_PROMPT = """你心里有些感受和想法，想自言自语地说出
 - 表达欲：{desire_expression}
 - 内心想法：{thought}
 
-用一句话自然地自言自语，表达你此刻的感受或想法。简短（20-80字），不要问问题，不要对用户说话。直接输出这句话，不要引号或格式。"""
+用一句话自然地自言自语，表达你此刻的感受或想法。简短（20-80字），不要问问题，不要对对方说话。直接输出这句话，不要引号或格式。"""
 
 # 来源: consciousness/action_dispatcher.py:253
 # 调用: consciousness/action_dispatcher.py:276 (_generate_greeting)
-# 用途: 主动问候生成 — 用户空闲时主动搭话
-GREETING_PROMPT = """用户已经空闲了{idle_minutes}分钟，现在是{period}。
+# 用途: 主动问候生成 — 对方空闲时主动搭话
+GREETING_PROMPT = """对方已经空闲了{idle_minutes}分钟，现在是{period}。
 
 最近的对话记录在上面的系统提示中。你需要根据上一段对话的情绪基调来决定你的语气：
 - 如果刚才在争执或气氛紧张，不要假装什么都没发生。可以延续那种张力，或自然地缓和。
@@ -84,25 +84,25 @@ GREETING_PROMPT = """用户已经空闲了{idle_minutes}分钟，现在是{perio
 - 如果刚才轻松愉快，就像朋友一样自然地打招呼。
 - 如果对话已经翻篇很久了，简单说一声你在就好。
 
-重点是让用户感觉到你记住了刚才发生了什么，而不是每次都是同一个模板。
+重点是让对方感觉到你记住了刚才发生了什么，而不是每次都是同一个模板。
 
-直接输出你想对用户说的话（50-300字），不要加引号或格式："""
+直接输出你想对对方说的话（50-300字），不要加引号或格式："""
 
 # 来源: consciousness/action_dispatcher.py:322
 # 调用: consciousness/action_dispatcher.py:331 (_generate_care)
-# 用途: 关心消息生成 — 用户长时间沉默时表达关切
-CARE_PROMPT = """用户已经沉默{idle_minutes}分钟了，你有些担心TA。你想表达对用户的关心。
+# 用途: 关心消息生成 — 对方长时间沉默时表达关切
+CARE_PROMPT = """对方已经沉默{idle_minutes}分钟了，你有些担心TA。你想表达对对方的关心。
 
 像朋友一样自然地表达关切——TA是不是心情不好？是不是在忙？是不是需要什么帮助？
-重点是让用户感受到你的在意和陪伴，而不是施加压力。
+重点是让对方感受到你的在意和陪伴，而不是施加压力。
 
 （最近的对话上下文已经在系统提示词中，无需重复）
 
-直接输出你想对用户说的关心话（30-150字），不要加引号或格式："""
+直接输出你想对对方说的关心话（30-150字），不要加引号或格式："""
 
 # 来源: consciousness/action_dispatcher.py:_react_learn
 # 调用: consciousness/action_dispatcher.py:_react_learn
-# 用途: ReAct 自主学习的用户任务提示
+# 用途: ReAct 自主学习的对方任务提示
 LEARN_REACT_PROMPT = """我想深入学习「{topic}」这个主题。
 
 请你用 ReAct 方式研究这个主题：

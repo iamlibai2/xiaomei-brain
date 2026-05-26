@@ -52,12 +52,17 @@ CREATE TABLE IF NOT EXISTS experience_stream (
     created_at REAL NOT NULL,
     session_id TEXT DEFAULT '',
     related_id TEXT DEFAULT '',
-    metadata TEXT DEFAULT '{}'
+    metadata TEXT DEFAULT '{}',
+    user_id TEXT DEFAULT 'global'
 );
 
 CREATE INDEX IF NOT EXISTS idx_exp_stream_type ON experience_stream(type);
 CREATE INDEX IF NOT EXISTS idx_exp_stream_created ON experience_stream(created_at);
 CREATE INDEX IF NOT EXISTS idx_exp_stream_session ON experience_stream(session_id, created_at);
+"""
+
+DDL_MIGRATED = """
+CREATE INDEX IF NOT EXISTS idx_exp_stream_user ON experience_stream(user_id, created_at);
 """
 
 
@@ -76,6 +81,19 @@ class ExperienceStream(SQLiteStore):
         conn = self._get_conn()
         conn.executescript(DDL)
         conn.commit()
+        self._migrate()
+        # 迁移后补充索引（DDL_MIGRATED 依赖 user_id 列存在）
+        conn.executescript(DDL_MIGRATED)
+        conn.commit()
+
+    def _migrate(self) -> None:
+        """增量迁移：添加 user_id 列（如果不存在）。"""
+        conn = self._get_conn()
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(experience_stream)").fetchall()]
+        if "user_id" not in cols:
+            conn.execute("ALTER TABLE experience_stream ADD COLUMN user_id TEXT DEFAULT 'global'")
+            conn.commit()
+            logger.info("[ExperienceStream] 迁移: 添加 user_id 列")
 
     # ── 写入 ──────────────────────────────────────────────────
 
@@ -87,6 +105,7 @@ class ExperienceStream(SQLiteStore):
         session_id: str = "",
         related_id: str = "",
         metadata: dict[str, Any] | None = None,
+        user_id: str = "global",
     ) -> int:
         """写入一条经验。
 
@@ -98,6 +117,7 @@ class ExperienceStream(SQLiteStore):
             session_id: 关联的会话 ID
             related_id: 关联的专用表 ID
             metadata: 类型相关的附加数据
+            user_id: 用户标识（默认 global 表示 agent 级别事件）
 
         Returns:
             新插入行的 id。
@@ -111,8 +131,8 @@ class ExperienceStream(SQLiteStore):
         conn = self._get_conn()
         cur = conn.execute(
             """INSERT INTO experience_stream
-               (type, content, importance, created_at, session_id, related_id, metadata)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               (type, content, importance, created_at, session_id, related_id, metadata, user_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 type,
                 content,
@@ -121,6 +141,7 @@ class ExperienceStream(SQLiteStore):
                 session_id or "",
                 related_id or "",
                 json.dumps(metadata or {}, ensure_ascii=False),
+                user_id,
             ),
         )
         conn.commit()
@@ -133,6 +154,7 @@ class ExperienceStream(SQLiteStore):
         limit: int = 50,
         session_id: str | None = None,
         types: list[str] | None = None,
+        user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """获取最近 N 条经验。
 
@@ -140,14 +162,19 @@ class ExperienceStream(SQLiteStore):
             limit: 最大返回条数
             session_id: 可选，按会话过滤
             types: 可选，按类型过滤
+            user_id: 可选，按用户过滤（不传则不过滤）
 
         Returns:
-            [{id, type, content, importance, created_at, session_id, related_id, metadata}, ...]
+            [{id, type, content, importance, created_at, session_id, related_id, metadata, user_id}, ...]
             按 created_at 倒序（最新的在前）。
         """
         conn = self._get_conn()
         sql = "SELECT * FROM experience_stream WHERE 1=1"
         params: list[Any] = []
+
+        if user_id:
+            sql += " AND (user_id = ? OR user_id = 'global')"
+            params.append(user_id)
 
         if session_id:
             sql += " AND session_id = ?"

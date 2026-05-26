@@ -352,7 +352,7 @@ def main():
                 print(f"[图片] {img_path}")
 
             living._command_done.clear()
-            living.put_message(msg, images=images)
+            living.put_message(msg, images=images, session_id=f"cli-{agent_id}")
 
             # 命令消息：等 living 线程处理完再刷新
             if msg.startswith("/"):
