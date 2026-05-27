@@ -101,7 +101,10 @@ _TASK_STEP_PROMPT = (
     "这一步用了{elapsed:.0f}秒，{tools_info}\n"
     "{buzz_hints}\n"
     "像工匠看了一眼自己手里的活——方向对吗？顺手吗？需要注意什么？\n"
-    "1-3句话，直接说出你的直觉。如果一切顺利，就说\"一切正常\"。"
+    "1-3句话，直接说出你的直觉。如果一切顺利，就说\"一切正常\"。\n\n"
+    "如果你发现某个必要的步骤被遗漏了，请输出JSON数组建议插入。没有则输出空数组。\n"
+    "---INSERT---\n"
+    "[]"
 )
 
 _TASK_DONE_PROMPT = (
@@ -198,15 +201,25 @@ class InnerVoice:
         # 最近一次反省（供 should_continue 使用）
         self._last_reflection: Reflection | None = None
 
+        # 最近一次 INSERT 建议
+        self._last_inserts: list[dict] = []
+
     # ── 响应解析 ──────────────────────────────────────────────
 
     @staticmethod
-    def _split_all(response: str) -> tuple[str, str, str, str]:
-        """分离 自然语言 / ---EVENTS--- JSON / ---SIGNAL--- JSON / ---GAPS--- JSON。"""
+    def _split_all(response: str) -> tuple[str, str, str, str, str]:
+        """分离 自然语言 / ---EVENTS--- / ---SIGNAL--- / ---GAPS--- / ---INSERT---"""
         signal_text = ""
         events_text = ""
         gaps_text = ""
+        inserts_text = ""
         remainder = response.strip()
+
+        # INSERT 在最前面（紧跟自然语言）
+        if "---INSERT---" in remainder:
+            remainder, inserts_text = remainder.split("---INSERT---", 1)
+            remainder = remainder.strip()
+            inserts_text = inserts_text.strip()
 
         # GAPS 在最后，先拆分
         if "---GAPS---" in remainder:
@@ -228,7 +241,27 @@ class InnerVoice:
         else:
             thought = remainder
 
-        return thought, events_text, signal_text, gaps_text
+        return thought, events_text, signal_text, gaps_text, inserts_text
+
+    def _parse_inserts(self, inserts_text: str) -> list[dict]:
+        """解析 ---INSERT--- 部分的 JSON 数组。"""
+        if not inserts_text or inserts_text.strip() in ("", "[]"):
+            return []
+        try:
+            inserts = json.loads(inserts_text.strip())
+            if isinstance(inserts, list):
+                return [item for item in inserts if isinstance(item, dict) and "description" in item]
+        except (json.JSONDecodeError, Exception):
+            pass
+        return []
+
+    def get_inserted_steps(self) -> list[dict]:
+        """获取最近一次 InnerVoice 建议插入的步骤。"""
+        return getattr(self, '_last_inserts', [])
+
+    def reset_inserted_steps(self) -> None:
+        """清空插入建议。"""
+        self._last_inserts = []
 
     def _apply_drive_events(self, events_text: str) -> None:
         """从 EVENTS JSON 解析维度值并应用到 Drive。"""
@@ -397,10 +430,13 @@ class InnerVoice:
         if not raw_response:
             return None
 
-        # 分离自然语言 / EVENTS JSON / SIGNAL JSON / GAPS JSON
-        thought_text, events_json, signal_json, gaps_json = self._split_all(raw_response)
+        # 分离自然语言 / EVENTS JSON / SIGNAL JSON / GAPS JSON / INSERT JSON
+        thought_text, events_json, signal_json, gaps_json, inserts_json = self._split_all(raw_response)
         if not thought_text:
             return None
+
+        # 解析插入建议
+        self._last_inserts = self._parse_inserts(inserts_json)
 
         # 构建 Reflection（thought 只存自然语言部分）
         reflection = Reflection(

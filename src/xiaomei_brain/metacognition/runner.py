@@ -1345,6 +1345,12 @@ class PACERunner:
                     else:
                         self._pending_block_advance = False
 
+            # 检查 InnerVoice 是否建议插入遗漏步骤
+            inserts = self._inner_voice.get_inserted_steps()
+            if inserts:
+                self._apply_sub_goal_inserts(inserts)
+                self._inner_voice.reset_inserted_steps()
+
             # [Layer 2] Experience Memory: InnerVoice 识别到重要经验 → 提取
             if reflection and self._experience_memory:
                 try:
@@ -1435,6 +1441,34 @@ class PACERunner:
                 return True
 
         return False
+
+    def _apply_sub_goal_inserts(self, inserts: list[dict]) -> None:
+        """将 InnerVoice 建议的遗漏步骤插入为目标树子目标。"""
+        current = self._purpose.get_current()
+        if not current or not current.parent_id:
+            return
+
+        existing_descs = {
+            sg.description.strip().lower()
+            for sg in self._purpose.get_sub_goals(current.parent_id)
+        }
+
+        from ..purpose.goal import GoalType
+        for item in inserts:
+            desc = item.get("description", "").strip()
+            if not desc:
+                continue
+            if desc.lower() in existing_descs:
+                logger.info("[PACE] 跳过重复插入: %s", desc[:40])
+                continue
+            self._purpose.add_goal(
+                description=desc,
+                goal_type=GoalType.EXECUTABLE,
+                parent_id=current.parent_id,
+                priority=current.priority * 0.9,
+            )
+            logger.info("[PACE] 动态插入子目标: %s", desc[:40])
+            print(f"[PACE] 动态插入: {desc[:60]}", flush=True)
 
     # ── [Layer 2] Project Mental Model helpers ────────────────────────
 
