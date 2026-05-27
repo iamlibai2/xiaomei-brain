@@ -23,6 +23,7 @@ from typing import Any, Callable
 from .types import (
     StepObservation, StepCheckResult, MetaSuggestion, SurpriseType, StuckClass,
 )
+from .perspectives import PerspectiveEngine
 from .rules import detect_surprises, parse_progress_tag, remove_progress_tag, content_similarity
 from .reviewer import LLMBudget, llm_step_check, llm_post_review, persist_lesson
 from .capability import CapabilityTracker
@@ -77,6 +78,10 @@ class PACERunner:
 
         # 可观测性指标（每次 run() 时创建）
         self._metrics = None
+
+        # 视角切换状态
+        self._perspective_engine: PerspectiveEngine | None = None
+        self._perspective_tried: bool = False
 
     # ── Public API ──────────────────────────────────────────────────
 
@@ -441,6 +446,7 @@ class PACERunner:
                     logger.info("[PACERunner] %s → 自动完成子目标并尝试推进", check.suggestion.value)
                     step_index += 1
                     current_goal_retries = 0  # 推进到新子目标，重置重试计数
+                    self._perspective_tried = False
                     next_goal = self._purpose.get_current()
                     if next_goal:
                         siblings = None
@@ -469,6 +475,38 @@ class PACERunner:
 
             # RETRY_DIFFERENT / SIMPLIFY: 不退出，不推进子目标，重试当前步骤
             if check.suggestion in (MetaSuggestion.RETRY_DIFFERENT, MetaSuggestion.SIMPLIFY):
+                iv_retry = self._check_iv_retry_signal()
+
+                # 视角切换突破条件：
+                # 1. InnerVoice 检测到 "方向不对" → 立即触发
+                # 2. 已重试 ≥ 1 次 → 保底触发
+                # 3. 本子目标尚未触发过视角切换
+                should_breakthrough = (
+                    (iv_retry or current_goal_retries >= 1)
+                    and not self._perspective_tried
+                )
+
+                if should_breakthrough:
+                    goal_desc = self._current_goal_desc()
+                    direction = self._trigger_perspective_breakthrough(goal_desc)
+                    self._perspective_tried = True
+
+                    if direction:
+                        # 清空 observations + 注入方向感
+                        self._observations = []
+                        if current_context:
+                            current_context = direction + "\n\n" + current_context
+                        else:
+                            current_context = direction
+                        current_goal_retries = 0
+                        logger.info(
+                            "[PACERunner] 视角切换 → 清空上下文，重新执行 (iv_retry=%s, retries=%d)",
+                            iv_retry, current_goal_retries,
+                        )
+                        step_index += 1
+                        continue
+                    # 方向感生成失败 → 走正常重试
+
                 current_goal_retries += 1
                 logger.info("[PACERunner] %s: %s (retry %d/%d)", check.suggestion.value, check.reasoning, current_goal_retries, max_retries_per_goal)
                 step_index += 1
@@ -495,6 +533,7 @@ class PACERunner:
                 self._metrics.sub_goals_completed += 1
             step_index += 1
             current_goal_retries = 0  # 推进到新子目标，重置重试计数
+            self._perspective_tried = False
             next_goal = self._purpose.get_current()
             if next_goal:
                 # 获取同级子目标
@@ -1279,6 +1318,51 @@ class PACERunner:
         except Exception as e:
             logger.debug("[PACERunner] InnerVoice task_step 失败: %s", e)
 
+    # ── [Layer 3] 视角切换 helpers ─────────────────────────────────
+
+    def _check_iv_retry_signal(self) -> bool:
+        """检查 InnerVoice 最近一次反省是否包含 'retry' 信号。"""
+        if not self._inner_voice:
+            return False
+        try:
+            thought = self._inner_voice.get_last_thought()
+            if not thought:
+                return False
+            from .inner_voice import _extract_continue_signal
+            __, reason = _extract_continue_signal(thought)
+            return reason == "retry"
+        except Exception:
+            return False
+
+    def _trigger_perspective_breakthrough(self, goal_description: str) -> str:
+        """触发视角切换突破。
+
+        Returns:
+            聚合的方向感文本。空字符串表示突破失败。
+        """
+        try:
+            agent = self._agent_provider._get_agent()
+            llm = agent.llm
+        except Exception:
+            logger.warning("[PACERunner] 无法获取 LLM 实例，跳过视角切换")
+            return ""
+
+        if self._perspective_engine is None:
+            self._perspective_engine = PerspectiveEngine()
+
+        logger.info(
+            "[PACERunner] 触发视角切换突破: goal='%s'",
+            goal_description[:60],
+        )
+        direction = self._perspective_engine.run(llm, goal_description)
+
+        if direction:
+            print(f"\n[视角切换] 获得突破方向:\n{direction}", flush=True)
+        else:
+            print(f"\n[视角切换] 所有视角均未产出有效方向", flush=True)
+
+        return direction
+
     # ── [Layer 2] Project Mental Model helpers ────────────────────────
 
     def _record_operation(
@@ -1307,6 +1391,7 @@ class PACERunner:
         self._resume_nudge = ""
         self._skip_post_review = False
         self._exit_reason = self.EXIT_COMPLETED
+        self._perspective_tried = False
 
     def _build_confirm_options(self, check: StepCheckResult) -> list[str]:
         """根据障碍类型生成用户确认选项"""
