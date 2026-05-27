@@ -535,6 +535,41 @@ class PACERunner:
                         continue
                     # 方向感生成失败 → 走正常重试
 
+                # 价值重估：重试 3 次时评估是否还值得继续
+                if current_goal_retries == 3:
+                    goal_desc = self._current_goal_desc()
+                    if not self._value_reassess(goal_desc, current_goal_retries):
+                        # 跳过当前子目标
+                        current_goal_id = self._current_goal_id()
+                        if current_goal_id:
+                            from ..purpose import task_executor
+                            task_executor.apply_skip(self._purpose, current_goal_id)
+                            current_goal_retries = 0
+                            self._perspective_tried = False
+                            # 推进到下一个
+                            next_goal = self._purpose.get_current()
+                            if next_goal and next_goal.parent_id:
+                                siblings = self._purpose.get_sub_goals(next_goal.parent_id)
+                                if siblings and all(s.is_completed() for s in siblings):
+                                    print(f"\n[元认知] 全部 {len(siblings)} 个子目标已完成。", flush=True)
+                                    cb.get("print_prompt", lambda: None)()
+                                    return
+                                current_context = self._build_intent_context_for_goal(next_goal, siblings)
+                                current_msg = type(msg)(
+                                    content=f"[系统] 子目标：{next_goal.description}",
+                                    user_id=msg.user_id,
+                                    session_id=msg.session_id,
+                                    source="system",
+                                )
+                                self._print_sub_goal_progress(next_goal)
+                            else:
+                                # 没有下一个子目标，标记当前目标完成
+                                self._exit_reason = self.EXIT_COMPLETED
+                                cb.get("print_prompt", lambda: None)()
+                                return
+                        step_index += 1
+                        continue
+
                 current_goal_retries += 1
                 logger.info("[PACERunner] %s: %s (retry %d/%d)", check.suggestion.value, check.reasoning, current_goal_retries, max_retries_per_goal)
                 step_index += 1
@@ -1469,6 +1504,44 @@ class PACERunner:
             )
             logger.info("[PACE] 动态插入子目标: %s", desc[:40])
             print(f"[PACE] 动态插入: {desc[:60]}", flush=True)
+
+    def _value_reassess(self, goal_description: str, retries: int) -> bool:
+        """评估当前子目标是否仍然值得继续。
+
+        Returns:
+            True = 值得继续, False = 建议跳过
+        """
+        try:
+            agent = self._agent_provider._get_agent()
+            llm = agent.llm
+        except Exception:
+            logger.warning("[PACE] 价值重估失败：无法获取LLM")
+            return True
+
+        prompt = (
+            f"你在执行子目标「{goal_description[:200]}」，已经重试了{retries}次。\n"
+            "快速判断：在当前情况下，这个子目标还值得继续做吗？\n"
+            '用JSON回答：{"worth_it": true/false, "reason": "一句话原因"}'
+        )
+
+        try:
+            response = llm.chat([{"role": "user", "content": prompt}])
+            text = (response.content or "").strip()
+            import json
+            start = text.find("{")
+            end = text.rfind("}") + 1
+            if start >= 0 and end > start:
+                data = json.loads(text[start:end])
+                worth_it = data.get("worth_it", True)
+                reason = data.get("reason", "")
+                if not worth_it:
+                    logger.info("[PACE] 价值重估: 建议跳过 — %s", reason)
+                    print(f"\n[PACE] 价值重估: 建议跳过「{goal_description[:40]}」— {reason}", flush=True)
+                return worth_it
+        except Exception as e:
+            logger.warning("[PACE] 价值重估 LLM 调用失败: %s", e)
+
+        return True
 
     # ── [Layer 2] Project Mental Model helpers ────────────────────────
 
