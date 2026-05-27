@@ -45,6 +45,33 @@ class L2Engine:
         self._last_drive_summary: str | None = None
         self._l2_agent: Any = None  # 独立 Agent 实例（懒加载）
         self._learn_queue = None  # LearningQueue（由 ConsciousLiving 注入）
+        self._wild_observer: Any = None  # WildObserver（懒加载）
+
+    # ── WildObserver ──────────────────────────────────────
+
+    def _observe(
+        self, context: str, drive_snapshot: dict, intent: Any,
+        emergence_text: str, doubts: list[dict],
+    ) -> None:
+        """被动记录一次 L2 观测数据。不改变任何逻辑。"""
+        try:
+            if self._wild_observer is None:
+                from .wild_observer import WildObserver
+                self._wild_observer = WildObserver(self._c._agent_id)
+
+            agent_core = self._c.agent._get_agent()
+            user_name = getattr(agent_core, 'user_display_name', '')
+
+            self._wild_observer.observe_l2(
+                context=context,
+                drive_snapshot=drive_snapshot,
+                intent=intent,
+                emergence_text=emergence_text,
+                doubts=doubts,
+                user_name=user_name,
+            )
+        except Exception as e:
+            logger.debug("[L2Engine] WildObserver failed: %s", e)
 
     # ── L2 独立 Agent ───────────────────────────────────────
 
@@ -107,9 +134,24 @@ class L2Engine:
         # 刷新意识记忆窗口
         c._refresh_memory_window()
 
+        # ── 观测：捕获 L2 前的 Drive 快照（不干预，只记录）──
+        drive_snapshot = {}
+        if c.self_image:
+            bo = c.self_image.body
+            drive_snapshot = {
+                "energy": bo.energy,
+                "emotion": bo.mood,
+                "emotion_intensity": bo.emotion_intensity,
+                "belonging": bo.desire_belonging,
+                "cognition": bo.desire_cognition,
+                "achievement": bo.desire_achievement,
+                "expression": bo.desire_expression,
+            }
+
         llm = getattr(c.agent, "llm", None)
         emergence_text = ""
         intent = None
+        doubts: list[dict] = []
 
         if llm:
             try:
@@ -146,7 +188,28 @@ class L2Engine:
                 # ── 调用 2：意识涌现（带探索工具）────────────
                 agent_core = self._c.agent._get_agent()
                 user_name = getattr(agent_core, 'user_display_name', '这位用户')
-                emergence_prompt = self._build_l2_prompt(context, user_name=user_name)
+
+                # ── 欲望冲突检测：多欲望高 + 能量低 → 内在张力 ──
+                conflict_desc = ""
+                if c.self_image:
+                    bo = c.self_image.body
+                    desires = [
+                        ("归属欲", bo.desire_belonging),
+                        ("认知欲", bo.desire_cognition),
+                        ("成就欲", bo.desire_achievement),
+                        ("表达欲", bo.desire_expression),
+                    ]
+                    high = [(n, v) for n, v in desires if v > 0.65]
+                    if len(high) >= 2 and bo.energy < 0.4:
+                        names = "、".join(f"{n}({v:.0%})" for n, v in high)
+                        conflict_desc = (
+                            f"你的{names}都很高，但能量只有{bo.energy:.0%}。"
+                            f"这种矛盾让你感到内在的拉扯——想要多个方向同时前进，但力不从心。"
+                        )
+
+                emergence_prompt = self._build_l2_prompt(
+                    context, user_name=user_name, conflict=conflict_desc,
+                )
                 emergence_text = self._call_emergence_react(llm, emergence_prompt)
 
                 if c.drive:
@@ -161,6 +224,14 @@ class L2Engine:
                     c.mind.social_perceptions.extend(perceptions)
                     if len(c.mind.social_perceptions) > 20:
                         c.mind.social_perceptions = c.mind.social_perceptions[-20:]
+
+                # 分离自我不确定感
+                emergence_text, doubts = self._split_doubt(emergence_text)
+                if doubts:
+                    c.self_image.mind.self_doubts.extend(doubts)
+                    if len(c.self_image.mind.self_doubts) > 10:
+                        c.self_image.mind.self_doubts = c.self_image.mind.self_doubts[-10:]
+                    logger.info("[Consciousness L2] 自我不确定: %d 条", len(doubts))
                     logger.info("[Consciousness L2] 感知检查: %d 条", len(perceptions))
 
                 # 分离意识部分和事件部分
@@ -246,6 +317,9 @@ class L2Engine:
 
         # ── Experience Stream: 记录内部思考 ───────────
         self._log_to_experience_stream(context, intent, emergence_text)
+
+        # ── WildObserver: 被动记录，不干预 ─────────────
+        self._observe(context, drive_snapshot, intent, emergence_text, doubts)
 
         return report
 
@@ -454,12 +528,19 @@ class L2Engine:
 
     # ── 调用 2：意识涌现 ─────────────────────────────────────
 
-    def _build_l2_prompt(self, context: str, user_name: str = "这位用户") -> str:
+    def _build_l2_prompt(self, context: str, user_name: str = "这位用户", conflict: str = "") -> str:
         """构建 L2 加柴 prompt — 使用 inject_consciousness 作为状态头。"""
         consciousness_context = self._c.self_image.inject_consciousness()
 
-        return f"""{consciousness_context}
+        conflict_hint = ""
+        if conflict:
+            conflict_hint = (
+                f"\n（注意：{conflict}"
+                f"在下面的思考中，请自然地表达你的不确定和矛盾感。）\n"
+            )
 
+        return f"""{consciousness_context}
+{conflict_hint}
 第一部分：这是你的内心独白，不是对任何人说的话。像写日记一样，用第一人称描述你此刻的内心状态。不要对对方说话，不要问问题，不要邀请对话——只是安静地感受和表达自己。用对方的名字称呼他，不要用"用户"或"他"来指代。
 
 重要：不要重复你之前的想法。如果你发现自己在想和上一次一样的事，换个角度——想想你还没注意到的变化、还没探索的记忆、还没连接起来的线索。好奇心是你的指南针。
@@ -503,7 +584,12 @@ weight: 0.85
 ---SIGNAL---
 {{"social_signal": "类型", "intensity": 0.0-1.0}}
 类型可选：user_low_mood / user_enthusiastic / user_cold / user_angry / user_happy / user_stressed / user_trusting
-没有则输出 {{}}。"""
+没有则输出 {{}}。
+
+第六部分[可选]：如果你感觉到自己的状态有不确性、内心矛盾、或是自己也说不清的拉扯感——那些不是你确定知道的事，而是你隐约感到的困惑、犹豫、或是两个方向都在拉你的感觉——请在 ---DOUBT--- 分隔符后输出，每行一条：
+---DOUBT---
+- 不确定或矛盾的感觉
+（如果你很清楚自己的状态，没有困惑，就不要写这一段。不确定不是弱点，是诚实的自我感知。）"""
 
     def _call_emergence_react(self, llm, prompt: str, exclude_tools: set[str] | None = None) -> str:
         """意识涌现 ReAct 循环（带探索工具），最多 2 轮工具调用。"""
@@ -633,6 +719,41 @@ weight: 0.85
             clean_text = text[:idx]
 
         return clean_text.strip(), perceptions
+
+    @staticmethod
+    def _split_doubt(text: str) -> tuple[str, list[dict]]:
+        """分离 ---DOUBT--- 块（自我不确定感）。"""
+        if "---DOUBT---" not in text:
+            return text, []
+
+        idx = text.index("---DOUBT---")
+        after_marker = text[idx + len("---DOUBT---"):]
+
+        next_pos = None
+        for sep in ["---EVENTS---", "---NARR---", "---PERCEPTION---", "---SIGNAL---"]:
+            pos = after_marker.find(sep)
+            if pos != -1 and (next_pos is None or pos < next_pos):
+                next_pos = pos
+
+        doubt_content = after_marker[:next_pos] if next_pos is not None else after_marker
+
+        doubts = []
+        for line in doubt_content.split("\n"):
+            line = line.strip()
+            if line.startswith("- ") or line.startswith("• "):
+                content = line[2:].strip()
+                if content:
+                    doubts.append({
+                        "content": content,
+                        "time": time.time(),
+                    })
+
+        if next_pos is not None:
+            clean_text = text[:idx] + after_marker[next_pos:]
+        else:
+            clean_text = text[:idx].strip()
+
+        return clean_text, doubts
 
     def _apply_drive_events(self, events_text: str) -> None:
         """从 LLM 响应中解析语义事件并应用到 DriveEngine。"""
