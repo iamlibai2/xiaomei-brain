@@ -279,7 +279,7 @@ def review(
     ]
 
     try:
-        response = llm.chat(messages, temperature=0.3, max_tokens=300)
+        response = llm.chat(messages)
         if response and hasattr(response, "content"):
             result = (response.content or "").strip()
             logger.info("[Review] 审查完成: %s", result[:80])
