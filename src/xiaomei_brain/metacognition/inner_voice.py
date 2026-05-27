@@ -215,12 +215,6 @@ class InnerVoice:
         inserts_text = ""
         remainder = response.strip()
 
-        # INSERT 在最前面（紧跟自然语言）
-        if "---INSERT---" in remainder:
-            remainder, inserts_text = remainder.split("---INSERT---", 1)
-            remainder = remainder.strip()
-            inserts_text = inserts_text.strip()
-
         # GAPS 在最后，先拆分
         if "---GAPS---" in remainder:
             remainder, gaps_text = remainder.split("---GAPS---", 1)
@@ -235,11 +229,17 @@ class InnerVoice:
 
         # 拆分 EVENTS
         if "---EVENTS---" in remainder:
-            thought, events_text = remainder.split("---EVENTS---", 1)
-            thought = thought.strip()
+            remainder, events_text = remainder.split("---EVENTS---", 1)
+            remainder = remainder.strip()
             events_text = events_text.strip()
-        else:
-            thought = remainder
+
+        thought = remainder
+
+        # INSERT 紧跟自然语言，从 thought 中提取
+        if "---INSERT---" in thought:
+            thought, inserts_text = thought.split("---INSERT---", 1)
+            thought = thought.strip()
+            inserts_text = inserts_text.strip()
 
         return thought, events_text, signal_text, gaps_text, inserts_text
 
