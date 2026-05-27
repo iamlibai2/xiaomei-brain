@@ -247,6 +247,7 @@ class TaskOrchestrator:
         resume_context = ""
         if goal.is_paused():
             goal.activate()
+            self._purpose.reactivate_paused_sub_goals(goal.id)
             resume_context = goal.get_cognitive_context()
             self._purpose.save()
             print(f"[目标] 恢复: {goal.description[:40]}", flush=True)

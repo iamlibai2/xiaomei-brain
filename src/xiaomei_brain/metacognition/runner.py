@@ -83,6 +83,9 @@ class PACERunner:
         self._perspective_engine: PerspectiveEngine | None = None
         self._perspective_tried: bool = False
 
+        # 子目标阻塞推进状态
+        self._pending_block_advance: bool = False
+
     # ── Public API ──────────────────────────────────────────────────
 
     def run(
@@ -353,6 +356,31 @@ class PACERunner:
                     obs, step_index, tool_names,
                     progress_data, elapsed, tc_count,
                 )
+
+                # InnerVoice 检测到等待信号 → 阻塞当前子目标并推进
+                if self._pending_block_advance:
+                    self._pending_block_advance = False
+                    next_goal = self._purpose.get_current()
+                    if next_goal:
+                        siblings = None
+                        if next_goal.parent_id:
+                            siblings = self._purpose.get_sub_goals(next_goal.parent_id)
+                        if siblings and all(s.is_completed() for s in siblings):
+                            print(f"\n[元认知] 全部 {len(siblings)} 个子目标已完成。", flush=True)
+                            cb.get("print_prompt", lambda: None)()
+                            return
+                        current_context = self._build_intent_context_for_goal(next_goal, siblings)
+                        current_msg = type(msg)(
+                            content=f"[系统] 子目标：{next_goal.description}",
+                            user_id=msg.user_id,
+                            session_id=msg.session_id,
+                            source="system",
+                        )
+                        self._print_sub_goal_progress(next_goal)
+                        current_goal_retries = 0
+                        self._perspective_tried = False
+                        step_index += 1
+                        continue
 
                 # ── [Layer 2] Project Mental Model: 记录操作 ──
                 self._record_operation(
@@ -974,7 +1002,11 @@ class PACERunner:
             if obs.llm_output.strip():
                 # 但若 Agent 明确拒绝/等待用户，则不自动完成
                 if self._detect_refusal_or_waiting(obs.llm_output):
-                    logger.info("[PACERunner] 无 PROGRESS 标签但 Agent 明确拒绝/等待用户，不自动完成")
+                    logger.info("[PACERunner] 无 PROGRESS 标签但 Agent 明确拒绝/等待用户")
+                    goal = self._purpose.get_current()
+                    if goal and goal.id and self._block_and_advance(goal.id, "Agent表示等待用户"):
+                        self._update_goal_progress("completed")
+                        return True
                     self._exit_reason = self.EXIT_WAITING_USER
                     return False
                 logger.info("[PACERunner] 无 PROGRESS 标签但无异常，自动完成当前子目标")
@@ -1301,6 +1333,18 @@ class PACERunner:
 
             reflection = self._inner_voice.on_task_step(task_ctx, buzz_hints=buzz_hints)
 
+            # 检查 InnerVoice 是否检测到等待信号 → 尝试阻塞并推进
+            if reflection and reflection.thought:
+                from .inner_voice import _extract_continue_signal
+                __, reason = _extract_continue_signal(reflection.thought)
+                if reason == "waiting_user":
+                    goal = self._purpose.get_current()
+                    if goal and goal.parent_id:
+                        self._pending_block_advance = self._block_and_advance(
+                            goal.id, "InnerVoice检测到等待信号")
+                    else:
+                        self._pending_block_advance = False
+
             # [Layer 2] Experience Memory: InnerVoice 识别到重要经验 → 提取
             if reflection and self._experience_memory:
                 try:
@@ -1363,6 +1407,35 @@ class PACERunner:
 
         return direction
 
+    # ── 子目标阻塞与推进 ─────────────────────────────────────────
+
+    def _block_and_advance(self, goal_id: str, reason: str) -> bool:
+        """阻塞当前子目标，尝试推进到下一个。
+
+        Returns:
+            True 如果成功推进到下一个子目标，False 如果没有更多可执行的子目标。
+        """
+        if not self._purpose:
+            return False
+
+        goal = self._purpose.goals.get(goal_id)
+        if not goal or not goal.parent_id:
+            return False
+
+        self._purpose.pause_goal(goal_id, context_cache=reason)
+        goal.append_log("blocked", reason[:200])
+        logger.info("[PACE] 子目标阻塞: %s — %s", goal.description[:40], reason[:60])
+        print(f"\n[PACE] 子目标阻塞: {goal.description[:40]}", flush=True)
+
+        # 找下一个 PENDING 兄弟
+        siblings = self._purpose.get_sub_goals(goal.parent_id)
+        for sg in siblings:
+            if sg.is_pending() and sg.id != goal_id:
+                self._purpose.set_current(sg.id)
+                return True
+
+        return False
+
     # ── [Layer 2] Project Mental Model helpers ────────────────────────
 
     def _record_operation(
@@ -1392,6 +1465,7 @@ class PACERunner:
         self._skip_post_review = False
         self._exit_reason = self.EXIT_COMPLETED
         self._perspective_tried = False
+        self._pending_block_advance = False
 
     def _build_confirm_options(self, check: StepCheckResult) -> list[str]:
         """根据障碍类型生成用户确认选项"""

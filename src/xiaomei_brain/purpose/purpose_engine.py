@@ -787,6 +787,18 @@ class PurposeEngine:
         logger.info("[Purpose] 恢复目标: %s", goal.description[:40])
         return goal
 
+    def reactivate_paused_sub_goals(self, parent_goal_id: str) -> int:
+        """将父目标下所有 PAUSED 子目标恢复为 PENDING。"""
+        count = 0
+        for g in self.get_sub_goals(parent_goal_id):
+            if g.is_paused():
+                g.status = GoalStatus.PENDING
+                g.updated_at = time.time()
+                count += 1
+        if count:
+            self.save()
+        return count
+
     def get_active_tasks(self) -> list[Goal]:
         """获取所有活跃的顶层 Task（parent_id=None, EXECUTABLE, ACTIVE）"""
         return [g for g in self.goals.values()
