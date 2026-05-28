@@ -228,6 +228,26 @@ class DreamEngine:
             report.memories_extracted,
             report.elapsed_seconds,
         )
+
+        # ── 经验流 ──
+        if self.exp_stream:
+            try:
+                parts = [f"梦境完成: {report.summary[:200]}" if report.summary else "梦境完成（无摘要）"]
+                if report.memories_reinforced:
+                    parts.append(f"记忆强化{report.memories_reinforced}条")
+                if report.memories_extracted:
+                    parts.append(f"记忆提取{report.memories_extracted}条")
+                if report.patterns_extracted:
+                    parts.append(f"模式提取{report.patterns_extracted}条")
+                if report.emotion_changes:
+                    parts.append(f"情绪变化: {report.emotion_changes}")
+                self.exp_stream.log(
+                    type="dream",
+                    content=" | ".join(parts),
+                    importance=0.6,
+                )
+            except Exception as e:
+                logger.debug("[ExpStream] dream write failed: %s", e)
         return report
 
     def _run_flame_burn(self, report: DreamReport) -> None:

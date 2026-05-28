@@ -78,6 +78,21 @@ class ActionExecutor:
 
         self.dispatcher._send_proactive(content)
 
+        # 经验流
+        cl = self.dispatcher._conscious_living
+        if cl and cl.agent:
+            agent_core = cl.agent._get_agent()
+            es = getattr(agent_core, "exp_stream", None)
+            if es:
+                try:
+                    es.log(
+                        type="internal_action",
+                        content=f"{intent_type or source}: {content[:200]}",
+                        importance=0.4,
+                    )
+                except Exception as e:
+                    logger.debug("[ExpStream] proactive write failed: %s", e)
+
         # 消费已执行的 intent（避免下一 tick 重复匹配）
         if intent_type_for_consume and item.source == "intent":
             si = self.dispatcher._get_self_image()
@@ -165,7 +180,7 @@ class ActionExecutor:
                     try:
                         es.log(
                             type="internal_action",
-                            content=f"Alarm「{item.content[:50]}」: {result[:300]}",
+                            content=f"Alarm「{item.content[:50]}」: {result}",
                             importance=0.5,
                         )
                     except Exception as e:
@@ -320,7 +335,7 @@ class ActionExecutor:
                     try:
                         es.log(
                             type="internal_action",
-                            content=f"Work: {clean_result[:300]}",
+                            content=f"Work: {clean_result}",
                             importance=0.5,
                         )
                     except Exception as e:
@@ -457,6 +472,20 @@ class ActionExecutor:
             logger.warning("[ActionExecutor] 未知工具: %s", tool_name)
             return False
 
+        # ── 经验流 ──
+        cl = self.dispatcher._conscious_living
+        if success and cl and cl.agent:
+            es = getattr(cl.agent._get_agent(), "exp_stream", None)
+            if es:
+                try:
+                    es.log(
+                        type="internal_action",
+                        content=f"TOOL {tool_name}: {item.reason or item.content or ''}",
+                        importance=0.4,
+                    )
+                except Exception as e:
+                    logger.debug("[ExpStream] tool write failed: %s", e)
+
         # 消费已执行的 intent（避免下一 tick 重复匹配）
         if item.source == "intent":
             intent_type = item.metadata.get("intent_type", "")
@@ -557,6 +586,18 @@ class ActionExecutor:
             print(f"\n\033[36m[{ts} → {target}]\033[0m {text}", flush=True)
             logger.info("[ActionExecutor] 主动发送给 %s (%d 字)", target, len(text))
 
+            # ── 经验流 ──
+            es = getattr(cl.agent._get_agent(), "exp_stream", None) if cl.agent else None
+            if es:
+                try:
+                    es.log(
+                        type="internal_action",
+                        content=f"TALK_AGENT → {target}: {text[:200]}",
+                        importance=0.4,
+                    )
+                except Exception as e:
+                    logger.debug("[ExpStream] talk_to_agent write failed: %s", e)
+
             # 满足归属欲
             if cl.drive:
                 cl.drive.on_desire_satisfied("belonging", 0.15)
@@ -652,6 +693,18 @@ class ActionExecutor:
             result = agent_core.react_nodb(messages=messages, max_steps=3, label="pleasure")
             if result:
                 logger.info("[ActionExecutor] PLEASURE 完成 (%d 字)", len(result))
+
+            # ── 经验流 ──
+            es = getattr(cl.agent._get_agent(), "exp_stream", None) if cl.agent else None
+            if es:
+                try:
+                    es.log(
+                        type="internal_action",
+                        content=f"PLEASURE (craving={craving_before:.0%}): {result[:200] if result else '无输出'}",
+                        importance=0.4,
+                    )
+                except Exception as e:
+                    logger.debug("[ExpStream] pleasure write failed: %s", e)
 
             # 检测抵抗：craving 高但 agent 没有按压杠杆
             hit_count_after = getattr(cl.drive, '_pleasure_hit_count', 0)

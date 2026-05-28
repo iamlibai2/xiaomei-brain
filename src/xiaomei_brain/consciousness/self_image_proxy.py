@@ -686,6 +686,11 @@ class SelfImage:
             lines.append("你之前感觉到的：")
             for sp in m.social_perceptions[-5:]:
                 lines.append(f"- {sp.get('content', '')}")
+        if m.self_doubts:
+            lines.append("你对自己有些不确定：")
+            for sd in m.self_doubts[-5:]:
+                lines.append(f"- {sd.get('content', '')}")
+            lines.append("（这些不是你确定的事实，是你此刻的真实感受——不确定也是你的状态。）")
         if m.learning_queue:
             learn_queue = getattr(self, "_learn_queue", None)
             if learn_queue is not None:

@@ -466,6 +466,10 @@ class SelfMind:
     # ── 社交感知（L2 第四问产出）──────────────
     social_perceptions: list[dict] = field(default_factory=list)
 
+    # ── 自我不确定感（L2 DOUBT 产出）─────────
+    # 每项: {"content": "...", "time": timestamp}，留最近 10 条
+    self_doubts: list[dict] = field(default_factory=list)
+
     # ── 内心声音（InnerVoice 反思）─────────────
     inner_voice: list[dict] = field(default_factory=list)
 

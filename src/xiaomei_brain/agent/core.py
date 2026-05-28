@@ -362,7 +362,7 @@ class Agent:
                         try:
                             self.exp_stream.log(
                                 type="tool_exec",
-                                content=f"{tc.name}: {str(result)[:300]}",
+                                content=f"{tc.name}: {str(result)}",
                                 session_id=self.session_id,
                                 related_id=str(tool_msg_id) if tool_msg_id else "",
                                 metadata={"tool_name": tc.name},
@@ -590,7 +590,7 @@ class Agent:
                         try:
                             exp_stream.log(
                                 type="tool_exec",
-                                content=f"{tc.name}: {str(result)[:300]}",
+                                content=f"{tc.name}: {str(result)}",
                                 metadata={"tool_name": tc.name},
                             )
                         except Exception as e:
@@ -607,7 +607,7 @@ class Agent:
                     try:
                         exp_stream.log(
                             type="internal_action",
-                            content=final_text[:500],
+                            content=final_text,
                         )
                     except Exception as e:
                         logger.debug("[ExpStream] react_nodb final failed: %s", e)
@@ -630,7 +630,7 @@ class Agent:
             try:
                 exp_stream.log(
                     type="internal_action",
-                    content=final_text[:500],
+                    content=final_text,
                 )
             except Exception as e:
                 logger.debug("[ExpStream] react_nodb fallback failed: %s", e)

@@ -420,6 +420,8 @@ class TaskOrchestrator:
             )
             calibration_ctx = self._get_calibration_context()
             sub_descriptions = self._intent_understanding.decompose_goal(task_text, calibration_ctx)
+            # 过滤"确认需求"类子目标：!开头=指令已明确，无需确认
+            sub_descriptions = [d for d in sub_descriptions if not d.startswith("确认")]
             return IntentResult(
                 intent_type=PurposeIntentType.TASK,
                 goals=[goal],

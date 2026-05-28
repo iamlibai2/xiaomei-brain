@@ -145,6 +145,7 @@ class ConsciousLiving(Living):
             self_image=None,  # 延迟设置（consciousness 创建后）
             drive=self.drive,
             purpose=self.purpose,
+            exp_stream=getattr(agent_instance, "exp_stream", None),
         )
 
         # ── [Layer 2] Experience Memory: 经验记忆 ──
@@ -853,6 +854,19 @@ class ConsciousLiving(Living):
                         content=msg.content,
                         user_id=agent_core.user_id,
                     )
+
+                # 经验流：收到其他 agent 消息
+                es = getattr(agent_core, "exp_stream", None)
+                if es:
+                    try:
+                        es.log(
+                            type="user_msg",
+                            content=f"[来自 {target_agent}] {msg.content[:500]}",
+                            session_id=agent_core.session_id,
+                            importance=0.4,
+                        )
+                    except Exception as e:
+                        logger.debug("[ExpStream] comms_receive write failed: %s", e)
 
             # 静默 ReAct — reasoning_content 以灰色 ANSI 包裹
             chunks: list[str] = []

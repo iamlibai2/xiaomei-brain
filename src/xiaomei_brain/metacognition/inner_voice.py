@@ -183,11 +183,13 @@ class InnerVoice:
         self_image: Any = None,
         drive: Any = None,
         purpose: Any = None,
+        exp_stream: Any = None,
     ) -> None:
         self._llm = llm
         self._self_image = self_image
         self._drive = drive
         self._purpose = purpose
+        self._exp_stream = exp_stream
 
         # 冷却与计数
         self._last_pause_time: float = 0.0
@@ -648,6 +650,24 @@ class InnerVoice:
         # 5. Knowledge gaps → learning_queue（TASK_DONE / CHAT_TURN 时，从 GAPS JSON 解析）
         if reflection.trigger in (TriggerType.TASK_DONE, TriggerType.CHAT_TURN) and gaps_text:
             self._apply_gaps(gaps_text, trigger_label=reflection.trigger.value)
+
+        # 6. ExperienceStream
+        if self._exp_stream:
+            try:
+                parts = [f"[{reflection.trigger.value}] {thought}"]
+                if events_text:
+                    parts.append(f"EVENTS: {events_text[:100]}")
+                if signal_text:
+                    parts.append(f"SIGNAL: {signal_text[:100]}")
+                if gaps_text:
+                    parts.append(f"GAPS: {gaps_text[:100]}")
+                self._exp_stream.log(
+                    type="internal_reflection",
+                    content=" | ".join(parts),
+                    importance=0.5,
+                )
+            except Exception as e:
+                logger.debug("[ExpStream] InnerVoice write failed: %s", e)
 
         logger.info(
             "[InnerVoice] %s:\n%s",

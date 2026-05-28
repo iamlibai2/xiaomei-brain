@@ -201,7 +201,7 @@ class LongTermMemory(SQLiteStore):
     def _embed(self, text: str) -> list[float]:
         """Embed a single text string.
 
-        优先走远程服务器（常驻进程），回退本地加载。
+        优先走远程服务器（常驻进程），回退本地（GPU → CPU）。
         """
         if self._remote_available is None:
             self._remote_available = self._check_remote()
@@ -213,13 +213,12 @@ class LongTermMemory(SQLiteStore):
                 self._remote_available = False
 
         model = self._get_embedder()
-        vector = model.encode(text, normalize_embeddings=True, show_progress_bar=False)
-        return vector.tolist()
+        return self._safe_local_encode(model, text)
 
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Embed multiple texts.
 
-        优先走远程服务器（常驻进程），回退本地加载。
+        优先走远程服务器（常驻进程），回退本地（GPU → CPU）。
         """
         if self._remote_available is None:
             self._remote_available = self._check_remote()
@@ -231,8 +230,26 @@ class LongTermMemory(SQLiteStore):
                 self._remote_available = False
 
         model = self._get_embedder()
-        vectors = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
-        return vectors.tolist()
+        return self._safe_local_encode(model, texts, batch=True)
+
+    def _safe_local_encode(self, model: Any, texts, batch: bool = False) -> list:
+        """Encode with GPU-first, CPU fallback on CUDA error."""
+        try:
+            vectors = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
+            return vectors.tolist()
+        except RuntimeError as e:
+            if "CUDA" not in str(e):
+                raise
+            from sentence_transformers import SentenceTransformer
+            if str(model.device) == "cpu":
+                raise
+            logger.warning("[Embed] CUDA error, switching to CPU: %s", e)
+            # 把当前实例切到 CPU（后续调用也走 CPU，不需要每次重试）
+            self._embedder = model.to("cpu")
+            vectors = self._embedder.encode(
+                texts, normalize_embeddings=True, show_progress_bar=False,
+            )
+            return vectors.tolist()
 
     # ── LanceDB ─────────────────────────────────────────────────
 

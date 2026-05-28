@@ -42,7 +42,7 @@ PROMPT = "> "
 # ── Tab 命令补齐 ───────────────────────────────────────────
 _COMMANDS = [
     "/intent", "/fuel", "/flame", "/tick", "/think", "/identity",
-    "/drive", "/purpose", "/plan",
+    "/drive", "/purpose", "/plan", "/intask", "/inchat",
     "/db", "/memory", "/context", "/dag", "/summarize", "/periodic", "/dream",
     "/tool ", "/tool list",
     "/export", "/model",

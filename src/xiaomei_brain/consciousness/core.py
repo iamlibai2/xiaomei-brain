@@ -813,9 +813,12 @@ class Consciousness:
         # L0: 火焰骨架维护（每秒必做）
         self.tick_L0(agent_state=agent_state)
 
-        # L1 异常已触发 L2（绕过冷却），直接返回
+        # L1 异常已触发 L2（绕过冷却），直接执行意图决策
         if self._l2_triggered_by_anomaly:
+            anomaly_type = self._l2_triggered_by_anomaly
             self._l2_triggered_by_anomaly = None
+            logger.info("[Consciousness] L1 异常 → L2 意图决策: %s", anomaly_type)
+            self.tick_L2_intent(anomaly_type)
             return TickResult.L2_TRIGGERED
 
         # L1: 每60秒自动触发（tick_L0 内部已累加 _l0_count）

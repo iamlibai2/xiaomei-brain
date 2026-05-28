@@ -1213,7 +1213,7 @@ weight: 0.85
                 try:
                     es.log(
                         type="internal_thought",
-                        content=f"内心独白：{consciousness_text[:300]}",
+                        content=f"内心独白：{consciousness_text}",
                         importance=0.6,
                     )
                 except Exception as e:

@@ -62,6 +62,22 @@ class LearningEngine:
         if self._cl.drive:
             self._cl.drive.on_desire_satisfied("cognition", 0.3)
 
+        # 经验流：学到了什么
+        try:
+            agent_core = self._cl.agent._get_agent()
+            es = getattr(agent_core, "exp_stream", None)
+            if es:
+                # 取第一段非标题文本作为摘要
+                lines = [l for l in knowledge.split("\n") if l.strip() and not l.startswith("#")]
+                preview = " ".join(lines[:2])[:120] if lines else knowledge[:120]
+                es.log(
+                    type="internal_action",
+                    content=f"学习完成「{topic}」: {preview}",
+                    importance=0.6,
+                )
+        except Exception as e:
+            logger.debug("[ExpStream] learn write failed: %s", e)
+
         logger.info("[LearningEngine] 学习完成: %s (%d 字)", topic, len(knowledge))
         return True
 

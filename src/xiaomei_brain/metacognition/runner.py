@@ -308,6 +308,15 @@ class PACERunner:
                 )
                 obs = detect_surprises(obs, self._observations)
 
+                # ── PACE 意外检测 → 经验流 ──
+                if obs.surprises:
+                    surprise_names = [s.value for s in obs.surprises]
+                    self._log_exp(
+                        f"PACE 意外 step={step_index}: {', '.join(surprise_names)} "
+                        f"「{self._current_goal_desc()[:80]}」",
+                        importance=0.5,
+                    )
+
                 # ── Step Check ──
                 check = self._step_check(obs, step_index)
                 self._observations.append(obs)
@@ -519,6 +528,11 @@ class PACERunner:
                 )
 
                 if should_breakthrough:
+                    self._log_exp(
+                        f"PACE 视角切换: {self._current_goal_desc()[:100]} "
+                        f"(iv_retry={iv_retry}, retries={current_goal_retries})",
+                        importance=0.6,
+                    )
                     goal_desc = self._current_goal_desc()
                     direction = self._trigger_perspective_breakthrough(goal_desc)
                     self._perspective_tried = True
@@ -576,6 +590,11 @@ class PACERunner:
 
                 # InnerVoice escalate: 重试 ≥ 2 次 + IV说"做不了" → 升级
                 if current_goal_retries >= 2 and self._check_iv_escalate_signal():
+                    self._log_exp(
+                        f"PACE 升级: {self._current_goal_desc()[:100]} "
+                        f"(retries={current_goal_retries})",
+                        importance=0.6,
+                    )
                     print(f"\n[元认知] InnerVoice 判断当前子目标无法完成，请求用户介入。", flush=True)
                     self._exit_reason = self.EXIT_ESCALATED
                     cb.get("print_prompt", lambda: None)()
@@ -614,12 +633,22 @@ class PACERunner:
                 siblings = None
                 if next_goal.parent_id:
                     siblings = self._purpose.get_sub_goals(next_goal.parent_id)
-                # 检查是否所有子目标已完成（防止死循环）
-                if siblings and all(s.is_completed() for s in siblings):
-                    logger.info("[PACERunner] 所有子目标已完成，任务结束")
-                    print(f"\n[元认知] 全部 {len(siblings)} 个子目标已完成。", flush=True)
-                    cb.get("print_prompt", lambda: None)()
-                    return
+                # 检查是否所有子目标已完成或暂停（防止死循环）
+                if siblings:
+                    active = [s for s in siblings if not s.is_completed() and not s.is_paused()]
+                    if not active:
+                        paused = [s for s in siblings if s.is_paused()]
+                        if paused:
+                            # 恢复 PAUSED 子目标，继续推进
+                            count = self._purpose.reactivate_paused_sub_goals(next_goal.parent_id)
+                            logger.info("[PACERunner] 恢复 %d 个暂停的子目标", count)
+                            next_goal = paused[0]
+                            self._purpose.set_current(next_goal.id)
+                        else:
+                            logger.info("[PACERunner] 所有子目标已完成，任务结束")
+                            print(f"\n[元认知] 全部 {len(siblings)} 个子目标已完成。", flush=True)
+                            cb.get("print_prompt", lambda: None)()
+                            return
                 # 无同级子目标（独立目标或无更多待推进子目标）→ 标记完成并退出
                 if not siblings:
                     logger.info("[PACERunner] 非分解型目标，标记完成并退出")
@@ -1219,6 +1248,23 @@ class PACERunner:
 
     def _agent_id(self) -> str:
         return getattr(self._config, 'agent_id', '') if self._config else ''
+
+    def _exp_stream(self):
+        """获取 ExperienceStream（用于记录 PACE 执行中的关键决策）。"""
+        try:
+            agent = self._agent_provider._get_agent()
+            return getattr(agent, "exp_stream", None)
+        except Exception:
+            return None
+
+    def _log_exp(self, content: str, importance: float = 0.5) -> None:
+        """写 PACE 关键事件到经验流。"""
+        es = self._exp_stream()
+        if es:
+            try:
+                es.log(type="internal_reflection", content=content, importance=importance)
+            except Exception as e:
+                logger.debug("[ExpStream] PACE write failed: %s", e)
 
     def _checkpoint_path(self, goal_id: str) -> "Path":
         return self._checkpoint_dir() / f"{self._agent_id()}_{goal_id}.json"

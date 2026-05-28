@@ -133,6 +133,19 @@ class AgentInstance:
             )
         agent.messages.append({"role": "user", "content": user_input, "id": user_msg_id})
 
+        # Co-write user message to experience stream
+        if agent.exp_stream:
+            try:
+                agent.exp_stream.log(
+                    type="user_msg",
+                    content=user_input,
+                    session_id=session_id,
+                    related_id=str(user_msg_id) if user_msg_id else "",
+                    user_id=user_id,
+                )
+            except Exception as e:
+                logger.debug("[ExpStream] user_msg write failed: %s", e)
+
         # 构建预组装消息
         system_prompt = self.get_system_prompt()
         if intent_context:
