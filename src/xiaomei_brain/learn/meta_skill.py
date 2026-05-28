@@ -9,6 +9,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ..prompts.drive import META_SKILL_PROMPT
+from ..consciousness.inject_consciousness import inject_consciousness
 
 if TYPE_CHECKING:
     from .storage import KnowledgeStorage
@@ -53,7 +54,7 @@ class MetaSkillPuller:
         agent_core = self._agent._get_agent()
         self._consciousness._refresh_memory_window()
 
-        system_prompt = self._consciousness.self_image.inject_consciousness()
+        system_prompt = inject_consciousness(self._consciousness.self_image)
         prompt = META_SKILL_PROMPT.format(skill_domain=skill_domain)
         messages = [
             {"role": "system", "content": system_prompt},

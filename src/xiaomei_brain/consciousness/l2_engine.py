@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from .intent import Intent, IntentType, create_wait_intent, create_greet_intent, create_reflect_intent, create_dream_intent, create_care_intent
+from .inject_consciousness import inject_consciousness
 
 if TYPE_CHECKING:
     from .core import Consciousness, ConsciousnessReport
@@ -524,7 +525,7 @@ class L2Engine:
         c = self._c
         l2_agent = self._get_l2_agent()
 
-        system_prompt = c.self_image.inject_consciousness()
+        system_prompt = inject_consciousness(c.self_image)
         has_goal = c.purpose and c.purpose.get_current() is not None
 
         # 查询目标 tag 的记忆
@@ -743,7 +744,7 @@ class L2Engine:
 
     def _build_l2_prompt(self, context: str, user_name: str = "这位用户", conflict: str = "") -> str:
         """构建 L2 加柴 prompt — 使用 inject_consciousness 作为状态头。"""
-        consciousness_context = self._c.self_image.inject_consciousness()
+        consciousness_context = inject_consciousness(self._c.self_image)
 
         conflict_hint = ""
         if conflict:

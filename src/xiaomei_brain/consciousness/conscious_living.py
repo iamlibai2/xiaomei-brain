@@ -44,6 +44,7 @@ from .core import Consciousness, ConsciousnessReport, TickResult
 from .intent import Intent
 from .storage import ConsciousnessStorage
 from .self_image_proxy import SelfImage
+from .inject_consciousness import inject_consciousness
 
 from ..drive import DriveEngine
 from ..purpose import PurposeEngine, IntentUnderstanding
@@ -921,7 +922,7 @@ class ConsciousLiving(Living):
             initiating: True=你主动找对方, False=对方发消息给你（回复模式）
         """
         si = self.consciousness.get_self_image() if self._load_consciousness else None
-        identity = si.inject_consciousness(mode="daily") if si else f"你是 {self._agent_id}。"
+        identity = inject_consciousness(si, mode="daily") if si else f"你是 {self._agent_id}。"
 
         if initiating:
             direction = (

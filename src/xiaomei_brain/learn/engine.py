@@ -13,6 +13,7 @@ from ..prompts.drive import LEARN_REACT_PROMPT
 from .queue import LearningQueue
 from .storage import KnowledgeStorage
 from .meta_skill import MetaSkillPuller
+from ..consciousness.inject_consciousness import inject_consciousness
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +184,7 @@ class LearningEngine:
         agent_id = getattr(agent, "id", "")
         safe_topic = topic.replace("/", "_").replace(" ", "_")
 
-        system_prompt = consciousness.self_image.inject_consciousness()
+        system_prompt = inject_consciousness(consciousness.self_image)
         user_msg = LEARN_REACT_PROMPT.format(
             topic=topic,
             agent_id=agent_id,

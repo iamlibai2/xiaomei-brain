@@ -12,6 +12,7 @@ from typing import Any
 from xiaomei_brain.agent.message_utils import estimate_content_tokens
 from xiaomei_brain.consciousness.context_assembler import determine_mode
 from xiaomei_brain.memory.conversation_db import estimate_tokens
+from xiaomei_brain.consciousness.inject_consciousness import inject_consciousness
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +116,7 @@ def build_context(
             exp_stream=getattr(agent, "exp_stream", None),
         )
         self_image.current_user_name = getattr(agent, 'user_display_name', '')
-        system_content = self_image.inject_consciousness(mode=mode)
+        system_content = inject_consciousness(self_image, mode=mode)
         # 日志：system prompt 中的 DAG 摘要数量
         dag_count = len(getattr(self_image.memory, 'dag_summaries', [])) if self_image is not None else 0
         logger.info(
