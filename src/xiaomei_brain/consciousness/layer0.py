@@ -100,8 +100,7 @@ class Layer0Autonomous:
                         # 写入 SelfBody（LLM 感知）
                         body_data = sig.as_body_dict()
                         si = self._c.get_self_image()
-                        for key, val in body_data.items():
-                            setattr(si.body, key, val)
+                        si.contribute_body_signals(body_data)
 
                         # 信号注入 consciousness（供 Living._heartbeat 读取）
                         self._c._interoception_signals = sig

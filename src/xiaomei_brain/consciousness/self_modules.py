@@ -715,7 +715,6 @@ class SelfHistory:
     last_llm_fuel_time: float = 0.0          # 上次加柴时间
     interpreted_changes: list[str] = field(default_factory=list)  # L2 解读后的变化
     growth_events: list[dict] = field(default_factory=list)  # 生长记录
-    accumulated_changes: list[dict] = field(default_factory=list)  # 累积变化
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -728,7 +727,6 @@ class SelfHistory:
             "last_llm_fuel_time": self.last_llm_fuel_time,
             "interpreted_changes": self.interpreted_changes[-20:],
             "growth_events": self.growth_events[-20:],
-            "accumulated_changes": self.accumulated_changes[-10:],
         }
 
     def from_dict(self, data: dict) -> None:
@@ -742,8 +740,6 @@ class SelfHistory:
             self.growth_events = data["growth_log"]
         if "growth_events" in data:
             self.growth_events = data["growth_events"]
-        if "accumulated_changes" in data:
-            self.accumulated_changes = data["accumulated_changes"]
 
     def increment_age(self, seconds: float = 1.0) -> None:
         self.consciousness_age += seconds
@@ -770,8 +766,6 @@ class SelfHistory:
         """兼容旧名 .last_wake_summary → 空字符串（已废弃）"""
         return ""
 
-    def clear_accumulated_changes(self) -> None:
-        self.accumulated_changes = []
 
     def get_summary(self) -> str:
         age_hours = int(self.consciousness_age) // 3600

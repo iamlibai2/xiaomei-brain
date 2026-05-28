@@ -614,16 +614,11 @@ class InnerVoice:
         # 1. SelfImage.mind.inner_voice
         if self._self_image:
             try:
-                mind = self._self_image.mind
-                if not hasattr(mind, "inner_voice"):
-                    mind.inner_voice = []
-                mind.inner_voice.append({
-                    "trigger": reflection.trigger.value,
-                    "thought": thought,
-                    "time": reflection.timestamp,
-                })
-                if len(mind.inner_voice) > 20:
-                    mind.inner_voice = mind.inner_voice[-20:]
+                self._self_image.contribute_inner_voice(
+                    trigger=reflection.trigger.value,
+                    thought=thought,
+                    timestamp=reflection.timestamp,
+                )
             except Exception as e:
                 logger.debug("[InnerVoice] SelfImage 写入失败: %s", e)
 

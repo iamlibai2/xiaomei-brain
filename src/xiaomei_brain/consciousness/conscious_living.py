@@ -461,7 +461,7 @@ class ConsciousLiving(Living):
                 content=f"闹钟「{job.name}」响了。{job.action_hint or job.reason}",
             )
             if self.consciousness.self_image is not None:
-                self.consciousness.intent_slot.intent_buffer.append(intent.to_dict())
+                self.consciousness.self_image.contribute_intent(intent.to_dict())
             logger.info("[ConsciousLiving] 轮次闹钟触发: %s (每%d轮)", job.name, job.round_interval)
 
     def _log_initialization(self) -> None:

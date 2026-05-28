@@ -309,7 +309,7 @@ class DreamEngine:
             intent = create_wait_intent()
 
         if self.cs.self_image is not None:
-            self.cs.self_image.intent.intent_buffer.append(intent.to_dict())
+            self.cs.self_image.contribute_intent(intent.to_dict())
         logger.info("[DreamEngine] 生成后续意图: %s", intent.type.value)
 
     def _build_dream_prompt(self) -> str:

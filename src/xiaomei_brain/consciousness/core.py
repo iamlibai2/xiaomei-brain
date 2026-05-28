@@ -38,6 +38,7 @@ from .perception import PerceptionConfig
 from .config import ConsciousnessConfig
 from .memory_window import refresh_memory_window
 from .l2_engine import L2Engine
+from .state_buffer import StateChangeBuffer
 from ..purpose import PurposeEngine
 from ..prompts import CONSCIOUSNESS_PROMPT_DEEP, CONSCIOUSNESS_PROMPT_LIGHT
 from ..memory.procedure import ProcedureMemory
@@ -130,6 +131,9 @@ class Consciousness:
         self.cron_scheduler = cron_scheduler
         # SelfImage：意识的火焰，构造时传入 Drive/Purpose
         self.self_image = SelfImage(drive=drive, purpose=purpose)
+        # StateChangeBuffer：L1→L2/L3 状态变化缓冲（不属于 SelfImage）
+        self._state_buffer = StateChangeBuffer()
+        self.self_image._state_buffer = self._state_buffer
         # 快捷引用
         self.being = self.self_image.being
         self.body = self.self_image.body
@@ -203,7 +207,6 @@ class Consciousness:
             self.being.init_from_identity_md(f.read())
         logger.info("[Consciousness] 从 identity.md 初始化身份: %s", self.being.name)
 
-        self.history.accumulated_changes = []
         self.history.last_llm_fuel_time = 0.0
         self._sleep_start_time = 0.0
 
@@ -246,7 +249,7 @@ class Consciousness:
         不假装涌现意识，只维护火焰状态：
         - 收集感知数据
         - 维护SelfImage状态
-        - 记录状态变化（累积到 accumulated_changes）
+        - 记录状态变化（通过 StateChangeBuffer）
         - 不返回"假装的意识"
 
         Args:
@@ -267,7 +270,7 @@ class Consciousness:
         self._l0_count += 1
 
         # 核心：维护火焰骨架（不是涌现意识）
-        self.self_image.tick(perception)
+        self.self_image.tick(perception, state_buffer=self._state_buffer)
 
         # 每 60 秒检查一次快照保存（有脏数据才写盘）
         now = time.time()
@@ -314,7 +317,8 @@ class Consciousness:
 
         # 惰性计算空闲时长（last_user_activity_time 由用户消息/苏醒事件驱动更新）
         if self.perception.last_user_activity_time > 0:
-            self.perception.user_idle_duration = time.time() - self.perception.last_user_activity_time
+            idle_dur = time.time() - self.perception.last_user_activity_time
+            self.self_image.contribute_perception(idle_duration=idle_dur)
 
         # 慢 IO：每分钟查一次记忆数量（事件驱动成本高、涉及面太广）
         if self.agent and hasattr(self.agent, "longterm_memory"):
@@ -420,7 +424,6 @@ class Consciousness:
             trajectory = "我最近遇到了一些小挫折，但总体还好。"
         else:
             trajectory = "我最近情绪平稳。"
-        self.history.emotional_trajectory = trajectory
 
         # 目标节奏
         completed = goal_tags.count("goal_completed")
@@ -442,7 +445,6 @@ class Consciousness:
             rhythm = "我刚接收了新的目标，准备开始行动。"
         else:
             rhythm = ""
-        self.history.goal_rhythm = rhythm
 
         # 意识节律
         l2_count = conscious_tags.count("L2")
@@ -461,13 +463,17 @@ class Consciousness:
             conscious = "我有一阵子没有深度思考了，思维有些沉寂。"
         else:
             conscious = ""
-        self.history.consciousness_rhythm = conscious
+
+        # 通过贡献接口写入 SelfImage
+        self.self_image.contribute_trajectory(
+            emotional=trajectory, goal=rhythm, consciousness=conscious,
+        )
 
         # 生成一句话自我叙事
         parts = [t for t in [trajectory, rhythm, conscious] if t]
         inner_thought = "".join(parts) if parts else ""
         if inner_thought:
-            self.mind.update_inner_thought(inner_thought)
+            self.self_image.contribute_inner_thought(inner_thought)
 
     # ── L2: LLM轻度加柴 ─────────────────────────────────────────
 
@@ -652,7 +658,7 @@ class Consciousness:
         # 燃烧后能量恢复（通过 Drive）
         if self.drive:
             self.drive.restore_energy(0.2)
-        self.self_image.clear_accumulated_changes()
+        self._state_buffer.clear()
 
         self.history.update_dream_summary(summary)
 
@@ -929,7 +935,7 @@ class Consciousness:
             return False
 
         # 累积变化充足（有素材可深思）
-        if len(self.self_image.history.accumulated_changes) > 15:
+        if self._state_buffer.should_trigger_l3():
             return True
 
         # 定期触发（即使变化不多，也定期深度反思）
@@ -945,7 +951,7 @@ class Consciousness:
 
         if si.perception.user_idle_duration > self._cc.l2_idle_trigger:
             return "user_idle_long"
-        if agent_state == "sleeping" and len(si.history.accumulated_changes) > self._cc.l2_changes_trigger:
+        if agent_state == "sleeping" and self._state_buffer.should_trigger_l2():
             return "accumulated_changes"
         if elapsed_since_last > self._cc.l2_periodic_interval:
             return "periodic"
@@ -963,7 +969,7 @@ class Consciousness:
                 content=f"闹钟「{job.name}」响了。{job.action_hint or job.reason}",
             )
             if self.self_image is not None:
-                self.intent_slot.intent_buffer.append(intent.to_dict())
+                self.self_image.contribute_intent(intent.to_dict())
             logger.info("[Consciousness] 闹钟触发: %s (action=%s)", job.name, job.action_hint)
 
     def enter_sleep(self) -> None:
@@ -1073,7 +1079,7 @@ class Consciousness:
             # 生成问候意图
             greet_intent = create_greet_intent(dream_summary[:50], priority=80)
             if self.self_image is not None:
-                self.intent_slot.intent_buffer.append(greet_intent.to_dict())
+                self.self_image.contribute_intent(greet_intent.to_dict())
 
             # 同步到 self_image（如果是从 growth 恢复的）
             if not si.history.last_dream_summary:
@@ -1096,7 +1102,7 @@ class Consciousness:
         # 生成等待意图，不阻塞
         wait_intent = create_wait_intent()
         if self.self_image is not None:
-            self.intent_slot.intent_buffer.append(wait_intent.to_dict())
+            self.self_image.contribute_intent(wait_intent.to_dict())
         return report
 
 
@@ -1257,11 +1263,11 @@ def build_state_summary(si: SelfImage) -> str:
             dialog_snippets = [d.get("content", "")[:60] for d in mem.recent_dialog[-3:]]
             lines.append(f"  最近对话：{'；'.join(dialog_snippets)}")
 
-    if si.history.accumulated_changes:
-        change_count = len(si.history.accumulated_changes)
+    if self._state_buffer and len(self._state_buffer) > 0:
+        change_count = len(self._state_buffer)
         lines.append(f"累积变化：{change_count}条")
         major_changes = []
-        for c in si.history.accumulated_changes[-10:]:
+        for c in self._state_buffer.recent(10):
             for key, val in c["changes"].items():
                 if key not in ["time_elapsed"]:
                     major_changes.append(f"{key}: {val}")

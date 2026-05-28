@@ -221,16 +221,12 @@ class L2Engine:
                 # 分离感知检查
                 emergence_text, perceptions = self._split_perception(emergence_text)
                 if perceptions:
-                    c.mind.social_perceptions.extend(perceptions)
-                    if len(c.mind.social_perceptions) > 20:
-                        c.mind.social_perceptions = c.mind.social_perceptions[-20:]
+                    c.self_image.contribute_social_perception(perceptions)
 
                 # 分离自我不确定感
                 emergence_text, doubts = self._split_doubt(emergence_text)
                 if doubts:
-                    c.self_image.mind.self_doubts.extend(doubts)
-                    if len(c.self_image.mind.self_doubts) > 10:
-                        c.self_image.mind.self_doubts = c.self_image.mind.self_doubts[-10:]
+                    c.self_image.contribute_self_doubts(doubts)
                     logger.info("[Consciousness L2] 自我不确定: %d 条", len(doubts))
                     logger.info("[Consciousness L2] 感知检查: %d 条", len(perceptions))
 
@@ -254,7 +250,7 @@ class L2Engine:
                     self._apply_social_signal(signal_json)
 
                 # 清空累积变化
-                c.self_image.clear_accumulated_changes()
+                c._state_buffer.clear()
                 c.history.last_llm_fuel_time = time.time()
 
                 # 清空 PACE 反射缓冲
@@ -274,7 +270,7 @@ class L2Engine:
         # 存入意图缓冲
         if intent and intent.is_actionable():
             if c.self_image is not None:
-                c.intent_slot.intent_buffer.append(intent.to_dict())
+                c.self_image.contribute_intent(intent.to_dict())
             # LEARN 意图的 TOPIC 也加入学习队列（持久化，不依赖立即触发）
             if intent.type == IntentType.LEARN:
                 learn_topic = (intent.params or {}).get("learn_topic", "")
@@ -388,7 +384,7 @@ class L2Engine:
         # 存入意图缓冲
         if intent and intent.is_actionable():
             if c.self_image is not None:
-                c.intent_slot.intent_buffer.append(intent.to_dict())
+                c.self_image.contribute_intent(intent.to_dict())
             if intent.type == IntentType.LEARN:
                 learn_topic = (intent.params or {}).get("learn_topic", "")
                 if learn_topic and self._learn_queue is not None:
@@ -466,15 +462,11 @@ class L2Engine:
                 emergence_text, signal_json = self._split_signal(emergence_text)
                 emergence_text, perceptions = self._split_perception(emergence_text)
                 if perceptions:
-                    c.mind.social_perceptions.extend(perceptions)
-                    if len(c.mind.social_perceptions) > 20:
-                        c.mind.social_perceptions = c.mind.social_perceptions[-20:]
+                    c.self_image.contribute_social_perception(perceptions)
 
                 emergence_text, doubts = self._split_doubt(emergence_text)
                 if doubts:
-                    c.self_image.mind.self_doubts.extend(doubts)
-                    if len(c.self_image.mind.self_doubts) > 10:
-                        c.self_image.mind.self_doubts = c.self_image.mind.self_doubts[-10:]
+                    c.self_image.contribute_self_doubts(doubts)
                     logger.info("[Consciousness L2] 自我不确定: %d 条", len(doubts))
 
                 consciousness_text, events_json = self._split_consciousness_events(emergence_text)
@@ -491,7 +483,7 @@ class L2Engine:
                 if signal_json and c.drive:
                     self._apply_social_signal(signal_json)
 
-                c.self_image.clear_accumulated_changes()
+                c._state_buffer.clear()
                 c.history.last_llm_fuel_time = time.time()
 
                 if c.self_image.mind.pace_reflections:
@@ -1115,7 +1107,7 @@ weight: 0.85
         consciousness_text = emergence_text.split("---EVENTS---")[0].strip()
         logger.info("[Consciousness L2] 自由表达全文 (%d 字):\n%s", len(consciousness_text), consciousness_text)
         if consciousness_text:
-            c.mind.update_inner_thought(consciousness_text)
+            c.self_image.contribute_inner_thought(consciousness_text)
         if c.agent and hasattr(c.agent, "longterm_memory") and c.agent.longterm_memory and consciousness_text:
             c.agent.longterm_memory.store_narrative(
                 content=consciousness_text,

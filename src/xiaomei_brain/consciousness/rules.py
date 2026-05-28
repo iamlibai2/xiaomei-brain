@@ -419,7 +419,8 @@ class _ConsciousnessView:
 
     @property
     def accumulated_changes(self) -> list[dict]:
-        return self._si.history.accumulated_changes
+        buf = getattr(self._si, '_state_buffer', None)
+        return buf._changes if buf else []
 
 
 def _get_drive_facet(si: SelfImage):

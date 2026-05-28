@@ -56,11 +56,6 @@ def _strength_level(strength: float) -> str:
 class SelfImage:
     """意识的火焰 — 所有意识数据的唯一汇聚地。"""
 
-    # _diff() 变化检测阈值
-    DIFF_IDLE_THRESHOLD_S: float = 10.0    # 对方空闲变化超过此秒数才记录
-    DIFF_ENERGY_THRESHOLD: float = 0.05    # 能量变化超过此比例才记录
-    DIFF_GOAL_THRESHOLD: float = 0.01      # 目标进展变化超过此比例才记录
-
     def __init__(self, drive: Any = None, purpose: Any = None) -> None:
         self.being = Being()
         self.body = SelfBody(_drive=drive)
@@ -76,6 +71,7 @@ class SelfImage:
         self._essence: Any = None               # Essence（底色存储）
         self._project_mental_model: Any = None   # [Layer 2]
         self._experience_memory: Any = None      # [Layer 2]
+        self._state_buffer: Any = None           # StateChangeBuffer 引用（L1→L2/L3 调度）
         self.current_user_name: str = ""         # 当前对话者显示名
         self.preferred_names: list[str] = []     # 从记忆加载的所有称呼（初始化时一次向量召回）
         self._assemble_map = {
@@ -106,8 +102,14 @@ class SelfImage:
 
     # ── 核心：火焰骨架 tick ─────────────────────────────────
 
-    def tick(self, perception: dict[str, Any]) -> None:
-        """火焰骨架循环，每秒运行一次。"""
+    def tick(self, perception: dict[str, Any],
+             state_buffer: Any = None) -> None:
+        """火焰骨架循环，每秒运行一次。
+
+        Args:
+            perception: 感知数据
+            state_buffer: StateChangeBuffer 实例（L1→L2/L3 通信队列）
+        """
         # 1. 保存上一刻快照
         prev = self._snapshot()
         self.history.cycle_count += 1
@@ -116,17 +118,9 @@ class SelfImage:
         self.update_from_perception(perception)
         self._update_environment()
 
-        # 3. 对比差异 → 写入 history
-        changes = self._diff(prev)
-        if changes:
-            self.history.accumulated_changes.append({
-                "cycle_id": self.history.cycle_count,
-                "timestamp": time.time(),
-                "changes": changes,
-            })
-            if len(self.history.accumulated_changes) > 30:
-                self.history.accumulated_changes = self.history.accumulated_changes[-30:]
-            self._dirty = True
+        # 3. 对比差异 → 写入 StateChangeBuffer（非 SelfImage）
+        if state_buffer is not None:
+            state_buffer.tick(prev, self._snapshot())
 
         logger.debug("[SelfImage.tick] #%d: age=%ds", self.history.cycle_count, int(self.history.consciousness_age))
 
@@ -140,42 +134,6 @@ class SelfImage:
             "window_size": self.memory.window_size,
             "goal_progress": self.mind.goal_progress,
         }
-
-    def _diff(self, last: dict) -> dict[str, Any]:
-        """对比上一刻和此刻的差异（直接读属性，不调 to_dict）。"""
-        if not last:
-            return {"first_cycle": True, "message": "火焰刚点燃"}
-
-        diff: dict[str, Any] = {}
-
-        cur_age = self.history.consciousness_age
-        if cur_age - last["consciousness_age"] > 0:
-            diff["time_elapsed"] = cur_age - last["consciousness_age"]
-
-        cur_state = self.perception.agent_state
-        if cur_state != last["agent_state"]:
-            diff["agent_state_change"] = {"from": last["agent_state"], "to": cur_state}
-
-        cur_idle = self.perception.user_idle_duration
-        idle_diff = cur_idle - last["user_idle_duration"]
-        if abs(idle_diff) > self.DIFF_IDLE_THRESHOLD_S:
-            diff["user_idle_change"] = idle_diff
-
-        cur_energy = self.body.energy
-        energy_diff = cur_energy - last["energy"]
-        if abs(energy_diff) > self.DIFF_ENERGY_THRESHOLD:
-            diff["energy_change"] = energy_diff
-
-        cur_mem = self.memory.window_size
-        if cur_mem != last["window_size"]:
-            diff["memory_change"] = cur_mem - last["window_size"]
-
-        cur_goal = self.mind.goal_progress
-        goal_diff = cur_goal - last["goal_progress"]
-        if abs(goal_diff) > self.DIFF_GOAL_THRESHOLD:
-            diff["goal_change"] = goal_diff
-
-        return diff
 
     # ── 状态更新 ──────────────────────────────────────────
 
@@ -285,10 +243,160 @@ class SelfImage:
         self.intent.from_dict(data.get("intent", {}))
         self.history.from_dict(data.get("history", data))
         self.desk.from_dict(data.get("desk", {}))
+        # _state_buffer 不从快照恢复（运行时重新注入）
 
-    def clear_accumulated_changes(self) -> None:
-        """清空累积变化（L2 加柴后调用）。"""
-        self.history.clear_accumulated_changes()
+    # ── 贡献接口：各层写入 SelfImage 的统一入口 ──────────────
+    #  各层通过以下方法贡献数据，不需要了解 SelfImage 内部结构。
+    #  SelfImage 负责校验、截断、去重。
+
+    def contribute_body_signals(self, signals: dict[str, Any]) -> None:
+        """Layer0 贡献：系统体征数据（CPU/内存/队列/LLM 统计等）。"""
+        for key, val in signals.items():
+            if hasattr(self.body, key):
+                setattr(self.body, key, val)
+
+    def contribute_perception(self, *,
+                               agent_state: str | None = None,
+                               user_active: bool = False,
+                               user_message: str = "",
+                               idle_duration: float | None = None) -> None:
+        """Consciousness 贡献：环境和用户感知。
+
+        由 tick_L0/L1/on_user_interaction 调用。
+        """
+        if agent_state is not None:
+            self.perception.agent_state = agent_state
+            self.perception.agent_state_history.append(agent_state)
+            if len(self.perception.agent_state_history) > 20:
+                self.perception.agent_state_history = self.perception.agent_state_history[-20:]
+
+        if user_active:
+            self.perception.last_user_activity_time = time.time()
+            self.perception.last_user_activity_content = user_message[:50]
+            self.perception.user_idle_duration = 0.0
+            self.body.attention = "与对方对话"
+            self.being.update_depth(self.being.relationship_depth + 0.02)
+
+        if idle_duration is not None:
+            self.perception.user_idle_duration = idle_duration
+
+    def contribute_inner_thought(self, text: str) -> None:
+        """L1/L2 贡献：当前内心想法。
+
+        由 L1._digest_internal_narratives / L2._store_emergence 调用。
+        """
+        self.mind.update_inner_thought(text)
+
+    def contribute_trajectory(self, *,
+                               emotional: str = "",
+                               goal: str = "",
+                               consciousness: str = "") -> None:
+        """L1 贡献：时间维度的自我轨迹。
+
+        由 L1._digest_internal_narratives 每分钟调用。
+        """
+        if emotional:
+            self.history.emotional_trajectory = emotional
+        if goal:
+            self.history.goal_rhythm = goal
+        if consciousness:
+            self.history.consciousness_rhythm = consciousness
+
+    def contribute_social_perception(self, perceptions: list[dict]) -> None:
+        """L2 贡献：社交感知结果。
+
+        由 L2Engine._split_perception() 调用。
+        """
+        self.mind.social_perceptions.extend(perceptions)
+        if len(self.mind.social_perceptions) > 20:
+            self.mind.social_perceptions = self.mind.social_perceptions[-20:]
+
+    def contribute_self_doubts(self, doubts: list[dict]) -> None:
+        """L2 贡献：自我怀疑。
+
+        由 L2Engine._split_doubt() 调用。
+        """
+        self.mind.self_doubts.extend(doubts)
+        if len(self.mind.self_doubts) > 10:
+            self.mind.self_doubts = self.mind.self_doubts[-10:]
+
+    def contribute_inner_voice(self, trigger: str, thought: str,
+                                timestamp: float | None = None) -> None:
+        """InnerVoice 贡献：内心反省。
+
+        由 InnerVoice._route_reflection() 调用。
+        """
+        if not hasattr(self.mind, "inner_voice"):
+            self.mind.inner_voice = []
+        self.mind.inner_voice.append({
+            "trigger": trigger,
+            "thought": thought,
+            "time": timestamp or time.time(),
+        })
+        if len(self.mind.inner_voice) > 20:
+            self.mind.inner_voice = self.mind.inner_voice[-20:]
+
+    def contribute_pace_reflection(self, data: dict) -> None:
+        """PACE 贡献：任务执行反思。
+
+        由 Consciousness.add_pace_reflection() 调用。
+        """
+        if not hasattr(self.mind, "pace_reflections"):
+            self.mind.pace_reflections = []
+        self.mind.pace_reflections.append(data)
+        if len(self.mind.pace_reflections) > 20:
+            self.mind.pace_reflections = self.mind.pace_reflections[-15:]
+
+    def consume_pace_reflections(self) -> list[dict]:
+        """L2 消费：读取并清空 PACE 反射缓冲。"""
+        reflections = getattr(self.mind, "pace_reflections", [])
+        self.mind.pace_reflections = []
+        return reflections
+
+    def contribute_intent(self, intent_dict: dict, urgent: bool = False) -> None:
+        """L2/Consciousness 贡献：意图决策结果。
+
+        由 L2Engine.tick() / Consciousness._check_alarms() / on_wake() 调用。
+        """
+        self.intent.intent_buffer.append(intent_dict)
+        if urgent:
+            intent_type = intent_dict.get("type", "")
+            if intent_type:
+                self.intent.urgent_intents.add(intent_type)
+
+    def contribute_dream(self, summary: str) -> None:
+        """DreamEngine 贡献：梦境摘要。
+
+        由 DreamEngine._run_flame_burn() 调用。
+        """
+        self.history.update_dream_summary(summary)
+        self.mind.record_goal_progress()
+
+    def contribute_memory_window(self, *, memories: dict | None = None,
+                                  project_map: str = "",
+                                  experience: list | None = None,
+                                  attention_snapshot: Any = None) -> None:
+        """MemoryWindow 贡献：记忆窗口装配。
+
+        由 refresh_memory_window() 调用。
+        """
+        if memories:
+            for key, val in memories.items():
+                if hasattr(self.memory, key):
+                    setattr(self.memory, key, val)
+            self.memory.window_size = sum(
+                len(getattr(self.memory, k, []) or [])
+                for k in ["narratives", "internal_narratives", "dag_summaries",
+                          "important_memories", "recalled_memories", "relation_chains",
+                          "procedures", "recent_dialog", "experience_timeline", "patterns"]
+            )
+
+        if project_map:
+            self.mind.project_map = project_map
+        if experience is not None:
+            self.mind.experience = experience
+        if attention_snapshot is not None:
+            self._last_attention_snapshot = attention_snapshot
 
     # ── 核心 API：意识注入 ────────────────────────────────
 
@@ -994,9 +1102,10 @@ class SelfImage:
             lines.append(f"目标节奏：{h.goal_rhythm}")
         if h.consciousness_rhythm:
             lines.append(f"意识节律：{h.consciousness_rhythm}")
-        if h.accumulated_changes:
+        # 近期变化（从 StateChangeBuffer 读取）
+        if self._state_buffer and len(self._state_buffer) > 0:
             major_changes = []
-            for c in h.accumulated_changes[-10:]:
+            for c in self._state_buffer.recent(10):
                 for key, val in c.get("changes", {}).items():
                     if key not in ["time_elapsed"]:
                         major_changes.append(f"{key}: {val}")

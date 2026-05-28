@@ -1090,7 +1090,7 @@ class ActionExecutor:
         if living.drive:
             living.drive.on_desire_satisfied("achievement", 0.1)
         if si:
-            si.mind.inner_thought = f"我想继续推进目标：{desc}"
+            si.contribute_inner_thought(f"我想继续推进目标：{desc}")
         return True
 
 
