@@ -275,22 +275,52 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
             .cooldown("idle_greet", ac.idle_greet_cooldown)
     )
 
-    # ── Desire 驱动 ─────────────────────────────────────
-
-    # 归属欲高 → 主动和其他 agent 聊天
+    # TALK 意图 → 和用户深入对话
     RULES.append(
-        Rule.when(lambda si, t=thr_belonging: _get_drive_facet(si).belonging > t)
+        Rule.when(lambda si: _has_intent(si, "TALK"))
+            .then(ActionItem(
+                action_type=ActionType.PROACTIVE,
+                priority=0.7,
+                content="",
+                reason="收到 TALK 意图，想和用户聊天",
+                source="intent",
+                cooldown_key="intent_talk",
+                metadata={"intent_type": "TALK"},
+            ))
+            .cooldown("intent_talk", ac.intent_greet_cooldown)
+    )
+
+    # TALK_AGENT 意图 → 主动和其他 agent 聊天
+    RULES.append(
+        Rule.when(lambda si: _has_intent(si, "TALK_AGENT"))
             .then(ActionItem(
                 action_type=ActionType.TALK_TO_AGENT,
-                priority=0.55,
+                priority=0.65,
                 content="",
-                reason=f"归属欲偏高 (>{thr_belonging:.1f})，想和其他 agent 交流",
-                source="desire",
-                cooldown_key="desire_talk_to_agent",
-                metadata={"desire_type": "belonging"},
+                reason="收到 TALK_AGENT 意图，想和其他 agent 交流",
+                source="intent",
+                cooldown_key="intent_talk_agent",
+                metadata={"intent_type": "TALK_AGENT"},
             ))
-            .cooldown("desire_talk_to_agent", ac.desire_talk_to_agent_cooldown)
+            .cooldown("intent_talk_agent", ac.desire_talk_to_agent_cooldown)
     )
+
+    # ── Desire 驱动 ─────────────────────────────────────
+
+    # 归属欲高 → 主动和其他 agent 聊天（已迁移到 Path A: TALK_AGENT 意图）
+    # RULES.append(
+    #     Rule.when(lambda si, t=thr_belonging: _get_drive_facet(si).belonging > t)
+    #         .then(ActionItem(
+    #             action_type=ActionType.TALK_TO_AGENT,
+    #             priority=0.55,
+    #             content="",
+    #             reason=f"归属欲偏高 (>{thr_belonging:.1f})，想和其他 agent 交流",
+    #             source="desire",
+    #             cooldown_key="desire_talk_to_agent",
+    #             metadata={"desire_type": "belonging"},
+    #         ))
+    #         .cooldown("desire_talk_to_agent", ac.desire_talk_to_agent_cooldown)
+    # )
 
     # 认知欲高 → 主动学习（从队列或兴趣中选题）
     RULES.append(

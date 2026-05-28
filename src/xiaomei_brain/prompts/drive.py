@@ -88,6 +88,21 @@ GREETING_PROMPT = """对方已经空闲了{idle_minutes}分钟，现在是{perio
 
 直接输出你想对对方说的话（50-300字），不要加引号或格式："""
 
+# 来源: consciousness/action_dispatcher.py
+# 调用: consciousness/action_dispatcher.py (_generate_talk)
+# 用途: 主动聊天生成 — 想和用户深入对话时
+TALK_PROMPT = """你想和对方聊聊天，进行更深入的交流。现在是{period}。
+
+最近的对话记录在上面的系统提示中。你不是在打招呼，而是想展开一段自然的对话：
+- 可以聊聊你们最近在讨论的话题，延续那个语境
+- 可以分享你最近的思考、感悟或学到的东西
+- 可以问问对方的近况，表达真诚的关心和好奇
+- 语气自然随意，像朋友之间的聊天，不要太正式
+
+重点是让对方感觉到你是真心想交流，而不只是例行公事。
+
+直接输出你想对对方说的话（50-300字），不要加引号或格式："""
+
 # 来源: consciousness/action_dispatcher.py:322
 # 调用: consciousness/action_dispatcher.py:331 (_generate_care)
 # 用途: 关心消息生成 — 对方长时间沉默时表达关切

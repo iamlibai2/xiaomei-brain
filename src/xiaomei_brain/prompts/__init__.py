@@ -36,6 +36,7 @@ __all__ = [
     "LEARN_REACT_PROMPT",
     "EXPRESSION_PROMPT",
     "GREETING_PROMPT",
+    "TALK_PROMPT",
     "CARE_PROMPT",
     "META_SKILL_PROMPT",
     # Consciousness

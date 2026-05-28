@@ -16,7 +16,7 @@ import re
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
-from ..prompts.drive import CARE_PROMPT, EXPRESSION_PROMPT, GREETING_PROMPT
+from ..prompts.drive import CARE_PROMPT, EXPRESSION_PROMPT, GREETING_PROMPT, TALK_PROMPT
 
 if TYPE_CHECKING:
     from .action_item import ActionItem, ActionType
@@ -378,6 +378,8 @@ class ActionExecutor:
         """行为完成后满足对应的欲望，打通 L2 intent → Drive 反馈链路。"""
         intent_desire_map = {
             "GREET": "belonging",
+            "TALK": "belonging",
+            "TALK_AGENT": "belonging",
             "LEARN": "cognition",
             "PROGRESS": "achievement",
             "EXPRESS": "expression",
@@ -673,6 +675,8 @@ class ActionExecutor:
 
         if intent_type == "GREET" or source == "idle":
             return self._generate_greeting(item)
+        elif intent_type == "TALK":
+            return self._generate_talk(item)
         elif intent_type == "CARE":
             return self._generate_care(item)
         elif intent_type == "EXPRESS":
@@ -798,6 +802,49 @@ class ActionExecutor:
                 logger.warning("[_generate_greeting] LLM 调用失败: %s", e)
 
         logger.info("[_generate_greeting] LLM 不可用，fallback")
+        return self._fallback_greeting()
+
+    def _generate_talk(self, item: ActionItem) -> str:
+        """通过 LLM 生成主动聊天内容（比 GREET 更深入的对话）"""
+        from datetime import datetime
+
+        si = self.dispatcher._get_self_image()
+        if not si:
+            logger.warning("[_generate_talk] SelfImage 不存在，fallback")
+            return self._fallback_greeting()
+
+        hour = datetime.now().hour
+        if 6 <= hour < 12:
+            period = "早上"
+        elif 12 <= hour < 18:
+            period = "下午"
+        elif 18 <= hour < 22:
+            period = "晚上"
+        else:
+            period = "深夜"
+
+        prompt = TALK_PROMPT.format(period=period)
+
+        llm = None
+        cl = self.dispatcher._conscious_living
+        if cl and hasattr(cl, "agent"):
+            llm = getattr(cl.agent, "llm", None)
+
+        if llm:
+            try:
+                cl.consciousness._refresh_memory_window()
+                consciousness = si.inject_consciousness()
+                resp = llm.chat(messages=[
+                    {"role": "system", "content": consciousness},
+                    {"role": "user", "content": prompt},
+                ])
+                content = resp.content.strip() if resp and resp.content else None
+                if content:
+                    return content
+            except Exception as e:
+                logger.warning("[_generate_talk] LLM 调用失败: %s", e)
+
+        logger.info("[_generate_talk] LLM 不可用，fallback")
         return self._fallback_greeting()
 
     def _fallback_greeting(self) -> str:

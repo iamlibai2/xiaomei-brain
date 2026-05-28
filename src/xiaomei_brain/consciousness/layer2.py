@@ -96,17 +96,18 @@ class Layer2DefaultNetwork:
                     ts = time.strftime("%H:%M:%S")
 
                     # L1 异常已触发 L2（绕过冷却），优先处理
-                    if getattr(self._c, '_l2_triggered_by_anomaly', False):
-                        self._c._l2_triggered_by_anomaly = False
-                        self._log(f"{ts} L2 触发 [异常 bypass] agent_state={agent_state} → tick_L2")
-                        logger.info("[Layer2] L2 触发（L1 异常，agent_state=%s）", agent_state)
+                    anomaly_type = getattr(self._c, '_l2_triggered_by_anomaly', None)
+                    if anomaly_type:
+                        self._c._l2_triggered_by_anomaly = None
+                        self._log(f"{ts} L2 触发 [异常 bypass] agent_state={agent_state} ctx={anomaly_type}")
+                        logger.info("[Layer2] L2 触发（L1 异常=%s，agent_state=%s）", anomaly_type, agent_state)
                         self._c._last_l2_time = time.time()
                         try:
-                            self._c.tick_L2("anomaly_detected")
-                            self._log(f"{ts} L2 tick_L2(anomaly) 完成")
+                            self._c.tick_L2_intent(anomaly_type)
+                            self._log(f"{ts} L2 tick_L2_intent({anomaly_type}) 完成")
                         except Exception as e:
-                            self._log(f"{ts} L2 tick_L2(anomaly) ERROR: {e}")
-                            logger.warning("[Layer2] tick_L2(anomaly) 出错: %s", e)
+                            self._log(f"{ts} L2 tick_L2_intent({anomaly_type}) ERROR: {e}")
+                            logger.warning("[Layer2] tick_L2_intent(%s) 出错: %s", anomaly_type, e)
 
                     # L2: 动态加柴（正常调度）
                     elif self._c._should_l2(agent_state):

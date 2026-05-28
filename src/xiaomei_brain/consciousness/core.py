@@ -143,7 +143,7 @@ class Consciousness:
         self._last_snapshot_save_time: float = 0.0
         self._last_report: ConsciousnessReport | None = None
         self._running: bool = False
-        self._l2_triggered_by_anomaly: bool = False  # L1 异常触发 L2 的信号
+        self._l2_triggered_by_anomaly: str | None = None  # L1 异常类型 → L2，如 "desire_starvation_belonging"
         self._anomaly_cooldowns: dict[str, float] = {}  # 异常类型 → 上次触发时间
         self._sleep_start_time: float = 0.0          # 入睡时间戳（入梦判定）
         self._last_l3_time: float = time.time()        # 启动后等冷却才触发 L3
@@ -362,8 +362,8 @@ class Consciousness:
             else:
                 self._anomaly_cooldowns[anomaly] = now
                 logger.info("[Consciousness L1] 检测到异常: %s，触发 L2 加柴", anomaly)
-                self._l2_triggered_by_anomaly = True
-                return "anomaly_detected"
+                self._l2_triggered_by_anomaly = anomaly
+                return anomaly
 
         return None
 
@@ -476,6 +476,18 @@ class Consciousness:
         if self._l2_engine is None:
             self._l2_engine = L2Engine(self)
         return self._l2_engine.tick(context)
+
+    def tick_L2_intent(self, context: str):
+        """只做意图决策，不跑内心独白。"""
+        if self._l2_engine is None:
+            self._l2_engine = L2Engine(self)
+        return self._l2_engine.tick_intent(context)
+
+    def tick_L2_emergence(self, context: str) -> str:
+        """只做内心独白，不跑意图决策。"""
+        if self._l2_engine is None:
+            self._l2_engine = L2Engine(self)
+        return self._l2_engine.tick_emergence(context)
 
     # ── Memory / Helpers（L2 依赖，也供其他层使用）───────────────
 
@@ -803,7 +815,7 @@ class Consciousness:
 
         # L1 异常已触发 L2（绕过冷却），直接返回
         if self._l2_triggered_by_anomaly:
-            self._l2_triggered_by_anomaly = False
+            self._l2_triggered_by_anomaly = None
             return TickResult.L2_TRIGGERED
 
         # L1: 每60秒自动触发（tick_L0 内部已累加 _l0_count）

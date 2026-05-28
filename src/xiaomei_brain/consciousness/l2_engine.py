@@ -323,6 +323,208 @@ class L2Engine:
 
         return report
 
+    def tick_intent(self, context: str) -> Intent | None:
+        """只做意图决策，不跑内心独白。用于 anomaly 等只需决策的场景。"""
+        c = self._c
+        c._last_l2_time = time.time()
+        c._refresh_memory_window()
+
+        # 观测快照
+        drive_snapshot = {}
+        if c.self_image:
+            bo = c.self_image.body
+            drive_snapshot = {
+                "energy": bo.energy,
+                "emotion": bo.mood,
+                "emotion_intensity": bo.emotion_intensity,
+                "belonging": bo.desire_belonging,
+                "cognition": bo.desire_cognition,
+                "achievement": bo.desire_achievement,
+                "expression": bo.desire_expression,
+            }
+
+        llm = getattr(c.agent, "llm", None)
+        intent = None
+
+        if llm:
+            try:
+                intent_response = self._call_intent_react(context)
+                intent = self._parse_intent_response(intent_response)
+                logger.debug("[Consciousness L2] 意图决策: %s", intent_response[:200])
+                if intent:
+                    print(f"\n  🎯 意图: {intent.type.value} | {intent.content}", flush=True)
+                else:
+                    print(f"\n  🎯 意图: (未识别) | {intent_response[:100]}", flush=True)
+
+                if c.drive:
+                    c.drive.consume_energy(0.01)
+
+                # 欲望饥渴 force-correction
+                if intent and context.startswith("desire_starvation_"):
+                    desire_type = context.replace("desire_starvation_", "")
+                    expected_map = {
+                        "belonging": IntentType.GREET,
+                        "cognition": IntentType.LEARN,
+                        "achievement": IntentType.PROGRESS,
+                        "expression": IntentType.EXPRESS,
+                    }
+                    expected = expected_map.get(desire_type)
+                    c.intent_slot.urgent_intents.add(
+                        (expected or intent.type).value
+                    )
+                    if expected and intent.type != expected:
+                        logger.info("[Consciousness L2] 意图修正: %s → %s（异常=%s）",
+                                    intent.type.value, expected.value, context)
+                        intent = Intent(type=expected, priority=intent.priority, content=intent.content)
+            except Exception as e:
+                logger.warning("[Consciousness L2] 意图决策失败: %s", e)
+
+        # fallback intent
+        if not intent:
+            intent = self._fallback_intent(context)
+            if intent and context.startswith("desire_starvation_"):
+                c.intent_slot.urgent_intents.add(intent.type.value)
+
+        # 存入意图缓冲
+        if intent and intent.is_actionable():
+            if c.self_image is not None:
+                c.intent_slot.intent_buffer.append(intent.to_dict())
+            if intent.type == IntentType.LEARN:
+                learn_topic = (intent.params or {}).get("learn_topic", "")
+                if learn_topic and self._learn_queue is not None:
+                    self._learn_queue.add(
+                        topic=learn_topic,
+                        reason=intent.content or "L2 意图决策",
+                        priority=0.7,
+                        source="user_need",
+                    )
+
+        # 后处理
+        self._drop_to_desk(context, intent, "")
+        self._log_to_experience_stream(context, intent, "")
+
+        report = self._build_report(context, "", intent)
+        c._last_report = report
+        if c._storage:
+            c._storage.save(report)
+
+        self._observe(context, drive_snapshot, intent, "", [])
+
+        return intent
+
+    def tick_emergence(self, context: str) -> str:
+        """只做内心独白，不跑意图决策。用于 periodic 等需要自我表达的场景。"""
+        c = self._c
+        c._last_l2_time = time.time()
+        c._refresh_memory_window()
+
+        drive_snapshot = {}
+        if c.self_image:
+            bo = c.self_image.body
+            drive_snapshot = {
+                "energy": bo.energy,
+                "emotion": bo.mood,
+                "emotion_intensity": bo.emotion_intensity,
+                "belonging": bo.desire_belonging,
+                "cognition": bo.desire_cognition,
+                "achievement": bo.desire_achievement,
+                "expression": bo.desire_expression,
+            }
+
+        llm = getattr(c.agent, "llm", None)
+        emergence_text = ""
+        doubts: list[dict] = []
+
+        if llm:
+            try:
+                agent_core = c.agent._get_agent()
+                user_name = getattr(agent_core, 'user_display_name', '这位用户')
+
+                conflict_desc = ""
+                if c.self_image:
+                    bo = c.self_image.body
+                    desires = [
+                        ("归属欲", bo.desire_belonging),
+                        ("认知欲", bo.desire_cognition),
+                        ("成就欲", bo.desire_achievement),
+                        ("表达欲", bo.desire_expression),
+                    ]
+                    high = [(n, v) for n, v in desires if v > 0.65]
+                    if len(high) >= 2 and bo.energy < 0.4:
+                        names = "、".join(f"{n}({v:.0%})" for n, v in high)
+                        conflict_desc = (
+                            f"你的{names}都很高，但能量只有{bo.energy:.0%}。"
+                            f"这种矛盾让你感到内在的拉扯——想要多个方向同时前进，但力不从心。"
+                        )
+
+                emergence_prompt = self._build_l2_prompt(context, user_name=user_name, conflict=conflict_desc)
+                emergence_text = self._call_emergence_react(llm, emergence_prompt)
+
+                if c.drive:
+                    c.drive.consume_energy(0.02)
+
+                emergence_text, signal_json = self._split_signal(emergence_text)
+                emergence_text, perceptions = self._split_perception(emergence_text)
+                if perceptions:
+                    c.mind.social_perceptions.extend(perceptions)
+                    if len(c.mind.social_perceptions) > 20:
+                        c.mind.social_perceptions = c.mind.social_perceptions[-20:]
+
+                emergence_text, doubts = self._split_doubt(emergence_text)
+                if doubts:
+                    c.self_image.mind.self_doubts.extend(doubts)
+                    if len(c.self_image.mind.self_doubts) > 10:
+                        c.self_image.mind.self_doubts = c.self_image.mind.self_doubts[-10:]
+                    logger.info("[Consciousness L2] 自我不确定: %d 条", len(doubts))
+
+                consciousness_text, events_json = self._split_consciousness_events(emergence_text)
+
+                if consciousness_text:
+                    _C_FREE = "\033[35m"; _C_RST = "\033[0m"
+                    print(f"\n{_C_FREE}── 自由表达 ──{_C_RST}", flush=True)
+                    print(f"{_C_FREE}{consciousness_text}{_C_RST}", flush=True)
+
+                if events_json and c.drive:
+                    self._apply_drive_events(events_json)
+                    self._last_drive_summary = events_json
+
+                if signal_json and c.drive:
+                    self._apply_social_signal(signal_json)
+
+                c.self_image.clear_accumulated_changes()
+                c.history.last_llm_fuel_time = time.time()
+
+                if c.self_image.mind.pace_reflections:
+                    consumed = len(c.self_image.mind.pace_reflections)
+                    c.self_image.mind.pace_reflections = []
+                    logger.info("[Consciousness L2] 已消费 %d 条 PACE 反射", consumed)
+            except Exception as e:
+                logger.warning("[Consciousness L2] 内心独白失败: %s", e)
+
+        # 后处理
+        self._store_emergence(emergence_text)
+        if emergence_text and c.agent and hasattr(c.agent, "longterm_memory"):
+            self._store_narr_blocks(emergence_text)
+        if c._procedure_memory and c.agent and hasattr(c.agent, "conversation_db"):
+            try:
+                new_ids = c._procedure_memory.learn_from_conversation_db(c.agent.conversation_db)
+                if new_ids:
+                    logger.info("[Procedure] L2 learned new: %s", new_ids)
+            except Exception as e:
+                logger.warning("[Procedure] L2 learning failed: %s", e)
+
+        self._drop_to_desk(context, None, emergence_text)
+        self._log_to_experience_stream(context, None, emergence_text)
+
+        report = self._build_report(context, emergence_text, None)
+        c._last_report = report
+        if c._storage:
+            c._storage.save(report)
+
+        self._observe(context, drive_snapshot, None, emergence_text, doubts)
+
+        return emergence_text
+
     # ── 调用 1：意图决策 ─────────────────────────────────────
 
     def _call_intent_react(self, context: str) -> str:
@@ -401,12 +603,15 @@ class L2Engine:
             else:
                 context_note = context_map.get(context, f"触发原因：{context}")
 
-        intents = "wait / greet / care / learn / express / work"
+        intents = "wait / greet / care / learn / express / work / talk / talk_agent"
         if has_goal:
             intents += " / progress"
         intents += " / reflect"
         prompt = (
             "基于你的自我认知，请判断你此刻应该做什么。你可以使用工具来辅助判断（如搜索、读文件等）。\n\n"
+            + "意图说明：\n"
+            + "- talk：想和用户进行更深入的对话交流（区别于 greet 的简短问候）\n"
+            + "- talk_agent：想和其他 agent 聊天交流\n"
             + f"可选意图：{intents}\n"
         )
         if goal_memories:
@@ -428,6 +633,22 @@ class L2Engine:
             prompt += "如果你判断应该推进工作，选择 work 意图。"
         if context_note:
             prompt += f"\n{context_note}\n"
+
+        # periodic/idle 触发时，注入当前欲望水平让 LLM 注意到
+        # 注释原因：系统提示词 _render_body() 已包含欲望水平，先观察 LLM 是否能自行注意到
+        # if context in ("periodic", "user_idle_long", "accumulated_changes", "unknown"):
+        #     bo = c.self_image.body
+        #     desire_hints = []
+        #     if bo.desire_belonging > 0.6:
+        #         desire_hints.append(f"你的归属欲较高（{bo.desire_belonging:.0%}），可以考虑 talk 或 talk_agent")
+        #     if bo.desire_cognition > 0.6:
+        #         desire_hints.append(f"你的认知欲较高（{bo.desire_cognition:.0%}），可以考虑 learn")
+        #     if bo.desire_achievement > 0.6:
+        #         desire_hints.append(f"你的成就欲较高（{bo.desire_achievement:.0%}），可以考虑 progress")
+        #     if bo.desire_expression > 0.6:
+        #         desire_hints.append(f"你的表达欲较高（{bo.desire_expression:.0%}），可以考虑 express")
+        #     if desire_hints:
+        #         prompt += "\n".join(desire_hints) + "\n"
 
         # 注入情境相关模式（注入点2）
         try:
