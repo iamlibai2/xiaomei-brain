@@ -130,10 +130,26 @@ class TaskOrchestrator:
 
         ConsciousLiving._handle_message 在完成命令检测后调用此方法。
         """
-        # 用户回复了等待中的 PACE → 清除等待标记，让消息正常流进意图分析
+        # 用户回复了等待中的 PACE → 清除等待标记，自动恢复
         if self._pace_waiting:
             self._pace_waiting = False
             logger.info("[TaskOrchestrator] 用户回复，PACE 等待结束")
+            # 自动恢复 PACE：用户回复就是最好的方向指引
+            if self._task_mode and self._purpose and self._purpose.current_goal:
+                goal = self._purpose.current_goal
+                if self._is_continue_statement(msg.content):
+                    # "继续" → 走原有恢复路径
+                    self._handle_continue(msg)
+                    return
+                # 用户给了新内容 → 直接用这条消息恢复 PACE
+                logger.info("[TaskOrchestrator] 自动恢复 PACE（用户提供上下文）")
+                self._init_pace_runner()
+                # 构建 nudge：用户说的话
+                nudge = f"[元认知上下文] 用户回复了：{msg.content[:500]}\n请在当前子目标基础上，考虑用户的反馈继续执行。"
+                self._pace_runner._resume_nudge = nudge
+                intent_context = self._build_intent_context_for_goal(goal, None)
+                self._run_pace(msg, intent_context)
+                return
 
         # "继续"检测：只在有活跃目标时触发
         if self._handle_continue(msg):
