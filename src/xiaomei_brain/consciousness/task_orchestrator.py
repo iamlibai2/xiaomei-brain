@@ -1179,7 +1179,16 @@ class TaskOrchestrator:
             print(f"\n[{self._parent.agent.name or self._parent._agent_id}] 正在等待你对「{goal_desc}」的反馈...", flush=True)
             logger.info("[TaskOrchestrator] PACE 退出: waiting_user, goal=%s", goal_desc)
         elif exit_reason in ("stuck", "escalated", "error"):
-            logger.info("[TaskOrchestrator] PACE 退出: %s", exit_reason)
+            current = self._purpose.get_current() if self._purpose else None
+            goal_desc = current.description[:40] if current else "当前任务"
+            reason_map = {
+                "stuck": "任务卡住了，无法继续。",
+                "escalated": "需要你的帮助才能继续。",
+                "error": "执行过程出错，已暂停。",
+            }
+            reason_text = reason_map.get(exit_reason, "执行已暂停。")
+            print(f"\n[{self._parent.agent.name or self._parent._agent_id}] {reason_text} 目标：「{goal_desc}」", flush=True)
+            logger.info("[TaskOrchestrator] PACE 退出: %s, goal=%s", exit_reason, goal_desc)
 
         return exit_reason
 
