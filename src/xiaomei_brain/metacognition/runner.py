@@ -381,6 +381,10 @@ class PACERunner:
                         self._perspective_tried = False
                         step_index += 1
                         continue
+                    # 无法推进 → 没有更多可执行子目标，退出等待用户
+                    self._exit_reason = self.EXIT_WAITING_USER
+                    cb.get("print_prompt", lambda: None)()
+                    return
 
                 # ── [Layer 2] Project Mental Model: 记录操作 ──
                 self._record_operation(
@@ -569,6 +573,13 @@ class PACERunner:
                                 return
                         step_index += 1
                         continue
+
+                # InnerVoice escalate: 重试 ≥ 2 次 + IV说"做不了" → 升级
+                if current_goal_retries >= 2 and self._check_iv_escalate_signal():
+                    print(f"\n[元认知] InnerVoice 判断当前子目标无法完成，请求用户介入。", flush=True)
+                    self._exit_reason = self.EXIT_ESCALATED
+                    cb.get("print_prompt", lambda: None)()
+                    return
 
                 current_goal_retries += 1
                 logger.info("[PACERunner] %s: %s (retry %d/%d)", check.suggestion.value, check.reasoning, current_goal_retries, max_retries_per_goal)
@@ -1416,6 +1427,20 @@ class PACERunner:
             from .inner_voice import _extract_continue_signal
             __, reason = _extract_continue_signal(thought)
             return reason == "retry"
+        except Exception:
+            return False
+
+    def _check_iv_escalate_signal(self) -> bool:
+        """检查 InnerVoice 最近一次反省是否包含 'escalate' 信号。"""
+        if not self._inner_voice:
+            return False
+        try:
+            thought = self._inner_voice.get_last_thought()
+            if not thought:
+                return False
+            from .inner_voice import _extract_continue_signal
+            __, reason = _extract_continue_signal(thought)
+            return reason == "escalate"
         except Exception:
             return False
 
