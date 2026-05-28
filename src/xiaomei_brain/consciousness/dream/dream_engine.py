@@ -274,7 +274,7 @@ class DreamEngine:
             self.drive.restore_energy(0.2)
 
         # 同步到 SelfImage
-        self.cs.history.update_dream_summary(report.summary)
+        self.cs.self_image.contribute_dream(report.summary)
 
         # 写入长期记忆
         if self.ltm and full_report:

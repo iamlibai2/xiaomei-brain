@@ -954,7 +954,7 @@ class ConsciousLiving(Living):
         """状态转换后同步更新意识系统的 agent_state。"""
         if self._load_consciousness:
             si = self.consciousness.get_self_image()
-            si.perception.agent_state = new_state.value
+            si.contribute_perception(agent_state=new_state.value)
 
     # ── Hook: 心跳 ───────────────────────────────────────────────
 
@@ -1273,7 +1273,7 @@ class ConsciousLiving(Living):
         # 火焰点燃（如果意识系统已加载）
         if self._load_consciousness:
             si = self.consciousness.get_self_image()
-            si.perception.last_user_activity_time = time.time()
+            si.contribute_perception(user_active=True)
 
         # 加载 fresh tail：让 agent "带着最近的记忆醒来"
         # 从 DB 还原完整的消息序列，包括 assistant(tool_calls) + tool 配对

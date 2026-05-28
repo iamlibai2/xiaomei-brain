@@ -98,7 +98,7 @@ def create_being_tool(consciousness: Any) -> Tool:
 
             # 9. 更新内心想法
             if consciousness_text:
-                consciousness.mind.update_inner_thought(consciousness_text[:200])
+                consciousness.self_image.contribute_inner_thought(consciousness_text[:200])
 
             # 10. 消耗少量能量（觉察也是精神活动）
             if consciousness.drive:
