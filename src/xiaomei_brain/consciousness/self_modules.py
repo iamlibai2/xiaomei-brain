@@ -227,13 +227,9 @@ class Being:
             self.relationship_status = "初识"
 
     def get_summary(self) -> str:
-        traits_text = "、".join(self.traits[:3])
-        values_text = "、".join(self.values[:2])
-        parts = [f"我是{self.name}。特质：{traits_text}。价值观：{values_text}。"]
-        if self.calling:
-            parts.append(f"我的追求：{self.calling[:100]}")
-        if self.boundaries:
-            parts.append(f"我的底线：{'、'.join(self.boundaries[:3])}")
+        parts = [f"我是{self.name}。性格{self.personality}。"]
+        if self.self_cognition.get("擅长"):
+            parts.append(f"擅长{'、'.join(self.self_cognition['擅长'][:3])}。")
         return " ".join(parts)
 
 
@@ -458,7 +454,6 @@ class SelfMind:
     # ── 认知产物（SelfImage 自有）──────────────
     inner_thought: str = ""
     inner_thought_history: list[str] = field(default_factory=list)
-    last_inner_thought_time: float = 0.0
 
     # ── 目标进展历史（tracking，非 fallback）──
     _goal_progress_history: list[float] = field(default_factory=list)
@@ -475,9 +470,6 @@ class SelfMind:
 
     # ── 项目心智模型（L2 注入）───────────────
     project_map: str = ""
-
-    # ── 经验记忆召回（L2 注入）───────────────
-    experience: list[dict] = field(default_factory=list)
 
     # ── PACE 执行反射（chat 后累积，L2 消费后清空）──
     pace_reflections: list[dict] = field(default_factory=list)
@@ -543,7 +535,6 @@ class SelfMind:
         self.inner_thought_history.append(thought)
         if len(self.inner_thought_history) > 10:
             self.inner_thought_history = self.inner_thought_history[-10:]
-        self.last_inner_thought_time = time.time()
 
     def update_memory_count(self, count: int, summary: str = "") -> None:
         self.memory_count = count
@@ -570,17 +561,15 @@ class SelfMind:
             "recent_memory_summaries": self.recent_memory_summaries[-10:],
             "inner_thought": self.inner_thought,
             "inner_thought_history": self.inner_thought_history[-10:],
-            "last_inner_thought_time": self.last_inner_thought_time,
             "social_perceptions": self.social_perceptions[-10:],
             "inner_voice": self.inner_voice[-10:],
             "project_map": self.project_map[:500] if self.project_map else "",
-            "experience": [e.get("id", "") for e in self.experience[-5:]],
             "pace_reflections_count": len(self.pace_reflections),
         }
 
     def from_dict(self, data: dict) -> None:
         # 代理字段的数据来自 Purpose，不从 JSON 恢复
-        for key in ("memory_count", "inner_thought", "last_inner_thought_time"):
+        for key in ("memory_count", "inner_thought"):
             if key in data:
                 setattr(self, key, data[key])
         for key in ("memory_count_history", "recent_memory_summaries",
@@ -595,7 +584,7 @@ class SelfMind:
             self.inner_voice = data["inner_voice"]
         if "project_map" in data:
             self.project_map = data["project_map"]
-        # experience 和 pace_reflections 是运行时视图，不从快照恢复
+        # pace_reflections 是运行时视图，不从快照恢复
 
     def get_summary(self) -> str:
         return f"目标「{self.primary_goal[:15]}」进展{self.goal_progress:.0%}，记忆{self.memory_count}条"
@@ -626,6 +615,7 @@ class SelfMemory:
     procedures: list[dict] = field(default_factory=list)
     recent_dialog: list[dict] = field(default_factory=list)
     experience_timeline: list[dict] = field(default_factory=list)  # 经验流（统一时间线）
+    experience: list[dict] = field(default_factory=list)  # 经验记忆召回（ExperienceMemory.recall()，top-5）
     patterns: list[dict] = field(default_factory=list)  # 模式记忆（跨时间统计规律，top-5 高置信度）
     window_size: int = 0
 
@@ -643,6 +633,7 @@ class SelfMemory:
             "procedures": self.procedures[-3:],
             "recent_dialog_count": len(self.recent_dialog),
             "experience_timeline_count": len(self.experience_timeline),
+            "experience_count": len(self.experience),
             "patterns_count": len(self.patterns),
             "window_size": self.window_size,
         }
@@ -661,31 +652,20 @@ class SelfIntent:
     """意识此刻的意图 — 从记忆+身体+认知中浮现。
 
     由 L2 LLM 产生，ActionDispatcher 消费。
-    intent_buffer 是待执行队列 [{"type", "reason", "priority"}],
+    intent_buffer 是待执行队列 [{type, priority, content, ...}],
     urgent_intents 标记紧急意图类型。
     """
 
-    type: str = ""           # greet / learn / express / act
-    description: str = ""    # "我想问问用户今天过得怎么样"
-    reason: str = ""         # "归属欲高，用户很久没说话了"
-    urgency: float = 0.0     # 0.0 ~ 1.0
     intent_buffer: list[dict] = field(default_factory=list)   # 待执行意图队列
     urgent_intents: set = field(default_factory=set)           # 紧急意图类型名
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "type": self.type,
-            "description": self.description,
-            "reason": self.reason,
-            "urgency": self.urgency,
             "intent_buffer": list(self.intent_buffer),
             "urgent_intents": list(self.urgent_intents),
         }
 
     def from_dict(self, data: dict) -> None:
-        for key in ("type", "description", "reason", "urgency"):
-            if key in data:
-                setattr(self, key, data[key])
         if "intent_buffer" in data:
             raw = data["intent_buffer"]
             # 兼容旧格式 list[str] → list[dict]
@@ -697,7 +677,7 @@ class SelfIntent:
             self.urgent_intents = set(data["urgent_intents"])
 
     def is_active(self) -> bool:
-        return bool(self.type and self.description) or bool(self.intent_buffer)
+        return bool(self.intent_buffer)
 
 
 # ── SelfHistory: 时间维度的我 ──────────────────────────────
@@ -713,7 +693,6 @@ class SelfHistory:
     consciousness_rhythm: str = ""           # 意识节律
     last_dream_summary: str = ""             # 最后一次梦
     last_llm_fuel_time: float = 0.0          # 上次加柴时间
-    interpreted_changes: list[str] = field(default_factory=list)  # L2 解读后的变化
     growth_events: list[dict] = field(default_factory=list)  # 生长记录
 
     def to_dict(self) -> dict[str, Any]:
@@ -725,7 +704,6 @@ class SelfHistory:
             "consciousness_rhythm": self.consciousness_rhythm,
             "last_dream_summary": self.last_dream_summary,
             "last_llm_fuel_time": self.last_llm_fuel_time,
-            "interpreted_changes": self.interpreted_changes[-20:],
             "growth_events": self.growth_events[-20:],
         }
 
@@ -734,8 +712,6 @@ class SelfHistory:
                      "consciousness_rhythm", "last_dream_summary", "last_llm_fuel_time"]:
             if key in data:
                 setattr(self, key, data[key])
-        if "interpreted_changes" in data:
-            self.interpreted_changes = data["interpreted_changes"]
         if "growth_log" in data:
             self.growth_events = data["growth_log"]
         if "growth_events" in data:
@@ -760,12 +736,6 @@ class SelfHistory:
     def growth_log(self) -> list[dict]:
         """兼容旧名 .growth_log → .growth_events"""
         return self.growth_events
-
-    @property
-    def last_wake_summary(self) -> str:
-        """兼容旧名 .last_wake_summary → 空字符串（已废弃）"""
-        return ""
-
 
     def get_summary(self) -> str:
         age_hours = int(self.consciousness_age) // 3600

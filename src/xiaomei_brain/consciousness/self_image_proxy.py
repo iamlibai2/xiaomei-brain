@@ -388,13 +388,14 @@ class SelfImage:
                 len(getattr(self.memory, k, []) or [])
                 for k in ["narratives", "internal_narratives", "dag_summaries",
                           "important_memories", "recalled_memories", "relation_chains",
-                          "procedures", "recent_dialog", "experience_timeline", "patterns"]
+                          "procedures", "recent_dialog", "experience_timeline",
+                          "experience", "patterns"]
             )
 
         if project_map:
             self.mind.project_map = project_map
         if experience is not None:
-            self.mind.experience = experience
+            self.memory.experience = experience
         if attention_snapshot is not None:
             self._last_attention_snapshot = attention_snapshot
 
@@ -1012,7 +1013,7 @@ class SelfImage:
     # ── Experience: 过往经验 ───────────────────────────────
 
     def _render_experience(self) -> list[str]:
-        m = self.mind
+        m = self.memory
         if not m.experience:
             return []
         lines = [f"\n****以下是你过去的类似经验****"]
@@ -1023,14 +1024,17 @@ class SelfImage:
     # ── Intent: 当前意图 ───────────────────────────────────
 
     def _render_intent(self) -> list[str]:
-        intent = self.intent
-        if not intent.is_active():
+        buf = self.intent.intent_buffer
+        if not buf:
             return []
-        return [
-            f"\n****以下是你当前的意图****",
-            f"你想做：{intent.description}",
-            f"原因：{intent.reason}",
-        ]
+        # 按优先级排序，取前3个
+        sorted_buf = sorted(buf, key=lambda i: i.get("priority", 0), reverse=True)
+        lines = [f"\n****以下是你当前的意图****"]
+        for item in sorted_buf[:3]:
+            lines.append(f"你想做：{item.get('content', item.get('type', ''))}")
+            if item.get("params", {}).get("reason"):
+                lines.append(f"原因：{item['params']['reason']}")
+        return lines
 
     # ── Experience Timeline: 统一经验流 ──────────────────────
 

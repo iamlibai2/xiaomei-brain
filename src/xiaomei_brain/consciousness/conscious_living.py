@@ -44,7 +44,7 @@ from .core import Consciousness, ConsciousnessReport, TickResult
 from .intent import Intent
 from .storage import ConsciousnessStorage
 from .self_image_proxy import SelfImage
-from .perception import PerceptionConfig
+
 from ..drive import DriveEngine
 from ..purpose import PurposeEngine, IntentUnderstanding
 from .task_orchestrator import TaskOrchestrator
@@ -679,9 +679,7 @@ class ConsciousLiving(Living):
             si.being.name = self._agent_id
             logger.info("[ConsciousLiving] 使用 agent_id 作为默认名字")
 
-        # 5. 加载感知规则（非运行时数据，始终从配置加载）
-        self.consciousness._perception_config = PerceptionConfig.load(self._agent_id)
-        logger.info("[ConsciousLiving] 从 PerceptionConfig 初始化完成: %d 条规则", len(self.consciousness._perception_config.rules))
+        # 5. 初始化完成
 
     # ── 插件系统 ────────────────────────────────────────────────────
 

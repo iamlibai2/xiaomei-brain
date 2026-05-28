@@ -25,7 +25,7 @@ from __future__ import annotations
 from enum import Enum
 
 import logging
-import re
+
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -34,7 +34,7 @@ from typing import Any
 from .self_image_proxy import SelfImage
 from .self_modules import Being, SelfBody, SelfPerception, SelfMind, SelfHistory
 from .intent import Intent, IntentType, create_wait_intent, create_greet_intent, create_reflect_intent, create_dream_intent, create_care_intent
-from .perception import PerceptionConfig
+
 from .config import ConsciousnessConfig
 from .memory_window import refresh_memory_window
 from .l2_engine import L2Engine
@@ -162,9 +162,6 @@ class Consciousness:
         # 身份配置（供 Drive 学习主题使用）
         self._identity_config: Any | None = None
 
-        # 感知规则配置（供状态解读使用）
-        self._perception_config: PerceptionConfig | None = None
-
         # 过程记忆（ProcedureMemory — LLM学习 + 关键词触发）
         self._procedure_memory: ProcedureMemory | None = None
 
@@ -184,11 +181,6 @@ class Consciousness:
         if self.agent:
             self.agent._procedure_memory = self._procedure_memory
         logger.info("\033[91m[Procedure]\033[0m initialized: %s", db_path)
-
-    def _init_from_perception_config(self) -> None:
-        """从 perception.md 配置初始化感知规则"""
-        self._perception_config = PerceptionConfig.load(self._agent_id)
-        logger.info("[Consciousness] 从 PerceptionConfig 初始化完成: %d 条规则", len(self._perception_config.rules))
 
     def set_storage(self, storage: Any) -> None:
         """设置意识存储"""
@@ -336,11 +328,7 @@ class Consciousness:
         # 检测异常（可通过 l1_anomaly_enabled 关闭）
         anomaly = detect_anomaly(self.self_image) if self._cc.l1_anomaly_enabled else None
 
-        # 新增：语义化解读变化（L1 规则匹配）
-        if self._perception_config:
-            self.history.interpreted_changes = interpret_changes(self.self_image, self._perception_config)
-
-        # 新增：消化内部叙事，生成自我感知（纯规则）
+        # 消化内部叙事，生成自我感知（纯规则）
         self._digest_internal_narratives()
 
         # 新增：Drive 归属欲随空闲时间自然上升
@@ -1059,7 +1047,7 @@ class Consciousness:
             report = ConsciousnessReport(
                 trigger="wake",
                 depth="light",
-                summary=si.history.last_wake_summary or dream_summary[:50],
+                summary=dream_summary[:50],
                 full_report=dream_summary,
                 self_image_snapshot=si.to_dict(),
             )
@@ -1110,41 +1098,6 @@ class Consciousness:
 # SelfImage 数据加工函数（从 SelfImage 移出，保持 SelfImage 纯数据）
 # ═══════════════════════════════════════════════════════════════════
 
-# ── 规则字段映射（中文名 → lambda getter）─────────────────────
-
-_RULE_FIELDS: dict[str, tuple] = {
-    "空闲":     (lambda s: s.perception.user_idle_duration, 1),
-    "关系深度":  (lambda s: s.being.relationship_depth, 1),
-    "能量":     (lambda s: s.body.energy, 1),
-    "记忆数量":  (lambda s: s.mind.memory_count, 1),
-    "燃烧时长":  (lambda s: s.history.consciousness_age, 1),
-}
-
-
-def _match_condition(condition: str, field_keyword: str, value: float) -> bool:
-    """匹配条件表达式（如 "空闲 > 300秒"）。"""
-    rest = condition.replace(field_keyword, "").strip()
-    op_match = re.match(r"([><=!]+)\s*(\d+(?:\.\d+)?)\s*(秒|分钟|小时|天)?", rest)
-    if not op_match:
-        return False
-    op = op_match.group(1)
-    threshold = float(op_match.group(2))
-    unit = op_match.group(3) or "秒"
-    unit_multipliers = {"秒": 1, "分钟": 60, "小时": 3600, "天": 86400}
-    threshold_seconds = threshold * unit_multipliers.get(unit, 1)
-    if op == ">":
-        return value > threshold_seconds
-    elif op == "<":
-        return value < threshold_seconds
-    elif op == ">=":
-        return value >= threshold_seconds
-    elif op == "<=":
-        return value <= threshold_seconds
-    elif op in ("==", "="):
-        return value == threshold_seconds
-    return False
-
-
 # ── 异常检测 ─────────────────────────────────────────────────
 
 def detect_anomaly(si: SelfImage) -> str | None:
@@ -1194,26 +1147,6 @@ def _detect_desire_starvation(si: SelfImage) -> str | None:
 def _detect_emotion_spike(si: SelfImage) -> bool:
     """检测情绪骤变：情绪强度 > 0.8 且不是平静。"""
     return si.body.emotion_intensity > 0.8 and si.body.mood not in ("平静", "neutral")
-
-
-# ── 语义化解读 ───────────────────────────────────────────────
-
-def interpret_changes(si: SelfImage, config: Any) -> list[str]:
-    """L1: 规则匹配，语义化解读 SelfImage 变化。"""
-    interpretations = []
-    sorted_rules = sorted(config.rules, key=lambda r: r.priority, reverse=True)
-
-    for rule in sorted_rules:
-        for chinese_field, (getter, _) in _RULE_FIELDS.items():
-            if chinese_field not in rule.condition:
-                continue
-            value = getter(si)
-            if _match_condition(rule.condition, chinese_field, value):
-                interpretations.append(rule.description)
-                break
-
-    logger.debug("[interpret_changes] 解读结果: %s", interpretations[:5])
-    return interpretations
 
 
 # ── 状态摘要 ─────────────────────────────────────────────────
