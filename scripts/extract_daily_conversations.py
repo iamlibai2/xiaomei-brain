@@ -18,15 +18,11 @@ from pathlib import Path
 BEIJING_TZ = timezone(timedelta(hours=8))
 
 # Paths — 读取多个 JSONL，合并去重
-TRANSCRIPT_PATHS = [
-    Path.home() / ".claude/projects/-home-iamlibai-workspace-claude-project-xiaomei-brain/15162ba7-006e-4e35-af0e-dbd56b73005b.jsonl",
-    Path.home() / ".claude/projects/-home-iamlibai-workspace-claude-project-xiaomei-brain/49c380e4-1e4b-46ce-ab42-d95deccce42d.jsonl",
-    Path.home() / ".claude/projects/-home-iamlibai-workspace-claude-project-xiaomei-brain/76485e1a-1c5f-4420-8d92-89cf4024ca8c.jsonl",
-    Path.home() / ".claude/projects/-home-iamlibai-workspace-claude-project-xiaomei-brain/d81f785c-754c-4658-add3-e110928ae83c.jsonl",
-    Path.home() / ".claude/projects/-home-iamlibai-workspace-claude-project-xiaomei-brain/02f4e85d-38ed-4140-9134-7c4f85fbb377.jsonl",
-    Path.home() / ".claude/projects/-home-iamlibai-workspace-claude-project-xiaomei-brain/bdf8e794-785c-4fd2-97f6-50120f6ec78e.jsonl",
-    Path.home() / ".claude/projects/-home-iamlibai-workspace-claude-project-xiaomei-brain/8443b5f2-77dc-43c3-95a0-26ca50ad4886.jsonl",
-]
+TRANSCRIPT_PATHS = sorted(
+    (Path.home() / ".claude/projects/-home-iamlibai-workspace-claude-project-xiaomei-brain").glob("*.jsonl"),
+    key=lambda p: p.stat().st_size,
+    reverse=True,
+)
 OUTPUT_DIR = Path("/home/iamlibai/workspace/claude-project/xiaomei-brain/docs/analyze")
 
 
