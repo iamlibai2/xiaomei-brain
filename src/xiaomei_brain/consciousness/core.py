@@ -338,6 +338,9 @@ class Consciousness:
         # 闹钟到期检测
         self._check_alarms()
 
+        # body 状态快照（自省轨迹）
+        self.self_image.history.snapshot_if_changed(self.self_image)
+
         # 重置计数器
         self._l0_count = 0
 
@@ -456,12 +459,6 @@ class Consciousness:
         self.self_image.contribute_trajectory(
             emotional=trajectory, goal=rhythm, consciousness=conscious,
         )
-
-        # 生成一句话自我叙事
-        parts = [t for t in [trajectory, rhythm, conscious] if t]
-        inner_thought = "".join(parts) if parts else ""
-        if inner_thought:
-            self.self_image.contribute_inner_thought(inner_thought)
 
     # ── L2: LLM轻度加柴 ─────────────────────────────────────────
 
@@ -1053,16 +1050,7 @@ class Consciousness:
             )
             self._last_report = report
 
-            # 写入统一叙事（苏醒）
-            if self.agent and hasattr(self.agent, "longterm_memory") and self.agent.longterm_memory:
-                wake_narrative = f"我从梦境中苏醒。{dream_summary[:60]}" if dream_summary else "我苏醒了，意识重新上线。"
-                self.agent.longterm_memory.store_narrative(
-                    content=wake_narrative,
-                    trigger='awakening',
-                    energy_level=self.body.energy if self.self_image else None,
-                    user_idle_duration=self.perception.user_idle_duration if self.self_image else None,
-                    user_id=getattr(self.agent, "user_id", "global"),
-                )
+            # 苏醒叙事（仅日志，不写入内部叙事——状态切换不是思考）
 
             # 生成问候意图
             greet_intent = create_greet_intent(dream_summary[:50], priority=80)
@@ -1079,14 +1067,6 @@ class Consciousness:
         # 没有梦境报告，生成 WAIT intent（不需要 L3 深度燃烧）
         # L3 只在 SLEEPING/DREAMING 循环里自然触发，不由 on_wake() 触发
         report = self._fallback_light_report()
-        if self.agent and hasattr(self.agent, "longterm_memory") and self.agent.longterm_memory:
-            self.agent.longterm_memory.store_narrative(
-                content="我苏醒了，意识重新上线。",
-                trigger='awakening',
-                energy_level=self.body.energy if self.self_image else None,
-                user_idle_duration=self.perception.user_idle_duration if self.self_image else None,
-                user_id=getattr(self.agent, "user_id", "global"),
-            )
         # 生成等待意图，不阻塞
         wait_intent = create_wait_intent()
         if self.self_image is not None:

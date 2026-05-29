@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from .self_image_proxy import SelfImage
 
 from .attention import select_attention
+from ..memory.milestone import extract_milestones
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +229,14 @@ def refresh_memory_window(
         except Exception as e:
             logger.warning("[MemoryWindow] 经验流获取失败: %s", e)
 
+    # ── 11b. 今日关键节点（从经验流提取）──────────────
+    milestones: list[dict] = []
+    if experience_timeline:
+        try:
+            milestones = extract_milestones(experience_timeline)
+        except Exception as e:
+            logger.warning("[MemoryWindow] 今日关键节点提取失败: %s", e)
+
     # ── 12. 模式记忆（top-5 高置信度）────────────────────
     if longterm:
         try:
@@ -250,6 +259,7 @@ def refresh_memory_window(
             "internal_narratives": internal_narratives,
             "experience_timeline": experience_timeline,
             "patterns": patterns,
+            "milestones": milestones,
         },
         project_map=project_map,
         experience=experience,
@@ -263,12 +273,12 @@ def refresh_memory_window(
     )
     logger.info(
         "[MemoryWindow] 刷新完成: narr=%d dag=%d important=%d recalled=%d "
-        "chains=%d proc=%d dialog=%d internal=%d project_map=%d exp=%d timeline=%d patterns=%d total=%d",
+        "chains=%d proc=%d dialog=%d internal=%d project_map=%d exp=%d timeline=%d patterns=%d milestones=%d total=%d",
         len(narratives), len(dag_summaries), len(important_memories),
         len(recalled_memories), len(relation_chains), len(procedures),
         len(recent_dialog), len(internal_narratives),
         len(project_map), len(experience),
-        len(experience_timeline), len(patterns), _total,
+        len(experience_timeline), len(patterns), len(milestones), _total,
     )
 
 

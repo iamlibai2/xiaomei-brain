@@ -258,11 +258,14 @@ class SelfImage:
             self.perception.user_idle_duration = idle_duration
 
     def contribute_inner_thought(self, text: str) -> None:
-        """L1/L2 贡献：当前内心想法。
+        """[已废弃] 内心想法统一走 store_narrative() → internal_narratives。
 
-        由 L1._digest_internal_narratives / L2._store_emergence 调用。
+        保留此方法用于兼容旧调用（being.py），内部转为 store_narrative。
         """
-        self.mind.update_inner_thought(text)
+        logger.warning(
+            "[SelfImage] contribute_inner_thought() 已废弃，请改用 store_narrative(): %s",
+            text[:80],
+        )
 
     def contribute_trajectory(self, *,
                                emotional: str = "",
@@ -366,7 +369,7 @@ class SelfImage:
                 for k in ["narratives", "internal_narratives", "dag_summaries",
                           "important_memories", "recalled_memories", "relation_chains",
                           "procedures", "recent_dialog", "experience_timeline",
-                          "experience", "patterns"]
+                          "experience", "patterns", "milestones"]
             )
 
         if project_map:

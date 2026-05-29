@@ -223,6 +223,16 @@ class L2Engine:
                 emergence_text, perceptions = self._split_perception(emergence_text)
                 if perceptions:
                     c.self_image.contribute_social_perception(perceptions)
+                    es = getattr(c.agent, "exp_stream", None)
+                    if es:
+                        for p in perceptions:
+                            es.log(
+                                type="internal_reflection",
+                                content=f"社交感知：{p.get('content', '')}",
+                                importance=0.5,
+                                metadata={"perception_type": p.get('type', ''), "source": "social_perception"},
+                                user_id=getattr(c.agent, "user_id", "global"),
+                            )
 
                 # 分离自我不确定感
                 emergence_text, doubts = self._split_doubt(emergence_text)
@@ -464,6 +474,13 @@ class L2Engine:
                 emergence_text, perceptions = self._split_perception(emergence_text)
                 if perceptions:
                     c.self_image.contribute_social_perception(perceptions)
+                    if c.agent and hasattr(c.agent, "longterm_memory") and c.agent.longterm_memory:
+                        for p in perceptions:
+                            c.agent.longterm_memory.store_narrative(
+                                content=f"社交感知：{p.get('content', '')} [{p.get('type', '')}]",
+                                trigger='social_perception',
+                                user_id=getattr(c.agent, "user_id", "global"),
+                            )
 
                 emergence_text, doubts = self._split_doubt(emergence_text)
                 if doubts:
@@ -1107,8 +1124,6 @@ weight: 0.85
 
         consciousness_text = emergence_text.split("---EVENTS---")[0].strip()
         logger.info("[Consciousness L2] 自由表达全文 (%d 字):\n%s", len(consciousness_text), consciousness_text)
-        if consciousness_text:
-            c.self_image.contribute_inner_thought(consciousness_text)
         if c.agent and hasattr(c.agent, "longterm_memory") and c.agent.longterm_memory and consciousness_text:
             c.agent.longterm_memory.store_narrative(
                 content=consciousness_text,

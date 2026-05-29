@@ -77,12 +77,13 @@ def cmd_show_inner_thought(living: ConsciousLiving, args: str = "") -> None:
 
     print("\n内在感知:", flush=True)
     print(f"  当前想法: {si.mind.inner_thought[:100] if si.mind.inner_thought else '（无）'}", flush=True)
-    print(f"  历史想法: {len(si.mind.inner_thought_history)}条", flush=True)
+    narratives = si.memory.internal_narratives
+    print(f"  内部叙事: {len(narratives)}条", flush=True)
 
-    if si.mind.inner_thought_history:
-        print("\n最近想法:", flush=True)
-        for i, thought in enumerate(si.mind.inner_thought_history[-3:]):
-            print(f"  [{i}] {thought[:80]}", flush=True)
+    if narratives:
+        print("\n最近叙事:", flush=True)
+        for i, n in enumerate(narratives[-3:]):
+            print(f"  [{i}] {n.get('content', '')[:80]}", flush=True)
 
     living._print_prompt()
 
@@ -126,7 +127,8 @@ def cmd_show_identity(living: ConsciousLiving, args: str = "") -> None:
         print(f"  当前想法: {si.mind.inner_thought[:100]}", flush=True)
     else:
         print(f"  当前想法: （无）", flush=True)
-    print(f"  历史想法: {len(si.mind.inner_thought_history)}条", flush=True)
+    narratives = si.memory.internal_narratives
+    print(f"  内部叙事: {len(narratives)}条", flush=True)
 
     if si.history.last_dream_summary:
         print("\n【最近梦境】", flush=True)

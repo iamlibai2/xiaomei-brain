@@ -96,14 +96,6 @@ def create_being_tool(consciousness: Any) -> Tool:
             if signal_json and consciousness.drive:
                 consciousness._apply_social_signal(signal_json)
 
-            # 9. 更新内心想法
-            if consciousness_text:
-                consciousness.self_image.contribute_inner_thought(consciousness_text[:200])
-
-            # 10. 消耗少量能量（觉察也是精神活动）
-            if consciousness.drive:
-                consciousness.drive.consume_energy(0.01)
-
             # 9. 记录到 longterm memory
             if consciousness.agent and hasattr(consciousness.agent, "longterm_memory") and consciousness.agent.longterm_memory and consciousness_text:
                 consciousness.agent.longterm_memory.store_narrative(

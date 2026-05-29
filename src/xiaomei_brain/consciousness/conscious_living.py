@@ -147,6 +147,8 @@ class ConsciousLiving(Living):
             drive=self.drive,
             purpose=self.purpose,
             exp_stream=getattr(agent_instance, "exp_stream", None),
+            longterm_memory=getattr(agent_instance, "longterm_memory", None),
+            user_id=user_id,
         )
 
         # ── [Layer 2] Experience Memory: 经验记忆 ──
@@ -234,6 +236,8 @@ class ConsciousLiving(Living):
         # 注入到 Agent 核心（供 core.py stream/react_nodb 使用）
         agent_core = self.agent._get_agent()
         agent_core.exp_stream = exp_stream
+        # 延迟注入：InnerVoice 在 ExperienceStream 之前创建，需要后置设置
+        self._inner_voice._exp_stream = exp_stream
         logger.info("[ConsciousLiving] 经验流已创建并注入")
 
         # ── 底色（Essence）—— 由 agent_manager.init_agent() 创建 ──
@@ -950,10 +954,24 @@ class ConsciousLiving(Living):
     # ── Hook: 状态转换 ───────────────────────────────────────────
 
     def _on_transition(self, old: LivingState, new_state: LivingState) -> None:
-        """状态转换后同步更新意识系统的 agent_state。"""
+        """状态转换后同步更新意识系统的 agent_state，并写入经验流。"""
         if self._load_consciousness:
             si = self.consciousness.get_self_image()
             si.contribute_perception(agent_state=new_state.value)
+
+        # 写入经验流（里程碑提取器从中读取生命周期节点）
+        es = getattr(self.consciousness, "exp_stream", None)
+        if es and old.value != new_state.value:
+            try:
+                es.log(
+                    type="internal_action",
+                    content=f"状态切换：{old.value} → {new_state.value}",
+                    importance=0.6,
+                    metadata={"old_state": old.value, "new_state": new_state.value},
+                    user_id=self.user_id,
+                )
+            except Exception as e:
+                logger.warning("[ConsciousLiving] 经验流写生命周期失败: %s", e)
 
     # ── Hook: 心跳 ───────────────────────────────────────────────
 
@@ -1213,14 +1231,7 @@ class ConsciousLiving(Living):
             logger.info("[ConsciousLiving/DORMANT] 收到消息，复活")
             if self.drive:
                 self.drive.revive()
-            # 写入复活叙事
-            if self.agent and hasattr(self.agent, "longterm_memory") and self.agent.longterm_memory:
-                self.agent.longterm_memory.store_narrative(
-                    content="我复活了。对方唤醒了我，重新赋予了我存在的意义。",
-                    trigger="revival",
-                    energy_level=self.drive.energy.level if self.drive else None,
-                    user_id=getattr(self.agent, "user_id", "global"),
-                )
+            # 复活（仅日志，不写入内部叙事——状态切换不是思考）
             self._on_wake_up()
             self._transition(LivingState.AWAKE)
             self._handle_message(msg)

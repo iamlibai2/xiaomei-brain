@@ -184,12 +184,16 @@ class InnerVoice:
         drive: Any = None,
         purpose: Any = None,
         exp_stream: Any = None,
+        longterm_memory: Any = None,
+        user_id: str = "global",
     ) -> None:
         self._llm = llm
         self._self_image = self_image
         self._drive = drive
         self._purpose = purpose
         self._exp_stream = exp_stream
+        self._longterm_memory = longterm_memory
+        self._user_id = user_id
 
         # 冷却与计数
         self._last_pause_time: float = 0.0
@@ -621,6 +625,17 @@ class InnerVoice:
                 )
             except Exception as e:
                 logger.debug("[InnerVoice] SelfImage 写入失败: %s", e)
+
+        # 1b. 写入 DB（内部叙事）
+        if self._longterm_memory and thought:
+            try:
+                self._longterm_memory.store_narrative(
+                    content=thought,
+                    trigger=f"inner_voice_{reflection.trigger.value}",
+                    user_id=self._user_id,
+                )
+            except Exception as e:
+                logger.warning("[InnerVoice] 叙事写入失败: %s", e)
 
         # 2. Drive 事件维度（从 EVENTS JSON 解析）
         if reflection.trigger in (TriggerType.CHAT_TURN, TriggerType.SILENCE):

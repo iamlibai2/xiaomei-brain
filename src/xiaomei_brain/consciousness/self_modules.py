@@ -453,7 +453,6 @@ class SelfMind:
 
     # ── 认知产物（SelfImage 自有）──────────────
     inner_thought: str = ""
-    inner_thought_history: list[str] = field(default_factory=list)
 
     # ── 目标进展历史（tracking，非 fallback）──
     _goal_progress_history: list[float] = field(default_factory=list)
@@ -531,10 +530,8 @@ class SelfMind:
             self._goal_progress_history = self._goal_progress_history[-50:]
 
     def update_inner_thought(self, thought: str) -> None:
+        """[已废弃] 内心想法统一走 store_narrative() → internal_narratives。"""
         self.inner_thought = thought
-        self.inner_thought_history.append(thought)
-        if len(self.inner_thought_history) > 10:
-            self.inner_thought_history = self.inner_thought_history[-10:]
 
     def update_memory_count(self, count: int, summary: str = "") -> None:
         self.memory_count = count
@@ -560,9 +557,8 @@ class SelfMind:
             "memory_count_history": self.memory_count_history[-20:],
             "recent_memory_summaries": self.recent_memory_summaries[-10:],
             "inner_thought": self.inner_thought,
-            "inner_thought_history": self.inner_thought_history[-10:],
-            "social_perceptions": self.social_perceptions[-10:],
-            "inner_voice": self.inner_voice[-10:],
+            "social_perceptions_count": len(self.social_perceptions),
+            "inner_voice_count": len(self.inner_voice),
             "project_map": self.project_map[:500] if self.project_map else "",
             "pace_reflections_count": len(self.pace_reflections),
         }
@@ -572,16 +568,17 @@ class SelfMind:
         for key in ("memory_count", "inner_thought"):
             if key in data:
                 setattr(self, key, data[key])
-        for key in ("memory_count_history", "recent_memory_summaries",
-                     "inner_thought_history"):
+        for key in ("memory_count_history", "recent_memory_summaries"):
             if key in data:
                 setattr(self, key, data[key])
         if "goal_progress_history" in data:
             self._goal_progress_history = data["goal_progress_history"]
         if "social_perceptions" in data:
-            self.social_perceptions = data["social_perceptions"]
+            # 从 JSON 迁移到 DB，不再从快照恢复
+            pass
         if "inner_voice" in data:
-            self.inner_voice = data["inner_voice"]
+            # 从 JSON 迁移到 DB，不再从快照恢复
+            pass
         if "project_map" in data:
             self.project_map = data["project_map"]
         # pace_reflections 是运行时视图，不从快照恢复
@@ -617,6 +614,7 @@ class SelfMemory:
     experience_timeline: list[dict] = field(default_factory=list)  # 经验流（统一时间线）
     experience: list[dict] = field(default_factory=list)  # 经验记忆召回（ExperienceMemory.recall()，top-5）
     patterns: list[dict] = field(default_factory=list)  # 模式记忆（跨时间统计规律，top-5 高置信度）
+    milestones: list[dict] = field(default_factory=list)  # 今日关键节点（milestone 提取器，纯规则）
     window_size: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -635,6 +633,7 @@ class SelfMemory:
             "experience_timeline_count": len(self.experience_timeline),
             "experience_count": len(self.experience),
             "patterns_count": len(self.patterns),
+            "milestones_count": len(self.milestones),
             "window_size": self.window_size,
         }
 
@@ -694,6 +693,7 @@ class SelfHistory:
     last_dream_summary: str = ""             # 最后一次梦
     last_llm_fuel_time: float = 0.0          # 上次加柴时间
     growth_events: list[dict] = field(default_factory=list)  # 生长记录
+    self_snapshots: list[dict] = field(default_factory=list)  # body 状态快照，最多 5 个，不持久化
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -722,6 +722,52 @@ class SelfHistory:
 
     def update_dream_summary(self, summary: str) -> None:
         self.last_dream_summary = summary[:200]
+
+    def snapshot_if_changed(self, si) -> bool:
+        """body 状态有有意义变化时拍快照。距上次 < 2分钟不拍。
+
+        Returns:
+            True 如果本次拍了快照
+        """
+        top_desire = max(
+            ("归属", si.body.desire_belonging),
+            ("认知", si.body.desire_cognition),
+            ("成就", si.body.desire_achievement),
+            ("表达", si.body.desire_expression),
+            key=lambda x: x[1],
+        )[0]
+
+        cur = {
+            "time": time.time(),
+            "mood": si.body.mood,
+            "energy": si.body.energy,
+            "top_desire": top_desire,
+            "attention": si.body.attention,
+        }
+
+        if not self.self_snapshots:
+            self.self_snapshots.append(cur)
+            return True
+
+        prev = self.self_snapshots[-1]
+        # 距上次 < 2 分钟不拍
+        if cur["time"] - prev["time"] < 120:
+            return False
+
+        # 有意义变化
+        changed = (
+            cur["mood"] != prev["mood"]
+            or abs(cur["energy"] - prev["energy"]) > 0.1
+            or cur["top_desire"] != prev["top_desire"]
+        )
+        # 兜底：超过 30 分钟无变化也拍一张
+        if not changed and cur["time"] - prev["time"] < 1800:
+            return False
+
+        self.self_snapshots.append(cur)
+        if len(self.self_snapshots) > 5:
+            self.self_snapshots = self.self_snapshots[-5:]
+        return True
 
     def add_event(self, content: str, date: str | None = None) -> None:
         from datetime import datetime
