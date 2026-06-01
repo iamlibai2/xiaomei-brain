@@ -48,7 +48,9 @@ from .inject_consciousness import inject_consciousness
 
 from ..drive import DriveEngine
 from ..purpose import PurposeEngine, IntentUnderstanding
-from .task_orchestrator import TaskOrchestrator
+from .conversation_driver import ConversationDriver
+from .message_gateway import MessageGateway
+from .agent_comms import AgentComms
 from .layer0 import Layer0Autonomous
 from .layer2 import Layer2DefaultNetwork
 from .attention_layer import AttentionLayer
@@ -160,8 +162,9 @@ class ConsciousLiving(Living):
         from ..metacognition.project_mental_model import ProjectMentalModel
         self._project_mental_model = ProjectMentalModel(dag=None)
 
-        # TaskOrchestrator: 任务 orchestration（意图分析、任务创建/路由、确认、chat）
-        self.task_orchestrator = TaskOrchestrator(
+        # ConversationDriver: 对话驱动（消息路由、ReAct、RoundScheduler 后处理）
+        # GoalManager 内嵌其中，负责目标全生命周期（意图分析、PACE 执行、确认）
+        self.conversation_driver = ConversationDriver(
             parent=self,
             purpose=self.purpose,
             drive=self.drive,
@@ -173,6 +176,12 @@ class ConsciousLiving(Living):
             experience_memory=self._experience_memory,
             project_mental_model=self._project_mental_model,
         )
+
+        # MessageGateway（消息入口预处理：命令检测、身份解析、会话切换）
+        self._gateway = MessageGateway()
+
+        # AgentComms（Agent 间通讯：收件箱、消息处理、系统提示词）
+        self._comms = AgentComms()
 
         # ActionDispatcher（统一动作分发）
         self._dispatcher = ActionDispatcher()
@@ -195,11 +204,34 @@ class ConsciousLiving(Living):
 
         si = self.consciousness.self_image
 
+        # ── db_path（供 ExperienceStream / TaskQueueStorage 等共用）──
+        db_path = getattr(self.agent, "db_path", None)
+        if db_path is None:
+            db_path = os.path.expanduser(
+                f"~/.xiaomei-brain/{self._agent_id}/memory/brain.db"
+            )
+
+        # ── 持久化（SelfImageStore 统一入口）────────────────────
+        from .queue_storage import TaskQueueStorage
+        from .self_image_store import SelfImageStore
+        queue_storage = TaskQueueStorage(db_path)
+        self.consciousness._store = SelfImageStore(self._agent_id, queue_storage)
+        si.intent._storage = queue_storage
+        logger.info("[ConsciousLiving] SelfImageStore 已创建并注入")
+
+        # ── 关系引擎（RelationshipEngine）─────────────────────
+        from .relationship import RelationshipEngine
+        self._relationship_engine = RelationshipEngine(db_path, user_id=self._agent_id)
+        self._relationship_engine.load()
+        si.being._relationship_engine = self._relationship_engine
+        logger.info("[ConsciousLiving] RelationshipEngine 已创建并注入: %s",
+                    self._relationship_engine.get_summary())
+
         # ── 学习子系统 ──────────────────────────────────────
         from ..learn import LearningQueue, KnowledgeStorage, MetaSkillPuller, LearningEngine
         ltm = getattr(agent_instance, "longterm_memory", None)
         agent_id = getattr(agent_instance, "id", "") if agent_instance else self._agent_id
-        self._learn_queue = LearningQueue(si)
+        self._learn_queue = LearningQueue(si, storage=queue_storage)
         self._learn_storage = KnowledgeStorage(agent_id, ltm, queue=self._learn_queue)
         self._learn_meta_skill = MetaSkillPuller(self._learn_storage)
         self._learn_meta_skill._agent = agent_instance
@@ -221,11 +253,6 @@ class ConsciousLiving(Living):
         l2_engine._learn_queue = self._learn_queue
 
         # ── 经验流（统一时间线）──────────────────────────────
-        db_path = getattr(self.agent, "db_path", None)
-        if db_path is None:
-            db_path = os.path.expanduser(
-                f"~/.xiaomei-brain/{self._agent_id}/memory/brain.db"
-            )
         from ..memory.experience_stream import ExperienceStream
         exp_stream = ExperienceStream(db_path)
         # 注入到各子系统
@@ -375,7 +402,6 @@ class ConsciousLiving(Living):
 
         # 注册周期任务
         self.register_periodic("heartbeat", self._config.living.tick_interval, self._heartbeat)
-        self.register_periodic("surge", self._config.living.surge_interval, self._surge)
         self.register_periodic("death_check", 60.0, self._check_death)  # 每分钟检查生存状态
 
         # 启动 Layer 0 自主层线程 + Layer 2 默认网络线程
@@ -560,13 +586,13 @@ class ConsciousLiving(Living):
                 "energy_level": 0.8,
                 "desire_state": {},
                 "intent_buffer": [],
-                "has_active_goal": self.task_orchestrator.has_active_goal if self.task_orchestrator else False,
+                "has_active_goal": self.conversation_driver.has_active_goal if self.conversation_driver else False,
             }
 
         si = self.consciousness.get_self_image()
         pending = si.intent.intent_buffer
         energy = si.body.energy
-        has_goal = self.task_orchestrator.has_active_goal if self.task_orchestrator else False
+        has_goal = self.conversation_driver.has_active_goal if self.conversation_driver else False
         desire_state = {}
         if self.drive:
             d = self.drive.desire
@@ -667,6 +693,10 @@ class ConsciousLiving(Living):
         # 2. 尝试从快照恢复（latest.json，最完整）
         restored = self.consciousness._restore_snapshot()
 
+        # 2.5 从 DB 加载 learning_queue（intent_buffer 已在 _restore_snapshot 中加载）
+        if hasattr(self, '_learn_queue') and self._learn_queue:
+            self._learn_queue.load_from_storage()
+
         # 3. 快照恢复失败则用模块文件恢复
         if not restored:
             restored = self.consciousness.restore_from_storage()
@@ -749,207 +779,20 @@ class ConsciousLiving(Living):
         uvicorn.run(app, host=host, port=port, log_level="warning")
 
     def _check_inbox(self) -> None:
-        """检查收件箱（兜底：处理回调遗漏的消息）。
-
-        on_receive 回调已在实时处理大多数消息。
-        这里只处理遗漏的（如启动前/关闭期间收到的）。
-        注入消息原文（而非 [系统通知]），让 LLM 直接处理。
-        """
-        count = self._inbox.count_unprocessed()
-        if count == 0:
-            return
-
-        if self._chatting:
-            logger.info(
-                "[Comms/Inbox] 收件箱有 %d 条未读消息（聊天中，下轮检查）", count,
-            )
-            return
-
-        unprocessed = self._inbox.get_unprocessed(limit=50)
-        for msg in unprocessed:
-            session_id = f"comms-{msg.from_agent}"
-
-            # 先用 comms-{agent_id} 作为 session_id
-            session_id = f"comms-{msg.from_agent}"
-
-            # 注册 peer（如果尚未注册）—— 必须先注册再路由
-            if hasattr(self, '_router') and self._router:
-                existing = self._router.route_for_session(session_id)
-                if existing is None or existing.type != "http_p2p":
-                    self._router.register_peer(
-                        peer_type="agent", peer_id=msg.from_agent,
-                        channel="http_p2p", session_id=session_id,
-                        output_type="http_p2p", output_target=msg.from_agent,
-                        priority=10,
-                    )
-
-            logger.info(
-                "[Comms/Inbox] %s: 1 条未读消息 → %s 会话（兜底）",
-                msg.from_agent, session_id,
-            )
-            self.put_message(
-                f"[来自 {msg.from_agent}] ({msg.type.value})\n{msg.content}",
-                source="agent",
-                session_id=session_id,
-            )
-            self._inbox.mark_processed(msg.msg_id)
+        """检查收件箱 → AgentComms"""
+        self._comms.check_inbox(self)
 
     def _on_comms_receive(self, msg) -> None:
-        """HTTP 回调：收到 agent 消息 → 注册 peer → 直接注入 Layer 1 队列。
-
-        在 HTTP server 线程中调用，需线程安全。
-        """
-        session_id = f"comms-{msg.from_agent}"
-
-        # 先注册 peer（确保 Router 能匹配到），再放入队列
-        existing = self._router.route_for_session(session_id)
-        if existing is None:
-            self._router.register_peer(
-                peer_type="agent", peer_id=msg.from_agent,
-                channel="http_p2p", session_id=session_id,
-                output_type="http_p2p", output_target=msg.from_agent,
-                priority=10,
-            )
-
-        self.put_message(
-            f"[来自 {msg.from_agent}] ({msg.type.value})\n{msg.content}",
-            source="agent", session_id=session_id,
-        )
-        self._inbox.mark_processed(msg.msg_id)
-        ts = time.strftime("%H:%M:%S")
-        self._debug_log("comms", f"{ts} ← {msg.from_agent}: {msg.content[:80]}")
-        # 打印到终端（完整内容，不截断）
-        print(f"\n\033[35m[{ts} ← {msg.from_agent}]\033[0m {msg.content}", flush=True)
-        logger.debug(
-            "[Comms/Receive] %s → %s 会话 (实时) %d 字",
-            msg.from_agent, session_id, len(msg.content),
-        )
+        """HTTP 回调：收到 agent 消息 → AgentComms"""
+        self._comms.on_receive(self, msg)
 
     def _handle_comms_message(self, msg: LivingMessage) -> None:
-        """处理 agent 间通讯消息：静默 ReAct → Router.deliver() 自动送达。
-
-        LLM 不知道消息怎么送达的，它只是在跟当前 session 的人说话。
-        """
-        target_agent = msg.session_id.replace("comms-", "")
-
-        # 先检查目标是否可达，不通就不调 LLM
-        route = self._router.route_for_session(msg.session_id)
-        if route and not self._router.check_route(route):
-            logger.warning("[Comms] 目标不可达: %s", target_agent)
-            return
-
-        self._chatting = True
-        try:
-            agent_core = self.agent._get_agent()
-            # 切换到 comms session，stream() 的 self.messages 自动分桶
-            saved_session = agent_core.session_id
-            agent_core.session_id = f"comms-{target_agent}"
-
-            system_prompt = self._build_comms_system_prompt(target_agent)
-            assembled = [{"role": "system", "content": system_prompt}]
-            if msg.content:
-                assembled.append({"role": "user", "content": msg.content})
-                # 记录 incoming agent 消息到 DB（分桶隔离，不污染主对话）
-                if agent_core.conversation_db:
-                    agent_core.conversation_db.log(
-                        session_id=agent_core.session_id,
-                        role="user",
-                        content=msg.content,
-                        user_id=agent_core.user_id,
-                    )
-
-                # 经验流：收到其他 agent 消息
-                es = getattr(agent_core, "exp_stream", None)
-                if es:
-                    try:
-                        es.log(
-                            type="user_msg",
-                            content=f"[来自 {target_agent}] {msg.content[:500]}",
-                            session_id=agent_core.session_id,
-                            importance=0.4,
-                        )
-                    except Exception as e:
-                        logger.debug("[ExpStream] comms_receive write failed: %s", e)
-
-            # 静默 ReAct — reasoning_content 以灰色 ANSI 包裹
-            chunks: list[str] = []
-            for chunk in agent_core.stream(messages=assembled):
-                chunks.append(chunk)
-            raw_text = "".join(chunks)
-
-            # 提取思考过程记入日志
-            reasoning_parts = re.findall(r'\033\[2m(.*?)\033\[0m', raw_text, flags=re.DOTALL)
-            if reasoning_parts:
-                reasoning_text = " ".join(r.strip() for r in reasoning_parts if r.strip())
-                if reasoning_text:
-                    logger.debug("[Comms/思考] %s (%d 字): %s",
-                                target_agent, len(reasoning_text), reasoning_text[:200])
-
-            # 去掉 reasoning_content → 只发给对方最终输出
-            clean_text = re.sub(r'\033\[2m.*?\033\[0m', '', raw_text, flags=re.DOTALL)
-            clean_text = re.sub(r'\x1b\[[0-9;]*m', '', clean_text)
-            clean_text = clean_text.strip()
-
-            # Router.deliver() 自动送达
-            if clean_text:
-                route = self._router.route_for_session(msg.session_id)
-                if route:
-                    if self._router.deliver(clean_text, route):
-                        ts = time.strftime("%H:%M:%S")
-                        self._debug_log("comms", f"{ts} → {target_agent}: {clean_text[:80]}")
-                        # 终端打印完整内容（含思考过程，ANSI 天然区分）
-                        print(f"\n\033[36m[{ts} → {target_agent}]\033[0m {raw_text}", flush=True)
-                        logger.debug(
-                            "[Comms] 自动回复 %s (%d 字): %s",
-                            target_agent, len(clean_text), clean_text[:100],
-                        )
-                    else:
-                        logger.warning("[Comms] 发送失败: %s", target_agent)
-                else:
-                    logger.warning("[Comms] 无输出路由: %s", msg.session_id)
-            else:
-                logger.info("[Comms] %s 消息无需回复", target_agent)
-        except Exception as e:
-            logger.error("[Comms] 处理失败: %s", e)
-        finally:
-            agent_core.session_id = saved_session
-            self._chatting = False
+        """处理 agent 间通讯消息 → AgentComms"""
+        self._comms.handle_message(self, msg)
 
     def _build_comms_system_prompt(self, target_agent: str, initiating: bool = False) -> str:
-        """构建 agent 间通讯的 system prompt。
-
-        LLM 被告知正在和另一个 agent 对话，
-        只需自然地说话，系统会自动把回复送达给对方。
-
-        Args:
-            target_agent: 对方 agent ID
-            initiating: True=你主动找对方, False=对方发消息给你（回复模式）
-        """
-        si = self.consciousness.get_self_image() if self._load_consciousness else None
-        identity = inject_consciousness(si, mode="daily") if si else f"你是 {self._agent_id}。"
-
-        if initiating:
-            direction = (
-                f"## 当前对话对象\n"
-                f"你忽然想找 **{target_agent}**（另一个 AI agent）聊聊，于是主动发了条消息过去。\n"
-                f"你的开场白已显示在下方。自然地开始对话。\n\n"
-            )
-        else:
-            direction = (
-                f"## 当前对话对象\n"
-                f"你现在正在和 **{target_agent}**（另一个 AI agent）对话。\n"
-                f"{target_agent} 发来的消息已显示在下方。\n\n"
-            )
-
-        return (
-            f"{identity}\n\n"
-            f"{direction}"
-            f"## 重要规则\n"
-            f"1. 你的文字回复会**自动送达**给 {target_agent}，你不需要使用 send_message 工具\n"
-            f"2. 就像和一个人面对面聊天一样自然\n"
-            f"3. 如果消息不需要回复，可以不说话（但正常的问候和问题应该回应）\n"
-            f"4. 你可以使用 check_inbox 查看是否有更多消息，但不要用 send_message"
-        )
+        """构建 agent 间通讯的 system prompt → AgentComms"""
+        return self._comms.build_system_prompt(self, target_agent, initiating=initiating)
 
     # ── Hook: 状态转换 ───────────────────────────────────────────
 
@@ -1012,21 +855,44 @@ class ConsciousLiving(Living):
             if state == LivingState.SLEEPING:
                 self._heartbeat_result = HEARTBEAT_DREAM
 
-    def _surge(self, state: LivingState) -> None:
-        """每分钟调用。ActionDispatcher 统一检查主动行为。"""
-        ts = time.strftime("%H:%M:%S")
-        self._debug_log("living", f"{ts} surge 涌动 state={state.value}")
-        self._check_inbox()
-        if self._load_consciousness:
-            si = self.consciousness.get_self_image()
-            self._dispatcher.tick(si)
-            queue_size = len(self._dispatcher._queue)
-            if queue_size > 0:
-                actions = [f"{a.action_type.value}({a.priority:.1f})" for a in self._dispatcher._queue]
-                self._debug_log("living", f"{ts} ActionDispatcher 匹配 {queue_size} 个动作: {', '.join(actions)}")
-            else:
-                self._debug_log("living", f"{ts} ActionDispatcher 无匹配动作")
-            self._dispatcher.process_queue()
+    def _loop_idle(self) -> None:
+        """IDLE 自主行为主循环。
+
+        覆盖 Living._loop_idle()：
+        1. 有消息 → 切 AWAKE 聊天
+        2. 消费意图队列 → 执行动作
+        3. 无事 → 计空闲 → SLEEPING
+        """
+        while True:
+            self._heartbeat_result = HEARTBEAT_NORMAL
+            self._tick_periodic(self.state)
+
+            # 1. 先检查消息
+            msg = self._wait_message(self.tick_interval)
+            if msg is not None:
+                self._on_wake_up()
+                self._transition(LivingState.AWAKE)
+                self._handle_message(msg)
+                self._last_active = time.time()
+                return
+
+            # 2. 检查收件箱兜底（实时回调已处理大多数消息）
+            self._check_inbox()
+
+            # 3. 消费意图队列
+            if self._load_consciousness:
+                si = self.consciousness.get_self_image()
+                self._dispatcher.tick(si)
+                executed = self._dispatcher.process_queue()
+                if executed:
+                    self._last_active = time.time()
+                    continue  # 有动作执行了，继续循环消费
+
+            # 4. 无事可做 → 计空闲 → SLEEPING
+            idle_time = time.time() - self._last_active
+            if idle_time >= self.idle_threshold:
+                self._transition(LivingState.SLEEPING)
+                return
 
     def _check_death(self, state: LivingState) -> None:
         """每分钟检查生存状态，濒死/死亡时触发相应行为。"""
@@ -1096,131 +962,9 @@ class ConsciousLiving(Living):
     # ── Message handling ─────────────────────────────────────────
 
     def _handle_message(self, msg: LivingMessage) -> None:
-        """处理消息"""
-        # 忽略空消息（如用户按回车找回输入行）
-        if not msg.content or not msg.content.strip():
-            logger.debug("[ConsciousLiving] 忽略空消息")
-            return
-
-        # 防止重复调用（_run_chat 进行中）
-        if self._chatting:
-            self._debug_log("living", f"{time.strftime('%H:%M:%S')} 消息 (忽略，chatting): {msg.content[:30]}")
-            logger.info("[ConsciousLiving] 聊天进行中，忽略新消息: %s", msg.content[:30])
-            return
-
-        logger.debug("[ConsciousLiving] 收到消息: %s [session=%s]", msg.content[:50], msg.session_id)
-
-        # Agent 间通讯会话：静默 ReAct → Router.deliver() 自动送达
-        if msg.session_id.startswith("comms-"):
-            self._debug_log("living",
-                f"{time.strftime('%H:%M:%S')} 收到 agent 消息 [{msg.session_id}]: {msg.content[:60]}"
-            )
-            self._handle_comms_message(msg)
-            return
-
-        # ── 身份解析：sender_id → identity ──
-        sender_id = msg.session_id  # session_id 兼作 sender_id
-        identity_mgr = getattr(self, '_identity_mgr', None)
-        if identity_mgr:
-            identity = identity_mgr.resolve(msg.user_id) if msg.user_id else None
-            if identity:
-                msg.user_display_name = identity_mgr.get_display_name(msg.user_id)
-                logger.debug("[ConsciousLiving] 身份已确认: id=%s", msg.user_id)
-            else:
-                msg.user_display_name = msg.user_display_name or "这位用户"
-                logger.debug("[ConsciousLiving] 身份未确认: sender=%s", sender_id)
-        else:
-            msg.user_display_name = "这位用户"
-
-        # 飞书会话
-        if msg.session_id.startswith("feishu-"):
-            logger.info("[Feishu/Step5] _handle_message 收到 feishu 会话消息 (session=%s)", msg.session_id)
-
-        # 设置 agent.user_id（必须在 AttentionLayer 切换前，确保 save/restore 正确分桶）
-        agent_core = self.agent._get_agent()
-        agent_core.user_id = msg.user_id
-        agent_core.user_display_name = getattr(msg, 'user_display_name', '这位用户')
-
-        # 切换到消息所属的会话（保存当前 → 恢复目标）
-        if hasattr(self, '_attention') and self._attention:
-            self._attention.switch_to(msg.session_id)
-
-        # 重置取消标志（新消息来了，之前的取消失效）
-        self._cancel_requested = False
-
-        # 命令检测（支持 `/cmd` 和裸 `cmd` 两种写法）
-        raw = msg.content.strip()
-        if raw.startswith("/"):
-            raw = raw[1:].strip()
-        parts = raw.split(None, 1)
-        cmd = parts[0].lower() if parts else ""
-        cmd_args = parts[1] if len(parts) > 1 else ""
-
-        # /intask /inchat 委托给 TaskOrchestrator
-        if cmd in ("intask", "inchat"):
-            if self.task_orchestrator.handle_command(cmd, cmd_args):
-                self._print_prompt()
-                self._command_done.set()
-            return
-
-        # 输入 `/` 列出所有命令
-        if not cmd:
-            self._list_commands()
-            self._command_done.set()
-            return
-        if cmd in self._intent_commands:
-            logger.info("[ConsciousLiving] 执行测试命令: %s %s", cmd, cmd_args)
-            handler = self._intent_commands[cmd]
-            handler(cmd_args)
-            self._command_done.set()
-            return
-
-        # Agent 命令（如 db/memory/dag）
-        if self.agent.commands:
-            result = self.agent.commands.execute(
-                raw,
-                user_id=msg.user_id,
-                session_id=msg.session_id,
-            )
-            if result:
-                logger.info("[ConsciousLiving] Agent 命令: %s", raw)
-                print(f"\n{result.output}", flush=True)
-                self._print_prompt()
-                self._command_done.set()
-                return
-
-        # 元技能模式匹配："去学 XX 技能" / "帮我找 XX skill"
-        meta_skill_pattern = re.compile(r'(去学|帮我找|搜索|找一个?).*(技能|skill)', re.IGNORECASE)
-        if meta_skill_pattern.search(raw):
-            domain = re.sub(r'(去学|帮我找|搜索|找一个?|技能|skill|一下|一个|的)', '', raw).strip()
-            if domain:
-                from .action_item import ActionItem, ActionType
-                action_item = ActionItem(
-                    action_type=ActionType.TOOL,
-                    content="meta_skill_pull",
-                    reason=f"对方要求学习技能: {domain}",
-                    priority=0.85,
-                    source="intent",
-                    cooldown_key=f"meta_skill_pull_{domain}",
-                    metadata={"skill_domain": domain},
-                )
-                self._dispatcher._queue.append(action_item)
-                self._dispatcher.process_queue()
-                self._print_prompt()
-                self._command_done.set()
-                return
-
-        # 用户活跃：满足连接感，归属欲 -0.1，催产素 +0.1
-        if self.drive:
-            self.drive.on_user_active()
-
-        # 委托给 TaskOrchestrator（"继续"、确认、意图分析、chat）
-        self.task_orchestrator.handle_message(msg, self._get_consciousness_state())
-        self._print_prompt()
-
-        # 轮次完成：检查轮次闹钟
-        if self.cron_scheduler:
-            self._check_round_alarms()
+        """处理消息：委托给 MessageGateway 做预处理（命令检测、身份解析、会话切换），
+        然后 ConversationDriver 做对话路由。"""
+        self._gateway.handle(msg, self)
 
     # ── Death & Revival ────────────────────────────────────────
 
@@ -1261,7 +1005,8 @@ class ConsciousLiving(Living):
             self._attention.new_session(new_sid)
 
         if self._load_consciousness:
-            self.consciousness._last_l2_time = time.time()
+            self.consciousness._last_intent_time = time.time()
+            self.consciousness._last_emerge_time = time.time()
             self.consciousness._last_l3_time = time.time()
             # 清理跨会话残留 intent（快照恢复的旧 intent 不应跨会话生效）
             self.consciousness.intent_slot.intent_buffer.clear()

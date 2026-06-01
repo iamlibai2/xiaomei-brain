@@ -55,7 +55,7 @@ def test_pace_mode():
     print("1. 初始状态检查")
     print("=" * 60)
 
-    to = living.task_orchestrator
+    to = living.conversation_driver
     print(f"   _task_mode = {to._task_mode}")
     print(f"   _pace_runner = {to._pace_runner}")
     print(f"   _exec_mode = {to._exec_mode}")

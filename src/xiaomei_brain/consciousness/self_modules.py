@@ -48,11 +48,26 @@ class Being:
         "擅长": [], "不擅长": [],
     })
 
-    # 关系（运行时值，不再从快照恢复，后续由交互驱动更新）
-    relationship_status: str = "初识"
-    relationship_depth: float = 0.0
-    trust_level: float = 0.0
-    relationship_depth_history: list[float] = field(default_factory=list)
+    # 关系（代理 RelationshipEngine，和 SelfBody 代理 Drive 同模式）
+    _relationship_engine: Any = field(default=None, repr=False, compare=False)
+
+    @property
+    def relationship_depth(self) -> float:
+        if self._relationship_engine:
+            return self._relationship_engine.depth
+        return 0.0
+
+    @property
+    def trust_level(self) -> float:
+        if self._relationship_engine:
+            return self._relationship_engine.trust
+        return 0.5
+
+    @property
+    def relationship_status(self) -> str:
+        if self._relationship_engine:
+            return self._relationship_engine.get_relationship_status()
+        return "初识"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -64,7 +79,6 @@ class Being:
             "relationship_status": self.relationship_status,
             "relationship_depth": self.relationship_depth,
             "trust_level": self.trust_level,
-            "relationship_depth_history": self.relationship_depth_history[-10:],
         }
 
     def from_dict(self, data: dict) -> None:
@@ -212,20 +226,6 @@ class Being:
                 "擅长": list(self_model.self_cognition.get("擅长", [])),
                 "不擅长": list(self_model.self_cognition.get("不擅长", [])),
             }
-    def update_depth(self, new_depth: float) -> None:
-        self.relationship_depth = max(0.0, min(1.0, new_depth))
-        self.relationship_depth_history.append(self.relationship_depth)
-        if len(self.relationship_depth_history) > 50:
-            self.relationship_depth_history = self.relationship_depth_history[-50:]
-        if self.relationship_depth >= 0.8:
-            self.relationship_status = "亲密"
-        elif self.relationship_depth >= 0.6:
-            self.relationship_status = "知己"
-        elif self.relationship_depth >= 0.4:
-            self.relationship_status = "熟悉"
-        else:
-            self.relationship_status = "初识"
-
     def get_summary(self) -> str:
         parts = [f"我是{self.name}。性格{self.personality}。"]
         if self.self_cognition.get("擅长"):
@@ -657,6 +657,7 @@ class SelfIntent:
 
     intent_buffer: list[dict] = field(default_factory=list)   # 待执行意图队列
     urgent_intents: set = field(default_factory=set)           # 紧急意图类型名
+    _storage: Any = field(default=None, repr=False, compare=False)  # TaskQueueStorage 引用
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -665,7 +666,9 @@ class SelfIntent:
         }
 
     def from_dict(self, data: dict) -> None:
-        if "intent_buffer" in data:
+        # intent_buffer 优先从 DB 加载（由 Consciousness.init 控制），
+        # from_dict 仅作为无 DB 时的回退
+        if "intent_buffer" in data and not self._storage:
             raw = data["intent_buffer"]
             # 兼容旧格式 list[str] → list[dict]
             if raw and isinstance(raw[0], str):
@@ -674,6 +677,12 @@ class SelfIntent:
                 self.intent_buffer = raw
         if "urgent_intents" in data:
             self.urgent_intents = set(data["urgent_intents"])
+
+    def load_from_storage(self) -> None:
+        """从 TaskQueueStorage 加载 pending intents 到内存。"""
+        if self._storage is None:
+            return
+        self.intent_buffer = self._storage.load_pending_intents()
 
     def is_active(self) -> bool:
         return bool(self.intent_buffer)

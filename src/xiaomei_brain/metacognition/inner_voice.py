@@ -336,6 +336,13 @@ class InnerVoice:
                 )
             except Exception as e:
                 logger.warning("[InnerVoice] SIGNAL 应用失败: %s", e)
+            # 同步到关系引擎（trust 变化）
+            engine = getattr(self._self_image.being, '_relationship_engine', None) if self._self_image else None
+            if engine:
+                try:
+                    engine.on_social_signal(signal_type, min(intensity, 1.0))
+                except Exception as e:
+                    logger.debug("[InnerVoice] 关系引擎应用失败: %s", e)
 
     def _apply_gaps(self, gaps_text: str, trigger_label: str = "") -> None:
         """从 GAPS JSON 解析知识盲区，委托 LearningQueue 入队。"""
@@ -471,10 +478,8 @@ class InnerVoice:
             return True
 
         if trigger == TriggerType.CHAT_TURN:
-            # 距上次反省 >= 2 轮有意义的交流
-            turns_since = self._chat_turn_count - self._last_chat_reflection_turn
-            if turns_since < 2:
-                return True
+            # 频率由 RoundScheduler 控制，这里不再做轮次判断
+            pass
 
         elif trigger == TriggerType.SILENCE:
             # 距上次 SILENCE 反省 > 30 秒

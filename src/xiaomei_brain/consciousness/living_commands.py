@@ -35,9 +35,12 @@ def cmd_manual_fuel(living: ConsciousLiving, args: str = "") -> None:
     """手动触发加柴"""
     logger.info("[CLI] 执行命令: fuel")
     print("\n手动触发 L2 加柴...", flush=True)
-    living.consciousness._last_l2_time = time.time()
-    report = living.consciousness.tick_L2("manual")
-    logger.info("[ConsciousLiving] L2加柴: %s", report.summary[:50])
+    living.consciousness._last_intent_time = time.time()
+    living.consciousness._last_emerge_time = time.time()
+    intent = living.consciousness.tick_L2_intent("manual")
+    emergence = living.consciousness.tick_L2_emergence("manual")
+    logger.info("[ConsciousLiving] L2加柴: intent=%s, emergence=%d字",
+                intent.type.value if intent else "None", len(emergence))
 
     intent = living.consciousness.get_pending_intent()
     if intent:
@@ -58,7 +61,8 @@ def cmd_show_flame(living: ConsciousLiving, args: str = "") -> None:
     print(f"  用户空闲: {int(si.perception.user_idle_duration)}秒", flush=True)
     print(f"  能量: {si.body.energy:.2f}", flush=True)
     print(f"  累积变化: {len(living.consciousness._state_buffer)}条", flush=True)
-    print(f"  上次加柴: {int(time.time() - living.consciousness._last_l2_time)}秒前", flush=True)
+    print(f"  上次意图决策: {int(time.time() - living.consciousness._last_intent_time)}秒前", flush=True)
+    print(f"  上次意识涌现: {int(time.time() - living.consciousness._last_emerge_time)}秒前", flush=True)
     living._print_prompt()
 
 

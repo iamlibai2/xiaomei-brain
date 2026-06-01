@@ -12,7 +12,8 @@ from typing import Any
 from xiaomei_brain.agent.message_utils import estimate_content_tokens
 from xiaomei_brain.consciousness.context_assembler import determine_mode
 from xiaomei_brain.memory.conversation_db import estimate_tokens
-from xiaomei_brain.consciousness.inject_consciousness import inject_consciousness
+from xiaomei_brain.consciousness.workspace import inject_consciousness
+from xiaomei_brain.consciousness.workspace.salience_profile import SalienceProfile
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +117,9 @@ def build_context(
             exp_stream=getattr(agent, "exp_stream", None),
         )
         self_image.current_user_name = getattr(agent, 'user_display_name', '')
-        system_content = inject_consciousness(self_image, mode=mode)
+        profile = _load_salience_profile(agent)
+        system_content = inject_consciousness(self_image, mode=mode, user_input=user_input, profile=profile)
+        self_image._salience_profile = profile  # 挂载，供反馈阶段使用
         # 日志：system prompt 中的 DAG 摘要数量
         dag_count = len(getattr(self_image.memory, 'dag_summaries', [])) if self_image is not None else 0
         logger.info(
@@ -151,3 +154,14 @@ def build_context(
     if system_content:
         return [{"role": "system", "content": system_content}] + agent.messages
     return list(agent.messages)
+
+
+# ── Profile 加载辅助 ────────────────────────────────────
+
+def _load_salience_profile(agent: Any) -> SalienceProfile:
+    """加载或创建 SalienceProfile。"""
+    from pathlib import Path
+
+    agent_id = getattr(agent, 'agent_id', None) or getattr(agent, 'user_id', 'default')
+    path = Path.home() / ".xiaomei-brain" / agent_id / "salience_profile.json"
+    return SalienceProfile.load(path)

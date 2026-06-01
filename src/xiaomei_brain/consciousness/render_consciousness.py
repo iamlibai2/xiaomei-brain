@@ -125,6 +125,11 @@ def _render_being(si) -> list[str]:
     if h.growth_events:
         recent = [e.get("content", "") for e in h.growth_events[-3:]]
         lines.append(f"最近你成长了：{'；'.join(recent)}。")
+
+    # 关系（决定对话语气和亲密程度）
+    if si.current_user_name:
+        lines.append(f"你和{si.current_user_name}的关系是{b.relationship_status}（深度{b.relationship_depth:.0%}，信任{b.trust_level:.0%}）。")
+
     return lines
 
 

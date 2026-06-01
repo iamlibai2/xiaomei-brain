@@ -1060,11 +1060,11 @@ class ActionExecutor:
             source="system",
         )
 
-        intent_context = living.task_orchestrator._build_intent_context_for_goal(active_sub)
+        intent_context = living.conversation_driver.goal_manager.build_intent_context_for_goal(active_sub)
         logger.info("[ActionExecutor] 自动执行: goal=%s sub=%s",
                     goal_obj.description[:40], active_sub.description[:40])
 
-        living.task_orchestrator._run_chat(msg, intent_context)
+        living.conversation_driver._run_chat(msg, intent_context)
 
         if living.drive:
             living.drive.on_desire_satisfied("achievement", 0.3)
@@ -1184,24 +1184,31 @@ class ActionDispatcher:
         # logger.info("[ActionDispatcher.tick] matched %d items", len(self._queue))
         return list(self._queue)
 
-    def process_queue(self) -> None:
-        """按优先级顺序执行队列中的所有 ActionItem"""
+    def process_queue(self) -> bool:
+        """按优先级顺序执行队列中的所有 ActionItem。
+
+        Returns:
+            True 表示至少有一个动作被执行
+        """
         if not self._queue:
-            return
+            return False
 
         # 排序：source 优先级 → priority
         self._queue.sort(key=lambda item: item.sort_key())
 
         logger.info("[ActionDispatcher] 队列执行: %d 个动作", len(self._queue))
+        executed = False
         for item in self._queue:
             try:
                 success = self._executor.execute(item)
                 if success:
                     self._record_fired(item.cooldown_key)
+                    executed = True
             except Exception as e:
                 logger.error("[ActionDispatcher] 执行失败: %s, error=%s", item, e)
 
         self._queue.clear()
+        return executed
 
     def add_rule(self, rule) -> None:
         """动态添加规则"""

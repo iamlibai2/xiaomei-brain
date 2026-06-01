@@ -58,6 +58,7 @@ class SelfImage:
         self._experience_memory: Any = None      # [Layer 2]
         self._state_buffer: Any = None           # StateChangeBuffer 引用（L1→L2/L3 调度）
         self.current_user_name: str = ""         # 当前对话者显示名
+        self.preferred_names: list[str] = []    # 用户称呼列表（load_preferred_names 填充）
 
     def load_preferred_names(self, user_id: str, longterm_memory: Any = None) -> None:
         """初始化时一次向量召回，加载该用户的所有称呼到 preferred_names。
@@ -162,7 +163,9 @@ class SelfImage:
         self.perception.last_user_activity_content = user_message[:50]
         self.perception.user_idle_duration = 0.0
         self.body.attention = "与对方对话"
-        self.being.update_depth(self.being.relationship_depth + 0.02)
+        # 关系引擎处理 depth 增长
+        if self.being._relationship_engine:
+            self.being._relationship_engine.on_user_message()
         self._dirty = True
 
     def add_growth(self, content: str, date: str | None = None) -> None:
@@ -252,7 +255,9 @@ class SelfImage:
             self.perception.last_user_activity_content = user_message[:50]
             self.perception.user_idle_duration = 0.0
             self.body.attention = "与对方对话"
-            self.being.update_depth(self.being.relationship_depth + 0.02)
+            # 关系引擎处理 depth 增长
+            if self.being._relationship_engine:
+                self.being._relationship_engine.on_user_message()
 
         if idle_duration is not None:
             self.perception.user_idle_duration = idle_duration
@@ -343,6 +348,12 @@ class SelfImage:
             intent_type = intent_dict.get("type", "")
             if intent_type:
                 self.intent.urgent_intents.add(intent_type)
+        # 同步写 DB
+        if self.intent._storage is not None:
+            try:
+                self.intent._storage.add_intent(intent_dict)
+            except Exception as e:
+                logger.debug("[SelfImage] contribute_intent DB 写入失败: %s", e)
 
     def contribute_dream(self, summary: str) -> None:
         """DreamEngine 贡献：梦境摘要。

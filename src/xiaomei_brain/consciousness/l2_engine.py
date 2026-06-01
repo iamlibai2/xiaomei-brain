@@ -130,7 +130,8 @@ class L2Engine:
         调用 2：意识涌现 — inject_consciousness() + 自由表达 + EVENTS + NARR
         """
         c = self._c
-        c._last_l2_time = time.time()
+        c._last_intent_time = time.time()
+        c._last_emerge_time = time.time()
 
         # 刷新意识记忆窗口
         c._refresh_memory_window()
@@ -333,7 +334,7 @@ class L2Engine:
     def tick_intent(self, context: str) -> Intent | None:
         """只做意图决策，不跑内心独白。用于 anomaly 等只需决策的场景。"""
         c = self._c
-        c._last_l2_time = time.time()
+        c._last_intent_time = time.time()
         c._refresh_memory_window()
 
         # 观测快照
@@ -422,7 +423,7 @@ class L2Engine:
     def tick_emergence(self, context: str) -> str:
         """只做内心独白，不跑意图决策。用于 periodic 等需要自我表达的场景。"""
         c = self._c
-        c._last_l2_time = time.time()
+        c._last_emerge_time = time.time()
         c._refresh_memory_window()
 
         drive_snapshot = {}
@@ -1093,6 +1094,13 @@ weight: 0.85
                 )
             except Exception as e:
                 logger.warning("[L2 SIGNAL] 应用失败: %s", e)
+            # 同步到关系引擎（trust 变化）
+            engine = getattr(c.self_image.being, '_relationship_engine', None)
+            if engine:
+                try:
+                    engine.on_social_signal(signal_type, min(intensity, 1.0))
+                except Exception as e:
+                    logger.debug("[L2 SIGNAL] 关系引擎应用失败: %s", e)
 
     # ── 存储 ─────────────────────────────────────────────────
 

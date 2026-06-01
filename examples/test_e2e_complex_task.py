@@ -157,7 +157,7 @@ print("ALL TESTS PASSED")"""
     test_ran = False
     while time.time() - start < 60:
         time.sleep(2)
-        orch = living.task_orchestrator
+        orch = living.conversation_driver
         # 检查 PACE 是否已处理完并等待用户
         if orch and orch._pace_waiting:
             print("   PACE 完成", flush=True)
@@ -215,7 +215,7 @@ print("ALL TESTS PASSED")"""
         all_pass = False
 
     # InnerVoice
-    orch = living.task_orchestrator
+    orch = living.conversation_driver
     n_iv = 0
     if orch and orch._inner_voice:
         n_iv = len(orch._inner_voice.recent_reflections)

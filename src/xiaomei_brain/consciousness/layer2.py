@@ -101,7 +101,7 @@ class Layer2DefaultNetwork:
                         self._c._l2_triggered_by_anomaly = None
                         self._log(f"{ts} L2 触发 [异常 bypass] agent_state={agent_state} ctx={anomaly_type}")
                         logger.info("[Layer2] L2 触发（L1 异常=%s，agent_state=%s）", anomaly_type, agent_state)
-                        self._c._last_l2_time = time.time()
+                        self._c._last_intent_time = time.time()
                         try:
                             self._c.tick_L2_intent(anomaly_type)
                             self._log(f"{ts} L2 tick_L2_intent({anomaly_type}) 完成")
@@ -109,18 +109,30 @@ class Layer2DefaultNetwork:
                             self._log(f"{ts} L2 tick_L2_intent({anomaly_type}) ERROR: {e}")
                             logger.warning("[Layer2] tick_L2_intent(%s) 出错: %s", anomaly_type, e)
 
-                    # L2: 动态加柴（正常调度）
-                    elif self._c._should_l2(agent_state):
-                        ctx = self._c._get_l2_context(agent_state)
-                        self._log(f"{ts} L2 触发 [加柴] agent_state={agent_state} ctx={ctx[:40]}")
-                        logger.info("[Layer2] L2 触发（加柴，agent_state=%s）", agent_state)
-                        self._c._last_l2_time = time.time()
+                    # L2 意图决策（"我该做什么"——欲望驱动 + 时间兜底）
+                    if self._c._should_intent(agent_state):
+                        ctx = "idle" if agent_state == "idle" else "periodic"
+                        self._log(f"{ts} L2 意图决策触发 agent_state={agent_state} ctx={ctx}")
+                        logger.info("[Layer2] L2 意图决策（agent_state=%s, ctx=%s）", agent_state, ctx)
+                        self._c._last_intent_time = time.time()
                         try:
-                            self._c.tick_L2(ctx)
-                            self._log(f"{ts} L2 tick_L2 完成")
+                            self._c.tick_L2_intent(ctx)
+                            self._log(f"{ts} L2 tick_L2_intent({ctx}) 完成")
                         except Exception as e:
-                            self._log(f"{ts} L2 tick_L2 ERROR: {e}")
-                            logger.warning("[Layer2] tick_L2 出错: %s", e)
+                            self._log(f"{ts} L2 tick_L2_intent({ctx}) ERROR: {e}")
+                            logger.warning("[Layer2] tick_L2_intent(%s) 出错: %s", ctx, e)
+
+                    # L2 意识涌现（"我此刻怎样"——内在节律 + 素材驱动）
+                    if self._c._should_emerge(agent_state):
+                        self._log(f"{ts} L2 意识涌现触发 agent_state={agent_state}")
+                        logger.info("[Layer2] L2 意识涌现（agent_state=%s）", agent_state)
+                        self._c._last_emerge_time = time.time()
+                        try:
+                            self._c.tick_L2_emergence(agent_state)
+                            self._log(f"{ts} L2 tick_L2_emergence 完成")
+                        except Exception as e:
+                            self._log(f"{ts} L2 tick_L2_emergence ERROR: {e}")
+                            logger.warning("[Layer2] tick_L2_emergence 出错: %s", e)
                     else:
                         self._log(f"{ts} L2 跳过 [条件不满足] state={agent_state}")
 

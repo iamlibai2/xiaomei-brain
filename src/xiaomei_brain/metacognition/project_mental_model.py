@@ -83,7 +83,7 @@ SCOPE_PROJECT = "project"   # High：整个项目
 class ProjectMentalModel:
     """项目心智模型 — 操作记录 + 分层摘要。
 
-    不直接做 I/O。由调用方（PACE Runner / task_orchestrator）在适当的时候：
+    不直接做 I/O。由调用方（PACE Runner / conversation_driver）在适当的时候：
     1. record_operation() — 记录每次操作
     2. maybe_summarize() — 检查是否需要触发摘要
     3. get_context() — 获取当前项目上下文文本，注入 system prompt

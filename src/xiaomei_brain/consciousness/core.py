@@ -143,7 +143,9 @@ class Consciousness:
         self.intent_slot = self.self_image.intent
         self.desk = self.self_image.desk
         self._l0_count: int = 0
-        self._last_l2_time: float = time.time()   # 启动后等冷却才触发 L2
+        self._last_intent_time: float = time.time()    # 上次意图决策时间（冷却用）
+        self._last_emerge_time: float = time.time()   # 上次意识涌现时间（冷却用）
+        self._last_l2_time: float = time.time()   # [deprecated] 保留兼容；新代码用 _last_intent_time / _last_emerge_time
         self._last_snapshot_save_time: float = 0.0
         self._last_report: ConsciousnessReport | None = None
         self._running: bool = False
@@ -158,6 +160,9 @@ class Consciousness:
 
         # 存储回调
         self._storage: Any | None = None
+
+        # 意识状态持久化（SelfImageStore，由 ConsciousLiving 注入）
+        self._store: Any | None = None
 
         # 身份配置（供 Drive 学习主题使用）
         self._identity_config: Any | None = None
@@ -204,26 +209,19 @@ class Consciousness:
 
         return True
 
-    def _snapshot_path(self) -> Path:
-        """快照文件路径"""
-        from pathlib import Path
-        return Path.home() / ".xiaomei-brain" / self._agent_id / "consciousness" / "latest.json"
-
     def _save_snapshot(self) -> None:
-        """保存 SelfImage 快照到 latest.json"""
-        try:
-            self.self_image.save_to_file(str(self._snapshot_path()))
-        except Exception as e:
-            logger.warning("[Consciousness] 快照保存失败: %s", e)
+        """保存 SelfImage 快照（委托 SelfImageStore）。"""
+        if self._store is not None:
+            self._store.save(self.self_image)
 
     def _restore_snapshot(self) -> bool:
-        """从 latest.json 恢复 SelfImage 快照"""
-        from pathlib import Path
-        si = SelfImage.load_from_file(str(self._snapshot_path()), drive=self.drive, purpose=self.purpose)
+        """从 latest.json + DB 恢复 SelfImage（委托 SelfImageStore）。"""
+        if self._store is None:
+            return False
+        si = self._store.restore(drive=self.drive, purpose=self.purpose)
         if si is None:
             return False
         self.self_image = si
-        # 更新快捷引用
         self.being = si.being
         self.body = si.body
         self.perception = si.perception
@@ -311,6 +309,13 @@ class Consciousness:
         if self.perception.last_user_activity_time > 0:
             idle_dur = time.time() - self.perception.last_user_activity_time
             self.self_image.contribute_perception(idle_duration=idle_dur)
+            # 关系衰减（空闲 > 24h）
+            engine = getattr(self.self_image.being, '_relationship_engine', None)
+            if engine:
+                try:
+                    engine.tick(idle_dur)
+                except Exception as e:
+                    logger.debug("[L1] 关系衰减失败: %s", e)
 
         # 慢 IO：每分钟查一次记忆数量（事件驱动成本高、涉及面太广）
         if self.agent and hasattr(self.agent, "longterm_memory"):
@@ -828,11 +833,19 @@ class Consciousness:
         Returns:
             TickResult: NORMAL / L2_TRIGGERED / L3_TRIGGERED / DREAM_TRIGGERED
         """
-        # L2: 动态加柴判断（空闲 / 累积变化(仅SLEEPING) / 定期，有冷却）
-        if self._should_l2(agent_state):
-            logger.info("[Consciousness] L2 触发（轻度加柴，agent_state=%s）", agent_state)
-            self._last_l2_time = time.time()
-            self.tick_L2(self._get_l2_context(agent_state))
+        # L2 意图决策（"我该做什么"——欲望驱动 + 时间兜底）
+        if self._should_intent(agent_state):
+            ctx = "idle" if agent_state == "idle" else "periodic"
+            logger.info("[Consciousness] L2 意图决策触发（agent_state=%s, ctx=%s）", agent_state, ctx)
+            self._last_intent_time = time.time()
+            self.tick_L2_intent(ctx)
+            return TickResult.L2_TRIGGERED
+
+        # L2 意识涌现（"我此刻怎样"——内在节律 + 素材驱动）
+        if self._should_emerge(agent_state):
+            logger.info("[Consciousness] L2 意识涌现触发（agent_state=%s）", agent_state)
+            self._last_emerge_time = time.time()
+            self.tick_L2_emergence(agent_state)
             return TickResult.L2_TRIGGERED
 
         # L3: 深度沉思（任何状态，有冷却，DREAMING 中由 DreamEngine 处理）
@@ -857,49 +870,87 @@ class Consciousness:
 
         return TickResult.NORMAL
 
-    def _should_l2(self, agent_state: str = "awake") -> bool:
-        """判断是否应该触发 L2 加柴。
+    def _should_intent(self, agent_state: str = "awake") -> bool:
+        """判断是否应做意图决策（"我该做什么"）。
 
-        只在 AWAKE/IDLE 触发——L2 是轻度加柴，像清醒时的念头。
-        SLEEPING 中不做轻度思考，只有 L3（深度沉思）和 DREAM（入梦）。
+        触发条件：
+        - 欲望超阈值（欲望驱动，主要机制）
+        - 用户空闲够久（时间兜底）
+        - 定期审视（低频兜底）
         """
         si = self.self_image
-        elapsed_since_last = time.time() - self._last_l2_time
+        elapsed = time.time() - self._last_intent_time
 
-        # SLEEPING/DREAMING 中不触发 L2
+        # SLEEPING/DREAMING 中不决策
         if agent_state in ("sleeping", "dreaming"):
             return False
 
-        # 能量约束：能量越低，冷却时间越长
+        # 能量沉寂
         energy = si.body.energy
         if energy < 0.15:
-            # 沉寂状态：不主动加柴（火焰微弱，节省能量）
-            logger.debug("[Consciousness._should_l2] 能量沉寂(%.2f)，跳过", energy)
             return False
 
-        # 动态冷却：能量低时冷却时间翻倍
+        # 动态冷却
         cooldown = self._cc.l2_cooldown
         if energy < 0.3:
-            cooldown *= 2.0  # 低能量：冷却翻倍，减少加柴频率
-
-        # 冷却期内不触发
-        if elapsed_since_last < cooldown:
+            cooldown *= 2.0
+        if elapsed < cooldown:
             return False
 
-        # 超过冷却期，检查条件
-        # 空闲触发仅在 IDLE 状态生效；AWAKE 只走定期
+        # 空闲触发（保留）
         if agent_state == "idle" and si.perception.user_idle_duration > self._cc.l2_idle_trigger:
-            logger.info("[Consciousness._should_l2] 空闲触发(%s): %d秒 > %d秒",
-                       agent_state, int(si.perception.user_idle_duration), self._cc.l2_idle_trigger)
-            return True
-        if elapsed_since_last > self._cc.l2_periodic_interval:
-            logger.info("[Consciousness._should_l2] 定期触发: %d秒 > %d秒",
-                       int(elapsed_since_last), self._cc.l2_periodic_interval)
             return True
 
-        logger.debug("[Consciousness._should_l2] 未触发: 空闲=%d, 间隔=%d",
-                    int(si.perception.user_idle_duration), int(elapsed_since_last))
+        # 定期触发（保留）
+        if elapsed > self._cc.l2_periodic_interval:
+            return True
+
+        # 欲望驱动（新增，仅 IDLE）
+        if agent_state == "idle":
+            t = self._cc.l2_desire_thresholds
+            if si.body.desire_belonging > t.get("belonging", 0.6):
+                return True
+            if si.body.desire_cognition > t.get("cognition", 0.6):
+                return True
+            if si.body.desire_achievement > t.get("achievement", 0.5):
+                return True
+            if si.body.desire_expression > t.get("expression", 0.6):
+                return True
+
         return False
+
+    def _should_emerge(self, agent_state: str = "awake") -> bool:
+        """判断是否应做意识涌现（"我此刻怎样"）。
+
+        触发条件：
+        - 定期节奏（内在节律，主要机制）
+        - 累积状态变化够多（素材驱动）
+
+        欲望不驱动涌现——饿了不会让人写日记。
+        """
+        si = self.self_image
+        elapsed = time.time() - self._last_emerge_time
+
+        if si.body.energy < 0.2:
+            return False
+
+        if elapsed < self._cc.l2_emergence_cooldown:
+            return False
+
+        # 定期节奏
+        if elapsed > self._cc.l2_emergence_interval:
+            return True
+
+        # 状态变化积累够多
+        if self._state_buffer.should_trigger_l2():
+            return True
+
+        return False
+
+    # [deprecated] _should_l2 kept for backward compatibility
+    def _should_l2(self, agent_state: str = "awake") -> bool:
+        """[deprecated] Use _should_intent() or _should_emerge() instead."""
+        return self._should_intent(agent_state)
 
     def _should_l3(self) -> bool:
         """判断是否应该触发 L3 深度沉思。
@@ -932,7 +983,7 @@ class Consciousness:
     def _get_l2_context(self, agent_state: str = "awake") -> str:
         """获取 L2 触发上下文"""
         si = self.self_image
-        elapsed_since_last = time.time() - self._last_l2_time
+        elapsed_since_last = time.time() - self._last_intent_time
 
         if si.perception.user_idle_duration > self._cc.l2_idle_trigger:
             return "user_idle_long"

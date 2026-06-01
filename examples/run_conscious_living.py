@@ -210,7 +210,7 @@ def main():
 
     # LLM 日志 + intent 日志按 agent 分
     from xiaomei_brain.base.llm import set_log_agent as _set_llm_log
-    from xiaomei_brain.consciousness.task_orchestrator import set_log_agent as _set_intent_log
+    from xiaomei_brain.consciousness.goal_manager import set_log_agent as _set_intent_log
     _set_llm_log(agent_id)
     _set_intent_log(agent_id)
 

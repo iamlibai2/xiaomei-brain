@@ -1,15 +1,17 @@
 """LearningQueue: 学习需求队列管理。
 
 统一管理 SelfMind.learning_queue 的读写，避免分散在各处的 list 操作。
+支持 TaskQueueStorage 持久化：add/pop 时同步写 DB，启动时从 DB 加载。
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ..consciousness.self_image_proxy import SelfImage
+    from ..consciousness.queue_storage import TaskQueueStorage
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +26,13 @@ class LearningQueue:
     """学习需求队列。
 
     直接操作 SelfMind.learning_queue（原地 list），不持有副本。
+    如果注入了 TaskQueueStorage，add/pop 时同步写 DB。
     """
 
-    def __init__(self, self_image: SelfImage) -> None:
+    def __init__(self, self_image: SelfImage,
+                 storage: TaskQueueStorage | None = None) -> None:
         self._si = self_image
+        self._storage = storage
         self._ensure_queue()
 
     def _ensure_queue(self) -> None:
@@ -39,6 +44,17 @@ class LearningQueue:
     def _queue(self) -> list[dict]:
         self._ensure_queue()
         return self._si.mind.learning_queue
+
+    # ── 初始化 ──────────────────────────────────────────────
+
+    def load_from_storage(self) -> None:
+        """从 TaskQueueStorage 加载 pending 学习主题到内存。"""
+        if self._storage is None:
+            return
+        items = self._storage.load_pending_learning()
+        self._queue.clear()
+        self._queue.extend(items)
+        logger.info("[LearningQueue] 从 DB 加载 %d 条待学习主题", len(items))
 
     # ── 写入 ──────────────────────────────────────────────
 
@@ -64,15 +80,24 @@ class LearningQueue:
             if topic in existing:
                 skipped_topics.append(topic)
                 continue
-            self._queue.append({
+            item = {
                 "topic": topic,
                 "reason": gap.get("reason", ""),
                 "priority": float(gap.get("priority", 0.5)),
                 "source": gap.get("source", "task_gap"),
-            })
+            }
+            self._queue.append(item)
             existing.add(topic)
             added_topics.append(topic)
             added += 1
+            # 同步写 DB
+            if self._storage:
+                self._storage.add_learning(
+                    topic=topic,
+                    reason=item["reason"],
+                    priority=item["priority"],
+                    source=item["source"],
+                )
 
         if added:
             logger.info("[LearningQueue] GAPS 入队: %d 个 — %s", added, ", ".join(added_topics))
@@ -95,13 +120,21 @@ class LearningQueue:
         if topic in existing:
             return False
 
-        self._queue.append({
+        item = {
             "topic": topic,
             "reason": reason,
             "priority": priority,
             "source": source,
-        })
+        }
+        self._queue.append(item)
         logger.info("[LearningQueue] 入队: %s (priority=%.1f, source=%s)", topic, priority, source)
+
+        # 同步写 DB
+        if self._storage:
+            self._storage.add_learning(
+                topic=topic, reason=reason, priority=priority, source=source,
+            )
+
         return True
 
     # ── 消费 ──────────────────────────────────────────────
@@ -116,6 +149,11 @@ class LearningQueue:
             return None
         self._queue.sort(key=lambda x: x.get("priority", 0), reverse=True)
         item = self._queue.pop(0)
+
+        # 同步写 DB
+        if self._storage:
+            self._storage.mark_learning_done(item["topic"])
+
         logger.info("[LearningQueue] 消费: %s (priority=%.1f, source=%s)",
                     item["topic"], item.get("priority", 0), item.get("source", ""))
         return item

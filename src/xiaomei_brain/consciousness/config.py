@@ -19,7 +19,15 @@ class ConsciousnessConfig:
     l2_idle_trigger: float = 300.0    # L2 空闲触发（用户空闲秒数）
     l2_changes_trigger: int = 10       # L2 累积变化触发（条数）
     l2_cooldown: float = 300.0         # L2 冷却时间（秒）
-    l2_periodic_interval: float = 1800.0  # L2 定期触发（秒）
+    l2_periodic_interval: float = 1800.0  # L2 意图决策定期兜底（秒）
+    l2_desire_thresholds: dict = field(default_factory=lambda: {
+        "belonging": 0.6,
+        "cognition": 0.6,
+        "achievement": 0.5,
+        "expression": 0.6,
+    })                                 # L2 意图决策欲望驱动阈值
+    l2_emergence_interval: float = 1800.0   # 意识涌现定期间隔（秒）
+    l2_emergence_cooldown: float = 600.0    # 意识涌现冷却（秒）
     l3_dream_interval: float = 300.0   # L3 梦境触发（睡眠秒数→入梦）
     l3_cooldown: float = 1800.0       # L3 深度沉思冷却（秒）
     l2_check_interval: float = 10.0     # Layer 2 检查间隔（秒）
