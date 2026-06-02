@@ -50,6 +50,7 @@ class PACERunner:
         inner_voice: Any = None,     # [Layer 3] InnerVoice 引擎
         experience_memory: Any = None,  # [Layer 2] 经验记忆
         project_mental_model: Any = None,  # [Layer 2] 项目心智模型
+        goal_run_storage: Any = None,  # 任务执行持久化
     ) -> None:
         self._agent_provider = agent_provider
         self._purpose = purpose
@@ -59,6 +60,7 @@ class PACERunner:
         self._inner_voice = inner_voice          # [Layer 3]
         self._experience_memory = experience_memory   # [Layer 2]
         self._project_mental_model = project_mental_model  # [Layer 2]
+        self._goal_run_storage = goal_run_storage
 
         # 运行状态
         self._observations: list[StepObservation] = []
@@ -68,6 +70,7 @@ class PACERunner:
         self._resume_nudge: str = ""
         self._skip_post_review: bool = False
         self._exit_reason: str = self.EXIT_COMPLETED
+        self._run_id: str = ""  # 当前 run 的 ID
 
         # 能力校准器
         self._capability_tracker = CapabilityTracker(agent_id=self._agent_id())
@@ -114,6 +117,14 @@ class PACERunner:
             goal_description=goal.description if goal else msg.content[:200],
         )
 
+        # 创建 DB run
+        agent_id = self._agent_id()
+        goal_id = goal.id if goal else "chat"
+        goal_desc = goal.description if goal else msg.content[:200]
+        self._run_id = ""
+        if self._goal_run_storage:
+            self._run_id = self._goal_run_storage.create_run(goal_id, goal_desc, agent_id)
+
         try:
             from .cognitive_loop import CognitiveLoop
             loop = CognitiveLoop(self)
@@ -131,6 +142,28 @@ class PACERunner:
             self._exit_reason = self.EXIT_ERROR
             cb.get("print_prompt", lambda: None)()
         finally:
+            if self._goal_run_storage and self._run_id:
+                if self._metrics:
+                    self._metrics.end_time = time.time()
+                    self._metrics.total_llm_calls = self._budget._count
+                    self._metrics.goal_completed = (
+                        self._purpose.get_current() is not None
+                        and self._purpose.get_current().is_completed()
+                    ) if self._purpose else False
+                self._goal_run_storage.close_run(
+                    self._run_id,
+                    total_llm_calls=self._budget._count,
+                    exit_reason=self._exit_reason,
+                    surprises_detected=self._metrics.surprises_detected if self._metrics else {},
+                    hard_rules_triggered=self._metrics.hard_rules_triggered if self._metrics else 0,
+                    llm_checks_performed=self._metrics.llm_checks_performed if self._metrics else 0,
+                    escalations=self._metrics.escalations if self._metrics else 0,
+                    auto_advances=self._metrics.auto_advances if self._metrics else 0,
+                    waiting_user_exits=self._metrics.waiting_user_exits if self._metrics else 0,
+                    sub_goals_completed=self._metrics.sub_goals_completed if self._metrics else 0,
+                    sub_goals_failed=self._metrics.sub_goals_failed if self._metrics else 0,
+                    goal_completed=self._metrics.goal_completed if self._metrics else False,
+                )
             if not self._skip_post_review:
                 self._do_post_review(msg)
             self._reset_run_state()
@@ -363,23 +396,29 @@ class PACERunner:
                 self._observations, task_duration,
             )
 
-            # 写入 cognitive_log
+            # 写入 cognitive_log（内存 + DB）
             if goal:
                 for item in lesson.what_worked:
-                    goal.append_log(
-                        entry_type="discovery",
-                        content=f"有效做法: {item}",
-                    )
+                    goal.append_log(entry_type="discovery", content=f"有效做法: {item}")
+                    if self._goal_run_storage:
+                        self._goal_run_storage.append_log(
+                            run_id=self._run_id, goal_id=goal_id,
+                            entry_type="discovery", content=f"有效做法: {item}",
+                        )
                 for item in lesson.what_failed:
-                    goal.append_log(
-                        entry_type="pitfall",
-                        content=f"遇到的问题: {item}",
-                    )
+                    goal.append_log(entry_type="pitfall", content=f"遇到的问题: {item}")
+                    if self._goal_run_storage:
+                        self._goal_run_storage.append_log(
+                            run_id=self._run_id, goal_id=goal_id,
+                            entry_type="pitfall", content=f"遇到的问题: {item}",
+                        )
                 for item in lesson.capability_notes:
-                    goal.append_log(
-                        entry_type="discovery",
-                        content=f"能力认知: {item}",
-                    )
+                    goal.append_log(entry_type="discovery", content=f"能力认知: {item}")
+                    if self._goal_run_storage:
+                        self._goal_run_storage.append_log(
+                            run_id=self._run_id, goal_id=goal_id,
+                            entry_type="discovery", content=f"能力认知: {item}",
+                        )
 
             # 存储到 ExperienceMemory（替代旧 Lesson JSON 文件）
             if self._experience_memory:
@@ -448,20 +487,7 @@ class PACERunner:
                 except Exception as e:
                     logger.debug("[PACERunner] 审查失败: %s", e)
 
-        # ── 持久化可观测性指标 ──
-        if self._metrics:
-            self._metrics.end_time = time.time()
-            self._metrics.total_llm_calls = self._budget._count
-            self._metrics.goal_completed = (
-                self._purpose.get_current() is not None
-                and self._purpose.get_current().is_completed()
-            ) if self._purpose else False
-            agent_id = getattr(self._config, 'agent_id', '') if self._config else ''
-            try:
-                from .metrics import persist_metrics
-                persist_metrics(self._metrics, agent_id)
-            except Exception as e:
-                logger.warning("[PACERunner] metrics 持久化失败: %s", e)
+        # 指标已在 close_run() 中持久化到 DB，不再写 JSON
 
     # ── Helpers ──────────────────────────────────────────────────────
 
@@ -536,6 +562,12 @@ class PACERunner:
                             content=summary,
                             sub_goal_id=completing_goal_id,
                         )
+                        if self._goal_run_storage:
+                            self._goal_run_storage.append_log(
+                                run_id=self._run_id, goal_id=root_goal.id,
+                                entry_type="output", content=summary,
+                                sub_goal_id=completing_goal_id,
+                            )
                     siblings = self._purpose.get_sub_goals(completing_goal.parent_id)
                     if all(sg.is_completed() for sg in siblings):
                         if root_goal:
@@ -716,18 +748,26 @@ class PACERunner:
 
     def _handle_exception(self, e: Exception, msg) -> None:
         """处理执行异常"""
-        if self._purpose:
-            goal = self._purpose.get_current()
-            if goal:
-                goal.append_log(
+        goal = self._purpose.get_current() if self._purpose else None
+        if goal:
+            goal.append_log(
+                entry_type="pitfall",
+                content=f"子目标「{goal.description[:30]}」执行出错: {str(e)[:200]}",
+                sub_goal_id=goal.id,
+            )
+            # DB 日志
+            if self._goal_run_storage:
+                self._goal_run_storage.append_log(
+                    run_id=self._run_id,
+                    goal_id=goal.id,
                     entry_type="pitfall",
                     content=f"子目标「{goal.description[:30]}」执行出错: {str(e)[:200]}",
                     sub_goal_id=goal.id,
                 )
-                from ..purpose import task_executor
-                result = task_executor.handle_sub_goal_error(self._purpose, goal.id, str(e))
-                if result.get("status_msg"):
-                    print(f"\033[33m{result['status_msg']}\033[0m", flush=True)
+            from ..purpose import task_executor
+            result = task_executor.handle_sub_goal_error(self._purpose, goal.id, str(e))
+            if result.get("status_msg"):
+                print(f"\033[33m{result['status_msg']}\033[0m", flush=True)
 
     def save_checkpoint(self, goal_id: str, step_index: int) -> "PACECheckpoint":
         """保存当前执行状态为检查点（内存 + 磁盘）"""
@@ -771,48 +811,39 @@ class PACERunner:
 
         return cp
 
-    @staticmethod
-    def _checkpoint_dir() -> "Path":
-        from pathlib import Path
-        return Path.home() / ".xiaomei-brain" / "pace_checkpoints"
-
     def _agent_id(self) -> str:
         return getattr(self._config, 'agent_id', '') if self._config else ''
 
-    def _checkpoint_path(self, goal_id: str) -> "Path":
-        return self._checkpoint_dir() / f"{self._agent_id()}_{goal_id}.json"
-
     def _persist_checkpoint(self, cp: "PACECheckpoint") -> None:
-        """落盘"""
-        import json
-        path = self._checkpoint_path(cp.goal_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        data = {
-            "goal_id": cp.goal_id,
-            "step_index": cp.step_index,
-            "observations_json": cp.observations_json,
-            "budget_call_count": cp.budget_call_count,
-            "budget_skip_until": cp.budget_skip_until,
-            "budget_consecutive_continue": cp.budget_consecutive_continue,
-            "consecutive_empty_count": cp.consecutive_empty_count,
-            "last_nudge": cp.last_nudge,
-            "saved_at": cp.saved_at,
-        }
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        logger.info("[PACERunner] checkpoint 已持久化: %s (step=%d)", path, cp.step_index)
+        """保存检查点到 DB"""
+        if not self._goal_run_storage:
+            return
+        self._goal_run_storage.save_checkpoint(
+            goal_id=cp.goal_id,
+            agent_id=self._agent_id(),
+            step_index=cp.step_index,
+            observations_json=cp.observations_json,
+            budget_call_count=cp.budget_call_count,
+            budget_skip_until=cp.budget_skip_until,
+            budget_consecutive_continue=cp.budget_consecutive_continue,
+            consecutive_empty_count=cp.consecutive_empty_count,
+            last_nudge=cp.last_nudge,
+            run_id=self._run_id,
+        )
+        logger.info("[PACERunner] checkpoint 已持久化到 DB: goal=%s step=%d",
+                    cp.goal_id, cp.step_index)
 
-    @classmethod
-    def load_checkpoint_from_disk(cls, goal_id: str, agent_id: str = "") -> "PACECheckpoint | None":
-        """从磁盘恢复检查点"""
+    def load_checkpoint_from_disk(self, goal_id: str, agent_id: str = "") -> "PACECheckpoint | None":
+        """从 DB 恢复检查点"""
+        if not self._goal_run_storage:
+            return None
         import json
-        from pathlib import Path
         from .types import PACECheckpoint
 
-        path = Path.home() / ".xiaomei-brain" / "pace_checkpoints" / f"{agent_id}_{goal_id}.json"
-        if not path.exists():
+        data = self._goal_run_storage.load_checkpoint(goal_id, agent_id or self._agent_id())
+        if not data:
             return None
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
             return PACECheckpoint(
                 goal_id=data["goal_id"],
                 step_index=data["step_index"],
@@ -990,6 +1021,11 @@ class PACERunner:
 
         self._purpose.pause_goal(goal_id, context_cache=reason)
         goal.append_log("blocked", reason[:200])
+        if self._goal_run_storage:
+            self._goal_run_storage.append_log(
+                run_id=self._run_id, goal_id=goal_id,
+                entry_type="blocked", content=reason[:200], sub_goal_id=goal_id,
+            )
         logger.info("[PACE] 子目标阻塞: %s — %s", goal.description[:40], reason[:60])
         print(f"\n[PACE] 子目标阻塞: {goal.description[:40]}", flush=True)
 
@@ -1098,6 +1134,7 @@ class PACERunner:
         self._exit_reason = self.EXIT_COMPLETED
         self._perspective_tried = False
         self._pending_block_advance = False
+        self._run_id = ""
 
     def _build_confirm_options(self, check: StepCheckResult) -> list[str]:
         """根据障碍类型生成用户确认选项"""

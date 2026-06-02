@@ -38,12 +38,14 @@ class ConversationDriver:
         inner_voice: Any = None,
         experience_memory: Any = None,
         project_mental_model: Any = None,
+        goal_run_storage: Any = None,
     ) -> None:
         self._parent = parent
         self._drive = drive
         self._agent = agent
         self._config = config
         self._inner_voice = inner_voice
+        self._goal_run_storage = goal_run_storage
 
         # 任务模式标记（GoalManager 通过 driver._task_mode 读写）
         self._task_mode: bool = False
@@ -57,6 +59,7 @@ class ConversationDriver:
             inner_voice=inner_voice,
             experience_memory=experience_memory,
             project_mental_model=project_mental_model,
+            goal_run_storage=goal_run_storage,
         )
         self._goal_manager.driver = self
 

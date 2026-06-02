@@ -1,11 +1,11 @@
 """PACE 可观测性指标：跟踪 PACE 运行效果和异常检测效率。
 
-PACEMetrics 在每次 PACE 运行过程中累积统计，post_review 时持久化。
-聚合指标跨多次运行，生成 Agent 级别的 PACE 效果报告。
+PACEMetrics 在每次 PACE 运行过程中累积统计，run 结束时由 close_run() 写入 goal_runs 表。
+聚合指标跨多次运行，从 DB 查询生成 Agent 级别的 PACE 效果报告。
 
 存储：
-    单次: ~/.xiaomei-brain/{id}/metacognition/metrics/{date}_{goal_id}.json
-    聚合: ~/.xiaomei-brain/{id}/metacognition/metrics_summary.json
+    单次: goal_runs 表（brain.db）
+    聚合: 从 goal_runs 表 SQL 查询
 """
 
 from __future__ import annotations
@@ -97,114 +97,31 @@ class PACEMetrics:
 
 
 def persist_metrics(metrics: PACEMetrics, agent_id: str) -> None:
-    """持久化单次 PACE 运行指标 + 更新聚合报告。
-
-    Args:
-        metrics: 单次运行指标
-        agent_id: Agent ID
-    """
-    base_dir = Path.home() / ".xiaomei-brain" / agent_id / "metacognition"
-    metrics_dir = base_dir / "metrics"
-    metrics_dir.mkdir(parents=True, exist_ok=True)
-
-    # 单次指标文件
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    goal_short = metrics.goal_id[:8] if metrics.goal_id else "unknown"
-    path = metrics_dir / f"{date_str}_{goal_short}.json"
-    try:
-        path.write_text(
-            json.dumps(metrics.to_dict(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        logger.info("[Metrics] 单次指标已持久化: %s", path)
-    except Exception as e:
-        logger.warning("[Metrics] 持久化失败: %s", e)
-
-    # 更新聚合报告
-    _update_summary(base_dir / "metrics_summary.json", metrics)
+    """[deprecated] 指标已在 close_run() 中持久化到 goal_runs 表。保留此函数避免 import 报错。"""
+    pass
 
 
-def _update_summary(summary_path: Path, metrics: PACEMetrics) -> None:
-    """增量更新聚合指标"""
-    summary = {
-        "total_runs": 0,
-        "total_steps": 0,
-        "total_llm_calls": 0,
-        "total_tool_calls": 0,
-        "total_elapsed": 0.0,
-        "surprises_detected": {},
-        "decisions": {
-            "hard_rules": 0,
-            "llm_checks": 0,
-            "escalations": 0,
-            "auto_advances": 0,
-            "waiting_user": 0,
-        },
-        "goal_stats": {
-            "total": 0,
-            "completed": 0,
-            "failed": 0,
-            "sub_goals_completed": 0,
-            "sub_goals_failed": 0,
-        },
-        "last_updated": "",
-    }
-
-    if summary_path.exists():
-        try:
-            loaded = json.loads(summary_path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                summary.update(loaded)
-        except Exception as e:
-            logger.debug("failed to load summary JSON, using defaults: %s", e)
-
-    summary["total_runs"] += 1
-    summary["total_steps"] += metrics.total_steps
-    summary["total_llm_calls"] += metrics.total_llm_calls
-    summary["total_tool_calls"] += metrics.total_tool_calls
-    summary["total_elapsed"] = round(summary["total_elapsed"] + metrics.total_elapsed, 1)
-
-    for k, v in metrics.surprises_detected.items():
-        summary["surprises_detected"][k] = summary["surprises_detected"].get(k, 0) + v
-
-    summary["decisions"]["hard_rules"] += metrics.hard_rules_triggered
-    summary["decisions"]["llm_checks"] += metrics.llm_checks_performed
-    summary["decisions"]["escalations"] += metrics.escalations
-    summary["decisions"]["auto_advances"] += metrics.auto_advances
-    summary["decisions"]["waiting_user"] += metrics.waiting_user_exits
-
-    summary["goal_stats"]["total"] += 1
-    if metrics.goal_completed:
-        summary["goal_stats"]["completed"] += 1
-    else:
-        summary["goal_stats"]["failed"] += 1
-    summary["goal_stats"]["sub_goals_completed"] += metrics.sub_goals_completed
-    summary["goal_stats"]["sub_goals_failed"] += metrics.sub_goals_failed
-
-    summary["last_updated"] = datetime.now().isoformat()
-
-    try:
-        summary_path.write_text(
-            json.dumps(summary, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-    except Exception as e:
-        logger.warning("[Metrics] 聚合报告更新失败: %s", e)
-
-
-def generate_report(agent_id: str) -> str:
+def generate_report(agent_id: str, goal_run_storage=None) -> str:
     """生成 PACE 可观测性报告。
 
     Args:
         agent_id: Agent ID
+        goal_run_storage: GoalRunStorage 实例（从 DB 查询）。如果为 None，降级读取旧 JSON。
 
     Returns:
         格式化的报告文本
     """
+    # 优先从 DB 查询
+    if goal_run_storage is not None:
+        s = goal_run_storage.get_summary(agent_id)
+        aggregated_surprises = goal_run_storage.get_aggregated_surprises(agent_id)
+        if s and s.get("total_runs", 0) > 0:
+            return _format_report(s, aggregated_surprises)
+
+    # 降级：读取旧 JSON 文件
     summary_path = (
         Path.home() / ".xiaomei-brain" / agent_id / "metacognition" / "metrics_summary.json"
     )
-
     if not summary_path.exists():
         return "暂无 PACE 运行数据。至少完成一次 PACE 任务后才会生成报告。"
 
@@ -213,15 +130,26 @@ def generate_report(agent_id: str) -> str:
     except Exception as e:
         return f"读取指标文件失败: {e}"
 
-    runs = s.get("total_runs", 0)
-    if runs == 0:
+    if s.get("total_runs", 0) == 0:
         return "暂无有效运行数据。"
 
+    return _format_report(s, s.get("surprises_detected", {}))
+
+
+def _format_report(s: dict, surprises: dict) -> str:
+    """格式化报告文本。兼容 DB 和 JSON 数据源。"""
+    runs = s.get("total_runs", 0)
     steps = s.get("total_steps", 0)
     avg_steps = steps / runs if runs else 0
-    completion_rate = (
-        s.get("goal_stats", {}).get("completed", 0) / s.get("goal_stats", {}).get("total", 1) * 100
-    )
+
+    # DB schema uses "completed" vs "failed"; JSON uses "goal_stats.completed"
+    if "goal_stats" in s:
+        completed = s["goal_stats"].get("completed", 0)
+        total = s["goal_stats"].get("total", 1)
+    else:
+        completed = s.get("completed", 0)
+        total = s.get("total_runs", 1)
+    completion_rate = completed / total * 100 if total else 0
 
     lines = [
         "╔══════════════════════════════════════════════════╗",
@@ -234,7 +162,6 @@ def generate_report(agent_id: str) -> str:
         "║  异常检测:                                        ║",
     ]
 
-    surprises = s.get("surprises_detected", {})
     surprise_labels = {
         "TOOL_LOOP": "TOOL_LOOP 拦截",
         "TOOL_STORM": "TOOL_STORM 拦截",
@@ -249,26 +176,38 @@ def generate_report(agent_id: str) -> str:
         if count > 0:
             lines.append(f"║    {label}:  {count} 次{' ' * (32 - len(label))}║")
 
-    decisions = s.get("decisions", {})
-    total_decisions = sum(decisions.values())
+    # DB schema uses "hard_rules" / "llm_checks" etc.; JSON uses "decisions.hard_rules"
+    if "decisions" in s:
+        decisions = s["decisions"]
+        hard_rules = decisions.get("hard_rules", 0)
+        llm_checks = decisions.get("llm_checks", 0)
+        auto_advances = decisions.get("auto_advances", 0)
+        escalations = decisions.get("escalations", 0)
+        waiting_user = decisions.get("waiting_user", 0)
+    else:
+        hard_rules = s.get("hard_rules", 0)
+        llm_checks = s.get("llm_checks", 0)
+        auto_advances = s.get("auto_advances", 0)
+        escalations = s.get("escalations", 0)
+        waiting_user = s.get("waiting_user", 0)
+
+    total_decisions = hard_rules + llm_checks + auto_advances + escalations + waiting_user
     lines.append("║                                                  ║")
     lines.append("║  决策分布:                                        ║")
     if total_decisions > 0:
         decision_items = [
-            ("hard_rules", "硬规则直接判定"),
-            ("llm_checks", "LLM step_check"),
-            ("auto_advances", "自动推进"),
-            ("escalations", "ESCALATE"),
-            ("waiting_user", "等待用户"),
+            ("hard_rules", "硬规则直接判定", hard_rules),
+            ("llm_checks", "LLM step_check", llm_checks),
+            ("auto_advances", "自动推进", auto_advances),
+            ("escalations", "ESCALATE", escalations),
+            ("waiting_user", "等待用户", waiting_user),
         ]
-        for key, label in decision_items:
-            count = decisions.get(key, 0)
+        for key, label, count in decision_items:
             pct = count / total_decisions * 100 if total_decisions else 0
             lines.append(f"║    {label}:  {count} ({pct:.0f}%){' ' * (27 - len(label))}║")
 
     lines.append("║                                                  ║")
-    goal_stats = s.get("goal_stats", {})
-    lines.append(f"║  任务完成率:        {goal_stats.get('completed', 0)}/{goal_stats.get('total', 0)} ({completion_rate:.0f}%){' ' * (19 - len(str(completion_rate)))}║")
+    lines.append(f"║  任务完成率:        {completed}/{total} ({completion_rate:.0f}%){' ' * (19 - len(str(completion_rate)))}║")
     lines.append("╚══════════════════════════════════════════════════╝")
 
     if s.get("last_updated"):

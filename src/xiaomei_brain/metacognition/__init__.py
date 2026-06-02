@@ -24,9 +24,11 @@ from .rules import detect_surprises, parse_progress_tag, remove_progress_tag
 from .reviewer import LLMBudget, llm_step_check, llm_post_review
 from .capability import CapabilityTracker
 from .metrics import PACEMetrics, persist_metrics, generate_report
+from .goal_run_storage import GoalRunStorage
 
 __all__ = [
     "PACERunner",
+    "GoalRunStorage",
     "CapabilityTracker",
     "PACEMetrics",
     "persist_metrics",

@@ -210,6 +210,29 @@ class CognitiveLoop:
                         tool_call_count=tc_count, elapsed=elapsed,
                     )
 
+                # ── 持久化步骤到 DB ──
+                if p._goal_run_storage and p._run_id:
+                    progress_data_ = parse_progress_tag(content) if content else None
+                    p._goal_run_storage.record_step(
+                        run_id=p._run_id,
+                        step_index=step_index,
+                        goal_description=obs.goal_description,
+                        llm_output=obs.llm_output,
+                        tool_calls=tool_names,
+                        tool_call_count=tc_count,
+                        elapsed_seconds=elapsed,
+                        has_progress_tag=obs.has_progress_tag,
+                        progress_status=obs.progress_status,
+                        surprises=[s.value for s in obs.surprises],
+                        step_check_suggestion=assessment.step_check.suggestion.value if assessment.step_check else "CONTINUE",
+                        iv_retry=assessment.iv_retry,
+                        iv_block=assessment.iv_block,
+                        iv_escalate=assessment.iv_escalate,
+                        perspective_tried=assessment.perspective_tried,
+                        retry_count=assessment.retry_count,
+                        action_decided="",
+                    )
+
                 display_content = remove_progress_tag(content)
                 p._print_output(display_content, elapsed, tc_count)
 
@@ -457,7 +480,7 @@ class CognitiveLoop:
             return "break"
 
         if action == Action.EXIT_WAITING:
-            self._record_step_output(display_content)
+            self._record_step_output(display_content, step_index)
             p._exit_reason = p.EXIT_WAITING_USER
             return "break"
 
@@ -497,11 +520,11 @@ class CognitiveLoop:
             if p._exit_reason == p.EXIT_COMPLETED:
                 if p._detect_refusal_or_waiting(display_content):
                     p._exit_reason = p.EXIT_WAITING_USER
-            self._record_step_output(display_content)
+            self._record_step_output(display_content, step_index)
             return "break"
 
         if action == Action.EXIT_COMPLETED:
-            self._record_step_output(display_content)
+            self._record_step_output(display_content, step_index)
             p._exit_reason = p.EXIT_COMPLETED
             return "break"
 
@@ -559,14 +582,23 @@ class CognitiveLoop:
 
     def _handle_step_error(self, step_err: Exception, step_index: int):
         p = self._p
-        if p._purpose:
-            goal = p._purpose.get_current()
-            if goal:
-                goal.append_log(
-                    entry_type="pitfall",
-                    content=f"子目标「{goal.description[:30]}」执行异常: {str(step_err)[:200]}",
-                    sub_goal_id=goal.id,
-                )
+        goal = p._purpose.get_current() if p._purpose else None
+        if goal:
+            goal.append_log(
+                entry_type="pitfall",
+                content=f"子目标「{goal.description[:30]}」执行异常: {str(step_err)[:200]}",
+                sub_goal_id=goal.id,
+            )
+        # DB 日志
+        if p._goal_run_storage:
+            p._goal_run_storage.append_log(
+                run_id=p._run_id,
+                goal_id=goal.id if goal else "",
+                entry_type="pitfall",
+                content=f"子目标「{goal.description[:30] if goal else '?'}」执行异常: {str(step_err)[:200]}",
+                sub_goal_id=goal.id if goal else "",
+                step_index=step_index,
+            )
 
         obs = StepObservation(
             step_index=step_index,
@@ -674,14 +706,25 @@ class CognitiveLoop:
         p._print_sub_goal_progress(next_goal)
         return new_msg, new_context
 
-    def _record_step_output(self, display_content: str) -> None:
+    def _record_step_output(self, display_content: str, step_index: int = 0) -> None:
         if not display_content:
             return
         p = self._p
-        if p._purpose:
-            goal = p._purpose.get_current()
-            if goal:
-                goal.append_log(entry_type="output", content=display_content[:500])
+        goal = p._purpose.get_current() if p._purpose else None
+        goal_id = goal.id if goal else ""
+        # 内存日志（runtime 读取需要）
+        if goal:
+            goal.append_log(entry_type="output", content=display_content[:500])
+        # DB 日志
+        if p._goal_run_storage:
+            p._goal_run_storage.append_log(
+                run_id=p._run_id,
+                goal_id=goal_id,
+                entry_type="output",
+                content=display_content[:500],
+                sub_goal_id=goal_id,
+                step_index=step_index,
+            )
 
     # ── Experience injection ───────────────────────────────────────
 

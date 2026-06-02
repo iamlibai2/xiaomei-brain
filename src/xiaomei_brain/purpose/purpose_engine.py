@@ -96,7 +96,7 @@ class PurposeEngine:
         self.longterm_memory: Any = None  # 统一叙事存储引用
 
         # 存储
-        self.storage = PurposeStorage(agent_id)
+        self.storage = PurposeStorage(agent_id=agent_id)
 
         # 目标树（空结构）
         self.goals: dict[str, Goal] = {}

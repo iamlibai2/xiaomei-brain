@@ -162,6 +162,17 @@ class ConsciousLiving(Living):
         from ..metacognition.project_mental_model import ProjectMentalModel
         self._project_mental_model = ProjectMentalModel(dag=None)
 
+        # ── db_path（供 ExperienceStream / TaskQueueStorage / GoalRunStorage 等共用）──
+        db_path = getattr(self.agent, "db_path", None)
+        if db_path is None:
+            db_path = os.path.expanduser(
+                f"~/.xiaomei-brain/{self._agent_id}/memory/brain.db"
+            )
+
+        # ── GoalRunStorage（统一任务执行持久化）──
+        from ..metacognition import GoalRunStorage
+        goal_run_storage = GoalRunStorage(db_path)
+
         # ConversationDriver: 对话驱动（消息路由、ReAct、RoundScheduler 后处理）
         # GoalManager 内嵌其中，负责目标全生命周期（意图分析、PACE 执行、确认）
         self.conversation_driver = ConversationDriver(
@@ -175,6 +186,7 @@ class ConsciousLiving(Living):
             inner_voice=self._inner_voice,
             experience_memory=self._experience_memory,
             project_mental_model=self._project_mental_model,
+            goal_run_storage=goal_run_storage,
         )
 
         # MessageGateway（消息入口预处理：命令检测、身份解析、会话切换）
@@ -203,13 +215,6 @@ class ConsciousLiving(Living):
         logger.info("[ConsciousLiving] Interoception 已创建")
 
         si = self.consciousness.self_image
-
-        # ── db_path（供 ExperienceStream / TaskQueueStorage 等共用）──
-        db_path = getattr(self.agent, "db_path", None)
-        if db_path is None:
-            db_path = os.path.expanduser(
-                f"~/.xiaomei-brain/{self._agent_id}/memory/brain.db"
-            )
 
         # ── 持久化（SelfImageStore 统一入口）────────────────────
         from .queue_storage import TaskQueueStorage

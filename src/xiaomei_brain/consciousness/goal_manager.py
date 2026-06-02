@@ -52,6 +52,7 @@ class GoalManager:
         inner_voice: Any = None,
         experience_memory: Any = None,
         project_mental_model: Any = None,
+        goal_run_storage: Any = None,
     ) -> None:
         self._parent = parent
         self._purpose = purpose
@@ -63,6 +64,7 @@ class GoalManager:
         self._inner_voice = inner_voice
         self._experience_memory = experience_memory
         self._project_mental_model = project_mental_model
+        self._goal_run_storage = goal_run_storage
 
         # 确认状态
         self._pending_confirm: dict | None = None
@@ -319,11 +321,24 @@ class GoalManager:
 
         cp = self._pace_checkpoint
         if not cp or cp.goal_id != goal.id:
-            from ..metacognition import PACERunner
             agent_id = getattr(self._config, 'agent_id', self._parent._agent_id) if self._config else self._parent._agent_id
-            cp = PACERunner.load_checkpoint_from_disk(goal.id, agent_id=agent_id)
-            if cp:
-                logger.info("[GoalManager] 从磁盘恢复 PACE 检查点: goal=%s step=%d", goal.id, cp.step_index)
+            if self._goal_run_storage:
+                cp_data = self._goal_run_storage.load_checkpoint(goal.id, agent_id=agent_id)
+                if cp_data:
+                    from ..metacognition.types import PACECheckpoint
+                    import json
+                    cp = PACECheckpoint(
+                        goal_id=cp_data["goal_id"],
+                        step_index=cp_data["step_index"],
+                        observations_json=cp_data["observations_json"],
+                        budget_call_count=cp_data["budget_call_count"],
+                        budget_skip_until=cp_data.get("budget_skip_until", 0),
+                        budget_consecutive_continue=cp_data.get("budget_consecutive_continue", 0),
+                        consecutive_empty_count=cp_data.get("consecutive_empty_count", 0),
+                        last_nudge=cp_data.get("last_nudge", ""),
+                        saved_at=cp_data.get("saved_at", 0),
+                    )
+                    logger.info("[GoalManager] 从 DB 恢复 PACE 检查点: goal=%s step=%d", goal.id, cp.step_index)
         if cp and cp.goal_id == goal.id:
             logger.info("[GoalManager] 从 PACE 检查点恢复: goal=%s step=%d", goal.id, cp.step_index)
             if self.driver:
@@ -632,7 +647,8 @@ class GoalManager:
             agent_provider=self._agent, purpose=self._purpose, drive=self._drive,
             config=self._config, inner_voice=self._inner_voice,
             experience_memory=self._experience_memory,
-            project_mental_model=self._project_mental_model)
+            project_mental_model=self._project_mental_model,
+            goal_run_storage=self._goal_run_storage)
         logger.info("[GoalManager] PACERunner 已创建")
 
     def _run_pace(self, msg: LivingMessage, intent_context: str = "") -> str:
@@ -688,7 +704,8 @@ class GoalManager:
             reason_text = reason_map.get(exit_reason, "执行已暂停。")
             print(f"\n[{self._parent.agent.name or self._parent._agent_id}] {reason_text} 目标：「{goal_desc}」", flush=True)
             logger.info("[GoalManager] PACE 退出: %s, goal=%s", exit_reason, goal_desc)
-        return exit_reason
+        elif exit_reason == "completed":
+            self._clear_current_goal()
 
     def _resume_pace(self, checkpoint, answer_context: str, original_msg=None) -> None:
         if self._pace_runner is None:
@@ -775,6 +792,14 @@ class GoalManager:
         self._purpose.save()
         print(f"\n[目标] 完成: {goal.description[:40]}", flush=True)
         self._extract_goal_knowledge(goal)
+        self._clear_current_goal()
+
+    def _clear_current_goal(self) -> None:
+        """清除当前目标引用，标记任务结束。"""
+        if self._purpose and self._purpose.current_goal:
+            goal_desc = self._purpose.current_goal.description[:40]
+            self._purpose.current_goal = None
+            logger.info("[GoalManager] 当前目标已清除: %s", goal_desc)
 
     def _extract_goal_knowledge(self, goal: Any) -> None:
         try:

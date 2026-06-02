@@ -185,14 +185,19 @@ class Being:
         4. 全文
         """
         import re
-        # 模式1: "你是XXX" — 取 是/叫 后的名字（到逗号/句号/换行为止）
+        # 模式1: "你是XXX" / "你叫XXX" — 取 是/叫 后的名字
         m = re.search(r"[是你][是叫]\s*(\S+?)[，,。.\s\n]", text)
         if m:
             return m.group(1)
-        # 模式2: 第一行
+        # 模式2: "- 名字：XXX" / "名字：XXX" / "名字: XXX"
+        m = re.search(r"名字[：:]\s*(\S+)", text)
+        if m:
+            return m.group(1)
+        # 模式3: 第一行
         first_line = text.split("\n")[0].strip()
         if first_line:
-            # 去掉末尾标点
+            # 去掉前导 bullet 和末尾标点
+            first_line = re.sub(r"^[-*]\s*", "", first_line)
             return re.sub(r"[，,。.！!？?]+$", "", first_line)
         return text
 
