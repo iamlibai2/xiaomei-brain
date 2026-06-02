@@ -258,7 +258,7 @@ class GoalManager:
             print(f"  {i+1}. {sg.description[:40]}", flush=True)
         if sub_goals:
             self._purpose.set_current(sub_goals[0].id)
-            self._print_sub_goal_progress(sub_goals[0], sub_goals)
+            self.print_sub_goal_progress(sub_goals[0], sub_goals)
             new_intent = self.build_intent_context_for_goal(sub_goals[0], siblings=sub_goals)
             self._run_chat(msg, new_intent)
 
@@ -266,6 +266,7 @@ class GoalManager:
         self._purpose.set_current(goal.id)
         print(f"[{type_label}] 当前: {goal.description[:40]}", flush=True)
         new_intent = self.build_intent_context_for_goal(goal)
+        # 所有任务统一走 PACE → CognitiveLoop
         self._run_chat(msg, new_intent)
 
     # ── Chat dispatch ─────────────────────────────────────────

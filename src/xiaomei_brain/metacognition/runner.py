@@ -2,15 +2,11 @@
 
 PACE = Pause → Assess → Choose → Execute
 
-与 ReAct 模式的区别：
-- ReAct：LLM 输出 → PROGRESS 解析 → 下一个子目标（流水线，蒙眼冲）
-- PACE：Pause → Assess → Choose → Execute → ...（认知回合制，步步稳）
+内部委托给 CognitiveLoop（统一任务执行模型：PERCEIVE → ASSESS → DECIDE → ACT）。
+PACERunner 保留所有 service 方法（step_check, InnerVoice, Perspective 等），
+CognitiveLoop 负责管道编排。
 
-每个回合：
-  1. Pause  — 停下来，注入上一轮的认知提示
-  2. Execute — Agent.stream()，执行一步
-  3. Assess  — 规则检测 + LLM 判断
-  4. Choose  — 根据结果决定：继续 / 换方法 / 澄清 / 求助
+兼容性：run() / assess_only() / save_checkpoint() / restore_checkpoint() API 不变。
 """
 
 from __future__ import annotations
@@ -24,8 +20,8 @@ from .types import (
     StepObservation, StepCheckResult, MetaSuggestion, SurpriseType, StuckClass,
 )
 from .perspectives import PerspectiveEngine
-from .rules import detect_surprises, parse_progress_tag, remove_progress_tag, content_similarity
-from .reviewer import LLMBudget, llm_step_check, llm_post_review, persist_lesson
+from .rules import detect_surprises, parse_progress_tag, remove_progress_tag
+from .reviewer import LLMBudget, llm_step_check, llm_post_review
 from .capability import CapabilityTracker
 
 logger = logging.getLogger(__name__)
@@ -94,7 +90,7 @@ class PACERunner:
         intent_context: str = "",
         callbacks: dict[str, Callable] | None = None,
     ) -> str:
-        """主循环：认知回合制执行。
+        """主循环：认知回合制执行。委托给 CognitiveLoop。
 
         Args:
             msg: LivingMessage 实例
@@ -119,9 +115,13 @@ class PACERunner:
         )
 
         try:
-            self._run_loop(msg, intent_context, cb,
-                           start_step=self._resume_step or 0,
-                           resume_nudge=self._resume_nudge)
+            from .cognitive_loop import CognitiveLoop
+            loop = CognitiveLoop(self)
+            self._exit_reason = loop.run(
+                msg, intent_context, cb,
+                start_step=self._resume_step or 0,
+                resume_nudge=self._resume_nudge,
+            )
         except Exception as e:
             import traceback
             tb = traceback.format_exc()
@@ -160,512 +160,16 @@ class PACERunner:
             "elapsed": elapsed_seconds,
         }
 
-    # ── Main Loop ────────────────────────────────────────────────────
+    # ── Main Loop（已委托给 CognitiveLoop） ──────────────────────────
 
     def _run_loop(self, msg, intent_context: str, cb: dict, start_step: int = 0, resume_nudge: str = "") -> None:
-        from xiaomei_brain.consciousness.context_pipeline import build_context
-
-        current_msg = msg
-        current_context = intent_context
-        agent = self._agent_provider._get_agent()
-        step_index = start_step
-        max_retries_per_goal = 5   # 同一子目标最多重试次数
-        current_goal_retries = 0
-
-        # resume 时注入用户回答到 context
-        if resume_nudge:
-            if current_context:
-                current_context = resume_nudge + "\n" + current_context
-            else:
-                current_context = resume_nudge
-
-        # ── Pre-check: 目标是否过于模糊？ ──
-        if self._purpose:
-            goal = self._purpose.get_current()
-            if goal:
-                pre = self._pre_check(goal)
-                if pre == "escalate":
-                    print(f"\n[元认知] 目标「{goal.description[:40]}」过于模糊，建议澄清后重试。", flush=True)
-                    self._exit_reason = self.EXIT_ESCALATED
-                    cb.get("print_prompt", lambda: None)()
-                    return
-                elif pre == "clarify":
-                    print(f"\n[元认知] 注意：目标「{goal.description[:40]}」可能不够明确，执行中会留意。", flush=True)
-
-                # 首次进入时重建上下文 + 替换消息内容
-                if goal.parent_id:
-                    siblings = self._purpose.get_sub_goals(goal.parent_id)
-                    if siblings:
-                        current_context = self._build_intent_context_for_goal(goal, siblings)
-                        # 关键：替换原始消息为子目标描述，避免 LLM 看到完整原始指令后一次性执行
-                        current_msg = type(msg)(
-                            content=f"[系统] 子目标 {next((i+1 for i,s in enumerate(siblings) if s.id==goal.id), '')}/{len(siblings)}: {goal.description}",
-                            user_id=msg.user_id,
-                            session_id=msg.session_id,
-                            source="system",
-                        )
-
-                # 注入历史 lesson
-                if not resume_nudge:  # resume 时不重复注入
-                    lesson_text = self._inject_relevant_lessons(goal.description)
-                    if lesson_text:
-                        if current_context:
-                            current_context = lesson_text + "\n" + current_context
-                        else:
-                            current_context = lesson_text
-
-        while True:
-            # ── 连续 3 步 EMPTY_RESPONSE → 模型服务可能出问题，立即 escalation ──
-            if len(self._observations) >= 3:
-                last3 = self._observations[-3:]
-                if all(SurpriseType.EMPTY_RESPONSE in obs.surprises for obs in last3):
-                    print(f"\n[元认知] 连续 3 步空响应，模型服务可能异常，暂停任务。", flush=True)
-                    self._exit_reason = self.EXIT_ERROR
-                    cb.get("print_prompt", lambda: None)()
-                    return
-
-            # ── 子目标重试上限 ──
-            if current_goal_retries >= max_retries_per_goal:
-                print(f"\n[元认知] 子目标「{self._current_goal_desc()[:40]}」重试 {current_goal_retries} 次仍未完成，暂停任务。", flush=True)
-                self._exit_reason = self.EXIT_STUCK
-                cb.get("print_prompt", lambda: None)()
-                return
-
-            agent_name = getattr(self._config, 'agent_name', '') or self._agent_id
-            print(f"\n{agent_name}: ", end="", flush=True)
-
-            t0 = time.time()
-            try:
-                cs = cb.get("get_consciousness_state", lambda: {})()
-                tc_before = agent.tool_call_buffer.last_index
-
-                agent.user_id = current_msg.user_id
-                agent.session_id = current_msg.session_id
-
-                # 注入 nudge 到 context
-                augmented_context = current_context
-                if self._observations and self._observations[-1].surprises:
-                    nudge = self._build_nudge_from_surprises(self._observations[-1])
-                    if nudge:
-                        if augmented_context:
-                            augmented_context = nudge + "\n" + augmented_context
-                        else:
-                            augmented_context = nudge
-
-                assembled = build_context(
-                    agent,
-                    current_msg.content,
-                    consciousness_state=cs,
-                    intent_context=augmented_context,
-                    assemble=cb.get("assemble_context", True),
-                    images=getattr(current_msg, "images", None),
-                )
-
-                # ── Agent 执行 ──
-                chunks = []
-                cancel_fn = cb.get("cancel_check", lambda: False)
-                for chunk in agent.stream(messages=assembled, cancel_check=cancel_fn):
-                    chunks.append(chunk)
-                content = "".join(chunks)
-                elapsed = time.time() - t0
-                tc_count = agent.tool_call_buffer.last_index - tc_before
-
-                # 能耗
-                if self._drive and elapsed > 1.0:
-                    self._drive.consume_energy(0.05)
-
-                # 取消检测
-                if cancel_fn():
-                    logger.info("[PACERunner] 取消请求")
-                    # 保存检查点以便恢复
-                    store_ckpt = cb.get("_store_checkpoint")
-                    if store_ckpt:
-                        goal_id = self._current_goal_id()
-                        ckpt = self.save_checkpoint(goal_id, step_index)
-                        store_ckpt(ckpt)
-                    print("\n[取消] 已中断", flush=True)
-                    self._exit_reason = self.EXIT_STUCK
-                    cb.get("print_prompt", lambda: None)()
-                    return
-
-                # ── 规则检测 ──
-                progress_data = parse_progress_tag(content)
-                display_content = remove_progress_tag(content)
-
-                # 提取工具调用名称
-                tool_names = self._extract_tool_names(agent.tool_call_buffer, tc_before, tc_count)
-
-                obs = StepObservation(
-                    step_index=step_index,
-                    goal_description=self._current_goal_desc(),
-                    llm_output=display_content,
-                    tool_calls=tool_names,
-                    tool_call_count=tc_count,
-                    elapsed_seconds=elapsed,
-                    has_progress_tag=progress_data is not None,
-                    progress_status=progress_data.get("status") if progress_data else None,
-                    raw_content=content,
-                )
-                obs = detect_surprises(obs, self._observations)
-
-                # ── PACE 意外检测 → 经验流 ──
-                if obs.surprises:
-                    surprise_names = [s.value for s in obs.surprises]
-                    self._log_exp(
-                        f"PACE 意外 step={step_index}: {', '.join(surprise_names)} "
-                        f"「{self._current_goal_desc()[:80]}」",
-                        importance=0.5,
-                    )
-
-                # ── Step Check ──
-                check = self._step_check(obs, step_index)
-                self._observations.append(obs)
-
-                # ── 能力校准埋点 ──
-                if tool_names:
-                    domain = CapabilityTracker.classify_domain(tool_names)
-                    result = (
-                        "failed" if obs.surprises
-                        else ("partial" if tc_count > 5 else "success")
-                    )
-                    self._capability_tracker.record(
-                        domain=domain,
-                        result=result,
-                        surprises=[s.value for s in obs.surprises],
-                        elapsed=elapsed,
-                        retries=current_goal_retries,
-                    )
-
-                # ── 可观测性埋点 ──
-                if self._metrics:
-                    if check.suggestion == MetaSuggestion.ESCALATE:
-                        self._metrics.llm_checks_performed += 1
-                    elif check.suggestion != MetaSuggestion.CONTINUE:
-                        # LLM step_check 参与了判定
-                        if not (
-                            SurpriseType.TOOL_STORM in obs.surprises
-                            or SurpriseType.EMPTY_RESPONSE in obs.surprises
-                            or (SurpriseType.GAVE_UP in obs.surprises
-                                and sum(1 for o in self._observations[-5:]
-                                        if SurpriseType.GAVE_UP in o.surprises) >= 2)
-                        ):
-                            self._metrics.llm_checks_performed += 1
-                    self._metrics.record_step(
-                        surprises=[s.value for s in obs.surprises],
-                        suggestion=check.suggestion.value if check else "CONTINUE",
-                        tool_call_count=tc_count,
-                        elapsed=elapsed,
-                    )
-
-                # ── 展示输出 ──
-                self._print_output(display_content, elapsed, tc_count)
-
-                # ── [Layer 3] InnerVoice: 步骤结束后自我觉察 ──
-                self._invoke_inner_voice_task_step(
-                    obs, step_index, tool_names,
-                    progress_data, elapsed, tc_count,
-                )
-
-                # InnerVoice 检测到等待信号 → 阻塞当前子目标并推进
-                if self._pending_block_advance:
-                    self._pending_block_advance = False
-                    next_goal = self._purpose.get_current()
-                    if next_goal:
-                        siblings = None
-                        if next_goal.parent_id:
-                            siblings = self._purpose.get_sub_goals(next_goal.parent_id)
-                        if siblings and all(s.is_completed() for s in siblings):
-                            print(f"\n[元认知] 全部 {len(siblings)} 个子目标已完成。", flush=True)
-                            cb.get("print_prompt", lambda: None)()
-                            return
-                        current_context = self._build_intent_context_for_goal(next_goal, siblings)
-                        current_msg = type(msg)(
-                            content=f"[系统] 子目标：{next_goal.description}",
-                            user_id=msg.user_id,
-                            session_id=msg.session_id,
-                            source="system",
-                        )
-                        self._print_sub_goal_progress(next_goal)
-                        current_goal_retries = 0
-                        self._perspective_tried = False
-                        step_index += 1
-                        continue
-                    # 无法推进 → 没有更多可执行子目标，退出等待用户
-                    self._exit_reason = self.EXIT_WAITING_USER
-                    cb.get("print_prompt", lambda: None)()
-                    return
-
-                # ── [Layer 2] Project Mental Model: 记录操作 ──
-                self._record_operation(
-                    description=obs.goal_description,
-                    files_changed=tool_names,
-                    step_index=step_index,
-                    outcome="成功" if not obs.surprises else "有问题",
-                    decision_note=display_content[:200],
-                )
-
-                # 意识交互
-                on_interaction = cb.get("on_user_interaction")
-                if on_interaction:
-                    on_interaction(current_msg.content, display_content)
-
-                # ── 处理进度（复用 PurposeEngine 逻辑） ──
-                self._handle_progress(progress_data, content)
-
-            except Exception as step_err:
-                import traceback
-                tb = traceback.format_exc()
-                logger.warning("[PACERunner] step %d 执行异常: %s\n%s", step_index, step_err, tb)
-
-                elapsed = time.time() - t0
-                # 记录错误到 cognitive_log
-                if self._purpose:
-                    goal = self._purpose.get_current()
-                    if goal:
-                        goal.append_log(
-                            entry_type="pitfall",
-                            content=f"子目标「{goal.description[:30]}」执行异常: {str(step_err)[:200]}",
-                            sub_goal_id=goal.id,
-                        )
-
-                # 构造 EMPTY_RESPONSE observation，触发重试
-                obs = StepObservation(
-                    step_index=step_index,
-                    goal_description=self._current_goal_desc(),
-                    llm_output="",
-                    tool_calls=[],
-                    tool_call_count=0,
-                    elapsed_seconds=elapsed,
-                    has_progress_tag=False,
-                    progress_status=None,
-                    raw_content=f"[ERROR] {str(step_err)[:500]}",
-                )
-                obs.surprises = [SurpriseType.EMPTY_RESPONSE]
-                self._observations.append(obs)
-                current_goal_retries += 1
-
-                # 连续 3 步空响应 → escalation
-                if len(self._observations) >= 3:
-                    last3 = self._observations[-3:]
-                    if all(SurpriseType.EMPTY_RESPONSE in o.surprises for o in last3):
-                        print(f"\n[元认知] 连续 3 步异常/空响应，模型服务可能异常，暂停任务。", flush=True)
-                        self._exit_reason = self.EXIT_ERROR
-                        cb.get("print_prompt", lambda: None)()
-                        return
-
-                # 否则继续循环重试
-                step_index += 1
-                continue
-
-            # ── 根据 check 结果决定下一步 ──
-            if check.suggestion == MetaSuggestion.ESCALATE:
-                if self._metrics:
-                    self._metrics.escalations += 1
-                # 如果有 on_confirm 回调，保存检查点并请求用户确认
-                on_confirm = cb.get("on_confirm")
-                if on_confirm and check.nudge:
-                    goal_id = self._current_goal_id()
-                    checkpoint = self.save_checkpoint(goal_id, step_index)
-                    confirm_options = self._build_confirm_options(check)
-                    print(f"\n[元认知] {check.reasoning}", flush=True)
-                    on_confirm(checkpoint, check.nudge, confirm_options)
-                    self._skip_post_review = True
-                    self._exit_reason = self.EXIT_ESCALATED
-                    return
-                # 没有 on_confirm → 直接退出
-                print(f"\n[元認知] {check.reasoning}", flush=True)
-                print("[元认知] 建议暂停任务，请求用户介入。", flush=True)
-                self._exit_reason = self.EXIT_ESCALATED
-                cb.get("print_prompt", lambda: None)()
-                return
-
-            # REPORT_PARTIAL / CLARIFY：不立即退出，尝试自动完成并推进
-            # 如果 Agent 声称完成了（有输出、无严重异常），信任并继续
-            if check.suggestion in (MetaSuggestion.REPORT_PARTIAL, MetaSuggestion.CLARIFY):
-                if self._try_advance_to_next(progress_data, obs, check):
-                    self._update_goal_progress("completed")
-                    logger.info("[PACERunner] %s → 自动完成子目标并尝试推进", check.suggestion.value)
-                    step_index += 1
-                    current_goal_retries = 0  # 推进到新子目标，重置重试计数
-                    self._perspective_tried = False
-                    next_goal = self._purpose.get_current()
-                    if next_goal:
-                        siblings = None
-                        if next_goal.parent_id:
-                            siblings = self._purpose.get_sub_goals(next_goal.parent_id)
-                        if siblings and all(s.is_completed() for s in siblings):
-                            logger.info("[PACERunner] 所有子目标已完成，任务结束")
-                            print(f"\n[元认知] 全部 {len(siblings)} 个子目标已完成。", flush=True)
-                            cb.get("print_prompt", lambda: None)()
-                            return
-                        current_context = self._build_intent_context_for_goal(next_goal, siblings)
-                        current_msg = type(msg)(
-                            content=f"[系统] 子目标：{next_goal.description}",
-                            user_id=msg.user_id,
-                            session_id=msg.session_id,
-                            source="system",
-                        )
-                        self._print_sub_goal_progress(next_goal)
-                        continue
-                # 无法推进，退出
-                print(f"\n[元认知] {check.reasoning}", flush=True)
-                print("[元认知] 无法继续推进，等待用户反馈。", flush=True)
-                self._exit_reason = self.EXIT_STUCK
-                cb.get("print_prompt", lambda: None)()
-                return
-
-            # RETRY_DIFFERENT / SIMPLIFY: 不退出，不推进子目标，重试当前步骤
-            if check.suggestion in (MetaSuggestion.RETRY_DIFFERENT, MetaSuggestion.SIMPLIFY):
-                iv_retry = self._check_iv_retry_signal()
-
-                # 视角切换突破条件：
-                # 1. InnerVoice 检测到 "方向不对" → 立即触发
-                # 2. 已重试 ≥ 1 次 → 保底触发
-                # 3. 本子目标尚未触发过视角切换
-                should_breakthrough = (
-                    (iv_retry or current_goal_retries >= 1)
-                    and not self._perspective_tried
-                )
-
-                if should_breakthrough:
-                    self._log_exp(
-                        f"PACE 视角切换: {self._current_goal_desc()[:100]} "
-                        f"(iv_retry={iv_retry}, retries={current_goal_retries})",
-                        importance=0.6,
-                    )
-                    goal_desc = self._current_goal_desc()
-                    direction = self._trigger_perspective_breakthrough(goal_desc)
-                    self._perspective_tried = True
-
-                    if direction:
-                        # 清空 observations + 注入方向感
-                        self._observations = []
-                        if current_context:
-                            current_context = direction + "\n\n" + current_context
-                        else:
-                            current_context = direction
-                        current_goal_retries = 0
-                        logger.info(
-                            "[PACERunner] 视角切换 → 清空上下文，重新执行 (iv_retry=%s, retries=%d)",
-                            iv_retry, current_goal_retries,
-                        )
-                        step_index += 1
-                        continue
-                    # 方向感生成失败 → 走正常重试
-
-                # 价值重估：重试 3 次时评估是否还值得继续
-                if current_goal_retries == 3:
-                    goal_desc = self._current_goal_desc()
-                    if not self._value_reassess(goal_desc, current_goal_retries):
-                        # 跳过当前子目标
-                        current_goal_id = self._current_goal_id()
-                        if current_goal_id:
-                            from ..purpose import task_executor
-                            task_executor.apply_skip(self._purpose, current_goal_id)
-                            current_goal_retries = 0
-                            self._perspective_tried = False
-                            # 推进到下一个
-                            next_goal = self._purpose.get_current()
-                            if next_goal and next_goal.parent_id:
-                                siblings = self._purpose.get_sub_goals(next_goal.parent_id)
-                                if siblings and all(s.is_completed() for s in siblings):
-                                    print(f"\n[元认知] 全部 {len(siblings)} 个子目标已完成。", flush=True)
-                                    cb.get("print_prompt", lambda: None)()
-                                    return
-                                current_context = self._build_intent_context_for_goal(next_goal, siblings)
-                                current_msg = type(msg)(
-                                    content=f"[系统] 子目标：{next_goal.description}",
-                                    user_id=msg.user_id,
-                                    session_id=msg.session_id,
-                                    source="system",
-                                )
-                                self._print_sub_goal_progress(next_goal)
-                            else:
-                                # 没有下一个子目标，标记当前目标完成
-                                self._exit_reason = self.EXIT_COMPLETED
-                                cb.get("print_prompt", lambda: None)()
-                                return
-                        step_index += 1
-                        continue
-
-                # InnerVoice escalate: 重试 ≥ 2 次 + IV说"做不了" → 升级
-                if current_goal_retries >= 2 and self._check_iv_escalate_signal():
-                    self._log_exp(
-                        f"PACE 升级: {self._current_goal_desc()[:100]} "
-                        f"(retries={current_goal_retries})",
-                        importance=0.6,
-                    )
-                    print(f"\n[元认知] InnerVoice 判断当前子目标无法完成，请求用户介入。", flush=True)
-                    self._exit_reason = self.EXIT_ESCALATED
-                    cb.get("print_prompt", lambda: None)()
-                    return
-
-                current_goal_retries += 1
-                logger.info("[PACERunner] %s: %s (retry %d/%d)", check.suggestion.value, check.reasoning, current_goal_retries, max_retries_per_goal)
-                step_index += 1
-                continue
-
-            # 判断是否继续推进
-            if not self._maybe_auto_advance(progress_data, obs, check):
-                # 如果 Agent 在等待用户，_maybe_auto_advance 已经设置了 _exit_reason
-                # 否则保持 completed（正常完成/无后续子目标）
-                if self._exit_reason == self.EXIT_COMPLETED:
-                    # 兜底检查：Agent 是否隐含在等待用户
-                    if self._detect_refusal_or_waiting(display_content):
-                        self._exit_reason = self.EXIT_WAITING_USER
-                if self._exit_reason == self.EXIT_WAITING_USER and self._metrics:
-                    self._metrics.waiting_user_exits += 1
-                logger.info("[PACERunner] 对话完成 (exit=%s)", self._exit_reason)
-                self._record_step_output(display_content)
-                cb.get("print_prompt", lambda: None)()
-                return
-
-            # 推进到下一个子目标
-            if self._metrics:
-                self._metrics.auto_advances += 1
-                self._metrics.sub_goals_completed += 1
-            step_index += 1
-            current_goal_retries = 0  # 推进到新子目标，重置重试计数
-            self._perspective_tried = False
-            next_goal = self._purpose.get_current()
-            if next_goal:
-                # 获取同级子目标
-                siblings = None
-                if next_goal.parent_id:
-                    siblings = self._purpose.get_sub_goals(next_goal.parent_id)
-                # 检查是否所有子目标已完成或暂停（防止死循环）
-                if siblings:
-                    active = [s for s in siblings if not s.is_completed() and not s.is_paused()]
-                    if not active:
-                        paused = [s for s in siblings if s.is_paused()]
-                        if paused:
-                            # 恢复 PAUSED 子目标，继续推进
-                            count = self._purpose.reactivate_paused_sub_goals(next_goal.parent_id)
-                            logger.info("[PACERunner] 恢复 %d 个暂停的子目标", count)
-                            next_goal = paused[0]
-                            self._purpose.set_current(next_goal.id)
-                        else:
-                            logger.info("[PACERunner] 所有子目标已完成，任务结束")
-                            print(f"\n[元认知] 全部 {len(siblings)} 个子目标已完成。", flush=True)
-                            cb.get("print_prompt", lambda: None)()
-                            return
-                # 无同级子目标（独立目标或无更多待推进子目标）→ 标记完成并退出
-                if not siblings:
-                    logger.info("[PACERunner] 非分解型目标，标记完成并退出")
-                    self._update_goal_progress("completed")
-                    next_goal.complete()
-                    if self._purpose:
-                        self._purpose.save()
-                    cb.get("print_prompt", lambda: None)()
-                    return
-                current_context = self._build_intent_context_for_goal(next_goal, siblings)
-                current_msg = type(msg)(
-                    content=f"[系统] 子目标：{next_goal.description}",
-                    user_id=msg.user_id,
-                    session_id=msg.session_id,
-                    source="system",
-                )
-                self._print_sub_goal_progress(next_goal)
+        """[deprecated] 已委托给 CognitiveLoop。保留用于向后兼容。"""
+        from .cognitive_loop import CognitiveLoop
+        loop = CognitiveLoop(self)
+        self._exit_reason = loop.run(
+            msg, intent_context, cb,
+            start_step=start_step, resume_nudge=resume_nudge,
+        )
 
     # ── Pre-check ────────────────────────────────────────────────────
 
@@ -877,9 +381,35 @@ class PACERunner:
                         content=f"能力认知: {item}",
                     )
 
-            # 持久化
-            agent_id = getattr(self._config, 'agent_id', '') if self._config else ''
-            persist_lesson(lesson, agent_id)
+            # 存储到 ExperienceMemory（替代旧 Lesson JSON 文件）
+            if self._experience_memory:
+                try:
+                    from ..memory.experience import Experience
+                    outcome_type = "mixed"
+                    if lesson.what_worked and not lesson.what_failed:
+                        outcome_type = "good"
+                    elif lesson.what_failed and not lesson.what_worked:
+                        outcome_type = "bad"
+                    exp = Experience(
+                        context=lesson.task_description,
+                        decision="",
+                        outcome="\n".join(
+                            [f"[有效] {w}" for w in lesson.what_worked]
+                            + [f"[失败] {f}" for f in lesson.what_failed]
+                        ),
+                        lesson="\n".join(
+                            [f"有效: {w}" for w in lesson.what_worked]
+                            + [f"避免: {f}" for f in lesson.what_failed]
+                        ),
+                        outcome_type=outcome_type,
+                        project_id=goal_id,
+                        tags=list(lesson.capability_notes),
+                    )
+                    self._experience_memory.store_experience(exp)
+                    logger.info("[PACERunner] 经验已存储到 ExperienceMemory: steps=%d time=%.1fs",
+                                lesson.total_steps, lesson.total_time)
+                except Exception as e:
+                    logger.warning("[PACERunner] 经验存储失败: %s", e)
 
             logger.info("[PACERunner] post_review 完成: steps=%d time=%.1fs",
                         lesson.total_steps, lesson.total_time)
@@ -1249,23 +779,6 @@ class PACERunner:
     def _agent_id(self) -> str:
         return getattr(self._config, 'agent_id', '') if self._config else ''
 
-    def _exp_stream(self):
-        """获取 ExperienceStream（用于记录 PACE 执行中的关键决策）。"""
-        try:
-            agent = self._agent_provider._get_agent()
-            return getattr(agent, "exp_stream", None)
-        except Exception:
-            return None
-
-    def _log_exp(self, content: str, importance: float = 0.5) -> None:
-        """写 PACE 关键事件到经验流。"""
-        es = self._exp_stream()
-        if es:
-            try:
-                es.log(type="internal_reflection", content=content, importance=importance)
-            except Exception as e:
-                logger.debug("[ExpStream] PACE write failed: %s", e)
-
     def _checkpoint_path(self, goal_id: str) -> "Path":
         return self._checkpoint_dir() / f"{self._agent_id()}_{goal_id}.json"
 
@@ -1336,65 +849,6 @@ class PACERunner:
             obs.surprises = [SurpriseType(s) for s in item.get("surprises", [])]
             restored.append(obs)
         return restored
-
-    def _inject_relevant_lessons(self, goal_description: str) -> str:
-        """从历史 lesson 中找到与当前 Goal 相关的，生成注入文本。
-
-        不调用 LLM，纯文件 I/O + token set 相似度匹配。
-
-        Returns:
-            注入文本（空字符串表示没有相关 lesson）
-        """
-        import json
-        from pathlib import Path
-
-        lessons_dir = (
-            Path.home() / ".xiaomei-brain"
-            / self._agent_id() / "metacognition" / "lessons"
-        )
-        if not lessons_dir.exists():
-            return ""
-
-        # 收集所有 lesson，计算相似度
-        candidates = []
-        for f in lessons_dir.glob("*.json"):
-            try:
-                data = json.loads(f.read_text())
-                lesson_text = (
-                    data.get("goal_description", "")
-                    + " " + " ".join(data.get("tags", []))
-                )
-                sim = content_similarity(goal_description, lesson_text)
-                if sim > 0.2:  # 低门槛，相关即可
-                    candidates.append((sim, data))
-            except Exception:
-                continue
-
-        if not candidates:
-            return ""
-
-        candidates.sort(key=lambda x: x[0], reverse=True)
-        top = candidates[:3]
-
-        lines = [
-            "\n[历史教训] 以下是以往类似任务的复盘记录，请特别注意避免重复这些错误：",
-        ]
-        for i, (sim, data) in enumerate(top):
-            rating = data.get("rating", "?")
-            lesson = data.get("lesson", "")
-            desc = data.get("goal_description", "")[:60]
-            if lesson:
-                lines.append(
-                    f"\n  经验 {i+1}（相关度: {sim:.2f}, 评级: {rating}）\n"
-                    f"    任务: {desc}\n"
-                    f"    教训: {lesson}"
-                )
-
-        logger.info(
-            "[PACERunner] 注入 %d 条历史 lesson (top sim=%.2f)",
-            len(top), top[0][0] if top else 0,
-        )
-        return "\n".join(lines)
 
     # ── [Layer 3] InnerVoice helpers ─────────────────────────────────
 

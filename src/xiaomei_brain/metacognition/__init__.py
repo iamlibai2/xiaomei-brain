@@ -21,7 +21,7 @@ from .types import (
     PACECheckpoint,
 )
 from .rules import detect_surprises, parse_progress_tag, remove_progress_tag
-from .reviewer import LLMBudget, llm_step_check, llm_post_review, persist_lesson
+from .reviewer import LLMBudget, llm_step_check, llm_post_review
 from .capability import CapabilityTracker
 from .metrics import PACEMetrics, persist_metrics, generate_report
 
@@ -44,5 +44,4 @@ __all__ = [
     "LLMBudget",
     "llm_step_check",
     "llm_post_review",
-    "persist_lesson",
 ]
