@@ -125,6 +125,9 @@ class PACERunner:
         if self._goal_run_storage:
             self._run_id = self._goal_run_storage.create_run(goal_id, goal_desc, agent_id)
 
+        # 推断当前任务所属的项目，设置 PMM 上下文
+        self._infer_project_id()
+
         try:
             from .cognitive_loop import CognitiveLoop
             loop = CognitiveLoop(self)
@@ -452,6 +455,34 @@ class PACERunner:
 
             logger.info("[PACERunner] post_review 完成: steps=%d time=%.1fs",
                         lesson.total_steps, lesson.total_time)
+
+            # ── PMM force_update: 立即将复盘发现融入认知地图 ──
+            if self._project_mental_model:
+                try:
+                    pm_observations = []
+                    for item in lesson.what_worked:
+                        pm_observations.append({
+                            "event_type": "discovery", "content": f"有效: {item}",
+                            "goal_context": goal_desc, "time": time.time(),
+                        })
+                    for item in lesson.what_failed:
+                        pm_observations.append({
+                            "event_type": "pitfall", "content": f"问题: {item}",
+                            "goal_context": goal_desc, "time": time.time(),
+                        })
+                    for item in lesson.capability_notes:
+                        pm_observations.append({
+                            "event_type": "discovery", "content": f"能力: {item}",
+                            "goal_context": goal_desc, "time": time.time(),
+                        })
+                    if pm_observations:
+                        agent = self._agent_provider._get_agent()
+                        self._project_mental_model.force_update(
+                            agent.llm, pm_observations,
+                        )
+                except Exception as e:
+                    logger.debug("[PACERunner] PMM force_update 跳过: %s", e)
+
         except Exception as e:
             logger.warning("[PACERunner] post_review 失败: %s", e)
 
@@ -1106,25 +1137,69 @@ class PACERunner:
 
     # ── [Layer 2] Project Mental Model helpers ────────────────────────
 
-    def _record_operation(
-        self, description: str, files_changed: list[str],
-        step_index: int, outcome: str, decision_note: str,
-    ) -> None:
-        """记录操作到 Project Mental Model。"""
+    def _infer_project_id(self) -> None:
+        """根据当前根目标自动推断 project_id 并设置 PMM。"""
+        if not self._project_mental_model:
+            return
+        root_goal = self._purpose.get_current() if self._purpose else None
+        if not root_goal:
+            return
+
+        desc = root_goal.description.strip()
+        if not desc:
+            return
+
+        import hashlib
+        h = hashlib.md5(desc.encode()).hexdigest()[:8]
+        words = desc.replace("！", "").replace("，", " ").replace("。", " ").split()
+        prefix = "-".join(w for w in words[:3] if len(w) <= 10)
+        slug = f"{prefix[:31]}-{h}" if prefix else h
+        self._project_mental_model.set_project(slug)
+
+    def _maybe_update_pmm(self) -> None:
+        """如果 PMM pending 足够，触发 LLM 更新。"""
         if not self._project_mental_model:
             return
         try:
-            self._project_mental_model.record_operation(
-                description=description,
-                files_changed=files_changed,
-                operation_type="modify",
-                goal_id=self._current_goal_id(),
-                step_index=step_index,
-                outcome=outcome,
-                decision_note=decision_note,
+            agent = self._agent_provider._get_agent()
+            if agent and agent.llm:
+                self._project_mental_model.maybe_update(agent.llm)
+        except Exception as e:
+            logger.debug("[PACERunner] PMM 更新跳过: %s", e)
+
+    def _extract_file_paths(self, buffer, tc_before: int, tc_count: int) -> list[str]:
+        """从 tool_call_buffer 提取实际文件路径（而非工具函数名）。
+
+        检查已知的文件参数名：file_path, path, target, filename, dest, output。
+        """
+        paths = []
+        file_params = {"file_path", "path", "target", "filename", "dest", "output"}
+        for i in range(tc_before + 1, tc_before + tc_count + 1):
+            rec = buffer.get(i)
+            if rec and hasattr(rec, "arguments"):
+                args = rec.arguments or {}
+                if isinstance(args, dict):
+                    for key, val in args.items():
+                        if key in file_params and isinstance(val, str):
+                            paths.append(val)
+        return paths
+
+    def _record_pmm_observation(
+        self, event_type: str, content: str,
+        step_index: int = 0, files: list[str] | None = None,
+    ) -> None:
+        """记录有意义的观察到 Project Mental Model。"""
+        if not self._project_mental_model:
+            return
+        try:
+            self._project_mental_model.record(
+                event_type=event_type,
+                content=content,
+                goal_context=self._current_goal_desc(),
+                files=files or [],
             )
         except Exception as e:
-            logger.debug("[PACERunner] 操作记录失败: %s", e)
+            logger.debug("[PACERunner] PMM 记录失败: %s", e)
 
     def _reset_run_state(self) -> None:
         """清理单次运行的临时状态"""

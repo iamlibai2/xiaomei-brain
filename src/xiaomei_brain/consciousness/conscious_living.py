@@ -158,16 +158,19 @@ class ConsciousLiving(Living):
         ltm = getattr(agent_instance, 'longterm_memory', None)
         self._experience_memory = ExperienceMemory(ltm) if ltm else None
 
-        # ── [Layer 2] Project Mental Model: 项目地图 ──
-        from ..metacognition.project_mental_model import ProjectMentalModel
-        self._project_mental_model = ProjectMentalModel(dag=None)
-
-        # ── db_path（供 ExperienceStream / TaskQueueStorage / GoalRunStorage 等共用）──
+        # ── db_path（供 ExperienceStream / TaskQueueStorage / GoalRunStorage / PMM 等共用）──
         db_path = getattr(self.agent, "db_path", None)
         if db_path is None:
             db_path = os.path.expanduser(
                 f"~/.xiaomei-brain/{self._agent_id}/memory/brain.db"
             )
+
+        # ── [Layer 2] Project Mental Model: 项目认知地图 ──
+        from ..metacognition.project_mental_model import (
+            ProjectMentalModel, ProjectMentalModelStorage,
+        )
+        _pmm_storage = ProjectMentalModelStorage(str(db_path))
+        self._project_mental_model = ProjectMentalModel(_pmm_storage, agent_id=self._agent_id)
 
         # ── GoalRunStorage（统一任务执行持久化）──
         from ..metacognition import GoalRunStorage

@@ -1,348 +1,411 @@
-"""Project Mental Model — 项目地图。
+"""Project Mental Model — 项目认知地图。
 
 不是代码索引，不是 RAG。是她脑子里的一张项目地图——活的、会更新、会自己长。
 
-基于操作记录分层压缩：
-- 每次 ReAct 循环结束 → 记录操作（改了哪些文件、做了什么、结果怎样）
-- 积累 8 条 → 触发 Leaf 摘要（"这个模块目前的状态"）
-- 4 个 Leaf → Mid 摘要（"这个子系统的架构"）
-- 继续升级 → 高层摘要（"整个项目的概览"）
-
-存储：复用 DAG 摘要机制（memory/dag.py），通过操作摘要路径写入。
+五维认知：结构、约定、历史、当前状态、质量标准。
+基于 LLM diff-merge 更新——有意义的观察发生时立即修订对应维度。
+持久化到 brain.db project_map 表，按 (agent_id, project_id) 隔离。
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
+
+from ..base.sqlite_store import SQLiteStore
 
 logger = logging.getLogger(__name__)
 
+SCHEMA_VERSION = 1
+PENDING_THRESHOLD = 3  # 积累 N 条有意义的观察 → 触发 LLM 更新
 
-# ── OperationRecord ────────────────────────────────────────────────────
+
+# ── ProjectMapData ────────────────────────────────────────────────────
 
 @dataclass
-class OperationRecord:
-    """一次操作的记录 — 最细粒度的项目活动单元。"""
-
-    timestamp: float = field(default_factory=time.time)
-    description: str = ""              # "修改了 auth.py 的登录逻辑"
-    files_changed: list[str] = field(default_factory=list)
-    operation_type: str = "modify"     # create / modify / delete / refactor / fix / config
-    goal_id: str = ""                  # 关联的目标 ID
-    step_index: int = 0                # 在目标中的第几步
-    outcome: str = ""                  # "成功" / "部分成功" / "失败"
-    decision_note: str = ""            # 关键决策记录（为什么这样做）
-
-    # 摘要状态
-    summarized: bool = False           # 是否已被纳入过摘要
+class ProjectMapData:
+    """五维认知地图。"""
+    structure: str = ""         # 模块/层次/依赖关系
+    conventions: str = ""       # 命名模式、代码风格、测试习惯
+    history: str = ""           # 设计决策、踩过的坑
+    current_state: str = ""     # 当前进度、阻塞点、下一步
+    quality_standards: str = "" # 质量标准
+    updated_at: float = 0.0
+    version: int = 0
 
     def to_dict(self) -> dict:
         return {
-            "timestamp": self.timestamp,
-            "description": self.description,
-            "files_changed": self.files_changed,
-            "operation_type": self.operation_type,
-            "goal_id": self.goal_id,
-            "step_index": self.step_index,
-            "outcome": self.outcome,
-            "decision_note": self.decision_note,
-            "summarized": self.summarized,
+            "structure": self.structure,
+            "conventions": self.conventions,
+            "history": self.history,
+            "current_state": self.current_state,
+            "quality_standards": self.quality_standards,
+            "updated_at": self.updated_at,
+            "version": self.version,
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "OperationRecord":
+    def from_dict(cls, data: dict) -> "ProjectMapData":
         return cls(
-            timestamp=data.get("timestamp", time.time()),
-            description=data.get("description", ""),
-            files_changed=data.get("files_changed", []),
-            operation_type=data.get("operation_type", "modify"),
-            goal_id=data.get("goal_id", ""),
-            step_index=data.get("step_index", 0),
-            outcome=data.get("outcome", ""),
-            decision_note=data.get("decision_note", ""),
-            summarized=data.get("summarized", False),
+            structure=data.get("structure", ""),
+            conventions=data.get("conventions", ""),
+            history=data.get("history", ""),
+            current_state=data.get("current_state", ""),
+            quality_standards=data.get("quality_standards", ""),
+            updated_at=data.get("updated_at", 0.0),
+            version=data.get("version", 0),
         )
 
+    def is_empty(self) -> bool:
+        return not any([
+            self.structure, self.conventions, self.history,
+            self.current_state, self.quality_standards,
+        ])
 
-# ── ProjectMentalModel ─────────────────────────────────────────────────
 
-# 摘要触发阈值
-LEAF_BATCH_SIZE = 8     # 8 条未摘要操作 → Leaf 摘要
-MID_BATCH_SIZE = 4      # 4 个未升级 Leaf → Mid 摘要
-HIGH_BATCH_SIZE = 4     # 4 个未升级 Mid → High 摘要
+# ── ProjectMentalModelStorage ─────────────────────────────────────────
 
-# 摘要级别
-SCOPE_MODULE = "module"     # Leaf：单个模块/目录
-SCOPE_SYSTEM = "system"     # Mid：子系统
-SCOPE_PROJECT = "project"   # High：整个项目
+class ProjectMentalModelStorage(SQLiteStore):
+    """brain.db project_map 表持久化。"""
 
+    def __init__(self, db_path: str) -> None:
+        super().__init__(db_path)
+        self._ensure_tables()
+
+    def _ensure_tables(self) -> None:
+        conn = self._get_conn()
+        version = self._get_schema_version("project_map")
+        if version >= SCHEMA_VERSION:
+            return
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS project_map (
+                agent_id          TEXT NOT NULL,
+                project_id        TEXT NOT NULL,
+                structure         TEXT NOT NULL DEFAULT '',
+                conventions       TEXT NOT NULL DEFAULT '',
+                history           TEXT NOT NULL DEFAULT '',
+                current_state     TEXT NOT NULL DEFAULT '',
+                quality_standards TEXT NOT NULL DEFAULT '',
+                updated_at        REAL NOT NULL DEFAULT 0.0,
+                version           INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (agent_id, project_id)
+            )
+        """)
+        conn.commit()
+        self._set_schema_version("project_map", SCHEMA_VERSION)
+        logger.info("[ProjectMentalModelStorage] 表已创建 (version=%d)", SCHEMA_VERSION)
+
+    def load(self, agent_id: str, project_id: str) -> ProjectMapData:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT * FROM project_map WHERE agent_id = ? AND project_id = ?",
+            (agent_id, project_id),
+        ).fetchone()
+        if row is None:
+            return ProjectMapData()
+        return ProjectMapData.from_dict(dict(row))
+
+    def save(self, agent_id: str, project_id: str, data: ProjectMapData) -> None:
+        data.updated_at = time.time()
+        data.version += 1
+        conn = self._get_conn()
+        conn.execute("""
+            INSERT OR REPLACE INTO project_map (
+                agent_id, project_id, structure, conventions, history,
+                current_state, quality_standards, updated_at, version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            agent_id, project_id,
+            data.structure, data.conventions, data.history,
+            data.current_state, data.quality_standards,
+            data.updated_at, data.version,
+        ))
+        conn.commit()
+        logger.info(
+            "[ProjectMentalModelStorage] 已保存: agent=%s project=%s v%d",
+            agent_id, project_id, data.version,
+        )
+
+    def list_projects(self, agent_id: str) -> list[dict]:
+        """列出该 agent 的所有已知项目（用于推断当前任务属于哪个项目）。"""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT project_id, structure, updated_at FROM project_map "
+            "WHERE agent_id = ? ORDER BY updated_at DESC",
+            (agent_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+# ── ProjectMentalModel ────────────────────────────────────────────────
 
 class ProjectMentalModel:
-    """项目心智模型 — 操作记录 + 分层摘要。
+    """项目心智模型 — 五维认知 + LLM diff-merge。
 
-    不直接做 I/O。由调用方（PACE Runner / conversation_driver）在适当的时候：
-    1. record_operation() — 记录每次操作
-    2. maybe_summarize() — 检查是否需要触发摘要
-    3. get_context() — 获取当前项目上下文文本，注入 system prompt
+    用法:
+        pmm = ProjectMentalModel(storage, agent_id="jiaojiao")
+        pmm.set_project("car-repair")  # 加载该项目的认知地图
+
+        # 每步有意义的观察
+        pmm.record(event_type="surprise", content="TOOL_LOOP ...")
+        pmm.record(event_type="block", content="文件权限不足")
+
+        # 触发更新
+        pmm.maybe_update(llm)  # pending >= 3 时调用 LLM
+
+        # 注入 system prompt
+        ctx = pmm.get_context()
     """
 
-    def __init__(self, dag: Any = None) -> None:
-        """
-        Args:
-            dag: DAG 摘要系统实例（memory/dag.py 的 DAGStore）
-                 如果提供，摘要通过 DAG 系统持久化。
-                 如果为 None，仅内存存储。
-        """
-        self._dag = dag
-        self._operations: list[OperationRecord] = []
-        self._leaf_summaries: list[dict] = []   # [{scope, content, file_paths, ...}]
-        self._mid_summaries: list[dict] = []
-        self._high_summaries: list[dict] = []
+    def __init__(self, storage: ProjectMentalModelStorage, agent_id: str = "") -> None:
+        self._storage = storage
+        self._agent_id = agent_id
+        self._project_id: str = ""
+        self._data: ProjectMapData = ProjectMapData()
+        self._pending: list[dict] = []
 
-    # ── 操作记录 ──────────────────────────────────────────────────
+    # ── 项目管理 ──────────────────────────────────────────────────
 
-    def record_operation(
+    def set_project(self, project_id: str) -> None:
+        """切换到指定项目，从 DB 加载认知地图。"""
+        if project_id == self._project_id:
+            return
+        self._project_id = project_id
+        self._data = self._storage.load(self._agent_id, project_id)
+        self._pending = []
+        if not self._data.is_empty():
+            logger.info(
+                "[ProjectMentalModel] 加载项目 %s v%d", project_id, self._data.version,
+            )
+        else:
+            logger.info("[ProjectMentalModel] 新项目 %s", project_id)
+
+    @property
+    def project_id(self) -> str:
+        return self._project_id
+
+    def list_known_projects(self) -> list[dict]:
+        """列出该 agent 的所有已知项目。"""
+        return self._storage.list_projects(self._agent_id)
+
+    # ── 观察记录 ──────────────────────────────────────────────────
+
+    def record(
         self,
-        description: str,
-        files_changed: list[str] | None = None,
-        operation_type: str = "modify",
-        goal_id: str = "",
-        step_index: int = 0,
-        outcome: str = "",
-        decision_note: str = "",
-    ) -> OperationRecord:
-        """记录一次操作。"""
-        op = OperationRecord(
-            description=description,
-            files_changed=files_changed or [],
-            operation_type=operation_type,
-            goal_id=goal_id,
-            step_index=step_index,
-            outcome=outcome,
-            decision_note=decision_note,
+        event_type: str = "",
+        content: str = "",
+        goal_context: str = "",
+        files: list[str] | None = None,
+    ) -> None:
+        """队列一条有意义的观察。常规 CONTINUE 步骤不需要调用。
+
+        Args:
+            event_type: surprise / block / completion / discovery / pitfall
+            content: 观察内容描述
+            goal_context: 当前目标上下文
+            files: 涉及的文件路径
+        """
+        if not self._project_id:
+            logger.debug("[ProjectMentalModel] project_id 未设置，跳过 record")
+            return
+        self._pending.append({
+            "event_type": event_type,
+            "content": content,
+            "goal_context": goal_context,
+            "files": files or [],
+            "time": time.time(),
+        })
+        logger.debug(
+            "[ProjectMentalModel] pending=%d event=%s: %s",
+            len(self._pending), event_type, content[:80],
         )
-        self._operations.append(op)
-        return op
 
-    # ── 摘要触发 ──────────────────────────────────────────────────
+    # ── LLM 更新 ──────────────────────────────────────────────────
 
-    def maybe_summarize(self, llm: Any = None) -> bool:
-        """检查是否需要触发摘要。如果需要且 llm 可用，执行摘要。
+    def maybe_update(self, llm: Any = None) -> bool:
+        """如果 pending >= 阈值，调用 LLM diff-merge 更新认知地图。
 
         Returns:
-            True 如果有摘要被触发
+            True 如果更新被执行
         """
-        # 统计未摘要操作
-        unsummarized = [op for op in self._operations if not op.summarized]
+        if len(self._pending) < PENDING_THRESHOLD or not llm:
+            return False
+        if not self._project_id:
+            return False
+        return self._do_update(llm)
 
-        if len(unsummarized) >= LEAF_BATCH_SIZE and llm:
-            self._summarize_leaf(llm, unsummarized[:LEAF_BATCH_SIZE])
-            return True
+    def force_update(self, llm: Any, observations: list[dict] | None = None) -> bool:
+        """立即调用 LLM 更新（如 post_review 之后），无视 pending 阈值。
 
-        # 检查是否需要升级 Leaf → Mid
-        unupgraded_leaves = [
-            s for s in self._leaf_summaries
-            if s.get("upgraded") != True  # noqa: E712
-        ]
-        if len(unupgraded_leaves) >= MID_BATCH_SIZE and llm:
-            self._summarize_mid(llm, unupgraded_leaves[:MID_BATCH_SIZE])
-            return True
+        Args:
+            llm: LLM 客户端
+            observations: 额外的观察（如 post_review findings），会被合并到 pending
+        """
+        if observations:
+            self._pending.extend(observations)
+        if not self._pending or not llm:
+            return False
+        if not self._project_id:
+            return False
+        return self._do_update(llm)
 
-        # 检查是否需要升级 Mid → High
-        unupgraded_mids = [
-            s for s in self._mid_summaries
-            if s.get("upgraded") != True  # noqa: E712
-        ]
-        if len(unupgraded_mids) >= HIGH_BATCH_SIZE and llm:
-            self._summarize_high(llm, unupgraded_mids[:HIGH_BATCH_SIZE])
-            return True
+    def _do_update(self, llm: Any) -> bool:
+        """执行 LLM diff-merge 更新。"""
+        new_data = self._call_diff_merge(llm)
+        if new_data is None:
+            logger.warning("[ProjectMentalModel] LLM 更新失败，保留现状")
+            return False
 
-        return False
+        self._storage.save(self._agent_id, self._project_id, new_data)
+        self._data = new_data
+        self._pending = []
+        logger.info(
+            "[ProjectMentalModel] 更新完成: project=%s v%d",
+            self._project_id, new_data.version,
+        )
+        return True
 
-    def _summarize_leaf(self, llm: Any, ops: list[OperationRecord]) -> None:
-        """生成 Leaf 摘要：某个模块目前的状态。"""
-        # 推断模块（从文件路径）
-        modules = self._infer_modules(ops)
-
-        summary_text = self._call_summary_llm(
-            llm,
-            "leaf",
-            ops=[op.description for op in ops],
-            files=list({f for op in ops for f in op.files_changed}),
-            scope=", ".join(modules) if modules else "项目",
+    def _call_diff_merge(self, llm: Any) -> ProjectMapData | None:
+        """调用 LLM 做 diff-merge。返回更新后的 ProjectMapData 或 None。"""
+        current = self._data
+        observations_text = "\n".join(
+            f"- [{obs['event_type']}] {obs['content'][:200]}"
+            for obs in self._pending[-10:]
         )
 
-        if summary_text:
-            self._leaf_summaries.append({
-                "scope": SCOPE_MODULE,
-                "modules": modules,
-                "content": summary_text,
-                "file_paths": list({f for op in ops for f in op.files_changed}),
-                "op_count": len(ops),
-                "upgraded": False,
-                "created_at": time.time(),
-            })
+        prompt = f"""你正在维护一个项目的认知地图。只修改与新观察相关的部分，其他部分保持不变。
 
-        # 标记操作已摘要
-        for op in ops:
-            op.summarized = True
+【当前地图】
+结构认知: {current.structure or '（空）'}
+约定认知: {current.conventions or '（空）'}
+历史认知: {current.history or '（空）'}
+当前状态: {current.current_state or '（空）'}
+质量标准: {current.quality_standards or '（空）'}
 
-    def _summarize_mid(self, llm: Any, leaves: list[dict]) -> None:
-        """将多个 Leaf 摘要升级为 Mid 摘要。"""
-        summary_text = self._call_summary_llm(
-            llm,
-            "mid",
-            ops=[s["content"] for s in leaves],
-            files=list({f for s in leaves for f in s.get("file_paths", [])}),
-            scope=", ".join(
-                {m for s in leaves for m in s.get("modules", [])}
-            ),
-        )
+【最近观察】（请据此更新地图）
+{observations_text}
 
-        if summary_text:
-            self._mid_summaries.append({
-                "scope": SCOPE_SYSTEM,
-                "content": summary_text,
-                "file_paths": list({f for s in leaves for f in s.get("file_paths", [])}),
-                "leaf_count": len(leaves),
-                "upgraded": False,
-                "created_at": time.time(),
-            })
+请用 JSON 格式回复完整的更新后地图：
+```json
+{{
+    "structure": "...",
+    "conventions": "...",
+    "history": "...",
+    "current_state": "...",
+    "quality_standards": "..."
+}}
+```
 
-        for s in leaves:
-            s["upgraded"] = True
-
-    def _summarize_high(self, llm: Any, mids: list[dict]) -> None:
-        """将多个 Mid 摘要升级为 High 摘要。"""
-        summary_text = self._call_summary_llm(
-            llm,
-            "high",
-            ops=[s["content"] for s in mids],
-            files=list({f for s in mids for f in s.get("file_paths", [])}),
-            scope="项目整体",
-        )
-
-        if summary_text:
-            self._high_summaries.append({
-                "scope": SCOPE_PROJECT,
-                "content": summary_text,
-                "mid_count": len(mids),
-                "upgraded": False,
-                "created_at": time.time(),
-            })
-
-        for s in mids:
-            s["upgraded"] = True
-
-    def _call_summary_llm(
-        self,
-        llm: Any,
-        level: str,
-        ops: list[str],
-        files: list[str],
-        scope: str,
-    ) -> str | None:
-        """调用 LLM 生成摘要。"""
-        level_labels = {
-            "leaf": "模块级别（Leaf）",
-            "mid": "子系统级别（Mid）",
-            "high": "项目级别（High）",
-        }
-        label = level_labels.get(level, level)
-
-        prompt = (
-            f"你正在维护一个项目的认知地图。以下是{label}的摘要素材。\n\n"
-            f"范围：{scope}\n"
-            f"涉及文件：{', '.join(files[:10])}\n\n"
-            f"操作记录：\n"
-            + "\n".join(f"- {op[:120]}" for op in ops[:8])
-            + "\n\n"
-            f"请用 2-4 句话总结这个{'模块' if level == 'leaf' else '层级'}的当前状态：\n"
-            f"1. 做了什么改动\n"
-            f"2. 当前的架构/结构\n"
-            f"3. 有什么需要注意的\n\n"
-            f"直接输出总结，不要编号。"
-        )
+规则：
+1. 每个字段最多 200 字，用中文
+2. 只修改与新观察相关的字段，未涉及的字段原样保留
+3. structure: 项目由哪几部分组成，它们之间的关系
+4. conventions: 命名/风格/习惯/测试方式
+5. history: 重要设计决策、踩过的坑、为什么这么做
+6. current_state: 做到哪了、卡在哪了、下一步做什么
+7. quality_standards: 这个项目"好"的标准是什么"""
 
         try:
             messages = [{"role": "user", "content": prompt}]
             response = llm.chat(messages)
-            if response and hasattr(response, "content"):
-                return (response.content or "").strip()[:500]
+            if not response or not hasattr(response, "content"):
+                return None
+            text = (response.content or "").strip()
+            return self._parse_response(text)
         except Exception as e:
-            logger.warning("LLM project summary failed: %s", e)
+            logger.warning("[ProjectMentalModel] LLM 调用失败: %s", e)
+            return None
 
-        return None
+    def _parse_response(self, text: str) -> ProjectMapData | None:
+        """从 LLM 响应中解析 JSON。"""
+        # 提取 JSON 块
+        if "```json" in text:
+            start = text.index("```json") + 7
+            end = text.index("```", start) if "```" in text[start:] else len(text)
+            text = text[start:end].strip()
+        elif "```" in text:
+            start = text.index("```") + 3
+            end = text.index("```", start) if "```" in text[start:] else len(text)
+            text = text[start:end].strip()
 
-    @staticmethod
-    def _infer_modules(ops: list[OperationRecord]) -> list[str]:
-        """从操作的文件路径推断模块名。"""
-        modules: set[str] = set()
-        for op in ops:
-            for f in op.files_changed:
-                parts = f.replace("src/", "").replace("/", ".").split(".")
-                if len(parts) >= 2:
-                    # 取前两级作为模块名，如 "agent.core"
-                    modules.add(".".join(parts[:2]))
-                elif parts:
-                    modules.add(parts[0])
-        return list(modules)[:5]
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            # 尝试修复：找第一个 { 和最后一个 }
+            try:
+                start = text.index("{")
+                end = text.rindex("}") + 1
+                data = json.loads(text[start:end])
+            except (ValueError, json.JSONDecodeError):
+                logger.warning("[ProjectMentalModel] JSON 解析失败: %s...", text[:100])
+                return None
+
+        current = self._data
+        return ProjectMapData(
+            structure=data.get("structure", current.structure),
+            conventions=data.get("conventions", current.conventions),
+            history=data.get("history", current.history),
+            current_state=data.get("current_state", current.current_state),
+            quality_standards=data.get("quality_standards", current.quality_standards),
+            updated_at=current.updated_at,  # save() 会更新
+            version=current.version,        # save() 会递增
+        )
 
     # ── 上下文获取 ──────────────────────────────────────────────────
 
     def get_context(self, module_filter: str = "") -> str:
-        """获取当前项目心智模型文本，用于注入 system prompt。
+        """获取当前项目认知地图文本，用于注入 system prompt。
 
-        Args:
-            module_filter: 只获取相关模块的摘要（按文件路径匹配）
-
-        Returns:
-            格式化的上下文文本
+        兼容旧接口（module_filter 参数保留但无实际过滤效果）。
         """
-        lines: list[str] = []
+        if not self._data or self._data.is_empty():
+            return ""
 
-        # 最近的 Leaf 摘要（模块级，最相关）
-        relevant_leaves = self._leaf_summaries
-        if module_filter:
-            relevant_leaves = [
-                s for s in self._leaf_summaries
-                if any(module_filter in fp for fp in s.get("file_paths", []))
-            ]
+        d = self._data
+        parts = []
+        if d.structure:
+            parts.append(f"结构: {d.structure}")
+        if d.conventions:
+            parts.append(f"约定: {d.conventions}")
+        if d.history:
+            parts.append(f"历史: {d.history}")
+        if d.current_state:
+            parts.append(f"当前: {d.current_state}")
+        if d.quality_standards:
+            parts.append(f"质量标准: {d.quality_standards}")
 
-        if relevant_leaves:
-            lines.append("【项目当前状态】")
-            for s in relevant_leaves[-3:]:  # 最近 3 个
-                lines.append(f"- [{', '.join(s.get('modules', ['?']))}] {s['content'][:200]}")
+        if not parts:
+            return ""
 
-        # 最近的 Mid 摘要
-        for s in self._mid_summaries[-1:]:  # 最新 1 个
-            lines.append(f"\n【子系统架构】{s['content'][:300]}")
+        hours_ago = ""
+        if d.updated_at:
+            elapsed = time.time() - d.updated_at
+            if elapsed > 3600:
+                hours_ago = f"（{elapsed / 3600:.0f}小时前更新）"
+            elif elapsed > 60:
+                hours_ago = f"（{elapsed / 60:.0f}分钟前更新）"
 
-        # 最近的 High 摘要
-        for s in self._high_summaries[-1:]:
-            lines.append(f"\n【项目概览】{s['content'][:300]}")
+        lines = [f"【项目认知地图 — {self._project_id}{hours_ago}】"]
+        lines.extend(parts)
+        return "\n".join(lines)
 
-        return "\n".join(lines) if lines else ""
+    # ── 工具方法 ────────────────────────────────────────────────────
 
-    # ── 查询 ──────────────────────────────────────────────────────
+    @staticmethod
+    def slugify(description: str, max_len: int = 40) -> str:
+        """从描述生成稳定的 project_id slug。"""
+        h = hashlib.md5(description.encode()).hexdigest()[:8]
+        # 取前几个有意义的词
+        words = description.replace("！", "").replace("，", " ").replace("。", " ").split()
+        prefix = "-".join(w for w in words[:3] if len(w) <= 10)
+        if prefix:
+            return f"{prefix[:max_len - 9]}-{h}"
+        return h
 
-    def get_recent_operations(self, limit: int = 20) -> list[OperationRecord]:
-        """获取最近的操作记录。"""
-        return self._operations[-limit:]
-
-    def get_unsummarized_operations(self) -> list[OperationRecord]:
-        """获取尚未被摘要的操作。"""
-        return [op for op in self._operations if not op.summarized]
-
-    def get_summary_stats(self) -> dict:
-        """获取摘要统计。"""
-        return {
-            "total_operations": len(self._operations),
-            "unsummarized": len(self.get_unsummarized_operations()),
-            "leaf_summaries": len(self._leaf_summaries),
-            "mid_summaries": len(self._mid_summaries),
-            "high_summaries": len(self._high_summaries),
-        }
+    @property
+    def pending_count(self) -> int:
+        return len(self._pending)

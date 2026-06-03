@@ -158,7 +158,7 @@ class CognitiveLoop:
             t0 = time.time()
             try:
                 # ── 执行 LLM 一步 ──
-                content, elapsed, tc_count, tool_names = self._execute_llm_step(
+                content, elapsed, tc_count, tool_names, tc_before = self._execute_llm_step(
                     agent, current_msg, current_context, callbacks,
                 )
 
@@ -238,6 +238,11 @@ class CognitiveLoop:
 
                 # InnerVoice 副作用处理（block / insert）
                 if assessment.iv_block:
+                    p._record_pmm_observation(
+                        event_type="block",
+                        content=f"Step {step_index}: InnerVoice 阻塞 — {assessment.step_check.reasoning if assessment.step_check else '无详细原因'}",
+                        step_index=step_index,
+                    )
                     p._pending_block_advance = False
                     next_goal = p._purpose.get_current() if p._purpose else None
                     if next_goal:
@@ -265,14 +270,23 @@ class CognitiveLoop:
                 if assessment.iv_insert:
                     p._apply_sub_goal_inserts(assessment.iv_insert)
 
-                # Project Mental Model
-                p._record_operation(
-                    description=obs.goal_description,
-                    files_changed=tool_names,
-                    step_index=step_index,
-                    outcome="成功" if not obs.surprises else "有问题",
-                    decision_note=display_content[:200],
-                )
+                # Project Mental Model: 仅记录有意义的观察
+                if obs.surprises:
+                    for s in obs.surprises:
+                        p._record_pmm_observation(
+                            event_type="surprise",
+                            content=f"Step {step_index}: {s}",
+                            step_index=step_index,
+                            files=p._extract_file_paths(
+                                agent.tool_call_buffer, tc_before, tc_count,
+                            ),
+                        )
+                if obs.progress_status == "completed":
+                    p._record_pmm_observation(
+                        event_type="completion",
+                        content=f"子目标完成: {obs.goal_description[:100]}",
+                        step_index=step_index,
+                    )
 
                 on_interaction = callbacks.get("on_user_interaction")
                 if on_interaction:
@@ -313,6 +327,9 @@ class CognitiveLoop:
             step_index += 1
             retries = 0
             p._perspective_tried = False
+
+            # PMM: 子目标完成，触发认知地图更新
+            p._maybe_update_pmm()
 
             next_result = self._advance_to_next(current_msg, current_context)
             if next_result is None:
@@ -567,7 +584,7 @@ class CognitiveLoop:
         tc_count = agent.tool_call_buffer.last_index - tc_before
         tool_names = p._extract_tool_names(agent.tool_call_buffer, tc_before, tc_count)
 
-        return content, elapsed, tc_count, tool_names
+        return content, elapsed, tc_count, tool_names, tc_before
 
     def _check_emergency_exit(self, callbacks) -> bool:
         p = self._p
