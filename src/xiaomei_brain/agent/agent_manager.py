@@ -585,6 +585,14 @@ class AgentManager:
         for ms_tool in create_memory_search_tools(agent.longterm_memory):
             tools.register(ms_tool)
 
+        # 注册目标管理工具（create_goal / list_goals）
+        # purpose_ref 延迟绑定：ConsciousLiving 创建 PurposeEngine 后设置
+        from xiaomei_brain.tools.builtin.goal import create_goal_tools
+        purpose_ref = [None]
+        for goal_tool in create_goal_tools(purpose_ref):
+            tools.register(goal_tool)
+        agent._purpose_ref = purpose_ref
+
 
         # ── CommandRegistry ──────────────────────────────────────────────
         agent.commands = CommandRegistry(

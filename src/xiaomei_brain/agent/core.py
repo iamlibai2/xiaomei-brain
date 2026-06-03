@@ -9,7 +9,8 @@ import time
 from typing import Any, Callable, Generator
 
 from xiaomei_brain.base.llm import LLMClient
-from xiaomei_brain.memory.conversation_db import ConversationDB, estimate_tokens
+from xiaomei_brain.memory.conversation_db import ConversationDB
+from xiaomei_brain.base.message_utils import estimate_tokens
 from xiaomei_brain.memory.self_model import SelfModel
 from xiaomei_brain.memory.dag import DAGSummaryGraph
 from xiaomei_brain.memory.longterm import LongTermMemory

@@ -410,10 +410,10 @@ class LongTermMemory(SQLiteStore):
         conn = self._get_conn()
         try:
             rows = conn.execute(
-                "SELECT id, content, agent_id FROM narrative_memories WHERE status = 'active'"
+                "SELECT id, content, user_id FROM narrative_memories WHERE status = 'active'"
             ).fetchall()
         except Exception:
-            # agent_id column may not exist in older schemas
+            # user_id column may not exist in older schemas (pre-v3)
             try:
                 rows = conn.execute(
                     "SELECT id, content FROM narrative_memories WHERE status = 'active'"
@@ -439,7 +439,7 @@ class LongTermMemory(SQLiteStore):
             for r in batch:
                 ids.append(r["id"])
                 contents.append(r["content"])
-                user_ids.append(r["agent_id"] if "agent_id" in r.keys() else "global")
+                user_ids.append(r["user_id"] if "user_id" in r.keys() else "global")
 
             try:
                 vectors = self._embed_batch(contents)
@@ -640,6 +640,12 @@ class LongTermMemory(SQLiteStore):
 
     def _init_tables(self) -> None:
         conn = self._get_conn()
+
+        # ── 先执行迁移，再执行 DDL（DDL 中的索引依赖迁移添加的列）──
+        current_version = self._get_schema_version("longterm")
+        if current_version < 3:
+            self._migrate_v3(conn)
+
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS memories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -788,11 +794,13 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
                 related_narrative_id INTEGER,              -- 关联的 consciousness_narratives.id
                 status TEXT DEFAULT 'active',              -- active/archived/consolidated
                 source TEXT DEFAULT 'L2',                  -- L2/dream/explicit
+                user_id TEXT DEFAULT 'global',           -- 用户隔离
                 updated_at REAL NOT NULL
             );
 
             CREATE INDEX IF NOT EXISTS idx_narrative_category ON narrative_memories(category);
             CREATE INDEX IF NOT EXISTS idx_narrative_status ON narrative_memories(status);
+            CREATE INDEX IF NOT EXISTS idx_narrative_user ON narrative_memories(user_id);
         """)
 
         # ── Schema 迁移（组件级 schema_versions 追踪）─────────
@@ -803,6 +811,9 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
 
         if current_version < 2:
             self._migrate_v2(conn)
+
+        if current_version < 3:
+            self._migrate_v3(conn)
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_strength ON memories(strength)")
@@ -860,6 +871,17 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
 
         self._set_schema_version("longterm", 2)
         logger.info("[LongTerm] Schema migrated to v2")
+
+    def _migrate_v3(self, conn: sqlite3.Connection) -> None:
+        """v2 → v3：narrative_memories 添加 user_id 列。"""
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(narrative_memories)").fetchall()}
+        if "user_id" not in cols:
+            conn.execute("ALTER TABLE narrative_memories ADD COLUMN user_id TEXT DEFAULT 'global'")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_narrative_user ON narrative_memories(user_id)")
+            logger.info("[LongTerm] 迁移: narrative_memories 添加 user_id 列")
+
+        self._set_schema_version("longterm", 3)
+        logger.info("[LongTerm] Schema migrated to v3")
 
     # ── Public API ──────────────────────────────────────────────
 
@@ -1048,6 +1070,7 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         related_narrative_id: int | None = None,
         source: str = "L2",
         timestamp: str | None = None,
+        user_id: str = "global",
     ) -> str:
         """Store a structured narrative memory block (NARR).
 
@@ -1060,6 +1083,7 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
             related_narrative_id: 关联的 consciousness_narratives.id
             source: L2 / dream / explicit
             timestamp: YYYY-MM-DD 人类可读时间
+            user_id: 用户标识（默认 "global"）
         """
         import random
 
@@ -1072,20 +1096,19 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         cur = conn.execute(
             """INSERT INTO narrative_memories
                (id, category, scene_tags, timestamp, created_at, content, feels_like,
-                changed_me, weight, related_narrative_id, source, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                changed_me, weight, related_narrative_id, source, user_id, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (nm_id, category, tags_json, timestamp, now, content, feels_like,
-             changed_me, weight, related_narrative_id, source, now),
+             changed_me, weight, related_narrative_id, source, user_id, now),
         )
         conn.commit()
         logger.info(
-            "\033[91m[NARR]\033[0m Stored %s [%s] weight=%.2f: %s",
-            nm_id, category, weight, content[:30],
+            "\033[91m[NARR]\033[0m Stored %s [%s] weight=%.2f user=%s: %s",
+            nm_id, category, weight, user_id, content[:30],
         )
 
         # 同时写入向量库（用于语义召回）
-        agent_id = getattr(self, "_agent_id", "")
-        self._add_narrative_vector(nm_id, content, agent_id)
+        self._add_narrative_vector(nm_id, content, user_id)
 
         return nm_id
 
@@ -1133,6 +1156,7 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         scene_tag: str,
         merged_content: str,
         merged_changed_me: str,
+        user_id: str = "global",
     ) -> str:
         """Consolidate multiple narrative memories with same scene_tag into one.
 
@@ -1165,7 +1189,6 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         )
 
         # 从向量库删除旧记录
-        agent_id = getattr(self, "_agent_id", "")
         for old_id in old_ids:
             self._delete_narrative_vector(old_id)
 
@@ -1174,15 +1197,15 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         cur = conn.execute(
             """INSERT INTO narrative_memories
                (id, category, scene_tags, timestamp, created_at, content, changed_me,
-                weight, status, source, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', 'dream', ?)""",
+                weight, status, source, user_id, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', 'dream', ?, ?)""",
             (new_id, "自我定义", json.dumps([scene_tag]), latest_ts, now,
-             merged_content, merged_changed_me, round(avg_weight, 3), now),
+             merged_content, merged_changed_me, round(avg_weight, 3), user_id, now),
         )
         conn.commit()
 
         # 新记录写入向量库
-        self._add_narrative_vector(new_id, merged_content, agent_id)
+        self._add_narrative_vector(new_id, merged_content, user_id)
 
         logger.info(
             "\033[91m[NARR]\033[0m Consolidated %d NARRs into %s",

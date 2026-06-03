@@ -34,7 +34,7 @@ logging.basicConfig(
 
 from xiaomei_brain.agent.agent_manager import AgentManager
 from xiaomei_brain.consciousness.conscious_living import ConsciousLiving
-from xiaomei_brain.memory.conversation_db import estimate_tokens
+from xiaomei_brain.base.message_utils import estimate_tokens
 
 # ── 提示符（必须纯 ASCII，WSL 下 readline 无法正确计算中文 prompt 宽度）──
 PROMPT = "> "

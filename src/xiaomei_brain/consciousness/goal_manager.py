@@ -37,6 +37,20 @@ def _get_intent_log_dir() -> str:
     return "~/.xiaomei-brain/global/logs/intent"
 
 
+def _time_ago(completed_at: float | None) -> str:
+    """将完成时间戳转换为人类可读的相对时间。"""
+    if not completed_at:
+        return "已完成"
+    elapsed = time.time() - completed_at
+    if elapsed < 60:
+        return "刚刚完成"
+    if elapsed < 3600:
+        return f"{int(elapsed / 60)}分钟前"
+    if elapsed < 86400:
+        return f"{int(elapsed / 3600)}小时前"
+    return f"{int(elapsed / 86400)}天前"
+
+
 class GoalManager:
     """目标生命周期：意图分析、创建/路由、确认、PACE 执行、完成。"""
 
@@ -187,8 +201,111 @@ class GoalManager:
         for goal in goals:
             if self._try_modify_existing(intent_result, goal):
                 continue
+            # 用 LLM 检查是否与已完成目标重复
+            if msg:
+                completed = self._get_recent_completed_goals()
+                if completed:
+                    result = self._llm_check_similar_goal(goal.description, completed)
+                    if result and result.get("duplicate"):
+                        goal_id = result.get("goal_id", "")
+                        dup_goal = self._purpose.goals.get(goal_id) if goal_id else None
+                        similar = [dup_goal] if dup_goal else completed[:1]
+                        self._ask_similar_goal_confirm(similar, intent_result, goal, msg)
+                        continue
             created_goal = self._create_task_from_intent(intent_result, goal)
             self._route_goal_by_type(created_goal, intent_result, msg)
+
+    # ── Similar completed goal detection (LLM) ──────────────────
+
+    def _get_recent_completed_goals(self, limit: int = 10) -> list:
+        """获取最近完成的顶层目标（过滤子目标，只保留用户可见的任务）。"""
+        if not self._purpose:
+            return []
+        completed = self._purpose.get_completed_goals()
+        # 只保留根目标（parent_id 为空），子目标对用户不可见
+        completed = [g for g in completed if not g.parent_id]
+        completed.sort(key=lambda g: g.updated_at, reverse=True)
+        return completed[:limit]
+
+    def _llm_check_similar_goal(self, description: str, completed: list) -> dict | None:
+        """让 LLM 判断新目标描述是否与已完成目标重复。"""
+        llm = getattr(self._intent_understanding, 'llm', None)
+        if not llm:
+            return None
+
+        if not completed:
+            return None
+
+        completed_text = "\n".join(
+            f"- [{g.id}] {g.description}（{_time_ago(g.updated_at)}完成）"
+            + (f" 产出: {g.metadata.get('output', '')[:80]}" if g.metadata.get('output') else "")
+            for g in completed
+        )
+
+        prompt = f"""判断以下新任务是否与已有已完成任务实质重复。
+
+新任务描述：
+{description}
+
+最近已完成的任务：
+{completed_text}
+
+判断标准：
+- 如果核心交付物相同（比如"调研报告"与"准备调研报告"），即视为重复
+- 如果主题/行业/方向明确不同（比如"agent行业调研"vs"机器人行业调研"），不算重复
+- 如果只是措辞不同但实质相同，算重复
+
+请返回 JSON：
+{{"duplicate": true/false, "goal_id": "重复的任务ID（仅 duplicate=true 时）", "reasoning": "一句话理由"}}"""
+
+        try:
+            response = llm.chat([{"role": "user", "content": prompt}])
+            import json
+            text = response.content if hasattr(response, "content") else str(response)
+            # 提取 JSON（可能包裹在 markdown 代码块中）
+            text = text.strip()
+            if "```" in text:
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+                text = text.split("```")[0]
+            result = json.loads(text.strip())
+            logger.info("[SimilarGoal] LLM 判断: duplicate=%s, goal_id=%s, reasoning=%s",
+                        result.get("duplicate"), result.get("goal_id"), result.get("reasoning", ""))
+            return result
+        except Exception as e:
+            logger.warning("[SimilarGoal] LLM 相似目标检查失败: %s", e)
+            return None
+
+    def _ask_similar_goal_confirm(self, similar: list, intent_result: Any, goal: Any, msg: Any) -> None:
+        """当检测到相似已完成目标时，询问用户。"""
+        options = []
+        for i, g in enumerate(similar):
+            label = f"看看「{g.description[:30]}」（{_time_ago(g.updated_at)}）"
+            options.append(label)
+        options.append("这是新任务（不同主题/方向）")
+
+        confirm_info = {
+            "type": "similar_goal",
+            "question": f"之前有过类似的任务已经完成了，要怎么做？",
+            "options": options,
+            "similar_goal_ids": [g.id for g in similar],
+            "intent_goal": goal,
+            "intent_result": intent_result,
+        }
+        self._pending_confirm = confirm_info
+        self._waiting_confirm = True
+        self._pending_confirm_msg = msg
+        if self.on_confirm_required:
+            self.on_confirm_required(confirm_info)
+        else:
+            print(f"\n[确认] {confirm_info['question']}", flush=True)
+            print(f"  类似任务如下：", flush=True)
+            for i, opt in enumerate(options[:-1]):  # 最后一个是"新任务"选项
+                print(f"    {i+1}. {opt}", flush=True)
+            print(f"  {len(options)}. {options[-1]}", flush=True)
+            print(f"  0. 忽略，创建新任务", flush=True)
+            self._parent._print_prompt()
 
     @staticmethod
     def _filter_meta_goals(goals: list) -> list:
@@ -439,6 +556,10 @@ class GoalManager:
             self._handle_continue_confirm(user_input, confirm)
             return
 
+        if confirm.get("type") == "similar_goal":
+            self._handle_similar_goal_confirm(user_input, confirm)
+            return
+
         self._handle_standard_confirm(user_input, confirm)
 
     def _handle_pace_confirm(self, user_input: str, confirm: dict) -> None:
@@ -502,6 +623,71 @@ class GoalManager:
                     self._resume_or_activate_goal(goal, original_msg, chosen_by_user=True)
                 return
         print("[确认] 无效选项，请重新选择：", flush=True)
+
+    def _handle_similar_goal_confirm(self, user_input: str, confirm: dict) -> None:
+        inp = user_input.strip()
+        similar_ids = confirm["similar_goal_ids"]
+        num_similar = len(similar_ids)
+
+        if inp == "0":
+            # 忽略，创建新任务
+            self._pending_confirm = None
+            self._waiting_confirm = False
+            self._pending_confirm_msg = None
+            self._pending_confirm_intent = None
+            intent_result = confirm["intent_result"]
+            goal = confirm["intent_goal"]
+            created_goal = self._create_task_from_intent(intent_result, goal)
+            self._route_goal_by_type(created_goal, intent_result, None)
+            return
+
+        if inp.isdigit():
+            idx = int(inp)
+            if 1 <= idx <= num_similar:
+                # 用户想看已完成的报告
+                goal_id = similar_ids[idx - 1]
+                completed_goal = self._purpose.goals.get(goal_id)
+                self._pending_confirm = None
+                self._waiting_confirm = False
+                self._pending_confirm_msg = None
+                self._pending_confirm_intent = None
+
+                if completed_goal:
+                    output = completed_goal.metadata.get("output", "")
+                    logs = completed_goal.cognitive_log
+                    print(f"\n[已完成任务] {completed_goal.description}", flush=True)
+                    if output:
+                        print(f"  产出摘要: {output[:300]}", flush=True)
+                    if logs:
+                        print(f"  日志 ({len(logs)} 条):", flush=True)
+                        for entry in logs[-5:]:
+                            print(f"    [{entry.entry_type}] {entry.content[:100]}", flush=True)
+                    print(f"\n如果你需要新的任务（不同主题/方向），请直接描述。", flush=True)
+                self._parent._print_prompt()
+                return
+
+            if idx == num_similar + 1:
+                # 这是新任务
+                self._pending_confirm = None
+                self._waiting_confirm = False
+                self._pending_confirm_msg = None
+                self._pending_confirm_intent = None
+                intent_result = confirm["intent_result"]
+                goal = confirm["intent_goal"]
+                created_goal = self._create_task_from_intent(intent_result, goal)
+                self._route_goal_by_type(created_goal, intent_result, None)
+                return
+
+        # 文本输入：也当作新任务
+        self._pending_confirm = None
+        self._waiting_confirm = False
+        original_msg = self._pending_confirm_msg
+        self._pending_confirm_msg = None
+        self._pending_confirm_intent = None
+        intent_result = confirm["intent_result"]
+        goal = confirm["intent_goal"]
+        created_goal = self._create_task_from_intent(intent_result, goal)
+        self._route_goal_by_type(created_goal, intent_result, None)
 
     def _handle_standard_confirm(self, user_input: str, confirm: dict) -> None:
         parsed = task_executor.parse_confirmation_input(confirm, user_input)
@@ -772,7 +958,30 @@ class GoalManager:
                 return json.loads(match.group(1))
             except json.JSONDecodeError:
                 return None
-        return None
+
+    @classmethod
+    def _sub_goal_covers_deliverable(cls, summary: str, root_goal: Any) -> bool:
+        """检测子目标完成 summary 是否已覆盖最终交付物。
+
+        信号：summary 描述的是整个任务已完成（如"完成XX报告"），
+        而非仅完成当前子目标（如"明确了主题"）。
+        """
+        import re
+        if len(summary) < 20:
+            return False
+        # 交付物关键词
+        deliverable_kw = ["报告", "文档", "文件", "PPT", "代码", "脚本", "方案", "分析", "总结"]
+        if not any(kw in summary for kw in deliverable_kw):
+            return False
+        # "完成"类动词 + 交付物 → Agent 认定整件事做完了
+        done_patterns = [
+            r"完成.*(报告|文档|文件|PPT|代码|脚本|方案|分析|总结)",
+            r"(写出|写好|输出|生成|创建|提交).*(报告|文档|文件|PPT|代码|脚本|方案|分析|总结)",
+        ]
+        for pat in done_patterns:
+            if re.search(pat, summary):
+                return True
+        return False
 
     @staticmethod
     def remove_progress_tag(content: str) -> str:

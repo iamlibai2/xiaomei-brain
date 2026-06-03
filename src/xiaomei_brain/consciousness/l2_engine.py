@@ -625,6 +625,12 @@ class L2Engine:
             + "- talk_agent：想和其他 agent 聊天交流\n"
             + f"可选意图：{intents}\n"
         )
+        # 有未完成目标时，优先推进
+        if has_goal:
+            prompt += (
+                "\n**重要**：你有未完成的目标。当前用户不在，这是你推进目标的最佳时机。"
+                "如果没有更紧急的事，应该优先选择 progress 意图来执行目标。\n"
+            )
         if goal_memories:
             lines = []
             for i, m in enumerate(goal_memories, 1):
@@ -1162,6 +1168,7 @@ weight: 0.85
                     related_narrative_id=None,
                     source="L2",
                     timestamp=nb.get("timestamp"),
+                    user_id=getattr(c.agent, "user_id", "global"),
                 )
                 logger.info("\033[91m[NARR]\033[0m tick_L2 stored: %s", nm_id)
                 if c.drive:

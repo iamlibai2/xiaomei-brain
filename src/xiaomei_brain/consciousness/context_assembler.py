@@ -34,7 +34,8 @@ from datetime import datetime
 from typing import Any, Callable
 
 from xiaomei_brain.agent.message_utils import estimate_content_tokens
-from xiaomei_brain.memory.conversation_db import ConversationDB, estimate_tokens
+from xiaomei_brain.memory.conversation_db import ConversationDB
+from xiaomei_brain.base.message_utils import estimate_tokens
 from xiaomei_brain.memory.dag import DAGSummaryGraph
 from xiaomei_brain.memory.self_model import SelfModel
 from ..prompts.consciousness import NARR_PREAMBLE

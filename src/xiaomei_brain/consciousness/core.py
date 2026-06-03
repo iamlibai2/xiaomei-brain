@@ -97,6 +97,16 @@ class ConsciousnessReport:
         }
 
 
+def _is_placeholder_dream(summary: str) -> bool:
+    """检测梦境摘要是否只是时间戳占位符（非实质梦境内容）。"""
+    import re
+    if re.match(r'^(现在是|当前时间|今天是)\d{4}年\d{1,2}月\d{1,2}日', summary):
+        return True
+    if len(summary) < 15:
+        return True
+    return False
+
+
 class Consciousness:
     """主动意识系统（火焰骨架 + LLM加柴）。
 
@@ -905,7 +915,7 @@ class Consciousness:
         if elapsed > self._cc.l2_periodic_interval:
             return True
 
-        # 欲望驱动（新增，仅 IDLE）
+        # 欲望驱动（仅 IDLE）
         if agent_state == "idle":
             t = self._cc.l2_desire_thresholds
             if si.body.desire_belonging > t.get("belonging", 0.6):
@@ -915,6 +925,10 @@ class Consciousness:
             if si.body.desire_achievement > t.get("achievement", 0.5):
                 return True
             if si.body.desire_expression > t.get("expression", 0.6):
+                return True
+
+            # 有未完成目标时，积极触发意图决策（不满欲望阈值也可触发）
+            if self.purpose and self.purpose.get_current() is not None:
                 return True
 
         return False
@@ -1103,10 +1117,11 @@ class Consciousness:
 
             # 苏醒叙事（仅日志，不写入内部叙事——状态切换不是思考）
 
-            # 生成问候意图
-            greet_intent = create_greet_intent(dream_summary[:50], priority=80)
-            if self.self_image is not None:
-                self.self_image.contribute_intent(greet_intent.to_dict())
+            # 仅在梦境有实质内容时（非纯时间戳）才生成问候意图
+            if not _is_placeholder_dream(dream_summary):
+                greet_intent = create_greet_intent(dream_summary[:50], priority=80)
+                if self.self_image is not None:
+                    self.self_image.contribute_intent(greet_intent.to_dict())
 
             # 同步到 self_image（如果是从 growth 恢复的）
             if not si.history.last_dream_summary:

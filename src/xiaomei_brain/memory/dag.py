@@ -169,7 +169,7 @@ class DAGSummaryGraph(SQLiteStore):
         time_end = max(times) if times else time.time()
 
         # Estimate tokens
-        from .conversation_db import estimate_tokens
+        from ..base.message_utils import estimate_tokens
         token_count = estimate_tokens(summary_text)
 
         # Store in database
@@ -246,7 +246,7 @@ class DAGSummaryGraph(SQLiteStore):
             if not summary_text:
                 continue
 
-            from .conversation_db import estimate_tokens
+            from ..base.message_utils import estimate_tokens
             token_count = estimate_tokens(summary_text)
 
             time_start = min(r["time_start"] for r in batch)

@@ -64,10 +64,6 @@ class ActionExecutor:
         source = item.metadata.get("source", "")
         desire_type = item.metadata.get("desire_type", "")
 
-        # PLEASURE 意图：让 LLM 自己做渴望→按压的因果决策
-        if intent_type == "PLEASURE" or desire_type == "craving":
-            return self._do_pleasure_release(item)
-
         content = item.content
         if not content:
             # 空的 content：由 LLM 生成（通过 intent/content + SelfImage 状态）
@@ -467,6 +463,8 @@ class ActionExecutor:
             success = self._do_progress_goal(item)
         elif tool_name == "pleasure_lever":
             success = self._do_pleasure_lever(item)
+        elif tool_name == "pleasure_release":
+            success = self._do_pleasure_release(item)
         elif tool_name == "meta_skill_pull":
             success = self._do_meta_skill_pull(item)
         else:
@@ -1000,7 +998,7 @@ class ActionExecutor:
     # ── TOOL: progress_goal ────────────────────────────────────
 
     def _do_progress_goal(self, item: ActionItem) -> bool:
-        """推进目标。AWAKE → 提醒用户；SLEEPING/DREAMING → 自动执行"""
+        """推进目标。AWAKE → 提醒用户；IDLE/SLEEPING/DREAMING → 自动执行"""
         living = self.dispatcher._conscious_living
         if not living:
             return False
@@ -1013,13 +1011,13 @@ class ActionExecutor:
 
         state = living.state.value if hasattr(living, 'state') else 'awake'
 
-        if state in ('sleeping', 'dreaming'):
+        if state in ('idle', 'sleeping', 'dreaming'):
             return self._auto_progress_goal(goal)
         else:
             return self._remind_progress_goal(goal)
 
     def _auto_progress_goal(self, goal) -> bool:
-        """SLEEPING/DREAMING：自动推进目标"""
+        """IDLE/SLEEPING/DREAMING：自动推进目标（统一走 PACE → CognitiveLoop）"""
         from .conscious_living import LivingMessage
 
         living = self.dispatcher._conscious_living
@@ -1061,10 +1059,14 @@ class ActionExecutor:
         )
 
         intent_context = living.conversation_driver.goal_manager.build_intent_context_for_goal(active_sub)
-        logger.info("[ActionExecutor] 自动执行: goal=%s sub=%s",
+        logger.info("[ActionExecutor] 自动执行 PACE: goal=%s sub=%s",
                     goal_obj.description[:40], active_sub.description[:40])
 
-        living.conversation_driver._run_chat(msg, intent_context)
+        # 统一走 PACE → CognitiveLoop（与 /intask 相同路径）
+        gm = living.conversation_driver.goal_manager
+        if gm._pace_runner is None:
+            gm._init_pace_runner()
+        gm._run_pace(msg, intent_context)
 
         if living.drive:
             living.drive.on_desire_satisfied("achievement", 0.3)

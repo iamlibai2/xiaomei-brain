@@ -123,6 +123,17 @@ class ConsciousLiving(Living):
         # Drive 系统（边缘系统）- 延迟加载
         self.drive = DriveEngine(self._agent_id, load=False, config=self._drive_config)
 
+        # 设置 Token 预算（从 LivingParams 读取）
+        self.drive.token_budget_daily = float(self._config.living.daily_token_budget)
+        self.drive.token_budget_monthly = float(self._config.living.monthly_token_budget)
+
+        # 注入 Token 回调到 LLM 客户端（穿透 ContextGuard）
+        llm = self.agent.llm
+        if hasattr(llm, '_llm'):
+            llm._llm._token_callback = self.drive.record_token_usage
+        else:
+            llm._token_callback = self.drive.record_token_usage
+
         # CronScheduler（闹钟系统）
         from ..schedule import CronScheduler
         self.cron_scheduler = CronScheduler(self._agent_id)
@@ -137,6 +148,11 @@ class ConsciousLiving(Living):
             drive=self.drive,
             load=False,
         )
+
+        # 绑定 purpose_ref，使 goal 工具可用
+        pr = getattr(agent_instance, '_purpose_ref', None)
+        if pr:
+            pr[0] = self.purpose
 
         # Intent Understanding
         self.intent_understanding = IntentUnderstanding(llm_client)

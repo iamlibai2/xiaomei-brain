@@ -34,8 +34,6 @@ from ...prompts.consciousness import DREAM_ENGINE_PROMPT
 from .emotion_processor import EmotionProcessor
 from .memory_organizer import MemoryOrganizer
 from .reflection import Reflection
-from .storage import DreamStorage
-
 logger = logging.getLogger(__name__)
 
 
@@ -93,7 +91,7 @@ class DreamEngine:
         ltm: Any | None,
         extractor: Any | None,
         llm: Any | None,
-        storage: DreamStorage | None = None,
+        storage: Any | None = None,
         procedure_memory: Any | None = None,
         exp_stream: Any | None = None,
     ) -> None:
@@ -102,10 +100,7 @@ class DreamEngine:
         self.ltm = ltm
         self.extractor = extractor
         self.llm = llm
-        self.storage = storage or DreamStorage(
-            base_dir="~/.xiaomei-brain",
-            agent_id=getattr(consciousness, '_agent_id', ''),
-        )
+        self.storage = storage
         self.procedure_memory = procedure_memory
         self.exp_stream = exp_stream
 
@@ -219,8 +214,9 @@ class DreamEngine:
 
         report.elapsed_seconds = time.time() - t0
 
-        # ── 存储 ────────────────────────────────────────
-        self.storage.save(report)
+        # ── 存储（可选）───────────────────────────────────
+        if self.storage:
+            self.storage.save(report)
 
         logger.info(
             "[DreamEngine] 完成: 强化%d条, 提取%d条, 耗时%.1fs",

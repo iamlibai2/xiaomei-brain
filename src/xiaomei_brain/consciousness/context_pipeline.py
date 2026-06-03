@@ -11,7 +11,7 @@ from typing import Any
 
 from xiaomei_brain.agent.message_utils import estimate_content_tokens
 from xiaomei_brain.consciousness.context_assembler import determine_mode
-from xiaomei_brain.memory.conversation_db import estimate_tokens
+from xiaomei_brain.base.message_utils import estimate_tokens
 from xiaomei_brain.consciousness.workspace import inject_consciousness
 from xiaomei_brain.consciousness.workspace.salience_profile import SalienceProfile
 
@@ -127,9 +127,17 @@ def build_context(
             mode, estimate_content_tokens(system_content), dag_count,
         )
 
-        # intent_context: task 模式追加任务约束
+        # intent_context: 任务约束放入最后一条用户消息（优先于 system prompt）
         if intent_context:
-            system_content += "\n" + intent_context
+            last_user = None
+            for m in reversed(agent.messages):
+                if m.get("role") == "user":
+                    last_user = m
+                    break
+            if last_user is not None:
+                last_user["content"] = intent_context + "\n\n" + last_user["content"]
+            else:
+                system_content += "\n" + intent_context
 
     # 6. 过滤已压缩消息
     if agent.dag:

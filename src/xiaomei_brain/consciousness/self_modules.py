@@ -76,18 +76,18 @@ class Being:
             "personality": self.personality,
             "learning_interests": self.learning_interests,
             "self_cognition": self.self_cognition,
-            "relationship_status": self.relationship_status,
-            "relationship_depth": self.relationship_depth,
-            "trust_level": self.trust_level,
         }
+
+    # relationship_status / relationship_depth / trust_level 是运行时值，
+    # 代理自 RelationshipEngine，不持久化到 SelfImage 快照。
 
     def from_dict(self, data: dict) -> None:
         for key in ["name", "birth_date", "personality",
                      "learning_interests", "self_cognition"]:
             if key in data:
                 setattr(self, key, data[key])
-        # relationship_depth / trust_level / relationship_depth_history 是运行时值，
-        # 不从快照恢复，后续由交互驱动更新
+        # 关系字段（relationship_status / relationship_depth / trust_level）是运行时值，
+        # 代理自 RelationshipEngine，不从快照恢复
 
     def init_from_identity_md(self, md_text: str) -> None:
         """从 identity.md 解析 Being 的活身份字段。
@@ -328,29 +328,10 @@ class SelfBody:
     # ── 序列化 ─────────────────────────────
 
     def to_dict(self) -> dict[str, Any]:
+        # 代理字段（energy/mood/desire/hormone 等）是运行时值，
+        # 数据源在 Drive，不从 SelfImage 快照持久化
         return {
-            "energy": self.energy,
-            "mood": self.mood or "平静",
-            "emotion_intensity": self.emotion_intensity,
             "attention": self.attention,
-            "desire_belonging": self.desire_belonging,
-            "desire_cognition": self.desire_cognition,
-            "desire_achievement": self.desire_achievement,
-            "desire_expression": self.desire_expression,
-            "desire_survival": self.desire_survival,
-            "dopamine": self.dopamine,
-            "serotonin": self.serotonin,
-            "cortisol": self.cortisol,
-            "oxytocin": self.oxytocin,
-            "norepinephrine": self.norepinephrine,
-            "motivation_level": self.motivation_level,
-            "pleasure_value": self.pleasure_value,
-            "craving": self.craving,
-            "pleasure_ceiling": self.pleasure_ceiling,
-            "emotional_blunting": self.emotional_blunting,
-            "oxytocin_gain": self.oxytocin_gain,
-            "energy_baseline": self.energy_baseline,
-            "energy_recovery_rate": self.energy_recovery_rate,
             # ── 内感受字段 ──
             "cpu_percent": self.cpu_percent,
             "memory_percent": self.memory_percent,
@@ -364,7 +345,7 @@ class SelfBody:
         }
 
     def from_dict(self, data: dict) -> None:
-        # 代理字段的数据来自 Drive，不从 JSON 恢复
+        # 代理字段（energy/mood/desire/hormone 等）的数据来自 Drive，不从快照恢复
         if "attention" in data:
             self.attention = data["attention"]
         # ── 内感受字段从快照恢复 ──
@@ -551,12 +532,9 @@ class SelfMind:
     # ── 序列化 ─────────────────────────────
 
     def to_dict(self) -> dict[str, Any]:
+        # 代理字段（primary_goal/goal_progress/active_goal_count 等）是运行时值，
+        # 数据源在 Purpose（SQLite），不从 SelfImage 快照持久化
         return {
-            "primary_goal": self.primary_goal,
-            "goal_progress": self.goal_progress,
-            "active_goal_count": self.active_goal_count,
-            "current_sub_goal": self.current_sub_goal,
-            "current_goal_depth": self.current_goal_depth,
             "goal_progress_history": self._goal_progress_history[-20:],
             "memory_count": self.memory_count,
             "memory_count_history": self.memory_count_history[-20:],
@@ -565,11 +543,10 @@ class SelfMind:
             "social_perceptions_count": len(self.social_perceptions),
             "inner_voice_count": len(self.inner_voice),
             "project_map": self.project_map[:500] if self.project_map else "",
-            "pace_reflections_count": len(self.pace_reflections),
         }
 
     def from_dict(self, data: dict) -> None:
-        # 代理字段的数据来自 Purpose，不从 JSON 恢复
+        # 代理字段（primary_goal/goal_progress 等）的数据来自 Purpose，不从快照恢复
         for key in ("memory_count", "inner_thought"):
             if key in data:
                 setattr(self, key, data[key])
@@ -578,14 +555,9 @@ class SelfMind:
                 setattr(self, key, data[key])
         if "goal_progress_history" in data:
             self._goal_progress_history = data["goal_progress_history"]
-        if "social_perceptions" in data:
-            # 从 JSON 迁移到 DB，不再从快照恢复
-            pass
-        if "inner_voice" in data:
-            # 从 JSON 迁移到 DB，不再从快照恢复
-            pass
         if "project_map" in data:
             self.project_map = data["project_map"]
+        # social_perceptions / inner_voice 从 DB 加载，不从快照恢复
         # pace_reflections 是运行时视图，不从快照恢复
 
     def get_summary(self) -> str:
@@ -665,23 +637,14 @@ class SelfIntent:
     _storage: Any = field(default=None, repr=False, compare=False)  # TaskQueueStorage 引用
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "intent_buffer": list(self.intent_buffer),
-            "urgent_intents": list(self.urgent_intents),
-        }
+        # intent_buffer 主存储路径是 SQLite（TaskQueueStorage.sync_intents），
+        # urgent_intents 是运行时派生值（从 priority 判断），都不持久化到快照
+        return {}
 
     def from_dict(self, data: dict) -> None:
-        # intent_buffer 优先从 DB 加载（由 Consciousness.init 控制），
-        # from_dict 仅作为无 DB 时的回退
-        if "intent_buffer" in data and not self._storage:
-            raw = data["intent_buffer"]
-            # 兼容旧格式 list[str] → list[dict]
-            if raw and isinstance(raw[0], str):
-                self.intent_buffer = [{"type": s} for s in raw]
-            else:
-                self.intent_buffer = raw
-        if "urgent_intents" in data:
-            self.urgent_intents = set(data["urgent_intents"])
+        # intent_buffer 唯一数据源是 SQLite（load_from_storage），
+        # 不从快照恢复。urgent_intents 是运行时派生值，也不恢复。
+        pass
 
     def load_from_storage(self) -> None:
         """从 TaskQueueStorage 加载 pending intents 到内存。"""

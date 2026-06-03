@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from xiaomei_brain.memory.conversation_db import estimate_tokens
+from xiaomei_brain.base.message_utils import estimate_tokens
 
 logger = logging.getLogger(__name__)
 

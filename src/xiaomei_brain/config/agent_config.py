@@ -360,6 +360,8 @@ def _build_living_config(data: dict):
                 idle_threshold=living.get("idle_threshold", 10800.0),
                 dream_interval=living.get("dream_interval", 3000.0),
                 max_context_tokens=living.get("max_context_tokens", 50000),
+                daily_token_budget=living.get("daily_token_budget", 0),
+                monthly_token_budget=living.get("monthly_token_budget", 0),
                 comms_port=living.get("comms_port", 0),
                 ws_port=living.get("ws_port", -1),
             )

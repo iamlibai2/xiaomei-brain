@@ -183,6 +183,9 @@ class LLMClient:
         self._fallback_index = -1  # -1 = 主配置
         self._interoception = interoception
 
+        # ── Token 回调（供 Drive 层记录累计消耗）──
+        self._token_callback: Any = None
+
         # ── 最近一次调用追踪 ──
         self._last_call_latency_ms: float = 0.0
         self._last_call_error: bool = False
@@ -249,8 +252,8 @@ class LLMClient:
             logger.warning("[LLM] 退避 %.1fs", seconds)
             time.sleep(seconds)
 
-    def _record_call(self, latency_ms: float, is_error: bool) -> None:
-        """记录一次调用结果给 Interoception。"""
+    def _record_call(self, latency_ms: float, is_error: bool, tokens: int = 0) -> None:
+        """记录一次调用结果给 Interoception 和 Token 回调。"""
         self._last_call_latency_ms = latency_ms
         self._last_call_error = is_error
         if self._interoception:
@@ -258,6 +261,27 @@ class LLMClient:
                 self._interoception.record_llm_call(latency_ms, is_error)
             except Exception as e:
                 logger.warning("Interoception record_llm_call failed: %s", e)
+        if self._token_callback and tokens > 0:
+            try:
+                self._token_callback(tokens)
+            except Exception as e:
+                logger.warning("Token callback failed: %s", e)
+
+    def _estimate_call_tokens(self, api_messages: list[dict], response_content: str | None) -> int:
+        """估算一次 LLM 调用的 token 消耗（输入+输出）。"""
+        from xiaomei_brain.base.message_utils import estimate_tokens
+        total = 0
+        for m in api_messages:
+            content = m.get("content", "")
+            if isinstance(content, str):
+                total += estimate_tokens(content)
+            elif isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict):
+                        total += estimate_tokens(part.get("text", ""))
+        if response_content:
+            total += estimate_tokens(response_content)
+        return total
 
     # region 公共接口
 
@@ -562,6 +586,10 @@ class LLMClient:
 
         _log(True)
 
+        # Token 估算（输入+输出）
+        tokens = self._estimate_call_tokens(api_messages, content)
+        self._record_call((time.time() - _t0) * 1000, False, tokens)
+
         # Save response to JSONL log
         self._save_llm_log(payload, {
             "content": content,
@@ -742,8 +770,12 @@ class LLMClient:
                     raise LLMError("API 响应缺少 choices 字段", retryable=True)
 
                 log_request(True)
-                self._record_call((time.time() - t0) * 1000, False)
-                return self._parse_response(data)
+                resp = self._parse_response(data)
+                tokens = self._estimate_call_tokens(
+                    payload.get("messages", []), resp.content
+                )
+                self._record_call((time.time() - t0) * 1000, False, tokens)
+                return resp
 
             except requests.Timeout:
                 last_error = LLMError(f"请求超时（{self.timeout}s）", retryable=True)

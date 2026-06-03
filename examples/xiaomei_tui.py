@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 # 导入 token 估算（用于上下文电量显示）
-from xiaomei_brain.memory.conversation_db import estimate_tokens
+from xiaomei_brain.base.message_utils import estimate_tokens
 
 # ── 日志缓冲区（TUI 启动前就创建，捕获所有日志）──────────────────────
 

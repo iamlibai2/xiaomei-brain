@@ -97,6 +97,14 @@ class DriveEngine:
         # 存储
         self.storage = DriveStorage(agent_id)
 
+        # Token 预算追踪
+        self.token_usage_today: float = 0.0
+        self.token_usage_date: str = ""       # YYYY-MM-DD，跨天自动清零
+        self.token_usage_month: float = 0.0
+        self.token_usage_month_date: str = ""  # YYYY-MM，跨月自动清零
+        self.token_budget_daily: float = 0.0   # 0 = 不限制
+        self.token_budget_monthly: float = 0.0
+
         # 时间追踪
         self.last_minute_tick = time.time()
         self.last_hour_tick = time.time()
@@ -116,7 +124,7 @@ class DriveEngine:
 
     def _restore_from_storage(self) -> None:
         """从存储恢复状态"""
-        success, pleasure_data, wear_data = self.storage.load(
+        success, pleasure_data, wear_data, token_data = self.storage.load(
             self.emotion, self.hormone, self.motivation, self.desire, self.energy
         )
         if success:
@@ -124,6 +132,11 @@ class DriveEngine:
                 self.pleasure.from_dict(pleasure_data)
             if wear_data:
                 self.wear = BodyWear.from_dict(wear_data)
+            if token_data:
+                self.token_usage_today = token_data.get("usage_today", 0.0)
+                self.token_usage_date = token_data.get("usage_date", "")
+                self.token_usage_month = token_data.get("usage_month", 0.0)
+                self.token_usage_month_date = token_data.get("usage_month_date", "")
             logger.info(
                 f"[DriveEngine] 状态恢复: "
                 f"emotion={self.emotion.type.value}, "
@@ -603,6 +616,42 @@ class DriveEngine:
         self.wear.on_pleasure_hit()
         return sensation
 
+    # ========== Token 预算 ==========
+
+    @property
+    def token_pressure(self) -> float:
+        """Token 压力系数：日预算和月预算中取最紧张的。
+
+        - 50% 以下不施压（给日常使用留缓冲）
+        - 50%~100% 线性增长 1.0 → 2.0
+        - 0 预算 = 不限制，返回 1.0
+        """
+        daily = self._calc_token_pressure(self.token_usage_today, self.token_budget_daily)
+        monthly = self._calc_token_pressure(self.token_usage_month, self.token_budget_monthly)
+        return max(daily, monthly)
+
+    @staticmethod
+    def _calc_token_pressure(used: float, budget: float) -> float:
+        if budget <= 0:
+            return 1.0
+        ratio = used / budget
+        return 1.0 + max(0.0, ratio - 0.5) * 2.0
+
+    def record_token_usage(self, count: int) -> None:
+        """记录一次 LLM 调用的 token 消耗（供 LLMClient 回调）。"""
+        if count <= 0:
+            return
+        today = time.strftime("%Y-%m-%d")
+        this_month = time.strftime("%Y-%m")
+        if today != self.token_usage_date:
+            self.token_usage_today = 0.0
+            self.token_usage_date = today
+        if this_month != self.token_usage_month_date:
+            self.token_usage_month = 0.0
+            self.token_usage_month_date = this_month
+        self.token_usage_today += count
+        self.token_usage_month += count
+
     # ========== 能量管理 ==========
 
     def consume_energy(self, delta: float = 0.05) -> None:
@@ -612,7 +661,7 @@ class DriveEngine:
         Args:
             delta: 消耗量，默认 0.05
         """
-        self.energy.level = max(0.0, self.energy.level - delta)
+        self.energy.level = max(0.0, self.energy.level - delta * self.token_pressure)
         self.energy.last_updated = time.time()
         logger.debug("[DriveEngine] 能量消耗: %.2f → %.2f", delta, self.energy.level)
 
@@ -1074,6 +1123,12 @@ class DriveEngine:
             self.emotion, self.hormone, self.motivation, self.desire, self.energy,
             pleasure_data=self.pleasure.to_dict(),
             wear_data=self.wear.to_dict(),
+            token_data={
+                "usage_today": self.token_usage_today,
+                "usage_date": self.token_usage_date,
+                "usage_month": self.token_usage_month,
+                "usage_month_date": self.token_usage_month_date,
+            },
         )
 
     def reset(self) -> None:

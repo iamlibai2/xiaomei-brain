@@ -89,18 +89,23 @@ class ConversationDriver:
         # PACE 等待 → 用户回复时自动恢复
         if gm.is_pace_waiting():
             gm._pace_waiting = False
-            logger.info("[ConversationDriver] 用户回复，PACE 等待结束")
-            if self._task_mode and gm._purpose and gm._purpose.current_goal:
+            logger.info("[ConversationDriver] 用户回复，等待结束")
+            if gm._purpose and gm._purpose.current_goal:
                 goal = gm._purpose.current_goal
                 if gm.is_continue_statement(msg.content):
                     gm.handle_continue(msg)
                     return
-                logger.info("[ConversationDriver] 自动恢复 PACE（用户提供上下文）")
-                gm._init_pace_runner()
-                nudge = f"[元认知上下文] 用户回复了：{msg.content[:500]}\n请在当前子目标基础上，考虑用户的反馈继续执行。"
-                gm._pace_runner._resume_nudge = nudge
                 intent_context = gm.build_intent_context_for_goal(goal, None)
-                gm._run_pace(msg, intent_context)
+                if self._task_mode:
+                    logger.info("[ConversationDriver] 自动恢复 PACE（用户提供上下文）")
+                    nudge = f"[元认知上下文] 用户回复了：{msg.content[:500]}\n请在当前子目标基础上，考虑用户的反馈继续执行。"
+                    gm._init_pace_runner()
+                    gm._pace_runner._resume_nudge = nudge
+                    gm._run_pace(msg, intent_context)
+                else:
+                    logger.info("[ConversationDriver] 自动恢复 ReAct（用户提供上下文）")
+                    nudge_context = f"[元认知上下文] 用户回复了：{msg.content[:500]}\n请在当前子目标基础上，考虑用户的反馈继续执行。"
+                    self._run_react(msg, f"{intent_context}\n{nudge_context}")
                 return
 
         # "继续"检测
@@ -269,6 +274,17 @@ class ConversationDriver:
                                     all_done = all(sg.is_completed() for sg in siblings)
                                     if all_done and root_goal:
                                         gm.complete_goal(root_goal)
+                                    # 早期完成检测：至少完成 2 个子目标后才触发，避免第一个子目标 LLM 就做完全部任务
+                                    elif (not all_done and root_goal and gm._sub_goal_covers_deliverable(summary, root_goal)
+                                          and sum(1 for s in siblings if s.is_completed()) >= 2):
+                                        remaining = sum(1 for s in siblings if not s.is_completed())
+                                        logger.info("[Progress] 早期完成：子目标产出已覆盖根目标，跳过剩余 %d 个子目标", remaining)
+                                        from xiaomei_brain.purpose.goal import GoalStatus
+                                        for s in siblings:
+                                            if not s.is_completed():
+                                                s.status = GoalStatus.COMPLETED
+                                                s.progress = 1.0
+                                        gm.complete_goal(root_goal)
                         gm._purpose.save()
 
                     display_content = gm.remove_progress_tag(content)
@@ -289,7 +305,12 @@ class ConversationDriver:
                         self._deliver_response(parent, current_msg.session_id, display_content)
 
                     if not gm.should_auto_advance(progress_data):
-                        logger.info("[ConversationDriver] 对话完成")
+                        # ReAct 模式下的等待：Agent 在等用户回复（如询问、确认）
+                        if progress_data and progress_data.get("status") == "in_progress":
+                            gm._pace_waiting = True
+                            logger.info("[ConversationDriver] 对话完成（等待用户回复: in_progress）")
+                        else:
+                            logger.info("[ConversationDriver] 对话完成")
                         had_sub_goal_completion = (
                             progress_data and progress_data.get("status") == "completed")
                         if not had_sub_goal_completion and display_content:

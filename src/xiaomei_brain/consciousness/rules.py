@@ -324,12 +324,12 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
 
     # 认知欲高 → 主动学习（从队列或兴趣中选题）
     RULES.append(
-        Rule.when(lambda si, t=thr_cognition: _get_drive_facet(si).cognition > t)
+        Rule.when(lambda si: _get_drive_facet(si).cognition > 1.0)
             .then(ActionItem(
                 action_type=ActionType.TOOL,
                 priority=0.55,
                 content="learn_topic",
-                reason=f"认知欲偏高 (>{thr_cognition:.1f})，主动学习",
+                reason="认知欲偏高，主动学习（当前阈值=1.0，暂不触发）",
                 source="desire",
                 cooldown_key="desire_learn",
                 metadata={"desire_type": "cognition"},
@@ -339,17 +339,17 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
 
     # ── Craving 驱动（快乐中枢渴望）─────────────────────
 
-    # 渴望偏高 → 通过 PROACTIVE 让 LLM 自己做因果决策
+    # 渴望偏高 → TOOL 驱动，让 LLM 自己做因果决策
     RULES.append(
-        Rule.when(lambda si: getattr(si.body, 'craving', 0) >= 0.5)
+        Rule.when(lambda si: getattr(si.body, 'craving', 0) >= 1.0)
             .then(ActionItem(
-                action_type=ActionType.PROACTIVE,
+                action_type=ActionType.TOOL,
                 priority=0.55,
-                content="",
+                content="pleasure_release",
                 reason="快乐中枢渴望偏高，通过意图让 LLM 自己做决策",
                 source="desire",
                 cooldown_key="desire_pleasure_lever",
-                metadata={"intent_type": "PLEASURE", "desire_type": "craving"},
+                metadata={"desire_type": "craving"},
             ))
             .cooldown("desire_pleasure_lever", 1800)
     )

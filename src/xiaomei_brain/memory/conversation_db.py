@@ -20,20 +20,9 @@ from pathlib import Path
 from typing import Any
 
 from xiaomei_brain.base.sqlite_store import SQLiteStore
+from xiaomei_brain.base.message_utils import estimate_tokens
 
 logger = logging.getLogger(__name__)
-
-
-def estimate_tokens(text: str | None) -> int:
-    """CJK-aware token estimation.
-
-    CJK characters ~1.5 tokens each, ASCII ~0.25 tokens each.
-    """
-    if not text:
-        return 0
-    cjk = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
-    other = len(text) - cjk
-    return int(cjk * 1.5 + other / 4)
 
 
 class ConversationDB(SQLiteStore):
