@@ -1,12 +1,19 @@
-"""PerspectiveEngine: 多视角并行 LLM 调用，突破单执行者视角僵化。
+"""统一多视角审视 — LLM 自主选择视角，三阶段运行。
 
-触发时机：PACE 子目标执行卡住时（InnerVoice "方向不对" 或重试 ≥ 1 次）。
-每个视角用极简上下文（只有子目标描述，不加载失败历史），产出方向感。
+不是静态角色扮演——是让 LLM 自己判断：要不要审视？从什么角度？要几个？
+三阶段：元视角生成 → 并行审视 → 综合建议。
+
+断点位置由代码固定，触发由 LLM 决定。
 
 Usage:
-    engine = PerspectiveEngine()
-    direction = engine.run(llm, goal_description)
-    # direction 作为执行者 context 前缀注入
+    from .perspectives import broaden_perspective
+
+    result = broaden_perspective(
+        target="当前计划", stage="design",
+        context=plan_text, pmm_context=pmm.get_context(),
+        llm=agent.llm,
+    )
+    # result 为综合调整建议，或 None（LLM 决定跳过 / 调用失败）
 """
 
 from __future__ import annotations
@@ -17,117 +24,233 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# ── 视角定义 ──────────────────────────────────────────────
+# ── 阶段信息 ─────────────────────────────────────────────────────────
 
-DEFAULT_PERSPECTIVES: list[dict[str, str]] = [
-    {
-        "name": "架构师",
-        "prompt": (
-            "你是一位资深系统架构师。执行者在做一个子目标时卡住了。"
-            "从架构的层面看——和整体设计一致吗？有没有设计层面的问题被忽略了？"
-            "不用给方案，给1-2句直觉式的方向感。"
-        ),
-    },
-    {
-        "name": "极简主义",
-        "prompt": (
-            "你的信条是'最简单的方案往往是对的'。执行者在一个子目标上反复尝试但做不成。"
-            "有没有更简单的做法？甚至——这一步真的必须做吗？"
-            "不用给方案，给1-2句直觉式的方向感。"
-        ),
-    },
-    {
-        "name": "用户",
-        "prompt": (
-            "你从这个软件的使用者角度看问题。执行者卡在某个子目标上。"
-            "从使用者的角度——他们真正关心的是什么？当前的做法是在解决真实问题，"
-            "还是在解决技术本身？不用给方案，给1-2句直觉式的方向感。"
-        ),
-    },
-    {
-        "name": "反面",
-        "prompt": (
-            "你的任务是找漏洞。执行者卡在了一个子目标上。"
-            "当前方案最可能出问题的地方在哪？最坏情况下会怎样？"
-            "不用给方案，给1-2句直觉式的方向感。"
-        ),
-    },
-]
+_STAGE_INFO: dict[str, tuple[str, str]] = {
+    "understand": ("需求理解", "理解这个任务真正要解决什么问题，谁会被影响"),
+    "design":     ("分解计划", "审视当前子目标拆分——有没有遗漏、有没有多余、顺序对吗"),
+    "execute":    ("当前方法", "审视执行路径，找盲区或替代方案"),
+    "review":     ("单步产出", "审视刚才这一步的产出质量——有没有隐患、边界情况漏了吗"),
+    "retrospect": ("整体交付", "审视完整交付——从用户/维护者/质量标准角度看，真的算'完成'了吗"),
+}
 
 
-class PerspectiveEngine:
-    """多视角并行调用引擎。
+# ── Phase 1: 元视角生成 ──────────────────────────────────────────────
 
-    用 ThreadPoolExecutor 并行调用 LLM，每个视角极简上下文。
-    聚合结果作为"方向感"注入执行者 context。
+_PHASE1_PROMPT = """你正在{stage_hint}。
+
+当前{target}：
+{context}
+{pmm_section}
+你可以选择做一次多视角审视——跳出当前思路，从不同角度看这件事。
+
+思考：谁会被这个{target}影响？他们关心什么？有什么容易被忽略的角度？
+
+如果当前{target}清晰完整、方向明确，回复 **跳过**。
+如果需要审视，列出 1-3 个具体视角——不要用笼统的"架构师""用户"，用具体角色。
+每个视角一行，格式：
+视角: 角色名 | 一句话说明关注点"""
+
+
+def _generate_perspectives(
+    llm: Any, target: str, stage_name: str, stage_hint: str,
+    context: str, pmm_context: str, timeout: float,
+) -> list[dict[str, str]] | None:
+    """Phase 1: LLM 决定是否审视 + 生成视角列表。
+
+    Returns:
+        视角列表 [{"name": ..., "focus": ...}]，或 None（跳过/失败）。
     """
+    pmm_section = f"\n项目背景：\n{pmm_context}" if pmm_context else ""
+    prompt = _PHASE1_PROMPT.format(
+        stage_hint=stage_hint, target=target,
+        context=context[:1500], pmm_section=pmm_section[:500],
+    )
 
-    def __init__(self, perspectives: list[dict[str, str]] | None = None) -> None:
-        self._perspectives = perspectives or DEFAULT_PERSPECTIVES
-        self._timeout: float = 30.0
-
-    def run(self, llm: Any, goal_description: str) -> str:
-        """并行调用所有视角，返回聚合的方向感文本。
-
-        Args:
-            llm: LLM 客户端（需要 chat(messages) -> response.content 接口）
-            goal_description: 当前子目标描述
-
-        Returns:
-            聚合的方向感文本。如果所有视角失败返回空字符串。
-        """
-        results: list[str] = []
-
-        with ThreadPoolExecutor(max_workers=len(self._perspectives)) as executor:
-            futures = {
-                executor.submit(
-                    self._call_perspective, llm, p["name"], p["prompt"], goal_description,
-                ): p["name"]
-                for p in self._perspectives
-            }
-
-            for future in as_completed(futures, timeout=self._timeout):
-                name = futures[future]
-                try:
-                    result = future.result(timeout=self._timeout)
-                    if result:
-                        results.append(f"【{name}视角】{result}")
-                except Exception as e:
-                    logger.warning("[PerspectiveEngine] 视角 %s 调用失败: %s", name, e)
-
-        if not results:
-            return ""
-
-        logger.info(
-            "[PerspectiveEngine] %d/%d 视角成功产出方向感",
-            len(results), len(self._perspectives),
-        )
-        return "\n\n".join(results)
-
-    @staticmethod
-    def _call_perspective(
-        llm: Any, name: str, system_prompt: str, goal_description: str,
-    ) -> str | None:
-        """单个视角的 LLM 调用。"""
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": (
-                    f"当前子目标：{goal_description[:300]}\n\n"
-                    "执行者卡住了。从你的视角看，问题可能出在哪？不用给方案，给1-2句直觉。"
-                ),
-            },
-        ]
-
-        try:
-            response = llm.chat(messages)
-            if response and hasattr(response, "content"):
-                text = (response.content or "").strip()
-                if text:
-                    # 截断，只要方向感
-                    return text[:200]
-        except Exception as e:
-            logger.warning("[PerspectiveEngine] %s LLM 调用异常: %s", name, e)
-
+    try:
+        response = llm.chat([{"role": "user", "content": prompt}])
+        text = (response.content or "").strip() if hasattr(response, "content") else ""
+    except Exception as e:
+        logger.warning("[broaden] Phase1 LLM 调用失败: %s", e)
         return None
+
+    if not text or "跳过" in text[:20]:
+        logger.debug("[broaden] Phase1: LLM 决定跳过审视 (stage=%s)", stage_name)
+        return None
+
+    perspectives = []
+    for line in text.split("\n"):
+        line = line.strip()
+        if line.startswith("视角:") or line.startswith("视角："):
+            # 格式: "视角: 角色名 | 关注点"
+            content = line.split(":", 1)[-1].strip().lstrip("：").strip()
+            if "|" in content:
+                name, focus = content.split("|", 1)
+                name = name.strip()
+                focus = focus.strip()
+                if name and focus:
+                    perspectives.append({"name": name, "focus": focus})
+
+    if not perspectives:
+        logger.debug("[broaden] Phase1: 未解析到有效视角")
+        return None
+
+    return perspectives[:3]
+
+
+# ── Phase 2: 并行视角审视 ─────────────────────────────────────────────
+
+_PHASE2_PROMPT = """你是「{name}」。你关注：{focus}
+
+当前{target}：
+{context}
+{pmm_section}
+从你的视角看，这个{target}有什么盲区、问题或改进点？1-2 句话。直接说重点，不要客套。"""
+
+
+def _parallel_review(
+    llm: Any, perspectives: list[dict[str, str]],
+    target: str, context: str, pmm_context: str, timeout: float,
+) -> list[str]:
+    """Phase 2: 并行调用每个视角。
+
+    Returns:
+        各视角的观察文本列表。
+    """
+    pmm_section = f"\n项目背景：\n{pmm_context}" if pmm_context else ""
+    results: list[str] = []
+
+    with ThreadPoolExecutor(max_workers=len(perspectives)) as executor:
+        futures = {}
+        for p in perspectives:
+            prompt = _PHASE2_PROMPT.format(
+                name=p["name"], focus=p["focus"],
+                target=target, context=context[:1000],
+                pmm_section=pmm_section[:300],
+            )
+            futures[
+                executor.submit(
+                    _call_single, llm, p["name"], prompt, timeout,
+                )
+            ] = p["name"]
+
+        for future in as_completed(futures, timeout=timeout):
+            name = futures[future]
+            try:
+                result = future.result(timeout=timeout)
+                if result:
+                    results.append(f"【{name}】{result}")
+            except Exception as e:
+                logger.warning("[broaden] 视角 %s 调用失败: %s", name, e)
+
+    if results:
+        logger.info(
+            "[broaden] Phase2: %d/%d 视角产出观察",
+            len(results), len(perspectives),
+        )
+    return results
+
+
+def _call_single(llm: Any, name: str, prompt: str, timeout: float) -> str | None:
+    """单个视角的 LLM 调用。"""
+    try:
+        response = llm.chat([{"role": "user", "content": prompt}])
+        if response and hasattr(response, "content"):
+            text = (response.content or "").strip()
+            if text:
+                return text[:200]
+    except Exception as e:
+        logger.warning("[broaden] %s LLM 异常: %s", name, e)
+    return None
+
+
+# ── Phase 3: 综合 ────────────────────────────────────────────────────
+
+_PHASE3_PROMPT = """以下是从不同视角对当前{target}的观察：
+
+{observations}
+
+请综合这些观察，给出对当前{target}的调整建议。2-3 条，具体可操作。
+如果各视角都觉得没问题，回复"各视角无异议，继续执行"。直接给建议，不要客套。"""
+
+
+def _synthesize(
+    llm: Any, observations: list[str],
+    target: str, context: str, pmm_context: str, timeout: float,
+) -> str | None:
+    """Phase 3: 综合各视角产出，给出调整建议。"""
+    observations_text = "\n\n".join(observations)
+    prompt = _PHASE3_PROMPT.format(target=target, observations=observations_text)
+
+    try:
+        response = llm.chat([{"role": "user", "content": prompt}])
+        if response and hasattr(response, "content"):
+            text = (response.content or "").strip()
+            if text:
+                return text[:500]
+    except Exception as e:
+        logger.warning("[broaden] Phase3 LLM 调用失败: %s", e)
+
+    return None
+
+
+# ── 主入口 ────────────────────────────────────────────────────────────
+
+def broaden_perspective(
+    target: str = "",
+    stage: str = "",
+    context: str = "",
+    pmm_context: str = "",
+    llm: Any = None,
+    timeout: float = 30.0,
+) -> str | None:
+    """统一多视角审视。
+
+    三阶段：元视角生成 → 并行审视 → 综合建议。
+    代码决定断点位置，LLM 决定是否审视、要什么视角。
+
+    Args:
+        target: 审视对象（"当前计划""当前方法""单步产出""整体交付"）
+        stage: 阶段标签 (understand/design/execute/review/retrospect)
+        context: 当前上下文
+        pmm_context: PMM 项目认知地图文本
+        llm: LLM 客户端
+        timeout: 单个视角 LLM 调用超时
+
+    Returns:
+        综合调整建议文本，或 None（跳过/失败）。
+    """
+    if not llm:
+        return None
+
+    stage_info = _STAGE_INFO.get(stage)
+    if not stage_info:
+        logger.warning("[broaden_perspective] 未知阶段: %s", stage)
+        return None
+    stage_name, stage_hint = stage_info
+
+    # Phase 1: 元视角生成
+    perspectives = _generate_perspectives(
+        llm, target, stage_name, stage_hint, context, pmm_context, timeout,
+    )
+    if not perspectives:
+        return None
+
+    logger.info(
+        "[broaden_perspective] stage=%s → %d 视角: %s",
+        stage, len(perspectives), [p["name"] for p in perspectives],
+    )
+
+    # Phase 2: 并行审视
+    observations = _parallel_review(
+        llm, perspectives, target, context, pmm_context, timeout,
+    )
+    if not observations:
+        return None
+
+    # Phase 3: 综合
+    result = _synthesize(llm, observations, target, context, pmm_context, timeout)
+    if result:
+        logger.info("[broaden_perspective] 综合完成: %s", result[:80])
+
+    return result

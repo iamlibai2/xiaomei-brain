@@ -795,11 +795,33 @@ class GoalManager:
         self._clear_current_goal()
 
     def _clear_current_goal(self) -> None:
-        """清除当前目标引用，标记任务结束。"""
-        if self._purpose and self._purpose.current_goal:
-            goal_desc = self._purpose.current_goal.description[:40]
-            self._purpose.current_goal = None
-            logger.info("[GoalManager] 当前目标已清除: %s", goal_desc)
+        """清除当前目标引用，标记任务结束。
+
+        确保根目标及其所有子目标都被标记为完成，
+        防止旧任务残留的 PENDING 子目标污染新任务。
+        """
+        if not self._purpose or not self._purpose.current_goal:
+            return
+
+        goal = self._purpose.current_goal
+        goal_desc = goal.description[:40]
+
+        # 找到根目标（沿 parent_id 上溯）
+        root = goal
+        while root.parent_id and root.parent_id in self._purpose.goals:
+            root = self._purpose.goals[root.parent_id]
+
+        # 完成根目标及其所有未完成的子目标
+        if root and not root.is_completed():
+            sub_goals = self._purpose.get_sub_goals(root.id)
+            for sg in sub_goals:
+                if not sg.is_completed():
+                    sg.complete()
+            root.complete()
+            logger.info("[GoalManager] 根目标已完成: %s (含 %d 子目标)", root.description[:40], len(sub_goals))
+
+        self._purpose.current_goal = None
+        logger.info("[GoalManager] 当前目标已清除: %s", goal_desc)
 
     def _extract_goal_knowledge(self, goal: Any) -> None:
         try:

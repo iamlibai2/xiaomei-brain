@@ -32,7 +32,7 @@ class Action(Enum):
     """DECIDE 阶段输出的动作类型。"""
     CONTINUE = "continue"
     RETRY = "retry"
-    SWITCH_PERSPECTIVE = "switch_perspective"
+    BROADEN_PERSPECTIVE = "broaden_perspective"
     INSERT_SUB_GOALS = "insert_sub_goals"
     SKIP_CURRENT = "skip_current"
     COMPLETE_AND_ADVANCE = "complete_advance"
@@ -62,7 +62,7 @@ class CognitiveLoop:
     """统一任务执行循环。
 
     持有对 PACERunner 的引用以访问所有 service 方法（step_check,
-    InnerVoice, PerspectiveEngine, task_executor 等）。这样组件全保留在
+    InnerVoice, 多视角审视, task_executor 等）。这样组件全保留在
     PACERunner 上，CognitiveLoop 只负责管道编排。
     """
 
@@ -438,13 +438,13 @@ class CognitiveLoop:
         # 4. 动态插入
         if a.iv_insert:
             return Action.INSERT_SUB_GOALS
-        # 5. 视角切换（IV 或保底触发）
+        # 5. 视角切换 — 统一多视角审视
         if a.iv_retry and not a.perspective_tried:
-            return Action.SWITCH_PERSPECTIVE
+            return Action.BROADEN_PERSPECTIVE
         if a.retry_count >= 1 and not a.perspective_tried and a.step_check and a.step_check.suggestion in (
             MetaSuggestion.RETRY_DIFFERENT, MetaSuggestion.SIMPLIFY,
         ):
-            return Action.SWITCH_PERSPECTIVE
+            return Action.BROADEN_PERSPECTIVE
         # 6. 价值重估 → 跳过
         if a.retry_count >= 3 and not a.value_ok:
             return Action.SKIP_CURRENT
@@ -505,13 +505,16 @@ class CognitiveLoop:
             p._apply_sub_goal_inserts(assessment.iv_insert)
             return "continue"
 
-        if action == Action.SWITCH_PERSPECTIVE:
-            direction = p._trigger_perspective_breakthrough(p._current_goal_desc())
+        if action == Action.BROADEN_PERSPECTIVE:
+            direction = p._broaden_perspective(
+                target="当前方法", stage="execute",
+                context=f"子目标: {p._current_goal_desc()}\n已重试: {assessment.retry_count}次\n提示: {assessment.step_check.reasoning if assessment.step_check else ''}",
+            )
             p._perspective_tried = True
             if direction:
+                # 将视角审视结果注入上下文，保留失败历史摘要
                 p._observations = []
-                # 注入方向感到上下文
-                logger.info("[CognitiveLoop] 视角切换 → 清空上下文，重新执行")
+                logger.info("[CognitiveLoop] 视角审视完成，注入方向感")
             return "continue"
 
         if action == Action.SKIP_CURRENT:

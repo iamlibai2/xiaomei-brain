@@ -19,7 +19,7 @@ from typing import Any, Callable
 from .types import (
     StepObservation, StepCheckResult, MetaSuggestion, SurpriseType, StuckClass,
 )
-from .perspectives import PerspectiveEngine
+from .perspectives import broaden_perspective
 from .rules import detect_surprises, parse_progress_tag, remove_progress_tag
 from .reviewer import LLMBudget, llm_step_check, llm_post_review
 from .capability import CapabilityTracker
@@ -78,8 +78,7 @@ class PACERunner:
         # 可观测性指标（每次 run() 时创建）
         self._metrics = None
 
-        # 视角切换状态
-        self._perspective_engine: PerspectiveEngine | None = None
+        # 视角审视状态
         self._perspective_tried: bool = False
 
         # 子目标阻塞推进状态
@@ -127,6 +126,25 @@ class PACERunner:
 
         # 推断当前任务所属的项目，设置 PMM 上下文
         self._infer_project_id()
+
+        # ── 多视角审视: understand 阶段（需求理解，分解前）──
+        self._broaden_perspective(
+            target="需求理解", stage="understand",
+            context=f"用户任务: {goal_desc}",
+        )
+        # ── 多视角审视: design 阶段（分解计划）──
+        if goal and hasattr(goal, 'parent_id') and goal.parent_id:
+            siblings = self._purpose.get_sub_goals(goal.parent_id) or [goal]
+        else:
+            siblings = [goal] if goal else []
+        if len(siblings) >= 2:
+            sub_goal_list = "\n".join(
+                f"{i+1}. {sg.description[:100]}" for i, sg in enumerate(siblings)
+            )
+            self._broaden_perspective(
+                target="分解计划", stage="design",
+                context=f"根目标: {goal_desc}\n\n子目标列表:\n{sub_goal_list}",
+            )
 
         try:
             from .cognitive_loop import CognitiveLoop
@@ -497,26 +515,19 @@ class PACERunner:
             except Exception as e:
                 logger.debug("[PACERunner] InnerVoice task_done 失败: %s", e)
 
-        # ── [Layer 5] 审查：子目标完成时触发 ──
-        if self._inner_voice and hasattr(self._inner_voice, '_last_reflection'):
-            thought = self._inner_voice.get_last_thought()
-            from .autonomy import should_review, review
-            if should_review(goal_desc, sub_goal_completed=True, inner_voice_signal=thought):
-                try:
-                    agent = self._agent_provider._get_agent()
-                    review_result = review(
-                        description=goal_desc,
-                        files_changed=[
-                            t for obs in self._observations[-10:]
-                            for t in obs.tool_calls
-                        ],
-                        llm=agent.llm,
-                        context=thought,
-                    )
-                    if review_result:
-                        logger.info("[PACERunner] 审查完成: %s", review_result[:80])
-                except Exception as e:
-                    logger.debug("[PACERunner] 审查失败: %s", e)
+        # ── 多视角审视: retrospect 阶段（整体交付终验）──
+        try:
+            obs_summary = "\n".join(
+                f"- Step {o.step_index}: {o.goal_description[:60]} "
+                f"({o.tool_call_count}工具/{o.elapsed_seconds:.0f}s)"
+                for o in self._observations[-10:]
+            ) if self._observations else "无"
+            self._broaden_perspective(
+                target="整体交付", stage="retrospect",
+                context=f"任务: {goal_desc}\n耗时: {task_duration:.0f}s\n步骤数: {len(self._observations)}\n\n步骤摘要:\n{obs_summary}",
+            )
+        except Exception as e:
+            logger.debug("[PACERunner] retrospect 视角审视失败: %s", e)
 
         # 指标已在 close_run() 中持久化到 DB，不再写 JSON
 
@@ -1006,34 +1017,35 @@ class PACERunner:
         except Exception:
             return False
 
-    def _trigger_perspective_breakthrough(self, goal_description: str) -> str:
-        """触发视角切换突破。
+    def _broaden_perspective(
+        self, target: str = "", stage: str = "", context: str = "",
+    ) -> str | None:
+        """调用统一多视角审视。
 
-        Returns:
-            聚合的方向感文本。空字符串表示突破失败。
+        LLM 自主决定是否审视、要几个视角、要什么视角。
         """
+        if not self._project_mental_model:
+            return None
         try:
             agent = self._agent_provider._get_agent()
-            llm = agent.llm
+            llm = agent.llm if agent else None
         except Exception:
-            logger.warning("[PACERunner] 无法获取 LLM 实例，跳过视角切换")
-            return ""
+            logger.debug("[PACERunner] 无法获取 LLM，跳过视角审视")
+            return None
 
-        if self._perspective_engine is None:
-            self._perspective_engine = PerspectiveEngine()
+        pmm_ctx = ""
+        try:
+            pmm_ctx = self._project_mental_model.get_context()
+        except Exception:
+            pass
 
-        logger.info(
-            "[PACERunner] 触发视角切换突破: goal='%s'",
-            goal_description[:60],
+        result = broaden_perspective(
+            target=target, stage=stage, context=context,
+            pmm_context=pmm_ctx, llm=llm,
         )
-        direction = self._perspective_engine.run(llm, goal_description)
-
-        if direction:
-            print(f"\n[视角切换] 获得突破方向:\n{direction}", flush=True)
-        else:
-            print(f"\n[视角切换] 所有视角均未产出有效方向", flush=True)
-
-        return direction
+        if result:
+            print(f"\n[视角审视] {stage}:\n{result}", flush=True)
+        return result
 
     # ── 子目标阻塞与推进 ─────────────────────────────────────────
 
