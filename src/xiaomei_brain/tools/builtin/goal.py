@@ -1,6 +1,7 @@
 """goal — 目标管理工具，让 Agent 在对话中接收和查询工作任务。
 
 create_goal: 将用户安排的工作记录为目标
+update_goal: 更新已有目标的描述/完成标准/优先级
 list_goals:   查看当前目标状态
 
 Usage:
@@ -37,9 +38,12 @@ def create_goal_tools(purpose_ref: list | None = None) -> list[Tool]:
         name="create_goal",
         description=(
             "当用户要求你完成某项工作时（如写报告、做调研、写代码、准备PPT等），"
-            "调用此工具将工作记录为待执行的目标。这是执行任务的第一步。"
-            "注意：如果目标描述模糊（缺少'做什么'或'怎么算完成'），先向用户确认再调用。"
-            "不要猜测用户意图——不清楚就直接问。"
+            "调用此工具将工作记录为待执行的目标。\n"
+            "重要规则：\n"
+            "1. 调用前必须确认清楚——目标描述要包含'做什么'和'怎么算完成'。"
+            "信息不足时先向用户追问，等对方回答后再调用，不要猜测。\n"
+            "2. 调用后只反馈「已创建任务，稍后执行」，不要再追问。"
+            "如果需要补充信息，在调用前完成。"
         ),
     )
     def create_goal(
@@ -91,14 +95,10 @@ def create_goal_tools(purpose_ref: list | None = None) -> list[Tool]:
             priority=priority,
         )
 
-        # 保存 acceptance_criteria 到 metadata
+        # 保存 acceptance_criteria 和 task_type 到 metadata
         if acceptance_criteria.strip():
-            import json
-            meta = json.loads(getattr(goal, 'metadata_json', '{}') or '{}')
-            meta["acceptance_criteria"] = acceptance_criteria.strip()
-            meta["task_type"] = goal_type
-            goal.metadata_json = json.dumps(meta, ensure_ascii=False)
-            purpose.save()
+            goal.metadata["acceptance_criteria"] = acceptance_criteria.strip()
+        goal.metadata["task_type"] = goal_type
 
         type_names = {
             "execution": "执行任务", "learning": "学习任务",
@@ -112,6 +112,54 @@ def create_goal_tools(purpose_ref: list | None = None) -> list[Tool]:
             lines.append(f"完成标准: {acceptance_criteria.strip()}")
         lines.append(f"目标ID: {goal.id}")
         lines.append("目标将在聊天结束后自动推进。")
+
+        return "\n".join(lines)
+
+    # ── update_goal ──────────────────────────────────────────
+
+    @tool(
+        name="update_goal",
+        description=(
+            "更新已有目标的描述、完成标准或优先级。"
+            "用于：用户补充了目标的细节（如报告类型、时间段、受众等）、"
+            "或调整优先级。只传需要更新的字段，不需要改的留空。"
+        ),
+    )
+    def update_goal(
+        goal_id: str,
+        description: str = "",
+        acceptance_criteria: str = "",
+        priority: float = -1.0,
+    ) -> str:
+        """更新已有目标。
+
+        Args:
+            goal_id: 要更新的目标 ID（从 create_goal 返回值或 list_goals 获取）
+            description: 新的描述（留空不更新）
+            acceptance_criteria: 新的完成标准（留空不更新）
+            priority: 新的优先级 0.0~1.0（-1 表示不更新）
+        """
+        purpose = _get_purpose()
+        if not purpose:
+            return "目标系统尚未初始化，请稍后再试。"
+
+        goal = purpose.update_goal(
+            goal_id=goal_id,
+            description=description,
+            acceptance_criteria=acceptance_criteria,
+            priority=None if priority < 0 else priority,
+        )
+
+        if goal is None:
+            return f"未找到目标 '{goal_id}'。请用 list_goals 查看所有目标。"
+
+        lines = [f"已更新目标「{goal.description[:60]}」"]
+        if description.strip():
+            lines.append(f"描述已更新")
+        if acceptance_criteria.strip():
+            lines.append(f"完成标准: {acceptance_criteria.strip()}")
+        if priority >= 0:
+            lines.append(f"优先级: {priority:.0%}")
 
         return "\n".join(lines)
 
@@ -166,4 +214,4 @@ def create_goal_tools(purpose_ref: list | None = None) -> list[Tool]:
 
         return "\n".join(lines)
 
-    return [create_goal, list_goals]
+    return [create_goal, update_goal, list_goals]

@@ -846,10 +846,12 @@ class ActionExecutor:
                     {"role": "system", "content": consciousness},
                     {"role": "user", "content": prompt},
                 ])
-                content = resp.content.strip() if resp and resp.content else None
+                content = resp.content.strip() if resp and resp.content else ""
                 logger.debug("[_generate_greeting] LLM 返回: %s", content[:100] if content else "None")
                 if content:
                     return content
+                else:
+                    logger.warning("[_generate_greeting] LLM 返回空内容，fallback")
             except Exception as e:
                 logger.warning("[_generate_greeting] LLM 调用失败: %s", e)
 
@@ -890,9 +892,11 @@ class ActionExecutor:
                     {"role": "system", "content": consciousness},
                     {"role": "user", "content": prompt},
                 ])
-                content = resp.content.strip() if resp and resp.content else None
+                content = resp.content.strip() if resp and resp.content else ""
                 if content:
                     return content
+                else:
+                    logger.warning("[_generate_talk] LLM 返回空内容，fallback")
             except Exception as e:
                 logger.warning("[_generate_talk] LLM 调用失败: %s", e)
 

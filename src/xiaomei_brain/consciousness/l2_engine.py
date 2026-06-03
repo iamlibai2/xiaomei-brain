@@ -247,7 +247,7 @@ class L2Engine:
 
                 # 终端展示自由表达
                 if consciousness_text:
-                    _C_FREE = "\033[35m"  # Magenta
+                    _C_FREE = "\033[32m"  # Green
                     _C_RST = "\033[0m"
                     print(f"\n{_C_FREE}── 自由表达 ──{_C_RST}", flush=True)
                     print(f"{_C_FREE}{consciousness_text}{_C_RST}", flush=True)
@@ -491,7 +491,7 @@ class L2Engine:
                 consciousness_text, events_json = self._split_consciousness_events(emergence_text)
 
                 if consciousness_text:
-                    _C_FREE = "\033[35m"; _C_RST = "\033[0m"
+                    _C_FREE = "\033[32m"; _C_RST = "\033[0m"
                     print(f"\n{_C_FREE}── 自由表达 ──{_C_RST}", flush=True)
                     print(f"{_C_FREE}{consciousness_text}{_C_RST}", flush=True)
 

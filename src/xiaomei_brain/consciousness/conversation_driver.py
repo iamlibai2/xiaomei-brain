@@ -121,8 +121,8 @@ class ConversationDriver:
         if msg.content.strip().startswith("!") and not self._task_mode:
             self._task_mode = True
 
-        # 有活跃目标时：LLM 意图分析
-        if gm._purpose and gm._purpose.current_goal:
+        # 任务模式 + 有活跃目标时：LLM 意图分析（_task_mode=False 时跳过，走聊天模式）
+        if self._task_mode and gm._purpose and gm._purpose.current_goal:
             logger.info("[ConversationDriver] 任务模式: %s", msg.content[:50])
             intent_result = gm.analyze_intent(msg.content)
             logger.info("[ConversationDriver] 意图分析: type=%s, goals=%d, confidence=%.2f",

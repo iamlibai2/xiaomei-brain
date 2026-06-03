@@ -839,6 +839,42 @@ class PurposeEngine:
 
     # ========== 存储 ==========
 
+    def update_goal(
+        self,
+        goal_id: str,
+        description: str = "",
+        acceptance_criteria: str = "",
+        priority: float | None = None,
+    ) -> Optional[Goal]:
+        """更新已有目标的描述/完成标准/优先级。
+
+        Args:
+            goal_id: 目标 ID
+            description: 新的描述（空字符串表示不更新）
+            acceptance_criteria: 新的完成标准（空字符串表示不更新）
+            priority: 新的优先级（None 表示不更新）
+
+        Returns:
+            更新后的 Goal，None 表示目标不存在
+        """
+        goal = self.goals.get(goal_id)
+        if not goal:
+            logger.warning(f"[PurposeEngine] 目标不存在: {goal_id}")
+            return None
+
+        if description.strip():
+            goal.description = description.strip()
+        if acceptance_criteria.strip():
+            goal.metadata["acceptance_criteria"] = acceptance_criteria.strip()
+        if priority is not None:
+            goal.priority = max(0.0, min(1.0, priority))
+
+        goal.updated_at = time.time()
+        self.save()
+
+        logger.info(f"[PurposeEngine] 目标更新: {goal.description[:40]}")
+        return goal
+
     def save(self) -> None:
         """保存到文件"""
         self.storage.save_goals(self.goals)
