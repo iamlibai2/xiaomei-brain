@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 import logging
 import re
+import socket
 import unicodedata
 from dataclasses import dataclass
 from typing import Generator
+from urllib.parse import urljoin
 
 import requests
 
@@ -37,25 +40,36 @@ class GetResult:
 
 
 def _is_private_url(url: str) -> bool:
-    """Check if URL resolves to a private/internal IP."""
+    """Check if URL resolves to a private/internal IP (covers IPv4 and IPv6)."""
     try:
         host = re.sub(r":\d+$", "", url.split("://", 1)[-1].split("/", 1)[0])
+        # IPv6 hostnames arrive as `[::1]` in the URL — strip brackets
+        if host.startswith("[") and host.endswith("]"):
+            host = host[1:-1]
         if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
             return True
-        # Resolve domain to IP
+        # 任意一个解析结果命中内网/loopback/link-local/AWS metadata
+        # 就视为私有地址。getaddrinfo 同时返回 IPv4 + IPv6，所以
+        # IPv6 主机名（如 `fc00::/7` ULA、`fe80::/10` link-local）也被覆盖。
         try:
-            ip = ipaddress.ip_address(host)
-            return ip.is_private or ip.is_loopback or ip.is_reserved
+            ipaddress.ip_address(host)
+            # 用 5 元组占位让下方 for 解包保持一致：synthetic sockaddr 是 (host, 0)
+            addresses = [(socket.AF_UNSPEC, socket.SOCK_STREAM, 0, "", (host, 0))]
         except ValueError:
-            # It's a hostname — try DNS resolution
             try:
-                import socket
-
-                addr = socket.gethostbyname(host)
-                ip = ipaddress.ip_address(addr)
-                return ip.is_private or ip.is_loopback or ip.is_reserved
+                addresses = socket.getaddrinfo(host, None)
             except (socket.gaierror, ValueError):
                 return False
+        for _family, _, _, _, sockaddr in addresses:
+            ip = ipaddress.ip_address(sockaddr[0])
+            if (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_reserved
+                or ip.is_link_local  # 169.254/16, 含 AWS/GCP metadata 169.254.169.254
+            ):
+                return True
+        return False
     except Exception:
         return False
 
@@ -120,7 +134,7 @@ def _html_to_markdown(html: str) -> tuple[str, str | None]:
 
     # Headers
     text = re.sub(
-        r"<h([1-6])[^>]*>([\s\S]*?)</h\\1>",
+        r"<h([1-6])[^>]*>([\s\S]*?)</h\1>",
         lambda m: f"\n{'#' * max(1, min(6, int(m.group(1))))} {_normalize_whitespace(_strip_tags(m.group(2)))}\n",
         text,
         flags=re.IGNORECASE,
@@ -218,19 +232,57 @@ class WebGetProvider:
         except Exception as e:
             raise ValueError(f"Invalid URL: {e}") from e
 
+        # SSRF 防护：拒绝指向私有/loopback/保留地址的 URL。
+        # 公共 URL 跳转到内部 IP 是常见的 SSRF 攻击向量，所以下面关掉
+        # allow_redirects 改手动跟进，每跳都重新校验。
+        if _is_private_url(url):
+            raise ValueError(
+                f"URL blocked (SSRF protection): {url} resolves to a private, "
+                f"loopback, or reserved address. Requests to localhost, LAN IPs, "
+                f"or cloud metadata (169.254.169.254) are not allowed."
+            )
+
         headers = {
             "User-Agent": self.user_agent,
             "Accept": "text/markdown, text/html;q=0.9, */*;q=0.1",
             "Accept-Language": "en-US,en;q=0.9",
         }
 
-        response = requests.get(
-            url,
-            headers=headers,
-            timeout=self.timeout,
-            allow_redirects=True,
-            stream=True,
-        )
+        current_url = url
+        redirect_count = 0
+        response = None
+        while True:
+            response = requests.get(
+                current_url,
+                headers=headers,
+                timeout=self.timeout,
+                allow_redirects=False,
+                stream=True,
+            )
+
+            if response.is_redirect:
+                if redirect_count >= self.max_redirects:
+                    response.close()
+                    raise RuntimeError(
+                        f"Too many redirects (>{self.max_redirects})"
+                    )
+                location = response.headers.get("Location", "")
+                if not location:
+                    response.close()
+                    raise RuntimeError("Redirect with no Location header")
+                next_url = urljoin(current_url, location)
+                if _is_private_url(next_url):
+                    response.close()
+                    raise ValueError(
+                        f"Redirect blocked (SSRF protection): "
+                        f"{current_url} -> {next_url} (private/reserved address)"
+                    )
+                response.close()
+                current_url = next_url
+                redirect_count += 1
+                continue
+
+            break
 
         final_url = response.url
         status = response.status_code
@@ -238,12 +290,12 @@ class WebGetProvider:
         # Normalize: take first part before semicolon
         content_type = content_type.split(";")[0].strip()
 
-        # Read body with byte limit
-        body_bytes = b""
+        # Read body with byte limit. bytearray 用 extend 避免每次 += 复制整个 buffer。
+        body_bytes = bytearray()
         for chunk in response.iter_content(chunk_size=8192):
-            body_bytes += chunk
+            body_bytes.extend(chunk)
             if len(body_bytes) > self.max_response_bytes:
-                body_bytes = body_bytes[: self.max_response_bytes]
+                del body_bytes[self.max_response_bytes :]
                 break
 
         try:
@@ -279,8 +331,8 @@ class WebGetProvider:
 
         elif "application/json" in content_type.lower():
             try:
-                parsed_json = __import__("json").loads(body)
-                text = __import__("json").dumps(parsed_json, indent=2, ensure_ascii=False)
+                parsed_json = json.loads(body)
+                text = json.dumps(parsed_json, indent=2, ensure_ascii=False)
                 extractor = "json"
             except Exception:
                 text = body

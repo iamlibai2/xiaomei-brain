@@ -18,6 +18,27 @@ _BLOCKED_PATTERNS = [
     (r'^\s*vim?\b|^\s*nano\b|^\s*emacs\b', 'Interactive editor cannot run here. Use write_file/edit_file tools instead.'),
     (r'^\s*less\b|^\s*more\b', 'Interactive pager will hang. Use cat instead.'),
     (r'^\s*(mysql|psql|sqlite3)\b(?!.*<<)', 'Database CLI is interactive. Pipe SQL via stdin or use a script.'),
+    # ── 解释器 -c/-e：可绕过任意黑名单执行任意代码（要求脚本落地）──
+    (r'^\s*python[0-9.]*\s+(-c)\b', 'python -c executes arbitrary code from CLI. '
+                                     'Write the code to a .py file and run it instead.'),
+    (r'^\s*node\s+(-e|--eval|-p)\b', 'node -e executes arbitrary JS. '
+                                      'Write to a .js file and run it instead.'),
+    (r'^\s*ruby\s+-e\b', 'ruby -e executes arbitrary code. '
+                          'Write to a .rb file and run it instead.'),
+    (r'^\s*perl\s+-e\b', 'perl -e executes arbitrary code. '
+                          'Write to a .pl file and run it instead.'),
+    # ── Shell -c：可绕过黑名单（要求脚本落地）──
+    (r'^\s*bash\s+-c\b', 'bash -c executes arbitrary shell. '
+                          'Use a script file or call commands directly.'),
+    (r'^\s*sh\s+-c\b', 'sh -c executes arbitrary shell. '
+                        'Use a script file or call commands directly.'),
+    # ── 管道到 shell：远程 payload 直接执行 ──
+    (r'\|\s*(sh|bash|zsh|dash)\b', 'Piping downloaded content to a shell is dangerous. '
+                                     'Download, inspect, then run explicitly.'),
+    # ── eval / exec：可执行任意表达式 ──
+    (r'^\s*eval\b', 'eval is too dangerous. Call the command directly.'),
+    (r';\s*eval\b', 'eval is too dangerous. Call the command directly.'),
+    (r'^\s*exec\b', 'exec replaces the shell process. Avoid in this context.'),
 ]
 
 # apt-get 需要非交互模式

@@ -1929,7 +1929,10 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
                     break
 
                 placeholders = ",".join("?" * len(frontier))
-                type_filter = f"AND r.relation_type = '{relation_type}'" if relation_type else ""
+                # 关系类型走参数化绑定：relation_type 来自上层抽取（可能源自 LLM），
+                # 直接 f-string 拼接会被 SQL 注入。
+                type_filter = "AND r.relation_type = ?" if relation_type else ""
+                type_params: list = [relation_type] if relation_type else []
 
                 rows = conn.execute(
                     f"""SELECT r.from_memory_id, r.to_memory_id,
@@ -1941,7 +1944,7 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
                         WHERE (r.from_memory_id IN ({placeholders})
                                OR r.to_memory_id IN ({placeholders}))
                           {type_filter}""",
-                    list(frontier) + list(frontier),
+                    list(frontier) + list(frontier) + type_params,
                 ).fetchall()
 
                 if not rows:

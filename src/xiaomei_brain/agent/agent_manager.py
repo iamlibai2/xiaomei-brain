@@ -14,13 +14,11 @@ logger = logging.getLogger(__name__)
 
 from xiaomei_brain.base.config import Config
 from xiaomei_brain.base.llm import LLMClient
-from xiaomei_brain.memory.self_model import SelfModel
 from xiaomei_brain.memory.conversation_db import ConversationDB
-from xiaomei_brain.memory.dag import DAGSummaryGraph
 from xiaomei_brain.memory.longterm import LongTermMemory
 from xiaomei_brain.memory.extractor import MemoryExtractor
 from xiaomei_brain.agent.session import SessionManager
-from xiaomei_brain.agent.commands import CommandRegistry
+from xiaomei_brain.agent.commands import MemoryConsole
 from xiaomei_brain.tools.registry import ToolRegistry
 
 
@@ -54,7 +52,7 @@ class AgentInstance:
     memory_extractor: "MemoryExtractor" = None  # type: ignore[assignment]
 
     # Command registry
-    commands: "CommandRegistry" = None  # type: ignore[assignment]
+    commands: "MemoryConsole" = None  # type: ignore[assignment]
 
     # Agent-specific config overrides (optional)
     provider: str = ""
@@ -238,9 +236,6 @@ class AgentManager:
 
     def _identity_path(self, agent_id: str) -> str:
         return os.path.join(self._self_dir(agent_id), "identity.md")
-
-    def _memory_dir(self, agent_id: str) -> str:
-        return os.path.join(self._agent_dir(agent_id), "memory")
 
     def _sessions_dir(self, agent_id: str) -> str:
         return os.path.join(self._agent_dir(agent_id), "sessions")
@@ -437,6 +432,15 @@ class AgentManager:
             provider=provider,
         )
 
+        # 启动时先验证 LLM 连通性，不通则拒绝初始化
+        try:
+            llm.chat(messages=[{"role": "user", "content": "hi"}], tools=None)
+        except Exception as e:
+            from xiaomei_brain.base.llm import FatalLLMError
+            if isinstance(e, FatalLLMError):
+                raise
+            raise FatalLLMError(f"LLM 连通性验证失败: {e}") from e
+
         tools = ToolRegistry()
 
         from xiaomei_brain.tools.builtin import (
@@ -530,89 +534,6 @@ class AgentManager:
             register_tools_fn(tools)
 
         session_manager = SessionManager(session_dir=self._sessions_dir(agent.id))
-
-        # ── 新记忆系统初始化 ────────────────────────────────────────────────
-        db_path = os.path.join(self._memory_dir(agent.id), "brain.db")
-
-        # Load SelfModel from identity.md (if exists)
-        identity_path = self._identity_path(agent.id)
-        if os.path.exists(identity_path):
-            self_model = SelfModel.load(identity_path)
-            if self_model and (self_model.purpose_seed.identity or self_model.seed_text):
-                agent.self_model = self_model
-
-        # ConversationDB (SQLite, 原始消息一字不差)
-        agent.conversation_db = ConversationDB(db_path)
-
-        # DAG 摘要图 + LongTermMemory (必须在 dag_tools 前创建)
-        dag = DAGSummaryGraph.for_agent(agent.id, llm_client=llm)
-        agent.longterm_memory = LongTermMemory(
-            db_path,
-            embedding_model=global_config.embedding_model or None,
-            embedding_fallback=global_config.embedding_fallback or None,
-        )
-
-        # DAG 直接挂载到 Agent（原通过 context_assembler 间接访问）
-        agent.dag = dag
-
-        # ProcedureMemory（过程记忆：学习 + 关键词触发）
-        from xiaomei_brain.memory.procedure import ProcedureMemory
-        agent._procedure_memory = ProcedureMemory(db_path, llm_client=llm)
-
-        # Essence（底色存储：不可变身份片段，所有 agent 统一）
-        from xiaomei_brain.consciousness.essence import Essence
-        agent._essence = Essence(db_path)
-
-        # MemoryExtractor (需要 dag + longterm_memory)
-        agent.memory_extractor = MemoryExtractor(
-            llm_client=llm,
-            longterm_memory=agent.longterm_memory,
-            conversation_db=agent.conversation_db,
-        )
-
-        # 注册 DAG 工具（含 extinct 记忆搜索和唤醒）
-        from xiaomei_brain.tools.builtin.dag_expand import create_dag_tools
-        for dag_tool in create_dag_tools(dag, agent.longterm_memory):
-            tools.register(dag_tool)
-
-        # 注册见证层工具（搜索历史念头）
-        from xiaomei_brain.tools.builtin.thought_search import create_thought_tools
-        for thought_tool in create_thought_tools(agent.longterm_memory):
-            tools.register(thought_tool)
-
-        # 注册记忆搜索工具（"想一想" — 扩散激活）
-        from xiaomei_brain.tools.builtin.memory_search import create_memory_search_tools
-        for ms_tool in create_memory_search_tools(agent.longterm_memory):
-            tools.register(ms_tool)
-
-        # 注册目标管理工具（create_goal / list_goals）
-        # purpose_ref 延迟绑定：ConsciousLiving 创建 PurposeEngine 后设置
-        from xiaomei_brain.tools.builtin.goal import create_goal_tools
-        purpose_ref = [None]
-        for goal_tool in create_goal_tools(purpose_ref):
-            tools.register(goal_tool)
-        agent._purpose_ref = purpose_ref
-
-
-        # ── CommandRegistry ──────────────────────────────────────────────
-        agent.commands = CommandRegistry(
-            conversation_db=agent.conversation_db,
-            dag=dag,
-            longterm_memory=agent.longterm_memory,
-            memory_extractor=agent.memory_extractor,
-            agent_instance=agent,
-        )
-
-        # ── Per-agent 输出目录隔离 ────────────────────────────────────────
-        agent_base_dir = self._agent_dir(agent.id)
-        from xiaomei_brain.tools.builtin import file_ops
-        file_ops.set_output_base(agent_base_dir)
-        from xiaomei_brain.tools.builtin import image as image_mod
-        image_mod.set_output_base(agent_base_dir)
-        from xiaomei_brain.tools.builtin import music as music_mod
-        music_mod.set_output_base(agent_base_dir)
-        from xiaomei_brain.tools.builtin import tts as tts_mod
-        tts_mod.set_output_base(agent_base_dir)
 
         # ── 赋值 ─────────────────────────────────────────────────────────
         agent.llm = llm

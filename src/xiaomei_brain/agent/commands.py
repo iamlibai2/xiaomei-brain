@@ -1,13 +1,13 @@
-"""System-level commands for memory system inspection and control.
+"""Memory inspection and control commands.
 
-Provides a unified command registry that any interface (CLI, WebSocket,
-Feishu, etc.) can call. Commands operate on the memory subsystems
-(ConversationDB, DAGSummaryGraph, LongTermMemory, etc.).
+Provides MemoryConsole, a unified memory debug/admin interface that any
+channel (CLI, WebSocket, Feishu, etc.) can call. Commands operate on the
+memory subsystems (ConversationDB, DAGSummaryGraph, LongTermMemory, etc.).
 
 Usage:
-    from xiaomei_brain.agent.commands import CommandRegistry
+    from xiaomei_brain.agent.commands import MemoryConsole
 
-    registry = CommandRegistry(
+    console = MemoryConsole(
         conversation_db=db,
         dag=dag,
         longterm_memory=ltm,
@@ -38,7 +38,7 @@ class CommandResult:
     session_id: str | None = None  # If set, caller should update current session_id
 
 
-class CommandRegistry:
+class MemoryConsole:
     """Unified command registry for the memory system.
 
     All commands return a CommandResult with both human-readable output

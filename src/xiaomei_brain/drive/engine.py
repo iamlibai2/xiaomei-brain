@@ -971,6 +971,10 @@ class DriveEngine:
             level: "mild" / "moderate" / "severe"
             source: 压力来源标识
         """
+        # 去重：压力等级未变化时跳过日志，但激素调整仍生效
+        if level == getattr(self, '_last_stress_level', ''):
+            return
+        self._last_stress_level = level
         intensity_map = {"mild": 0.3, "moderate": 0.6, "severe": 0.9}
         intensity = self._modulate_hormone_to_emotion(
             EmotionType.FEAR, min(1.0, self.emotion.intensity + intensity_map.get(level, 0.3))

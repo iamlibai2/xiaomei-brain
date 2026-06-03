@@ -54,6 +54,7 @@ from .agent_comms import AgentComms
 from .layer0 import Layer0Autonomous
 from .layer2 import Layer2DefaultNetwork
 from .attention_layer import AttentionLayer
+from ..base.llm import FatalLLMError
 from ..gateway.router import Router, InboundMsg, OutputRoute
 from ..plugin import boot_plugins
 
@@ -95,15 +96,11 @@ class ConsciousLiving(Living):
         # 解析 agent_id（统一来源）
         self._agent_id = getattr(agent_instance, "id", None) or getattr(agent_instance, "agent_id", "")
 
-        # 读取统一配置（优先级：传入 config > 共享 config.yaml > 默认值）
-        if config is None:
-            from ..config import load_agent_config
-            agent_cfg = load_agent_config(self._agent_id)
-            self._config = agent_cfg.consciousness
-            self._drive_config = agent_cfg.drive
-        else:
-            self._config = config
-            self._drive_config = None
+        # 读取统一配置
+        from ..config import load_agent_config
+        agent_cfg = load_agent_config(self._agent_id)
+        self._config = config or agent_cfg.consciousness
+        self._drive_config = agent_cfg.drive
 
         super().__init__(
             agent_instance=agent_instance,
@@ -119,6 +116,97 @@ class ConsciousLiving(Living):
         from ..agent.context_guard import ContextGuard
         if not isinstance(self.agent.llm, ContextGuard):
             self.agent.llm = ContextGuard(self.agent.llm, max_tokens=80000)
+
+        # ── 记忆系统初始化 ───────────────────────────────────────────
+        db_path = os.path.expanduser(
+            f"~/.xiaomei-brain/{self._agent_id}/memory/brain.db"
+        )
+
+        # SelfModel 加载（从 identity.md）
+        identity_path = os.path.expanduser(
+            f"~/.xiaomei-brain/{self._agent_id}/consciousness/identity.md"
+        )
+        if os.path.exists(identity_path):
+            from ..memory.self_model import SelfModel
+            self_model = SelfModel.load(identity_path)
+            if self_model and (self_model.purpose_seed.identity or self_model.seed_text):
+                self.agent.self_model = self_model
+
+        # ConversationDB（SQLite, 原始消息一字不差）
+        from ..memory.conversation_db import ConversationDB
+        self.agent.conversation_db = ConversationDB(db_path)
+
+        # 获取底层 LLMClient（穿透 ContextGuard）
+        _llm = self.agent.llm
+        if hasattr(_llm, '_llm'):
+            _llm = _llm._llm
+
+        # DAG 摘要图 + LongTermMemory
+        from ..memory.dag import DAGSummaryGraph
+        from ..memory.longterm import LongTermMemory
+        dag = DAGSummaryGraph.for_agent(self._agent_id, llm_client=_llm)
+        self.agent.longterm_memory = LongTermMemory(db_path)
+        self.agent.dag = dag
+
+        # ProcedureMemory（过程记忆：学习 + 关键词触发）
+        from ..memory.procedure import ProcedureMemory
+        self.agent._procedure_memory = ProcedureMemory(db_path, llm_client=_llm)
+
+        # Essence（底色存储：不可变身份片段）
+        from ..consciousness.essence import Essence
+        self.agent._essence = Essence(db_path)
+
+        # MemoryExtractor（需要 dag + longterm_memory）
+        from ..memory.extractor import MemoryExtractor
+        self.agent.memory_extractor = MemoryExtractor(
+            llm_client=_llm,
+            longterm_memory=self.agent.longterm_memory,
+            conversation_db=self.agent.conversation_db,
+        )
+
+        # 注册 DAG 工具（含 extinct 记忆搜索和唤醒）
+        from ..tools.builtin.dag_expand import create_dag_tools
+        for dag_tool in create_dag_tools(dag, self.agent.longterm_memory):
+            self.agent.tools.register(dag_tool)
+
+        # 注册见证层工具（搜索历史念头）
+        from ..tools.builtin.thought_search import create_thought_tools
+        for thought_tool in create_thought_tools(self.agent.longterm_memory):
+            self.agent.tools.register(thought_tool)
+
+        # 注册记忆搜索工具（"想一想" — 扩散激活）
+        from ..tools.builtin.memory_search import create_memory_search_tools
+        for ms_tool in create_memory_search_tools(self.agent.longterm_memory):
+            self.agent.tools.register(ms_tool)
+
+        # 注册目标管理工具（create_goal / list_goals）
+        # purpose_ref 延迟绑定：PurposeEngine 创建后设置
+        from ..tools.builtin.goal import create_goal_tools
+        purpose_ref = [None]
+        for goal_tool in create_goal_tools(purpose_ref):
+            self.agent.tools.register(goal_tool)
+        self.agent._purpose_ref = purpose_ref
+
+        # MemoryConsole
+        from ..agent.commands import MemoryConsole
+        self.agent.commands = MemoryConsole(
+            conversation_db=self.agent.conversation_db,
+            dag=dag,
+            longterm_memory=self.agent.longterm_memory,
+            memory_extractor=self.agent.memory_extractor,
+            agent_instance=self.agent,
+        )
+
+        # Per-agent 输出目录隔离
+        agent_base_dir = os.path.expanduser(f"~/.xiaomei-brain/{self._agent_id}")
+        from ..tools.builtin import file_ops
+        file_ops.set_output_base(agent_base_dir)
+        from ..tools.builtin import image as image_mod
+        image_mod.set_output_base(agent_base_dir)
+        from ..tools.builtin import music as music_mod
+        music_mod.set_output_base(agent_base_dir)
+        from ..tools.builtin import tts as tts_mod
+        tts_mod.set_output_base(agent_base_dir)
 
         # Drive 系统（边缘系统）- 延迟加载
         self.drive = DriveEngine(self._agent_id, load=False, config=self._drive_config)
@@ -173,13 +261,6 @@ class ConsciousLiving(Living):
         from ..memory.experience import ExperienceMemory
         ltm = getattr(agent_instance, 'longterm_memory', None)
         self._experience_memory = ExperienceMemory(ltm) if ltm else None
-
-        # ── db_path（供 ExperienceStream / TaskQueueStorage / GoalRunStorage / PMM 等共用）──
-        db_path = getattr(self.agent, "db_path", None)
-        if db_path is None:
-            db_path = os.path.expanduser(
-                f"~/.xiaomei-brain/{self._agent_id}/memory/brain.db"
-            )
 
         # ── [Layer 2] Project Mental Model: 项目认知地图 ──
         from ..metacognition.project_mental_model import (
@@ -291,7 +372,7 @@ class ConsciousLiving(Living):
         self._inner_voice._exp_stream = exp_stream
         logger.info("[ConsciousLiving] 经验流已创建并注入")
 
-        # ── 底色（Essence）—— 由 agent_manager.init_agent() 创建 ──
+        # ── 底色（Essence）—— 由 ConsciousLiving.__init__() 创建 ──
         essence = getattr(self.agent, '_essence', None)
         if essence is not None:
             self.consciousness.essence = essence
@@ -636,7 +717,7 @@ class ConsciousLiving(Living):
     def _inject_dag_to_agent(self) -> None:
         """将 DAG、配置、压缩回调注入 Agent 对象。
 
-        DAG 由 build_agent() 创建并挂到 agent.dag，这里只注入运行时配置和回调。
+        DAG 由 ConsciousLiving.__init__() 创建并挂到 agent.dag，这里只注入运行时配置和回调。
         ContextAssembler 已剪断——Agent._auto_compact() 直接操作 dag。
         """
         dag = getattr(self.agent, "dag", None)
@@ -661,7 +742,7 @@ class ConsciousLiving(Living):
         agent_core.on_compact = _on_compact
         agent_core._living_cfg = self._config
 
-        # 同步 CommandRegistry 的 dag 引用
+        # 同步 MemoryConsole 的 dag 引用
         if self.agent.commands:
             self.agent.commands.dag = dag
         logger.info("[ConsciousLiving] DAG + config injected to Agent")
@@ -1007,6 +1088,19 @@ class ConsciousLiving(Living):
             return
 
     # ── Hooks ────────────────────────────────────────────────────
+
+    def _verify_llm(self) -> None:
+        """启动时检测 LLM 连通性，不可用则拒绝启动。"""
+        llm = self.agent.llm
+        logger.info("[ConsciousLiving] 验证 LLM 连通性: %s @ %s", llm.model, llm.base_url)
+        try:
+            resp = llm.chat(messages=[{"role": "user", "content": "hi"}], tools=None)
+            logger.info("[ConsciousLiving] LLM 连通性验证通过: %.50s", resp.content or "")
+        except Exception as e:
+            raise FatalLLMError(
+                f"LLM 启动验证失败: {e}",
+                status_code=getattr(e, 'status_code', 0),
+            ) from e
 
     def _on_wake(self) -> None:
         """苏醒（根据欲望状态决定行为）

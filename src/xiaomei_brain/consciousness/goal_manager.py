@@ -133,9 +133,7 @@ class GoalManager:
                                 goal.id, self._pace_checkpoint.step_index)
             if self.driver:
                 self.driver._task_mode = False
-            if self._purpose and self._purpose.current_goal:
-                self._purpose.pause_goal(self._purpose.current_goal.id)
-            print("\n[聊天模式] 已退出", flush=True)
+            print("\n[任务模式] 已退出，回到聊天", flush=True)
             return True
         return False
 

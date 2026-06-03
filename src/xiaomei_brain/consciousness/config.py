@@ -33,6 +33,7 @@ class ConsciousnessConfig:
     l2_check_interval: float = 10.0     # Layer 2 检查间隔（秒）
     l1_anomaly_enabled: bool = False   # L1 异常检测开关（False 时跳过所有异常检测）
     energy_low_threshold: float = 0.1  # 能量极低阈值（低于此值用flow最小上下文）
+    dream_report_enabled: bool = True   # 苏醒时是否使用梦境报告（False 时苏醒走 WAIT fallback，梦境燃烧不受影响）
     energy_silent_threshold: float = 0.15  # 能量沉寂阈值（低于此值禁止主动行为）
 
 
@@ -78,6 +79,10 @@ class ActionConfig:
     desire_achievement_cooldown: float = 3600.0
     desire_express_cooldown: float = 3600.0
     desire_talk_to_agent_cooldown: float = 60.0  # 主动和其他 agent 聊天冷却（测试：1分钟）
+
+    # 欲望驱动行为开关
+    learn_enabled: bool = True           # 认知欲驱动学习
+    pleasure_enabled: bool = True        # 快乐中枢驱动行为
 
 
 # ── 上下文组装参数 ──────────────────────────────────────────────────

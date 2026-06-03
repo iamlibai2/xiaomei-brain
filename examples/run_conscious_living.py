@@ -33,6 +33,7 @@ logging.basicConfig(
 # 开发中：不做日志过滤，所有模块 INFO 全部输到 stderr
 
 from xiaomei_brain.agent.agent_manager import AgentManager
+from xiaomei_brain.base.llm import FatalLLMError
 from xiaomei_brain.consciousness.conscious_living import ConsciousLiving
 from xiaomei_brain.base.message_utils import estimate_tokens
 
@@ -284,39 +285,36 @@ def main():
     living.on_proactive = on_proactive
     living.on_chat_chunk = on_chat_chunk
 
-    # ── 登录（和 Linux 一样，代码层验证） ──────────────────
+    # ── 后台启动（agent 自主运行，不等用户登录） ──────────
+    thread = threading.Thread(target=living.run, daemon=True)
+    thread.start()
+    time.sleep(2)
+
+    # ── 登录 ──────────────────────────────────────────────────
     from xiaomei_brain.contacts.manager import IdentityManager
     contacts_dir = os.path.expanduser(f"~/.xiaomei-brain/{agent_id}/contacts")
     identity_mgr = IdentityManager(contacts_dir)
     ids = identity_mgr.list_ids()
 
-    if not ids:
-        print(f"\n\033[33m没有找到任何身份。请在 {contacts_dir}/identities.yaml 中配置。\033[0m")
-        print("示例：")
-        print("  people:")
-        print("    - id: 博士")
-        print("      name: 博士\n")
-        return
-
-    print(f"\n可用身份: {', '.join(ids)}")
+    if ids:
+        print(f"\n可用身份: {', '.join(ids)}")
     user_id = None
     while not user_id:
         try:
             user_id = input("login: ").strip()
         except (KeyboardInterrupt, EOFError):
             print()
-            return
+            user_id = "guest"
+            break
         if not user_id:
             continue
         identity = identity_mgr.resolve(user_id)
         if identity:
             display_name = identity["name"]
-            # 设置身份
             living.user_id = user_id
             agent_core = agent._get_agent()
             agent_core.user_id = user_id
             agent_core.user_display_name = display_name
-            # 加载称呼记忆到 SelfImage
             if hasattr(living, 'consciousness') and living.consciousness:
                 si = living.consciousness.get_self_image()
                 if si:
@@ -327,11 +325,6 @@ def main():
         else:
             print(f"\033[31m用户 '{user_id}' 不存在。可用: {', '.join(ids)}\033[0m")
             user_id = None
-
-    # ── 后台启动 ────────────────────────────────────────────
-    thread = threading.Thread(target=living.run, daemon=True)
-    thread.start()
-    time.sleep(2)
 
     _DOUBLE_PRESS_WINDOW = 2.0
     _last_interrupt = 0.0
@@ -411,4 +404,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except FatalLLMError as e:
+        ts = time.strftime("%H:%M:%S")
+        print(f"\n\033[91m[FATAL] {ts} LLM API 致命错误，程序终止\033[0m", flush=True)
+        print(f"\033[91m[FATAL] HTTP {e.status_code}: {e}\033[0m", flush=True)
+        sys.exit(1)

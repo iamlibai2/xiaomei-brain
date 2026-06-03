@@ -2,13 +2,40 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 
 from ..base import Tool, tool
 
+logger = logging.getLogger(__name__)
+
 # 默认输出目录（LLM 写文件时如果给相对路径，自动拼接到此目录）
 # 可通过 set_output_base() 按 agent 隔离
 _output_base: str | None = None
+
+# 硬拒的敏感路径前缀（realpath 比较，覆盖符号链接绕过）。
+# 包含 SSH/凭证/系统目录，工具永远不能读写。
+_SENSITIVE_PATH_PREFIXES = tuple(
+    os.path.realpath(p)
+    for p in (
+        os.path.expanduser("~/.ssh"),
+        os.path.expanduser("~/.gnupg"),
+        os.path.expanduser("~/.aws"),
+        os.path.expanduser("~/.config/gcloud"),
+        os.path.expanduser("~/.azure"),
+        os.path.expanduser("~/.kube"),
+        os.path.expanduser("~/.docker"),
+        os.path.expanduser("~/.bash_history"),
+        os.path.expanduser("~/.zsh_history"),
+        "/etc",
+        "/proc",
+        "/sys",
+        "/var/log",
+        "/boot",
+        "/root/.ssh",
+    )
+)
 
 
 def _get_output_dir() -> str:
@@ -27,17 +54,90 @@ def set_output_base(base_dir: str) -> None:
     _output_base = base_dir
 
 
-def _read_file_content(path: str) -> str | None:
-    """Read file content. Returns None if not found."""
+def _get_allowed_roots() -> list[str]:
+    """绝对路径允许的根目录列表。
+
+    默认仅允许 agent workspace；可通过 `XIAOMEI_ALLOWED_PATHS`（冒号分隔）追加。
+    例如 `XIAOMEI_ALLOWED_PATHS=/srv/project:/tmp/work`。
+    """
+    roots: list[str] = []
+    workspace = _get_output_dir()
+    if workspace:
+        roots.append(os.path.realpath(workspace))
+    extra = os.environ.get("XIAOMEI_ALLOWED_PATHS", "")
+    for p in extra.split(":"):
+        p = p.strip()
+        if p:
+            try:
+                roots.append(os.path.realpath(p))
+            except Exception:
+                continue
+    return roots
+
+
+def _is_sensitive(real_path: str) -> str | None:
+    """检查 real_path 是否落在敏感前缀下，返回拒绝原因；否则返回 None。"""
+    for prefix in _SENSITIVE_PATH_PREFIXES:
+        if real_path == prefix or real_path.startswith(prefix + os.sep):
+            return prefix
+    return None
+
+
+def _resolve_path(path: str) -> tuple[str, str]:
+    """将用户给的路径解析为 realpath，并校验可访问性。
+
+    Returns:
+        (real_full_path, error_message)。成功时 error_message 为空字符串。
+
+    规则：
+    - 先用 expanduser 展开 `~` / `~user`，避免 `~/.ssh/id_rsa` 被当相对路径绕过
+    - 相对路径 → 拼接到 output_dir，然后 realpath。
+    - 绝对路径 → 必须 realpath 后落在 `_get_allowed_roots()` 某个根下。
+    - 任何路径 → realpath 后不能在 `_SENSITIVE_PATH_PREFIXES` 敏感前缀内。
+    - 解析过程中任何 `..` / 符号链接都会被 realpath 展开后再检查。
+    """
+    if not path:
+        return "", f"Error: empty path"
+
+    # 必须先 expanduser：否则 `~/.ssh/id_rsa` 会落到 workspace 内
+    expanded = os.path.expanduser(path)
+
+    if os.path.isabs(expanded):
+        full_path = expanded
+    else:
+        full_path = os.path.join(_get_output_dir(), expanded)
+
     try:
-        if not os.path.isabs(path):
-            full_path = os.path.join(_get_output_dir(), path)
-        else:
-            full_path = path
-        with open(full_path, "r", encoding="utf-8") as f:
-            return f.read()
-    except Exception:
-        return None
+        real_path = os.path.realpath(full_path)
+    except Exception as e:
+        return "", f"Error: cannot resolve path '{path}': {e}"
+
+    # 敏感路径硬拒：realpath 在前，`..` / 符号链接绕过都会被展开
+    sensitive = _is_sensitive(real_path)
+    if sensitive:
+        return "", (
+            f"Error: access denied. '{path}' resolves to '{real_path}', "
+            f"which is under a sensitive location ({sensitive}). "
+            f"For security, file tools cannot access SSH keys, cloud credentials, "
+            f"shell history, or system files. Use a different method."
+        )
+
+    if os.path.isabs(path):
+        allowed_roots = _get_allowed_roots()
+        is_allowed = any(
+            real_path == r or real_path.startswith(r + os.sep)
+            for r in allowed_roots
+        )
+        if not is_allowed:
+            allowed_display = ", ".join(allowed_roots) if allowed_roots else "(none)"
+            return "", (
+                f"Error: access denied. Absolute path '{path}' resolves to "
+                f"'{real_path}', which is outside the allowed directories: "
+                f"{allowed_display}. Use a RELATIVE path (resolved to the workspace) "
+                f"or add the parent directory to XIAOMEI_ALLOWED_PATHS."
+            )
+
+    return real_path, ""
 
 
 @tool(name="read_file",
@@ -45,11 +145,21 @@ def _read_file_content(path: str) -> str | None:
       "Use a RELATIVE path for files in the workspace directory. "
       "Example: read_file('hello.py') reads ~/.xiaomei-brain/global/workspace/hello.py")
 def read_file(path: str) -> str:
-    """Read a file and return its contents. Relative paths resolved to workspace dir."""
-    content = _read_file_content(path)
-    if content is None:
+    """Read a file and return its contents. Relative paths resolved to workspace dir.
+
+    Security: absolute paths must be under the agent workspace (or XIAOMEI_ALLOWED_PATHS).
+    Sensitive paths (SSH keys, cloud credentials, /etc, etc.) are always rejected.
+    """
+    real_path, error = _resolve_path(path)
+    if error:
+        return error
+    try:
+        with open(real_path, "r", encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
         return f"Error: file not found: {path}"
-    return content
+    except Exception as e:
+        return f"Error: {e}"
 
 
 @tool(name="write_file", description="Write content to a file. "
@@ -61,18 +171,19 @@ def write_file(path: str, content: str) -> str:
     Args:
         path: File path (relative paths are saved to examples/, absolute paths used as-is)
         content: File content
-    """
-    try:
-        # 相对路径 → 拼接到默认输出目录
-        if not os.path.isabs(path):
-            full_path = os.path.join(_get_output_dir(), path)
-            os.makedirs(os.path.dirname(full_path), exist_ok=True)
-        else:
-            full_path = path
 
-        with open(full_path, "w", encoding="utf-8") as f:
+    Security: same access controls as read_file.
+    """
+    real_path, error = _resolve_path(path)
+    if error:
+        return error
+    try:
+        parent = os.path.dirname(real_path)
+        if parent and not os.path.isdir(parent):
+            os.makedirs(parent, exist_ok=True)
+        with open(real_path, "w", encoding="utf-8") as f:
             f.write(content)
-        return f"Successfully wrote to {full_path}"
+        return f"Successfully wrote to {real_path}"
     except Exception as e:
         return f"Error: {e}"
 
@@ -95,46 +206,39 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
     Returns:
         JSON with file_path, old_lines, new_lines, and diff output, or error message.
     """
-    import json
+    real_path, error = _resolve_path(path)
+    if error:
+        return json.dumps({"error": error})
 
     try:
-        if not os.path.isabs(path):
-            full_path = os.path.join(_get_output_dir(), path)
-        else:
-            full_path = path
-
-        with open(full_path, "r", encoding="utf-8") as f:
+        with open(real_path, "r", encoding="utf-8") as f:
             original = f.read()
 
         if old_string not in original:
             return json.dumps({
                 "error": "old_string not found in file",
-                "file": full_path,
+                "file": real_path,
             })
 
         new_content = original.replace(old_string, new_string, 1)
-        with open(full_path, "w", encoding="utf-8") as f:
+        with open(real_path, "w", encoding="utf-8") as f:
             f.write(new_content)
 
-        # Compute line numbers and content for the replaced region
         idx = original.find(old_string)
         if idx < 0:
             added_l, removed_l = [], []
             removed_content, added_content = [], []
             base = 0
         else:
-            # base = line number where old_string starts (1-based)
-            # count("\n") = number of full lines the string spans
-            # If old_string ends with \n: it's full lines only, use count(newlines)
-            # If old_string doesn't end with \n: last line included, use count+1
             base = original[:idx].count("\n") + 1
+            # 不以 \n 结尾 → 最后一行算入；否则 \n 已是分隔符，下一行才开始
             removed_l = list(range(base, base + old_string.count("\n") + (0 if old_string.endswith("\n") else 1)))
             added_l = list(range(base, base + new_string.count("\n") + (0 if new_string.endswith("\n") else 1))) if new_string else []
             removed_content = old_string.split("\n")
             added_content = new_string.split("\n") if new_string else []
 
         return json.dumps({
-            "file_path": full_path,
+            "file_path": real_path,
             "added_lines": added_l,
             "removed_lines": removed_l,
             "added_count": len(added_l),

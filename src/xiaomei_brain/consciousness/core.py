@@ -1104,6 +1104,14 @@ class Consciousness:
                     dream_summary or "无", self.perception.agent_state,
                     self.history.last_dream_summary or "无")
 
+        # 如果梦境报告关闭，直接走 fallback（梦境燃烧不受影响）
+        if not self._cc.dream_report_enabled:
+            report = self._fallback_light_report()
+            wait_intent = create_wait_intent()
+            if self.self_image is not None:
+                self.self_image.contribute_intent(wait_intent.to_dict())
+            return report
+
         # 如果有梦境报告，直接使用
         if dream_summary:
             report = ConsciousnessReport(

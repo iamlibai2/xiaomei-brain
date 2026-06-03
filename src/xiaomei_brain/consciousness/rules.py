@@ -185,9 +185,9 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
             .cooldown("intent_act", ac.intent_act_cooldown)
     )
 
-    # LEARN 意图 → 主动学习
+    # LEARN 意图 → 主动学习（learn_enabled 控制）
     RULES.append(
-        Rule.when(lambda si: _has_intent(si, "LEARN"))
+        Rule.when(lambda si: ac.learn_enabled and _has_intent(si, "LEARN"))
             .then(ActionItem(
                 action_type=ActionType.TOOL,
                 priority=0.6,
@@ -322,9 +322,9 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
     #         .cooldown("desire_talk_to_agent", ac.desire_talk_to_agent_cooldown)
     # )
 
-    # 认知欲高 → 主动学习（从队列或兴趣中选题）
+    # 认知欲高 → 主动学习（learn_enabled 控制）
     RULES.append(
-        Rule.when(lambda si: _get_drive_facet(si).cognition > 1.0)
+        Rule.when(lambda si: ac.learn_enabled and _get_drive_facet(si).cognition > 1.0)
             .then(ActionItem(
                 action_type=ActionType.TOOL,
                 priority=0.55,
@@ -339,9 +339,9 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
 
     # ── Craving 驱动（快乐中枢渴望）─────────────────────
 
-    # 渴望偏高 → TOOL 驱动，让 LLM 自己做因果决策
+    # 渴望偏高 → TOOL 驱动（pleasure_enabled 控制）
     RULES.append(
-        Rule.when(lambda si: getattr(si.body, 'craving', 0) >= 1.0)
+        Rule.when(lambda si: ac.pleasure_enabled and getattr(si.body, 'craving', 0) >= 1.0)
             .then(ActionItem(
                 action_type=ActionType.TOOL,
                 priority=0.55,

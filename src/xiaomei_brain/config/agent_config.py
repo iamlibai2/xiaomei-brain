@@ -347,6 +347,7 @@ def _build_living_config(data: dict):
             l3_cooldown=cc.get("l3_cooldown", 1800.0),
             l2_check_interval=cc.get("l2_check_interval", 10.0),
             l1_anomaly_enabled=cc.get("l1_anomaly_enabled", False),
+            dream_report_enabled=cc.get("dream_report_enabled", True),
             energy_low_threshold=cc.get("energy_low_threshold", 0.1),
             energy_silent_threshold=cc.get("energy_silent_threshold", 0.15),
         )
@@ -384,6 +385,8 @@ def _build_living_config(data: dict):
                 desire_achievement_cooldown=action.get("desire_achievement_cooldown", 3600.0),
                 desire_express_cooldown=action.get("desire_express_cooldown", 3600.0),
                 desire_talk_to_agent_cooldown=action.get("desire_talk_to_agent_cooldown", 60.0),
+                learn_enabled=action.get("learn_enabled", True),
+                pleasure_enabled=action.get("pleasure_enabled", True),
             )
 
         context = data.get("context", {})

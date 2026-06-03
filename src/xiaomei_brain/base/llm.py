@@ -74,11 +74,27 @@ class LLMError(Exception):
     Attributes:
         retryable: 本次错误是否可重试。429/5xx/网络错误为 True，
                    认证失败 / 参数错误为 False。
+        status_code: HTTP 状态码（0 表示非 HTTP 错误）。
     """
 
-    def __init__(self, message: str, retryable: bool = False) -> None:
+    def __init__(self, message: str, retryable: bool = False, status_code: int = 0) -> None:
         super().__init__(message)
         self.retryable = retryable
+        self.status_code = status_code
+
+
+class FatalLLMError(BaseException):
+    """LLM 致命错误 —— 程序不应继续运行。
+
+    继承 BaseException（而非 Exception），自动穿透所有 ``except Exception`` 块，
+    类似 SystemExit / KeyboardInterrupt 的行为。
+
+    触发条件：401（认证失败）/ 402（欠费）/ 403（禁止访问）。
+    """
+
+    def __init__(self, message: str, status_code: int = 0) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 # endregion
 
@@ -143,9 +159,15 @@ class LLMClient:
     # 可重试的 HTTP 状态码
     RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
+    # 致命的 HTTP 状态码 —— 程序不应继续运行
+    FATAL_STATUS_CODES = {401, 402, 403}
+
     # 默认重试次数和超时时间
     DEFAULT_MAX_RETRIES = 3
     DEFAULT_TIMEOUT = 60
+
+    # 连续失败阈值 —— 超过此次数视为 API 不可用，触发 FatalLLMError
+    MAX_CONSECUTIVE_FAILURES = 10
 
     def __init__(
         self,
@@ -192,6 +214,9 @@ class LLMClient:
 
         # ── 退避状态 ──
         self._backoff_until: float = 0.0
+
+        # ── 连续失败计数 ──
+        self._consecutive_failures: int = 0
 
         # 参数校验
         if not self.api_key:
@@ -256,6 +281,18 @@ class LLMClient:
         """记录一次调用结果给 Interoception 和 Token 回调。"""
         self._last_call_latency_ms = latency_ms
         self._last_call_error = is_error
+
+        # ── 连续失败检测 ──
+        if is_error:
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= self.MAX_CONSECUTIVE_FAILURES:
+                raise FatalLLMError(
+                    f"LLM 连续失败 {self._consecutive_failures} 次，API 不可用，程序终止",
+                    status_code=0,
+                )
+        else:
+            self._consecutive_failures = 0
+
         if self._interoception:
             try:
                 self._interoception.record_llm_call(latency_ms, is_error)
@@ -428,6 +465,11 @@ class LLMClient:
                 [m.get("role") for m in api_messages],
                 len(api_messages[0].get("content", "") if api_messages else ""),
                 bool(tools),
+            )
+        if response.status_code in self.FATAL_STATUS_CODES:
+            raise FatalLLMError(
+                f"LLM API 致命错误 (HTTP {response.status_code}): {response.text[:200]}",
+                status_code=response.status_code,
             )
         response.raise_for_status()
 
@@ -758,7 +800,13 @@ class LLMClient:
                             retryable=False,
                         )
 
-                # 非 200 状态码直接抛异常
+                # 非 200 状态码：致命错误直接终止程序
+                if response.status_code in self.FATAL_STATUS_CODES:
+                    log_request(False, f"fatal_{response.status_code}")
+                    raise FatalLLMError(
+                        f"LLM API 致命错误 (HTTP {response.status_code}): {response.text[:200]}",
+                        status_code=response.status_code,
+                    )
                 if response.status_code >= 400:
                     logger.warning("[LLM] HTTP %d response body: %s", response.status_code, response.text[:500])
                 response.raise_for_status()
@@ -800,10 +848,20 @@ class LLMClient:
                 raise last_error
 
             except requests.RequestException as e:
-                # 其他请求异常（如 401/403/422）不重试
+                # 致命状态码（401/402/403）→ 终止程序
+                if isinstance(e, requests.HTTPError) and e.response is not None:
+                    if e.response.status_code in self.FATAL_STATUS_CODES:
+                        self._record_call((time.time() - t0) * 1000, True)
+                        log_request(False, f"fatal_{e.response.status_code}")
+                        raise FatalLLMError(
+                            f"LLM API 致命错误 (HTTP {e.response.status_code}): {str(e)[:200]}",
+                            status_code=e.response.status_code,
+                        )
+                # 其他请求异常（如 422）不重试
                 self._record_call((time.time() - t0) * 1000, True)
                 log_request(False, f"req_err:{e}")
-                raise LLMError(f"请求失败：{e}", retryable=False)
+                http_status = e.response.status_code if isinstance(e, requests.HTTPError) and e.response is not None else 0
+                raise LLMError(f"请求失败：{e}", retryable=False, status_code=http_status)
 
         # 重试次数耗尽（理论上 above for loop 总会 return 或 raise，
         # 这里是为了穷尽所有路径）

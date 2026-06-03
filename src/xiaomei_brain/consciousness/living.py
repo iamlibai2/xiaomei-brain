@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable
 
+from xiaomei_brain.base.llm import FatalLLMError
+
 logger = logging.getLogger(__name__)
 
 
@@ -150,6 +152,8 @@ class Living:
                 try:
                     task.handler(state)
                     task.last_fired = now
+                except FatalLLMError:
+                    raise  # 致命错误（401/402/403）→ 穿透到主循环
                 except Exception as e:
                     import traceback
                     traceback.print_exc()
@@ -210,23 +214,31 @@ class Living:
         self._running = True
 
         self._transition(LivingState.WAKING)
-        self._on_wake()
-        self._transition(LivingState.AWAKE)
 
-        while self._running:
-            if self.state == LivingState.AWAKE:
-                self._loop_awake()
-            elif self.state == LivingState.IDLE:
-                self._loop_idle()
-            elif self.state == LivingState.SLEEPING:
-                self._loop_sleeping()
-            elif self.state == LivingState.DREAMING:
-                self._loop_dreaming()
-            elif self.state == LivingState.DORMANT:
-                self._loop_dormant()
-            else:
-                logger.warning("[Living] Unexpected state: %s", self.state)
-                time.sleep(1)
+        try:
+            self._on_wake()
+            self._transition(LivingState.AWAKE)
+
+            while self._running:
+                if self.state == LivingState.AWAKE:
+                    self._loop_awake()
+                elif self.state == LivingState.IDLE:
+                    self._loop_idle()
+                elif self.state == LivingState.SLEEPING:
+                    self._loop_sleeping()
+                elif self.state == LivingState.DREAMING:
+                    self._loop_dreaming()
+                elif self.state == LivingState.DORMANT:
+                    self._loop_dormant()
+                else:
+                    logger.warning("[Living] Unexpected state: %s", self.state)
+                    time.sleep(1)
+        except FatalLLMError as e:
+            ts = time.strftime("%H:%M:%S")
+            print(f"\n\033[91m[FATAL] {ts} LLM API 致命错误，程序终止\033[0m", flush=True)
+            print(f"\033[91m[FATAL] HTTP {e.status_code}: {e}\033[0m", flush=True)
+            logger.error("[Living] 致命错误，程序终止: HTTP %d %s", e.status_code, e)
+            self.stop()
 
     def stop(self) -> None:
         """停止主循环"""

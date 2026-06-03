@@ -1137,7 +1137,7 @@ weight: 0.85
         c = self._c
 
         consciousness_text = emergence_text.split("---EVENTS---")[0].strip()
-        logger.info("[Consciousness L2] 自由表达全文 (%d 字):\n%s", len(consciousness_text), consciousness_text)
+        logger.info("[Consciousness L2] 自由表达已存储 (%d 字)", len(consciousness_text))
         if c.agent and hasattr(c.agent, "longterm_memory") and c.agent.longterm_memory and consciousness_text:
             c.agent.longterm_memory.store_narrative(
                 content=consciousness_text,

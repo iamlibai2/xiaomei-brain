@@ -471,7 +471,7 @@ class SelfMind:
             current = self._purpose.get_current()
             if current:
                 return current.description
-        return "建立信任"
+        return ""
 
     @property
     def goal_progress(self) -> float:
