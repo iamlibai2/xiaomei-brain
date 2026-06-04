@@ -339,10 +339,15 @@ class ConversationDriver:
 
             except Exception as e:
                 import traceback
-                tb = traceback.format_exc()
-                logger.error("[ConversationDriver] Chat failed: %s\n%s", e, tb)
-                print(f"\n\033[31m[错误] {e}\033[0m", flush=True)
-                print(f"\033[90m{tb}\033[0m", flush=True)
+                from xiaomei_brain.base.llm import LLMError
+                if isinstance(e, LLMError) and e.retryable:
+                    print(f"\n\033[33m[网络异常] LLM 接口暂时不可用，稍后自动重试\033[0m", flush=True)
+                    logger.warning("[ConversationDriver] Chat 网络异常: %s", e)
+                else:
+                    tb = traceback.format_exc()
+                    logger.error("[ConversationDriver] Chat failed: %s\n%s", e, tb)
+                    print(f"\n\033[31m[错误] {e}\033[0m", flush=True)
+                    print(f"\033[90m{tb}\033[0m", flush=True)
                 if gm._purpose:
                     goal = gm._purpose.get_current()
                     if goal:

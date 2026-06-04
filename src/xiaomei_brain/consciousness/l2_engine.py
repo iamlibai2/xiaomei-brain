@@ -586,7 +586,11 @@ class L2Engine:
                         elapsed, len(result))
             return result
         except Exception as e:
-            logger.error("[Consciousness] ReAct 意图决策失败: %s", e, exc_info=True)
+            from xiaomei_brain.base.llm import LLMError
+            if isinstance(e, LLMError) and e.retryable:
+                logger.warning("[Consciousness] ReAct 意图决策: 网络异常，跳过本次")
+            else:
+                logger.error("[Consciousness] ReAct 意图决策失败: %s", e, exc_info=True)
             return ""
 
     def _build_intent_prompt(self, context: str, has_goal: bool = False, goal_memories: list[dict] | None = None) -> str:
