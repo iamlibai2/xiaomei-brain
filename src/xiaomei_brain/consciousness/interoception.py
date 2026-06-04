@@ -61,8 +61,11 @@ class InteroceptionSignals:
     thread_health: dict[str, bool] = field(default_factory=dict)
     queue_pressure: float = 0.0
     llm_latency_ms: float = 0.0
+    llm_latency_p50: float = 0.0          # 最近窗口的 P50 延迟
+    llm_latency_p99: float = 0.0          # 最近窗口的 P99 延迟
     llm_error_rate: float = 0.0
     llm_consecutive_failures: int = 0
+    llm_empty_response_rate: float = 0.0  # 空内容比例（调了 LLM 但返回空）
     token_usage: float = 0.0
     memory_fullness_pct: float = 0.0
     burning_duration: float = 0.0
@@ -75,7 +78,10 @@ class InteroceptionSignals:
             "thread_health": self.thread_health,
             "queue_pressure": self.queue_pressure,
             "llm_latency_ms": self.llm_latency_ms,
+            "llm_latency_p50": self.llm_latency_p50,
+            "llm_latency_p99": self.llm_latency_p99,
             "llm_error_rate": self.llm_error_rate,
+            "llm_empty_response_rate": self.llm_empty_response_rate,
             "token_usage": self.token_usage,
             "memory_fullness_pct": self.memory_fullness_pct,
             "burning_duration": self.burning_duration,
@@ -100,10 +106,33 @@ class Interoception:
         self._llm_error_window_seconds = LLM_ERROR_WINDOW_SECONDS
         self._last_llm_latency_ms: float = 0.0
 
+        # LLM 延迟样本（用于 P50/P99 计算，保留最近 100 个）
+        self._llm_latency_samples: list[float] = []
+        self._llm_latency_max_samples = 100
+
+        # 空内容追踪（滑动窗口）
+        self._empty_response_window: list[tuple[float, bool]] = []  # [(timestamp, is_empty)]
+
+        # 退避/切换日志去重（避免每秒刷屏）
+        self._last_backoff_log: int = -1    # 上次打退避日志时的 consecutive_failures
+        self._last_switch_log: int = -1     # 上次打切换日志时的 consecutive_failures
+
         # SOS 冷却追踪
         self._sos_last_sent: dict[str, float] = {}       # reason → last sent time
         self._sos_reminder_sent: dict[str, bool] = {}    # reason → whether 30min reminder sent
         self._sos_recovered: set[str] = set()             # already-recovered reasons
+
+        # 当前信号快照（供 LLMClient / Living 等外部组件直接读取，短路长链路）
+        self.backoff_seconds: float = 0.0
+        self.provider_switch: bool = False
+        self.sos: bool = False
+        self.sos_message: str = ""
+
+        # 慢速评估节流（每 SLOW_TICK_INTERVAL 次 tick 才做一次阈值判断）
+        self._tick_count: int = 0
+        self.SLOW_TICK_INTERVAL = 5  # 每 5 秒做一次阈值判断
+        self._last_throttle: bool = False
+        self._last_stress_level: str = "none"
 
         # 外部引用
         self._llm_callback: Any = None
@@ -122,16 +151,41 @@ class Interoception:
     def set_burn_start_time(self, t: float) -> None:
         self._burn_start_time = t
 
-    def record_llm_call(self, latency_ms: float, is_error: bool) -> None:
-        """记录一次 LLM 调用结果（供 LLMClient 调用）。"""
+    def record_llm_call(self, latency_ms: float, is_error: bool) -> int:
+        """记录一次 LLM 调用结果，返回当前连续失败数（供 LLMClient 使用）。"""
         now = time.time()
         self._llm_error_window.append((now, is_error))
         self._last_llm_latency_ms = latency_ms
+
+        # 延迟样本（非错误调用才记录，错误调用的延迟不反映真实性能）
+        if not is_error and latency_ms > 0:
+            self._llm_latency_samples.append(latency_ms)
+            if len(self._llm_latency_samples) > self._llm_latency_max_samples:
+                self._llm_latency_samples = self._llm_latency_samples[-self._llm_latency_max_samples:]
 
         # 清理过期窗口
         cutoff = now - self._llm_error_window_seconds
         self._llm_error_window = [
             (ts, err) for ts, err in self._llm_error_window if ts > cutoff
+        ]
+
+        # 立即计算连续失败数（不用等下一次 tick）
+        consecutive = 0
+        for _, is_err in reversed(self._llm_error_window):
+            if is_err:
+                consecutive += 1
+            else:
+                break
+        return consecutive
+
+    def record_empty_content(self) -> None:
+        """记录一次 LLM 返回空内容（调用成功但 content 为空）。"""
+        now = time.time()
+        self._empty_response_window.append((now, True))
+        # 清理过期
+        cutoff = now - self._llm_error_window_seconds
+        self._empty_response_window = [
+            (ts, e) for ts, e in self._empty_response_window if ts > cutoff
         ]
 
     # ── 主 tick ───────────────────────────────────────────────
@@ -144,22 +198,37 @@ class Interoception:
         """
         signals = InteroceptionSignals()
 
-        # 1. 采集
+        # 1. 采集（每秒）
         self._collect_hardware(signals)
         self._collect_thread_health(signals)
         self._collect_queue(signals, queue_depth)
         self._collect_llm(signals)
+        self._collect_empty_responses(signals)
         self._collect_burning(signals)
         self._collect_memory(signals)
 
-        # 2. 自愈判断
-        self._evaluate_self_heal(signals)
+        # 2-4. 阈值判断（每 SLOW_TICK_INTERVAL 秒一次）
+        self._tick_count += 1
+        if self._tick_count >= self.SLOW_TICK_INTERVAL:
+            self._tick_count = 0
+            self._evaluate_self_heal(signals)
+            self._evaluate_sos(signals)
+            self._evaluate_stress(signals)
+        else:
+            # 快 tick：沿用上次慢 tick 的评估结果（避免重置为 0）
+            signals.throttle = self._last_throttle
+            signals.backoff_seconds = self.backoff_seconds
+            signals.provider_switch = self.provider_switch
+            signals.stress_level = self._last_stress_level
+            # SOS 不在快 tick 中重复设置（由慢 tick + _heartbeat 消费）
 
-        # 3. SOS 判断
-        self._evaluate_sos(signals)
-
-        # 4. 压力等级
-        self._evaluate_stress(signals)
+        # 同步到实例属性（供 LLMClient / _heartbeat 等直接读取，短路长链路）
+        self._last_throttle = signals.throttle
+        self._last_stress_level = signals.stress_level
+        self.backoff_seconds = signals.backoff_seconds
+        self.provider_switch = signals.provider_switch
+        self.sos = signals.sos
+        self.sos_message = signals.sos_message
 
         return signals
 
@@ -218,6 +287,25 @@ class Interoception:
                 break
         signals.llm_consecutive_failures = consecutive
 
+        # 延迟 P50/P99
+        if self._llm_latency_samples:
+            sorted_lat = sorted(self._llm_latency_samples)
+            n = len(sorted_lat)
+            signals.llm_latency_p50 = sorted_lat[n // 2]
+            signals.llm_latency_p99 = sorted_lat[int(n * 0.99)] if n >= 100 else sorted_lat[-1]
+
+    def _collect_empty_responses(self, signals: InteroceptionSignals) -> None:
+        """计算空内容比例。"""
+        now = time.time()
+        cutoff = now - self._llm_error_window_seconds
+        self._empty_response_window = [
+            (ts, e) for ts, e in self._empty_response_window if ts > cutoff
+        ]
+        # 与 LLM 错误窗口的总调用数合并计算比例
+        total = len(self._llm_error_window) + len(self._empty_response_window)
+        if total > 0:
+            signals.llm_empty_response_rate = len(self._empty_response_window) / total
+
     def _collect_burning(self, signals: InteroceptionSignals) -> None:
         signals.burning_duration = (time.time() - self._burn_start_time) / 3600.0
 
@@ -231,25 +319,37 @@ class Interoception:
         # 限流
         if signals.queue_pressure > THROTTLE_QUEUE_PRESSURE:
             signals.throttle = True
-            logger.warning(
-                "[Interoception] 限流触发: queue_pressure=%.2f", signals.queue_pressure,
-            )
+            if not getattr(self, '_throttle_logged', False):
+                logger.warning(
+                    "[Interoception] 限流触发: queue_pressure=%.2f", signals.queue_pressure,
+                )
+                self._throttle_logged = True
+        else:
+            self._throttle_logged = False
 
         # LLM 退避
         if signals.llm_consecutive_failures >= BACKOFF_CONSECUTIVE_FAILURES:
             signals.backoff_seconds = min(30.0, 2 ** signals.llm_consecutive_failures)
-            logger.warning(
-                "[Interoception] 退避触发: consecutive_failures=%d, delay=%.1fs",
-                signals.llm_consecutive_failures, signals.backoff_seconds,
-            )
+            if signals.llm_consecutive_failures != self._last_backoff_log:
+                logger.warning(
+                    "[Interoception] 退避触发: consecutive_failures=%d, delay=%.1fs",
+                    signals.llm_consecutive_failures, signals.backoff_seconds,
+                )
+                self._last_backoff_log = signals.llm_consecutive_failures
+        else:
+            self._last_backoff_log = -1
 
         # Provider 切换
         if signals.llm_consecutive_failures >= PROVIDER_SWITCH_CONSECUTIVE_FAILURES:
             signals.provider_switch = True
-            logger.warning(
-                "[Interoception] Provider 切换触发: consecutive_failures=%d",
-                signals.llm_consecutive_failures,
-            )
+            if signals.llm_consecutive_failures != self._last_switch_log:
+                logger.warning(
+                    "[Interoception] Provider 切换触发: consecutive_failures=%d",
+                    signals.llm_consecutive_failures,
+                )
+                self._last_switch_log = signals.llm_consecutive_failures
+        else:
+            self._last_switch_log = -1
 
     # ── SOS 判断 ──────────────────────────────────────────────
 

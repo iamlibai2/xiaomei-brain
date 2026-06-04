@@ -852,6 +852,8 @@ class ActionExecutor:
                     return content
                 else:
                     logger.warning("[_generate_greeting] LLM 返回空内容，fallback")
+                    if cl and hasattr(cl, 'interoception') and cl.interoception:
+                        cl.interoception.record_empty_content()
             except Exception as e:
                 logger.warning("[_generate_greeting] LLM 调用失败: %s", e)
 
@@ -897,6 +899,8 @@ class ActionExecutor:
                     return content
                 else:
                     logger.warning("[_generate_talk] LLM 返回空内容，fallback")
+                    if cl and hasattr(cl, 'interoception') and cl.interoception:
+                        cl.interoception.record_empty_content()
             except Exception as e:
                 logger.warning("[_generate_talk] LLM 调用失败: %s", e)
 

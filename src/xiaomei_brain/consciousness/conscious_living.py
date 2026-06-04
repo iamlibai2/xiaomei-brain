@@ -942,15 +942,17 @@ class ConsciousLiving(Living):
             # 注入给 Living 基类（供限流 read）
             self._interoception_signals = sig
 
-            # SOS 通道
-            if getattr(sig, 'sos', False) and getattr(sig, 'sos_message', ''):
-                self.send_sos_to_channels(sig.sos_message)
-
             # 压力事件 → Drive
             if self.drive and sig.stress_level != "none":
                 self.drive.on_system_stress(sig.stress_level, "interoception")
             elif self.drive and sig.stress_level == "none":
                 self.drive.on_system_healthy()
+
+        # ── SOS（短路：直接从 Interoception 实例读，不经过 4 层链路）──
+        intero = getattr(self, 'interoception', None)
+        if intero and intero.sos and intero.sos_message:
+            intero.sos = False  # 消费后清空，避免重复发送
+            self.send_sos_to_channels(intero.sos_message)
 
         # 检查 Layer 2 发出的入梦信号
         if getattr(self.consciousness, '_dream_signal', False):

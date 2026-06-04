@@ -277,27 +277,27 @@ class LLMClient:
             logger.warning("[LLM] 退避 %.1fs", seconds)
             time.sleep(seconds)
 
-    def _record_call(self, latency_ms: float, is_error: bool, tokens: int = 0) -> None:
+    def _record_call(self, latency_ms: float, is_error: bool, tokens: int = 0,
+                     status_code: int = 0) -> None:
         """记录一次调用结果给 Interoception 和 Token 回调。"""
         self._last_call_latency_ms = latency_ms
         self._last_call_error = is_error
 
-        # ── 连续失败检测 ──
-        if is_error:
-            self._consecutive_failures += 1
-            if self._consecutive_failures >= self.MAX_CONSECUTIVE_FAILURES:
-                raise FatalLLMError(
-                    f"LLM 连续失败 {self._consecutive_failures} 次，API 不可用，程序终止",
-                    status_code=0,
-                )
-        else:
-            self._consecutive_failures = 0
-
+        # ── 交给 Interoception 统一管理（返回当前连续失败数）──
+        consecutive = 0
         if self._interoception:
             try:
-                self._interoception.record_llm_call(latency_ms, is_error)
+                consecutive = self._interoception.record_llm_call(latency_ms, is_error)
             except Exception as e:
                 logger.warning("Interoception record_llm_call failed: %s", e)
+
+        # ── 连续失败检测（仅 HTTP 状态码 >= 400；网络错误由 Interoception SOS 处理）──
+        if is_error and status_code >= 400:
+            if consecutive >= self.MAX_CONSECUTIVE_FAILURES:
+                raise FatalLLMError(
+                    f"LLM 连续 {consecutive} 次 HTTP {status_code} 错误，程序终止",
+                    status_code=status_code,
+                )
         if self._token_callback and tokens > 0:
             try:
                 self._token_callback(tokens)
@@ -748,6 +748,13 @@ class LLMClient:
         msg_preview = ""
         has_tools = "tools" in payload
 
+        # ── 读取 Interoception 退避信号 ──
+        if self._interoception:
+            backoff = getattr(self._interoception, 'backoff_seconds', 0.0)
+            if backoff > 0:
+                logger.warning("[LLM] Interoception 退避 %.1fs，暂停请求", backoff)
+                time.sleep(backoff)
+
         def log_request(success: bool, detail: str = ""):
             """记录单次 LLM 调用结果。"""
             elapsed = time.time() - t0
@@ -851,16 +858,17 @@ class LLMClient:
                 # 致命状态码（401/402/403）→ 终止程序
                 if isinstance(e, requests.HTTPError) and e.response is not None:
                     if e.response.status_code in self.FATAL_STATUS_CODES:
-                        self._record_call((time.time() - t0) * 1000, True)
+                        self._record_call((time.time() - t0) * 1000, True,
+                                         status_code=e.response.status_code)
                         log_request(False, f"fatal_{e.response.status_code}")
                         raise FatalLLMError(
                             f"LLM API 致命错误 (HTTP {e.response.status_code}): {str(e)[:200]}",
                             status_code=e.response.status_code,
                         )
                 # 其他请求异常（如 422）不重试
-                self._record_call((time.time() - t0) * 1000, True)
-                log_request(False, f"req_err:{e}")
                 http_status = e.response.status_code if isinstance(e, requests.HTTPError) and e.response is not None else 0
+                self._record_call((time.time() - t0) * 1000, True, status_code=http_status)
+                log_request(False, f"req_err:{e}")
                 raise LLMError(f"请求失败：{e}", retryable=False, status_code=http_status)
 
         # 重试次数耗尽（理论上 above for loop 总会 return 或 raise，
