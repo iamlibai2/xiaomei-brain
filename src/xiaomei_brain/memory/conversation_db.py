@@ -99,8 +99,15 @@ class ConversationDB(SQLiteStore):
         ]
         for sql in triggers:
             conn.execute(sql)
+        conn.commit()
 
         self._migrate(conn)
+
+        # 初始化后做一次被动 checkpoint，避免 WAL 文件过度堆积
+        try:
+            conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+        except sqlite3.OperationalError:
+            pass
 
     # ── Schema migration ──────────────────────────────────────────
 
@@ -160,29 +167,44 @@ class ConversationDB(SQLiteStore):
             content = content.encode("utf-8", "surrogatepass").decode("utf-8", "replace")
         except Exception:
             content = content.replace("\udc00", "?").replace("\ud800", "?")
-        conn = self._get_conn()
         token_count = estimate_tokens(content)
-        cur = conn.execute(
-            """INSERT INTO messages
-               (user_id, session_id, role, content, token_count, tool_name,
-                tool_call_id, metadata, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                user_id,
-                session_id,
-                role,
-                content,
-                token_count,
-                tool_name,
-                tool_call_id,
-                json.dumps(metadata or {}, ensure_ascii=False),
-                time.time(),
-            ),
-        )
-        conn.commit()
-        # Log saved message
-        logger.debug("[DB] Saved #%d [%s/%s] %s (%d chars)", cur.lastrowid, user_id, session_id, role, len(content) if content else 0)
-        return cur.lastrowid  # type: ignore[return-value]
+        metadata_json = json.dumps(metadata or {}, ensure_ascii=False)
+
+        last_error = None
+        for attempt in range(3):
+            conn = self._get_conn()
+            try:
+                cur = conn.execute(
+                    """INSERT INTO messages
+                       (user_id, session_id, role, content, token_count, tool_name,
+                        tool_call_id, metadata, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        user_id, session_id, role, content, token_count,
+                        tool_name, tool_call_id, metadata_json, time.time(),
+                    ),
+                )
+                conn.commit()
+                logger.debug("[DB] Saved #%d [%s/%s] %s (%d chars)",
+                             cur.lastrowid, user_id, session_id, role, len(content) if content else 0)
+                return cur.lastrowid
+            except sqlite3.OperationalError as e:
+                last_error = e
+                if "locked" in str(e) and attempt < 2:
+                    # 同连接自锁：清除悬挂事务后重试
+                    in_tx = getattr(conn, 'in_transaction', None)
+                    logger.warning(
+                        "[DB] database locked, retry %d/3, in_transaction=%s",
+                        attempt + 1, in_tx,
+                    )
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                    time.sleep(0.5 * (attempt + 1))
+                    continue
+                raise
+        raise last_error  # type: ignore[misc]
 
     def query(
         self,

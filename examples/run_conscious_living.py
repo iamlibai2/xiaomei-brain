@@ -20,17 +20,18 @@ import argparse
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-# ── 日志：输出到 stderr ──────────────────────────────────────
+# ── 日志：root=DEBUG，Handler 各自控制级别 ──────────────────
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
     datefmt="%H:%M:%S",
     stream=sys.stderr,
 )
 
-# agent 日志文件 handler — agent_id 已知后添加
+# 控制台收紧到 INFO
+logging.getLogger().handlers[0].setLevel(logging.INFO)  
 
-# 开发中：不做日志过滤，所有模块 INFO 全部输到 stderr
+# agent 日志文件 handler — agent_id 已知后添加
 
 from xiaomei_brain.agent.agent_manager import AgentManager
 from xiaomei_brain.base.llm import FatalLLMError
@@ -173,7 +174,7 @@ def _status_line(living) -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="ConsciousLiving CLI")
+    parser = argparse.ArgumentParser(description="xiaomei-brain CLI")
     parser.add_argument(
         "--name", "-a",
         default="xiaomei",

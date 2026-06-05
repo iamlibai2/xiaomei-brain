@@ -67,8 +67,41 @@ def build_intent_context(purpose, intent_result, chosen_by_user: bool = False, r
         return ""
 
     # CHAT 闲聊：不需要特殊上下文（人格由 identity.md/SelfModel 处理）
+    # 但有活跃/暂停目标时，提示 LLM 用 resume_goal 恢复 PACE 执行
     if intent_result.is_chat():
-        return ""
+        if purpose:
+            current = purpose.get_current()
+            if current:
+                # 找到根目标（顶层业务目标，而非子目标/元目标）
+                root = current
+                while root.parent_id:
+                    parent = purpose.goals.get(root.parent_id)
+                    if parent:
+                        root = parent
+                    else:
+                        break
+                goal_desc = root.description[:80]
+            else:
+                # 无活跃目标，检查是否有暂停/待执行的目标
+                paused = purpose.get_paused_tasks()
+                pending = purpose.get_pending_goals()
+                if paused or pending:
+                    return (
+                        '[提示] 当前没有正在执行的目标，但有暂停或待执行的任务。\n'
+                        '如果对方提到之前的任务（如继续、提到项目名等），\n'
+                        '请先用 list_goals 查看目标列表，确认后调用 resume_goal 恢复执行。\n'
+                        '如果对方明确要求新建任务，则正常处理。'
+                    )
+                else:
+                    return ''
+
+            return (
+                f'[提示] 当前有活跃目标「{goal_desc}」。\n'
+                '如果对方想继续这个任务（如说继续、接着做、确认推进等），\n'
+                '请先调用 resume_goal 工具来恢复执行，不要直接开始工作。\n'
+                '如果对方说的是其他无关内容，忽略此提示。'
+            )
+        return ''
 
     # CLARIFICATION / QUERY：如果无活跃目标，不需要特殊上下文
     # 有活跃目标时，统一走下面的 TASK 强约束上下文（"只执行这一个子目标"）
@@ -246,6 +279,11 @@ def update_goal_progress(purpose, drive, status: str) -> Optional[str]:
     elif status == "in_progress":
         purpose.update_progress(active_sub.id, 0.1)
         logger.debug("[Progress] 子目标推进: %s (+10%%)", active_sub.description[:30])
+
+    elif status == "waiting_user":
+        # LLM 明确表示需要等待用户回复，标记进度但不完成
+        purpose.update_progress(active_sub.id, 0.1)
+        logger.info("[Progress] 子目标等待用户: %s", active_sub.description[:30])
 
     return None
 

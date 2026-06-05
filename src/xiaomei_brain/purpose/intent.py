@@ -163,7 +163,7 @@ class IntentUnderstanding:
         """
         # 第1次LLM：判断意图类型
         type_info = self.understand_intent_type(
-            user_input, meaning, current_goal, current_goal_depth, pending_goals
+            user_input, meaning, current_goal, current_goal_depth, pending_goals,
         )
 
         intent_type = type_info["intent_type"]
@@ -297,6 +297,7 @@ class IntentUnderstanding:
                 "confidence": float(data.get("confidence", 0.5)),
                 "reasoning": data.get("reasoning", ""),
                 "goal_description": data.get("goal_description", ""),
+                "target_goal_id": data.get("target_goal_id", ""),
                 "response_guidance": data.get("response_guidance", ""),
             }
         except Exception:

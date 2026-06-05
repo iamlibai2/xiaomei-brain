@@ -128,23 +128,26 @@ class PACERunner:
         self._infer_project_id()
 
         # ── 多视角审视: understand 阶段（需求理解，分解前）──
-        self._broaden_perspective(
-            target="需求理解", stage="understand",
-            context=f"用户任务: {goal_desc}",
-        )
-        # ── 多视角审视: design 阶段（分解计划）──
-        if goal and hasattr(goal, 'parent_id') and goal.parent_id:
-            siblings = self._purpose.get_sub_goals(goal.parent_id) or [goal]
-        else:
-            siblings = [goal] if goal else []
-        if len(siblings) >= 2:
-            sub_goal_list = "\n".join(
-                f"{i+1}. {sg.description[:100]}" for i, sg in enumerate(siblings)
-            )
+        # resume 时跳过：审视已在上次执行时完成，用户回复是回答问题而非新任务
+        if not self._resume_nudge:
             self._broaden_perspective(
-                target="分解计划", stage="design",
-                context=f"根目标: {goal_desc}\n\n子目标列表:\n{sub_goal_list}",
+                target="需求理解", stage="understand",
+                context=f"用户任务: {goal_desc}",
             )
+        # ── 多视角审视: design 阶段（分解计划）──
+        if not self._resume_nudge:
+            if goal and hasattr(goal, 'parent_id') and goal.parent_id:
+                siblings = self._purpose.get_sub_goals(goal.parent_id) or [goal]
+            else:
+                siblings = [goal] if goal else []
+            if len(siblings) >= 2:
+                sub_goal_list = "\n".join(
+                    f"{i+1}. {sg.description[:100]}" for i, sg in enumerate(siblings)
+                )
+                self._broaden_perspective(
+                    target="分解计划", stage="design",
+                    context=f"根目标: {goal_desc}\n\n子目标列表:\n{sub_goal_list}",
+                )
 
         try:
             from .cognitive_loop import CognitiveLoop
@@ -185,11 +188,12 @@ class PACERunner:
                     sub_goals_failed=self._metrics.sub_goals_failed if self._metrics else 0,
                     goal_completed=self._metrics.goal_completed if self._metrics else False,
                 )
-            if not self._skip_post_review:
+            if not self._skip_post_review and self._exit_reason != self.EXIT_WAITING_USER:
                 self._do_post_review(msg)
+            exit_reason = self._exit_reason
             self._reset_run_state()
 
-        return self._exit_reason
+        return exit_reason
 
     def assess_only(
         self,
@@ -643,12 +647,27 @@ class PACERunner:
     # Agent 明确拒绝执行/等待用户的关键词 — 此时不应自动完成子目标
     _WAITING_PATTERNS = [
         re.compile(p) for p in [
+            # 等待用户回复
             r"等(用户|对方)", r"等.*确认", r"等.*回复", r"等.*反馈",
+            r"(用户|对方)还没", r"还没看过", r"还没回复",
+            # Agent 主动询问用户（常见问询模式）
+            r"请问", r"想问你", r"需要你", r"你能告诉", r"能告诉我",
+            r"确认一下", r"先确认", r"首先需要",
+            r"在开始之前", r"在继续之前",
+            r"告诉我", r"请提供", r"请说明",
+            r"我先了解", r"先了解一下", r"需要了解", r"需要知道",
+            r"你希望", r"你想要", r"你打算", r"想了解",
+            # 间接确认/征求意见（确认后、你看如何、有没有要调整等）
+            r"确认后", r"再进入", r"再开始",
+            r"有没有要调整", r"需要调整",
+            r"你看.*如何", r"你看.*怎么样",
+            r"有什么意见", r"有什么建议", r"有什么想法",
+            r"可以吗", r"行不行",
+            # 明确拒绝/放弃
             r"停一下", r"停下来", r"先停",
             r"我不执行", r"不执行这个", r"不能执行",
             r"我在这儿等着", r"我等着",
             r"别再推", r"不要再推", r"别把.*当",
-            r"(用户|对方)还没", r"还没看过", r"还没回复",
             r"逻辑上不通", r"没有意义",
         ]
     ]
@@ -672,8 +691,8 @@ class PACERunner:
         if self._should_continue(progress_data):
             return True
         # 有 PROGRESS in_progress → Agent 明确表示没做完，不推进
-        if progress_data and progress_data.get("status") == "in_progress":
-            logger.info("[PACERunner] PROGRESS=in_progress，Agent 表示未完成，不自动推进")
+        if progress_data and progress_data.get("status") in ("in_progress", "waiting_user"):
+            logger.info("[PACERunner] PROGRESS=%s，Agent 表示未完成，不自动推进", progress_data.get("status"))
             self._exit_reason = self.EXIT_WAITING_USER
             return False
         # 无 PROGRESS 但也没有意外信号，且没有工具调用 → 视为"确认类"子目标完成
@@ -683,9 +702,12 @@ class PACERunner:
                 if self._detect_refusal_or_waiting(obs.llm_output):
                     logger.info("[PACERunner] 无 PROGRESS 标签但 Agent 明确拒绝/等待用户")
                     goal = self._purpose.get_current()
-                    if goal and goal.id and self._block_and_advance(goal.id, "Agent表示等待用户"):
+                    if goal and goal.id:
+                        # 先完成当前子目标，再推进到下一个——
+                        # _block_and_advance 会切换 current，必须先 complete
                         self._update_goal_progress("completed")
-                        return True
+                        if self._block_and_advance(goal.id, "Agent表示等待用户"):
+                            return True
                     self._exit_reason = self.EXIT_WAITING_USER
                     return False
                 logger.info("[PACERunner] 无 PROGRESS 标签但无异常，自动完成当前子目标")

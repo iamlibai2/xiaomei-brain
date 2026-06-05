@@ -109,14 +109,6 @@ class GoalManager:
     def is_pace_waiting(self) -> bool:
         return self._pace_waiting
 
-    @staticmethod
-    def is_continue_statement(text: str) -> bool:
-        patterns = ("继续", "接着做", "还做", "再做", "延续", "持续")
-        for p in patterns:
-            if text.startswith(p) or text.startswith(f"{p}，") or text.startswith(f"{p}。"):
-                return True
-        return False
-
     def handle_command(self, cmd: str, args: str) -> bool:
         if cmd == "intask":
             if self.driver:
@@ -187,7 +179,8 @@ class GoalManager:
         return self._intent_understanding.understand(
             user_input=user_input, meaning=meaning_summary,
             current_goal=current_goal_desc, current_goal_depth=current_goal_depth,
-            pending_goals=pending_summary, calibration_context=calibration_ctx,
+            pending_goals=pending_summary,
+            calibration_context=calibration_ctx,
         )
 
     # ── Task intent handling ──────────────────────────────────
@@ -402,26 +395,6 @@ class GoalManager:
         if self.driver:
             self.driver._run_react(msg, intent_context)
 
-    # ── Continue handling ─────────────────────────────────────
-
-    def handle_continue(self, msg) -> bool:
-        if not (self._purpose and self._purpose.current_goal):
-            return False
-        if not self.is_continue_statement(msg.content):
-            return False
-        goals = self._purpose.get_top_level_goals()
-        if not goals:
-            return False
-        if len(goals) == 1:
-            self._resume_or_activate_goal(goals[0], msg)
-            return True
-        matched = self._match_goal_by_keywords(msg.content, goals)
-        if matched:
-            self._resume_or_activate_goal(matched, msg)
-        else:
-            self._show_continue_selection(goals, msg)
-        return True
-
     def _resume_or_activate_goal(self, goal, msg, chosen_by_user: bool = False) -> None:
         resume_context = ""
         if goal.is_paused():
@@ -484,31 +457,6 @@ class GoalManager:
             confidence=1.0, reasoning="延续现有任务")
         self._run_chat(msg, self.build_intent_context(
             fake_intent, chosen_by_user=chosen_by_user, resume_snapshot=resume_context))
-
-    def _match_goal_by_keywords(self, text: str, goals: list) -> Any | None:
-        task_keywords = text
-        for kw in ("继续", "接着做", "还做", "再做", "延续", "持续"):
-            if task_keywords.startswith(kw):
-                task_keywords = task_keywords[len(kw):].strip("，。")
-                break
-        import re
-        words = [k for k in re.split(r"[\s，、。]+", task_keywords) if k]
-        if len(words) == 1 and len(words[0]) > 2 and re.match(r"^[\u4e00-\u9fff]+$", words[0]):
-            keywords = list(words[0])
-        else:
-            keywords = words
-        if not keywords:
-            return None
-        for g in goals:
-            desc = g.description or ""
-            if all(kw in desc for kw in keywords):
-                return g
-        long_keywords = [kw for kw in keywords if len(kw) >= 2]
-        for g in goals:
-            desc = g.description or ""
-            if any(kw in desc for kw in long_keywords):
-                return g
-        return None
 
     def _show_continue_selection(self, goals: list, msg) -> None:
         seen = set()
@@ -631,12 +579,13 @@ class GoalManager:
             # 忽略，创建新任务
             self._pending_confirm = None
             self._waiting_confirm = False
+            original_msg = self._pending_confirm_msg
             self._pending_confirm_msg = None
             self._pending_confirm_intent = None
             intent_result = confirm["intent_result"]
             goal = confirm["intent_goal"]
             created_goal = self._create_task_from_intent(intent_result, goal)
-            self._route_goal_by_type(created_goal, intent_result, None)
+            self._route_goal_by_type(created_goal, intent_result, original_msg)
             return
 
         if inp.isdigit():
@@ -668,12 +617,13 @@ class GoalManager:
                 # 这是新任务
                 self._pending_confirm = None
                 self._waiting_confirm = False
+                original_msg = self._pending_confirm_msg
                 self._pending_confirm_msg = None
                 self._pending_confirm_intent = None
                 intent_result = confirm["intent_result"]
                 goal = confirm["intent_goal"]
                 created_goal = self._create_task_from_intent(intent_result, goal)
-                self._route_goal_by_type(created_goal, intent_result, None)
+                self._route_goal_by_type(created_goal, intent_result, original_msg)
                 return
 
         # 文本输入：也当作新任务
@@ -685,7 +635,7 @@ class GoalManager:
         intent_result = confirm["intent_result"]
         goal = confirm["intent_goal"]
         created_goal = self._create_task_from_intent(intent_result, goal)
-        self._route_goal_by_type(created_goal, intent_result, None)
+        self._route_goal_by_type(created_goal, intent_result, original_msg)
 
     def _handle_standard_confirm(self, user_input: str, confirm: dict) -> None:
         parsed = task_executor.parse_confirmation_input(confirm, user_input)
@@ -759,9 +709,15 @@ class GoalManager:
         if goal.parent_id and self._purpose:
             parent = self._purpose.goals.get(goal.parent_id)
             if parent:
-                parts.append(f"任务目标: {parent.description[:120]}")
+                parts.append(f"为了完成「{parent.description[:120]}」，我给自己规划了以下步骤。")
+                parts.append("这是我自己拆解的任务，不是别人指定的——每一步都是我自己决定要做的。")
                 parts.append("")
-        parts.append("【当前任务】只执行这一个子目标，不要做其他事情：")
+        parts.append("")
+        parts.append("【重要】该任务已由意图系统自动创建为目标，你不需要再调用 create_goal。")
+        parts.append("直接开始执行，不要重复创建。")
+        parts.append("现在开始执行。上一阶段已经完成并关闭，")
+        parts.append("不要复盘上一阶段、不要重复上一阶段的产出、不要确认上一阶段是否完成。")
+        parts.append("当前唯一要做的事：")
         parts.append(f"「{goal.description}」")
         if hasattr(goal, 'acceptance_criteria') and goal.acceptance_criteria:
             parts.append(f"完成标准: {goal.acceptance_criteria}")
@@ -956,30 +912,6 @@ class GoalManager:
                 return json.loads(match.group(1))
             except json.JSONDecodeError:
                 return None
-
-    @classmethod
-    def _sub_goal_covers_deliverable(cls, summary: str, root_goal: Any) -> bool:
-        """检测子目标完成 summary 是否已覆盖最终交付物。
-
-        信号：summary 描述的是整个任务已完成（如"完成XX报告"），
-        而非仅完成当前子目标（如"明确了主题"）。
-        """
-        import re
-        if len(summary) < 20:
-            return False
-        # 交付物关键词
-        deliverable_kw = ["报告", "文档", "文件", "PPT", "代码", "脚本", "方案", "分析", "总结"]
-        if not any(kw in summary for kw in deliverable_kw):
-            return False
-        # "完成"类动词 + 交付物 → Agent 认定整件事做完了
-        done_patterns = [
-            r"完成.*(报告|文档|文件|PPT|代码|脚本|方案|分析|总结)",
-            r"(写出|写好|输出|生成|创建|提交).*(报告|文档|文件|PPT|代码|脚本|方案|分析|总结)",
-        ]
-        for pat in done_patterns:
-            if re.search(pat, summary):
-                return True
-        return False
 
     @staticmethod
     def remove_progress_tag(content: str) -> str:

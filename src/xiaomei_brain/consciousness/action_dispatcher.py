@@ -827,9 +827,9 @@ class ActionExecutor:
 
         prompt = GREETING_PROMPT.format(idle_minutes=idle_minutes, period=period)
 
-        logger.info("[_generate_greeting] === LLM PROMPT START ===")
-        logger.info("%s", prompt)
-        logger.info("[_generate_greeting] === LLM PROMPT END ===")
+        logger.debug("[_generate_greeting] === LLM PROMPT START ===")
+        logger.debug("%s", prompt)
+        logger.debug("[_generate_greeting] === LLM PROMPT END ===")
 
         # 调用 LLM 生成
         llm = None

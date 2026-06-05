@@ -13,18 +13,21 @@ INTENT_CLASSIFY_PROMPT = """
 【对方输入】
 {user_input}
 
-请判断意图类型（intent_type），只需返回一个类型：
+请判断意图类型（intent_type）：
 
-- task: 对方要求执行某个任务（如：帮我做X，开发X、做个X）
+- task: 对方要求执行某个新任务（如：帮我做X，开发X、做个X）
 - query: 对方提出问题（如：X是什么、怎么做X、如何X）
 - chat: 闲聊，无明确任务目的
-- clarification: 请求解释或细化已有的目标
+- clarification: 请求解释或细化已有的当前目标
 
 重要规则：
 - **停止/放弃已有目标 → task**（如"别做X了"、"取消这个任务"）
-- **明确的任务请求 → task**（如"帮我做一个ERP"、"开发一个网站"）
+- **明确的新任务请求 → task**（如"帮我做一个ERP"、"开发一个网站"）。必须有具体的任务描述才算 task，不能凭空编造
 - **以"什么/怎么/如何/为什么"开头 → query**（如"ERP是什么"）
 - **当前有活跃目标时，对方消息是关于当前目标的细化/解释 → clarification**
+- **但注意：对方描述的任务与当前目标明显不同（核心交付物/领域/范围不同）→ task，不是 clarification**
+- **"分成N个子目标执行" = 对当前目标的明确操作指令 → task**
+- **不明确的继续类语句（"继续"、"接着做"、"next"）→ chat**，让 Agent 通过对话确认用户想继续什么
 
 返回 JSON：
 {{"intent_type": "task/query/chat/clarification", "confidence": 0.0-1.0, "reasoning": "判断理由", "goal_description": "目标描述（仅task时有）"}}
@@ -84,7 +87,13 @@ PROGRESS_BLOCK_INSTRUCTION = """【重要】先正常回复对方，回复完成
 或
 
 <PROGRESS>
-{"status": "in_progress"}  ← 当前子目标未完成时（如只做了反问/澄清）
+{"status": "in_progress"}  ← 当前子目标未完成，但无需等待用户，系统会继续推进
+</PROGRESS>
+
+或
+
+<PROGRESS>
+{"status": "waiting_user"}  ← 你向对方提了问题/需要对方确认，必须暂停等待回复
 </PROGRESS>
 
 如果对方输入中没有值得推进的内容，输出：无需推进"""

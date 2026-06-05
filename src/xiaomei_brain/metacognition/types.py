@@ -55,7 +55,7 @@ class StepObservation:
     tool_call_count: int
     elapsed_seconds: float
     has_progress_tag: bool
-    progress_status: str | None        # "completed" / "in_progress" / None
+    progress_status: str | None        # "completed" / "in_progress" / "waiting_user" / None
     surprises: list[SurpriseType] = field(default_factory=list)
     raw_content: str = ""              # 含 PROGRESS 标签的完整输出
     timestamp: float = field(default_factory=time.time)

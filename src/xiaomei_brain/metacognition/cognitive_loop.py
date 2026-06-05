@@ -89,12 +89,6 @@ class CognitiveLoop:
         step_index = start_step
         retries = 0
 
-        if resume_nudge:
-            current_context = (
-                resume_nudge + "\n" + current_context
-                if current_context else resume_nudge
-            )
-
         # ── Pre-check + context setup ──
         if p._purpose:
             goal = p._purpose.get_current()
@@ -118,16 +112,26 @@ class CognitiveLoop:
                     siblings = p._purpose.get_sub_goals(goal.parent_id)
                     if siblings:
                         current_context = p._build_intent_context_for_goal(goal, siblings)
-                        current_msg = type(msg)(
-                            content=(
-                                f"[系统] 子目标 "
-                                f"{next((i+1 for i,s in enumerate(siblings) if s.id==goal.id), '')}"
-                                f"/{len(siblings)}: {goal.description}"
-                            ),
-                            user_id=msg.user_id,
-                            session_id=msg.session_id,
-                            source="system",
-                        )
+                        if msg is not None:
+                            current_msg = type(msg)(
+                                content=(
+                                    f"[系统] 子目标 "
+                                    f"{next((i+1 for i,s in enumerate(siblings) if s.id==goal.id), '')}"
+                                    f"/{len(siblings)}: {goal.description}"
+                                ),
+                                user_id=msg.user_id,
+                                session_id=msg.session_id,
+                                source="system",
+                            )
+                        else:
+                            current_msg = {
+                                "role": "user",
+                                "content": (
+                                    f"[系统] 子目标 "
+                                    f"{next((i+1 for i,s in enumerate(siblings) if s.id==goal.id), '')}"
+                                    f"/{len(siblings)}: {goal.description}"
+                                ),
+                            }
 
                 if not resume_nudge:
                     exp_text = self._inject_experiences(goal.description)
@@ -136,6 +140,15 @@ class CognitiveLoop:
                             exp_text + "\n" + current_context
                             if current_context else exp_text
                         )
+
+        # resume_nudge 必须在 _build_intent_context_for_goal 之后注入，
+        # 否则会被覆盖，导致用户回复丢失（CognitiveLoop 以同样的上下文
+        # 再次提问 → waiting_user → resume → 循环）
+        if resume_nudge:
+            current_context = (
+                resume_nudge + "\n" + current_context
+                if current_context else resume_nudge
+            )
 
         # ── 主循环 ──
         while True:
@@ -535,7 +548,11 @@ class CognitiveLoop:
 
         if action == Action.COMPLETE_AND_ADVANCE:
             if self._can_auto_advance(obs, assessment.step_check):
-                p._update_goal_progress("completed")
+                # 避免双重完成：_handle_progress（L295）已处理 "completed" PROGRESS
+                # tag 并切换到下一个子目标，此处不应再次完成新目标
+                progress_data = parse_progress_tag(obs.raw_content) if obs.raw_content else None
+                if not (progress_data and progress_data.get("status") == "completed"):
+                    p._update_goal_progress("completed")
                 return "advance"
             if p._exit_reason == p.EXIT_COMPLETED:
                 if p._detect_refusal_or_waiting(display_content):
@@ -656,23 +673,36 @@ class CognitiveLoop:
             return False
         if not current.is_active():
             return False
-        if current.progress > 0:
-            return False
 
+        # PROGRESS 标签检查必须在 current.progress > 0 之前——
+        # _handle_progress("in_progress") 会设置 progress=0.1，
+        # 如果先检查 progress > 0 会跳过 PROGRESS 检查，导致遗漏 in_progress 信号
         progress_data = parse_progress_tag(obs.raw_content) if obs.raw_content else None
         if progress_data and progress_data.get("status") == "completed":
+            # 即使 PROGRESS 说 completed，如果 LLM 同时在等用户确认，转为 waiting_user
+            if p._detect_refusal_or_waiting(obs.llm_output):
+                logger.info(
+                    "[CognitiveLoop] PROGRESS=completed 但输出包含等待用户信号，转为 waiting_user")
+                p._exit_reason = p.EXIT_WAITING_USER
+                return False
             return True
-        if progress_data and progress_data.get("status") == "in_progress":
+        if progress_data and progress_data.get("status") in ("in_progress", "waiting_user"):
             p._exit_reason = p.EXIT_WAITING_USER
+            return False
+
+        if current.progress > 0:
             return False
 
         # 无 PROGRESS 但无异常且无工具调用 → 自动完成
         if not obs.surprises and obs.tool_call_count == 0 and obs.llm_output.strip():
             if p._detect_refusal_or_waiting(obs.llm_output):
                 goal = p._purpose.get_current()
-                if goal and goal.id and p._block_and_advance(goal.id, "Agent表示等待用户"):
+                if goal and goal.id:
+                    # 先完成当前子目标，再推进到下一个——
+                    # _block_and_advance 会切换 current，必须先 complete
                     p._update_goal_progress("completed")
-                    return True
+                    if p._block_and_advance(goal.id, "Agent表示等待用户"):
+                        return True
                 p._exit_reason = p.EXIT_WAITING_USER
                 return False
             return True

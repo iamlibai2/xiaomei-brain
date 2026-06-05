@@ -39,6 +39,7 @@ class ConversationDriver:
         experience_memory: Any = None,
         project_mental_model: Any = None,
         goal_run_storage: Any = None,
+        resume_trigger: list | None = None,
     ) -> None:
         self._parent = parent
         self._drive = drive
@@ -46,6 +47,7 @@ class ConversationDriver:
         self._config = config
         self._inner_voice = inner_voice
         self._goal_run_storage = goal_run_storage
+        self._resume_trigger = resume_trigger
 
         # 任务模式标记（GoalManager 通过 driver._task_mode 读写）
         self._task_mode: bool = False
@@ -92,9 +94,6 @@ class ConversationDriver:
             logger.info("[ConversationDriver] 用户回复，等待结束")
             if gm._purpose and gm._purpose.current_goal:
                 goal = gm._purpose.current_goal
-                if gm.is_continue_statement(msg.content):
-                    gm.handle_continue(msg)
-                    return
                 intent_context = gm.build_intent_context_for_goal(goal, None)
                 if self._task_mode:
                     logger.info("[ConversationDriver] 自动恢复 PACE（用户提供上下文）")
@@ -107,10 +106,6 @@ class ConversationDriver:
                     nudge_context = f"[元认知上下文] 用户回复了：{msg.content[:500]}\n请在当前子目标基础上，考虑用户的反馈继续执行。"
                     self._run_react(msg, f"{intent_context}\n{nudge_context}")
                 return
-
-        # "继续"检测
-        if gm.handle_continue(msg):
-            return
 
         # 等待确认状态
         if gm.is_waiting_confirm():
@@ -138,7 +133,7 @@ class ConversationDriver:
 
             intent_context = gm.build_intent_context(intent_result)
             gm.log_intent_context(intent_result, intent_context, msg.content)
-            self._run_chat(msg, intent_context)
+            self._run_react(msg, intent_context)
             return
 
         # /intask 任务模式但尚无目标
@@ -158,7 +153,7 @@ class ConversationDriver:
 
             intent_context = gm.build_intent_context(intent_result)
             gm.log_intent_context(intent_result, intent_context, msg.content)
-            self._run_chat(msg, intent_context)
+            self._run_react(msg, intent_context)
             return
 
         # 聊天模式
@@ -248,6 +243,16 @@ class ConversationDriver:
                         parent._print_prompt()
                         return
 
+                    # resume_goal 工具触发：切换到 PACE 执行
+                    if self._resume_trigger and self._resume_trigger[0]:
+                        goal_id = self._resume_trigger[0]
+                        self._resume_trigger[0] = None
+                        goal = gm._purpose.goals.get(goal_id) if gm._purpose else None
+                        if goal:
+                            logger.info("[ConversationDriver] resume_goal 触发: %s", goal_id)
+                            gm._resume_or_activate_goal(goal, current_msg)
+                            return
+
                     progress_data = gm.parse_progress_tag(content)
                     if progress_data and gm._purpose:
                         logger.info("[Progress Tag] data=%s", progress_data)
@@ -273,17 +278,6 @@ class ConversationDriver:
                                     siblings = gm._purpose.get_sub_goals(parent_goal.parent_id)
                                     all_done = all(sg.is_completed() for sg in siblings)
                                     if all_done and root_goal:
-                                        gm.complete_goal(root_goal)
-                                    # 早期完成检测：至少完成 2 个子目标后才触发，避免第一个子目标 LLM 就做完全部任务
-                                    elif (not all_done and root_goal and gm._sub_goal_covers_deliverable(summary, root_goal)
-                                          and sum(1 for s in siblings if s.is_completed()) >= 2):
-                                        remaining = sum(1 for s in siblings if not s.is_completed())
-                                        logger.info("[Progress] 早期完成：子目标产出已覆盖根目标，跳过剩余 %d 个子目标", remaining)
-                                        from xiaomei_brain.purpose.goal import GoalStatus
-                                        for s in siblings:
-                                            if not s.is_completed():
-                                                s.status = GoalStatus.COMPLETED
-                                                s.progress = 1.0
                                         gm.complete_goal(root_goal)
                         gm._purpose.save()
 

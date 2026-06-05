@@ -66,6 +66,7 @@ def build_context(
     })
 
     # ── 开关：不组装时直接返回裸消息 ──
+    logger.info("[ContextPipeline] ENTRY assemble=%s intent_ctx=%d", assemble, len(intent_context) if intent_context else 0)
     if not assemble:
         return list(agent.messages)
 
@@ -121,23 +122,28 @@ def build_context(
         system_content = inject_consciousness(self_image, mode=mode, user_input=user_input, profile=profile)
         self_image._salience_profile = profile  # 挂载，供反馈阶段使用
         # 日志：system prompt 中的 DAG 摘要数量
-        dag_count = len(getattr(self_image.memory, 'dag_summaries', [])) if self_image is not None else 0
+        dag_count = len(getattr(self_image.memory, 'dag_summaries', []))
         logger.info(
             "[ContextPipeline] 组装完成: mode=%s system_tokens=%d dag_summaries=%d",
             mode, estimate_content_tokens(system_content), dag_count,
         )
 
-        # intent_context: 任务约束放入最后一条用户消息（优先于 system prompt）
-        if intent_context:
-            last_user = None
-            for m in reversed(agent.messages):
-                if m.get("role") == "user":
-                    last_user = m
-                    break
-            if last_user is not None:
-                last_user["content"] = intent_context + "\n\n" + last_user["content"]
-            else:
-                system_content += "\n" + intent_context
+    # intent_context: 任务约束放入最后一条用户消息（优先于 system prompt）
+    # 放在 self_image 块外部，确保 PACE 等不传 self_image 的路径也能注入 PROGRESS 指令
+    if intent_context:
+        logger.info(
+            "[ContextPipeline] intent_context_len=%d has_PROGRESS=%s",
+            len(intent_context), "<PROGRESS>" in intent_context,
+        )
+        last_user = None
+        for m in reversed(agent.messages):
+            if m.get("role") == "user":
+                last_user = m
+                break
+        if last_user is not None:
+            last_user["content"] = intent_context + "\n\n" + last_user["content"]
+        else:
+            system_content += "\n" + intent_context
 
     # 6. 过滤已压缩消息
     if agent.dag:

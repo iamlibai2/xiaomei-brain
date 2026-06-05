@@ -179,13 +179,16 @@ class ConsciousLiving(Living):
         for ms_tool in create_memory_search_tools(self.agent.longterm_memory):
             self.agent.tools.register(ms_tool)
 
-        # 注册目标管理工具（create_goal / list_goals）
+        # 注册目标管理工具（create_goal / list_goals / resume_goal）
         # purpose_ref 延迟绑定：PurposeEngine 创建后设置
+        # resume_trigger: resume_goal 设置 goal_id → ConversationDriver 检测后启动 PACE
         from ..tools.builtin.goal import create_goal_tools
         purpose_ref = [None]
-        for goal_tool in create_goal_tools(purpose_ref):
+        resume_trigger = [None]
+        for goal_tool in create_goal_tools(purpose_ref, resume_trigger):
             self.agent.tools.register(goal_tool)
         self.agent._purpose_ref = purpose_ref
+        self.agent._resume_trigger = resume_trigger
 
         # MemoryConsole
         from ..agent.commands import MemoryConsole
@@ -287,6 +290,7 @@ class ConsciousLiving(Living):
             experience_memory=self._experience_memory,
             project_mental_model=self._project_mental_model,
             goal_run_storage=goal_run_storage,
+            resume_trigger=resume_trigger,
         )
 
         # MessageGateway（消息入口预处理：命令检测、身份解析、会话切换）

@@ -3,10 +3,11 @@
 create_goal: 将用户安排的工作记录为目标
 update_goal: 更新已有目标的描述/完成标准/优先级
 list_goals:   查看当前目标状态
+resume_goal: 恢复执行已有目标，触发 PACE 执行循环
 
 Usage:
     from xiaomei_brain.tools.builtin.goal import create_goal_tools
-    tools = create_goal_tools(purpose_ref)
+    tools = create_goal_tools(purpose_ref, resume_trigger)
 """
 
 from __future__ import annotations
@@ -19,12 +20,13 @@ if TYPE_CHECKING:
     from ...purpose.purpose_engine import PurposeEngine
 
 
-def create_goal_tools(purpose_ref: list | None = None) -> list[Tool]:
+def create_goal_tools(purpose_ref: list | None = None, resume_trigger: list | None = None) -> list[Tool]:
     """创建目标管理工具。
 
     Args:
         purpose_ref: 单元素列表，元素为 PurposeEngine 实例。
-                     ConsciousLiving 创建 PurposeEngine 后设置 purpose_ref[0]。
+        resume_trigger: 单元素列表，resume_goal 调用后设置 [goal_id]，
+                        ConversationDriver 检测后启动 PACE 执行。
     """
 
     def _get_purpose() -> "PurposeEngine | None":
@@ -197,13 +199,13 @@ def create_goal_tools(purpose_ref: list | None = None) -> list[Tool]:
             lines.append("### 进行中")
             for g in active:
                 pct = f"{g.progress:.0%}" if g.progress else "0%"
-                lines.append(f"- [{pct}] {g.description[:80]}")
+                lines.append(f"- [{pct}] {g.description[:80]}  (ID: {g.id})")
 
         if pending:
             lines.append("\n### 待执行")
             for g in pending[:10]:
                 prefix = type_names.get(g.goal_type.value if hasattr(g.goal_type, 'value') else str(g.goal_type), "")
-                lines.append(f"- {prefix} {g.description[:80]}")
+                lines.append(f"- {prefix} {g.description[:80]}  (ID: {g.id})")
 
         if completed:
             lines.append(f"\n### 已完成（{len(completed)} 项）")
@@ -214,4 +216,41 @@ def create_goal_tools(purpose_ref: list | None = None) -> list[Tool]:
 
         return "\n".join(lines)
 
-    return [create_goal, update_goal, list_goals]
+    # ── resume_goal ──────────────────────────────────────────
+
+    @tool(
+        name="resume_goal",
+        description=(
+            "恢复执行一个已有的目标。"
+            "当用户确认要继续某个任务时调用此工具。\n"
+            "调用前必须先用 list_goals 查看目标列表，然后和用户确认要恢复哪一个。"
+            "不要在用户未明确确认的情况下调用。"
+        ),
+    )
+    def resume_goal(goal_id: str) -> str:
+        """恢复执行已有目标，启动 PACE 执行循环。
+
+        Args:
+            goal_id: 要恢复的目标 ID（从 list_goals 获取）
+        """
+        purpose = _get_purpose()
+        if not purpose:
+            return "目标系统尚未初始化，请稍后再试。"
+
+        goal = purpose.goals.get(goal_id)
+        if not goal:
+            return f"未找到目标 '{goal_id}'。请用 list_goals 查看所有目标。"
+
+        if goal.is_completed():
+            return f"目标「{goal.description[:60]}」已完成，无需恢复。"
+
+        # 设置 trigger，ConversationDriver 检测后启动 PACE
+        if resume_trigger is not None:
+            resume_trigger[0] = goal_id
+        else:
+            # 无 trigger 时直接激活（兼容旧调用路径）
+            purpose.resume_goal(goal_id)
+
+        return f"正在恢复执行「{goal.description[:60]}」..."
+
+    return [create_goal, update_goal, list_goals, resume_goal]
