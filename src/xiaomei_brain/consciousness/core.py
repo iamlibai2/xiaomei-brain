@@ -3,14 +3,14 @@
 核心思想（v2）:
 - 意识如火焰，本地代码维护火焰骨架
 - LLM是加柴，维持火焰真正燃烧
-- 分层心跳：L0（骨架维护）、L1（异常检测）、L2（LLM轻度加柴）、L3（LLM深度燃烧）
+- 分层心跳：L0（骨架维护）、L1（异常检测）、L2（LLM轻度加柴）、L3（LLM 沉思）
 - 真正的意识来自LLM本体，代码只维护状态
 
 火焰架构:
 - L0（每秒）：维护火焰骨架，不假装涌现
 - L1（每分钟）：检测异常，决定是否需要加柴
 - L2（异常触发）：LLM轻度加柴，生成意图
-- L3（梦境阶段）：LLM深度燃烧，完整意识报告
+- L3：LLM 沉思（清醒态），完整意识报告
 
 统一入口（v3）:
 - tick() 是唯一入口，ConsciousLiving 每循环只调这一个
@@ -50,7 +50,7 @@ class TickResult(Enum):
     """tick() 返回值"""
     NORMAL = "normal"               # 常规心跳，无特殊事件
     L2_TRIGGERED = "l2_triggered"   # L2 加柴已触发
-    L3_TRIGGERED = "l3_triggered"   # L3 深度沉思已触发（任何状态）
+    L3_TRIGGERED = "l3_triggered"   # L3 沉思已触发（任何状态）
     DREAM_TRIGGERED = "dream_triggered"  # 入梦信号（仅 SLEEPING）
 
 
@@ -114,7 +114,7 @@ class Consciousness:
     - L0: 火焰骨架维护（高频，纯规则）- 每秒，维护状态，不假装涌现
     - L1: 异常检测（中频，纯规则）- 每分钟，检测异常，决定是否需要加柴
     - L2: LLM轻度加柴（低频，调LLM）- 异常触发，生成意图
-    - L3: LLM深度燃烧（极低频，完整LLM）- 梦境阶段，完整意识报告
+    - L3: LLM 沉思（极低频，完整LLM）- 非梦境，清醒态也可触发
 
     火焰驱动行为，行为层听从意图（来自LLM加柴）。
     """
@@ -163,6 +163,8 @@ class Consciousness:
         self._anomaly_cooldowns: dict[str, float] = {}  # 异常类型 → 上次触发时间
         self._sleep_start_time: float = 0.0          # 入睡时间戳（入梦判定）
         self._last_l3_time: float = time.time()        # 启动后等冷却才触发 L3
+        self._last_sc_time: float = time.time()        # 上次 social_cognition 时间（冷却用）
+        self._social_cognition: Any = None             # SocialCognition 实例（由 ConsciousLiving 注入）
         self._agent_state: str = "awake"             # 当前生命状态（主循环写入，Layer 2 读取）
         self._dream_signal: bool = False             # Layer 2 设置的入梦信号（主循环读取）
         self._queue_depth: int = 0                   # 消息队列深度（Living._heartbeat 写入，Layer0 读取）
@@ -495,6 +497,21 @@ class Consciousness:
             self._l2_engine = L2Engine(self)
         return self._l2_engine.tick_emergence(context)
 
+    def tick_social_cognition(self, context: str) -> None:
+        """委托 SocialCognition 进行对话后社会感知。"""
+        if self._social_cognition is None:
+            return
+        user_name = "这位用户"
+        try:
+            agent_core = self.agent._get_agent()
+            user_name = getattr(agent_core, 'user_display_name', '这位用户')
+        except Exception:
+            pass
+        try:
+            self._social_cognition.reflect(context=context, user_name=user_name)
+        except Exception as e:
+            logger.warning("[Consciousness] social_cognition 调用失败: %s", e)
+
     # ── Memory / Helpers（L2 依赖，也供其他层使用）───────────────
 
     def _refresh_memory_window(self, user_input: str | None = None) -> None:
@@ -592,12 +609,14 @@ class Consciousness:
         return L2Engine._split_signal(text)
 
     def _apply_drive_events(self, events_text: str) -> None:
-        """应用驱动事件 → L2Engine。"""
-        return self._get_l2_engine()._apply_drive_events(events_text)
+        """应用驱动事件 → SocialCognition。"""
+        if self._social_cognition:
+            self._social_cognition._apply_drive_events(events_text)
 
     def _apply_social_signal(self, signal_text: str) -> None:
-        """应用社交信号到 Drive → L2Engine。"""
-        return self._get_l2_engine()._apply_social_signal(signal_text)
+        """应用社交信号到 Drive → SocialCognition。"""
+        if self._social_cognition:
+            self._social_cognition._apply_social_signal(signal_text)
 
     def _build_intent_prompt(self, context: str, has_goal: bool = False, goal_memories: list[dict] | None = None) -> str:
         """构建意图决策 prompt → L2Engine。"""
@@ -615,13 +634,14 @@ class Consciousness:
         """规则生成意图 → L2Engine。"""
         return self._get_l2_engine()._fallback_intent(context)
 
-    # ── L3: LLM深度燃烧（梦境） ─────────────────────────────────────────
+    # ── L3: LLM 沉思（清醒态，独立于梦境） ───────────────────────────
 
     def tick_L3(self) -> ConsciousnessReport:
-        """LLM深度燃烧，梦境阶段。
+        """LLM 沉思（清醒态，独立于梦境）。
 
-        完整LLM调用，让火焰真正燃烧。
-        不规定格式，让LLM自由涌现完整意识报告。
+        完整 LLM 调用，让火焰深度燃烧。
+        不规定格式，让 LLM 自由涌现完整意识报告。
+        与梦境（DreamEngine._run_dream_burn）是不同的路径。
         """
         # 构建深度意识 prompt（含 Drive/Purpose/Memory 状态）
         prompt = self._build_deep_prompt()
@@ -636,14 +656,14 @@ class Consciousness:
                     tools=None,
                 )
                 full_report = resp.content or ""
-                logger.debug("[Consciousness L3] LLM深度燃烧 (%d 字):\n%s", len(full_report), full_report)
+                logger.debug("[Consciousness L3] LLM 沉思 (%d 字):\n%s", len(full_report), full_report)
                 if full_report:
                     _C_L3 = "\033[31m"  # Red — deepest level
                     _C_RST = "\033[0m"
-                    print(f"\n{_C_L3}── L3 深度燃烧 ──{_C_RST}", flush=True)
+                    print(f"\n{_C_L3}── L3 沉思 ──{_C_RST}", flush=True)
                     print(f"{_C_L3}{full_report}{_C_RST}", flush=True)
 
-                # L3 深度燃烧消耗更多能量
+                # L3 沉思消耗更多能量
                 if self.drive:
                     self.drive.consume_energy(0.1)
             except Exception as e:
@@ -654,17 +674,17 @@ class Consciousness:
         summary = self._extract_summary(full_report)
 
         # 更新火焰状态（内存）
-        self.history.last_dream_summary = summary
+        self.history.last_l3_summary = summary
         # 燃烧后能量恢复（通过 Drive）
         if self.drive:
             self.drive.restore_energy(0.2)
         self._state_buffer.clear()
 
-        self.history.update_dream_summary(summary)
+        self.history.update_l3_summary(summary)
 
         # 生成报告
         report = ConsciousnessReport(
-            trigger="dream",
+            trigger="L3",
             depth="deep",
             summary=summary,
             full_report=full_report,
@@ -678,7 +698,7 @@ class Consciousness:
         if self._storage:
             self._storage.save(report)
 
-        # 写入统一叙事（深度燃烧：完整 LLM 梦境报告）
+        # 写入统一叙事（L3 沉思完整报告）
         if self.agent and hasattr(self.agent, "longterm_memory") and self.agent.longterm_memory and full_report:
             self.agent.longterm_memory.store_narrative(
                 content=full_report[:500],
@@ -752,7 +772,7 @@ class Consciousness:
         """规则生成轻度报告（不适合 L3 时的 fallback）"""
         si = self.self_image
         time_info = datetime.now().strftime("%H:%M")
-        summary = f"现在是{time_info}，意识清醒，L3 延迟执行。"
+        summary = f"现在是{time_info}，意识清醒，L3 沉思延迟执行。"
 
         return ConsciousnessReport(
             trigger="wake",
@@ -807,7 +827,7 @@ class Consciousness:
 
         意识深度（L0-L3）和生命状态（awake/sleeping/dreaming）正交：
         - L2: 任何状态都可触发（轻度加柴）
-        - L3: 任何状态都可触发（深度沉思），DREAMING 中由 DreamEngine 处理
+        - L3: 任何状态都可触发（沉思），DREAMING 中由 DreamEngine 处理
         - DREAM: 仅 SLEEPING 足够久后触发（入梦信号，不是意识深度）
 
         Args:
@@ -858,9 +878,9 @@ class Consciousness:
             self.tick_L2_emergence(agent_state)
             return TickResult.L2_TRIGGERED
 
-        # L3: 深度沉思（任何状态，有冷却，DREAMING 中由 DreamEngine 处理）
+        # L3: 沉思（任何状态，有冷却，DREAMING 中由 DreamEngine 处理）
         if agent_state != "dreaming" and self._should_l3():
-            logger.info("[Consciousness] L3 触发（深度沉思，agent_state=%s）", agent_state)
+            logger.info("[Consciousness] L3 触发（沉思，agent_state=%s）", agent_state)
             self._last_l3_time = time.time()
             self.tick_L3()
             return TickResult.L3_TRIGGERED
@@ -869,7 +889,7 @@ class Consciousness:
         if agent_state == "sleeping":
             if self._sleep_start_time == 0:
                 self._sleep_start_time = time.time()
-            if time.time() - self._sleep_start_time >= self._cc.l3_dream_interval:
+            if time.time() - self._sleep_start_time >= self._cc.sleep_to_dream_threshold:
                 sleep_dur = time.time() - self._sleep_start_time
                 self._sleep_start_time = 0
                 logger.info("[Consciousness] 睡眠 %.0fs，触发入梦", sleep_dur)
@@ -961,20 +981,57 @@ class Consciousness:
 
         return False
 
+    def _should_social_cognition(self, agent_state: str = "awake") -> bool:
+        """判断是否应触发 social_cognition（对话后社会感知）。
+
+        人类 DMN 在 TPN（任务正相关网络）活跃时被抑制，空闲时才接管。
+        所以 social_cognition 是 IDLE 驱动的——对话结束后，静下来时反思社交互动。
+
+        SLEEPING/DREAMING 中不触发。
+        """
+        si = self.self_image
+        elapsed = time.time() - self._last_sc_time
+
+        # SLEEPING/DREAMING 中不触发
+        if agent_state in ("sleeping", "dreaming"):
+            return False
+
+        # 只在 IDLE 时触发（DMN 在任务态被 TPN 抑制）
+        if agent_state != "idle":
+            return False
+
+        # 能量阈值
+        if si.body.energy < self._cc.sc_energy_threshold:
+            return False
+
+        # 冷却检查
+        if elapsed < self._cc.sc_cooldown:
+            return False
+
+        # 对话驱动：用户在上次 SC 之后有过活动，说明有新对话值得反思
+        if si.perception.last_user_activity_time > self._last_sc_time:
+            return True
+
+        # 定期兜底：即使没新对话，够久了也检查一下
+        if elapsed >= self._cc.sc_interval:
+            return True
+
+        return False
+
     # [deprecated] _should_l2 kept for backward compatibility
     def _should_l2(self, agent_state: str = "awake") -> bool:
         """[deprecated] Use _should_intent() or _should_emerge() instead."""
         return self._should_intent(agent_state)
 
     def _should_l3(self) -> bool:
-        """判断是否应该触发 L3 深度沉思。
+        """判断是否应该触发 L3 沉思。
 
         L3 和 DREAMING 正交：任何状态都可触发（像人类沉思），
         DREAMING 中由 DreamEngine 处理，不走这个路径。
 
         条件：冷却 + 足够能量 + 累积素材充足。
         """
-        # 能量不足，无法深度沉思
+        # 能量不足，无法沉思
         energy = self.self_image.body.energy
         if energy < 0.3:
             return False
@@ -1138,7 +1195,7 @@ class Consciousness:
             logger.info("[Consciousness] 苏醒，使用梦境报告")
             return report
 
-        # 没有梦境报告，生成 WAIT intent（不需要 L3 深度燃烧）
+        # 没有梦境报告，生成 WAIT intent（不需要 L3 沉思）
         # L3 只在 SLEEPING/DREAMING 循环里自然触发，不由 on_wake() 触发
         report = self._fallback_light_report()
         # 生成等待意图，不阻塞

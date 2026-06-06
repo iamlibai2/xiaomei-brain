@@ -28,8 +28,11 @@ class ConsciousnessConfig:
     })                                 # L2 意图决策欲望驱动阈值
     l2_emergence_interval: float = 1800.0   # 意识涌现定期间隔（秒）
     l2_emergence_cooldown: float = 600.0    # 意识涌现冷却（秒）
-    l3_dream_interval: float = 300.0   # L3 梦境触发（睡眠秒数→入梦）
-    l3_cooldown: float = 1800.0       # L3 深度沉思冷却（秒）
+    sleep_to_dream_threshold: float = 300.0  # 入梦触发（SLEEPING 持续秒数→入梦信号）
+    l3_cooldown: float = 1800.0       # L3 沉思冷却（秒）
+    sc_cooldown: float = 900.0              # social_cognition 冷却时间（秒）
+    sc_interval: float = 3600.0             # social_cognition 定期兜底间隔（秒）
+    sc_energy_threshold: float = 0.25       # social_cognition 最低能量阈值
     l2_check_interval: float = 10.0     # Layer 2 检查间隔（秒）
     l1_anomaly_enabled: bool = False   # L1 异常检测开关（False 时跳过所有异常检测）
     energy_low_threshold: float = 0.1  # 能量极低阈值（低于此值用flow最小上下文）

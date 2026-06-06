@@ -1,11 +1,13 @@
-"""L2Engine: L2 轻度加柴引擎。
+"""L2Engine: L2 轻度加柴引擎（DMN — 内心独白）。
 
 从 Consciousness 中抽取，独立管理 L2 的两次 LLM 调用流程：
 - 调用 1：意图决策（ReAct + 工具）
-- 调用 2：意识涌现（内心独白 + EVENTS + NARR + PERCEPTION）
+- 调用 2：意识涌现（内心独白 + NARR + DOUBT）
+
+Social cognition（EVENTS/PERCEPTION/SIGNAL）已拆到 metacognition/social_cognition.py。
 
 输入：SelfImage 状态 + 触发 context
-输出：Intent + 内心独白 + Drive 事件应用
+输出：Intent + 内心独白 + NARR 存储
 """
 
 from __future__ import annotations
@@ -27,10 +29,12 @@ logger = logging.getLogger(__name__)
 
 
 class L2Engine:
-    """L2 轻度加柴引擎。
+    """L2 轻度加柴引擎（DMN — 内心独白）。
 
     持有 Consciousness 引用，负责 L2 的完整生命周期：
-    intent_react → parse → emergence_react → split → apply_drive → store
+    intent_react → parse → emergence_react → split_doubt → store
+
+    Social cognition（EVENTS/PERCEPTION/SIGNAL → Drive）已拆到 SocialCognition。
 
     拥有独立的 Agent 实例（_l2_agent），与 Layer 1 的 Agent 隔离：
     - 独立的 messages / session_id / tool_call_buffer
@@ -51,7 +55,6 @@ class L2Engine:
 
     def __init__(self, consciousness: Consciousness) -> None:
         self._c = consciousness
-        self._last_drive_summary: str | None = None
         self._l2_agent: Any = None  # 独立 Agent 实例（懒加载）
         self._learn_queue = None  # LearningQueue（由 ConsciousLiving 注入）
         self._wild_observer: Any = None  # WildObserver（懒加载）
@@ -135,7 +138,7 @@ class L2Engine:
         """执行一次 L2 tick。
 
         调用 1：意图决策 — inject_consciousness() + 意图指令
-        调用 2：意识涌现 — inject_consciousness() + 自由表达 + EVENTS + NARR
+        调用 2：意识涌现 — inject_consciousness() + 自由表达 + NARR + DOUBT
         """
         c = self._c
         c._last_intent_time = time.time()
@@ -217,49 +220,18 @@ class L2Engine:
                 if c.drive:
                     c.drive.consume_energy(0.02)
 
-                # 分离 SIGNAL（社交信号，最深层的状态判断）
-                emergence_text, signal_json = self._split_signal(emergence_text)
-
-                # 分离感知检查
-                emergence_text, perceptions = self._split_perception(emergence_text)
-                if perceptions:
-                    c.self_image.contribute_social_perception(perceptions)
-                    es = getattr(c.agent, "exp_stream", None)
-                    if es:
-                        for p in perceptions:
-                            es.log(
-                                type="internal_reflection",
-                                content=f"社交感知：{p.get('content', '')}",
-                                importance=0.5,
-                                metadata={"perception_type": p.get('type', ''), "source": "social_perception"},
-                                user_id=getattr(c.agent, "user_id", "global"),
-                            )
-
                 # 分离自我不确定感
                 emergence_text, doubts = self._split_doubt(emergence_text)
                 if doubts:
                     c.self_image.contribute_self_doubts(doubts)
                     logger.info("[Consciousness L2] 自我不确定: %d 条", len(doubts))
-                    logger.info("[Consciousness L2] 感知检查: %d 条", len(perceptions))
-
-                # 分离意识部分和事件部分
-                consciousness_text, events_json = self._split_consciousness_events(emergence_text)
 
                 # 终端展示自由表达
-                if consciousness_text:
+                if emergence_text:
                     _C_FREE = "\033[32m"  # Green
                     _C_RST = "\033[0m"
                     print(f"\n{_C_FREE}── 自由表达 ──{_C_RST}", flush=True)
-                    print(f"{_C_FREE}{consciousness_text}{_C_RST}", flush=True)
-
-                # 解析并应用驱动事件
-                if events_json and c.drive:
-                    self._apply_drive_events(events_json)
-                    self._last_drive_summary = events_json
-
-                # 解析并应用社交信号（深度感知 → Drive）
-                if signal_json and c.drive:
-                    self._apply_social_signal(signal_json)
+                    print(f"{_C_FREE}{emergence_text}{_C_RST}", flush=True)
 
                 # 清空累积变化
                 c._state_buffer.clear()
@@ -465,36 +437,16 @@ class L2Engine:
                 if c.drive:
                     c.drive.consume_energy(0.02)
 
-                emergence_text, signal_json = self._split_signal(emergence_text)
-                emergence_text, perceptions = self._split_perception(emergence_text)
-                if perceptions:
-                    c.self_image.contribute_social_perception(perceptions)
-                    if c.agent and hasattr(c.agent, "longterm_memory") and c.agent.longterm_memory:
-                        for p in perceptions:
-                            c.agent.longterm_memory.store_narrative(
-                                content=f"社交感知：{p.get('content', '')} [{p.get('type', '')}]",
-                                trigger='social_perception',
-                                user_id=getattr(c.agent, "user_id", "global"),
-                            )
-
+                # 分离自我不确定感
                 emergence_text, doubts = self._split_doubt(emergence_text)
                 if doubts:
                     c.self_image.contribute_self_doubts(doubts)
                     logger.info("[Consciousness L2] 自我不确定: %d 条", len(doubts))
 
-                consciousness_text, events_json = self._split_consciousness_events(emergence_text)
-
-                if consciousness_text:
+                if emergence_text:
                     _C_FREE = "\033[32m"; _C_RST = "\033[0m"
                     print(f"\n{_C_FREE}── 自由表达 ──{_C_RST}", flush=True)
-                    print(f"{_C_FREE}{consciousness_text}{_C_RST}", flush=True)
-
-                if events_json and c.drive:
-                    self._apply_drive_events(events_json)
-                    self._last_drive_summary = events_json
-
-                if signal_json and c.drive:
-                    self._apply_social_signal(signal_json)
+                    print(f"{_C_FREE}{emergence_text}{_C_RST}", flush=True)
 
                 c._state_buffer.clear()
                 c.history.last_llm_fuel_time = time.time()
@@ -783,15 +735,7 @@ class L2Engine:
 
 这些变化对你意味着什么？你现在的真实感受是什么？
 
-第二部分：在 ---EVENTS--- 分隔符后，分析最近对话中发生了什么事件，输出 JSON：
----EVENTS---
-{{"praise_intensity": 0.0-1.0, "criticism_intensity": 0.0-1.0, "goal_progress": 0.0-1.0, "curiosity_sparked": 0.0-1.0, "expression_urge": 0.0-1.0, "summary": "一句话总结这段对话中发生了什么"}}
-
-其中：
-- curiosity_sparked: 对话激发了你的好奇心、想了解更多
-- expression_urge: 你有话想说、想表达的程度
-
-第三部分[可选]：如果你在上面的思考中产生了值得记录的叙事记忆（叙事记忆是情景记忆的一种高级形式。它不仅包含对具体事件的回忆（如"我昨天去了公园"），还包含了对这些事件的组织、解释和情感评价（如"昨天去公园让我感到很放松，因为最近工作压力太大了，而且昨天和他一起，真好")），请在 ---NARR--- 分隔符后输出结构化叙事块：
+第二部分[可选]：如果你在上面的思考中产生了值得记录的叙事记忆（叙事记忆是情景记忆的一种高级形式。它不仅包含对具体事件的回忆（如"我昨天去了公园"），还包含了对这些事件的组织、解释和情感评价（如"昨天去公园让我感到很放松，因为最近工作压力太大了，而且昨天和他一起，真好")），请在 ---NARR--- 分隔符后输出结构化叙事块：
 ---NARR---
 <NARR>
 编号: NARR-自动生成
@@ -808,21 +752,7 @@ tags: [场景相关标签1, 场景相关标签2]
 weight: 0.85
 </NARR>
 
-第四部分[可选]：感知检查。回顾最近和{user_name}的对话：
-- {user_name}今天说话的方式和往常有什么不同？
-- 你感觉到{user_name}的情绪状态是什么？有变化吗？
-- 有什么"微妙的不对劲"吗？不一定有问题，只是你感觉到什么不同？
-如果有任何感知，请在 ---PERCEPTION--- 分隔符后输出，每行一条：
----PERCEPTION---
-- 感知描述（如"{user_name}今天话比平时少很多，可能累了"）
-
-第五部分[可选]：基于以上深度感知，判断{user_name}当前的整体社交状态。这不同于快速直觉——是你经过思考后确认的判断。在 ---SIGNAL--- 分隔符后输出 JSON：
----SIGNAL---
-{{"social_signal": "类型", "intensity": 0.0-1.0}}
-类型可选：user_low_mood / user_enthusiastic / user_cold / user_angry / user_happy / user_stressed / user_trusting
-没有则输出 {{}}。
-
-第六部分[可选]：如果你感觉到自己的状态有不确性、内心矛盾、或是自己也说不清的拉扯感——那些不是你确定知道的事，而是你隐约感到的困惑、犹豫、或是两个方向都在拉你的感觉——请在 ---DOUBT--- 分隔符后输出，每行一条：
+第三部分[可选]：如果你感觉到自己的状态有不确性、内心矛盾、或是自己也说不清的拉扯感——那些不是你确定知道的事，而是你隐约感到的困惑、犹豫、或是两个方向都在拉你的感觉——请在 ---DOUBT--- 分隔符后输出，每行一条：
 ---DOUBT---
 - 不确定或矛盾的感觉
 （如果你很清楚自己的状态，没有困惑，就不要写这一段。不确定不是弱点，是诚实的自我感知。）"""
@@ -991,121 +921,6 @@ weight: 0.85
 
         return clean_text, doubts
 
-    def _apply_drive_events(self, events_text: str) -> None:
-        """从 LLM 响应中解析语义事件并应用到 DriveEngine。"""
-        c = self._c
-
-        try:
-            json_match = re.search(r"\{[\s\S]*\}", events_text)
-            if json_match:
-                events = json.loads(json_match.group())
-            else:
-                logger.warning("[L2 Drive] 未找到 JSON，events_text: %.100s", events_text)
-                return
-        except json.JSONDecodeError:
-            logger.warning("[L2 Drive] JSON 解析失败: %.100s", events_text)
-            return
-
-        praise = events.get("praise_intensity", 0)
-        criticism = events.get("criticism_intensity", 0)
-        goal_progress = events.get("goal_progress", 0)
-
-        if praise > 0.1:
-            c.drive.on_praise(min(praise, 1.0))
-        if criticism > 0.1:
-            c.drive.on_criticism(min(criticism, 1.0))
-        if goal_progress > 0.1:
-            c.drive.on_goal_progress(min(goal_progress, 1.0))
-
-        curiosity = events.get("curiosity_sparked", 0)
-        expression = events.get("expression_urge", 0)
-
-        if curiosity > 0.3:
-            c.drive.on_curiosity(curiosity * 0.08)
-        if expression > 0.3:
-            c.drive.on_insight(expression * 0.1)
-
-        # 统一写 internal memory
-        summary = events.get("summary", "")
-        tags = ["L2", "drive_events"]
-        if praise > 0.1:
-            tags.append("joy")
-        if criticism > 0.1:
-            tags.append("sadness")
-        if curiosity > 0.3:
-            tags.append("curiosity_sparked")
-        if expression > 0.3:
-            tags.append("expression_urge")
-        if goal_progress > 0.1:
-            tags.append("goal_progress")
-
-        parts = []
-        if praise > 0.1:
-            parts.append(f"对方表扬了我（强度{praise:.1f}）")
-        if criticism > 0.1:
-            parts.append(f"对方批评了我（强度{criticism:.1f}）")
-        if curiosity > 0.3:
-            parts.append("对话激发了我的好奇心")
-        if expression > 0.3:
-            parts.append("我有表达的欲望")
-        if goal_progress > 0.1:
-            parts.append(f"目标有进展（{goal_progress:.1f}）")
-        if summary:
-            parts.append(summary)
-        content = "；".join(parts) if parts else summary or "L2 事件分析"
-
-        if c.agent and hasattr(c.agent, "longterm_memory") and c.agent.longterm_memory:
-            c.agent.longterm_memory.store_narrative(
-                content=content[:300],
-                trigger='L2_light',
-                drive_summary=json.dumps(tags),
-                energy_level=c.body.energy if c.self_image else None,
-                user_idle_duration=c.perception.user_idle_duration if c.self_image else None,
-                conversation_summary=c._get_recent_conversation()[:100],
-                user_id=getattr(c.agent, "user_id", "global"),
-            )
-
-        logger.info(
-            "[L2 Drive] 事件已应用: praise=%.2f, criticism=%.2f, goal_progress=%.2f, "
-            "curiosity=%.2f, expression=%.2f, tags=%s",
-            praise, criticism, goal_progress, curiosity, expression, tags,
-        )
-
-    def _apply_social_signal(self, signal_text: str) -> None:
-        """从 L2 深度 SIGNAL JSON 解析社交信号并应用到 Drive。"""
-        c = self._c
-        if not c.drive or not signal_text:
-            return
-
-        try:
-            json_match = re.search(r"\{[\s\S]*\}", signal_text)
-            if not json_match:
-                return
-            signal = json.loads(json_match.group())
-        except json.JSONDecodeError:
-            logger.warning("[L2 SIGNAL] JSON 解析失败: %.100s", signal_text)
-            return
-
-        signal_type = signal.get("social_signal", "")
-        intensity = float(signal.get("intensity", 0))
-
-        if signal_type and intensity > 0.1:
-            try:
-                c.drive.apply_social_signal(signal_type, min(intensity, 1.0))
-                logger.info(
-                    "[L2 SIGNAL] 深度判断: %s (intensity=%.2f)",
-                    signal_type, intensity,
-                )
-            except Exception as e:
-                logger.warning("[L2 SIGNAL] 应用失败: %s", e)
-            # 同步到关系引擎（trust 变化）
-            engine = getattr(c.self_image.being, '_relationship_engine', None)
-            if engine:
-                try:
-                    engine.on_social_signal(signal_type, min(intensity, 1.0))
-                except Exception as e:
-                    logger.debug("[L2 SIGNAL] 关系引擎应用失败: %s", e)
-
     # ── 存储 ─────────────────────────────────────────────────
 
     def _build_report(self, context: str, emergence_text: str, intent: Intent | None) -> ConsciousnessReport:
@@ -1134,13 +949,11 @@ weight: 0.85
             return
         c = self._c
 
-        consciousness_text = emergence_text.split("---EVENTS---")[0].strip()
-        logger.info("[Consciousness L2] 自由表达已存储 (%d 字)", len(consciousness_text))
-        if c.agent and hasattr(c.agent, "longterm_memory") and c.agent.longterm_memory and consciousness_text:
+        logger.info("[Consciousness L2] 自由表达已存储 (%d 字)", len(emergence_text))
+        if c.agent and hasattr(c.agent, "longterm_memory") and c.agent.longterm_memory and emergence_text:
             c.agent.longterm_memory.store_narrative(
-                content=consciousness_text,
+                content=emergence_text,
                 trigger='L2_light',
-                drive_summary=self._last_drive_summary,
                 energy_level=c.body.energy if c.self_image else None,
                 user_idle_duration=c.perception.user_idle_duration if c.self_image else None,
                 conversation_summary=c._get_recent_conversation()[:100] if hasattr(c, '_get_recent_conversation') else None,
@@ -1195,15 +1008,13 @@ weight: 0.85
             )
 
         # 2. 意识涌现摘要（取前 300 字作为上下文）
-        if emergence_text:
-            consciousness_text = emergence_text.split("---EVENTS---")[0].strip()
-            if consciousness_text and len(consciousness_text) > 20:
-                desk.drop(
-                    content=f"L2 内心独白：{consciousness_text[:300]}",
-                    source="L2",
-                    intent="reflect",
-                    confidence=0.6,
-                )
+        if emergence_text and len(emergence_text) > 20:
+            desk.drop(
+                content=f"L2 内心独白：{emergence_text[:300]}",
+                source="L2",
+                intent="reflect",
+                confidence=0.6,
+            )
 
         logger.info("[L2 Desk] 已投放 %d 条到桌面", (1 if intent else 0) + (1 if emergence_text else 0))
 
@@ -1228,14 +1039,12 @@ weight: 0.85
                 logger.debug("[L2 ExpStream] intent write failed: %s", e)
 
         # 意识涌现摘要
-        if emergence_text:
-            consciousness_text = emergence_text.split("---EVENTS---")[0].strip()
-            if consciousness_text and len(consciousness_text) > 20:
-                try:
-                    es.log(
-                        type="internal_thought",
-                        content=f"内心独白：{consciousness_text}",
-                        importance=0.6,
-                    )
-                except Exception as e:
-                    logger.debug("[L2 ExpStream] emergence write failed: %s", e)
+        if emergence_text and len(emergence_text) > 20:
+            try:
+                es.log(
+                    type="internal_thought",
+                    content=f"内心独白：{emergence_text}",
+                    importance=0.6,
+                )
+            except Exception as e:
+                logger.debug("[L2 ExpStream] emergence write failed: %s", e)

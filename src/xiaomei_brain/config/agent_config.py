@@ -343,13 +343,16 @@ def _build_living_config(data: dict):
             l2_changes_trigger=cc.get("l2_changes_trigger", 10),
             l2_cooldown=cc.get("l2_cooldown", 300.0),
             l2_periodic_interval=cc.get("l2_periodic_interval", 1800.0),
-            l3_dream_interval=cc.get("l3_dream_interval", 300.0),
+            sleep_to_dream_threshold=cc.get("sleep_to_dream_threshold", cc.get("l3_dream_interval", 300.0)),
             l3_cooldown=cc.get("l3_cooldown", 1800.0),
             l2_check_interval=cc.get("l2_check_interval", 10.0),
             l1_anomaly_enabled=cc.get("l1_anomaly_enabled", False),
             dream_report_enabled=cc.get("dream_report_enabled", True),
             energy_low_threshold=cc.get("energy_low_threshold", 0.1),
             energy_silent_threshold=cc.get("energy_silent_threshold", 0.15),
+            sc_cooldown=cc.get("sc_cooldown", 900.0),
+            sc_interval=cc.get("sc_interval", 3600.0),
+            sc_energy_threshold=cc.get("sc_energy_threshold", 0.25),
         )
 
         living = data.get("living", {})
@@ -613,8 +616,11 @@ def _format_config_yaml(data: dict) -> str:
     _w(f"  l2_changes_trigger:   {consciousness.get('l2_changes_trigger', 10)}     # L2 累积变化触发（条数）")
     _w(f"  l2_cooldown:          {consciousness.get('l2_cooldown', 300.0)}   # L2 冷却时间（秒）")
     _w(f"  l2_periodic_interval: {consciousness.get('l2_periodic_interval', 1800.0)}  # L2 定期触发（秒）")
-    _w(f"  l3_dream_interval:    {consciousness.get('l3_dream_interval', 300.0)}   # L3 梦境触发（睡眠秒数→入梦）")
-    _w(f"  l3_cooldown:          {consciousness.get('l3_cooldown', 1800.0)}  # L3 深度沉思冷却（秒）")
+    _w(f"  sleep_to_dream_threshold: {consciousness.get('sleep_to_dream_threshold', consciousness.get('l3_dream_interval', 300.0))}   # 入梦触发（睡眠秒数→入梦）")
+    _w(f"  l3_cooldown:          {consciousness.get('l3_cooldown', 1800.0)}  # L3 沉思冷却（秒）")
+    _w(f"  sc_cooldown:          {consciousness.get('sc_cooldown', 900.0)}    # social_cognition 冷却（秒）")
+    _w(f"  sc_interval:          {consciousness.get('sc_interval', 3600.0)}   # social_cognition 定期兜底（秒）")
+    _w(f"  sc_energy_threshold:  {consciousness.get('sc_energy_threshold', 0.25)}   # social_cognition 最低能量")
     _w(f"  energy_low_threshold: {consciousness.get('energy_low_threshold', 0.1)}    # 能量极低阈值（低于→flow 最小上下文）")
     _w(f"  energy_silent_threshold: {consciousness.get('energy_silent_threshold', 0.15)}  # 能量沉寂阈值（低于→禁止主动行为）")
 

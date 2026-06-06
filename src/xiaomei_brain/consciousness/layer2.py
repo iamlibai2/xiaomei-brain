@@ -1,11 +1,12 @@
-"""Layer2DefaultNetwork: 默认网络线程。
+"""Layer2DefaultNetwork: DMN 线程（默认模式网络）。
 
 LLM 驱动，后台运行，面向自己。
 负责：
-- L2：动态加柴（自我反省 → SelfImage 更新）
-- L3：深度沉思（梦境燃烧）
-- DREAM 入梦信号
-- 定期记忆提取（periodic/dream）
+- L2：意图决策 + 内心独白（自我参照 + 走神）
+- social_cognition：对话后社会感知（社会认知 + 心理理论）
+- L3：LLM 沉思（清醒态，独立于梦境）
+- DREAM：入梦信号（仅 SLEEPING）
+- 定期记忆提取（periodic）
 
 不面向任何对话方，输出是"思想"而非"行动"。
 思想更新 SelfImage、存入长期记忆，不直接投递给任何人。
@@ -26,10 +27,10 @@ logger = logging.getLogger(__name__)
 
 
 class Layer2DefaultNetwork:
-    """默认网络——独立线程。
+    """DMN（默认模式网络）——独立线程。
 
     持有 consciousness 引用，通过 RLock 安全读写共享状态。
-    使用 consciousness 内建的 L2Engine / DreamEngine 进行 LLM 调用。
+    使用 consciousness 内建的 L2Engine / DreamEngine / SocialCognition 进行 LLM 调用。
     """
 
     def __init__(
@@ -136,10 +137,22 @@ class Layer2DefaultNetwork:
                     else:
                         self._log(f"{ts} L2 跳过 [条件不满足] state={agent_state}")
 
-                    # L3: 深度沉思（不在 DREAMING 中，由 _loop_dreaming 处理）
+                    # social_cognition: 对话后社会感知（社会认知 + 心理理论）
+                    if self._c._should_social_cognition(agent_state):
+                        self._log(f"{ts} social_cognition 触发 agent_state={agent_state}")
+                        logger.info("[Layer2] social_cognition 触发（agent_state=%s）", agent_state)
+                        self._c._last_sc_time = time.time()
+                        try:
+                            self._c.tick_social_cognition(agent_state)
+                            self._log(f"{ts} social_cognition 完成")
+                        except Exception as e:
+                            self._log(f"{ts} social_cognition ERROR: {e}")
+                            logger.warning("[Layer2] social_cognition 出错: %s", e)
+
+                    # L3: 沉思（不在 DREAMING 中，由 _loop_dreaming 处理）
                     if agent_state != "dreaming" and self._c._should_l3():
-                        self._log(f"{ts} L3 触发 [深度沉思] agent_state={agent_state} → tick_L3")
-                        logger.info("[Layer2] L3 触发（深度沉思，agent_state=%s）", agent_state)
+                        self._log(f"{ts} L3 触发 [沉思] agent_state={agent_state} → tick_L3")
+                        logger.info("[Layer2] L3 触发（沉思，agent_state=%s）", agent_state)
                         self._c._last_l3_time = time.time()
                         try:
                             self._c.tick_L3()
@@ -153,7 +166,7 @@ class Layer2DefaultNetwork:
                         if self._c._sleep_start_time == 0:
                             self._c._sleep_start_time = time.time()
                         elapsed = time.time() - self._c._sleep_start_time
-                        if elapsed >= self._c._cc.l3_dream_interval:
+                        if elapsed >= self._c._cc.sleep_to_dream_threshold:
                             self._log(f"{ts} DREAM 入梦信号 已发送 sleep_elapsed={elapsed:.0f}s")
                             self._c._sleep_start_time = 0
                             self._c._dream_signal = True

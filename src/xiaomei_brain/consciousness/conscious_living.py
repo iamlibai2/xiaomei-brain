@@ -112,6 +112,9 @@ class ConsciousLiving(Living):
             tick_interval=tick_interval or self._config.living.tick_interval,
         )
 
+        # 自主行为计时器（独立于 _last_active，不干扰空闲检测）
+        self._last_autonomous: float = 0
+
         # 包装 LLM 客户端：自动控制上下文总 token 量
         from ..agent.context_guard import ContextGuard
         if not isinstance(self.agent.llm, ContextGuard):
@@ -260,6 +263,17 @@ class ConsciousLiving(Living):
             user_id=user_id,
         )
 
+        # ── SocialCognition: 社会认知引擎 ──
+        from ..metacognition.social_cognition import SocialCognition
+        self._social_cognition = SocialCognition(
+            llm=llm_client,
+            self_image=None,  # 延迟设置（consciousness 创建后）
+            drive=self.drive,
+            exp_stream=getattr(agent_instance, "exp_stream", None),
+            longterm_memory=getattr(agent_instance, "longterm_memory", None),
+            user_id=user_id,
+        )
+
         # ── [Layer 2] Experience Memory: 经验记忆 ──
         from ..memory.experience import ExperienceMemory
         ltm = getattr(agent_instance, 'longterm_memory', None)
@@ -352,6 +366,11 @@ class ConsciousLiving(Living):
         if self._inner_voice:
             self._inner_voice._self_image = si
             self._inner_voice._learn_queue = self._learn_queue
+        # SocialCognition → SelfImage 连接
+        if self._social_cognition:
+            self._social_cognition._self_image = si
+        # 注入到 Consciousness（用于 tick_social_cognition 委托）
+        self.consciousness._social_cognition = self._social_cognition
         # ProjectMentalModel / ExperienceMemory / LearningQueue → SelfImage
         si._project_mental_model = self._project_mental_model
         si._experience_memory = self._experience_memory
@@ -372,8 +391,9 @@ class ConsciousLiving(Living):
         # 注入到 Agent 核心（供 core.py stream/react_nodb 使用）
         agent_core = self.agent._get_agent()
         agent_core.exp_stream = exp_stream
-        # 延迟注入：InnerVoice 在 ExperienceStream 之前创建，需要后置设置
+        # 延迟注入：InnerVoice / SocialCognition 在 ExperienceStream 之前创建，需要后置设置
         self._inner_voice._exp_stream = exp_stream
+        self._social_cognition._exp_stream = exp_stream
         logger.info("[ConsciousLiving] 经验流已创建并注入")
 
         # ── 底色（Essence）—— 由 ConsciousLiving.__init__() 创建 ──
@@ -439,7 +459,7 @@ class ConsciousLiving(Living):
         )
         logger.info("[ConsciousLiving] Layer0 已创建")
 
-        # Layer 2：默认网络线程（L2 加柴 + L3 沉思 + 入梦信号）
+        # DMN：默认模式网络线程（L2 加柴 + social_cognition + L3 沉思 + 入梦信号）
         self._layer2 = Layer2DefaultNetwork(
             consciousness=self.consciousness,
             check_interval=self._config.consciousness.l2_check_interval,
@@ -513,7 +533,7 @@ class ConsciousLiving(Living):
         self.register_periodic("heartbeat", self._config.living.tick_interval, self._heartbeat)
         self.register_periodic("death_check", 60.0, self._check_death)  # 每分钟检查生存状态
 
-        # 启动 Layer 0 自主层线程 + Layer 2 默认网络线程
+        # 启动 Layer 0 自主层线程 + DMN 默认模式网络线程
         if self._load_consciousness:
             self._layer0.start()
             self._layer2.start()
@@ -996,7 +1016,7 @@ class ConsciousLiving(Living):
                 self._dispatcher.tick(si)
                 executed = self._dispatcher.process_queue()
                 if executed:
-                    self._last_active = time.time()
+                    self._last_autonomous = time.time()
                     continue  # 有动作执行了，继续循环消费
 
             # 4. 无事可做 → 计空闲 → SLEEPING
@@ -1047,7 +1067,7 @@ class ConsciousLiving(Living):
             self._transition(LivingState.SLEEPING)
             return
 
-        # 运行 DreamEngine（串行执行：情绪整理→记忆强化→L3燃烧→反省）
+        # 运行 DreamEngine（串行执行：情绪整理→记忆强化→梦境燃烧→反省）
         try:
             report = self._dream_engine.run()
             logger.info(

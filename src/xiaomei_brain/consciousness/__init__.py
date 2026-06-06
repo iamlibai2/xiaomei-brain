@@ -16,8 +16,9 @@
 分层心跳架构：
 - L0: 火焰骨架维护（高频，纯规则）- 每秒，维护状态
 - L1: 异常检测（中频，纯规则）- 每分钟，检测异常
-- L2: LLM轻度加柴（低频，调LLM）- 异常触发
-- L3: LLM深度燃烧（极低频，完整LLM）- 梦境阶段
+- L2: DMN 内心独白（低频，调LLM）- 自我参照 + 走神
+- social_cognition: 对话后社会感知（中频，调LLM）- 社会认知 + 心理理论
+- L3: LLM 沉思（极低频，完整LLM）- 清醒态深度反思
 """
 
 from .self_image_proxy import SelfImage
