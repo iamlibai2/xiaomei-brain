@@ -202,6 +202,12 @@ def _detect_gave_up(obs: StepObservation, history: list[StepObservation]) -> boo
     触发条件：
     1. 当前输出包含明确的拒绝/放弃关键词
     2. 且上一步也检测到 REPEATED_OUTPUT 或 GAVE_UP（连续拒绝）
+
+    为什么用关键词而非依赖 LLM 的 PROGRESS 标签？
+    Agent 陷入重复/死循环时通常不会主动输出 "PROGRESS: stuck"——
+    ta自己不知道自己卡住了。但ta的语言会泄露信号："死循环"、
+    "同一个子目标推了"、"已完整交付"（拒绝再做）。这些是涌现行为，
+    关键词 + 连续模式是对 LLM 输出的事后诊断，不是对用户意图的事前猜测。
     """
     GAVE_UP_KEYWORDS = [
         "不重复", "不答", "拒收", "不再输出", "不会重复",

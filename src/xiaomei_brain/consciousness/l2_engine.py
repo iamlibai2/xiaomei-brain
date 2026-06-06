@@ -41,6 +41,14 @@ class L2Engine:
     # 探索类工具白名单
     EXPLORE_TOOL_NAMES: set[str] = {"dag_expand", "dag_search", "web_search", "thought_search", "being", "check_inbox"}
 
+    # 欲望饥渴 → 对应意图类型
+    _DESIRE_INTENT_TYPE = {
+        "belonging": IntentType.GREET,
+        "cognition": IntentType.LEARN,
+        "achievement": IntentType.PROGRESS,
+        "expression": IntentType.EXPRESS,
+    }
+
     def __init__(self, consciousness: Consciousness) -> None:
         self._c = consciousness
         self._last_drive_summary: str | None = None
@@ -172,16 +180,8 @@ class L2Engine:
                 # 欲望饥渴时，强制意图匹配对应欲望
                 if intent and context.startswith("desire_starvation_"):
                     desire_type = context.replace("desire_starvation_", "")
-                    expected_map = {
-                        "belonging": IntentType.GREET,
-                        "cognition": IntentType.LEARN,
-                        "achievement": IntentType.PROGRESS,
-                        "expression": IntentType.EXPRESS,
-                    }
-                    expected = expected_map.get(desire_type)
-                    c.intent_slot.urgent_intents.add(
-                        (expected or intent.type).value
-                    )
+                    expected = self._DESIRE_INTENT_TYPE.get(desire_type)
+                    c.intent_slot.urgent_intents.add((expected or intent.type).value)
                     if expected and intent.type != expected:
                         logger.info("[Consciousness L2] 意图修正: %s → %s（异常=%s）",
                                     intent.type.value, expected.value, context)
@@ -370,13 +370,7 @@ class L2Engine:
                 # 欲望饥渴 force-correction
                 if intent and context.startswith("desire_starvation_"):
                     desire_type = context.replace("desire_starvation_", "")
-                    expected_map = {
-                        "belonging": IntentType.GREET,
-                        "cognition": IntentType.LEARN,
-                        "achievement": IntentType.PROGRESS,
-                        "expression": IntentType.EXPRESS,
-                    }
-                    expected = expected_map.get(desire_type)
+                    expected = self._DESIRE_INTENT_TYPE.get(desire_type)
                     c.intent_slot.urgent_intents.add(
                         (expected or intent.type).value
                     )

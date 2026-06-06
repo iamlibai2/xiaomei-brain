@@ -134,21 +134,6 @@ class GoalManager:
     def analyze_intent(self, user_input: str) -> Any:
         if user_input.startswith("!"):
             task_text = user_input[1:].strip()
-            task_type = "execution"
-            task_lower = task_text
-            learn_kw = ["学习", "学", "了解原理", "入门", "掌握", "理解", "研究原理"]
-            explore_kw = ["调研", "对比", "选型", "有哪些", "哪个好", "评测", "探索"]
-            reflect_kw = ["反省", "反思", "复盘", "回顾"]
-            relation_kw = ["关注", "关心", "维护关系", "保持联系"]
-            if any(task_lower.startswith(k) for k in learn_kw):
-                task_type = "learning"
-            elif any(task_lower.startswith(k) for k in explore_kw):
-                task_type = "exploration"
-            elif any(k in task_lower for k in reflect_kw):
-                task_type = "reflection"
-            elif any(k in task_lower for k in relation_kw):
-                task_type = "relationship"
-
             goal = Goal(description=task_text, goal_type=GoalType.EXECUTABLE, status=GoalStatus.PENDING)
             calibration_ctx = self._get_calibration_context()
             sub_descriptions = self._intent_understanding.decompose_goal(task_text, calibration_ctx)
@@ -156,7 +141,7 @@ class GoalManager:
             return IntentResult(
                 intent_type=PurposeIntentType.TASK, goals=[goal], sub_goals=sub_descriptions,
                 relation=GoalRelation.NEW, target_goal_id=None, confidence=1.0,
-                task_type=task_type,
+                task_type="execution",
                 reasoning=f"指令以 ! 开头，明确的任务请求：{task_text[:50]}",
             )
 
