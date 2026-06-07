@@ -94,6 +94,7 @@ class PurposeEngine:
         self.drive = drive
         self._loaded = False  # 标记是否已加载
         self.longterm_memory: Any = None  # 统一叙事存储引用
+        self.exp_stream: Any = None       # 经验流引用
 
         # 存储
         self.storage = PurposeStorage(agent_id=agent_id)
@@ -212,6 +213,10 @@ class PurposeEngine:
         """设置统一叙事存储引用，用于写入内部事件叙事"""
         self.longterm_memory = ltm
 
+    def set_exp_stream(self, exp_stream: Any) -> None:
+        """设置经验流引用"""
+        self.exp_stream = exp_stream
+
     # ========== 目标管理 ==========
 
     def add_goal(
@@ -256,14 +261,13 @@ class PurposeEngine:
 
         logger.info(f"[PurposeEngine] 目标添加: {goal.description[:30]}")
 
-        if self.longterm_memory:
+        if self.exp_stream:
             type_names = {GoalType.EXECUTABLE: "执行目标", GoalType.PHASE: "阶段目标", GoalType.STRATEGIC: "战略目标"}
             type_name = type_names.get(goal_type, "目标")
-            self.longterm_memory.store(
-                content=f"我接收到了一个新的{type_name}：{description}",
-                source="internal",
-                tags=["purpose", "goal", "new_goal"],
-                importance=0.6,
+            self.exp_stream.log(
+                type="internal_action",
+                content=f"新增{type_name}：{description}",
+                importance=0.4,
             )
 
         return goal
@@ -414,21 +418,19 @@ class PurposeEngine:
             if self.drive:
                 self.drive.on_goal_failed(reason="对方放弃")
 
-        # 写入内部叙事
-        if self.longterm_memory:
+        # 写入经验流
+        if self.exp_stream:
             if success:
-                self.longterm_memory.store(
-                    content=f"我完成了目标'{goal.description}'，感到很有成就感。",
-                    source="internal",
-                    tags=["purpose", "achievement", "goal_completed"],
-                    importance=0.7,
+                self.exp_stream.log(
+                    type="internal_action",
+                    content=f"目标完成：{goal.description}",
+                    importance=0.4,
                 )
             else:
-                self.longterm_memory.store(
-                    content=f"我放弃了目标'{goal.description}'。",
-                    source="internal",
-                    tags=["purpose", "setback", "goal_abandoned"],
-                    importance=0.5,
+                self.exp_stream.log(
+                    type="internal_action",
+                    content=f"目标放弃：{goal.description}",
+                    importance=0.4,
                 )
 
         # 自动切换到下一个目标
@@ -507,12 +509,11 @@ class PurposeEngine:
             f"[PurposeEngine] 目标分解: {parent.description[:20]} → {len(sub_goals)}个子目标"
         )
 
-        if self.longterm_memory:
-            self.longterm_memory.store(
-                content=f"我把目标'{parent.description}'分解为{len(sub_goals)}个子目标来逐步完成。",
-                source="internal",
-                tags=["purpose", "planning", "decompose"],
-                importance=0.5,
+        if self.exp_stream:
+            self.exp_stream.log(
+                type="internal_action",
+                content=f"目标分解：'{parent.description}' → {len(sub_goals)}个子目标",
+                importance=0.3,
             )
 
         return sub_goals
@@ -605,12 +606,11 @@ class PurposeEngine:
             f"{sum(1 for g in sub_goals if g.depends_on)}个有依赖"
         )
 
-        if self.longterm_memory:
-            self.longterm_memory.store(
-                content=f"我把目标'{parent.description}'分解为{len(sub_goals)}个子目标来逐步完成。",
-                source="internal",
-                tags=["purpose", "planning", "decompose"],
-                importance=0.5,
+        if self.exp_stream:
+            self.exp_stream.log(
+                type="internal_action",
+                content=f"目标分解(DAG)：'{parent.description}' → {len(sub_goals)}个子目标",
+                importance=0.3,
             )
 
         return sub_goals

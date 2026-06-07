@@ -581,7 +581,7 @@ class SelfMemory:
     """
 
     narratives: list[dict] = field(default_factory=list)
-    internal_narratives: list[dict] = field(default_factory=list)  # 内部叙事（consciousness_narratives）
+    internal_narratives: list[dict] = field(default_factory=list)  # 内部叙事（consciousness_stream）
     dag_summaries: list[dict] = field(default_factory=list)  # [{id, depth, content}]
     important_memories: list[dict] = field(default_factory=list)
     recalled_memories: list[dict] = field(default_factory=list)

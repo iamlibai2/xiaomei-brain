@@ -74,7 +74,7 @@ class ProcedureConsolidationJob:
         try:
             # 获取所有 active procedure
             rows = conn.execute(
-                "SELECT * FROM procedures WHERE status = 'active'"
+                "SELECT * FROM procedure_memories WHERE status = 'active'"
             ).fetchall()
 
             for row in rows:
@@ -91,7 +91,7 @@ class ProcedureConsolidationJob:
                             decayed_weight = weight * (self.decay_base ** (idle_hours - 24))
                             if decayed_weight < weight:
                                 conn.execute(
-                                    "UPDATE procedures SET weight = ? WHERE id = ?",
+                                    "UPDATE procedure_memories SET weight = ? WHERE id = ?",
                                     (decayed_weight, proc_id),
                                 )
                                 result.decayed += 1
@@ -107,7 +107,7 @@ class ProcedureConsolidationJob:
                             decayed_weight = weight * (self.decay_base ** (idle_hours - 24))
                             if decayed_weight < weight:
                                 conn.execute(
-                                    "UPDATE procedures SET weight = ? WHERE id = ?",
+                                    "UPDATE procedure_memories SET weight = ? WHERE id = ?",
                                     (decayed_weight, proc_id),
                                 )
                                 result.decayed += 1
@@ -137,7 +137,7 @@ class ProcedureConsolidationJob:
 
                     if should_archive:
                         conn.execute(
-                            "UPDATE procedures SET status = 'archived' WHERE id = ?",
+                            "UPDATE procedure_memories SET status = 'archived' WHERE id = ?",
                             (proc_id,),
                         )
                         result.archived += 1

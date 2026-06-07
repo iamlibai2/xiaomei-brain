@@ -394,6 +394,7 @@ class ConsciousLiving(Living):
         # 延迟注入：InnerVoice / SocialCognition 在 ExperienceStream 之前创建，需要后置设置
         self._inner_voice._exp_stream = exp_stream
         self._social_cognition._exp_stream = exp_stream
+        self.purpose.exp_stream = exp_stream
         logger.info("[ConsciousLiving] 经验流已创建并注入")
 
         # ── 底色（Essence）—— 由 ConsciousLiving.__init__() 创建 ──

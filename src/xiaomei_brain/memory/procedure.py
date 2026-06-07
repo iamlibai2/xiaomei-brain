@@ -166,8 +166,16 @@ class ProcedureStore(SQLiteStore):
 
     def _init_table(self) -> None:
         conn = self._get_conn()
+
+        # 迁移：procedures → procedure_memories
+        existing = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='procedures'"
+        ).fetchone()
+        if existing:
+            conn.execute("ALTER TABLE procedures RENAME TO procedure_memories")
+
         conn.executescript("""
-            CREATE TABLE IF NOT EXISTS procedures (
+            CREATE TABLE IF NOT EXISTS procedure_memories (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 description TEXT,
@@ -185,9 +193,9 @@ class ProcedureStore(SQLiteStore):
                 version_history TEXT DEFAULT '[]',
                 execution_log TEXT DEFAULT '[]'
             );
-            CREATE INDEX IF NOT EXISTS idx_procedures_status ON procedures(status);
-            CREATE INDEX IF NOT EXISTS idx_procedures_weight ON procedures(weight);
-            CREATE INDEX IF NOT EXISTS idx_procedures_updated ON procedures(updated_at);
+            CREATE INDEX IF NOT EXISTS idx_procedure_memories_status ON procedure_memories(status);
+            CREATE INDEX IF NOT EXISTS idx_procedure_memories_weight ON procedure_memories(weight);
+            CREATE INDEX IF NOT EXISTS idx_procedure_memories_updated ON procedure_memories(updated_at);
         """)
         conn.commit()
 
@@ -206,7 +214,7 @@ class ProcedureStore(SQLiteStore):
         version_history = procedure.get("version_history", [])
 
         conn.execute("""
-            INSERT OR REPLACE INTO procedures
+            INSERT OR REPLACE INTO procedure_memories
             (id, name, description, trigger_config, steps, scope,
              execution_count, execution_success_rate, weight, status,
              created_at, updated_at, last_executed, version, version_history, execution_log)
@@ -237,7 +245,7 @@ class ProcedureStore(SQLiteStore):
         """Get a procedure by id."""
         conn = self._get_conn()
         row = conn.execute(
-            "SELECT * FROM procedures WHERE id = ?", (proc_id,)
+            "SELECT * FROM procedure_memories WHERE id = ?", (proc_id,)
         ).fetchone()
         if not row:
             return None
@@ -247,7 +255,7 @@ class ProcedureStore(SQLiteStore):
         """Get all active procedures."""
         conn = self._get_conn()
         rows = conn.execute(
-            "SELECT * FROM procedures WHERE status = 'active' ORDER BY weight DESC"
+            "SELECT * FROM procedure_memories WHERE status = 'active' ORDER BY weight DESC"
         ).fetchall()
         return [self._row_to_dict(r) for r in rows]
 
@@ -260,7 +268,7 @@ class ProcedureStore(SQLiteStore):
         """Update execution stats: count, success_rate, weight, log, last_executed."""
         conn = self._get_conn()
         row = conn.execute(
-            "SELECT execution_count, execution_success_rate, weight, execution_log FROM procedures WHERE id = ?",
+            "SELECT execution_count, execution_success_rate, weight, execution_log FROM procedure_memories WHERE id = ?",
             (proc_id,)
         ).fetchone()
         if not row:
@@ -293,7 +301,7 @@ class ProcedureStore(SQLiteStore):
             log = log[-20:]
 
         conn.execute("""
-            UPDATE procedures
+            UPDATE procedure_memories
             SET execution_count = ?,
                 execution_success_rate = ?,
                 weight = ?,
@@ -318,7 +326,7 @@ class ProcedureStore(SQLiteStore):
         """Archive procedures with weight below threshold. Returns count."""
         conn = self._get_conn()
         cur = conn.execute(
-            "UPDATE procedures SET status = 'archived' WHERE weight < ? AND status = 'active'",
+            "UPDATE procedure_memories SET status = 'archived' WHERE weight < ? AND status = 'active'",
             (threshold,)
         )
         conn.commit()

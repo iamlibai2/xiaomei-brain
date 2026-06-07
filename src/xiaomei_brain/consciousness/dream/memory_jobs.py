@@ -263,6 +263,7 @@ class ExtractJob:
                     importance=0.8,
                     user_id=user_id,
                     scene_tags=scene_tags if scene_tags else None,
+                    mem_type="common",
                 )
                 if mid:
                     saved += 1

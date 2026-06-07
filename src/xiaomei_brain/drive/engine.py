@@ -353,15 +353,6 @@ class DriveEngine:
                 importance=0.5,
             )
 
-        if self.longterm_memory:
-            rpe_str = f"比预期{'好' if rpe > 0 else '差'}" if rpe != 0 else "符合预期"
-            self.longterm_memory.store(
-                content=f"我完成了一个目标，{rpe_str}，多巴胺上升，感到成就和满足。",
-                source="internal",
-                tags=["drive", "achievement", "goal_completed"],
-                importance=0.7,
-            )
-
     def on_goal_failed(self, reason: str = "") -> None:
         """
         目标失败
@@ -398,13 +389,12 @@ class DriveEngine:
             f"reason={reason}"
         )
 
-        if self.longterm_memory:
+        if self.exp_stream:
             reason_suffix = f"原因是：{reason}" if reason else ""
-            self.longterm_memory.store(
-                content=f"我的一个目标失败了，感到沮丧和失落。{reason_suffix}",
-                source="internal",
-                tags=["drive", "setback", "goal_failed"],
-                importance=0.7,
+            self.exp_stream.log(
+                type="drive_event",
+                content=f"目标失败：{reason_suffix}" if reason else "目标失败",
+                importance=0.5,
             )
 
     def on_goal_progress(self, progress: float) -> None:
@@ -858,11 +848,10 @@ class DriveEngine:
                 if self.emotion.intensity < self.config.emotion.min_intensity:
                     self.emotion = EmotionalState()  # 回归平静
                     logger.debug("[DriveEngine] 情绪回归平静")
-                    if self.longterm_memory:
-                        self.longterm_memory.store(
-                            content="我的情绪渐渐平复，回归了平静的状态。",
-                            source="internal",
-                            tags=["drive", "emotion", "neutral"],
+                    if self.exp_stream:
+                        self.exp_stream.log(
+                            type="drive_event",
+                            content="情绪回归平静",
                             importance=0.3,
                         )
             else:

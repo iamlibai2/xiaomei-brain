@@ -5,7 +5,7 @@
 
 设计原则：
 - 只追加，不修改（immutable log）
-- 双写阶段：同时写 experience_stream 和旧表（messages/consciousness_narratives）
+- 双写阶段：同时写 experience_stream 和旧表（messages/consciousness_stream）
 - 专用表（memories/narrative_memories 等）从经验流异步精炼，是物化视图
 """
 
@@ -260,27 +260,27 @@ class ExperienceStream(SQLiteStore):
         return total
 
     def migrate_consciousness_narratives(self) -> int:
-        """从 consciousness_narratives 表迁移。"""
+        """从 consciousness_stream 表迁移。"""
         conn = self._get_conn()
 
         table_check = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='consciousness_narratives'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='consciousness_stream'"
         ).fetchone()
         if not table_check:
-            logger.info("[ExperienceStream] consciousness_narratives 表不存在，跳过")
+            logger.info("[ExperienceStream] consciousness_stream 表不存在，跳过")
             return 0
 
         # 检查是否已迁移过（通过 metadata 中的 source 标记）
         already = conn.execute(
-            "SELECT COUNT(*) FROM experience_stream WHERE metadata LIKE '%consciousness_narratives%'"
+            "SELECT COUNT(*) FROM experience_stream WHERE metadata LIKE '%consciousness_stream%'"
         ).fetchone()[0]
         if already > 0:
-            logger.info("[ExperienceStream] consciousness_narratives 已迁移 %d 条，跳过", already)
+            logger.info("[ExperienceStream] consciousness_stream 已迁移 %d 条，跳过", already)
             return 0
 
         total = 0
         rows = conn.execute(
-            "SELECT content, created_at, id FROM consciousness_narratives ORDER BY created_at ASC"
+            "SELECT content, created_at, id FROM consciousness_stream ORDER BY created_at ASC"
         ).fetchall()
 
         for row in rows:
@@ -295,13 +295,13 @@ class ExperienceStream(SQLiteStore):
                     row["created_at"],
                     "",
                     str(row["id"]),
-                    '{"source": "consciousness_narratives"}',
+                    '{"source": "consciousness_stream"}',
                 ),
             )
             total += 1
 
         conn.commit()
-        logger.info("[ExperienceStream] consciousness_narratives 迁移完成: %d 条", total)
+        logger.info("[ExperienceStream] consciousness_stream 迁移完成: %d 条", total)
         return total
 
     def migrate_tool_history(self) -> int:

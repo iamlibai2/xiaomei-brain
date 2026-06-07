@@ -408,7 +408,7 @@ class MemoryExtractor:
                     memory_id = self.ltm.store(
                         content=content, source=source, tags=[tag],
                         importance=imp, user_id=user_id,
-                        scene_tags=scene_tags,
+                        scene_tags=scene_tags, mem_type="common",
                     )
                     logger.info("[Memory ADD JSON] #%d: %.50s scenes=%s", memory_id, content, scene_tags)
                     ids.append(memory_id)
@@ -421,7 +421,7 @@ class MemoryExtractor:
                     memory_id = self.ltm.store(
                         content=content, source=source, tags=[tag],
                         importance=imp, user_id=user_id,
-                        scene_tags=scene_tags,
+                        scene_tags=scene_tags, mem_type="common",
                     )
                     logger.info("[Memory ADD JSON(fallback)] #%d: %.50s scenes=%s", memory_id, content, scene_tags)
                     ids.append(memory_id)
@@ -556,7 +556,7 @@ class MemoryExtractor:
                     memory_id = self.ltm.store(
                         content=content, source=source, tags=[tag],
                         importance=imp, user_id=user_id,
-                        scene_tags=["日常"],
+                        scene_tags=["日常"], mem_type="common",
                     )
                     logger.info("[Memory ADD] #%d: %.50s", memory_id, content)
                     ids.append(memory_id)
@@ -569,7 +569,7 @@ class MemoryExtractor:
                     memory_id = self.ltm.store(
                         content=content, source=source, tags=[tag],
                         importance=imp, user_id=user_id,
-                        scene_tags=["日常"],
+                        scene_tags=["日常"], mem_type="common",
                     )
                     logger.info("[Memory ADD(fallback)] #%d: %.50s", memory_id, content)
                     ids.append(memory_id)

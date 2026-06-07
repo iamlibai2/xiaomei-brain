@@ -249,7 +249,7 @@ class Doctor:
         # Record counts for key tables
         try:
             conn = sqlite3.connect(str(db_path))
-            for tbl in ["memories", "messages", "experience_stream", "consciousness_narratives"]:
+            for tbl in ["memories", "messages", "experience_stream", "consciousness_stream"]:
                 if tbl in table_names:
                     cnt = conn.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0]
                     if cnt > 0:

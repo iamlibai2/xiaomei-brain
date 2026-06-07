@@ -276,7 +276,7 @@ class L2Engine:
         if c._storage:
             c._storage.save(report)
 
-        # 写入意识涌现 → inner_thought + consciousness_narratives
+        # 写入意识涌现 → inner_thought + consciousness_stream
         self._store_emergence(emergence_text)
 
         # ── Narrative Memory（NARR 块解析存储）──────────────────────
@@ -944,7 +944,7 @@ weight: 0.85
         )
 
     def _store_emergence(self, emergence_text: str) -> None:
-        """写入意识涌现 → inner_thought + consciousness_narratives。"""
+        """写入意识涌现 → inner_thought + consciousness_stream。"""
         if not emergence_text:
             return
         c = self._c

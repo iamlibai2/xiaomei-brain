@@ -56,7 +56,7 @@ STATUS_EXTINCT = "extinct"
 class LongTermMemory(SQLiteStore):
     """Vector-semantic long-term memory — SQLite metadata + LanceDB vector index."""
 
-    VALID_SOURCES = {"immediate", "periodic", "dream", "manual", "insight", "internal", "learned", "hub"}
+    VALID_SOURCES = {"immediate", "periodic", "dream", "manual", "insight", "internal", "learned", "hub", "experience", "every_turn", "merged", "task_completion"}
 
     def __init__(
         self,
@@ -641,10 +641,14 @@ class LongTermMemory(SQLiteStore):
     def _init_tables(self) -> None:
         conn = self._get_conn()
 
-        # ── 先执行迁移，再执行 DDL（DDL 中的索引依赖迁移添加的列）──
+        # ── 先执行表结构迁移（改名、加列），再执行 DDL（DDL 中的索引依赖迁移后的列）──
         current_version = self._get_schema_version("longterm")
+
         if current_version < 3:
             self._migrate_v3(conn)
+
+        if current_version < 4:
+            self._migrate_v4(conn)
 
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS memories (
@@ -760,8 +764,8 @@ class LongTermMemory(SQLiteStore):
             CREATE INDEX IF NOT EXISTS idx_thoughts_user ON thoughts(user_id);
             CREATE INDEX IF NOT EXISTS idx_thoughts_session ON thoughts(session_id);
 
-            -- 意识叙事表：LLM 内心独白（与 memories 表分离）
-            CREATE TABLE IF NOT EXISTS consciousness_narratives (
+            -- 意识流表：LLM 内心独白 + 内部事件日志
+            CREATE TABLE IF NOT EXISTS consciousness_stream (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 content TEXT NOT NULL,
                 trigger TEXT NOT NULL,                   -- 'L2_light' / 'L3_deep' / 'awakening' / 'dream'
@@ -777,8 +781,8 @@ class LongTermMemory(SQLiteStore):
                 extracted_procedures TEXT DEFAULT '[]' -- JSON array of procedures
             );
 
-CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(trigger);
-            CREATE INDEX IF NOT EXISTS idx_narratives_created ON consciousness_narratives(created_at);
+CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_stream(trigger);
+            CREATE INDEX IF NOT EXISTS idx_consciousness_stream_created ON consciousness_stream(created_at);
 
             -- 叙事记忆表：主动结构化自我叙事（NARR 块）
             CREATE TABLE IF NOT EXISTS narrative_memories (
@@ -791,7 +795,7 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
                 feels_like TEXT,                           -- 核心情绪词
                 changed_me TEXT,                           -- "这次经历让我更理解了..."
                 weight REAL DEFAULT 0.8,                    -- 初始0.8~1.0
-                related_narrative_id INTEGER,              -- 关联的 consciousness_narratives.id
+                related_narrative_id INTEGER,              -- 关联的 consciousness_stream.id
                 status TEXT DEFAULT 'active',              -- active/archived/consolidated
                 source TEXT DEFAULT 'L2',                  -- L2/dream/explicit
                 user_id TEXT DEFAULT 'global',           -- 用户隔离
@@ -811,9 +815,6 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
 
         if current_version < 2:
             self._migrate_v2(conn)
-
-        if current_version < 3:
-            self._migrate_v3(conn)
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_strength ON memories(strength)")
@@ -862,18 +863,34 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         logger.info("[LongTerm] Schema migrated to v1")
 
     def _migrate_v2(self, conn: sqlite3.Connection) -> None:
-        """v1 → v2：consciousness_narratives 添加 user_id 列。"""
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(consciousness_narratives)").fetchall()}
+        """v1 → v2：意识流表 添加 user_id 列。"""
+        # 兼容旧名 consciousness_narratives 和新名 consciousness_stream
+        tbl = "consciousness_stream"
+        if not conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tbl,)
+        ).fetchone():
+            tbl = "consciousness_narratives"
+            if not conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tbl,)
+            ).fetchone():
+                self._set_schema_version("longterm", 2)
+                return
+        cols = {row[1] for row in conn.execute(f"PRAGMA table_info({tbl})").fetchall()}
         if "user_id" not in cols:
-            conn.execute("ALTER TABLE consciousness_narratives ADD COLUMN user_id TEXT DEFAULT 'global'")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_narratives_user ON consciousness_narratives(user_id, created_at)")
-            logger.info("[LongTerm] 迁移: consciousness_narratives 添加 user_id 列")
+            conn.execute(f"ALTER TABLE {tbl} ADD COLUMN user_id TEXT DEFAULT 'global'")
+            conn.execute(f"CREATE INDEX IF NOT EXISTS idx_consciousness_stream_user ON {tbl}(user_id, created_at)")
+            logger.info("[LongTerm] 迁移: %s 添加 user_id 列", tbl)
 
         self._set_schema_version("longterm", 2)
         logger.info("[LongTerm] Schema migrated to v2")
 
     def _migrate_v3(self, conn: sqlite3.Connection) -> None:
         """v2 → v3：narrative_memories 添加 user_id 列。"""
+        if not conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='narrative_memories'"
+        ).fetchone():
+            self._set_schema_version("longterm", 3)
+            return
         cols = {row[1] for row in conn.execute("PRAGMA table_info(narrative_memories)").fetchall()}
         if "user_id" not in cols:
             conn.execute("ALTER TABLE narrative_memories ADD COLUMN user_id TEXT DEFAULT 'global'")
@@ -882,6 +899,18 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
 
         self._set_schema_version("longterm", 3)
         logger.info("[LongTerm] Schema migrated to v3")
+
+    def _migrate_v4(self, conn: sqlite3.Connection) -> None:
+        """v3 → v4：consciousness_narratives → consciousness_stream 重命名。"""
+        existing = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='consciousness_narratives'"
+        ).fetchone()
+        if existing:
+            conn.execute("ALTER TABLE consciousness_narratives RENAME TO consciousness_stream")
+            logger.info("[LongTerm] 迁移: consciousness_narratives → consciousness_stream")
+
+        self._set_schema_version("longterm", 4)
+        logger.info("[LongTerm] Schema migrated to v4")
 
     # ── Public API ──────────────────────────────────────────────
 
@@ -1003,7 +1032,7 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
         related_json = json.dumps(related_memory_ids or [], ensure_ascii=False)
 
         cur = conn.execute(
-            """INSERT INTO consciousness_narratives
+            """INSERT INTO consciousness_stream
                (content, trigger, created_at, related_memory_ids, drive_summary,
                 energy_level, user_idle_duration, conversation_summary, user_id)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -1034,7 +1063,7 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
             user_id: filter by user (不传则不过滤)
         """
         conn = self._get_conn()
-        sql = "SELECT * FROM consciousness_narratives WHERE 1=1"
+        sql = "SELECT * FROM consciousness_stream WHERE 1=1"
         params: list = []
         if user_id:
             sql += " AND (user_id = ? OR user_id = 'global')"
@@ -1080,7 +1109,7 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
             scene_tags: 场景标签列表
             feels_like: 核心情绪词
             changed_me: "这次经历让我更理解了..."
-            related_narrative_id: 关联的 consciousness_narratives.id
+            related_narrative_id: 关联的 consciousness_stream.id
             source: L2 / dream / explicit
             timestamp: YYYY-MM-DD 人类可读时间
             user_id: 用户标识（默认 "global"）
@@ -1405,13 +1434,13 @@ CREATE INDEX IF NOT EXISTS idx_narratives_trigger ON consciousness_narratives(tr
             d["_rank_score"] = similarity * strength_boost * importance_boost
 
             # ── Context-aware type weighting ──
-            weights = {"experience": 1.0, "knowledge": 1.0, "skill": 1.0}
+            weights = {"common": 1.0, "experience": 1.0, "knowledge": 1.0, "skill": 1.0}
             if type_weights:
                 weights.update(type_weights)
             elif context == "work":
-                weights = {"skill": 1.5, "knowledge": 1.3, "experience": 1.0}
+                weights = {"skill": 1.5, "knowledge": 1.3, "experience": 1.2, "common": 1.0}
             elif context == "chat":
-                weights = {"skill": 0.8, "knowledge": 1.0, "experience": 1.3}
+                weights = {"common": 1.3, "experience": 1.2, "knowledge": 1.0, "skill": 0.8}
             mem_type = d.get("type", "experience")
             type_boost = weights.get(mem_type, 1.0)
             d["_rank_score"] *= type_boost
