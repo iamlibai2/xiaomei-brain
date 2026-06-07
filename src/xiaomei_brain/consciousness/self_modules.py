@@ -667,7 +667,8 @@ class SelfHistory:
     emotional_trajectory: str = ""           # 情绪轨迹
     goal_rhythm: str = ""                    # 目标节奏
     consciousness_rhythm: str = ""           # 意识节律
-    last_dream_summary: str = ""             # 最后一次梦
+    last_dream_summary: str = ""             # 最后一次梦境摘要（仅 DreamEngine 写入）
+    last_l3_summary: str = ""                # 最后一次 L3 沉思摘要（仅 tick_L3 写入）
     last_llm_fuel_time: float = 0.0          # 上次加柴时间
     growth_events: list[dict] = field(default_factory=list)  # 生长记录
     self_snapshots: list[dict] = field(default_factory=list)  # body 状态快照，最多 5 个，不持久化
@@ -680,13 +681,14 @@ class SelfHistory:
             "goal_rhythm": self.goal_rhythm,
             "consciousness_rhythm": self.consciousness_rhythm,
             "last_dream_summary": self.last_dream_summary,
+            "last_l3_summary": self.last_l3_summary,
             "last_llm_fuel_time": self.last_llm_fuel_time,
             "growth_events": self.growth_events[-20:],
         }
 
     def from_dict(self, data: dict) -> None:
         for key in ["consciousness_age", "cycle_count", "emotional_trajectory", "goal_rhythm",
-                     "consciousness_rhythm", "last_dream_summary", "last_llm_fuel_time"]:
+                     "consciousness_rhythm", "last_dream_summary", "last_l3_summary", "last_llm_fuel_time"]:
             if key in data:
                 setattr(self, key, data[key])
         if "growth_log" in data:
@@ -698,7 +700,12 @@ class SelfHistory:
         self.consciousness_age += seconds
 
     def update_dream_summary(self, summary: str) -> None:
+        """更新梦境摘要（仅 DreamEngine 调用）。"""
         self.last_dream_summary = summary[:200]
+
+    def update_l3_summary(self, summary: str) -> None:
+        """更新 L3 沉思摘要（仅 tick_L3 调用）。"""
+        self.last_l3_summary = summary[:200]
 
     def snapshot_if_changed(self, si) -> bool:
         """body 状态有有意义变化时拍快照。距上次 < 2分钟不拍。

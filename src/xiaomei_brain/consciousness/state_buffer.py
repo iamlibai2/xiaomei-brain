@@ -111,7 +111,7 @@ class StateChangeBuffer:
     # ── 读取（L2/L3 调度判断）──────────────────────────
 
     def should_trigger_l3(self) -> bool:
-        """累积变化是否足够触发 L3 深度燃烧。"""
+        """累积变化是否足够触发 L3 沉思。"""
         return len(self._changes) > self.L3_TRIGGER_COUNT
 
     def should_trigger_l2(self) -> bool:

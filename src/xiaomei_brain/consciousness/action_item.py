@@ -15,7 +15,7 @@ class ActionType(Enum):
     PROACTIVE = "proactive"       # 主动发消息
     ALARM = "alarm"               # 闹钟触发（完整 ReAct）
     WORK = "work"                 # 自由工作（完整 ReAct）
-    TRIGGER_L3 = "trigger_l3"     # 触发 L3 深度燃烧
+    TRIGGER_L3 = "trigger_l3"     # 触发 L3 沉思
     TOOL = "tool"                 # 执行工具
     NOTIFY = "notify"             # 通知用户
     TALK_TO_AGENT = "talk_to_agent"  # 主动和其他 agent 聊天

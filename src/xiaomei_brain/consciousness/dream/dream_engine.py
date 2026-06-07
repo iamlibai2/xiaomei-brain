@@ -5,7 +5,7 @@ DREAMING 状态时做深度离线处理。
 串行流程：
 1. 情绪整理（EmotionProcessor）— 根据梦境内容调整 Drive 欲望/激素
 2. 记忆整理（MemoryOrganizer）— ReinforceJob + ExtractJob
-3. L3 火焰深度燃烧（LLM）— 完整意识报告
+3. 梦境深度燃烧（LLM）— 完整的梦境意识报告
 4. 反省（Reflection）— 预留
 
 DreamEngine 由 ConsciousLiving._loop_dreaming() 调用，
@@ -113,7 +113,7 @@ class DreamEngine:
         """执行梦境。
 
         Args:
-            prior_summary: 如果之前已有梦境摘要（如 L3 触发后写入的），直接使用，跳过 LLM 调用
+            prior_summary: 保留参数，当前未使用（始终为空字符串）。
 
         Returns:
             DreamReport
@@ -191,7 +191,7 @@ class DreamEngine:
             except Exception as e:
                 logger.warning("[DreamEngine] Pattern 提取失败: %s", e)
 
-        # ── 阶段4：L3 火焰深度燃烧 ─────────────────────
+        # ── 阶段4：梦境深度燃烧 ─────────────────────
         # 如果已有摘要，直接用；否则调 LLM
         if summary_to_process and not prior_summary:
             # prior_summary 为空但 SelfImage 有 last_dream_summary → 用现成的
@@ -200,11 +200,11 @@ class DreamEngine:
             logger.info("[DreamEngine] 使用已有梦境摘要: %s", report.summary[:30])
         elif not summary_to_process:
             # 真的需要 LLM 生成
-            self._run_flame_burn(report)
+            self._run_dream_burn(report)
         else:
-            # prior_summary 有值 → 这是外部传入的 L3 产物
+            # prior_summary 有值（保留路径，当前未使用）
             report.summary = prior_summary
-            logger.info("[DreamEngine] 使用外部梦境摘要: %s", report.summary[:30])
+            logger.info("[DreamEngine] 使用 prior_summary: %s", report.summary[:30])
 
         # ── 阶段4：反省（预留）──────────────────────────
         try:
@@ -246,8 +246,13 @@ class DreamEngine:
                 logger.debug("[ExpStream] dream write failed: %s", e)
         return report
 
-    def _run_flame_burn(self, report: DreamReport) -> None:
-        """调用 LLM 生成深度意识报告"""
+    def _run_dream_burn(self, report: DreamReport) -> None:
+        """梦境深度燃烧 — 调用 LLM 生成梦境意识报告。
+
+        与清醒态的 tick_L3() 是不同的路径：
+        - tick_L3(): 清醒时触发，产出 → last_l3_summary，trigger="L3"
+        - _run_dream_burn(): DREAMING 中触发，产出 → last_dream_summary，trigger="dream"
+        """
         prompt = self._build_dream_prompt()
 
         try:
@@ -269,7 +274,7 @@ class DreamEngine:
             self.drive.consume_energy(0.1)
             self.drive.restore_energy(0.2)
 
-        # 同步到 SelfImage
+        # 同步到 SelfImage（写 last_dream_summary，不是 last_l3_summary）
         self.cs.self_image.contribute_dream(report.summary)
 
         # 写入长期记忆
@@ -277,14 +282,14 @@ class DreamEngine:
             self.ltm.store(
                 content=full_report[:500],
                 source="internal",
-                tags=["consciousness", "L3", "dream", "deep_burn"],
+                tags=["consciousness", "dream", "deep_burn"],
                 importance=0.5,
             )
 
         # 生成后续 intent
         self._generate_followup_intent(report.summary)
 
-        logger.info("[DreamEngine] L3 燃烧:\n%s", full_report[:200])
+        logger.info("[DreamEngine] 梦境深度燃烧完成:\n%s", full_report[:200])
 
     def _generate_followup_intent(self, summary: str) -> None:
         """根据梦境摘要生成后续意图"""

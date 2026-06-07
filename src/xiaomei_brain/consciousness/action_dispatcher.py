@@ -424,7 +424,7 @@ class ActionExecutor:
         return result
 
     def _do_trigger_l3(self, item: ActionItem) -> bool:
-        """触发 L3 深度燃烧"""
+        """触发 L3 沉思"""
         if self.dispatcher._conscious_living is None:
             logger.warning("[ActionExecutor] 无 ConsciousLiving 引用，无法触发 L3")
             return False

@@ -358,7 +358,7 @@ class SelfImage:
     def contribute_dream(self, summary: str) -> None:
         """DreamEngine 贡献：梦境摘要。
 
-        由 DreamEngine._run_flame_burn() 调用。
+        由 DreamEngine._run_dream_burn() 调用。
         """
         self.history.update_dream_summary(summary)
         self.mind.record_goal_progress()

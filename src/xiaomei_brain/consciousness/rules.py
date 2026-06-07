@@ -155,7 +155,7 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
             .cooldown("intent_care", ac.intent_care_cooldown)
     )
 
-    # REFLECT 意图 → 触发 L3 深度燃烧
+    # REFLECT 意图 → 触发 L3 沉思
     RULES.append(
         Rule.when(lambda si: _has_intent(si, "REFLECT"))
             .then(ActionItem(
