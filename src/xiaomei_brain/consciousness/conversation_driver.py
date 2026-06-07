@@ -368,10 +368,23 @@ class ConversationDriver:
             return
         try:
             agent_core = self._parent.agent._get_agent()
-            user_name = getattr(agent_core, 'user_display_name', '这位用户')
+            user_name = getattr(agent_core, 'user_display_name', '对方')
+            agent_name = agent_core.name or "我"
+
+            # 从 agent.messages 过滤 user/assistant 对话
+            msgs = agent_core.messages
+            dialogue = [
+                m for m in msgs
+                if m.get("role") in ("user", "assistant")
+            ]
+            recent_dialogue = "\n".join(
+                f"{'对方' if m.get('role') == 'user' else agent_name}：{m.get('content', '')}"
+                for m in dialogue
+            ) if dialogue else ""
+
             self._inner_voice.on_chat_turn(
-                user_msg=user_msg, response_len=response_len,
-                elapsed=elapsed, tools=tools or [], user_name=user_name)
+                elapsed=elapsed, tools=tools or [], user_name=user_name,
+                recent_dialogue=recent_dialogue)
         except Exception as e:
             logger.debug("[ConversationDriver] InnerVoice chat_turn 失败: %s", e)
 

@@ -498,19 +498,54 @@ class Consciousness:
         return self._l2_engine.tick_emergence(context)
 
     def tick_social_cognition(self, context: str) -> None:
-        """委托 SocialCognition 进行对话后社会感知。"""
+        """委托 SocialCognition 进行对话后社会感知。
+
+        从 ConversationDB 读取 _last_sc_time 到现在的增量对话，
+        格式化为对话文本传给 SocialCognition 分析。
+        """
         if self._social_cognition is None:
             return
-        user_name = "这位用户"
+
+        user_name = "对方"
         try:
             agent_core = self.agent._get_agent()
-            user_name = getattr(agent_core, 'user_display_name', '这位用户')
+            user_name = getattr(agent_core, 'user_display_name', '对方')
         except Exception:
             pass
+
+        # 查询上次 SC 之后的增量对话
+        recent_conv = self._get_recent_conversation_since(self._last_sc_time)
+        self._last_sc_time = time.time()  # 更新冷却时间（对话快照已取，即使 LLM 失败也更新）
+
         try:
-            self._social_cognition.reflect(context=context, user_name=user_name)
+            self._social_cognition.reflect(
+                context=context, user_name=user_name,
+                recent_conversation=recent_conv,
+            )
         except Exception as e:
             logger.warning("[Consciousness] social_cognition 调用失败: %s", e)
+
+    def _get_recent_conversation_since(self, since: float) -> str:
+        """获取从 since 时间戳到现在的对话文本（从 ConversationDB 读取）。"""
+        if not self.agent or not hasattr(self.agent, "conversation_db"):
+            return ""
+        db = self.agent.conversation_db
+        if not db:
+            return ""
+        try:
+            recent = db.get_recent(50, user_id=self._agent_id, since=since)
+            lines = []
+            for m in recent:
+                role = m.get("role", "unknown")
+                content = m.get("content", "")
+                if role == "user":
+                    lines.append(f"对方：{content[:200]}")
+                elif role == "assistant":
+                    lines.append(f"{self.being.name or '我'}：{content[:200]}")
+            return "\n".join(lines) if lines else ""
+        except Exception as e:
+            logger.warning("[Consciousness] 增量对话查询失败: %s", e)
+            return ""
 
     # ── Memory / Helpers（L2 依赖，也供其他层使用）───────────────
 

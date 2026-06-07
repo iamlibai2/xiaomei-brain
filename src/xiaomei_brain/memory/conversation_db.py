@@ -286,10 +286,12 @@ class ConversationDB(SQLiteStore):
         with self._cleared_at_lock:
             self._cleared_at[session_id] = time.time()
 
-    def get_recent(self, n: int = 20, session_id: str | None = None, user_id: str | None = None) -> list[dict[str, Any]]:
+    def get_recent(self, n: int = 20, session_id: str | None = None,
+                   user_id: str | None = None, since: float | None = None) -> list[dict[str, Any]]:
         """Get the most recent N messages (respecting clear boundaries).
 
         Filter by session_id, user_id, or both. When neither is given, returns all messages.
+        If `since` is given, only returns messages with created_at > since.
         """
         conn = self._get_conn()
         clauses = []
@@ -305,6 +307,9 @@ class ConversationDB(SQLiteStore):
                 cleared_at = self._cleared_at.get(session_id, 0.0)
             clauses.append("created_at > ?")
             params.append(cleared_at)
+        if since is not None:
+            clauses.append("created_at > ?")
+            params.append(since)
 
         where = " AND ".join(clauses) if clauses else "1=1"
         params.extend([n])

@@ -716,7 +716,7 @@ class L2Engine:
 
     # ── 调用 2：意识涌现 ─────────────────────────────────────
 
-    def _build_l2_prompt(self, context: str, user_name: str = "这位用户", conflict: str = "") -> str:
+    def _build_l2_prompt(self, context: str, user_name: str = "对方", conflict: str = "") -> str:
         """构建 L2 加柴 prompt — 使用 inject_consciousness 作为状态头。"""
         consciousness_context = inject_consciousness(self._c.self_image)
 

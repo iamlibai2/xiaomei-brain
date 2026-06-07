@@ -141,7 +141,6 @@ class Layer2DefaultNetwork:
                     if self._c._should_social_cognition(agent_state):
                         self._log(f"{ts} social_cognition 触发 agent_state={agent_state}")
                         logger.info("[Layer2] social_cognition 触发（agent_state=%s）", agent_state)
-                        self._c._last_sc_time = time.time()
                         try:
                             self._c.tick_social_cognition(agent_state)
                             self._log(f"{ts} social_cognition 完成")

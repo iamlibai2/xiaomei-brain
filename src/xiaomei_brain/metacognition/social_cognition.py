@@ -58,12 +58,14 @@ class SocialCognition:
 
     # ── 公共入口 ──────────────────────────────────────────────
 
-    def reflect(self, context: str = "", user_name: str = "这位用户") -> str | None:
+    def reflect(self, context: str = "", user_name: str = "对方",
+                recent_conversation: str = "") -> str | None:
         """执行一次社会认知反思。
 
         Args:
             context: 触发上下文（如 "dialogue_driven"、"periodic"）
             user_name: 用户显示名称
+            recent_conversation: 最近对话文本（由调用方从 ConversationDB 查询传入）
 
         Returns:
             LLM 原始响应文本，或 None（调用失败）
@@ -72,7 +74,7 @@ class SocialCognition:
             return None
 
         # 构建 prompt
-        prompt = self._build_prompt(context, user_name)
+        prompt = self._build_prompt(context, user_name, recent_conversation)
         if not prompt:
             return None
 
@@ -88,14 +90,15 @@ class SocialCognition:
 
     # ── Prompt 构建 ───────────────────────────────────────────
 
-    def _build_prompt(self, context: str, user_name: str) -> str | None:
+    def _build_prompt(self, context: str, user_name: str,
+                      recent_conversation: str = "") -> str | None:
         """构建 social_cognition prompt。
 
         包含：consciousness 上下文 + 最近对话 + EVENTS/PERCEPTION/SIGNAL 要求。
         """
         consciousness_context = inject_consciousness(self._self_image)
 
-        recent = self._get_recent_conversation()
+        recent = recent_conversation or self._get_recent_conversation()
         if not recent or recent == "（无对话数据）":
             return None  # 没有对话就不触发，纯对话驱动
 
@@ -132,28 +135,20 @@ class SocialCognition:
 没有则输出 {{}}。"""
 
     def _get_recent_conversation(self) -> str:
-        """获取最近对话文本。"""
-        # 尝试从 SelfImage 获取
+        """获取最近对话文本（fallback：从 SelfImage.memory.recent_dialog）。"""
         si = self._self_image
         if si:
-            recent = getattr(si.memory, "recent_conversation", "")
-            if recent and len(recent) > 20:
-                return recent
-
-        # 从 longterm_memory 获取最近对话
-        if self._longterm_memory:
-            try:
-                narratives = self._longterm_memory.get_recent(10, sources=["chat"])
-                if narratives:
-                    lines = []
-                    for n in narratives:
-                        content = n.get("content", "")
-                        if content:
-                            lines.append(content[:200])
-                    if lines:
-                        return "\n".join(lines)
-            except Exception as e:
-                logger.debug("[SocialCognition] 获取对话失败: %s", e)
+            recent_dialog = getattr(si.memory, "recent_dialog", [])
+            if recent_dialog:
+                lines = []
+                for d in recent_dialog:
+                    role = d.get("role", "")
+                    content = d.get("content", "")
+                    if content:
+                        label = "对方" if role == "user" else ("我" if role == "assistant" else role)
+                        lines.append(f"{label}：{content[:200]}")
+                if lines:
+                    return "\n".join(lines)
 
         return "（无对话数据）"
 

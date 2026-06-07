@@ -64,9 +64,8 @@ _SYSTEM_PROMPT = (
 )
 
 _CHAT_TURN_PROMPT = (
-    "你刚和{user_name}交流完。短暂的内省——\n\n"
-    "{user_name}说：「{user_msg}」\n"
-    "你回应了（{response_len}字，{elapsed:.0f}秒，{tools_info}）\n\n"
+    "你刚和{user_name}交流完（{elapsed:.0f}秒，{tools_info}）。短暂的内省——\n\n"
+    "{recent_dialogue}"
     "只是感受——{user_name}的状态对吗？你的回应恰当吗？\n"
     "有什么你刚才没注意到的？\n\n"
     "1-3句话的内心嘟囔。如果没什么特别的感觉，就说\"一切正常\"。\n\n"
@@ -511,23 +510,18 @@ class InnerVoice:
     ) -> list[dict] | None:
         """根据触发类型构建 LLM messages。"""
         if trigger == TriggerType.CHAT_TURN:
-            user_msg = context.get("user_msg", "")[:200]
-            if len(user_msg) <= 3:
-                return None  # 太短，不反省
-
-            response_len = context.get("response_len", 0)
-            if response_len <= 20:
-                return None  # 回复太短，不反省
+            recent_dialogue = context.get("recent_dialogue", "")
+            if not recent_dialogue:
+                return None  # 没有对话数据，不反省
 
             tools = context.get("tools", [])
             tools_info = f"用了{', '.join(tools)}" if tools else "没用工具"
 
             user_prompt = _CHAT_TURN_PROMPT.format(
-                user_msg=user_msg,
-                response_len=response_len,
                 elapsed=context.get("elapsed", 0),
                 tools_info=tools_info,
-                user_name=context.get("user_name", "这位用户"),
+                user_name=context.get("user_name", "对方"),
+                recent_dialogue=recent_dialogue,
             )
 
         elif trigger == TriggerType.TASK_STEP:
@@ -691,18 +685,18 @@ class InnerVoice:
 
     # ── 公共方法 ──────────────────────────────────────────────────
 
-    def on_chat_turn(self, user_msg: str, response_len: int, elapsed: float,
-                     tools: list[str] | None = None, user_name: str = "这位用户") -> None:
+    def on_chat_turn(self, elapsed: float,
+                     tools: list[str] | None = None, user_name: str = "对方",
+                     recent_dialogue: str = "") -> None:
         """对话轮次完成时调用（便捷方法）。"""
         self._chat_turn_count += 1
         self.pause(
             TriggerType.CHAT_TURN,
             context={
-                "user_msg": user_msg,
-                "response_len": response_len,
                 "elapsed": elapsed,
                 "tools": tools or [],
                 "user_name": user_name,
+                "recent_dialogue": recent_dialogue,
             },
         )
 
