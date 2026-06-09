@@ -42,7 +42,7 @@ def refresh_memory_window(
 
     - user_input: 当前用户消息，有则直接用于 semantic recall（不再反复咀嚼同一句话）
     - 无 user_input 时：fallback 到 attention_query 做内省召回
-    - narratives:          search_narratives(mood+attention, top_k=10)
+    - narratives:          search_narratives(mood+attention, top_k=5)
     - dag_summaries:       get_higher_summaries(session_id)
     - important_memories:  get_important(user_id, top_k=10)
     - recalled_memories:   dual-channel recall → merge → dedup (max_per_tag=2)
@@ -83,7 +83,7 @@ def refresh_memory_window(
             narratives = longterm.search_narratives(
                 query=attention_query,
                 user_id=user_id,
-                top_k=10,
+                top_k=5,
             ) or []
         except Exception as e:
             logger.warning("[MemoryWindow] 叙事记忆获取失败: %s", e)

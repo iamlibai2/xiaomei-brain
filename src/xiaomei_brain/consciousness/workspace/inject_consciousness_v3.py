@@ -1,8 +1,8 @@
-"""v3 意识注入 — 渲染 being（身份）、essence（底色）和 body（身体/情绪）。
+"""v3 意识注入 — 渲染 being（身份）、essence（底色）、body（身体/情绪）和叙事记忆。
 
 与 v1/v2 的区别：
 - 不评分，不排序，不按模式筛选
-- 始终渲染 being + essence + body
+- 始终渲染 being + essence + body + narratives
 - 签名兼容 v1/v2
 - 完全自包含，不依赖其他版本
 
@@ -17,7 +17,7 @@ import logging
 from typing import Any, TYPE_CHECKING
 
 from ..self_modules import SelfPerception
-from .render_consciousness_v3 import _render_being, _render_essence, _render_body
+from .render_consciousness_v3 import _render_being, _render_essence, _render_body, _render_narratives
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 def inject_consciousness(si, mode: str = "daily", user_input: str = "",
                         profile: Any = None) -> str:
-    """v3: 渲染 being（身份）+ essence（底色）+ body（身体/情绪）。
+    """v3: 渲染 being（身份）+ essence（底色）+ body（身体/情绪）+ narratives（叙事记忆）。
 
     mode / user_input / profile 保留参数兼容性，当前忽略。
     """
@@ -37,5 +37,5 @@ def inject_consciousness(si, mode: str = "daily", user_input: str = "",
             type(si.perception),
         )
 
-    lines = _render_being(si) + _render_essence(si) + _render_body(si)
+    lines = _render_being(si) + _render_essence(si) + _render_body(si) + _render_narratives(si)
     return "\n".join(lines)

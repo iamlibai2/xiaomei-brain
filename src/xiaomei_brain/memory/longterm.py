@@ -494,7 +494,7 @@ class LongTermMemory(SQLiteStore):
 
         safe_user_id = self._safe_user_id(user_id)
         results = table.search(query_vector) \
-            .where(f"user_id = '{safe_user_id}'") \
+            .where(f"user_id = '{safe_user_id}' OR user_id = 'global'") \
             .limit(top_k * 3) \
             .to_pandas()
 
@@ -515,6 +515,7 @@ class LongTermMemory(SQLiteStore):
 
         if not rows:
             return []
+        logger.debug("[search_narratives] found %d narratives for query='%s'", len(rows), query[:50])
 
         # scene_tag post-filter
         if scene_tag:

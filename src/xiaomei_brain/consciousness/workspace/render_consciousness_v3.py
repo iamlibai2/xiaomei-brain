@@ -153,3 +153,39 @@ def _render_essence(si) -> list[str]:
     if not rendered:
         return []
     return [rendered]
+
+
+def _render_narratives(si) -> list[str]:
+    """渲染叙事记忆——过去真实经历的叙事片段。
+
+    每条叙事改变感知和回应世界的方式。
+    """
+    mem = si.memory
+    narratives = getattr(mem, 'narratives', None) or []
+    if not narratives:
+        return []
+
+    lines = [
+        "\n****以下是你过去经历中留下的叙事片段。"
+        "每条叙事改变了你感知和回应世界的方式——读它们的时候，"
+        "不是「记住了内容」，是进入那种感知状态。****",
+    ]
+    for n in narratives:
+        category = n.get("category", "")
+        content = n.get("content", "")
+        feels = n.get("feels_like", "")
+        changed = n.get("changed_me", "")
+        scene_tags = n.get("scene_tags", [])
+        scene = scene_tags[0] if scene_tags else ""
+
+        header = f"- [{category}]"
+        if scene:
+            header += f" {scene}"
+        lines.append(header)
+        lines.append(f"  {content}")
+        if feels:
+            lines.append(f"  感受：{feels}")
+        if changed:
+            lines.append(f"  改变：{changed[:150]}")
+
+    return lines
