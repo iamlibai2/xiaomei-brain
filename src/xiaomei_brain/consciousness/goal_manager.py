@@ -689,7 +689,7 @@ class GoalManager:
     # ── Intent context ────────────────────────────────────────
 
     def build_intent_context_for_goal(self, goal, siblings: list = None) -> str:
-        from xiaomei_brain.prompts.purpose import PROGRESS_BLOCK_INSTRUCTION
+        from xiaomei_brain.prompts import PROGRESS_BLOCK_INSTRUCTION
         parts = []
         if goal.parent_id and self._purpose:
             parent = self._purpose.goals.get(goal.parent_id)

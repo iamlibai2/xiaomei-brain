@@ -15,7 +15,7 @@ from xiaomei_brain.memory.self_model import SelfModel
 from xiaomei_brain.memory.dag import DAGSummaryGraph
 from xiaomei_brain.memory.longterm import LongTermMemory
 from xiaomei_brain.memory.extractor import MemoryExtractor
-from xiaomei_brain.prompts.memory import get_memory_decision_prompt
+from xiaomei_brain.prompts import MEMORY_DECISION_PROMPT
 from xiaomei_brain.tools.registry import ToolRegistry
 from xiaomei_brain.agent.message_utils import (
     strip_orphaned_tool_messages,
@@ -231,7 +231,7 @@ class Agent:
             for i in range(len(all_messages) - 1, -1, -1):
                 if all_messages[i].get("role") == "user":
                     all_messages[i] = dict(all_messages[i])
-                    mem_prompt = get_memory_decision_prompt(self.user_display_name)
+                    mem_prompt = MEMORY_DECISION_PROMPT.format(user_name=self.user_display_name)
                     all_messages[i]["content"] = append_to_content(all_messages[i]["content"], mem_prompt)
                     appended = True
                     content_repr = all_messages[i]["content"]

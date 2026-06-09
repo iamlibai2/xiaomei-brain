@@ -204,10 +204,12 @@ class AgentComms:
         LLM 被告知正在和另一个 agent 对话，
         只需自然地说话，系统会自动把回复送达给对方。
         """
-        from .inject_consciousness import inject_consciousness
+        from xiaomei_brain.consciousness.context_pipeline import build_simple_context
 
-        si = living.consciousness.get_self_image() if living._load_consciousness else None
-        identity = inject_consciousness(si, mode="daily") if si else f"你是 {living._agent_id}。"
+        if living._load_consciousness and living.consciousness:
+            identity = build_simple_context(living.consciousness, mode="daily")
+        else:
+            identity = f"你是 {living._agent_id}。"
 
         if initiating:
             direction = (

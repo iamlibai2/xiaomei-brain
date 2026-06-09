@@ -170,6 +170,18 @@ def build_context(
     return list(agent.messages)
 
 
+# ── 轻量上下文 ──────────────────────────────────────
+
+def build_simple_context(consciousness, mode: str = "daily", user_input: str = "",
+                         profile=None) -> str:
+    """轻量上下文组装：刷新记忆窗口 + 注入意识。返回 system prompt 文本。
+
+    供主对话外的独立 LLM 调用使用（意图决策、主动行为、学习、社交感知等）。
+    """
+    consciousness._refresh_memory_window(user_input or None)
+    return inject_consciousness(consciousness.self_image, mode=mode, user_input=user_input, profile=profile)
+
+
 # ── Profile 加载辅助 ────────────────────────────────────
 
 def _load_salience_profile(agent: Any) -> SalienceProfile:

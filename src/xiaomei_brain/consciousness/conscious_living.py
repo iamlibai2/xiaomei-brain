@@ -44,7 +44,6 @@ from .core import Consciousness, ConsciousnessReport, TickResult
 from .intent import Intent
 from .storage import ConsciousnessStorage
 from .self_image_proxy import SelfImage
-from .inject_consciousness import inject_consciousness
 
 from ..drive import DriveEngine
 from ..purpose import PurposeEngine, IntentUnderstanding
@@ -371,6 +370,7 @@ class ConsciousLiving(Living):
             self._social_cognition._self_image = si
         # 注入到 Consciousness（用于 tick_social_cognition 委托）
         self.consciousness._social_cognition = self._social_cognition
+        self._social_cognition._consciousness = self.consciousness
         # ProjectMentalModel / ExperienceMemory / LearningQueue → SelfImage
         si._project_mental_model = self._project_mental_model
         si._experience_memory = self._experience_memory
@@ -801,12 +801,20 @@ class ConsciousLiving(Living):
         # 3. 加载 Consciousness（可选）
         if self._load_consciousness:
             self._setup_conscious_data()
-            # restore 可能替换了 SelfImage，重新绑定引用
+            # _restore_snapshot() 会用新的 SelfImage 替换 self.consciousness.self_image，
+            # 之前在 __init__ 挂载的运行时引用需要重新绑定到新对象上。
             si = self.consciousness.self_image
             if self._inner_voice:
                 self._inner_voice._self_image = si
+            if self._social_cognition:
+                self._social_cognition._self_image = si
             si._project_mental_model = self._project_mental_model
             si._experience_memory = self._experience_memory
+            si._learn_queue = self._learn_queue
+            si.being._relationship_engine = self._relationship_engine
+            essence = getattr(self.agent, '_essence', None)
+            if essence is not None:
+                si._essence = essence
         else:
             logger.info("[ConsciousLiving] 意识系统未加载（生命存在但无意识）")
 

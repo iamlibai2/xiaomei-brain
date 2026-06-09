@@ -103,11 +103,17 @@ class RelationshipEngine:
         self._last_decay_time: float = time.time()
         self._loaded = False
 
-    # ── 初始化 ─────────────────────────────────────────
+    # ── 初始化 / 用户切换 ──────────────────────────────
 
-    def load(self) -> None:
-        """从 DB 加载关系数据。"""
-        data = self._storage.load(self._user_id)
+    def load(self, user_id: str | None = None) -> None:
+        """从 DB 加载关系数据。
+
+        Args:
+            user_id: 要加载的用户 ID，None = 使用当前 user_id
+        """
+        uid = user_id or self._user_id
+        self._user_id = uid
+        data = self._storage.load(uid)
         if data:
             self.depth = float(data.get("depth", 0.0))
             self.trust = float(data.get("trust", 0.5))
@@ -115,12 +121,18 @@ class RelationshipEngine:
             self.last_interaction_time = float(data.get("last_interaction_time", 0))
             self._last_decay_time = float(data.get("last_decay_time", time.time()))
             logger.info(
-                "[Relationship] 从 DB 加载: depth=%.2f, trust=%.2f, count=%d",
-                self.depth, self.trust, self.interaction_count,
+                "[Relationship] 从 DB 加载 user=%s: depth=%.2f, trust=%.2f, count=%d",
+                uid, self.depth, self.trust, self.interaction_count,
             )
         else:
-            logger.info("[Relationship] 无历史数据，使用默认值")
+            logger.info("[Relationship] 无历史数据 user=%s，使用默认值", uid)
         self._loaded = True
+
+    def switch_user(self, user_id: str) -> None:
+        """切换到指定用户，加载对应关系数据。"""
+        if user_id == self._user_id and self._loaded:
+            return
+        self.load(user_id)
 
     def save(self) -> None:
         """保存到 DB。"""

@@ -22,7 +22,8 @@ import re
 import time
 from typing import Any
 
-from ..consciousness.inject_consciousness import inject_consciousness
+from ..consciousness.context_pipeline import build_simple_context
+from xiaomei_brain.prompts import SOCIAL_COGNITION_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ class SocialCognition:
         self,
         llm: Any = None,
         self_image: Any = None,
+        consciousness: Any = None,
         drive: Any = None,
         exp_stream: Any = None,
         longterm_memory: Any = None,
@@ -51,6 +53,7 @@ class SocialCognition:
     ) -> None:
         self._llm = llm
         self._self_image = self_image
+        self._consciousness = consciousness
         self._drive = drive
         self._exp_stream = exp_stream
         self._longterm_memory = longterm_memory
@@ -96,43 +99,17 @@ class SocialCognition:
 
         包含：consciousness 上下文 + 最近对话 + EVENTS/PERCEPTION/SIGNAL 要求。
         """
-        consciousness_context = inject_consciousness(self._self_image)
+        consciousness_context = build_simple_context(self._consciousness, mode="daily")
 
         recent = recent_conversation or self._get_recent_conversation()
         if not recent or recent == "（无对话数据）":
             return None  # 没有对话就不触发，纯对话驱动
 
-        return f"""{consciousness_context}
-
-你现在做一次安静的社会感知——不是在跟任何人对话，只是在观察和理解。
-
-回顾最近和{user_name}的对话：
-
-{recent}
-
-请从以下三个维度，输出你的感知：
-
-第一部分：在 ---EVENTS--- 分隔符后，分析最近对话中发生了什么事件，输出 JSON：
----EVENTS---
-{{"praise_intensity": 0.0-1.0, "criticism_intensity": 0.0-1.0, "goal_progress": 0.0-1.0, "curiosity_sparked": 0.0-1.0, "expression_urge": 0.0-1.0, "summary": "一句话总结这段对话中发生了什么"}}
-
-其中：
-- curiosity_sparked: 对话激发了你的好奇心、想了解更多
-- expression_urge: 你有话想说、想表达的程度
-
-第二部分：感知检查。回顾和{user_name}的互动：
-- {user_name}说话的方式和往常有什么不同？
-- 你感觉到{user_name}的情绪状态是什么？有变化吗？
-- 有什么"微妙的不对劲"吗？不一定有问题，只是你感觉到什么不同？
-如果有任何感知，请在 ---PERCEPTION--- 分隔符后输出，每行一条：
----PERCEPTION---
-- 感知描述（如"{user_name}今天话比平时少很多，可能累了"）
-
-第三部分：基于以上深度感知，判断{user_name}当前的整体社交状态。这不同于快速直觉——是你经过思考后确认的判断。在 ---SIGNAL--- 分隔符后输出 JSON：
----SIGNAL---
-{{"social_signal": "类型", "intensity": 0.0-1.0}}
-类型可选：user_low_mood / user_enthusiastic / user_cold / user_angry / user_happy / user_stressed / user_trusting
-没有则输出 {{}}。"""
+        return SOCIAL_COGNITION_PROMPT.format(
+            consciousness_context=consciousness_context,
+            user_name=user_name,
+            recent=recent,
+        )
 
     def _get_recent_conversation(self) -> str:
         """获取最近对话文本（fallback：从 SelfImage.memory.recent_dialog）。"""

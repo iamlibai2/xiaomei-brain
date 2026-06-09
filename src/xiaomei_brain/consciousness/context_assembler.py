@@ -38,12 +38,8 @@ from xiaomei_brain.memory.conversation_db import ConversationDB
 from xiaomei_brain.base.message_utils import estimate_tokens
 from xiaomei_brain.memory.dag import DAGSummaryGraph
 from xiaomei_brain.memory.self_model import SelfModel
-from ..prompts.consciousness import NARR_PREAMBLE
-
-logger = logging.getLogger(__name__)
-
-# Narrative preamble injected into daily/reflect modes
-_NARR_PREAMBLE = NARR_PREAMBLE  # imported from prompts/
+# NARR_PREAMBLE moved to prompts_bak.py (ContextAssembler never instantiated)
+_NARR_PREAMBLE = ""
 
 
 class ContextAssembler:

@@ -16,12 +16,12 @@ import re
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
-from ..prompts.drive import CARE_PROMPT, EXPRESSION_PROMPT, GREETING_PROMPT, TALK_PROMPT
+from ..prompts import CARE_PROMPT, EXPRESSION_PROMPT, GREETING_PROMPT, TALK_PROMPT, WORK_INSTRUCTIONS_PROMPT
 
 if TYPE_CHECKING:
     from .action_item import ActionItem, ActionType
     from .self_image_proxy import SelfImage
-from .inject_consciousness import inject_consciousness
+from xiaomei_brain.consciousness.context_pipeline import build_simple_context
 
 
 logger = logging.getLogger(__name__)
@@ -117,11 +117,8 @@ class ActionExecutor:
         agent_core = cl.agent._get_agent()
         consciousness = cl.consciousness
 
-        # 刷新记忆窗口（无 user_input，fallback 到 attention_query 做内省召回）
-        consciousness._refresh_memory_window()
-
         # 构建消息
-        system_prompt = inject_consciousness(consciousness.self_image)
+        system_prompt = build_simple_context(consciousness, mode="daily")
         user_msg = (
             f"你的闹钟响了。\n\n"
             f"闹钟名称：{item.content or '未命名'}\n"
@@ -199,9 +196,6 @@ class ActionExecutor:
         agent_core = cl.agent._get_agent()
         consciousness = cl.consciousness
 
-        # 刷新记忆窗口（无 user_input，fallback 到 attention_query）
-        consciousness._refresh_memory_window()
-
         # 从长期记忆按 tag 直接查目标/任务（不走语义搜索）
         longterm = getattr(cl.agent, "longterm_memory", None)
         goal_memories = []
@@ -250,22 +244,8 @@ class ActionExecutor:
         # 构建 system_prompt + 触发消息
         # WORK 指令放在 system 层（LLM 知道这是系统指令，不是用户说的）
         # 触发用 assistant 角色（LLM 看到的是"自己"的内心想法，而非用户在说话）
-        work_instructions = (
-            f"\n\n## 主动工作触发\n\n"
-            f"你的 WORK 意图已被触发。成就欲偏高，你有空闲时间主动推进工作。\n\n"
-            f"待办任务列表：\n{task_list_text}\n\n"
-            f"请：\n"
-            f"1. 先感受自己的状态\n"
-            f"2. 从列表中选择一个任务（或自己想到的任务）\n"
-            f"3. 用全部工具执行它（搜索、读文件、写代码……）\n"
-            f"4. 完成后决定：这个任务完成了吗？需要更新状态吗？\n\n"
-            f"工作完成后，先用一段话总结本次工作的内容和成果（这是你会说给对方听的部分），\n"
-            f"然后在末尾附上 MEMORY 块用于记忆存储：\n"
-            f"<MEMORY>\n"
-            f'{{"relations": [], "actions": [{{"type": "ADD", "tag": "事实", "content": "我完成了...", "scenes": ["工作"]}}]}}\n'
-            f"</MEMORY>"
-        )
-        system_prompt = inject_consciousness(consciousness.self_image) + work_instructions
+        work_instructions = WORK_INSTRUCTIONS_PROMPT.format(task_list_text=task_list_text)
+        system_prompt = build_simple_context(consciousness, mode="task") + work_instructions
         trigger_msg = (
             f"（收到 WORK 意图，成就欲偏高，我应该主动推进工作了。"
             f"看看待办列表里有什么可以做的……）"
@@ -632,10 +612,7 @@ class ActionExecutor:
         agent_core = cl.agent._get_agent()
         consciousness = cl.consciousness
 
-        # 刷新记忆窗口
-        consciousness._refresh_memory_window()
-
-        system_prompt = inject_consciousness(consciousness.self_image)
+        system_prompt = build_simple_context(consciousness, mode="daily")
         # 去掉无关规则（通讯、会话管理等，PLEASURE 场景不需要）
         system_prompt = re.sub(
             r'## 与其他 agent 通讯的规则.*?(?=\n##|\Z)', '',
@@ -762,9 +739,7 @@ class ActionExecutor:
 
         if llm:
             try:
-                # 刷新记忆窗口（embedding 未就绪时 fast-fail，不会阻塞）
-                cl.consciousness._refresh_memory_window()
-                consciousness = inject_consciousness(si)
+                consciousness = build_simple_context(cl.consciousness, mode="daily")
                 resp = llm.chat(messages=[
                     {"role": "system", "content": consciousness},
                     {"role": "user", "content": prompt},
@@ -839,9 +814,7 @@ class ActionExecutor:
 
         if llm:
             try:
-                # 刷新记忆窗口（embedding 未就绪时 fast-fail，不会阻塞）
-                cl.consciousness._refresh_memory_window()
-                consciousness = inject_consciousness(si)
+                consciousness = build_simple_context(cl.consciousness, mode="daily")
                 resp = llm.chat(messages=[
                     {"role": "system", "content": consciousness},
                     {"role": "user", "content": prompt},
@@ -888,8 +861,7 @@ class ActionExecutor:
 
         if llm:
             try:
-                cl.consciousness._refresh_memory_window()
-                consciousness = inject_consciousness(si)
+                consciousness = build_simple_context(cl.consciousness, mode="daily")
                 resp = llm.chat(messages=[
                     {"role": "system", "content": consciousness},
                     {"role": "user", "content": prompt},
@@ -942,9 +914,7 @@ class ActionExecutor:
 
         if llm:
             try:
-                # 刷新记忆窗口（embedding 未就绪时 fast-fail，不会阻塞）
-                cl.consciousness._refresh_memory_window()
-                consciousness = inject_consciousness(si)
+                consciousness = build_simple_context(cl.consciousness, mode="daily")
                 resp = llm.chat(messages=[
                     {"role": "system", "content": consciousness},
                     {"role": "user", "content": prompt},

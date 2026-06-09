@@ -40,7 +40,7 @@ from .memory_window import refresh_memory_window
 from .l2_engine import L2Engine
 from .state_buffer import StateChangeBuffer
 from ..purpose import PurposeEngine
-from ..prompts import CONSCIOUSNESS_PROMPT_DEEP, CONSCIOUSNESS_PROMPT_LIGHT
+from ..prompts import CONSCIOUSNESS_PROMPT_DEEP
 from ..memory.procedure import ProcedureMemory
 
 logger = logging.getLogger(__name__)
@@ -1174,9 +1174,9 @@ class Consciousness:
 
         logger.info("[Consciousness] 从 SelfModel 初始化完成")
 
-    def on_user_interaction(self, user_message: str, response: str) -> None:
+    def on_user_interaction(self, user_message: str, response: str, user_id: str | None = None) -> None:
         """用户交互时更新"""
-        self.self_image.update_from_interaction(user_message, response)
+        self.self_image.update_from_interaction(user_message, response, user_id=user_id)
 
     def on_wake(self) -> ConsciousnessReport:
         """苏醒时调用。

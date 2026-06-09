@@ -30,7 +30,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from typing import Any
 
-from ...prompts.consciousness import DREAM_ENGINE_PROMPT
+from ...prompts import DREAM_ENGINE_PROMPT
 from .emotion_processor import EmotionProcessor
 from .memory_organizer import MemoryOrganizer
 from .reflection import Reflection
@@ -276,15 +276,6 @@ class DreamEngine:
 
         # 同步到 SelfImage（写 last_dream_summary，不是 last_l3_summary）
         self.cs.self_image.contribute_dream(report.summary)
-
-        # 写入长期记忆
-        if self.ltm and full_report:
-            self.ltm.store(
-                content=full_report[:500],
-                source="internal",
-                tags=["consciousness", "dream", "deep_burn"],
-                importance=0.5,
-            )
 
         # 生成后续 intent
         self._generate_followup_intent(report.summary)

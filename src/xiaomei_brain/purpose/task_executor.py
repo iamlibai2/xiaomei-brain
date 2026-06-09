@@ -15,7 +15,7 @@ import logging
 from typing import Any, Optional
 
 
-from ..prompts.purpose import PROGRESS_BLOCK_INSTRUCTION
+from ..prompts import PROGRESS_BLOCK_INSTRUCTION
 
 logger = logging.getLogger(__name__)
 

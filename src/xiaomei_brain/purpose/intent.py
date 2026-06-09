@@ -82,7 +82,7 @@ class IntentResult:
         """是否是闲聊"""
         return self.intent_type == IntentType.CHAT
 
-from ..prompts.purpose import INTENT_CLASSIFY_PROMPT, GOAL_DECOMPOSE_PROMPT
+from ..prompts import INTENT_CLASSIFY_PROMPT, GOAL_DECOMPOSE_PROMPT
 
 
 class IntentUnderstanding:

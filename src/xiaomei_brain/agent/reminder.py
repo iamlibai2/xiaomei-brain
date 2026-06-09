@@ -11,7 +11,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
-from xiaomei_brain.prompts import REMINDER_EXTRACTION_PROMPT
+# REMINDER_EXTRACTION_PROMPT moved to prompts/prompts_bak.py;
+# ReminderManager is unused, but keep lazy import for completeness.
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,7 @@ class ReminderManager:
 
     def _llm_extract(self, message: str) -> list[Reminder]:
         """Use LLM to extract reminders."""
+        from xiaomei_brain.prompts.prompts_bak import REMINDER_EXTRACTION_PROMPT
         prompt = REMINDER_EXTRACTION_PROMPT.format(message=message)
         try:
             response = self.llm_client.chat(

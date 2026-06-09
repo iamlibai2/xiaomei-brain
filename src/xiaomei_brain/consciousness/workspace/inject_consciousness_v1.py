@@ -1,9 +1,9 @@
 """意识注入 — 将 SelfImage 数据渲染为 LLM 可读的自我意识文本。
 
-组装逻辑在此，渲染函数在 render_consciousness.py。
+组装逻辑在此，渲染函数在 render_consciousness_v1.py。
 
 Usage:
-    from xiaomei_brain.consciousness.inject_consciousness import inject_consciousness
+    from xiaomei_brain.consciousness.workspace.inject_consciousness_v1 import inject_consciousness
     text = inject_consciousness(si, mode="daily")
 """
 
@@ -12,8 +12,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from .self_modules import SelfPerception
-from .render_consciousness import (
+from ..self_modules import SelfPerception
+from .render_consciousness_v1 import (
     _render_header,
     _render_being,
     _render_being_legacy,
@@ -37,7 +37,7 @@ from .render_consciousness import (
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from .self_image_proxy import SelfImage
+    from ..self_image_proxy import SelfImage
 
 
 def inject_consciousness(si, mode: str = "daily") -> str:

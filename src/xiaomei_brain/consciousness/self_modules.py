@@ -52,6 +52,10 @@ class Being:
     _relationship_engine: Any = field(default=None, repr=False, compare=False)
 
     @property
+    def has_relationship(self) -> bool:
+        return self._relationship_engine is not None
+
+    @property
     def relationship_depth(self) -> float:
         if self._relationship_engine:
             return self._relationship_engine.depth
@@ -67,7 +71,7 @@ class Being:
     def relationship_status(self) -> str:
         if self._relationship_engine:
             return self._relationship_engine.get_relationship_status()
-        return "初识"
+        return ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -90,10 +94,7 @@ class Being:
         # 代理自 RelationshipEngine，不从快照恢复
 
     def init_from_identity_md(self, md_text: str) -> None:
-        """从 identity.md 解析 Being 的活身份字段。
-
-        不变字段（特质/价值观/存在意义/追求/热爱/底线）走 extract_essence_items() 进 Essence。
-        """
+        """从 identity.md 解析 Being 的活身份字段。"""
         sections = self._parse_markdown_sections(md_text)
 
         def _as_list(text: str) -> list[str]:
@@ -113,8 +114,8 @@ class Being:
             self.personality = md_text.strip()
 
         # 只映射 Being 自身的字段（活的部分）
-        if "身份" in sections:
-            self.name = self._extract_name(sections["身份"].strip())
+        if "名字" in sections:
+            self.name = self._extract_name(sections["名字"].strip())
         if "出生" in sections:
             self.birth_date = sections["出生"].strip()
         if "性格" in sections:
@@ -133,50 +134,8 @@ class Being:
                 self.self_cognition["不擅长"] = items
 
     @staticmethod
-    def extract_essence_items(md_text: str) -> list[dict]:
-        """从 identity.md 提取不变字段，返回 Essence.add_batch() 可用的 item 列表。
-
-        identity.md section → essence category 映射：
-          #特质 → trait, #价值观 → value, #存在意义 → meaning,
-          #追求 → calling, #热爱 → passions, #底线 → boundary
-        """
-        sections = Being._parse_markdown_sections(md_text)
-        if not sections:
-            return []
-
-        def _as_list(text: str) -> list[str]:
-            items: list[str] = []
-            for line in text.split("\n"):
-                line = line.strip()
-                if line.startswith("- "):
-                    items.append(line[2:].strip())
-            return items
-
-        section_map = [
-            ("特质", "trait", 0.8, True),       # list
-            ("价值观", "value", 0.8, True),       # list
-            ("存在意义", "meaning", 0.7, False),   # text
-            ("追求", "calling", 0.7, False),       # text
-            ("热爱", "passions", 0.7, True),       # list
-            ("底线", "boundary", 0.6, True),       # list
-        ]
-
-        items: list[dict] = []
-        for section, category, priority, is_list in section_map:
-            if section not in sections:
-                continue
-            text = sections[section].strip()
-            if is_list:
-                parsed = _as_list(text)
-                for p in parsed:
-                    items.append({"category": category, "content": p, "priority": priority})
-            elif text:
-                items.append({"category": category, "content": text, "priority": priority})
-        return items
-
-    @staticmethod
     def _extract_name(text: str) -> str:
-        """从 # 身份 段提取名字。
+        """从 # 名字 段提取名字。
 
         优先级：
         1. "你是XXX" 模式 → XXX
@@ -203,13 +162,16 @@ class Being:
 
     @staticmethod
     def _parse_markdown_sections(md_text: str) -> dict[str, str]:
-        """按 # 标题切分 markdown 文本为 {section_name: content}。"""
+        """按 # 标题切分 markdown 文本为 {section_name: content}。
+
+        只认 # 开头的行（##、### 等忽略，当作内容）。
+        """
         import re
         sections: dict[str, str] = {}
         current_key = ""
         current_lines: list[str] = []
         for line in md_text.split("\n"):
-            m = re.match(r"^#\s*(.+)", line)
+            m = re.match(r"^#\s+(.+)", line)
             if m:
                 if current_key:
                     sections[current_key] = "\n".join(current_lines).strip()

@@ -137,9 +137,5 @@ def _parse_block_fields(block: str) -> dict[str, Any] | None:
 
 def build_narr_prompt_addition(context: str = "") -> str:
     """生成追加到 LLM prompt 的 NARR 块引导文本。"""
-    from ..prompts.memory import NARR_BLOCK_INSTRUCTION
-
-    result = NARR_BLOCK_INSTRUCTION
-    if context:
-        result += f"\n\n当前场景参考：{context}"
-    return result
+    # NARR_BLOCK_INSTRUCTION moved to prompts/prompts_bak.py (zero-call)
+    return ""

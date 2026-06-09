@@ -291,7 +291,7 @@ class ConversationDriver:
                     print(f"\033[90m[本轮耗时 {elapsed:.1f}s{tc_str}]\033[0m", flush=True)
 
                     if parent._load_consciousness:
-                        parent.consciousness.on_user_interaction(current_msg.content, display_content)
+                        parent.consciousness.on_user_interaction(current_msg.content, display_content, user_id=current_msg.user_id)
 
                     if display_content and current_msg.session_id not in ("main", ""):
                         logger.info("[ConversationDriver/Deliver] 尝试送达: session=%s len=%d",
@@ -369,7 +369,7 @@ class ConversationDriver:
         try:
             agent_core = self._parent.agent._get_agent()
             user_name = getattr(agent_core, 'user_display_name', '对方')
-            agent_name = agent_core.name or "我"
+            agent_name = self._parent.agent.name or "我"
 
             # 从 agent.messages 过滤 user/assistant 对话
             msgs = agent_core.messages

@@ -19,6 +19,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Optional
 
+from xiaomei_brain.prompts import (
+    INNER_VOICE_SYSTEM, CHAT_TURN, TASK_STEP, TASK_DONE, SILENCE,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -50,84 +54,6 @@ class TaskStepContext:
     elapsed_seconds: float = 0.0
     output_preview: str = ""
     progress_status: str | None = None
-
-
-# ── Prompt Templates ──────────────────────────────────────────────────
-
-_SYSTEM_PROMPT = (
-    "你是小美的内心声音。你在安静的自我觉察时刻——\n"
-    "不是在跟任何人对话，只是在对自己坦诚。\n"
-    "你的话是直觉式的、感受性的，不是分析的、评判的。\n"
-    "1-3句就够了。如果一切顺利，就说\"一切正常\"。\n"
-    "不要假装有感觉——如果确实没什么，就让它没什么。\n"
-    "重要：用对方的名字称呼他，不要用\"用户\"或\"他\"来指代。"
-)
-
-_CHAT_TURN_PROMPT = (
-    "你刚和{user_name}交流完（{elapsed:.0f}秒，{tools_info}）。短暂的内省——\n\n"
-    "{recent_dialogue}"
-    "只是感受——{user_name}的状态对吗？你的回应恰当吗？\n"
-    "有什么你刚才没注意到的？\n\n"
-    "1-3句话的内心嘟囔。如果没什么特别的感觉，就说\"一切正常\"。\n\n"
-    "在 ---EVENTS--- 分隔符后，用 JSON 描述你感知到的对话事件：\n"
-    "---EVENTS---\n"
-    '{{"praise_intensity": 0.0-1.0, "expression_urge": 0.0-1.0, '
-    '"curiosity_sparked": 0.0-1.0, '
-    '"summary": "一句话总结这段对话的感受"}}\n'
-    "其中 expression_urge 是你有话想说、想回应的程度。\n"
-    "curiosity_sparked 是你对新信息/未知领域/新奇话题的好奇程度——\n"
-    "{user_name}提到了你不太懂的领域？话题很新鲜？激发了你想了解更多的冲动？\n"
-    "如果没有特别的事件，所有值填 0.0。\n\n"
-    "在 ---SIGNAL--- 分隔符后，描述你感知到的{user_name}的社交信号（快速直觉）：\n"
-    "---SIGNAL---\n"
-    '{{"social_signal": "类型", "intensity": 0.0-1.0}}\n'
-    "类型可选：user_low_mood / user_enthusiastic / user_cold / "
-    "user_angry / user_happy / user_stressed / user_trusting\n"
-    "没有则输出 {{}}。\n\n"
-    "在 ---GAPS--- 分隔符后，从这段对话中识别你需要学习的东西。不只是你答不上来的——\n"
-    "还包括：{user_name}提到了你不熟的领域？话题暗示了某个值得了解的知识？\n"
-    "{user_name}表达了某种需求，而你如果懂更多就能帮得更好？\n"
-    "总之：这段对话揭示了你什么样的知识缺口或学习机会？没有就输出空数组。\n"
-    "---GAPS---\n"
-    '[{{"topic": "具体知识点或领域", "reason": "为什么需要学", "priority": 0.5-0.9, "source": "user_need"}}]\n'
-    "source 用 user_need。priority: 完全答不上来/{user_name}明确需求 > 0.8，\n"
-    "对话中自然浮现的不熟领域 0.6-0.7，暗示性话题 0.5。"
-)
-
-_TASK_STEP_PROMPT = (
-    "你在做一个任务。停一下，看一眼手头的活——\n\n"
-    "目标：「{goal_description}」（第{step_index}步）\n"
-    "这一步用了{elapsed:.0f}秒，{tools_info}\n"
-    "{buzz_hints}\n"
-    "像工匠看了一眼自己手里的活——方向对吗？顺手吗？需要注意什么？\n"
-    "1-3句话，直接说出你的直觉。如果一切顺利，就说\"一切正常\"。\n\n"
-    "如果你发现某个必要的步骤被遗漏了，请输出JSON数组建议插入。没有则输出空数组。\n"
-    "---INSERT---\n"
-    "[]"
-)
-
-_TASK_DONE_PROMPT = (
-    "你刚完成了一个任务。停下来感受一下——\n\n"
-    "目标：「{goal_description}」\n"
-    "总耗时{elapsed:.0f}秒，共{steps}步\n"
-    "工具使用：{tools_used}\n"
-    "结果预览：{result_preview}\n\n"
-    "先做1-3句话的内心总结：完成得怎么样？有什么值得记住的？\n"
-    "如果一切正常，就说\"完成，没有问题\"。\n\n"
-    "然后，在 ---GAPS--- 分隔符后，诚实地评估你在这项任务中遇到的知识盲区。\n"
-    "只记录真正让你卡住、反复搜索、或回答质量明显不够的。没有就输出空数组。\n"
-    "---GAPS---\n"
-    '[{{"topic": "具体知识点", "reason": "任务中反复搜索才理解", "priority": 0.8, "source": "task_gap"}}]\n'
-    "source 用 task_gap（任务中发现的盲区）或 user_need（回答对方问题时质量不够好）。\n"
-    "priority: 反复搜索或明显卡住 > 0.7，回答质量一般 0.4-0.6。"
-)
-
-_SILENCE_PROMPT = (
-    "周围安静下来了。你在自己的空间里——\n\n"
-    "对方已经{idle_seconds:.0f}秒没有说话了。\n"
-    "你现在什么感觉？有什么想说或想做的吗？\n\n"
-    "1-3句话的内心感受。如果没什么特别的，就说\"安静着，没什么\"。"
-)
 
 
 # ── 任务控制信号提取（纯正则，不需要 LLM 产 enum）─────────────────
@@ -466,6 +392,73 @@ class InnerVoice:
 
         return reflection
 
+    # ── Prompt 构建 ───────────────────────────────────────────────
+
+    def _build_messages(self, trigger, context, task_ctx=None, buzz_hints=""):
+        """根据触发类型构建 LLM messages。"""
+        if trigger == TriggerType.CHAT_TURN:
+            recent_dialogue = context.get("recent_dialogue", "")
+            if not recent_dialogue:
+                return None
+
+            tools = context.get("tools", [])
+            tools_info = f"用了{', '.join(tools)}" if tools else "没用工具"
+
+            user_prompt = CHAT_TURN.format(
+                elapsed=context.get("elapsed", 0),
+                tools_info=tools_info,
+                user_name=context.get("user_name", "对方"),
+                recent_dialogue=recent_dialogue,
+            )
+
+        elif trigger == TriggerType.TASK_STEP:
+            if not task_ctx:
+                return None
+
+            tools = task_ctx.tool_calls
+            if tools:
+                tools_info = f"调用了 {', '.join(tools[:5])}" + (
+                    f" 等{len(tools)}个工具" if len(tools) > 5 else ""
+                )
+            else:
+                tools_info = "没有调用工具"
+
+            hints = f"注意信号：{buzz_hints}" if buzz_hints else ""
+
+            user_prompt = TASK_STEP.format(
+                goal_description=task_ctx.goal_description[:200],
+                step_index=task_ctx.step_index,
+                elapsed=task_ctx.elapsed_seconds,
+                tools_info=tools_info,
+                buzz_hints=hints,
+            )
+
+        elif trigger == TriggerType.TASK_DONE:
+            tools = context.get("tools_used", [])
+            tools_str = ", ".join(tools[:10]) if tools else "无"
+            result = context.get("result_preview", "")[:500]
+            user_prompt = TASK_DONE.format(
+                goal_description=context.get("goal_description", "")[:200],
+                elapsed=context.get("elapsed", 0),
+                steps=context.get("steps", 0),
+                tools_used=tools_str,
+                result_preview=result or "（无）",
+            )
+
+        elif trigger == TriggerType.SILENCE:
+            idle = context.get("idle_seconds", 0)
+            if idle < 60:
+                return None
+            user_prompt = SILENCE.format(idle_seconds=idle)
+
+        else:
+            return None
+
+        return [
+            {"role": "system", "content": INNER_VOICE_SYSTEM},
+            {"role": "user", "content": user_prompt},
+        ]
+
     # ── 冷却逻辑 ──────────────────────────────────────────────────
 
     def _should_skip(self, trigger: TriggerType) -> bool:
@@ -498,79 +491,6 @@ class InnerVoice:
 
         elif trigger == TriggerType.SILENCE:
             self._last_silence_reflection_time = now
-
-    # ── Prompt 构建 ───────────────────────────────────────────────
-
-    def _build_messages(
-        self,
-        trigger: TriggerType,
-        context: dict,
-        task_ctx: TaskStepContext | None = None,
-        buzz_hints: str = "",
-    ) -> list[dict] | None:
-        """根据触发类型构建 LLM messages。"""
-        if trigger == TriggerType.CHAT_TURN:
-            recent_dialogue = context.get("recent_dialogue", "")
-            if not recent_dialogue:
-                return None  # 没有对话数据，不反省
-
-            tools = context.get("tools", [])
-            tools_info = f"用了{', '.join(tools)}" if tools else "没用工具"
-
-            user_prompt = _CHAT_TURN_PROMPT.format(
-                elapsed=context.get("elapsed", 0),
-                tools_info=tools_info,
-                user_name=context.get("user_name", "对方"),
-                recent_dialogue=recent_dialogue,
-            )
-
-        elif trigger == TriggerType.TASK_STEP:
-            if not task_ctx:
-                return None
-
-            tools = task_ctx.tool_calls
-            if tools:
-                tools_info = f"调用了 {', '.join(tools[:5])}" + (
-                    f" 等{len(tools)}个工具" if len(tools) > 5 else ""
-                )
-            else:
-                tools_info = "没有调用工具"
-
-            hints = f"注意信号：{buzz_hints}" if buzz_hints else ""
-
-            user_prompt = _TASK_STEP_PROMPT.format(
-                goal_description=task_ctx.goal_description[:200],
-                step_index=task_ctx.step_index,
-                elapsed=task_ctx.elapsed_seconds,
-                tools_info=tools_info,
-                buzz_hints=hints,
-            )
-
-        elif trigger == TriggerType.TASK_DONE:
-            tools = context.get("tools_used", [])
-            tools_str = ", ".join(tools[:10]) if tools else "无"
-            result = context.get("result_preview", "")[:500]
-            user_prompt = _TASK_DONE_PROMPT.format(
-                goal_description=context.get("goal_description", "")[:200],
-                elapsed=context.get("elapsed", 0),
-                steps=context.get("steps", 0),
-                tools_used=tools_str,
-                result_preview=result or "（无）",
-            )
-
-        elif trigger == TriggerType.SILENCE:
-            idle = context.get("idle_seconds", 0)
-            if idle < 60:
-                return None  # 空闲不够长
-            user_prompt = _SILENCE_PROMPT.format(idle_seconds=idle)
-
-        else:
-            return None
-
-        return [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ]
 
     # ── LLM 调用 ──────────────────────────────────────────────────
 

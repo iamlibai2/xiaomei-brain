@@ -156,7 +156,7 @@ class ReinforceJob:
 
 # ── ExtractJob ──────────────────────────────────────────────
 
-from ...prompts.memory import DREAM_USER_EXTRACT_PROMPT
+from ...prompts import DREAM_USER_EXTRACT_PROMPT
 
 
 class ExtractJob:

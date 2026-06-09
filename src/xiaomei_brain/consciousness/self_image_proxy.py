@@ -157,7 +157,7 @@ class SelfImage:
             self.mind.record_goal_progress()
         self._dirty = True
 
-    def update_from_interaction(self, user_message: str, response: str) -> None:
+    def update_from_interaction(self, user_message: str, response: str, user_id: str | None = None) -> None:
         """从交互更新状态。"""
         self.perception.last_user_activity_time = time.time()
         self.perception.last_user_activity_content = user_message[:50]
@@ -165,6 +165,8 @@ class SelfImage:
         self.body.attention = "与对方对话"
         # 关系引擎处理 depth 增长
         if self.being._relationship_engine:
+            if user_id:
+                self.being._relationship_engine.switch_user(user_id)
             self.being._relationship_engine.on_user_message()
         self._dirty = True
 

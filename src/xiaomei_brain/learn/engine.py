@@ -9,11 +9,11 @@ import logging
 import random
 import time
 
-from ..prompts.drive import LEARN_REACT_PROMPT
+from ..prompts import LEARN_REACT_PROMPT
 from .queue import LearningQueue
 from .storage import KnowledgeStorage
 from .meta_skill import MetaSkillPuller
-from ..consciousness.inject_consciousness import inject_consciousness
+from ..consciousness.context_pipeline import build_simple_context
 
 logger = logging.getLogger(__name__)
 
@@ -179,12 +179,10 @@ class LearningEngine:
         if not consciousness:
             return None
 
-        consciousness._refresh_memory_window()
-
+        system_prompt = build_simple_context(consciousness, mode="task")
         agent_id = getattr(agent, "id", "")
         safe_topic = topic.replace("/", "_").replace(" ", "_")
 
-        system_prompt = inject_consciousness(consciousness.self_image)
         user_msg = LEARN_REACT_PROMPT.format(
             topic=topic,
             agent_id=agent_id,

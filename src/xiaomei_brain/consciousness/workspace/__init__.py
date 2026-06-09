@@ -8,4 +8,4 @@ Usage:
     text = inject_consciousness(si, mode="daily", user_input="你好")
 """
 
-from .inject_consciousness_v2 import inject_consciousness  # noqa: F401
+from .inject_consciousness_v3 import inject_consciousness  # noqa: F401

@@ -753,7 +753,7 @@ class PACERunner:
         - 完整子目标列表（带完成标记），让 LLM 安心"剩下的会做"
         - 进度显示 + PROGRESS 块指令强制自报状态
         """
-        from xiaomei_brain.prompts.purpose import PROGRESS_BLOCK_INSTRUCTION
+        from xiaomei_brain.prompts import PROGRESS_BLOCK_INSTRUCTION
 
         context_parts = []
 

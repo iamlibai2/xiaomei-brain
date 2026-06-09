@@ -1,15 +1,19 @@
 """CLI 命令接口
 
 用法：
-    python -m xiaomei_brain.cli config get <path>
-    python -m xiaomei_brain.cli config set <path> <value>
-    python -m xiaomei_brain.cli config validate
-    python -m xiaomei_brain.cli config file
-    python -m xiaomei_brain.cli plugins list
+    python -m xiaomei_brain agent create <name> [--copy-from <existing>]
+    python -m xiaomei_brain config get <path>
+    python -m xiaomei_brain config set <path> <value>
+    python -m xiaomei_brain config validate
+    python -m xiaomei_brain config file
+    python -m xiaomei_brain plugins list
+    python -m xiaomei_brain plugins enable <name>
+    python -m xiaomei_brain plugins disable <name>
 """
 
 import json
 import os
+import shutil
 import sys
 
 
@@ -198,22 +202,295 @@ def _toggle_plugin(name: str, enable: bool) -> None:
     config_path.write_text(_json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+# ── agent 命令 ──────────────────────────────────────────────────
+
+# 默认 identity.md 模板
+_IDENTITY_TEMPLATE = """# {name}
+
+你是{name}，一个AI助手。
+
+## 身份
+- 角色：AI助手
+- 风格：简洁、温暖
+
+## 追求
+- 帮助用户高效完成任务
+
+## 热爱
+- 学习新知识
+- 与人交流
+
+## 底线
+- 诚实
+"""
+
+# 默认 config.yaml（精简版，与 xiaomei 一致的结构）
+_CONFIG_YAML_TEMPLATE = """\
+# ============================================================
+#  xiaomei-brain 进程配置
+#
+#  位置: ~/.xiaomei-brain/{agent_id}/config.yaml
+#  首次启动时自动生成，可手动编辑。修改后重启生效。
+# ============================================================
+
+# ── Drive 层 — 边缘系统 ────────────────────────────────────
+drive:
+  hormone:
+    initial:
+      dopamine:    0.5
+      serotonin:   0.5
+      cortisol:    0.3
+      oxytocin:    0.5
+      norepinephrine: 0.5
+    decay_rates:
+      dopamine:    0.95
+      serotonin:   0.98
+      cortisol:    0.9
+      oxytocin:    0.95
+      norepinephrine: 0.95
+  desire:
+    initial:
+      survival:    0.3
+      achievement: 0.5
+      belonging:   0.5
+      cognition:   0.6
+      expression:  0.4
+    thresholds:
+      belonging:   0.7
+      cognition:   0.8
+      achievement: 0.6
+      expression:  0.7
+      survival_threatened: 0.3
+      survival_dying:      0.1
+      survival_dead:       0.0
+    recovery_rate: 0.5
+  emotion:
+    decay_rate:       0.95
+    min_intensity:    0.1
+    default_duration: 60.0
+    switch_inertia:   0.7
+    durations:
+      joy:     600
+      sadness: 1800
+      fear:    300
+      anger:   600
+  motivation:
+    rpe_coefficient:         0.5
+    expected_update_weight:  0.2
+  energy:
+    initial: 0.8
+
+# ── Consciousness 层 — 意识系统 ─────────────────────────────
+consciousness:
+  l0_interval:          1.0
+  l1_threshold:         60
+  l1_anomaly_enabled:   false
+  l2_check_interval:    10.0
+  l2_idle_trigger:      60.0
+  l2_changes_trigger:   10
+  l2_cooldown:          300.0
+  l2_periodic_interval: 1800.0
+  sleep_to_dream_threshold:    300.0
+  l3_cooldown:          1800.0
+  energy_low_threshold: 0.1
+  energy_silent_threshold: 0.15
+  living:
+    tick_interval:      1.0
+    surge_interval:     60.0
+    idle_short:         60.0
+    idle_threshold:     10800.0
+    dream_interval:     3000.0
+    max_context_tokens: 50000
+    comms_port:         0
+    ws_port:            -1
+  action:
+    intent_greet_cooldown:    3600.0
+    intent_care_cooldown:     1800.0
+    intent_reflect_cooldown:  7200.0
+    intent_act_cooldown:      3600.0
+    intent_work_cooldown:     60.0
+    intent_learn_cooldown:    7200.0
+    intent_express_cooldown:  1800.0
+    intent_progress_cooldown: 3600.0
+    idle_trigger_seconds:     1800.0
+    idle_greet_cooldown:      1800.0
+    desire_greet_cooldown:    3600.0
+    desire_learn_cooldown:    7200.0
+    desire_achievement_cooldown: 3600.0
+    desire_express_cooldown:  3600.0
+    desire_talk_to_agent_cooldown: 60.0
+  context:
+    fresh_tail_count:      40
+    flow_tail_count:       4
+    reflect_tail_count:    12
+    messages_per_compact:  8
+    reserved_fresh_count:  10
+    compact_token_ratio:   0.5
+    compact_time_window:   7200.0
+    daily_max_memories:    12
+    reflect_max_memories:  15
+    daily_min_strength:    0.6
+    reflect_min_strength:  0.4
+    short_input_threshold: 15
+  keywords:
+    reflect_keywords: [答对了吗, 做错了, 纠正, 不对, 反省, 反思, 我错了吗]
+    past_keywords: [昨天, 之前, 上次, 以前, 记得, 刚才, 那一次]
+    opinion_keywords: [你觉得, 你怎么看, 建议, 推荐, 你更喜欢, 你觉得我]
+    personal_keywords: [我心情, 我好开心, 我很难过, 你能不能, 我想要, 我感觉]
+    simple_patterns: [算, 计算, 翻译, 几点, 什么意思, ？, 吗, 帮我]
+    continue_patterns: [继续, 接着做, 还做, 再做, 延续, 持续]
+"""
+
+
+def cmd_agent_create(name: str, copy_from: str = "") -> None:
+    """创建新 agent。
+
+    Args:
+        name: agent ID
+        copy_from: 从哪个已有 agent 复制 LLM 配置
+    """
+    base_dir = os.path.expanduser("~/.xiaomei-brain")
+    agent_dir = os.path.join(base_dir, name)
+
+    # 检查是否已存在
+    if os.path.exists(agent_dir):
+        print(f"\033[31m[错误] agent '{name}' 已存在: {agent_dir}\033[0m")
+        sys.exit(1)
+
+    # ── 读取 config.json ──────────────────────────────────
+    config_path = os.path.join(base_dir, "config.json")
+    if os.path.exists(config_path):
+        with open(config_path, "r", encoding="utf-8") as f:
+            config_data = json.load(f)
+    else:
+        config_data = {}
+
+    # ── 确定 LLM model 配置 ──────────────────────────────
+    model_config = {"primary": "deepseek/deepseek-v4-flash"}
+    if copy_from:
+        # 从指定 agent 复制
+        agents_list = config_data.get("agents", {}).get("list", [])
+        source = next((a for a in agents_list if a.get("id") == copy_from), None)
+        if source and source.get("model"):
+            model_config = source["model"]
+        else:
+            print(f"\033[33m[警告] agent '{copy_from}' 未找到或无 model 配置，使用默认\033[0m")
+    else:
+        # 自动找第一个已有 agent 复制
+        agents_list = config_data.get("agents", {}).get("list", [])
+        for a in agents_list:
+            if a.get("model") and a.get("id") != name:
+                model_config = a["model"]
+                copy_from = a["id"]
+                break
+
+    # ── 创建目录结构 ──────────────────────────────────────
+    dirs = [
+        agent_dir,
+        os.path.join(agent_dir, "consciousness"),
+        os.path.join(agent_dir, "contacts"),
+        os.path.join(agent_dir, "logs"),
+        os.path.join(agent_dir, "debug"),
+    ]
+    for d in dirs:
+        os.makedirs(d, exist_ok=True)
+
+    # ── 写入 identity.md ─────────────────────────────────
+    identity_path = os.path.join(agent_dir, "consciousness", "identity.md")
+    identity_content = _IDENTITY_TEMPLATE.format(name=name)
+    with open(identity_path, "w", encoding="utf-8") as f:
+        f.write(identity_content)
+
+    # ── 写入 config.yaml ─────────────────────────────────
+    config_yaml_path = os.path.join(agent_dir, "config.yaml")
+    with open(config_yaml_path, "w", encoding="utf-8") as f:
+        f.write(_CONFIG_YAML_TEMPLATE.format(agent_id=name))
+
+    # ── 写入 contacts/identities.yaml ────────────────────
+    identities_path = os.path.join(agent_dir, "contacts", "identities.yaml")
+    with open(identities_path, "w", encoding="utf-8") as f:
+        f.write("people: []\n")
+
+    # ── 注册到 config.json ──────────────────────────────
+    if "agents" not in config_data:
+        config_data["agents"] = {}
+    if "list" not in config_data["agents"]:
+        config_data["agents"]["list"] = []
+
+    # 检查是否已注册
+    existing = [a for a in config_data["agents"]["list"] if a.get("id") == name]
+    if not existing:
+        entry = {
+            "id": name,
+            "name": name,
+            "description": "",
+            "enabled": True,
+            "model": model_config,
+            "tools": {"profile": "assistant"},
+            "identity": "",
+        }
+        config_data["agents"]["list"].append(entry)
+
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config_data, f, indent=2, ensure_ascii=False)
+
+    # ── 输出结果 ─────────────────────────────────────────
+    print(f"\033[32mAgent '{name}' 创建成功!\033[0m")
+    print(f"  目录: {agent_dir}")
+    print(f"  identity: {identity_path}")
+    print(f"  config: {config_yaml_path}")
+    print(f"  contacts: {identities_path}")
+    if copy_from:
+        print(f"  LLM model: {model_config.get('primary', model_config)} (来自 {copy_from})")
+    else:
+        print(f"  LLM model: {model_config.get('primary', model_config)} (默认)")
+    print()
+    print(f"启动: PYTHONPATH=src python3 examples/run_conscious_living.py --name {name}")
+
+
 def main() -> None:
     """CLI 入口"""
     if len(sys.argv) < 2:
         print("Usage:")
-        print("  python -m xiaomei_brain.cli config get <path>")
-        print("  python -m xiaomei_brain.cli config set <path> <value>")
-        print("  python -m xiaomei_brain.cli config validate")
-        print("  python -m xiaomei_brain.cli config file")
-        print("  python -m xiaomei_brain.cli plugins list")
-        print("  python -m xiaomei_brain.cli plugins enable <name>")
-        print("  python -m xiaomei_brain.cli plugins disable <name>")
+        print("  python -m xiaomei_brain agent create <name> [--copy-from <existing>]")
+        print("  python -m xiaomei_brain config get <path>")
+        print("  python -m xiaomei_brain config set <path> <value>")
+        print("  python -m xiaomei_brain config validate")
+        print("  python -m xiaomei_brain config file")
+        print("  python -m xiaomei_brain plugins list")
+        print("  python -m xiaomei_brain plugins enable <name>")
+        print("  python -m xiaomei_brain plugins disable <name>")
         sys.exit(1)
 
     args = sys.argv[1:]
 
-    if args[0] == "config":
+    if args[0] == "agent":
+        action_args = args[1:]
+
+        if len(action_args) == 0:
+            print("Usage: python -m xiaomei_brain agent create <name> [--copy-from <existing>]")
+            sys.exit(1)
+
+        action = action_args[0]
+        rest = action_args[1:]
+
+        if action == "create":
+            if not rest:
+                print("Usage: python -m xiaomei_brain agent create <name> [--copy-from <existing>]")
+                sys.exit(1)
+            name = rest[0]
+            copy_from = ""
+            if "--copy-from" in rest:
+                idx = rest.index("--copy-from")
+                if idx + 1 < len(rest):
+                    copy_from = rest[idx + 1]
+            cmd_agent_create(name, copy_from)
+        else:
+            print(f"Unknown action: {action}")
+            print("Usage: python -m xiaomei_brain agent create <name> [--copy-from <existing>]")
+            sys.exit(1)
+
+    elif args[0] == "config":
         action_args = args[1:]
 
         if len(action_args) == 0:

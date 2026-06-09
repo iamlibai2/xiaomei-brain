@@ -206,7 +206,7 @@ class PatternExtractor:
         social_signals = self._gather_social_signals(time_window)
 
         # 2. 构建 prompt
-        from ..prompts.pattern import PATTERN_EXTRACT_PROMPT
+        from ..prompts import PATTERN_EXTRACT_PROMPT
 
         prompt = PATTERN_EXTRACT_PROMPT.format(
             experience_data=experience_data or "（本时段无活动记录）",

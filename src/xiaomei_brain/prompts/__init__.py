@@ -1,66 +1,50 @@
-"""集中管理所有 LLM 提示词
+"""集中管理所有 LLM 提示词模板。
 
-来源文件对应关系:
-- memory.py: memory/extractor.py
-- drive.py: drive/event_extractor.py, drive/action_executor.py
-- consciousness.py: consciousness/core.py
-- purpose.py: purpose/intent.py, purpose/purpose_engine.py
-- agent.py: agent/reminder.py, agent/proactive_output.py
-- dag.py: memory/dag.py
+所有 prompt 定义在 templates_v2.py 中，本文件只做 re-export。
+templates.py = v1（冻结），prompts_bak.py = 废弃。
 """
 
-from .memory import *
-from .drive import *
-from .consciousness import *
-from .purpose import *
-from .agent import *
-from .dag import *
-from .pattern import *
+from .templates_v2 import *  # noqa: F401, F403
 
 __all__ = [
     # Memory
     "PERIODIC_EXTRACT_PROMPT",
-    "EVERY_TURN_EXTRACT_PROMPT",
     "DREAM_EXTRACT_PROMPT",
     "DREAM_USER_EXTRACT_PROMPT",
     "TASK_COMPLETION_PROMPT",
-    "MEMORY_DECISION_PROMPT",  # deprecated, use get_memory_decision_prompt()
-    "get_memory_decision_prompt",
-    "IMMEDIATE_EXTRACT_PROMPT",
+    "MEMORY_DECISION_PROMPT",
     "PROCEDURE_LEARN_PROMPT",
     "PROCEDURE_GENERATE_PROMPT",
-    "PROCEDURE_MATCH_INFERENCE_PROMPT",
     # Drive
-    # "EVENT_EXTRACT_PROMPT",        # [DEPRECATED] 已注释，保留备查
-    # "GREET_GENERATE_PROMPT",       # [DEPRECATED] 已注释，保留备查
     "LEARN_REACT_PROMPT",
     "EXPRESSION_PROMPT",
     "GREETING_PROMPT",
     "TALK_PROMPT",
     "CARE_PROMPT",
     "META_SKILL_PROMPT",
+    "WORK_INSTRUCTIONS_PROMPT",
     # Consciousness
     "CONSCIOUSNESS_PROMPT_DEEP",
-    "CONSCIOUSNESS_PROMPT_LIGHT",
-    "NARR_PREAMBLE",
     "DREAM_ENGINE_PROMPT",
-    # "INTENT_GENERATION_PROMPT",    # [DEPRECATED] 已注释，保留备查
-    # "L2_TICK_PROMPT",              # [DEPRECATED] 已注释，保留备查
-    # "L3_TICK_PROMPT",              # [DEPRECATED] 已注释，保留备查
+    "L2_EMERGENCE_PROMPT",
     # Purpose
     "INTENT_CLASSIFY_PROMPT",
     "GOAL_DECOMPOSE_PROMPT",
     "GOAL_LLM_DECOMPOSE_PROMPT",
     "PROGRESS_BLOCK_INSTRUCTION",
     # Agent
-    "REMINDER_EXTRACTION_PROMPT",
     "WAKE_GREETING_PROMPT",
-    "CHAT_STYLE_PROMPT",
     # DAG
     "DAG_SUMMARIZE_PROMPT",
     "DAG_PROMOTE_PROMPT",
-    # Memory (narrative)
-    "NARR_BLOCK_INSTRUCTION",
     # Pattern
     "PATTERN_EXTRACT_PROMPT",
+    # InnerVoice
+    "INNER_VOICE_SYSTEM",
+    "CHAT_TURN",
+    "TASK_STEP",
+    "TASK_DONE",
+    "SILENCE",
+    # SocialCognition
+    "SOCIAL_COGNITION_PROMPT",
 ]

@@ -18,12 +18,10 @@ from .longterm import LongTermMemory
 
 # 集中化提示词
 from xiaomei_brain.prompts import (
-    IMMEDIATE_EXTRACT_PROMPT,
     PERIODIC_EXTRACT_PROMPT,
-    EVERY_TURN_EXTRACT_PROMPT,
     DREAM_EXTRACT_PROMPT,
     TASK_COMPLETION_PROMPT,
-    get_memory_decision_prompt,
+    MEMORY_DECISION_PROMPT,
 )
 
 logger = logging.getLogger(__name__)
@@ -37,9 +35,7 @@ class MemoryExtractor:
     3. Dream: deep analysis at night / idle
     """
 
-    # [废弃] 关键词触发方式，已被 extract_every_turn 替代。
-    # 旧方式依赖硬编码关键词（如"记住"、"我讨厌"），会漏掉"我是李白"等重要信息。
-    # 新方式每轮调 LLM 自己判断，Mem0 路线，无需关键词过滤。
+    # [废弃] 关键词触发方式。extract_every_turn 路径也已废弃，全代码库零调用。
     IMMEDIATE_KEYWORDS = [
         "记住", "我以前", "我喜欢", "我要", "我不要",
         "帮我记", "别忘了", "我讨厌",
@@ -56,17 +52,17 @@ class MemoryExtractor:
         self.db = conversation_db
         self._last_extract_time = time.time()
 
-    # [废弃] 已由 extract_every_turn 替代，保留仅供兼容。
+    # [废弃] 全代码库零调用。
     def check_immediate(self, user_input: str) -> bool:
-        """[废弃] 关键词匹配方式判断是否提取，已被 extract_every_turn 替代。"""
+        """[废弃] 零调用。"""
         return any(kw in user_input for kw in self.IMMEDIATE_KEYWORDS)
 
-    # [废弃] 已由 extract_every_turn 替代，保留仅供兼容。
+    # [废弃] 全代码库零调用。
     def extract_immediate(
         self, user_input: str, assistant_response: str,
         user_id: str = "global",
     ) -> list[int]:
-        """[废弃] 关键词触发提取，已被 extract_every_turn 替代。"""
+        """[废弃] 零调用。"""
         if not self.ltm or not self.llm:
             return []
 
@@ -87,6 +83,7 @@ class MemoryExtractor:
             logger.error("Immediate extraction failed: %s", e)
             return []
 
+    # [手动] 仅 CLI `memory periodic` 命令触发，无自动调用路径。
     def extract_periodic(
         self, interval_minutes: int = 10, user_id: str = "global",
     ) -> list[int]:
@@ -127,6 +124,7 @@ class MemoryExtractor:
             logger.error("Periodic extraction failed: %s", e)
             return []
 
+    # [手动] 仅 CLI `memory dream` 命令触发，无自动调用路径。
     def extract_dream(self, user_id: str = "global") -> list[int]:
         """Deep dream-mode extraction of today's conversations."""
         if not self.ltm or not self.db:
@@ -169,15 +167,16 @@ class MemoryExtractor:
             logger.error("Dream extraction failed: %s", e)
             return []
 
+    # [废弃] 全代码库零调用。当时的设想是每轮调 LLM 自己判断，实际未落地。
     def extract_every_turn(
         self,
         user_input: str,
         assistant_response: str,
         user_id: str = "global",
     ) -> list[int]:
-        """每轮对话后调用。一次 LLM 调用完成提取+决策。
+        """[废弃] 零调用。
 
-        同时从用户输入和助手回复中提取：
+        同时从用户输入和助手回复中提取:
         - 用户输入 → 用户的事实/偏好/经历
         - 助手回复 → 小美学到的经验/教训/决策/自我认知
 

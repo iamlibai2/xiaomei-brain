@@ -34,10 +34,9 @@ def _plog(msg: str, *args) -> str:
     """Format log message with red Procedure tag."""
     return f"{_P_LOG} {msg}" % (args if args else ())
 
-from ..prompts.memory import (
+from ..prompts import (
     PROCEDURE_LEARN_PROMPT as _PROCEDURE_LEARN_PROMPT,
     PROCEDURE_GENERATE_PROMPT as _PROCEDURE_GENERATE_PROMPT,
-    PROCEDURE_MATCH_INFERENCE_PROMPT as _PROCEDURE_MATCH_INFERENCE_PROMPT,
 )
 
 # ── Response parsing ──────────────────────────────────────────
