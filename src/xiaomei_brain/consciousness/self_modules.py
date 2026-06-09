@@ -246,6 +246,8 @@ class SelfBody:
     @property
     def emotion_intensity(self) -> float:  return self._d("emotion.intensity", 0.0)
     @property
+    def emotions_dict(self) -> dict:       return self._d("emotions", {})
+    @property
     def desire_belonging(self) -> float:   return self._d("desire.belonging", 0.0)
     @property
     def desire_cognition(self) -> float:   return self._d("desire.cognition", 0.0)

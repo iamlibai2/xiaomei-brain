@@ -25,32 +25,126 @@ class EmotionType(Enum):
     NEUTRAL = "neutral"   # 平静
 
 
-@dataclass
 class EmotionalState:
-    """
-    情绪状态 - 快速评估信号
+    """情绪状态 - 复合情绪模型。
+
+    支持同时持有多种情绪（如"愤怒81% + 恐惧64%"），而非强制二选一。
 
     特点：
     - 快速产生（事件触发）
     - 分钟级衰减
-    - 有强度和持续时间
+    - 各情绪独立衰减，低于阈值自动移除
+
+    向后兼容：
+    - .type → 返回 dominant 情绪类型（供旧代码读取）
+    - .intensity → 返回 dominant 情绪强度
+    - 构造时仍可传 type= / intensity=，自动映射到 emotions dict
     """
-    type: EmotionType = EmotionType.NEUTRAL
-    intensity: float = 0.0        # 强度 0.0-1.0
-    created_at: float = 0.0       # 产生时间
-    duration: float = 60.0        # 预期持续时间（秒）
+
+    def __init__(
+        self,
+        emotions: dict[str, float] | None = None,
+        type: EmotionType | None = None,
+        intensity: float = 0.0,
+        created_at: float = 0.0,
+        duration: float = 60.0,
+    ) -> None:
+        if emotions:
+            self.emotions: dict[str, float] = dict(emotions)
+        elif type is not None and type != EmotionType.NEUTRAL:
+            key = type.value if isinstance(type, EmotionType) else type
+            self.emotions = {key: intensity}
+        else:
+            self.emotions = {}
+        self.created_at: float = created_at
+        self.duration: float = duration
+
+    # ── 向后兼容属性 ──────────────────────────────────────
+
+    @property
+    def type(self) -> EmotionType:
+        """dominant 情绪类型（向后兼容）。"""
+        if not self.emotions:
+            return EmotionType.NEUTRAL
+        return EmotionType(max(self.emotions, key=self.emotions.get))
+
+    @type.setter
+    def type(self, value: EmotionType) -> None:
+        """设置 dominant 情绪（向后兼容，直接覆盖 dict）。"""
+        key = value.value if isinstance(value, EmotionType) else value
+        if key == "neutral":
+            self.emotions.clear()
+        else:
+            current = self.emotions.get(key, 0.0)
+            self.emotions = {key: max(current, 0.1)}
+
+    @property
+    def intensity(self) -> float:
+        """dominant 情绪强度（向后兼容）。"""
+        if not self.emotions:
+            return 0.0
+        return max(self.emotions.values())
+
+    @intensity.setter
+    def intensity(self, value: float) -> None:
+        """设置 dominant 情绪强度（向后兼容）。"""
+        if self.emotions:
+            dominant = max(self.emotions, key=self.emotions.get)
+            self.emotions[dominant] = max(0.0, min(1.0, value))
+
+    # ── 复合情绪 API ──────────────────────────────────────
+
+    def add_emotion(self, name: str, intensity: float) -> None:
+        """添加或合并一个情绪。同 key 取 max（保留最强感受）。"""
+        clamped = max(0.0, min(1.0, intensity))
+        if clamped < 0.05:
+            return
+        existing = self.emotions.get(name, 0.0)
+        self.emotions[name] = max(existing, clamped)
+        self.created_at = time.time()
+
+    def decay_all(self, rate: float) -> None:
+        """对所有情绪衰减，低于阈值 0.08 的移除。"""
+        for key in list(self.emotions):
+            self.emotions[key] *= rate
+            if self.emotions[key] < 0.08:
+                del self.emotions[key]
+
+    def is_empty(self) -> bool:
+        return not self.emotions
+
+    def dominant(self) -> tuple[str, float]:
+        """返回 (emotion_name, intensity)，空时返回 ("neutral", 0.0)。"""
+        if not self.emotions:
+            return ("neutral", 0.0)
+        name = max(self.emotions, key=self.emotions.get)
+        return (name, self.emotions[name])
+
+    def top_emotions(self, n: int = 3) -> list[tuple[str, float]]:
+        """返回强度最高的 N 个情绪。"""
+        return sorted(self.emotions.items(), key=lambda x: x[1], reverse=True)[:n]
+
+    # ── 序列化 ────────────────────────────────────────────
 
     def to_dict(self) -> dict:
         return {
-            "type": self.type.value,
-            "intensity": self.intensity,
+            "emotions": dict(self.emotions),
             "created_at": self.created_at,
             "duration": self.duration,
         }
 
     def from_dict(self, data: dict) -> None:
-        self.type = EmotionType(data.get("type", "neutral"))
-        self.intensity = data.get("intensity", 0.0)
+        # 新格式：{"emotions": {"joy": 0.5, ...}, ...}
+        if "emotions" in data:
+            self.emotions = data["emotions"]
+        else:
+            # 旧格式迁移：{"type": "joy", "intensity": 0.5, ...}
+            old_type = data.get("type", "neutral")
+            old_intensity = data.get("intensity", 0.0)
+            if old_type != "neutral" and old_intensity > 0.0:
+                self.emotions = {old_type: old_intensity}
+            else:
+                self.emotions = {}
         self.created_at = data.get("created_at", 0.0)
         self.duration = data.get("duration", 60.0)
 

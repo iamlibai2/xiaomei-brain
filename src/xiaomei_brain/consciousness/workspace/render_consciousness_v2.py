@@ -58,6 +58,35 @@ def _describe_emotion(emotion_type: str, intensity: float) -> str:
             return label
     return emotion_type  # fallback
 
+
+def _describe_mixed_emotions(emotions: dict) -> str:
+    """将情绪字典映射为混合情绪中文描述。"""
+    if not emotions:
+        return "平静"
+
+    label_map = {
+        "joy":     {0.7: "非常开心",  0.4: "开心",     0.1: "有些愉悦"},
+        "sadness": {0.7: "非常悲伤",  0.4: "低落",     0.1: "有些消沉"},
+        "fear":    {0.7: "非常恐惧不安", 0.4: "紧张焦虑", 0.1: "有些不安"},
+        "anger":   {0.7: "非常愤怒",  0.4: "生气",     0.1: "有些烦躁"},
+        "surprise":{0.7: "非常震惊",  0.4: "有些惊讶", 0.1: "微微一愣"},
+        "disgust": {0.7: "非常反感",  0.4: "感到排斥", 0.1: "有些不适"},
+    }
+
+    parts = []
+    for name, intensity in sorted(emotions.items(), key=lambda x: x[1], reverse=True):
+        thresholds = label_map.get(name, {0.7: name, 0.1: name})
+        label = name
+        for threshold, lbl in sorted(thresholds.items(), reverse=True):
+            if intensity >= threshold:
+                label = lbl
+                break
+        parts.append(label)
+
+    if len(parts) == 1:
+        return parts[0]
+    return "，".join(parts)
+
 def _render_being_legacy(si) -> list[str]:
     """旧 context_assembler 的 SelfModel 身份渲染格式。
 
@@ -144,9 +173,8 @@ def _v1_body(si) -> list[str]:
     bo = si.body
     lines: list[str] = ["\n****以下是你当前的身体指标值，将这些指标转换成你的身体和思维感受，并用此来决定你的输出内容和输出风格****"]
     _energy = float(getattr(bo, 'energy', 0.5) or 0.5)
-    _mood = getattr(bo, 'mood', '平静') or '平静'
-    _emotion_intensity = float(getattr(bo, 'emotion_intensity', 0) or 0)
-    _emotion_desc = _describe_emotion(_mood, _emotion_intensity)
+    _emotions = getattr(bo, 'emotions_dict', None) or {}
+    _emotion_desc = _describe_mixed_emotions(_emotions)
     lines.append(f"- 能量：{_energy:.0%}")
     lines.append(f"- 心情：{_emotion_desc}")
     desire_parts = []
@@ -608,9 +636,8 @@ def _render_body(si, detail: str = "medium", user_input: str = "") -> list[str]:
 
     if detail == DetailLevel.LOW:
         energy = float(getattr(bo, 'energy', 0.5) or 0.5)
-        mood = getattr(bo, 'mood', '平静') or '平静'
-        intensity = float(getattr(bo, 'emotion_intensity', 0) or 0)
-        emo = _describe_emotion(mood, intensity)
+        _emotions = getattr(bo, 'emotions_dict', None) or {}
+        emo = _describe_mixed_emotions(_emotions)
 
         lines = ["\n****以下是你当前的身体指标值（精简）****"]
         lines.append(f"- 能量：{energy:.0%}")

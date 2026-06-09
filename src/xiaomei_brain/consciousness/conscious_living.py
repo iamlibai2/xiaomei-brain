@@ -680,8 +680,11 @@ class ConsciousLiving(Living):
             logger.info("")
             logger.info("    情绪状态:")
             e = self.drive.emotion
-            logger.info("      type       : %s", e.type.value)
-            logger.info("      intensity  : %.2f", e.intensity)
+            if e.is_empty():
+                logger.info("      平静")
+            else:
+                for name, intensity in sorted(e.emotions.items(), key=lambda x: x[1], reverse=True):
+                    logger.info("      %s: %.2f", name, intensity)
 
         # Purpose 状态
         if self.purpose:

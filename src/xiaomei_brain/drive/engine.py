@@ -139,7 +139,7 @@ class DriveEngine:
                 self.token_usage_month_date = token_data.get("usage_month_date", "")
             logger.info(
                 f"[DriveEngine] 状态恢复: "
-                f"emotion={self.emotion.type.value}, "
+                f"emotions={dict(self.emotion.emotions)}, "
                 f"cortisol={self.hormone.cortisol:.2f}, "
                 f"belonging={self.desire.belonging:.2f}, "
                 f"pleasure={self.pleasure_value:.2f}, "
@@ -214,18 +214,15 @@ class DriveEngine:
         - 情绪 → JOY，强度增加
         - 激素 → dopamine↑, oxytocin↑
         """
-        # 情绪更新（增量 + 切换惯性）
-        current_intensity = self.emotion.intensity if self.emotion.type == EmotionType.JOY else 0.0
-        intensity = self._modulate_hormone_to_emotion(
-            EmotionType.JOY, min(1.0, current_intensity + delta)
+        # 情绪更新（增量 + 切换惯性 → 合并到混合情绪）
+        current_joy = self.emotion.emotions.get("joy", 0.0)
+        joy_intensity = self._modulate_hormone_to_emotion(
+            EmotionType.JOY, min(1.0, current_joy + delta)
         )
-        actual_type, intensity = self._modulate_emotion_switch(EmotionType.JOY, intensity)
-        self.emotion = EmotionalState(
-            type=actual_type,
-            intensity=intensity,
-            created_at=time.time(),
-            duration=self.config.emotion.get_duration(actual_type.value),
-        )
+        actual_type, joy_intensity = self._modulate_emotion_switch(EmotionType.JOY, joy_intensity)
+        if joy_intensity >= 0.05:
+            self.emotion.add_emotion(actual_type.value, joy_intensity)
+            self.emotion.duration = self.config.emotion.get_duration(actual_type.value)
 
         # 激素更新（增量）
         self.hormone.dopamine = min(1.0, self.hormone.dopamine + delta * 0.2)
@@ -237,7 +234,7 @@ class DriveEngine:
 
         logger.info(
             f"[DriveEngine] 用户表扬: "
-            f"emotion={EmotionType.JOY.value}({self.emotion.intensity:.2f}), "
+            f"joy={joy_intensity:.2f}, "
             f"dopamine={self.hormone.dopamine:.2f}"
         )
 
@@ -245,7 +242,7 @@ class DriveEngine:
         if self.exp_stream:
             self.exp_stream.log(
                 type="drive_event",
-                content=f"对方表扬了我：情绪={EmotionType.JOY.value}，多巴胺={self.hormone.dopamine:.2f}",
+                content=f"对方表扬了我：joy={joy_intensity:.2f}，多巴胺={self.hormone.dopamine:.2f}",
                 importance=0.4,
             )
 
@@ -260,18 +257,15 @@ class DriveEngine:
         - 情绪 → SADNESS，强度增加
         - 激素 → cortisol↑, dopamine↓, serotonin↓, norepinephrine↑
         """
-        # 情绪更新（切换惯性）
-        current_intensity = self.emotion.intensity if self.emotion.type == EmotionType.SADNESS else 0.0
+        # 情绪更新（切换惯性 → 合并到混合情绪）
+        current_sadness = self.emotion.emotions.get("sadness", 0.0)
         intensity = self._modulate_hormone_to_emotion(
-            EmotionType.SADNESS, min(1.0, current_intensity + delta)
+            EmotionType.SADNESS, min(1.0, current_sadness + delta)
         )
         actual_type, intensity = self._modulate_emotion_switch(EmotionType.SADNESS, intensity)
-        self.emotion = EmotionalState(
-            type=actual_type,
-            intensity=intensity,
-            created_at=time.time(),
-            duration=self.config.emotion.get_duration(actual_type.value),
-        )
+        if intensity >= 0.05:
+            self.emotion.add_emotion(actual_type.value, intensity)
+            self.emotion.duration = self.config.emotion.get_duration(actual_type.value)
 
         # 激素更新
         self.hormone.cortisol = min(1.0, self.hormone.cortisol + delta * 0.3)
@@ -284,7 +278,7 @@ class DriveEngine:
 
         logger.info(
             f"[DriveEngine] 用户批评: "
-            f"emotion={EmotionType.SADNESS.value}({self.emotion.intensity:.2f}), "
+            f"sadness={intensity:.2f}, "
             f"cortisol={self.hormone.cortisol:.2f}"
         )
 
@@ -292,7 +286,7 @@ class DriveEngine:
         if self.exp_stream:
             self.exp_stream.log(
                 type="drive_event",
-                content=f"对方批评了我：情绪={EmotionType.SADNESS.value}，皮质醇={self.hormone.cortisol:.2f}",
+                content=f"对方批评了我：sadness={intensity:.2f}，皮质醇={self.hormone.cortisol:.2f}",
                 importance=0.4,
             )
 
@@ -319,12 +313,9 @@ class DriveEngine:
                 EmotionType.JOY, min(1.0, 0.5 + dopamine_change)
             )
             actual_type, intensity = self._modulate_emotion_switch(EmotionType.JOY, intensity)
-            self.emotion = EmotionalState(
-                type=actual_type,
-                intensity=intensity,
-                created_at=time.time(),
-                duration=self.config.emotion.get_duration(actual_type.value),
-            )
+            if intensity >= 0.05:
+                self.emotion.add_emotion(actual_type.value, intensity)
+                self.emotion.duration = self.config.emotion.get_duration(actual_type.value)
             self.hormone.dopamine = min(1.0, self.hormone.dopamine + dopamine_change * 0.3)
             self.hormone.serotonin = min(1.0, self.hormone.serotonin + 0.2)
             self.hormone.cortisol = max(0.0, self.hormone.cortisol - 0.1)
@@ -363,15 +354,12 @@ class DriveEngine:
         - 欲望 → achievement↑（挫折后更想完成）, survival↓（存在受威胁）
         """
         intensity = self._modulate_hormone_to_emotion(
-            EmotionType.SADNESS, min(1.0, self.emotion.intensity + 0.4)
+            EmotionType.SADNESS, min(1.0, self.emotion.emotions.get("sadness", 0.0) + 0.4)
         )
         actual_type, intensity = self._modulate_emotion_switch(EmotionType.SADNESS, intensity)
-        self.emotion = EmotionalState(
-            type=actual_type,
-            intensity=intensity,
-            created_at=time.time(),
-            duration=self.config.emotion.get_duration(actual_type.value) * 2,  # 持续更久
-        )
+        if intensity >= 0.05:
+            self.emotion.add_emotion(actual_type.value, intensity)
+            self.emotion.duration = self.config.emotion.get_duration(actual_type.value) * 2  # 持续更久
 
         self.hormone.cortisol = min(1.0, self.hormone.cortisol + 0.3)
         self.hormone.dopamine = max(0.0, self.hormone.dopamine - 0.2)
@@ -548,7 +536,7 @@ class DriveEngine:
 
         scale = intensity  # LLM 输出的强度直接作为缩放因子
 
-        # 情绪（含切换惯性）
+        # 情绪（添加/合并到混合情绪，不再覆盖）
         emotion_name = mapping.get("emotion")
         if emotion_name:
             from .state import EmotionType
@@ -557,10 +545,9 @@ class DriveEngine:
                 raw_intensity = min(1.0, scale * 0.8)
                 modulated = self._modulate_hormone_to_emotion(em, raw_intensity)
                 actual_em, actual_intensity = self._modulate_emotion_switch(em, modulated)
-                self.emotion.type = actual_em
-                self.emotion.intensity = actual_intensity
-                self.emotion.created_at = time.time()
-                self.emotion.duration = self.config.emotion.get_duration(actual_em.value)
+                if actual_intensity >= 0.05:
+                    self.emotion.add_emotion(actual_em.value, actual_intensity)
+                    self.emotion.duration = self.config.emotion.get_duration(actual_em.value)
             except ValueError:
                 pass
 
@@ -582,10 +569,10 @@ class DriveEngine:
         self.desire.last_updated = time.time()
 
         logger.info(
-            "[DriveEngine] 社交信号: %s (intensity=%.2f) → emotion=%s, "
+            "[DriveEngine] 社交信号: %s (intensity=%.2f) → emotions=%s, "
             "cortisol=%.2f, oxytocin=%.2f, belonging=%.2f",
             signal_type, intensity,
-            self.emotion.type.value, self.hormone.cortisol,
+            dict(self.emotion.emotions), self.hormone.cortisol,
             self.hormone.oxytocin, self.desire.belonging,
         )
 
@@ -708,23 +695,25 @@ class DriveEngine:
     # 体量够大时再升格为独立文件。
 
     def _modulate_emotion_to_hormone(self) -> None:
-        """每分钟：当前情绪顺向偏置激素。
+        """每分钟：所有活跃情绪顺向偏置激素。
 
         情绪持续时，"身体"慢慢跟上——激素随时间被情绪推向同一方向。
         步长很小（0.01 * intensity），一个 intensity=0.7 的情绪
         持续一小时累积约 0.4 的激素偏移，不会压倒事件，但让心情留下痕迹。
         """
-        if self.emotion.type == EmotionType.NEUTRAL:
+        if self.emotion.is_empty():
             return
-        step = 0.01 * self.emotion.intensity
-        if self.emotion.type == EmotionType.FEAR:
-            self.hormone.cortisol = min(1.0, self.hormone.cortisol + step)
-        elif self.emotion.type == EmotionType.ANGER:
-            self.hormone.norepinephrine = min(1.0, self.hormone.norepinephrine + step)
-        elif self.emotion.type == EmotionType.JOY:
-            self.hormone.dopamine = min(1.0, self.hormone.dopamine + step)
-        elif self.emotion.type == EmotionType.SADNESS:
-            self.hormone.serotonin = max(0.0, self.hormone.serotonin - step)
+        step = 0.01
+        for name, intensity in self.emotion.emotions.items():
+            s = step * intensity
+            if name == "fear":
+                self.hormone.cortisol = min(1.0, self.hormone.cortisol + s)
+            elif name == "anger":
+                self.hormone.norepinephrine = min(1.0, self.hormone.norepinephrine + s)
+            elif name == "joy":
+                self.hormone.dopamine = min(1.0, self.hormone.dopamine + s)
+            elif name == "sadness":
+                self.hormone.serotonin = max(0.0, self.hormone.serotonin - s)
 
     def _modulate_hormone_to_emotion(self, target: EmotionType, intensity: float) -> float:
         """事件时：激素背景调制情绪强度。
@@ -767,21 +756,32 @@ class DriveEngine:
         return 1.0
 
     def _modulate_emotion_switch(self, target: EmotionType, intensity: float) -> tuple:
-        """情绪切换惯性：上下文感知的情绪切换。
+        """情绪冲突调制：基于当前 dominant 情绪计算新情绪的冲突阻力。
 
         三层调制：
-        1. 冲突矩阵 — 不同情绪间的切换难度（SADNESS→JOY 很难，FEAR→ANGER 较易）
+        1. 冲突矩阵 — 不同情绪间的冲突（SADNESS→JOY 很难，FEAR→ANGER 较易）
         2. 个性惯性 — switch_inertia 配置（0.1=好哄，0.9=极其固执）
         3. 激素上下文 — 多巴胺让开心更容易，皮质醇让开心更难、恐惧更容易
 
+        注意：不再阻止目标情绪的添加（旧 mono-emotion 的 blocking 行为已废弃）。
+        冲突只影响新情绪的强度，不影响旧情绪的保留。
+
         Returns:
-            (实际情绪类型, 调整后强度)
+            (目标情绪类型, 调整后强度)
         """
-        current = self.emotion.type
+        dominant_name, dominant_intensity = self.emotion.dominant()
+        if dominant_name == "neutral":
+            current = EmotionType.NEUTRAL
+        else:
+            try:
+                current = EmotionType(dominant_name)
+            except ValueError:
+                current = EmotionType.NEUTRAL
+
         if current == EmotionType.NEUTRAL or current == target:
             return (target, intensity)
 
-        # Layer 1: 冲突矩阵 — 不同情绪间的切换阻力
+        # Layer 1: 冲突矩阵 — 不同情绪间的冲突阻力
         conflict_pairs = {
             (EmotionType.SADNESS, EmotionType.JOY): 0.8,
             (EmotionType.FEAR, EmotionType.JOY): 0.6,
@@ -809,19 +809,11 @@ class DriveEngine:
             if self.hormone.cortisol > 0.5:
                 conflict *= 0.7  # 皮质醇高 → 恐惧更容易
 
-        # 应用冲突
+        # 应用冲突（不阻塞，只降低强度）
         adjusted = intensity * (1.0 - max(0.0, min(1.0, conflict)))
 
-        # 阈值判断：候选太弱则维持原情绪（惯性获胜）
-        if adjusted < self.emotion.intensity * 0.5:
-            logger.debug(
-                "[DriveEngine] 情绪切换惯性维持: %s -(x)-> %s (conflict=%.2f, %.2f -> %.2f)",
-                current.value, target.value, conflict, intensity, adjusted,
-            )
-            return (current, self.emotion.intensity)
-
         logger.debug(
-            "[DriveEngine] 情绪切换: %s -> %s (conflict=%.2f, %.2f -> %.2f)",
+            "[DriveEngine] 情绪冲突调制: %s -> %s (conflict=%.2f, %.2f -> %.2f)",
             current.value, target.value, conflict, intensity, adjusted,
         )
         return (target, max(0.0, min(1.0, adjusted)))
@@ -840,14 +832,13 @@ class DriveEngine:
             self.last_minute_tick = time.time()
             return
 
-        if self.emotion.type != EmotionType.NEUTRAL:
+        if not self.emotion.is_empty():
             elapsed = time.time() - self.emotion.created_at
             if elapsed > self.emotion.duration:
-                # 开始衰减
-                self.emotion.intensity *= self.config.emotion.decay_rate
-                if self.emotion.intensity < self.config.emotion.min_intensity:
-                    self.emotion = EmotionalState()  # 回归平静
-                    logger.debug("[DriveEngine] 情绪回归平静")
+                # 开始衰减（所有情绪同时衰减）
+                self.emotion.decay_all(self.config.emotion.decay_rate)
+                if self.emotion.is_empty():
+                    logger.debug("[DriveEngine] 所有情绪回归平静")
                     if self.exp_stream:
                         self.exp_stream.log(
                             type="drive_event",
@@ -966,15 +957,12 @@ class DriveEngine:
         self._last_stress_level = level
         intensity_map = {"mild": 0.3, "moderate": 0.6, "severe": 0.9}
         intensity = self._modulate_hormone_to_emotion(
-            EmotionType.FEAR, min(1.0, self.emotion.intensity + intensity_map.get(level, 0.3))
+            EmotionType.FEAR, min(1.0, self.emotion.emotions.get("fear", 0.0) + intensity_map.get(level, 0.3))
         )
         actual_type, intensity = self._modulate_emotion_switch(EmotionType.FEAR, intensity)
-        self.emotion = EmotionalState(
-            type=actual_type,
-            intensity=intensity,
-            created_at=time.time(),
-            duration=self.config.emotion.get_duration(actual_type.value),
-        )
+        if intensity >= 0.05:
+            self.emotion.add_emotion(actual_type.value, intensity)
+            self.emotion.duration = self.config.emotion.get_duration(actual_type.value)
 
         if level == "mild":
             self.hormone.cortisol = min(1.0, self.hormone.cortisol + 0.05)

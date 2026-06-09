@@ -151,8 +151,12 @@ def cmd_show_drive(living: ConsciousLiving, args: str = "") -> None:
     print("=" * 50, flush=True)
 
     print("\n【情绪状态】", flush=True)
-    print(f"  类型: {living.drive.emotion.type.value}", flush=True)
-    print(f"  强度: {living.drive.emotion.intensity:.2f}", flush=True)
+    e = living.drive.emotion
+    if e.is_empty():
+        print("  平静", flush=True)
+    else:
+        for name, intensity in sorted(e.emotions.items(), key=lambda x: x[1], reverse=True):
+            print(f"  {name}: {intensity:.2f}", flush=True)
 
     print("\n【激素状态】", flush=True)
     print(f"  多巴胺: {living.drive.hormone.dopamine:.2f}（动力）", flush=True)

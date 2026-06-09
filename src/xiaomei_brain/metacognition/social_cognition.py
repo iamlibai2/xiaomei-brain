@@ -282,10 +282,8 @@ class SocialCognition:
         if goal_progress > 0.1:
             self._drive.on_goal_progress(min(goal_progress, 1.0))
         if boundary > 0.3:
-            from xiaomei_brain.drive.state import EmotionType
-            self._drive.emotion.type = EmotionType.ANGER
-            self._drive.emotion.intensity = min(1.0, boundary * 0.9)
-            self._drive.emotion.created_at = time.time()
+            anger_intensity = min(1.0, boundary * 0.9)
+            self._drive.emotion.add_emotion("anger", anger_intensity)
             self._drive.emotion.duration = self._drive.config.emotion.get_duration("anger")
             self._drive.hormone.cortisol = min(1.0, self._drive.hormone.cortisol + boundary * 0.2)
             self._drive.hormone.norepinephrine = min(1.0, self._drive.hormone.norepinephrine + boundary * 0.15)
