@@ -158,7 +158,14 @@ class SocialCognition:
         # 3. 分离 SIGNAL
         _, signal_json = self._split_signal(raw)
 
-        # 路由 EVENTS → Drive
+        # 路由 SIGNAL → Drive + relationship_engine（先执行——感知用户情绪）
+        if signal_json and self._drive:
+            try:
+                self._apply_social_signal(signal_json)
+            except Exception as e:
+                logger.warning("[SocialCognition] SIGNAL 应用失败: %s", e)
+
+        # 路由 EVENTS → Drive（后执行——边界侵犯等覆盖社交信号）
         if events_json and self._drive:
             try:
                 self._apply_drive_events(events_json)
@@ -171,13 +178,6 @@ class SocialCognition:
                 self._self_image.contribute_social_perception(perceptions)
             except Exception as e:
                 logger.warning("[SocialCognition] PERCEPTION 写入失败: %s", e)
-
-        # 路由 SIGNAL → Drive + relationship_engine
-        if signal_json and self._drive:
-            try:
-                self._apply_social_signal(signal_json)
-            except Exception as e:
-                logger.warning("[SocialCognition] SIGNAL 应用失败: %s", e)
 
         # 写入 ExpStream
         if self._exp_stream:

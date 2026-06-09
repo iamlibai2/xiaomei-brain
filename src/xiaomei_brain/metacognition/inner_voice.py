@@ -578,15 +578,17 @@ class InnerVoice:
             except Exception as e:
                 logger.warning("[InnerVoice] 叙事写入失败: %s", e)
 
-        # 2. Drive 事件维度（从 EVENTS JSON 解析）
-        if reflection.trigger in (TriggerType.CHAT_TURN, TriggerType.SILENCE):
-            if events_text:
-                self._apply_drive_events(events_text)
-
-        # 3. Drive 社交信号（从 SIGNAL JSON 解析，仅 CHAT_TURN）
+        # 2. Drive 社交信号（从 SIGNAL JSON 解析，仅 CHAT_TURN）
+        #    先处理——感知用户情绪，产生基础情绪反应
         if reflection.trigger == TriggerType.CHAT_TURN:
             if signal_text:
                 self._apply_social_signal(signal_text)
+
+        # 3. Drive 事件维度（从 EVENTS JSON 解析）
+        #    后处理——边界侵犯等事件覆盖社交信号，愤怒优先于恐惧
+        if reflection.trigger in (TriggerType.CHAT_TURN, TriggerType.SILENCE):
+            if events_text:
+                self._apply_drive_events(events_text)
 
         # 4. Purpose cognitive_log
         if reflection.trigger in (TriggerType.TASK_STEP, TriggerType.TASK_DONE):
