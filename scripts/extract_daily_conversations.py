@@ -160,7 +160,7 @@ def main():
         filename = f"对话记录_{date_str}.md"
         filepath = OUTPUT_DIR / filename
 
-        entries = dialogues[date_str]
+        entries = sorted(dialogues[date_str], key=lambda x: x[0])
 
         if filepath.exists() and filepath.stat().st_size > 100:
             # Append new entries (dedup by timestamp + content prefix)
@@ -169,7 +169,10 @@ def main():
             with open(filepath, encoding="utf-8") as ef:
                 for m in _re.finditer(r'\[(\d{2}:\d{2}:\d{2})\]', ef.read()):
                     existing_keys.add(m.group(1))
-            new_entries = [(t, r, c) for t, r, c in entries if t not in existing_keys]
+            new_entries = sorted(
+                ((t, r, c) for t, r, c in entries if t not in existing_keys),
+                key=lambda x: x[0],
+            )
             if not new_entries:
                 print(f"Skipping {filename} (no new entries)")
                 continue
