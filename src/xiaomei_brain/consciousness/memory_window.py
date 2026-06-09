@@ -45,7 +45,7 @@ def refresh_memory_window(
     - narratives:          search_narratives(mood+attention, top_k=10)
     - dag_summaries:       get_higher_summaries(session_id)
     - important_memories:  get_important(user_id, top_k=10)
-    - recalled_memories:   recall() → merge → dedup → top_k=5
+    - recalled_memories:   dual-channel recall → merge → dedup (max_per_tag=2)
     - relation_chains:     get_relation_chain(depth=2)
     - procedures:          procedure_memory.match(user_query, top_k=3)
     - recent_dialog:       get_recent(n)
@@ -76,9 +76,6 @@ def refresh_memory_window(
         perception=si.perception,
         last_snapshot=getattr(si, "_last_attention_snapshot", None),
     )
-
-    # 记忆召回查询词：有 user_input 直接用（避免反复咀嚼同一句话），无则用内省信号
-    memory_query = user_input if user_input else attention_query
 
     # ── 1. 叙事记忆 ──────────────────────────────────────
     if longterm:
@@ -114,24 +111,44 @@ def refresh_memory_window(
         except Exception as e:
             logger.warning("[MemoryWindow] 重要记忆获取失败: %s", e)
 
-    # ── 4. 召回记忆 ────────────────────────────────────
-    if longterm and memory_query:
+    # ── 4. 召回记忆（双通道：user_input + attention_query，各自召回再合并）───
+    if longterm:
         try:
-            # 语义召回
-            similar = longterm.recall(
-                memory_query, user_id=user_id, top_k=30,
-            ) or []
-            similar = [
-                m for m in similar
-                if m.get("effective_strength", 0) >= 0.0
-            ]
-            similar.sort(key=lambda m: m.get("score", 0), reverse=True)
-            similar = similar[:10]
-
-            # 与重要记忆合并去重
             seen: set[str] = set()
             merged: list[dict] = []
-            for m in important_memories + similar:
+
+            # 通道1：user_input 语义召回（匹配当前对话内容）
+            if user_input:
+                similar_user = longterm.recall(
+                    user_input, user_id=user_id, top_k=20,
+                ) or []
+                similar_user = [m for m in similar_user if m.get("effective_strength", 0) >= 0.0]
+                similar_user.sort(key=lambda m: m.get("score", 0), reverse=True)
+                for m in similar_user[:8]:
+                    mid = m.get("id", "")
+                    if mid and mid in seen:
+                        continue
+                    if mid:
+                        seen.add(mid)
+                    merged.append(m)
+
+            # 通道2：attention_query 召回（匹配情绪/注意力状态）
+            if attention_query and attention_query != "平静，等待中":
+                similar_attn = longterm.recall(
+                    attention_query, user_id=user_id, top_k=20,
+                ) or []
+                similar_attn = [m for m in similar_attn if m.get("effective_strength", 0) >= 0.0]
+                similar_attn.sort(key=lambda m: m.get("score", 0), reverse=True)
+                for m in similar_attn[:8]:
+                    mid = m.get("id", "")
+                    if mid and mid in seen:
+                        continue
+                    if mid:
+                        seen.add(mid)
+                    merged.append(m)
+
+            # 与重要记忆合并去重
+            for m in important_memories:
                 mid = m.get("id", "")
                 if mid and mid in seen:
                     continue
@@ -147,14 +164,14 @@ def refresh_memory_window(
             merged.sort(key=lambda m: m["_combined"], reverse=True)
 
             # 去重（每标签最多 2 条）
-            recalled_memories = _deduplicate_memories(merged, max_per_tag=2)[:5]
+            recalled_memories = _deduplicate_memories(merged, max_per_tag=2)
             for m in recalled_memories:
                 m.pop("_combined", None)
         except Exception as e:
             logger.warning("[MemoryWindow] 召回记忆获取失败: %s", e)
 
     # ── 5. 关系记忆链 ────────────────────────────────────
-    if longterm and memory_query and recalled_memories:
+    if longterm and recalled_memories:
         try:
             chain_map: dict[int, dict] = {}
             for seed in recalled_memories[:5]:

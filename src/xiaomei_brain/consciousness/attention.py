@@ -33,10 +33,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# ── 信号阈值 ──────────────────────────────────────────────
-
 # 欲望超过此值才有机会被关注
 DESIRE_THRESHOLD = 0.3
+
+# 情绪超过此强度才有机会被关注
+EMOTION_THRESHOLD = 0.3
 
 # 跨过阈值的信号，给予的额外加权倍数
 EMERGENCE_BOOST = 1.5
@@ -84,14 +85,9 @@ def select_attention(
     if perception:
         _collect_state_signals(perception, signals, last)
 
-    # ── 4. 兜底：心情 ──────────────────────────────────
-    if body and body.mood:
-        base_w = _sigmoid_normalize(body.emotion_intensity, center=0.3, scale=5)
-        signals.append(AttentionSignal(
-            key="mood",
-            label=f"心情{body.mood}",
-            weight=max(0.1, base_w),
-        ))
+    # ── 4. 情绪信号：每种情绪是一种注意力滤镜 ──────────
+    if body:
+        _collect_emotion_signals(body, signals, last)
 
     if not signals:
         return "平静，等待中", {}
@@ -120,6 +116,43 @@ def select_attention(
 
 
 # ── 信号收集 ──────────────────────────────────────────────
+
+def _collect_emotion_signals(body, signals: list, last: dict) -> None:
+    """从情绪状态收集信号。每种情绪是注意力滤镜，影响记忆召回方向。"""
+    mood = body.mood
+    intensity = body.emotion_intensity
+
+    if not mood or mood == "neutral" or intensity < EMOTION_THRESHOLD:
+        # 情绪不显著时，心情作为低权重兜底
+        if mood:
+            w = _sigmoid_normalize(intensity, center=0.2, scale=3)
+            signals.append(AttentionSignal(
+                key="mood", label="心情平静", weight=max(0.05, w),
+            ))
+        return
+
+    # 情绪→注意力标签（影响记忆召回查询词）
+    focus_map = {
+        "anger":    "被激怒，关注冒犯和边界",
+        "sadness":  "感到低落，关注失去和遗憾",
+        "fear":     "感到不安，关注威胁和风险",
+        "disgust":  "感到反感，关注不适和侵害",
+        "joy":      "心情愉快，关注积极和连接",
+        "surprise": "感到意外，关注变化和新奇",
+    }
+
+    label = focus_map.get(mood, f"心情{mood}")
+    base_w = intensity  # 情绪越强，信号权重越高
+    emerged = _is_emerged(mood, intensity, last, EMOTION_THRESHOLD)
+    weight = _apply_boosts(base_w, emerged, mood)
+
+    signals.append(AttentionSignal(
+        key=mood,
+        label=label,
+        weight=weight,
+        emerged=emerged,
+    ))
+
 
 def _collect_desire_signals(body, signals: list, last: dict) -> None:
     """从欲望收集中选信号。"""
