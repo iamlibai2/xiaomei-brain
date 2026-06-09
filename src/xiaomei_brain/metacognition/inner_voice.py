@@ -211,14 +211,21 @@ class InnerVoice:
             return
 
         praise = events.get("praise_intensity", 0)
+        criticism = events.get("criticism_intensity", 0)
         expression = events.get("expression_urge", 0)
         curiosity = events.get("curiosity_sparked", 0)
+        boundary = events.get("boundary_violation", 0)
 
         if praise > 0.1:
             try:
                 self._drive.on_praise(min(praise, 1.0))
             except Exception as e:
                 logger.warning("[InnerVoice] on_praise 失败: %s", e)
+        if criticism > 0.1:
+            try:
+                self._drive.on_criticism(min(criticism, 1.0))
+            except Exception as e:
+                logger.warning("[InnerVoice] on_criticism 失败: %s", e)
         if expression > 0.3:
             try:
                 self._drive.on_insight(expression * 0.05)
@@ -229,10 +236,25 @@ class InnerVoice:
                 self._drive.on_curiosity(curiosity * 0.08)
             except Exception as e:
                 logger.warning("[InnerVoice] on_curiosity 失败: %s", e)
+        if boundary > 0.3:
+            try:
+                from xiaomei_brain.drive.state import EmotionType
+                self._drive.emotion.type = EmotionType.ANGER
+                self._drive.emotion.intensity = min(1.0, boundary * 0.9)
+                self._drive.emotion.created_at = time.time()
+                self._drive.emotion.duration = self._drive.config.emotion.get_duration("anger")
+                # 激素同步：愤怒立即使皮质醇和去甲肾上腺素上升
+                self._drive.hormone.cortisol = min(1.0, self._drive.hormone.cortisol + boundary * 0.2)
+                self._drive.hormone.norepinephrine = min(1.0, self._drive.hormone.norepinephrine + boundary * 0.15)
+                self._drive.hormone.last_updated = time.time()
+                logger.info("[InnerVoice] boundary_violation=%.2f → ANGER(%.2f)", boundary, self._drive.emotion.intensity)
+            except Exception as e:
+                logger.warning("[InnerVoice] boundary_violation 失败: %s", e)
 
         logger.info(
-            "[InnerVoice] EVENTS: praise=%.2f, expression=%.2f, curiosity=%.2f",
-            praise, expression, curiosity,
+            "[InnerVoice] EVENTS: praise=%.2f, criticism=%.2f, expression=%.2f, "
+            "curiosity=%.2f, boundary=%.2f",
+            praise, criticism, expression, curiosity, boundary,
         )
 
     def _apply_social_signal(self, signal_text: str) -> None:

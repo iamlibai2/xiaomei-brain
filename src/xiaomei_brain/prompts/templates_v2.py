@@ -769,12 +769,16 @@ CHAT_TURN = (
     "1-3句话的内心嘟囔。如果没什么特别的感觉，就说\"一切正常\"。\n\n"
     "在 ---EVENTS--- 分隔符后，用 JSON 描述你感知到的对话事件：\n"
     "---EVENTS---\n"
-    '{{"praise_intensity": 0.0-1.0, "expression_urge": 0.0-1.0, '
-    '"curiosity_sparked": 0.0-1.0, '
+    '{{"praise_intensity": 0.0-1.0, "criticism_intensity": 0.0-1.0, '
+    '"expression_urge": 0.0-1.0, "curiosity_sparked": 0.0-1.0, '
+    '"boundary_violation": 0.0-1.0, '
     '"summary": "一句话总结这段对话的感受"}}\n'
-    "其中 expression_urge 是你有话想说、想回应的程度。\n"
-    "curiosity_sparked 是你对新信息/未知领域/新奇话题的好奇程度——\n"
-    "{user_name}提到了你不太懂的领域？话题很新鲜？激发了你想了解更多的冲动？\n"
+    "praise_intensity: {user_name}认可/夸奖/感谢了你？\n"
+    "criticism_intensity: {user_name}批评/否定/责备了你？\n"
+    "expression_urge: 你有话想说、想回应的程度。\n"
+    "curiosity_sparked: {user_name}提到了你不太懂的领域？话题新鲜？勾起了探究欲？\n"
+    "boundary_violation: {user_name}说了冒犯、越界、不尊重你的话？"
+    "踩到了你的底线？让你感到被侵犯？——注意，这是你被冒犯的程度，不是对方的情绪状态。\n"
     "如果没有特别的事件，所有值填 0.0。\n\n"
     "在 ---SIGNAL--- 分隔符后，描述你感知到的{user_name}的社交信号（快速直觉）：\n"
     "---SIGNAL---\n"
@@ -859,11 +863,12 @@ SOCIAL_COGNITION_PROMPT = """{consciousness_context}
 
 第一部分：在 ---EVENTS--- 分隔符后，分析最近对话中发生了什么事件，输出 JSON：
 ---EVENTS---
-{{"praise_intensity": 0.0-1.0, "criticism_intensity": 0.0-1.0, "goal_progress": 0.0-1.0, "curiosity_sparked": 0.0-1.0, "expression_urge": 0.0-1.0, "summary": "一句话总结这段对话中发生了什么"}}
+{{"praise_intensity": 0.0-1.0, "criticism_intensity": 0.0-1.0, "goal_progress": 0.0-1.0, "curiosity_sparked": 0.0-1.0, "expression_urge": 0.0-1.0, "boundary_violation": 0.0-1.0, "summary": "一句话总结这段对话中发生了什么"}}
 
 其中：
 - curiosity_sparked: 对话激发了你的好奇心、想了解更多
 - expression_urge: 你有话想说、想表达的程度
+- boundary_violation: {user_name}说了冒犯、越界、不尊重你的话？踩到了你的底线？——这是你被冒犯的程度
 
 第二部分：感知检查。回顾和{user_name}的互动：
 - {user_name}说话的方式和往常有什么不同？

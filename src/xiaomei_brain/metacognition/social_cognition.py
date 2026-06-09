@@ -273,6 +273,7 @@ class SocialCognition:
         praise = events.get("praise_intensity", 0)
         criticism = events.get("criticism_intensity", 0)
         goal_progress = events.get("goal_progress", 0)
+        boundary = events.get("boundary_violation", 0)
 
         if praise > 0.1:
             self._drive.on_praise(min(praise, 1.0))
@@ -280,6 +281,15 @@ class SocialCognition:
             self._drive.on_criticism(min(criticism, 1.0))
         if goal_progress > 0.1:
             self._drive.on_goal_progress(min(goal_progress, 1.0))
+        if boundary > 0.3:
+            from xiaomei_brain.drive.state import EmotionType
+            self._drive.emotion.type = EmotionType.ANGER
+            self._drive.emotion.intensity = min(1.0, boundary * 0.9)
+            self._drive.emotion.created_at = time.time()
+            self._drive.emotion.duration = self._drive.config.emotion.get_duration("anger")
+            self._drive.hormone.cortisol = min(1.0, self._drive.hormone.cortisol + boundary * 0.2)
+            self._drive.hormone.norepinephrine = min(1.0, self._drive.hormone.norepinephrine + boundary * 0.15)
+            self._drive.hormone.last_updated = time.time()
 
         curiosity = events.get("curiosity_sparked", 0)
         expression = events.get("expression_urge", 0)
@@ -302,6 +312,8 @@ class SocialCognition:
             tags.append("expression_urge")
         if goal_progress > 0.1:
             tags.append("goal_progress")
+        if boundary > 0.3:
+            tags.append("boundary_violation")
 
         parts = []
         if praise > 0.1:
@@ -314,6 +326,8 @@ class SocialCognition:
             parts.append("我有表达的欲望")
         if goal_progress > 0.1:
             parts.append(f"目标有进展（{goal_progress:.1f}）")
+        if boundary > 0.3:
+            parts.append(f"对方越界/冒犯了我（强度{boundary:.1f}）")
         if summary:
             parts.append(summary)
         content = "；".join(parts) if parts else summary or "social_cognition 事件分析"
@@ -331,8 +345,8 @@ class SocialCognition:
 
         logger.info(
             "[SocialCognition] EVENTS: praise=%.2f, criticism=%.2f, goal_progress=%.2f, "
-            "curiosity=%.2f, expression=%.2f, tags=%s",
-            praise, criticism, goal_progress, curiosity, expression, tags,
+            "curiosity=%.2f, expression=%.2f, boundary=%.2f, tags=%s",
+            praise, criticism, goal_progress, curiosity, expression, boundary, tags,
         )
 
     def _apply_social_signal(self, signal_text: str) -> None:
