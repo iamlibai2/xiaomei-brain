@@ -38,7 +38,7 @@ def set_music_provider(provider) -> None:
 
 @tool(
     name="generate_music",
-    description="根据文字描述和歌词生成音乐。必须提供歌词（支持 [verse], [chorus], [bridge] 等标签）。生成可能需要较长时间，请耐心等待。",
+    description="根据文字描述和歌词生成音乐。必须提供歌词（支持 [verse], [chorus], [bridge] 等标签）。filename 必须带扩展名（如 .mp3、.wav）。生成可能需要较长时间，请耐心等待。",
 )
 def music_generate(
     prompt: str,
@@ -51,7 +51,7 @@ def music_generate(
         prompt: Music description including style, mood, instruments, tempo etc.
                 Examples: "独立民谣,忧郁,内省", "欢快电子乐,节拍强劲"
         lyrics: Optional lyrics in [verse], [chorus], [bridge] format.
-        filename: Output audio file path.
+        filename: Output audio file path. 必须带扩展名。
     """
     global _music_provider
 

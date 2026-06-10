@@ -71,7 +71,16 @@ class MusicProvider:
         response.raise_for_status()
         data = response.json()
 
+        # MiniMax 音乐 API 的错误不在 HTTP 状态码里，而是包在 base_resp 中
+        base_resp = data.get("base_resp", {})
+        if base_resp.get("status_code", 0) != 0:
+            raise ValueError(
+                f"MiniMax music API 错误 (code={base_resp['status_code']}): {base_resp.get('status_msg', 'unknown')}"
+            )
+
         audio_hex = data.get("data", {}).get("audio", "")
+        if not audio_hex:
+            raise ValueError(f"MiniMax music API 返回空音频数据，response: {data}")
         return bytes.fromhex(audio_hex)
 
     def generate_to_file(
@@ -130,6 +139,12 @@ class MusicProvider:
         )
         response.raise_for_status()
         data = response.json()
+
+        base_resp = data.get("base_resp", {})
+        if base_resp.get("status_code", 0) != 0:
+            raise ValueError(
+                f"MiniMax music API 错误 (code={base_resp['status_code']}): {base_resp.get('status_msg', 'unknown')}"
+            )
 
         # For streaming, audio may come in chunks if task supports it
         # Otherwise yield the complete audio at the end

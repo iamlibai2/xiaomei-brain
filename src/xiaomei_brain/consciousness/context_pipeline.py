@@ -7,6 +7,7 @@ DAG 压缩和过滤由 Agent._auto_compact() / agent.dag.filter_compressed_messa
 from __future__ import annotations
 
 import logging
+import time as _time
 from typing import Any
 
 from xiaomei_brain.agent.message_utils import estimate_content_tokens
@@ -118,8 +119,12 @@ def build_context(
             exp_stream=getattr(agent, "exp_stream", None),
         )
         self_image.current_user_name = getattr(agent, 'user_display_name', '')
+        # 传递上条用户消息的时间戳，供 _render_header 计算时差
+        self_image._last_user_msg_time = getattr(agent, '_last_user_msg_time', None)
         profile = _load_salience_profile(agent)
         system_content = inject_consciousness(self_image, mode=mode, user_input=user_input, profile=profile)
+        # 记录当前消息的时间，供下次使用
+        agent._last_user_msg_time = _time.time()
         self_image._salience_profile = profile  # 挂载，供反馈阶段使用
         # 日志：system prompt 中的 DAG 摘要数量
         dag_count = len(getattr(self_image.memory, 'dag_summaries', []))
