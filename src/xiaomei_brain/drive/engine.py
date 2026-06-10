@@ -162,6 +162,9 @@ class DriveEngine:
         self._restore_from_storage()
         self._loaded = True
 
+        # 褪黑素从存储恢复后立刻用当前时间覆盖
+        self._update_melatonin()
+
         logger.info(
             f"[DriveEngine] 加载完成: "
             f"desire.belonging={self.desire.belonging:.2f}, "
