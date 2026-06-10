@@ -216,6 +216,7 @@ class ConversationDriver:
                         images=getattr(current_msg, "images", None),
                         self_image=getattr(getattr(parent, "consciousness", None), "self_image", None),
                         force_mode=getattr(parent, "force_mode", ""),
+                        inner_voice_mode=self._inner_voice.get_last_mode() if self._inner_voice else "",
                     )
 
                     chunks = []

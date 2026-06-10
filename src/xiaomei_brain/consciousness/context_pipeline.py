@@ -27,9 +27,10 @@ def determine_mode(
     pending_intents: list[str] | None = None,
     has_active_goal: bool = False,
     recent_has_tool_calls: bool = False,
+    inner_voice_mode: str = "",
     config: Any | None = None,
 ) -> str:
-    """Determine operational mode based on consciousness state.
+    """Determine operational mode based on consciousness state + InnerVoice MODE.
 
     Args:
         user_input: The user's current message.
@@ -38,6 +39,8 @@ def determine_mode(
         pending_intents: Pending intents from SelfImage.
         has_active_goal: Whether there is an active goal in PurposeEngine.
         recent_has_tool_calls: Whether recent exchanges involved tool calls.
+        inner_voice_mode: InnerVoice MODE judgment ("daily" or "task"). Only set
+            after CHAT_TURN reflection; empty if not yet available.
         config: LivingConfig instance (uses defaults if not provided).
 
     Returns:
@@ -46,7 +49,6 @@ def determine_mode(
     if config is None:
         from .config import LivingConfig
         config = LivingConfig()
-    kw = config.keywords
     cc = config.consciousness
 
     desire_state = desire_state or {}
@@ -60,7 +62,7 @@ def determine_mode(
     if energy_level < cc.energy_low_threshold:
         return "flow"
 
-    # Pending DREAM/REFLECT intent → reflect
+    # Pending DREAM/REFLECT/RECALL intent → reflect (L3-triggered, explicit)
     if any(i in pending_intents for i in ("DREAM", "REFLECT", "RECALL")):
         return "reflect"
 
@@ -68,31 +70,18 @@ def determine_mode(
     if has_active_goal:
         return "task"
 
+    # InnerVoice MODE judgment (LLM-based, only after CHAT_TURN)
+    if inner_voice_mode == "task":
+        return "task"
+    if inner_voice_mode == "flow":
+        return "flow"
+    if inner_voice_mode == "daily":
+        return "daily"
+
     # High desire tension → daily (desire drives context need)
     max_desire = max(desire_state.get(k, 0) for k in ("belonging", "cognition", "achievement", "expression"))
     if max_desire > 0.8:
         return "daily"
-
-    # User input reflects on past behavior → reflect
-    if any(k in user_input for k in kw.reflect_keywords):
-        return "reflect"
-
-    # Past references → daily (need history)
-    if any(k in user_input for k in kw.past_keywords):
-        return "daily"
-
-    # Personal opinion/judgment → daily (need self-model)
-    if any(k in user_input for k in kw.opinion_keywords):
-        return "daily"
-
-    # Emotional/personal → daily
-    if any(k in user_input for k in kw.personal_keywords):
-        return "daily"
-
-    # Simple/factual → flow
-    if len(user_input) < config.context.short_input_threshold:
-        if any(p in user_input for p in kw.simple_patterns):
-            return "flow"
 
     # Default: daily
     return "daily"
@@ -108,6 +97,7 @@ def build_context(
     images: list[str] | None = None,
     self_image: Any = None,
     force_mode: str = "",
+    inner_voice_mode: str = "",
 ) -> list[dict[str, Any]]:
     """组装完整上下文，返回可直接传入 ReAct 引擎的消息列表。
 
@@ -168,6 +158,7 @@ def build_context(
             pending_intents=cs.get("pending_intents", []),
             has_active_goal=cs.get("has_active_goal", False),
             recent_has_tool_calls=recent_tool_calls,
+            inner_voice_mode=inner_voice_mode,
             config=cfg,
         )
 

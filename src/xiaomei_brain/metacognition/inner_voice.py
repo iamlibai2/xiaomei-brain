@@ -135,15 +135,19 @@ class InnerVoice:
         # 最近一次 INSERT 建议
         self._last_inserts: list[dict] = []
 
+        # 最近一次 MODE 判断（daily / task）
+        self._last_mode: str = ""
+
     # ── 响应解析 ──────────────────────────────────────────────
 
     @staticmethod
-    def _split_all(response: str) -> tuple[str, str, str, str, str]:
-        """分离 自然语言 / ---EVENTS--- / ---SIGNAL--- / ---GAPS--- / ---INSERT---"""
+    def _split_all(response: str) -> tuple[str, str, str, str, str, str]:
+        """分离 自然语言 / ---EVENTS--- / ---SIGNAL--- / ---GAPS--- / ---INSERT--- / ---MODE---"""
         signal_text = ""
         events_text = ""
         gaps_text = ""
         inserts_text = ""
+        mode_text = ""
         remainder = response.strip()
 
         # GAPS 在最后，先拆分
@@ -151,6 +155,12 @@ class InnerVoice:
             remainder, gaps_text = remainder.split("---GAPS---", 1)
             remainder = remainder.strip()
             gaps_text = gaps_text.strip()
+
+        # MODE 在 GAPS 之前
+        if "---MODE---" in remainder:
+            remainder, mode_text = remainder.split("---MODE---", 1)
+            remainder = remainder.strip()
+            mode_text = mode_text.strip()
 
         # SIGNAL 在 EVENTS 之后
         if "---SIGNAL---" in remainder:
@@ -172,7 +182,7 @@ class InnerVoice:
             thought = thought.strip()
             inserts_text = inserts_text.strip()
 
-        return thought, events_text, signal_text, gaps_text, inserts_text
+        return thought, events_text, signal_text, gaps_text, inserts_text, mode_text
 
     def _parse_inserts(self, inserts_text: str) -> list[dict]:
         """解析 ---INSERT--- 部分的 JSON 数组。"""
@@ -388,8 +398,14 @@ class InnerVoice:
         if not raw_response:
             return None
 
-        # 分离自然语言 / EVENTS JSON / SIGNAL JSON / GAPS JSON / INSERT JSON
-        thought_text, events_json, signal_json, gaps_json, inserts_json = self._split_all(raw_response)
+        # 分离自然语言 / EVENTS JSON / SIGNAL JSON / GAPS JSON / INSERT JSON / MODE
+        thought_text, events_json, signal_json, gaps_json, inserts_json, mode_text = self._split_all(raw_response)
+        # 存储 MODE（仅 CHAT_TURN 有，其他 trigger 为空字符串）
+        if mode_text:
+            mode_text = mode_text.strip().split("\n")[0].strip().lower()
+            self._last_mode = mode_text if mode_text in ("daily", "task", "flow") else ""
+            if self._last_mode:
+                logger.info("[InnerVoice] MODE: %s", self._last_mode)
         if not thought_text:
             return None
 
@@ -689,6 +705,10 @@ class InnerVoice:
         if not self._last_reflection:
             return False
         return _has_experience_signal(self._last_reflection.thought)
+
+    def get_last_mode(self) -> str:
+        """获取最近一次 InnerVoice 判断的上下文模式（daily / task）。"""
+        return self._last_mode
 
     def get_last_thought(self) -> str:
         """获取最近一次反省的文本。"""
