@@ -238,6 +238,10 @@ def build_context(
     # 7. token 裁剪
     system_tokens = estimate_tokens(system_content) if system_content else 0
     messages_budget = max(200, max_tokens - system_tokens - 500)
+    logger.info(
+        "[ContextPipeline] 裁剪前: %d条消息, system_tokens=%d, budget=%d, max_tokens=%d",
+        len(agent.messages), system_tokens, messages_budget, max_tokens,
+    )
     trimmed: list[dict[str, Any]] = []
     used = 0
     for m in reversed(agent.messages):
@@ -247,6 +251,10 @@ def build_context(
         trimmed.append(m)
         used += t
     agent.messages = list(reversed(trimmed))
+    logger.info(
+        "[ContextPipeline] 裁剪后: %d条消息, used=%d tokens",
+        len(agent.messages), used,
+    )
 
     # 8. 返回最终消息列表
     if system_content:

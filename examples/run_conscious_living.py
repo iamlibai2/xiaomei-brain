@@ -323,6 +323,13 @@ def main():
                     ltm = getattr(agent, 'longterm_memory', None)
                     si.load_preferred_names(user_id, ltm)
             print(f"你好，{display_name}。\n")
+            # 登录后加载 fresh_tail（此时 user_id 已确定）
+            living.load_fresh_tail()
+            # 通知 attention 层：fresh_tail 属于 CLI 会话，防止后续 switch_to 覆盖
+            if hasattr(living, '_attention') and living._attention:
+                cli_sid = f"cli-{agent_id}"
+                living._attention.save_session(cli_sid)
+                living._attention._current_session = cli_sid
         else:
             print(f"\033[31m用户 '{user_id}' 不存在。可用: {', '.join(ids)}\033[0m")
             user_id = None

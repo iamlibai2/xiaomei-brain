@@ -1186,121 +1186,128 @@ class ConsciousLiving(Living):
             si = self.consciousness.get_self_image()
             si.contribute_perception(user_active=True)
 
-        # 加载 fresh tail：让 agent "带着最近的记忆醒来"
-        # 从 DB 还原完整的消息序列，包括 assistant(tool_calls) + tool 配对
-        if self.agent.conversation_db and getattr(self.agent, "dag", None):
-            agent = self.agent._get_agent()
-            recent = self.agent.conversation_db.get_recent(
-                self._config.context.fresh_tail_count,
-                user_id=self.user_id,
+        # fresh_tail 延迟到登录后加载（此时才知道 user_id）
+        logger.info("[ConsciousLiving] Good morning! 火焰点燃。")
+
+    def load_fresh_tail(self) -> None:
+        """加载 fresh tail：让 agent "带着最近的记忆醒来"。
+
+        在用户登录后调用（此时 user_id 已确定），从 DB 还原完整的消息序列，
+        包括 assistant(tool_calls) + tool 配对。
+        """
+        if not self.agent.conversation_db or not getattr(self.agent, "dag", None):
+            return
+
+        agent = self.agent._get_agent()
+        recent = self.agent.conversation_db.get_recent(
+            self._config.context.fresh_tail_count,
+            user_id=self.user_id,
+        )
+
+        if not recent:
+            logger.info("[ConsciousLiving] fresh_tail: 无历史消息 (user_id=%s)", self.user_id)
+            return
+
+        import json
+
+        # 第一遍：收集 assistant 的 tool_call_ids（用于过滤孤立 tool 消息）
+        assistant_tc_ids: set[str] = set()
+        for m in recent:
+            if m.get("role") == "assistant":
+                metadata = m.get("metadata", {})
+                if isinstance(metadata, str):
+                    try:
+                        metadata = json.loads(metadata)
+                    except Exception:
+                        metadata = {}
+                if isinstance(metadata, dict):
+                    for tc in metadata.get("tool_calls", []):
+                        tc_id = tc.get("id", "")
+                        if tc_id:
+                            assistant_tc_ids.add(tc_id)
+
+        # 第二遍：重建消息列表，从 DB metadata 恢复 tool_calls / reasoning_content
+        # 同时复制 DB id（DAG 压缩需要，用于 filter_compressed_messages 匹配）
+        restored: list[dict] = []
+        for m in recent:
+            role = m.get("role", "user")
+            db_id = m.get("id")  # SQLite row id
+            if role == "user":
+                msg = {"role": "user", "content": m.get("content", "")}
+                if db_id is not None:
+                    msg["id"] = db_id
+                restored.append(msg)
+            elif role == "assistant":
+                msg: dict[str, Any] = {"role": "assistant", "content": m.get("content", "")}
+                if db_id is not None:
+                    msg["id"] = db_id
+                metadata = m.get("metadata", {})
+                if isinstance(metadata, str):
+                    try:
+                        metadata = json.loads(metadata)
+                    except Exception:
+                        metadata = {}
+                if isinstance(metadata, dict):
+                    if metadata.get("tool_calls"):
+                        msg["tool_calls"] = metadata["tool_calls"]
+                    if metadata.get("reasoning_content"):
+                        msg["reasoning_content"] = metadata["reasoning_content"]
+                restored.append(msg)
+            elif role == "tool":
+                tc_id = m.get("tool_call_id", "")
+                if tc_id and tc_id in assistant_tc_ids:
+                    msg = {
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "content": m.get("content", ""),
+                    }
+                    if db_id is not None:
+                        msg["id"] = db_id
+                    restored.append(msg)
+
+        # 第三遍：清理不完整的 tool_calls（防止 DeepSeek 400）
+        from xiaomei_brain.base.message_utils import scrub_tool_calls_incomplete
+        before = len(restored)
+        restored = scrub_tool_calls_incomplete(restored)
+        if len(restored) < before:
+            logger.warning(
+                "[ConsciousLiving] 剥离了 %d 条不完整 tool_calls 消息",
+                before - len(restored),
             )
 
-            # 第一遍：收集 assistant 的 tool_call_ids（用于过滤孤立 tool 消息）
-            assistant_tc_ids: set[str] = set()
-            for m in recent:
-                if m.get("role") == "assistant":
-                    metadata = m.get("metadata", {})
-                    if isinstance(metadata, str):
-                        import json
-                        try:
-                            metadata = json.loads(metadata)
-                        except Exception:
-                            metadata = {}
-                    if isinstance(metadata, dict):
-                        for tc in metadata.get("tool_calls", []):
-                            tc_id = tc.get("id", "")
-                            if tc_id:
-                                assistant_tc_ids.add(tc_id)
-
-            # 第二遍：重建消息列表，从 DB metadata 恢复 tool_calls / reasoning_content
-            # 同时复制 DB id（DAG 压缩需要，用于 filter_compressed_messages 匹配）
-            restored: list[dict] = []
-            for m in recent:
-                role = m.get("role", "user")
-                db_id = m.get("id")  # SQLite row id
-                if role == "user":
-                    msg = {"role": "user", "content": m.get("content", "")}
-                    if db_id is not None:
-                        msg["id"] = db_id
-                    restored.append(msg)
-                elif role == "assistant":
-                    msg: dict[str, Any] = {"role": "assistant", "content": m.get("content", "")}
-                    if db_id is not None:
-                        msg["id"] = db_id
-                    metadata = m.get("metadata", {})
-                    if isinstance(metadata, str):
-                        import json
-                        try:
-                            metadata = json.loads(metadata)
-                        except Exception:
-                            metadata = {}
-                    if isinstance(metadata, dict):
-                        if metadata.get("tool_calls"):
-                            msg["tool_calls"] = metadata["tool_calls"]
-                        if metadata.get("reasoning_content"):
-                            msg["reasoning_content"] = metadata["reasoning_content"]
-                    restored.append(msg)
-                elif role == "tool":
-                    tc_id = m.get("tool_call_id", "")
-                    if tc_id and tc_id in assistant_tc_ids:
-                        msg = {
-                            "role": "tool",
-                            "tool_call_id": tc_id,
-                            "content": m.get("content", ""),
-                        }
-                        if db_id is not None:
-                            msg["id"] = db_id
-                        restored.append(msg)
-
-            # 第三遍：清理不完整的 tool_calls（防止 DeepSeek 400）
-            # 使用公用方法，剥离 assistant 有 tool_calls 但缺少 tool 响应的残缺记录
-            from xiaomei_brain.base.message_utils import scrub_tool_calls_incomplete
-            before = len(restored)
-            restored = scrub_tool_calls_incomplete(restored)
-            if len(restored) < before:
-                logger.warning(
-                    "[ConsciousLiving] 剥离了 %d 条不完整 tool_calls 消息",
-                    before - len(restored),
-                )
-
-            # 第四遍：清理 ReAct 循环残留的空 assistant 消息
-            cleaned = []
-            i = 0
-            while i < len(restored):
-                m = restored[i]
-                if (m.get("role") == "assistant"
-                    and not m.get("content")
-                    and not m.get("reasoning_content")):
-                    i += 1
-                    continue
-                cleaned.append(m)
+        # 第四遍：清理 ReAct 循环残留的空 assistant 消息
+        cleaned = []
+        i = 0
+        while i < len(restored):
+            m = restored[i]
+            if (m.get("role") == "assistant"
+                and not m.get("content")
+                and not m.get("reasoning_content")):
                 i += 1
-            if len(cleaned) < len(restored):
-                logger.info("[ConsciousLiving] 清理 %d 条 ReAct 残留消息", len(restored) - len(cleaned))
+                continue
+            cleaned.append(m)
+            i += 1
+        if len(cleaned) < len(restored):
+            logger.info("[ConsciousLiving] 清理 %d 条 ReAct 残留消息", len(restored) - len(cleaned))
 
-            # 第五遍：过滤主动输出（没有前置 user 消息的孤立 assistant）
-            # 主动输出通过 _send_proactive() 写入了 conversation_db，恢复时不应进入对话上下文
-            filtered = []
-            prev_role = None
-            for m in cleaned:
-                role = m.get("role", "")
-                if role == "assistant" and not m.get("tool_calls"):
-                    # 前一消息不是 user → 这是主动输出，跳过
-                    if prev_role != "user":
-                        continue
-                filtered.append(m)
-                prev_role = role
-            if len(filtered) < len(cleaned):
-                logger.info(
-                    "[ConsciousLiving] 过滤 %d 条主动输出消息",
-                    len(cleaned) - len(filtered),
-                )
+        # 第五遍：过滤主动输出（没有前置 user 消息的孤立 assistant）
+        filtered = []
+        prev_role = None
+        for m in cleaned:
+            role = m.get("role", "")
+            if role == "assistant" and not m.get("tool_calls"):
+                if prev_role != "user":
+                    continue
+            filtered.append(m)
+            prev_role = role
+        if len(filtered) < len(cleaned):
+            logger.info(
+                "[ConsciousLiving] 过滤 %d 条主动输出消息",
+                len(cleaned) - len(filtered),
+            )
 
-            agent.messages = filtered
-            if agent.messages:
-                logger.info("[ConsciousLiving] 苏醒时加载 fresh_tail: %d 条消息", len(agent.messages))
-
-        logger.info("[ConsciousLiving] Good morning! 火焰点燃。")
+        agent.messages = filtered
+        logger.info("[ConsciousLiving] 加载 fresh_tail: %d 条消息 (user_id=%s)", len(agent.messages), self.user_id)
 
     def _on_wake_up(self) -> None:
         """从 IDLE 收到消息唤醒，直接切 AWAKE 处理。
