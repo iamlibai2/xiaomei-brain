@@ -46,12 +46,13 @@ from ..memory.procedure import ProcedureMemory
 logger = logging.getLogger(__name__)
 
 
-class TickResult(Enum):
-    """tick() 返回值"""
-    NORMAL = "normal"               # 常规心跳，无特殊事件
-    L2_TRIGGERED = "l2_triggered"   # L2 加柴已触发
-    L3_TRIGGERED = "l3_triggered"   # L3 沉思已触发（任何状态）
-    DREAM_TRIGGERED = "dream_triggered"  # 入梦信号（仅 SLEEPING）
+# [已废弃] TickResult — 旧架构遗留，L2/L3/DREAM 调度已迁移到 layer2.py 线程
+# class TickResult(Enum):
+#     """tick() 返回值"""
+#     NORMAL = "normal"               # 常规心跳，无特殊事件
+#     L2_TRIGGERED = "l2_triggered"   # L2 加柴已触发
+#     L3_TRIGGERED = "l3_triggered"   # L3 沉思已触发（任何状态）
+#     DREAM_TRIGGERED = "dream_triggered"  # 入梦信号（仅 SLEEPING）
 
 
 @dataclass
@@ -854,86 +855,57 @@ class Consciousness:
         """当前 L0 心跳计数（供 ConsciousLiving 周期检查）"""
         return self._l0_count
 
-    def tick(
-        self,
-        agent_state: str = "awake",
-    ) -> TickResult:
-        """统一入口。ConsciousLiving 每循环只调这一个。
+    # [已废弃] tick() — 旧架构 "统一入口"，实际没人调用
+    #   L0 由 Layer0 线程直接调 tick_L0()
+    #   L1 异常 → L2 bypass 保留在 _l2_triggered_by_anomaly（L1 异常检测仍走这里）
+    #   L2/L3/DREAM 调度已迁移到 layer2.py 线程
+    # def tick(
+    #     self,
+    #     agent_state: str = "awake",
+    # ) -> TickResult:
+    #     """统一入口。ConsciousLiving 每循环只调这一个。"""
+    #     self.tick_L0(agent_state=agent_state)
+    #     if self._l2_triggered_by_anomaly:
+    #         anomaly_type = self._l2_triggered_by_anomaly
+    #         self._l2_triggered_by_anomaly = None
+    #         logger.info("[Consciousness] L1 异常 → L2 意图决策: %s", anomaly_type)
+    #         self.tick_L2_intent(anomaly_type)
+    #         return TickResult.L2_TRIGGERED
+    #     if self._l0_count >= self._cc.l1_threshold:
+    #         logger.info("[Consciousness] L1 触发（异常检测，_l0_count=%d）", self._l0_count)
+    #         self.tick_L1()
+    #     return self._tick_above_l1(agent_state)
 
-        意识深度（L0-L3）和生命状态（awake/sleeping/dreaming）正交：
-        - L2: 任何状态都可触发（轻度加柴）
-        - L3: 任何状态都可触发（沉思），DREAMING 中由 DreamEngine 处理
-        - DREAM: 仅 SLEEPING 足够久后触发（入梦信号，不是意识深度）
-
-        Args:
-            agent_state: ConsciousLiving 当前生命状态
-
-        Returns:
-            TickResult: NORMAL / L2_TRIGGERED / L3_TRIGGERED / DREAM_TRIGGERED
-        """
-        # L0: 火焰骨架维护（每秒必做）
-        self.tick_L0(agent_state=agent_state)
-
-        # L1 异常已触发 L2（绕过冷却），直接执行意图决策
-        if self._l2_triggered_by_anomaly:
-            anomaly_type = self._l2_triggered_by_anomaly
-            self._l2_triggered_by_anomaly = None
-            logger.info("[Consciousness] L1 异常 → L2 意图决策: %s", anomaly_type)
-            self.tick_L2_intent(anomaly_type)
-            return TickResult.L2_TRIGGERED
-
-        # L1: 每60秒自动触发（tick_L0 内部已累加 _l0_count）
-        if self._l0_count >= self._cc.l1_threshold:
-            logger.info("[Consciousness] L1 触发（异常检测，_l0_count=%d）", self._l0_count)
-            self.tick_L1()
-
-        return self._tick_above_l1(agent_state)
-
-    def _tick_above_l1(self, agent_state: str = "awake") -> TickResult:
-        """L2/L3/DREAM 调度——L0/L1 已由 Layer 0 线程单独处理。
-
-        Args:
-            agent_state: ConsciousLiving 当前生命状态
-
-        Returns:
-            TickResult: NORMAL / L2_TRIGGERED / L3_TRIGGERED / DREAM_TRIGGERED
-        """
-        # L2 意图决策（"我该做什么"——欲望驱动 + 时间兜底）
-        if self._should_intent(agent_state):
-            ctx = "idle" if agent_state == "idle" else "periodic"
-            logger.info("[Consciousness] L2 意图决策触发（agent_state=%s, ctx=%s）", agent_state, ctx)
-            self._last_intent_time = time.time()
-            self.tick_L2_intent(ctx)
-            return TickResult.L2_TRIGGERED
-
-        # L2 意识涌现（"我此刻怎样"——内在节律 + 素材驱动）
-        if self._should_emerge(agent_state):
-            logger.info("[Consciousness] L2 意识涌现触发（agent_state=%s）", agent_state)
-            self._last_emerge_time = time.time()
-            self.tick_L2_emergence(agent_state)
-            return TickResult.L2_TRIGGERED
-
-        # L3: 沉思（任何状态，有冷却，DREAMING 中由 DreamEngine 处理）
-        if agent_state != "dreaming" and self._should_l3():
-            logger.info("[Consciousness] L3 触发（沉思，agent_state=%s）", agent_state)
-            self._last_l3_time = time.time()
-            self.tick_L3()
-            return TickResult.L3_TRIGGERED
-
-        # DREAM: 入梦信号（仅 SLEEPING 足够久）
-        if agent_state == "sleeping":
-            if self._sleep_start_time == 0:
-                self._sleep_start_time = time.time()
-            if time.time() - self._sleep_start_time >= self._cc.sleep_to_dream_threshold:
-                sleep_dur = time.time() - self._sleep_start_time
-                self._sleep_start_time = 0
-                logger.info("[Consciousness] 睡眠 %.0fs，触发入梦", sleep_dur)
-                return TickResult.DREAM_TRIGGERED
-        elif agent_state != "dreaming":
-            # AWAKE/IDLE 状态，重置睡眠计时
-            self._sleep_start_time = 0
-
-        return TickResult.NORMAL
+    # [已废弃] _tick_above_l1() — L2/L3/DREAM 调度已迁移到 layer2.py 线程
+    # def _tick_above_l1(self, agent_state: str = "awake") -> TickResult:
+    #     """L2/L3/DREAM 调度——L0/L1 已由 Layer 0 线程单独处理。"""
+    #     if self._should_intent(agent_state):
+    #         ctx = "idle" if agent_state == "idle" else "periodic"
+    #         logger.info("[Consciousness] L2 意图决策触发（agent_state=%s, ctx=%s）", agent_state, ctx)
+    #         self._last_intent_time = time.time()
+    #         self.tick_L2_intent(ctx)
+    #         return TickResult.L2_TRIGGERED
+    #     if self._should_emerge(agent_state):
+    #         logger.info("[Consciousness] L2 意识涌现触发（agent_state=%s）", agent_state)
+    #         self._last_emerge_time = time.time()
+    #         self.tick_L2_emergence(agent_state)
+    #         return TickResult.L2_TRIGGERED
+    #     if agent_state != "dreaming" and self._should_l3():
+    #         logger.info("[Consciousness] L3 触发（沉思，agent_state=%s）", agent_state)
+    #         self._last_l3_time = time.time()
+    #         self.tick_L3()
+    #         return TickResult.L3_TRIGGERED
+    #     if agent_state == "sleeping":
+    #         if self._sleep_start_time == 0:
+    #             self._sleep_start_time = time.time()
+    #         if time.time() - self._sleep_start_time >= self._cc.sleep_to_dream_threshold:
+    #             sleep_dur = time.time() - self._sleep_start_time
+    #             self._sleep_start_time = 0
+    #             logger.info("[Consciousness] 睡眠 %.0fs，触发入梦", sleep_dur)
+    #             return TickResult.DREAM_TRIGGERED
+    #     elif agent_state != "dreaming":
+    #         self._sleep_start_time = 0
+    #     return TickResult.NORMAL
 
     def _should_intent(self, agent_state: str = "awake") -> bool:
         """判断是否应做意图决策（"我该做什么"）。

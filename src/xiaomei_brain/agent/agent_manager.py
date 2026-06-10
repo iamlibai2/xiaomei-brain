@@ -433,13 +433,14 @@ class AgentManager:
         )
 
         # 启动时先验证 LLM 连通性，不通则拒绝初始化
-        try:
-            llm.chat(messages=[{"role": "user", "content": "hi"}], tools=None)
-        except Exception as e:
-            from xiaomei_brain.base.llm import FatalLLMError
-            if isinstance(e, FatalLLMError):
-                raise
-            raise FatalLLMError(f"LLM 连通性验证失败: {e}") from e
+        # 但太费时间（~3s），暂时注释掉
+        # try:
+        #     llm.chat(messages=[{"role": "user", "content": "hi"}], tools=None)
+        # except Exception as e:
+        #     from xiaomei_brain.base.llm import FatalLLMError
+        #     if isinstance(e, FatalLLMError):
+        #         raise
+        #     raise FatalLLMError(f"LLM 连通性验证失败: {e}") from e
 
         tools = ToolRegistry()
 

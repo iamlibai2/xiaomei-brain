@@ -158,11 +158,23 @@ class ReinforceJob:
 
 from ...prompts import DREAM_USER_EXTRACT_PROMPT
 
+# 每批处理的消息数
+EXTRACT_BATCH_SIZE = 100
+# 单次梦境最多处理的消息数（防止首次运行处理过多）
+EXTRACT_MAX_MESSAGES = 1000
+
 
 class ExtractJob:
-    """对话提取 job — 从 conversation_db 读当天消息，LLM 深度提取记忆。"""
+    """对话提取 job — 分批从 conversation_db 读当天消息，LLM 深度提取记忆。
 
-    DREAM_USER_EXTRACT_PROMPT = DREAM_USER_EXTRACT_PROMPT
+    V2 改进：
+    - 分批处理（每 ~100 条消息一批），每批独立 LLM 调用
+    - 前一批结果作为"已有记忆"传给下一批，自然去重
+    - 扩大提取范围：事实/关系/经历/情感/承诺/洞察/自我收获
+    """
+
+    PROMPT = DREAM_USER_EXTRACT_PROMPT
+    BATCH_SIZE = EXTRACT_BATCH_SIZE
 
     def __init__(
         self,
@@ -172,53 +184,127 @@ class ExtractJob:
         self.extractor = extractor
         self.user_id = user_id
 
+    # ── Run ────────────────────────────────────────────────────
+
     def run(self) -> DreamResult:
-        """从今日对话提取新记忆。"""
+        """分批从今日对话提取新记忆。"""
         if not self.extractor.llm or not self.extractor.ltm or not self.extractor.db:
             return DreamResult(job="extract", errors=1, details="missing dependencies")
 
+        # 查询今日所有消息
         today_start = datetime.now().replace(
             hour=0, minute=0, second=0, microsecond=0,
         ).timestamp()
 
-        messages = self.extractor.db.query(since=today_start, limit=500)
+        messages = self.extractor.db.query(since=today_start, limit=EXTRACT_MAX_MESSAGES)
         if len(messages) < 3:
-            return DreamResult(job="extract", saved=0, details="<3 messages, skip")
+            return DreamResult(job="extract", saved=0, details=f"<3 messages, skip")
 
-        formatted = self._format_messages(messages)
+        logger.info("[ExtractJob] Processing %d messages", len(messages))
 
-        recent_memories = ""
-        existing = self.extractor.ltm.get_recent(10, user_id=self.user_id)
-        if existing:
-            recent_memories = "\n".join(f"- {m['content']}" for m in existing)
+        # 分批处理
+        batches = [
+            messages[i:i + self.BATCH_SIZE]
+            for i in range(0, len(messages), self.BATCH_SIZE)
+        ]
 
-        prompt = self.DREAM_USER_EXTRACT_PROMPT.format(
-            messages=formatted,
-            recent_memories=recent_memories or "（无已有记忆）",
+        all_output: list[str] = []       # 所有批次的 ADD:/RELATES: 行
+        cumulative: list[str] = []       # 累积的记忆内容（给下一批做上下文）
+        batch_count = 0
+        empty_count = 0
+
+        for batch_idx, batch in enumerate(batches):
+            formatted = self._format_messages(batch)
+
+            # 构建"已有记忆"上下文（来自前面批次的结果）
+            context = self._build_context(cumulative)
+
+            prompt = self.PROMPT.format(
+                messages=formatted,
+                recent_memories=context,
+            )
+
+            try:
+                result = self.extractor.llm.chat(
+                    messages=[{"role": "user", "content": prompt}],
+                    tools=None,
+                )
+                text = result.content or ""
+            except Exception as e:
+                logger.error(
+                    "[ExtractJob] LLM call failed for batch %d/%d: %s",
+                    batch_idx + 1, len(batches), e,
+                )
+                continue
+
+            batch_count += 1
+            text = text.strip()
+
+            if text == "EMPTY":
+                empty_count += 1
+                logger.debug("[ExtractJob] batch %d/%d: EMPTY", batch_idx + 1, len(batches))
+                continue
+
+            all_output.append(text)
+
+            # 解析本批 ADD 行的内容，加入累积上下文
+            batch_contents = self._extract_add_contents(text)
+            cumulative.extend(batch_contents)
+
+            logger.info(
+                "[ExtractJob] batch %d/%d: %d messages → %d memories extracted (cumulative=%d)",
+                batch_idx + 1, len(batches), len(batch), len(batch_contents), len(cumulative),
+            )
+
+        # 5. 合并所有输出，统一执行（去重 + 存储）
+        if not all_output:
+            return DreamResult(
+                job="extract", saved=0,
+                details=f"no memories from {batch_count} batches ({empty_count} EMPTY)",
+            )
+
+        combined = "\n".join(all_output)
+        saved = self._execute_adds(combined)
+
+        return DreamResult(
+            job="extract", saved=saved,
+            details=f"{len(messages)} msgs in {batch_count} batches, cumulative={len(cumulative)} items",
         )
 
-        try:
-            result = self.extractor.llm.chat(
-                messages=[{"role": "user", "content": prompt}],
-                tools=None,
-            )
-            text = result.content or ""
-        except Exception as e:
-            logger.error("[ExtractJob] LLM call failed: %s", e)
-            return DreamResult(job="extract", errors=1, details=str(e))
+    # ── Helpers ────────────────────────────────────────────────
 
-        if text.strip() == "EMPTY":
-            return DreamResult(job="extract", saved=0, details="EMPTY response")
+    def _build_context(self, cumulative: list[str]) -> str:
+        """构建"已有记忆"上下文文本。"""
+        if not cumulative:
+            return "（无已有记忆）"
+        # 限制上下文长度，最新的放在前面（最近批次的更相关）
+        items = cumulative[-50:]  # 最多 50 条
+        return "\n".join(f"- {c}" for c in reversed(items))
 
-        saved = self._execute_adds(text)
-        return DreamResult(job="extract", saved=saved)
+    def _extract_add_contents(self, text: str) -> list[str]:
+        """从 LLM 输出中提取 ADD 行的纯内容（去掉 scenes 标签）。"""
+        contents = []
+        for line in text.split("\n"):
+            line = line.strip()
+            if not line.upper().startswith("ADD:"):
+                continue
+            content = line[4:].strip()
+            content = re.sub(r"^[-*]\s*", "", content).strip()
+            if not content or len(content) < 5:
+                continue
+            # 去掉 | scenes: 部分，只保留内容
+            if " | " in content:
+                content = content.rsplit(" | ", 1)[0].strip()
+            contents.append(content)
+        return contents
 
     def _format_messages(self, messages: list[dict]) -> str:
         lines = []
         for m in messages:
             role = m.get("role", "user")
+            label = "我" if role == "assistant" else "对方"
             content = m.get("content", "")[:500]
-            lines.append(f"[{role}] {content}")
+            lines.append(f"[{label}] {content}")
         return "\n".join(lines)
 
     def _execute_adds(self, text: str) -> int:
@@ -300,7 +386,6 @@ class ExtractJob:
 
     def _execute_relates(self, rel_line: str, content_to_id: dict[str, int], user_id: str) -> None:
         """Parse and execute a RELATES line to create memory relations."""
-        import re
         ltm = self.extractor.ltm
 
         # Format: RELATES: 记忆1|--<type>-->|记忆2

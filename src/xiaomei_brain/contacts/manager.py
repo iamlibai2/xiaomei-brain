@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -45,33 +44,6 @@ class IdentityManager:
     def exists(self, identity_id: str) -> bool:
         """检查 id 是否存在。"""
         return identity_id in self._identities
-
-    # ── preferred names（从记忆加载） ──────────────────────────
-
-    def load_preferred_names(self, user_id: str, longterm_memory: Any = None) -> list[str]:
-        """从长期记忆中加载该用户的所有称呼。
-
-        一次向量召回，把 agent 记住的别名/绰号全拉出来。
-        存入 SelfImage，后面每次对话都能看到。
-        """
-        if longterm_memory is None:
-            return []
-
-        try:
-            results = longterm_memory.recall(
-                query=f"{user_id} 称呼 名字 叫我",
-                user_id=user_id,
-                top_k=5,
-            )
-            names = []
-            for m in results:
-                content = m.get("content", "")
-                # 提取称呼模式：对方让我叫他XX / 可以叫我XX / 他叫XX
-                names.append(content)
-            return names
-        except Exception as e:
-            logger.warning("[Contacts] 加载称呼记忆失败: %s", e)
-            return []
 
     # ── persistence ────────────────────────────────────────────
 

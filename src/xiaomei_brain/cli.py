@@ -320,6 +320,8 @@ consciousness:
     idle_threshold:     10800.0  # 长空闲阈值（秒）→ SLEEPING
     dream_interval:     3000.0   # 梦境间隔（秒）
     max_context_tokens: 50000  # 上下文最大 token 数
+    daily_token_budget: 0      # 每日 token 预算（0=不限制）
+    monthly_token_budget: 0    # 月度 token 预算（0=不限制）
     comms_port:         0      # 0=自动分配, -1=禁用
     ws_port:            -1      # WebSocket 端口（-1=禁用）
   # ── 行为冷却时间（秒）───────────────────────────────────

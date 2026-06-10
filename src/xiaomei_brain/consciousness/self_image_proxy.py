@@ -69,12 +69,7 @@ class SelfImage:
         if not user_id or not longterm_memory:
             return
         try:
-            results = longterm_memory.recall(
-                query=f"{user_id} 称呼 名字 叫我",
-                user_id=user_id,
-                top_k=5,
-            )
-            self.preferred_names = [m.get("content", "") for m in results]
+            self.preferred_names = longterm_memory.recall_names(user_id)
         except Exception:
             self.preferred_names = []
 

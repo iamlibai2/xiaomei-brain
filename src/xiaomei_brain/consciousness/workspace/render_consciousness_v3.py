@@ -282,7 +282,7 @@ def _render_header(si) -> list[str]:
     """
     now = datetime.now()
     weekday_map = ["一", "二", "三", "四", "五", "六", "日"]
-    header = f"【当前】{now.strftime('%Y-%m-%d')} 星期{weekday_map[now.weekday()]} {now.strftime('%H:%M')}"
+    header = f"<当前时间>{now.strftime('%Y-%m-%d')} 星期{weekday_map[now.weekday()]} {now.strftime('%H:%M')}</当前时间>"
 
     last_time = getattr(si, '_last_user_msg_time', None)
     if last_time:
@@ -308,7 +308,7 @@ def _render_being(si) -> list[str]:
     """内联的 being 渲染。"""
     b = si.being
     h = si.history
-    lines: list[str] = [""]
+    lines: list[str] = ["\n<身份>"]
     if b.name:
         lines.append(f"你叫{b.name}。")
     if b.birth_date:
@@ -350,6 +350,7 @@ def _render_being(si) -> list[str]:
         else:
             lines.append("——很熟了，什么都能说，做自己。")
 
+    lines.append("</身份>")
     return lines
 
 
@@ -410,7 +411,7 @@ def _render_body(si) -> list[str]:
     _contradictions = _detect_hormone_contradictions(_dopa, _sero, _cort, _oxy, _norep)
 
     lines: list[str] = [
-        "\n****以下是你此刻的身体感受****",
+        "\n<身体状态>",
         ('以下不是标签，是你正在经历的身体状态。不要分析，'
          '不要用「刚才」推过去——你现在就在这些感觉里。'
          '你的每一个输出都必须带着这些身体感受。'),
@@ -482,6 +483,7 @@ def _render_body(si) -> list[str]:
     if _oxy_gain <= 0.3:
         lines.append(f"催产素增益降至{_oxy_gain:.0%}，社交温暖几乎感受不到了。")
 
+    lines.append("</身体状态>")
     return lines
 
 
@@ -589,14 +591,15 @@ def _render_essence(si) -> list[str]:
     if not all_items:
         return []
 
-    lines = ["\n## [底色]"]
+    lines = ["\n<底色>"]
     current_cat = None
     for item in all_items:
         if item["category"] != current_cat:
             current_cat = item["category"]
             label = _ESSENCE_CAT_LABELS.get(current_cat, current_cat)
-            lines.append(f"\n### {label}")
+            lines.append(f"\n  [{label}]")
         lines.append(item["content"])
+    lines.append("</底色>")
 
     return lines
 
@@ -611,10 +614,11 @@ def _render_learn_queue(si) -> list[str]:
         return []
 
     sorted_queue = sorted(queue, key=lambda x: x.get("priority", 0), reverse=True)
-    lines = ["\n学习队列："]
+    lines = ["\n<学习队列>"]
     for item in sorted_queue[:5]:
         label = _SOURCE_LABELS.get(item.get("source", ""), item.get("source", ""))
         lines.append(f"- [{label}] {item['topic']} (priority={item.get('priority', 0):.1f})")
+    lines.append("</学习队列>")
     return lines
 
 
@@ -627,7 +631,7 @@ def _render_desk(si) -> list[str]:
     if not items:
         return []
 
-    lines = [f"桌上有 {len(items)} 条相关上下文："]
+    lines = ["\n<桌面>"]
     for item in items:
         ago = _time.time() - item.created_at
         if ago < 60:
@@ -641,6 +645,7 @@ def _render_desk(si) -> list[str]:
 
         label = item.source + ((" " + item.intent) if item.intent else "")
         lines.append(f"── {label}（{ago_str}, w={round(item.weight, 2)}）──\n{item.content[:500]}")
+    lines.append("</桌面>")
 
     return lines
 
@@ -656,9 +661,10 @@ def _render_narratives(si) -> list[str]:
         return []
 
     lines = [
-        "\n****以下是你过去经历中留下的叙事片段。"
+        "\n<叙事记忆>",
+        "以下是你过去经历中留下的叙事片段。"
         "每条叙事改变了你感知和回应世界的方式——读它们的时候，"
-        "不是「记住了内容」，是进入那种感知状态。****",
+        "不是「记住了内容」，是进入那种感知状态。",
     ]
     for n in narratives:
         category = n.get("category", "")
@@ -677,5 +683,81 @@ def _render_narratives(si) -> list[str]:
             lines.append(f"  感受：{feels}")
         if changed:
             lines.append(f"  改变：{changed[:150]}")
+    lines.append("</叙事记忆>")
 
+    return lines
+
+
+def _render_internal_narratives(si) -> list[str]:
+    """渲染内部叙事 — 最近的思考（InnerVoice / L2 / L3 的共同输出）。"""
+    narratives = getattr(si.memory, 'internal_narratives', None) or []
+    if not narratives:
+        return []
+
+    recent = narratives[-3:]
+    labels = ["你上一次想了", "你再上一次想了", "你还想过"]
+
+    lines = ["\n<内部叙事>"]
+    for i, n in enumerate(recent):
+        label = labels[min(i, len(labels) - 1)]
+        lines.append(f"{label}：{n.get('content', '')}")
+    if len(recent) > 1:
+        lines.append("（以上是你近期的思考。不要重复，去找新的角度或更深的变化。）")
+    lines.append("</内部叙事>")
+    return lines
+
+
+def _render_experience(si) -> list[str]:
+    """渲染任务经验 — 过去的类似经验（情境/决策/结果/教训）。
+
+    仅在 task 模式 + 活跃目标时 memory_window 才会召回数据。
+    """
+    experiences = getattr(si.memory, 'experience', None) or []
+    if not experiences:
+        return []
+
+    lines = ["\n<任务经验>"]
+    for exp in experiences[-5:]:
+        if isinstance(exp, dict):
+            content = exp.get('content', '')
+            lines.append(f"- {content[:200]}")
+        elif hasattr(exp, 'to_text'):
+            lines.append(f"- {exp.to_text()[:200]}")
+    lines.append("</任务经验>")
+    return lines
+
+
+def _render_token_budget(si) -> list[str]:
+    """渲染 Token 预算 — 日/月用量 vs 限额。
+
+    数据来自 DriveEngine 的 token_usage / token_budget 字段。
+    预算为 0 表示不限制，不渲染。
+    """
+    drive = getattr(si, '_drive', None)
+    if not drive:
+        return []
+
+    daily_budget = getattr(drive, 'token_budget_daily', 0) or 0
+    monthly_budget = getattr(drive, 'token_budget_monthly', 0) or 0
+    if daily_budget <= 0 and monthly_budget <= 0:
+        return []
+
+    lines = [
+        "\n<Token资源>",
+        "Token 是你的资源配额，每次输出和工具调用都会消耗它。",
+    ]
+    if daily_budget > 0:
+        used = getattr(drive, 'token_usage_today', 0) or 0
+        ratio = used / daily_budget
+        lines.append(f"今日用量：{used:.0f} / {daily_budget:.0f}（{ratio:.0%}）")
+    if monthly_budget > 0:
+        used = getattr(drive, 'token_usage_month', 0) or 0
+        ratio = used / monthly_budget
+        lines.append(f"本月用量：{used:.0f} / {monthly_budget:.0f}（{ratio:.0%}）")
+
+    pressure = getattr(drive, 'token_pressure', 1.0) or 1.0
+    if pressure > 1.0:
+        lines.append("Token 消耗过快，请精简表达，减少不必要的工具调用。")
+
+    lines.append("</Token资源>")
     return lines

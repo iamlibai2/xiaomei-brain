@@ -40,7 +40,7 @@ from typing import Any
 
 from .action_dispatcher import ActionDispatcher
 from .living import Living, LivingState, LivingMessage, HEARTBEAT_NORMAL, HEARTBEAT_DREAM
-from .core import Consciousness, ConsciousnessReport, TickResult
+from .core import Consciousness, ConsciousnessReport
 from .intent import Intent
 from .storage import ConsciousnessStorage
 from .self_image_proxy import SelfImage

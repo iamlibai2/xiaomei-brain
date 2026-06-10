@@ -1298,6 +1298,24 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
                 logger.error("[Memory RECALL] Keyword recall also failed: %s", e2)
                 return []
 
+    def recall_names(self, user_id: str) -> list[str]:
+        """召回用户称呼（别名、绰号、昵称等）。
+
+        语义搜索关于"怎么称呼这个用户"的记忆，仅保留高置信度结果。
+        """
+        try:
+            results = self.recall(
+                query="允许我叫他 可以叫他 对他的称呼 称呼他为",
+                user_id=user_id,
+                top_k=5,
+            )
+            return [
+                m.get("content", "") for m in results
+                if m.get("score", 0) >= 0.6
+            ]
+        except Exception:
+            return []
+
     def get_important(
         self, user_id: str = "global", top_k: int = 20, min_strength: float = 0.0,
     ) -> list[dict[str, Any]]:

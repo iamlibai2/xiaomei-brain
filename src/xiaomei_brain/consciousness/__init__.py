@@ -48,7 +48,7 @@ from .action_dispatcher import ActionDispatcher, ActionExecutor
 from .config import LivingConfig
 from .memory_window import refresh_memory_window
 from .attention import select_attention
-from .dream import DreamEngine, DreamReport, EmotionProcessor, MemoryOrganizer, DreamStorage
+from .dream import DreamEngine, DreamReport, EmotionProcessor, DreamStorage, ReinforceJob, ExtractJob
 
 __all__ = [
     # SelfImage
@@ -98,6 +98,7 @@ __all__ = [
     "DreamEngine",
     "DreamReport",
     "EmotionProcessor",
-    "MemoryOrganizer",
     "DreamStorage",
+    "ReinforceJob",
+    "ExtractJob",
 ]

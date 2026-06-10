@@ -3,10 +3,12 @@
 DREAMING 状态时做深度离线处理。
 
 串行流程：
-1. 情绪整理（EmotionProcessor）— 根据梦境内容调整 Drive 欲望/激素
-2. 记忆整理（MemoryOrganizer）— ReinforceJob + ExtractJob
-3. 梦境深度燃烧（LLM）— 完整的梦境意识报告
-4. 反省（Reflection）— 预留
+1a. 记忆提取（ExtractJob）— 从今日对话提取新记忆
+1b. 记忆强化（ReinforceJob）— 低强度记忆强化 + extinct
+1c. 关系强化（RelationReinforceJob）— 共现→关系加固 + 衰减
+2.  情绪整理（EmotionProcessor）— 根据梦境内容调整 Drive 欲望/激素
+3.  梦境深度燃烧（LLM）— 完整的梦境意识报告
+4.  反省（Reflection）— 预留
 
 DreamEngine 由 ConsciousLiving._loop_dreaming() 调用，
 不依赖独立调度器。
@@ -32,7 +34,7 @@ from typing import Any
 
 from ...prompts import DREAM_ENGINE_PROMPT
 from .emotion_processor import EmotionProcessor
-from .memory_organizer import MemoryOrganizer
+from .memory_jobs import ReinforceJob, ExtractJob, RelationReinforceJob
 from .reflection import Reflection
 logger = logging.getLogger(__name__)
 
@@ -106,7 +108,6 @@ class DreamEngine:
 
         # 子系统
         self.emotion_processor = EmotionProcessor()
-        self.memory_organizer = MemoryOrganizer(ltm, extractor)
         self.reflection = Reflection()
 
     def run(self, prior_summary: str = "") -> DreamReport:
@@ -123,7 +124,46 @@ class DreamEngine:
 
         logger.info("[DreamEngine] 开始梦境")
 
-        # ── 阶段1：情绪整理 ─────────────────────────────
+        uid = getattr(self.cs.self_image, 'current_user_id', None) or "global"
+
+        # ── 阶段1a：记忆提取 ────────────────────────────
+        # 先提取今日对话中的新记忆，让后续阶段（强化、关系、燃烧）都能用到
+        try:
+            if self.extractor and self.extractor.llm:
+                ej = ExtractJob(self.extractor, user_id=uid)
+                e = ej.run()
+                report.memories_extracted = e.saved
+                logger.info("[DreamEngine] 记忆提取: saved=%d", e.saved)
+        except Exception as e:
+            logger.error("[DreamEngine] 记忆提取失败: %s", e)
+            report.errors += 1
+
+        # ── 阶段1b：记忆强化 ────────────────────────────
+        try:
+            if self.ltm:
+                rj = ReinforceJob(self.ltm, user_id=uid)
+                r = rj.run()
+                report.memories_reinforced = r.reinforced
+                logger.info("[DreamEngine] 记忆强化: reinforced=%d extinct=%d", r.reinforced, r.extinct)
+        except Exception as e:
+            logger.error("[DreamEngine] 记忆强化失败: %s", e)
+            report.errors += 1
+
+        # ── 阶段1c：关系强化 ────────────────────────────
+        try:
+            if self.ltm:
+                rrj = RelationReinforceJob(self.ltm, user_id=uid)
+                rr = rrj.run()
+                report.relations_reinforced = rr.reinforced
+                report.relations_created = rr.created
+                report.relations_decayed = rr.decayed
+                report.relations_dormant = rr.dormant
+                logger.info("[DreamEngine] 关系强化: reinforced=%d created=%d", rr.reinforced, rr.created)
+        except Exception as e:
+            logger.error("[DreamEngine] 关系强化失败: %s", e)
+            report.errors += 1
+
+        # ── 阶段2：情绪整理 ─────────────────────────────
         # 基于已有梦境摘要调整 Drive（如果有的话）
         summary_to_process = (
             prior_summary
@@ -133,19 +173,6 @@ class DreamEngine:
             changes = self.emotion_processor.process(self.drive, summary_to_process)
             report.emotion_changes = changes
             logger.info("[DreamEngine] 情绪整理: %s", changes)
-
-        # ── 阶段2：记忆整理 ─────────────────────────────
-        try:
-            mem_result = self.memory_organizer.organize()
-            report.memories_reinforced = mem_result.reinforced
-            report.memories_extracted = mem_result.extracted
-            report.relations_reinforced = mem_result.relations_reinforced
-            report.relations_created = mem_result.relations_created
-            report.relations_decayed = mem_result.relations_decayed
-            report.relations_dormant = mem_result.relations_dormant
-        except Exception as e:
-            logger.error("[DreamEngine] 记忆整理失败: %s", e)
-            report.errors += 1
 
         # ── 阶段2.5：Procedure 巩固 ──────────────────────
         if self.procedure_memory:
