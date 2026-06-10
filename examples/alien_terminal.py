@@ -285,7 +285,7 @@ class NostromoTerminal:
             from xiaomei_brain.memory.extractor import MemoryExtractor
             from xiaomei_brain.memory.longterm import LongTermMemory
             from xiaomei_brain.memory.self_model import SelfModel
-            from xiaomei_brain.consciousness.context_assembler import ContextAssembler, determine_mode
+            from xiaomei_brain.consciousness.context_pipeline import determine_mode
             from xiaomei_brain.tools.registry import ToolRegistry
             from xiaomei_brain.tools.builtin.dag_expand import create_dag_tools
             from xiaomei_brain.agent.core import Agent
@@ -394,7 +394,7 @@ class NostromoTerminal:
 
         try:
             # Import here to avoid top-level import before agent path setup
-            from xiaomei_brain.consciousness.context_assembler import determine_mode
+            from xiaomei_brain.consciousness.context_pipeline import determine_mode
             mode = determine_mode(cmd)
             response_chunks: list[str] = []
             for chunk in self.agent.stream(cmd):

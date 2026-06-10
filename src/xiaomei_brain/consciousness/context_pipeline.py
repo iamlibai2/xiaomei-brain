@@ -11,12 +11,91 @@ import time as _time
 from typing import Any
 
 from xiaomei_brain.agent.message_utils import estimate_content_tokens
-from xiaomei_brain.consciousness.context_assembler import determine_mode
 from xiaomei_brain.base.message_utils import estimate_tokens
 from xiaomei_brain.consciousness.workspace import inject_consciousness
 from xiaomei_brain.consciousness.workspace.salience_profile import SalienceProfile
 
 logger = logging.getLogger(__name__)
+
+
+# ── 模式判定 ──────────────────────────────────────
+
+def determine_mode(
+    user_input: str,
+    energy_level: float = 0.8,
+    desire_state: dict | None = None,
+    pending_intents: list[str] | None = None,
+    has_active_goal: bool = False,
+    recent_has_tool_calls: bool = False,
+    config: Any | None = None,
+) -> str:
+    """Determine operational mode based on consciousness state.
+
+    Args:
+        user_input: The user's current message.
+        energy_level: Flame/energy level (0-1), from SelfImage.
+        desire_state: Drive desire state dict {belonging, cognition, achievement, expression}.
+        pending_intents: Pending intents from SelfImage.
+        has_active_goal: Whether there is an active goal in PurposeEngine.
+        recent_has_tool_calls: Whether recent exchanges involved tool calls.
+        config: LivingConfig instance (uses defaults if not provided).
+
+    Returns:
+        "flow", "daily", "reflect", or "task".
+    """
+    if config is None:
+        from .config import LivingConfig
+        config = LivingConfig()
+    kw = config.keywords
+    cc = config.consciousness
+
+    desire_state = desire_state or {}
+    pending_intents = pending_intents or []
+
+    # ── Context continuity: don't drop to flow mid-stream ──
+    if recent_has_tool_calls:
+        return "daily"
+
+    # Flame low → flow (minimal context)
+    if energy_level < cc.energy_low_threshold:
+        return "flow"
+
+    # Pending DREAM/REFLECT intent → reflect
+    if any(i in pending_intents for i in ("DREAM", "REFLECT", "RECALL")):
+        return "reflect"
+
+    # Active goal → task
+    if has_active_goal:
+        return "task"
+
+    # High desire tension → daily (desire drives context need)
+    max_desire = max(desire_state.get(k, 0) for k in ("belonging", "cognition", "achievement", "expression"))
+    if max_desire > 0.8:
+        return "daily"
+
+    # User input reflects on past behavior → reflect
+    if any(k in user_input for k in kw.reflect_keywords):
+        return "reflect"
+
+    # Past references → daily (need history)
+    if any(k in user_input for k in kw.past_keywords):
+        return "daily"
+
+    # Personal opinion/judgment → daily (need self-model)
+    if any(k in user_input for k in kw.opinion_keywords):
+        return "daily"
+
+    # Emotional/personal → daily
+    if any(k in user_input for k in kw.personal_keywords):
+        return "daily"
+
+    # Simple/factual → flow
+    if len(user_input) < config.context.short_input_threshold:
+        if any(p in user_input for p in kw.simple_patterns):
+            return "flow"
+
+    # Default: daily
+    return "daily"
 
 
 def build_context(

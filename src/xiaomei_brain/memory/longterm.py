@@ -1253,6 +1253,7 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
         time_range: tuple[float, float] | None = None,
         context: str = "auto",
         type_weights: dict[str, float] | None = None,
+        mem_type: str | None = None,
     ) -> list[dict[str, Any]]:
         """Recall memories by semantic similarity.
 
@@ -1268,6 +1269,8 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
                    If specified, only returns memories matching this scene.
             time_range: Optional (start, end) unix timestamps to filter by event_time.
                         Only returns memories whose event_time falls within this range.
+            mem_type: Optional memory type to filter by (e.g. 'common').
+                      If None, no type filter is applied.
         """
         # Clean surrogate characters from query
         try:
@@ -1282,14 +1285,14 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
 
         # Try vector search first
         try:
-            result = self._vector_recall(query, user_id, top_k, sources, scene, time_range, context, type_weights)
+            result = self._vector_recall(query, user_id, top_k, sources, scene, time_range, context, type_weights, mem_type)
             return result if result is not None else []
         except Exception as e:
             logger.warning(
                 "[Memory RECALL] Vector search failed, falling back to keywords: %s", e,
             )
             try:
-                result = self._keyword_recall(query, user_id, top_k, sources, scene, time_range, context, type_weights)
+                result = self._keyword_recall(query, user_id, top_k, sources, scene, time_range, context, type_weights, mem_type)
                 return result if result is not None else []
             except Exception as e2:
                 logger.error("[Memory RECALL] Keyword recall also failed: %s", e2)
@@ -1315,6 +1318,7 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
             SELECT * FROM memories
             WHERE (user_id = ?)
               AND status != 'extinct'
+              AND type = 'common'
             ORDER BY strength * importance DESC
             LIMIT ?
         """, (user_id, top_k * 2)).fetchall()
@@ -1346,6 +1350,7 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
         time_range: tuple[float, float] | None = None,
         context: str = "auto",
         type_weights: dict[str, float] | None = None,
+        mem_type: str | None = None,
     ) -> list[dict[str, Any]]:
         """Semantic recall using LanceDB vector search."""
         query_vector = self._embed(query)
@@ -1368,10 +1373,13 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
         mem_ids = results["id"].tolist()
         distances = dict(zip(results["id"].tolist(), results["_distance"].tolist()))
 
-        # Fetch full metadata from SQLite (exclude extinct, optional source filter)
+        # Fetch full metadata from SQLite (exclude extinct, optional source/type filter)
         placeholders = ",".join("?" * len(mem_ids))
         sql = f"""SELECT * FROM memories WHERE id IN ({placeholders}) AND status != '{STATUS_EXTINCT}'"""
         params = list(mem_ids)
+        if mem_type:
+            sql += " AND type = ?"
+            params.append(mem_type)
         if sources:
             src_placeholders = ",".join("?" * len(sources))
             sql += f" AND source IN ({src_placeholders})"
@@ -1462,11 +1470,12 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
         time_range: tuple[float, float] | None = None,
         context: str = "auto",
         type_weights: dict[str, float] | None = None,
+        mem_type: str | None = None,
     ) -> list[dict[str, Any]]:
         """Fallback keyword recall using LIKE."""
         conn = self._get_conn()
         keywords = self._extract_keywords(query)
-        rows = self._search_by_keywords(conn, keywords, user_id, top_k, sources)
+        rows = self._search_by_keywords(conn, keywords, user_id, top_k, sources, mem_type)
 
         result = []
         seen_ids = set()
@@ -2298,6 +2307,7 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
     def _search_by_keywords(
         self, conn: sqlite3.Connection, keywords: list[str],
         user_id: str, top_k: int, sources: list[str] | None = None,
+        mem_type: str | None = None,
     ) -> list[sqlite3.Row]:
         """Keyword-based search (fallback when LanceDB unavailable)."""
         all_rows = []
@@ -2313,6 +2323,9 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
                         src_placeholders = ",".join("?" * len(sources))
                         sql += f" AND m.source IN ({src_placeholders})"
                         params.extend(sources)
+                    if mem_type:
+                        sql += " AND m.type = ?"
+                        params.append(mem_type)
                     sql += " AND m.content LIKE ? ORDER BY m.importance DESC, m.created_at DESC LIMIT ?"
                     params.extend([f"%{keyword}%", top_k * 2])
                     rows = conn.execute(sql, params).fetchall()

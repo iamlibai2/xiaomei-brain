@@ -257,18 +257,38 @@ class ExtractJob:
         content_to_id: dict[str, int] = {}
         for content, scene_tags in add_lines:
             try:
-                mid = ltm.store(
-                    content=content,
-                    source="dream",
-                    importance=0.8,
-                    user_id=user_id,
-                    scene_tags=scene_tags if scene_tags else None,
-                    mem_type="common",
-                )
-                if mid:
-                    saved += 1
-                    content_to_id[content[:30]] = mid
-                    logger.debug("[ExtractJob] stored #%d: %.50s scenes=%s", mid, content, scene_tags)
+                # Dedup: recall first, UPDATE if similar memory already exists
+                is_dup = False
+                try:
+                    existing = ltm.recall(content, user_id=user_id, top_k=3)
+                    if existing and existing[0].get("score", 0) > 0.85:
+                        old = existing[0]
+                        logger.info(
+                            "[ExtractJob DEDUP] #%d score=%.2f -> UPDATE instead of ADD: %.50s",
+                            old["id"], existing[0]["score"], content,
+                        )
+                        clean = self.extractor._simple_update(old["content"], content)
+                        ltm.save_history(old["id"], old["content"], "UPDATE")
+                        ltm.update_content(old["id"], clean)
+                        content_to_id[content[:30]] = old["id"]
+                        saved += 1
+                        is_dup = True
+                except Exception as e:
+                    logger.debug("[ExtractJob DEDUP] recall failed, will ADD: %s", e)
+
+                if not is_dup:
+                    mid = ltm.store(
+                        content=content,
+                        source="dream",
+                        importance=0.8,
+                        user_id=user_id,
+                        scene_tags=scene_tags if scene_tags else None,
+                        mem_type="common",
+                    )
+                    if mid:
+                        saved += 1
+                        content_to_id[content[:30]] = mid
+                        logger.debug("[ExtractJob] stored #%d: %.50s scenes=%s", mid, content, scene_tags)
             except Exception as e:
                 logger.warning("[ExtractJob] store failed: %s", e)
 

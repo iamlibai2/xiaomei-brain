@@ -193,7 +193,7 @@ def test_mode_determination():
     print("Mode Determination")
     print("=" * 60)
 
-    from xiaomei_brain.consciousness.context_assembler import determine_mode
+    from xiaomei_brain.consciousness.context_pipeline import determine_mode
 
     cases = [
         ("算1+1等于几", "flow"),

@@ -138,6 +138,14 @@ _SOURCE_LABELS: dict[str, str] = {
     "concept_expansion": "概念扩展",
 }
 
+# 记忆关系类型 → 中文标签（relation chains 渲染用）
+_REL_LABELS: dict[str, str] = {
+    "causal": "因果",
+    "temporal": "时序",
+    "contrast": "对比",
+    "contains": "包含",
+}
+
 # 矛盾激素组合 —— 检测身体数值的内在张力
 def _detect_hormone_contradictions(dopa, sero, cort, oxy, norep):
     """返回矛盾激素组合的特殊描述列表。"""
@@ -158,6 +166,19 @@ def _detect_hormone_contradictions(dopa, sero, cort, oxy, norep):
 # ═══════════════════════════════════════════════════════════════
 #  辅助函数
 # ═══════════════════════════════════════════════════════════════
+
+def _strength_level(strength: float) -> str:
+    """将 effective_strength 转为 L1~L5 等级标签。"""
+    if strength >= 0.8:
+        return "L1"
+    elif strength >= 0.6:
+        return "L2"
+    elif strength >= 0.4:
+        return "L3"
+    elif strength >= 0.2:
+        return "L4"
+    return "L5"
+
 
 def _value_label(value: float, tiers: list[tuple[float, str]]) -> str:
     """按阈值取最高匹配的标签。"""
@@ -461,6 +482,98 @@ def _render_body(si) -> list[str]:
     if _oxy_gain <= 0.3:
         lines.append(f"催产素增益降至{_oxy_gain:.0%}，社交温暖几乎感受不到了。")
 
+    return lines
+
+
+def _render_longterm_memories(si) -> list[str]:
+    """渲染长期记忆 — important_memories + recalled_memories 去重合并。
+
+    从 si.memory 取原始数据，在 render 层统一格式化。
+    """
+    mem = si.memory
+    items: list[dict] = []
+    seen_ids: set[str] = set()
+    for m in (getattr(mem, 'important_memories', None) or []) + (getattr(mem, 'recalled_memories', None) or []):
+        mid = m.get("id", "")
+        if mid and mid in seen_ids:
+            continue
+        tags = m.get("tags") or []
+        mem_type = m.get("type", "")
+        if mem_type == "pattern" or "pattern" in tags:
+            continue
+        if mid:
+            seen_ids.add(mid)
+        items.append(m)
+
+    if not items:
+        return []
+
+    lines = [
+        "\n<长期记忆>",
+        "以下是你的长期记忆，当对方问及相关信息时，你必须主动引用这些记忆来回答，"
+        "不要说'你不记得'或让对方自己回答。"
+        "记忆时间格式为 @2026-05-04T12:00:00，可用于时间推理（判断'上周'/'上个月'等）。",
+    ]
+    for m in items:
+        content = m.get("content", "")
+        eff = m.get("effective_strength", 0)
+        level = _strength_level(eff)
+        tags = m.get("tags") or []
+        tag_str = ",".join(tags) if tags else ""
+        created_ts = m.get("created_at", 0)
+        if created_ts:
+            time_str = datetime.fromtimestamp(created_ts).strftime("%Y-%m-%dT%H:%M:%S")
+            time_part = f" @{time_str}"
+        else:
+            time_part = ""
+        lines.append(f"- [{level} {eff:.2f}] {content}{time_part}  [{tag_str}]")
+    lines.append("</长期记忆>")
+    return lines
+
+
+def _render_relation_chains(si) -> list[str]:
+    """渲染记忆关联链 — 内容之间的因果/时序/对比等关系。
+
+    从 si.memory.relation_chains 取原始数据，在 render 层统一格式化。
+    """
+    chains = getattr(si.memory, 'relation_chains', None) or []
+    if not chains:
+        return []
+
+    lines = [
+        "\n<记忆关联链>",
+        "以下记忆与当前对话存在语义关联（因果/时序等），可帮助你理解上下文脉络：",
+    ]
+    for c in chains:
+        content = c.get("content", "")
+        hop = c.get("hop", "?")
+        rel_type = c.get("relation_type", "")
+        rel_label = _REL_LABELS.get(rel_type, rel_type)
+        if content:
+            lines.append(f"- [跳{hop}] {content} （{rel_label}）")
+    lines.append("</记忆关联链>")
+    return lines
+
+
+def _render_dag_summaries(si) -> list[str]:
+    """渲染 DAG 摘要——分层压缩的对话历史摘要。
+
+    从 si.memory.dag_summaries 取原始数据，在 render 层统一格式化。
+    """
+    dag = getattr(si.memory, 'dag_summaries', None) or []
+    if not dag:
+        return []
+
+    lines = ["\n<历史摘要>"]
+    for s in dag:
+        node_id = s.get("id", "")
+        depth = s.get("depth", 0)
+        content = s.get("content", "")
+        meta = f' node_id="{node_id}" depth="{depth}"' if node_id else ""
+        lines.append(f"<summary{meta}>")
+        lines.append(content)
+        lines.append("</summary>")
+    lines.append("</历史摘要>")
     return lines
 
 

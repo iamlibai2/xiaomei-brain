@@ -622,7 +622,7 @@ class ContextAssembler:
         ) or []
 
         similar_memories = self.longterm.recall(
-            user_input, user_id=user_id, top_k=30,
+            user_input, user_id=user_id, top_k=30, mem_type="common",
         ) or []
         similar_memories = [
             m for m in similar_memories
@@ -707,7 +707,7 @@ class ContextAssembler:
         if self.longterm is None:
             return ""
 
-        seed_memories = self.longterm.recall(user_input, user_id=user_id, top_k=5)
+        seed_memories = self.longterm.recall(user_input, user_id=user_id, top_k=5, mem_type="common")
         if not seed_memories:
             return ""
 

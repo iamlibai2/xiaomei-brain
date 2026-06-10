@@ -18,8 +18,10 @@ from typing import Any, TYPE_CHECKING
 
 from ..self_modules import SelfPerception
 from .render_consciousness_v3 import (
-    _render_header, _render_being, _render_essence, _render_body,
-    _render_narratives, _render_learn_queue, _render_desk,
+    _render_header, _render_being, _render_body,
+    _render_longterm_memories, _render_relation_chains,
+    _render_dag_summaries,
+    _render_essence, _render_narratives, _render_learn_queue, _render_desk,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,7 +43,10 @@ def inject_consciousness(si, mode: str = "daily", user_input: str = "",
         )
 
     lines = (
-        _render_header(si) + _render_being(si) + _render_essence(si) + _render_body(si)
-        + _render_narratives(si) + _render_learn_queue(si) + _render_desk(si)
+        _render_header(si) + _render_being(si) + _render_body(si)
+        + _render_longterm_memories(si) + _render_relation_chains(si)
+        + _render_dag_summaries(si)
+        + _render_essence(si) + _render_narratives(si)
+        + _render_learn_queue(si) + _render_desk(si)
     )
     return "\n".join(lines)

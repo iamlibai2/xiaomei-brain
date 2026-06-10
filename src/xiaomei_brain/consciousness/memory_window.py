@@ -120,7 +120,7 @@ def refresh_memory_window(
             # 通道1：user_input 语义召回（匹配当前对话内容）
             if user_input:
                 similar_user = longterm.recall(
-                    user_input, user_id=user_id, top_k=20,
+                    user_input, user_id=user_id, top_k=20, mem_type="common",
                 ) or []
                 similar_user = [m for m in similar_user if m.get("effective_strength", 0) >= 0.0]
                 similar_user.sort(key=lambda m: m.get("score", 0), reverse=True)
@@ -135,7 +135,7 @@ def refresh_memory_window(
             # 通道2：attention_query 召回（匹配情绪/注意力状态）
             if attention_query and attention_query != "平静，等待中":
                 similar_attn = longterm.recall(
-                    attention_query, user_id=user_id, top_k=20,
+                    attention_query, user_id=user_id, top_k=20, mem_type="common",
                 ) or []
                 similar_attn = [m for m in similar_attn if m.get("effective_strength", 0) >= 0.0]
                 similar_attn.sort(key=lambda m: m.get("score", 0), reverse=True)

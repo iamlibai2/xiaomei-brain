@@ -23,7 +23,7 @@ def main():
     from xiaomei_brain.memory.self_model import SelfModel
     from xiaomei_brain.memory.conversation_db import ConversationDB
     from xiaomei_brain.memory.dag import DAGSummaryGraph
-    from xiaomei_brain.consciousness.context_assembler import ContextAssembler, determine_mode
+    from xiaomei_brain.consciousness.context_pipeline import determine_mode
     from xiaomei_brain.memory.longterm import LongTermMemory
     from xiaomei_brain.memory.extractor import MemoryExtractor
     from xiaomei_brain.memory.dream import DreamProcessor
