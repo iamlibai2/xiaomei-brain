@@ -117,6 +117,9 @@ class DriveEngine:
             self._restore_from_storage()
             self._loaded = True
 
+        # 褪黑素由日夜节律驱动，启动时立刻计算一次（不等 tick_hour）
+        self._update_melatonin()
+
         logger.info(
             f"[DriveEngine] 初始化完成: "
             f"desire.belonging={self.desire.belonging:.2f}, "
@@ -610,6 +613,15 @@ class DriveEngine:
         monthly = self._calc_token_pressure(self.token_usage_month, self.token_budget_monthly)
         return max(daily, monthly)
 
+    def _update_melatonin(self) -> None:
+        """根据当前时间计算褪黑素——纯日夜节律，不受事件和衰减影响。
+
+        峰值 ~凌晨2点（0.9），谷值 ~下午2点（0.1）。
+        余弦曲线：0.5 + 0.4 * cos((hour - 2) * π / 12)
+        """
+        hour = datetime.now().hour + datetime.now().minute / 60.0
+        self.hormone.melatonin = 0.5 + 0.4 * math.cos((hour - 2) * math.pi / 12)
+
     @staticmethod
     def _calc_token_pressure(used: float, budget: float) -> float:
         if budget <= 0:
@@ -874,9 +886,7 @@ class DriveEngine:
                 setattr(self.hormone, name, current * rate)
 
         # 褪黑素：纯日夜节律驱动，不受事件和衰减影响
-        # 峰值 ~凌晨2点（0.9），谷值 ~下午2点（0.1）
-        hour = datetime.now().hour + datetime.now().minute / 60.0
-        self.hormone.melatonin = 0.5 + 0.4 * math.cos((hour - 2) * math.pi / 12)
+        self._update_melatonin()
 
         # 欲望回升（乘法回升到基础张力）
         recovery = self.config.desire.recovery_rate
