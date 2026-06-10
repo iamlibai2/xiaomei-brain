@@ -248,13 +248,15 @@ drive:
       cortisol:    0.3     # 皮质醇 — 压力激素
       oxytocin:    0.5     # 催产素 — 社会连接，信任
       norepinephrine: 0.5  # 去甲肾上腺素 — 警觉，快速响应
-    # 衰减率（每小时乘以该系数）
+      melatonin:   0.5     # 褪黑素 — 纯日夜节律驱动，峰值凌晨2点、谷值下午2点
+    # 衰减率（每小时乘以该系数）。褪黑素由日夜节律覆盖，衰减率仅占位。
     decay_rates:
       dopamine:    0.95
       serotonin:   0.98
       cortisol:    0.9
       oxytocin:    0.95
       norepinephrine: 0.95
+      melatonin:   0.95
   # ── 欲望（内在张力，驱动目标行为）───────────────────────
   desire:
     # 基础张力（初始值 / 回落目标值）

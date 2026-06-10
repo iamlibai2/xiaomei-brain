@@ -69,13 +69,14 @@ class EmotionConfig:
 @dataclass
 class HormoneConfig:
     """激素配置"""
-    # 衰减率（每小时）
+    # 衰减率（每小时）。褪黑素不在此列，由日夜节律直接计算。
     decay_rates: dict = field(default_factory=lambda: {
         "dopamine": 0.95,
         "serotonin": 0.98,
         "cortisol": 0.90,
         "oxytocin": 0.95,
         "norepinephrine": 0.95,
+        "melatonin": 0.95,   # 占位，实际由 tick_hour() 的日夜节律覆盖
     })
 
     # 默认初始值
@@ -85,6 +86,7 @@ class HormoneConfig:
         "cortisol": 0.3,
         "oxytocin": 0.5,
         "norepinephrine": 0.5,
+        "melatonin": 0.5,
     })
 
 

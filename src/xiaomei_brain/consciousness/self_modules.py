@@ -268,6 +268,8 @@ class SelfBody:
     @property
     def norepinephrine(self) -> float:     return self._d("hormone.norepinephrine", 0.5)
     @property
+    def melatonin(self) -> float:          return self._d("hormone.melatonin", 0.5)
+    @property
     def motivation_level(self) -> float:   return self._d("motivation.motivation_level", 0.5)
     @property
     def pleasure_value(self) -> float:     return self._d("pleasure_value", 0.5)

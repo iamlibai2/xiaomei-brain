@@ -8,9 +8,11 @@ Drive 引擎 - 边缘系统核心
 - 状态输出：供其他层使用
 """
 
+import math
 import time
 import random
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -79,6 +81,7 @@ class DriveEngine:
             cortisol=defaults.get("cortisol", 0.3),
             oxytocin=defaults.get("oxytocin", 0.5),
             norepinephrine=defaults.get("norepinephrine", 0.5),
+            melatonin=defaults.get("melatonin", 0.5),
         )
         self.motivation = MotivationState()
         self.desire = DesireState(
@@ -870,6 +873,11 @@ class DriveEngine:
                 current = getattr(self.hormone, name)
                 setattr(self.hormone, name, current * rate)
 
+        # 褪黑素：纯日夜节律驱动，不受事件和衰减影响
+        # 峰值 ~凌晨2点（0.9），谷值 ~下午2点（0.1）
+        hour = datetime.now().hour + datetime.now().minute / 60.0
+        self.hormone.melatonin = 0.5 + 0.4 * math.cos((hour - 2) * math.pi / 12)
+
         # 欲望回升（乘法回升到基础张力）
         recovery = self.config.desire.recovery_rate
         base_values = {
@@ -1122,6 +1130,7 @@ class DriveEngine:
             cortisol=defaults.get("cortisol", 0.3),
             oxytocin=defaults.get("oxytocin", 0.5),
             norepinephrine=defaults.get("norepinephrine", 0.5),
+            melatonin=defaults.get("melatonin", 0.5),
         )
         self.motivation = MotivationState()
         self.desire = DesireState(

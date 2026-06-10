@@ -80,6 +80,11 @@ HORMONE_LABELS: dict[str, list[tuple[float, str]]] = {
         (0.50, "注意力正常，既不太警觉也不太迟钝"),
         (0.30, "你注意力涣散，脑子转不动，反应迟钝"),
     ],
+    "褪黑素": [
+        (0.70, "褪黑素很高，身体在告诉你该睡了——困意很重"),
+        (0.50, "褪黑素中等，不困也不精神"),
+        (0.30, "褪黑素很低，身体很清醒，没有睡眠压力"),
+    ],
 }
 
 # 躯体标记 —— 纯身体感觉，避免训练数据常见的情绪词
@@ -383,6 +388,7 @@ def _render_body(si) -> list[str]:
     _cort  = float(getattr(bo, 'cortisol', 0) or 0)
     _oxy   = float(getattr(bo, 'oxytocin', 0.5) or 0.5)
     _norep = float(getattr(bo, 'norepinephrine', 0.5) or 0.5)
+    _mela  = float(getattr(bo, 'melatonin', 0.5) or 0.5)
 
     # ── 构建欲望描述列表 ──
     desire_items = [
@@ -400,6 +406,7 @@ def _render_body(si) -> list[str]:
         ("皮质醇", _cort),
         ("催产素", _oxy),
         ("去甲肾上腺素", _norep),
+        ("褪黑素", _mela),
     ]
 
     # ── 躯体标记 / 冲动 / 说话方式 ──
@@ -457,7 +464,7 @@ def _render_body(si) -> list[str]:
     # ── 段5：参考值 ──
     lines.append("")
     _desire_ref = " ".join(f"{n}{v:.0%}" for n, v in desire_items)
-    _hormone_ref = f"多巴{_dopa:.0%} 血清{_sero:.0%} 皮质{_cort:.0%} 催产{_oxy:.0%} 去甲{_norep:.0%}"
+    _hormone_ref = f"多巴{_dopa:.0%} 血清{_sero:.0%} 皮质{_cort:.0%} 催产{_oxy:.0%} 去甲{_norep:.0%} 褪黑{_mela:.0%}"
     lines.append(f"---")
     lines.append(f"参考值 | 能量：{_energy:.0%} | 欲望：{_desire_ref} | 激素：{_hormone_ref}")
 

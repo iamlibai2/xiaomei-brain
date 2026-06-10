@@ -166,6 +166,7 @@ class HormoneState:
     cortisol: float = 0.3
     oxytocin: float = 0.5
     norepinephrine: float = 0.5
+    melatonin: float = 0.5   # 褪黑素 — 纯日夜节律驱动，不受事件/衰减影响
     last_updated: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict:
@@ -175,6 +176,7 @@ class HormoneState:
             "cortisol": self.cortisol,
             "oxytocin": self.oxytocin,
             "norepinephrine": self.norepinephrine,
+            "melatonin": self.melatonin,
             "last_updated": self.last_updated,
         }
 
@@ -184,6 +186,7 @@ class HormoneState:
         self.cortisol = data.get("cortisol", 0.3)
         self.oxytocin = data.get("oxytocin", 0.5)
         self.norepinephrine = data.get("norepinephrine", 0.5)
+        self.melatonin = data.get("melatonin", 0.5)
         self.last_updated = data.get("last_updated", time.time())
 
 
