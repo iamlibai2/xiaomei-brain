@@ -335,7 +335,12 @@ class ConversationDriver:
             except Exception as e:
                 import traceback
                 from xiaomei_brain.base.llm import LLMError
-                if isinstance(e, LLMError) and e.retryable:
+                import requests as _requests
+                is_retryable = (
+                    (isinstance(e, LLMError) and e.retryable)
+                    or isinstance(e, _requests.ConnectionError)
+                )
+                if is_retryable:
                     print(f"\n\033[33m[网络异常] LLM 接口暂时不可用，稍后自动重试\033[0m", flush=True)
                     logger.warning("[ConversationDriver] Chat 网络异常: %s", e)
                 else:
