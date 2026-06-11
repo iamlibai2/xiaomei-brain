@@ -130,9 +130,39 @@ def build_context(
             metadata=meta,
         )
 
-    # 2. 添加到 messages
+        # Co-write to experience stream
+        if agent.exp_stream:
+            try:
+                agent.exp_stream.log(
+                    type="user_msg",
+                    content=user_input,
+                    session_id=agent.session_id,
+                    related_id=str(user_msg_id) if user_msg_id else "",
+                    user_id=agent.user_id,
+                )
+            except Exception as e:
+                logger.debug("[ExpStream] user_msg write failed: %s", e)
+
+    # 2. 添加到 messages（带距上条消息的时间间隔）
+    last_msg_time = getattr(agent, '_last_user_msg_time', None)
+    gap_prefix = ""
+    if last_msg_time and isinstance(message_content, str):
+        gap = _time.time() - last_msg_time
+        if gap >= 10:
+            if gap < 60:
+                gap_prefix = f"距上条消息 {int(gap)}秒 "
+            elif gap < 3600:
+                gap_prefix = f"距上条消息 {int(gap / 60)}分钟 "
+            elif gap < 86400:
+                gap_prefix = f"距上条消息 {int(gap / 3600)}小时 "
+            else:
+                gap_prefix = f"距上条消息 {int(gap / 86400)}天 "
+    if isinstance(message_content, str):
+        tagged_content = gap_prefix + message_content
+    else:
+        tagged_content = message_content  # 多模态数组不加前缀
     agent.messages.append({
-        "role": "user", "content": message_content, "id": user_msg_id,
+        "role": "user", "content": tagged_content, "id": user_msg_id,
     })
 
     # ── 开关：不组装时直接返回裸消息 ──

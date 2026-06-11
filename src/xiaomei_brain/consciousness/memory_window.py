@@ -94,7 +94,9 @@ def refresh_memory_window(
             summaries = dag.get_higher_summaries(user_id=user_id, max_tokens=dag_max_tokens)
             if summaries:
                 dag_summaries = [
-                    {"id": s.id, "depth": s.depth, "content": s.content}
+                    {"id": s.id, "depth": s.depth, "content": s.content,
+                     "time_start": s.time_start, "time_end": s.time_end,
+                     "created_at": s.created_at}
                     if hasattr(s, "id") else s
                     for s in summaries
                 ]
@@ -206,7 +208,8 @@ def refresh_memory_window(
         try:
             recent = conversation_db.get_recent(20, user_id=user_id)
             recent_dialog = [
-                {"role": r.get("role", ""), "content": r.get("content", "")}
+                {"role": r.get("role", ""), "content": r.get("content", ""),
+                 "created_at": r.get("created_at", 0)}
                 for r in recent
             ]
         except Exception as e:
@@ -263,6 +266,39 @@ def refresh_memory_window(
         except Exception as e:
             logger.warning("[MemoryWindow] 模式记忆获取失败: %s", e)
 
+    # ── 13. 今日小结 ────────────────────────────────────
+    today_stats = None
+    now = time.time()
+    last_stats = getattr(getattr(si.history, 'today_stats', None), 'get', lambda _: 0)
+    last_updated = last_stats("updated_at") if isinstance(si.history.today_stats, dict) else 0
+    if now - last_updated > 300:  # 5分钟内不重复统计
+        try:
+            today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+            msg_count = 0
+            mem_count = 0
+            if conversation_db:
+                conn = conversation_db._get_conn()
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM messages WHERE created_at >= ? AND role IN ('user', 'assistant')",
+                    (today_start,),
+                ).fetchone()
+                msg_count = row[0] if row else 0
+            if longterm:
+                conn = longterm._get_conn()
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM memories WHERE created_at >= ?",
+                    (today_start,),
+                ).fetchone()
+                mem_count = row[0] if row else 0
+            today_stats = {
+                "hour": datetime.now().hour,
+                "messages": msg_count,
+                "memories": mem_count,
+                "updated_at": now,
+            }
+        except Exception as e:
+            logger.warning("[MemoryWindow] 今日小结统计失败: %s", e)
+
     # ── 统一推入 SelfImage ──────────────────────────────
     si.contribute_memory_window(
         memories={
@@ -281,6 +317,7 @@ def refresh_memory_window(
         project_map=project_map,
         experience=experience,
         attention_snapshot=attention_snapshot,
+        today_stats=today_stats,
     )
 
     _total = (

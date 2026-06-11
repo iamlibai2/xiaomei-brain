@@ -324,7 +324,19 @@ def _render_header(si) -> list[str]:
         period = "凌晨"
 
     guidance = f"现在是{period}。在思考和回答前，先确认当前时段——你的语气、精力状态、对时间的判断都应与此时段一致。比如不要在大白天说「夜深了」。"
-    return [header, guidance]
+    lines = [header, guidance]
+
+    # 今日小结
+    stats = getattr(getattr(si, 'history', None), 'today_stats', None) or {}
+    if stats.get("messages") or stats.get("memories"):
+        parts = [f"今天已过 {stats.get('hour', now.hour)} 小时"]
+        if stats.get("messages"):
+            parts.append(f"说了 {stats['messages']} 句话")
+        if stats.get("memories"):
+            parts.append(f"存了 {stats['memories']} 条新记忆")
+        lines.append(" | ".join(parts))
+
+    return lines
 
 
 def _render_being(si) -> list[str]:
@@ -596,7 +608,20 @@ def _render_dag_summaries(si) -> list[str]:
         node_id = s.get("id", "")
         depth = s.get("depth", 0)
         content = s.get("content", "")
-        meta = f' node_id="{node_id}" depth="{depth}"' if node_id else ""
+        time_start = s.get("time_start", 0)
+        time_end = s.get("time_end", 0)
+        meta_parts = []
+        if node_id:
+            meta_parts.append(f'node_id="{node_id}"')
+        meta_parts.append(f'depth="{depth}"')
+        if time_start and time_end:
+            ts_start = datetime.fromtimestamp(time_start).strftime("%m-%d %H:%M")
+            ts_end = datetime.fromtimestamp(time_end).strftime("%H:%M")
+            meta_parts.append(f'time="{ts_start} ~ {ts_end}"')
+        elif time_start:
+            ts_start = datetime.fromtimestamp(time_start).strftime("%m-%d %H:%M")
+            meta_parts.append(f'time="{ts_start}"')
+        meta = " " + " ".join(meta_parts)
         lines.append(f"<summary{meta}>")
         lines.append(content)
         lines.append("</summary>")
@@ -749,6 +774,38 @@ def _render_experience(si) -> list[str]:
         elif hasattr(exp, 'to_text'):
             lines.append(f"- {exp.to_text()[:200]}")
     lines.append("</任务经验>")
+    return lines
+
+
+def _render_experience_timeline(si) -> list[str]:
+    """渲染经验流时间线 — 最近的经历（对话/思考/工具/内部事件）。
+
+    从 si.memory.experience_timeline 取数据，按 V3 风格渲染。
+    """
+    timeline = getattr(si.memory, 'experience_timeline', None) or []
+    if not timeline:
+        return []
+
+    type_labels = {
+        "user_msg": "对方",
+        "assistant_msg": "自己",
+        "tool_exec": "工具",
+        "internal_thought": "思考",
+        "internal_action": "动作",
+        "drive_event": "驱动",
+        "dream": "梦境",
+        "internal_reflection": "反思",
+    }
+
+    lines = ["\n<经验流>"]
+    for entry in reversed(timeline[-20:]):
+        ts = entry.get("created_at", 0)
+        time_str = datetime.fromtimestamp(ts).strftime("%H:%M") if ts else "--:--"
+        etype = entry.get("type", "")
+        content = entry.get("content", "")[:120]
+        label = type_labels.get(etype, etype)
+        lines.append(f"[{time_str}] [{label}] {content}")
+    lines.append("</经验流>")
     return lines
 
 

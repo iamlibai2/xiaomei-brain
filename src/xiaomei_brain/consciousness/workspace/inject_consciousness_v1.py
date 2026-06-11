@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
 
 def inject_consciousness(si, mode: str = "daily") -> str:
-    """将意识注入 LLM 上下文 — 小美此刻的自我描述。
+    """将意识注入 LLM 上下文 — agent 此刻的自我描述。
 
     mode: flow / daily / task / reflect
     第二人称输出，让 LLM 读到"这是我的状态"而非自我介绍。

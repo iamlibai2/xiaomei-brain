@@ -41,7 +41,7 @@ DDL = """
 CREATE TABLE IF NOT EXISTS relationships (
     user_id TEXT PRIMARY KEY,
     depth REAL DEFAULT 0.0,
-    trust REAL DEFAULT 0.5,
+    trust REAL DEFAULT 0.3,
     interaction_count INTEGER DEFAULT 0,
     last_interaction_time REAL DEFAULT 0,
     last_decay_time REAL DEFAULT 0
@@ -97,7 +97,7 @@ class RelationshipEngine:
         self._storage = RelationshipStorage(db_path)
         self._user_id = user_id
         self.depth: float = 0.0
-        self.trust: float = 0.5
+        self.trust: float = 0.3
         self.interaction_count: int = 0
         self.last_interaction_time: float = 0.0
         self._last_decay_time: float = time.time()
@@ -125,6 +125,10 @@ class RelationshipEngine:
                 uid, self.depth, self.trust, self.interaction_count,
             )
         else:
+            self.depth = 0.0
+            self.trust = 0.3
+            self.interaction_count = 0
+            self.last_interaction_time = 0.0
             logger.info("[Relationship] 无历史数据 user=%s，使用默认值", uid)
         self._loaded = True
 

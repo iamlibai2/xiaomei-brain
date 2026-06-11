@@ -363,7 +363,8 @@ class SelfImage:
     def contribute_memory_window(self, *, memories: dict | None = None,
                                   project_map: str = "",
                                   experience: list | None = None,
-                                  attention_snapshot: Any = None) -> None:
+                                  attention_snapshot: Any = None,
+                                  today_stats: dict | None = None) -> None:
         """MemoryWindow 贡献：记忆窗口装配。
 
         由 refresh_memory_window() 调用。
@@ -386,6 +387,8 @@ class SelfImage:
             self.memory.experience = experience
         if attention_snapshot is not None:
             self._last_attention_snapshot = attention_snapshot
+        if today_stats is not None:
+            self.history.today_stats = today_stats
 
 
     # ── 文件持久化 ──────────────────────────────────────────

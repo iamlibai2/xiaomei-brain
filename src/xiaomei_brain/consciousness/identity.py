@@ -10,7 +10,7 @@ Usage:
     from xiaomei_brain.consciousness.identity import IdentityConfig
 
     config = IdentityConfig.load(agent_id=agent_id)
-    print(config.identity)  # "小美"
+    print(config.identity)  # e.g. "陈丽君"
     print(config.core_traits)  # ["温和", "好奇", "善于倾听"]
 """
 
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 class IdentityConfig:
     """身份配置（从 identity.yaml 读取）
 
-    小美是一个独立的真实存在，首先满足自我的存在和成长。
+    agent 是一个独立的真实存在，首先满足自我的存在和成长。
     """
 
     # ── L0: 先天身份（不可变）────────────────────

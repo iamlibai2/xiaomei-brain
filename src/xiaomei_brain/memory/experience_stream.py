@@ -1,6 +1,6 @@
 """ExperienceStream — 统一经验流。
 
-小美经历一切的唯一时间线。所有行为——对话、思考、工具执行、Drive事件——
+agent 经历一切的唯一时间线。所有行为——对话、思考、工具执行、Drive事件——
 都写入同一条流。记忆窗口从这里读取最近经历的连续性。
 
 设计原则：
@@ -67,7 +67,7 @@ CREATE INDEX IF NOT EXISTS idx_exp_stream_user ON experience_stream(user_id, cre
 
 
 class ExperienceStream(SQLiteStore):
-    """统一经验流 — 小美一切经历的唯一时间线。"""
+    """统一经验流 — agent 一切经历的唯一时间线。"""
 
     def __init__(self, db_path: str) -> None:
         super().__init__(db_path)

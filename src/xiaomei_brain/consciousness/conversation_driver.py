@@ -384,7 +384,7 @@ class ConversationDriver:
                 if m.get("role") in ("user", "assistant")
             ]
             recent_dialogue = "\n".join(
-                f"{'对方' if m.get('role') == 'user' else agent_name}：{m.get('content', '')}"
+                ConversationDriver._fmt_dialogue_line(m, agent_name)
                 for m in dialogue
             ) if dialogue else ""
 
@@ -416,6 +416,24 @@ class ConversationDriver:
             profile.save(path)
         except Exception as e:
             logger.debug("[ConversationDriver] Salience 反馈失败: %s", e)
+
+    @staticmethod
+    def _fmt_dialogue_line(m: dict, agent_name: str) -> str:
+        """格式化对话行，带上时间戳（若可获取）。"""
+        from datetime import datetime
+        ts = m.get("created_at", 0)
+        time_str = ""
+        if ts:
+            try:
+                time_str = datetime.fromtimestamp(ts).strftime("[%H:%M] ")
+            except Exception:
+                pass
+        speaker = "对方" if m.get("role") == "user" else agent_name
+        content = m.get("content", "")
+        # 内容可能已经带时间前缀（fresh_tail 注入），避免重复
+        if content.startswith("[") and "] " in content[:8]:
+            return f"{speaker}：{content}"
+        return f"{time_str}{speaker}：{content}"
 
     @staticmethod
     def _deliver_response(parent, session_id: str, content: str) -> None:

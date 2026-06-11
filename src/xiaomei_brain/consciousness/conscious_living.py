@@ -1228,19 +1228,31 @@ class ConsciousLiving(Living):
 
         # 第二遍：重建消息列表，从 DB metadata 恢复 tool_calls / reasoning_content
         # 同时复制 DB id（DAG 压缩需要，用于 filter_compressed_messages 匹配）
+        # 给 user/assistant 消息加上 [HH:MM] 时间前缀，让 LLM 感知对话发生的时间
         restored: list[dict] = []
         for m in recent:
             role = m.get("role", "user")
             db_id = m.get("id")  # SQLite row id
+            created_ts = m.get("created_at", 0)
+            time_prefix = ""
+            if created_ts and role in ("user", "assistant"):
+                try:
+                    time_prefix = datetime.fromtimestamp(created_ts).strftime("[%H:%M] ")
+                except Exception:
+                    pass
             if role == "user":
-                msg = {"role": "user", "content": m.get("content", "")}
+                msg = {"role": "user", "content": f"{time_prefix}{m.get('content', '')}"}
                 if db_id is not None:
                     msg["id"] = db_id
+                if created_ts:
+                    msg["created_at"] = created_ts
                 restored.append(msg)
             elif role == "assistant":
-                msg: dict[str, Any] = {"role": "assistant", "content": m.get("content", "")}
+                msg: dict[str, Any] = {"role": "assistant", "content": f"{time_prefix}{m.get('content', '')}"}
                 if db_id is not None:
                     msg["id"] = db_id
+                if created_ts:
+                    msg["created_at"] = created_ts
                 metadata = m.get("metadata", {})
                 if isinstance(metadata, str):
                     try:

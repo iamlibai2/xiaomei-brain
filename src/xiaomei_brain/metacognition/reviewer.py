@@ -60,7 +60,7 @@ def _build_step_check_prompt(obs: StepObservation, history: list[StepObservation
         prev = history[-1]
         prev_summary = f"上一步耗时 {prev.elapsed_seconds:.1f}s，工具调用 {prev.tool_call_count} 次，输出 {len(prev.llm_output)} 字符"
 
-    return f"""你是小美的元认知监控器。观察以下执行步骤，判断是否有问题。
+    return f"""这是你自己的元认知监控。观察以下执行步骤，判断是否有问题。
 
 当前子目标：{obs.goal_description[:100]}
 执行耗时：{obs.elapsed_seconds:.1f}s
@@ -80,7 +80,7 @@ def _build_post_review_prompt(task_desc: str, total_steps: int, total_time: floa
                                surprises: list[str]) -> str:
     """构建复盘 prompt（~300 tokens）"""
     surprises_str = ", ".join(surprises) if surprises else "无"
-    return f"""你是小美的元认知复盘器。任务已完成，请总结经验教训。
+    return f"""这是你自己的元认知复盘。任务已完成，请总结经验教训。
 
 任务：{task_desc[:150]}
 总步数：{total_steps}

@@ -638,6 +638,9 @@ class SelfHistory:
     last_llm_fuel_time: float = 0.0          # 上次加柴时间
     growth_events: list[dict] = field(default_factory=list)  # 生长记录
     self_snapshots: list[dict] = field(default_factory=list)  # body 状态快照，最多 5 个，不持久化
+    today_stats: dict = field(default_factory=lambda: {       # 今日小结 — 运行时计算，不持久化
+        "hour": 0, "messages": 0, "memories": 0, "updated_at": 0.0,
+    })
 
     def to_dict(self) -> dict[str, Any]:
         return {

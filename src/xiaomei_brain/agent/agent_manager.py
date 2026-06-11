@@ -28,7 +28,7 @@ class AgentInstance:
 
     Each instance has:
     - id: unique identifier (e.g. "default", "xiaomei", "xiaoming")
-    - name: display name (e.g. "小美", "小明")
+    - name: display name (e.g. "agent", "小明")
     - identity.md: system prompt file, dynamically read at runtime
     - independent memory/, sessions/ directories
     - persistent Agent (created once, reused across conversations)

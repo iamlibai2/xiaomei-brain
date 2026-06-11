@@ -22,7 +22,7 @@ from .render_consciousness_v3 import (
     _render_longterm_memories, _render_relation_chains,
     _render_dag_summaries,
     _render_essence, _render_narratives, _render_internal_narratives,
-    _render_experience, _render_token_budget, _render_learn_queue, _render_desk,
+    _render_experience, _render_experience_timeline, _render_token_budget, _render_learn_queue, _render_desk,
 )
 
 logger = logging.getLogger(__name__)
@@ -80,6 +80,7 @@ def _assemble_daily(si) -> str:
         + _render_dag_summaries(si)
         + _render_narratives(si)
         + _render_internal_narratives(si)
+        + _render_experience_timeline(si)
         + _render_token_budget(si)
         + _render_learn_queue(si)
         + _render_desk(si)
@@ -113,6 +114,7 @@ def _assemble_reflect(si) -> str:
         + _render_dag_summaries(si)
         + _render_narratives(si)
         + _render_internal_narratives(si)
+        + _render_experience_timeline(si)
         + _render_token_budget(si)
         + _render_learn_queue(si)
         + _render_desk(si)

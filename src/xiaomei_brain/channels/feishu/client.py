@@ -30,7 +30,7 @@ class FeishuChannel:
         verification_token: str = "",
         account_id: str = "default",
         streaming: bool = False,
-        streaming_header_title: str = "小美",
+        streaming_header_title: str = "agent",
     ):
         self.app_id = app_id
         self.app_secret = app_secret

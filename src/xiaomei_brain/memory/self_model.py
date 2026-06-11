@@ -28,7 +28,7 @@ class PurposeSeed:
     This is the agent's '天赋' (gift/calling): preset first, grows later.
     """
 
-    identity: str = ""       # "我是小美，一个温柔体贴的AI伴侣"
+    identity: str = ""       # agent 的身份声明，从 identity.md 加载
     calling: str = ""        # "我要成为真正懂用户内心的伙伴"
     passions: list[str] = field(default_factory=list)   # sources of joy
     boundaries: list[str] = field(default_factory=list)  # things I will not do
