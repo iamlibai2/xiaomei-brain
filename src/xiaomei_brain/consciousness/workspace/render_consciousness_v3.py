@@ -306,7 +306,25 @@ def _render_header(si) -> list[str]:
             days = int(gap / 86400)
             header += f" | 距上条消息 {days} 天"
 
-    return [header]
+    # 时段提示
+    hour = now.hour
+    if 5 <= hour < 8:
+        period = "凌晨，天还没亮"
+    elif 8 <= hour < 12:
+        period = "上午"
+    elif 12 <= hour < 14:
+        period = "中午"
+    elif 14 <= hour < 18:
+        period = "下午"
+    elif 18 <= hour < 21:
+        period = "傍晚"
+    elif 21 <= hour < 24:
+        period = "深夜"
+    else:
+        period = "凌晨"
+
+    guidance = f"现在是{period}。在思考和回答前，先确认当前时段——你的语气、精力状态、对时间的判断都应与此时段一致。比如不要在大白天说「夜深了」。"
+    return [header, guidance]
 
 
 def _render_being(si) -> list[str]:
