@@ -311,18 +311,20 @@ class DAGSummaryGraph(SQLiteStore):
         import math
         conn = self._get_conn()
 
-        # Collect orphan summaries — filter by user_id, optionally by session_id
+        # Collect orphan summaries — filtered by user_id + global.
         if session_id:
             rows = conn.execute(
                 """SELECT * FROM summaries
-                   WHERE user_id = ? AND session_id = ? AND parent_id IS NULL
+                   WHERE session_id = ? AND parent_id IS NULL
+                     AND (user_id = ? OR user_id = 'global')
                    ORDER BY depth DESC""",
-                (user_id, session_id),
+                (session_id, user_id),
             ).fetchall()
         else:
             rows = conn.execute(
                 """SELECT * FROM summaries
-                   WHERE user_id = ? AND parent_id IS NULL
+                   WHERE parent_id IS NULL
+                     AND (user_id = ? OR user_id = 'global')
                    ORDER BY depth DESC""",
                 (user_id,),
             ).fetchall()
@@ -609,8 +611,11 @@ class DAGSummaryGraph(SQLiteStore):
             if role == "tool":
                 tool_name = m.get("tool_name", "tool")
                 lines.append(f"[{tool_name}] {content[:200]}")
+            elif role == "assistant":
+                lines.append(f"[我] {content}")
             else:
-                lines.append(f"[{role}] {content}")
+                label = m.get("user_id") or m.get("user_display_name") or role
+                lines.append(f"[{label}] {content}")
         return "\n".join(lines)
 
     def _llm_summarize(self, formatted: str, prompt_template: str | None = None) -> str | None:

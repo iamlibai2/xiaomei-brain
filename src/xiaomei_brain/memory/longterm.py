@@ -1302,16 +1302,17 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
         """召回用户称呼（别名、绰号、昵称等）。
 
         语义搜索关于"怎么称呼这个用户"的记忆，仅保留高置信度结果。
+        注意：向量召回不做 user_id 过滤（记忆归 agent），此处后过滤。
         """
         try:
             results = self.recall(
                 query="允许我叫他 可以叫他 对他的称呼 称呼他为",
                 user_id=user_id,
-                top_k=5,
+                top_k=10,
             )
             return [
                 m.get("content", "") for m in results
-                if m.get("score", 0) >= 0.6
+                if m.get("score", 0) >= 0.6 and m.get("user_id") == user_id
             ]
         except Exception:
             return []
@@ -1334,7 +1335,7 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
 
         rows = conn.execute("""
             SELECT * FROM memories
-            WHERE (user_id = ?)
+            WHERE (user_id = ? OR user_id = 'global')
               AND status != 'extinct'
               AND type = 'common'
             ORDER BY strength * importance DESC
@@ -1374,13 +1375,7 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
         query_vector = self._embed(query)
         table = self._get_lance_table()
 
-        # Validate user_id to prevent SQL injection in where clause
-        # user_id comes from internal agent context, but we validate anyway
-        safe_user_id = self._safe_user_id(user_id)
-
-        # Search with user_id filter — overfetch then re-rank
         results = table.search(query_vector) \
-            .where(f"user_id = '{safe_user_id}'") \
             .limit(top_k * 3) \
             .to_pandas()
 
@@ -1391,10 +1386,10 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
         mem_ids = results["id"].tolist()
         distances = dict(zip(results["id"].tolist(), results["_distance"].tolist()))
 
-        # Fetch full metadata from SQLite (exclude extinct, optional source/type filter)
+        # Fetch full metadata from SQLite (exclude extinct, filter by user_id + global)
         placeholders = ",".join("?" * len(mem_ids))
-        sql = f"""SELECT * FROM memories WHERE id IN ({placeholders}) AND status != '{STATUS_EXTINCT}'"""
-        params = list(mem_ids)
+        sql = f"""SELECT * FROM memories WHERE id IN ({placeholders}) AND status != '{STATUS_EXTINCT}' AND (user_id = ? OR user_id = 'global')"""
+        params = list(mem_ids) + [user_id]
         if mem_type:
             sql += " AND type = ?"
             params.append(mem_type)

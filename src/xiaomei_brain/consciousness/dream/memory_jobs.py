@@ -208,10 +208,10 @@ class ExtractJob:
             for i in range(0, len(messages), self.BATCH_SIZE)
         ]
 
-        all_output: list[str] = []       # 所有批次的 ADD:/RELATES: 行
         cumulative: list[str] = []       # 累积的记忆内容（给下一批做上下文）
         batch_count = 0
         empty_count = 0
+        total_saved = 0
 
         for batch_idx, batch in enumerate(batches):
             formatted = self._format_messages(batch)
@@ -245,29 +245,34 @@ class ExtractJob:
                 logger.debug("[ExtractJob] batch %d/%d: EMPTY", batch_idx + 1, len(batches))
                 continue
 
-            all_output.append(text)
+            # 确定本批次的 user_id：所有用户消息来自同一用户则用该用户，否则 global
+            batch_user_ids = set(
+                m.get("user_id", "global")
+                for m in batch if m.get("role") == "user"
+            )
+            batch_user_id = list(batch_user_ids)[0] if len(batch_user_ids) == 1 else "global"
+
+            # 立即执行本批次的记忆存储
+            batch_saved = self._execute_adds(text, user_id=batch_user_id)
+            total_saved += batch_saved
 
             # 解析本批 ADD 行的内容，加入累积上下文
             batch_contents = self._extract_add_contents(text)
             cumulative.extend(batch_contents)
 
             logger.info(
-                "[ExtractJob] batch %d/%d: %d messages → %d memories extracted (cumulative=%d)",
-                batch_idx + 1, len(batches), len(batch), len(batch_contents), len(cumulative),
+                "[ExtractJob] batch %d/%d: %d messages → %d memories stored (batch_user=%s, total=%d)",
+                batch_idx + 1, len(batches), len(batch), batch_saved, batch_user_id, total_saved,
             )
 
-        # 5. 合并所有输出，统一执行（去重 + 存储）
-        if not all_output:
+        if batch_count == 0:
             return DreamResult(
                 job="extract", saved=0,
-                details=f"no memories from {batch_count} batches ({empty_count} EMPTY)",
+                details=f"<3 messages, skip",
             )
 
-        combined = "\n".join(all_output)
-        saved = self._execute_adds(combined)
-
         return DreamResult(
-            job="extract", saved=saved,
+            job="extract", saved=total_saved,
             details=f"{len(messages)} msgs in {batch_count} batches, cumulative={len(cumulative)} items",
         )
 
@@ -292,6 +297,9 @@ class ExtractJob:
             content = re.sub(r"^[-*]\s*", "", content).strip()
             if not content or len(content) < 5:
                 continue
+            # 去掉 [我] 前缀（只影响存储路由，不影响内容展示）
+            if content.startswith("[我]"):
+                content = content[3:].strip()
             # 去掉 | scenes: 部分，只保留内容
             if " | " in content:
                 content = content.rsplit(" | ", 1)[0].strip()
@@ -302,14 +310,18 @@ class ExtractJob:
         lines = []
         for m in messages:
             role = m.get("role", "user")
-            label = "我" if role == "assistant" else "对方"
+            if role == "assistant":
+                label = "我"
+            else:
+                label = m.get("user_id") or m.get("user_display_name") or "对方"
             content = m.get("content", "")[:500]
             lines.append(f"[{label}] {content}")
         return "\n".join(lines)
 
-    def _execute_adds(self, text: str) -> int:
+    def _execute_adds(self, text: str, user_id: str | None = None) -> int:
         ltm = self.extractor.ltm
-        user_id = self.user_id
+        if user_id is None:
+            user_id = self.user_id
         saved = 0
 
         # Parse all ADD lines and their optional scene tags
@@ -342,11 +354,18 @@ class ExtractJob:
         # Store memories (first pass to get IDs)
         content_to_id: dict[str, int] = {}
         for content, scene_tags in add_lines:
+            # [我] 前缀 → 涉及自己，存 global
+            mem_user_id = user_id
+            if content.startswith("[我]"):
+                mem_user_id = "global"
+                content = content[3:].strip()
+                logger.debug("[ExtractJob] '[我]' prefix → user_id=global")
+
             try:
                 # Dedup: recall first, UPDATE if similar memory already exists
                 is_dup = False
                 try:
-                    existing = ltm.recall(content, user_id=user_id, top_k=3)
+                    existing = ltm.recall(content, user_id=mem_user_id, top_k=3)
                     if existing and existing[0].get("score", 0) > 0.85:
                         old = existing[0]
                         logger.info(
@@ -367,7 +386,7 @@ class ExtractJob:
                         content=content,
                         source="dream",
                         importance=0.8,
-                        user_id=user_id,
+                        user_id=mem_user_id,
                         scene_tags=scene_tags if scene_tags else None,
                         mem_type="common",
                     )

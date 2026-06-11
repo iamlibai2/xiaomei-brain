@@ -219,6 +219,11 @@ def build_context(
             exp_stream=getattr(agent, "exp_stream", None),
         )
         self_image.current_user_name = getattr(agent, 'user_display_name', '')
+        identity_mgr = getattr(agent, 'identity_mgr', None)
+        if identity_mgr:
+            user_id = getattr(agent, 'user_id', '')
+            self_image.current_user_relation = identity_mgr.get_relation(user_id)
+            logger.info("[ContextPipeline] relation: user_id=%s → %s", user_id, self_image.current_user_relation)
         # 传递上条用户消息的时间戳，供 _render_header 计算时差
         self_image._last_user_msg_time = getattr(agent, '_last_user_msg_time', None)
         profile = _load_salience_profile(agent)

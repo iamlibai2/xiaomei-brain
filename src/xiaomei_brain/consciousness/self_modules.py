@@ -68,6 +68,12 @@ class Being:
         return 0.5
 
     @property
+    def closeness(self) -> float:
+        if self._relationship_engine:
+            return self._relationship_engine.closeness
+        return 0.0
+
+    @property
     def relationship_status(self) -> str:
         if self._relationship_engine:
             return self._relationship_engine.get_relationship_status()

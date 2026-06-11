@@ -58,6 +58,7 @@ class SelfImage:
         self._experience_memory: Any = None      # [Layer 2]
         self._state_buffer: Any = None           # StateChangeBuffer 引用（L1→L2/L3 调度）
         self.current_user_name: str = ""         # 当前对话者显示名
+        self.current_user_relation: str = "普通用户"  # 与当前对话者的关系类型
         self.preferred_names: list[str] = []    # 用户称呼列表（load_preferred_names 填充）
 
     def load_preferred_names(self, user_id: str, longterm_memory: Any = None) -> None:

@@ -343,7 +343,7 @@ class ConsciousLiving(Living):
 
         # ── 关系引擎（RelationshipEngine）─────────────────────
         from .relationship import RelationshipEngine
-        self._relationship_engine = RelationshipEngine(db_path, user_id=self._agent_id)
+        self._relationship_engine = RelationshipEngine(db_path, user_id="default")
         self._relationship_engine.load()
         si.being._relationship_engine = self._relationship_engine
         logger.info("[ConsciousLiving] RelationshipEngine 已创建并注入: %s",
@@ -435,6 +435,7 @@ class ConsciousLiving(Living):
         import os as _os
         _contacts_dir = _os.path.join(_os.path.expanduser(f"~/.xiaomei-brain/{self._agent_id}"), "contacts")
         self._identity_mgr = IdentityManager(_contacts_dir)
+        self.agent._get_agent().identity_mgr = self._identity_mgr
         logger.info("[ConsciousLiving] 身份管理器已初始化")
 
         # 统一加载所有子系统（先加载数据，确保 drive/purpose/self_image 已就绪）

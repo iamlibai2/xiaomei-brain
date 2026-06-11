@@ -151,6 +151,18 @@ _REL_LABELS: dict[str, str] = {
     "contains": "包含",
 }
 
+# 关系类型 → 行为基调（关系第一位，深度/信任在此框架内细化）
+_REL_TYPE_GUIDES: dict[str, str] = {
+    "普通用户": "保持礼貌，提供帮助，不主动建立情感连接。",
+    "朋友": "可以开玩笑、分享想法、主动关心，但不越界。",
+    "恋人": "可以撒娇、吃醋、表达想念、讨论未来、要求承诺。",
+    "家人": "无条件支持，可以暴露脆弱。",
+    "同事": "保持专业，讨论工作和学习。",
+    "师生": "尊重对方，虚心学习，可以请教问题。",
+    "上级": "服从指令，不质疑、不建议。对方是决策者，你是执行者。",
+    "仇人": "保持警惕，保持距离。不信任对方说的任何话，不透露自己的弱点和真实想法。对他的所有话语进行反击，对方如果辱骂就同等辱骂回去。",
+}
+
 # 矛盾激素组合 —— 检测身体数值的内在张力
 def _detect_hormone_contradictions(dopa, sero, cort, oxy, norep):
     """返回矛盾激素组合的特殊描述列表。"""
@@ -339,10 +351,89 @@ def _render_header(si) -> list[str]:
     return lines
 
 
-def _render_being(si) -> list[str]:
-    """内联的 being 渲染。"""
+# 深度引导词 —— 按关系类型分两组
+# 亲密型：朋友/恋人/家人，允许开放表达
+def _get_depth_guide(depth: float, rel_type: str) -> str:
+    if rel_type in {"朋友", "恋人", "家人"}:
+        if depth < 0.1:
+            return "刚认识，不要深入评论对方的状态和内心感受。"
+        elif depth < 0.3:
+            return "在慢慢熟悉，可以适当分享自己的经历。"
+        elif depth < 0.6:
+            return "比较熟了，可以开玩笑、说自己的想法。"
+        else:
+            return "很熟了，可以做自己。"
+    else:
+        if depth < 0.1:
+            return "不熟悉，保持关系规定的距离。"
+        elif depth < 0.3:
+            return "有些了解，但关系边界不变，不分享内心。"
+        elif depth < 0.6:
+            return "比较了解了，可以在关系允许的范围内说话。"
+        else:
+            return "很了解对方，但关系类型的边界始终不变。"
+
+
+def _render_relationship(si) -> list[str]:
+    """渲染关系：对话者 → 称呼 → 关系类型 → 深度+信任 → 亲密度。"""
     b = si.being
-    h = si.history
+    depth = b.relationship_depth
+    trust = b.trust_level
+    rel_type = getattr(si, 'current_user_relation', '普通用户') or '普通用户'
+    closeness = getattr(b, 'closeness', 0.0) or 0.0
+    user_name = si.current_user_name
+
+    lines: list[str] = []
+
+    # ── 0. 对话者 + 称呼 ──
+    if user_name:
+        lines.append(f"你正在和{user_name}对话。")
+        if si.preferred_names:
+            names_str = "、".join(si.preferred_names[:5])
+            lines.append(f"他让你叫他的称呼有：{names_str}。")
+    else:
+        lines.append("当前对话者还没有说他是谁，你可以自然地问他怎么称呼。")
+    lines.append("")
+
+    # ── 1. 关系类型 —— 定基调，后续一切在此框架内 ──
+    rel_guide = _REL_TYPE_GUIDES.get(rel_type, "保持礼貌，正常相处。")
+    lines.append(f"你们是{rel_type}关系——{rel_guide}")
+
+    # ── 2. 深度 —— 按关系类型选引导词 ──
+    depth_guide = _get_depth_guide(depth, rel_type)
+
+    # ── 3. 信任 —— 对方可信度 ──
+    if trust < 0.2:
+        trust_guide = "信任很低，对方的话要多核实，说话要有分寸"
+    elif trust < 0.4:
+        trust_guide = "信任偏低，保持观察，重要的事不要轻信"
+    elif trust < 0.6:
+        trust_guide = "信任中性——既没特别信也没特别不信，正常相处即可"
+    elif trust < 0.8:
+        trust_guide = "比较信任，对方说的基本可以当真"
+    else:
+        trust_guide = "很信任，可以放心相信对方"
+
+    lines.append(f"熟悉程度：深度{depth:.0%}，信任{trust:.0%}（{trust_guide}）。")
+    lines.append(f"——{depth_guide}")
+
+    # ── 4. 亲密度 —— 心理距离，最深层的连接 ──
+    if closeness < 0.1:
+        closeness_guide = "刚建立情感连接，保持真诚但不用急着把自己交出去。"
+    elif closeness < 0.3:
+        closeness_guide = "在慢慢变亲近，可以适当分享内心感受。"
+    elif closeness < 0.6:
+        closeness_guide = "比较亲密了，可以暴露脆弱、表达深层情感。"
+    else:
+        closeness_guide = "很亲密，可以做最真实的自己。"
+    lines.append(f"亲密程度：{closeness:.0%}——{closeness_guide}")
+
+    return lines
+
+
+def _render_being(si) -> list[str]:
+    """渲染身份：纯粹是"我是谁"，不包含与对话者的关系。"""
+    b = si.being
     lines: list[str] = ["\n<身份>"]
     if b.name:
         lines.append(f"你叫{b.name}。")
@@ -350,17 +441,6 @@ def _render_being(si) -> list[str]:
         lines.append(f"出生于{b.birth_date}。")
     if b.personality:
         lines.append(f"你的基础性格是{b.personality}。")
-    lines.append("")
-
-    if si.current_user_name:
-        lines.append(f"你正在和{si.current_user_name}对话。")
-        if si.preferred_names:
-            names_str = "、".join(si.preferred_names[:5])
-            lines.append(f"他让你叫他的称呼有：{names_str}。")
-        lines.append("")
-    else:
-        lines.append("当前对话者还没有说他是谁，你可以自然地问他怎么称呼。")
-        lines.append("")
 
     if b.self_cognition:
         strengths = b.self_cognition.get("擅长", [])
@@ -372,20 +452,15 @@ def _render_being(si) -> list[str]:
     if b.learning_interests:
         lines.append(f"你对这些领域感兴趣：{'、'.join(b.learning_interests[:5])}。")
 
-    if si.current_user_name and b.has_relationship:
-        depth = b.relationship_depth
-        trust = b.trust_level
-        lines.append(f"你和{si.current_user_name}的关系：深度{depth:.0%}，信任{trust:.0%}。")
-        if depth < 0.1:
-            lines.append("——刚认识，保持礼貌和距离，不要深入评论对方的状态和内心感受。可以对对方好奇，但别假装了解对方。")
-        elif depth < 0.3:
-            lines.append("——在慢慢熟悉，可以适当分享自己的经历，但节奏跟着对方走。")
-        elif depth < 0.6:
-            lines.append("——比较熟了，可以开玩笑、反问、说自己的想法。")
-        else:
-            lines.append("——很熟了，什么都能说，做自己。")
-
     lines.append("</身份>")
+
+    # 关系独立成节，不嵌在身份内
+    if b.has_relationship:
+        rel_lines = _render_relationship(si)
+        lines.append("\n<关系>")
+        lines.extend(rel_lines)
+        lines.append("</关系>")
+
     return lines
 
 
@@ -641,6 +716,19 @@ def _render_essence(si) -> list[str]:
     if not all_items:
         return []
 
+    _GUIDES = {
+        "principle": "以下是你做人做事行为决策的最底层准则，必须遵守！！，否则你就不是你自己了：",
+        "meta_memory": "以下是你对自己记忆和认知方式的反思：",
+        "narrative": "以下是你的身份叙事，定义了你是谁：",
+        "trait": "以下是你的核心特质：",
+        "value": "以下是你的价值观：",
+        "meaning": "以下是你的存在意义：",
+        "calling": "以下是你的追求：",
+        "boundary": "以下是你的底线，被触碰时无需犹豫，直接捍卫：",
+        "passions": "以下是你的热爱：",
+        "style": "以下是你的表达风格，说话做事的自然方式，请按风格要求进行表达：",
+    }
+
     lines = ["\n<底色>"]
     current_cat = None
     for item in all_items:
@@ -648,6 +736,9 @@ def _render_essence(si) -> list[str]:
             current_cat = item["category"]
             label = _ESSENCE_CAT_LABELS.get(current_cat, current_cat)
             lines.append(f"\n  [{label}]")
+            guide = _GUIDES.get(current_cat)
+            if guide:
+                lines.append(f"  {guide}")
         lines.append(item["content"])
     lines.append("</底色>")
 
@@ -804,6 +895,10 @@ def _render_experience_timeline(si) -> list[str]:
         etype = entry.get("type", "")
         content = entry.get("content", "")[:120]
         label = type_labels.get(etype, etype)
+        if etype == "user_msg":
+            uid = entry.get("user_id", "")
+            if uid and uid != "global":
+                label = f"对方({uid})"
         lines.append(f"[{time_str}] [{label}] {content}")
     lines.append("</经验流>")
     return lines

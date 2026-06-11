@@ -41,6 +41,11 @@ class IdentityManager:
         """列出所有身份 id。"""
         return list(self._identities.keys())
 
+    def get_relation(self, identity_id: str) -> str:
+        """获取与指定用户的关系类型。默认 "普通用户"。"""
+        entry = self._identities.get(identity_id)
+        return entry.get("relation", "普通用户") if entry else "普通用户"
+
     def exists(self, identity_id: str) -> bool:
         """检查 id 是否存在。"""
         return identity_id in self._identities
@@ -59,6 +64,7 @@ class IdentityManager:
                 for person in data.get("people", []):
                     self._identities[person["id"]] = {
                         "name": person.get("name", person["id"]),
+                        "relation": person.get("relation", "普通用户"),
                     }
                 logger.info("[Contacts] 加载 %d 个身份", len(self._identities))
             except Exception as e:
@@ -85,6 +91,10 @@ def _parse_simple_yaml(text: str) -> dict:
             m = re.match(r"\s*name:\s*(.+)", line)
             if m and current:
                 current["name"] = m.group(1).strip()
+            else:
+                m = re.match(r"\s*relation:\s*(.+)", line)
+                if m and current:
+                    current["relation"] = m.group(1).strip()
     if current:
         result["people"].append(current)
     return result

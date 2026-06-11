@@ -366,6 +366,11 @@ class MemoryExtractor:
             if not isinstance(action_item, dict):
                 continue
 
+            # 涉及自己 → 存 global，只关于对方 → 存 user_id
+            effective_user_id = "global" if action_item.get("self") else user_id
+            if effective_user_id != user_id:
+                logger.debug("[Memory JSON] 'self' flag → user_id=%s", effective_user_id)
+
             action_type = action_item.get("type", "").upper()
             tag = action_item.get("tag", "事实")
             content = action_item.get("content", "").strip()
@@ -388,7 +393,7 @@ class MemoryExtractor:
             if action_type == "ADD":
                 is_dup = False
                 try:
-                    existing = self.ltm.recall(content, user_id=user_id, top_k=3)
+                    existing = self.ltm.recall(content, user_id=effective_user_id, top_k=3)
                     if existing and existing[0].get("score", 0) > 0.85:
                         old = existing[0]
                         logger.info(
@@ -406,7 +411,7 @@ class MemoryExtractor:
                 if not is_dup:
                     memory_id = self.ltm.store(
                         content=content, source=source, tags=[tag],
-                        importance=imp, user_id=user_id,
+                        importance=imp, user_id=effective_user_id,
                         scene_tags=scene_tags, mem_type="common",
                     )
                     logger.info("[Memory ADD JSON] #%d: %.50s scenes=%s", memory_id, content, scene_tags)
@@ -415,11 +420,11 @@ class MemoryExtractor:
                         content_to_id[content[:50]] = memory_id
 
             elif action_type in ("UPDATE", "MERGE", "DELETE"):
-                similar = self.ltm.recall(content, user_id=user_id, top_k=3)
+                similar = self.ltm.recall(content, user_id=effective_user_id, top_k=3)
                 if not similar:
                     memory_id = self.ltm.store(
                         content=content, source=source, tags=[tag],
-                        importance=imp, user_id=user_id,
+                        importance=imp, user_id=effective_user_id,
                         scene_tags=scene_tags, mem_type="common",
                     )
                     logger.info("[Memory ADD JSON(fallback)] #%d: %.50s scenes=%s", memory_id, content, scene_tags)
