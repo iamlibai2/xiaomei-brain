@@ -193,10 +193,13 @@ def build_context(
         )
 
     # 4. DAG auto-compact
-    if agent.dag and agent.session_id:
-        agent._auto_compact(
-            agent.session_id, max_tokens, None,
-        )
+    # 已移至 RoundScheduler._invoke_dag_compact() 异步 daemon 线程执行（每 8 轮）。
+    # 此处保留注释：旧同步路径会阻塞对话（LLM 压缩耗时 4-10s），
+    # 且与 daemon 线程争抢 _auto_compact 锁，导致异步路径白跑。
+    # if agent.dag and agent.session_id:
+    #     agent._auto_compact(
+    #         agent.session_id, max_tokens, None,
+    #     )
 
     # 5. 刷新记忆窗口 + 生成 system prompt
     system_content = ""
@@ -218,10 +221,11 @@ def build_context(
             dag_max_tokens=max_tokens // 5,
             exp_stream=getattr(agent, "exp_stream", None),
         )
+        user_id = getattr(agent, 'user_id', '')
         self_image.current_user_name = getattr(agent, 'user_display_name', '')
+        self_image.current_user_id = user_id or "global"
         identity_mgr = getattr(agent, 'identity_mgr', None)
         if identity_mgr:
-            user_id = getattr(agent, 'user_id', '')
             self_image.current_user_relation = identity_mgr.get_relation(user_id)
             logger.info("[ContextPipeline] relation: user_id=%s → %s", user_id, self_image.current_user_relation)
         # 传递上条用户消息的时间戳，供 _render_header 计算时差
@@ -291,12 +295,19 @@ def build_context(
 # ── 轻量上下文 ──────────────────────────────────────
 
 def build_simple_context(consciousness, mode: str = "daily", user_input: str = "",
-                         profile=None) -> str:
+                         profile=None, user_id: str | None = None) -> str:
     """轻量上下文组装：刷新记忆窗口 + 注入意识。返回 system prompt 文本。
 
     供主对话外的独立 LLM 调用使用（意图决策、主动行为、学习、社交感知等）。
+
+    Args:
+        user_id: 目标用户 ID，用于过滤 recent_dialog（None = 使用 agent_id，"" = 全部用户）
     """
-    consciousness._refresh_memory_window(user_input or None)
+    # mode="internal"：内部决策，不过滤 user_id，展示全部用户消息
+    _user_id = user_id
+    if mode == "internal" and user_id is None:
+        _user_id = ""
+    consciousness._refresh_memory_window(user_input or None, user_id=_user_id)
     return inject_consciousness(consciousness.self_image, mode=mode, user_input=user_input, profile=profile)
 
 

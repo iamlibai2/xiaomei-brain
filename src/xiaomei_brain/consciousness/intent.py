@@ -56,6 +56,9 @@ class IntentType(Enum):
     TALK = "talk"
     """想和其他 agent 聊聊"""
 
+    SLEEP = "sleep"
+    """想睡觉——能量见底或无事可做时主动休眠"""
+
 
 @dataclass
 class Intent:
@@ -94,7 +97,7 @@ class Intent:
 
     def to_dict(self) -> dict:
         """转换为字典"""
-        return {
+        d = {
             "type": self.type.value,
             "priority": self.priority,
             "content": self.content,
@@ -102,6 +105,11 @@ class Intent:
             "source": self.source,
             "params": self.params,
         }
+        # 携带 user_id（供多用户路由）
+        uid = self.params.get("user_id", "")
+        if uid:
+            d["user_id"] = uid
+        return d
 
     @classmethod
     def from_dict(cls, data: dict) -> "Intent":
@@ -176,6 +184,15 @@ def create_dream_intent(priority: int = 40) -> Intent:
     )
 
 
+def create_sleep_intent(reason: str = "", priority: int = 80) -> Intent:
+    """创建睡眠意图"""
+    return Intent(
+        type=IntentType.SLEEP,
+        priority=priority,
+        content=f"想睡觉：{reason}" if reason else "能量耗尽或无事可做，主动休眠",
+    )
+
+
 def create_care_intent(user_state: str, priority: int = 75) -> Intent:
     """创建关心意图"""
     return Intent(
@@ -183,4 +200,14 @@ def create_care_intent(user_state: str, priority: int = 75) -> Intent:
         priority=priority,
         content=f"想关心对方，对方状态：{user_state}",
         params={"user_state": user_state},
+    )
+
+
+def create_express_intent(thought: str, priority: int = 60) -> Intent:
+    """创建表达意图"""
+    return Intent(
+        type=IntentType.EXPRESS,
+        priority=priority,
+        content=f"想分享：{thought}",
+        params={"thought": thought},
     )

@@ -52,10 +52,15 @@ class Essence(SQLiteStore):
                 category TEXT NOT NULL,
                 content TEXT NOT NULL,
                 priority REAL DEFAULT 0.5,
-                created_at REAL NOT NULL
+                created_at REAL NOT NULL,
+                relation_types TEXT
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_essence_category ON essence(category)")
+        # Migration: add relation_types column to existing tables
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(essence)").fetchall()]
+        if "relation_types" not in cols:
+            conn.execute("ALTER TABLE essence ADD COLUMN relation_types TEXT")
         conn.commit()
 
     # ── Write (只增) ───────────────────────────────────────────
@@ -65,6 +70,7 @@ class Essence(SQLiteStore):
         category: str,
         content: str,
         priority: float = 0.5,
+        relation_types: str | None = None,
     ) -> int:
         """添加一条底色片段。
 
@@ -72,6 +78,7 @@ class Essence(SQLiteStore):
             category: 类型（必须是 VALID_CATEGORIES 之一）
             content: 第一人称描述
             priority: 排序优先级 (0-1)
+            relation_types: 逗号分隔的关系类型（如 "恋人,朋友"），空值 = 通用
 
         Returns:
             新记录的 ID
@@ -82,8 +89,8 @@ class Essence(SQLiteStore):
         conn = self._get_conn()
         now = time.time()
         cursor = conn.execute(
-            "INSERT INTO essence (category, content, priority, created_at) VALUES (?, ?, ?, ?)",
-            (category, content.strip(), priority, now),
+            "INSERT INTO essence (category, content, priority, created_at, relation_types) VALUES (?, ?, ?, ?, ?)",
+            (category, content.strip(), priority, now, relation_types),
         )
         conn.commit()
         logger.info("[Essence] +%s #%d: %s", category, cursor.lastrowid, content[:60])
@@ -93,7 +100,7 @@ class Essence(SQLiteStore):
         """批量添加。
 
         Args:
-            items: [{"category": ..., "content": ..., "priority": 0.5}, ...]
+            items: [{"category": ..., "content": ..., "priority": 0.5, "relation_types": "恋人,朋友"}, ...]
 
         Returns:
             新记录 ID 列表
@@ -104,6 +111,7 @@ class Essence(SQLiteStore):
                 category=item["category"],
                 content=item["content"],
                 priority=item.get("priority", 0.5),
+                relation_types=item.get("relation_types"),
             ))
         return ids
 
@@ -113,12 +121,26 @@ class Essence(SQLiteStore):
         conn = self._get_conn()
         return conn.execute("SELECT COUNT(*) FROM essence").fetchone()[0]
 
-    def get_all(self) -> list[dict]:
-        """获取全部底色片段，按 category + priority 排序。"""
+    def get_all(self, relation_type: str | None = None) -> list[dict]:
+        """获取底色片段，按 category + priority 排序。
+
+        Args:
+            relation_type: 当前关系类型。style 类别只返回通用项（NULL）和匹配项。
+        """
         conn = self._get_conn()
-        rows = conn.execute(
-            "SELECT * FROM essence ORDER BY category, priority DESC, id"
-        ).fetchall()
+        if relation_type:
+            rows = conn.execute(
+                """SELECT * FROM essence
+                   WHERE category != 'style'
+                      OR relation_types IS NULL
+                      OR relation_types LIKE ?
+                   ORDER BY category, priority DESC, id""",
+                (f"%{relation_type}%",),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM essence ORDER BY category, priority DESC, id"
+            ).fetchall()
         return [dict(r) for r in rows]
 
     def get_by_category(self, category: str) -> list[dict]:
@@ -144,14 +166,16 @@ class Essence(SQLiteStore):
         self,
         categories: list[str] | None = None,
         max_items: int | None = None,
+        relation_type: str | None = None,
     ) -> str:
         """渲染为注入 SelfImage 的文本。
 
         Args:
             categories: 要包含的类别列表，None = 全部
             max_items: 每个类别最多取几条，None = 全部
+            relation_type: 当前关系类型
         """
-        all_items = self.get_all()
+        all_items = self.get_all(relation_type=relation_type)
 
         # 过滤类别
         if categories:

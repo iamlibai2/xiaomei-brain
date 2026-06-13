@@ -219,6 +219,7 @@ class ConsciousLiving(Living):
         # 设置 Token 预算（从 LivingParams 读取）
         self.drive.token_budget_daily = float(self._config.living.daily_token_budget)
         self.drive.token_budget_monthly = float(self._config.living.monthly_token_budget)
+        self.drive.token_reset_hour = int(self._config.living.daily_token_reset_hour)
 
         # 注入 Token 回调到 LLM 客户端（穿透 ContextGuard）
         llm = self.agent.llm
@@ -304,6 +305,8 @@ class ConsciousLiving(Living):
             project_mental_model=self._project_mental_model,
             goal_run_storage=goal_run_storage,
             resume_trigger=resume_trigger,
+            procedure_memory=getattr(self.agent, '_procedure_memory', None),
+            longterm_memory=getattr(agent_instance, 'longterm_memory', None),
         )
 
         # MessageGateway（消息入口预处理：命令检测、身份解析、会话切换）
@@ -999,6 +1002,13 @@ class ConsciousLiving(Living):
             if state == LivingState.SLEEPING:
                 self._heartbeat_result = HEARTBEAT_DREAM
 
+        # 检查配额重置后的梦境标志（token 配额刚跨过 reset_hour）
+        if self.drive and self.drive._pending_dream_after_reset:
+            if state == LivingState.SLEEPING:
+                logger.info("[ConsciousLiving] 配额重置 → 触发 DREAMING（先梦境再恢复）")
+                self.drive._pending_dream_after_reset = False
+                self._heartbeat_result = HEARTBEAT_DREAM
+
     def _loop_idle(self) -> None:
         """IDLE 自主行为主循环。
 
@@ -1028,6 +1038,15 @@ class ConsciousLiving(Living):
                 si = self.consciousness.get_self_image()
                 self._dispatcher.tick(si)
                 executed = self._dispatcher.process_queue()
+
+                # 检查是否有 SLEEP 意图（agent 自己决定要睡了）
+                if self._has_sleep_intent(si):
+                    logger.info("[ConsciousLiving/IDLE] SLEEP 意图 → 进入 SLEEPING")
+                    # 消费 SLEEP intent，避免残留导致下次 IDLE 立即再次 SLEEP
+                    self._consume_sleep_intent(si)
+                    self._transition(LivingState.SLEEPING)
+                    return
+
                 if executed:
                     self._last_autonomous = time.time()
                     continue  # 有动作执行了，继续循环消费
@@ -1068,6 +1087,60 @@ class ConsciousLiving(Living):
                     f.write(line + "\n")
             except Exception as ex:
                 logger.warning("[%s] 写调试日志失败: %s", thread, ex)
+
+    def _has_sleep_intent(self, si) -> bool:
+        """检查意图缓冲或桌面中是否有 SLEEP 意图。
+
+        L2 引擎通过 contribute_intent() 将意图写入 intent_buffer（dict 列表），
+        同时通过 _drop_to_desk() 写入 desk。两者都检查以确保覆盖。
+        """
+        try:
+            # 1. 检查 intent_buffer（dict 列表，如 {"type": "sleep", ...}）
+            buf = getattr(si.intent, 'intent_buffer', [])
+            if buf:
+                for item in buf:
+                    if isinstance(item, dict):
+                        if item.get("type", "").lower() == "sleep":
+                            return True
+                    else:
+                        itype = getattr(item, 'type', None)
+                        if itype:
+                            if hasattr(itype, 'value') and itype.value == 'sleep':
+                                return True
+                            elif str(itype).lower() == 'sleep':
+                                return True
+
+            # 2. 检查 desk（L2 引擎投放意图的位置）
+            desk = getattr(si, 'desk', None)
+            if desk is not None:
+                for item in getattr(desk, '_items', []):
+                    intent_val = getattr(item, 'intent', None)
+                    if intent_val and str(intent_val).lower() == 'sleep':
+                        return True
+        except Exception:
+            pass
+        return False
+
+    def _consume_sleep_intent(self, si) -> None:
+        """消费 SLEEP intent：从 intent_buffer 和 desk 中移除。
+
+        防止 SLEEP intent 残留，导致下次进入 IDLE 立即再次触发 SLEEP。
+        """
+        # 1. 从 intent_buffer 移除
+        buf = getattr(si.intent, 'intent_buffer', [])
+        if buf:
+            si.intent.intent_buffer = [
+                i for i in buf
+                if not (isinstance(i, dict) and i.get("type", "").lower() == "sleep")
+            ]
+
+        # 2. 从 desk 移除
+        desk = getattr(si, 'desk', None)
+        if desk is not None:
+            desk._items = [
+                item for item in getattr(desk, '_items', [])
+                if not (getattr(item, 'intent', None) and str(item.intent).lower() == 'sleep')
+            ]
 
     def _should_skip_dreaming(self) -> bool:
         return not self._load_consciousness
@@ -1238,7 +1311,7 @@ class ConsciousLiving(Living):
             time_prefix = ""
             if created_ts and role in ("user", "assistant"):
                 try:
-                    time_prefix = datetime.fromtimestamp(created_ts).strftime("[%H:%M] ")
+                    time_prefix = datetime.fromtimestamp(created_ts).strftime("[%m-%d %H:%M] ")
                 except Exception:
                     pass
             if role == "user":
@@ -1323,12 +1396,16 @@ class ConsciousLiving(Living):
         logger.info("[ConsciousLiving] 加载 fresh_tail: %d 条消息 (user_id=%s)", len(agent.messages), self.user_id)
 
     def _on_wake_up(self) -> None:
-        """从 IDLE 收到消息唤醒，直接切 AWAKE 处理。
+        """从 IDLE/SLEEPING 收到消息唤醒，直接切 AWAKE 处理。
 
         idle 不是睡眠/梦境状态，不需要调 consciousness.on_wake()。
         on_wake() 只用于 DORMANT→AWAKE（启动）和 SLEEPING→AWAKE（睡眠醒来）。
         """
         logger.info("[ConsciousLiving] Waking up — message received!")
+        # 清除残留的 SLEEP intent（状态相关，醒来后无意义）
+        if self._load_consciousness:
+            si = self.consciousness.get_self_image()
+            self._consume_sleep_intent(si)
         self._transition(LivingState.AWAKE)
 
     def send_sos_to_channels(self, message: str, channels: list | None = None) -> None:
@@ -1397,10 +1474,11 @@ class ConsciousLiving(Living):
 
     # ── Proactive output ─────────────────────────────────────────
 
-    def _send_proactive(self, content: str) -> None:
+    def _send_proactive(self, content: str, user_id: str | None = None) -> None:
         """发送主动消息"""
-        logger.info("[ConsciousLiving/Proactive] 主动发送 (%d 字)", len(content))
-        print(f"\033[32m── 主动输出 ──\033[0m", flush=True)
+        target_user = user_id or self.user_id
+        logger.info("[ConsciousLiving/Proactive] 主动发送 (%d 字) to %s", len(content), target_user)
+        print(f"\033[32m── 主动输出 → {target_user} ──\033[0m", flush=True)
 
         if self.agent.conversation_db:
             try:
@@ -1408,7 +1486,7 @@ class ConsciousLiving(Living):
                     session_id=self.session_id,
                     role="assistant",
                     content=content,
-                    user_id=self.user_id,
+                    user_id=target_user,
                 )
             except Exception as e:
                 logger.warning("[ConsciousLiving/Proactive] 对话日志写入失败: %s", e)

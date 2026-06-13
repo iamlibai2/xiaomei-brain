@@ -22,7 +22,8 @@ from .render_consciousness_v3 import (
     _render_longterm_memories, _render_relation_chains,
     _render_dag_summaries,
     _render_essence, _render_narratives, _render_internal_narratives,
-    _render_experience, _render_experience_timeline, _render_token_budget, _render_learn_queue, _render_desk,
+    _render_experience, _render_experience_timeline, _render_learn_queue, _render_desk,
+    _render_procedures, _render_recent_dialog,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,12 +45,14 @@ def inject_consciousness(si, mode: str = "daily", user_input: str = "",
         )
 
     _assemble_map = {
-        "flow":    _assemble_flow,
-        "daily":   _assemble_daily,
-        "task":    _assemble_task,
-        "reflect": _assemble_reflect,
-        "dream":   _assemble_dream,
-        "learn":   _assemble_learn,
+        "flow":     _assemble_flow,
+        "daily":    _assemble_daily,
+        "task":     _assemble_task,
+        "reflect":  _assemble_reflect,
+        "dream":    _assemble_dream,
+        "learn":    _assemble_learn,
+        "proactive": _assemble_proactive,
+        "internal": _assemble_internal,
     }
     assemble = _assemble_map.get(mode, _assemble_daily)
     return assemble(si)
@@ -75,13 +78,13 @@ def _assemble_daily(si) -> str:
         + _render_being(si)
         + _render_essence(si)
         + _render_body(si)
+        + _render_procedures(si)
         + _render_longterm_memories(si)
         + _render_relation_chains(si)
         + _render_dag_summaries(si)
         + _render_narratives(si)
         + _render_internal_narratives(si)
         + _render_experience_timeline(si)
-        + _render_token_budget(si)
         + _render_learn_queue(si)
         + _render_desk(si)
     )
@@ -115,7 +118,6 @@ def _assemble_reflect(si) -> str:
         + _render_narratives(si)
         + _render_internal_narratives(si)
         + _render_experience_timeline(si)
-        + _render_token_budget(si)
         + _render_learn_queue(si)
         + _render_desk(si)
     )
@@ -136,4 +138,54 @@ def _assemble_learn(si) -> str:
         _render_header(si)
         + _render_being(si)
         + _render_essence(si)
+    )
+
+
+def _assemble_proactive(si) -> str:
+    """proactive: 主动消息 — daily 完整上下文 + 最近对话。
+
+    供 GREET/CARE/EXPRESS/TALK 等主动消息生成使用。
+    与 daily 的区别：额外渲染最近对话（recent_dialog），
+    让 LLM 知道最近聊了什么，避免"失忆"。
+    """
+    return "\n".join(
+        _render_header(si)
+        + _render_being(si)
+        + _render_essence(si)
+        + _render_body(si)
+        + _render_procedures(si)
+        + _render_longterm_memories(si)
+        + _render_relation_chains(si)
+        + _render_dag_summaries(si)
+        + _render_narratives(si)
+        + _render_internal_narratives(si)
+        + _render_recent_dialog(si)
+        + _render_experience_timeline(si)
+        + _render_learn_queue(si)
+        + _render_desk(si)
+    )
+
+
+def _assemble_internal(si) -> str:
+    """internal: 内部决策 — daily 完整上下文 + 所有用户的最近对话。
+
+    供 L2 意图决策、社交感知等内部 LLM 调用使用。
+    与 daily 的区别：额外渲染 recent_dialog（不过滤 user_id，展示全部用户消息），
+    让 LLM 在内部决策时能看到全局对话上下文。
+    """
+    return "\n".join(
+        _render_header(si)
+        + _render_being(si)
+        + _render_essence(si)
+        + _render_body(si)
+        + _render_procedures(si)
+        + _render_longterm_memories(si)
+        + _render_relation_chains(si)
+        + _render_dag_summaries(si)
+        + _render_narratives(si)
+        + _render_internal_narratives(si)
+        + _render_recent_dialog(si)
+        + _render_experience_timeline(si)
+        + _render_learn_queue(si)
+        + _render_desk(si)
     )

@@ -366,6 +366,7 @@ def _build_living_config(data: dict):
                 max_context_tokens=living.get("max_context_tokens", 50000),
                 daily_token_budget=living.get("daily_token_budget", 0),
                 monthly_token_budget=living.get("monthly_token_budget", 0),
+                daily_token_reset_hour=living.get("daily_token_reset_hour", 4),
                 comms_port=living.get("comms_port", 0),
                 ws_port=living.get("ws_port", -1),
             )

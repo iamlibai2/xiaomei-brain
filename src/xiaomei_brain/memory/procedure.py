@@ -2,7 +2,7 @@
 
 Architecture:
 - SQLite (brain.db): procedures table — name, description, trigger_config, steps, etc.
-- Learn from: conversation history + LLM generation (in L2 tick)
+- Learn from: conversation history + LLM generation (via RoundScheduler, every 15 turns)
 - Trigger: keyword matching (O(N) scan, no vector needed)
 - Execute: inject top-3 procedures into context, LLM decides whether to use
 
@@ -346,24 +346,94 @@ class ProcedureStore(SQLiteStore):
 
 
 class ProcedureMatcher:
-    """Keyword-based procedure matching and context injection."""
+    """语义向量 + 关键词 boosted 的过程记忆匹配。"""
 
     def __init__(self, store: ProcedureStore) -> None:
         self._store = store
 
-    def match(self, user_message: str, top_k: int = 3) -> list[dict]:
-        """Match user_message against all active procedures. Returns top_k candidates."""
+    def match(
+        self,
+        user_message: str,
+        top_k: int = 1,
+        embed_fn: Any = None,
+        threshold: float = 0.6,
+    ) -> list[dict]:
+        """语义匹配 user_message 与所有活跃过程记忆。
+
+        Args:
+            user_message: 用户消息
+            top_k: 返回条数（默认 1，激活最匹配的一个）
+            embed_fn: 文本→归一化向量的嵌入函数，None 时回退关键词匹配
+            threshold: 余弦相似度阈值，低于此值的不入选
+
+        Returns:
+            匹配到的过程记忆列表，按 weight × similarity 排序
+        """
         all_active = self._store.get_all_active()
         if not all_active:
             return []
 
+        if embed_fn:
+            return self._semantic_match(
+                user_message, all_active, top_k, embed_fn, threshold,
+            )
+
+        # 回退：纯关键词匹配（embed_fn 不可用时）
+        return self._keyword_match(user_message, all_active, top_k)
+
+    def _semantic_match(
+        self,
+        user_message: str,
+        all_active: list[dict],
+        top_k: int,
+        embed_fn,
+        threshold: float,
+    ) -> list[dict]:
+        """向量语义匹配 + 关键词 boost。"""
+        import numpy as np
+
+        try:
+            query_vec = np.array(embed_fn(user_message))
+        except Exception as e:
+            logger.warning("%s Embed query failed, fallback to keyword: %s", _P_LOG, e)
+            return self._keyword_match(user_message, all_active, top_k)
+
+        scored = []
+        for proc in all_active:
+            text = f"{proc['name']}: {proc.get('description', '')}"
+            try:
+                proc_vec = np.array(embed_fn(text))
+                # 向量已归一化，dot product = cosine similarity
+                sim = float(np.dot(proc_vec, query_vec))
+            except Exception as e:
+                logger.debug("%s Embed procedure '%s' failed: %s", _P_LOG, proc.get('name', ''), e)
+                continue
+
+            # 关键词精确命中 → boost
+            config = proc.get("trigger_config", {})
+            if _match_trigger_config(config, user_message):
+                sim *= 1.3
+
+            if sim >= threshold:
+                weight = proc.get("weight", 0.5)
+                scored.append((proc, sim * weight))
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return [p for p, _ in scored[:top_k]]
+
+    def _keyword_match(
+        self,
+        user_message: str,
+        all_active: list[dict],
+        top_k: int,
+    ) -> list[dict]:
+        """关键词匹配（回退方案）。"""
         matched = []
         for proc in all_active:
             config = proc.get("trigger_config", {})
             if _match_trigger_config(config, user_message):
                 matched.append(proc)
 
-        # Sort by weight descending
         matched.sort(key=lambda p: p.get("weight", 0.5), reverse=True)
         return matched[:top_k]
 
@@ -414,7 +484,7 @@ class ProcedureLearner:
 
         history_text = self._format_history(conversation_history)
         detect_prompt = _PROCEDURE_LEARN_PROMPT.format(conversation_history=history_text)
-        logger.info("%s L2 checking conversation (%d msgs)...", _P_LOG, len(conversation_history))
+        logger.info("%s 检测对话 (%d msgs)...", _P_LOG, len(conversation_history))
         try:
             resp = self._llm.chat(
                 messages=[{"role": "user", "content": detect_prompt}],
@@ -423,12 +493,12 @@ class ProcedureLearner:
             raw = (resp.content or "").strip()
             data = json.loads(raw or "{}")
         except Exception as e:
-            logger.warning("%s detect failed: %s", _P_LOG, e)
+            logger.warning("%s 检测失败: %s", _P_LOG, e)
             return []
 
         teach_intent = data.get("teach_intent", False)
         task_completion = data.get("task_completion", False)
-        logger.info("%s L2 detect result: teach_intent=%s task_completion=%s", _P_LOG, teach_intent, task_completion)
+        logger.info("%s 检测结果: teach_intent=%s task_completion=%s", _P_LOG, teach_intent, task_completion)
 
         if not teach_intent and not task_completion:
             return []
@@ -450,11 +520,11 @@ class ProcedureLearner:
             raw2 = (resp2.content or "").strip()
             proc_data = json.loads(raw2 or "{}")
         except Exception as e:
-            logger.warning("%s generate failed: %s", _P_LOG, e)
+            logger.info("%s 生成失败: %s", _P_LOG, e)
             return []
 
         if not proc_data.get("name") or not proc_data.get("steps"):
-            logger.warning("%s generate returned empty: %s", _P_LOG, resp2.content[:80])
+            logger.warning("%s 生成返回为空: %s", _P_LOG, resp2.content[:80])
             return []
 
         # Step 2.5: validate trigger keywords — filter out single-char and generic words
@@ -572,9 +642,19 @@ class ProcedureMemory:
         self._matcher = ProcedureMatcher(self._store)
         self._learner = ProcedureLearner(self._store, llm_client)
 
-    def match(self, user_message: str, top_k: int = 3) -> list[dict]:
-        """Match user_message against active procedures. Returns top_k candidates."""
-        return self._matcher.match(user_message, top_k)
+    def match(
+        self, user_message: str, top_k: int = 1,
+        embed_fn: Any = None, threshold: float = 0.6,
+    ) -> list[dict]:
+        """Match user_message against active procedures. Returns top_k candidates.
+
+        Args:
+            user_message: 用户消息
+            top_k: 返回条数（默认 1）
+            embed_fn: 嵌入函数，None 时回退关键词匹配
+            threshold: 余弦相似度阈值
+        """
+        return self._matcher.match(user_message, top_k, embed_fn=embed_fn, threshold=threshold)
 
     def inject_context(self, procedures: list[dict]) -> str:
         """Build context injection string."""
@@ -605,17 +685,20 @@ class ProcedureMemory:
         self,
         conversation_db,
         injected_procedure_ids: list[str] | None = None,
+        since: float | None = None,
     ) -> list[str]:
         """Fetch recent conversation history from db and run learn pipeline.
 
-        This is a convenience wrapper that handles the DB fetch internally,
-        keeping the learn logic encapsulated in procedure.py (not in
-        consciousness/core.py or other modules).
+        Args:
+            conversation_db: ConversationDB instance.
+            injected_procedure_ids: IDs of procedures in context (for result inference).
+            since: If given, only fetch messages created after this timestamp.
+                   Used for incremental learning (only new messages since last check).
         """
         if not conversation_db:
             return []
         try:
-            recent = conversation_db.get_recent(8)
+            recent = conversation_db.get_recent(50, since=since)
             if len(recent) < 2:
                 return []
             history = [
@@ -624,5 +707,5 @@ class ProcedureMemory:
             ]
             return self.learn_from_conversation(history, injected_procedure_ids)
         except Exception as e:
-            logger.warning("%s learn_from_conversation_db failed: %s", _P_LOG, e)
+            logger.warning("%s 学习失败: %s", _P_LOG, e)
             return []

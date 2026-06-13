@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Any, TYPE_CHECKING
 
@@ -40,6 +41,8 @@ class ConversationDriver:
         project_mental_model: Any = None,
         goal_run_storage: Any = None,
         resume_trigger: list | None = None,
+        procedure_memory: Any = None,
+        longterm_memory: Any = None,
     ) -> None:
         self._parent = parent
         self._drive = drive
@@ -48,6 +51,10 @@ class ConversationDriver:
         self._inner_voice = inner_voice
         self._goal_run_storage = goal_run_storage
         self._resume_trigger = resume_trigger
+        self._procedure_memory = procedure_memory
+        self._longterm_memory = longterm_memory
+        self._last_pl_time: float = time.time()
+        self._last_narr_time: float = time.time()
 
         # 任务模式标记（GoalManager 通过 driver._task_mode 读写）
         self._task_mode: bool = False
@@ -69,6 +76,13 @@ class ConversationDriver:
         self._scheduler = RoundScheduler()
         self._scheduler.every(1, self._salience_feedback)
         self._scheduler.every(3, self._invoke_inner_voice_chat_turn)
+        self._scheduler.every(8, self._invoke_dag_compact)
+        self._scheduler.every(10, self._invoke_memory_extract)
+        self._scheduler.every(15, self._invoke_procedure_learn)
+        self._scheduler.every(20, self._invoke_narrative_learn)
+
+        # 异步任务互斥（防止重叠执行）
+        self._extracting: bool = False
 
         # 向后兼容属性（conscious_living.py / action_dispatcher.py 使用）
         self.has_active_goal = self._goal_manager.has_active_goal
@@ -377,7 +391,6 @@ class ConversationDriver:
             user_name = getattr(agent_core, 'user_display_name', '对方')
             agent_name = self._parent.agent.name or "我"
 
-            # 从 agent.messages 过滤 user/assistant 对话
             msgs = agent_core.messages
             dialogue = [
                 m for m in msgs
@@ -388,11 +401,163 @@ class ConversationDriver:
                 for m in dialogue
             ) if dialogue else ""
 
-            self._inner_voice.on_chat_turn(
-                elapsed=elapsed, tools=tools or [], user_name=user_name,
-                recent_dialogue=recent_dialogue)
+            # 快照数据，daemon 线程异步执行
+            iv = self._inner_voice
+            _elapsed = elapsed
+            _tools = tools or []
+            _user_name = user_name
+            _dialogue = recent_dialogue
+
+            def _run():
+                try:
+                    iv.on_chat_turn(
+                        elapsed=_elapsed, tools=_tools, user_name=_user_name,
+                        recent_dialogue=_dialogue)
+                except Exception as e:
+                    logger.debug("[ConversationDriver] InnerVoice chat_turn 失败: %s", e)
+
+            threading.Thread(target=_run, daemon=True, name="inner_voice").start()
         except Exception as e:
             logger.debug("[ConversationDriver] InnerVoice chat_turn 失败: %s", e)
+
+    def _invoke_dag_compact(self, **kwargs: Any) -> None:
+        """每 8 轮对话预压缩 DAG：提前 summarize，减少下次 build_context 延迟。"""
+        try:
+            agent_core = self._parent.agent._get_agent()
+            dag = getattr(agent_core, 'dag', None)
+            if not dag:
+                return
+            session_id = getattr(agent_core, 'session_id', None)
+            if not session_id:
+                return
+
+            # 快照数据，daemon 线程异步执行
+            _dag = dag
+            _session_id = session_id
+            _agent = agent_core
+
+            def _run():
+                try:
+                    _agent._auto_compact(_session_id, max_tokens=4000, messages=None)
+                except Exception as e:
+                    logger.debug("[ConversationDriver] DAG compact 失败: %s", e)
+
+            threading.Thread(target=_run, daemon=True, name="dag_compact").start()
+        except Exception as e:
+            logger.debug("[ConversationDriver] DAG compact 失败: %s", e)
+
+    def _invoke_memory_extract(self, **kwargs: Any) -> None:
+        """每 10 轮对话提取增量记忆。复用 MemoryExtractor.extract_periodic()。"""
+        if self._extracting:
+            return  # 上一轮提取还未完成，跳过
+        try:
+            agent_core = self._parent.agent._get_agent()
+            extractor = getattr(agent_core, 'memory_extractor', None)
+            if not extractor or not extractor.llm:
+                return
+
+            user_name = getattr(agent_core, 'user_display_name', '') or "用户"
+            self._extracting = True
+            _extractor = extractor
+            _self = self
+
+            def _run():
+                try:
+                    _extractor.extract_periodic(user_name=user_name)
+                except Exception as e:
+                    logger.warning("[ConversationDriver] 记忆提取失败: %s", e)
+                finally:
+                    _self._extracting = False
+
+            threading.Thread(target=_run, daemon=True, name="memory_extract").start()
+        except Exception as e:
+            self._extracting = False
+            logger.warning("[ConversationDriver] 记忆提取失败: %s", e)
+
+    def _invoke_procedure_learn(self, **kwargs: Any) -> None:
+        """每 15 轮对话检测一次：从增量对话中学习新的 procedure。"""
+        if not self._procedure_memory:
+            return
+        try:
+            agent_core = self._parent.agent._get_agent()
+            db = getattr(agent_core, 'conversation_db', None)
+            if not db:
+                return
+
+            since = self._last_pl_time
+            self._last_pl_time = time.time()
+
+            _pm = self._procedure_memory
+            _db = db
+            _since = since
+
+            def _run():
+                try:
+                    new_ids = _pm.learn_from_conversation_db(_db, since=_since)
+                    if new_ids:
+                        logger.info("[Procedure] 学到新流程: %s", new_ids)
+                except Exception as e:
+                    logger.warning("[Procedure] 学习失败: %s", e)
+
+            threading.Thread(target=_run, daemon=True, name="procedure_learn").start()
+        except Exception as e:
+            logger.warning("[Procedure] 学习失败: %s", e)
+
+    def _invoke_narrative_learn(self, **kwargs: Any) -> None:
+        """每 20 轮对话检测一次：从增量对话中生成新的叙事记忆。"""
+        if not self._longterm_memory:
+            return
+        try:
+            agent_core = self._parent.agent._get_agent()
+            db = getattr(agent_core, 'conversation_db', None)
+            llm = getattr(agent_core, 'llm', None)
+            if not db or not llm:
+                return
+
+            user_id = getattr(agent_core, 'user_id', 'global')
+            agent_name = self._parent.agent.name or "我"
+
+            # 轻量意识上下文（build_simple_context mode="learn"）
+            consciousness = getattr(self._parent, 'consciousness', None)
+            consciousness_context = ""
+            if consciousness:
+                try:
+                    from .context_pipeline import build_simple_context
+                    consciousness_context = build_simple_context(consciousness, mode="learn")
+                except Exception as e:
+                    logger.debug("[NARR] build_simple_context failed: %s", e)
+
+            since = self._last_narr_time
+            self._last_narr_time = time.time()
+
+            _ltm = self._longterm_memory
+            _db = db
+            _llm = llm
+            _since = since
+            _user_id = user_id
+            _agent_name = agent_name
+            _ctx = consciousness_context
+
+            def _run():
+                try:
+                    from ..memory.narrative import learn_narratives
+                    new_ids = learn_narratives(
+                        conversation_db=_db,
+                        llm=_llm,
+                        longterm_memory=_ltm,
+                        since=_since,
+                        user_id=_user_id,
+                        agent_name=_agent_name,
+                        consciousness_context=_ctx,
+                    )
+                    if new_ids:
+                        logger.info("[NARR] 学到新叙事: %s", new_ids)
+                except Exception as e:
+                    logger.warning("[NARR] 学习失败: %s", e)
+
+            threading.Thread(target=_run, daemon=True, name="narrative_learn").start()
+        except Exception as e:
+            logger.warning("[NARR] 学习失败: %s", e)
 
     def _salience_feedback(self, display_content: str = "", **kwargs: Any) -> None:
         if not display_content:
@@ -425,7 +590,7 @@ class ConversationDriver:
         time_str = ""
         if ts:
             try:
-                time_str = datetime.fromtimestamp(ts).strftime("[%H:%M] ")
+                time_str = datetime.fromtimestamp(ts).strftime("[%m-%d %H:%M] ")
             except Exception:
                 pass
         speaker = "对方" if m.get("role") == "user" else agent_name

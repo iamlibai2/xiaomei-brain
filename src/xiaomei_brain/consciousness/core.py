@@ -163,6 +163,7 @@ class Consciousness:
         self._l2_triggered_by_anomaly: str | None = None  # L1 异常类型 → L2，如 "desire_starvation_belonging"
         self._anomaly_cooldowns: dict[str, float] = {}  # 异常类型 → 上次触发时间
         self._sleep_start_time: float = 0.0          # 入睡时间戳（入梦判定）
+        self._dreamed_this_sleep: bool = False      # 本次睡眠周期是否已做过梦
         self._last_l3_time: float = time.time()        # 启动后等冷却才触发 L3
         self._last_sc_time: float = time.time()        # 上次 social_cognition 时间（冷却用）
         self._social_cognition: Any = None             # SocialCognition 实例（由 ConsciousLiving 注入）
@@ -481,7 +482,11 @@ class Consciousness:
     # ── L2: LLM轻度加柴 ─────────────────────────────────────────
 
     def tick_L2(self, context: str) -> ConsciousnessReport:
-        """LLM 轻度加柴 — 委托给 L2Engine。"""
+        """[已废弃] LLM 轻度加柴 — 委托给 L2Engine。
+
+        全代码库零调用。实际流程中 Layer2 直接调用 tick_L2_intent()
+        和 tick_L2_emergence() 两个独立入口，不再走此合并路径。
+        """
         if self._l2_engine is None:
             self._l2_engine = L2Engine(self)
         return self._l2_engine.tick(context)
@@ -550,12 +555,14 @@ class Consciousness:
 
     # ── Memory / Helpers（L2 依赖，也供其他层使用）───────────────
 
-    def _refresh_memory_window(self, user_input: str | None = None) -> None:
+    def _refresh_memory_window(self, user_input: str | None = None,
+                              user_id: str | None = None) -> None:
         """刷新 SelfImage.memory — L2 加柴前拉取 7 种记忆。
 
         Args:
             user_input: 当前用户消息，有则直接用于 semantic recall，
                         无则 fallback 到 attention_query 做内省召回。
+            user_id: 目标用户 ID，用于过滤 recent_dialog（None = 使用 agent_id）
         """
         agent = self.agent
         if agent is None:
@@ -575,7 +582,7 @@ class Consciousness:
             conversation_db=getattr(agent, "conversation_db", None),
             procedure_memory=getattr(agent, "_procedure_memory", None),
             session_id=session_id,
-            user_id=self._agent_id,
+            user_id=user_id if user_id is not None else self._agent_id,
             user_input=user_input,
             exp_stream=self.exp_stream,
         )
@@ -602,7 +609,10 @@ class Consciousness:
             return "（获取对话失败）"
 
     def _learn_procedures_from_conversation(self) -> None:
-        """在 L2 tick 中调用：从最近对话学习新 procedure + 记录执行结果。"""
+        """[已废弃] 在 L2 tick 中调用：从最近对话学习新 procedure + 记录执行结果。
+
+        全代码库零调用。实际流程中 procedure 学习已移到 L2Engine.tick_emergence()
+        尾部（第468行），直接调用 _procedure_memory.learn_from_conversation_db()。"""
         if not self._procedure_memory or not self.agent:
             return
         db = getattr(self.agent, "conversation_db", None)
@@ -914,6 +924,7 @@ class Consciousness:
         - 欲望超阈值（欲望驱动，主要机制）
         - 用户空闲够久（时间兜底）
         - 定期审视（低频兜底）
+        - 能量极低（允许 agent 自己决定 SLEEP）
         """
         si = self.self_image
         elapsed = time.time() - self._last_intent_time
@@ -922,12 +933,8 @@ class Consciousness:
         if agent_state in ("sleeping", "dreaming"):
             return False
 
-        # 能量沉寂
+        # 动态冷却（低能量时冷却加倍，节省 token）
         energy = si.body.energy
-        if energy < 0.15:
-            return False
-
-        # 动态冷却
         cooldown = self._cc.l2_cooldown
         if energy < 0.3:
             cooldown *= 2.0

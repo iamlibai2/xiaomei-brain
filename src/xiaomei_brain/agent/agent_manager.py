@@ -94,6 +94,7 @@ class AgentInstance:
             self._agent.dag = getattr(self, "dag", None)
             self._agent.longterm_memory = self.longterm_memory
             self._agent.memory_extractor = self.memory_extractor
+            self._agent._procedure_memory = getattr(self, "_procedure_memory", None)
         return self._agent
 
     def chat(

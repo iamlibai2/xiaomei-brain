@@ -480,6 +480,7 @@ def cmd_user(living: ConsciousLiving, args: str = "") -> None:
         si = living.consciousness.get_self_image()
         if si:
             si.current_user_name = display_name
+            si.current_user_id = identity_id
             identity_mgr = getattr(living, '_identity_mgr', None)
             if identity_mgr:
                 si.current_user_relation = identity_mgr.get_relation(identity_id)

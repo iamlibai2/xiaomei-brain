@@ -12,7 +12,7 @@ import math
 import time
 import random
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -102,11 +102,14 @@ class DriveEngine:
 
         # Token 预算追踪
         self.token_usage_today: float = 0.0
-        self.token_usage_date: str = ""       # YYYY-MM-DD，跨天自动清零
+        self.token_usage_date: str = ""       # YYYY-MM-DD，跨 reset_hour 清零
         self.token_usage_month: float = 0.0
         self.token_usage_month_date: str = ""  # YYYY-MM，跨月自动清零
         self.token_budget_daily: float = 0.0   # 0 = 不限制
         self.token_budget_monthly: float = 0.0
+        self.token_reset_hour: int = 4         # 每日配额重置时间（0-23），默认凌晨4点
+        self._pending_dream_after_reset: bool = False  # 配额重置后触发梦境
+        self._last_reset_check: float = 0.0    # 上次检查重置的时间
 
         # 时间追踪
         self.last_minute_tick = time.time()
@@ -143,6 +146,7 @@ class DriveEngine:
                 self.token_usage_date = token_data.get("usage_date", "")
                 self.token_usage_month = token_data.get("usage_month", 0.0)
                 self.token_usage_month_date = token_data.get("usage_month_date", "")
+                self._pending_dream_after_reset = token_data.get("pending_dream_after_reset", False)
             logger.info(
                 f"[DriveEngine] 状态恢复: "
                 f"emotions={dict(self.emotion.emotions)}, "
@@ -633,43 +637,102 @@ class DriveEngine:
         return 1.0 + max(0.0, ratio - 0.5) * 2.0
 
     def record_token_usage(self, count: int) -> None:
-        """记录一次 LLM 调用的 token 消耗（供 LLMClient 回调）。"""
+        """记录一次 LLM 调用的 token 消耗（供 LLMClient 回调）。
+
+        每日按 token_reset_hour 判断跨天（不再用自然日 00:00）。
+        例如 reset_hour=4 表示每天凌晨 4 点重置日配额。
+        """
         if count <= 0:
             return
-        today = time.strftime("%Y-%m-%d")
-        this_month = time.strftime("%Y-%m")
-        if today != self.token_usage_date:
+
+        now = time.time()
+        now_dt = datetime.fromtimestamp(now)
+
+        # 按 reset_hour 计算"当前配额日"的日期标识
+        # 如果当前小时 < reset_hour，配额日 = 昨天日期（还在前一天的配额周期内）
+        if now_dt.hour < self.token_reset_hour:
+            quota_date = (now_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+                          - timedelta(days=1)).strftime("%Y-%m-%d")
+        else:
+            quota_date = now_dt.strftime("%Y-%m-%d")
+
+        this_month = now_dt.strftime("%Y-%m")
+
+        if quota_date != self.token_usage_date:
             self.token_usage_today = 0.0
-            self.token_usage_date = today
+            self.token_usage_date = quota_date
+            logger.info("[DriveEngine] Token 日配额重置: %s (reset_hour=%d)", quota_date, self.token_reset_hour)
+
         if this_month != self.token_usage_month_date:
             self.token_usage_month = 0.0
             self.token_usage_month_date = this_month
+
         self.token_usage_today += count
         self.token_usage_month += count
 
     # ========== 能量管理 ==========
+    #
+    # 能量 = Token 预算的具身感受。
+    # energy.level 从 token_usage_today / token_budget_daily 派生，
+    # 不再独立消耗/恢复。consume_energy / restore_energy 保留接口兼容。
+    #
+
+    def _sync_energy_from_token(self) -> None:
+        """将 energy.level 同步为 token 日配额消耗比例。
+
+        能量是 token 配额消耗的"身体感受"映射。
+        - token_budget_daily == 0（不限制）→ energy 固定 0.8
+        - 映射: usage_ratio [0, 1+] → energy [0.95, 0.05]
+        """
+        if self.token_budget_daily <= 0:
+            self.energy.level = 0.8
+            self.energy.last_updated = time.time()
+            return
+
+        ratio = self.token_usage_today / self.token_budget_daily
+        # 线性映射: 0% → 0.95, 50% → 0.50, 100% → 0.05
+        self.energy.level = max(0.05, 0.95 - ratio * 0.90)
+        self.energy.last_updated = time.time()
+
+    @property
+    def is_energy_critical(self) -> bool:
+        """能量是否严重不足——bot 应该考虑睡了。"""
+        return self.energy.level < 0.15
+
+    def _compute_energy_sources(self) -> dict:
+        """能量来源计算（预留扩展）。
+
+        Returns:
+            {来源名称: 贡献值}
+
+        当前仅一个来源：token 日配额消耗。
+        未来可能增加：电池充电（具身）、饮食（生物隐喻）等。
+        """
+        sources = {"token_quota": 0.0}
+
+        if self.token_budget_daily > 0:
+            ratio = self.token_usage_today / self.token_budget_daily
+            sources["token_quota"] = max(0.05, 0.95 - ratio * 0.90)
+        else:
+            sources["token_quota"] = 0.8
+
+        return sources
 
     def consume_energy(self, delta: float = 0.05) -> None:
         """
-        消耗能量（对话/LLM调用/主动行为）
-
-        Args:
-            delta: 消耗量，默认 0.05
+        消耗能量 — 已由 token 配额消耗自动反映，不再独立操作。
+        保留接口兼容，仅更新 last_updated。
         """
-        self.energy.level = max(0.0, self.energy.level - delta * self.token_pressure)
-        self.energy.last_updated = time.time()
-        logger.debug("[DriveEngine] 能量消耗: %.2f → %.2f", delta, self.energy.level)
+        self._sync_energy_from_token()
+        logger.debug("[DriveEngine] consume_energy(%.3f) — 能量由 token 配额派生: %.2f", delta, self.energy.level)
 
     def restore_energy(self, delta: float = 0.1) -> None:
         """
-        恢复能量（睡眠/休息）
-
-        Args:
-            delta: 恢复量，默认 0.1
+        恢复能量 — 已由 token 配额重置自动反映，不再独立操作。
+        保留接口兼容，仅更新 last_updated。
         """
-        self.energy.level = min(0.95, self.energy.level + delta)
-        self.energy.last_updated = time.time()
-        logger.debug("[DriveEngine] 能量恢复: +%.2f → %.2f", delta, self.energy.level)
+        self._sync_energy_from_token()
+        logger.debug("[DriveEngine] restore_energy(+%.3f) — 能量由 token 配额派生: %.2f", delta, self.energy.level)
 
     # ========== LLM 更新欲望（已废弃）==========
 
@@ -939,21 +1002,16 @@ class DriveEngine:
         """
         主 tick - 根据时间决定调用分钟/小时衰减
 
-        被动能量恢复：每次 tick 恢复微量能量，激素调质恢复速度。
-        即使什么都不做，能量也会缓慢回升（~5分钟从0恢复到0.3）。
+        能量由 token 日配额消耗比例派生，每次 tick 同步。
+        检测配额重置（跨 reset_hour），设置梦境标志。
         """
         now = time.time()
 
-        # 被动能量恢复：基础恢复 + 激素调质
-        # 多巴胺/血清素/去甲肾上腺素促进恢复，皮质醇抑制恢复
-        hormone_factor = (
-            self.hormone.dopamine * 0.3
-            + self.hormone.serotonin * 0.25
-            - self.hormone.cortisol * 0.35
-            + self.hormone.norepinephrine * 0.1
-        )
-        recovery_multiplier = max(0.0, min(2.0, 1.0 + hormone_factor))
-        self.restore_energy(0.001 * recovery_multiplier)
+        # 能量由 token 配额消耗映射（不再是独立恢复/消耗）
+        self._sync_energy_from_token()
+
+        # 检测日配额是否刚跨过 reset_hour
+        self._check_quota_reset()
 
         # 分钟衰减
         if now - self.last_minute_tick >= 60:
@@ -962,6 +1020,33 @@ class DriveEngine:
         # 小时衰减
         if now - self.last_hour_tick >= 3600:
             self.tick_hour()
+
+    def _check_quota_reset(self) -> None:
+        """检测日配额是否刚跨过 reset_hour。
+
+        当检测到配额日标识变化（记录的上次日期 ≠ 当前配额日），
+        表示刚经历了配额重置，设置 _pending_dream_after_reset 标志。
+        """
+        if self.token_budget_daily <= 0:
+            return
+
+        now = datetime.now()
+        if now.hour < self.token_reset_hour:
+            quota_date = (now.replace(hour=0, minute=0, second=0, microsecond=0)
+                          - timedelta(days=1)).strftime("%Y-%m-%d")
+        else:
+            quota_date = now.strftime("%Y-%m-%d")
+
+        # 配额日变了（reset_hour 刚过）→ 标记需要梦境
+        if self.token_usage_date and quota_date != self.token_usage_date:
+            if not self._pending_dream_after_reset:
+                logger.info(
+                    "[DriveEngine] 配额重置检测: %s → %s (reset_hour=%d)，触发梦境标志",
+                    self.token_usage_date, quota_date, self.token_reset_hour,
+                )
+                self._pending_dream_after_reset = True
+                self.token_usage_today = 0.0
+                self.token_usage_date = quota_date
 
     # ========== 系统压力事件（内感受 → Drive）==========
 
@@ -1130,6 +1215,7 @@ class DriveEngine:
                 "usage_date": self.token_usage_date,
                 "usage_month": self.token_usage_month,
                 "usage_month_date": self.token_usage_month_date,
+                "pending_dream_after_reset": self._pending_dream_after_reset,
             },
         )
 

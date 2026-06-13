@@ -1,94 +1,122 @@
-"""EmotionProcessor: 情绪整理，根据梦境内容调整 Drive 数值。
+"""EmotionProcessor: 情绪整理，根据梦境报告中的结构化情绪块调整 Drive 数值。
 
 参考人类大脑：
-- 做了关于爱的梦 → 第二天对爱的需求更强烈（归属欲上升）
-- 噩梦 → 皮质醇上升，安全感下降
+- 做了关于爱的梦 → 归属欲上升，催产素上升
+- 噩梦 → 皮质醇上升
+- REM 睡眠中杏仁核与前额叶的对话：情绪记忆再加工，去标签化
 
-原理：梦境内容反映潜意识欲望，通过梦境内容调整欲望/激素数值。
+原理：LLM 在梦境报告中输出 ---EMOTION--- JSON 块，Processor 解析并应用。
 """
 
 from __future__ import annotations
 
+import json
 import logging
-import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-# 梦境主题 → Drive 修改规则
-# 每条规则: (关键词模式, 欲望字段, 变化量, 激素变化)
-DESIRE_RULES: list[tuple[str, str, float, list[tuple[str, float]]]] = [
-    # 归属/爱
-    (r"爱|恋人|亲吻|拥抱|亲密|想念|想见", "belonging",     0.10, [("oxytocin", 0.15)]),
-    (r"孤单|孤独|被抛弃|没人理",          "belonging",    -0.05, [("cortisol", 0.05)]),
-    # 认知/好奇
-    (r"学习|发现|探索|宇宙|星空|新知",    "cognition",     0.10, []),
-    (r"困惑|迷茫|不懂|未知",              "cognition",    -0.05, []),
-    # 成就
-    (r"成功|达成|完成|胜利|获奖",        "achievement",   0.10, [("dopamine", 0.10)]),
-    (r"失败|挫折|沮丧|输",               "achievement",  -0.05, [("dopamine", -0.05)]),
-    # 表达
-    (r"表达|说出口|唱歌|创作|画画",        "expression",   0.10, [("dopamine", 0.05)]),
-    (r"说不出|压抑|沉默",                  "expression",  -0.05, []),
-    # 性相关（人类本能）
-    (r"春梦|性|欲望|裸体|身体",           "belonging",     0.05, [("testosterone", 0.10), ("dopamine", 0.05)]),
-    # 恐惧/噩梦
-    (r"噩梦|害怕|恐惧|追逐|逃跑",          "belonging",    -0.10, [("cortisol", 0.15)]),
-    # 社交
-    (r"朋友|聚会|聊天|多人",              "belonging",     0.05, [("oxytocin", 0.05)]),
-]
-
-
 class EmotionProcessor:
     """情绪整理器。
 
-    根据梦境摘要内容，通过规则匹配调整 Drive 的欲望值和激素值。
+    从 LLM 梦境报告中提取 ---EMOTION--- 结构化块，
+    解析 JSON 并应用欲望/激素变更，生成后续意图。
 
     Usage:
         processor = EmotionProcessor()
-        processor.process(drive, dream_summary="梦见和用户一起看星星")
+        changes = processor.process(drive, full_report="...---EMOTION---...", cs=consciousness)
     """
 
-    def process(self, drive: Any, dream_summary: str) -> dict[str, float]:
-        """根据梦境内容调整 Drive 数值。
+    def process(self, drive: Any, full_report: str, cs: Any) -> dict[str, float]:
+        """从梦境报告中提取情绪块，应用 Drive 变更，生成 Intent。
 
         Args:
             drive: DriveEngine 实例
-            dream_summary: 梦境摘要文本
+            full_report: LLM 完整梦境报告（含 ---EMOTION--- 块）
+            cs: ConsciousnessState 实例（用于 contribute_intent）
 
         Returns:
             实际发生的变化 dict {field: delta}
         """
-        if not drive or not dream_summary:
-            return {}
+        from ..intent import (
+            create_greet_intent, create_reflect_intent, create_wait_intent,
+            create_care_intent, create_express_intent,
+        )
 
         changes: dict[str, float] = {}
-        summary_lower = dream_summary.lower()
 
-        for pattern, desire_field, desire_delta, hormone_changes in DESIRE_RULES:
-            if re.search(pattern, summary_lower):
-                # 应用欲望变化
-                if hasattr(drive.desire, desire_field):
-                    old_val = getattr(drive.desire, desire_field)
-                    new_val = max(0.0, min(1.0, old_val + desire_delta))
-                    setattr(drive.desire, desire_field, new_val)
-                    changes[desire_field] = round(new_val - old_val, 3)
+        if "---EMOTION---" not in full_report:
+            if cs.self_image:
+                cs.self_image.contribute_intent(create_wait_intent().to_dict())
+            return changes
 
-                # 应用激素变化
-                for hormone_field, hormone_delta in hormone_changes:
-                    if hasattr(drive.hormone, hormone_field):
-                        old_h = getattr(drive.hormone, hormone_field)
-                        new_h = max(0.0, min(1.0, old_h + hormone_delta))
-                        setattr(drive.hormone, hormone_field, new_h)
-                        changes[hormone_field] = round(new_h - old_h, 3)
+        try:
+            idx = full_report.index("---EMOTION---")
+            after = full_report[idx + len("---EMOTION---"):]
+            for sep in ["---", "```"]:
+                if sep in after:
+                    after = after[:after.index(sep)]
+            data = json.loads(after.strip())
+        except (json.JSONDecodeError, ValueError):
+            logger.warning("[EmotionProcessor] JSON 解析失败")
+            if cs.self_image:
+                cs.self_image.contribute_intent(create_wait_intent().to_dict())
+            return changes
 
-                logger.info(
-                    "[EmotionProcessor] 梦境匹配 '%s' → %s %.3f, 激素: %s",
-                    pattern,
-                    desire_field,
-                    desire_delta,
-                    [(h, round(d, 3)) for h, d in hormone_changes],
-                )
+        # 应用欲望变更
+        if drive and "desire_changes" in data:
+            for field, delta in data["desire_changes"].items():
+                if hasattr(drive.desire, field):
+                    old = getattr(drive.desire, field)
+                    new = max(0.0, min(1.0, old + float(delta)))
+                    setattr(drive.desire, field, new)
+                    changes[field] = round(new - old, 3)
 
+        # 应用激素变更
+        if drive and "hormone_changes" in data:
+            for field, delta in data["hormone_changes"].items():
+                if hasattr(drive.hormone, field):
+                    old = getattr(drive.hormone, field)
+                    new = max(0.0, min(1.0, old + float(delta)))
+                    setattr(drive.hormone, field, new)
+                    changes[field] = round(new - old, 3)
+
+        # 生成后续意图
+        intent_type = data.get("followup_intent", "wait")
+        reason = data.get("intent_reason", "")
+        default_priority = {
+            "greet": 70, "care": 75, "reflect": 50,
+            "express": 60, "wait": 10,
+        }
+        priority = data.get("intent_priority", default_priority.get(intent_type, 50))
+
+        intent_map = {
+            "greet": lambda: create_greet_intent(reason[:50], priority=priority),
+            "reflect": lambda: create_reflect_intent(reason[:50], priority=priority),
+            "care": lambda: create_care_intent(reason[:50], priority=priority),
+            "express": lambda: create_express_intent(reason[:50], priority=priority),
+            "wait": lambda: create_wait_intent(),
+        }
+        intent = intent_map.get(intent_type, create_wait_intent)()
+
+        # 携带目标用户 ID（用于多用户路由）
+        target_user_id = data.get("target_user_id")
+        if target_user_id and target_user_id != "null":
+            intent_dict = intent.to_dict()
+            intent_dict["user_id"] = target_user_id
+        else:
+            intent_dict = intent.to_dict()
+
+        if cs.self_image:
+            cs.self_image.contribute_intent(intent_dict)
+
+        logger.info(
+            "[EmotionProcessor] 情绪整理: desire=%s hormone=%s intent=%s",
+            {k: v for k, v in changes.items()
+             if k in ("belonging", "cognition", "achievement", "expression")},
+            {k: v for k, v in changes.items()
+             if k in ("oxytocin", "cortisol", "dopamine", "serotonin")},
+            intent_type,
+        )
         return changes

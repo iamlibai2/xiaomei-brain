@@ -1,6 +1,6 @@
-"""NARR 块解析工具。
+"""NARR 块解析 + 叙事记忆学习。
 
-从 LLM 输出中解析结构化叙事块。
+从 LLM 输出中解析结构化叙事块，以及从对话记录中检测和生成新的叙事记忆。
 
 格式示例：
 <NARR>
@@ -16,15 +16,127 @@ changed_me:
 tags: [床上, 亲密]
 weight: 0.85
 </NARR>
+
+learn_narratives() 是对话驱动的叙事记忆学习入口：
+- 从 RoundScheduler 每 20 轮触发（via ConversationDriver）
+- 增量查询对话记录，独立 LLM 调用生成 NARR 块
+- 替代原来 L2 tick_emergence() 尾部定时器驱动的 NARR 生成
 """
+
+from __future__ import annotations
 
 import re
 import logging
 import json
-from typing import Any
+import time
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from xiaomei_brain.base.llm import LLMClient
 
 logger = logging.getLogger("xiaomei_brain.narrative")
 _P_LOG = "\033[91m[NARR]\033[0m"
+
+
+def learn_narratives(
+    conversation_db: Any,
+    llm: LLMClient,
+    longterm_memory: Any,
+    since: float | None = None,
+    user_id: str = "global",
+    agent_name: str = "我",
+    consciousness_context: str = "",
+) -> list[str]:
+    """从对话记录中检测并生成新的叙事记忆。
+
+    增量查询对话记录，独立 LLM 调用生成 NARR 块，
+    解析后存入 narrative_memories 表。
+
+    Args:
+        conversation_db: ConversationDB 实例
+        llm: LLM 客户端
+        longterm_memory: LongTermMemory 实例
+        since: 增量查询起始时间戳（UNIX 秒），不传则取最近 50 条
+        user_id: 用户标识
+        agent_name: Agent 名称（用于 prompt）
+        consciousness_context: 意识上下文（来自 build_simple_context）
+
+    Returns:
+        新生成的 NARR ID 列表
+    """
+    # 1. 取增量对话
+    recent = conversation_db.get_recent(50, since=since, user_id=user_id)
+    if not recent:
+        logger.debug("%s 无增量对话，跳过", _P_LOG)
+        return []
+
+    # 2. 格式化对话
+    lines: list[str] = []
+    for m in recent:
+        role = m.get("role", "")
+        content = m.get("content", "")[:500]
+        if role == "user":
+            lines.append(f"[对方] {content}")
+        elif role == "assistant":
+            lines.append(f"[{agent_name}] {content}")
+    recent_dialogue = "\n".join(lines)
+
+    if len(recent_dialogue) < 100:
+        logger.debug("%s 对话太短 (%d 字)，跳过", _P_LOG, len(recent_dialogue))
+        return []
+
+    logger.info("%s 检测对话 (%d 条, %d 字)...", _P_LOG, len(recent), len(recent_dialogue))
+
+    # 3. 构建 prompt + LLM 调用
+    from ..prompts.templates_v2 import NARR_LEARN_PROMPT
+
+    prompt = NARR_LEARN_PROMPT.format(
+        agent_name=agent_name,
+        consciousness_context=consciousness_context,
+        recent_dialogue=recent_dialogue,
+    )
+
+    try:
+        response = llm.chat(
+            messages=[{"role": "user", "content": prompt}],
+            tools=None,
+        )
+    except Exception as e:
+        logger.warning("%s LLM 调用失败: %s", _P_LOG, e)
+        return []
+
+    narr_text = response.content or ""
+    if not narr_text or "NARR" not in narr_text:
+        logger.debug("%s 无 NARR 块生成", _P_LOG)
+        return []
+
+    # 4. 解析并存储
+    narr_blocks = parse_narr_block(narr_text)
+    if not narr_blocks:
+        logger.debug("%s 未解析到有效 NARR 块", _P_LOG)
+        return []
+
+    new_ids: list[str] = []
+    for nb in narr_blocks:
+        try:
+            nm_id = longterm_memory.store_narrative_memory(
+                category=nb.get("category", "自我定义"),
+                content=nb.get("content", ""),
+                scene_tags=nb.get("scene_tags", []),
+                feels_like=nb.get("feels_like", ""),
+                changed_me=nb.get("changed_me", ""),
+                weight=nb.get("weight", 0.8),
+                related_narrative_id=None,
+                source="round",
+                timestamp=nb.get("timestamp"),
+                user_id=user_id,
+            )
+            new_ids.append(nm_id)
+            logger.info("%s 学到新叙事: %s [%s]", _P_LOG, nm_id, nb.get("category", ""))
+        except Exception as e:
+            logger.warning("%s 存储失败: %s", _P_LOG, e)
+
+    return new_ids
 
 
 def parse_narr_block(text: str) -> list[dict[str, Any]]:

@@ -2,12 +2,13 @@
 
 从 Consciousness 中抽取，独立管理 L2 的两次 LLM 调用流程：
 - 调用 1：意图决策（ReAct + 工具）
-- 调用 2：意识涌现（内心独白 + NARR + DOUBT）
+- 调用 2：意识涌现（内心独白 + DOUBT）
 
 Social cognition（EVENTS/PERCEPTION/SIGNAL）已拆到 metacognition/social_cognition.py。
+Narrative Memory（NARR）已拆到 RoundScheduler._invoke_narrative_learn()。
 
 输入：SelfImage 状态 + 触发 context
-输出：Intent + 内心独白 + NARR 存储
+输出：Intent + 内心独白
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from .intent import Intent, IntentType, create_wait_intent, create_greet_intent, create_reflect_intent, create_dream_intent, create_care_intent
+from .intent import Intent, IntentType, create_wait_intent, create_greet_intent, create_reflect_intent, create_dream_intent, create_care_intent, create_sleep_intent
 from xiaomei_brain.consciousness.context_pipeline import build_simple_context
 from xiaomei_brain.prompts import L2_EMERGENCE_PROMPT
 
@@ -136,10 +137,14 @@ class L2Engine:
     # ── 公共入口 ─────────────────────────────────────────────
 
     def tick(self, context: str) -> ConsciousnessReport:
-        """执行一次 L2 tick。
+        """[已废弃] 执行一次 L2 tick（意图决策 + 内心独白合体）。
+
+        全代码库零调用。实际流程中 Layer2 拆分调用：
+        - tick_intent(): 只做意图决策
+        - tick_emergence(): 只做内心独白
 
         调用 1：意图决策 — inject_consciousness() + 意图指令
-        调用 2：意识涌现 — inject_consciousness() + 自由表达 + NARR + DOUBT
+        调用 2：意识涌现 — inject_consciousness() + 自由表达 + DOUBT
         """
         c = self._c
         c._last_intent_time = time.time()
@@ -280,18 +285,8 @@ class L2Engine:
         # 写入意识涌现 → inner_thought + consciousness_stream
         self._store_emergence(emergence_text)
 
-        # ── Narrative Memory（NARR 块解析存储）──────────────────────
-        if emergence_text and c.agent and hasattr(c.agent, "longterm_memory"):
-            self._store_narr_blocks(emergence_text)
-
-        # ── Procedure Learning ────────────────────────
-        if c._procedure_memory and c.agent and hasattr(c.agent, "conversation_db"):
-            try:
-                new_ids = c._procedure_memory.learn_from_conversation_db(c.agent.conversation_db)
-                if new_ids:
-                    logger.info("\033[91m[Procedure]\033[0m L2 learned new: %s", new_ids)
-            except Exception as e:
-                logger.warning("\033[91m[Procedure]\033[0m L2 learning failed: %s", e)
+        # Narrative Memory 已拆到 RoundScheduler._invoke_narrative_learn()
+        # via ConversationDriver，不再从 L2 emergence 生成 NARR 块
 
         # ── Desk: 把 L2 的分析扔上桌面 ─────────────────
         self._drop_to_desk(context, intent, emergence_text)
@@ -461,15 +456,7 @@ class L2Engine:
 
         # 后处理
         self._store_emergence(emergence_text)
-        if emergence_text and c.agent and hasattr(c.agent, "longterm_memory"):
-            self._store_narr_blocks(emergence_text)
-        if c._procedure_memory and c.agent and hasattr(c.agent, "conversation_db"):
-            try:
-                new_ids = c._procedure_memory.learn_from_conversation_db(c.agent.conversation_db)
-                if new_ids:
-                    logger.info("[Procedure] L2 learned new: %s", new_ids)
-            except Exception as e:
-                logger.warning("[Procedure] L2 learning failed: %s", e)
+        # Narrative Memory 已拆到 RoundScheduler._invoke_narrative_learn()
 
         self._drop_to_desk(context, None, emergence_text)
         self._log_to_experience_stream(context, None, emergence_text)
@@ -490,7 +477,7 @@ class L2Engine:
         c = self._c
         l2_agent = self._get_l2_agent()
 
-        system_prompt = build_simple_context(c, mode="daily")
+        system_prompt = build_simple_context(c, mode="internal")
         has_goal = c.purpose and c.purpose.get_current() is not None
 
         # 查询目标 tag 的记忆
@@ -568,12 +555,13 @@ class L2Engine:
         intents = "wait / greet / care / learn / express / work / talk / talk_agent"
         if has_goal:
             intents += " / progress"
-        intents += " / reflect"
+        intents += " / reflect / sleep"
         prompt = (
             "基于你的自我认知，请判断你此刻应该做什么。你可以使用工具来辅助判断（如搜索、读文件等）。\n\n"
             + "意图说明：\n"
             + "- talk：想和用户进行更深入的对话交流（区别于 greet 的简短问候）\n"
             + "- talk_agent：想和其他 agent 聊天交流\n"
+            + "- sleep：能量已经很困了，或者手头确实无事可做，主动进入休眠节省资源\n"
             + f"可选意图：{intents}\n"
         )
         # 有未完成目标时，优先推进
@@ -632,7 +620,7 @@ class L2Engine:
         except Exception as e:
             logger.debug("Pattern 注入 L2 intent 失败（将跳过）: %s", e)
 
-        prompt += "\n如果需要，先执行工具操作。最终输出：\nINTENT: <意图类型>\nREASON: <理由，一句话>\nTOPIC: <学习主题>（仅 LEARN 意图时需要，其他意图不输出此行）"
+        prompt += "\n如果需要，先执行工具操作。最终输出：\nINTENT: <意图类型>\nREASON: <理由，一句话>\nTARGET_USER: <目标用户ID>（greet/care/express/talk 等主动消息必填，其他意图填 \"-\"）\nTOPIC: <学习主题>（仅 LEARN 意图时需要，其他意图不输出此行）"
         return prompt
 
     def _parse_intent_response(self, response: str) -> Intent | None:
@@ -651,6 +639,12 @@ class L2Engine:
         reason_match = re.search(r"REASON:\s*(.+)", response)
         reason = reason_match.group(1).strip() if reason_match else ""
 
+        # 解析 TARGET_USER
+        target_match = re.search(r"TARGET_USER:\s*(.+)", response)
+        target_user = target_match.group(1).strip() if target_match else ""
+        if target_user in ("-", "null", "none", ""):
+            target_user = ""
+
         # 解析 LEARN 意图的 TOPIC 字段
         topic_match = re.search(r"TOPIC:\s*(.+)", response)
         learn_topic = topic_match.group(1).strip() if topic_match else ""
@@ -668,13 +662,18 @@ class L2Engine:
             IntentType.EXPRESS: 60,
             IntentType.PROGRESS: 60,
             IntentType.WORK: 55,
+            IntentType.SLEEP: 80,
         }
+
+        params = {"learn_topic": learn_topic} if learn_topic else {}
+        if target_user:
+            params["user_id"] = target_user
 
         return Intent(
             type=intent_type,
             priority=priority_map.get(intent_type, 50),
             content=reason,
-            params={"learn_topic": learn_topic} if learn_topic else {},
+            params=params,
         )
 
     def _fallback_intent(self, context: str) -> Intent:
@@ -719,7 +718,7 @@ class L2Engine:
 
     def _build_l2_prompt(self, context: str, user_name: str = "对方", conflict: str = "") -> str:
         """构建 L2 加柴 prompt — 使用 inject_consciousness 作为状态头。"""
-        consciousness_context = build_simple_context(self._c, mode="daily")
+        consciousness_context = build_simple_context(self._c, mode="internal")
 
         conflict_hint = ""
         if conflict:
@@ -973,7 +972,9 @@ class L2Engine:
         desk = si.desk
 
         # 1. 意图决策
-        if intent and intent.is_actionable():
+        # SLEEP intent 不放 desk：它是纯状态切换信号，只有 IDLE 循环消费，
+        # 不需要让 ActionDispatcher / chat 上下文渲染等看到。
+        if intent and intent.is_actionable() and intent.type != IntentType.SLEEP:
             intent_type = intent.type.value
             intent_content = getattr(intent, "content", "")
             desk.drop(

@@ -957,7 +957,8 @@ class GoalManager:
                 logger.warning("[GoalComplete] extractor 版本不支持 task_completion")
                 return
             logger.info("[GoalComplete] 开始知识提取: goal=%s", goal.id)
-            ids = extractor.extract_task_completion(goal, user_id=self._parent.user_id)
+            agent_name = getattr(self._parent.agent, 'name', '')
+            ids = extractor.extract_task_completion(goal, user_id=self._parent.user_id, agent_name=agent_name)
             if ids:
                 print(f"[知识] 从目标中提取了 {len(ids)} 条长期记忆", flush=True)
             else:

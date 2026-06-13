@@ -53,6 +53,7 @@ class LivingParams:
     max_context_tokens: int = 50000    # 上下文最大 token 数
     daily_token_budget: int = 0       # 每日 token 预算，0=不限制
     monthly_token_budget: int = 0     # 月度 token 预算，0=不限制
+    daily_token_reset_hour: int = 4   # 每日 token 配额重置时间（0-23），默认凌晨 4 点
     comms_port: int = 0               # 0=自动分配, -1=禁用, >0=指定端口
     ws_port: int = -1                 # WebSocket Gateway 端口（-1=禁用, >0=指定端口）
 

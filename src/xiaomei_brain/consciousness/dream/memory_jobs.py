@@ -187,7 +187,11 @@ class ExtractJob:
     # ── Run ────────────────────────────────────────────────────
 
     def run(self) -> DreamResult:
-        """分批从今日对话提取新记忆。"""
+        """按用户分组、分批从今日对话提取新记忆。
+
+        先按 user_id 将消息分组，每组内再分批处理。
+        这样每条记忆都能正确关联到对话所属的用户，而非全部归 global。
+        """
         if not self.extractor.llm or not self.extractor.ltm or not self.extractor.db:
             return DreamResult(job="extract", errors=1, details="missing dependencies")
 
@@ -202,68 +206,74 @@ class ExtractJob:
 
         logger.info("[ExtractJob] Processing %d messages", len(messages))
 
-        # 分批处理
-        batches = [
-            messages[i:i + self.BATCH_SIZE]
-            for i in range(0, len(messages), self.BATCH_SIZE)
-        ]
+        # 按 user_id 分组
+        user_groups: dict[str, list[dict]] = {}
+        for m in messages:
+            uid = m.get("user_id") or "global"
+            user_groups.setdefault(uid, []).append(m)
+
+        logger.info("[ExtractJob] %d user groups: %s", len(user_groups),
+                    {u: len(msgs) for u, msgs in user_groups.items()})
 
         cumulative: list[str] = []       # 累积的记忆内容（给下一批做上下文）
         batch_count = 0
-        empty_count = 0
         total_saved = 0
 
-        for batch_idx, batch in enumerate(batches):
-            formatted = self._format_messages(batch)
-
-            # 构建"已有记忆"上下文（来自前面批次的结果）
-            context = self._build_context(cumulative)
-
-            prompt = self.PROMPT.format(
-                messages=formatted,
-                recent_memories=context,
-            )
-
-            try:
-                result = self.extractor.llm.chat(
-                    messages=[{"role": "user", "content": prompt}],
-                    tools=None,
-                )
-                text = result.content or ""
-            except Exception as e:
-                logger.error(
-                    "[ExtractJob] LLM call failed for batch %d/%d: %s",
-                    batch_idx + 1, len(batches), e,
-                )
+        for group_user_id, group_msgs in user_groups.items():
+            if len(group_msgs) < 3:
                 continue
 
-            batch_count += 1
-            text = text.strip()
+            # 按用户分组内分批
+            user_batches = [
+                group_msgs[i:i + self.BATCH_SIZE]
+                for i in range(0, len(group_msgs), self.BATCH_SIZE)
+            ]
 
-            if text == "EMPTY":
-                empty_count += 1
-                logger.debug("[ExtractJob] batch %d/%d: EMPTY", batch_idx + 1, len(batches))
-                continue
+            for batch_idx, batch in enumerate(user_batches):
+                formatted = self._format_messages(batch)
 
-            # 确定本批次的 user_id：所有用户消息来自同一用户则用该用户，否则 global
-            batch_user_ids = set(
-                m.get("user_id", "global")
-                for m in batch if m.get("role") == "user"
-            )
-            batch_user_id = list(batch_user_ids)[0] if len(batch_user_ids) == 1 else "global"
+                # 构建"已有记忆"上下文（来自前面批次的结果）
+                context = self._build_context(cumulative)
 
-            # 立即执行本批次的记忆存储
-            batch_saved = self._execute_adds(text, user_id=batch_user_id)
-            total_saved += batch_saved
+                prompt = self.PROMPT.format(
+                    messages=formatted,
+                    recent_memories=context,
+                )
 
-            # 解析本批 ADD 行的内容，加入累积上下文
-            batch_contents = self._extract_add_contents(text)
-            cumulative.extend(batch_contents)
+                try:
+                    result = self.extractor.llm.chat(
+                        messages=[{"role": "user", "content": prompt}],
+                        tools=None,
+                    )
+                    text = result.content or ""
+                except Exception as e:
+                    logger.error(
+                        "[ExtractJob] LLM call failed for user=%s batch %d/%d: %s",
+                        group_user_id, batch_idx + 1, len(user_batches), e,
+                    )
+                    continue
 
-            logger.info(
-                "[ExtractJob] batch %d/%d: %d messages → %d memories stored (batch_user=%s, total=%d)",
-                batch_idx + 1, len(batches), len(batch), batch_saved, batch_user_id, total_saved,
-            )
+                batch_count += 1
+                text = text.strip()
+
+                if text == "EMPTY":
+                    logger.debug("[ExtractJob] user=%s batch %d/%d: EMPTY",
+                                 group_user_id, batch_idx + 1, len(user_batches))
+                    continue
+
+                # 记忆直接归属到本组用户
+                batch_saved = self._execute_adds(text, user_id=group_user_id)
+                total_saved += batch_saved
+
+                # 解析本批 ADD 行的内容，加入累积上下文
+                batch_contents = self._extract_add_contents(text)
+                cumulative.extend(batch_contents)
+
+                logger.info(
+                    "[ExtractJob] user=%s batch %d/%d: %d messages → %d memories stored (total=%d)",
+                    group_user_id, batch_idx + 1, len(user_batches),
+                    len(batch), batch_saved, total_saved,
+                )
 
         if batch_count == 0:
             return DreamResult(
@@ -273,7 +283,7 @@ class ExtractJob:
 
         return DreamResult(
             job="extract", saved=total_saved,
-            details=f"{len(messages)} msgs in {batch_count} batches, cumulative={len(cumulative)} items",
+            details=f"{len(messages)} msgs in {batch_count} batches across {len(user_groups)} users, cumulative={len(cumulative)} items",
         )
 
     # ── Helpers ────────────────────────────────────────────────

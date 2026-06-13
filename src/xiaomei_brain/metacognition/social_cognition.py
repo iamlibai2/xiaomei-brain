@@ -99,7 +99,7 @@ class SocialCognition:
 
         包含：consciousness 上下文 + 最近对话 + EVENTS/PERCEPTION/SIGNAL 要求。
         """
-        consciousness_context = build_simple_context(self._consciousness, mode="daily")
+        consciousness_context = build_simple_context(self._consciousness, mode="internal")
 
         recent = recent_conversation or self._get_recent_conversation()
         if not recent or recent == "（无对话数据）":

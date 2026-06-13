@@ -160,21 +160,47 @@ class Layer2DefaultNetwork:
                             self._log(f"{ts} L3 tick_L3 ERROR: {e}")
                             logger.warning("[Layer2] tick_L3 出错: %s", e)
 
-                    # DREAM: 入梦信号（仅 SLEEPING）
+                    # DREAM: 入梦信号（仅 SLEEPING，每次睡眠只触发一次）
                     if agent_state == "sleeping":
-                        if self._c._sleep_start_time == 0:
-                            self._c._sleep_start_time = time.time()
-                        elapsed = time.time() - self._c._sleep_start_time
-                        if elapsed >= self._c._cc.sleep_to_dream_threshold:
-                            self._log(f"{ts} DREAM 入梦信号 已发送 sleep_elapsed={elapsed:.0f}s")
-                            self._c._sleep_start_time = 0
-                            self._c._dream_signal = True
-                    else:
+                        if not self._c._dreamed_this_sleep:
+                            if self._c._sleep_start_time == 0:
+                                self._c._sleep_start_time = time.time()
+                            elapsed = time.time() - self._c._sleep_start_time
+                            if elapsed >= self._c._cc.sleep_to_dream_threshold:
+                                self._log(f"{ts} DREAM 入梦信号 已发送 sleep_elapsed={elapsed:.0f}s")
+                                self._c._sleep_start_time = 0
+                                self._c._dreamed_this_sleep = True
+                                self._c._dream_signal = True
+                    elif agent_state != "dreaming":
+                        # AWAKE/IDLE/DORMANT：重置睡眠状态
                         self._c._sleep_start_time = 0
+                        self._c._dreamed_this_sleep = False
 
                 except Exception as e:
                     ts = time.strftime("%H:%M:%S")
                     self._log(f"{ts} Layer2 ERROR: {e}")
                     logger.warning("[Layer2] 主循环出错: %s", e)
+
+                except BaseException as e:
+                    # KeyboardInterrupt / SystemExit 必须穿透
+                    if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                        raise
+                    # FatalLLMError（401/402/403）等 BaseException 子类不会被
+                    # except Exception 捕获。记录日志并优雅停止线程。
+                    ts = time.strftime("%H:%M:%S")
+                    from xiaomei_brain.base.llm import FatalLLMError
+                    if isinstance(e, FatalLLMError):
+                        self._log(f"{ts} Layer2 FATAL LLM: {e}")
+                        logger.error("[Layer2] 致命 LLM 错误，停止 DMN 线程: %s", e)
+                        # 通知主循环（interoception signal）
+                        intero = getattr(self._c, '_interoception_signals', None)
+                        if intero is not None:
+                            intero.stress_level = "critical"
+                            intero.sos = True
+                            intero.sos_message = f"[Layer2] LLM 致命错误: {e}"
+                    else:
+                        self._log(f"{ts} Layer2 FATAL: {type(e).__name__}: {e}")
+                        logger.error("[Layer2] 致命错误，停止 DMN 线程: %s", e)
+                    self._running = False
 
             time.sleep(self._check_interval)

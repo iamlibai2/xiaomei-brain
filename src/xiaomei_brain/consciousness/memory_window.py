@@ -195,11 +195,12 @@ def refresh_memory_window(
             logger.warning("[MemoryWindow] 关系记忆获取失败: %s", e)
 
     # ── 6. 过程记忆 ────────────────────────────────────
-    # procedure 用 user_input（如果有），无则 fallback 到 attention_query
+    # procedure 用 user_input 语义匹配（向量 + keyword boost），激活最匹配的一个
     proc_query = user_input if user_input else attention_query
     if procedure_memory and proc_query:
         try:
-            procedures = procedure_memory.match(proc_query, top_k=3) or []
+            embed_fn = longterm._embed if longterm else None
+            procedures = procedure_memory.match(proc_query, top_k=1, embed_fn=embed_fn, threshold=0.5) or []
         except Exception as e:
             logger.warning("[MemoryWindow] 过程记忆获取失败: %s", e)
 

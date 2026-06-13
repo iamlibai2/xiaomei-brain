@@ -73,7 +73,9 @@ class ActionExecutor:
         # 执行前先记录要消费的 intent 类型
         intent_type_for_consume = item.metadata.get("intent_type", "") if item.source == "intent" else ""
 
-        self.dispatcher._send_proactive(content)
+        # 目标用户 ID（多用户路由）
+        target_user_id = item.metadata.get("user_id", "")
+        self.dispatcher._send_proactive(content, user_id=target_user_id or None)
 
         # 经验流
         cl = self.dispatcher._conscious_living
@@ -739,9 +741,10 @@ class ActionExecutor:
 
         if llm:
             try:
-                consciousness = build_simple_context(cl.consciousness, mode="daily")
+                user_id = item.metadata.get("user_id")
+                system = build_simple_context(cl.consciousness, mode="proactive", user_input=prompt, user_id=user_id)
                 resp = llm.chat(messages=[
-                    {"role": "system", "content": consciousness},
+                    {"role": "system", "content": system},
                     {"role": "user", "content": prompt},
                 ])
                 content = resp.content.strip() if resp and resp.content else None
@@ -814,9 +817,10 @@ class ActionExecutor:
 
         if llm:
             try:
-                consciousness = build_simple_context(cl.consciousness, mode="daily")
+                user_id = item.metadata.get("user_id")
+                system = build_simple_context(cl.consciousness, mode="proactive", user_input=prompt, user_id=user_id)
                 resp = llm.chat(messages=[
-                    {"role": "system", "content": consciousness},
+                    {"role": "system", "content": system},
                     {"role": "user", "content": prompt},
                 ])
                 content = resp.content.strip() if resp and resp.content else ""
@@ -861,9 +865,9 @@ class ActionExecutor:
 
         if llm:
             try:
-                consciousness = build_simple_context(cl.consciousness, mode="daily")
+                system = build_simple_context(cl.consciousness, mode="proactive", user_input=prompt, user_id=item.metadata.get("user_id"))
                 resp = llm.chat(messages=[
-                    {"role": "system", "content": consciousness},
+                    {"role": "system", "content": system},
                     {"role": "user", "content": prompt},
                 ])
                 content = resp.content.strip() if resp and resp.content else ""
@@ -914,9 +918,10 @@ class ActionExecutor:
 
         if llm:
             try:
-                consciousness = build_simple_context(cl.consciousness, mode="daily")
+                user_id = item.metadata.get("user_id")
+                system = build_simple_context(cl.consciousness, mode="proactive", user_input=prompt, user_id=user_id)
                 resp = llm.chat(messages=[
-                    {"role": "system", "content": consciousness},
+                    {"role": "system", "content": system},
                     {"role": "user", "content": prompt},
                 ])
                 content = resp.content.strip() if resp and resp.content else None
@@ -1139,6 +1144,18 @@ class ActionDispatcher:
 
             # 能量门控：低能量时抑制主动行为
             item = self._clone_action_item(rule.action_item)
+
+            # 注入 intent 中携带的 user_id（供多用户路由）
+            if item.source == "intent" and self_image:
+                intent_type = item.metadata.get("intent_type", "")
+                if intent_type:
+                    for i in self_image.intent.intent_buffer:
+                        if i.get("type", "").upper() == intent_type.upper():
+                            uid = i.get("user_id", "")
+                            if uid:
+                                item.metadata["user_id"] = uid
+                                logger.debug("[ActionDispatcher] intent user_id: %s → %s", intent_type, uid)
+                            break
             if silent and item.action_type.value != "notify":
                 logger.debug("[ActionDispatcher] 能量沉寂(%.2f)，跳过: %s", energy, rule.cooldown_key)
                 continue
@@ -1225,10 +1242,10 @@ class ActionDispatcher:
             metadata=dict(item.metadata),
         )
 
-    def _send_proactive(self, content: str) -> None:
+    def _send_proactive(self, content: str, user_id: str | None = None) -> None:
         """发送主动消息（委托给 ConsciousLiving）"""
         if self._conscious_living:
-            self._conscious_living._send_proactive(content)
+            self._conscious_living._send_proactive(content, user_id=user_id)
 
     def _get_self_image(self):
         """获取 SelfImage（委托给 ConsciousLiving）"""

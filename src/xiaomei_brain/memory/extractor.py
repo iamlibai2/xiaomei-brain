@@ -86,6 +86,7 @@ class MemoryExtractor:
     # [手动] 仅 CLI `memory periodic` 命令触发，无自动调用路径。
     def extract_periodic(
         self, interval_minutes: int = 10, user_id: str = "global",
+        user_name: str = "",
     ) -> list[int]:
         """Periodic extraction of recent conversations."""
         if not self.ltm or not self.db:
@@ -109,6 +110,7 @@ class MemoryExtractor:
             prompt = PERIODIC_EXTRACT_PROMPT.format(
                 messages=formatted,
                 recent_memories=recent_memories or "（无已有记忆）",
+                user_name=user_name or "用户",
             )
             result = self.llm.chat(
                 messages=[{"role": "user", "content": prompt}],
@@ -125,7 +127,7 @@ class MemoryExtractor:
             return []
 
     # [手动] 仅 CLI `memory dream` 命令触发，无自动调用路径。
-    def extract_dream(self, user_id: str = "global") -> list[int]:
+    def extract_dream(self, user_id: str = "global", agent_name: str = "") -> list[int]:
         """Deep dream-mode extraction of today's conversations."""
         if not self.ltm or not self.db:
             return []
@@ -153,6 +155,7 @@ class MemoryExtractor:
             prompt = DREAM_EXTRACT_PROMPT.format(
                 messages=formatted,
                 recent_memories=recent_memories or "（无已有记忆）",
+                agent_name=agent_name or "我",
             )
             result = self.llm.chat(
                 messages=[{"role": "user", "content": prompt}],
@@ -870,6 +873,7 @@ class MemoryExtractor:
         self,
         goal: Any,  # Goal from purpose.goal (with cognitive_log)
         user_id: str = "global",
+        agent_name: str = "",
     ) -> list[int]:
         """Goal 完成时：从认知日志中提取经验/模式/用户洞察。
 
@@ -883,6 +887,7 @@ class MemoryExtractor:
         Args:
             goal: Goal 对象（purpose.goal.Goal，含 cognitive_log）
             user_id: 用户标识
+            agent_name: agent 名称（如"小美"、"小明"）
 
         Returns:
             新创建的记忆 ID 列表
@@ -914,6 +919,7 @@ class MemoryExtractor:
                 cognitive_log=log_text,
                 artifacts=artifact_text,
                 recent_memories=recent_memories or "（无已有记忆）",
+                agent_name=agent_name or "我",
             )
 
             result = self.llm.chat(

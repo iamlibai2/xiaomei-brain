@@ -355,7 +355,8 @@ class MemoryConsole:
         if not self.extractor:
             return CommandResult(output="(MemoryExtractor 未配置)")
 
-        ids = self.extractor.extract_periodic(interval_minutes=2, user_id=user_id)
+        user_name = getattr(self.agent_instance, 'name', '') or "用户"
+        ids = self.extractor.extract_periodic(interval_minutes=2, user_id=user_id, user_name=user_name)
         if ids:
             lines = [f"[Periodic] 提取了 {len(ids)} 条记忆"]
             if self.ltm:
@@ -372,7 +373,8 @@ class MemoryConsole:
         if not self.extractor:
             return CommandResult(output="(MemoryExtractor 未配置)")
 
-        ids = self.extractor.extract_dream(user_id=user_id)
+        agent_name = getattr(self.agent_instance, 'name', '')
+        ids = self.extractor.extract_dream(user_id=user_id, agent_name=agent_name)
         if ids:
             lines = [f"[Dream] 深度提取了 {len(ids)} 条记忆"]
             if self.ltm:

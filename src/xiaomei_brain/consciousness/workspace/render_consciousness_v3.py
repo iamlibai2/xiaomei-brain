@@ -716,6 +716,19 @@ def _render_essence(si) -> list[str]:
     if not all_items:
         return []
 
+    rel_type = getattr(si, 'current_user_relation', None)
+
+    # 分离 style 项：通用 vs 关系专用
+    generic_styles: list[dict] = []
+    rel_styles: list[dict] = []
+    for item in all_items:
+        if item["category"] == "style":
+            if item.get("relation_types") and rel_type and rel_type in item["relation_types"].split(","):
+                rel_styles.append(item)
+            elif not item.get("relation_types"):
+                generic_styles.append(item)
+        # 非 style 类别不变，后面正常渲染
+
     _GUIDES = {
         "principle": "以下是你做人做事行为决策的最底层准则，必须遵守！！，否则你就不是你自己了：",
         "meta_memory": "以下是你对自己记忆和认知方式的反思：",
@@ -726,12 +739,25 @@ def _render_essence(si) -> list[str]:
         "calling": "以下是你的追求：",
         "boundary": "以下是你的底线，被触碰时无需犹豫，直接捍卫：",
         "passions": "以下是你的热爱：",
-        "style": "以下是你的表达风格，说话做事的自然方式，请按风格要求进行表达：",
+        "style": "以下是你的日常说话风格：",
+    }
+
+    _REL_STYLE_LABELS: dict[str, str] = {
+        "上级": "以下是你与上级沟通时的对话风格：",
+        "恋人": "以下是你与恋人相处时的对话风格：",
+        "朋友": "以下是你与朋友相处时的对话风格：",
+        "家人": "以下是你与家人相处时的对话风格：",
+        "同事": "以下是你与同事沟通时的对话风格：",
+        "师生": "以下是你与老师/学生沟通时的对话风格：",
+        "仇人": "以下是你面对仇人时的对话风格：",
     }
 
     lines = ["\n<底色>"]
     current_cat = None
     for item in all_items:
+        if item["category"] == "style":
+            continue  # style 单独处理
+
         if item["category"] != current_cat:
             current_cat = item["category"]
             label = _ESSENCE_CAT_LABELS.get(current_cat, current_cat)
@@ -740,6 +766,21 @@ def _render_essence(si) -> list[str]:
             if guide:
                 lines.append(f"  {guide}")
         lines.append(item["content"])
+
+    # 渲染通用 style
+    if generic_styles:
+        lines.append(f"\n  [输出风格]")
+        lines.append(f"  {_GUIDES['style']}")
+        for item in generic_styles:
+            lines.append(item["content"])
+
+    # 渲染关系专用 style
+    if rel_styles:
+        label = _REL_STYLE_LABELS.get(rel_type, f"以下是此关系的对话风格：")
+        lines.append(f"\n  [{label}]")
+        for item in rel_styles:
+            lines.append(item["content"])
+
     lines.append("</底色>")
 
     return lines
@@ -787,6 +828,44 @@ def _render_desk(si) -> list[str]:
         label = item.source + ((" " + item.intent) if item.intent else "")
         lines.append(f"── {label}（{ago_str}, w={round(item.weight, 2)}）──\n{item.content[:500]}")
     lines.append("</桌面>")
+
+    return lines
+
+
+def _render_procedures(si) -> list[str]:
+    """渲染过程记忆——学到的标准流程。
+
+    每条过程记忆是一个可执行的步骤序列，用于处理特定场景。
+    """
+    mem = si.memory
+    procedures = getattr(mem, 'procedures', None) or []
+    if not procedures:
+        return []
+
+    lines = [
+        "\n<过程记忆>",
+        "以下是你在过去经历中学到的标准流程。遇到类似场景时，参考它们——",
+        "不是刻板照做，是心里有数，知道大概怎么走。",
+    ]
+    for p in procedures:
+        name = p.get("name", "")
+        desc = p.get("description", "")
+        weight = p.get("weight", 0)
+        steps = p.get("steps", [])
+        exec_count = p.get("execution_count", 0)
+
+        header = f"- {name}"
+        if exec_count > 0:
+            header += f" (执行{exec_count}次, 权重{weight:.2f})"
+        lines.append(header)
+        if desc:
+            lines.append(f"  {desc[:120]}")
+        if steps:
+            for j, s in enumerate(steps, 1):
+                step_name = s.get("name", "")
+                step_desc = s.get("description", "")
+                lines.append(f"  {j}. {step_name}: {step_desc[:100]}")
+    lines.append("</过程记忆>")
 
     return lines
 
@@ -904,37 +983,26 @@ def _render_experience_timeline(si) -> list[str]:
     return lines
 
 
-def _render_token_budget(si) -> list[str]:
-    """渲染 Token 预算 — 日/月用量 vs 限额。
-
-    数据来自 DriveEngine 的 token_usage / token_budget 字段。
-    预算为 0 表示不限制，不渲染。
-    """
-    drive = getattr(si, '_drive', None)
-    if not drive:
+def _render_recent_dialog(si) -> list[str]:
+    """渲染最近对话（供 proactive 模式使用，让 LLM 知道最近聊了什么）。"""
+    mem = si.memory
+    dialogs = getattr(mem, 'recent_dialog', []) or []
+    if not dialogs:
         return []
-
-    daily_budget = getattr(drive, 'token_budget_daily', 0) or 0
-    monthly_budget = getattr(drive, 'token_budget_monthly', 0) or 0
-    if daily_budget <= 0 and monthly_budget <= 0:
-        return []
-
-    lines = [
-        "\n<Token资源>",
-        "Token 是你的资源配额，每次输出和工具调用都会消耗它。",
-    ]
-    if daily_budget > 0:
-        used = getattr(drive, 'token_usage_today', 0) or 0
-        ratio = used / daily_budget
-        lines.append(f"今日用量：{used:.0f} / {daily_budget:.0f}（{ratio:.0%}）")
-    if monthly_budget > 0:
-        used = getattr(drive, 'token_usage_month', 0) or 0
-        ratio = used / monthly_budget
-        lines.append(f"本月用量：{used:.0f} / {monthly_budget:.0f}（{ratio:.0%}）")
-
-    pressure = getattr(drive, 'token_pressure', 1.0) or 1.0
-    if pressure > 1.0:
-        lines.append("Token 消耗过快，请精简表达，减少不必要的工具调用。")
-
-    lines.append("</Token资源>")
+    lines = ["\n<最近对话>"]
+    for i, d in enumerate(dialogs, 1):
+        role = d.get('role', '')
+        content = d.get('content', '')
+        lines.append(f"- 对话{i}[{role}]：{content}")
+    lines.append("</最近对话>")
     return lines
+
+
+def _render_token_budget(si) -> list[str]:
+    """渲染 Token 预算（已废弃）。
+
+    能量已从 token 配额消耗比例派生，通过 _render_body() 的
+    能量描述自然表达。不再直接注入 token 裸数字到上下文。
+    保留此函数用于向后兼容，始终返回空列表。
+    """
+    return []

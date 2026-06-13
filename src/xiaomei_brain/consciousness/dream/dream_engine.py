@@ -6,8 +6,7 @@ DREAMING 状态时做深度离线处理。
 1a. 记忆提取（ExtractJob）— 从今日对话提取新记忆
 1b. 记忆强化（ReinforceJob）— 低强度记忆强化 + extinct
 1c. 关系强化（RelationReinforceJob）— 共现→关系加固 + 衰减
-2.  情绪整理（EmotionProcessor）— 根据梦境内容调整 Drive 欲望/激素
-3.  梦境深度燃烧（LLM）— 完整的梦境意识报告
+3.  梦境深度燃烧（LLM）— 完整的梦境意识报告（含 ---EMOTION--- 情绪块）
 4.  反省（Reflection）— 预留
 
 DreamEngine 由 ConsciousLiving._loop_dreaming() 调用，
@@ -110,11 +109,8 @@ class DreamEngine:
         self.emotion_processor = EmotionProcessor()
         self.reflection = Reflection()
 
-    def run(self, prior_summary: str = "") -> DreamReport:
+    def run(self) -> DreamReport:
         """执行梦境。
-
-        Args:
-            prior_summary: 保留参数，当前未使用（始终为空字符串）。
 
         Returns:
             DreamReport
@@ -124,13 +120,13 @@ class DreamEngine:
 
         logger.info("[DreamEngine] 开始梦境")
 
-        uid = getattr(self.cs.self_image, 'current_user_id', None) or "global"
-
         # ── 阶段1a：记忆提取 ────────────────────────────
         # 先提取今日对话中的新记忆，让后续阶段（强化、关系、燃烧）都能用到
+        # 梦境处理所有用户的消息，不依赖 current_user_id，
+        # 每条记忆的归属由消息自身的 user_id 决定
         try:
             if self.extractor and self.extractor.llm:
-                ej = ExtractJob(self.extractor, user_id=uid)
+                ej = ExtractJob(self.extractor)
                 e = ej.run()
                 report.memories_extracted = e.saved
                 logger.info("[DreamEngine] 记忆提取: saved=%d", e.saved)
@@ -139,9 +135,10 @@ class DreamEngine:
             report.errors += 1
 
         # ── 阶段1b：记忆强化 ────────────────────────────
+        # 梦境处理所有用户的记忆，不限定 user_id
         try:
             if self.ltm:
-                rj = ReinforceJob(self.ltm, user_id=uid)
+                rj = ReinforceJob(self.ltm)
                 r = rj.run()
                 report.memories_reinforced = r.reinforced
                 logger.info("[DreamEngine] 记忆强化: reinforced=%d extinct=%d", r.reinforced, r.extinct)
@@ -150,9 +147,10 @@ class DreamEngine:
             report.errors += 1
 
         # ── 阶段1c：关系强化 ────────────────────────────
+        # 梦境处理所有用户的关系，不限定 user_id
         try:
             if self.ltm:
-                rrj = RelationReinforceJob(self.ltm, user_id=uid)
+                rrj = RelationReinforceJob(self.ltm)
                 rr = rrj.run()
                 report.relations_reinforced = rr.reinforced
                 report.relations_created = rr.created
@@ -162,17 +160,6 @@ class DreamEngine:
         except Exception as e:
             logger.error("[DreamEngine] 关系强化失败: %s", e)
             report.errors += 1
-
-        # ── 阶段2：情绪整理 ─────────────────────────────
-        # 基于已有梦境摘要调整 Drive（如果有的话）
-        summary_to_process = (
-            prior_summary
-            or self.cs.self_image.history.last_dream_summary
-        )
-        if summary_to_process:
-            changes = self.emotion_processor.process(self.drive, summary_to_process)
-            report.emotion_changes = changes
-            logger.info("[DreamEngine] 情绪整理: %s", changes)
 
         # ── 阶段2.5：Procedure 巩固 ──────────────────────
         if self.procedure_memory:
@@ -219,21 +206,18 @@ class DreamEngine:
                 logger.warning("[DreamEngine] Pattern 提取失败: %s", e)
 
         # ── 阶段4：梦境深度燃烧 ─────────────────────
-        # 如果已有摘要，直接用；否则调 LLM
-        if summary_to_process and not prior_summary:
-            # prior_summary 为空但 SelfImage 有 last_dream_summary → 用现成的
-            report.summary = summary_to_process
-            report.full_report = self.cs.self_image.history.last_dream_summary
-            logger.info("[DreamEngine] 使用已有梦境摘要: %s", report.summary[:30])
-        elif not summary_to_process:
-            # 真的需要 LLM 生成
+        # 有新记忆被提取 → 重新生成摘要；否则复用缓存
+        last_summary = self.cs.self_image.history.last_dream_summary
+        if report.memories_extracted > 0:
             self._run_dream_burn(report)
+        elif last_summary:
+            report.summary = last_summary
+            report.full_report = self.cs.self_image.history.last_dream_summary
+            logger.info("[DreamEngine] 无新记忆，复用已有梦境摘要: %s", report.summary[:30])
         else:
-            # prior_summary 有值（保留路径，当前未使用）
-            report.summary = prior_summary
-            logger.info("[DreamEngine] 使用 prior_summary: %s", report.summary[:30])
+            self._run_dream_burn(report)
 
-        # ── 阶段4：反省（预留）──────────────────────────
+        # ── 阶段5：反省（预留）──────────────────────────
         try:
             self.reflection.reflect(self.cs)
         except Exception as e:
@@ -304,32 +288,13 @@ class DreamEngine:
         # 同步到 SelfImage（写 last_dream_summary，不是 last_l3_summary）
         self.cs.self_image.contribute_dream(report.summary)
 
-        # 生成后续 intent
-        self._generate_followup_intent(report.summary)
+        # 情绪整理：从梦境报告中提取 ---EMOTION--- 块，应用 Drive 变更，生成后续 intent
+        changes = self.emotion_processor.process(self.drive, full_report, self.cs)
+        report.emotion_changes = changes
+        if changes:
+            logger.info("[DreamEngine] 情绪整理: %s", changes)
 
         logger.info("[DreamEngine] 梦境深度燃烧完成:\n%s", full_report[:200])
-
-    def _generate_followup_intent(self, summary: str) -> None:
-        """根据梦境摘要生成后续意图"""
-        if not summary:
-            return
-
-        from ..intent import (
-            create_greet_intent,
-            create_reflect_intent,
-            create_wait_intent,
-        )
-
-        if any(k in summary for k in ["对方", "想念", "连接", "一起", "陪伴"]):
-            intent = create_greet_intent(summary[:50], priority=80)
-        elif any(k in summary for k in ["目标", "完成", "进展", "失败"]):
-            intent = create_reflect_intent(summary[:50], priority=60)
-        else:
-            intent = create_wait_intent()
-
-        if self.cs.self_image is not None:
-            self.cs.self_image.contribute_intent(intent.to_dict())
-        logger.info("[DreamEngine] 生成后续意图: %s", intent.type.value)
 
     def _build_dream_prompt(self) -> str:
         """构建梦境 prompt"""
@@ -347,8 +312,10 @@ class DreamEngine:
                 lines = []
                 for m in messages[-50:]:
                     role = m.get("role", "?")
+                    uid = m.get("user_id", "")
                     content = m.get("content", "")[:200]
-                    lines.append(f"[{role}] {content}")
+                    label = f"{role}:{uid}" if uid else role
+                    lines.append(f"[{label}] {content}")
                 messages_text = "\n".join(lines)
 
         # Drive 状态
@@ -385,12 +352,14 @@ class DreamEngine:
 
     @staticmethod
     def _extract_summary(full_report: str) -> str:
-        """从完整报告提取一句话摘要"""
+        """从完整报告提取一句话摘要（排除 ---EMOTION--- 块）"""
         if not full_report:
             return ""
+        # 取 EMOTION 块之前的部分作为摘要来源
+        text = full_report.split("---EMOTION---")[0]
         for sep in ["。", "\n", "！", "？"]:
-            if sep in full_report:
-                sentence = full_report.split(sep)[0] + sep
+            if sep in text:
+                sentence = text.split(sep)[0] + sep
                 if len(sentence) <= 60:
                     return sentence
-        return full_report[:60]
+        return text[:60]
