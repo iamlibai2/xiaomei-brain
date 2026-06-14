@@ -931,10 +931,12 @@ class ConsciousLiving(Living):
         if admin_port > 0:
             from ..admin.server import create_admin_app
             import uvicorn
+            config_path = os.path.expanduser(f"~/.xiaomei-brain/{self._agent_id}/config.yaml")
             admin_app = create_admin_app(
                 living=self,
                 agent_manager=self._agent_manager,
                 config=self._config,
+                config_path=config_path,
             )
             admin_config = uvicorn.Config(admin_app, host=host, port=admin_port, log_level="warning")
             self._admin_server = uvicorn.Server(admin_config)

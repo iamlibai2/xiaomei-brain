@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import threading
+from pathlib import Path
 from typing import Any, Callable
 
 
@@ -15,11 +16,15 @@ class ConflictError(Exception):
 class ConfigProvider:
     """配置中心 - 单一数据源
 
-    所有配置读写都经过此类，支持：
+    所有配置读写都经过此类，支持 JSON 和 YAML：
     - get(path): 获取配置值
     - apply(new_config, base_hash): 完整替换
     - patch(partial, base_hash): 部分更新（JSON Merge Patch）
     - hash: 当前配置的 hash
+
+    文件格式自动检测：
+    - .yaml / .yml → YAML
+    - 其他 → JSON
     """
 
     def __init__(self, config_path: str):
@@ -28,6 +33,7 @@ class ConfigProvider:
         self._hash: str = ""
         self._lock = threading.RLock()
         self._change_handlers: list[Callable[[dict], None]] = []
+        self._is_yaml = Path(config_path).suffix in (".yaml", ".yml")
         self._load()
 
     @property
@@ -149,7 +155,11 @@ class ConfigProvider:
         if os.path.exists(self.config_path):
             with open(self.config_path, "r", encoding="utf-8") as f:
                 try:
-                    self._config = json.load(f)
+                    if self._is_yaml:
+                        import yaml
+                        self._config = yaml.safe_load(f) or {}
+                    else:
+                        self._config = json.load(f)
                 except json.JSONDecodeError as e:
                     raise ValueError(f"Invalid JSON in config file: {e}")
         else:
@@ -163,7 +173,11 @@ class ConfigProvider:
         if dir_path:
             os.makedirs(dir_path, exist_ok=True)
         with open(self.config_path, "w", encoding="utf-8") as f:
-            json.dump(config, f, ensure_ascii=False, indent=2)
+            if self._is_yaml:
+                import yaml
+                yaml.dump(config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            else:
+                json.dump(config, f, ensure_ascii=False, indent=2)
 
     def _compute_hash(self, config: dict) -> str:
         """计算配置的 SHA256 hash"""

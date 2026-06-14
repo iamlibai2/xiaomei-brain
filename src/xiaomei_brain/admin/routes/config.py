@@ -1,46 +1,63 @@
-"""GET/PATCH /api/config — 配置读写。"""
+"""GET/PATCH/PUT /api/config — 配置读写，基于 ConfigProvider。
+
+GET  → 返回完整配置 + hash（供后续 PATCH/PUT 做冲突检测）
+PATCH → JSON Merge Patch，需要 baseHash
+PUT   → 完整替换，需要 baseHash
+"""
 
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import APIRouter, Depends, HTTPException
+
+from xiaomei_brain.base.config_provider import ConfigProvider, ConflictError
 
 from ..auth import verify_admin
 
 router = APIRouter()
 
-_CONFIG: Any = None
+_PROVIDER: ConfigProvider | None = None
 
 
-def set_config(config: Any) -> None:
-    global _CONFIG
-    _CONFIG = config
+def set_config_path(path: str) -> None:
+    global _PROVIDER
+    _PROVIDER = ConfigProvider(path)
 
 
 @router.get("/api/config", dependencies=[Depends(verify_admin)])
 def get_config() -> dict:
-    if _CONFIG is None:
-        raise HTTPException(status_code=503, detail="配置未加载")
-    cfg = getattr(_CONFIG, "data", None)
-    if cfg:
-        return {"config": dict(cfg)}
-    result = {}
-    for attr in dir(_CONFIG):
-        if not attr.startswith("_"):
-            v = getattr(_CONFIG, attr)
-            if isinstance(v, (str, int, float, bool, list, dict, type(None))):
-                result[attr] = v
-    return {"config": result}
+    if _PROVIDER is None:
+        raise HTTPException(status_code=503, detail="ConfigProvider 未初始化")
+    return {
+        "config": _PROVIDER.get(),
+        "hash": _PROVIDER.hash,
+    }
 
 
 @router.patch("/api/config", dependencies=[Depends(verify_admin)])
-def patch_config(patch: dict) -> dict:
-    if _CONFIG is None:
-        raise HTTPException(status_code=503, detail="配置未加载")
-    applied = []
-    for key, value in patch.items():
-        if hasattr(_CONFIG, key):
-            setattr(_CONFIG, key, value)
-            applied.append(key)
-    return {"applied": applied}
+def patch_config(body: dict) -> dict:
+    if _PROVIDER is None:
+        raise HTTPException(status_code=503, detail="ConfigProvider 未初始化")
+    partial = body.get("config", body)  # 支持 {"config": {...}} 或直接 {...}
+    base_hash = body.get("baseHash", "")
+    try:
+        _PROVIDER.patch(partial, base_hash)
+    except ConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"success": True, "hash": _PROVIDER.hash}
+
+
+@router.put("/api/config", dependencies=[Depends(verify_admin)])
+def apply_config(body: dict) -> dict:
+    if _PROVIDER is None:
+        raise HTTPException(status_code=503, detail="ConfigProvider 未初始化")
+    config = body.get("config", body)
+    base_hash = body.get("baseHash", "")
+    try:
+        _PROVIDER.apply(config, base_hash)
+    except ConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"success": True, "hash": _PROVIDER.hash}
