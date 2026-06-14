@@ -898,9 +898,11 @@ class ConsciousLiving(Living):
         # ── WS Gateway（Web UI 入口）──────────────────────────
         self._ws_thread = None
         self._ws_server = None
+        self._admin_thread = None
+        self._admin_server = None
         ws_port = self._config.living.ws_port
         if ws_port > 0:
-            from ..server.ws.server import create_app
+            from ..gateway.server import create_app
             import uvicorn
             ws_app = create_app(
                 router=self._router,
@@ -916,6 +918,33 @@ class ConsciousLiving(Living):
             )
             self._ws_thread.start()
             logger.info("[ConsciousLiving] WS Gateway 已启动: ws://%s:%d/ws", host, ws_port)
+
+        # ── Admin 管理门（独立端口，强制认证）────────────────────
+        admin_port = getattr(self._config, 'admin_port', 0)
+        if admin_port <= 0:
+            lc = getattr(self._config, 'living', None)
+            if lc:
+                admin_port = getattr(lc, 'admin_port', 0)
+        if admin_port <= 0:
+            admin_port = ws_port + 1 if ws_port > 0 else 0
+
+        if admin_port > 0:
+            from ..admin.server import create_admin_app
+            import uvicorn
+            admin_app = create_admin_app(
+                living=self,
+                agent_manager=self._agent_manager,
+                config=self._config,
+            )
+            admin_config = uvicorn.Config(admin_app, host=host, port=admin_port, log_level="warning")
+            self._admin_server = uvicorn.Server(admin_config)
+            self._admin_thread = threading.Thread(
+                target=self._admin_server.run,
+                daemon=True,
+                name="admin-gateway",
+            )
+            self._admin_thread.start()
+            logger.info("[ConsciousLiving] Admin 管理门已启动: http://%s:%d (auth=Bearer token)", host, admin_port)
 
     @staticmethod
     def _run_ws_gateway(app, host: str, port: int) -> None:
