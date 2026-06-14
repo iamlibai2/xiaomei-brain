@@ -124,8 +124,6 @@ async def ws_endpoint(ws: WebSocket) -> None:
 def create_app(
     router: Any = None,
     living: Any = None,
-    tts: Any = None,
-    agent_manager: Any = None,
     config: Any = None,
 ) -> FastAPI:
     global _global_router, _global_config, _method_router

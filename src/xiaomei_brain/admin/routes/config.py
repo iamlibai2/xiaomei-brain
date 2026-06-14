@@ -1,8 +1,9 @@
 """GET/PATCH/PUT /api/config — 配置读写，基于 ConfigProvider。
 
-GET  → 返回完整配置 + hash（供后续 PATCH/PUT 做冲突检测）
-PATCH → JSON Merge Patch，需要 baseHash
-PUT   → 完整替换，需要 baseHash
+GET        → 返回完整配置 + hash（供后续 PATCH/PUT 做冲突检测）
+GET /{path} → dot-notation 子路径查询（如 drive.desire.belonging）
+PATCH      → JSON Merge Patch，需要 baseHash
+PUT        → 完整替换，需要 baseHash
 """
 
 from __future__ import annotations
@@ -31,6 +32,18 @@ def get_config() -> dict:
         "config": _PROVIDER.get(),
         "hash": _PROVIDER.hash,
     }
+
+
+@router.get("/api/config/{config_path:path}", dependencies=[Depends(verify_admin)])
+def get_config_path(config_path: str) -> dict:
+    if not config_path:
+        raise HTTPException(status_code=400, detail="path 不能为空，使用 GET /api/config 获取完整配置")
+    if _PROVIDER is None:
+        raise HTTPException(status_code=503, detail="ConfigProvider 未初始化")
+    value = _PROVIDER.get(config_path)
+    if value is None:
+        raise HTTPException(status_code=404, detail=f"配置路径不存在: {config_path}")
+    return {"path": config_path, "value": value}
 
 
 @router.patch("/api/config", dependencies=[Depends(verify_admin)])

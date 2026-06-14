@@ -9,22 +9,28 @@ from fastapi import Header, HTTPException
 logger = logging.getLogger(__name__)
 
 _AGENT_ID: str = ""
+_TOKEN_CACHE: str | None = None  # None = 未读取
 
 
 def set_admin_agent_id(agent_id: str) -> None:
-    """注入 agent_id，用于读取 AgentConfig 中的 admin token。"""
-    global _AGENT_ID
+    """注入 agent_id，同时清除 token 缓存。"""
+    global _AGENT_ID, _TOKEN_CACHE
     _AGENT_ID = agent_id
+    _TOKEN_CACHE = None
 
 
 def _get_admin_token() -> str:
-    """从 AgentConfig YAML 读取 admin token。"""
+    """从 AgentConfig YAML 读取 admin token（首次读取后缓存）。"""
+    global _TOKEN_CACHE
+    if _TOKEN_CACHE is not None:
+        return _TOKEN_CACHE
     if not _AGENT_ID:
         return ""
     try:
         from xiaomei_brain.config.agent_config import load_agent_config
         cfg = load_agent_config(_AGENT_ID)
-        return cfg.admin.token
+        _TOKEN_CACHE = cfg.admin.token
+        return _TOKEN_CACHE
     except Exception:
         return ""
 

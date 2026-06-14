@@ -44,12 +44,12 @@ class WSAdapter(ChannelAdapter):
         """
         conn_id = self._conn_manager.get_conn_id(target)
         if conn_id is None:
-            logger.debug("[WSAdapter] 无连接: session=%s", target)
+            logger.warning("[WSAdapter] 丢弃消息，无连接: session=%s msg=%.100s", target, text)
             return
 
         loop = self._loop
         if loop is None:
-            logger.debug("[WSAdapter] 事件循环未设置: session=%s", target)
+            logger.warning("[WSAdapter] 丢弃消息，事件循环未设置: session=%s msg=%.100s", target, text)
             return
 
         if msg_type == "text_chunk":
