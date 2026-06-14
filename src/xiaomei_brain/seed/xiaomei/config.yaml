@@ -1,0 +1,113 @@
+# ============================================================
+#  xiaomei-brain 进程配置
+#
+#  位置: ~/.xiaomei-brain/{agent_id}/config.yaml
+#  首次启动时自动生成，可手动编辑。修改后重启生效。
+# ============================================================
+
+# ── Drive 层 — 边缘系统
+drive:
+  hormone:
+    initial:
+      dopamine:    0.5
+      serotonin:   0.5
+      cortisol:    0.3
+      oxytocin:    0.5
+      norepinephrine: 0.5
+    decay_rates:
+      dopamine:    0.95
+      serotonin:   0.98
+      cortisol:    0.9
+      oxytocin:    0.95
+      norepinephrine: 0.95
+  desire:
+    initial:
+      survival:    0.3
+      achievement: 0.5
+      belonging:   0.5
+      cognition:   0.6
+      expression:  0.4
+    thresholds:
+      belonging:   0.7
+      cognition:   0.8
+      achievement: 0.6
+      expression:  0.7
+      survival_threatened: 0.3
+      survival_dying:      0.1
+      survival_dead:       0.0
+    recovery_rate: 0.5
+  emotion:
+    decay_rate:       0.95
+    min_intensity:    0.1
+    default_duration: 60.0
+    switch_inertia:   0.7
+    durations:
+      joy:     600
+      sadness: 1800
+      fear:    300
+      anger:   600
+  motivation:
+    rpe_coefficient:         0.5
+    expected_update_weight:  0.2
+  energy:
+    initial: 0.8
+
+# ── Consciousness 层 — 意识系统
+consciousness:
+  l0_interval:          1.0
+  l1_threshold:         60
+  l1_anomaly_enabled:   false
+  l2_check_interval:    10.0
+  l2_idle_trigger:      60.0
+  l2_changes_trigger:   10
+  l2_cooldown:          300.0
+  l2_periodic_interval: 1800.0
+  sleep_to_dream_threshold:    300.0
+  l3_cooldown:          1800.0
+  energy_low_threshold: 0.1
+  energy_silent_threshold: 0.15
+  living:
+    tick_interval:      1.0
+    surge_interval:     60.0
+    idle_short:         60.0
+    idle_threshold:     10800.0
+    dream_interval:     3000.0
+    max_context_tokens: 50000
+    comms_port:         0
+    ws_port:            19766
+  action:
+    intent_greet_cooldown:    3600.0
+    intent_care_cooldown:     1800.0
+    intent_reflect_cooldown:  7200.0
+    intent_act_cooldown:      3600.0
+    intent_work_cooldown:     60.0
+    intent_learn_cooldown:    7200.0
+    intent_express_cooldown:  1800.0
+    intent_progress_cooldown: 3600.0
+    idle_trigger_seconds:     1800.0
+    idle_greet_cooldown:      1800.0
+    desire_greet_cooldown:    3600.0
+    desire_learn_cooldown:    7200.0
+    desire_achievement_cooldown: 3600.0
+    desire_express_cooldown:  3600.0
+    desire_talk_to_agent_cooldown: 60.0
+  context:
+    fresh_tail_count:      40
+    flow_tail_count:       4
+    reflect_tail_count:    12
+    messages_per_compact:  8
+    reserved_fresh_count:  10
+    compact_token_ratio:   0.5
+    compact_time_window:   7200.0
+    daily_max_memories:    12
+    reflect_max_memories:  15
+    daily_min_strength:    0.6
+    reflect_min_strength:  0.4
+    short_input_threshold: 15
+  keywords:
+    reflect_keywords: [答对了吗, 做错了, 纠正, 不对, 反省, 反思, 我错了吗]
+    past_keywords: [昨天, 之前, 上次, 以前, 记得, 刚才, 那一次]
+    opinion_keywords: [你觉得, 你怎么看, 建议, 推荐, 你更喜欢, 你觉得我]
+    personal_keywords: [我心情, 我好开心, 我很难过, 你能不能, 我想要, 我感觉]
+    simple_patterns: [算, 计算, 翻译, 几点, 什么意思, ？, 吗, 帮我]
+    continue_patterns: [继续, 接着做, 还做, 再做, 延续, 持续]

@@ -1,21 +1,22 @@
 """Xiaomei Brain — entry point for `python -m xiaomei_brain`.
 
 Usage:
-    python -m xiaomei_brain run <agent_id> [--cli] [--no-consciousness] [--legacy] [--port <port>]
-    python -m xiaomei_brain tui [--host <host>] [--port <port>]
-    python -m xiaomei_brain agent list
-    python -m xiaomei_brain agent info <name>
-    python -m xiaomei_brain agent create <name> [--copy-from <existing>]
-    python -m xiaomei_brain agent delete <name> [-f/--force]
-    python -m xiaomei_brain config get <path>
-    python -m xiaomei_brain config set <path> <value>
-    python -m xiaomei_brain config validate
-    python -m xiaomei_brain config file
-    python -m xiaomei_brain plugins list
-    python -m xiaomei_brain plugins enable <name>
-    python -m xiaomei_brain plugins disable <name>
-    python -m xiaomei_brain logs <agent_id> [-f/--follow] [-n/--lines <n>]
-    python -m xiaomei_brain doctor [--fix] [-v/--verbose]
+    xiaomei-brain                              # 启动小美（首次自动创建）
+    xiaomei-brain run <agent_id> [--cli] [--no-consciousness] [--legacy] [--port <port>]
+    xiaomei-brain tui [--host <host>] [--port <port>]
+    xiaomei-brain agent list
+    xiaomei-brain agent info <name>
+    xiaomei-brain agent create <name> [--copy-from <existing>]
+    xiaomei-brain agent delete <name> [-f/--force]
+    xiaomei-brain config get <path>
+    xiaomei-brain config set <path> <value>
+    xiaomei-brain config validate
+    xiaomei-brain config file
+    xiaomei-brain plugins list
+    xiaomei-brain plugins enable <name>
+    xiaomei-brain plugins disable <name>
+    xiaomei-brain logs <agent_id> [-f/--follow] [-n/--lines <n>]
+    xiaomei-brain doctor [--fix] [-v/--verbose]
 """
 
 from xiaomei_brain.cli import main
