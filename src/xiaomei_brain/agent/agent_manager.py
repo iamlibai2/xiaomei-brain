@@ -352,6 +352,201 @@ class AgentManager:
         del self._agents[agent_id]
         return True
 
+    def delete_agent(self, agent_id: str) -> dict:
+        """完全删除 agent：config.json 条目、内存注册表、文件目录。
+
+        Returns:
+            {"id": ..., "deleted": True, "agent_dir": ..., "removed_from_config": bool}
+
+        Raises:
+            ValueError: agent 不存在
+        """
+        if agent_id not in self._agents:
+            raise ValueError(f"Agent '{agent_id}' does not exist")
+
+        agent_dir = self._agent_dir(agent_id)
+        removed_from_config = False
+
+        # 1. 从 config.json 移除
+        config_path = self._config_path()
+        if os.path.exists(config_path):
+            with open(config_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            agents_list = data.get("agents", {}).get("list", [])
+            new_list = [a for a in agents_list if a.get("id") != agent_id]
+            if len(new_list) < len(agents_list):
+                data["agents"]["list"] = new_list
+                with open(config_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+                removed_from_config = True
+
+        # 2. 从内存移除
+        del self._agents[agent_id]
+
+        # 3. 删除目录树
+        import shutil
+        if os.path.exists(agent_dir):
+            shutil.rmtree(agent_dir)
+
+        return {
+            "id": agent_id,
+            "deleted": True,
+            "agent_dir": agent_dir,
+            "removed_from_config": removed_from_config,
+        }
+
+    # ── Agent 管理 API（CLI + REST 共用）───────────────────────
+
+    def create_agent(
+        self,
+        name: str,
+        copy_from: str = "",
+        identity_content: str = "",
+        config_yaml_content: str = "",
+    ) -> dict:
+        """创建新 agent：目录 + 模板文件 + 注册到 config.json。
+
+        Args:
+            name: Agent ID
+            copy_from: 从已有 agent 复制 LLM model 配置
+            identity_content: identity.md 内容（为空则用默认模板）
+            config_yaml_content: config.yaml 内容（为空则用默认模板）
+
+        Returns:
+            {"id": ..., "name": ..., "model": ..., ...}
+
+        Raises:
+            ValueError: agent 已存在
+        """
+        agent_dir = self._agent_dir(name)
+        if os.path.exists(agent_dir):
+            raise ValueError(f"Agent '{name}' 已存在")
+
+        # ── 确定 model 配置 ──────────────────────────────
+        model_config = {"primary": "deepseek/deepseek-v4-flash"}
+        if copy_from:
+            source = self._agents.get(copy_from)
+            if source:
+                model_config = {"primary": f"{source.provider}/{source.model}" if source.provider else source.model}
+        else:
+            # 从已有 agent 复制
+            for a in self._agents.values():
+                if a.provider and a.model:
+                    model_config = {"primary": f"{a.provider}/{a.model}"}
+                    copy_from = a.id
+                    break
+
+        # ── 目录结构 ──────────────────────────────────────
+        dirs = [
+            agent_dir,
+            os.path.join(agent_dir, "consciousness"),
+            os.path.join(agent_dir, "contacts"),
+            os.path.join(agent_dir, "logs"),
+            os.path.join(agent_dir, "debug"),
+        ]
+        for d in dirs:
+            os.makedirs(d, exist_ok=True)
+
+        # ── identity.md ──────────────────────────────────
+        identity_path = os.path.join(agent_dir, "consciousness", "identity.md")
+        if not identity_content:
+            identity_content = f"# {name}\n\n你是{name}，一个AI助手。\n\n## 身份\n- 角色：AI助手\n- 风格：简洁、温暖\n\n## 追求\n- 帮助用户高效完成任务\n\n## 热爱\n- 学习新知识\n- 与人交流\n\n## 底线\n- 诚实\n"
+        with open(identity_path, "w", encoding="utf-8") as f:
+            f.write(identity_content)
+
+        # ── config.yaml ──────────────────────────────────
+        config_yaml_path = os.path.join(agent_dir, "config.yaml")
+        if not config_yaml_content:
+            from xiaomei_brain.cli._config_template import CONFIG_YAML_TEMPLATE
+            config_yaml_content = CONFIG_YAML_TEMPLATE.format(agent_id=name)
+        with open(config_yaml_path, "w", encoding="utf-8") as f:
+            f.write(config_yaml_content)
+
+        # ── contacts/identities.yaml ─────────────────────
+        identities_path = os.path.join(agent_dir, "contacts", "identities.yaml")
+        with open(identities_path, "w", encoding="utf-8") as f:
+            f.write("people: []\n")
+
+        # ── 注册到 config.json ──────────────────────────
+        config_json_path = self._config_path()
+        if os.path.exists(config_json_path):
+            with open(config_json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        else:
+            data = {}
+        if "agents" not in data:
+            data["agents"] = {}
+        if "list" not in data["agents"]:
+            data["agents"]["list"] = []
+        existing = [a for a in data["agents"]["list"] if a.get("id") == name]
+        if not existing:
+            entry = {
+                "id": name,
+                "name": name,
+                "description": "",
+                "enabled": True,
+                "model": model_config,
+                "tools": {"profile": "assistant"},
+                "identity": "",
+            }
+            data["agents"]["list"].append(entry)
+            with open(config_json_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+
+        # ── 注册到内存 ──────────────────────────────────
+        provider, model = "", ""
+        if "/" in model_config.get("primary", ""):
+            provider, model = model_config["primary"].split("/", 1)
+
+        instance = self.register(AgentConfig(
+            id=name, name=name,
+            provider=provider, model=model,
+            identity_content=identity_content,
+        ))
+
+        return {
+            "id": instance.id,
+            "name": instance.name,
+            "model": model_config.get("primary", ""),
+            "enabled": instance.enabled,
+            "created_at": instance.created_at,
+            "agent_dir": agent_dir,
+        }
+
+    def list_agents_info(self) -> list[dict]:
+        """列出所有 agent 的信息（REST API 用）。"""
+        result = []
+        for a in self._agents.values():
+            model_str = f"{a.provider}/{a.model}" if a.provider and a.model else (a.model or a.provider or "")
+            result.append({
+                "id": a.id,
+                "name": a.name,
+                "description": a.description,
+                "enabled": a.enabled,
+                "model": model_str,
+                "created_at": a.created_at,
+                "agent_dir": a.agent_dir(),
+            })
+        return result
+
+    def get_agent_info(self, agent_id: str) -> dict | None:
+        """获取单个 agent 的信息（REST API 用）。"""
+        a = self._agents.get(agent_id)
+        if a is None:
+            return None
+        model_str = f"{a.provider}/{a.model}" if a.provider and a.model else (a.model or a.provider or "")
+        return {
+            "id": a.id,
+            "name": a.name,
+            "description": a.description,
+            "enabled": a.enabled,
+            "model": model_str,
+            "created_at": a.created_at,
+            "agent_dir": a.agent_dir(),
+        }
+
+    # ── /Agent 管理 API ────────────────────────────────────────
+
     def get_or_create(
         self, agent_id: str, config: AgentConfig | None = None
     ) -> AgentInstance:

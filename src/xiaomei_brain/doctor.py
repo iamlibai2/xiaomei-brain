@@ -480,12 +480,12 @@ class Doctor:
             print(f"  {self._color(Status.FAIL, '✗ Some checks failed — run with --fix for details')}\n")
 
 
-def main() -> None:
+def main(_args: list[str] | None = None) -> None:
     import argparse
     parser = argparse.ArgumentParser(description="xiaomei-brain health check")
     parser.add_argument("--fix", action="store_true", help="auto-fix where possible")
     parser.add_argument("-v", "--verbose", action="store_true", help="show detail on failure")
-    args = parser.parse_args()
+    args = parser.parse_args(_args)
 
     doctor = Doctor(verbose=args.verbose)
     doctor.run()

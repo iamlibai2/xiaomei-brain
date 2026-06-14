@@ -37,6 +37,7 @@ class ConnectParams(BaseModel):
     token: str = ""
     client: str = "unknown"
     session_id: str = ""  # 重连时带上之前的 session_id 可恢复会话
+    user_id: str = ""  # 用户身份，设置后加载该用户的对话历史
 
 
 # ── Chat ─────────────────────────────────────

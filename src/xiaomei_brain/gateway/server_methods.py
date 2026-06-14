@@ -69,6 +69,21 @@ class MethodRouter:
 
         # 重连：客户端带了之前的 session_id → 复用
         session_id = p.session_id or f"ws-{conn_id[:8]}"
+
+        # 设置 user_id 并加载 fresh_tail（WS 连接也需要"带着记忆醒来"）
+        if p.user_id and self._living:
+            self._living.user_id = p.user_id
+            agent_core = self._living.agent._get_agent()
+            if agent_core:
+                agent_core.user_id = p.user_id
+            self._living.load_fresh_tail()
+            # 保存 attention 会话，防止后续 switch_to 覆盖 fresh_tail
+            if hasattr(self._living, '_attention') and self._living._attention:
+                ws_sid = f"ws-{session_id}"
+                self._living._attention.save_session(ws_sid)
+                self._living._attention._current_session = ws_sid
+            logger.info("[Gateway] fresh_tail 已加载: user_id=%s session=%s", p.user_id, session_id)
+
         return build_res(req_id, ok=True, payload={
             "session_id": session_id,
             "reconnect": bool(p.session_id),

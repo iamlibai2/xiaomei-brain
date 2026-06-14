@@ -272,6 +272,10 @@ class Living:
         """请求取消当前动作"""
         self._cancel_requested = True
 
+    def abort_chat(self) -> None:
+        """中断当前 LLM 生成（Gateway chat.abort 使用）。"""
+        self.cancel()
+
     def reset_cancel(self) -> None:
         """重置取消标志"""
         self._cancel_requested = False
