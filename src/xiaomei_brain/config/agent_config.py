@@ -101,15 +101,22 @@ def _drive_config_path(agent_id: str) -> Path:
 
 
 @dataclass
+class AdminConfig:
+    """Admin 管理门配置。"""
+    token: str = ""
+
+
+@dataclass
 class AgentConfig:
     """进程级统一配置。
 
-    包含 drive 和 consciousness 两大段。
+    包含 drive / consciousness / admin 三大段。
     drive 段使用 drive.config.DriveConfig 结构。
     consciousness 段使用 consciousness.config.LivingConfig 结构。
     """
     drive: Any = field(default_factory=lambda: _default_drive_config())
     consciousness: Any = field(default_factory=lambda: _default_living_config())
+    admin: AdminConfig = field(default_factory=AdminConfig)
 
     @classmethod
     def from_yaml(cls, agent_id: str) -> AgentConfig:
@@ -141,11 +148,13 @@ class AgentConfig:
 
         drive_data = data.get("drive", {})
         consciousness_data = data.get("consciousness", {})
+        admin_data = data.get("admin", {})
 
         drive_cfg = _build_drive_config(drive_data)
         living_cfg = _build_living_config(consciousness_data)
+        admin_cfg = AdminConfig(token=admin_data.get("token", ""))
 
-        config = cls(drive=drive_cfg, consciousness=living_cfg)
+        config = cls(drive=drive_cfg, consciousness=living_cfg, admin=admin_cfg)
         logger.info("[AgentConfig] 已从 %s 加载", path)
         return config
 

@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from .protocol import build_res, build_event, error_shape, ErrorCodes
+from .schemas import ConnectParams, ChatSendParams, ChatAbortParams, format_error
 from .auth import check_token
 
 logger = logging.getLogger(__name__)
@@ -52,30 +53,37 @@ class MethodRouter:
     # ── Handlers ──────────────────────────────
 
     def _handle_connect(self, conn_id: str, req_id: str, params: dict) -> dict:
-        token = params.get("token", "")
-        client = params.get("client", "unknown")
+        try:
+            p = ConnectParams.model_validate(params)
+        except Exception as e:
+            return build_res(req_id, ok=False,
+                             error=error_shape(ErrorCodes.INVALID_REQUEST, f"参数无效: {format_error(e)}"))
 
-        if not check_token(token, self._config):
+        if not check_token(p.token, self._config):
             return build_res(req_id, ok=False,
                              error=error_shape(ErrorCodes.UNAUTHORIZED, "Token 无效"))
 
         self._auth_sessions.add(conn_id)
-        logger.info("[Gateway] 客户端已认证: conn=%s client=%s", conn_id[:8], client)
+        logger.info("[Gateway] 客户端已认证: conn=%s client=%s", conn_id[:8], p.client)
 
-        session_id = f"ws-{conn_id[:8]}"
+        # 重连：客户端带了之前的 session_id → 复用
+        session_id = p.session_id or f"ws-{conn_id[:8]}"
         return build_res(req_id, ok=True, payload={
             "session_id": session_id,
+            "reconnect": bool(p.session_id),
             "protocol_version": 1,
         })
 
     def _handle_chat_send(self, conn_id: str, req_id: str, params: dict) -> dict:
-        content = params.get("content", "").strip()
-        if not content:
+        try:
+            p = ChatSendParams.model_validate(params)
+        except Exception as e:
             return build_res(req_id, ok=False,
-                             error=error_shape(ErrorCodes.EMPTY_MESSAGE, "空消息"))
+                             error=error_shape(ErrorCodes.INVALID_REQUEST, f"参数无效: {format_error(e)}"))
 
-        session_id = params.get("session_id") or f"ws-{conn_id[:8]}"
-        user_id = params.get("user_id", "") or "ws-user"
+        content = p.content.strip()
+        session_id = p.session_id or f"ws-{conn_id[:8]}"
+        user_id = p.user_id or "ws-user"
 
         living = self._living
         if living is None:
@@ -86,6 +94,12 @@ class MethodRouter:
         return build_res(req_id, ok=True, payload={"accepted": True, "session_id": session_id})
 
     def _handle_chat_abort(self, conn_id: str, req_id: str, params: dict) -> dict:
+        try:
+            ChatAbortParams.model_validate(params)
+        except Exception as e:
+            return build_res(req_id, ok=False,
+                             error=error_shape(ErrorCodes.INVALID_REQUEST, f"参数无效: {format_error(e)}"))
+
         living = self._living
         if living is None:
             return build_res(req_id, ok=False,

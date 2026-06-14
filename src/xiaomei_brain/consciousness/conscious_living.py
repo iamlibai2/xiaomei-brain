@@ -933,9 +933,9 @@ class ConsciousLiving(Living):
             import uvicorn
             config_path = os.path.expanduser(f"~/.xiaomei-brain/{self._agent_id}/config.yaml")
             admin_app = create_admin_app(
+                agent_id=self._agent_id,
                 living=self,
                 agent_manager=getattr(self, '_agent_manager', None),
-                config=self._config,
                 config_path=config_path,
             )
             admin_config = uvicorn.Config(admin_app, host=host, port=admin_port, log_level="warning")

@@ -101,6 +101,16 @@ class Router:
             rule.output_route.type, rule.output_route.target, rule.priority,
         )
 
+    def remove_peer(self, peer_id: str) -> None:
+        """移除指定 peer_id 的所有路由规则（用于连接断开时清理）。"""
+        removed = 0
+        with self._lock:
+            before = len(self._rules)
+            self._rules = [r for r in self._rules if r.peer_id != peer_id]
+            removed = before - len(self._rules)
+        if removed:
+            logger.info("[Router] 移除规则: peer_id=%s (%d条)", peer_id, removed)
+
     def register_peer(
         self,
         peer_type: str,

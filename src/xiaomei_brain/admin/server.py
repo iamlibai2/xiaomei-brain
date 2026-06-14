@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import FastAPI
 
-from .auth import set_admin_config
+from .auth import set_admin_agent_id
 from .routes.status import router as status_router, set_living as set_status_living
 from .routes.config import router as config_router, set_config_path
 from .routes.agents import router as agents_router, set_agent_manager
@@ -24,20 +24,20 @@ async def health() -> dict:
 
 
 def create_admin_app(
+    agent_id: str = "",
     living: Any = None,
     agent_manager: Any = None,
-    config: Any = None,
     config_path: str = "",
 ) -> FastAPI:
     """创建 Admin 管理门 FastAPI app。
 
     Args:
+        agent_id: Agent ID（用于读取 admin token）
         living: ConsciousLiving 实例
         agent_manager: AgentManager 实例
-        config: 配置对象（用于 auth/admin token）
         config_path: agent 配置文件路径（用于 ConfigProvider）
     """
-    set_admin_config(config)
+    set_admin_agent_id(agent_id)
     set_status_living(living)
     set_sessions_living(living)
     if config_path:

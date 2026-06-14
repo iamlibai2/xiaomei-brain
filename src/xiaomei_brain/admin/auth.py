@@ -3,29 +3,30 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from fastapi import Header, HTTPException
 
 logger = logging.getLogger(__name__)
 
-_CONFIG: Any = None
+_AGENT_ID: str = ""
 
 
-def set_admin_config(config: Any) -> None:
-    """注入配置引用。"""
-    global _CONFIG
-    _CONFIG = config
+def set_admin_agent_id(agent_id: str) -> None:
+    """注入 agent_id，用于读取 AgentConfig 中的 admin token。"""
+    global _AGENT_ID
+    _AGENT_ID = agent_id
 
 
 def _get_admin_token() -> str:
-    """从配置读取 admin token。"""
-    if _CONFIG is None:
+    """从 AgentConfig YAML 读取 admin token。"""
+    if not _AGENT_ID:
         return ""
-    admin_cfg = getattr(_CONFIG, "admin", None)
-    if admin_cfg is None:
+    try:
+        from xiaomei_brain.config.agent_config import load_agent_config
+        cfg = load_agent_config(_AGENT_ID)
+        return cfg.admin.token
+    except Exception:
         return ""
-    return getattr(admin_cfg, "token", "") or ""
 
 
 def verify_admin(authorization: str = Header(default="")) -> str:

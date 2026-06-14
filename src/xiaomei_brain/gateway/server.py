@@ -17,6 +17,7 @@ from .connection import ConnectionManager, cm
 from .protocol import (
     MsgType, build_res, build_event, error_shape, ErrorCodes,
 )
+from .schemas import ReqFrame, format_error
 from .server_methods import MethodRouter
 from .auth import resolve_auth_mode
 
@@ -47,15 +48,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
     await ws.accept()
     conn_id = str(uuid.uuid4())
     cm.register(conn_id, ws)
-
-    if _global_router:
-        session_id = f"ws-{conn_id[:8]}"
-        _global_router.register_peer(
-            peer_type="human", peer_id=conn_id,
-            channel="ws", session_id=session_id,
-            output_type="ws", output_target=session_id,
-        )
-        cm.set_session(session_id, conn_id)
+    _peer_registered = False  # connect 成功后设为 True
 
     async def send_frame(frame: dict) -> None:
         try:
@@ -75,34 +68,47 @@ async def ws_endpoint(ws: WebSocket) -> None:
 
             msg_type = raw.get("type", "")
 
-            if msg_type == MsgType.REQ.value:
-                req_id = raw.get("id", "")
-                method = raw.get("method", "")
-                params = raw.get("params", {})
-
-                if not req_id or not method:
-                    await send_frame(build_res(
-                        req_id or "?", ok=False,
-                        error=error_shape(ErrorCodes.INVALID_REQUEST, "缺少 id 或 method"),
-                    ))
-                    continue
-
-                if _method_router:
-                    res = _method_router.dispatch(conn_id, req_id, method, params)
-                    await send_frame(res)
-                else:
-                    await send_frame(build_res(
-                        req_id, ok=False,
-                        error=error_shape(ErrorCodes.GATEWAY_NOT_READY, "Gateway 未就绪"),
-                    ))
-
-            elif msg_type == "ping":
+            # ping → pong
+            if msg_type == "ping":
                 await send_frame({"type": "pong"})
+                continue
 
-            else:
+            # 非 req 类型 → 错误
+            if msg_type != MsgType.REQ.value:
                 await send_frame(build_res(
                     raw.get("id", "?"), ok=False,
                     error=error_shape(ErrorCodes.INVALID_REQUEST, f"未知消息类型: {msg_type}"),
+                ))
+                continue
+
+            # Pydantic 校验 req 帧
+            try:
+                req = ReqFrame.model_validate(raw)
+            except Exception as e:
+                await send_frame(build_res(
+                    raw.get("id", "?"), ok=False,
+                    error=error_shape(ErrorCodes.PARSE_ERROR, format_error(e)),
+                ))
+                continue
+
+            if _method_router:
+                res = _method_router.dispatch(conn_id, req.id, req.method, req.params)
+                await send_frame(res)
+
+                # connect 成功后注册 Peer 路由（使用 handler 返回的 session_id）
+                if req.method == "connect" and res.get("ok") and _global_router and not _peer_registered:
+                    session_id = res["payload"]["session_id"]
+                    _global_router.register_peer(
+                        peer_type="human", peer_id=conn_id,
+                        channel="ws", session_id=session_id,
+                        output_type="ws", output_target=session_id,
+                    )
+                    cm.set_session(session_id, conn_id)
+                    _peer_registered = True
+            else:
+                await send_frame(build_res(
+                    req.id, ok=False,
+                    error=error_shape(ErrorCodes.GATEWAY_NOT_READY, "Gateway 未就绪"),
                 ))
 
     except WebSocketDisconnect:
@@ -110,6 +116,8 @@ async def ws_endpoint(ws: WebSocket) -> None:
     finally:
         if _method_router:
             _method_router.drop_session(conn_id)
+        if _global_router:
+            _global_router.remove_peer(conn_id)
         cm.unregister(conn_id)
 
 
