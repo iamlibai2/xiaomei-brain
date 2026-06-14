@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from .protocol import build_res, build_event, error_shape, ErrorCodes
-from .schemas import ConnectParams, ChatSendParams, ChatAbortParams, format_error
+from .schemas import ConnectParams, ChatSendParams, ChatAbortParams, ChatHistoryParams, format_error
 from .auth import check_token
 
 logger = logging.getLogger(__name__)
@@ -22,6 +22,7 @@ class MethodRouter:
             "connect": self._handle_connect,
             "chat.send": self._handle_chat_send,
             "chat.abort": self._handle_chat_abort,
+            "chat.history": self._handle_chat_history,
         }
         # 已认证的 session
         self._auth_sessions: set[str] = set()
@@ -107,6 +108,39 @@ class MethodRouter:
         try:
             living.abort_chat()
             return build_res(req_id, ok=True, payload={"aborted": True})
+        except Exception as e:
+            return build_res(req_id, ok=False,
+                             error=error_shape(ErrorCodes.INTERNAL_ERROR, str(e)))
+
+    def _handle_chat_history(self, conn_id: str, req_id: str, params: dict) -> dict:
+        try:
+            p = ChatHistoryParams.model_validate(params)
+        except Exception as e:
+            return build_res(req_id, ok=False,
+                             error=error_shape(ErrorCodes.INVALID_REQUEST, f"参数无效: {format_error(e)}"))
+
+        living = self._living
+        if living is None:
+            return build_res(req_id, ok=False,
+                             error=error_shape(ErrorCodes.GATEWAY_NOT_READY, "Gateway 未就绪"))
+
+        try:
+            db = getattr(getattr(living, 'agent', None), 'conversation_db', None)
+            if db is None:
+                return build_res(req_id, ok=True, payload={"messages": []})
+
+            session_id = p.session_id or None
+            rows = db.get_recent(n=min(p.limit, 200), session_id=session_id)
+            messages = [
+                {
+                    "role": r.get("role", "user"),
+                    "content": r.get("content", ""),
+                    "created_at": r.get("created_at", 0),
+                    "user_id": r.get("user_id", ""),
+                }
+                for r in rows
+            ]
+            return build_res(req_id, ok=True, payload={"messages": messages})
         except Exception as e:
             return build_res(req_id, ok=False,
                              error=error_shape(ErrorCodes.INTERNAL_ERROR, str(e)))

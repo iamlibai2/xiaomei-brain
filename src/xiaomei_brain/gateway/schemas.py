@@ -51,6 +51,11 @@ class ChatAbortParams(BaseModel):
     session_id: str = ""
 
 
+class ChatHistoryParams(BaseModel):
+    session_id: str = ""
+    limit: int = 50
+
+
 # ── Wire frames ──────────────────────────────
 
 class ReqFrame(BaseModel):
