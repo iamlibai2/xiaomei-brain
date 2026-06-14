@@ -1,4 +1,6 @@
-"""轻量 HTTP 消息服务器 — 接收其他 agent 发来的消息。
+"""P2P HTTP 消息服务器 — 接收其他 agent 发来的消息。
+
+Agent 间通信的入口点（与 WS 服务端平级，都在 gateway/ 统一对外界面下）。
 
 使用 Python 标准库 http.server，零额外依赖。
 运行在 daemon 线程中。
@@ -8,13 +10,33 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
+import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-from .protocol import AgentMessage
-from . import _log_to_comms_log
+from ..channels.p2p.protocol import AgentMessage
 
 logger = logging.getLogger(__name__)
+
+_COMMS_LOG_PATH = os.path.expanduser("~/.xiaomei-brain/comms.log")
+
+try:
+    os.makedirs(os.path.dirname(_COMMS_LOG_PATH), exist_ok=True)
+except Exception as e:
+    logger.warning("Failed to create comms log directory: %s", e)
+
+
+def _log_to_comms_log(from_agent: str, to_agent: str, msg_type: str, content: str) -> None:
+    """写入全局通讯日志（tail -f 可读）。"""
+    ts = time.strftime("%H:%M:%S")
+    clean = content.replace("|", " ").replace("\\", "\\\\").replace("\n", "\\n")
+    line = f"{ts}|{from_agent}|{to_agent}|{msg_type}|{clean}\n"
+    try:
+        with open(_COMMS_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception as e:
+        logger.warning("Failed to write to comms log: %s", e)
 
 
 def _make_handler(inbox, agent_id: str, on_receive):

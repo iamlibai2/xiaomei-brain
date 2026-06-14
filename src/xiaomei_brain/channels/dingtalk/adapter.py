@@ -51,7 +51,7 @@ class DingTalkAdapter(ChannelAdapter):
     def channel_type(self) -> str:
         return "dingtalk"
 
-    def send(self, target: str, text: str) -> None:
+    def send(self, target: str, text: str, msg_type: str = "text") -> None:
         """向钉钉用户/群发送消息。Core 通过 Router.deliver() 调用此方法。
 
         优先使用 SDK 的 sessionWebhook 回复（含 @发送者），

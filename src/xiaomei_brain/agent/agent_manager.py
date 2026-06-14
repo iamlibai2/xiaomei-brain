@@ -456,7 +456,7 @@ class AgentManager:
         tools.register(edit_file_tool)
 
         # Agent 间通讯 — send_message + check_inbox 工具
-        from xiaomei_brain.server.p2p.directory import AgentDirectory
+        from xiaomei_brain.channels.p2p.directory import AgentDirectory
         agent._directory = AgentDirectory()
         set_send_message_context(agent.id, agent._directory)
         tools.register(send_message_tool)

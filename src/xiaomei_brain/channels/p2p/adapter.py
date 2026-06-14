@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from ...gateway.channel_adapter import ChannelAdapter
 
 if TYPE_CHECKING:
-    from ...server.p2p.directory import AgentDirectory
+    from .directory import AgentDirectory
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +43,8 @@ class HTTPP2PAdapter(ChannelAdapter):
         db_path = getattr(living.agent, "db_path", None) or os.path.expanduser(
             f"~/.xiaomei-brain/{living._agent_id}/memory/brain.db"
         )
-        from ...server.p2p.inbox import AgentInbox
-        from ...server.p2p.directory import AgentDirectory
+        from .inbox import AgentInbox
+        from .directory import AgentDirectory
 
         # 收件箱
         living._inbox = AgentInbox(db_path)
@@ -67,7 +67,7 @@ class HTTPP2PAdapter(ChannelAdapter):
             import hashlib
             base = 18765 + (int(hashlib.md5(self._agent_id.encode()).hexdigest(), 16) % 100)
             ports_to_try = [base]
-        from ...server.p2p.server import start_comms_server_in_thread
+        from ...gateway.comms_server import start_comms_server_in_thread
 
         for port in ports_to_try:
             try:
@@ -108,7 +108,7 @@ class HTTPP2PAdapter(ChannelAdapter):
         except Exception:
             return False
 
-    def send(self, target: str, text: str) -> None:
+    def send(self, target: str, text: str, msg_type: str = "text") -> None:
         """向目标 agent 发送 HTTP 消息。
 
         Args:
@@ -119,8 +119,8 @@ class HTTPP2PAdapter(ChannelAdapter):
             logger.warning("[HTTPP2PAdapter] 通讯录未设置，无法发送到 %s", target)
             return
 
-        from ...server.p2p.protocol import AgentMessage, MsgType
-        from ...server.p2p.client import send_message as _send
+        from .protocol import AgentMessage, MsgType
+        from .client import send_message as _send
 
         msg = AgentMessage(
             type=MsgType.CHAT,

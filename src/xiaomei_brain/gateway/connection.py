@@ -48,3 +48,7 @@ class ConnectionManager:
     @property
     def count(self) -> int:
         return len(self.connections)
+
+
+# 全局单例（server.py 和 ws_adapter.py 共享）
+cm = ConnectionManager()

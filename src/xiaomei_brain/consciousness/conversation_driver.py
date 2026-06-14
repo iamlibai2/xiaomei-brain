@@ -239,6 +239,9 @@ class ConversationDriver:
                         chunks.append(chunk)
                         if on_chunk:
                             on_chunk(chunk)
+                        # 流式推送到 WS 通道
+                        if current_msg.session_id not in ("main", ""):
+                            self._deliver_chunk(parent, current_msg.session_id, chunk)
                     content = "".join(chunks)
                     elapsed = time.time() - t0
                     tc_count = agent.tool_call_buffer.last_index - tc_before
@@ -599,6 +602,16 @@ class ConversationDriver:
         if content.startswith("[") and "] " in content[:8]:
             return f"{speaker}：{content}"
         return f"{time_str}{speaker}：{content}"
+
+    @staticmethod
+    def _deliver_chunk(parent, session_id: str, chunk: str) -> None:
+        """流式推送单个 chunk 到 WS 通道（仅 WS，其他通道忽略）。"""
+        router = getattr(parent, '_router', None)
+        if not router:
+            return
+        route = router.route_for_session(session_id)
+        if route and route.type == "ws":
+            router.deliver(chunk, route, msg_type="text_chunk")
 
     @staticmethod
     def _deliver_response(parent, session_id: str, content: str) -> None:

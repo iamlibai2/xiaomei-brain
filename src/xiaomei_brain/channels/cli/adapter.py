@@ -17,7 +17,7 @@ class CLIAdapter(ChannelAdapter):
     输出直接 print 到 stdout。
     """
 
-    def send(self, target: str, text: str) -> None:
+    def send(self, target: str, text: str, msg_type: str = "text") -> None:
         if text.strip():
             print(f"\n{text}", flush=True)
 

@@ -182,12 +182,12 @@ class Router:
             return adapter.ping(route.target)
         return True  # 无 ping 方法的 adapter 默认可达
 
-    def deliver(self, text: str, route: OutputRoute) -> bool:
+    def deliver(self, text: str, route: OutputRoute, msg_type: str = "text") -> bool:
         """将文本分发到指定路由的通道。返回 True 表示成功。"""
         adapter = self._adapters.get(route.type)
         if adapter:
             try:
-                adapter.send(route.target, text)
+                adapter.send(route.target, text, msg_type=msg_type)
                 return True
             except Exception as e:
                 logger.warning("[Router] 分发失败 (%s/%s): %s", route.type, route.target, e)

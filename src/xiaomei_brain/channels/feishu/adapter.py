@@ -93,7 +93,7 @@ class FeishuAdapter(ChannelAdapter):
             except Exception as e:
                 logger.warning("[FeishuAdapter] 关闭通道失败: %s", e)
 
-    def send(self, target: str, text: str) -> None:
+    def send(self, target: str, text: str, msg_type: str = "text") -> None:
         logger.info("[FeishuAdapter] Router.deliver → target=%s text=%s", target, text[:80])
         msg = OutboundMsg(text=text)
         self._channel.send(target, msg)

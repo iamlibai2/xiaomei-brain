@@ -934,7 +934,7 @@ class ConsciousLiving(Living):
             config_path = os.path.expanduser(f"~/.xiaomei-brain/{self._agent_id}/config.yaml")
             admin_app = create_admin_app(
                 living=self,
-                agent_manager=self._agent_manager,
+                agent_manager=getattr(self, '_agent_manager', None),
                 config=self._config,
                 config_path=config_path,
             )

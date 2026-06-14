@@ -22,12 +22,13 @@ class ChannelAdapter(ABC):
     """通道适配器抽象基类。"""
 
     @abstractmethod
-    def send(self, target: str, text: str) -> None:
+    def send(self, target: str, text: str, msg_type: str = "text") -> None:
         """向目标发送文本。
 
         Args:
             target: 路由目标（"stdout" / agent_id / client_id / conversation_id）
             text: 要发送的文本
+            msg_type: 消息类型（"text" / "text_chunk"），非 WS 通道忽略
         """
         ...
 
