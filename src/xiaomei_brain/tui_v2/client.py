@@ -24,6 +24,7 @@ class GatewayClient:
     def __init__(self) -> None:
         self._ws: websocket.WebSocketApp | None = None
         self._session_id: str = ""
+        self._agent_name: str = ""
         self._connected: bool = False
         self._on_event: Callable[[str, dict], None] | None = None
         self._pending: dict[str, dict] = {}  # req_id → response
@@ -31,6 +32,10 @@ class GatewayClient:
         self._lock = threading.Lock()
         self._recv_thread: threading.Thread | None = None
         self._ping_thread: threading.Thread | None = None
+
+    @property
+    def agent_name(self) -> str:
+        return self._agent_name
 
     @property
     def session_id(self) -> str:
@@ -124,13 +129,16 @@ class GatewayClient:
 
         payload = res.get("payload", {})
         self._session_id = payload.get("session_id", "")
+        self._agent_name = payload.get("agent_name", "")
+        logger.info("[GatewayClient] connect response payload keys: %s, agent_name=%r",
+                    list(payload.keys()), self._agent_name)
         self._connected = True
 
         # 启动 ping 线程
         self._ping_thread = threading.Thread(target=self._ping_loop, daemon=True)
         self._ping_thread.start()
 
-        return {"session_id": self._session_id}
+        return {"session_id": self._session_id, "agent_name": self._agent_name}
 
     def send_chat(self, content: str, session_id: str = "", user_id: str = "") -> dict:
         if not self._connected:

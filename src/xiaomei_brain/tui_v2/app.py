@@ -148,7 +148,7 @@ class TUIApp:
         self.client = GatewayClient()
         self.state = State()
         self.console = Console()
-        self._agent_name: str = user_id or "xiaomei"
+        self._agent_name: str = ""
         self._event_queue: queue.Queue[tuple[str, dict]] = queue.Queue()
         self._running: bool = True
         self._in_dim: bool = False
@@ -168,7 +168,13 @@ class TUIApp:
                 host=self.host, port=self.port,
                 token=self.token, user_id=self.user_id,
             )
-            self.console.print(f"[green]✓[/green] 已连接 (session: {result.get('session_id', '?')[:8]})")
+            self._agent_name = self.client.agent_name or self._agent_name or "agent"
+            agent_from_connect = result.get("agent_name", "(none)")
+            self.console.print(
+                f"[green]✓[/green] 已连接 agent={self._agent_name!r} "
+                f"(from connect: {agent_from_connect!r}) "
+                f"session={result.get('session_id', '?')[:8]}"
+            )
         except Exception as e:
             self.console.print(f"[red]连接失败: {e}[/red]")
             return
@@ -237,9 +243,11 @@ class TUIApp:
         self._chunk_buf.clear()
         self._chunk_buf_time = time.time()
 
+        # 每行缩进 2 空格，与 header 对齐
+        text = text.replace("\n", "\n  ")
         if not self.state.streaming:
             self.state.stream()
-            text = f"\n{_BOLD_CYAN}{self._agent_name}:{_RESET} {text}"
+            text = f"\n{_BOLD_CYAN}🌸 {self._agent_name}:{_RESET}\n  {text}"
 
         with self._streaming_lock:
             self._streaming_text += text
@@ -264,8 +272,8 @@ class TUIApp:
             return
         if not text:
             return
-        clean = _strip_ansi(text).replace("\r", "")
-        self._pt(f"\n{_BOLD_CYAN}{self._agent_name}:{_RESET} {clean}\n")
+        clean = _strip_ansi(text).replace("\r", "").replace("\n", "\n  ")
+        self._pt(f"\n{_BOLD_CYAN}🌸 {self._agent_name}:{_RESET}\n  {clean}\n")
 
     def _reset_reply_state(self) -> None:
         self.state.idle()
@@ -342,9 +350,9 @@ class TUIApp:
                 if not content:
                     continue
                 if role == "user":
-                    print(f"{_GREEN}你:{_RESET} {content[:200]}")
+                    print(f"{_GREEN}👤{_RESET} {content[:200]}")
                 elif role == "assistant":
-                    print(f"{_CYAN}{self._agent_name}:{_RESET} {content[:200]}")
+                    print(f"{_CYAN}🌸 {self._agent_name}:{_RESET} {content[:200]}")
             self.console.print("[dim]──────────────[/dim]\n")
         except Exception:
             pass
@@ -357,107 +365,120 @@ class TUIApp:
         from prompt_toolkit.formatted_text import ANSI, to_formatted_text
         from prompt_toolkit.styles import Style
         from prompt_toolkit.application.current import get_app
+        from prompt_toolkit.key_binding import KeyBindings
 
-        # 后台线程输出 helper：仅用于非流式事件（工具调用、错误等）
+        # 后台线程输出 helper
         def pt(text: str) -> None:
             print_formatted_text(ANSI(text), end="", flush=True)
 
         self._pt = pt
 
-        session = PromptSession(style=Style.from_dict({
-            "bottom-toolbar": "noreverse",
-            "bottom-toolbar.text": "noreverse",
-        }))
+        kb = KeyBindings()
+
+        @kb.add("enter")
+        def _handle_enter(event):
+            text = event.current_buffer.text.strip()
+            if not text:
+                return
+
+            event.current_buffer.reset()
+
+            # 命令处理
+            if text.startswith("/"):
+                if self._handle_command_kb(text, event):
+                    return
+
+            # 输出用户输入到 scrollback（_pt 内部走 run_in_terminal）
+            self._pt(f"{_GREEN}👤{_RESET} {text}\n")
+
+            # 更新状态并发送
+            self.state.thinking()
+            self._in_dim = False
+            threading.Thread(
+                target=self._send_chat_bg, args=(text,), daemon=True
+            ).start()
+
+        @kb.add("c-c")
+        def _handle_ctrl_c(event):
+            if self.state.status in (S_THINKING, S_STREAMING, S_TOOL):
+                self.client.abort_chat()
+                self.state.idle()
+                with self._streaming_lock:
+                    self._streaming_text = ""
+            else:
+                event.app.exit()
+
+        session = PromptSession(
+            key_bindings=kb,
+            style=Style.from_dict({
+                "bottom-toolbar": "noreverse",
+                "bottom-toolbar.text": "noreverse",
+            }),
+        )
 
         # 启动事件消费线程
         consumer = threading.Thread(target=self._event_consumer_loop, daemon=True)
         consumer.start()
 
-        while True:
-            try:
-                def prompt_message():
-                    """动态 prompt message：包含分隔线和流式文本。
+        def prompt_message():
+            """动态 prompt message：流式文本 + 输入栏上横线 + 输入提示。"""
+            app = get_app()
+            self._app = app
 
-                    流式文本通过 ANSI → FormattedText 转换后直接渲染在 prompt 上方，
-                    完全绕过 run_in_terminal，消除闪烁和丢字。
-                    """
-                    app = get_app()
-                    self._app = app
+            term_width = shutil.get_terminal_size().columns
+            line = "─" * term_width
 
-                    term_width = shutil.get_terminal_size().columns
-                    line = "─" * term_width
+            with self._streaming_lock:
+                streaming = self._streaming_text
 
-                    with self._streaming_lock:
-                        streaming = self._streaming_text
+            parts: list[tuple[str, str]] = []
+            if streaming:
+                parts.extend(to_formatted_text(ANSI(streaming)))
+                parts.append(("", "\n"))
+            parts.append(("#45475A", line))
+            parts.append(("", "\n❯ "))
+            return parts
 
-                    parts: list[tuple[str, str]] = [("#45475A", line)]
-                    if streaming:
-                        parts.append(("", "\n"))
-                        # 将 ANSI 转义序列转换为 prompt_toolkit 的 style 元组
-                        parts.extend(to_formatted_text(ANSI(streaming)))
-                        parts.append(("", "\n"))
-                        parts.append(("#45475A", line))
-                    parts.append(("", "\n❯ "))
-                    return parts
+        try:
+            session.prompt(
+                prompt_message,
+                bottom_toolbar=_status_formatted(self.state),
+                refresh_interval=0.5,
+            )
+        except KeyboardInterrupt:
+            pass
+        except EOFError:
+            pass
+        finally:
+            self._app = None
 
-                user_input = session.prompt(
-                    prompt_message,
-                    bottom_toolbar=_status_formatted(self.state),
-                    refresh_interval=0.5,
-                )
-                self._app = None
+    def _send_chat_bg(self, text: str) -> None:
+        """后台线程发送消息。"""
+        res = self.client.send_chat(text, user_id=self.user_id)
+        if not res.get("ok"):
+            err = res.get("error", {}).get("message", "发送失败")
+            self._event_queue.put((EVENT_ERROR, {"text": err}))
 
-                user_input = user_input.strip()
-                if not user_input:
-                    continue
-
-                if user_input.startswith("/"):
-                    if self._handle_command(user_input):
-                        continue
-
-                print(f"{_GREEN}你:{_RESET} {user_input}")
-                self.state.thinking()
-                self._in_dim = False
-                res = self.client.send_chat(user_input, user_id=self.user_id)
-                if not res.get("ok"):
-                    err = res.get("error", {}).get("message", "发送失败")
-                    print(f"{_RED}✗ {err}{_RESET}")
-                    self.state.idle()
-                    continue
-
-            except KeyboardInterrupt:
-                if self.state.status in (S_THINKING, S_STREAMING, S_TOOL):
-                    self.client.abort_chat()
-                    self.state.idle()
-                    with self._streaming_lock:
-                        self._streaming_text = ""
-                    continue
-                break
-            except EOFError:
-                break
-            except Exception as e:
-                print(f"{_RED}错误: {e}{_RESET}")
-                self.state.idle()
-                continue
-
-    def _handle_command(self, cmd: str) -> bool:
+    def _handle_command_kb(self, cmd: str, event) -> bool:
+        """从 key binding 上下文处理命令，可访问 event.app。"""
         parts = cmd.split(maxsplit=1)
         name = parts[0].lower()
 
         if name in ("/quit", "/q", "/exit"):
+            event.app.exit()
             return True
         elif name == "/clear":
-            self.console.clear()
+            event.app.renderer.clear()
             return True
         elif name == "/status":
-            print(
+            self._pt(
                 f"  状态: {self.state.status} | "
                 f"会话: {self.client.session_id[:8]} | "
-                f"连接: {'✓' if self.client.connected else '✗'}"
+                f"连接: {'✓' if self.client.connected else '✗'}\n"
             )
             return True
         elif name == "/help":
-            print(
+            self._pt(
                 f"{_BOLD_CYAN}可用命令:{_RESET}\n"
                 "  /help    显示帮助\n"
                 "  /quit    退出\n"

@@ -86,6 +86,7 @@ class MethodRouter:
 
         return build_res(req_id, ok=True, payload={
             "session_id": session_id,
+            "agent_name": getattr(self._living, "_agent_id", ""),
             "reconnect": bool(p.session_id),
             "protocol_version": 1,
         })
