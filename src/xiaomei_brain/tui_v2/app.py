@@ -27,9 +27,11 @@ from rich.console import Console
 
 from .client import GatewayClient
 from .command_handler import CommandHandler
+from .input_handler import InputHandler
 from .text_utils import sanitize, sanitize_streaming
 from .slash_completer import SlashCompleter
-from .formatters import format_now
+from .formatters import format_duration, format_now
+from .tool_card import ToolCard, ToolState
 
 # ── 事件类型 ──────────────────────────────────────────
 
@@ -86,31 +88,50 @@ class State:
         self.status: str = S_IDLE
         self.status_text: str = "就绪"
         self.streaming: bool = False
+        self._busy_since: float = 0.0
+        self._last_elapsed: float = 0.0
+
+    def _mark_busy(self) -> None:
+        if self.status == S_IDLE:
+            self._busy_since = time.monotonic()
 
     def idle(self) -> None:
+        if self._busy_since > 0:
+            self._last_elapsed = time.monotonic() - self._busy_since
         self.status = S_IDLE
         self.status_text = "就绪"
         self.streaming = False
+        self._busy_since = 0.0
 
     def thinking(self) -> None:
+        self._mark_busy()
         self.status = S_THINKING
         self.status_text = "思考中..."
         self.streaming = False
 
     def stream(self) -> None:
+        self._mark_busy()
         self.status = S_STREAMING
         self.status_text = "回复中"
         self.streaming = True
 
     def tool(self, name: str) -> None:
+        self._mark_busy()
         self.status = S_TOOL
         self.status_text = _TOOL_HINTS.get(name, f"🔧 {name}")
         self.streaming = False
 
     def error(self, msg: str) -> None:
+        self._mark_busy()
         self.status = S_ERROR
         self.status_text = f"错误: {msg}"
         self.streaming = False
+
+    @property
+    def elapsed(self) -> float:
+        if self._busy_since > 0:
+            return time.monotonic() - self._busy_since
+        return self._last_elapsed
 
 
 def _status_formatted(app) -> list[tuple[str, str]]:
@@ -136,8 +157,10 @@ def _status_formatted(app) -> list[tuple[str, str]]:
     term_width = shutil.get_terminal_size().columns
     line = "─" * term_width
 
-    # 左侧：状态动画，右侧：agent name
-    left = f"{icon}  {state.status_text}"
+    # 左侧：状态动画 + 耗时，右侧：agent name
+    elapsed = state.elapsed
+    elapsed_str = f" | 耗时 {format_duration(elapsed)}" if elapsed > 0 else ""
+    left = f"{icon}  {state.status_text}{elapsed_str}"
     right = f"🌸 {app._agent_name}  "
     pad = term_width - len(left) - len(right)
     if pad < 1:
@@ -198,11 +221,13 @@ class TUIApp:
         self._scrollback: deque[str] = deque(maxlen=8)  # 保留最近几个回合，防 prompt 区域过高
         self._scrollback_lock = threading.Lock()
 
-        # 输入历史
-        self._input_history: list[str] = []
-        self._history_index: int = -1
-        self._current_input_buf: str = ""
-        self._last_ctrl_c: float = 0.0
+        # 输入处理器
+        self.input_handler = InputHandler(
+            command_handler=self.command_handler,
+        )
+
+        # 工具卡片
+        self._tool_cards: dict[int, ToolCard] = {}
 
     def run(self) -> None:
         self.console.print(f"[dim]连接 Gateway {self.host}:{self.port}...[/dim]")
@@ -337,7 +362,6 @@ class TUIApp:
 
     def _on_tool_start(self, payload: dict) -> None:
         self._flush_chunks()
-        # 流式文本先输出到 scrollback，然后清空
         if self.state.streaming:
             with self._streaming_lock:
                 streaming = self._streaming_text
@@ -357,17 +381,33 @@ class TUIApp:
                     v = v[:57] + "..."
                 parts.append(f'{k}="{v}"')
         args_str = ", ".join(parts) if parts else f"...({len(arguments)} args)"
-        self._pt(f"  {_CYAN}▶ [{idx}] {name}({args_str}){_RESET}\n")
+
+        card = ToolCard(tool_id=idx, name=name, args=args_str, state=ToolState.PENDING)
+        self._tool_cards[idx] = card
+        self._pt(f"  {_CYAN}{card.icon} [{idx}] {name}({args_str}){_RESET}\n")
 
     def _on_tool_complete(self, payload: dict) -> None:
         data = _parse_tool_payload(payload)
-        name = data.get("name", "unknown")
         idx = data.get("index", 0)
         result = data.get("result", "")
+
+        card = self._tool_cards.pop(idx, None)
+        if card is None:
+            # 没有对应的 PENDING 卡片（可能是异常情况），直接输出结果
+            name = data.get("name", "unknown")
+            is_error = str(result).lower().startswith("error")
+            tag = f"{_RED}✗{_RESET}" if is_error else f"{_GREEN}✓{_RESET}"
+            preview = str(result).split("\n")[0][:100]
+            self._pt(f"  {tag} [{idx}] {name}: {preview}\n")
+            self.state.thinking()
+            return
+
+        card.result_summary = str(result).split("\n")[0][:100]
         is_error = str(result).lower().startswith("error")
-        tag = f"{_RED}✗{_RESET}" if is_error else f"{_GREEN}✓{_RESET}"
-        preview = str(result).split("\n")[0][:100]
-        self._pt(f"  {tag} [{idx}] {name}: {preview}\n")
+        card.state = ToolState.ERROR if is_error else ToolState.SUCCESS
+
+        tag = f"{_RED}{card.icon}{_RESET}" if is_error else f"{_GREEN}{card.icon}{_RESET}"
+        self._pt(f"  {tag} [{idx}] {card.name}: {card.result_summary}\n")
         self.state.thinking()
 
     def _on_error(self, payload: dict) -> None:
@@ -391,6 +431,7 @@ class TUIApp:
         if streaming:
             self._pt(streaming + "\n")
         self._pt(f"\n{_YELLOW}已中断{_RESET}\n")
+        self._tool_cards.clear()
         self.state.idle()
 
     # ── 历史消息 ──────────────────────────────────────
@@ -422,7 +463,6 @@ class TUIApp:
         from prompt_toolkit.formatted_text import ANSI, to_formatted_text
         from prompt_toolkit.styles import Style
         from prompt_toolkit.application.current import get_app
-        from prompt_toolkit.key_binding import KeyBindings
 
         # 终端 scrollback（走 run_in_terminal，流式结束后一次性批量输出）
         def _print(text: str) -> None:
@@ -442,80 +482,34 @@ class TUIApp:
         # 注册命令（依赖 _pt 和 _echo 已就绪）
         self._register_commands()
 
-        kb = KeyBindings()
+        # ── 输入处理器 ──────────────────────────────────
+        ih = self.input_handler
 
-        @kb.add("enter")
-        def _handle_enter(event):
-            text = event.current_buffer.text.strip()
-            if not text:
-                return
-
-            # 命令处理
-            if text.startswith("/"):
-                event.current_buffer.reset()
-                self._handle_command_kb(text, event)
-                self._add_history(text)
-                return
-
-            # 用户输入回显到 prompt 区域（无闪烁），再清空输入框
-            self._echo(f"{_GREEN}👤{_RESET} {text}")
-            event.current_buffer.reset()
-
-            self._add_history(text)
-
-            # 更新状态并发送
+        def _on_submit(text: str) -> None:
             self.state.thinking()
             self._in_dim = False
             threading.Thread(
                 target=self._send_chat_bg, args=(text,), daemon=True
             ).start()
 
-        @kb.add("c-c")
-        def _handle_ctrl_c(event):
-            now = time.monotonic()
+        def _on_abort() -> None:
+            self.client.abort_chat()
+            self.state.idle()
+            with self._streaming_lock:
+                self._streaming_text = ""
 
-            if self.state.status == S_STREAMING:
-                # 级别1: 中断流式输出
-                self.client.abort_chat()
-                self.state.idle()
-                with self._streaming_lock:
-                    self._streaming_text = ""
-                self._last_ctrl_c = now
-            elif self.state.status in (S_THINKING, S_TOOL) and now - self._last_ctrl_c > 2.0:
-                # 级别2: 中断活跃操作（非流式，且非双击）
-                self.client.abort_chat()
-                self.state.idle()
-                with self._streaming_lock:
-                    self._streaming_text = ""
-                self._last_ctrl_c = now
-            else:
-                # 级别3: 退出（空闲或双击）
-                event.app.exit()
-
-        @kb.add("c-d")
-        def _handle_ctrl_d(event):
-            buf = event.current_buffer
-            if not buf.text.strip():
-                event.app.exit()
-            else:
-                buf.delete()
-
-        @kb.add("c-l")
-        def _handle_ctrl_l(event):
-            event.app.renderer.clear()
-
-        @kb.add("up")
-        def _handle_up(event):
-            self._navigate_history(event.current_buffer, -1)
-
-        @kb.add("down")
-        def _handle_down(event):
-            self._navigate_history(event.current_buffer, 1)
+        ih._on_submit = _on_submit
+        ih._on_abort = _on_abort
+        ih._on_quit = lambda: self._app.exit() if self._app else None
+        ih._on_echo = lambda text: self._echo(f"{_GREEN}👤{_RESET} {text}")
+        ih._is_command = self.command_handler.is_command
+        ih._is_streaming = lambda: self.state.status == S_STREAMING
+        ih._is_active = lambda: self.state.status in (S_THINKING, S_TOOL)
 
         self.completer = SlashCompleter(self.command_handler)
 
         session = PromptSession(
-            key_bindings=kb,
+            key_bindings=ih.build_key_bindings(),
             completer=self.completer,
             reserve_space_for_menu=0,
             style=Style.from_dict({
@@ -671,46 +665,9 @@ class TUIApp:
     def _cmd_abort(self) -> None:
         self.client.abort_chat()
         self.state.idle()
+        self._tool_cards.clear()
         with self._streaming_lock:
             self._streaming_text = ""
-
-    def _handle_command_kb(self, cmd: str, event) -> bool:
-        """从 key binding 上下文处理命令。委托给 CommandHandler。"""
-        return self.command_handler.execute(cmd)
-
-    # ── 输入历史 ──────────────────────────────────────
-
-    def _add_history(self, text: str) -> None:
-        """保存输入到历史（去重相邻重复）。"""
-        if text not in self._input_history:
-            self._input_history.append(text)
-        elif self._input_history and self._input_history[-1] != text:
-            self._input_history.append(text)
-        self._history_index = -1
-
-    def _navigate_history(self, buf, direction: int) -> None:
-        """Up/Down 导航输入历史。"""
-        if not self._input_history:
-            return
-
-        if self._history_index == -1:
-            self._current_input_buf = buf.text
-
-        new_idx = self._history_index + direction
-
-        if new_idx < -1:
-            return
-        if new_idx >= len(self._input_history):
-            return
-
-        self._history_index = new_idx
-
-        if new_idx == -1:
-            buf.text = getattr(self, "_current_input_buf", "")
-        else:
-            buf.text = self._input_history[new_idx]
-        buf.cursor_position = len(buf.text)
-
 
 # ── 入口 ──────────────────────────────────────────────
 
