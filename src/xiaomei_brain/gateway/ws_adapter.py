@@ -54,6 +54,10 @@ class WSAdapter(ChannelAdapter):
 
         if msg_type == "text_chunk":
             event_name = "chat.chunk"
+        elif msg_type == "tool.start":
+            event_name = "tool.start"
+        elif msg_type == "tool.complete":
+            event_name = "tool.complete"
         else:
             event_name = "session.message"
 

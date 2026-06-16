@@ -75,6 +75,10 @@ class Agent:
         self._compact_locks: dict[str, threading.Lock] = {}
         self._locks_lock = threading.Lock()
 
+        # ── Tool event callbacks (set by caller, e.g. ConversationDriver) ──
+        self.on_tool_start: Callable[[int, str, dict], None] | None = None
+        self.on_tool_complete: Callable[[int, str, dict, str], None] | None = None
+
     @property
     def messages(self) -> list[dict[str, Any]]:
         """当前 user_id 的消息列表（按 user_id 分桶，同一用户跨 session 共享）。"""
@@ -296,6 +300,8 @@ class Agent:
                     # Collapsed display + buffer storage
                     idx = self.tool_call_buffer.add(tc.name, tc.arguments, "")  # placeholder
                     _ptc(idx, tc.name, tc.arguments)
+                    if self.on_tool_start:
+                        self.on_tool_start(idx, tc.name, tc.arguments)
                     _last_tool = tc.name
                     logger.debug("Tool call: %s(%s)", tc.name, tc.arguments)
 
@@ -336,6 +342,8 @@ class Agent:
                         _pwr(idx, tc.name, tc.arguments, result)
                     else:
                         _ptr(idx, result)
+                    if self.on_tool_complete:
+                        self.on_tool_complete(idx, tc.name, tc.arguments, str(result))
                     logger.debug("Tool result: %s", result[:200])
 
                     # 存 tool result 到 DB，保存 DB id 到消息（DAG 压缩需要）

@@ -223,6 +223,14 @@ class ConversationDriver:
                     agent.session_id = current_msg.session_id
                     agent.user_display_name = getattr(current_msg, 'user_display_name', agent.user_display_name)
 
+                    # 注册工具事件 callback（非 CLI 通道通过 Router 投递）
+                    if current_msg.session_id not in ("main", ""):
+                        agent.on_tool_start = self._make_tool_event_callback("tool.start", current_msg.session_id, parent)
+                        agent.on_tool_complete = self._make_tool_event_callback("tool.complete", current_msg.session_id, parent)
+                    else:
+                        agent.on_tool_start = None
+                        agent.on_tool_complete = None
+
                     assembled = build_context(
                         agent, current_msg.content,
                         consciousness_state=cs, intent_context=current_context,
@@ -612,6 +620,26 @@ class ConversationDriver:
         route = router.route_for_session(session_id)
         if route and route.type == "ws":
             router.deliver(chunk, route, msg_type="text_chunk")
+
+    @staticmethod
+    def _make_tool_event_callback(event_type: str, session_id: str, parent: Any):
+        """创建工具事件 callback，通过 Router 投递到各通道。"""
+        import json as _json
+        def callback(idx: int, name: str, data, *args):
+            router = getattr(parent, '_router', None)
+            if not router:
+                return
+            route = router.route_for_session(session_id)
+            if not route:
+                return
+            payload = {"index": idx, "name": name, "event": event_type}
+            if event_type == "tool.start":
+                payload["arguments"] = data if isinstance(data, dict) else {}
+            elif event_type == "tool.complete":
+                payload["arguments"] = data if isinstance(data, dict) else {}
+                payload["result"] = args[0] if args else ""
+            router.deliver(_json.dumps(payload, ensure_ascii=False), route, msg_type=event_type)
+        return callback
 
     @staticmethod
     def _deliver_response(parent, session_id: str, content: str) -> None:

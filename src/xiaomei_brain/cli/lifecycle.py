@@ -1,6 +1,6 @@
 """xiaomei-brain lifecycle — start / stop / restart / status。
 
-Python 生态标准做法：JSON PID 文件 + psutil + 信号优雅停止。
+Python 生态标准做法：JSON PID 文件 + psutil + 信号停止。
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # ── 常量 ──────────────────────────────────────────────────────
-_SHUTDOWN_TIMEOUT = 25  # SIGTERM 后等待优雅退出的秒数
+_SHUTDOWN_TIMEOUT = 25  # SIGTERM 后等待进程退出的秒数
 _STOP_POLL_INTERVAL = 0.5  # 轮询间隔
 
 
@@ -112,11 +112,11 @@ def _is_process_alive(pid: int, agent_id: str) -> bool:
 # ── 信号处理 ────────────────────────────────────────────────
 
 def setup_signal_handlers(living: Any = None) -> None:
-    """注册 SIGTERM/SIGINT 优雅停止处理器。"""
+    """注册 SIGTERM/SIGINT 信号处理器。"""
 
     def _graceful_shutdown(signum: int, _frame) -> None:
         sig_name = signal.Signals(signum).name
-        logger.info("[Lifecycle] 收到 %s，正在优雅停止...", sig_name)
+        logger.info("[Lifecycle] 收到 %s，正在停止...", sig_name)
         if living:
             living.stop()
         remove_pid_file(_agent_id_from_args())
@@ -195,7 +195,7 @@ def cmd_start(args: list[str]) -> None:
 
 
 def cmd_stop(args: list[str]) -> None:
-    """`xiaomei-brain stop` — 优雅停止 agent。
+    """`xiaomei-brain stop` — 停止 agent。
 
     Usage: xiaomei-brain stop <agent_id>
     """
@@ -227,7 +227,7 @@ def cmd_stop(args: list[str]) -> None:
         print(f"Agent '{agent_id}' 已强制停止")
         return
 
-    # 优雅停止：SIGTERM → 等待 → SIGKILL
+    # 停止：SIGTERM → 等待 → SIGKILL
     print(f"正在停止 agent '{agent_id}' (PID {pid})...", end="", flush=True)
     try:
         proc = psutil.Process(pid)

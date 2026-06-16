@@ -17,6 +17,7 @@ Usage:
     xiaomei-brain plugins disable <name>
     xiaomei-brain logs <agent_id> [-f/--follow] [-n/--lines <n>]
     xiaomei-brain doctor [--fix] [-v/--verbose]
+    xiaomei-brain setup
 """
 
 from xiaomei_brain.cli import main

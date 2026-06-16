@@ -13,6 +13,7 @@
     python -m xiaomei_brain plugins <list|enable|disable> ...
     python -m xiaomei_brain logs <agent_id> [-f] [-n <lines>]
     python -m xiaomei_brain doctor [--fix] [-v]
+    python -m xiaomei_brain setup
 """
 
 import sys
@@ -93,8 +94,12 @@ def main() -> None:
         cmd_status(args)
 
     elif cmd == "tui":
-        from xiaomei_brain.cli.tui import cmd_tui
+        from xiaomei_brain.tui import cmd_tui
         cmd_tui(args)
+
+    elif cmd == "tui2":
+        from xiaomei_brain.tui_v2 import run_tui
+        run_tui(args)
 
     elif cmd == "agent":
         from xiaomei_brain.cli.agent import cmd_agent
@@ -115,6 +120,10 @@ def main() -> None:
     elif cmd == "doctor":
         from xiaomei_brain.cli.doctor import cmd_doctor
         cmd_doctor(args)
+
+    elif cmd == "setup":
+        from xiaomei_brain.cli.setup import cmd_setup
+        cmd_setup(args)
 
     else:
         print(f"Unknown command: {cmd}")
