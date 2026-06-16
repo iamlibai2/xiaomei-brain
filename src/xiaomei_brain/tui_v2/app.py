@@ -26,6 +26,10 @@ from typing import Any
 from rich.console import Console
 
 from .client import GatewayClient
+from .command_handler import CommandHandler
+from .text_utils import sanitize, sanitize_streaming
+from .slash_completer import SlashCompleter
+from .formatters import format_now
 
 # ── 事件类型 ──────────────────────────────────────────
 
@@ -63,10 +67,6 @@ _RED = "\033[31m"
 _YELLOW = "\033[33m"
 _CYAN = "\033[36m"
 _RULE = "\033[38;2;69;71;90m"  # #45475A
-
-# prompt_toolkit 对应的 style
-_BOLD_CYAN_STYLE = "bold #00aaaa"
-_GREEN_STYLE = "#44cc44"
 
 
 # ── 动画帧 ────────────────────────────────────────────
@@ -181,6 +181,7 @@ class TUIApp:
         self.user_id = user_id
         self.client = GatewayClient()
         self.state = State()
+        self.command_handler = CommandHandler()
         self.console = Console()
         self._pt: callable = lambda text: None  # 占位，_input_loop() 里会替换
         self._echo: callable = lambda text: None
@@ -196,6 +197,12 @@ class TUIApp:
         self._status_tick: int = 0
         self._scrollback: deque[str] = deque(maxlen=8)  # 保留最近几个回合，防 prompt 区域过高
         self._scrollback_lock = threading.Lock()
+
+        # 输入历史
+        self._input_history: list[str] = []
+        self._history_index: int = -1
+        self._current_input_buf: str = ""
+        self._last_ctrl_c: float = 0.0
 
     def run(self) -> None:
         self.console.print(f"[dim]连接 Gateway {self.host}:{self.port}...[/dim]")
@@ -271,6 +278,10 @@ class TUIApp:
         if self._in_dim:
             text = f"{_DIM}{text}{_RESET}"
 
+        text = sanitize_streaming(text)
+        if not text:
+            return
+
         self._chunk_buf.append(text)
         if time.time() - self._chunk_buf_time > 0.1:
             self._flush_chunks()
@@ -317,8 +328,9 @@ class TUIApp:
             return
         if not text:
             return
-        clean = _strip_ansi(text).replace("\r", "").replace("\n", "\n  ")
+        clean = sanitize(text).replace("\r", "").replace("\n", "\n  ")
         self._pt(f"\n{_BOLD_CYAN}🌸 {self._agent_name}:{_RESET}\n  {clean}\n")
+        self._reset_reply_state()
 
     def _reset_reply_state(self) -> None:
         self.state.idle()
@@ -366,7 +378,7 @@ class TUIApp:
             self._streaming_text = ""
         if streaming:
             self._pt(streaming + "\n")
-        msg = _strip_ansi(payload.get("text", "未知错误"))
+        msg = sanitize(payload.get("text", "未知错误"))
         self._pt(f"\n{_RED}错误: {msg}{_RESET}\n")
         self.state.error(msg)
 
@@ -427,6 +439,9 @@ class TUIApp:
         self._pt = _print
         self._echo = _echo
 
+        # 注册命令（依赖 _pt 和 _echo 已就绪）
+        self._register_commands()
+
         kb = KeyBindings()
 
         @kb.add("enter")
@@ -439,11 +454,14 @@ class TUIApp:
             if text.startswith("/"):
                 event.current_buffer.reset()
                 self._handle_command_kb(text, event)
+                self._add_history(text)
                 return
 
             # 用户输入回显到 prompt 区域（无闪烁），再清空输入框
             self._echo(f"{_GREEN}👤{_RESET} {text}")
             event.current_buffer.reset()
+
+            self._add_history(text)
 
             # 更新状态并发送
             self.state.thinking()
@@ -454,16 +472,52 @@ class TUIApp:
 
         @kb.add("c-c")
         def _handle_ctrl_c(event):
-            if self.state.status in (S_THINKING, S_STREAMING, S_TOOL):
+            now = time.monotonic()
+
+            if self.state.status == S_STREAMING:
+                # 级别1: 中断流式输出
                 self.client.abort_chat()
                 self.state.idle()
                 with self._streaming_lock:
                     self._streaming_text = ""
+                self._last_ctrl_c = now
+            elif self.state.status in (S_THINKING, S_TOOL) and now - self._last_ctrl_c > 2.0:
+                # 级别2: 中断活跃操作（非流式，且非双击）
+                self.client.abort_chat()
+                self.state.idle()
+                with self._streaming_lock:
+                    self._streaming_text = ""
+                self._last_ctrl_c = now
             else:
+                # 级别3: 退出（空闲或双击）
                 event.app.exit()
+
+        @kb.add("c-d")
+        def _handle_ctrl_d(event):
+            buf = event.current_buffer
+            if not buf.text.strip():
+                event.app.exit()
+            else:
+                buf.delete()
+
+        @kb.add("c-l")
+        def _handle_ctrl_l(event):
+            event.app.renderer.clear()
+
+        @kb.add("up")
+        def _handle_up(event):
+            self._navigate_history(event.current_buffer, -1)
+
+        @kb.add("down")
+        def _handle_down(event):
+            self._navigate_history(event.current_buffer, 1)
+
+        self.completer = SlashCompleter(self.command_handler)
 
         session = PromptSession(
             key_bindings=kb,
+            completer=self.completer,
+            reserve_space_for_menu=0,
             style=Style.from_dict({
                 "bottom-toolbar": "noreverse",
                 "bottom-toolbar.text": "noreverse",
@@ -492,18 +546,11 @@ class TUIApp:
                 parts.append(("", display))
                 parts.append(("", "\n"))
 
-            # 2. 流式文本（手动应用 header 样式，绕过 ANSI parser）
+            # 2. 流式文本（ANSI 直接渲染，保留颜色编码）
             with self._streaming_lock:
                 streaming = self._streaming_text
             if streaming:
-                display = _strip_ansi(streaming)
-                header = f"\n🌸 {self._agent_name}:"
-                if display.startswith(header):
-                    parts.append(("", "\n"))
-                    parts.append((_BOLD_CYAN_STYLE, f"🌸 {self._agent_name}:"))
-                    parts.append(("", display[len(header):]))
-                else:
-                    parts.append(("", display))
+                parts.extend(to_formatted_text(ANSI(streaming)))
                 parts.append(("", "\n"))
 
             # 3. 分隔线 + 输入提示
@@ -531,41 +578,138 @@ class TUIApp:
             err = res.get("error", {}).get("message", "发送失败")
             self._event_queue.put((EVENT_ERROR, {"text": err}))
 
-    def _handle_command_kb(self, cmd: str, event) -> bool:
-        """从 key binding 上下文处理命令，可访问 event.app。"""
-        parts = cmd.split(maxsplit=1)
-        name = parts[0].lower()
+    # ── 命令系统 ──────────────────────────────────────
 
-        if name in ("/quit", "/q", "/exit"):
-            event.app.exit()
-            return True
-        elif name == "/clear":
-            event.app.renderer.clear()
-            return True
-        elif name == "/status":
-            self._pt(
-                f"  状态: {self.state.status} | "
-                f"会话: {self.client.session_id[:8]} | "
-                f"连接: {'✓' if self.client.connected else '✗'}\n"
-            )
-            return True
-        elif name == "/help":
-            self._pt(
-                f"{_BOLD_CYAN}可用命令:{_RESET}\n"
-                "  /help    显示帮助\n"
-                "  /quit    退出\n"
-                "  /clear   清屏\n"
-                "  /status  连接状态\n"
-                "  /abort   中断当前回复\n"
-            )
-            return True
-        elif name == "/abort":
-            self.client.abort_chat()
-            self.state.idle()
-            with self._streaming_lock:
-                self._streaming_text = ""
-            return True
-        return False
+    def _register_commands(self) -> None:
+        """注册所有命令。"""
+        ch = self.command_handler
+
+        # TUI 内部命令
+        ch.register_tui("clear", "清空屏幕", lambda a: self._cmd_clear())
+        ch.register_tui("quit", "退出 TUI", lambda a: self._cmd_quit())
+        ch.register_tui("exit", "退出 TUI", lambda a: self._cmd_quit())
+        ch.register_tui("help", "显示所有命令", lambda a: self._cmd_help())
+        ch.register_tui("status", "显示连接状态", lambda a: self._cmd_status())
+        ch.register_tui("abort", "中断当前回复", lambda a: self._cmd_abort())
+
+        # Gateway 透传命令 — 作为聊天消息发送到 Agent
+        ch.register_gateway("intent", "显示当前意图")
+        ch.register_gateway("fuel", "手动触发加柴")
+        ch.register_gateway("flame", "显示火焰状态")
+        ch.register_gateway("tick", "显示心跳计数")
+        ch.register_gateway("think", "显示内在想法")
+        ch.register_gateway("identity", "显示意识全景")
+        ch.register_gateway("drive", "显示 Drive 状态")
+        ch.register_gateway("purpose", "显示 Purpose 状态")
+        ch.register_gateway("plan", "显示当前计划")
+        ch.register_gateway("model", "切换模型")
+        ch.register_gateway("export", "导出会话")
+        ch.register_gateway("pace-stats", "PACE 统计报告")
+        ch.register_gateway("sessions", "列出所有会话")
+        ch.register_gateway("switch", "切换会话: /switch <session_id>")
+        ch.register_gateway("user", "查看/切换身份")
+        ch.register_gateway("tool", "展开工具调用详情")
+        ch.register_gateway("db", "对话日志查询")
+        ch.register_gateway("memory", "记忆查询")
+        ch.register_gateway("dag", "DAG 图谱查看")
+        ch.register_gateway("summarize", "触发摘要")
+        ch.register_gateway("periodic", "触发定期记忆提取")
+        ch.register_gateway("dream", "触发梦境")
+        ch.register_gateway("context", "显示当前上下文")
+        ch.register_gateway("new", "新建会话")
+        ch.register_gateway("intask", "任务模式")
+        ch.register_gateway("inchat", "聊天模式")
+        ch.register_gateway("image", "发送图片: /image <path> [text]")
+
+        # 发送回调：Gateway 命令 → 作为聊天消息发送
+        ch.set_send_callback(self._on_gateway_command)
+
+    def _on_gateway_command(self, text: str) -> None:
+        """Gateway 透传命令：回显到 prompt 区域并发送到 Agent。"""
+        self._echo(f"{_GREEN}👤{_RESET} {text}")
+        self.state.thinking()
+        threading.Thread(
+            target=self._send_chat_bg, args=(text,), daemon=True
+        ).start()
+
+    def _cmd_clear(self) -> None:
+        app = self._app
+        if app is not None:
+            app.renderer.clear()
+
+    def _cmd_quit(self) -> None:
+        app = self._app
+        if app is not None:
+            app.exit()
+
+    def _cmd_help(self) -> None:
+        tui_cmds = self.command_handler.list_tui()
+        gw_cmds = self.command_handler.list_gateway()
+
+        lines = [f"{_BOLD_CYAN}可用命令:{_RESET}"]
+        lines.append("\n  TUI 内部命令:")
+        for c in tui_cmds:
+            lines.append(f"  /{c.name:<12} {c.description}")
+
+        lines.append("\n  Gateway 命令 (发送到 Agent):")
+        for c in gw_cmds:
+            lines.append(f"  /{c.name:<12} {c.description}")
+
+        lines.append(f"\n  共 {len(tui_cmds) + len(gw_cmds)} 个命令")
+        self._pt("\n".join(lines) + "\n")
+
+    def _cmd_status(self) -> None:
+        self._pt(
+            f"  Host:    {self.host}:{self.port}\n"
+            f"  Status:  {self.state.status}\n"
+            f"  Agent:   {self._agent_name or '(未连接)'}\n"
+            f"  User:    {self.user_id or '(未登录)'}\n"
+            f"  Session: {self.client.session_id[:8] if self.client.session_id else '-'}\n"
+            f"  连接:    {'✓' if self.client.connected else '✗'}\n"
+        )
+
+    def _cmd_abort(self) -> None:
+        self.client.abort_chat()
+        self.state.idle()
+        with self._streaming_lock:
+            self._streaming_text = ""
+
+    def _handle_command_kb(self, cmd: str, event) -> bool:
+        """从 key binding 上下文处理命令。委托给 CommandHandler。"""
+        return self.command_handler.execute(cmd)
+
+    # ── 输入历史 ──────────────────────────────────────
+
+    def _add_history(self, text: str) -> None:
+        """保存输入到历史（去重相邻重复）。"""
+        if text not in self._input_history:
+            self._input_history.append(text)
+        elif self._input_history and self._input_history[-1] != text:
+            self._input_history.append(text)
+        self._history_index = -1
+
+    def _navigate_history(self, buf, direction: int) -> None:
+        """Up/Down 导航输入历史。"""
+        if not self._input_history:
+            return
+
+        if self._history_index == -1:
+            self._current_input_buf = buf.text
+
+        new_idx = self._history_index + direction
+
+        if new_idx < -1:
+            return
+        if new_idx >= len(self._input_history):
+            return
+
+        self._history_index = new_idx
+
+        if new_idx == -1:
+            buf.text = getattr(self, "_current_input_buf", "")
+        else:
+            buf.text = self._input_history[new_idx]
+        buf.cursor_position = len(buf.text)
 
 
 # ── 入口 ──────────────────────────────────────────────
