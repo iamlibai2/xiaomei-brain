@@ -20,10 +20,10 @@ import shutil
 import sys
 import threading
 import time
+from collections import deque
 from typing import Any
 
 from rich.console import Console
-from rich.text import Text
 
 from .client import GatewayClient
 
@@ -64,6 +64,22 @@ _YELLOW = "\033[33m"
 _CYAN = "\033[36m"
 _RULE = "\033[38;2;69;71;90m"  # #45475A
 
+# prompt_toolkit 对应的 style
+_BOLD_CYAN_STYLE = "bold #00aaaa"
+_GREEN_STYLE = "#44cc44"
+
+
+# ── 动画帧 ────────────────────────────────────────────
+_THINKING_FRAMES = ["◐", "◓", "◑", "◒"]
+_STREAMING_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+_TOOL_FRAMES = ["◈", "◇", "◆", "◇"]
+
+_IDLE_ICON = ("●", "#8fa88f")       # 柔和绿
+_THINKING_COLOR = "#c4b96e"      # 柔和金
+_STREAMING_COLOR = "#6eb9b9"     # 柔和青
+_TOOL_COLOR = "#b97ab9"          # 柔和紫
+_ERROR_ICON = ("✖", "#b97070")   # 柔和红
+
 
 class State:
     def __init__(self) -> None:
@@ -97,22 +113,40 @@ class State:
         self.streaming = False
 
 
-def _status_formatted(state: State) -> list[tuple[str, str]]:
-    """prompt_toolkit FormattedText 格式的状态栏。"""
-    icons = {
-        S_IDLE: ("●", "#44cc44"),
-        S_THINKING: ("◐", "#cccc44"),
-        S_STREAMING: ("◉", "#44cccc"),
-        S_TOOL: ("◆", "#cc44cc"),
-        S_ERROR: ("✖", "#cc4444"),
-    }
-    icon, color = icons.get(state.status, ("●", "#888888"))
+def _status_formatted(app) -> list[tuple[str, str]]:
+    """prompt_toolkit FormattedText 格式的状态栏 — callable，每次刷新重新求值。"""
+    state = app.state
+    app._status_tick += 1
+    tick = app._status_tick
+
+    if state.status == S_THINKING:
+        frame = _THINKING_FRAMES[tick % len(_THINKING_FRAMES)]
+        icon, color = frame, _THINKING_COLOR
+    elif state.status == S_STREAMING:
+        frame = _STREAMING_FRAMES[tick % len(_STREAMING_FRAMES)]
+        icon, color = frame, _STREAMING_COLOR
+    elif state.status == S_TOOL:
+        frame = _TOOL_FRAMES[tick % len(_TOOL_FRAMES)]
+        icon, color = frame, _TOOL_COLOR
+    elif state.status == S_ERROR:
+        icon, color = _ERROR_ICON
+    else:
+        icon, color = _IDLE_ICON
+
     term_width = shutil.get_terminal_size().columns
     line = "─" * term_width
+
+    # 左侧：状态动画，右侧：agent name
+    left = f"{icon}  {state.status_text}"
+    right = f"🌸 {app._agent_name}  "
+    pad = term_width - len(left) - len(right)
+    if pad < 1:
+        pad = 1
+
     return [
         ("#45475A", f"{line}\n"),
-        (f"{color} bold", f" {icon} "),
-        ("", state.status_text),
+        (color, f"{left}{' ' * pad}"),
+        ("", right),
     ]
 
 
@@ -148,6 +182,8 @@ class TUIApp:
         self.client = GatewayClient()
         self.state = State()
         self.console = Console()
+        self._pt: callable = lambda text: None  # 占位，_input_loop() 里会替换
+        self._echo: callable = lambda text: None
         self._agent_name: str = ""
         self._event_queue: queue.Queue[tuple[str, dict]] = queue.Queue()
         self._running: bool = True
@@ -157,6 +193,9 @@ class TUIApp:
         self._streaming_text: str = ""
         self._streaming_lock = threading.Lock()
         self._app = None  # prompt_toolkit Application 引用，供后台线程 invalidate
+        self._status_tick: int = 0
+        self._scrollback: deque[str] = deque(maxlen=8)  # 保留最近几个回合，防 prompt 区域过高
+        self._scrollback_lock = threading.Lock()
 
     def run(self) -> None:
         self.console.print(f"[dim]连接 Gateway {self.host}:{self.port}...[/dim]")
@@ -262,12 +301,18 @@ class TUIApp:
         self._flush_chunks()
         text = payload.get("text", "")
         if self.state.streaming:
-            # 流式结束：输出累积文本到 scrollback，然后清空
+            # 流式结束：批量 dump 到终端（一次 run_in_terminal = 一次闪）
+            with self._scrollback_lock:
+                pending = list(self._scrollback)
+                self._scrollback.clear()
             with self._streaming_lock:
                 streaming = self._streaming_text
                 self._streaming_text = ""
+            combined = "".join(f"{line}\n" for line in pending)
             if streaming:
-                self._pt(streaming + "\n")
+                combined += streaming + "\n"
+            if combined:
+                self._pt(combined)
             self._reset_reply_state()
             return
         if not text:
@@ -367,11 +412,20 @@ class TUIApp:
         from prompt_toolkit.application.current import get_app
         from prompt_toolkit.key_binding import KeyBindings
 
-        # 后台线程输出 helper
-        def pt(text: str) -> None:
+        # 终端 scrollback（走 run_in_terminal，流式结束后一次性批量输出）
+        def _print(text: str) -> None:
             print_formatted_text(ANSI(text), end="", flush=True)
 
-        self._pt = pt
+        # prompt 区域（仅用户输入，不闪）
+        def _echo(text: str) -> None:
+            with self._scrollback_lock:
+                self._scrollback.append(text)
+            app = self._app
+            if app is not None:
+                app.invalidate()
+
+        self._pt = _print
+        self._echo = _echo
 
         kb = KeyBindings()
 
@@ -381,15 +435,15 @@ class TUIApp:
             if not text:
                 return
 
-            event.current_buffer.reset()
-
             # 命令处理
             if text.startswith("/"):
-                if self._handle_command_kb(text, event):
-                    return
+                event.current_buffer.reset()
+                self._handle_command_kb(text, event)
+                return
 
-            # 输出用户输入到 scrollback（_pt 内部走 run_in_terminal）
-            self._pt(f"{_GREEN}👤{_RESET} {text}\n")
+            # 用户输入回显到 prompt 区域（无闪烁），再清空输入框
+            self._echo(f"{_GREEN}👤{_RESET} {text}")
+            event.current_buffer.reset()
 
             # 更新状态并发送
             self.state.thinking()
@@ -421,20 +475,38 @@ class TUIApp:
         consumer.start()
 
         def prompt_message():
-            """动态 prompt message：流式文本 + 输入栏上横线 + 输入提示。"""
+            """动态 prompt：用户输入 + 流式文本 + 分隔线 + ❯。"""
             app = get_app()
             self._app = app
 
             term_width = shutil.get_terminal_size().columns
             line = "─" * term_width
 
+            parts: list[tuple[str, str]] = []
+
+            # 1. 用户输入（scrollback，纯文本，无 ANSI parser）
+            with self._scrollback_lock:
+                snapshot = list(self._scrollback)
+            for msg in snapshot:
+                display = _strip_ansi(msg.rstrip("\n"))
+                parts.append(("", display))
+                parts.append(("", "\n"))
+
+            # 2. 流式文本（手动应用 header 样式，绕过 ANSI parser）
             with self._streaming_lock:
                 streaming = self._streaming_text
-
-            parts: list[tuple[str, str]] = []
             if streaming:
-                parts.extend(to_formatted_text(ANSI(streaming)))
+                display = _strip_ansi(streaming)
+                header = f"\n🌸 {self._agent_name}:"
+                if display.startswith(header):
+                    parts.append(("", "\n"))
+                    parts.append((_BOLD_CYAN_STYLE, f"🌸 {self._agent_name}:"))
+                    parts.append(("", display[len(header):]))
+                else:
+                    parts.append(("", display))
                 parts.append(("", "\n"))
+
+            # 3. 分隔线 + 输入提示
             parts.append(("#45475A", line))
             parts.append(("", "\n❯ "))
             return parts
@@ -442,7 +514,7 @@ class TUIApp:
         try:
             session.prompt(
                 prompt_message,
-                bottom_toolbar=_status_formatted(self.state),
+                bottom_toolbar=lambda: _status_formatted(self),
                 refresh_interval=0.5,
             )
         except KeyboardInterrupt:
