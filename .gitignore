@@ -31,6 +31,9 @@ CLAUDE.md
 .idea/
 .vscode/
 
+# Deprecated / development history (keep on disk, not in repo)
+bak/
+
 # Process / temp files
 *.pid
 *_pid.txt
