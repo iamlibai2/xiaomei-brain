@@ -4,12 +4,13 @@
 import sys
 import time
 import logging
+import os
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger()
 
 # 添加路径
-sys.path.insert(0, "/home/iamlibai/workspace/claude-project/xiaomei-brain/src")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from xiaomei_brain.agent.agent_manager import AgentManager
 from xiaomei_brain.drive import DriveEngine, DesireActionExecutor

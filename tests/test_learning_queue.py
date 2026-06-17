@@ -2,13 +2,14 @@
 """快速测试学习队列链路：GAPS 解析 → learning_queue → _get_learning_topic"""
 
 import sys
+import os
 import json
 import logging
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger()
 
-sys.path.insert(0, "/home/iamlibai/workspace/claude-project/xiaomei-brain/src")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from xiaomei_brain.consciousness.self_image_proxy import SelfImage
 from xiaomei_brain.metacognition.inner_voice import InnerVoice

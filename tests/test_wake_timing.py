@@ -13,7 +13,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger()
 
-sys.path.insert(0, "/home/iamlibai/workspace/claude-project/xiaomei-brain/src")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from xiaomei_brain.agent.agent_manager import AgentManager
 from xiaomei_brain.consciousness.conscious_living import ConsciousLiving
