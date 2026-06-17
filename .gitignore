@@ -23,6 +23,9 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+# Claude Code (personal dev config)
+.claude/
+
 # IDE
 .idea/
 .vscode/
