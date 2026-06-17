@@ -240,7 +240,17 @@ class Transport(ABC):
     @abstractmethod
     def stream_iter(self, response: requests.Response,
                     model: ModelDefinition, profile: ProviderProfile
-                    ) -> Generator[tuple[str, dict | None], None, None]: ...
+                    ) -> Generator[tuple[str, dict | None], None, None]:
+        """迭代 SSE 流，产出 (delta_content, extra_info | None) 元组。
+
+        delta_content: 本次 chunk 的文本增量（可能为空字符串 ""）
+        extra_info:   附加信息 dict，不同 transport 产出不同字段：
+                       - chat_completions: {"finish_reason": str, "tool_calls": [...], "reasoning": str}
+                       - anthropic:        {"content_block_type": "text"|"tool_use", "index": int, ...}
+                       - bedrock:          {"message_start": {...}, "message_stop": {...}}
+                       None 表示本次 chunk 无额外信息（正常增量文本）
+        """
+        ...
 ```
 
 #### TransportRegistry
@@ -274,6 +284,28 @@ def get_transport(api_mode: str) -> Transport: ...
 - **Profile 路径**：有 profile → 调用 hook 方法（`profile.prepare_messages()`、`profile.build_extra_body()`、`profile.build_api_kwargs_extras()`）
 - **Fallback 路径**：无 profile（config.json only provider）→ 走默认 OpenAI 兼容逻辑
 - **思考标签处理**：`<think>...</think>` 过滤（现有逻辑保留）
+
+**ChatCompletionsTransport 的无 profile 默认行为**：
+
+当 provider 无对应插件（config.json only）时，transport 使用以下保守默认值，确保对非 OpenAI 原生端点的最大兼容性：
+
+```python
+# 非原生端点（base_url 不含 "api.openai.com"）的保守默认
+_NON_NATIVE_DEFAULTS = {
+    "supports_developer_role": False,     # 大多数兼容端点不支持 developer role
+    "supports_usage_in_streaming": False, # 很多端点 stream 不返回 usage
+    "supports_strict_mode": False,        # JSON strict mode 兼容性差
+}
+
+# 原生端点（base_url 含 "api.openai.com"）使用 OpenAI 标准默认
+_NATIVE_DEFAULTS = {
+    "supports_developer_role": True,
+    "supports_usage_in_streaming": True,
+    "supports_strict_mode": True,
+}
+```
+
+这些默认值用于 `ModelDefinition` 的 per-model 字段（`supports_*`）为 `None` 时的回退。有 profile 的 provider 由 hook 方法自行决定行为，不受此默认值影响。
 
 ### 3.3 `client.py` — 运行时客户端
 
@@ -406,6 +438,42 @@ def register(ctx):
 | `src/xiaomei_brain/consciousness/conscious_living.py` | `boot_plugins()` 保持不变，自动包含 provider |
 | 其他调用方 | 只改 import 路径 |
 
+### 5.1 LLMClient 构造迁移路径
+
+**旧 API**：
+```python
+from xiaomei_brain.base.llm import LLMClient
+client = LLMClient(model="deepseek-v4-flash", api_key=..., base_url=..., provider="deepseek")
+```
+
+**新 API**：
+```python
+from xiaomei_brain.llm import LLMClient
+client = LLMClient(provider="deepseek", model="deepseek-v4-flash", registry=registry)
+```
+
+**迁移策略**：由于新旧构造函数签名差异大，采用"一次性切换 + 工厂辅助"策略，不保留两套 API 并行：
+
+1. **集中构造点识别**：现有调用方仅三处——`agent/core.py`（AgentInstance 内部）、`memory/context_assembler.py`、`memory/extractor.py`。都在 `AgentInstance` 或其子组件内，均可通过 agent 持有的 `PluginRegistry` 获取。
+2. **添加工厂方法**——在 `AgentInstance` 上提供：
+   ```python
+   class AgentInstance:
+       def _build_llm_client(self, provider: str | None = None, model: str | None = None) -> LLMClient:
+           """从注册表构建 LLMClient。默认使用 agent config 中的 provider/model。"""
+           return LLMClient(
+               provider=provider or self.config.provider,
+               model=model or self.config.model,
+               registry=self.plugin_registry,
+           )
+   ```
+3. **切换步骤**：
+   - 实现新的 `llm/client.py`
+   - `agent/core.py`：`LLMClient(...)` → `self._build_llm_client()`
+   - `memory/context_assembler.py`：接收 `LLMClient` 实例而非自行构造
+   - `memory/extractor.py`：接收 `LLMClient` 实例而非自行构造
+   - 删除 `base/llm.py`
+4. **不保留兼容层**：旧 API 调用方仅 3 处，集中切换成本低。保留兼容层会增加维护负担和类型混乱。
+
 ## 6. 配置覆盖与合并
 
 插件提供"出厂默认值"，`config.json` 的 `models.providers` 可覆盖：
@@ -422,6 +490,27 @@ DeepSeekProfile.models = [v4-flash, v4-pro]
 - `baseUrl`：config.json 优先，否则用 profile 默认
 - `apiKey`：config.json 优先，否则用 profile 的 `env_vars` 对应环境变量
 - `models`：合并，config.json 中相同 id 的字段覆盖 profile 默认
+
+**Plugin ↔ config.json merge 时机与职责**：
+
+两股独立数据流最终汇入 `PluginRegistry._providers`，合并发生在 **启动阶段**，由 `LLMClient` 的工厂方法负责：
+
+```
+1. boot_plugins(agent_id)                      # 插件 profile 写入 registry
+2. ProviderProfile.load_config_providers()     # config.json → 构建/合并 profile
+   └─ for each provider in config.models.providers:
+        existing = registry.get_provider(id)
+        if existing:
+            merge(existing, config)  → registry   # 合并覆盖
+        else:
+            from_config(id, config) → registry   # 新注册
+```
+
+关键点：
+- **谁合并**：`ProviderProfile.from_config()` 的变体 `ProviderProfile.merge_or_create(registry, provider_id, config)`
+- **何时合并**：在 `boot_plugins()` 之后立即调用，确保插件 profile 先进入 registry，config.json 后覆盖
+- **合并粒度**：字段级。config.json 中显式设置的字段覆盖 profile 默认，未设置的保留 profile 值
+- **models 合并**：config.json 的 models 列表与 profile 的 models 列表合并，相同 `id` 则 config 覆盖
 
 **config.json only provider**（无对应插件）：自动从 config.json 构建 `ProviderProfile`，`api_mode` 默认 `chat-completions`。
 
