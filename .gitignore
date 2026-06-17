@@ -27,6 +27,12 @@ Thumbs.db
 .idea/
 .vscode/
 
+# Process / temp files
+*.pid
+*_pid.txt
+test_result.txt
+todos.json
+
 # TensorFlow / ML models (large)
 *.h5
 *.pt
