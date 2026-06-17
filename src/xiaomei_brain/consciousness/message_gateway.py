@@ -61,6 +61,7 @@ class MessageGateway:
         agent_core.user_display_name = getattr(msg, 'user_display_name', '这位用户')
 
         # 6. 会话切换
+        living.session_id = msg.session_id  # 更新当前会话 ID（用于输出路由）
         if hasattr(living, '_attention') and living._attention:
             living._attention.switch_to(msg.session_id)
 

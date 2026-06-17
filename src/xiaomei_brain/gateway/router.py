@@ -206,6 +206,25 @@ class Router:
             logger.debug("[Router] 无适配器: %s", route.type)
             return False
 
+    # ── Broadcast ──────────────────────────────────────────
+
+    def broadcast(self, text: str, msg_type: str = "text") -> int:
+        """广播文本到所有唯一的输出路由。返回成功发送的数量。"""
+        with self._lock:
+            seen: set[tuple[str, str]] = set()
+            routes: list[OutputRoute] = []
+            for rule in self._rules:
+                key = (rule.output_route.type, rule.output_route.target)
+                if key not in seen:
+                    seen.add(key)
+                    routes.append(rule.output_route)
+
+        sent = 0
+        for route in routes:
+            if self.deliver(text, route, msg_type=msg_type):
+                sent += 1
+        return sent
+
     # ── Internal ────────────────────────────────────────────
 
     @staticmethod

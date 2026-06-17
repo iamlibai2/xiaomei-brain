@@ -23,6 +23,7 @@ class MethodRouter:
             "chat.send": self._handle_chat_send,
             "chat.abort": self._handle_chat_abort,
             "chat.history": self._handle_chat_history,
+            "identity.list": self._handle_identity_list,
         }
         # 已认证的 session
         self._auth_sessions: set[str] = set()
@@ -160,6 +161,27 @@ class MethodRouter:
         except Exception as e:
             return build_res(req_id, ok=False,
                              error=error_shape(ErrorCodes.INTERNAL_ERROR, str(e)))
+
+    def _handle_identity_list(self, conn_id: str, req_id: str, params: dict) -> dict:
+        """返回 agent 配置的可登录身份列表（来自 contacts/identities.yaml）。"""
+        living = self._living
+        if living is None:
+            return build_res(req_id, ok=False,
+                             error=error_shape(ErrorCodes.GATEWAY_NOT_READY, "Gateway 未就绪"))
+
+        agent_core = living.agent._get_agent() if hasattr(living, 'agent') else None
+        mgr = getattr(agent_core, 'identity_mgr', None)
+
+        identities = []
+        if mgr:
+            for id_ in mgr.list_ids():
+                identities.append({
+                    "id": id_,
+                    "name": mgr.get_display_name(id_),
+                    "relation": mgr.get_relation(id_),
+                })
+
+        return build_res(req_id, ok=True, payload={"identities": identities})
 
     def drop_session(self, conn_id: str) -> None:
         """断开连接时清除认证状态。"""

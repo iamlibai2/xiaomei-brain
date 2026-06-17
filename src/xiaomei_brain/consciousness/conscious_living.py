@@ -1216,6 +1216,8 @@ class ConsciousLiving(Living):
 
     # ── Death & Revival ────────────────────────────────────────
 
+    _RECOVER_CHECK_INTERVAL = 300  # 5 分钟探活一次
+
     def _loop_dormant(self) -> None:
         """DORMANT 状态：死亡休眠，收到消息 → 复活。"""
         msg = self._wait_message(timeout=self.tick_interval)
@@ -1223,12 +1225,48 @@ class ConsciousLiving(Living):
             logger.info("[ConsciousLiving/DORMANT] 收到消息，复活")
             if self.drive:
                 self.drive.revive()
-            # 复活（仅日志，不写入内部叙事——状态切换不是思考）
+            self._suspended_reason = ""
             self._on_wake_up()
             self._transition(LivingState.AWAKE)
             self._handle_message(msg)
             self._last_active = time.time()
             return
+
+        # 暂停恢复检查
+        if self._suspended_reason:
+            self._try_recover()
+
+    def _try_recover(self) -> None:
+        """尝试从 LLM 欠费暂停中恢复（周期性轻量 API 探活）。"""
+        now = time.time()
+        last = getattr(self, '_last_recover_check', None)
+        if last is None:
+            self._last_recover_check = now  # 首次挂起，初始化计时
+            return
+        if now - last >= self._RECOVER_CHECK_INTERVAL:
+            self._last_recover_check = now
+            self._probe_llm_health()
+
+    def _probe_llm_health(self) -> None:
+        """发送轻量 LLM 请求检查余额是否恢复。"""
+        try:
+            llm = self.agent.llm
+            llm.chat(messages=[{"role": "user", "content": "hi"}], tools=None, log_level=logging.DEBUG)
+            # 成功了 = 余额恢复
+            logger.info("[ConsciousLiving] LLM 探活成功，余额已恢复，复活")
+            self._suspended_reason = ""
+            agent_name = getattr(self.agent, 'name', None) or self._agent_id
+            self.send_sos_to_channels(f"{agent_name} 已恢复运行")
+            self._on_wake_up()
+            self._transition(LivingState.AWAKE)
+        except FatalLLMError as e:
+            if e.status_code == 402:
+                logger.debug("[ConsciousLiving] LLM 探活: 仍欠费 (%.0f分钟后重试)",
+                             self._RECOVER_CHECK_INTERVAL / 60)
+            else:
+                raise
+        except Exception:
+            logger.debug("[ConsciousLiving] LLM 探活: 网络异常，继续等待")
 
     # ── Hooks ────────────────────────────────────────────────────
 
@@ -1444,25 +1482,15 @@ class ConsciousLiving(Living):
         ts = time.strftime("%H:%M:%S")
         sos_text = f"[SOS] {ts}\n{message}"
 
-        # 遍历所有注册的渠道适配器直接发送
-        registry = getattr(self, '_registry', None)
-        if registry:
-            sent = False
-            for name in registry.list_channels():
-                if channels and name not in channels:
-                    continue
-                try:
-                    adapter = registry.get_channel(name)
-                    if adapter and hasattr(adapter, 'send_message'):
-                        adapter.send_message(sos_text)
-                        sent = True
-                except Exception as e:
-                    logger.error("[Living SOS] 渠道 %s 推送失败: %s", name, e)
-            if sent:
-                logger.warning("[Living SOS] 已推送到渠道: %.100s", message)
+        # 优先通过 Router 广播到所有已连接通道
+        router = getattr(self, '_router', None)
+        if router:
+            sent = router.broadcast(sos_text)
+            if sent > 0:
+                logger.warning("[Living SOS] 已广播到 %d 个通道: %.100s", sent, message)
                 return
 
-        # 无渠道时走 stdout
+        # 无 Router 时走 stdout
         print(f"\n\033[91m{sos_text}\033[0m", flush=True)
 
     def _on_stop(self) -> None:

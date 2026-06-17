@@ -46,6 +46,10 @@ class InputHandler:
         self._is_active = is_active or (lambda: False)
         self.command_handler = command_handler or CommandHandler()
 
+        # 登录模式
+        self._login_mode: bool = False
+        self._login_callback: Callable[[str], None] | None = None
+
         # 三级 Ctrl+C 状态
         self._last_ctrl_c: float = 0.0
 
@@ -67,6 +71,12 @@ class InputHandler:
         def _handle_enter(event):
             text = event.current_buffer.text.strip()
             if not text:
+                return
+
+            # 登录模式：Enter 提交登录
+            if self._login_mode and self._login_callback:
+                event.current_buffer.reset()
+                self._login_callback(text)
                 return
 
             # 命令处理
@@ -127,6 +137,12 @@ class InputHandler:
         @kb.add("down")
         def _handle_down(event):
             self._navigate_history(event.current_buffer, 1)
+
+    def set_login_mode(self, enabled: bool) -> None:
+        """切换登录/聊天模式。"""
+        self._login_mode = enabled
+        self._history_index = -1
+        self._current_input = ""
 
     # ── 输入历史 ──────────────────────────────────────
 

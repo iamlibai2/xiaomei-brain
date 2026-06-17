@@ -92,10 +92,14 @@ class GatewayClient:
             logger.warning("WS error: %s", error)
 
         def on_close(ws, code, reason):
+            was_connected = self._connected
             self._connected = False
             with self._lock:
                 for evt in self._pending_events.values():
                     evt.set()
+            # 非主动关闭时通知 TUI（如 Gateway 欠费崩溃）
+            if was_connected and self._on_event:
+                self._on_event("error", {"text": f"连接已断开 (code={code})"})
 
         self._ws = websocket.WebSocketApp(
             url,
@@ -165,6 +169,15 @@ class GatewayClient:
         })
         if res.get("ok"):
             return res.get("payload", {}).get("messages", [])
+        return []
+
+    def list_identities(self) -> list[dict]:
+        """获取 agent 配置的可登录身份列表。需要先 connect（即使 user_id 为空）。"""
+        if not self._connected:
+            return []
+        res = self._rpc_sync("identity.list", {})
+        if res.get("ok"):
+            return res.get("payload", {}).get("identities", [])
         return []
 
     def close(self) -> None:

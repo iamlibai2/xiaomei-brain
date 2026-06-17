@@ -114,6 +114,7 @@ class Living:
         self._interoception_signals: Any = None
         self._sos_message: str | None = None
         self._sos_message_time: float = 0.0
+        self._suspended_reason: str = ""  # 暂停原因（如 LLM 402），空字符串表示正常运行
 
         # 周期任务
         self._periodic_tasks: list[PeriodicTask] = []
@@ -220,19 +221,27 @@ class Living:
             self._transition(LivingState.AWAKE)
 
             while self._running:
-                if self.state == LivingState.AWAKE:
-                    self._loop_awake()
-                elif self.state == LivingState.IDLE:
-                    self._loop_idle()
-                elif self.state == LivingState.SLEEPING:
-                    self._loop_sleeping()
-                elif self.state == LivingState.DREAMING:
-                    self._loop_dreaming()
-                elif self.state == LivingState.DORMANT:
-                    self._loop_dormant()
-                else:
-                    logger.warning("[Living] Unexpected state: %s", self.state)
-                    time.sleep(1)
+                try:
+                    if self.state == LivingState.AWAKE:
+                        self._loop_awake()
+                    elif self.state == LivingState.IDLE:
+                        self._loop_idle()
+                    elif self.state == LivingState.SLEEPING:
+                        self._loop_sleeping()
+                    elif self.state == LivingState.DREAMING:
+                        self._loop_dreaming()
+                    elif self.state == LivingState.DORMANT:
+                        self._loop_dormant()
+                    else:
+                        logger.warning("[Living] Unexpected state: %s", self.state)
+                        time.sleep(1)
+                except FatalLLMError as e:
+                    if e.status_code == 402:
+                        logger.warning("[Living] LLM 欠费，暂停（进入 DORMANT）")
+                        self._suspended_reason = f"LLM API 欠费 (HTTP 402)"
+                        self._transition(LivingState.DORMANT)
+                        continue
+                    raise  # 401/403 → 穿透到外层，终止程序
         except FatalLLMError as e:
             ts = time.strftime("%H:%M:%S")
             print(f"\n\033[91m[FATAL] {ts} LLM API 致命错误，程序终止\033[0m", flush=True)
@@ -392,6 +401,7 @@ class Living:
         """DORMANT 状态：死亡休眠，等待复活。
 
         用户发消息 → 复活，transition to AWAKE。
+        暂停恢复 → 子类覆盖 _try_recover() 实现。
         """
         msg = self._wait_message(timeout=self.tick_interval)
         if msg is not None:
@@ -401,6 +411,13 @@ class Living:
             self._handle_message(msg)
             self._last_active = time.time()
             return
+
+        # 暂停恢复检查（如 LLM 402 欠费 → 定期探活）
+        if self._suspended_reason:
+            self._try_recover()
+
+    def _try_recover(self) -> None:
+        """子类覆盖：尝试从暂停中恢复。默认 no-op。"""
 
     # ── Loop: DREAMING ──────────────────────────────────────────────
 

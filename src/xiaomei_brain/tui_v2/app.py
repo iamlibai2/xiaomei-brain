@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import queue
 import shutil
 import sys
@@ -45,6 +46,7 @@ EVENT_ABORTED = "chat.aborted"
 # ── 状态 ──────────────────────────────────────────────
 
 S_IDLE = "idle"
+S_LOGIN = "login"
 S_THINKING = "thinking"
 S_STREAMING = "streaming"
 S_TOOL = "tool"
@@ -90,10 +92,18 @@ class State:
         self.streaming: bool = False
         self._busy_since: float = 0.0
         self._last_elapsed: float = 0.0
+        self.login_error: str = ""
 
     def _mark_busy(self) -> None:
         if self.status == S_IDLE:
             self._busy_since = time.monotonic()
+
+    def login_prompt(self) -> None:
+        self.status = S_LOGIN
+        self.status_text = "请登录"
+        self.streaming = False
+        self._busy_since = 0.0
+        self.login_error = ""
 
     def idle(self) -> None:
         if self._busy_since > 0:
@@ -161,7 +171,7 @@ def _status_formatted(app) -> list[tuple[str, str]]:
     elapsed = state.elapsed
     elapsed_str = f" | 耗时 {format_duration(elapsed)}" if elapsed > 0 else ""
     left = f"{icon}  {state.status_text}{elapsed_str}"
-    right = f"🌸 {app._agent_name}  "
+    right = f"● {app._agent_name}  "
     pad = term_width - len(left) - len(right)
     if pad < 1:
         pad = 1
@@ -181,6 +191,11 @@ def _parse_tool_payload(payload: dict) -> dict:
         except (json.JSONDecodeError, TypeError):
             pass
     return payload
+
+
+def _newline_count(parts: list[tuple[str, str]]) -> int:
+    """统计 FormattedText parts 中的 \n 数量。"""
+    return sum(text.count("\n") for _, text in parts)
 
 
 def _strip_ansi(text: str) -> str:
@@ -209,6 +224,9 @@ class TUIApp:
         self._pt: callable = lambda text: None  # 占位，_input_loop() 里会替换
         self._echo: callable = lambda text: None
         self._agent_name: str = ""
+        self._display_name: str = ""
+        self._logged_in: bool = False
+        self._identities: list[dict] = []
         self._event_queue: queue.Queue[tuple[str, dict]] = queue.Queue()
         self._running: bool = True
         self._in_dim: bool = False
@@ -220,6 +238,7 @@ class TUIApp:
         self._status_tick: int = 0
         self._scrollback: deque[str] = deque(maxlen=8)  # 保留最近几个回合，防 prompt 区域过高
         self._scrollback_lock = threading.Lock()
+        self._pt_lines: int = 0  # _pt() 输出累积行数，padding 时扣除
 
         # 输入处理器
         self.input_handler = InputHandler(
@@ -230,28 +249,59 @@ class TUIApp:
         self._tool_cards: dict[int, ToolCard] = {}
 
     def run(self) -> None:
-        self.console.print(f"[dim]连接 Gateway {self.host}:{self.port}...[/dim]")
-
         self.client.on_event(self._enqueue_event)
 
+        # Phase 1: pre-connect（空 user_id，获取 agent_name + 身份列表）
         try:
             result = self.client.connect(
                 host=self.host, port=self.port,
                 token=self.token, user_id=self.user_id,
             )
             self._agent_name = self.client.agent_name or self._agent_name or "agent"
-            agent_from_connect = result.get("agent_name", "(none)")
-            self.console.print(
-                f"[green]✓[/green] 已连接 agent={self._agent_name!r} "
-                f"(from connect: {agent_from_connect!r}) "
-                f"session={result.get('session_id', '?')[:8]}"
-            )
+            session_id = result.get("session_id", "?")[:8]
         except Exception as e:
             self.console.print(f"[red]连接失败: {e}[/red]")
             return
 
-        self._load_history()
-        self.console.print("[dim]输入消息开始对话，Ctrl+C 退出[/dim]\n")
+        # Banner — Claude Code 风格
+        logo_w = 20  # 左列固定宽度（留出脸和文字之间的呼吸空间）
+        logo = [
+            "     ╭─────────╮",
+            "     │  ◕   ◕  │",
+            "     │    ●    │",
+            "     ╰─────────╯",
+        ]
+        info = [
+            f"[bold white]xiaomei-brain[/bold white]",
+            f"[dim]连接 Gateway {self.host}:{self.port}[/dim]",
+            f"[dim][green]✓[/green] 已连接 agent=[/dim][bold]{self._agent_name}[/bold]",
+            f"[dim]session={session_id}[/dim]",
+        ]
+        for l, r in zip(logo, info):
+            self.console.print(f"{l:<{logo_w}}{r}")
+        # 底部暗色横线
+        term_width = shutil.get_terminal_size().columns
+        self.console.print(f"[dim]{'─' * term_width}[/dim]")
+
+        # 获取可登录身份列表；如果 --user 已显式指定，跳过登录界面
+        self._identities = self.client.list_identities()
+        if self.user_id and not self._identities:
+            self.console.print("[dim]无身份配置，使用命令行指定的身份[/dim]")
+            self._logged_in = True
+        elif self.user_id:
+            # --user 已指定，验证是否存在
+            match = next((i for i in self._identities if i["id"] == self.user_id), None)
+            if match:
+                self._display_name = match.get("name", self.user_id)
+                self._logged_in = True
+            else:
+                # 指定的 user_id 不在身份列表中，仍要求登录
+                self.console.print(f"[yellow]用户 '{self.user_id}' 不在身份列表中，请登录[/yellow]")
+        elif not self._identities:
+            self.console.print("[dim]无身份配置，使用默认身份[/dim]")
+            self._logged_in = True
+
+        # Phase 2: 登录（如需要）→ 聊天
         self._input_loop()
 
         self._running = False
@@ -322,7 +372,7 @@ class TUIApp:
         text = text.replace("\n", "\n  ")
         if not self.state.streaming:
             self.state.stream()
-            text = f"\n{_BOLD_CYAN}🌸 {self._agent_name}:{_RESET}\n  {text}"
+            text = f"\n{_BOLD_CYAN}● {self._agent_name}:{_RESET}\n  {text}"
 
         with self._streaming_lock:
             self._streaming_text += text
@@ -354,7 +404,7 @@ class TUIApp:
         if not text:
             return
         clean = sanitize(text).replace("\r", "").replace("\n", "\n  ")
-        self._pt(f"\n{_BOLD_CYAN}🌸 {self._agent_name}:{_RESET}\n  {clean}\n")
+        self._pt(f"\n{_BOLD_CYAN}● {self._agent_name}:{_RESET}\n  {clean}\n")
         self._reset_reply_state()
 
     def _reset_reply_state(self) -> None:
@@ -450,10 +500,91 @@ class TUIApp:
                 if role == "user":
                     print(f"{_GREEN}👤{_RESET} {content[:200]}")
                 elif role == "assistant":
-                    print(f"{_CYAN}🌸 {self._agent_name}:{_RESET} {content[:200]}")
+                    print(f"{_CYAN}● {self._agent_name}:{_RESET} {content[:200]}")
             self.console.print("[dim]──────────────[/dim]\n")
         except Exception:
             pass
+
+    # ── 登录 ────────────────────────────────────────────
+
+    def _do_connect(self, user_id: str) -> None:
+        """用指定的 user_id 重新连接 Gateway（会触发 load_fresh_tail）。"""
+        self.client.close()
+        self.client = GatewayClient()
+        self.client.on_event(self._enqueue_event)
+        result = self.client.connect(
+            host=self.host, port=self.port,
+            token=self.token, user_id=user_id,
+        )
+        self._agent_name = self.client.agent_name or self._agent_name or "agent"
+        self._load_history()
+
+    def _show_welcome(self) -> None:
+        """登录后显示简短问候。"""
+        name = self._display_name or self.user_id or "用户"
+        cwd = os.getcwd()
+        home = os.path.expanduser("~")
+        if cwd.startswith(home):
+            cwd = "~" + cwd[len(home):]
+        lines = [
+            f"   {_GREEN}你好，{name}{_RESET}",
+            f"   {_DIM}{cwd}  ·  /help 查看命令{_RESET}",
+        ]
+        self._echo("\n".join(lines))
+        self._echo(" ")  # 空行，呼吸感
+
+    def _on_login_submit(self, user_id: str) -> None:
+        """验证登录输入并连接。"""
+        if not user_id:
+            return
+        # 在身份列表中查找
+        match = next((i for i in self._identities if i["id"] == user_id), None)
+        if not match:
+            self.state.login_error = f"用户 '{user_id}' 不存在"
+            app = self._app
+            if app is not None:
+                app.invalidate()
+            return
+
+        self.user_id = user_id
+        self._display_name = match.get("name", user_id)
+        self._logged_in = True
+        self.state.login_error = ""
+
+        # 断开空连接，用正确的 user_id 重连
+        self._do_connect(user_id)
+
+        # 切换到聊天模式
+        self.input_handler.set_login_mode(False)
+        self.state.idle()
+        self._show_welcome()
+        app = self._app
+        if app is not None:
+            app.invalidate()
+
+    def _enter_login_mode(self) -> None:
+        """进入登录界面（/login 命令或重新登录）。"""
+        self._logged_in = False
+        self.user_id = ""
+        self._display_name = ""
+        self.client.close()
+        # 重新 pre-connect 获取身份列表
+        self.client = GatewayClient()
+        self.client.on_event(self._enqueue_event)
+        try:
+            self.client.connect(
+                host=self.host, port=self.port,
+                token=self.token, user_id="",
+            )
+            self._identities = self.client.list_identities()
+        except Exception:
+            self._identities = []
+
+        self.state.login_prompt()
+        self.input_handler.set_login_mode(True)
+        app = self._app
+        if app is not None:
+            app.invalidate()
 
     # ── 主输入循环 ──────────────────────────────────────
 
@@ -467,6 +598,7 @@ class TUIApp:
         # 终端 scrollback（走 run_in_terminal，流式结束后一次性批量输出）
         def _print(text: str) -> None:
             print_formatted_text(ANSI(text), end="", flush=True)
+            self._pt_lines += text.count("\n")
 
         # prompt 区域（仅用户输入，不闪）
         def _echo(text: str) -> None:
@@ -502,9 +634,17 @@ class TUIApp:
         ih._on_abort = _on_abort
         ih._on_quit = lambda: self._app.exit() if self._app else None
         ih._on_echo = lambda text: self._echo(f"{_GREEN}👤{_RESET} {text}")
+        ih._login_callback = self._on_login_submit
         ih._is_command = self.command_handler.is_command
         ih._is_streaming = lambda: self.state.status == S_STREAMING
         ih._is_active = lambda: self.state.status in (S_THINKING, S_TOOL)
+
+        # 未登录 → 进入登录模式；已登录 → 显示欢迎 header
+        if not self._logged_in:
+            self.state.login_prompt()
+            ih.set_login_mode(True)
+        else:
+            self._show_welcome()
 
         self.completer = SlashCompleter(self.command_handler)
 
@@ -523,7 +663,7 @@ class TUIApp:
         consumer.start()
 
         def prompt_message():
-            """动态 prompt：用户输入 + 流式文本 + 分隔线 + ❯。"""
+            """动态 prompt：登录界面 / 聊天界面。"""
             app = get_app()
             self._app = app
 
@@ -532,6 +672,44 @@ class TUIApp:
 
             parts: list[tuple[str, str]] = []
 
+            if not self._logged_in:
+                # ── 登录界面 ──────────────────────────────
+                if self._identities:
+                    max_id = max((len(i["id"]) for i in self._identities), default=0)
+                    prefix = "可用身份:  "
+                    _prefix_w = sum(2 if ord(c) > 0x2000 else 1 for c in prefix)
+                    _dim_id = "italic #999999"
+                    _dim_text = "#999999"
+                    for i, ident in enumerate(self._identities):
+                        name = ident.get("name", ident["id"])
+                        rel = ident.get("relation", "普通用户")
+                        if i == 0:
+                            parts.append(("", prefix))
+                        else:
+                            parts.append(("", " " * _prefix_w))
+                        parts.append((_dim_id, f"{ident['id']:<{max_id}}"))
+                        parts.append((_dim_text, f"  —  {name}（{rel}）"))
+                        parts.append(("", "\n"))
+                    parts.append(("", "\n"))
+
+                # 用空行填充，避免输入框被撑开
+                _S = _newline_count(parts)
+                # 公式: term_h = S + pad + 2 (分隔线+login:) + 1 (输入) + 2 (toolbar)
+                #       pad = term_h - S - 5
+                reserved = 5 + (1 if self.state.login_error else 0)
+                term_h = shutil.get_terminal_size().lines
+                pad = max(0, term_h - _S - reserved)
+                if pad > 0:
+                    parts.append(("", "\n" * pad))
+
+                parts.append(("#45475A", line))
+                parts.append(("", "\nlogin: "))
+
+                if self.state.login_error:
+                    parts.append(("#cc6666", f"\n{self.state.login_error}"))
+                return parts
+
+            # ── 聊天界面 ──────────────────────────────────
             # 1. 用户输入（scrollback，纯文本，无 ANSI parser）
             with self._scrollback_lock:
                 snapshot = list(self._scrollback)
@@ -547,7 +725,18 @@ class TUIApp:
                 parts.extend(to_formatted_text(ANSI(streaming)))
                 parts.append(("", "\n"))
 
-            # 3. 分隔线 + 输入提示
+            # 3. 空行填充，始终把输入框压到底部
+            # 公式: available = term_h - _pt_lines (扣除 _pt() 输出区域)
+            #       available = S_n + pad + 2 (分隔线+❯) + 1 (输入) + 2 (toolbar)
+            #       pad = available - S_n - 5
+            _S = _newline_count(parts)
+            available = shutil.get_terminal_size().lines - self._pt_lines
+            reserved = 5  # 分隔线(1) + ❯(1) + 输入(1) + bottom_toolbar(2)
+            pad = max(0, available - _S - reserved)
+            if pad > 0:
+                parts.append(("", "\n" * pad))
+
+            # 4. 分隔线 + 输入提示
             parts.append(("#45475A", line))
             parts.append(("", "\n❯ "))
             return parts
@@ -585,6 +774,7 @@ class TUIApp:
         ch.register_tui("help", "显示所有命令", lambda a: self._cmd_help())
         ch.register_tui("status", "显示连接状态", lambda a: self._cmd_status())
         ch.register_tui("abort", "中断当前回复", lambda a: self._cmd_abort())
+        ch.register_tui("login", "切换到其他用户身份", lambda a: self._cmd_login())
 
         # Gateway 透传命令 — 作为聊天消息发送到 Agent
         ch.register_gateway("intent", "显示当前意图")
@@ -669,6 +859,13 @@ class TUIApp:
         with self._streaming_lock:
             self._streaming_text = ""
 
+    def _cmd_login(self) -> None:
+        """重新进入登录界面。"""
+        self.client.abort_chat()
+        with self._streaming_lock:
+            self._streaming_text = ""
+        self._enter_login_mode()
+
 # ── 入口 ──────────────────────────────────────────────
 
 def run_tui(args: list[str] | None = None) -> None:
@@ -676,7 +873,7 @@ def run_tui(args: list[str] | None = None) -> None:
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--port", type=int, default=19766)
     parser.add_argument("--token", default="")
-    parser.add_argument("--user", default="user")
+    parser.add_argument("--user", default="")
     rest = args if args is not None else sys.argv[1:]
     parsed, _ = parser.parse_known_args(rest)
 
