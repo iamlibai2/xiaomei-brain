@@ -1,64 +1,325 @@
 # LLM 适配层重构设计
 
 > 日期：2026-06-18
-> 参考：OpenClaw multi-provider architecture
+> 参考：OpenClaw multi-provider architecture（8 ModelApi、compat 归一化、配置格式）
+> 参考：Hermes Agent provider 架构（ProviderProfile 数据类、Transport 策略、Profile-first）
 > 复用：现有 plugin 框架（`src/xiaomei_brain/plugin/`）
 
 ## 1. 目标
 
-将 LLM 适配层从单格式硬编码重构为基于插件体系的多 provider 通用架构。用户可通过创建 provider 插件（内置或第三方）支持任意 OpenAI-compatible / Anthropic / Google 等 API，无需修改核心代码。
+将 LLM 适配层从单格式硬编码重构为基于插件体系的多 provider 通用架构。用户可通过创建 provider 插件（内置或第三方）支持任意 OpenAI-compatible / Anthropic / Bedrock 等 API，无需修改核心代码。
 
-## 2. 架构
-
-### 2.1 与现有插件系统的关系
-
-项目已有完整的 plugin 框架，provider 全部纳入其中：
+## 2. 架构概览
 
 ```
-plugin 框架（现有）
-├── manifest.py     # PluginManifest（kind=provider 是合法类型）
-├── context.py      # PluginContext.register_provider(provider)
-├── loader.py       # PluginLoader 3阶段: 发现 → 校验 → 加载
-├── registry.py     # PluginRegistry._providers 字典已就绪
-├── bootstrap.py    # boot_plugins() 自动发现所有插件
-└── ...
+                 config.json                    PluginLoader
+                 (models.providers)             (现有)
+                      │                            │
+                      ▼                            ▼
+              ProviderProfile.build()    →   PluginRegistry._providers
+              (配置 + 插件合并)                  │
+                                                 ▼
+                                         LLMClient(provider, model)
+                                              │
+                                         Transport dispatch
+                                    ┌────────┼────────┐
+                                    ▼        ▼        ▼
+                            chat_     anthropic  bedrock
+                         completions  _messages  _converse
+                            (P0)       (P1)      (P2)
+                                    │
+                                    ▼
+                            NormalizedResponse
+                            (统一输出类型)
+```
 
+### 2.1 核心设计原则（借鉴 Hermes）
+
+- **ProviderProfile 数据类**：一个 `ProviderProfile` 表达一个 provider 的全部信息。90% 的 provider 直接实例化，不写子类
+- **Hook 方法**：需要自定义行为（thinking 格式、message 预处理）的 provider 才子类化，只 override 1-2 个 hook
+- **Transport 策略模式**：每类 wire 协议一个 Transport，由 provider 的 `api_mode` 字段选择
+- **Profile-first, config-fallback**：有 profile → 走 profile；config.json 纯文本 → 自动构建通用 profile
+
+### 2.2 模块结构
+
+```
 llm/ 模块（新增）
-├── types.py              # ModelApi / ModelDefinition / ModelCompatConfig
-├── provider_base.py      # ProviderPlugin ABC
-├── compat.py             # normalize_compat()
-├── client.py             # LLMClient（从 PluginRegistry 拿 provider）
-├── stream_adapters.py    # 8 种 API 流式适配器
+├── types.py              # ModelApi / ProviderProfile / ModelDefinition / NormalizedResponse
+├── transport/            # Wire 协议实现（策略模式）
+│   ├── __init__.py       # TransportRegistry: api_mode → Transport 类
+│   ├── base.py           # Transport ABC
+│   ├── chat_completions.py     # OpenAI-compatible（覆盖 90%+ provider）
+│   ├── anthropic_messages.py   # Anthropic Messages API
+│   └── bedrock_converse.py     # AWS Bedrock Converse
+├── client.py             # LLMClient（从 PluginRegistry 拿 provider，分发到 transport）
 ├── __init__.py
 └── providers/            # 内置 provider 插件
     ├── deepseek/
     │   ├── plugin.yaml   # kind: provider
     │   └── adapter.py    # register(ctx) → ctx.register_provider(...)
     ├── zhipu/
-    │   ├── plugin.yaml
-    │   └── adapter.py
     ├── volcengine/
-    │   ├── plugin.yaml
-    │   └── adapter.py
     ├── openai/
-    │   ├── plugin.yaml
-    │   └── adapter.py
-    └── ...               # 按需添加更多
+    └── ...               # 按需添加
 ```
 
-### 2.2 PluginLoader 发现 provider 的路径
+## 3. 模块设计
 
+### 3.1 `types.py` — 数据结构
+
+#### ModelApi 枚举
+
+与 OpenClaw 一致，定义 6 种 API 接口：
+
+| 值 | Transport | 覆盖 |
+|------|-----------|------|
+| `chat-completions` | ChatCompletionsTransport | OpenAI / DeepSeek / MiniMax / 智谱 / 火山 / Ollama / Gemini(兼容) / 90%+ |
+| `anthropic-messages` | AnthropicTransport | Anthropic / Claude API |
+| `bedrock-converse` | BedrockConverseTransport | AWS Bedrock |
+| `openai-responses` | *stub P2* | OpenAI Responses API（新版） |
+| `openai-codex-responses` | *stub P2* | OpenAI Codex |
+| `github-copilot` | *stub P2* | GitHub Copilot |
+
+> Hermes 经验：Google Gemini 的 OpenAI 兼容端点也走 `chat-completions`，Ollama 同理。不需要为它们单独写 transport。
+
+#### ProviderProfile — Provider 核心抽象
+
+```python
+@dataclass
+class ProviderProfile:
+    """一个 LLM provider 的完整描述。
+
+    简单 provider（OpenAI 兼容）直接实例化此类。
+    需要特殊处理的 provider 才子类化并 override hook 方法。
+    """
+
+    # ── 必填字段 ──
+    provider_id: str              # "deepseek"（注册 key）
+    name: str                     # "DeepSeek"（展示名）
+    api_mode: str = "chat-completions"  # 选择 transport
+    base_url: str = ""            # API 端点
+
+    # ── 可选字段 ──
+    aliases: tuple[str, ...] = ()  # ("deepseek-compat",)
+    display_name: str = ""
+    description: str = ""
+    env_vars: tuple[str, ...] = ()  # ("DEEPSEEK_API_KEY",)
+    auth_type: str = "api-key"      # api-key | aws-sdk | oauth
+    default_headers: dict = field(default_factory=dict)
+    supports_health_check: bool = True
+    supports_vision: bool = False
+    default_max_tokens: int | None = None
+    default_aux_model: str = ""     # 轻量备用模型
+
+    # ── 模型目录 ──
+    models: list[ModelDefinition] = field(default_factory=list)
+
+    # ══ Hook 方法（子类按需 override）══
+
+    def get_headers(self, api_key: str) -> dict[str, str]:
+        """构建请求头。默认 Bearer token。"""
+        return {"Authorization": f"Bearer {api_key}"}
+
+    def prepare_messages(self, messages: list[dict]) -> list[dict]:
+        """预处理消息列表。默认直接返回。"""
+        return messages
+
+    def build_extra_body(self, *, stream: bool, **context) -> dict:
+        """额外请求体字段。如 DeepSeek: {"thinking": {"type": "enabled"}}"""
+        return {}
+
+    def build_api_kwargs_extras(self, **context) -> dict[str, Any]:
+        """顶层 API 参数。如 DeepSeek: {"reasoning_effort": "medium"}"""
+        return {}
+
+    def get_max_tokens(self, model: ModelDefinition) -> int | None:
+        """返回此模型的最大 token 数。"""
+        return model.max_tokens
+
+    def resolve_model(self, model_id: str) -> ModelDefinition | None:
+        """从 models 列表中查找模型。"""
+        for m in self.models:
+            if m.id == model_id:
+                return m
+        return None
+
+    @classmethod
+    def from_config(cls, provider_id: str, config: dict) -> ProviderProfile:
+        """从 config.json 的 models.providers.<id> 构建。"""
+        ...
 ```
-PluginLoader.boot()
-  ├── src/xiaomei_brain/llm/providers/     ← 内置 provider（新目录）
-  ├── src/xiaomei_brain/channels/          ← 现有 channel 插件
-  ├── ~/.xiaomei-brain/plugins/            ← 用户/第三方 provider
-  └── entry_points                         ← pip 包
+
+#### ModelDefinition — 模型定义
+
+```python
+@dataclass
+class ModelDefinition:
+    id: str                    # "deepseek-v4-flash"
+    name: str                  # "DeepSeek V4 Flash"
+    context_window: int        # 128000
+    max_tokens: int            # 8192
+    reasoning: bool = False    # 推理能力
+    input_modes: list[str] = field(default_factory=lambda: ["text"])
+    cost: dict = field(default_factory=dict)
 ```
 
-Loader 的发现目录列表扩展为 3 项（原为 2 项）：channels、llm/providers、用户 plugins。
+> 注：`ModelCompatConfig` 不再作为独立结构。provider 差异通过 `ProviderProfile` 的 hook 方法处理（profile-first），不需要额外的 compat 字段层。config.json only provider（无插件）构建的通用 profile 行为由 `chat_completions` transport 的默认处理覆盖。
 
-### 2.3 完整数据流
+#### NormalizedResponse — 统一输出
+
+```python
+@dataclass
+class NormalizedResponse:
+    """所有 transport 输出的统一响应类型。"""
+    content: str | None
+    tool_calls: list[ToolCall] | None
+    finish_reason: str          # "stop" | "tool_calls" | "length" | "content_filter"
+    reasoning: str | None       # 推理内容（DeepSeek/GLM 的 thinking）
+    usage: dict | None          # {input_tokens, output_tokens}
+    provider_data: dict | None  # 协议特定数据（Anthropic content_blocks 等）
+
+@dataclass
+class ToolCall:
+    id: str | None
+    name: str
+    arguments: str              # JSON 字符串
+    provider_data: dict | None  # extra_content, call_id 等
+```
+
+### 3.2 `transport/` — Wire 协议实现
+
+#### Transport ABC
+
+```python
+class Transport(ABC):
+    """一种 API 协议的传输实现。"""
+
+    @abstractmethod
+    def convert_messages(self, messages: list[dict], profile: ProviderProfile) -> list[dict]: ...
+
+    @abstractmethod
+    def convert_tools(self, tools: list[dict], profile: ProviderProfile) -> list[dict]: ...
+
+    @abstractmethod
+    def build_kwargs(self, messages: list[dict], tools: list[dict] | None,
+                     model: ModelDefinition, profile: ProviderProfile,
+                     stream: bool, **context) -> dict: ...
+
+    @abstractmethod
+    def normalize_response(self, raw: Any, profile: ProviderProfile) -> NormalizedResponse: ...
+
+    @abstractmethod
+    def stream_iter(self, response: requests.Response, profile: ProviderProfile
+                    ) -> Generator[tuple[str, dict | None], None, None]: ...
+```
+
+#### TransportRegistry
+
+```python
+# transport/__init__.py
+_transports: dict[str, type[Transport]] = {}
+
+def register_transport(api_mode: str, transport_cls: type[Transport]) -> None: ...
+def get_transport(api_mode: str) -> Transport: ...
+```
+
+#### 实现优先级
+
+| Transport | 文件 | 流格式 | 优先级 |
+|-----------|------|--------|--------|
+| `ChatCompletionsTransport` | `chat_completions.py` | SSE `data: {...}` | P0 — 现有逻辑迁移 |
+| `AnthropicTransport` | `anthropic_messages.py` | SSE `event: content_block_delta` | P1 |
+| `BedrockConverseTransport` | `bedrock_converse.py` | AWS JSONL stream | P2 |
+
+**ChatCompletionsTransport 的关键行为**（来自 Hermes 经验）：
+
+- **消息清理**：剥离内部字段（`tool_name`、`_`-prefixed），输出纯净 OpenAI 格式
+- **Profile 路径**：有 profile → 调用 hook 方法（`profile.prepare_messages()`、`profile.build_extra_body()`、`profile.build_api_kwargs_extras()`）
+- **Fallback 路径**：无 profile（config.json only provider）→ 走默认 OpenAI 兼容逻辑
+- **思考标签处理**：`<think>...</think>` 过滤（现有逻辑保留）
+
+### 3.3 `client.py` — 运行时客户端
+
+```python
+class LLMClient:
+    """LLM API 客户端。
+
+    从 PluginRegistry 获取 provider profile，按 api_mode 分发到对应 transport。
+    """
+
+    def __init__(self, provider: str, model: str, registry: PluginRegistry):
+        self._profile = registry.get_provider(provider)
+        if self._profile is None:
+            raise ValueError(f"Unknown provider: {provider}")
+        self._model_def = self._profile.resolve_model(model)
+        if self._model_def is None:
+            raise ValueError(f"Unknown model: {provider}/{model}")
+        self._transport = get_transport(self._profile.api_mode)
+```
+
+- `chat(messages, tools)` — 非流式，保留现有重试/退避逻辑
+- `chat_stream(messages, tools)` — 流式，按 transport 分发
+- 保留：`FatalLLMError`、`LLMError`、退避/重试/fallback、JSONL 日志、token 估算、Interoception 回调
+
+### 3.4 Provider 插件示例
+
+#### 简单 provider（DeepSeek — 需要 hook）
+
+**`llm/providers/deepseek/adapter.py`**：
+
+```python
+from xiaomei_brain.llm.types import ProviderProfile, ModelDefinition
+
+class DeepSeekProfile(ProviderProfile):
+    provider_id = "deepseek"
+    name = "DeepSeek"
+    api_mode = "chat-completions"
+    base_url = "https://api.deepseek.com/v1"
+    env_vars = ("DEEPSEEK_API_KEY",)
+
+    models = [
+        ModelDefinition(id="deepseek-v4-flash", name="DeepSeek V4 Flash",
+                        context_window=128000, max_tokens=8192, reasoning=True),
+        ModelDefinition(id="deepseek-v4-pro", name="DeepSeek V4 Pro",
+                        context_window=128000, max_tokens=8192, reasoning=True),
+    ]
+
+    # ── 唯一需要 override 的 hook：V4 thinking 格式 ──
+    def build_extra_body(self, *, stream: bool, **context) -> dict:
+        return {"thinking": {"type": "enabled"}}
+
+    def build_api_kwargs_extras(self, **context) -> dict[str, Any]:
+        return {"reasoning_effort": "medium"}
+
+def register(ctx):
+    ctx.register_provider(DeepSeekProfile)
+```
+
+#### 更简单的 provider（OpenAI — 不需要 hook）
+
+```python
+from xiaomei_brain.llm.types import ProviderProfile, ModelDefinition
+
+openai = ProviderProfile(
+    provider_id="openai",
+    name="OpenAI",
+    base_url="https://api.openai.com/v1",
+    env_vars=("OPENAI_API_KEY",),
+    models=[
+        ModelDefinition(id="gpt-4o", name="GPT-4o",
+                        context_window=128000, max_tokens=16384),
+        ModelDefinition(id="gpt-5-mini", name="GPT-5 Mini",
+                        context_window=256000, max_tokens=16384),
+    ],
+)
+
+def register(ctx):
+    ctx.register_provider(openai)
+```
+
+> Hermes 经验：32 个 provider 中，大部分就是这样一个 `ProviderProfile(...)` 实例，零子类化。
+
+## 4. 完整数据流
 
 ```
 启动时：
@@ -66,269 +327,67 @@ Loader 的发现目录列表扩展为 3 项（原为 2 项）：channels、llm/p
     → 扫描 llm/providers/*/plugin.yaml
     → 校验 kind=provider, requires_env
     → 调用 adapter.register(ctx)
-    → ctx.register_provider(provider_instance)
-    → PluginRegistry._providers["deepseek"] = provider_instance
+    → ctx.register_provider(DeepSeekProfile)    # ProviderProfile 实例/类
+    → PluginRegistry._providers["deepseek"] = profile
+
+  # config.json 也有 provider 但无插件 → 自动构建通用 profile
+  → from_config("volcengine", config.models.providers.volcengine)
+    → ProviderProfile(provider_id="volcengine", base_url="...", ...)
+    → registry._providers["volcengine"] = profile
 
 运行时：
-  LLMClient(provider="deepseek", model="deepseek-v4-flash", registry=...)
-    → registry.get_provider("deepseek")
-    → provider.resolve_model("deepseek-v4-flash")  → ModelDefinition
-    → normalize_compat(api, base_url, model_def)   → ModelCompatConfig
-    → 构建 endpoint + headers
-    → chat/chat_stream → 按 api 分发到 stream_adapter
+  LLMClient(provider="deepseek", model="deepseek-v4-flash", registry)
+    → registry.get_provider("deepseek")        → DeepSeekProfile
+    → profile.resolve_model("deepseek-v4-flash") → ModelDefinition
+    → get_transport("chat-completions")         → ChatCompletionsTransport
+
+  client.chat(messages, tools)
+    → transport.convert_messages(messages, profile)   # profile.prepare_messages()
+    → transport.convert_tools(tools, profile)
+    → transport.build_kwargs(...)
+        → profile.build_extra_body(stream=False)       # {"thinking": {...}}
+        → profile.build_api_kwargs_extras()            # {"reasoning_effort": "medium"}
+    → HTTP POST → normalize_response(raw)              # NormalizedResponse
 ```
 
-## 3. 模块设计
-
-### 3.1 `types.py` — 数据结构
-
-**`ModelApi` 枚举** — 8 种 API 接口（与 OpenClaw 一致）：
-
-| 值 | 覆盖 |
-|------|------|
-| `openai-completions` | OpenAI / DeepSeek / MiniMax / 智谱 / 火山 / 等 90%+ 的 provider |
-| `openai-responses` | OpenAI Responses API（新版）|
-| `openai-codex-responses` | OpenAI Codex |
-| `anthropic-messages` | Anthropic / AWS Bedrock / GCP Vertex |
-| `google-generative-ai` | Google Gemini |
-| `bedrock-converse-stream` | AWS Bedrock Converse |
-| `ollama` | Ollama 本地模型 |
-| `github-copilot` | GitHub Copilot |
-
-**`ModelCompatConfig`** — Provider 能力差异：
-
-```python
-@dataclass
-class ModelCompatConfig:
-    supports_developer_role: bool = True
-    supports_reasoning_effort: bool = False
-    supports_usage_in_streaming: bool = True
-    supports_strict_mode: bool = True
-    supports_tools: bool = True
-    supports_store: bool = False
-    max_tokens_field: str = "max_tokens"
-    thinking_format: str | None = None        # "openrouter" / "qwen-chat-template"
-    requires_tool_result_name: bool = False
-    requires_assistant_after_tool_result: bool = False
-    requires_thinking_as_text: bool = False
-    requires_mistral_tool_ids: bool = False
-    tool_schema_profile: str | None = None    # "xai"
-    tool_call_arguments_encoding: str | None = None  # "html-entities"
-```
-
-**`ModelDefinition`** — 一条模型定义：
-
-```python
-@dataclass
-class ModelDefinition:
-    id: str                          # "deepseek-v4-flash"
-    name: str                        # "DeepSeek V4 Flash"
-    api: ModelApi                    # 使用的 API 接口
-    context_window: int              # 128000
-    max_tokens: int                  # 8192
-    reasoning: bool = False          # 推理能力
-    input_modes: list[str] = field(default_factory=lambda: ["text"])
-    cost: dict = field(default_factory=dict)  # {input, output, cache_read, cache_write}
-    compat: ModelCompatConfig | None = None   # None 则由 compat.py 自动归一化
-```
-
-### 3.2 `provider_base.py` — ProviderPlugin ABC
-
-```python
-class ProviderPlugin(ABC):
-    """每个 provider 插件必须实现此接口。
-
-    最小实现只需 4 个类属性 + 1 个类方法。
-    非标准 provider 可 override 更多方法。
-    """
-
-    # ── 必须设置 ──
-    provider_id: str          # "deepseek"（注册 key）
-    name: str                 # "DeepSeek"（展示名）
-    api: ModelApi             # 默认 API 接口
-    base_url: str             # API 端点
-
-    # ── 必须实现 ──
-    @classmethod
-    def models(cls) -> list[ModelDefinition]: ...
-
-    # ── 可选 override ──
-    @classmethod
-    def env_key(cls) -> str | None: ...           # "DEEPSEEK_API_KEY"
-    @classmethod
-    def compat_overrides(cls, model_id: str) -> dict | None: ...
-    @classmethod
-    def headers(cls) -> dict: ...
-    @classmethod
-    def auth_header(cls) -> str: ...              # 默认 "Bearer"
-    @classmethod
-    def build_payload(cls, messages, tools, stream, compat) -> dict: ...
-    @classmethod
-    def parse_chunk(cls, line, compat) -> Delta | None: ...
-```
-
-### 3.3 `compat.py` — 兼容性归一化
-
-`normalize_compat(api, base_url, model_compat)` — 根据 API 类型和 baseURL 自动设置 compat 默认值。
-
-核心规则（沿用 OpenClaw 经验）：
-- 原生 OpenAI（`api.openai.com`）→ 全部能力默认 `True`
-- 非原生 `openai-completions` 端点 → `supports_developer_role`、`supports_usage_in_streaming`、`supports_strict_mode` 默认 `False`
-- `anthropic-messages` → 自动处理 thinking block / tool schema 互转
-- `google-generative-ai` → Gemini thought signature 清理
-
-如果 model 定义的 `compat` 字段不为 None，则用 model 值覆盖归一化后的默认值。
-
-### 3.4 `client.py` — 运行时客户端
-
-`LLMClient` 从 `PluginRegistry` 获取 provider，不再直接读 config.json：
-
-```python
-class LLMClient:
-    def __init__(self, provider: str, model: str, registry: PluginRegistry):
-        self._provider = registry.get_provider(provider)
-        self._model_def = self._provider.resolve_model(model)
-        self._compat = normalize_compat(
-            self._provider.api,
-            self._provider.base_url,
-            self._model_def.compat,
-        )
-```
-
-- `chat(messages, tools)` — 非流式，保留现有重试/退避逻辑
-- `chat_stream(messages, tools)` — 流式，按 `model_def.api` 分发到 stream adapter
-- 保留：`FatalLLMError`、`LLMError`、退避/重试/fallback、JSONL 日志、token 估算、Interoception 回调
-
-### 3.5 `stream_adapters.py` — API 适配器
-
-每个 `ModelApi` 一个流式处理函数：
-
-| Adapter | API | 流格式 | 优先级 |
-|---------|-----|--------|--------|
-| `_stream_openai_completions` | openai-completions | SSE `data: {...}` | P0 |
-| `_stream_anthropic_messages` | anthropic-messages | SSE `event: content_block_delta` | P1 |
-| `_stream_google_generative_ai` | google-generative-ai | JSONL | P1 |
-| `_stream_bedrock_converse` | bedrock-converse-stream | AWS SSE | P2 |
-| 其余 4 种 | — | — | P2 stubbed |
-
-统一签名：`(provider, model_def, compat, url, headers, payload) → Generator[str] + ChatResponse`
-
-### 3.6 Provider 插件示例
-
-**`llm/providers/deepseek/plugin.yaml`**：
-
-```yaml
-name: deepseek
-version: "1.0.0"
-description: DeepSeek LLM provider
-kind: provider
-requires_env: []
-```
-
-**`llm/providers/deepseek/adapter.py`**：
-
-```python
-from xiaomei_brain.llm.provider_base import ProviderPlugin
-from xiaomei_brain.llm.types import ModelApi, ModelDefinition
-
-class DeepSeekProvider(ProviderPlugin):
-    provider_id = "deepseek"
-    name = "DeepSeek"
-    api = ModelApi.OPENAI_COMPLETIONS
-    base_url = "https://api.deepseek.com/v1"
-
-    @classmethod
-    def env_key(cls) -> str:
-        return "DEEPSEEK_API_KEY"
-
-    @classmethod
-    def models(cls) -> list[ModelDefinition]:
-        return [
-            ModelDefinition(
-                id="deepseek-v4-flash",
-                name="DeepSeek V4 Flash",
-                context_window=128000,
-                max_tokens=8192,
-                reasoning=True,
-            ),
-            ModelDefinition(
-                id="deepseek-v4-pro",
-                name="DeepSeek V4 Pro",
-                context_window=128000,
-                max_tokens=8192,
-                reasoning=True,
-            ),
-        ]
-
-def register(ctx):
-    ctx.register_provider(DeepSeekProvider)
-```
-
-## 4. 与现有代码的关系
+## 5. 与现有代码的关系
 
 | 现有文件 | 处理方式 |
 |----------|----------|
 | `src/xiaomei_brain/base/llm.py` | 移入 `src/xiaomei_brain/llm/client.py`，核心逻辑保留 |
-| `src/xiaomei_brain/base/config.py` | `from_json()` 中 `models.providers` 解析逻辑改为构建 provider 插件 |
+| `src/xiaomei_brain/base/config.py` | `from_json()` 中 `models.providers` 解析逻辑改为构建 ProviderProfile |
 | `src/xiaomei_brain/plugin/loader.py` | 发现目录列表新增 `llm/providers/` |
+| `src/xiaomei_brain/plugin/context.py` | `register_provider()` 接受 ProviderProfile |
 | `src/xiaomei_brain/agent/agent_manager.py` | `_DEFAULT_CONFIG_TEMPLATE` 格式不变 |
 | `src/xiaomei_brain/consciousness/conscious_living.py` | `boot_plugins()` 保持不变，自动包含 provider |
 | 其他调用方 | 只改 import 路径 |
 
-## 5. LLMClient 公开 API（向后兼容）
-
-```python
-from xiaomei_brain.llm import LLMClient
-
-# 构造
-client = LLMClient(
-    provider="deepseek",
-    model="deepseek-v4-flash",
-    registry=registry,       # 从 boot_plugins() 返回的 PluginRegistry
-)
-
-# 对话（同现有 API）
-response = client.chat(messages=[...], tools=[...])
-for chunk in client.chat_stream(messages=[...], tools=[...]):
-    ...
-
-# 切换模型/Provider
-client.set_model("glm-5.1")
-client.set_provider("zhipu", model="glm-5.1")
-
-# fallback
-client.add_fallback("volcengine/doubao-pro-32k")
-client.switch_to_fallback()
-```
-
 ## 6. 配置覆盖与合并
 
-插件提供"出厂默认值"（baseUrl、model 目录），`config.json` 的 `models.providers` 可覆盖或追加：
+插件提供"出厂默认值"，`config.json` 的 `models.providers` 可覆盖：
 
 ```
-ProviderPlugin.base_url = "https://api.deepseek.com/v1"    ← 插件默认
-  ↳ config.json models.providers.deepseek.baseUrl = "..."  ← 用户覆盖（优先）
+DeepSeekProfile.base_url = "https://api.deepseek.com/v1"
+  ↳ config.json models.providers.deepseek.baseUrl = "https://my-proxy/v1"  ← 覆盖
 
-ProviderPlugin.models() = [deepseek-v4-flash, ...]         ← 插件默认
-  ↳ config.json models.providers.deepseek.models = [...]    ← 用户追加/覆盖
+DeepSeekProfile.models = [v4-flash, v4-pro]
+  ↳ config.json models.providers.deepseek.models = [...]  ← 追加/覆盖
 ```
 
 合并规则：
-- `baseUrl`：config.json 值优先，否则用插件默认
-- `apiKey`：config.json 值优先，否则用插件 `env_key()` 对应的环境变量
-- `models`：config.json 的 models 列表与插件 models 合并，config.json 中相同 id 的字段覆盖插件默认
+- `baseUrl`：config.json 优先，否则用 profile 默认
+- `apiKey`：config.json 优先，否则用 profile 的 `env_vars` 对应环境变量
+- `models`：合并，config.json 中相同 id 的字段覆盖 profile 默认
 
-**config.json only provider**（无对应插件目录）：如果 `models.providers` 里有、但没有对应插件目录，系统自动从 config.json 构建一个通用 provider（`api` 默认为 `openai-completions`）。
+**config.json only provider**（无对应插件）：自动从 config.json 构建 `ProviderProfile`，`api_mode` 默认 `chat-completions`。
 
-## 8. 第三方 Provider 插件
-
-用户或第三方可创建自己的 provider 插件：
+## 7. 第三方 Provider 插件
 
 ```
 # 方式 1：放入 ~/.xiaomei-brain/plugins/
-~/.xiaomei-brain/plugins/my_internal_llm/
+~/.xiaomei-brain/plugins/my_llm/
 ├── plugin.yaml           # kind: provider
-└── adapter.py            # class MyLLMProvider(ProviderPlugin): ...
+└── adapter.py            # ProviderProfile(...) → ctx.register_provider()
 
 # 方式 2：pip 包 entry point
 # pyproject.toml:
@@ -336,7 +395,21 @@ ProviderPlugin.models() = [deepseek-v4-flash, ...]         ← 插件默认
 #   my_provider = "my_package.my_provider.adapter"
 ```
 
-插件加载时自动通过现有 pipeline 发现、校验、注册到 `PluginRegistry`，`LLMClient` 即可使用。
+## 8. LLMClient 公开 API（向后兼容）
+
+```python
+from xiaomei_brain.llm import LLMClient
+
+client = LLMClient(provider="deepseek", model="deepseek-v4-flash", registry=registry)
+
+response = client.chat(messages=[...], tools=[...])
+for chunk in client.chat_stream(messages=[...], tools=[...]):
+    ...
+
+client.set_provider("zhipu", model="glm-5.1")
+client.add_fallback("volcengine/doubao-pro-32k")
+client.switch_to_fallback()
+```
 
 ## 9. 不在 scope
 
@@ -345,6 +418,6 @@ ProviderPlugin.models() = [deepseek-v4-flash, ...]         ← 插件默认
 
 ## 10. 测试策略
 
-- **unit**：compat 归一化、PluginLoader 发现 provider 插件、stream adapter 转换
-- **integration**：mock HTTP 响应验证 chat/chat_stream 完整链路
-- **plugin test**：创建临时 provider 插件目录，验证 `boot_plugins()` 自动发现并注册
+- **unit**：ProviderProfile 构建/合并、TransportRegistry 分发
+- **integration**：mock HTTP 验证 chat/chat_stream 完整链路（profile → transport → response）
+- **plugin test**：创建临时 provider 插件目录，验证 boot_plugins() 自动发现并注册
