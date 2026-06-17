@@ -104,7 +104,7 @@ class ProviderProfile:
     display_name: str = ""
     description: str = ""
     env_vars: tuple[str, ...] = ()  # ("DEEPSEEK_API_KEY",)
-    auth_type: str = "api-key"      # api-key | aws-sdk | oauth
+    auth_type: str = "api-key"      # api-key | aws-sdk | oauth | oauth-device-code | copilot-acp | token
     default_headers: dict = field(default_factory=dict)
     supports_health_check: bool = True
     supports_vision: bool = False
@@ -120,16 +120,17 @@ class ProviderProfile:
         """构建请求头。默认 Bearer token。"""
         return {"Authorization": f"Bearer {api_key}"}
 
-    def prepare_messages(self, messages: list[dict]) -> list[dict]:
-        """预处理消息列表。默认直接返回。"""
+    def prepare_messages(self, messages: list[dict], model: ModelDefinition) -> list[dict]:
+        """预处理消息列表。默认直接返回。可据 model 做不同处理。"""
         return messages
 
-    def build_extra_body(self, *, stream: bool, **context) -> dict:
-        """额外请求体字段。如 DeepSeek: {"thinking": {"type": "enabled"}}"""
+    def build_extra_body(self, model: ModelDefinition, *, stream: bool, **context) -> dict:
+        """额外请求体字段。如 DeepSeek V4: {"thinking": {"type": "enabled"}}。
+        传入 model 以区分同 provider 不同模型的行为。"""
         return {}
 
-    def build_api_kwargs_extras(self, **context) -> dict[str, Any]:
-        """顶层 API 参数。如 DeepSeek: {"reasoning_effort": "medium"}"""
+    def build_api_kwargs_extras(self, model: ModelDefinition, **context) -> dict[str, Any]:
+        """顶层 API 参数。如 DeepSeek V4: {"reasoning_effort": "medium"}"""
         return {}
 
     def get_max_tokens(self, model: ModelDefinition) -> int | None:
@@ -149,6 +150,19 @@ class ProviderProfile:
         ...
 ```
 
+#### Auth 类型
+
+| 值 | 说明 | 覆盖 |
+|-----|------|------|
+| `api-key` | Bearer token，查 env_vars 环境变量 | 90%+ provider（默认） |
+| `aws-sdk` | AWS SDK 凭证链（Bedrock） | AWS Bedrock |
+| `oauth` | OAuth 2.0 标准流程 | Anthropic OAuth |
+| `oauth-device-code` | 设备码授权（CLI 友好） | MiniMax / GitHub Copilot |
+| `copilot-acp` | 外部进程 auth | GitHub Copilot ACP |
+| `token` | 直接 token，不封装 Bearer | 自定义端点 |
+
+> v1 实现 `api-key`；`aws-sdk` 在 Bedrock transport 实现时一并完成；其余 P2。
+
 #### ModelDefinition — 模型定义
 
 ```python
@@ -161,9 +175,17 @@ class ModelDefinition:
     reasoning: bool = False    # 推理能力
     input_modes: list[str] = field(default_factory=lambda: ["text"])
     cost: dict = field(default_factory=dict)
+
+    # ── Per-model 能力覆盖（None = 沿用 provider/transport 默认值）──
+    supports_vision: bool | None = None
+    supports_tools: bool | None = None
+    supports_developer_role: bool | None = None
+    supports_strict_mode: bool | None = None
+    supports_usage_in_streaming: bool | None = None
+    max_tokens_field: str | None = None    # "max_tokens" | "max_completion_tokens"
 ```
 
-> 注：`ModelCompatConfig` 不再作为独立结构。provider 差异通过 `ProviderProfile` 的 hook 方法处理（profile-first），不需要额外的 compat 字段层。config.json only provider（无插件）构建的通用 profile 行为由 `chat_completions` transport 的默认处理覆盖。
+> 设计要点（来自 OpenClaw）：同一 provider 的不同模型能力不同。如 OpenAI 的 GPT-4o 支持视觉，GPT-3.5 不支持。`supports_*` 字段设为 `None` 时沿用 transport 对该 api_mode 的默认值（如非原生 `chat-completions` 默认关 `supports_developer_role`），非 `None` 时覆盖默认值。Transport 在 `build_kwargs()` 和 `convert_messages()` 中根据当前 model 的这些字段决定行为。
 
 #### NormalizedResponse — 统一输出
 
@@ -192,13 +214,19 @@ class ToolCall:
 
 ```python
 class Transport(ABC):
-    """一种 API 协议的传输实现。"""
+    """一种 API 协议的传输实现。
+
+    所有方法接收 model（当前使用的模型）和 profile（所属 provider）。
+    model 上的 per-model 能力字段（supports_vision 等）决定传输层行为。
+    """
 
     @abstractmethod
-    def convert_messages(self, messages: list[dict], profile: ProviderProfile) -> list[dict]: ...
+    def convert_messages(self, messages: list[dict],
+                         model: ModelDefinition, profile: ProviderProfile) -> list[dict]: ...
 
     @abstractmethod
-    def convert_tools(self, tools: list[dict], profile: ProviderProfile) -> list[dict]: ...
+    def convert_tools(self, tools: list[dict],
+                      model: ModelDefinition, profile: ProviderProfile) -> list[dict]: ...
 
     @abstractmethod
     def build_kwargs(self, messages: list[dict], tools: list[dict] | None,
@@ -206,10 +234,12 @@ class Transport(ABC):
                      stream: bool, **context) -> dict: ...
 
     @abstractmethod
-    def normalize_response(self, raw: Any, profile: ProviderProfile) -> NormalizedResponse: ...
+    def normalize_response(self, raw: Any,
+                           model: ModelDefinition, profile: ProviderProfile) -> NormalizedResponse: ...
 
     @abstractmethod
-    def stream_iter(self, response: requests.Response, profile: ProviderProfile
+    def stream_iter(self, response: requests.Response,
+                    model: ModelDefinition, profile: ProviderProfile
                     ) -> Generator[tuple[str, dict | None], None, None]: ...
 ```
 
@@ -230,6 +260,13 @@ def get_transport(api_mode: str) -> Transport: ...
 | `ChatCompletionsTransport` | `chat_completions.py` | SSE `data: {...}` | P0 — 现有逻辑迁移 |
 | `AnthropicTransport` | `anthropic_messages.py` | SSE `event: content_block_delta` | P1 |
 | `BedrockConverseTransport` | `bedrock_converse.py` | AWS JSONL stream | P2 |
+
+**AnthropicTransport 的特殊处理**：
+
+- **Tool schema 互转**：OpenAI 格式 `{type: "function", function: {name, parameters}}` → Anthropic 格式 `{name, description, input_schema}`
+- **Tool choice 互转**：OpenAI 字符串模式 `"auto"/"none"/"required"` → Anthropic 对象模式 `{type: "auto"}/{type: "any"}`
+- **Tool use 归一化**：Anthropic `content_block` → 统一 `ToolCall` 格式，存入 `provider_data`
+- **Content block 保序**：Anthropic 的 text + tool_use 交错顺序保留在 `provider_data.anthropic_content_blocks` 中
 
 **ChatCompletionsTransport 的关键行为**（来自 Hermes 经验）：
 
@@ -285,11 +322,15 @@ class DeepSeekProfile(ProviderProfile):
     ]
 
     # ── 唯一需要 override 的 hook：V4 thinking 格式 ──
-    def build_extra_body(self, *, stream: bool, **context) -> dict:
-        return {"thinking": {"type": "enabled"}}
+    def build_extra_body(self, model, *, stream: bool, **context) -> dict:
+        if model.reasoning:
+            return {"thinking": {"type": "enabled"}}
+        return {}
 
-    def build_api_kwargs_extras(self, **context) -> dict[str, Any]:
-        return {"reasoning_effort": "medium"}
+    def build_api_kwargs_extras(self, model, **context) -> dict[str, Any]:
+        if model.reasoning:
+            return {"reasoning_effort": "medium"}
+        return {}
 
 def register(ctx):
     ctx.register_provider(DeepSeekProfile)
@@ -342,12 +383,14 @@ def register(ctx):
     → get_transport("chat-completions")         → ChatCompletionsTransport
 
   client.chat(messages, tools)
-    → transport.convert_messages(messages, profile)   # profile.prepare_messages()
-    → transport.convert_tools(tools, profile)
-    → transport.build_kwargs(...)
-        → profile.build_extra_body(stream=False)       # {"thinking": {...}}
-        → profile.build_api_kwargs_extras()            # {"reasoning_effort": "medium"}
-    → HTTP POST → normalize_response(raw)              # NormalizedResponse
+    → transport.convert_messages(messages, model, profile)  # profile.prepare_messages(msgs, model)
+    → transport.convert_tools(tools, model, profile)
+    → transport.build_kwargs(messages, tools, model, profile, stream=False)
+        → model.supports_vision → 决定是否传 image
+        → model.max_tokens_field → 用 max_tokens 还是 max_completion_tokens
+        → profile.build_extra_body(model, stream=False)      # {"thinking": {...}} if V4
+        → profile.build_api_kwargs_extras(model)              # {"reasoning_effort": "medium"} if V4
+    → HTTP POST → normalize_response(raw)                    # NormalizedResponse
 ```
 
 ## 5. 与现有代码的关系
@@ -358,6 +401,7 @@ def register(ctx):
 | `src/xiaomei_brain/base/config.py` | `from_json()` 中 `models.providers` 解析逻辑改为构建 ProviderProfile |
 | `src/xiaomei_brain/plugin/loader.py` | 发现目录列表新增 `llm/providers/` |
 | `src/xiaomei_brain/plugin/context.py` | `register_provider()` 接受 ProviderProfile |
+| `src/xiaomei_brain/plugin/registry.py` | 无需修改——已支持 last-writer-wins 覆盖 |
 | `src/xiaomei_brain/agent/agent_manager.py` | `_DEFAULT_CONFIG_TEMPLATE` 格式不变 |
 | `src/xiaomei_brain/consciousness/conscious_living.py` | `boot_plugins()` 保持不变，自动包含 provider |
 | 其他调用方 | 只改 import 路径 |
@@ -380,6 +424,8 @@ DeepSeekProfile.models = [v4-flash, v4-pro]
 - `models`：合并，config.json 中相同 id 的字段覆盖 profile 默认
 
 **config.json only provider**（无对应插件）：自动从 config.json 构建 `ProviderProfile`，`api_mode` 默认 `chat-completions`。
+
+**用户插件覆盖**（来自 Hermes last-writer-wins）：PluginLoader 发现顺序为 `内置 → 用户目录 → entry_points`。PluginRegistry 的 `register_provider()` 本身就是直接赋值（`self._providers[id] = provider`），后续注册自然覆盖前者——用户插件可覆盖内置同名的 `base_url`、`models`、`hooks`。无需额外代码。
 
 ## 7. 第三方 Provider 插件
 
