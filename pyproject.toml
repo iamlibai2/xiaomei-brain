@@ -3,13 +3,37 @@ name = "xiaomei-brain"
 version = "0.2.0"
 description = "A multi-agent AI framework with consciousness, drive, purpose, and metacognition"
 readme = "README.md"
+license = {text = "MIT"}
 requires-python = ">=3.11"
+authors = [
+    {name = "李白 libai", email = "iamlibai2@gmail.com"},
+]
+keywords = ["ai", "agent", "llm", "memory", "consciousness", "multi-agent"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "requests>=2.31.0",
     "sentence-transformers>=2.2.0",
     "pyyaml>=6.0",
-    "lancedb",
+    "lancedb>=0.4.0",
+    "rich>=13.0.0",
+    "pydantic>=2.0",
+    "numpy>=1.24.0",
+    "jsonschema>=4.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/iamlibai2/xiaomei-brain"
+Repository = "https://github.com/iamlibai2/xiaomei-brain"
+Issues = "https://github.com/iamlibai2/xiaomei-brain/issues"
 
 [project.scripts]
 xiaomei-brain = "xiaomei_brain.cli:main"
@@ -17,20 +41,15 @@ xiaomei-brain = "xiaomei_brain.cli:main"
 [project.optional-dependencies]
 feishu = ["lark-oapi"]
 dingtalk = ["dingtalk-stream"]
-tts = [
-    "sounddevice>=0.4.0",
-    "numpy>=1.24.0",
-]
+tts = ["sounddevice>=0.4.0"]
 server = [
     "fastapi>=0.109.0",
     "uvicorn[standard]>=0.27.0",
 ]
-tui = ["textual"]
+tui = ["prompt-toolkit>=3.0", "websocket-client>=1.0"]
+ws = ["websockets>=12.0"]
 schedule = ["croniter"]
-dev = [
-    "pytest>=8.0",
-    "jsonschema",
-]
+dev = ["pytest>=8.0"]
 
 [build-system]
 requires = ["hatchling"]

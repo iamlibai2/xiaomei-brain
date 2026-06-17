@@ -23,8 +23,10 @@ Consciousness (flame skeleton + LLM fuel)
 
 ```bash
 # Prerequisites
-source /home/iamlibai/workspace/python_env_common/bin/activate
-uv pip install -e . --break-system-packages
+python3 -m venv venv
+source venv/bin/activate
+pip install -e .
+```
 
 # CLI interactive mode (full consciousness)
 PYTHONPATH=src python3 examples/run_conscious_living.py --name xiaomei
