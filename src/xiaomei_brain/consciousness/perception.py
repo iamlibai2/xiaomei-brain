@@ -1,5 +1,11 @@
 """感知规则配置解析器。
 
+.. deprecated:: 2026-06-17
+    本模块已废弃。PerceptionConfig 和 PerceptionRule 在源码中零调用方。
+    感知规则的实际加载已内化到 SelfImage / InnerPerception 中。
+    保留代码供参考，后续版本将删除。
+
+原设计意图：
 从 perception.md 读取感知规则配置：
 - 用户状态规则
 - 关系规则
@@ -101,41 +107,23 @@ class PerceptionConfig:
 
     @classmethod
     def load(cls, agent_id: str = "") -> PerceptionConfig:
-        """从 perception.md 加载配置。
-
-        查找顺序：
-        1. ~/.xiaomei-brain/{agent_id}/consciousness/perception.md
-        2. agents/{agent_id}/consciousness/perception.md（项目目录）
+        """从 ~/.xiaomei-brain/{agent_id}/consciousness/perception.md 加载配置。
 
         如果不存在，返回默认配置。
         """
-        # 查找配置文件
-        paths = [
-            os.path.expanduser(f"~/.xiaomei-brain/{agent_id}/consciousness/perception.md"),
-            os.path.join(os.path.dirname(__file__), "..", "..", "..", "agents", agent_id, "consciousness", "perception.md"),
-        ]
+        path = os.path.expanduser(f"~/.xiaomei-brain/{agent_id}/consciousness/perception.md")
 
-        config_path = ""
-        content = ""
-
-        for path in paths:
-            if os.path.exists(path):
-                config_path = path
-                with open(path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                logger.info("[Perception] 从 %s 加载配置", path)
-                break
-
-        if not content:
-            logger.warning("[Perception] 未找到 perception.md，使用默认规则")
+        if not os.path.exists(path):
+            logger.warning("[Perception] 未找到 perception.md: %s，使用默认规则", path)
             return cls(rules=cls.DEFAULT_RULES.copy())
 
-        # 解析 MD 内容
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+
         config = cls._parse_md(content)
-        config.config_path = config_path
+        config.config_path = path
         config.loaded_at = datetime.now().timestamp()
 
-        # 如果解析出的规则为空，使用默认规则
         if not config.rules:
             logger.warning("[Perception] 解析结果为空，使用默认规则")
             config.rules = cls.DEFAULT_RULES.copy()

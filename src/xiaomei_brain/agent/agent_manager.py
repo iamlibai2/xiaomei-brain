@@ -12,6 +12,40 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# ── 默认 config.json 模板 ──────────────────────────────────────
+# 首次创建 config.json 时使用，用户可手动编辑修改。
+# 注意：api_key 留空，需用户填入；模型和 URL 使用默认值开箱即用。
+_DEFAULT_CONFIG_TEMPLATE = {
+    "agents": {
+        "defaults": {
+            "model": {"primary": "deepseek/deepseek-v4-flash"},
+            "tools": {"profile": "assistant"},
+        }
+    },
+    "models": {
+        "providers": {
+            "deepseek": {
+                "baseUrl": "https://api.deepseek.com",
+                "apiKey": "",
+                "models": [{"id": "deepseek-v4-flash"}],
+            }
+        }
+    },
+    "embedding": {
+        "model": "BAAI/bge-m3",
+        "dimension": 1024,
+    },
+    "agent": {
+        "idle_threshold": 1800,
+        "dream_interval": 3600,
+        "session_timeout": 7200,
+    },
+    "memory": {
+        "lancedb_path": "~/.xiaomei-brain/{agent_id}/memory/lancedb",
+        "conversation_db_path": "~/.xiaomei-brain/{agent_id}/brain.db",
+    },
+}
+
 from xiaomei_brain.base.config import Config
 from xiaomei_brain.base.llm import LLMClient
 from xiaomei_brain.memory.conversation_db import ConversationDB
@@ -473,7 +507,7 @@ class AgentManager:
             with open(config_json_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
         else:
-            data = {}
+            data = _DEFAULT_CONFIG_TEMPLATE
         if "agents" not in data:
             data["agents"] = {}
         if "list" not in data["agents"]:
@@ -512,6 +546,57 @@ class AgentManager:
             "created_at": instance.created_at,
             "agent_dir": agent_dir,
         }
+
+    def clone_agent(self, source: str, target: str) -> dict:
+        """从已有 agent 克隆：复制 identity.md + config.yaml + contacts。
+
+        Args:
+            source: 源 agent ID
+            target: 新 agent ID
+
+        Returns:
+            {"id": ..., "name": ..., "model": ..., "agent_dir": ...}
+
+        Raises:
+            ValueError: target 已存在，或 source 不存在
+        """
+        source_dir = self._agent_dir(source)
+        if not os.path.exists(source_dir):
+            raise ValueError(f"源 Agent '{source}' 不存在")
+
+        identity_path = os.path.join(source_dir, "consciousness", "identity.md")
+        config_yaml_path = os.path.join(source_dir, "config.yaml")
+        contacts_path = os.path.join(source_dir, "contacts", "identities.yaml")
+
+        identity_content = ""
+        if os.path.exists(identity_path):
+            with open(identity_path, "r", encoding="utf-8") as f:
+                identity_content = f.read()
+
+        config_yaml_content = ""
+        if os.path.exists(config_yaml_path):
+            with open(config_yaml_path, "r", encoding="utf-8") as f:
+                config_yaml_content = f.read()
+
+        contacts_content = ""
+        if os.path.exists(contacts_path):
+            with open(contacts_path, "r", encoding="utf-8") as f:
+                contacts_content = f.read()
+
+        info = self.create_agent(
+            target,
+            copy_from=source,
+            identity_content=identity_content,
+            config_yaml_content=config_yaml_content,
+        )
+
+        if contacts_content:
+            target_contacts = os.path.join(info["agent_dir"], "contacts", "identities.yaml")
+            with open(target_contacts, "w", encoding="utf-8") as f:
+                f.write(contacts_content)
+
+        logger.info("[AgentManager] 克隆完成: %s → %s", source, target)
+        return info
 
     def list_agents_info(self) -> list[dict]:
         """列出所有 agent 的信息（REST API 用）。"""

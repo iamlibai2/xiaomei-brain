@@ -1,5 +1,12 @@
 """身份配置解析器。
 
+.. deprecated:: 2026-06-17
+    本模块已废弃。IdentityConfig.load() 的唯一调用方是 test_action_executor.py，
+    而该测试因 DesireActionExecutor 不存在已无法 import。身份加载已统一走
+    consciousness/core.py 直读 identity.md。
+    保留代码供参考，后续版本将删除。
+
+原设计意图：
 从 identity.yaml 读取身份分层配置：
 - L0: 先天身份（不可变）
 - L1: 基础特质（极难变）
@@ -74,37 +81,27 @@ class IdentityConfig:
 
     @classmethod
     def load(cls, agent_id: str = "") -> IdentityConfig:
-        """从 identity.yaml 加载配置
-
-        查找顺序：
-        1. ~/.xiaomei-brain/{agent_id}/consciousness/identity.yaml
-        2. agents/{agent_id}/consciousness/identity.yaml（项目目录fallback）
+        """从 ~/.xiaomei-brain/{agent_id}/consciousness/identity.yaml 加载配置。
 
         如果不存在，返回默认配置。
         """
-        paths = [
-            os.path.expanduser(f"~/.xiaomei-brain/{agent_id}/consciousness/identity.yaml"),
-            os.path.join(os.path.dirname(__file__), "..", "..", "..", "agents", agent_id, "consciousness", "identity.yaml"),
-        ]
+        path = os.path.expanduser(f"~/.xiaomei-brain/{agent_id}/consciousness/identity.yaml")
 
-        config_path = ""
-        data = {}
+        if not os.path.exists(path):
+            logger.warning("[Identity] 未找到 identity.yaml: %s，使用默认配置", path)
+            return cls()
 
-        for path in paths:
-            if os.path.exists(path):
-                config_path = path
-                with open(path, "r", encoding="utf-8") as f:
-                    data = yaml.safe_load(f) or {}
-                logger.info("[Identity] 从 %s 加载配置", path)
-                break
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
 
         if not data:
-            logger.warning("[Identity] 未找到 identity.yaml，使用默认配置")
+            logger.warning("[Identity] identity.yaml 为空，使用默认配置")
             return cls()
 
         config = cls._from_dict(data)
-        config.config_path = config_path
+        config.config_path = path
         config.loaded_at = datetime.now().timestamp()
+        logger.info("[Identity] 从 %s 加载配置", path)
         return config
 
     @classmethod

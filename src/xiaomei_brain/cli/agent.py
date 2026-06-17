@@ -18,9 +18,13 @@ def cmd_agent(args: list[str]) -> None:
     p_info = sub.add_parser("info", help="查看 agent 详情")
     p_info.add_argument("name", help="Agent ID")
 
-    p_create = sub.add_parser("create", help="创建新 agent")
+    p_create = sub.add_parser("create", help="创建空白 agent")
     p_create.add_argument("name", help="Agent ID")
-    p_create.add_argument("--copy-from", default="", help="复制已有 agent 的 LLM 配置")
+    p_create.add_argument("--copy-from", default="", help="从已有 agent 复制 LLM 模型配置")
+
+    p_clone = sub.add_parser("clone", help="克隆已有 agent（完整复制身份+配置+联系人）")
+    p_clone.add_argument("source", help="源 agent ID")
+    p_clone.add_argument("target", help="新 agent ID")
 
     p_delete = sub.add_parser("delete", help="删除 agent（确认后不可恢复）")
     p_delete.add_argument("name", help="Agent ID")
@@ -57,6 +61,17 @@ def cmd_agent(args: list[str]) -> None:
         print(f"  目录: {info['agent_dir']}")
         print(f"  LLM model: {info['model']}")
         print(f"  启动: xiaomei-brain run {parsed.name} --cli")
+
+    elif parsed.action == "clone":
+        try:
+            info = manager.clone_agent(parsed.source, parsed.target)
+        except ValueError as e:
+            print(f"\033[31m[错误] {e}\033[0m")
+            sys.exit(1)
+        print(f"\033[32mAgent '{parsed.target}' 已从 '{parsed.source}' 克隆创建!\033[0m")
+        print(f"  目录: {info['agent_dir']}")
+        print(f"  LLM model: {info['model']}")
+        print(f"  启动: xiaomei-brain run {parsed.target} --cli")
 
     elif parsed.action == "delete":
         if not parsed.force:

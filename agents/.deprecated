@@ -1,0 +1,12 @@
+DEPRECATED — 2026-06-17
+
+本目录已废弃。源码中零引用。
+
+原用途: agent 人格定义模板目录，作为 identity.yaml / perception.md 的 fallback 加载路径。
+当前状态:
+  - 新 agent bootstrap 使用 seed/ 目录
+  - 运行时配置读取 ~/.xiaomei-brain/{agent_id}/
+  - identity.py / perception.py 的 fallback 路径已移除
+  - talent.md 从未被任何代码引用（系统 prompt 读 identity.md）
+
+保留此目录供设计参考。后续版本将删除。
