@@ -25,6 +25,7 @@ Thumbs.db
 
 # Claude Code (personal dev config)
 .claude/
+CLAUDE.md
 
 # IDE
 .idea/
