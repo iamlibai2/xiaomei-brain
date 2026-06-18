@@ -14,6 +14,7 @@
     python -m xiaomei_brain logs <agent_id> [-f] [-n <lines>]
     python -m xiaomei_brain doctor [--fix] [-v]
     python -m xiaomei_brain setup
+    python -m xiaomei_brain model                   # 交互式配置模型
 """
 
 import sys
@@ -124,6 +125,10 @@ def main() -> None:
     elif cmd == "setup":
         from xiaomei_brain.cli.setup import cmd_setup
         cmd_setup(args)
+
+    elif cmd == "model":
+        from xiaomei_brain.cli.model import cmd_model
+        cmd_model(args)
 
     else:
         print(f"Unknown command: {cmd}")
