@@ -34,6 +34,9 @@ CLAUDE.md
 # Deprecated / development history (keep on disk, not in repo)
 bak/
 
+# Git worktrees
+.worktrees/
+
 # Process / temp files
 *.pid
 *_pid.txt
