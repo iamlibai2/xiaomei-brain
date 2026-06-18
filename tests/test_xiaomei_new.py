@@ -17,7 +17,7 @@ def main():
     sys.path.insert(0, "src")
 
     from xiaomei_brain.base.config import Config
-    from xiaomei_brain.base.llm import LLMClient
+    from xiaomei_brain.llm.client import LLMClient
     from xiaomei_brain.agent.core import Agent
     from xiaomei_brain.agent.commands import CommandRegistry
     from xiaomei_brain.memory.self_model import SelfModel

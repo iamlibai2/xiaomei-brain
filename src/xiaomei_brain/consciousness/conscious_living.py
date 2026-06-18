@@ -53,7 +53,7 @@ from .agent_comms import AgentComms
 from .layer0 import Layer0Autonomous
 from .layer2 import Layer2DefaultNetwork
 from .attention_layer import AttentionLayer
-from ..base.llm import FatalLLMError
+from ..llm.client import FatalLLMError
 from ..gateway.router import Router, InboundMsg, OutputRoute
 from ..plugin import boot_plugins
 

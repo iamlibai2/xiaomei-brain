@@ -188,7 +188,7 @@ class Layer2DefaultNetwork:
                     # FatalLLMError（401/402/403）等 BaseException 子类不会被
                     # except Exception 捕获。记录日志并优雅停止线程。
                     ts = time.strftime("%H:%M:%S")
-                    from xiaomei_brain.base.llm import FatalLLMError
+                    from xiaomei_brain.llm.client import FatalLLMError
                     if isinstance(e, FatalLLMError):
                         self._log(f"{ts} Layer2 FATAL LLM: {e}")
                         logger.error("[Layer2] 致命 LLM 错误，停止 DMN 线程: %s", e)

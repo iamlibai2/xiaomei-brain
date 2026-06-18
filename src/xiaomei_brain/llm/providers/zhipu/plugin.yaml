@@ -1,0 +1,5 @@
+name: zhipu
+version: "1.0.0"
+description: 智谱AI GLM series
+kind: provider
+entry: adapter:register

@@ -17,7 +17,7 @@ import threading
 import time
 
 from xiaomei_brain.agent.agent_manager import AgentManager
-from xiaomei_brain.base.llm import FatalLLMError
+from xiaomei_brain.llm.client import FatalLLMError
 from xiaomei_brain.base.message_utils import estimate_tokens
 from xiaomei_brain.consciousness.conscious_living import ConsciousLiving
 
@@ -326,7 +326,7 @@ def cmd_run(args: list[str]) -> None:
     ))
     logging.getLogger().addHandler(_file_handler)
 
-    from xiaomei_brain.base.llm import set_log_agent as _set_llm_log
+    from xiaomei_brain.llm.client import set_log_agent as _set_llm_log
     from xiaomei_brain.consciousness.goal_manager import set_log_agent as _set_intent_log
     _set_llm_log(agent_id)
     _set_intent_log(agent_id)

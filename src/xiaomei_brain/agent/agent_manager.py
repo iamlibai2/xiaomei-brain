@@ -10,7 +10,31 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from xiaomei_brain.llm.client import LLMClient, set_log_agent
+from xiaomei_brain.llm.types import load_config_providers
+from xiaomei_brain.plugin.bootstrap import boot_plugins
+from xiaomei_brain.plugin.registry import PluginRegistry
+
 logger = logging.getLogger(__name__)
+
+
+def _read_config_dict() -> dict | None:
+    """读取 config.json 原始 JSON（用于 load_config_providers）。"""
+    import json as _json
+    from pathlib import Path as _Path
+
+    search_paths = [
+        _Path("config.json"),
+        _Path.home() / ".xiaomei-brain" / "config.json",
+    ]
+    for p in search_paths:
+        if p.is_file():
+            try:
+                return _json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+    return None
+
 
 # ── 默认 config.json 模板 ──────────────────────────────────────
 # 首次创建 config.json 时使用，用户可手动编辑修改。
@@ -47,7 +71,6 @@ _DEFAULT_CONFIG_TEMPLATE = {
 }
 
 from xiaomei_brain.base.config import Config
-from xiaomei_brain.base.llm import LLMClient
 from xiaomei_brain.memory.conversation_db import ConversationDB
 from xiaomei_brain.memory.longterm import LongTermMemory
 from xiaomei_brain.memory.extractor import MemoryExtractor
@@ -696,22 +719,43 @@ class AgentManager:
         provider = agent.provider or global_config.provider
         model = agent.model or global_config.model
 
-        # 当 agent 指定了 provider，从 _provider_configs 取对应配置
-        # 否则 fallback 到 global_config（会用到 aliyun 的默认值）
+        # 构建 PluginRegistry：先加载内置 provider 插件，再从 config.json 合并配置
+        registry = boot_plugins(agent_id=agent.id)
+        raw_config = _read_config_dict()
+        if raw_config:
+            load_config_providers(registry, raw_config)
+
+        # 解析 API key（优先级：agent 指定 → config.json provider 配置 → env var → 全局 fallback）
+        api_key = ""
+        # 1. 从 config.json _provider_configs 中获取该 provider 的专属 key
         if provider and provider in global_config._provider_configs:
-            prov_cfg = global_config._provider_configs[provider]
-            api_key = agent.api_key or prov_cfg.get("api_key", "") or global_config.api_key
-            base_url = agent.base_url or prov_cfg.get("base_url", "") or global_config.base_url
-        else:
-            api_key = agent.api_key or global_config.api_key
-            base_url = agent.base_url or global_config.base_url
+            api_key = global_config._provider_configs[provider].get("api_key", "")
+        # 2. 如果 config 里没有，尝试从 provider profile 的 env vars 获取
+        prov_profile = registry.get_provider(provider)
+        if not api_key and prov_profile:
+            for env_var in prov_profile.env_vars:
+                api_key = os.environ.get(env_var, "")
+                if api_key:
+                    break
+        # 3. 最终 fallback：agent → 已解析的 key → 全局 config
+        api_key = agent.api_key or api_key or global_config.api_key
+
+        # 设置 LLM 日志目录
+        set_log_agent(agent.id)
+
+        masked = api_key[:8] + "****" + api_key[-4:] if len(api_key) > 12 else "***"
+        logger.info("[init_agent] provider=%s model=%s api_key=%s base_url=%s",
+                    provider, model, masked, prov_profile.base_url if prov_profile else "N/A")
 
         llm = LLMClient(
-            model=model,
-            api_key=api_key,
-            base_url=base_url,
             provider=provider,
+            model=model,
+            registry=registry,
+            api_key=api_key,
         )
+
+        # 保存 registry 到 agent 实例
+        agent._registry = registry
 
         # 启动时先验证 LLM 连通性，不通则拒绝初始化
         # 但太费时间（~3s），暂时注释掉

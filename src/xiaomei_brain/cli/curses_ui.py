@@ -876,12 +876,24 @@ def curses_input(
         import curses
 
         def _run(stdscr):
-            curses.curs_set(1)  # 显示光标
+            # 强制设置 raw 模式 — 防止连续多次 curses.wrapper() 之后
+            # 终端残留在 cooked/line-buffered 状态（WSL2 上常见）
+            curses.noecho()
+            curses.cbreak()
+            stdscr.keypad(True)
+            stdscr.timeout(-1)  # 阻塞模式
+            try:
+                curses.curs_set(1)  # 显示光标
+            except Exception:
+                pass
             if curses.has_colors():
-                curses.start_color()
-                curses.use_default_colors()
-                curses.init_pair(1, curses.COLOR_GREEN, -1)
-                curses.init_pair(2, curses.COLOR_YELLOW, -1)
+                try:
+                    curses.start_color()
+                    curses.use_default_colors()
+                    curses.init_pair(1, curses.COLOR_GREEN, -1)
+                    curses.init_pair(2, curses.COLOR_YELLOW, -1)
+                except Exception:
+                    pass
 
             value = list(default)
             cursor_pos = len(value)
@@ -926,7 +938,9 @@ def curses_input(
                     except curses.error:
                         pass
 
-                    stdscr.move(row, 4 + cursor_pos)  # 4 = len("  > ")
+                    # 光标位置 clamp 到安全范围
+                    cursor_x = min(4 + cursor_pos, max_x - 1)
+                    stdscr.move(row, cursor_x)
 
                 except curses.error:
                     pass
@@ -942,13 +956,31 @@ def curses_input(
 
                 key = stdscr.getch()
 
+                if key == curses.ERR:
+                    continue
+
                 if key in (curses.KEY_ENTER, 10, 13):
                     result_holder[0] = "".join(value)
                     return
 
                 elif key == 27:  # ESC
-                    result_holder[0] = cancel_returns
-                    return
+                    # 检查是否可能是 escape 序列（箭头键等）
+                    stdscr.timeout(50)
+                    nxt = stdscr.getch()
+                    stdscr.timeout(-1)
+                    if nxt == curses.ERR:
+                        # 纯 ESC — 取消
+                        result_holder[0] = cancel_returns
+                        return
+                    # escape 序列 — 忽略（不是在输入框中需要处理的键）
+                    # 继续消费剩余的序列字节
+                    if nxt in (ord("["), ord("O")):
+                        while True:
+                            stdscr.timeout(50)
+                            c = stdscr.getch()
+                            if c in (curses.ERR, -1) or 0x40 <= c <= 0x7E:
+                                break
+                    stdscr.timeout(-1)
 
                 elif key in (curses.KEY_BACKSPACE, 127, 8):
                     if cursor_pos > 0:

@@ -1,12 +1,12 @@
 """xiaomei-brain model — 交互式配置 Provider 和模型.
 
-All user interaction stays inside curses — no plain input() / print() mid-flow:
-    curses_radiolist → curses_input → curses_checklist → curses_radiolist → ...
+照 Hermes 做法：curses 只做菜单选择（radiolist/checklist），文本输入用
+tty.setraw() 遮蔽输入（密码）或 input()（普通文本），不在 curses 内做文本输入。
 
 Flow:
     1. curses_radiolist → 主菜单（已有 provider / 添加 / 默认 / 退出）
     2. 选 provider → 子菜单（管理 key / 管理模型 / 删除）
-    3. 添加 provider → catalog radiolist → curses_input(key) → model checklist
+    3. 添加 provider → catalog radiolist → masked_input(key) → model checklist
     4. 所有变更实时写入 config.json
 """
 
@@ -18,24 +18,66 @@ from xiaomei_brain.cli.colors import Colors, color
 # ── curses 组件封装 ──────────────────────────────────────────
 
 def _radiolist(title: str, items: list[str], selected: int = 0,
-               cancel_returns: int | None = None, description: str | None = None) -> int | None:
+               cancel_returns: int | None = None, description: str | None = None,
+               searchable: bool = False) -> int | None:
     from xiaomei_brain.cli.curses_ui import curses_radiolist
     return curses_radiolist(title, items, selected=selected,
-                            cancel_returns=cancel_returns, description=description)
+                            cancel_returns=cancel_returns, description=description,
+                            searchable=searchable)
 
 
-def _checklist(title: str, items: list[str], selected: set[int]) -> set[int]:
+_CHECKLIST_CANCEL = object()
+
+def _checklist(title: str, items: list[str], selected: set[int]) -> set[int] | None:
     from xiaomei_brain.cli.curses_ui import curses_checklist
-    return curses_checklist(title, items, selected)
+    result = curses_checklist(title, items, selected, cancel_returns=_CHECKLIST_CANCEL)
+    if result is _CHECKLIST_CANCEL:
+        return None
+    return result
 
 
-def _curses_input(title: str, *, password: bool = False,
-                  description: str | None = None, default: str = "",
-                  cancel_returns: str | None = None) -> str | None:
-    """curses 文本输入 — 不跳出 curses UI"""
-    from xiaomei_brain.cli.curses_ui import curses_input
-    return curses_input(title, password=password, description=description,
-                        default=default, cancel_returns=cancel_returns)
+def _prompt_input(title: str, *, password: bool = False,
+                  description: str | None = None, default: str = "") -> str:
+    """文本输入 — 密码用 tty.setraw() + 字符遮蔽，普通文本用 input()。
+
+    不在 curses 内运行（照 Hermes 做法），curses 菜单退出后调用是安全的。
+    """
+    import sys
+    from xiaomei_brain.cli.curses_ui import flush_stdin
+    from xiaomei_brain.cli.colors import Colors, color
+
+    flush_stdin()
+
+    # 构建提示信息
+    lines = [color(f"  {title}", Colors.YELLOW)]
+    if description:
+        for line in description.splitlines():
+            lines.append(f"  {line}")
+    print()
+    for line in lines:
+        print(line)
+    print()
+
+    if password:
+        from xiaomei_brain.cli.masked_input import masked_input
+        print(color("  输入后回车录入，直接回车跳过", Colors.DIM))
+        value = masked_input("  > ")
+        if not value and default:
+            return default
+        return value
+    else:
+        if not sys.stdin.isatty():
+            return default
+        try:
+            print(color("  输入后回车录入，直接回车跳过", Colors.DIM))
+            if default:
+                value = input(f"  [{default}] > ").strip()
+                return value if value else default
+            else:
+                return input("  > ").strip()
+        except (KeyboardInterrupt, EOFError):
+            return ""
+
 
 
 # ── 主入口 ──────────────────────────────────────────────────
@@ -54,7 +96,16 @@ def cmd_model(args: list[str]) -> None:
 
         items = list(current_providers.items())
         labels = _build_main_menu(items, current_primary)
-        idx = _radiolist("模型配置", labels, selected=0, cancel_returns=len(labels) - 1)
+
+        n_configured = len(items)
+        total_models = sum(len(pcfg.get("models", [])) for _, pcfg in items)
+        desc_parts = [f"已配置: {n_configured} 个 Provider, {total_models} 个模型"]
+        if current_primary:
+            desc_parts.append(f"默认模型: {current_primary}")
+        description = "  ".join(desc_parts)
+
+        idx = _radiolist("模型配置", labels, selected=0, cancel_returns=len(labels) - 1,
+                         description=description, searchable=True)
 
         if idx is None or idx == len(labels) - 1:  # 退出
             break
@@ -105,7 +156,8 @@ def _set_default(provider, current_providers: dict, current_primary: str) -> Non
             default_idx = i
             break
 
-    idx = _radiolist("选择默认模型", labels, selected=default_idx, cancel_returns=None)
+    labels.append("返回")
+    idx = _radiolist("选择默认模型", labels, selected=default_idx, cancel_returns=len(labels) - 1, searchable=True)
     if idx is not None:
         primary = labels[idx]
         provider.patch({"agents": {"defaults": {"model": {"primary": primary}}}})
@@ -113,42 +165,69 @@ def _set_default(provider, current_providers: dict, current_primary: str) -> Non
 
 
 def _add_provider(provider, current_providers: dict) -> None:
-    from xiaomei_brain.llm.model_catalog import get_provider_models, PROVIDER_META, get_all_providers
+    from xiaomei_brain.llm.model_catalog import get_provider_models, PROVIDER_META
 
-    catalog = get_all_providers()
-    available = [(pid, PROVIDER_META.get(pid, {})) for pid in catalog if pid not in current_providers]
+    available = [(pid, PROVIDER_META[pid]) for pid in PROVIDER_META if pid not in current_providers]
 
     if not available:
         print(color("没有可添加的 Provider。", Colors.YELLOW))
         return
 
     labels = [f"{pid:15s}  {meta.get('base_url', '')}" for pid, meta in available]
+    custom_label_idx = len(labels)       # "+ 自定义（OpenAI 兼容）" 的位置
+    labels.append("+ 自定义（OpenAI 兼容）...")
     labels.append("返回")
 
-    idx = _radiolist("添加 Provider", labels, selected=0, cancel_returns=len(labels) - 1)
-    if idx is None or idx >= len(available):
+    idx = _radiolist("添加 Provider", labels, selected=0, cancel_returns=len(labels) - 1, searchable=True)
+    if idx is None or idx >= len(labels) - 1:
+        return
+
+    # 自定义 provider：手动输入所有信息
+    if idx == custom_label_idx:
+        pid = _prompt_input("Provider ID", description="小写字母+数字，如 ollama、vllm")
+        if not pid:
+            return
+        base_url = _prompt_input(f"{pid} — Base URL", description="OpenAI 兼容的 API 地址")
+        if not base_url:
+            return
+        api_key = _prompt_input(f"输入 {pid} API Key", password=True, description=f"Base URL: {base_url}")
+        model_id = _prompt_input(f"{pid} — 模型 ID", description=f"Base URL: {base_url}")
+        if not model_id:
+            return
+        current_providers[pid] = {
+            "baseUrl": base_url,
+            "apiKey": api_key,
+            "api": "openai-completions",
+            "models": [{"id": model_id, "name": model_id, "contextWindow": 128000, "maxTokens": 8192}],
+        }
+        provider.patch({"models": {"providers": current_providers}})
+        print(color(f"  ✓ 已添加: {pid}", Colors.GREEN))
         return
 
     pid, meta = available[idx]
     base_url = meta.get("base_url", "")
 
-    # API Key — curses_input 保持在 curses 内
-    api_key = _curses_input(
+    # Base URL — 可覆盖
+    custom_url = _prompt_input(
+        f"{pid} — Base URL",
+        description=f"默认: {base_url}",
+        default=base_url,
+    )
+    base_url = custom_url
+
+    # API Key — masked_input 在 curses 结束后安全运行
+    api_key = _prompt_input(
         f"输入 {pid} API Key",
         password=True,
-        description=f"Base URL: {base_url}\n\n按 Enter 跳过（稍后可配置）",
-        cancel_returns="",
+        description=f"Base URL: {base_url}",
     )
-    if api_key is None:
-        return  # ESC 取消
 
     # 模型选择
     models = get_provider_models(pid)
     if not models:
-        model_id = _curses_input(
+        model_id = _prompt_input(
             f"{pid} — 手动输入模型 ID",
-            description=f"Base URL: {base_url}\n\n该 provider 无模型目录，请手动输入",
-            cancel_returns="",
+            description=f"Base URL: {base_url}",
         )
         if model_id:
             current_providers[pid] = {
@@ -163,9 +242,29 @@ def _add_provider(provider, current_providers: dict) -> None:
 
     model_labels = [f"{m.id:35s} ctx={m.context_window//1000}K" + ("  reasoning" if m.reasoning else "")
                     for m in models]
+    model_labels.append("+ 手动输入模型名...")
+    custom_idx = len(models)  # the "+ 手动输入" row
+    back_idx = len(models) + 1
+    model_labels.append("返回")
     chosen = _checklist(f"{pid} — 选择模型 (SPACE 勾选, ENTER 确认)", model_labels, set(range(len(models))))
+    if chosen is None or back_idx in chosen:
+        return
 
-    if not chosen:
+    # 处理"手动输入模型名"
+    custom_models = []
+    if custom_idx in chosen:
+        chosen.discard(custom_idx)
+        custom_id = _prompt_input(
+            f"{pid} — 手动输入模型 ID",
+            description=f"Base URL: {base_url}",
+        )
+        if custom_id:
+            custom_models.append({
+                "id": custom_id, "name": custom_id,
+                "contextWindow": 128000, "maxTokens": 8192,
+            })
+
+    if not chosen and not custom_models:
         return
 
     selected_models = []
@@ -178,6 +277,7 @@ def _add_provider(provider, current_providers: dict) -> None:
             "maxTokens": m.max_output or 8192,
             "reasoning": m.reasoning,
         })
+    selected_models.extend(custom_models)
 
     current_providers[pid] = {
         "baseUrl": base_url,
@@ -214,7 +314,7 @@ def _edit_provider(provider, pid: str, pcfg: dict) -> None:
             "返回",
         ]
 
-        idx = _radiolist(f"{pid}", sub_labels, selected=0, cancel_returns=len(sub_labels) - 1)
+        idx = _radiolist(f"{pid}", sub_labels, selected=0, cancel_returns=len(sub_labels) - 1, searchable=True)
         if idx is None or idx == len(sub_labels) - 1:
             return
 
@@ -228,13 +328,12 @@ def _edit_provider(provider, pid: str, pcfg: dict) -> None:
                 description=f"Base URL: {base_url}",
             )
             if key_idx == 0:
-                new_key = _curses_input(
+                new_key = _prompt_input(
                     f"{pid} — 新 API Key",
                     password=True,
                     description=f"Base URL: {base_url}",
-                    cancel_returns="",
                 )
-                if new_key is None:
+                if not new_key:
                     continue
                 if new_key:
                     current_providers[pid]["apiKey"] = new_key
@@ -250,7 +349,18 @@ def _edit_provider(provider, pid: str, pcfg: dict) -> None:
         elif idx == 3:  # 选择模型
             models_catalog = get_provider_models(pid)
             if not models_catalog:
-                print(color(f"{pid} 无模型目录", Colors.YELLOW))
+                # 无目录时仍然允许手动输入
+                custom_id = _prompt_input(
+                    f"{pid} — 手动输入模型 ID",
+                    description=f"Base URL: {base_url}",
+                )
+                if custom_id:
+                    current_providers[pid]["models"] = [
+                        {"id": custom_id, "name": custom_id, "contextWindow": 128000, "maxTokens": 8192},
+                    ]
+                    pcfg["models"] = current_providers[pid]["models"]
+                    provider.patch({"models": {"providers": current_providers}})
+                    print(color(f"  ✓ 已添加模型: {custom_id}", Colors.GREEN))
                 continue
 
             existing_ids = {m["id"] for m in models}
@@ -267,7 +377,28 @@ def _edit_provider(provider, pid: str, pcfg: dict) -> None:
                 if m.id in existing_ids:
                     preselected.add(i)
 
+            model_labels.append("+ 手动输入模型名...")
+            custom_idx = len(models_catalog)
+            back_idx = len(models_catalog) + 1
+            model_labels.append("返回")
+
             chosen = _checklist(f"{pid} — 选择模型 (SPACE 勾选, ENTER 确认)", model_labels, preselected)
+            if chosen is None or back_idx in chosen:
+                continue
+
+            # 处理"手动输入模型名"
+            custom_models = []
+            if custom_idx in chosen:
+                chosen.discard(custom_idx)
+                custom_id = _prompt_input(
+                    f"{pid} — 手动输入模型 ID",
+                    description=f"Base URL: {base_url}",
+                )
+                if custom_id:
+                    custom_models.append({
+                        "id": custom_id, "name": custom_id,
+                        "contextWindow": 128000, "maxTokens": 8192,
+                    })
 
             selected_models = []
             for i in sorted(chosen):
@@ -278,6 +409,7 @@ def _edit_provider(provider, pid: str, pcfg: dict) -> None:
                     "maxTokens": m.max_output or 8192,
                     "reasoning": m.reasoning,
                 })
+            selected_models.extend(custom_models)
             current_providers[pid]["models"] = selected_models
             pcfg["models"] = selected_models
             provider.patch({"models": {"providers": current_providers}})
@@ -292,7 +424,9 @@ def _edit_provider(provider, pid: str, pcfg: dict) -> None:
                 description=f"此操作将从 config.json 中移除 {pid} 的所有配置\n\nBase URL: {pcfg.get('baseUrl', '')}",
             )
             if confirm_idx == 0:
-                current_providers.pop(pid, None)
+                # None = delete (JSON Merge Patch 语义), 不能 pop()
+                # 因为 _deep_merge 只处理 partial 中存在的 key
+                current_providers[pid] = None
                 provider.patch({"models": {"providers": current_providers}})
                 print(color(f"  ✓ 已删除: {pid}", Colors.GREEN))
                 return  # 返回主菜单

@@ -54,6 +54,11 @@ class PluginLoader:
         channels_root = Path(_channels.__file__).parent
         dirs.append(str(channels_root))
 
+        # 内置 LLM provider（llm/providers/）
+        import xiaomei_brain.llm.providers as _providers
+        providers_root = Path(_providers.__file__).parent
+        dirs.append(str(providers_root))
+
         # 用户插件
         user_plugins = Path.home() / ".xiaomei-brain" / "plugins"
         dirs.append(str(user_plugins))

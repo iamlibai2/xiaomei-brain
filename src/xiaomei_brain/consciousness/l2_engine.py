@@ -520,7 +520,7 @@ class L2Engine:
                         elapsed, len(result))
             return result
         except Exception as e:
-            from xiaomei_brain.base.llm import LLMError
+            from xiaomei_brain.llm.client import LLMError
             if isinstance(e, LLMError) and e.retryable:
                 logger.warning("[Consciousness] ReAct 意图决策: 网络异常，跳过本次")
             else:

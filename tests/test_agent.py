@@ -3,18 +3,37 @@
 import pytest
 
 from xiaomei_brain import Agent, ToolRegistry
-from xiaomei_brain.base.llm import LLMClient
+from xiaomei_brain.llm.client import LLMClient
+from xiaomei_brain.llm.types import ProviderProfile, ModelDefinition
+from xiaomei_brain.plugin.registry import PluginRegistry
 from unittest.mock import Mock, patch
 
 
 @pytest.fixture
 def mock_llm():
     """Create a mock LLM client."""
-    with patch("xiaomei_brain.base.llm.OpenAI") as mock:
-        mock.return_value.chat.completions.create.return_value.choices = [
-            Mock(message=Mock(content="Hello!", tool_calls=None), finish_reason="stop")
-        ]
-        yield LLMClient(model="gpt-4o", api_key="test-key")
+    import os
+    os.environ["TEST_API_KEY"] = "test-key"
+    reg = PluginRegistry()
+    reg.register_provider("test-provider", ProviderProfile(
+        provider_id="test-provider",
+        name="Test",
+        base_url="https://test.example.com/v1",
+        env_vars=("TEST_API_KEY",),
+        models=[ModelDefinition(id="test-model", name="Test", context_window=4096, max_tokens=1024)],
+    ))
+    with patch("xiaomei_brain.llm.client.requests") as mock_req:
+        mock_resp = Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "choices": [{
+                "message": {"content": "Hello!", "role": "assistant"},
+                "finish_reason": "stop",
+            }]
+        }
+        mock_req.post.return_value = mock_resp
+        yield LLMClient(provider="test-provider", model="test-model", registry=reg)
+    os.environ.pop("TEST_API_KEY", None)
 
 
 @pytest.fixture

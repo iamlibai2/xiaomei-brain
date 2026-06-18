@@ -4,7 +4,7 @@ os.environ.setdefault('HF_HUB_OFFLINE', '1')
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 from xiaomei_brain.base.config import Config
-from xiaomei_brain.base.llm import LLMClient
+from xiaomei_brain.llm.client import LLMClient
 from xiaomei_brain.agent.core import Agent
 from xiaomei_brain.memory.self_model import SelfModel
 from xiaomei_brain.memory.conversation_db import ConversationDB

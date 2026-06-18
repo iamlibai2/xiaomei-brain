@@ -7,7 +7,7 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 sys.stdout = open('/home/iamlibai/workspace/claude-project/xiaomei-brain/test_result.txt', 'w')
 
 from xiaomei_brain.base.config import Config
-from xiaomei_brain.base.llm import LLMClient
+from xiaomei_brain.llm.client import LLMClient
 from xiaomei_brain.memory.conversation_db import ConversationDB
 from xiaomei_brain.memory.longterm import LongTermMemory
 from xiaomei_brain.memory.extractor import MemoryExtractor

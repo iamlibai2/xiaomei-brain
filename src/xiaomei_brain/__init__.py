@@ -12,7 +12,7 @@ from xiaomei_brain.tools.base import Tool, tool
 from xiaomei_brain.tools.registry import ToolRegistry
 
 # LLM & Config (base infrastructure)
-from xiaomei_brain.base.llm import LLMClient, LLMError
+from xiaomei_brain.llm.client import LLMClient, LLMError
 from xiaomei_brain.base.config import Config
 
 # Memory

@@ -8,7 +8,7 @@ import threading
 import time
 from typing import Any, Callable, Generator
 
-from xiaomei_brain.base.llm import LLMClient
+from xiaomei_brain.llm.client import LLMClient
 from xiaomei_brain.memory.conversation_db import ConversationDB
 from xiaomei_brain.base.message_utils import estimate_tokens
 from xiaomei_brain.memory.self_model import SelfModel
@@ -267,7 +267,7 @@ class Agent:
                         "type": "function",
                         "function": {
                             "name": tc.name,
-                            "arguments": json.dumps(tc.arguments),
+                            "arguments": tc.arguments,
                         },
                     }
                     for tc in response.tool_calls
@@ -277,16 +277,15 @@ class Agent:
                     "content": response.content,
                     "tool_calls": tool_calls_data,
                 }
-                if response.reasoning_content:
-                    msg["reasoning_content"] = response.reasoning_content
+                if response.reasoning:
+                    msg["reasoning"] = response.reasoning
                 self.messages.append(msg)
 
-                # 存 assistant(tool_calls) 到 DB，tool_calls + reasoning_content 存入 metadata
-                # 存 assistant(tool_calls) 到 DB，保存 DB id 到消息（DAG 压缩需要）
+                # 存 assistant(tool_calls) 到 DB，tool_calls + reasoning 存入 metadata
                 if self.conversation_db:
                     meta = {"tool_calls": tool_calls_data}
-                    if response.reasoning_content:
-                        meta["reasoning_content"] = response.reasoning_content
+                    if response.reasoning:
+                        meta["reasoning"] = response.reasoning
                     tool_msg_id = self.conversation_db.log(
                         session_id=self.session_id,
                         role="assistant",
@@ -297,16 +296,21 @@ class Agent:
                     msg["id"] = tool_msg_id
 
                 for tc in response.tool_calls:
+                    # Parse JSON arguments string → dict
+                    try:
+                        args_dict = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
+                    except json.JSONDecodeError:
+                        args_dict = {}
                     # Collapsed display + buffer storage
-                    idx = self.tool_call_buffer.add(tc.name, tc.arguments, "")  # placeholder
-                    _ptc(idx, tc.name, tc.arguments)
+                    idx = self.tool_call_buffer.add(tc.name, args_dict, "")  # placeholder
+                    _ptc(idx, tc.name, args_dict)
                     if self.on_tool_start:
-                        self.on_tool_start(idx, tc.name, tc.arguments)
+                        self.on_tool_start(idx, tc.name, args_dict)
                     _last_tool = tc.name
-                    logger.debug("Tool call: %s(%s)", tc.name, tc.arguments)
+                    logger.debug("Tool call: %s(%s)", tc.name, args_dict)
 
                     # 重试检测：同一工具+参数失败超过2次则拦截
-                    call_key = (tc.name, json.dumps(tc.arguments, sort_keys=True))
+                    call_key = (tc.name, json.dumps(args_dict, sort_keys=True))
                     fail_count = _tool_failure_counts.get(call_key, 0)
                     if fail_count >= 3:
                         result = (
@@ -317,7 +321,7 @@ class Agent:
                         logger.warning("[Agent] 拦截重复失败工具调用(%d次): %s", fail_count, tc.name)
                     else:
                         try:
-                            result = self.tools.execute(tc.name, **tc.arguments)
+                            result = self.tools.execute(tc.name, **args_dict)
                         except Exception as e:
                             result = f"Error executing tool '{tc.name}': {e}"
                             logger.error("Tool error: %s", e)
@@ -435,8 +439,8 @@ class Agent:
                     assistant_msg_id = None
                     if self.conversation_db:
                         meta = {}
-                        if response.reasoning_content:
-                            meta["reasoning_content"] = response.reasoning_content
+                        if response.reasoning:
+                            meta["reasoning"] = response.reasoning
                         assistant_msg_id = self.conversation_db.log(
                             session_id=self.session_id,
                             role="assistant",
@@ -445,8 +449,8 @@ class Agent:
                             metadata=meta if meta else None,
                         )
                     msg: dict[str, Any] = {"role": "assistant", "content": display_content, "id": assistant_msg_id}
-                    if response.reasoning_content:
-                        msg["reasoning_content"] = response.reasoning_content
+                    if response.reasoning:
+                        msg["reasoning"] = response.reasoning
                     self.messages.append(msg)
 
                     # Co-write to experience stream
@@ -531,8 +535,8 @@ class Agent:
             response = self.llm.chat(messages=all_messages, tools=openai_tools)
 
             # 展示思考过程（ANSI 灰色，不进入后续消息）
-            if response.reasoning_content:
-                print(f"\033[2m{response.reasoning_content}\033[0m", flush=True)
+            if response.reasoning:
+                print(f"\033[2m{response.reasoning}\033[0m", flush=True)
 
             if response.tool_calls:
                 tool_calls_data = [
@@ -541,7 +545,7 @@ class Agent:
                         "type": "function",
                         "function": {
                             "name": tc.name,
-                            "arguments": json.dumps(tc.arguments),
+                            "arguments": tc.arguments,
                         },
                     }
                     for tc in response.tool_calls
@@ -553,11 +557,16 @@ class Agent:
                 })
 
                 for tc in response.tool_calls:
+                    # Parse JSON arguments string → dict
+                    try:
+                        args_dict = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
+                    except json.JSONDecodeError:
+                        args_dict = {}
                     _idx += 1
-                    print_tool_call(_idx, tc.name, tc.arguments)
+                    print_tool_call(_idx, tc.name, args_dict)
                     _last_tool = tc.name
 
-                    call_key = (tc.name, json.dumps(tc.arguments, sort_keys=True))
+                    call_key = (tc.name, json.dumps(args_dict, sort_keys=True))
                     fail_count = _tool_failure_counts.get(call_key, 0)
                     if fail_count >= 3:
                         result = (
@@ -568,7 +577,7 @@ class Agent:
                         logger.warning("[Agent] 拦截重复失败工具调用(%d次): %s", fail_count, tc.name)
                     else:
                         try:
-                            result = self.tools.execute(tc.name, **tc.arguments)
+                            result = self.tools.execute(tc.name, **args_dict)
                         except Exception as e:
                             result = f"Error executing tool '{tc.name}': {e}"
                             logger.error("Tool error: %s", e)
@@ -605,7 +614,7 @@ class Agent:
                         except Exception as e:
                             logger.debug("[ExpStream] react_nodb tool_exec failed: %s", e)
             else:
-                final_text = response.content or response.reasoning_content or ""
+                final_text = response.content or response.reasoning or ""
                 if final_text:
                     if _label_name:
                         print(f"\n{_color}── {_label_name} ──{_reset}", flush=True)
@@ -628,7 +637,7 @@ class Agent:
         all_messages = list(messages) + loop_messages + [finish_msg]
         all_messages = clean_messages(all_messages)
         resp = self.llm.chat(messages=all_messages, tools=None)
-        final_text = resp.content or resp.reasoning_content or ""
+        final_text = resp.content or resp.reasoning or ""
         if final_text:
             if _label_name:
                 print(f"\n{_color}── {_label_name} ──{_reset}", flush=True)

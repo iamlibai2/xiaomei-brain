@@ -20,40 +20,43 @@ import requests
 logger = logging.getLogger(__name__)
 
 MODELS_DEV_URL = "https://models.dev/api.json"
-CACHE_TTL = 3600  # 内存缓存 1 小时
+CACHE_TTL = 3600        # 内存缓存 1 小时
+DISK_CACHE_TTL = 86400  # 磁盘缓存 24 小时，超时后重新拉取
 
 
 # ── Provider 元信息 ──
 
 PROVIDER_META: dict[str, dict] = {
-    "deepseek":  {"base_url": "https://api.deepseek.com/v1",   "env_vars": ["DEEPSEEK_API_KEY"]},
-    "zhipu":     {"base_url": "https://open.bigmodel.cn/api/paas/v4", "env_vars": ["ZHIPU_API_KEY", "GLM_API_KEY"]},
     "openai":    {"base_url": "https://api.openai.com/v1",     "env_vars": ["OPENAI_API_KEY"]},
-    "minimax":   {"base_url": "https://api.minimaxi.com/v1",   "env_vars": ["MINIMAX_API_KEY"]},
-    "aliyun":    {"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "env_vars": ["DASHSCOPE_API_KEY"]},
-    "moonshot":  {"base_url": "https://api.moonshot.cn/v1",    "env_vars": ["MOONSHOT_API_KEY"]},
-    "kimi":      {"base_url": "https://api.moonshot.cn/v1",    "env_vars": ["KIMI_API_KEY"]},
-    "stepfun":   {"base_url": "https://api.stepfun.com/v1",    "env_vars": ["STEPFUN_API_KEY"]},
-    "xiaomi":    {"base_url": "https://api.xiaomimimo.com/v1",  "env_vars": ["XIAOMI_API_KEY"]},
     "anthropic": {"base_url": "https://api.anthropic.com",     "env_vars": ["ANTHROPIC_API_KEY"]},
     "google":    {"base_url": "https://generativelanguage.googleapis.com/v1beta", "env_vars": ["GOOGLE_API_KEY"]},
     "xai":       {"base_url": "https://api.x.ai/v1",           "env_vars": ["XAI_API_KEY"]},
+    "openrouter":{"base_url": "https://openrouter.ai/api/v1",  "env_vars": ["OPENROUTER_API_KEY"]},
+    "deepseek":  {"base_url": "https://api.deepseek.com/v1",   "env_vars": ["DEEPSEEK_API_KEY"]},
+    "zhipu":     {"base_url": "https://open.bigmodel.cn/api/paas/v4", "env_vars": ["ZHIPU_API_KEY", "GLM_API_KEY"]},
+    "minimax":   {"base_url": "https://api.minimaxi.com/v1",   "env_vars": ["MINIMAX_API_KEY"]},
+    "aliyun":    {"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "env_vars": ["DASHSCOPE_API_KEY"]},
+    "moonshot":  {"base_url": "https://api.moonshot.cn/v1",    "env_vars": ["MOONSHOT_API_KEY", "KIMI_API_KEY"]},
+    "stepfun":   {"base_url": "https://api.stepfun.com/v1",    "env_vars": ["STEPFUN_API_KEY"]},
+    "siliconflow":{"base_url": "https://api.siliconflow.cn/v1", "env_vars": ["SILICONFLOW_API_KEY"]},
+    "xiaomi":    {"base_url": "https://api.xiaomimimo.com/v1",  "env_vars": ["XIAOMI_API_KEY"]},
 }
 
 # 我们的 provider ID → models.dev provider ID
 PROVIDER_TO_MODELS_DEV: dict[str, str] = {
-    "deepseek": "deepseek",
-    "zhipu": "zai",
     "openai": "openai",
-    "minimax": "minimax",
-    "aliyun": "alibaba",
-    "moonshot": "kimi-for-coding",
-    "kimi": "kimi-for-coding",
-    "stepfun": "stepfun",
-    "xiaomi": "xiaomi",
     "anthropic": "anthropic",
     "google": "google",
     "xai": "xai",
+    "openrouter": "openrouter",
+    "deepseek": "deepseek",
+    "zhipu": "zhipuai",
+    "minimax": "minimax",
+    "aliyun": "alibaba",
+    "moonshot": "moonshotai",
+    "stepfun": "stepfun",
+    "siliconflow": "siliconflow",
+    "xiaomi": "xiaomi",
 }
 
 
@@ -96,6 +99,8 @@ def _load_disk_cache() -> dict | None:
 def _save_disk_cache(data: dict) -> None:
     path = _cache_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    if isinstance(data, dict):
+        data["_cached_at"] = time.time()
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
 
@@ -103,20 +108,29 @@ def _save_disk_cache(data: dict) -> None:
 # ── 数据获取 ──
 
 def _fetch() -> dict:
-    """获取 models.dev 数据（内存 → 磁盘 → 网络）。"""
+    """获取 models.dev 数据（内存 → 磁盘 → 网络）。
+
+    磁盘缓存有 24 小时 TTL，超时后重新拉取保证模型列表不会过时。
+    """
     global _cache, _cache_time
 
-    # 1. 内存缓存
+    # 1. 内存缓存（1 小时内有效）
     if _cache is not None and (time.time() - _cache_time) < CACHE_TTL:
         return _cache
 
     # 2. 磁盘缓存
     disk = _load_disk_cache()
-    if disk:
-        _cache = disk
-        _cache_time = time.time()
-        logger.debug("models.dev: loaded from disk cache")
-        return _cache
+    if disk is not None:
+        # 检查磁盘缓存年龄
+        disk_time = disk.get("_cached_at", 0) if isinstance(disk, dict) else 0
+        now = time.time()
+        if disk_time and (now - disk_time) < DISK_CACHE_TTL:
+            _cache = disk
+            _cache_time = now
+            logger.debug("models.dev: loaded from disk cache (age: %.1fh)", (now - disk_time) / 3600)
+            return _cache
+        else:
+            logger.debug("models.dev: disk cache expired, re-fetching")
 
     # 3. 网络
     try:

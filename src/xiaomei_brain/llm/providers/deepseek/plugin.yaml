@@ -1,0 +1,5 @@
+name: deepseek
+version: "1.0.0"
+description: DeepSeek provider — V4 thinking mode support
+kind: provider
+entry: adapter:register

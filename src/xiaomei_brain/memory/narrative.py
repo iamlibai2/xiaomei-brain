@@ -32,7 +32,7 @@ import time
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from xiaomei_brain.base.llm import LLMClient
+    from xiaomei_brain.llm.client import LLMClient
 
 logger = logging.getLogger("xiaomei_brain.narrative")
 _P_LOG = "\033[91m[NARR]\033[0m"

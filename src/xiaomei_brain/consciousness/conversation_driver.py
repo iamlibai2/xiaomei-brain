@@ -359,7 +359,7 @@ class ConversationDriver:
 
             except Exception as e:
                 import traceback
-                from xiaomei_brain.base.llm import LLMError
+                from xiaomei_brain.llm.client import LLMError
                 import requests as _requests
                 is_retryable = (
                     (isinstance(e, LLMError) and e.retryable)

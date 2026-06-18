@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable
 
-from xiaomei_brain.base.llm import FatalLLMError
+from xiaomei_brain.llm.client import FatalLLMError
 
 logger = logging.getLogger(__name__)
 
