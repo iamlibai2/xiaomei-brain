@@ -201,6 +201,8 @@ class ConsciousLiving(Living):
             memory_extractor=self.agent.memory_extractor,
             agent_instance=self.agent,
         )
+        if hasattr(self, '_gateway_inbound'):
+            self._gateway_inbound.set_agent_commands(self.agent.commands)
 
         # Per-agent 输出目录隔离
         agent_base_dir = os.path.expanduser(f"~/.xiaomei-brain/{self._agent_id}")
@@ -440,6 +442,12 @@ class ConsciousLiving(Living):
         self._identity_mgr = IdentityManager(_contacts_dir)
         self.agent._get_agent().identity_mgr = self._identity_mgr
         logger.info("[ConsciousLiving] 身份管理器已初始化")
+
+        # ── Gateway 入站门 ──────────────────────────────────────────
+        from ..gateway import Gateway
+        self._gateway_inbound = Gateway(living=self, router=self._router, config=self._config)
+        self._gateway_inbound.set_identity_mgr(self._identity_mgr)
+        logger.info("[ConsciousLiving] Gateway 入站门已创建")
 
         # 统一加载所有子系统（先加载数据，确保 drive/purpose/self_image 已就绪）
         self._setup_all()
@@ -882,11 +890,9 @@ class ConsciousLiving(Living):
         # ── 各通道适配器 Post-load 初始化 ──────────────────
         for name in self._registry.list_channels():
             adapter = self._registry.get_channel(name)
-            if adapter and hasattr(adapter, "setup"):
-                try:
-                    adapter.setup(living=self)
-                except Exception as e:
-                    logger.error("[ConsciousLiving] %s adapter setup 失败: %s", name, e)
+            if adapter:
+                self._gateway_inbound.register_channel(name, adapter)
+        self._gateway_inbound.open_channels()
 
         # 更新 send_message 工具的上下文
         try:
@@ -1509,13 +1515,7 @@ class ConsciousLiving(Living):
             layer2.stop()
 
         # 关闭所有通道适配器
-        for name in self._registry.list_channels():
-            adapter = self._registry.get_channel(name)
-            if adapter and hasattr(adapter, "shutdown"):
-                try:
-                    adapter.shutdown()
-                except Exception as e:
-                    logger.warning("[ConsciousLiving] 关闭通道 %s 失败: %s", name, e)
+        self._gateway_inbound.close_channels()
 
         # 关闭 WS Gateway
         ws_server = getattr(self, '_ws_server', None)
