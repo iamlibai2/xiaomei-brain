@@ -267,7 +267,17 @@ def _run_agent(
                 print(f"[图片] {img_path}")
 
             living._command_done.clear()
-            living.put_message(msg, images=images, session_id=f"cli-{agent_id}")
+            gw = getattr(living, '_gateway_inbound', None)
+            if gw:
+                from xiaomei_brain.gateway.inbound import RawMessage
+                result = gw.accept(RawMessage(
+                    content=msg, source="human", channel="cli",
+                    images=images, session_id=f"cli-{agent_id}",
+                ))
+                if hasattr(result, 'reason'):
+                    print(f"\n[Gateway] 消息被拒绝: {result.reason}", flush=True)
+            else:
+                living.put_message(msg, images=images, session_id=f"cli-{agent_id}")
 
             if msg.startswith("/"):
                 living._command_done.wait(timeout=3)

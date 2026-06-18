@@ -108,8 +108,20 @@ class MethodRouter:
             return build_res(req_id, ok=False,
                              error=error_shape(ErrorCodes.GATEWAY_NOT_READY, "Gateway 未就绪"))
 
-        living.put_message(content, session_id=session_id, user_id=user_id)
-        return build_res(req_id, ok=True, payload={"accepted": True, "session_id": session_id})
+        gw = getattr(living, '_gateway_inbound', None)
+        if gw:
+            from .inbound import RawMessage, Accepted
+            result = gw.accept(RawMessage(
+                content=content, source="human", channel="ws",
+                peer_id=user_id, peer_type="human",
+                session_id=session_id,
+            ))
+            accepted = isinstance(result, Accepted)
+            return build_res(req_id, ok=accepted, payload={"accepted": accepted, "session_id": session_id})
+        else:
+            # Fallback: Gateway not yet initialized
+            living.put_message(content, session_id=session_id, user_id=user_id)
+            return build_res(req_id, ok=True, payload={"accepted": True, "session_id": session_id})
 
     def _handle_chat_abort(self, conn_id: str, req_id: str, params: dict) -> dict:
         try:

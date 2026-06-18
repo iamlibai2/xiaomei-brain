@@ -75,7 +75,16 @@ class FeishuAdapter(ChannelAdapter):
             logger.info("[Feishu/Step2] 注册 peer: feishu → session=%s output_target=%s", session_id, conversation_id)
             logger.info("[Feishu/Step3] put_message → Layer 1 队列 (session=%s)", session_id)
 
-            living.put_message(text, source="human", session_id=session_id)
+            gw = getattr(living, '_gateway_inbound', None)
+            if gw:
+                from xiaomei_brain.gateway.inbound import RawMessage
+                gw.accept(RawMessage(
+                    content=text, source="human", channel="feishu",
+                    peer_id=sender, peer_type="human",
+                    session_id=session_id,
+                ))
+            else:
+                living.put_message(text, source="human", session_id=session_id)
             if hasattr(living, "_debug_log"):
                 living._debug_log("feishu", f"{ts} ← {sender}: {text[:80]}")
             logger.info("[Feishu/Step4] 等待主循环处理 (session=%s)", session_id)

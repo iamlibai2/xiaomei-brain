@@ -130,8 +130,17 @@ class DingTalkAdapter(ChannelAdapter):
             ts = time.strftime("%H:%M:%S")
             logger.info("[DingTalk] <- %s: %s", sender, text[:80])
 
-            living.put_message(text, source="human", session_id=session_id,
-                              images=media_paths)
+            gw = getattr(living, '_gateway_inbound', None)
+            if gw:
+                from xiaomei_brain.gateway.inbound import RawMessage
+                gw.accept(RawMessage(
+                    content=text, source="human", channel="dingtalk",
+                    peer_id=sender, peer_type="human",
+                    images=media_paths, session_id=session_id,
+                ))
+            else:
+                living.put_message(text, source="human", session_id=session_id,
+                                  images=media_paths)
             if hasattr(living, "_debug_log"):
                 living._debug_log("dingtalk", f"{ts} <- {sender}: {text[:80]}")
 

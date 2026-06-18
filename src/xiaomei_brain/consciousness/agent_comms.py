@@ -61,11 +61,17 @@ class AgentComms:
                 "[AgentComms/Inbox] %s: 1 条未读消息 → %s 会话（兜底）",
                 msg.from_agent, session_id,
             )
-            living.put_message(
-                f"[来自 {msg.from_agent}] ({msg.type.value})\n{msg.content}",
-                source="agent",
-                session_id=session_id,
-            )
+            content = f"[来自 {msg.from_agent}] ({msg.type.value})\n{msg.content}"
+            gw = getattr(living, '_gateway_inbound', None)
+            if gw:
+                from xiaomei_brain.gateway.inbound import RawMessage
+                gw.accept(RawMessage(
+                    content=content, source="agent", channel="comms",
+                    peer_id=msg.from_agent, peer_type="agent",
+                    session_id=session_id,
+                ))
+            else:
+                living.put_message(content, source="agent", session_id=session_id)
             living._inbox.mark_processed(msg.msg_id)
 
     # ── HTTP callback ──────────────────────────────────────────────
@@ -88,10 +94,17 @@ class AgentComms:
                 priority=10,
             )
 
-        living.put_message(
-            f"[来自 {msg.from_agent}] ({msg.type.value})\n{msg.content}",
-            source="agent", session_id=session_id,
-        )
+        content = f"[来自 {msg.from_agent}] ({msg.type.value})\n{msg.content}"
+        gw = getattr(living, '_gateway_inbound', None)
+        if gw:
+            from xiaomei_brain.gateway.inbound import RawMessage
+            gw.accept(RawMessage(
+                content=content, source="agent", channel="comms",
+                peer_id=msg.from_agent, peer_type="agent",
+                session_id=session_id,
+            ))
+        else:
+            living.put_message(content, source="agent", session_id=session_id)
         living._inbox.mark_processed(msg.msg_id)
         ts = time.strftime("%H:%M:%S")
         living._debug_log("comms", f"{ts} ← {msg.from_agent}: {msg.content[:80]}")
