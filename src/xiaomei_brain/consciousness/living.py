@@ -263,25 +263,15 @@ class Living:
         source: str = "",
         images: list[str] | None = None,
         urgent: bool = False,
+        display_name: str | None = None,
     ) -> None:
-        """Enqueue a message with character-level sanitization.
+        """Enqueue a message.
 
-        放入消息（字符级过滤）。
+        Sanitization, throttle, and busy checks are handled by
+        Gateway.accept() which calls this method after preprocessing.
+
+        将消息放入队列。清洗、限流、busy 检查由 Gateway.accept() 处理。
         """
-        if isinstance(content, str):
-            content = self._clean_input(content)
-
-        # Rate-limit check.
-        # 限流检查。
-        #
-        # Human messages never dropped; agent/system messages dropped under throttle.
-        # human 消息永不丢弃；agent/系统消息在限流时丢弃。
-        if source != "human" and not urgent:
-            sig = getattr(self, '_interoception_signals', None)
-            if sig and getattr(sig, 'throttle', False):
-                logger.warning("[Living] 限流激活，丢弃非紧急消息(source=%s): %.50s", source, content)
-                return
-
         msg = LivingMessage(
             content=content,
             user_id=user_id or self.user_id,
@@ -289,6 +279,8 @@ class Living:
             source=source,
             images=images or [],
         )
+        if display_name:
+            msg.user_display_name = display_name
         self._queue.put_nowait(msg)
 
     @staticmethod
