@@ -1,11 +1,12 @@
 """MessageGateway -- message entry preprocessing layer.
 
-Before the message enters ConversationDriver, performs:
-- Empty message / re-entry filtering
+After Gateway.accept() has already handled sanitization, empty-filtering,
+busy-guard, identity resolution, and data commands (/db /memory /dag), this
+layer handles:
+
 - Inter-agent communication routing
-- Identity resolution (IdentityManager)
 - Session switching (AttentionLayer)
-- Command detection and dispatch (/intent, /fuel, /db, etc.)
+- Intent command dispatch (/intask, /inchat)
 - Meta-skill pattern matching
 - Drive activation
 
@@ -13,12 +14,12 @@ Finally delegates to ConversationDriver.handle_message().
 
 MessageGateway -- 消息入口预处理层。
 
-在消息进入 ConversationDriver 之前，完成：
-- 空消息 / 重入过滤
+Gateway.accept() 已处理清洗、空消息过滤、busy 检查、身份解析、数据命令后，
+此层处理：
+
 - Agent 间通讯路由
-- 身份解析（IdentityManager）
 - 会话切换（AttentionLayer）
-- 命令检测与分发（/intent, /fuel, /db 等）
+- 意图命令分发（/intask, /inchat）
 - 元技能模式匹配
 - Drive 激活
 
@@ -41,30 +42,26 @@ logger = logging.getLogger(__name__)
 
 
 class MessageGateway:
-    """Message entry: command detection, identity resolution, session switching,
+    """Message entry: comms routing, intent commands, meta-skill matching,
     then delegate to ConversationDriver.
 
-    消息入口：命令检测、身份解析、会话切换，然后委托 ConversationDriver。
+    消息入口：comms 路由、意图命令、元技能匹配，然后委托 ConversationDriver。
     """
 
     def handle(self, msg: LivingMessage, living: ConsciousLiving) -> None:
-        # 1. Ignore empty messages.
-        # 1. 忽略空消息。
-        if not msg.content or not msg.content.strip():
-            logger.debug("[MessageGateway] 忽略空消息")
-            return
+        """Preprocess message: comms routing, session switch, intent commands,
+        meta-skill matching. Then delegate to ConversationDriver.
 
-        # 2. Re-entry guard.
-        # 2. 防重入。
-        if living._chatting:
-            living._debug_log("living", f"{time.strftime('%H:%M:%S')} 消息 (忽略，chatting): {msg.content[:30]}")
-            logger.info("[MessageGateway] 聊天进行中，忽略新消息: %s", msg.content[:30])
-            return
+        Sanitization, empty check, busy check, and identity resolution are
+        now handled by Gateway.accept() before the message reaches this point.
 
+        预处理消息：comms 路由、会话切换、意图命令、元技能匹配，
+        然后委托 ConversationDriver。
+        """
         logger.debug("[MessageGateway] 收到消息: %s [session=%s]", msg.content[:50], msg.session_id)
 
-        # 3. Inter-agent communication.
-        # 3. Agent 间通讯。
+        # 1. Inter-agent communication.
+        # 1. Agent 间通讯。
         if msg.session_id.startswith("comms-"):
             living._debug_log("living",
                 f"{time.strftime('%H:%M:%S')} 收到 agent 消息 [{msg.session_id}]: {msg.content[:60]}"
@@ -72,86 +69,63 @@ class MessageGateway:
             living._handle_comms_message(msg)
             return
 
-        # 4. Identity resolution.
-        # 4. 身份解析。
-        self._resolve_identity(msg, living)
-
-        # 5. Sync user identity to the underlying agent core for memory scoping.
-        # 5. 同步用户身份到底层 agent core，用于记忆隔离。
+        # 2. Sync user identity to the underlying agent core for memory scoping.
+        # 2. 同步用户身份到底层 agent core，用于记忆隔离。
         agent_core = living.agent._get_agent()
         agent_core.user_id = msg.user_id
         agent_core.user_display_name = getattr(msg, 'user_display_name', '这位用户')
 
-        # 6. Session switch.
-        # 6. 会话切换。
-        # Update current session ID for output routing.
-        # 更新当前会话 ID（用于输出路由）。
+        # 3. Session switch.
+        # 3. 会话切换。
         living.session_id = msg.session_id
         if hasattr(living, '_attention') and living._attention:
             living._attention.switch_to(msg.session_id)
 
-        # 7. Reset cancel flag.
-        # 7. 重置取消标志。
+        # 4. Reset cancel flag.
+        # 4. 重置取消标志。
         living._cancel_requested = False
 
-        # 8. Command detection.
-        # 8. 命令检测。
-        if self._try_handle_command(msg, living):
+        # 5. Intent commands (/intask, /inchat, test commands).
+        # 5. 意图命令（/intask, /inchat, 测试命令）。
+        if self._try_handle_intent_commands(msg, living):
             return
 
-        # 9. Meta-skill pattern matching.
-        # 9. 元技能模式匹配。
+        # 6. Meta-skill pattern matching.
+        # 6. 元技能模式匹配。
         if self._try_meta_skill(msg, living):
             return
 
-        # 10. Drive activation.
-        # 10. Drive 激活。
+        # 7. Drive activation.
+        # 7. Drive 激活。
         if living.drive:
             living.drive.on_user_active()
 
-        # 11. Delegate to ConversationDriver with full consciousness state.
-        # 11. 委托 ConversationDriver，传入完整 consciousness state。
+        # 8. Delegate to ConversationDriver with full consciousness state.
+        # 8. 委托 ConversationDriver，传入完整 consciousness state。
         living.conversation_driver.handle_message(msg, living._get_consciousness_state())
         living._print_prompt()
 
-        # 12. Round alarms.
-        # 12. 轮次闹钟。
+        # 9. Round alarms.
+        # 9. 轮次闹钟。
         if living.cron_scheduler:
             living._check_round_alarms()
 
     #---------------------------------------------------------------------------
-    #   Identity
-    #   身份解析
+    #   Intent Commands
+    #   意图命令
     #---------------------------------------------------------------------------
 
     @staticmethod
-    def _resolve_identity(msg: LivingMessage, living: ConsciousLiving) -> None:
-        # Resolve user identity via IdentityManager and set display name on msg.
-        # 通过 IdentityManager 解析用户身份，设置 msg 上的 display name。
-        identity_mgr = getattr(living, '_identity_mgr', None)
-        if identity_mgr:
-            identity = identity_mgr.resolve(msg.user_id) if msg.user_id else None
-            if identity:
-                msg.user_display_name = identity_mgr.get_display_name(msg.user_id)
-                logger.debug("[MessageGateway] 身份已确认: id=%s", msg.user_id)
-            else:
-                msg.user_display_name = getattr(msg, 'user_display_name', None) or "这位用户"
-                logger.debug("[MessageGateway] 身份未确认: sender=%s", msg.session_id)
-        else:
-            msg.user_display_name = "这位用户"
+    def _try_handle_intent_commands(msg: LivingMessage, living: ConsciousLiving) -> bool:
+        """Detect and handle intent commands (/intask, /inchat, test commands).
 
-    #---------------------------------------------------------------------------
-    #   Commands
-    #   命令处理
-    #---------------------------------------------------------------------------
-
-    @staticmethod
-    def _try_handle_command(msg: LivingMessage, living: ConsciousLiving) -> bool:
-        """Detect and handle commands.
+        Data commands (/db, /memory, /dag) are handled upstream by
+        Gateway.accept().
 
         Returns True if handled (caller should return).
 
-        检测并处理命令。返回 True 表示已处理（调用方应 return）。
+        检测并处理意图命令。数据命令上游由 Gateway.accept() 处理。
+        返回 True 表示已处理（调用方应 return）。
         """
         raw = msg.content.strip()
         if raw.startswith("/"):
@@ -183,21 +157,6 @@ class MessageGateway:
             handler(cmd_args)
             living._command_done.set()
             return True
-
-        # Agent commands (/db, /memory, /dag).
-        # Agent 命令（/db, /memory, /dag）。
-        if living.agent.commands:
-            result = living.agent.commands.execute(
-                raw,
-                user_id=msg.user_id,
-                session_id=msg.session_id,
-            )
-            if result:
-                logger.info("[MessageGateway] Agent 命令: %s", raw)
-                print(f"\n{result.output}", flush=True)
-                living._print_prompt()
-                living._command_done.set()
-                return True
 
         return False
 
