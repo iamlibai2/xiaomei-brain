@@ -839,3 +839,143 @@ def _numbered_fallback(
         print()
 
     return chosen
+
+
+# ── curses 文本输入（替代 input()/getpass，保持在 curses 内）─────
+
+def curses_input(
+    title: str,
+    *,
+    password: bool = False,
+    description: str | None = None,
+    default: str = "",
+    cancel_returns: str | None = None,
+) -> str | None:
+    """Curses 文本输入框 — 保持在 curses UI 内。
+
+    Args:
+        title: 输入提示（黄色 bold）
+        password: True 时显示 ``*`` 遮蔽
+        description: 可选多行说明文字
+        default: 默认值（直接 Enter 返回）
+        cancel_returns: ESC 时返回此值（None = 返回 default）
+
+    Returns:
+        输入的文本，ESC 返回 cancel_returns，非 TTY 返回 default
+    """
+    if not sys.stdin.isatty():
+        return default
+
+    desc_lines: list[str] = []
+    if description:
+        desc_lines = description.splitlines()
+
+    result_holder: list[str | None] = [cancel_returns]
+
+    try:
+        import curses
+
+        def _run(stdscr):
+            curses.curs_set(1)  # 显示光标
+            if curses.has_colors():
+                curses.start_color()
+                curses.use_default_colors()
+                curses.init_pair(1, curses.COLOR_GREEN, -1)
+                curses.init_pair(2, curses.COLOR_YELLOW, -1)
+
+            value = list(default)
+            cursor_pos = len(value)
+
+            while True:
+                stdscr.clear()
+                max_y, max_x = stdscr.getmaxyx()
+
+                # 标题行
+                row = 0
+                try:
+                    hattr = curses.A_BOLD
+                    if curses.has_colors():
+                        hattr |= curses.color_pair(2)
+                    stdscr.addnstr(row, 0, title, max_x - 1, hattr)
+                    row += 1
+
+                    # 描述行
+                    for dline in desc_lines:
+                        if row >= max_y - 2:
+                            break
+                        stdscr.addnstr(row, 0, dline, max_x - 1, curses.A_NORMAL)
+                        row += 1
+
+                    row += 1  # 空行
+
+                    # 输入行
+                    if row >= max_y:
+                        row = max_y - 1
+
+                    if value:
+                        if password:
+                            display = "*" * len(value)
+                        else:
+                            display = "".join(value)
+                    else:
+                        display = ""
+
+                    prompt_line = f"  > {display}"
+                    try:
+                        stdscr.addnstr(row, 0, prompt_line, max_x - 1, curses.A_NORMAL)
+                    except curses.error:
+                        pass
+
+                    stdscr.move(row, 4 + cursor_pos)  # 4 = len("  > ")
+
+                except curses.error:
+                    pass
+
+                # 底部提示行
+                try:
+                    hint = "  ENTER confirm  ESC cancel  Ctrl+U clear"
+                    stdscr.addnstr(max_y - 1, 0, hint, max_x - 1, curses.A_DIM)
+                except curses.error:
+                    pass
+
+                stdscr.refresh()
+
+                key = stdscr.getch()
+
+                if key in (curses.KEY_ENTER, 10, 13):
+                    result_holder[0] = "".join(value)
+                    return
+
+                elif key == 27:  # ESC
+                    result_holder[0] = cancel_returns
+                    return
+
+                elif key in (curses.KEY_BACKSPACE, 127, 8):
+                    if cursor_pos > 0:
+                        cursor_pos -= 1
+                        value.pop(cursor_pos)
+
+                elif key == curses.KEY_LEFT:
+                    if cursor_pos > 0:
+                        cursor_pos -= 1
+
+                elif key == curses.KEY_RIGHT:
+                    if cursor_pos < len(value):
+                        cursor_pos += 1
+
+                elif key == 21:  # Ctrl+U
+                    value.clear()
+                    cursor_pos = 0
+
+                elif 32 <= key < 127:  # printable ASCII
+                    value.insert(cursor_pos, chr(key))
+                    cursor_pos += 1
+
+        curses.wrapper(_run)
+        flush_stdin()
+        return result_holder[0]
+
+    except KeyboardInterrupt:
+        return cancel_returns
+    except Exception:
+        return default
