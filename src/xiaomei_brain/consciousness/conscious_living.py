@@ -443,12 +443,6 @@ class ConsciousLiving(Living):
         self.agent._get_agent().identity_mgr = self._identity_mgr
         logger.info("[ConsciousLiving] 身份管理器已初始化")
 
-        # ── Gateway 入站门 ──────────────────────────────────────────
-        from ..gateway import Gateway
-        self._gateway_inbound = Gateway(living=self, router=self._router, config=self._config)
-        self._gateway_inbound.set_identity_mgr(self._identity_mgr)
-        logger.info("[ConsciousLiving] Gateway 入站门已创建")
-
         # 统一加载所有子系统（先加载数据，确保 drive/purpose/self_image 已就绪）
         self._setup_all()
 
@@ -500,6 +494,14 @@ class ConsciousLiving(Living):
             session_id="main", output_type="cli", output_target="stdout",
         )
         logger.info("[ConsciousLiving] Router 已创建 (%d 个频道)", len(self._registry.list_channels()))
+
+        # ── Gateway 入站门 ──────────────────────────────────────────
+        from ..gateway import Gateway
+        self._gateway_inbound = Gateway(living=self, router=self._router, config=self._config)
+        self._gateway_inbound.set_identity_mgr(self._identity_mgr)
+        if self.agent.commands:
+            self._gateway_inbound.set_agent_commands(self.agent.commands)
+        logger.info("[ConsciousLiving] Gateway 入站门已创建")
 
         # 注入 DAG + 配置 + 回调到 Agent（替代原 _inject_context_assembler）
         self._inject_dag_to_agent()

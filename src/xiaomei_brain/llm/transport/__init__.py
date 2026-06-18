@@ -24,4 +24,5 @@ def get_transport(api_mode: str) -> Transport:
 from .chat_completions import ChatCompletionsTransport  # noqa: E402
 from .anthropic_messages import AnthropicMessagesTransport  # noqa: E402
 register_transport("chat-completions", ChatCompletionsTransport)
+register_transport("openai-completions", ChatCompletionsTransport)  # 别名：同 OpenAI 格式
 register_transport("anthropic-messages", AnthropicMessagesTransport)
