@@ -356,7 +356,7 @@ class Agent:
                         tool_msg_id = self.conversation_db.log(
                             session_id=self.session_id,
                             role="tool",
-                            content=result,
+                            content=str(result),
                             user_id=self.user_id,
                             tool_name=tc.name,
                             tool_call_id=tc.id,

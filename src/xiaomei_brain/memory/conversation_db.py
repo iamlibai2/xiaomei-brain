@@ -162,6 +162,9 @@ class ConversationDB(SQLiteStore):
         metadata: dict[str, Any] | None = None,
     ) -> int:
         """Write one message. Returns the row id."""
+        # Normalize non-string content (e.g. dict tool results)
+        if not isinstance(content, str):
+            content = str(content)
         # Remove lone surrogates (e.g. from malformed emoji bytes)
         try:
             content = content.encode("utf-8", "surrogatepass").decode("utf-8", "replace")
