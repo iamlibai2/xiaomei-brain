@@ -44,7 +44,7 @@ def send_message(to: str, content: str, type: str = "chat") -> str:
     if not _agent_id:
         return "[错误] send_message 工具未初始化（缺少 agent_id）"
 
-    from xiaomei_brain.channels.p2p.protocol import AgentMessage, MsgType
+    from xiaomei_brain.plugins.channels.p2p.protocol import AgentMessage, MsgType
 
     try:
         msg_type = MsgType(type)
@@ -58,7 +58,7 @@ def send_message(to: str, content: str, type: str = "chat") -> str:
         content=content,
     )
 
-    from xiaomei_brain.channels.p2p.client import send_message as _send
+    from xiaomei_brain.plugins.channels.p2p.client import send_message as _send
 
     # 自动注册目标 agent 到 Router（后续回复会路由到 comms-{to} 会话）
     if _router is not None:
