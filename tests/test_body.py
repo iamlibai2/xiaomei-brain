@@ -103,3 +103,119 @@ class TestSenseABC:
         from xiaomei_brain.body.sense import Ears
         e = Ears()
         assert e.listen() is None
+
+
+class TestMockDevices:
+    """Mock 设备测试。"""
+
+    def test_mock_camera_open_close(self):
+        from xiaomei_brain.body.device.mock import MockCamera
+        c = MockCamera()
+        assert c.is_operational() is False
+        assert c.open() is True
+        assert c.is_operational() is True
+        c.close()
+        assert c.is_operational() is False
+
+    def test_mock_camera_capture(self):
+        from xiaomei_brain.body.device.mock import MockCamera
+        c = MockCamera()
+        c.open()
+        assert c.capture() == b"mock_frame_data"
+
+    def test_mock_camera_set_faces(self):
+        from xiaomei_brain.body.device.mock import MockCamera
+        c = MockCamera()
+        c.set_faces(["face_a", "face_b"])
+        assert c._face_ids == ["face_a", "face_b"]
+
+    def test_mock_microphone_open_close(self):
+        from xiaomei_brain.body.device.mock import MockMicrophone
+        m = MockMicrophone()
+        assert m.is_operational() is False
+        assert m.open() is True
+        assert m.is_operational() is True
+
+    def test_mock_microphone_capture(self):
+        from xiaomei_brain.body.device.mock import MockMicrophone
+        m = MockMicrophone()
+        m.open()
+        assert m.capture() == b"mock_audio_data"
+
+    def test_mock_speaker_record_text(self):
+        from xiaomei_brain.body.device.mock import MockSpeaker
+        s = MockSpeaker()
+        s.open()
+        s.speak("hello")
+        s.play("/path/to/song.mp3")
+        assert s.last_spoken == "hello"
+        assert s.last_played == "/path/to/song.mp3"
+
+
+class TestMockSenses:
+    """Mock 感官测试。"""
+
+    def test_mock_eyes_see(self):
+        from xiaomei_brain.body import Body
+        from xiaomei_brain.body.device.mock import MockCamera, MockEyes
+
+        body = Body()
+        body.register_sense(MockEyes(), MockCamera())
+        body.open()
+        result = body.eyes.see("描述这个画面")
+        assert "mock vision" in result
+        assert "安静的室内场景" in result
+
+    def test_mock_eyes_recognize_faces(self):
+        from xiaomei_brain.body import Body
+        from xiaomei_brain.body.device.mock import MockCamera, MockEyes
+
+        body = Body()
+        camera = MockCamera()
+        camera.set_faces(["face_doc", "face_li"])
+        body.register_sense(MockEyes(), camera)
+        body.open()
+
+        result = body.eyes.recognize_faces()
+        assert len(result) == 2
+        assert result[0]["face_id"] == "face_doc"
+
+    def test_mock_ears_listen(self):
+        from xiaomei_brain.body import Body
+        from xiaomei_brain.body.device.mock import MockMicrophone, MockEars
+
+        body = Body()
+        mic = MockMicrophone()
+        mic.set_speech("你好我是博士")
+        mic.set_tone("happy")
+        body.register_sense(MockEars(), mic)
+        body.open()
+
+        result = body.ears.listen("分析情绪")
+        assert "mock audio" in result
+        assert "博士" in result
+        assert "happy" in result
+
+    def test_mock_ears_recognize_voice(self):
+        from xiaomei_brain.body import Body
+        from xiaomei_brain.body.device.mock import MockMicrophone, MockEars
+
+        body = Body()
+        body.register_sense(MockEars(), MockMicrophone())
+        body.open()
+
+        assert body.ears.recognize_voice() == "voice_mock_001"
+
+    def test_mock_throat_speak_and_play(self):
+        from xiaomei_brain.body import Body
+        from xiaomei_brain.body.device.mock import MockSpeaker, MockThroat
+
+        body = Body()
+        speaker = MockSpeaker()
+        body.register_sense(MockThroat(), speaker)
+        body.open()
+
+        body.throat.speak("hello")
+        body.throat.play("/music/song.mp3")
+        assert speaker.last_spoken == "hello"
+        assert speaker.last_played == "/music/song.mp3"
