@@ -503,6 +503,25 @@ class ConsciousLiving(Living):
             self._gateway_inbound.set_agent_commands(self.agent.commands)
         logger.info("[ConsciousLiving] Gateway 入站门已创建")
 
+        # ── Body 身体感官层（Phase 1: Mock 设备）─────────────────
+        from ..body import Body
+        from ..body.device.mock import MockCamera, MockMicrophone, MockSpeaker
+        from ..body.device.mock import MockEyes, MockEars, MockThroat
+
+        self.body = Body()
+        self.body.register_sense(MockEyes(), MockCamera())
+        self.body.register_sense(MockEars(), MockMicrophone())
+        self.body.register_sense(MockThroat(), MockSpeaker())
+
+        # 注册 Body 工具到 Agent（look_around / listen_to_environment / play_music）
+        from ..body.tools import create_body_tools
+        body_ref = [self.body]
+        identity_mgr_ref = [self._identity_mgr]
+        for body_tool in create_body_tools(body_ref=body_ref, identity_mgr_ref=identity_mgr_ref):
+            self.agent.tools.register(body_tool)
+
+        logger.info("[ConsciousLiving] Body 身体感官层已创建（Mock 模式），工具已注册")
+
         # 注入 DAG + 配置 + 回调到 Agent（替代原 _inject_context_assembler）
         self._inject_dag_to_agent()
 
@@ -925,6 +944,7 @@ class ConsciousLiving(Living):
                 name="ws-gateway",
             )
             self._ws_thread.start()
+            self._gateway_inbound.set_ws_server(self._ws_server, self._ws_thread)
             logger.info("[ConsciousLiving] WS Gateway 已启动: ws://%s:%d/ws", host, ws_port)
 
         # ── Admin 管理门（独立端口，强制认证）────────────────────
@@ -1340,6 +1360,12 @@ class ConsciousLiving(Living):
         # fresh_tail 延迟到登录后加载（此时才知道 user_id）
         logger.info("[ConsciousLiving] Good morning! 火焰点燃。")
 
+        # 唤醒身体感官
+        body = getattr(self, 'body', None)
+        if body:
+            body.open()
+            logger.info("[ConsciousLiving] Body 感官已上线")
+
     def load_fresh_tail(self) -> None:
         """加载 fresh tail：让 agent "带着最近的记忆醒来"。
 
@@ -1519,14 +1545,11 @@ class ConsciousLiving(Living):
         # 关闭所有通道适配器
         self._gateway_inbound.close_channels()
 
-        # 关闭 WS Gateway
-        ws_server = getattr(self, '_ws_server', None)
-        if ws_server is not None:
-            try:
-                ws_server.should_exit = True
-                logger.info("[ConsciousLiving] WS Gateway 已请求关闭")
-            except Exception as e:
-                logger.warning("[ConsciousLiving] 关闭 WS Gateway 失败: %s", e)
+        # 关闭身体感官
+        body = getattr(self, 'body', None)
+        if body:
+            body.close()
+            logger.info("[ConsciousLiving] Body 感官已下线")
 
         if self.drive:
             self.drive.save()
