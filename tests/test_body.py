@@ -332,3 +332,42 @@ class TestBodyTools:
 
         assert "mock audio" in result["audio"]
         assert result["speaker"]["voice_id"] == "voice_mock_001"
+
+
+class TestRealSpeaker:
+    """真实扬声器测试 — 使用 ffplay 播放音频。"""
+
+    def test_real_speaker_is_device(self):
+        from xiaomei_brain.body.device.real import RealSpeaker
+        from xiaomei_brain.body.device import Speaker
+        assert issubclass(RealSpeaker, Speaker)
+
+    def test_real_speaker_lifecycle(self):
+        from xiaomei_brain.body.device.real import RealSpeaker
+        s = RealSpeaker()
+        assert s.is_operational() is False
+        assert s.open() is True
+        assert s.is_operational() is True
+        s.close()
+        assert s.is_operational() is False
+
+    def test_real_speaker_play_records(self):
+        from xiaomei_brain.body.device.real import RealSpeaker
+        s = RealSpeaker()
+        s.open()
+        s.play("/tmp/test.mp3")
+        assert s.last_played == "/tmp/test.mp3"
+
+    def test_throat_with_real_speaker(self):
+        """Throat + RealSpeaker 组合：play 委托到 RealSpeaker。"""
+        from xiaomei_brain.body import Body
+        from xiaomei_brain.body.sense import Throat
+        from xiaomei_brain.body.device.real import RealSpeaker
+
+        body = Body()
+        speaker = RealSpeaker()
+        body.register_sense(Throat(), speaker)
+        body.open()
+
+        body.throat.play("/music/song.mp3")
+        assert speaker.last_played == "/music/song.mp3"

@@ -118,8 +118,14 @@ class Throat(Sense):
         """TTS 朗读。"""
         if not self.is_available():
             return
+        device = self.device
+        if device and hasattr(device, "speak"):
+            device.speak(text)
 
     def play(self, audio_path: str) -> None:
         """播放音频文件。"""
         if not self.is_available():
             return
+        device = self.device
+        if device and hasattr(device, "play"):
+            device.play(audio_path)
