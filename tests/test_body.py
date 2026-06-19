@@ -219,3 +219,104 @@ class TestMockSenses:
         body.throat.play("/music/song.mp3")
         assert speaker.last_spoken == "hello"
         assert speaker.last_played == "/music/song.mp3"
+
+
+class TestBodyTools:
+    """Body 工具测试。"""
+
+    def test_look_around_with_mock(self):
+        from xiaomei_brain.body import Body
+        from xiaomei_brain.body.device.mock import MockCamera, MockEyes
+        from xiaomei_brain.body.tools import create_body_tools
+
+        body = Body()
+        camera = MockCamera()
+        camera.set_faces(["face_doc"])
+        body.register_sense(MockEyes(), camera)
+        body.open()
+
+        tools = create_body_tools(body=body)
+        look_around = [t for t in tools if t.name == "look_around"][0]
+
+        result = look_around.func("描述现场")
+        assert len(result["faces"]) == 1
+        assert result["faces"][0]["face_id"] == "face_doc"
+        assert "mock vision" in result["scene"]
+
+    def test_look_around_with_identity_resolution(self):
+        from xiaomei_brain.body import Body
+        from xiaomei_brain.body.device.mock import MockCamera, MockEyes
+        from xiaomei_brain.body.tools import create_body_tools
+        from xiaomei_brain.contacts.manager import IdentityManager
+        import tempfile, os
+
+        tmpdir = tempfile.mkdtemp()
+        yaml_file = os.path.join(tmpdir, "identities.yaml")
+        with open(yaml_file, "w") as f:
+            f.write("""people:
+  - id: boshi
+    name: 博士
+    relation: 恋人
+    alias_ids:
+      - face_doc
+""")
+        mgr = IdentityManager(tmpdir)
+
+        body = Body()
+        camera = MockCamera()
+        camera.set_faces(["face_doc", "face_stranger"])
+        body.register_sense(MockEyes(), camera)
+        body.open()
+
+        tools = create_body_tools(body=body, identity_mgr_ref=[mgr])
+        look_around = [t for t in tools if t.name == "look_around"][0]
+
+        result = look_around.func()
+        assert result["faces"][0]["name"] == "博士"
+        assert result["faces"][0]["relation"] == "恋人"
+        assert result["faces"][1]["name"] == "陌生人"
+
+    def test_look_around_unavailable(self):
+        from xiaomei_brain.body.tools import create_body_tools
+
+        tools = create_body_tools()
+        look_around = [t for t in tools if t.name == "look_around"][0]
+
+        result = look_around.func()
+        assert "error" in result
+
+    def test_play_music_with_mock(self):
+        from xiaomei_brain.body import Body
+        from xiaomei_brain.body.device.mock import MockSpeaker, MockThroat
+        from xiaomei_brain.body.tools import create_body_tools
+
+        body = Body()
+        speaker = MockSpeaker()
+        body.register_sense(MockThroat(), speaker)
+        body.open()
+
+        tools = create_body_tools(body=body)
+        play = [t for t in tools if t.name == "play_music"][0]
+
+        result = play.func("/music/chengdu.mp3")
+        assert result["played"] == "/music/chengdu.mp3"
+        assert speaker.last_played == "/music/chengdu.mp3"
+
+    def test_listen_to_environment_with_mock(self):
+        from xiaomei_brain.body import Body
+        from xiaomei_brain.body.device.mock import MockMicrophone, MockEars
+        from xiaomei_brain.body.tools import create_body_tools
+
+        body = Body()
+        mic = MockMicrophone()
+        mic.set_speech("唱得真好")
+        mic.set_tone("excited")
+        body.register_sense(MockEars(), mic)
+        body.open()
+
+        tools = create_body_tools(body=body)
+        listen = [t for t in tools if t.name == "listen_to_environment"][0]
+
+        result = listen.func("分析情绪")
+        assert "mock audio" in result["audio"]
+        assert result["speaker"]["voice_id"] == "voice_mock_001"
