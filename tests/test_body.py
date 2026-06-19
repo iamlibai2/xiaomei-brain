@@ -222,12 +222,26 @@ class TestMockSenses:
 
 
 class TestBodyTools:
-    """Body 工具测试。"""
+    """Body 工具测试 — 使用延迟绑定 _refs 模式。"""
+
+    @staticmethod
+    def _inject_refs(body, identity_mgr=None):
+        """注入 body_ref 和 identity_mgr_ref，供工具函数延迟绑定使用。"""
+        from xiaomei_brain.plugins.body import _refs
+        _refs.body_ref[0] = body
+        _refs.identity_mgr_ref[0] = identity_mgr
+
+    @staticmethod
+    def _clear_refs():
+        """清理 _refs 避免测试间污染。"""
+        from xiaomei_brain.plugins.body import _refs
+        _refs.body_ref[0] = None
+        _refs.identity_mgr_ref[0] = None
 
     def test_look_around_with_mock(self):
         from xiaomei_brain.body import Body
         from xiaomei_brain.body.device.mock import MockCamera, MockEyes
-        from xiaomei_brain.body.tools import create_body_tools
+        from xiaomei_brain.body.tools import look_around
 
         body = Body()
         camera = MockCamera()
@@ -235,10 +249,10 @@ class TestBodyTools:
         body.register_sense(MockEyes(), camera)
         body.open()
 
-        tools = create_body_tools(body=body)
-        look_around = [t for t in tools if t.name == "look_around"][0]
+        self._inject_refs(body)
+        result = look_around("描述现场")
+        self._clear_refs()
 
-        result = look_around.func("描述现场")
         assert len(result["faces"]) == 1
         assert result["faces"][0]["face_id"] == "face_doc"
         assert "mock vision" in result["scene"]
@@ -246,7 +260,7 @@ class TestBodyTools:
     def test_look_around_with_identity_resolution(self):
         from xiaomei_brain.body import Body
         from xiaomei_brain.body.device.mock import MockCamera, MockEyes
-        from xiaomei_brain.body.tools import create_body_tools
+        from xiaomei_brain.body.tools import look_around
         from xiaomei_brain.contacts.manager import IdentityManager
         import tempfile, os
 
@@ -268,44 +282,42 @@ class TestBodyTools:
         body.register_sense(MockEyes(), camera)
         body.open()
 
-        tools = create_body_tools(body=body, identity_mgr_ref=[mgr])
-        look_around = [t for t in tools if t.name == "look_around"][0]
+        self._inject_refs(body, mgr)
+        result = look_around()
+        self._clear_refs()
 
-        result = look_around.func()
         assert result["faces"][0]["name"] == "博士"
         assert result["faces"][0]["relation"] == "恋人"
         assert result["faces"][1]["name"] == "陌生人"
 
     def test_look_around_unavailable(self):
-        from xiaomei_brain.body.tools import create_body_tools
+        from xiaomei_brain.body.tools import look_around
 
-        tools = create_body_tools()
-        look_around = [t for t in tools if t.name == "look_around"][0]
-
-        result = look_around.func()
+        self._clear_refs()
+        result = look_around()
         assert "error" in result
 
     def test_play_music_with_mock(self):
         from xiaomei_brain.body import Body
         from xiaomei_brain.body.device.mock import MockSpeaker, MockThroat
-        from xiaomei_brain.body.tools import create_body_tools
+        from xiaomei_brain.body.tools import play_music
 
         body = Body()
         speaker = MockSpeaker()
         body.register_sense(MockThroat(), speaker)
         body.open()
 
-        tools = create_body_tools(body=body)
-        play = [t for t in tools if t.name == "play_music"][0]
+        self._inject_refs(body)
+        result = play_music("/music/chengdu.mp3")
+        self._clear_refs()
 
-        result = play.func("/music/chengdu.mp3")
         assert result["played"] == "/music/chengdu.mp3"
         assert speaker.last_played == "/music/chengdu.mp3"
 
     def test_listen_to_environment_with_mock(self):
         from xiaomei_brain.body import Body
         from xiaomei_brain.body.device.mock import MockMicrophone, MockEars
-        from xiaomei_brain.body.tools import create_body_tools
+        from xiaomei_brain.body.tools import listen_to_environment
 
         body = Body()
         mic = MockMicrophone()
@@ -314,9 +326,9 @@ class TestBodyTools:
         body.register_sense(MockEars(), mic)
         body.open()
 
-        tools = create_body_tools(body=body)
-        listen = [t for t in tools if t.name == "listen_to_environment"][0]
+        self._inject_refs(body)
+        result = listen_to_environment("分析情绪")
+        self._clear_refs()
 
-        result = listen.func("分析情绪")
         assert "mock audio" in result["audio"]
         assert result["speaker"]["voice_id"] == "voice_mock_001"
