@@ -50,3 +50,27 @@ class RealSpeaker(Speaker):
             logger.warning("[RealSpeaker] ffplay 不可用，无法播放: %s", audio_path)
         except Exception:
             logger.exception("[RealSpeaker] 播放失败: %s", audio_path)
+
+    def speak(self, text: str) -> None:
+        """TTS 生成音频并播放。文字 → MiniMax TTS → ffplay。
+
+        上限 500 字符。TTS 未配置时静默跳过。
+        """
+        from xiaomei_brain.tools.builtin.tts import _tts_provider
+        import tempfile, os
+
+        text = text[:500]
+        if not text.strip():
+            return
+
+        if _tts_provider is None:
+            logger.warning("[RealSpeaker] TTS 未配置，speak() 跳过")
+            return
+
+        path = os.path.join(tempfile.mkdtemp(), "speak.mp3")
+        try:
+            _tts_provider.speak_to_file(text, path)
+            logger.info("[RealSpeaker] TTS 生成完毕: %s", path)
+            self.play(path)
+        except Exception:
+            logger.exception("[RealSpeaker] TTS 失败")

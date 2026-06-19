@@ -371,3 +371,10 @@ class TestRealSpeaker:
 
         body.throat.play("/music/song.mp3")
         assert speaker.last_played == "/music/song.mp3"
+
+    def test_speak_skips_when_no_tts(self):
+        """TTS 未配置时 speak() 不崩溃，静默跳过。"""
+        from xiaomei_brain.plugins.body.throat.real_speaker import RealSpeaker
+        s = RealSpeaker()
+        s.open()
+        s.speak("你好")  # 不应崩溃
