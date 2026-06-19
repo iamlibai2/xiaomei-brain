@@ -61,6 +61,8 @@ class Gateway:
         self._identity_mgr = None
         self._agent_commands = None
         self._channels: dict[str, Any] = {}
+        self._ws_server = None
+        self._ws_thread = None
 
     # ── Dependencies (set after init) ──────────────────────
 
@@ -69,6 +71,11 @@ class Gateway:
 
     def set_agent_commands(self, commands) -> None:
         self._agent_commands = commands
+
+    def set_ws_server(self, server, thread) -> None:
+        """注册 WS Gateway，由 Gateway 统一管理生命周期。"""
+        self._ws_server = server
+        self._ws_thread = thread
 
     # ── Channel lifecycle ──────────────────────────────────
 
@@ -88,7 +95,16 @@ class Gateway:
                     logger.error("[Gateway] 通道启动失败: %s %s", name, e)
 
     def close_channels(self) -> None:
-        """关闭所有通道。"""
+        """关闭所有通道（含 WS Gateway）。"""
+        # 关闭 WS Gateway
+        if self._ws_server is not None:
+            try:
+                self._ws_server.should_exit = True
+                logger.info("[Gateway] WS Gateway 已请求关闭")
+            except Exception as e:
+                logger.warning("[Gateway] 关闭 WS Gateway 失败: %s", e)
+
+        # 关闭所有插件通道适配器
         for name, adapter in self._channels.items():
             if hasattr(adapter, "shutdown"):
                 try:

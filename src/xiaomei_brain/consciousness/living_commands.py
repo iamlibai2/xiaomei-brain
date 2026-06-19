@@ -93,7 +93,33 @@ def cmd_show_inner_thought(living: ConsciousLiving, args: str = "") -> None:
 
 
 def cmd_show_identity(living: ConsciousLiving, args: str = "") -> None:
-    """显示意识全景（完整身份分层）"""
+    """显示意识全景: /identity, /identity map <alias> <target>"""
+    args = args.strip()
+
+    # ── /identity map <alias> <target> ─────────────────
+    if args.startswith("map "):
+        rest = args[4:].strip()
+        parts = rest.split()
+        if len(parts) < 2:
+            print("\n用法: /identity map <alias> <target>", flush=True)
+            print("  例如: /identity map ou_xxxx boshi", flush=True)
+            living._print_prompt()
+            return
+        alias, target = parts[0], parts[1]
+        identity_mgr = getattr(living, '_identity_mgr', None)
+        if not identity_mgr:
+            print("\n\033[31mIdentityManager 未初始化\033[0m", flush=True)
+            living._print_prompt()
+            return
+        if identity_mgr.add_alias(alias, target):
+            dn = identity_mgr.get_display_name(target)
+            print(f"\n\033[32m已添加别名: {alias} → {target} ({dn})\033[0m", flush=True)
+        else:
+            print(f"\n\033[31m添加失败。可用主 id: {', '.join(identity_mgr.list_ids())}\033[0m", flush=True)
+        living._print_prompt()
+        return
+
+    # ── /identity（无参数）─ 显示全景 ─────────────────
     logger.info("[CLI] 执行命令: identity")
     si = living.consciousness.get_self_image()
 
@@ -137,6 +163,16 @@ def cmd_show_identity(living: ConsciousLiving, args: str = "") -> None:
     if si.history.last_dream_summary:
         print("\n【最近梦境】", flush=True)
         print(f"  {si.history.last_dream_summary[:150]}", flush=True)
+
+    # 显示身份映射信息
+    identity_mgr = getattr(living, '_identity_mgr', None)
+    if identity_mgr:
+        aliases = identity_mgr.list_aliases()
+        if aliases:
+            print("\n【平台别名映射】", flush=True)
+            for alias, target in sorted(aliases.items()):
+                dn = identity_mgr.get_display_name(target)
+                print(f"  {alias} → {target} ({dn})", flush=True)
 
     print("\n" + "-" * 50, flush=True)
     living._print_prompt()
@@ -587,6 +623,81 @@ def cmd_switch(living: ConsciousLiving, args: str = "") -> None:
     living._print_prompt()
 
 
+# ── Body 感官命令 ──────────────────────────────────────────────
+
+def cmd_eyes(living, args: str) -> None:
+    """显示眼睛状态。"""
+    body = getattr(living, 'body', None)
+    if not body:
+        print("\n\033[33mBody 层未加载\033[0m", flush=True)
+        return
+    eyes = body.eyes
+    if not eyes:
+        print("\n\033[33m眼睛未注册\033[0m", flush=True)
+        return
+    available = eyes.is_available()
+    status = "\033[32m在线\033[0m" if available else "\033[31m离线\033[0m"
+    print(f"\n眼睛 [{eyes.name}]: {status}", flush=True)
+    if available:
+        faces = eyes.recognize_faces()
+        face_str = ", ".join(f.get("face_id", "?") for f in faces) if faces else "无人"
+        print(f"  人脸: {face_str}", flush=True)
+
+
+def cmd_ears(living, args: str) -> None:
+    """显示耳朵状态。"""
+    body = getattr(living, 'body', None)
+    if not body:
+        print("\n\033[33mBody 层未加载\033[0m", flush=True)
+        return
+    ears = body.ears
+    if not ears:
+        print("\n\033[33m耳朵未注册\033[0m", flush=True)
+        return
+    available = ears.is_available()
+    status = "\033[32m在线\033[0m" if available else "\033[31m离线\033[0m"
+    print(f"\n耳朵 [{ears.name}]: {status}", flush=True)
+    if available:
+        voice_id = ears.recognize_voice()
+        print(f"  voice_id: {voice_id or '未识别'}", flush=True)
+
+
+def cmd_see(living, args: str) -> None:
+    """看当前场景。"""
+    body = getattr(living, 'body', None)
+    if not body or not body.eyes:
+        print("\n\033[33m眼睛不可用\033[0m", flush=True)
+        return
+    if not body.eyes.is_available():
+        print("\n\033[31m眼睛离线\033[0m", flush=True)
+        return
+    scene = body.eyes.see(args or "描述这个画面")
+    faces = body.eyes.recognize_faces()
+    print(f"\n场景: {scene or '无'}", flush=True)
+    if faces:
+        identity_mgr = getattr(living, '_identity_mgr', None)
+        for f in faces:
+            fid = f.get("face_id", "")
+            name = identity_mgr.get_display_name(fid) if identity_mgr else ""
+            print(f"  人脸: {name or fid}", flush=True)
+    print(flush=True)
+
+
+def cmd_hear(living, args: str) -> None:
+    """听周围声音。"""
+    body = getattr(living, 'body', None)
+    if not body or not body.ears:
+        print("\n\033[33m耳朵不可用\033[0m", flush=True)
+        return
+    if not body.ears.is_available():
+        print("\n\033[31m耳朵离线\033[0m", flush=True)
+        return
+    result = body.ears.listen(args or "分析音频")
+    voice_id = body.ears.recognize_voice()
+    print(f"\n音频: {result or '无'}", flush=True)
+    print(f"声纹: {voice_id or '未识别'}", flush=True)
+
+
 # ── 命令注册表 ──────────────────────────────────────────────────
 
 # 所有 CLI 命令，ConsciousLiving 用此表注册
@@ -607,4 +718,8 @@ COMMAND_REGISTRY: dict[str, tuple] = {
     "sessions":  (cmd_sessions,       False),
     "switch":    (cmd_switch,         True),
     "user":      (cmd_user,           True),
+    "eyes":      (cmd_eyes,           False),
+    "ears":      (cmd_ears,           False),
+    "see":       (cmd_see,            True),
+    "hear":      (cmd_hear,           True),
 }

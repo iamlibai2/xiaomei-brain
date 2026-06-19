@@ -34,6 +34,7 @@ _COMMANDS = [
     "/help", "/exit", "/quit",
     "/clear", "/new", "/users",
     "/sessions", "/switch ",
+    "/eyes", "/ears", "/see ", "/hear ",
 ]
 
 
@@ -272,6 +273,7 @@ def _run_agent(
                 from xiaomei_brain.gateway.inbound import RawMessage
                 result = gw.accept(RawMessage(
                     content=msg, source="human", channel="cli",
+                    peer_id=user_id or "cli-user", peer_type="human",
                     images=images, session_id=f"cli-{agent_id}",
                 ))
                 if hasattr(result, 'reason'):
