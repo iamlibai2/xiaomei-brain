@@ -1,7 +1,7 @@
 """喉咙器官插件 — 将 Throat + RealSpeaker 注册到 pending_senses。"""
 
 from xiaomei_brain.body.sense import Throat
-from xiaomei_brain.body.device.real import RealSpeaker
+from .real_speaker import RealSpeaker
 from .. import _refs
 
 

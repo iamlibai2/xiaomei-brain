@@ -338,12 +338,12 @@ class TestRealSpeaker:
     """真实扬声器测试 — 使用 ffplay 播放音频。"""
 
     def test_real_speaker_is_device(self):
-        from xiaomei_brain.body.device.real import RealSpeaker
+        from xiaomei_brain.plugins.body.throat.real_speaker import RealSpeaker
         from xiaomei_brain.body.device import Speaker
         assert issubclass(RealSpeaker, Speaker)
 
     def test_real_speaker_lifecycle(self):
-        from xiaomei_brain.body.device.real import RealSpeaker
+        from xiaomei_brain.plugins.body.throat.real_speaker import RealSpeaker
         s = RealSpeaker()
         assert s.is_operational() is False
         assert s.open() is True
@@ -352,7 +352,7 @@ class TestRealSpeaker:
         assert s.is_operational() is False
 
     def test_real_speaker_play_records(self):
-        from xiaomei_brain.body.device.real import RealSpeaker
+        from xiaomei_brain.plugins.body.throat.real_speaker import RealSpeaker
         s = RealSpeaker()
         s.open()
         s.play("/tmp/test.mp3")
@@ -362,7 +362,7 @@ class TestRealSpeaker:
         """Throat + RealSpeaker 组合：play 委托到 RealSpeaker。"""
         from xiaomei_brain.body import Body
         from xiaomei_brain.body.sense import Throat
-        from xiaomei_brain.body.device.real import RealSpeaker
+        from xiaomei_brain.plugins.body.throat.real_speaker import RealSpeaker
 
         body = Body()
         speaker = RealSpeaker()

@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import subprocess
 
-from ..device import Speaker
+from xiaomei_brain.body.device import Speaker
 
 logger = logging.getLogger(__name__)
 
