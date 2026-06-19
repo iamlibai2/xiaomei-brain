@@ -1,10 +1,8 @@
-"""耳朵器官插件 — 将 Ears + Microphone 注册到 pending_senses。"""
+"""耳朵器官插件 — 将 Ears + MockMicrophone 注册到 Body。"""
 
 from xiaomei_brain.body.sense import Ears
-from xiaomei_brain.body.device.mock import MockMicrophone
-from .. import _refs
+from .mock_microphone import MockMicrophone
 
 
 def register(ctx):
-    _refs.pending_senses.append((Ears(), MockMicrophone()))
-    ctx.logger.info("耳朵器官已注册（待 Body 装配）")
+    ctx.register_sense(Ears(), MockMicrophone())

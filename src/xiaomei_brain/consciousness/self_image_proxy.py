@@ -234,6 +234,25 @@ class SelfImage:
             if hasattr(self.body, key):
                 setattr(self.body, key, val)
 
+    def contribute_body_senses(self, state) -> None:
+        """Layer0 贡献：身体感官数据（视觉/听觉/发声）。
+
+        由 Body.tick() 产出，推送感官快照到 SelfImage.body。
+        """
+        self.body.senses_online = dict(state.senses_online)
+        self.body.visual_faces = list(state.visual_faces)
+        self.body.visual_changed = state.visual_changed
+        self.body.audio_voice_id = state.audio_voice_id
+        self.body.audio_level = state.audio_level
+        self.body.audio_changed = state.audio_changed
+        self.body.last_spoken = state.last_spoken
+        self.body.last_played = state.last_played
+        if state.visual_scene:
+            self.body.visual_scene = state.visual_scene[:500]
+        if state.audio_scene:
+            self.body.audio_scene = state.audio_scene[:500]
+        self.body.sensory = dict(state.sensory)
+
     def contribute_perception(self, *,
                                agent_state: str | None = None,
                                user_active: bool = False,

@@ -212,10 +212,11 @@ class LLMClient:
             )
         if response.status_code >= 400:
             logger.warning(
-                "[LLM DEBUG] HTTP %d | msgs=%d roles=%s",
+                "[LLM DEBUG] HTTP %d | msgs=%d roles=%s | body=%s",
                 response.status_code,
                 len(api_messages),
                 [m.get("role") for m in api_messages],
+                response.text[:500],
             )
         response.raise_for_status()
 

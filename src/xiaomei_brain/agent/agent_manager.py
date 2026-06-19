@@ -772,8 +772,11 @@ class AgentManager:
         from xiaomei_brain.tools.builtin import (
             shell_tool, read_file_tool, write_file_tool, edit_file_tool,
             send_message_tool, check_inbox_tool, set_send_message_context,
-            tts_tools, music_tools, image_tools, websearch_tools, webget_tools,
+            websearch_tools, webget_tools,
         )
+        from xiaomei_brain.plugins.tools.tts_minimax import tts as tts_tools
+        from xiaomei_brain.plugins.tools.music_minimax import music as music_tools
+        from xiaomei_brain.plugins.tools.image_minimax import image as image_tools
         tools.register(shell_tool)
         tools.register(read_file_tool)
         tools.register(write_file_tool)
@@ -793,9 +796,9 @@ class AgentManager:
     TTSProvider, VoiceConfig, AudioConfig,
     MusicProvider, MusicAudioConfig,
     ImageProvider, ImageConfig,
-    BaiduSearchProvider,
     WebGetProvider,
 )
+                from xiaomei_brain.plugins.tools.web_search_baidu.baidu import BaiduSearchProvider
                 voice_config = VoiceConfig(
                     voice_id=global_config.tts_voice_id,
                     speed=global_config.tts_speed,

@@ -208,12 +208,6 @@ class ConsciousLiving(Living):
         agent_base_dir = os.path.expanduser(f"~/.xiaomei-brain/{self._agent_id}")
         from ..tools.builtin import file_ops
         file_ops.set_output_base(agent_base_dir)
-        from ..tools.builtin import image as image_mod
-        image_mod.set_output_base(agent_base_dir)
-        from ..tools.builtin import music as music_mod
-        music_mod.set_output_base(agent_base_dir)
-        from ..tools.builtin import tts as tts_mod
-        tts_mod.set_output_base(agent_base_dir)
 
         # Drive 系统（边缘系统）- 延迟加载
         self.drive = DriveEngine(self._agent_id, load=False, config=self._drive_config)
@@ -456,13 +450,14 @@ class ConsciousLiving(Living):
                 with open(_p, "w") as _f:
                     _f.write("")
 
-        # Layer 0：自主层线程（火焰骨架 + Drive 衰减 + 异常检测 + 内感受）
+        # Layer 0：自主层线程（火焰骨架 + Drive 衰减 + 异常检测 + 内感受 + 身体感官）
         self._layer0 = Layer0Autonomous(
             consciousness=self.consciousness,
             drive=self.drive,
             tick_interval=1.0,
             debug_file=os.path.join(self._debug_dir, "layer0.log"),
             interoception=self.interoception,
+            body=self.body,
         )
         logger.info("[ConsciousLiving] Layer0 已创建")
 
@@ -508,19 +503,20 @@ class ConsciousLiving(Living):
 
         self.body = Body()
 
-        # 从插件系统装配器官（body/ 插件已通过 pending_senses 注册）
-        from ..plugins.body._refs import body_ref, identity_mgr_ref, pending_senses
-        for sense, device in pending_senses:
+        # 从插件系统装配器官（body/ 插件已通过 ctx.register_sense() 注册）
+        pending = self._registry.get_pending_senses()
+        for sense, device in pending:
             self.body.register_sense(sense, device)
             logger.info("[ConsciousLiving] 装配器官: %s → %s",
                         sense.name, device.__class__.__name__)
 
         # 填充延迟绑定引用，使工具函数能解析到 body/identity_mgr
+        from ..plugins.body._refs import body_ref, identity_mgr_ref
         body_ref[0] = self.body
         identity_mgr_ref[0] = self._identity_mgr
 
         logger.info("[ConsciousLiving] Body 身体感官层已创建（%d 个器官），引用已注入插件",
-                    len(pending_senses))
+                    len(pending))
 
         # 注入 DAG + 配置 + 回调到 Agent（替代原 _inject_context_assembler）
         self._inject_dag_to_agent()

@@ -1,10 +1,8 @@
-"""喉咙器官插件 — 将 Throat + RealSpeaker 注册到 pending_senses。"""
+"""喉咙器官插件 — 将 Throat + RealSpeaker 注册到 Body。"""
 
 from xiaomei_brain.body.sense import Throat
 from .real_speaker import RealSpeaker
-from .. import _refs
 
 
 def register(ctx):
-    _refs.pending_senses.append((Throat(), RealSpeaker()))
-    ctx.logger.info("喉咙器官已注册（RealSpeaker + ffplay）")
+    ctx.register_sense(Throat(), RealSpeaker())

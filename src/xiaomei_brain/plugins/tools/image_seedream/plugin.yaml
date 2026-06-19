@@ -1,0 +1,5 @@
+name: image_seedream
+version: "1.0.0"
+description: "图片生成工具 — generate_image_seedream（豆包 Seedream，火山引擎）"
+kind: bundle
+entry: adapter:register

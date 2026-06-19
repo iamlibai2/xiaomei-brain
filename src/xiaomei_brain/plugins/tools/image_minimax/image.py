@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 
-from ..base import tool
+from xiaomei_brain.tools.base import tool
 
 logger = logging.getLogger(__name__)
 

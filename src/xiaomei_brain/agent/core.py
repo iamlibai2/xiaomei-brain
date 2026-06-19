@@ -387,7 +387,7 @@ class Agent:
                         {
                             "role": "tool",
                             "tool_call_id": tc.id,
-                            "content": result,
+                            "content": str(result),
                             "id": tool_msg_id,
                         }
                     )
@@ -600,7 +600,7 @@ class Agent:
                     loop_messages.append({
                         "role": "tool",
                         "tool_call_id": tc.id,
-                        "content": result,
+                        "content": str(result),
                     })
 
                     # Co-write to experience stream (internal tool exec)

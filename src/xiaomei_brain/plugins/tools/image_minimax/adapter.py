@@ -2,7 +2,9 @@
 
 
 def register(ctx):
-    from xiaomei_brain.tools.builtin.image import image_generate_tool
+    from .image import image_generate_tool, set_output_base
+
+    set_output_base(ctx.agent_dir)
 
     image_generate_tool.source = "plugin:image_minimax"
     image_generate_tool.optional = True

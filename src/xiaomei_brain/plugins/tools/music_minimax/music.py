@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 
-from ..base import tool
+from xiaomei_brain.tools.base import tool
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,7 @@ def music_generate(
 )
 def music_list_models() -> str:
     """List available music generation models."""
-    from ..speech.music import get_available_models
+    from xiaomei_brain.speech.music import get_available_models
 
     models = get_available_models()
     return "可用音乐模型: " + ", ".join(models)

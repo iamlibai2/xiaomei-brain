@@ -595,6 +595,15 @@ def _render_body(si) -> list[str]:
     if _oxy_gain <= 0.3:
         lines.append(f"催产素增益降至{_oxy_gain:.0%}，社交温暖几乎感受不到了。")
 
+    # ── 环境感知（插件 sensory 槽位）──
+    _sensory: dict = getattr(bo, 'sensory', None) or {}
+    if _sensory:
+        lines.append("")
+        for section, items in _sensory.items():
+            lines.append(f"### {section}")
+            for k, v in items.items():
+                lines.append(f"- {k}：{v}")
+
     lines.append("</身体状态>")
     return lines
 

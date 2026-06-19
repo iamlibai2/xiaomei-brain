@@ -195,6 +195,7 @@ class PluginRegistry:
         self._hooks: dict[str, list[Callable]] = {}
         self._plugins: dict[str, LoadedPlugin] = {}
         self._web_search_providers: list[Any] = []
+        self._pending_senses: list[tuple[Any, Any]] = []
 
     # ── Channel ─────────────────────────────────────────────────
 
@@ -295,6 +296,19 @@ class PluginRegistry:
                 cb(**kwargs)
             except Exception as e:
                 logger.warning("[PluginRegistry] Hook '%s' 回调失败: %s", event, e)
+
+    # ── Sense (Body 器官) ──────────────────────────────────────
+
+    def register_sense(self, sense: Any, device: Any) -> None:
+        """注册身体器官（Sense + Device）。
+
+        body/ 插件调用此方法，由 conscious_living 消费后装配到 Body。
+        """
+        self._pending_senses.append((sense, device))
+
+    def get_pending_senses(self) -> list[tuple[Any, Any]]:
+        """获取所有待装配的器官。"""
+        return list(self._pending_senses)
 
     # ── Plugin tracking ─────────────────────────────────────────
 

@@ -81,6 +81,15 @@ class Eyes(Sense):
             return []
         return []
 
+    def contribute_to(self, state) -> None:
+        """贡献视觉数据到 BodyState。10分钟一次，本地CV分析。"""
+        state.visual_faces = self.recognize_faces()
+
+    def capture_raw(self) -> None:
+        """采集一帧原始画面。5分钟一次，不分析，只存入设备缓冲。"""
+        if self.is_available() and self._device:
+            self._device.capture()
+
 
 class Ears(Sense):
     """听的能力。
@@ -108,6 +117,15 @@ class Ears(Sense):
             return None
         return None
 
+    def contribute_to(self, state) -> None:
+        """贡献听觉数据到 BodyState。10分钟一次，声纹识别。"""
+        state.audio_voice_id = self.recognize_voice()
+
+    def capture_raw(self) -> None:
+        """采集一段原始音频。5分钟一次，不分析，只存入设备缓冲。"""
+        if self.is_available() and self._device:
+            self._device.capture()
+
 
 class Throat(Sense):
     """说的能力。"""
@@ -129,3 +147,10 @@ class Throat(Sense):
         device = self.device
         if device and hasattr(device, "play"):
             device.play(audio_path)
+
+    def contribute_to(self, state) -> None:
+        """贡献发声数据到 BodyState。读取设备最近输出记录。"""
+        device = self.device
+        if device:
+            state.last_spoken = getattr(device, "last_spoken", "") or ""
+            state.last_played = getattr(device, "last_played", "") or ""

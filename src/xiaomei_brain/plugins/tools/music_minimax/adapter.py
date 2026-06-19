@@ -2,7 +2,9 @@
 
 
 def register(ctx):
-    from xiaomei_brain.tools.builtin.music import music_generate_tool
+    from .music import music_generate_tool, set_output_base
+
+    set_output_base(ctx.agent_dir)
 
     music_generate_tool.source = "plugin:music_minimax"
     music_generate_tool.optional = True

@@ -40,6 +40,7 @@ class Layer0Autonomous:
         tick_interval: float = 1.0,
         debug_file: str = "",        # 调试日志文件路径
         interoception: Any = None,   # Interoception 实例
+        body: Any = None,            # Body 实例（物理感官）
     ) -> None:
         self._c = consciousness
         self._drive = drive
@@ -49,6 +50,7 @@ class Layer0Autonomous:
         self._lock: threading.RLock = threading.RLock()
         self._debug_file = debug_file
         self._interoception = interoception           # 内感受
+        self._body = body                             # 身体感官
 
         # TUI 日志缓冲区
         self._log_buffer: deque[str] = deque(maxlen=200)
@@ -105,6 +107,12 @@ class Layer0Autonomous:
                         # 信号注入 consciousness（供 Living._heartbeat 读取）
                         self._c._interoception_signals = sig
                     # ── 内感受结束 ──
+
+                    # ── 身体感官：采集各器官数据 + 写入 SelfBody ──
+                    if self._body:
+                        body_state = self._body.tick()
+                        si.contribute_body_senses(body_state)
+                    # ── 身体感官结束 ──
 
                     si = self._c.get_self_image()
                     ts = time.strftime("%H:%M:%S")

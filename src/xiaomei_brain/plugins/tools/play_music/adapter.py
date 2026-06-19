@@ -1,7 +1,22 @@
 """play_music 工具插件 — 调用 body.throat 音频输出。"""
 
 from xiaomei_brain.tools.base import Tool
-from xiaomei_brain.body.tools import play_music
+from xiaomei_brain.plugins.body._refs import body_ref
+
+
+def play_music(audio_path: str) -> dict:
+    """播放音频文件。
+
+    Args:
+        audio_path: 音频文件路径
+    Returns:
+        {"played": "..."}
+    """
+    b = body_ref[0]
+    if not b or not b.throat or not b.throat.is_available():
+        return {"error": "喉咙不可用"}
+    b.throat.play(audio_path)
+    return {"played": audio_path}
 
 
 def register(ctx):

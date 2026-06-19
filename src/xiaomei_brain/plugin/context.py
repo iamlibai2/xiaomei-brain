@@ -53,6 +53,12 @@ class PluginContext:
         self.logger = logging.getLogger(f"xiaomei_brain.plugin.{plugin_name}")
         self._registry = registry
 
+    @property
+    def agent_dir(self) -> str:
+        """Per-agent 工作目录：~/.xiaomei-brain/{agent_id}/"""
+        import os
+        return os.path.expanduser(f"~/.xiaomei-brain/{self.agent_id}")
+
     # ── Channel ──────────────────────────────────────────────────
 
     def register_channel(self, name: str, adapter: Any) -> None:
@@ -157,6 +163,16 @@ class PluginContext:
             return
         self._registry.register_hook(event, callback)
         self.logger.info("Hook 已注册: %s", event)
+
+    # ── Sense (Body 器官) ──────────────────────────────────────
+
+    def register_sense(self, sense: Any, device: Any) -> None:
+        """注册身体器官（Sense + Device）。
+
+        body/ 插件调用此方法，器官由 conscious_living 装配到 Body。
+        """
+        self._registry.register_sense(sense, device)
+        self.logger.info("器官已注册: %s → %s", sense.name, device.__class__.__name__)
 
     # ── 装饰器快捷方式 ──────────────────────────────────────────
 

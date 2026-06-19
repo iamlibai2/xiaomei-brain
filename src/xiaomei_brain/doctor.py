@@ -185,7 +185,7 @@ class Doctor:
             sec.checks.append(self._ok("baidu_api_key", "configured"))
 
         try:
-            from xiaomei_brain.tools.provider import BaiduSearchProvider
+            from xiaomei_brain.plugins.tools.web_search_baidu.baidu import BaiduSearchProvider
             provider = BaiduSearchProvider(api_key=cfg.baidu_api_key)
             results = provider.search(query="test", count=1)
             if results:

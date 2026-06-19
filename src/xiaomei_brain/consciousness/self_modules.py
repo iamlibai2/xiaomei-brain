@@ -232,6 +232,21 @@ class SelfBody:
     memory_fullness_pct: float = 0.0
     burning_duration: float = 0.0
 
+    # ── 感官字段（Body.tick() → SelfImage.contribute_body_senses() 写入）──
+    senses_online: dict = field(default_factory=dict)
+    visual_scene: str = ""
+    visual_faces: list = field(default_factory=list)
+    visual_changed: bool = False
+    audio_scene: str = ""
+    audio_voice_id: str | None = None
+    audio_level: float = 0.0
+    audio_changed: bool = False
+    last_spoken: str = ""
+    last_played: str = ""
+
+    # 通用感官槽位（同 BodyState.sensory）
+    sensory: dict = field(default_factory=dict)
+
     # ── 代理读取辅助 ──────────────────────────
 
     def _d(self, path: str, default: Any = 0.0) -> Any:
@@ -314,6 +329,18 @@ class SelfBody:
             "token_usage": self.token_usage,
             "memory_fullness_pct": self.memory_fullness_pct,
             "burning_duration": self.burning_duration,
+            # ── 感官字段 ──
+            "senses_online": self.senses_online,
+            "visual_scene": self.visual_scene,
+            "visual_faces": self.visual_faces,
+            "visual_changed": self.visual_changed,
+            "audio_scene": self.audio_scene,
+            "audio_voice_id": self.audio_voice_id,
+            "audio_level": self.audio_level,
+            "audio_changed": self.audio_changed,
+            "last_spoken": self.last_spoken,
+            "last_played": self.last_played,
+            "sensory": self.sensory,
         }
 
     def from_dict(self, data: dict) -> None:
@@ -325,6 +352,15 @@ class SelfBody:
             "cpu_percent", "memory_percent", "thread_health",
             "queue_pressure", "llm_latency_ms",
             "llm_error_rate", "token_usage", "memory_fullness_pct", "burning_duration",
+        ):
+            if key in data:
+                setattr(self, key, data[key])
+        # ── 感官字段从快照恢复 ──
+        for key in (
+            "senses_online", "visual_scene", "visual_faces", "visual_changed",
+            "audio_scene", "audio_voice_id", "audio_level", "audio_changed",
+            "last_spoken", "last_played",
+            "sensory",
         ):
             if key in data:
                 setattr(self, key, data[key])

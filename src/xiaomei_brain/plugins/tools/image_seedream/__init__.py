@@ -1,0 +1,1 @@
+# Image Seedream plugin package

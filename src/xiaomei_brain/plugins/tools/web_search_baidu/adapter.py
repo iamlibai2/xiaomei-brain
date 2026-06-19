@@ -8,7 +8,7 @@ import os
 
 
 def register(ctx):
-    from xiaomei_brain.tools.provider.websearch import BaiduSearchProvider
+    from .baidu import BaiduSearchProvider
 
     # 优先从插件配置获取 key，其次从环境变量
     api_key = ctx.config.get("api_key", "")

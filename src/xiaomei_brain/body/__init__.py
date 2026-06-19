@@ -12,9 +12,10 @@ from __future__ import annotations
 
 from .sense import Sense, Eyes, Ears, Throat
 from .device import Device, Camera, Microphone, Speaker
+from .state import BodyState
 
 __all__ = [
-    "Body", "Sense", "Eyes", "Ears", "Throat",
+    "Body", "BodyState", "Sense", "Eyes", "Ears", "Throat",
     "Device", "Camera", "Microphone", "Speaker",
 ]
 
@@ -24,6 +25,11 @@ class Body:
 
     def __init__(self) -> None:
         self._senses: dict[str, Sense] = {}
+        self._last_state: BodyState | None = None
+        # 节流时间戳
+        self._last_online_check: float = 0.0
+        self._last_capture: float = 0.0
+        self._last_analyze: float = 0.0
 
     def register_sense(self, sense: Sense, device: Device) -> None:
         """注册一个感官及其关联设备。"""
@@ -37,6 +43,57 @@ class Body:
                 sense._device.open()
         for sense in self._senses.values():
             sense.online = True
+
+    def tick(self) -> BodyState:
+        """采集所有感官状态，产出感知快照。
+
+        L0 每秒调用，Body 内部按频率节流：
+          - 1分钟：检查感官在线（可能涉及网络IO）
+          - 5分钟：采集原始数据（拍照/录音，不分析）
+          - 10分钟：分析识别（人脸/声纹/变化检测）
+        """
+        import time
+
+        now = time.time()
+        # 如果有上一次状态，复制在线信息作为缓存
+        state = BodyState(timestamp=now)
+        if self._last_state:
+            state.senses_online = dict(self._last_state.senses_online)
+
+        # ── 1分钟：检查在线 ──
+        if now - self._last_online_check >= 60:
+            state.senses_online = {
+                name: s.is_available() for name, s in self._senses.items()
+            }
+            self._last_online_check = now
+
+        # ── 5分钟：采集原始数据 ──
+        if now - self._last_capture >= 300:
+            for sense in self._senses.values():
+                if sense.is_available() and hasattr(sense, 'capture_raw'):
+                    try:
+                        sense.capture_raw()
+                    except Exception:
+                        pass
+            self._last_capture = now
+
+        # ── 10分钟：分析识别 ──
+        if now - self._last_analyze >= 600:
+            for sense in self._senses.values():
+                if sense.is_available() and hasattr(sense, 'contribute_to'):
+                    try:
+                        sense.contribute_to(state)
+                    except Exception:
+                        pass
+            self._last_analyze = now
+
+        self._last_state = state
+        return state
+
+    @property
+    def last_state(self) -> BodyState | None:
+        """最近一次 tick() 产出的感知快照。"""
+        return self._last_state
 
     def close(self) -> None:
         """全部感官下线。"""

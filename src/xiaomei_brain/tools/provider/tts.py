@@ -66,16 +66,31 @@ class TTSProvider:
         self.voice_config = voice_config or VoiceConfig()
         self.audio_config = audio_config or AudioConfig()
 
-    def speak(self, text: str) -> bytes:
+    @staticmethod
+    def _check_base_resp(data: dict) -> None:
+        """检查 MiniMax API 业务错误（base_resp.status_code != 0）。"""
+        base_resp = data.get("base_resp", {})
+        status_code = base_resp.get("status_code", 0)
+        if status_code != 0:
+            status_msg = base_resp.get("status_msg", "unknown error")
+            raise RuntimeError(f"MiniMax API error {status_code}: {status_msg}")
+
+    def speak(self, text: str,
+              speed: float | None = None, emotion: str | None = None,
+              pitch: float | None = None) -> bytes:
         """Generate speech synchronously (blocking).
 
         Args:
             text: Text to convert to speech (max 10000 chars)
+            speed: Per-call speed override (None = use config default)
+            emotion: Per-call emotion override (None = use config default)
+            pitch: Per-call pitch override (None = use config default)
 
         Returns:
             Audio data as bytes
         """
-        payload = self._build_payload(text, stream=False)
+        payload = self._build_payload(text, stream=False,
+                                      speed=speed, emotion=emotion, pitch=pitch)
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -91,21 +106,31 @@ class TTSProvider:
         response.raise_for_status()
 
         data = response.json()
+        self._check_base_resp(data)
         audio_hex = data.get("data", {}).get("audio", "")
+        if not audio_hex:
+            raise RuntimeError("MiniMax TTS returned no audio data")
         return bytes.fromhex(audio_hex)
 
     def speak_streaming(
         self,
         text: str,
         on_chunk: Callable[[bytes], None] | None = None,
+        speed: float | None = None,
+        emotion: str | None = None,
+        pitch: float | None = None,
     ) -> None:
         """Generate speech with streaming callback (non-blocking).
 
         Args:
             text: Text to convert to speech
             on_chunk: Callback function that receives audio chunks as they arrive
+            speed: Per-call speed override (None = use config default)
+            emotion: Per-call emotion override (None = use config default)
+            pitch: Per-call pitch override (None = use config default)
         """
-        payload = self._build_payload(text, stream=True)
+        payload = self._build_payload(text, stream=True,
+                                      speed=speed, emotion=emotion, pitch=pitch)
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -121,6 +146,7 @@ class TTSProvider:
         )
         response.raise_for_status()
 
+        chunk_count = 0
         for line in response.iter_lines():
             if not line:
                 continue
@@ -128,36 +154,54 @@ class TTSProvider:
             if isinstance(line, bytes):
                 line = line.decode("utf-8", errors="replace")
 
+            # 检查业务错误（MiniMax 错误不走 SSE data: 前缀）
             if not line.startswith("data: "):
+                try:
+                    data = json.loads(line)
+                    self._check_base_resp(data)
+                except json.JSONDecodeError:
+                    pass
                 continue
 
             data_str = line[6:]
             if not data_str or data_str.strip() == "[DONE]":
-                continue
+                break
 
             try:
                 data = json.loads(data_str)
+                self._check_base_resp(data)
                 audio_hex = data.get("data", {}).get("audio", "")
                 if audio_hex:
                     chunk = bytes.fromhex(audio_hex)
+                    chunk_count += 1
                     if on_chunk:
                         on_chunk(chunk)
             except json.JSONDecodeError:
                 logger.debug("Failed to parse streaming response: %s", data_str[:100])
 
-    def speak_to_file(self, text: str, output_path: str) -> None:
+        if chunk_count == 0:
+            raise RuntimeError("MiniMax TTS streaming returned no audio chunks")
+
+    def speak_to_file(self, text: str, output_path: str,
+                      speed: float | None = None, emotion: str | None = None,
+                      pitch: float | None = None) -> None:
         """Generate speech and save to file.
 
         Args:
             text: Text to convert to speech
             output_path: Path to save the audio file
+            speed: Per-call speed override (None = use config default)
+            emotion: Per-call emotion override (None = use config default)
+            pitch: Per-call pitch override (None = use config default)
         """
-        audio_data = self.speak(text)
+        audio_data = self.speak(text, speed=speed, emotion=emotion, pitch=pitch)
         with open(output_path, "wb") as f:
             f.write(audio_data)
         logger.info("Saved TTS audio to: %s", output_path)
 
-    def _build_payload(self, text: str, stream: bool) -> dict:
+    def _build_payload(self, text: str, stream: bool,
+                       speed: float | None = None, emotion: str | None = None,
+                       pitch: float | None = None) -> dict:
         """Build API request payload."""
         return {
             "model": DEFAULT_MODEL,
@@ -165,10 +209,10 @@ class TTSProvider:
             "stream": stream,
             "voice_setting": {
                 "voice_id": self.voice_config.voice_id,
-                "speed": self.voice_config.speed,
+                "speed": speed if speed is not None else self.voice_config.speed,
                 "vol": self.voice_config.vol,
-                "pitch": self.voice_config.pitch,
-                "emotion": self.voice_config.emotion,
+                "pitch": pitch if pitch is not None else self.voice_config.pitch,
+                "emotion": emotion if emotion is not None else self.voice_config.emotion,
             },
             "audio_setting": {
                 "sample_rate": self.audio_config.sample_rate,
