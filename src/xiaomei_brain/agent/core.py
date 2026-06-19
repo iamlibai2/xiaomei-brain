@@ -348,7 +348,7 @@ class Agent:
                         _ptr(idx, result)
                     if self.on_tool_complete:
                         self.on_tool_complete(idx, tc.name, tc.arguments, str(result))
-                    logger.debug("Tool result: %s", result[:200])
+                    logger.debug("Tool result: %s", str(result)[:200])
 
                     # 存 tool result 到 DB，保存 DB id 到消息（DAG 压缩需要）
                     tool_msg_id = None
