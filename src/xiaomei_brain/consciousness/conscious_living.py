@@ -503,24 +503,24 @@ class ConsciousLiving(Living):
             self._gateway_inbound.set_agent_commands(self.agent.commands)
         logger.info("[ConsciousLiving] Gateway 入站门已创建")
 
-        # ── Body 身体感官层（Phase 1: Mock 设备）─────────────────
+        # ── Body 身体感官层 ─────────────────────────────────────
         from ..body import Body
-        from ..body.device.mock import MockCamera, MockMicrophone, MockSpeaker
-        from ..body.device.mock import MockEyes, MockEars, MockThroat
 
         self.body = Body()
-        self.body.register_sense(MockEyes(), MockCamera())
-        self.body.register_sense(MockEars(), MockMicrophone())
-        self.body.register_sense(MockThroat(), MockSpeaker())
 
-        # 注册 Body 工具到 Agent（look_around / listen_to_environment / play_music）
-        from ..body.tools import create_body_tools
-        body_ref = [self.body]
-        identity_mgr_ref = [self._identity_mgr]
-        for body_tool in create_body_tools(body_ref=body_ref, identity_mgr_ref=identity_mgr_ref):
-            self.agent.tools.register(body_tool)
+        # 从插件系统装配器官（body/ 插件已通过 pending_senses 注册）
+        from ..plugins.body._refs import body_ref, identity_mgr_ref, pending_senses
+        for sense, device in pending_senses:
+            self.body.register_sense(sense, device)
+            logger.info("[ConsciousLiving] 装配器官: %s → %s",
+                        sense.name, device.__class__.__name__)
 
-        logger.info("[ConsciousLiving] Body 身体感官层已创建（Mock 模式），工具已注册")
+        # 填充延迟绑定引用，使工具函数能解析到 body/identity_mgr
+        body_ref[0] = self.body
+        identity_mgr_ref[0] = self._identity_mgr
+
+        logger.info("[ConsciousLiving] Body 身体感官层已创建（%d 个器官），引用已注入插件",
+                    len(pending_senses))
 
         # 注入 DAG + 配置 + 回调到 Agent（替代原 _inject_context_assembler）
         self._inject_dag_to_agent()

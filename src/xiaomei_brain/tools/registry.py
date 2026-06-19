@@ -41,6 +41,30 @@ class ToolRegistry:
             for t in self._tools.values()
         ]
 
+    def filter_by_allowlist(self, allow: list[str]) -> None:
+        """按允许列表过滤（移除不在 allow 中的 optional 工具）。
+
+        非 optional 工具不受影响。allow 中包含 "group:plugins" 表示允许所有插件工具。
+        """
+        if not allow:
+            return
+        remove = []
+        for name, tool in self._tools.items():
+            if not tool.optional:
+                continue
+            if name in allow:
+                continue
+            # 按来源分组匹配
+            if tool.source.startswith("plugin:") and "group:plugins" in allow:
+                continue
+            remove.append(name)
+        for name in remove:
+            del self._tools[name]
+
+    def list_by_source(self, source: str) -> list[Tool]:
+        """按来源列出工具。source 可以是 "core" 或 "plugin:<id>" 前缀。"""
+        return [t for t in self._tools.values() if t.source == source or t.source.startswith(source)]
+
     def execute(self, name: str, **kwargs: Any) -> str:
         """Execute a tool by name with given arguments."""
         tool = self._tools.get(name)

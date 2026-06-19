@@ -1,0 +1,1 @@
+# Image MiniMax plugin package

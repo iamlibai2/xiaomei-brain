@@ -815,8 +815,7 @@ class AgentManager:
                     audio_config=audio_config,
                 )
                 tts_tools.set_tts_player(None, tts_provider)
-                # tools.register(tts_tools.tts_speak_tool)  # TTS 未配置，避免误导 agent
-                tools.register(tts_tools.tts_speak_to_file_tool)
+                # speak_to_file 由插件 tts_minimax 注册，不再在此硬编码
 
         if global_config.music_enabled:
             music_api_key = global_config.music_api_key or global_config.tts_api_key or api_key
@@ -831,7 +830,7 @@ class AgentManager:
                     ),
                 )
                 music_tools.set_music_provider(music_provider)
-                tools.register(music_tools.music_generate_tool)
+                # generate_music 由插件 music_minimax 注册，不再在此硬编码
 
         if global_config.image_enabled:
             image_api_key = global_config.image_api_key or global_config.tts_api_key or api_key
@@ -844,17 +843,31 @@ class AgentManager:
                     config=ImageConfig(),
                 )
                 image_tools.set_image_provider(image_provider)
-                tools.register(image_tools.image_generate_tool)
+                # generate_image 由插件 image_minimax 注册，不再在此硬编码
+
+        # ── Web Search Provider ─────────────────────────────────────────
+        # 设置 registry 引用供 web_search 工具调度
+        websearch_tools.set_registry(registry)
 
         if global_config.web_search_enabled and global_config.baidu_api_key:
             web_search_provider = BaiduSearchProvider(api_key=global_config.baidu_api_key)
-            websearch_tools.set_search_provider(web_search_provider)
+            registry.register_web_search_provider(web_search_provider)
+
+        # web_search 工具在任意 provider 可用时注册（内置保底或外部插件）
+        if global_config.web_search_enabled and registry.get_web_search_providers():
             tools.register(websearch_tools.web_search_tool)
 
         if global_config.web_get_enabled:
             web_get_provider = WebGetProvider()
             webget_tools.set_get_provider(web_get_provider)
             tools.register(webget_tools.web_get_tool)
+
+        # ── 加载插件工具 ────────────────────────────────────────────────
+        for plugin_tool in registry.get_agent_tools():
+            try:
+                tools.register(plugin_tool)
+            except ValueError:
+                pass  # 插件工具和核心工具同名时跳过
 
         if register_tools_fn:
             register_tools_fn(tools)

@@ -1,0 +1,5 @@
+name: music_minimax
+version: "1.0.0"
+description: "音乐生成工具 — generate_music（MiniMax Music API）"
+kind: bundle
+entry: adapter:register

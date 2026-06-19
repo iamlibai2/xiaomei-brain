@@ -1,0 +1,5 @@
+name: look_around
+version: "1.0.0"
+description: "看看周围 — 调用 body.eyes 视觉感知"
+kind: bundle
+entry: adapter:register

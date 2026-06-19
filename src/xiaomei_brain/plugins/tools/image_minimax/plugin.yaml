@@ -1,0 +1,5 @@
+name: image_minimax
+version: "1.0.0"
+description: "图片生成工具 — generate_image（MiniMax Image API）"
+kind: bundle
+entry: adapter:register

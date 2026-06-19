@@ -16,6 +16,12 @@ class Tool:
     parameters: dict[str, Any]  # JSON Schema
     func: Callable[..., str]
 
+    # 元数据
+    source: str = "core"            # "core" | "plugin:<id>"
+    optional: bool = False          # True → 需在 tools.allow 中显式列出
+    emoji: str = ""
+    category: str = ""              # "fs" | "web" | "memory" | "media" | "internal" ...
+
     def execute(self, **kwargs: Any) -> str:
         """Execute the tool with given arguments."""
         return self.func(**kwargs)

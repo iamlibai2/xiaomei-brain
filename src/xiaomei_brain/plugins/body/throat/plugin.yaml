@@ -1,0 +1,5 @@
+name: body_throat
+version: "1.0.0"
+description: "喉咙器官 — 声音输出（扬声器）"
+kind: bundle
+entry: adapter:register

@@ -189,10 +189,12 @@ class PluginRegistry:
         self._channels: dict[str, Any] = {}
         self._providers: dict[str, Any] = {}
         self._tools = ToolRegistry()
+        self._agent_tools: list[Any] = []  # tools.base.Tool 对象
         self._speech: dict[str, Any] = {}
         self._memory: dict[str, Any] = {}
         self._hooks: dict[str, list[Callable]] = {}
         self._plugins: dict[str, LoadedPlugin] = {}
+        self._web_search_providers: list[Any] = []
 
     # ── Channel ─────────────────────────────────────────────────
 
@@ -238,6 +240,30 @@ class PluginRegistry:
     @property
     def tools(self) -> ToolRegistry:
         return self._tools
+
+    # ── Agent Tool (tools.base.Tool) ───────────────────────────
+
+    def register_agent_tool(self, tool: Any) -> None:
+        """注册 Agent 工具（接受 tools.base.Tool 对象）。"""
+        self._agent_tools.append(tool)
+
+    def get_agent_tools(self) -> list[Any]:
+        """获取所有插件注册的 Agent 工具。"""
+        return list(self._agent_tools)
+
+    # ── Web Search Provider ────────────────────────────────────
+
+    def register_web_search_provider(self, provider: Any) -> None:
+        """注册 Web 搜索 Provider。
+
+        核心工具 web_search 通过此方法收集可用的搜索后端，
+        按优先级自动选择。
+        """
+        self._web_search_providers.append(provider)
+
+    def get_web_search_providers(self) -> list[Any]:
+        """获取所有已注册的 Web 搜索 Provider。"""
+        return list(self._web_search_providers)
 
     # ── Speech ──────────────────────────────────────────────────
 

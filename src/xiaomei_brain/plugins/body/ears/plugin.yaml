@@ -1,0 +1,5 @@
+name: body_ears
+version: "1.0.0"
+description: "耳朵器官 — 听觉感知（麦克风 + 声纹识别）"
+kind: bundle
+entry: adapter:register

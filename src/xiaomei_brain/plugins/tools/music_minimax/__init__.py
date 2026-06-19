@@ -1,0 +1,1 @@
+# Music MiniMax plugin package

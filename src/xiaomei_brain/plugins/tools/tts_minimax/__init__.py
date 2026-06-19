@@ -1,0 +1,1 @@
+# TTS MiniMax plugin package

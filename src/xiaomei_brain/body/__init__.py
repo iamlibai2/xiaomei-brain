@@ -55,6 +55,10 @@ class Body:
     def throat(self) -> Throat | None:
         return self._senses.get("throat")  # type: ignore[return-value]
 
+    def get_sense(self, name: str) -> Sense | None:
+        """按名称获取已注册的感官。"""
+        return self._senses.get(name)
+
     def is_available(self, sense_name: str) -> bool:
         sense = self._senses.get(sense_name)
         return sense is not None and sense.is_available()

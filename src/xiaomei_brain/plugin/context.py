@@ -101,6 +101,32 @@ class PluginContext:
         self._registry.register_tool(name, schema, handler, toolset=toolset, check_fn=check_fn, optional=optional)
         self.logger.info("工具已注册: %s (toolset=%s)", name, toolset)
 
+    # ── Agent Tool (接受 tools.base.Tool 对象) ─────────────────
+
+    def register_agent_tool(self, tool: Any) -> None:
+        """注册 Agent 工具（接受 tools.base.Tool 对象）。
+
+        和 register_tool() 的区别：
+          - register_tool(): Hermes 风格，name + schema + handler
+          - register_agent_tool(): 直接传入 Tool dataclass 实例
+
+        插件目录下的 adapter.py 在 register(ctx) 中用此方法注册工具。
+        """
+        self._registry.register_agent_tool(tool)
+        self.logger.info("Agent 工具已注册: %s (source=%s)", tool.name, getattr(tool, 'source', 'unknown'))
+
+    # ── Web Search Provider ────────────────────────────────────
+
+    def register_web_search_provider(self, provider: Any) -> None:
+        """注册 Web 搜索 Provider。
+
+        核心工具 web_search 会按优先级自动选择可用的 provider。
+        """
+        self._registry.register_web_search_provider(provider)
+        self.logger.info("WebSearch provider 已注册: %s (priority=%s)",
+                         getattr(provider, 'provider_id', 'unknown'),
+                         getattr(provider, 'priority', 0))
+
     # ── Speech ───────────────────────────────────────────────────
 
     def register_speech_provider(self, provider: Any) -> None:

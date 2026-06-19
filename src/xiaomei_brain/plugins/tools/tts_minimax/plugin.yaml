@@ -1,0 +1,5 @@
+name: tts_minimax
+version: "1.0.0"
+description: "文本转语音工具 — speak_to_file（MiniMax TTS API）"
+kind: bundle
+entry: adapter:register

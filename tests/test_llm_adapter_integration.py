@@ -40,7 +40,7 @@ def test_llm_client_from_registry():
     from xiaomei_brain.llm.client import LLMClient
     from xiaomei_brain.plugin.registry import PluginRegistry
     from xiaomei_brain.plugin.context import PluginContext
-    from xiaomei_brain.llm.providers.deepseek.adapter import register
+    from xiaomei_brain.plugins.providers.deepseek.adapter import register
 
     reg = PluginRegistry()
     ctx = PluginContext(config={}, plugin_name="deepseek", agent_id="test", registry=reg)
@@ -60,7 +60,7 @@ def test_provider_from_config_merge():
     from xiaomei_brain.llm.types import ProviderProfile, ModelDefinition, load_config_providers
     from xiaomei_brain.plugin.registry import PluginRegistry
     from xiaomei_brain.plugin.context import PluginContext
-    from xiaomei_brain.llm.providers.deepseek.adapter import register
+    from xiaomei_brain.plugins.providers.deepseek.adapter import register
 
     reg = PluginRegistry()
     ctx = PluginContext(config={}, plugin_name="deepseek", agent_id="test", registry=reg)

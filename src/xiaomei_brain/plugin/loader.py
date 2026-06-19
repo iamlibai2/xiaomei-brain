@@ -49,15 +49,13 @@ class PluginLoader:
     def _default_dirs(self) -> list[str]:
         """默认插件扫描目录。"""
         dirs: list[str] = []
-        # 内置频道（channels/ 现有目录）
-        import xiaomei_brain.channels as _channels
-        channels_root = Path(_channels.__file__).parent
-        dirs.append(str(channels_root))
-
-        # 内置 LLM provider（llm/providers/）
-        import xiaomei_brain.llm.providers as _providers
-        providers_root = Path(_providers.__file__).parent
-        dirs.append(str(providers_root))
+        # 统一插件目录（plugins/ 下按四类组织）
+        import xiaomei_brain.plugins as _plugins
+        plugins_root = Path(_plugins.__file__).parent
+        for category in ("channels", "providers", "body", "tools"):
+            category_dir = plugins_root / category
+            if category_dir.is_dir():
+                dirs.append(str(category_dir))
 
         # 用户插件
         user_plugins = Path.home() / ".xiaomei-brain" / "plugins"

@@ -131,7 +131,7 @@ class Living:
         - _on_wake_up()
         - _on_stop()
         - _on_transition(old, new)
-        - _get_heartbeat_result() -> str
+        - _heartbeat_result -> str
 
     Periodic task registration:
         - register_periodic(name, interval, handler)
@@ -147,7 +147,7 @@ class Living:
         - _on_wake_up()
         - _on_stop()
         - _on_transition(old, new)
-        - _get_heartbeat_result() -> str
+        - _heartbeat_result -> str
 
     周期任务注册:
         - register_periodic(name, interval, handler)
@@ -531,7 +531,7 @@ class Living:
             self._heartbeat_result = HEARTBEAT_NORMAL
             self._tick_periodic(self.state)
 
-            if self._get_heartbeat_result() == HEARTBEAT_DREAM:
+            if self._heartbeat_result == HEARTBEAT_DREAM:
                 logger.info("[Living/SLEEPING] 触发 DREAMING")
                 self._transition(LivingState.DREAMING)
                 return
@@ -606,7 +606,7 @@ class Living:
             self._heartbeat_result = HEARTBEAT_NORMAL
             self._tick_periodic(self.state)
 
-            if self._get_heartbeat_result() == HEARTBEAT_DREAM and not l3_fired:
+            if self._heartbeat_result == HEARTBEAT_DREAM and not l3_fired:
                 l3_fired = True
                 continue
 

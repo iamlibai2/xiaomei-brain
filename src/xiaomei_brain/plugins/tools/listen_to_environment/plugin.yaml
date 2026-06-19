@@ -1,0 +1,5 @@
+name: listen_to_environment
+version: "1.0.0"
+description: "听听周围 — 调用 body.ears 听觉感知"
+kind: bundle
+entry: adapter:register

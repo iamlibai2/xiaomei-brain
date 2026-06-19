@@ -1,0 +1,5 @@
+name: body_eyes
+version: "1.0.0"
+description: "眼睛器官 — 视觉感知（摄像头 + 人脸识别）"
+kind: bundle
+entry: adapter:register

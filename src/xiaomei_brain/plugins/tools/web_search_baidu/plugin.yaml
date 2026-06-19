@@ -1,0 +1,5 @@
+name: web_search_baidu
+version: "1.0.0"
+description: "百度搜索 Provider — web_search 工具的内置保底后端"
+kind: bundle
+entry: adapter:register
