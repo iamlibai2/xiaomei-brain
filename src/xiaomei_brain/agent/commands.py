@@ -1141,10 +1141,17 @@ class MemoryConsole:
 
         # Recent activity (last 7 days)
         day_rows = conn.execute(
-            "SELECT date(created_at, 'unixepoch') as day, "
-            "COUNT(*) as cnt, COUNT(DISTINCT session_id) as sessions "
-            "FROM messages "
-            "WHERE created_at > ? "
+            "SELECT date(m.created_at, 'unixepoch') as day, "
+            "COUNT(DISTINCT m.session_id) as sessions, "
+            "SUM(CASE WHEN m.role='user' THEN 1 ELSE 0 END) as user_msg, "
+            "SUM(CASE WHEN m.role='assistant' THEN 1 ELSE 0 END) as assistant_msg, "
+            "COALESCE(th.tool_calls, 0) as tool_calls "
+            "FROM messages m "
+            "LEFT JOIN ("
+            "  SELECT date(created_at, 'unixepoch') as day, COUNT(*) as tool_calls "
+            "  FROM tool_history GROUP BY day"
+            ") th ON th.day = date(m.created_at, 'unixepoch') "
+            "WHERE m.created_at > ? "
             "GROUP BY day ORDER BY day DESC LIMIT 7",
             (now - 7 * 86400,),
         ).fetchall()
@@ -1154,14 +1161,13 @@ class MemoryConsole:
             today_str = _time.strftime("%Y-%m-%d", _time.localtime(now))
             yesterday_str = _time.strftime("%Y-%m-%d", _time.localtime(now - 86400))
 
-            max_day_cnt = max(r["cnt"] for r in day_rows) if day_rows else 1
             lines.append(f"\n  {G}最近7天{R}")
-            for r in reversed(day_rows):
-                day = r["day"]
-                cnt = r["cnt"]
-                sessions = r["sessions"]
+            lines.append(f"  {X}{'日期':<14} {'用户消息':>6} {'小美回复':>6} {'工具调用':>6} {'会话':>4}{R}")
 
-                # Label: today / yesterday / weekday
+            for r in day_rows:
+                day = r["day"]
+                day = day if isinstance(day, str) else str(day)
+
                 if day == today_str:
                     label = f"{G}今天{R}"
                 elif day == yesterday_str:
@@ -1169,14 +1175,16 @@ class MemoryConsole:
                 else:
                     tm = _time.strptime(day, "%Y-%m-%d")
                     wd = WEEKDAYS[tm.tm_wday]
-                    date_part = f"{tm.tm_mon}/{tm.tm_mday}"
-                    label = f"{date_part} {wd}"
+                    label = f"{tm.tm_mon}/{tm.tm_mday} {wd}"
 
-                # Bar
-                bar_w = max(1, int(cnt / max_day_cnt * 15)) if max_day_cnt > 0 else 1
-                bar = "█" * min(bar_w, 30)
+                user_n = r["user_msg"] or 0
+                assistant_n = r["assistant_msg"] or 0
+                tool_n = r["tool_calls"] or 0
+                sess_n = r["sessions"] or 0
 
-                lines.append(f"  {label:<14} {G}{bar}{R}  {V}{cnt:>4}{R} 条  {X}{sessions} 会话{R}")
+                lines.append(
+                    f"  {label:<14} {V}{user_n:>6}{R} {V}{assistant_n:>6}{R} {V}{tool_n:>6}{R} {X}{sess_n:>4}{R}"
+                )
 
         return CommandResult(output="\n".join(lines))
 
