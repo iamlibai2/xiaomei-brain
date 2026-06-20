@@ -214,7 +214,6 @@ class ConsciousLiving(Living):
             longterm_memory=self.agent.longterm_memory,
             memory_extractor=self.agent.memory_extractor,
             agent_instance=self.agent,
-            self_image=self.consciousness.self_image,
         )
         if hasattr(self, '_gateway_inbound'):
             self._gateway_inbound.set_agent_commands(self.agent.commands)
@@ -347,6 +346,7 @@ class ConsciousLiving(Living):
             cron_scheduler=self.cron_scheduler,
         )
         self._load_consciousness = load_consciousness
+        self.agent.commands._self_image = self.consciousness.self_image
         boot_line("意识核心", "OK", f"agent={self._agent_id}")
 
         # ── 内感受（Interoception）—— 身体状态感知 ──

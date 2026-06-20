@@ -1,0 +1,267 @@
+"""InternalDisplay — 对话内部处理结果展示。
+
+每轮对话结束后，以 boot 风格区块展示记忆提取、内心声音、DAG 压缩等。
+同时输出结构化数据供 WebSocket/TUI 使用。
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+
+
+# ── 颜色（与 boot.py 保持一致）────────────────────────────
+C_DIM = "\033[38;5;73m"   # dusty teal
+RESET = "\033[0m"
+
+
+@dataclass
+class InternalDisplay:
+    """收集并格式化展示内部处理结果。
+
+    双通道输出：
+    - CLI:  display() → ANSI 格式化文本打印到 stdout
+    - WS:   to_dict() → 结构化 dict，供 TUI 自行渲染
+
+    用法:
+        display = InternalDisplay()
+        display.record_memory("ADD|标签|内容")
+        display.record_inner_voice("今天状态不错...", ["归属欲 0.5→0.6"], "user_happy(0.7)")
+        display.display()   # CLI 输出
+        ws.send(display.to_dict())  # WS 推送
+        display.clear()
+    """
+
+    _memory_actions: list[dict] = field(default_factory=list)
+    _inner_voice_thought: str = ""
+    _inner_voice_drive: list[str] = field(default_factory=list)
+    _inner_voice_signal: str = ""
+    _dag_msg_count: int = 0
+    _dag_summary_tokens: int = 0
+    _periodic_count: int = 0
+    _intent_type: str = ""
+    _intent_reason: str = ""
+    _recall_count: int = 0
+    _recall_tags: list[str] = field(default_factory=list)
+
+    # ── Record ────────────────────────────────────────────
+
+    def record_memory(self, memory_block: str) -> None:
+        """记录本轮记忆提取结果。
+
+        Args:
+            memory_block: LLM 输出的 <MEMORY> 原始文本
+        """
+        if not memory_block or not memory_block.strip():
+            return
+        for action in _parse_memory_actions(memory_block):
+            self._memory_actions.append(action)
+
+    def record_inner_voice(self, thought: str, drive_deltas: list[str], signal: str) -> None:
+        """记录内心声音结果（来自上一轮的 daemon 线程）。"""
+        if thought:
+            self._inner_voice_thought = thought
+        if drive_deltas:
+            self._inner_voice_drive = list(drive_deltas)
+        if signal:
+            self._inner_voice_signal = signal
+
+    def record_dag_compact(self, msg_count: int, summary_tokens: int) -> None:
+        """记录 DAG 压缩结果。"""
+        self._dag_msg_count = msg_count
+        self._dag_summary_tokens = summary_tokens
+
+    def record_periodic_extract(self, count: int) -> None:
+        """记录定期记忆提取结果。"""
+        self._periodic_count = count
+
+    def record_intent(self, intent_type: str, reason: str) -> None:
+        """记录意图决策结果。"""
+        if intent_type:
+            self._intent_type = intent_type
+        if reason:
+            self._intent_reason = reason
+
+    def record_memory_recall(self, count: int, tags: list[str]) -> None:
+        """记录记忆召回结果。"""
+        self._recall_count = count
+        self._recall_tags = list(tags)
+
+    # ── Has Data ──────────────────────────────────────────
+
+    def has_data(self) -> bool:
+        return bool(
+            self._memory_actions
+            or self._inner_voice_thought
+            or self._dag_msg_count
+            or self._periodic_count
+            or self._intent_type
+            or self._recall_count
+        )
+
+    # ── CLI 输出 ──────────────────────────────────────────
+
+    def display(self) -> None:
+        """CLI：直接打印 ANSI 格式化区块。无数据则 silence。"""
+        if not self.has_data():
+            return
+        lines = self.render_lines()
+        # 粗略估算最长行的显示宽度（非 ASCII 算 2 列），让标题线不短于内容
+        max_w = max((sum(2 if ord(c) > 127 else 1 for c in line) for line in lines), default=30)
+        # "── 📋 本轮内部处理 ──" 核心约 20 列，补齐到比内容略宽
+        extra = max(max_w - 20, 0)
+        pad = "─" * (extra // 2 + 2)
+        print()
+        print(f"  {C_DIM}──{pad} 📋 本轮内部处理 {pad}──{RESET}", flush=True)
+        for line in lines:
+            print(f"    {line}", flush=True)
+
+    def render_lines(self) -> list[str]:
+        """返回 ANSI 格式化的行列表（不含边框头尾）。"""
+        lines: list[str] = []
+
+        if self._intent_type:
+            reason = f" — {self._intent_reason[:60]}" if self._intent_reason else ""
+            lines.append(f"🎯 意图: {self._intent_type}{reason}")
+
+        if self._recall_count:
+            tags_str = " · ".join(self._recall_tags[:4]) if self._recall_tags else "匹配记忆"
+            lines.append(f"🔍 记忆召回: {self._recall_count} 条（{tags_str}）")
+
+        if self._memory_actions:
+            parts = []
+            for a in self._memory_actions:
+                action = a.get("action", "?")
+                label = {"ADD": "新增", "UPDATE": "更新", "MERGE": "合并", "DELETE": "删除"}.get(action, action)
+                preview = a.get("preview", "")
+                parts.append(f'{label} "{preview}"')
+            lines.append("🧠 " + " · ".join(parts))
+
+        if self._inner_voice_thought:
+            thought = self._inner_voice_thought[:80]
+            if len(self._inner_voice_thought) > 80:
+                thought += "…"
+            lines.append(f"💭 内心声音: {thought}")
+
+        if self._inner_voice_drive:
+            lines.append("📈 Drive: " + " · ".join(self._inner_voice_drive))
+
+        if self._inner_voice_signal:
+            lines.append(f"👤 社交感知: {self._inner_voice_signal}")
+
+        if self._dag_msg_count:
+            lines.append(f"📦 DAG: {self._dag_msg_count} 条消息 → 摘要 ({self._dag_summary_tokens} tokens)")
+
+        if self._periodic_count:
+            lines.append(f"🗂 定期提取: {self._periodic_count} 条记忆")
+
+        return lines
+
+    # ── WS/TUI 结构化输出 ─────────────────────────────────
+
+    def to_dict(self) -> dict:
+        """返回结构化数据，供 WebSocket/TUI 渲染。
+
+        Returns:
+            {"type": "internal_display", "data": {...}}
+            只包含有数据的字段。
+        """
+        data: dict = {}
+
+        if self._memory_actions:
+            data["memory"] = self._memory_actions
+
+        inner_voice: dict = {}
+        if self._inner_voice_thought:
+            inner_voice["thought"] = self._inner_voice_thought
+        if self._inner_voice_drive:
+            inner_voice["drive_deltas"] = self._inner_voice_drive
+        if self._inner_voice_signal:
+            inner_voice["signal"] = self._inner_voice_signal
+        if inner_voice:
+            data["inner_voice"] = inner_voice
+
+        if self._dag_msg_count:
+            data["dag"] = {
+                "msg_count": self._dag_msg_count,
+                "summary_tokens": self._dag_summary_tokens,
+            }
+
+        if self._periodic_count:
+            data["periodic"] = {"count": self._periodic_count}
+
+        if self._intent_type:
+            data["intent"] = {"type": self._intent_type, "reason": self._intent_reason}
+
+        if self._recall_count:
+            data["recall"] = {"count": self._recall_count, "tags": self._recall_tags}
+
+        return {"type": "internal_display", "data": data}
+
+    def clear(self) -> None:
+        """清空所有数据，准备下一轮。"""
+        self._memory_actions.clear()
+        self._inner_voice_thought = ""
+        self._inner_voice_drive.clear()
+        self._inner_voice_signal = ""
+        self._dag_msg_count = 0
+        self._dag_summary_tokens = 0
+        self._periodic_count = 0
+        self._intent_type = ""
+        self._intent_reason = ""
+        self._recall_count = 0
+        self._recall_tags.clear()
+
+
+# ── 记忆块解析 ────────────────────────────────────────────
+
+def _parse_memory_actions(memory_block: str) -> list[dict]:
+    """从 MEMORY block 中提取结构化动作列表。
+
+    Returns:
+        [{"action": "ADD", "preview": "用户喜欢Python"}, ...]
+    """
+    block = memory_block.strip()
+    if not block:
+        return []
+
+    # JSON 格式
+    try:
+        data = json.loads(block)
+        if isinstance(data, dict) and "actions" in data:
+            return [
+                {
+                    "action": a.get("action", "?"),
+                    "preview": _truncate(a.get("content", "")),
+                }
+                for a in data["actions"]
+                if isinstance(a, dict)
+            ]
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    # 行格式: ADD|tag|content
+    actions: list[dict] = []
+    for line in block.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split("|", 2)
+        if len(parts) < 2:
+            continue
+        action = parts[0].strip().upper()
+        if action not in ("ADD", "UPDATE", "MERGE", "DELETE"):
+            continue
+        content = parts[2].strip() if len(parts) > 2 else ""
+        actions.append({"action": action, "preview": _truncate(content)})
+
+    return actions
+
+
+def _truncate(text: str, max_len: int = 30) -> str:
+    t = text.replace("\n", " ").strip()
+    if len(t) > max_len:
+        return t[:max_len] + "…"
+    return t
+
+

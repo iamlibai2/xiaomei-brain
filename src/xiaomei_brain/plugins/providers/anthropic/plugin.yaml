@@ -1,0 +1,5 @@
+name: anthropic
+version: "1.0.0"
+description: Anthropic Messages API provider — Claude series models
+kind: provider
+entry: adapter:register
