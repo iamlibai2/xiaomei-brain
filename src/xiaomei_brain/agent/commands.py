@@ -1141,7 +1141,8 @@ class MemoryConsole:
 
         # Recent activity (last 7 days)
         day_rows = conn.execute(
-            "SELECT date(created_at, 'unixepoch') as day, COUNT(*) as cnt "
+            "SELECT date(created_at, 'unixepoch') as day, "
+            "COUNT(*) as cnt, COUNT(DISTINCT session_id) as sessions "
             "FROM messages "
             "WHERE created_at > ? "
             "GROUP BY day ORDER BY day DESC LIMIT 7",
@@ -1149,10 +1150,33 @@ class MemoryConsole:
         ).fetchall()
 
         if day_rows:
+            WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+            today_str = _time.strftime("%Y-%m-%d", _time.localtime(now))
+            yesterday_str = _time.strftime("%Y-%m-%d", _time.localtime(now - 86400))
+
+            max_day_cnt = max(r["cnt"] for r in day_rows) if day_rows else 1
             lines.append(f"\n  {G}最近7天{R}")
             for r in reversed(day_rows):
-                day_label = r["day"][5:]  # MM-DD
-                lines.append(f"  {D}{day_label}{R}  {V}{r['cnt']:>4}{R}")
+                day = r["day"]
+                cnt = r["cnt"]
+                sessions = r["sessions"]
+
+                # Label: today / yesterday / weekday
+                if day == today_str:
+                    label = f"{G}今天{R}"
+                elif day == yesterday_str:
+                    label = f"{D}昨天{R}"
+                else:
+                    tm = _time.strptime(day, "%Y-%m-%d")
+                    wd = WEEKDAYS[tm.tm_wday]
+                    date_part = f"{tm.tm_mon}/{tm.tm_mday}"
+                    label = f"{date_part} {wd}"
+
+                # Bar
+                bar_w = max(1, int(cnt / max_day_cnt * 15)) if max_day_cnt > 0 else 1
+                bar = "█" * min(bar_w, 30)
+
+                lines.append(f"  {label:<14} {G}{bar}{R}  {V}{cnt:>4}{R} 条  {X}{sessions} 会话{R}")
 
         return CommandResult(output="\n".join(lines))
 
