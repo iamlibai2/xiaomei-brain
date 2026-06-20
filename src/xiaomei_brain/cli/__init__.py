@@ -2,19 +2,20 @@
 
 用法：
     xiaomei-brain                                   # 启动小美（首次自动创建）
-    python -m xiaomei_brain start <agent_id> [--no-consciousness] [--legacy]
-    python -m xiaomei_brain run <agent_id> [--cli] [--no-consciousness] [--legacy]
-    python -m xiaomei_brain stop <agent_id> [--force]
-    python -m xiaomei_brain restart <agent_id>
-    python -m xiaomei_brain status <agent_id>
-    python -m xiaomei_brain tui [--host localhost] [--port <port>]
-    python -m xiaomei_brain agent <list|info|create|delete> ...
-    python -m xiaomei_brain config <get|set|validate|file> ...
-    python -m xiaomei_brain plugins <list|enable|disable> ...
-    python -m xiaomei_brain logs <agent_id> [-f] [-n <lines>]
-    python -m xiaomei_brain doctor [--fix] [-v]
-    python -m xiaomei_brain setup
-    python -m xiaomei_brain model                   # 交互式配置模型
+    xiaomei-brain run <agent_id> [--cli] [--no-consciousness] [--legacy]
+    xiaomei-brain start <agent_id>                 # 后台启动
+    xiaomei-brain stop <agent_id> [--force]
+    xiaomei-brain restart <agent_id>
+    xiaomei-brain status <agent_id>
+    xiaomei-brain tui [--host localhost] [--port <port>]
+    xiaomei-brain agent <list|info|create|delete> ...
+    xiaomei-brain config <get|set|validate|file> ...
+    xiaomei-brain plugins <list|enable|disable> ...
+    xiaomei-brain logs <agent_id> [-f] [-n <lines>]
+    xiaomei-brain doctor [--fix] [-v]
+    xiaomei-brain setup
+    xiaomei-brain install                  # 预下载 Embedding 模型
+    xiaomei-brain model                   # 交互式配置模型
 """
 
 import sys

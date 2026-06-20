@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from typing import Callable
 
@@ -18,7 +19,14 @@ logger = logging.getLogger(__name__)
 
 # ── 调试日志（定位卡死）────────────────────────────────────────
 import sys as _sys
-_debug = open("/tmp/xiaomei_tui_trace.log", "w", buffering=1)
+import tempfile as _tempfile
+try:
+    _debug = open(
+        os.path.join(_tempfile.gettempdir(), "xiaomei_tui_trace.log"),
+        "w", buffering=1,
+    )
+except OSError:
+    _debug = open(os.devnull, "w")
 def _trace(msg):
     import time as _time
     ts = _time.monotonic()

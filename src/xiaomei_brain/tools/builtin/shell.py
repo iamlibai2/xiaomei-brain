@@ -39,6 +39,15 @@ _BLOCKED_PATTERNS = [
     (r'^\s*eval\b', 'eval is too dangerous. Call the command directly.'),
     (r';\s*eval\b', 'eval is too dangerous. Call the command directly.'),
     (r'^\s*exec\b', 'exec replaces the shell process. Avoid in this context.'),
+    # ── Windows: 命令行解释器 + 系统管理工具 ──
+    (r'^\s*powershell\s+(-Command|-c|-EncodedCommand|-e|-Enc)\b',
+     'powershell -Command executes arbitrary code. Write a .ps1 file and run it instead.'),
+    (r'^\s*cmd\s+/[cC]\b', 'cmd /c executes arbitrary shell. Use a script file or call commands directly.'),
+    (r'^\s*wmic\b', 'wmic is deprecated and dangerous.'),
+    (r'^\s*reg\s+(add|delete|import|export)\b', 'Direct registry manipulation is blocked.'),
+    # ── IIS / 服务管理（系统级变更）──
+    (r'^\s*sc\s+(stop|delete|config)\b', 'Service control is blocked.'),
+    (r'^\s*(net\s+stop|net\s+user|net\s+localgroup)\b', 'System service/account management is blocked.'),
 ]
 
 # apt-get 需要非交互模式

@@ -174,12 +174,15 @@ def cmd_start(args: list[str]) -> None:
     stdout = (log_dir / "agent.log").open("a")
     stderr = (log_dir / "agent.err.log").open("a")
 
+    popen_kwargs: dict = {}
+    if sys.platform != "win32":
+        popen_kwargs["start_new_session"] = True  # Unix: 脱离终端
     proc = subprocess.Popen(
         run_args,
         stdout=stdout,
         stderr=stderr,
-        start_new_session=True,  # 脱离终端
         close_fds=True,
+        **popen_kwargs,
     )
 
     # 等待 PID 文件写入（最多等 3 秒）

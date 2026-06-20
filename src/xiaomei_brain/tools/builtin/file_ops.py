@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 
 from ..base import Tool, tool
 
@@ -14,11 +15,13 @@ logger = logging.getLogger(__name__)
 # 可通过 set_output_base() 按 agent 隔离
 _output_base: str | None = None
 
-# 硬拒的敏感路径前缀（realpath 比较，覆盖符号链接绕过）。
-# 包含 SSH/凭证/系统目录，工具永远不能读写。
-_SENSITIVE_PATH_PREFIXES = tuple(
-    os.path.realpath(p)
-    for p in (
+
+def _build_sensitive_paths() -> tuple[str, ...]:
+    """构建敏感路径列表。按平台区分，realpath 比较覆盖符号链接绕过。
+
+    包含 SSH/凭证/系统目录，工具永远不能读写。
+    """
+    common = [
         os.path.expanduser("~/.ssh"),
         os.path.expanduser("~/.gnupg"),
         os.path.expanduser("~/.aws"),
@@ -28,14 +31,31 @@ _SENSITIVE_PATH_PREFIXES = tuple(
         os.path.expanduser("~/.docker"),
         os.path.expanduser("~/.bash_history"),
         os.path.expanduser("~/.zsh_history"),
-        "/etc",
-        "/proc",
-        "/sys",
-        "/var/log",
-        "/boot",
-        "/root/.ssh",
-    )
-)
+    ]
+    if sys.platform == "win32":
+        system_root = os.environ.get("SystemRoot", r"C:\Windows")
+        common.extend([
+            system_root,
+            os.path.join(system_root, "System32"),
+            os.path.join(system_root, "SysWOW64"),
+            os.environ.get("ProgramFiles", r"C:\Program Files"),
+            os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+            os.environ.get("ProgramData", r"C:\ProgramData"),
+        ])
+    else:
+        common.extend([
+            "/etc",
+            "/proc",
+            "/sys",
+            "/var/log",
+            "/boot",
+            "/root/.ssh",
+        ])
+    return tuple(os.path.realpath(p) for p in common)
+
+
+# 硬拒的敏感路径前缀（realpath 比较，覆盖符号链接绕过）。
+_SENSITIVE_PATH_PREFIXES = _build_sensitive_paths()
 
 
 def _get_output_dir() -> str:
@@ -57,15 +77,15 @@ def set_output_base(base_dir: str) -> None:
 def _get_allowed_roots() -> list[str]:
     """绝对路径允许的根目录列表。
 
-    默认仅允许 agent workspace；可通过 `XIAOMEI_ALLOWED_PATHS`（冒号分隔）追加。
-    例如 `XIAOMEI_ALLOWED_PATHS=/srv/project:/tmp/work`。
+    默认仅允许 agent workspace；可通过 `XIAOMEI_ALLOWED_PATHS`（用系统路径分隔符）追加。
+    Linux 用冒号，Windows 用分号。
     """
     roots: list[str] = []
     workspace = _get_output_dir()
     if workspace:
         roots.append(os.path.realpath(workspace))
     extra = os.environ.get("XIAOMEI_ALLOWED_PATHS", "")
-    for p in extra.split(":"):
+    for p in extra.split(os.pathsep):
         p = p.strip()
         if p:
             try:
