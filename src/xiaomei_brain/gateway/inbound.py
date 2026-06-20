@@ -219,7 +219,7 @@ class Gateway:
     _DATA_CMDS = frozenset({
         "db", "memory", "dag", "context", "clear", "new", "summarize",
         "expand", "periodic", "dream", "user-memories", "relationship", "learn",
-        "self", "essence", "stream", "projects",
+        "self", "essence", "stream", "projects", "stats",
     })
 
     def _dispatch_command(self, content: str, user_id: str, session_id: str) -> bool:

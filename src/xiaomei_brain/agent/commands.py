@@ -180,6 +180,10 @@ class MemoryConsole:
         if cmd == "projects":
             return self._cmd_projects()
 
+        # ── Stats ───────────────────────────────────────────
+        if cmd == "stats":
+            return self._cmd_stats()
+
         # ── Help ────────────────────────────────────────────────
         if cmd == "help":
             return self._cmd_help()
@@ -938,6 +942,220 @@ class MemoryConsole:
             data={"projects": [dict(r) for r in rows]},
         )
 
+    def _cmd_stats(self) -> CommandResult:
+        """Global statistics panel — conversations, memory, goals, activity."""
+        import time as _time
+
+        G, V, D, X, R = "\033[32m", "\033[38;5;203m", "\033[38;5;73m", "\033[90m", "\033[0m"
+
+        db_source = self.db or self.dag or self.ltm
+        if not db_source:
+            return CommandResult(output=f"  {D}无数据库{R}")
+
+        conn = db_source._get_conn()
+        now = _time.time()
+        lines = [f"  {V}══ 统计面板 ══{R}"]
+
+        # ── 1. Overview ──
+        lines.append(f"\n  {G}概览{R}")
+
+        # DB size
+        try:
+            size_bytes = os.path.getsize(str(db_source.db_path))
+            if size_bytes >= 1024 * 1024:
+                size_str = f"{size_bytes / (1024 * 1024):.1f} MB"
+            elif size_bytes >= 1024:
+                size_str = f"{size_bytes / 1024:.1f} KB"
+            else:
+                size_str = f"{size_bytes} B"
+        except OSError:
+            size_str = "N/A"
+
+        # Messages + sessions + time range
+        msg_stats = conn.execute(
+            "SELECT COUNT(*) as total, "
+            "COUNT(DISTINCT session_id) as sessions, "
+            "MIN(created_at) as first_ts, MAX(created_at) as last_ts "
+            "FROM messages"
+        ).fetchone()
+        total_msgs = msg_stats["total"] or 0
+        total_sessions = msg_stats["sessions"] or 0
+        first_ts = msg_stats["first_ts"] or 0
+        last_ts = msg_stats["last_ts"] or 0
+
+        if first_ts and last_ts:
+            days = max(1, int((last_ts - first_ts) / 86400))
+            first_date = _time.strftime("%m-%d", _time.localtime(first_ts))
+            last_date = _time.strftime("%m-%d", _time.localtime(last_ts))
+            time_range = f"{first_date} → {last_date}  {X}({days}d){R}"
+        else:
+            time_range = f"{X}—{R}"
+
+        lines.append(f"  {D}数据库{R}    brain.db  {V}{size_str}{R}")
+        lines.append(f"  {D}时间范围{R}  {time_range}")
+
+        # Message distribution by role
+        role_rows = conn.execute(
+            "SELECT role, COUNT(*) FROM messages GROUP BY role ORDER BY COUNT(*) DESC"
+        ).fetchall()
+        role_parts = []
+        role_map = {}
+        for role, cnt in role_rows:
+            role_map[role] = cnt
+            icon = {"user": "👤", "assistant": "🤖", "tool": "🔧"}.get(role, role)
+            role_parts.append(f"{icon} {V}{cnt}{R}")
+        lines.append(f"  {D}消息{R}      {V}{total_msgs:,}{R} 条  {X}({' · '.join(role_parts)}){R}")
+        lines.append(f"  {D}会话{R}      {V}{total_sessions}{R} 个")
+
+        # Tool calls
+        tool_total = conn.execute("SELECT COUNT(*) FROM tool_history").fetchone()[0]
+        if tool_total:
+            top_tools = conn.execute(
+                "SELECT tool_name, COUNT(*) as cnt FROM tool_history "
+                "GROUP BY tool_name ORDER BY cnt DESC LIMIT 5"
+            ).fetchall()
+            tool_parts = [f"{X}{t['tool_name']}{R} {V}{t['cnt']}{R}" for t in top_tools]
+            lines.append(f"  {D}工具调用{R}  {V}{tool_total:,}{R} 次  {X}({' · '.join(tool_parts)}){R}")
+
+        # ── 2. Long-term Memory ──
+        lines.append(f"\n  {G}长期记忆{R}")
+
+        mem_total = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+        if mem_total:
+            mem_status = conn.execute(
+                "SELECT status, COUNT(*) FROM memories GROUP BY status"
+            ).fetchall()
+            status_parts = []
+            for s, c in mem_status:
+                color = G if s == "active" else X
+                status_parts.append(f"{color}{s}{R} {V}{c}{R}")
+            lines.append(f"  {D}总计{R}      {V}{mem_total}{R} 条  {X}({' · '.join(status_parts)}){R}")
+
+            # Source distribution
+            src_rows = conn.execute(
+                "SELECT source, COUNT(*) FROM memories GROUP BY source ORDER BY COUNT(*) DESC"
+            ).fetchall()
+            if src_rows:
+                src_parts = [f"{X}{s}{R} {V}{c}{R}" for s, c in src_rows[:6]]
+                lines.append(f"  {D}来源{R}      {X}{' · '.join(src_parts)}{R}")
+
+            # Avg importance + strength
+            avg = conn.execute(
+                "SELECT AVG(importance), AVG(strength) FROM memories WHERE status='active'"
+            ).fetchone()
+            lines.append(f"  {D}平均强度{R}  {V}{avg[0]:.2f}{R}  {X}importance{R}  {V}{avg[1]:.2f}{R}  {X}strength{R}")
+
+            tag_count = conn.execute("SELECT COUNT(DISTINCT tag) FROM memory_tags").fetchone()[0]
+            if tag_count:
+                lines.append(f"  {D}标签{R}      {V}{tag_count}{R} 个独立标签")
+
+        else:
+            lines.append(f"  {X}暂无{R}")
+
+        # ── 3. DAG ──
+        dag_total = conn.execute("SELECT COUNT(*) FROM summaries").fetchone()[0]
+        if dag_total:
+            leaf = conn.execute("SELECT COUNT(*) FROM summaries WHERE depth=0").fetchone()[0]
+            higher = dag_total - leaf
+            max_depth = conn.execute("SELECT MAX(depth) FROM summaries").fetchone()[0]
+            lines.append(f"\n  {G}DAG 摘要{R}")
+            lines.append(f"  {D}总计{R}      {V}{dag_total}{R} 个  {X}(叶子 {leaf} · 高层 {higher} · 最大深度 {max_depth}){R}")
+
+        # ── 4. Experience Stream ──
+        exp_total = conn.execute("SELECT COUNT(*) FROM experience_stream").fetchone()[0]
+        if exp_total:
+            exp_dist = conn.execute(
+                "SELECT type, COUNT(*) FROM experience_stream GROUP BY type ORDER BY COUNT(*) DESC"
+            ).fetchall()
+            TYPE_LABELS = {
+                "user_msg": "用户", "assistant_msg": "回复", "tool_exec": "工具",
+                "internal_thought": "思考", "internal_action": "动作",
+                "drive_event": "Drive", "dream": "梦境", "internal_reflection": "反省",
+            }
+            parts = [f"{X}{TYPE_LABELS.get(t, t)}{R} {V}{c}{R}" for t, c in exp_dist]
+            lines.append(f"\n  {G}经验流{R}")
+            lines.append(f"  {D}总计{R}      {V}{exp_total:,}{R} 条")
+            lines.append(f"  {D}分布{R}      {X}{' · '.join(parts)}{R}")
+
+        # ── 5. Goals ──
+        goal_total = conn.execute("SELECT COUNT(*) FROM goals").fetchone()[0]
+        if goal_total:
+            goal_status = conn.execute(
+                "SELECT status, COUNT(*) FROM goals GROUP BY status"
+            ).fetchall()
+            status_parts = []
+            STATUS_LABELS = {"PENDING": "待执行", "ACTIVE": "进行中", "COMPLETED": "已完成", "ABANDONED": "已放弃"}
+            for s, c in goal_status:
+                label = STATUS_LABELS.get(s, s)
+                color = G if s == "ACTIVE" else (V if s == "COMPLETED" else X)
+                status_parts.append(f"{color}{label}{R} {V}{c}{R}")
+
+            completed = sum(c for s, c in goal_status if s == "COMPLETED")
+            pending = sum(c for s, c in goal_status if s == "PENDING")
+
+            lines.append(f"\n  {G}目标{R}")
+            lines.append(f"  {D}总计{R}      {V}{goal_total}{R} 个  {X}({' · '.join(status_parts)}){R}")
+
+            # PACE stats
+            run_stats = conn.execute(
+                "SELECT COUNT(*), SUM(goal_completed), "
+                "SUM(CASE WHEN goal_completed=0 AND end_time>0 THEN 1 ELSE 0 END), "
+                "SUM(total_tool_calls), SUM(total_llm_calls) "
+                "FROM goal_runs"
+            ).fetchone()
+            run_total = run_stats[0] or 0
+            if run_total:
+                run_done = run_stats[1] or 0
+                run_failed = run_stats[2] or 0
+                run_tools = run_stats[3] or 0
+                run_llm = run_stats[4] or 0
+                lines.append(f"  {D}PACE{R}     {V}{run_total}{R} 次运行  {X}(完成 {G}{run_done}{R}{X} / 失败 {V}{run_failed}{R}{X}){R}")
+                lines.append(f"         {X}工具 {V}{run_tools}{R} 次  ·  LLM {V}{run_llm}{R} 次{R}")
+
+        # ── 6. Activity Pattern ──
+        lines.append(f"\n  {G}活跃时段{R}")
+
+        hour_rows = conn.execute(
+            "SELECT CAST(strftime('%H', created_at, 'unixepoch') AS INTEGER) as h, COUNT(*) as cnt "
+            "FROM messages GROUP BY h ORDER BY h"
+        ).fetchall()
+
+        if hour_rows:
+            hour_map = {int(r["h"]): r["cnt"] for r in hour_rows}
+            max_cnt = max(hour_map.values()) if hour_map else 1
+
+            # 4 time blocks: 凌晨 00-06, 上午 06-12, 下午 12-18, 晚上 18-24
+            BLOCKS = [
+                ("凌晨 00-06", range(0, 6)),
+                ("上午 06-12", range(6, 12)),
+                ("下午 12-18", range(12, 18)),
+                ("晚上 18-24", range(18, 24)),
+            ]
+            for label, hours in BLOCKS:
+                block_cnt = sum(hour_map.get(h, 0) for h in hours)
+                if block_cnt == 0:
+                    continue
+                bar_w = max(1, int(block_cnt / max_cnt * 20)) if max_cnt > 0 else 1
+                bar = "█" * min(bar_w, 30)
+                lines.append(f"  {D}{label}{R}  {G}{bar}{R}  {V}{block_cnt}{R}")
+
+        # Recent activity (last 7 days)
+        day_rows = conn.execute(
+            "SELECT date(created_at, 'unixepoch') as day, COUNT(*) as cnt "
+            "FROM messages "
+            "WHERE created_at > ? "
+            "GROUP BY day ORDER BY day DESC LIMIT 7",
+            (now - 7 * 86400,),
+        ).fetchall()
+
+        if day_rows:
+            lines.append(f"\n  {G}最近7天{R}")
+            for r in reversed(day_rows):
+                day_label = r["day"][5:]  # MM-DD
+                lines.append(f"  {D}{day_label}{R}  {V}{r['cnt']:>4}{R}")
+
+        return CommandResult(output="\n".join(lines))
+
     def _cmd_help(self) -> CommandResult:
         """Show available commands."""
         lines = [
@@ -946,6 +1164,7 @@ class MemoryConsole:
             "  \033[32m/memory\033[0m        查看最近长期记忆",
             "  \033[32m/self\033[0m          查看当前自我画像",
             "  \033[32m/essence\033[0m       查看底色（性格基线）",
+            "  \033[32m/stats\033[0m         全局统计面板",
             "  \033[32m/stream [N]\033[0m    查看最近经验流（默认20条）",
             "  \033[32m/projects\033[0m      查看项目心智模型",
             "  \033[32m/clear\033[0m         清空当前会话上下文（数据保留）",
