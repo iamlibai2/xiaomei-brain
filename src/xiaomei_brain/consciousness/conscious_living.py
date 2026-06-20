@@ -214,6 +214,7 @@ class ConsciousLiving(Living):
             longterm_memory=self.agent.longterm_memory,
             memory_extractor=self.agent.memory_extractor,
             agent_instance=self.agent,
+            self_image=self.consciousness.self_image,
         )
         if hasattr(self, '_gateway_inbound'):
             self._gateway_inbound.set_agent_commands(self.agent.commands)

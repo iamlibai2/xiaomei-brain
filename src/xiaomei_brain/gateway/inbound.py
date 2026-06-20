@@ -218,7 +218,8 @@ class Gateway:
     # Data commands routed to MemoryConsole.execute()
     _DATA_CMDS = frozenset({
         "db", "memory", "dag", "context", "clear", "new", "summarize",
-        "expand", "periodic", "dream", "users",
+        "expand", "periodic", "dream", "user-memories", "relationship", "learn",
+        "self", "essence", "stream", "projects",
     })
 
     def _dispatch_command(self, content: str, user_id: str, session_id: str) -> bool:

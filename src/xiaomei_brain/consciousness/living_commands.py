@@ -21,14 +21,54 @@ logger = logging.getLogger(__name__)
 
 def cmd_show_intent(living: ConsciousLiving, args: str = "") -> None:
     """显示当前 Intent"""
+    import time as _time
     logger.info("[CLI] 执行命令: intent")
+    G, V, D, X, R = "\033[32m", "\033[38;5;203m", "\033[38;5;73m", "\033[90m", "\033[0m"
+    now = _time.time()
+
     intent = living.consciousness.get_pending_intent()
-    G, V, D, R = "\033[32m", "\033[38;5;203m", "\033[38;5;73m", "\033[0m"
+
+    # Buffer stats from DB
+    db_source = getattr(living.agent, 'conversation_db', None) or getattr(living.agent, 'longterm_memory', None)
+    buf_total = buf_pending = buf_done = 0
+    buf_recent: list = []
+    if db_source:
+        try:
+            conn = db_source._get_conn()
+            buf_total = conn.execute("SELECT COUNT(*) FROM intent_buffer").fetchone()[0]
+            if buf_total > 0:
+                buf_pending = conn.execute("SELECT COUNT(*) FROM intent_buffer WHERE status='pending'").fetchone()[0]
+                buf_done = conn.execute("SELECT COUNT(*) FROM intent_buffer WHERE status='done'").fetchone()[0]
+                buf_recent = conn.execute(
+                    "SELECT type, content, priority, status, created_at FROM intent_buffer ORDER BY created_at DESC LIMIT 5"
+                ).fetchall()
+        except Exception:
+            pass
+
+    print(f"\n  {G}意图{R}", flush=True)
+
     if intent:
-        print(f"\n  {G}当前意图{R}  {V}{intent.type.value}{R}  {D}priority={intent.priority}{R}", flush=True)
-        print(f"  {intent.content}", flush=True)
+        print(f"  {D}待处理{R}  {V}{intent.type.value}{R}  priority={intent.priority:.2f}", flush=True)
+        print(f"  {intent.content[:120]}", flush=True)
     else:
-        print(f"\n  {D}无待处理意图{R}", flush=True)
+        print(f"  {D}待处理{R}  {X}无{R}", flush=True)
+
+    if buf_total > 0:
+        print(f"  {D}缓冲区{R}  {V}{buf_total}{R} 条  {X}(pending {buf_pending}, done {buf_done}){R}", flush=True)
+        print(f"  {D}最近{R}", flush=True)
+        for b in buf_recent:
+            ago = now - b["created_at"]
+            if ago < 3600:
+                ts = f"{int(ago // 60)}m前"
+            elif ago < 86400:
+                ts = f"{int(ago // 3600)}h前"
+            else:
+                ts = f"{int(ago // 86400)}d前"
+            status_mark = f"{G}●{R}" if b["status"] == "pending" else f"{X}○{R}"
+            print(f"  {status_mark} {D}{b['type']:<8}{R} {b['content'][:60]}  {X}{ts}{R}", flush=True)
+    else:
+        print(f"  {D}缓冲区{R}  {X}空{R}", flush=True)
+
     living._print_prompt()
 
 
