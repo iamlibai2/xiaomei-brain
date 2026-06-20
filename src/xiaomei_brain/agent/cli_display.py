@@ -168,37 +168,39 @@ def print_write_result(idx: int, name: str, arguments: dict, result: str) -> Non
 
 def expand_tool_call(index: int, tool_call_buffer: Any = None) -> None:
     """展开指定编号的工具调用详情。"""
+    G, V, D, X, R = "\033[32m", "\033[38;5;203m", "\033[38;5;73m", "\033[90m", "\033[0m"
     if tool_call_buffer is None:
         from xiaomei_brain.agent.tool_call_buffer import tool_call_buffer as tcb
         tool_call_buffer = tcb
     rec = tool_call_buffer.get(index)
     if not rec:
-        print(f"  未找到工具调用 #{index}，最近编号: {tool_call_buffer.last_index}", flush=True)
+        print(f"  {V}未找到工具调用 #{index}{R}，最近编号: {tool_call_buffer.last_index}", flush=True)
         return
-    print(f"\n  ┌── 工具调用 #{rec.index} ──", flush=True)
-    print(f"  │ 工具: {rec.name}", flush=True)
-    print(f"  │ 参数:", flush=True)
+    print(f"\n  {X}┌──{R} {G}工具调用 #{rec.index}{R} {X}──{R}", flush=True)
+    print(f"  {X}│{R} {D}工具{R} {rec.name}", flush=True)
+    print(f"  {X}│{R} {D}参数{R}", flush=True)
     for k, v in (rec.arguments or {}).items():
         val = str(v)
-        print(f"  │   {k} = {val}", flush=True)
-    print(f"  │ 结果:", flush=True)
+        print(f"  {X}│{R}   {k} = {val}", flush=True)
+    print(f"  {X}│{R} {D}结果{R}", flush=True)
     for line in rec.result.splitlines():
-        print(f"  │   {line}", flush=True)
-    print(f"  └──", flush=True)
+        print(f"  {X}│{R}   {line}", flush=True)
+    print(f"  {X}└──{R}", flush=True)
 
 
 def list_tool_calls(n: int = 5, tool_call_buffer: Any = None) -> None:
     """列出最近 N 次工具调用。"""
+    G, V, D, X, R = "\033[32m", "\033[38;5;203m", "\033[38;5;73m", "\033[90m", "\033[0m"
     if tool_call_buffer is None:
         from xiaomei_brain.agent.tool_call_buffer import tool_call_buffer as tcb
         tool_call_buffer = tcb
     records = tool_call_buffer.recent(n)
     if not records:
-        print("  暂无工具调用记录", flush=True)
+        print(f"  {D}暂无工具调用记录{R}", flush=True)
         return
     for rec in records:
         r = rec.result.replace("\n", " ").strip()
         if len(r) > 50:
             r = r[:47] + "..."
-        tag = "\033[31m✗\033[0m" if r.lower().startswith("error") else "\033[32m✓\033[0m"
-        print(f"  [{rec.index}] {rec.name}  {tag} {r}", flush=True)
+        tag = f"{V}✗{R}" if r.lower().startswith("error") else f"{G}✓{R}"
+        print(f"  {X}[{rec.index}]{R} {rec.name}  {tag} {r}", flush=True)

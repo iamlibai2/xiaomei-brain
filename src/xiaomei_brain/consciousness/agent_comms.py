@@ -65,11 +65,17 @@ class AgentComms:
             gw = getattr(living, '_gateway_inbound', None)
             if gw:
                 from xiaomei_brain.gateway.inbound import RawMessage
-                gw.accept(RawMessage(
+                result = gw.accept(RawMessage(
                     content=content, source="agent", channel="comms",
                     peer_id=msg.from_agent, peer_type="agent",
                     session_id=session_id,
                 ))
+                if hasattr(result, 'reason'):
+                    logger.warning(
+                        "[AgentComms/Inbox] %s 消息被拒绝 (%s)，稍后重试",
+                        msg.from_agent, result.reason,
+                    )
+                    continue
             else:
                 living.put_message(content, source="agent", session_id=session_id)
             living._inbox.mark_processed(msg.msg_id)

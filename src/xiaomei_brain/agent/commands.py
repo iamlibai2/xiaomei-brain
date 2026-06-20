@@ -82,6 +82,9 @@ class MemoryConsole:
         if not cmd:
             return None
 
+        # 兼容 /command 和 command 两种形式
+        cmd = cmd.removeprefix("/")
+
         # ── User switching ──────────────────────────────────────
         if cmd.startswith("user "):
             new_user = cmd[5:].strip()
@@ -161,79 +164,93 @@ class MemoryConsole:
         """Database statistics."""
         lines = []
         data: dict[str, Any] = {}
+        G = "\033[32m"      # green — key label
+        V = "\033[38;5;203m" # coral — value
+        D = "\033[38;5;73m"  # teal — dim label
+        R = "\033[0m"
 
         if self.db:
             data["messages"] = self.db.count()
-            lines.append(f"messages: {data['messages']}")
+            lines.append(f"  {G}消息总数{R}    {V}{data['messages']}{R}")
 
         if self.dag:
             conn = self.dag._get_conn()
             data["summaries"] = conn.execute("SELECT COUNT(*) FROM summaries").fetchone()[0]
-            lines.append(f"summaries: {data['summaries']}")
+            lines.append(f"  {G}DAG 摘要{R}  {V}{data['summaries']}{R}")
 
         if self.ltm:
             data["memories_total"] = self.ltm.count()
             data["memories_user"] = self.ltm.count(user_id)
             data["tags"] = self.ltm.get_all_tags()
-            lines.append(f"memories: {data['memories_total']}")
-            lines.append(f"memories({user_id}): {data['memories_user']}")
-            lines.append(f"tags: {data['tags']}")
+            lines.append(f"  {G}长期记忆{R}  {V}{data['memories_total']}{R}  ({D}{user_id}{R}: {V}{data['memories_user']}{R})")
+            if data["tags"]:
+                lines.append(f"  {D}标签{R}      {', '.join(data['tags'])}")
 
-        return CommandResult(output="\n".join(lines), data=data)
+        return CommandResult(output="\n".join(lines) or f"  {D}(无数据){R}", data=data)
 
     def _cmd_memory(self, user_id: str) -> CommandResult:
         """List recent long-term memories."""
         if not self.ltm:
-            return CommandResult(output="(长期记忆未配置)")
+            return CommandResult(output="  \033[38;5;73m(长期记忆未配置)\033[0m")
 
         rows = self.ltm.get_recent(10, user_id=user_id)
         lines = []
+        G = "\033[32m"
+        D = "\033[38;5;73m"
+        R = "\033[0m"
         for r in rows:
-            lines.append(f"[{r['user_id']}] [{r['source']}] {r['content'][:60]}")
+            lines.append(f"  {G}[{r['user_id']}]{R} {D}{r['source']}{R}  {r['content'][:60]}")
 
         return CommandResult(
-            output="\n".join(lines) or "(无记忆)",
+            output="\n".join(lines) or f"  {D}(无记忆){R}",
             data={"memories": rows},
         )
 
     def _cmd_context(self, query: str, user_id: str, session_id: str) -> CommandResult:
         """Show last LLM context (exact copy of what was sent)."""
         if not self.agent_instance:
-            return CommandResult(output="(Agent 未配置)")
+            return CommandResult(output="  \033[38;5;73m(Agent 未配置)\033[0m")
 
         agent = self.agent_instance._get_agent()
         all_messages = agent._last_all_messages or agent.messages
         if not all_messages:
-            return CommandResult(output="(上下文为空)")
+            return CommandResult(output="  \033[38;5;73m(上下文为空)\033[0m")
 
         from xiaomei_brain.agent.message_utils import estimate_content_tokens
 
+        G = "\033[32m"
+        V = "\033[38;5;203m"
+        D = "\033[38;5;73m"
+        X = "\033[90m"
+        R = "\033[0m"
+
         total = 0
-        lines = [f"=== 上下文 ({len(all_messages)}条消息) ===", ""]
+        lines = [f"  {G}上下文{R}  {D}{len(all_messages)} 条消息{R}"]
         for i, m in enumerate(all_messages):
             role = m.get("role", "?")
             content = m.get("content", "")
             tokens = estimate_content_tokens(content)
             total += tokens
             if role == "system":
-                lines.append(f"──── system ({tokens}t) ────")
-                lines.append(content)
-                lines.append(f"──── end system ────")
-                lines.append("")
+                lines.append(f"  {V}── system ({tokens}t) ──{R}")
+                for cl in content.split("\n")[:20]:
+                    lines.append(f"  {X}{cl}{R}")
+                lines.append(f"  {V}── end system ──{R}")
             else:
                 preview = content[:80] + ("..." if len(content) > 80 else "")
-                lines.append(f"[{i}] {role} ({tokens}t): {preview}")
-        lines.append(f"=== 总计 {total} tokens ===")
+                role_icon = { "user": "👤", "assistant": "🤖", "tool": "🔧" }.get(role, role)
+                lines.append(f"  {G}[{i}]{R} {role_icon} {D}({tokens}t){R} {preview}")
+        lines.append(f"  {V}── 总计 {total} tokens ──{R}")
         return CommandResult(output="\n".join(lines))
 
     def _cmd_clear(self, session_id: str) -> CommandResult:
         """Clear current session context (data preserved, just invisible to assembler)."""
         if not self.db:
-            return CommandResult(output="(ConversationDB 未配置)")
+            return CommandResult(output="  \033[38;5;73m(ConversationDB 未配置)\033[0m")
 
         self.db.clear_context(session_id)
         return CommandResult(
-            output=f"[清空] session={session_id} 上下文已清空（历史数据保留）",
+            output=f"  \033[32m会话已清空\033[0m  \033[38;5;73m{session_id}\033[0m  \033[90m(历史数据保留)\033[0m",
             data={"session_id": session_id},
         )
 
@@ -242,7 +259,7 @@ class MemoryConsole:
         import time
         new_session = f"s_{int(time.time())}"
         return CommandResult(
-            output=f"[新建] session: {new_session}",
+            output=f"  \033[32m新建会话\033[0m  \033[38;5;203m{new_session}\033[0m",
             data={"new_session": new_session},
             session_id=new_session,
         )
@@ -250,45 +267,52 @@ class MemoryConsole:
     def _cmd_summarize(self, session_id: str, user_id: str = "global") -> CommandResult:
         """Manually trigger DAG compression."""
         if not self.dag or not self.db:
-            return CommandResult(output="(DAG 或 ConversationDB 未配置)")
+            return CommandResult(output="  \033[38;5;73m(DAG 或 ConversationDB 未配置)\033[0m")
 
         msgs = self.db.get_recent(8, session_id=session_id)
         if not msgs:
-            return CommandResult(output="无消息")
+            return CommandResult(output="  \033[38;5;73m无消息\033[0m")
 
         node = self.dag.compact(session_id, [m["id"] for m in msgs], msgs, user_id=user_id)
         if node:
             return CommandResult(
-                output=f"摘要: id={node.id} depth={node.depth} tokens={node.token_count}",
+                output=f"  \033[32mDAG 压缩完成\033[0m  \033[38;5;203m#{node.id}\033[0m  \033[38;5;73mdepth={node.depth}\033[0m  \033[90m{node.token_count}t\033[0m",
                 data={"node_id": node.id, "depth": node.depth, "tokens": node.token_count},
             )
-        return CommandResult(output="压缩失败")
+        return CommandResult(output="  \033[38;5;203m压缩失败\033[0m")
 
     def _cmd_expand(self, keyword: str, session_id: str) -> CommandResult:
         """Search DAG summaries and expand to original messages."""
         if not self.dag:
-            return CommandResult(output="(DAG 未配置)")
+            return CommandResult(output="  \033[38;5;73m(DAG 未配置)\033[0m")
 
         if not keyword:
-            return CommandResult(output="用法: expand <关键词>")
+            return CommandResult(output="  \033[90m用法: /expand <关键词>\033[0m")
+
+        G = "\033[32m"
+        V = "\033[38;5;203m"
+        D = "\033[38;5;73m"
+        X = "\033[90m"
+        R = "\033[0m"
 
         nodes = self.dag.search(keyword, limit=3)
         if not nodes:
-            return CommandResult(output=f"没有找到与「{keyword}」相关的历史摘要。")
+            return CommandResult(output=f"  {D}没有找到与「{keyword}」相关的历史摘要{R}")
 
         lines = []
         for node in nodes:
-            lines.append(f"=== 摘要 #{node.id} (depth={node.depth}) ===")
-            lines.append(f"摘要：{node.content}")
+            lines.append(f"  {V}── 摘要 #{node.id}{R}  {D}depth={node.depth}{R}")
+            lines.append(f"  {node.content}")
+            lines.append(f"  {X}── 展开原文 ──{R}")
             originals = self.dag.expand(node.id)
-            lines.append("--- 展开原文 ---")
             if not originals:
-                lines.append("（无原始消息）")
+                lines.append(f"  {X}(无原始消息){R}")
             else:
                 for msg in originals:
                     role = msg.get("role", "user")
                     content = msg.get("content", "")
-                    lines.append(f"[{role}] {content[:150]}")
+                    icon = "👤" if role == "user" else "🤖"
+                    lines.append(f"  {G}{icon}{R} {content[:150]}")
             lines.append("")
 
         return CommandResult(output="\n".join(lines))
@@ -296,9 +320,13 @@ class MemoryConsole:
     def _cmd_dag_list(self, session_id: str) -> CommandResult:
         """列出当前会话的所有 DAG 摘要。"""
         if not self.dag:
-            return CommandResult(output="(DAG 未配置)")
+            return CommandResult(output="  \033[38;5;73m(DAG 未配置)\033[0m")
 
-        # 直接查 summaries 表
+        G = "\033[32m"
+        V = "\033[38;5;203m"
+        D = "\033[38;5;73m"
+        R = "\033[0m"
+
         conn = self.dag._get_conn()
         rows = conn.execute(
             "SELECT * FROM summaries WHERE session_id = ? AND parent_id IS NULL ORDER BY depth DESC, id",
@@ -306,18 +334,16 @@ class MemoryConsole:
         ).fetchall()
 
         if not rows:
-            return CommandResult(output=f"(会话 {session_id} 暂无摘要)")
+            return CommandResult(output=f"  {D}(会话 {session_id} 暂无摘要){R}")
 
         leaf_count = sum(1 for r in rows if r["depth"] == 0)
         higher_count = sum(1 for r in rows if r["depth"] > 0)
 
-        lines = [f"=== DAG 摘要 ({leaf_count} 叶子 / {higher_count} 高级) ===", ""]
+        lines = [f"  {G}DAG 摘要{R}  {V}{leaf_count}{R} 叶子 / {V}{higher_count}{R} 高层"]
 
         for r in rows:
             depth = r["depth"]
-            content = r["content"]
-            lines.append(f"[depth={depth}] #{r['id']}:")
-            lines.append(content)
+            lines.append(f"  {V}[d={depth}]{R} {G}#{r['id']}{R} {r['content'][:120]}")
             lines.append("")
 
         return CommandResult(output="\n".join(lines))
@@ -325,95 +351,120 @@ class MemoryConsole:
     def _cmd_dag(self, keyword: str, session_id: str) -> CommandResult:
         """搜索 DAG 摘要（展开原文）。"""
         if not self.dag:
-            return CommandResult(output="(DAG 未配置)")
+            return CommandResult(output="  \033[38;5;73m(DAG 未配置)\033[0m")
 
         if not keyword:
             return self._cmd_dag_list(session_id)
 
+        G = "\033[32m"
+        V = "\033[38;5;203m"
+        D = "\033[38;5;73m"
+        X = "\033[90m"
+        R = "\033[0m"
+
         nodes = self.dag.search(keyword, limit=5)
         if not nodes:
-            return CommandResult(output=f"没有找到与「{keyword}」相关的摘要。")
+            return CommandResult(output=f"  {D}没有找到与「{keyword}」相关的摘要{R}")
 
         lines = []
         for node in nodes:
-            lines.append(f"=== 摘要 #{node.id} [depth={node.depth}] ===")
-            lines.append(node.content)
-            lines.append("--- 原文 ---")
+            lines.append(f"  {V}── 摘要 #{node.id}{R}  {D}depth={node.depth}{R}")
+            lines.append(f"  {node.content}")
+            lines.append(f"  {X}── 原文 ──{R}")
             originals = self.dag.expand(node.id)
             if not originals:
-                lines.append("（无原始消息）")
+                lines.append(f"  {X}(无原始消息){R}")
             else:
                 for msg in originals:
                     role = msg.get("role", "user")
                     content = msg.get("content", "")[:200]
-                    lines.append(f"[{role}] {content}")
+                    icon = "👤" if role == "user" else "🤖"
+                    lines.append(f"  {G}{icon}{R} {content}")
             lines.append("")
         return CommandResult(output="\n".join(lines))
 
     def _cmd_periodic(self, user_id: str) -> CommandResult:
         """Manually trigger periodic memory extraction."""
         if not self.extractor:
-            return CommandResult(output="(MemoryExtractor 未配置)")
+            return CommandResult(output="  \033[38;5;73m(MemoryExtractor 未配置)\033[0m")
+
+        G = "\033[32m"
+        V = "\033[38;5;203m"
+        D = "\033[38;5;73m"
+        R = "\033[0m"
 
         user_name = getattr(self.agent_instance, 'name', '') or "用户"
         ids = self.extractor.extract_periodic(interval_minutes=2, user_id=user_id, user_name=user_name)
         if ids:
-            lines = [f"[Periodic] 提取了 {len(ids)} 条记忆"]
+            lines = [f"  {G}定时提取完成{R}  {V}{len(ids)} 条{R}"]
             if self.ltm:
                 for r in self.ltm.get_recent(len(ids), user_id=user_id):
-                    lines.append(f"  [{r['user_id']}] {r['content'][:60]}")
+                    lines.append(f"  {D}[{r['user_id']}]{R} {r['content'][:60]}")
             return CommandResult(
                 output="\n".join(lines),
                 data={"extracted_ids": ids},
             )
-        return CommandResult(output="[Periodic] 无新记忆")
+        return CommandResult(output=f"  {D}无新记忆{R}")
 
     def _cmd_dream(self, user_id: str) -> CommandResult:
         """Manually trigger dream extraction."""
         if not self.extractor:
-            return CommandResult(output="(MemoryExtractor 未配置)")
+            return CommandResult(output="  \033[38;5;73m(MemoryExtractor 未配置)\033[0m")
+
+        G = "\033[32m"
+        V = "\033[38;5;203m"
+        D = "\033[38;5;73m"
+        R = "\033[0m"
 
         agent_name = getattr(self.agent_instance, 'name', '')
         ids = self.extractor.extract_dream(user_id=user_id, agent_name=agent_name)
         if ids:
-            lines = [f"[Dream] 深度提取了 {len(ids)} 条记忆"]
+            lines = [f"  {G}梦境提取完成{R}  {V}{len(ids)} 条{R}"]
             if self.ltm:
                 for r in self.ltm.get_recent(len(ids), user_id=user_id):
-                    lines.append(f"  [{r['user_id']}] {r['content'][:60]}")
+                    lines.append(f"  {D}[{r['user_id']}]{R} {r['content'][:60]}")
             return CommandResult(
                 output="\n".join(lines),
                 data={"extracted_ids": ids},
             )
-        return CommandResult(output="[Dream] 无新记忆")
+        return CommandResult(output=f"  {D}无新记忆{R}")
 
     def _cmd_users(self) -> CommandResult:
         """Show memory counts per user."""
         if not self.ltm:
-            return CommandResult(output="(LongTermMemory 未配置)")
+            return CommandResult(output="  \033[38;5;73m(LongTermMemory 未配置)\033[0m")
+
+        G = "\033[32m"
+        V = "\033[38;5;203m"
+        D = "\033[38;5;73m"
+        R = "\033[0m"
 
         conn = self.ltm._get_conn()
         rows = conn.execute(
             "SELECT user_id, COUNT(*) FROM memories GROUP BY user_id"
         ).fetchall()
 
-        lines = [f"{r[0]}: {r[1]} 条记忆" for r in rows]
+        if not rows:
+            return CommandResult(output=f"  {D}(无用户){R}")
+
+        lines = [f"  {G}{r[0]}{R}  {V}{r[1]}{R} 条" for r in rows]
         data = {r[0]: r[1] for r in rows}
-        return CommandResult(output="\n".join(lines) or "(无用户)", data=data)
+        return CommandResult(output="\n".join(lines), data=data)
 
     def _cmd_help(self) -> CommandResult:
         """Show available commands."""
         lines = [
-            "可用命令:",
-            "  user <名字>   切换用户身份",
-            "  db            查看消息/摘要/记忆统计",
-            "  memory        查看最近长期记忆",
-            "  clear         清空当前会话上下文（数据保留）",
-            "  new           新建会话",
-            "  context       查看完整上下文（自动用最近用户消息查询）",
-            "  summarize     手动触发DAG压缩",
-            "  periodic      手动触发定时记忆提取",
-            "  dream         手动触发梦境深度提取",
-            "  users         查看各用户记忆数量",
-            "  help          显示此帮助",
+            "  \033[32m/user <名字>\033[0m   切换用户身份",
+            "  \033[32m/db\033[0m            查看消息/摘要/记忆统计",
+            "  \033[32m/memory\033[0m        查看最近长期记忆",
+            "  \033[32m/clear\033[0m         清空当前会话上下文（数据保留）",
+            "  \033[32m/new\033[0m           新建会话",
+            "  \033[32m/context\033[0m       查看完整上下文",
+            "  \033[32m/summarize\033[0m     手动触发DAG压缩",
+            "  \033[32m/dag <关键词>\033[0m  搜索DAG摘要",
+            "  \033[32m/expand <关键词>\033[0m 展开DAG摘要原文",
+            "  \033[32m/periodic\033[0m      手动触发定时记忆提取",
+            "  \033[32m/dream\033[0m         手动触发梦境深度提取",
+            "  \033[32m/users\033[0m         查看各用户记忆数量",
         ]
         return CommandResult(output="\n".join(lines))

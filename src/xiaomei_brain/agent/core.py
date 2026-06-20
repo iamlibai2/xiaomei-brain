@@ -79,6 +79,9 @@ class Agent:
         self.on_tool_start: Callable[[int, str, dict], None] | None = None
         self.on_tool_complete: Callable[[int, str, dict, str], None] | None = None
 
+        # ── Internal display (injected by ConversationDriver) ──
+        self.internal_display: Any = None  # InternalDisplay 实例
+
     @property
     def messages(self) -> list[dict[str, Any]]:
         """当前 user_id 的消息列表（按 user_id 分桶，同一用户跨 session 共享）。"""
@@ -402,6 +405,8 @@ class Agent:
                         logger.info("[Memory] extracted block='%s' clean_len=%d", memory_block[:50] if memory_block else "", len(clean_content) if clean_content else 0)
                         if memory_block:
                             self.memory_extractor.execute_block(memory_block, user_id=self.user_id)
+                            if self.internal_display:
+                                self.internal_display.record_memory(memory_block)
 
                         # Extract THINK block (见证层) from response — must use RAW content, not clean_content
                         # (clean_content already stripped MEMORY block, which would also remove any ‖ that follows)
@@ -491,6 +496,7 @@ class Agent:
         max_steps: int = 5,
         exp_stream: Any = None,
         label: str = "",
+        silent: bool = False,
     ) -> str:
         """纯内部推理 ReAct — 非流式，不写 DB、不加 MEMORY_PROMPT、不提取记忆。
 
@@ -501,6 +507,7 @@ class Agent:
             exp_stream: 可选 ExperienceStream 实例，存在时 co-write 工具执行和最终结果。
                         不传则 fallback 到 self.exp_stream。
             label: 输出标签（intent/alarm/pleasure/work/comms），控制终端颜色。
+            silent: True 时不打印最终结果（调用方自己处理展示）。
         """
         if exp_stream is None:
             exp_stream = getattr(self, "exp_stream", None)
@@ -616,9 +623,10 @@ class Agent:
             else:
                 final_text = response.content or response.reasoning or ""
                 if final_text:
-                    if _label_name:
-                        print(f"\n{_color}── {_label_name} ──{_reset}", flush=True)
-                    print(f"{_color}{final_text}{_reset}", flush=True)
+                    if not silent:
+                        if _label_name:
+                            print(f"\n{_color}── {_label_name} ──{_reset}", flush=True)
+                        print(f"{_color}{final_text}{_reset}", flush=True)
 
                 # Co-write final result to experience stream
                 if exp_stream and final_text:
@@ -638,7 +646,7 @@ class Agent:
         all_messages = clean_messages(all_messages)
         resp = self.llm.chat(messages=all_messages, tools=None)
         final_text = resp.content or resp.reasoning or ""
-        if final_text:
+        if final_text and not silent:
             if _label_name:
                 print(f"\n{_color}── {_label_name} ──{_reset}", flush=True)
             print(f"{_color}{final_text}{_reset}", flush=True)

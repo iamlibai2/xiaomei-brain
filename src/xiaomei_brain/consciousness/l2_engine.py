@@ -178,10 +178,17 @@ class L2Engine:
                 intent_response = self._call_intent_react(context)
                 intent = self._parse_intent_response(intent_response)
                 logger.debug("[Consciousness L2] 意图决策: %s", intent_response[:200])
+
+                # 存储最近意图供 InternalDisplay 展示
                 if intent:
-                    print(f"\n  🎯 意图: {intent.type.value} | {intent.content}", flush=True)
-                else:
-                    print(f"\n  🎯 意图: (未识别) | {intent_response[:100]}", flush=True)
+                    c._last_intent_for_display = {
+                        "type": intent.type.value,
+                        "reason": intent.content or "",
+                    }
+                    # idle/L2 路径无 ConversationDriver，直接展示
+                    self._print_intent_result(intent)
+                    # 消费掉，避免对话路径再次展示
+                    c._last_intent_for_display = None
 
                 if c.drive:
                     c.drive.consume_energy(0.01)
@@ -327,10 +334,17 @@ class L2Engine:
                 intent_response = self._call_intent_react(context)
                 intent = self._parse_intent_response(intent_response)
                 logger.debug("[Consciousness L2] 意图决策: %s", intent_response[:200])
+
+                # 存储最近意图供 InternalDisplay 展示
                 if intent:
-                    print(f"\n  🎯 意图: {intent.type.value} | {intent.content}", flush=True)
-                else:
-                    print(f"\n  🎯 意图: (未识别) | {intent_response[:100]}", flush=True)
+                    c._last_intent_for_display = {
+                        "type": intent.type.value,
+                        "reason": intent.content or "",
+                    }
+                    # idle/L2 路径无 ConversationDriver，直接展示
+                    self._print_intent_result(intent)
+                    # 消费掉，避免对话路径再次展示
+                    c._last_intent_for_display = None
 
                 if c.drive:
                     c.drive.consume_energy(0.01)
@@ -512,12 +526,19 @@ class L2Engine:
         logger.info("[Consciousness] ReAct 意图决策开始, sys_len=%d, q_len=%d",
                     len(system_prompt), len(question))
 
+        # 提示用户意图决策开始（silent 模式下 react_nodb 不打印 header）
+        _C_ACCENT = "\033[38;5;203m"
+        _C_RST = "\033[0m"
+        print(f"\n  {_C_ACCENT}── 🧠 意图决策 ──{_C_RST}", flush=True)
+
         t0 = time.time()
         try:
-            result = l2_agent.react_nodb(messages=messages, max_steps=12, label="intent")
+            result = l2_agent.react_nodb(messages=messages, max_steps=12, label="intent", silent=True)
             elapsed = time.time() - t0
             logger.info("[Consciousness] ReAct 意图决策完成, elapsed=%.1fs, result_len=%d",
                         elapsed, len(result))
+            # 展示思考部分，过滤 ---INTENT--- 结构块
+            self._print_intent_display(result)
             return result
         except Exception as e:
             from xiaomei_brain.llm.client import LLMError
@@ -620,14 +641,53 @@ class L2Engine:
         except Exception as e:
             logger.debug("Pattern 注入 L2 intent 失败（将跳过）: %s", e)
 
-        prompt += "\n如果需要，先执行工具操作。最终输出：\nINTENT: <意图类型>\nREASON: <理由，一句话>\nTARGET_USER: <目标用户ID>（greet/care/express/talk 等主动消息必填，其他意图填 \"-\"）\nTOPIC: <学习主题>（仅 LEARN 意图时需要，其他意图不输出此行）"
+        prompt += ("\n先自由思考，分析你此刻的状态、能量、欲望水平、对方的情况，"
+                   "说明你为什么做出这个选择——不要直接给结论，要让读的人理解你的推理过程。"
+                   "然后在 ---INTENT--- 分隔符后输出结构化结果：\n"
+                   "---INTENT---\n"
+                   "INTENT: <意图类型>\n"
+                   "REASON: <理由，一句话>\n"
+                   "TARGET_USER: <目标用户ID>（greet/care/express/talk 等主动消息必填，其他意图填 \"-\"）\n"
+                   "TOPIC: <学习主题>（仅 LEARN 意图时需要，其他意图不输出此行）")
         return prompt
 
+    @staticmethod
+    def _strip_block(text: str, marker: str) -> str:
+        """去除结构化块（---INTENT--- 等），只保留思考文本。"""
+        if marker in text:
+            text = text.split(marker, 1)[0]
+        return text.strip()
+
+    def _print_intent_display(self, response: str) -> None:
+        """展示意图决策的思考过程，过滤掉 ---INTENT--- 结构块。"""
+        thinking = self._strip_block(response, "---INTENT---")
+        if thinking:
+            _C_YELLOW = "\033[33m"
+            _C_RST = "\033[0m"
+            print(f"{_C_YELLOW}{thinking}{_C_RST}", flush=True)
+
+    @staticmethod
+    def _print_intent_result(intent: Intent) -> None:
+        """意图决策完成后展示 InternalDisplay（非对话路径无 ConversationDriver）。"""
+        from .internal_display import InternalDisplay
+        display = InternalDisplay()
+        display.record_intent(intent.type.value, intent.content or "")
+        display.display()
+
     def _parse_intent_response(self, response: str) -> Intent | None:
-        """解析 LLM 返回的意图。"""
-        match = re.search(r"INTENT:\s*(\w+)", response, re.IGNORECASE)
+        """解析 LLM 返回的意图。优先从 ---INTENT--- 块提取，兼容旧格式。"""
+        # 优先从 ---INTENT--- 块提取
+        block_content = response
+        if "---INTENT---" in response:
+            parts = response.split("---INTENT---", 1)
+            block_content = parts[1] if len(parts) > 1 else response
+
+        match = re.search(r"INTENT:\s*(\w+)", block_content, re.IGNORECASE)
         if not match:
-            return None
+            # 兼容：整个 response 中搜索
+            match = re.search(r"INTENT:\s*(\w+)", response, re.IGNORECASE)
+            if not match:
+                return None
 
         intent_type_str = match.group(1).upper()
 
@@ -636,17 +696,17 @@ class L2Engine:
         except ValueError:
             return None
 
-        reason_match = re.search(r"REASON:\s*(.+)", response)
+        reason_match = re.search(r"REASON:\s*(.+)", block_content)
         reason = reason_match.group(1).strip() if reason_match else ""
 
         # 解析 TARGET_USER
-        target_match = re.search(r"TARGET_USER:\s*(.+)", response)
+        target_match = re.search(r"TARGET_USER:\s*(.+)", block_content)
         target_user = target_match.group(1).strip() if target_match else ""
         if target_user in ("-", "null", "none", ""):
             target_user = ""
 
         # 解析 LEARN 意图的 TOPIC 字段
-        topic_match = re.search(r"TOPIC:\s*(.+)", response)
+        topic_match = re.search(r"TOPIC:\s*(.+)", block_content)
         learn_topic = topic_match.group(1).strip() if topic_match else ""
 
         if intent_type == IntentType.LEARN and learn_topic:

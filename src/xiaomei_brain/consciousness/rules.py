@@ -362,7 +362,7 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
             .then(ActionItem(
                 action_type=ActionType.NOTIFY,
                 priority=0.4,
-                content="能量不足，请注意休息",
+                content="能量不足，需要休息！",
                 reason="能量极低，需要休息",
                 source="system",
                 cooldown_key="system_energy_low",

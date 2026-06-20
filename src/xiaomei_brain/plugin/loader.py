@@ -19,8 +19,22 @@ from typing import Any
 from .manifest import PluginManifest
 from .context import PluginContext
 from .registry import PluginRegistry, LoadedPlugin
+from ..cli.boot import boot_line
 
 logger = logging.getLogger(__name__)
+
+
+# ── WARNING 捕获 ──────────────────────────────────────────
+
+class _WarningCapture(logging.Handler):
+    """临时 handler：捕获 register() 期间的 WARNING，用于 boot 格式展示。"""
+
+    def __init__(self):
+        super().__init__(level=logging.WARNING)
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.messages.append(record.getMessage())
 
 
 class PluginLoader:
@@ -141,14 +155,18 @@ class PluginLoader:
 
         enabled: list[PluginManifest] = []
         for m in manifests:
+            label = f"{m.kind}/{m.name}" if m.kind else m.name
+
             # allow/deny 决策
             if deny_list and m.name in deny_list:
                 logger.info("[Plugin] %s 已被 disable", m.name)
                 self.registry.track_plugin(LoadedPlugin(manifest=m, status="disabled"))
+                boot_line(label, "WARN", "已禁用")
                 continue
             if allow_list and m.name not in allow_list:
                 logger.info("[Plugin] %s 不在 allow 列表中，跳过", m.name)
                 self.registry.track_plugin(LoadedPlugin(manifest=m, status="disabled"))
+                boot_line(label, "WARN", "未在白名单")
                 continue
 
             # requires_env 检查
@@ -157,6 +175,7 @@ class PluginLoader:
                 msg = f"缺失环境变量: {', '.join(missing)}"
                 logger.warning("[Plugin] %s 验证失败: %s", m.name, msg)
                 self.registry.track_plugin(LoadedPlugin(manifest=m, status="error", error=msg))
+                boot_line(label, "WARN", "配置缺失")
                 continue
 
             # configSchema 校验
@@ -164,6 +183,7 @@ class PluginLoader:
             if schema_error:
                 logger.warning("[Plugin] %s config schema 校验失败: %s", m.name, schema_error)
                 self.registry.track_plugin(LoadedPlugin(manifest=m, status="error", error=schema_error))
+                boot_line(label, "FAIL", "配置校验失败")
                 continue
 
             enabled.append(m)
@@ -222,13 +242,21 @@ class PluginLoader:
         entries_config = plugins_config.get("entries", {})
 
         for m in manifests:
+            label = f"{m.kind}/{m.name}" if m.kind else m.name
             try:
                 loaded = self._load_one(m, entries_config.get(m.name, {}))
                 results.append(loaded)
+                if loaded.status == "loaded":
+                    boot_line(label, "OK", loaded.summary)
+                elif loaded.status == "warn":
+                    boot_line(label, "WARN", loaded.error or "")
+                else:
+                    boot_line(label, "FAIL", loaded.error or "未知错误")
             except Exception as e:
                 logger.error("[Plugin] %s 加载失败: %s", m.name, e, exc_info=True)
                 results.append(LoadedPlugin(manifest=m, status="error", error=str(e)))
                 self.registry.track_plugin(results[-1])
+                boot_line(label, "FAIL", str(e)[:30])
 
         return results
 
@@ -270,9 +298,22 @@ class PluginLoader:
             agent_id=self.agent_id,
             registry=self.registry,
         )
-        register_fn(ctx)
 
-        loaded = LoadedPlugin(manifest=m, status="loaded")
+        # 捕获 register() 内的 WARNING，用于 boot_line 展示
+        capture = _WarningCapture()
+        ctx.logger.addHandler(capture)
+        try:
+            register_fn(ctx)
+        finally:
+            ctx.logger.removeHandler(capture)
+
+        status = "loaded"
+        warn_msg = ""
+        if capture.messages:
+            status = "warn"
+            warn_msg = capture.messages[0]
+
+        loaded = LoadedPlugin(manifest=m, status=status, error=warn_msg or None, summary=ctx.summary)
         self.registry.track_plugin(loaded)
         return loaded
 

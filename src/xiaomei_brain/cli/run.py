@@ -22,7 +22,12 @@ from xiaomei_brain.base.message_utils import estimate_tokens
 from xiaomei_brain.consciousness.conscious_living import ConsciousLiving
 
 # ── 提示符（纯 ASCII，WSL 下 readline 无法正确计算中文 prompt 宽度）──
-PROMPT = "> "
+PROMPT = "❯ "
+
+# ── 项目主体色（256 色）────────────────────────────────────
+C_ACCENT = "\033[38;5;203m"   # coral pink（主体色：退出/交互提示）
+C_ACCENT2 = "\033[38;5;73m"  # dusty teal（搭配色：身份/标题）
+C_CONTENT = "\033[38;5;250m" # light silver gray（Agent 输出）
 
 # ── Tab 命令补齐 ───────────────────────────────────────────
 _COMMANDS = [
@@ -162,92 +167,195 @@ def _run_agent(
 
     def on_proactive(content):
         with _stream_lock:
-            print(f"\n\033[33m[{agent_name}]\033[0m {content}\n", end="", flush=True)
+            print(f"\n{C_ACCENT}[{agent_name}]\033[0m {content}\n", end="", flush=True)
+
+    _in_thinking = False  # 跟踪 LLM 输出是否处于思考段
 
     def on_chat_chunk(chunk):
+        nonlocal _in_thinking
         with _stream_lock:
-            print(chunk, end="", flush=True)
+            # 思考段由 stream_iter 用 \033[2m (dim) 标记，保持原样
+            if "\033[2m" in chunk:
+                _in_thinking = True
+            if "\033[0m" in chunk:
+                _in_thinking = False
+
+            if _in_thinking or "\033" in chunk:
+                # 思考内容 / ANSI 控制码：不变
+                print(chunk, end="", flush=True)
+                # 思考结束后的第一个内容 chunk，输出浅灰色
+                if not _in_thinking and "\033[0m" in chunk:
+                    print(C_CONTENT, end="", flush=True)
+            else:
+                # 正文内容：浅灰色
+                print(f"{C_CONTENT}{chunk}\033[0m", end="", flush=True)
 
     living.on_proactive = on_proactive
     living.on_chat_chunk = on_chat_chunk
 
     thread = threading.Thread(target=living.run, daemon=True)
     thread.start()
-    time.sleep(2)
 
-    # ── 登录 ──────────────────────────────────────────────
-    from xiaomei_brain.contacts.manager import IdentityManager
-    contacts_dir = os.path.expanduser(f"~/.xiaomei-brain/{agent_id}/contacts")
-    identity_mgr = IdentityManager(contacts_dir)
-    ids = identity_mgr.list_ids()
+    try:
+        time.sleep(2)
 
-    if ids:
-        print(f"\n可用身份: {', '.join(ids)}")
-    user_id = None
-    while not user_id:
-        try:
-            user_id = input("login: ").strip()
-        except (KeyboardInterrupt, EOFError):
+        # ── 登录 ──────────────────────────────────────────────
+        from xiaomei_brain.contacts.manager import IdentityManager
+        contacts_dir = os.path.expanduser(f"~/.xiaomei-brain/{agent_id}/contacts")
+        identity_mgr = IdentityManager(contacts_dir)
+        ids = identity_mgr.list_ids()
+
+        if ids:
             print()
-            user_id = "guest"
-            break
-        if not user_id:
-            continue
-        identity = identity_mgr.resolve(user_id)
-        if identity:
-            display_name = identity["name"]
-            living.user_id = user_id
-            agent_core = agent._get_agent()
-            agent_core.user_id = user_id
-            agent_core.user_display_name = display_name
-            if hasattr(living, 'consciousness') and living.consciousness:
-                si = living.consciousness.get_self_image()
-                if si:
-                    si.current_user_name = display_name
-                    ltm = getattr(agent, 'longterm_memory', None)
-                    si.load_preferred_names(user_id, ltm)
-            print(f"你好，{display_name}。\n")
-            living.load_fresh_tail()
-            if hasattr(living, '_attention') and living._attention:
-                cli_sid = f"cli-{agent_id}"
-                living._attention.save_session(cli_sid)
-                living._attention._current_session = cli_sid
-        else:
-            print(f"\033[31m用户 '{user_id}' 不存在。可用: {', '.join(ids)}\033[0m")
-            user_id = None
+            parts = []
+            for i, uid in enumerate(ids, 1):
+                info = identity_mgr._identities.get(uid, {})
+                name = info.get("name", uid)
+                parts.append(f"{C_ACCENT2}{i}. {name}\033[0m\033[90m({uid})\033[0m")
+            print(f"  \033[90m请登录，可用身份：\033[0m " + " ".join(parts))
+            print()
 
+        user_id = None
+        while not user_id:
+            try:
+                user_id = input("  login: ").strip()
+            except (KeyboardInterrupt, EOFError):
+                print("\r\033[K" + C_ACCENT + "  再见\033[0m", flush=True)
+                import sys as _sys
+                _sys.exit(0)
+
+            if not user_id:
+                continue
+
+            # 尝试按序号选择
+            try:
+                idx = int(user_id) - 1
+                if 0 <= idx < len(ids):
+                    user_id = ids[idx]
+            except ValueError:
+                pass
+
+            identity = identity_mgr.resolve(user_id)
+            if identity:
+                display_name = identity["name"]
+                living.user_id = user_id
+                agent_core = agent._get_agent()
+                agent_core.user_id = user_id
+                agent_core.user_display_name = display_name
+                if hasattr(living, 'consciousness') and living.consciousness:
+                    si = living.consciousness.get_self_image()
+                    if si:
+                        si.current_user_name = display_name
+                        ltm = getattr(agent, 'longterm_memory', None)
+                        si.load_preferred_names(user_id, ltm)
+                print(f"\n  {C_ACCENT}你好，{display_name}\033[0m\n")
+                living.load_fresh_tail()
+                if hasattr(living, '_attention') and living._attention:
+                    cli_sid = f"cli-{agent_id}"
+                    living._attention.save_session(cli_sid)
+                    living._attention._current_session = cli_sid
+            else:
+                print(f"  \033[31m用户 '{user_id}' 不存在\033[0m", flush=True)
+                user_id = None
+    except KeyboardInterrupt:
+        print("\r\033[K" + C_ACCENT + "  再见\033[0m", flush=True)
+        living.stop()
+        import sys as _sys
+        _sys.exit(0)
+
+    _exiting = False  # 防止退出阶段重复触发
     _DOUBLE_PRESS_WINDOW = 2.0
     _last_interrupt = 0.0
+    _in_exit_window = False  # 第一次 Ctrl+C 后跳过 status/分隔线
+
+    def _do_exit(reason: str = "再见") -> None:
+        """退出：保存关键状态，通知 living 线程停止，立即退出。
+
+        living 线程在 run() 的 finally 块中自行清理（_on_stop），
+        主线程不等待 —— 用 os._exit(0) 瞬间退出，不等 daemon 线程。
+        """
+        nonlocal _exiting
+        if _exiting:
+            return
+        _exiting = True
+
+        # \033[1A 上移一行（覆盖 "再按 Ctrl+C 退出"），\r\033[K 清到行尾
+        print(f"\r\033[K\033[1A\r\033[K{C_ACCENT}  {reason}\033[0m", flush=True)
+
+        # 主线程保存关键状态
+        try:
+            if living.drive:
+                living.drive.save()
+            if living.purpose:
+                living.purpose.save()
+        except Exception:
+            pass
+
+        # 通知 living 线程停止（它在 finally 里自行 _on_stop）
+        living.stop()
+
+        # 清理 PID 文件
+        from xiaomei_brain.cli.lifecycle import remove_pid_file
+        remove_pid_file(agent_id)
+
+        # 立即退出，不等待 daemon 线程
+        import os as _os
+        _os._exit(0)
+
+    def _handle_clarify_if_needed() -> bool:
+        """处理 clarify 请求（如果有）。返回 True 表示处理了请求。"""
+        from xiaomei_brain.tools.builtin.clarify import poll_clarify_request, answer_clarify_request
+        req = poll_clarify_request()
+        if req is None:
+            return False
+        question = req.get("question", "")
+        choices = req.get("choices")
+        print()
+        print(f"  ❓ {question}")
+        if choices:
+            for i, c in enumerate(choices, 1):
+                print(f"     {i}. {c}")
+            print(f"     {len(choices) + 1}. 其他（请输入你的答案）")
+            print()
+        try:
+            response = input("  > ").strip()
+        except (KeyboardInterrupt, EOFError):
+            response = ""
+        answer_clarify_request(response)
+        return True
 
     try:
         while living.is_running:
             try:
-                status = _status_line(living)
-                if status:
-                    print(f"\n\033[90m{status}\033[0m", flush=True)
-                try:
-                    bar_w = os.get_terminal_size().columns
-                except Exception:
-                    bar_w = 78
-                print("\033[90m" + "─" * bar_w + "\033[0m")
+                # 第一次 Ctrl+C 后跳过 status/分隔线，保持界面干净
+                if not _in_exit_window:
+                    status = _status_line(living)
+                    if status:
+                        print(f"\n\033[90m{status}\033[0m", flush=True)
+                    try:
+                        bar_w = os.get_terminal_size().columns
+                    except Exception:
+                        bar_w = 78
+                    print("\033[90m" + "─" * bar_w + "\033[0m")
                 first_line = input(PROMPT)
                 msg = _read_multiline(first_line)
+                _in_exit_window = False  # 正常输入了，退出窗口结束
             except (KeyboardInterrupt, EOFError):
-                print()
+                # 清掉当前行（❯ 提示符），不残留
+                print("\r\033[K", end="", flush=True)
                 now = time.time()
                 if now - _last_interrupt < _DOUBLE_PRESS_WINDOW:
-                    print("\033[31m强制退出\033[0m")
-                    living.stop()
+                    _do_exit("再见")
                     break
                 _last_interrupt = now
+                _in_exit_window = True
                 living.cancel()
-                print("\033[90m[取消] 已中断当前操作 (再次 Ctrl+C 退出)\033[0m")
+                print(C_ACCENT + "  再按一次 Ctrl+C 退出\033[0m", flush=True)
                 continue
 
             msg = msg.strip()
             if msg.lower() in ("exit", "quit", "stop"):
-                print("\033[90m正在停止...\033[0m")
-                living.stop()
+                _do_exit("正在停止...")
                 break
             if not msg:
                 continue
@@ -277,26 +385,26 @@ def _run_agent(
                     images=images, session_id=f"cli-{agent_id}",
                 ))
                 if hasattr(result, 'reason'):
-                    print(f"\n[Gateway] 消息被拒绝: {result.reason}", flush=True)
+                    if getattr(result, 'silent', False):
+                        pass  # EMPTY / HANDLED — 不打扰用户
+                    else:
+                        print(f"\n[Gateway] 消息被拒绝: {result.reason}", flush=True)
             else:
                 living.put_message(msg, images=images, session_id=f"cli-{agent_id}")
 
             if msg.startswith("/"):
                 living._command_done.wait(timeout=3)
+                continue
 
-            while living._chatting:
-                time.sleep(0.1)
+            from xiaomei_brain.tools.builtin.clarify import _clarify_request_ready
+
+            if living._clarify_listening.wait(timeout=3):
+                while living._clarify_listening.is_set():
+                    if _clarify_request_ready.wait(timeout=1):
+                        _handle_clarify_if_needed()
 
     except KeyboardInterrupt:
-        print("\n\033[90m正在停止...\033[0m")
-        living.stop()
-
-    try:
-        thread.join(timeout=5)
-    except KeyboardInterrupt:
-        print("\n\033[90m强制中断，等待线程退出...\033[0m")
-        thread.join(timeout=2)
-    print("\033[90m已停止\033[0m")
+        _do_exit("正在停止...")
 
 
 # ── CLI 入口 ─────────────────────────────────────────────
@@ -327,7 +435,7 @@ def cmd_run(args: list[str]) -> None:
         datefmt="%H:%M:%S",
         stream=sys.stderr,
     )
-    logging.getLogger().handlers[0].setLevel(logging.INFO)
+    logging.getLogger().handlers[0].setLevel(logging.WARNING)
 
     agent_log_dir = os.path.expanduser(f"~/.xiaomei-brain/{agent_id}/logs")
     os.makedirs(agent_log_dir, exist_ok=True)
@@ -358,45 +466,93 @@ def cmd_run(args: list[str]) -> None:
         print(f"\033[31m[错误] agent '{agent_id}' 不存在。可用: {', '.join(available)}\033[0m")
         sys.exit(1)
 
-    agent = manager.build_agent(agent_id)
-    agent_name = agent.name or agent_id
+    # 获取 agent 名称（在 build 之前，避免 boot 信息夹在 banner 中间）
+    agent_info = next(a for a in manager.list() if a.id == agent_id)
+    agent_name = agent_info.name or agent_id
 
-    print("\n" + "=" * 50)
-    print(f"       \033[36mConsciousLiving\033[0m CLI — \033[1m{agent_name}\033[0m")
-    print("=" * 50)
+    from xiaomei_brain.cli.boot import boot_banner, boot_muted
+    model = getattr(agent_info, 'model', '')
+    extra = []
     if parsed.no_consciousness:
-        print("       \033[33m[无意识模式]\033[0m")
+        extra.append("[无意识模式]")
     if parsed.legacy:
-        print("       \033[33m[Legacy 上下文模式]\033[0m")
-    print("=" * 50 + "\n")
+        extra.append("[Legacy 上下文模式]")
+    boot_banner(
+        agent_name=agent_name,
+        agent_id=agent_id,
+        model=model,
+        extra_lines=extra or None,
+    )
 
-    # ── 通讯端口 ──────────────────────────────────────────
-    comms_port = parsed.port
-    if comms_port == 0:
-        config_json = os.path.expanduser("~/.xiaomei-brain/config.json")
-        if os.path.exists(config_json):
-            try:
-                import json
-                with open(config_json) as f:
-                    data = json.load(f)
-                agents_cfg = data.get("xiaomei_brain", {}).get("agents", {})
-                agent_cfg = agents_cfg.get(agent_id, {})
-                comms_port = agent_cfg.get("comms_port", 0)
-            except Exception:
-                pass
+    with boot_muted():
+        agent = manager.build_agent(agent_id)
 
-    from xiaomei_brain.config.agent_config import load_agent_config
-    agent_cfg = load_agent_config(agent_id)
-    cfg = agent_cfg.consciousness
-    cfg.living.comms_port = comms_port
-    living = ConsciousLiving(agent, load_consciousness=not parsed.no_consciousness, config=cfg)
+        # ── 通讯端口 ──────────────────────────────────────────
+        comms_port = parsed.port
+        if comms_port == 0:
+            config_json = os.path.expanduser("~/.xiaomei-brain/config.json")
+            if os.path.exists(config_json):
+                try:
+                    import json
+                    with open(config_json) as f:
+                        data = json.load(f)
+                    agents_cfg = data.get("xiaomei_brain", {}).get("agents", {})
+                    agent_cfg = agents_cfg.get(agent_id, {})
+                    comms_port = agent_cfg.get("comms_port", 0)
+                except Exception:
+                    pass
+
+        from xiaomei_brain.config.agent_config import load_agent_config
+        agent_cfg = load_agent_config(agent_id)
+        cfg = agent_cfg.consciousness
+        cfg.living.comms_port = comms_port
+        living = ConsciousLiving(agent, load_consciousness=not parsed.no_consciousness, config=cfg)
+
+    # ── 上线标语 ──────────────────────────────────────────
+    from xiaomei_brain.cli.boot import C_OK, C_DIM, BOLD, RESET, boot_sep
+    si = living.consciousness.self_image if hasattr(living, 'consciousness') and living.consciousness else None
+    name = si.being.name if si else agent_name
+
+    parts = []
+    ltm = getattr(agent, 'longterm_memory', None)
+    if ltm:
+        try:
+            mem_count = ltm.count()
+            parts.append(f"{mem_count} 条记忆")
+        except Exception:
+            pass
+    purpose = getattr(living, 'purpose', None)
+    if purpose:
+        n_goals = len(getattr(purpose, 'goals', {}))
+        if n_goals:
+            parts.append(f"{n_goals} 个目标")
+    essence = getattr(agent, 'essence', None)
+    if essence:
+        try:
+            n_essence = essence.count()
+            if n_essence:
+                parts.append(f"{n_essence} 条底色")
+        except Exception:
+            pass
+
+    tagline = f"{name}大脑系统已上线"
+    if parts:
+        tagline += f"，现有{' · '.join(parts)}"
+    boot_sep(tagline)
+
     living.assemble_context = True
+    # daemon 线程里 os.get_terminal_size() 拿不到正确值，从主线程传入
+    try:
+        living.conversation_driver.term_width = os.get_terminal_size().columns
+    except Exception:
+        living.conversation_driver.term_width = 80
+    living._show_prompt = False  # CLI 模式：主循环统一管理提示符
 
     if parsed.legacy:
         living.force_mode = "legacy"
 
     # ── 生命周期管理 ──────────────────────────────────────────
-    from xiaomei_brain.cli.lifecycle import write_pid_file, setup_signal_handlers
+    from xiaomei_brain.cli.lifecycle import write_pid_file, setup_signal_handlers, remove_pid_file
     write_pid_file(agent_id)
     setup_signal_handlers(living)
 

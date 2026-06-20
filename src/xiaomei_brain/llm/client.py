@@ -167,6 +167,8 @@ class LLMClient:
         # Token 估算
         tokens = self._estimate_call_tokens(api_messages, resp.content)
         self._record_call(self._last_call_latency_ms, False, tokens)
+        self._log_call(len(api_messages), bool(api_tools), self._last_call_latency_ms,
+                       "", success=True, stream=False)
 
         self._save_llm_log(payload, resp)
         return resp
@@ -269,6 +271,8 @@ class LLMClient:
         elapsed = (time.time() - t0) * 1000
         tokens = self._estimate_call_tokens(api_messages, content)
         self._record_call(elapsed, False, tokens)
+        self._log_call(len(api_messages), bool(api_tools), elapsed,
+                       "", success=True, stream=True)
         self._save_llm_log(payload, self._last_stream_response)
 
     # ── Retry logic ────────────────────────────────────────
@@ -372,6 +376,18 @@ class LLMClient:
             total += estimate_tokens(response_content)
         return total
 
+    def _log_call(self, n_msgs: int, has_tools: bool, elapsed_ms: float,
+                  detail: str, *, success: bool, stream: bool) -> None:
+        ts = datetime.datetime.now().strftime("%H:%M:%S")
+        detail_clean = detail.replace("\n", "\\n")[:80] if detail else ""
+        tag = "LLM OK STREAM" if stream else "LLM OK"
+        if not success:
+            tag = "LLM ERR STREAM" if stream else "LLM ERR"
+        msg = "%s model=%s msgs=%d tools=%s elapsed=%.2fs %s" % (
+            ts, self._model_id, n_msgs, has_tools, elapsed_ms / 1000, detail_clean,
+        )
+        logger.info("\033[91m[%s] %s\033[0m" if success else "[%s] %s", tag, msg)
+
     def _record_call(self, latency_ms: float, is_error: bool, tokens: int = 0,
                      status_code: int = 0) -> None:
         self._last_call_latency_ms = latency_ms
@@ -459,7 +475,9 @@ class LLMClient:
         if self._profile is None:
             raise ValueError(f"Unknown provider: {provider}")
         self._transport = get_transport(self._profile.api_mode)
-        self._api_key = self._resolve_api_key()
+        resolved = self._resolve_api_key()
+        if resolved:
+            self._api_key = resolved
         if model:
             self._model_id = model
             self._model_def = self._profile.resolve_model(model)

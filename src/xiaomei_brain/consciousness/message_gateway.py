@@ -85,80 +85,26 @@ class MessageGateway:
         # 4. 重置取消标志。
         living._cancel_requested = False
 
-        # 5. Intent commands (/intask, /inchat, test commands).
-        # 5. 意图命令（/intask, /inchat, 测试命令）。
-        if self._try_handle_intent_commands(msg, living):
-            return
-
-        # 6. Meta-skill pattern matching.
-        # 6. 元技能模式匹配。
+        # 5. Meta-skill pattern matching.
+        #    All commands handled upstream by Gateway.accept().
+        # 5. 元技能模式匹配。
+        #    所有命令由上游 Gateway.accept() 处理。
         if self._try_meta_skill(msg, living):
             return
 
-        # 7. Drive activation.
-        # 7. Drive 激活。
+        # 6. Drive activation.
+        # 6. Drive 激活。
         if living.drive:
             living.drive.on_user_active()
 
-        # 8. Delegate to ConversationDriver with full consciousness state.
-        # 8. 委托 ConversationDriver，传入完整 consciousness state。
+        # 7. Delegate to ConversationDriver with full consciousness state.
+        # 7. 委托 ConversationDriver，传入完整 consciousness state。
         living.conversation_driver.handle_message(msg, living._get_consciousness_state())
-        living._print_prompt()
 
-        # 9. Round alarms.
-        # 9. 轮次闹钟。
+        # 8. Round alarms.
+        # 8. 轮次闹钟。
         if living.cron_scheduler:
             living._check_round_alarms()
-
-    #---------------------------------------------------------------------------
-    #   Intent Commands
-    #   意图命令
-    #---------------------------------------------------------------------------
-
-    @staticmethod
-    def _try_handle_intent_commands(msg: LivingMessage, living: ConsciousLiving) -> bool:
-        """Detect and handle intent commands (/intask, /inchat, test commands).
-
-        Data commands (/db, /memory, /dag) are handled upstream by
-        Gateway.accept().
-
-        Returns True if handled (caller should return).
-
-        检测并处理意图命令。数据命令上游由 Gateway.accept() 处理。
-        返回 True 表示已处理（调用方应 return）。
-        """
-        raw = msg.content.strip()
-        if raw.startswith("/"):
-            raw = raw[1:].strip()
-        parts = raw.split(None, 1)
-        cmd = parts[0].lower() if parts else ""
-        cmd_args = parts[1] if len(parts) > 1 else ""
-
-        # /intask /inchat -- handled by GoalManager via ConversationDriver.
-        # /intask /inchat -- 由 GoalManager 处理（通过 ConversationDriver）。
-        if cmd in ("intask", "inchat"):
-            if living.conversation_driver.handle_command(cmd, cmd_args):
-                living._print_prompt()
-                living._command_done.set()
-            return True
-
-        # Bare `/` -> list all commands.
-        # 裸 `/` -> 列出所有命令。
-        if not cmd:
-            living._list_commands()
-            living._command_done.set()
-            return True
-
-        # Test / debug commands.
-        # 测试/调试命令。
-        if cmd in living._intent_commands:
-            logger.info("[MessageGateway] 执行测试命令: %s %s", cmd, cmd_args)
-            handler = living._intent_commands[cmd]
-            handler(cmd_args)
-            living._command_done.set()
-            return True
-
-        return False
 
     #---------------------------------------------------------------------------
     #   Meta Skill
@@ -198,6 +144,5 @@ class MessageGateway:
         )
         living._dispatcher._queue.append(action_item)
         living._dispatcher.process_queue()
-        living._print_prompt()
         living._command_done.set()
         return True

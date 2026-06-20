@@ -169,6 +169,16 @@ def refresh_memory_window(
             recalled_memories = _deduplicate_memories(merged, max_per_tag=2)
             for m in recalled_memories:
                 m.pop("_combined", None)
+
+            # 存储召回摘要供 InternalDisplay 展示
+            recall_tags = list(dict.fromkeys(
+                t for m in recalled_memories
+                for t in (m.get("tags") or [])
+            ))[:5]
+            si._last_recall_summary = {
+                "count": len(recalled_memories),
+                "tags": recall_tags,
+            }
         except Exception as e:
             logger.warning("[MemoryWindow] 召回记忆获取失败: %s", e)
 

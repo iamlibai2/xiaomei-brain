@@ -123,7 +123,8 @@ def setup_signal_handlers(living: Any = None) -> None:
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, _graceful_shutdown)
-    signal.signal(signal.SIGINT, _graceful_shutdown)
+    # SIGINT is handled by the CLI main loop's KeyboardInterrupt handler
+    # (double-press → _do_exit with polling, not signal-based exit)
 
 
 def _agent_id_from_args() -> str:

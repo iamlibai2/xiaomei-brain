@@ -11,6 +11,7 @@ import threading
 import time
 from typing import Any, TYPE_CHECKING
 
+from .internal_display import InternalDisplay
 from .living import LivingMessage
 from .round_scheduler import RoundScheduler
 from ..purpose import (
@@ -55,6 +56,7 @@ class ConversationDriver:
         self._longterm_memory = longterm_memory
         self._last_pl_time: float = time.time()
         self._last_narr_time: float = time.time()
+        self.term_width: int = 80  # 终端宽度，由 CLI 入口在初始化后设置
 
         # 任务模式标记（GoalManager 通过 driver._task_mode 读写）
         self._task_mode: bool = False
@@ -83,6 +85,9 @@ class ConversationDriver:
 
         # 异步任务互斥（防止重叠执行）
         self._extracting: bool = False
+
+        # 内部处理展示
+        self.display = InternalDisplay()
 
         # 向后兼容属性（conscious_living.py / action_dispatcher.py 使用）
         self.has_active_goal = self._goal_manager.has_active_goal
@@ -204,17 +209,16 @@ class ConversationDriver:
 
         def run():
             parent._chatting = True
+            parent._clarify_listening.set()
             try:
                 current_msg = msg
                 current_context = intent_context
                 agent = parent.agent._get_agent()
+                agent.internal_display = self.display
 
                 while True:
-                    _w = 138
-                    _label = " LLM output "
-                    _pad = (_w - len(_label)) // 2
-                    print("\n" + "=" * _pad + _label + "=" * _pad, flush=True)
-                    print(f"{parent.agent.name or parent._agent_id}: ", end="", flush=True)
+                    print("\033[90m" + "─" * self.term_width + "\033[0m", flush=True)
+                    print(f"  \033[38;5;203m{parent.agent.name or parent._agent_id}\033[0m: ", end="", flush=True)
                     cs = parent._get_consciousness_state()
                     t0 = time.time()
                     tc_before = agent.tool_call_buffer.last_index
@@ -266,7 +270,6 @@ class ConversationDriver:
                     if parent._cancel_requested:
                         logger.info("[ConversationDriver] LLM 结果已丢弃（取消请求）")
                         print("\n[取消] 已中断", flush=True)
-                        parent._print_prompt()
                         return
 
                     # resume_goal 工具触发：切换到 PACE 执行
@@ -309,12 +312,35 @@ class ConversationDriver:
 
                     display_content = gm.remove_progress_tag(content)
 
-                    _label2 = " LLM output-end "
-                    _pad2 = (_w - len(_label2)) // 2
-                    print("=" * _pad2 + _label2 + "=" * _pad2, flush=True)
+                    print("\033[90m" + "─" * self.term_width + "\033[0m", flush=True)
 
                     tc_str = f"，{tc_count}次工具调用" if tc_count else ""
                     print(f"\033[90m[本轮耗时 {elapsed:.1f}s{tc_str}]\033[0m", flush=True)
+
+                    # ── 内部处理展示 ──
+                    # 收集意图决策和记忆召回数据
+                    c = getattr(parent, "consciousness", None)
+                    if c:
+                        intent_data = getattr(c, "_last_intent_for_display", None)
+                        if intent_data:
+                            self.display.record_intent(
+                                intent_data.get("type", ""),
+                                intent_data.get("reason", ""),
+                            )
+                            c._last_intent_for_display = None
+
+                        recall = getattr(c.self_image, "_last_recall_summary", None)
+                        if recall:
+                            self.display.record_memory_recall(
+                                recall.get("count", 0),
+                                recall.get("tags", []),
+                            )
+                            c.self_image._last_recall_summary = None
+
+                    self.display.display()
+                    if self.display.has_data() and current_msg.session_id not in ("main", ""):
+                        self._deliver_internal_display(parent, current_msg.session_id, self.display.to_dict())
+                    self.display.clear()
 
                     if parent._load_consciousness:
                         parent.consciousness.on_user_interaction(current_msg.content, display_content, user_id=current_msg.user_id)
@@ -346,7 +372,6 @@ class ConversationDriver:
                             display_content=display_content,
                         )
 
-                        parent._print_prompt()
                         return
 
                     next_goal = gm._purpose.get_current()
@@ -383,9 +408,9 @@ class ConversationDriver:
                         result = task_executor.handle_sub_goal_error(gm._purpose, goal.id, str(e))
                         if result["status_msg"]:
                             print(f"\033[33m{result['status_msg']}\033[0m", flush=True)
-                parent._print_prompt()
             finally:
                 parent._chatting = False
+                parent._clarify_listening.clear()
 
         run()
 
@@ -414,6 +439,7 @@ class ConversationDriver:
 
             # 快照数据，daemon 线程异步执行
             iv = self._inner_voice
+            display = self.display
             _elapsed = elapsed
             _tools = tools or []
             _user_name = user_name
@@ -424,6 +450,11 @@ class ConversationDriver:
                     iv.on_chat_turn(
                         elapsed=_elapsed, tools=_tools, user_name=_user_name,
                         recent_dialogue=_dialogue)
+                    thought = iv.get_last_thought()
+                    deltas = getattr(iv, 'last_drive_deltas', [])
+                    signal = getattr(iv, 'last_social_signal', '')
+                    if thought or deltas or signal:
+                        display.record_inner_voice(thought, deltas, signal)
                 except Exception as e:
                     logger.debug("[ConversationDriver] InnerVoice chat_turn 失败: %s", e)
 
@@ -446,10 +477,26 @@ class ConversationDriver:
             _dag = dag
             _session_id = session_id
             _agent = agent_core
+            display = self.display
+
+            # 临时 callback 捕获压缩数据
+            _compact_data: dict = {}
+            _orig_on_compact = _agent.on_compact
+
+            def _capture_compact(data: dict) -> None:
+                _compact_data.update(data)
+                if _orig_on_compact:
+                    _orig_on_compact(data)
+
+            _agent.on_compact = _capture_compact
 
             def _run():
                 try:
                     _agent._auto_compact(_session_id, max_tokens=4000, messages=None)
+                    count = _compact_data.get("compact_count", 0)
+                    tokens = _compact_data.get("summary_tokens", 0)
+                    if count:
+                        display.record_dag_compact(count, tokens)
                 except Exception as e:
                     logger.debug("[ConversationDriver] DAG compact 失败: %s", e)
 
@@ -471,10 +518,14 @@ class ConversationDriver:
             self._extracting = True
             _extractor = extractor
             _self = self
+            display = self.display
 
             def _run():
                 try:
-                    _extractor.extract_periodic(user_name=user_name)
+                    result = _extractor.extract_periodic(user_name=user_name)
+                    count = len(result) if result else 0
+                    if count:
+                        display.record_periodic_extract(count)
                 except Exception as e:
                     logger.warning("[ConversationDriver] 记忆提取失败: %s", e)
                 finally:
@@ -612,6 +663,17 @@ class ConversationDriver:
         return f"{time_str}{speaker}：{content}"
 
     @staticmethod
+    def _deliver_internal_display(parent, session_id: str, data: dict) -> None:
+        """推送内部处理结果到 WS 通道（供 TUI 渲染）。"""
+        import json as _json
+        router = getattr(parent, '_router', None)
+        if not router:
+            return
+        route = router.route_for_session(session_id)
+        if route:
+            router.deliver(_json.dumps(data, ensure_ascii=False), route, msg_type="internal_display")
+
+    @staticmethod
     def _deliver_chunk(parent, session_id: str, chunk: str) -> None:
         """流式推送单个 chunk 到 WS 通道（仅 WS，其他通道忽略）。"""
         router = getattr(parent, '_router', None)
@@ -655,4 +717,5 @@ class ConversationDriver:
                         session_id, route.type, route.target, len(content))
             router.deliver(content, route)
         else:
-            logger.warning("[ConversationDriver/Deliver] 无输出路由: session=%s", session_id)
+            if session_id and not session_id.startswith("cli-"):
+                logger.warning("[ConversationDriver/Deliver] 无输出路由: session=%s", session_id)

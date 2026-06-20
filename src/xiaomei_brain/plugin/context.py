@@ -52,6 +52,7 @@ class PluginContext:
         self.agent_id = agent_id
         self.logger = logging.getLogger(f"xiaomei_brain.plugin.{plugin_name}")
         self._registry = registry
+        self.summary = ""                       # register() 可设置，用于 boot 展示
 
     @property
     def agent_dir(self) -> str:

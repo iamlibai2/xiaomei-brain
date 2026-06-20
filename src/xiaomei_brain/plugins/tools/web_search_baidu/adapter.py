@@ -21,3 +21,4 @@ def register(ctx):
 
     provider = BaiduSearchProvider(api_key=api_key)
     ctx.register_web_search_provider(provider)
+    ctx.summary = f"qianfan.baidubce.com"

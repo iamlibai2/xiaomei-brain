@@ -152,9 +152,9 @@ class Gateway:
         # 6. Session routing
         session_id = raw.session_id or self._route_session(raw)
 
-        # 7. Data command handling (/db, /memory, /dag)
+        # 7. Command dispatch — all / commands handled here
         if content.startswith("/"):
-            handled = self._try_data_command(content, user_id, session_id)
+            handled = self._dispatch_command(content, user_id, session_id)
             if handled:
                 return Rejected(reason="HANDLED", silent=True)
 
@@ -213,18 +213,91 @@ class Gateway:
         ))
         return routed.session_id
 
-    def _try_data_command(self, content: str, user_id: str, session_id: str) -> bool:
-        """处理数据查询命令 (/db /memory /dag)。返回 True 表示已处理。"""
-        if not self._agent_commands:
-            return False
-        raw_cmd = content.strip()
-        if raw_cmd.startswith("/"):
-            raw_cmd = raw_cmd[1:].strip()
-        cmd = raw_cmd.split(None, 1)[0].lower() if raw_cmd else ""
-        # Only handle data commands here; /intask /inchat stay in Consciousness
-        if cmd in ("db", "memory", "dag"):
-            result = self._agent_commands.execute(raw_cmd, user_id=user_id, session_id=session_id)
+    # ── Command dispatch ──────────────────────────────────────
+
+    # Data commands routed to MemoryConsole.execute()
+    _DATA_CMDS = frozenset({
+        "db", "memory", "dag", "context", "clear", "new", "summarize",
+        "expand", "periodic", "dream", "users",
+    })
+
+    def _dispatch_command(self, content: str, user_id: str, session_id: str) -> bool:
+        """统一命令入口。处理所有 / 命令。返回 True 表示已处理。
+
+        顺序：裸 / → 数据命令 → 系统命令 → 未识别（入队当普通消息）
+        """
+        raw = content.strip()[1:].strip()  # 去掉 /
+        living = self._living
+
+        # Bare `/` → list all commands
+        if not raw:
+            self._list_all_commands()
+            living._command_done.set()
+            return True
+
+        parts = raw.split(None, 1)
+        cmd = parts[0].lower()
+        cmd_args = parts[1] if len(parts) > 1 else ""
+
+        # /help — show all commands (data + system)
+        if cmd == "help":
+            self._list_all_commands()
+            living._command_done.set()
+            return True
+
+        # 1. Data commands: /db, /context, /dag, etc.
+        if self._agent_commands and cmd in self._DATA_CMDS:
+            result = self._agent_commands.execute(
+                raw, user_id=user_id, session_id=session_id,
+            )
             if result:
                 print(f"\n{result.output}", flush=True)
+                if result.user_id:
+                    living.user_id = result.user_id
+                    agent_core = living.agent._get_agent()
+                    agent_core.user_id = result.user_id
+                if result.session_id:
+                    living.session_id = result.session_id
+                    if hasattr(living, '_attention') and living._attention:
+                        living._attention.switch_to(result.session_id)
+                living._command_done.set()
                 return True
+
+        # 2. /intask /inchat — task/chat mode switch
+        if cmd in ("intask", "inchat"):
+            cd = getattr(living, 'conversation_driver', None)
+            if cd and cd.handle_command(cmd, cmd_args):
+                living._command_done.set()
+            return True
+
+        # 3. System/debug commands: /intent, /drive, /flame, etc.
+        intent_cmds = getattr(living, '_intent_commands', {})
+        if cmd in intent_cmds:
+            logger.info("[Gateway] 执行系统命令: %s %s", cmd, cmd_args)
+            intent_cmds[cmd](cmd_args)
+            living._command_done.set()
+            return True
+
         return False
+
+    def _list_all_commands(self) -> None:
+        """列出所有可用命令（数据 + 模式 + 系统）。"""
+        living = self._living
+
+        print()
+        print("\033[36m命令列表:\033[0m")
+        print()
+
+        # 数据命令
+        if self._agent_commands:
+            result = self._agent_commands.execute("help")
+            if result:
+                print(result.output, flush=True)
+
+        # 模式切换
+        print(f"  \033[32m/intask\033[0m        进入任务模式")
+        print(f"  \033[32m/inchat\033[0m        退出任务模式")
+
+        # 系统命令
+        if hasattr(living, '_list_commands'):
+            living._list_commands()

@@ -541,9 +541,6 @@ class TUIApp:
         match = next((i for i in self._identities if i["id"] == user_id), None)
         if not match:
             self.state.login_error = f"用户 '{user_id}' 不存在"
-            app = self._app
-            if app is not None:
-                app.invalidate()
             return
 
         self.user_id = user_id

@@ -56,6 +56,7 @@ from .attention_layer import AttentionLayer
 from ..llm.client import FatalLLMError
 from ..gateway.router import Router, InboundMsg, OutputRoute
 from ..plugin import boot_plugins
+from ..cli.boot import boot_section, boot_line
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,9 @@ class ConsciousLiving(Living):
         self._config = config or agent_cfg.consciousness
         self._drive_config = agent_cfg.drive
 
+        boot_section("记忆系统")
+        boot_line("加载配置", "OK")
+
         super().__init__(
             agent_instance=agent_instance,
             idle_threshold=idle_threshold or self._config.living.idle_threshold,
@@ -133,10 +137,16 @@ class ConsciousLiving(Living):
             self_model = SelfModel.load(identity_path)
             if self_model and (self_model.purpose_seed.identity or self_model.seed_text):
                 self.agent.self_model = self_model
+                boot_line("SelfModel (身份种子)", "OK", "1 条身份")
+            else:
+                boot_line("SelfModel (身份种子)", "WARN", "未能加载")
+        else:
+            boot_line("SelfModel (身份种子)", "WARN", "identity.md 不存在")
 
         # ConversationDB（SQLite, 原始消息一字不差）
         from ..memory.conversation_db import ConversationDB
         self.agent.conversation_db = ConversationDB(db_path)
+        boot_line("ConversationDB", "OK")
 
         # 获取底层 LLMClient（穿透 ContextGuard）
         _llm = self.agent.llm
@@ -149,10 +159,14 @@ class ConsciousLiving(Living):
         dag = DAGSummaryGraph.for_agent(self._agent_id, llm_client=_llm)
         self.agent.longterm_memory = LongTermMemory(db_path)
         self.agent.dag = dag
+        boot_line("摘要图谱 (DAG)", "OK")
+        ltm_count = self.agent.longterm_memory.count() if hasattr(self.agent.longterm_memory, 'count') else 0
+        boot_line("长期记忆", "OK", f"{ltm_count} 条" if ltm_count else "")
 
         # ProcedureMemory（过程记忆：学习 + 关键词触发）
         from ..memory.procedure import ProcedureMemory
         self.agent._procedure_memory = ProcedureMemory(db_path, llm_client=_llm)
+        boot_line("过程记忆 (ProcedureMemory)", "OK")
 
         # Essence（底色存储：不可变身份片段）
         from ..consciousness.essence import Essence
@@ -209,8 +223,13 @@ class ConsciousLiving(Living):
         from ..tools.builtin import file_ops
         file_ops.set_output_base(agent_base_dir)
 
+        boot_line("记忆提取器", "OK")
+
+        boot_section("驱动与目的")
+
         # Drive 系统（边缘系统）- 延迟加载
         self.drive = DriveEngine(self._agent_id, load=False, config=self._drive_config)
+        boot_line("Drive 边缘系统", "OK")
 
         # 设置 Token 预算（从 LivingParams 读取）
         self.drive.token_budget_daily = float(self._config.living.daily_token_budget)
@@ -238,6 +257,7 @@ class ConsciousLiving(Living):
             drive=self.drive,
             load=False,
         )
+        boot_line("Purpose 前额叶", "OK")
 
         # 绑定 purpose_ref，使 goal 工具可用
         pr = getattr(agent_instance, '_purpose_ref', None)
@@ -314,6 +334,8 @@ class ConsciousLiving(Living):
         # ActionDispatcher（统一动作分发）
         self._dispatcher = ActionDispatcher()
 
+        boot_section("意识系统")
+
         # 意识系统（引用 Drive 和 Purpose）- 只创建结构
         cc = self._config.consciousness if self._config else None
         self.consciousness = Consciousness(
@@ -324,6 +346,7 @@ class ConsciousLiving(Living):
             cron_scheduler=self.cron_scheduler,
         )
         self._load_consciousness = load_consciousness
+        boot_line("意识核心", "OK", f"agent={self._agent_id}")
 
         # ── 内感受（Interoception）—— 身体状态感知 ──
         from .interoception import Interoception
@@ -338,15 +361,18 @@ class ConsciousLiving(Living):
         queue_storage = TaskQueueStorage(db_path)
         self.consciousness._store = SelfImageStore(self._agent_id, queue_storage)
         si.intent._storage = queue_storage
+        snapshot_exists = self.consciousness._store.snapshot_path.exists()
         logger.info("[ConsciousLiving] SelfImageStore 已创建并注入")
+        boot_line("SelfImageStore", "OK", "已恢复" if snapshot_exists else "新创建")
 
         # ── 关系引擎（RelationshipEngine）─────────────────────
         from .relationship import RelationshipEngine
         self._relationship_engine = RelationshipEngine(db_path, user_id="default")
         self._relationship_engine.load()
         si.being._relationship_engine = self._relationship_engine
-        logger.info("[ConsciousLiving] RelationshipEngine 已创建并注入: %s",
-                    self._relationship_engine.get_summary())
+        rel_summary = self._relationship_engine.get_summary()
+        logger.info("[ConsciousLiving] RelationshipEngine 已创建并注入: %s", rel_summary)
+        boot_line("关系引擎", "OK", str(rel_summary))
 
         # ── 学习子系统 ──────────────────────────────────────
         from ..learn import LearningQueue, KnowledgeStorage, MetaSkillPuller, LearningEngine
@@ -394,14 +420,18 @@ class ConsciousLiving(Living):
         self._inner_voice._exp_stream = exp_stream
         self._social_cognition._exp_stream = exp_stream
         self.purpose.exp_stream = exp_stream
+        exp_count = exp_stream.count()
         logger.info("[ConsciousLiving] 经验流已创建并注入")
+        boot_line("经验流", "OK", f"{exp_count} 条" if exp_count else "空")
 
         # ── 底色（Essence）—— 由 ConsciousLiving.__init__() 创建 ──
         essence = getattr(self.agent, '_essence', None)
         if essence is not None:
             self.consciousness.essence = essence
             agent_core.essence = essence
-            logger.info("[ConsciousLiving] Essence 已关联 (%d 条底色)", essence.count())
+            _essence_count = essence.count()
+            logger.info("[ConsciousLiving] Essence 已关联 (%d 条底色)", _essence_count)
+            boot_line("本质底色 (Essence)", "OK", f"{_essence_count} 条底色")
             if self._load_consciousness:
                 self.consciousness.self_image._essence = essence
         else:
@@ -418,6 +448,8 @@ class ConsciousLiving(Living):
             procedure_memory=getattr(self.agent, '_procedure_memory', None),
             exp_stream=exp_stream,
         )
+        has_llm = getattr(self.agent, 'llm', None) is not None
+        boot_line("梦境引擎", "OK", "LLM已连接" if has_llm else "LLM缺失")
 
         # 命令注册表 — 从 living_commands 加载（测试/调试/系统操作）
         from .living_commands import COMMAND_REGISTRY, list_commands as _list_cmds
@@ -450,34 +482,10 @@ class ConsciousLiving(Living):
                 with open(_p, "w") as _f:
                     _f.write("")
 
-        # Layer 0：自主层线程（火焰骨架 + Drive 衰减 + 异常检测 + 内感受 + 身体感官）
-        self._layer0 = Layer0Autonomous(
-            consciousness=self.consciousness,
-            drive=self.drive,
-            tick_interval=1.0,
-            debug_file=os.path.join(self._debug_dir, "layer0.log"),
-            interoception=self.interoception,
-            body=self.body,
-        )
-        logger.info("[ConsciousLiving] Layer0 已创建")
-
-        # DMN：默认模式网络线程（L2 加柴 + social_cognition + L3 沉思 + 入梦信号）
-        self._layer2 = Layer2DefaultNetwork(
-            consciousness=self.consciousness,
-            check_interval=self._config.consciousness.l2_check_interval,
-            debug_file=os.path.join(self._debug_dir, "layer2.log"),
-        )
-        logger.info("[ConsciousLiving] Layer2 已创建")
-
-        # Layer 1：注意层（会话管理——保存/恢复/切换）
-        agent_core = self.agent._get_agent()
-        self._attention = AttentionLayer(agent_core)
-        logger.info("[ConsciousLiving] AttentionLayer 已创建")
-
         # Router：消息路由 + 输出分发
         self._router = Router()
 
-        # 启动插件系统，加载频道适配器
+        # 启动插件系统，加载频道适配器 + body 器官
         self._boot_plugins()
         for name in self._registry.list_channels():
             adapter = self._registry.get_channel(name)
@@ -490,15 +498,8 @@ class ConsciousLiving(Living):
         )
         logger.info("[ConsciousLiving] Router 已创建 (%d 个频道)", len(self._registry.list_channels()))
 
-        # ── Gateway 入站门 ──────────────────────────────────────────
-        from ..gateway import Gateway
-        self._gateway_inbound = Gateway(living=self, router=self._router, config=self._config)
-        self._gateway_inbound.set_identity_mgr(self._identity_mgr)
-        if self.agent.commands:
-            self._gateway_inbound.set_agent_commands(self.agent.commands)
-        logger.info("[ConsciousLiving] Gateway 入站门已创建")
-
-        # ── Body 身体感官层 ─────────────────────────────────────
+        # ── Body 身体感官层（Layer0 之前创建，Layer0 需要 body）──
+        boot_section("身体与感知")
         from ..body import Body
 
         self.body = Body()
@@ -515,8 +516,47 @@ class ConsciousLiving(Living):
         body_ref[0] = self.body
         identity_mgr_ref[0] = self._identity_mgr
 
+        organ_count = len(pending)
         logger.info("[ConsciousLiving] Body 身体感官层已创建（%d 个器官），引用已注入插件",
-                    len(pending))
+                    organ_count)
+        boot_line("Body 身体感官", "OK", f"{organ_count} 个器官")
+
+        # Layer 0：自主层线程（火焰骨架 + Drive 衰减 + 异常检测 + 内感受 + 身体感官）
+        self._layer0 = Layer0Autonomous(
+            consciousness=self.consciousness,
+            drive=self.drive,
+            tick_interval=1.0,
+            debug_file=os.path.join(self._debug_dir, "layer0.log"),
+            interoception=self.interoception,
+            body=self.body,
+        )
+        logger.info("[ConsciousLiving] Layer0 已创建")
+        boot_line("Layer0 自主层", "OK")
+
+        # DMN：默认模式网络线程（L2 加柴 + social_cognition + L3 沉思 + 入梦信号）
+        self._layer2 = Layer2DefaultNetwork(
+            consciousness=self.consciousness,
+            check_interval=self._config.consciousness.l2_check_interval,
+            debug_file=os.path.join(self._debug_dir, "layer2.log"),
+        )
+        logger.info("[ConsciousLiving] Layer2 已创建")
+        boot_line("Layer2 默认模式网络", "OK")
+
+        # Layer 1：注意层（会话管理——保存/恢复/切换）
+        agent_core = self.agent._get_agent()
+        self._attention = AttentionLayer(agent_core)
+        logger.info("[ConsciousLiving] AttentionLayer 已创建")
+        boot_line("注意层 (AttentionLayer)", "OK")
+
+        # ── Gateway 入站门 ──────────────────────────────────────────
+        boot_section("通讯层")
+        from ..gateway import Gateway
+        self._gateway_inbound = Gateway(living=self, router=self._router, config=self._config)
+        self._gateway_inbound.set_identity_mgr(self._identity_mgr)
+        if self.agent.commands:
+            self._gateway_inbound.set_agent_commands(self.agent.commands)
+        logger.info("[ConsciousLiving] Gateway 入站门已创建")
+        boot_line("Gateway 入站门", "OK")
 
         # 注入 DAG + 配置 + 回调到 Agent（替代原 _inject_context_assembler）
         self._inject_dag_to_agent()
@@ -532,6 +572,7 @@ class ConsciousLiving(Living):
         drive_config = getattr(self.drive, 'config', None)
         _init_rules(drive_config=drive_config, living_config=self._config)
         self._dispatcher.load_rules(RULES)
+        boot_line("行为规则", "OK", f"{len(RULES)} 条规则")
         self._dispatcher.inject_conscious_living(self)
         self._dispatcher.inject_learn_engine(self._learn_engine)
 
@@ -544,6 +585,9 @@ class ConsciousLiving(Living):
 
         # 注册 session 管理工具（manage_session：list / switch / new）
         self._register_session_tools()
+
+        # 注册 clarify 工具并注入 CLI 回调
+        self._register_clarify_tool()
 
         # 记录初始化摘要
         self._log_initialization()
@@ -637,6 +681,17 @@ class ConsciousLiving(Living):
                 logger.info("[ConsciousLiving] manage_session 工具已注册")
         except Exception as e:
             logger.warning("[ConsciousLiving] manage_session 工具注册失败: %s", e)
+
+    def _register_clarify_tool(self) -> None:
+        """注册 clarify 工具并注入 CLI 回调。"""
+        try:
+            from ..tools.builtin.clarify import set_clarify_callback, _cli_callback, clarify_tool
+            set_clarify_callback(_cli_callback)
+            if hasattr(self.agent, "tools") and self.agent.tools:
+                self.agent.tools.register(clarify_tool)
+                logger.info("[ConsciousLiving] clarify 工具已注册（CLI 回调）")
+        except Exception as e:
+            logger.warning("[ConsciousLiving] clarify 工具注册失败: %s", e)
 
     def _check_round_alarms(self) -> None:
         """对话轮次完成后检查轮次闹钟。"""
@@ -819,9 +874,21 @@ class ConsciousLiving(Living):
 
         # 1. 加载 Drive
         self.drive.load()
+        drive_state = getattr(self.drive, 'desire', None)
+        if drive_state:
+            energy = getattr(self.drive, 'energy', None)
+            energy_str = f" 能量{energy.level:.0%}" if energy and hasattr(energy, 'level') else ""
+            boot_line("Drive 数据", "OK",
+                      f"归属{drive_state.belonging:.1f} 认知{drive_state.cognition:.1f}"
+                      f" 成就{drive_state.achievement:.1f} 表达{drive_state.expression:.1f}{energy_str}")
 
         # 2. 加载 Purpose
         self.purpose.load()
+        goal_count = len(getattr(self.purpose, 'goals', {}))
+        current = self.purpose.current_goal
+        current_str = f" 当前: {current.description[:15]}" if current and hasattr(current, 'description') else ""
+        boot_line("Purpose 数据", "OK",
+                  f"{goal_count} 个目标{current_str}" if goal_count else "无目标")
 
         # 2.5 将统一叙事存储接入 Drive 和 Purpose（Memory 作为基础设施）
         ltm = getattr(self.agent, "longterm_memory", None)
@@ -833,6 +900,13 @@ class ConsciousLiving(Living):
         # 3. 加载 Consciousness（可选）
         if self._load_consciousness:
             self._setup_conscious_data()
+            si = self.consciousness.self_image
+            age_sec = si.history.consciousness_age
+            age_str = f"{int(age_sec // 3600)}h{int((age_sec % 3600) // 60)}m" if age_sec > 0 else "首次燃烧"
+            intent_count = len(si.intent.intent_buffer) if si.intent.intent_buffer else 0
+            intent_str = f" {intent_count}意图" if intent_count else ""
+            boot_line("意识数据", "OK",
+                      f"{si.being.name}, 燃烧{age_str}{intent_str}")
             # _restore_snapshot() 会用新的 SelfImage 替换 self.consciousness.self_image，
             # 之前在 __init__ 挂载的运行时引用需要重新绑定到新对象上。
             si = self.consciousness.self_image
@@ -910,6 +984,9 @@ class ConsciousLiving(Living):
             if adapter:
                 self._gateway_inbound.register_channel(name, adapter)
         self._gateway_inbound.open_channels()
+        channel_count = len(self._registry.list_channels())
+        if channel_count:
+            boot_line("频道适配器", "OK", f"{channel_count} 个")
 
         # 更新 send_message 工具的上下文
         try:
@@ -942,6 +1019,7 @@ class ConsciousLiving(Living):
             self._ws_thread.start()
             self._gateway_inbound.set_ws_server(self._ws_server, self._ws_thread)
             logger.info("[ConsciousLiving] WS Gateway 已启动: ws://%s:%d/ws", host, ws_port)
+            boot_line("WebSocket 服务", "OK", f"ws://{host}:{ws_port}/ws")
 
         # ── Admin 管理门（独立端口，强制认证）────────────────────
         admin_port = getattr(self._config, 'admin_port', 0)
@@ -1097,6 +1175,9 @@ class ConsciousLiving(Living):
                 # 检查是否有 SLEEP 意图（agent 自己决定要睡了）
                 if self._has_sleep_intent(si):
                     logger.info("[ConsciousLiving/IDLE] SLEEP 意图 → 进入 SLEEPING")
+                    # 提取睡眠原因
+                    reason = self._get_sleep_reason(si)
+                    self._print_section("进入睡眠", f"原因：{reason}" if reason else "", icon="🌙")
                     # 消费 SLEEP intent，避免残留导致下次 IDLE 立即再次 SLEEP
                     self._consume_sleep_intent(si)
                     self._transition(LivingState.SLEEPING)
@@ -1109,6 +1190,7 @@ class ConsciousLiving(Living):
             # 4. 无事可做 → 计空闲 → SLEEPING
             idle_time = time.time() - self._last_active
             if idle_time >= self.idle_threshold:
+                self._print_section("进入睡眠", f"空闲 {idle_time:.0f}s，超时自动入睡", icon="🌙")
                 self._transition(LivingState.SLEEPING)
                 return
 
@@ -1121,11 +1203,13 @@ class ConsciousLiving(Living):
         survival = self.drive.get_survival_state()
         if survival == "dead":
             logger.warning("[ConsciousLiving] 生存欲归零，进入死亡状态 (DORMANT)")
+            self._print_section("进入休眠", "生存欲归零，停止活动", icon="💀")
             self._transition(LivingState.DORMANT)
         elif survival == "dying":
             # 濒死：强制 SLEEPING，不接受对话
             if state != LivingState.SLEEPING:
                 logger.warning("[ConsciousLiving] 濒死状态 → 强制 SLEEPING")
+                self._print_section("进入睡眠", "濒死状态，强制休息", icon="🌙")
                 self._transition(LivingState.SLEEPING)
 
     def _debug_log(self, thread: str, line: str) -> None:
@@ -1208,6 +1292,8 @@ class ConsciousLiving(Living):
             self._transition(LivingState.SLEEPING)
             return
 
+        self._print_section("进入梦境", "深度整理记忆 · 强化连接 · 模式发现 · 反省", icon="🌌")
+
         # 运行 DreamEngine（串行执行：情绪整理→记忆强化→梦境燃烧→反省）
         try:
             report = self._dream_engine.run()
@@ -1217,19 +1303,47 @@ class ConsciousLiving(Living):
                 report.memories_extracted,
                 report.summary[:50] if report.summary else "",
             )
+            self._print_dream_results(report)
         except Exception as e:
             logger.error("[ConsciousLiving] DreamEngine 运行失败: %s", e)
-
-        # DreamEngine 完成后生成后续意图（已在 run() 内部写入 intent_buffer）
-        # 这里不做额外处理
 
         self._transition(LivingState.SLEEPING)
 
     # ── ActionDispatcher 通知 ────────────────────────────────
 
+    def _print_section(self, title: str, subtitle: str = "", icon: str = "") -> None:
+        """打印内部动作标题（睡眠/梦境/醒来/意图决策等）。"""
+        C_OK = "\033[38;5;203m"
+        C_DIM = "\033[38;5;73m"
+        RESET = "\033[0m"
+        prefix = f"{icon} " if icon else ""
+        print()
+        print(f"  {C_OK}── {prefix}{title} ──{RESET}", flush=True)
+        if subtitle:
+            print(f"  {C_DIM}{subtitle}{RESET}", flush=True)
+
+    def _print_dream_results(self, report) -> None:
+        """打印梦境结果摘要。"""
+        C_DIM = "\033[38;5;73m"
+        C_OK = "\033[38;5;203m"
+        RESET = "\033[0m"
+        lines = []
+        if report.memories_extracted:
+            lines.append(f"🧠 记忆提取: {report.memories_extracted} 条")
+        if report.memories_reinforced:
+            lines.append(f"🔗 记忆强化: {report.memories_reinforced} 条")
+        if report.patterns_extracted:
+            lines.append(f"🔍 模式发现: {report.patterns_extracted} 个")
+        if report.summary:
+            lines.append(f"{C_OK}💭 梦境{RESET}: {report.summary[:120]}")
+        for line in lines:
+            print(f"  {C_DIM}│{RESET} {line}", flush=True)
+        print(f"  {C_DIM}└──{RESET}", flush=True)
+
     def _print_notification(self, content: str) -> None:
         """打印通知到 CLI 状态栏"""
-        print(f"\n\033[33m[通知] {content}\033[0m", flush=True)
+        name = self.consciousness.being.name if self.consciousness and self.consciousness.being else ""
+        print(f"\n  \033[38;5;203m[通知] {name}{content}\033[0m", flush=True)
 
     # ── Message handling ─────────────────────────────────────────
 
@@ -1494,18 +1608,36 @@ class ConsciousLiving(Living):
         agent.messages = filtered
         logger.info("[ConsciousLiving] 加载 fresh_tail: %d 条消息 (user_id=%s)", len(agent.messages), self.user_id)
 
+    def _get_sleep_reason(self, si) -> str:
+        """从意图缓冲中提取 SLEEP 意图的原因。"""
+        buf = getattr(si.intent, 'intent_buffer', [])
+        for item in buf:
+            if isinstance(item, dict):
+                if item.get("type", "").lower() == "sleep":
+                    return item.get("content", "") or item.get("reason", "")
+            elif hasattr(item, 'type'):
+                itype = getattr(item, 'type', None)
+                if itype:
+                    iv = itype.value if hasattr(itype, 'value') else str(itype)
+                    if iv.lower() == 'sleep':
+                        return getattr(item, 'content', '') or getattr(item, 'reason', '')
+        return ""
+
     def _on_wake_up(self) -> None:
         """从 IDLE/SLEEPING 收到消息唤醒，直接切 AWAKE 处理。
 
         idle 不是睡眠/梦境状态，不需要调 consciousness.on_wake()。
         on_wake() 只用于 DORMANT→AWAKE（启动）和 SLEEPING→AWAKE（睡眠醒来）。
         """
+        was_sleeping = self.state == LivingState.SLEEPING
         logger.info("[ConsciousLiving] Waking up — message received!")
         # 清除残留的 SLEEP intent（状态相关，醒来后无意义）
         if self._load_consciousness:
             si = self.consciousness.get_self_image()
             self._consume_sleep_intent(si)
         self._transition(LivingState.AWAKE)
+        if was_sleeping:
+            self._print_section("醒来", "收到消息，恢复活动", icon="☀️")
 
     def send_sos_to_channels(self, message: str, channels: list | None = None) -> None:
         """SOS 紧急推送：绕过 LLM，直接发送到所有可用渠道。"""

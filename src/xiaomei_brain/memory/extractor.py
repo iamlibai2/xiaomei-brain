@@ -839,14 +839,14 @@ class MemoryExtractor:
             import json
             data = json.loads(block_clean)
             if isinstance(data, dict) and ("actions" in data or "relations" in data):
-                return self._execute_actions(memory_block, source="merged", user_id=user_id)
+                return self._execute_actions(memory_block, source="immediate", user_id=user_id)
         except json.JSONDecodeError:
             pass
 
         # ── 截断 JSON salvage（直接从 block 提取，不走 _execute_actions） ─
         parsed = self._parse_json_actions(memory_block)
         if parsed and parsed.get("actions"):
-            ids, content_to_id = self._execute_json_actions(parsed, source="merged", importance=0.5, user_id=user_id)
+            ids, content_to_id = self._execute_json_actions(parsed, source="immediate", importance=0.5, user_id=user_id)
             for rel in parsed.get("relations", []):
                 self._execute_json_relation(rel, content_to_id, user_id)
             return ids
@@ -865,7 +865,7 @@ class MemoryExtractor:
         if not has_valid and not has_relates:
             return []
 
-        return self._execute_actions(memory_block, source="merged", user_id=user_id)
+        return self._execute_actions(memory_block, source="immediate", user_id=user_id)
 
     # ── Task 完成提取 ─────────────────────────────────────────────
 

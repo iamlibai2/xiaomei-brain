@@ -110,10 +110,11 @@ class GoalManager:
         return self._pace_waiting
 
     def handle_command(self, cmd: str, args: str) -> bool:
+        G, V, D, X, R = "\033[32m", "\033[38;5;203m", "\033[38;5;73m", "\033[90m", "\033[0m"
         if cmd == "intask":
             if self.driver:
                 self.driver._task_mode = True
-            print("\n[任务模式] 已进入，请描述你要做的任务，/inchat 退出", flush=True)
+            print(f"\n  {G}任务模式{R}  已进入，请描述你要做的任务  {X}/inchat 退出{R}", flush=True)
             return True
         if cmd == "inchat":
             if self.driver and self.driver._task_mode and self._pace_runner and self._purpose:
@@ -125,7 +126,7 @@ class GoalManager:
                                 goal.id, self._pace_checkpoint.step_index)
             if self.driver:
                 self.driver._task_mode = False
-            print("\n[任务模式] 已退出，回到聊天", flush=True)
+            print(f"\n  {G}任务模式{R}  已退出，回到聊天", flush=True)
             return True
         return False
 

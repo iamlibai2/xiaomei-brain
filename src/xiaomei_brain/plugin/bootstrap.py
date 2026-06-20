@@ -13,11 +13,15 @@ from .registry import PluginRegistry
 
 logger = logging.getLogger(__name__)
 
+# ── 缓存：避免重复加载插件（build_agent 和 ConsciousLiving 都会调用）──
+_cache: dict[str, PluginRegistry] = {}
+
 
 def boot_plugins(agent_id: str = "", extra_dirs: list[str] | None = None) -> PluginRegistry:
     """一键启动插件系统。
 
     从统一 config.json 读取配置 → 映射到插件 entries → Discover → Validate → Load。
+    同一 agent_id 只加载一次，后续调用返回缓存。
 
     Args:
         agent_id: 当前 agent 标识
@@ -26,6 +30,13 @@ def boot_plugins(agent_id: str = "", extra_dirs: list[str] | None = None) -> Plu
     Returns:
         填充好的 PluginRegistry
     """
+    cache_key = agent_id or "__default__"
+    if cache_key in _cache:
+        return _cache[cache_key]
+
+    from ..cli.boot import boot_section
+    boot_section("插件系统")
+
     registry = PluginRegistry()
 
     # 从统一配置中提取插件配置
@@ -36,7 +47,11 @@ def boot_plugins(agent_id: str = "", extra_dirs: list[str] | None = None) -> Plu
         config={"plugins": plugins_config},
         agent_id=agent_id,
     )
-    loaded = loader.boot(plugin_dirs=extra_dirs)
+
+    # 抑制 stderr handler 的 WARNING 输出，保持 boot 画面干净
+    from ..cli.boot import boot_muted
+    with boot_muted():
+        loaded = loader.boot(plugin_dirs=extra_dirs)
     for plugin in loaded:
         if plugin.status == "error":
             logger.error("[Plugin] %s 加载失败: %s", plugin.manifest.name, plugin.error)
@@ -45,6 +60,7 @@ def boot_plugins(agent_id: str = "", extra_dirs: list[str] | None = None) -> Plu
         else:
             logger.info("[Plugin] %s 已加载 (v%s)", plugin.manifest.name, plugin.manifest.version)
 
+    _cache[cache_key] = registry
     return registry
 
 

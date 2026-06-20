@@ -173,8 +173,9 @@ class LoadedPlugin:
     """已加载的插件记录。"""
 
     manifest: Any  # PluginManifest
-    status: Literal["loaded", "error", "disabled"] = "loaded"
+    status: Literal["loaded", "warn", "error", "disabled"] = "loaded"
     error: str | None = None
+    summary: str = ""
 
 
 # ── PluginRegistry ───────────────────────────────────────────────

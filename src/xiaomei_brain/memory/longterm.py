@@ -2267,7 +2267,7 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
         import re
         if not re.fullmatch(r"[\w\u4e00-\u9fff\u3040-\u30ff\u0400-\u04ff\s\-]+", user_id):
             # Unsafe characters detected — fall back to safe default
-            logger.warning("[Security] Unsafe user_id '%s', using 'global'", user_id)
+            logger.info("[Security] no user_id, using 'global'")
             return "global"
         return user_id
 

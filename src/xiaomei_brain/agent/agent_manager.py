@@ -226,6 +226,23 @@ class AgentInstance:
         return content
 
 
+def _extract_name_from_identity(identity_path: str) -> str | None:
+    """从 identity.md 中提取名字（格式: # 名字\n名字内容）。"""
+    try:
+        with open(identity_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped in ("# 名字", "# 名称", "# Name"):
+                if i + 1 < len(lines):
+                    name = lines[i + 1].strip()
+                    if name and not name.startswith("#"):
+                        return name
+    except (OSError, UnicodeDecodeError):
+        pass
+    return None
+
+
 @dataclass
 class AgentConfig:
     """Configuration for registering a new agent."""
@@ -344,9 +361,19 @@ class AgentManager:
             if "/" in model_primary:
                 provider, model = model_primary.split("/", 1)
 
+            raw_name = agent_data.get("name", agent_id)
+            # config.json 没设置名字时，从 identity.md 提取
+            if raw_name == agent_id and os.path.exists(identity_path):
+                try:
+                    extracted = _extract_name_from_identity(identity_path)
+                    if extracted:
+                        raw_name = extracted
+                except Exception:
+                    pass
+
             instance = AgentInstance(
                 id=agent_id,
-                name=agent_data.get("name", agent_id),
+                name=raw_name,
                 description=agent_data.get("description", ""),
                 avatar=agent_data.get("avatar"),
                 enabled=agent_data.get("enabled", True),

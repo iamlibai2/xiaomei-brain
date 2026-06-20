@@ -15,7 +15,7 @@ import threading
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-from ..channels.p2p.protocol import AgentMessage
+from ..plugins.channels.p2p.protocol import AgentMessage
 
 logger = logging.getLogger(__name__)
 

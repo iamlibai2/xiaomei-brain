@@ -28,7 +28,7 @@ DISK_CACHE_TTL = 86400  # 磁盘缓存 24 小时，超时后重新拉取
 
 PROVIDER_META: dict[str, dict] = {
     "openai":    {"base_url": "https://api.openai.com/v1",     "env_vars": ["OPENAI_API_KEY"]},
-    "anthropic": {"base_url": "https://api.anthropic.com",     "env_vars": ["ANTHROPIC_API_KEY"]},
+    "anthropic": {"base_url": "https://api.anthropic.com",     "env_vars": ["ANTHROPIC_API_KEY"], "api_mode": "anthropic-messages"},
     "google":    {"base_url": "https://generativelanguage.googleapis.com/v1beta", "env_vars": ["GOOGLE_API_KEY"]},
     "xai":       {"base_url": "https://api.x.ai/v1",           "env_vars": ["XAI_API_KEY"]},
     "openrouter":{"base_url": "https://openrouter.ai/api/v1",  "env_vars": ["OPENROUTER_API_KEY"]},

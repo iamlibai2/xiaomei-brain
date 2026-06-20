@@ -20,7 +20,13 @@ Usage:
     xiaomei-brain setup
 """
 
+import signal
+
 from xiaomei_brain.cli import main
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        # 忽略后续 SIGINT，避免 atexit 清理（PyTorch 等）被中断报错
+        signal.signal(signal.SIGINT, signal.SIG_IGN)

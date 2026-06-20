@@ -224,6 +224,7 @@ def _add_provider(provider, current_providers: dict) -> None:
 
     # 模型选择
     models = get_provider_models(pid)
+    api_mode = PROVIDER_META[pid].get("api_mode", "openai-completions")
     if not models:
         model_id = _prompt_input(
             f"{pid} — 手动输入模型 ID",
@@ -233,7 +234,7 @@ def _add_provider(provider, current_providers: dict) -> None:
             current_providers[pid] = {
                 "baseUrl": base_url,
                 "apiKey": api_key,
-                "api": "openai-completions",
+                "api": api_mode,
                 "models": [{"id": model_id, "name": model_id, "contextWindow": 128000, "maxTokens": 8192}],
             }
             provider.patch({"models": {"providers": current_providers}})
@@ -279,10 +280,11 @@ def _add_provider(provider, current_providers: dict) -> None:
         })
     selected_models.extend(custom_models)
 
+    api_mode = PROVIDER_META[pid].get("api_mode", "openai-completions")
     current_providers[pid] = {
         "baseUrl": base_url,
         "apiKey": api_key,
-        "api": "openai-completions",
+        "api": api_mode,
         "models": selected_models,
     }
 

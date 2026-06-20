@@ -180,6 +180,7 @@ class Living:
         self._running: bool = False
         self._cancel_requested: bool = False
         self._chatting = False
+        self._clarify_listening = threading.Event()  # 主线程需要监听 clarify 请求
         self._command_done = threading.Event()
 
         # Interoception signals.
@@ -301,14 +302,23 @@ class Living:
         FatalLLMError 402（欠费）触发 DORMANT 并定期恢复。
         FatalLLMError 401/403 终止程序。
         """
-        print(f"[Living] 启动生命循环（当前状态: {self.state.value}）", flush=True)
+        from ..cli.boot import boot_section, boot_line, boot_sep
+
+        boot_section("生命循环")
+        boot_line("状态转换", "....", f"{self.state.value} → waking")
         self._running = True
 
         self._transition(LivingState.WAKING)
 
         try:
-            self._on_wake()
+            boot_line("状态转换", "....", "waking → awake")
             self._transition(LivingState.AWAKE)
+            boot_line("状态转换", "OK", f"{self.state.value}")
+            boot_sep("Agent 已启动生命循环")
+
+            # 启动展示完成后再做运行时初始化（_on_wake 会触发 dispatcher tick，
+            # 其中规则通知等输出不应插入 boot 行之间）
+            self._on_wake()
 
             while self._running:
                 try:
@@ -342,13 +352,18 @@ class Living:
             print(f"\033[91m[FATAL] HTTP {e.status_code}: {e}\033[0m", flush=True)
             logger.error("[Living] 致命错误，程序终止: HTTP %d %s", e.status_code, e)
             self.stop()
+        finally:
+            # Clean up when thread exits (normal stop or exception).
+            # 线程退出时清理（正常停止或异常）。
+            self._on_stop()
 
     def stop(self) -> None:
-        # Stop the main loop.
-        # 停止主循环。
+        # Stop the main loop — just signal, no I/O.
+        # _on_stop() runs in run()'s finally block when the thread exits.
+        # 停止主循环 — 只发信号，不做 I/O。
+        # _on_stop() 在线程退出的 finally 块中执行。
         self._running = False
         self._queue.put_nowait(None)
-        self._on_stop()
 
     #---------------------------------------------------------------------------
     #   SOS emergency push

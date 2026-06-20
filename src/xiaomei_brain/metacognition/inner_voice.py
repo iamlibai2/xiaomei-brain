@@ -138,6 +138,10 @@ class InnerVoice:
         # 最近一次 MODE 判断（daily / task）
         self._last_mode: str = ""
 
+        # 最近一次 drive/signal 变化（供 InternalDisplay 读取）
+        self.last_drive_deltas: list[str] = []
+        self.last_social_signal: str = ""
+
     # ── 响应解析 ──────────────────────────────────────────────
 
     @staticmethod
@@ -265,8 +269,23 @@ class InnerVoice:
             praise, criticism, expression, curiosity, boundary,
         )
 
+        # 记录变化描述（供 InternalDisplay 读取）
+        deltas: list[str] = []
+        if praise > 0.1:
+            deltas.append(f"赞美 +{praise:.1f}")
+        if criticism > 0.1:
+            deltas.append(f"批评 +{criticism:.1f}")
+        if expression > 0.3:
+            deltas.append(f"表达欲 +{expression:.1f}")
+        if curiosity > 0.3:
+            deltas.append(f"好奇心 +{curiosity:.1f}")
+        if boundary > 0.3:
+            deltas.append(f"边界侵犯 anger{boundary:.1f}")
+        self.last_drive_deltas = deltas
+
     def _apply_social_signal(self, signal_text: str) -> None:
         """从 SIGNAL JSON 解析用户社交信号并应用到 Drive。"""
+        self.last_social_signal = ""
         if not self._drive or not signal_text:
             return
 
@@ -283,8 +302,10 @@ class InnerVoice:
         intensity = float(signal.get("intensity", 0))
 
         if signal_type and intensity > 0.1:
+            clamped = min(intensity, 1.0)
             try:
-                self._drive.apply_social_signal(signal_type, min(intensity, 1.0))
+                self._drive.apply_social_signal(signal_type, clamped)
+                self.last_social_signal = f"{signal_type}({clamped:.1f})"
                 logger.info(
                     "[InnerVoice] SIGNAL: %s (intensity=%.2f)",
                     signal_type, intensity,
