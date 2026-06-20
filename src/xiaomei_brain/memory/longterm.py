@@ -87,10 +87,19 @@ class LongTermMemory(SQLiteStore):
         self._lance_table: Any = None
 
         # Background warmup: pre-load embedding model in background thread
+        self._warmup_complete = threading.Event()
         t = threading.Thread(target=self._warmup_embedder, daemon=True)
         t.start()
 
     # ── Embedding ───────────────────────────────────────────────
+
+    def is_embedder_ready(self) -> bool:
+        """Embedding 模型是否已加载完成（包括后台 warmup）。"""
+        return self._warmup_complete.is_set()
+
+    def wait_embedder(self, timeout: float | None = None) -> bool:
+        """阻塞等待 embedding 模型加载完成。返回 True 表示就绪。"""
+        return self._warmup_complete.wait(timeout=timeout)
 
     def _warmup_embedder(self) -> None:
         """如果远端 embedding 服务未独立启动，才预加载本地模型。
@@ -113,6 +122,8 @@ class LongTermMemory(SQLiteStore):
             pass  # Will retry on first use
         except Exception as e:
             logger.debug("[Embed] warmup failed: %s", e)
+        finally:
+            self._warmup_complete.set()
 
     def _get_embedder(self) -> Any:
         """Lazy-load the embedding model (thread-safe).
@@ -130,11 +141,14 @@ class LongTermMemory(SQLiteStore):
             os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
             os.environ["HF_HUB_OFFLINE"] = "1"
 
+            from contextlib import redirect_stderr
+            from io import StringIO
             from sentence_transformers import SentenceTransformer
 
             try:
                 logger.info("Loading embedding model: %s", self._embedding_model_name)
-                self._embedder = SentenceTransformer(self._embedding_model_name)
+                with redirect_stderr(StringIO()):
+                    self._embedder = SentenceTransformer(self._embedding_model_name)
                 logger.info("Embedding model loaded: %s", self._embedding_model_name)
             except Exception as e:
                 if self._embedding_model_name != self._embedding_fallback:
@@ -147,6 +161,7 @@ class LongTermMemory(SQLiteStore):
                 else:
                     raise
 
+            self._warmup_complete.set()
             return self._embedder
 
     # ── Remote Embedding Server ──────────────────────────────────
@@ -159,7 +174,11 @@ class LongTermMemory(SQLiteStore):
             resp = urllib.request.urlopen(url, timeout=2)
             if resp.status == 200:
                 data = json.loads(resp.read())
-                self._remote_dim = data.get("dim")
+                dim = data.get("dim")
+                if not dim:
+                    logger.debug("[Embed] Remote health returned 200 but no dim field, treating as unavailable")
+                    return False
+                self._remote_dim = dim
                 logger.info(
                     "[Embed] Remote server available at %s (dim=%s)",
                     self._embed_server_url, self._remote_dim,

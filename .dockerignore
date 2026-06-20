@@ -1,0 +1,14 @@
+__pycache__
+*.pyc
+.git
+.gitignore
+.venv
+venv
+dist
+*.egg-info
+docs
+examples
+tests
+logs
+debug
+.claude

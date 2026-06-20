@@ -17,7 +17,7 @@ Usage:
     from xiaomei_brain.consciousness.identity import IdentityConfig
 
     config = IdentityConfig.load(agent_id=agent_id)
-    print(config.identity)  # e.g. "陈丽君"
+    print(config.identity)  # e.g. "小美"
     print(config.core_traits)  # ["温和", "好奇", "善于倾听"]
 """
 

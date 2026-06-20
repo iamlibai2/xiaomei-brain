@@ -18,6 +18,7 @@ Usage:
     xiaomei-brain logs <agent_id> [-f/--follow] [-n/--lines <n>]
     xiaomei-brain doctor [--fix] [-v/--verbose]
     xiaomei-brain setup
+    xiaomei-brain install                     # 预下载 Embedding 模型
 """
 
 import signal

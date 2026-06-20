@@ -1,0 +1,13 @@
+version: "3.8"
+
+services:
+  xiaomei-brain:
+    build: .
+    image: xiaomei-brain:latest
+    stdin_open: true
+    tty: true
+    volumes:
+      - ~/.xiaomei-brain:/root/.xiaomei-brain
+    ports:
+      - "19766:19766"   # WebSocket
+    command: run xiaomei --cli

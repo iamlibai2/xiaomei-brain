@@ -249,6 +249,12 @@ def _run_agent(
                         ltm = getattr(agent, 'longterm_memory', None)
                         si.load_preferred_names(user_id, ltm)
                 print(f"\n  {C_ACCENT}你好，{display_name}\033[0m\n")
+                # ── 等待 Embedding 模型就绪 ──────────────────
+                ltm = getattr(agent, 'longterm_memory', None)
+                if ltm and not ltm.is_embedder_ready():
+                    print(f"  \033[90m[....] Embedding 模型加载中（首次约 20 秒），请稍候...\033[0m", flush=True)
+                    ltm.wait_embedder()
+                    print(f"  \033[90m[ OK ] Embedding 模型就绪\033[0m", flush=True)
                 living.load_fresh_tail()
                 if hasattr(living, '_attention') and living._attention:
                     cli_sid = f"cli-{agent_id}"

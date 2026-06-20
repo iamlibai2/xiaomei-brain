@@ -130,6 +130,10 @@ def main() -> None:
         from xiaomei_brain.cli.model import cmd_model
         cmd_model(args)
 
+    elif cmd == "install":
+        from xiaomei_brain.cli.install import cmd_install
+        cmd_install(args)
+
     else:
         print(f"Unknown command: {cmd}")
         sys.exit(1)
