@@ -1122,9 +1122,8 @@ class MemoryConsole:
 
         if hour_rows:
             hour_map = {int(r["h"]): r["cnt"] for r in hour_rows}
-            max_cnt = max(hour_map.values()) if hour_map else 1
+            total_msg = sum(hour_map.values())
 
-            # 4 time blocks: 凌晨 00-06, 上午 06-12, 下午 12-18, 晚上 18-24
             BLOCKS = [
                 ("凌晨 00-06", range(0, 6)),
                 ("上午 06-12", range(6, 12)),
@@ -1135,9 +1134,10 @@ class MemoryConsole:
                 block_cnt = sum(hour_map.get(h, 0) for h in hours)
                 if block_cnt == 0:
                     continue
-                bar_w = max(1, int(block_cnt / max_cnt * 20)) if max_cnt > 0 else 1
-                bar = "█" * min(bar_w, 30)
-                lines.append(f"  {D}{label}{R}  {G}{bar}{R}  {V}{block_cnt}{R}")
+                pct = block_cnt / total_msg * 100 if total_msg else 0
+                bar_w = max(1, int(pct / 5))
+                bar = "█" * min(bar_w, 20)
+                lines.append(f"  {D}{label:<10}{R} {G}{bar}{R}  {V}{block_cnt}{R} 条消息  {X}({pct:.0f}%){R}")
 
         # Recent activity (last 7 days)
         day_rows = conn.execute(
