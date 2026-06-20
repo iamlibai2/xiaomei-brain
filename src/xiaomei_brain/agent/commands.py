@@ -1162,7 +1162,7 @@ class MemoryConsole:
             yesterday_str = _time.strftime("%Y-%m-%d", _time.localtime(now - 86400))
 
             lines.append(f"\n  {G}最近7天{R}")
-            lines.append(f"  {X}{'日期':<14} {'用户消息':>6} {'小美回复':>6} {'工具调用':>6} {'会话':>4}{R}")
+            lines.append(f"  {X}{'日期':<14} {'user':>6} {'agent':>6} {'tool':>6} {'会话':>4}{R}")
 
             for r in day_rows:
                 day = r["day"]
