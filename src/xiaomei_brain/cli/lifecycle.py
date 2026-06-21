@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import signal
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -18,6 +19,14 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
+from rich.text import Text
+from rich.box import ROUNDED
+
+console = Console()
 
 logger = logging.getLogger(__name__)
 
@@ -299,54 +308,251 @@ def cmd_restart(args: list[str]) -> None:
     cmd_start(restart_args)
 
 
+# ── 状态可视化常量和工具 ─────────────────────────────────────
+
+_EMOTION_CN: dict[str, str] = {
+    "joy": "😊 开心", "sadness": "😢 悲伤", "anger": "😠 愤怒",
+    "fear": "😨 恐惧", "surprise": "😲 惊讶", "disgust": "😒 厌恶",
+    "neutral": "😐 平静",
+}
+
+_DESIRE_CN: dict[str, str] = {
+    "survival": "生存欲", "achievement": "成就欲", "belonging": "归属欲",
+    "cognition": "认知欲", "expression": "表达欲",
+}
+
+
+def _bar(value: float, width: int = 16) -> Text:
+    """渲染进度条，带颜色。>70% 绿，40-70% 黄，<40% 红。"""
+    filled = max(0, min(width, int(value * width)))
+    if value >= 0.7:
+        color = "green"
+    elif value >= 0.4:
+        color = "yellow"
+    else:
+        color = "red"
+    return Text.assemble(
+        ("█" * filled, color),
+        ("░" * (width - filled), "dim"),
+    )
+
+
+def _read_drive_state(agent_id: str) -> dict | None:
+    """读取 drive_state.json（可能不存在）。"""
+    path = Path.home() / ".xiaomei-brain" / agent_id / "drive" / "drive_state.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _read_brain_stats(agent_id: str) -> dict:
+    """从 brain.db 读取统计信息（记忆数、活跃目标、最后对话时间）。"""
+    db_path = Path.home() / ".xiaomei-brain" / agent_id / "memory" / "brain.db"
+    result: dict = {"memory_count": 0, "active_goals": [], "last_conversation": None}
+    if not db_path.exists():
+        return result
+    try:
+        conn = sqlite3.connect(str(db_path))
+        row = conn.execute(
+            "SELECT COUNT(*) FROM memories WHERE deleted_at IS NULL"
+        ).fetchone()
+        result["memory_count"] = row[0] if row else 0
+        rows = conn.execute(
+            "SELECT description, progress FROM goals WHERE status = 'ACTIVE' "
+            "ORDER BY priority DESC LIMIT 5"
+        ).fetchall()
+        result["active_goals"] = [
+            {"description": r[0], "progress": r[1] or 0.0} for r in rows
+        ]
+        row = conn.execute(
+            "SELECT MAX(created_at) FROM conversations"
+        ).fetchone()
+        if row and row[0]:
+            result["last_conversation"] = datetime.fromtimestamp(row[0], tz=timezone.utc)
+        conn.close()
+    except Exception:
+        pass
+    return result
+
+
+def _format_uptime(seconds: float) -> str:
+    """格式化运行时长。"""
+    days = int(seconds // 86400)
+    hours, rem = divmod(int(seconds) % 86400, 3600)
+    minutes = rem // 60
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    parts.append(f"{minutes}m")
+    return " ".join(parts)
+
+
+def _format_ago(dt: datetime) -> str:
+    """格式化相对时间。"""
+    diff = datetime.now(timezone.utc) - dt
+    seconds = diff.total_seconds()
+    if seconds < 60:
+        return "刚刚"
+    if seconds < 3600:
+        return f"{int(seconds // 60)} 分钟前"
+    if seconds < 86400:
+        return f"{int(seconds // 3600)} 小时前"
+    if seconds < 604800:
+        return f"{diff.days} 天前"
+    return dt.strftime("%m-%d %H:%M")
+
+
+def _section(title: str, icon: str, border_style: str) -> Table:
+    """创建一个带标题的 section 表格。"""
+    t = Table(
+        title=f"{icon}  {title}",
+        title_style=f"bold {border_style}",
+        title_justify="left",
+        box=ROUNDED,
+        border_style=border_style,
+        padding=(0, 2),
+        show_header=False,
+    )
+    t.add_column("body", ratio=1)
+    return t
+
+
 def cmd_status(args: list[str]) -> None:
-    """`xiaomei-brain status` — 查看 agent 运行状态。
+    """`xiaomei-brain status` — Agent 状态可视化。
 
-    Usage: xiaomei-brain status <agent_id>
+    Usage: xiaomei-brain status <agent_id> [--watch]
     """
-    import psutil
-
     parser = argparse.ArgumentParser(
         prog="xiaomei-brain status",
         description="查看 Agent 状态",
     )
     parser.add_argument("agent_id", nargs="?", default="xiaomei", help="Agent ID")
+    parser.add_argument("--watch", "-w", action="store_true", help="实时刷新（每 3 秒）")
     parsed = parser.parse_args(args)
 
     agent_id = parsed.agent_id
+    _print_status(agent_id)
 
-    data = read_pid_file(agent_id)
-    if not data:
-        print(f"Agent '{agent_id}': 未运行")
-        sys.exit(1)
+    if parsed.watch:
+        try:
+            while True:
+                time.sleep(3)
+                console.print()
+                _print_status(agent_id)
+        except KeyboardInterrupt:
+            console.print("\n  [dim]已停止刷新[/]\n")
 
-    pid = data["pid"]
-    try:
-        proc = psutil.Process(pid)
-        proc.cpu_percent()  # 触发第一次采样
-        time.sleep(0.1)
-        cpu = proc.cpu_percent()
-        mem = proc.memory_info()
-        create_time = datetime.fromtimestamp(proc.create_time(), tz=timezone.utc)
 
-        # 计算运行时长
-        uptime = datetime.now(timezone.utc) - create_time
-        days = uptime.days
-        hours, rem = divmod(uptime.seconds, 3600)
-        minutes, seconds = divmod(rem, 60)
+def _print_status(agent_id: str) -> None:
+    """打印单次状态报告。"""
+    import psutil
 
-        uptime_str = ""
-        if days:
-            uptime_str += f"{days}d "
-        uptime_str += f"{hours}h {minutes}m {seconds}s"
+    pid_data = read_pid_file(agent_id)
+    drive = _read_drive_state(agent_id)
+    stats = _read_brain_stats(agent_id)
+    is_running = pid_data is not None
 
-        print(f"Agent '{agent_id}': 运行中")
-        print(f"  PID:       {pid}")
-        print(f"  CPU:       {cpu:.1f}%")
-        print(f"  Memory:    {mem.rss // 1024 // 1024} MB")
-        print(f"  Uptime:    {uptime_str}")
-        print(f"  Started:   {create_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    except psutil.NoSuchProcess:
-        print(f"Agent '{agent_id}': PID {pid} 已不存在（遗留 PID 文件）")
-        remove_pid_file(agent_id)
-        sys.exit(1)
+    # ── 获取运行信息 ──────────────────────────────────────
+    sys_info_lines: list[Text] = []
+    if is_running and pid_data:
+        pid = pid_data["pid"]
+        try:
+            proc = psutil.Process(pid)
+            proc.cpu_percent()
+            time.sleep(0.1)
+            cpu = proc.cpu_percent()
+            mem_mb = proc.memory_info().rss // 1024 // 1024
+            create_time = datetime.fromtimestamp(proc.create_time(), tz=timezone.utc)
+            uptime_sec = (datetime.now(timezone.utc) - create_time).total_seconds()
+            sys_info_lines.append(
+                Text.assemble(
+                    ("PID ", "dim"), str(pid),
+                    ("  CPU ", "dim"), f"{cpu:.1f}%",
+                    ("  MEM ", "dim"), f"{mem_mb} MB",
+                    ("  已运行 ", "dim"), _format_uptime(uptime_sec),
+                )
+            )
+        except psutil.NoSuchProcess:
+            is_running = False
+
+    # ── 渲染 ─────────────────────────────────────────────
+    console.print()
+
+    # 头部
+    status_dot = "🟢" if is_running else "⏸️"
+    status_text = "运行中" if is_running else "未运行"
+    status_style = "green bold" if is_running else "dim"
+    header = Text.assemble(
+        ("\n", ""),
+        (f"🌸 {agent_id}", "bold bright_magenta"),
+        (f"  {status_dot} {status_text}", status_style),
+    )
+    console.print(header)
+    if sys_info_lines:
+        console.print(sys_info_lines[0])
+    console.print()
+
+    # ── 记忆 + Token 一行 ────────────────────────────────
+    mem_text = Text.assemble(
+        (f"{stats['memory_count']:,}", "bold"), (" 条记忆", ""),
+    )
+    extras: list[Text] = [Text("🧠  "), mem_text]
+    if stats["last_conversation"]:
+        extras.append(Text(f"  ·  最近对话: {_format_ago(stats['last_conversation'])}"))
+    if drive and drive.get("token"):
+        token = drive["token"]
+        today_used = token.get("today_used", 0)
+        if today_used:
+            extras.append(Text(f"  ·  Token: {today_used:,}"))
+    console.print(Text.assemble(*extras))
+    if sys_info_lines:
+        console.print()
+
+    # ── 情绪 ─────────────────────────────────────────────
+    if drive and drive.get("emotion", {}).get("emotions"):
+        emotions = drive["emotion"]["emotions"]
+        top = sorted(emotions.items(), key=lambda x: x[1], reverse=True)[:3]
+        emo_parts: list[Text] = []
+        for name, val in top:
+            cn = _EMOTION_CN.get(name, name)
+            emo_parts.append(Text.assemble(cn, "  ", _bar(val), f" {val:.0%}"))
+        et = _section("情绪", "💭", "bright_cyan")
+        for ep in emo_parts:
+            et.add_row(ep)
+        console.print(et)
+
+    # ── 目标 ─────────────────────────────────────────────
+    if stats["active_goals"]:
+        gt = _section("活跃目标", "🎯", "bright_green")
+        for g in stats["active_goals"]:
+            desc = g["description"]
+            if len(desc) > 32:
+                desc = desc[:30] + "…"
+            gt.add_row(Text.assemble(desc, "", ""))
+            gt.add_row(Text.assemble(_bar(g["progress"]), f"  {g['progress']:.0%}"))
+        console.print(gt)
+
+    # ── 欲望 ─────────────────────────────────────────────
+    if drive and drive.get("desire"):
+        desire = drive["desire"]
+        desire_items = [(k, v) for k, v in desire.items()
+                        if k in _DESIRE_CN and k != "last_updated"]
+        desire_items.sort(key=lambda x: x[1], reverse=True)
+        if desire_items:
+            dt = _section("欲望", "🔥", "bright_yellow")
+            for key, val in desire_items:
+                cn = _DESIRE_CN.get(key, key)
+                dt.add_row(
+                    Text.assemble(f"{cn:<6}  ", _bar(val), f" {val:.0%}")
+                )
+            console.print(dt)
+
+    # ── 底部提示 ─────────────────────────────────────────
+    if not is_running:
+        console.print(f"  [dim]💡 xiaomei-brain run {agent_id}  启动 Agent[/]")
+    console.print()

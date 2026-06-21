@@ -52,6 +52,7 @@ def test_import_core_modules():
     import xiaomei_brain.cli.install
     import xiaomei_brain.cli.memory
     import xiaomei_brain.cli.channel
+    import xiaomei_brain.cli.lifecycle
     # If we got here, all imports succeeded
     assert True
 
@@ -72,6 +73,16 @@ def test_cli_channel_list():
         [sys.executable, "-m", "xiaomei_brain", "channel", "list"],
         capture_output=True, text=True, timeout=10,
     )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+
+
+def test_cli_status():
+    """`xiaomei-brain status` should exit cleanly (even without running agent)."""
+    result = subprocess.run(
+        [sys.executable, "-m", "xiaomei_brain", "status", "xiaomei"],
+        capture_output=True, text=True, timeout=10,
+    )
+    # status exits 0 whether agent is running or not
     assert result.returncode == 0, f"stderr: {result.stderr}"
 
 
