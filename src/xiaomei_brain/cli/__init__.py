@@ -11,6 +11,10 @@
     xiaomei-brain agent <list|info|create|delete> ...
     xiaomei-brain config <get|set|validate|file> ...
     xiaomei-brain plugins <list|enable|disable> ...
+    xiaomei-brain memory list <agent_id> [--limit N] [--user U]
+    xiaomei-brain memory search <agent_id> <query> [--limit N]
+    xiaomei-brain memory forget <agent_id> <memory_id>
+    xiaomei-brain channel add / list / remove <channel>
     xiaomei-brain logs <agent_id> [-f] [-n <lines>]
     xiaomei-brain doctor [--fix] [-v]
     xiaomei-brain setup
@@ -114,6 +118,14 @@ def main() -> None:
     elif cmd == "plugins":
         from xiaomei_brain.cli.plugins import cmd_plugins
         cmd_plugins(args)
+
+    elif cmd == "memory":
+        from xiaomei_brain.cli.memory import cmd_memory
+        cmd_memory(args)
+
+    elif cmd == "channel":
+        from xiaomei_brain.cli.channel import cmd_channel
+        cmd_channel(args)
 
     elif cmd == "logs":
         from xiaomei_brain.cli.logs import cmd_logs

@@ -50,8 +50,29 @@ def test_import_core_modules():
     import xiaomei_brain.cli.run
     import xiaomei_brain.cli.boot
     import xiaomei_brain.cli.install
+    import xiaomei_brain.cli.memory
+    import xiaomei_brain.cli.channel
     # If we got here, all imports succeeded
     assert True
+
+
+def test_cli_memory_help():
+    """`xiaomei-brain memory` without args should show usage error (not crash)."""
+    result = subprocess.run(
+        [sys.executable, "-m", "xiaomei_brain", "memory"],
+        capture_output=True, text=True, timeout=10,
+    )
+    # argparse exits with 2 for missing required args
+    assert result.returncode == 2
+
+
+def test_cli_channel_list():
+    """`xiaomei-brain channel list` should exit cleanly."""
+    result = subprocess.run(
+        [sys.executable, "-m", "xiaomei_brain", "channel", "list"],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
 
 
 def test_longterm_memory_instantiation():
