@@ -338,6 +338,11 @@ def _render_header(si) -> list[str]:
     guidance = f"现在是{period}。在思考和回答前，先确认当前时段——你的语气、精力状态、对时间的判断都应与此时段一致。比如不要在大白天说「夜深了」。"
     lines = [header, guidance]
 
+    # 时间感知（L2 内心独白产出 —— "感觉到的"时间质地）
+    temporal = getattr(si.mind, 'temporal_sense', '')
+    if temporal:
+        lines.append(f"<时间感知>{temporal}</时间感知>")
+
     # 今日小结
     stats = getattr(getattr(si, 'history', None), 'today_stats', None) or {}
     if stats.get("messages") or stats.get("memories"):

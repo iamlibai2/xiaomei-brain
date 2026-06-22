@@ -147,12 +147,12 @@ class InternalDisplay:
             self._intent_reason = reason
 
     def record_emergence_stored(self, count: int) -> None:
-        """记录自由表达全文已存储。"""
+        """记录内心独白全文已存储。"""
         if count:
             self._emergence_stored = count
 
     def record_emergence_stats(self, narr_count: int, doubt_count: int) -> None:
-        """记录自由表达后处理结果。"""
+        """记录内心独白后处理结果。"""
         if narr_count:
             self._narr_extracted = narr_count
         if doubt_count:
@@ -238,10 +238,10 @@ class InternalDisplay:
             lines.append("🧠 " + " · ".join(parts))
 
         if self._inner_voice_thought:
-            thought = self._inner_voice_thought[:80]
-            if len(self._inner_voice_thought) > 80:
-                thought += "…"
-            lines.append(f"💭 内心声音: {thought}")
+            thought = self._inner_voice_thought.replace("\n", " ").strip()
+            if len(thought) > 80:
+                thought = thought[:80] + "…"
+            lines.append(f'💭 内心声音: "{thought}"')
 
         if self._inner_voice_drive:
             lines.append("📈 Drive: " + " · ".join(self._inner_voice_drive))
@@ -282,7 +282,7 @@ class InternalDisplay:
             lines.append(f"📖 叙事学习: {self._narrative_count} 条")
 
         if self._emergence_stored:
-            lines.append(f"🗂  自由表达记忆: {self._emergence_stored} 篇")
+            lines.append(f"🗂  内心独白记忆: {self._emergence_stored} 篇")
 
         if self._narr_extracted:
             lines.append(f"✨ 叙事记忆: {self._narr_extracted} 条（NARR 结构化块）")

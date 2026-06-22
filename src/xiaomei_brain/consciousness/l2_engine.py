@@ -144,7 +144,7 @@ class L2Engine:
         - tick_emergence(): 只做内心独白
 
         调用 1：意图决策 — inject_consciousness() + 意图指令
-        调用 2：意识涌现 — inject_consciousness() + 自由表达 + DOUBT
+        调用 2：意识涌现 — inject_consciousness() + 内心独白 + DOUBT
         """
         c = self._c
         c._last_intent_time = time.time()
@@ -222,17 +222,24 @@ class L2Engine:
                 if c.drive:
                     c.drive.consume_energy(0.02)
 
+                # 分离时间感知
+                emergence_text, temporal_sense = self._split_temporal(emergence_text)
+                if temporal_sense and c.self_image:
+                    c.self_image.mind.temporal_sense = temporal_sense
+                    logger.info("[Consciousness L2] 时间感知: %s", temporal_sense)
+
                 # 分离自我不确定感
                 emergence_text, doubts = self._split_doubt(emergence_text)
                 if doubts:
                     c.self_image.contribute_self_doubts(doubts)
                     logger.info("[Consciousness L2] 自我不确定: %d 条", len(doubts))
 
-                # 终端展示自由表达
+                # 终端展示内心独白（过滤 NARR 块）
                 if emergence_text:
                     from .internal_display import C_FREE, RESET, print_section
-                    print_section("自由表达", icon="✨")
-                    print(f"{C_FREE}{emergence_text}{RESET}", flush=True)
+                    display_text = self._strip_narr(emergence_text)
+                    print_section("内心独白", icon="✨")
+                    print(f"{C_FREE}{display_text}{RESET}", flush=True)
 
                 # 清空累积变化
                 c._state_buffer.clear()
@@ -424,16 +431,25 @@ class L2Engine:
                 if c.drive:
                     c.drive.consume_energy(0.02)
 
+                # 分离时间感知
+                emergence_text, temporal_sense = self._split_temporal(emergence_text)
+                if temporal_sense and c.self_image:
+                    c.self_image.mind.temporal_sense = temporal_sense
+                    logger.info("[Consciousness L2] 时间感知: %s", temporal_sense)
+
                 # 分离自我不确定感
                 emergence_text, doubts = self._split_doubt(emergence_text)
                 if doubts:
                     c.self_image.contribute_self_doubts(doubts)
                     logger.info("[Consciousness L2] 自我不确定: %d 条", len(doubts))
 
-                if emergence_text:
+                # 分离 NARR 块（结构化叙事，展示时过滤）
+                display_text = self._strip_narr(emergence_text)
+
+                if display_text:
                     from .internal_display import C_FREE, RESET, print_section
-                    print_section("自由表达", icon="✨")
-                    print(f"{C_FREE}{emergence_text}{RESET}", flush=True)
+                    print_section("内心独白", icon="✨")
+                    print(f"{C_FREE}{display_text}{RESET}", flush=True)
 
                 c._state_buffer.clear()
                 c.history.last_llm_fuel_time = time.time()
@@ -893,6 +909,38 @@ class L2Engine:
         return clean_text.strip(), perceptions
 
     @staticmethod
+    def _split_temporal(text: str) -> tuple[str, str]:
+        """分离 ---TEMPORAL--- 行（时间感知）。"""
+        if "---TEMPORAL---" not in text:
+            return text, ""
+        parts = text.split("---TEMPORAL---", 1)
+        after = parts[1].strip() if len(parts) > 1 else ""
+        # 取第一行非空文本
+        temporal = after.split("\n")[0].strip() if after else ""
+        # 裁断下一个分隔符
+        for sep in ["---NARR---", "---DOUBT---", "---EVENTS---", "---PERCEPTION---", "---SIGNAL---"]:
+            idx = temporal.find(sep)
+            if idx != -1:
+                temporal = temporal[:idx].strip()
+        # 重构干净文本（去掉 ---TEMPORAL--- 行）
+        if "---TEMPORAL---" in parts[0]:
+            clean = parts[0].split("---TEMPORAL---")[0].strip()
+        else:
+            clean = parts[0].strip()
+        if temporal:
+            remaining = after[len(temporal):].strip()
+            if remaining:
+                clean = clean + "\n" + remaining if clean else remaining
+        return clean, temporal
+
+    @staticmethod
+    def _strip_narr(text: str) -> str:
+        """过滤 NARR 块（结构化叙事，展示时不应显示）。"""
+        text = re.sub(r'<NARR>[\s\S]*?</NARR>', '', text)
+        text = re.sub(r'---NARR---\s*', '', text)
+        return text.strip()
+
+    @staticmethod
     def _split_doubt(text: str) -> tuple[str, list[dict]]:
         """分离 ---DOUBT--- 块（自我不确定感）。"""
         if "---DOUBT---" not in text:
@@ -955,7 +1003,7 @@ class L2Engine:
             return
         c = self._c
 
-        logger.info("[Consciousness L2] 自由表达已存储 (%d 字)", len(emergence_text))
+        logger.info("[Consciousness L2] 内心独白已存储 (%d 字)", len(emergence_text))
         if c.agent and hasattr(c.agent, "longterm_memory") and c.agent.longterm_memory and emergence_text:
             c.agent.longterm_memory.store_narrative(
                 content=emergence_text,

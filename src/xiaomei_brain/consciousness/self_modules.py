@@ -451,6 +451,9 @@ class SelfMind:
     # ── 目标进展历史（tracking，非 fallback）──
     _goal_progress_history: list[float] = field(default_factory=list)
 
+    # ── 时间感知（L2 TEMPORAL 产出）──────────
+    temporal_sense: str = ""
+
     # ── 社交感知（L2 第四问产出）──────────────
     social_perceptions: list[dict] = field(default_factory=list)
 
@@ -548,6 +551,7 @@ class SelfMind:
             "memory_count_history": self.memory_count_history[-20:],
             "recent_memory_summaries": self.recent_memory_summaries[-10:],
             "inner_thought": self.inner_thought,
+            "temporal_sense": self.temporal_sense,
             "social_perceptions_count": len(self.social_perceptions),
             "inner_voice_count": len(self.inner_voice),
             "project_map": self.project_map[:500] if self.project_map else "",
@@ -555,7 +559,7 @@ class SelfMind:
 
     def from_dict(self, data: dict) -> None:
         # 代理字段（primary_goal/goal_progress 等）的数据来自 Purpose，不从快照恢复
-        for key in ("memory_count", "inner_thought"):
+        for key in ("memory_count", "inner_thought", "temporal_sense"):
             if key in data:
                 setattr(self, key, data[key])
         for key in ("memory_count_history", "recent_memory_summaries"):

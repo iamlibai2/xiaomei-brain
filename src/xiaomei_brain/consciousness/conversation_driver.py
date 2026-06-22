@@ -318,7 +318,7 @@ class ConversationDriver:
                     print(f"\033[90m[本轮耗时 {elapsed:.1f}s{tc_str}]\033[0m", flush=True)
 
                     # ── 内部处理展示 ──
-                    # 收集记忆召回数据（L2 意图/自由表达由 L2 自身展示）
+                    # 收集记忆召回数据（L2 意图/内心独白由 L2 自身展示）
                     c = getattr(parent, "consciousness", None)
                     if c:
                         recall = getattr(c.self_image, "_last_recall_summary", None)
@@ -403,6 +403,13 @@ class ConversationDriver:
             finally:
                 parent._chatting = False
                 parent._clarify_listening.clear()
+                # 清理工具回调，避免 PACE/CognitiveLoop 执行时陈旧回调触发
+                try:
+                    agent_core = parent.agent._get_agent()
+                    agent_core.on_tool_start = None
+                    agent_core.on_tool_complete = None
+                except Exception:
+                    pass
 
         run()
 
@@ -696,7 +703,7 @@ class ConversationDriver:
         """创建工具事件 callback，通过 Router 投递到各通道。"""
         import json as _json
         def callback(idx: int, name: str, data, *args):
-            if not self._should_deliver(session_id):
+            if not ConversationDriver._should_deliver(session_id):
                 return
             router = getattr(parent, '_router', None)
             if not router:
