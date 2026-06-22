@@ -85,8 +85,8 @@ class ChatCompletionsTransport(Transport):
                 api_msg["content"] = msg["content"]
             if msg.get("tool_calls"):
                 api_msg["tool_calls"] = msg["tool_calls"]
-            # reasoning_content: GLM 原生支持，其他模型透传可能导致 400
-            if msg.get("reasoning_content") and "glm" in model.id.lower():
+            # reasoning_content: GLM/DeepSeek 原生支持
+            if msg.get("reasoning_content") and ("glm" in model.id.lower() or "deepseek" in model.id.lower()):
                 api_msg["reasoning_content"] = msg["reasoning_content"]
             if msg.get("tool_call_id"):
                 api_msg["tool_call_id"] = msg["tool_call_id"]
@@ -234,9 +234,9 @@ class ChatCompletionsTransport(Transport):
                     rc = delta["reasoning_content"]
                     reasoning_parts.append(rc)
                     if not reasoning_yielded:
-                        yield "\n\033[2m", None
+                        yield "\n\033[2m", {"is_reasoning": True}
                         reasoning_yielded = True
-                    yield rc, None
+                    yield rc, {"is_reasoning": True}
 
                 # regular content
                 if "content" in delta and delta["content"] and not delta.get("reasoning_content"):

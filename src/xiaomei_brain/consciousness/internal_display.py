@@ -305,7 +305,7 @@ def _parse_memory_actions(memory_block: str) -> list[dict]:
         if isinstance(data, dict) and "actions" in data:
             return [
                 {
-                    "action": a.get("action", "?"),
+                    "action": a.get("type", a.get("action", "?")),
                     "preview": _truncate(a.get("content", "")),
                 }
                 for a in data["actions"]

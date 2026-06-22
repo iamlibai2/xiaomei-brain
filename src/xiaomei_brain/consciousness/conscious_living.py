@@ -1548,8 +1548,13 @@ class ConsciousLiving(Living):
                 if isinstance(metadata, dict):
                     if metadata.get("tool_calls"):
                         msg["tool_calls"] = metadata["tool_calls"]
-                    if metadata.get("reasoning_content"):
-                        msg["reasoning_content"] = metadata["reasoning_content"]
+                        # DeepSeek V4: 有工具调用的轮次必须传回 reasoning_content
+                        rc = metadata.get("reasoning_content") or metadata.get("reasoning")
+                        if rc:
+                            msg["reasoning_content"] = rc
+                    elif metadata.get("reasoning_content"):
+                        # 无工具调用的轮次不需要传回，但保留 metadata 以备他用
+                        pass
                 restored.append(msg)
             elif role == "tool":
                 tc_id = m.get("tool_call_id", "")

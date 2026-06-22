@@ -281,14 +281,14 @@ class Agent:
                     "tool_calls": tool_calls_data,
                 }
                 if response.reasoning:
-                    msg["reasoning"] = response.reasoning
+                    msg["reasoning_content"] = response.reasoning
                 self.messages.append(msg)
 
-                # 存 assistant(tool_calls) 到 DB，tool_calls + reasoning 存入 metadata
+                # 存 assistant(tool_calls) 到 DB，tool_calls + reasoning_content 存入 metadata
                 if self.conversation_db:
                     meta = {"tool_calls": tool_calls_data}
                     if response.reasoning:
-                        meta["reasoning"] = response.reasoning
+                        meta["reasoning_content"] = response.reasoning
                     tool_msg_id = self.conversation_db.log(
                         session_id=self.session_id,
                         role="assistant",
@@ -446,7 +446,7 @@ class Agent:
                     if self.conversation_db:
                         meta = {}
                         if response.reasoning:
-                            meta["reasoning"] = response.reasoning
+                            meta["reasoning_content"] = response.reasoning
                         assistant_msg_id = self.conversation_db.log(
                             session_id=self.session_id,
                             role="assistant",
@@ -456,7 +456,7 @@ class Agent:
                         )
                     msg: dict[str, Any] = {"role": "assistant", "content": display_content, "id": assistant_msg_id}
                     if response.reasoning:
-                        msg["reasoning"] = response.reasoning
+                        msg["reasoning_content"] = response.reasoning
                     self.messages.append(msg)
 
                     # Co-write to experience stream

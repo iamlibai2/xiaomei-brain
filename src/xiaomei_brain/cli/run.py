@@ -290,7 +290,7 @@ def _run_agent(
     with _stream_lock:
         own, others = [], []
         for content, uid in _pending_proactive:
-            if uid == user_id or not uid:
+            if uid == user_id or not uid or uid == "global":
                 own.append(content)
             else:
                 others.append((content, uid))
@@ -470,7 +470,7 @@ def cmd_run(args: list[str]) -> None:
         datefmt="%H:%M:%S",
         stream=sys.stderr,
     )
-    logging.getLogger().handlers[0].setLevel(logging.WARNING)
+    logging.getLogger().handlers[0].setLevel(logging.INFO)
 
     agent_log_dir = os.path.expanduser(f"~/.xiaomei-brain/{agent_id}/logs")
     os.makedirs(agent_log_dir, exist_ok=True)

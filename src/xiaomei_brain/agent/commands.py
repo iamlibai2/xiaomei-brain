@@ -370,7 +370,7 @@ class MemoryConsole:
             total += tokens
             if role == "system":
                 lines.append(f"  {V}── system ({tokens}t) ──{R}")
-                for cl in content.split("\n")[:20]:
+                for cl in content.split("\n"):
                     lines.append(f"  {X}{cl}{R}")
                 lines.append(f"  {V}── end system ──{R}")
             else:

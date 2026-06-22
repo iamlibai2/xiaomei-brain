@@ -225,7 +225,8 @@ class LLMClient:
         try:
             for text, extra in self._transport.stream_iter(response, self._model_def, self._profile):
                 if text:
-                    content_parts.append(text)
+                    if not (extra and extra.get("is_reasoning")):
+                        content_parts.append(text)
                     yield text
                 if extra:
                     if extra.get("finish_reason"):
