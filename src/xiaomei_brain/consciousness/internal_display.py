@@ -60,6 +60,8 @@ class InternalDisplay:
     _periodic_count: int = 0
     _intent_type: str = ""
     _intent_reason: str = ""
+    _narr_extracted: int = 0
+    _doubt_count: int = 0
     _recall_count: int = 0
     _recall_tags: list[str] = field(default_factory=list)
     _procedure_count: int = 0
@@ -103,6 +105,13 @@ class InternalDisplay:
         if reason:
             self._intent_reason = reason
 
+    def record_emergence_stats(self, narr_count: int, doubt_count: int) -> None:
+        """记录自由表达后处理结果。"""
+        if narr_count:
+            self._narr_extracted = narr_count
+        if doubt_count:
+            self._doubt_count = doubt_count
+
     def record_memory_recall(self, count: int, tags: list[str]) -> None:
         """记录记忆召回结果。"""
         self._recall_count = count
@@ -130,6 +139,8 @@ class InternalDisplay:
             or self._recall_count
             or self._procedure_count
             or self._narrative_count
+            or self._narr_extracted
+            or self._doubt_count
         )
 
     # ── CLI 输出 ──────────────────────────────────────────
@@ -154,8 +165,9 @@ class InternalDisplay:
         lines: list[str] = []
 
         if self._intent_type:
-            reason = f" — {self._intent_reason[:60]}" if self._intent_reason else ""
-            lines.append(f"🎯 意图: {self._intent_type}{reason}")
+            lines.append(f"🎯 意图决策结论: {self._intent_type}")
+            if self._intent_reason:
+                lines.append(f"💡 决策原因: {self._intent_reason}")
 
         if self._recall_count:
             tags_str = " · ".join(self._recall_tags[:4]) if self._recall_tags else "匹配记忆"
@@ -193,6 +205,12 @@ class InternalDisplay:
 
         if self._narrative_count:
             lines.append(f"📖 叙事学习: {self._narrative_count} 条")
+
+        if self._narr_extracted:
+            lines.append(f"✨ 叙事记忆: {self._narr_extracted} 条（自由表达）")
+
+        if self._doubt_count:
+            lines.append(f"🔮 自我不确定: {self._doubt_count} 条")
 
         return lines
 
@@ -241,6 +259,11 @@ class InternalDisplay:
         if self._narrative_count:
             data["narrative"] = {"count": self._narrative_count}
 
+        if self._narr_extracted:
+            data["narr_extracted"] = self._narr_extracted
+        if self._doubt_count:
+            data["doubt_count"] = self._doubt_count
+
         return {"type": "internal_display", "data": data}
 
     def clear(self) -> None:
@@ -258,6 +281,8 @@ class InternalDisplay:
         self._recall_tags.clear()
         self._procedure_count = 0
         self._narrative_count = 0
+        self._narr_extracted = 0
+        self._doubt_count = 0
 
 
 # ── 记忆块解析 ────────────────────────────────────────────

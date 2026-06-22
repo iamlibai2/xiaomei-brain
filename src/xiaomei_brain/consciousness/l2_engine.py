@@ -179,17 +179,6 @@ class L2Engine:
                 intent = self._parse_intent_response(intent_response)
                 logger.debug("[Consciousness L2] 意图决策: %s", intent_response[:200])
 
-                # 存储最近意图供 InternalDisplay 展示
-                if intent:
-                    c._last_intent_for_display = {
-                        "type": intent.type.value,
-                        "reason": intent.content or "",
-                    }
-                    # idle/L2 路径无 ConversationDriver，直接展示
-                    self._print_intent_result(intent)
-                    # 消费掉，避免对话路径再次展示
-                    c._last_intent_for_display = None
-
                 if c.drive:
                     c.drive.consume_energy(0.01)
 
@@ -334,17 +323,6 @@ class L2Engine:
                 intent = self._parse_intent_response(intent_response)
                 logger.debug("[Consciousness L2] 意图决策: %s", intent_response[:200])
 
-                # 存储最近意图供 InternalDisplay 展示
-                if intent:
-                    c._last_intent_for_display = {
-                        "type": intent.type.value,
-                        "reason": intent.content or "",
-                    }
-                    # idle/L2 路径无 ConversationDriver，直接展示
-                    self._print_intent_result(intent)
-                    # 消费掉，避免对话路径再次展示
-                    c._last_intent_for_display = None
-
                 if c.drive:
                     c.drive.consume_energy(0.01)
 
@@ -469,7 +447,9 @@ class L2Engine:
 
         # 后处理
         self._store_emergence(emergence_text)
-        self._store_narr_blocks(emergence_text)
+        narr_count = self._store_narr_blocks(emergence_text)
+        c._last_emergence_narr = narr_count
+        c._last_emergence_doubt = len(doubts)
 
         self._drop_to_desk(context, None, emergence_text)
         self._log_to_experience_stream(context, None, emergence_text)
@@ -663,14 +643,6 @@ class L2Engine:
             _C_YELLOW = "\033[33m"
             _C_RST = "\033[0m"
             print(f"{_C_YELLOW}{thinking}{_C_RST}", flush=True)
-
-    @staticmethod
-    def _print_intent_result(intent: Intent) -> None:
-        """意图决策完成后展示 InternalDisplay（非对话路径无 ConversationDriver）。"""
-        from .internal_display import InternalDisplay
-        display = InternalDisplay()
-        display.record_intent(intent.type.value, intent.content or "")
-        display.display()
 
     def _parse_intent_response(self, response: str) -> Intent | None:
         """解析 LLM 返回的意图。优先从 ---INTENT--- 块提取，兼容旧格式。"""
@@ -994,13 +966,14 @@ class L2Engine:
                 user_id=getattr(c.agent, "user_id", "global"),
             )
 
-    def _store_narr_blocks(self, emergence_text: str) -> None:
-        """解析并存储 NARR 块。"""
+    def _store_narr_blocks(self, emergence_text: str) -> int:
+        """解析并存储 NARR 块，返回成功存储数量。"""
         from ..memory.narrative import parse_narr_block
 
         c = self._c
         ltm = c.agent.longterm_memory
         narr_blocks = parse_narr_block(emergence_text)
+        stored = 0
         for nb in narr_blocks:
             try:
                 nm_id = ltm.store_narrative_memory(
@@ -1016,10 +989,12 @@ class L2Engine:
                     user_id=getattr(c.agent, "user_id", "global"),
                 )
                 logger.info("\033[91m[NARR]\033[0m tick_L2 stored: %s", nm_id)
+                stored += 1
                 if c.drive:
                     c.drive.on_insight(0.1)
             except Exception as e:
                 logger.warning("\033[91m[NARR]\033[0m store failed: %s", e)
+        return stored
 
     def _drop_to_desk(self, context: str, intent: Intent | None, emergence_text: str) -> None:
         """把 L2 的分析结果扔到桌面，供 Action/Chat 取用。"""

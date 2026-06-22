@@ -87,6 +87,22 @@ class Layer2DefaultNetwork:
             except Exception as ex:
                 logger.warning("[Layer2] 写调试日志失败: %s", ex)
 
+    def _display_internal(self, intent=None) -> None:
+        """idle 路径展示 InternalDisplay（无 ConversationDriver）。"""
+        from xiaomei_brain.consciousness.internal_display import InternalDisplay
+        c = self._c
+        display = InternalDisplay()
+        if intent:
+            display.record_intent(intent.type.value, intent.content or "")
+        narr = getattr(c, "_last_emergence_narr", 0)
+        doubt = getattr(c, "_last_emergence_doubt", 0)
+        if narr or doubt:
+            display.record_emergence_stats(narr, doubt)
+            c._last_emergence_narr = 0
+            c._last_emergence_doubt = 0
+        if display.has_data():
+            display.display()
+
     def _run(self) -> None:
         """主循环：每 check_interval 秒检查一次 L2/L3/DREAM。"""
         logger.info("[Layer2] 进入主循环")
@@ -104,7 +120,8 @@ class Layer2DefaultNetwork:
                         logger.info("[Layer2] L2 触发（L1 异常=%s，agent_state=%s）", anomaly_type, agent_state)
                         self._c._last_intent_time = time.time()
                         try:
-                            self._c.tick_L2_intent(anomaly_type)
+                            intent = self._c.tick_L2_intent(anomaly_type)
+                            self._display_internal(intent=intent)
                             self._log(f"{ts} L2 tick_L2_intent({anomaly_type}) 完成")
                         except Exception as e:
                             self._log(f"{ts} L2 tick_L2_intent({anomaly_type}) ERROR: {e}")
@@ -117,7 +134,8 @@ class Layer2DefaultNetwork:
                         logger.info("[Layer2] L2 意图决策（agent_state=%s, ctx=%s）", agent_state, ctx)
                         self._c._last_intent_time = time.time()
                         try:
-                            self._c.tick_L2_intent(ctx)
+                            intent = self._c.tick_L2_intent(ctx)
+                            self._display_internal(intent=intent)
                             self._log(f"{ts} L2 tick_L2_intent({ctx}) 完成")
                         except Exception as e:
                             self._log(f"{ts} L2 tick_L2_intent({ctx}) ERROR: {e}")
@@ -130,6 +148,7 @@ class Layer2DefaultNetwork:
                         self._c._last_emerge_time = time.time()
                         try:
                             self._c.tick_L2_emergence(agent_state)
+                            self._display_internal()
                             self._log(f"{ts} L2 tick_L2_emergence 完成")
                         except Exception as e:
                             self._log(f"{ts} L2 tick_L2_emergence ERROR: {e}")

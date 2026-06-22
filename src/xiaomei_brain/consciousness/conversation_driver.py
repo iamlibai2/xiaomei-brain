@@ -318,17 +318,9 @@ class ConversationDriver:
                     print(f"\033[90m[本轮耗时 {elapsed:.1f}s{tc_str}]\033[0m", flush=True)
 
                     # ── 内部处理展示 ──
-                    # 收集意图决策和记忆召回数据
+                    # 收集记忆召回数据（L2 意图/自由表达由 L2 自身展示）
                     c = getattr(parent, "consciousness", None)
                     if c:
-                        intent_data = getattr(c, "_last_intent_for_display", None)
-                        if intent_data:
-                            self.display.record_intent(
-                                intent_data.get("type", ""),
-                                intent_data.get("reason", ""),
-                            )
-                            c._last_intent_for_display = None
-
                         recall = getattr(c.self_image, "_last_recall_summary", None)
                         if recall:
                             self.display.record_memory_recall(
