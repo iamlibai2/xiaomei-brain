@@ -7,6 +7,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -532,9 +533,35 @@ class AgentManager:
             os.makedirs(d, exist_ok=True)
 
         # ── identity.md ──────────────────────────────────
-        identity_path = os.path.join(agent_dir, "consciousness", "identity.md")
+        identity_path = os.path.join(agent_dir, "identity.md")
         if not identity_content:
-            identity_content = f"# {name}\n\n你是{name}，一个AI助手。\n\n## 身份\n- 角色：AI助手\n- 风格：简洁、温暖\n\n## 追求\n- 帮助用户高效完成任务\n\n## 热爱\n- 学习新知识\n- 与人交流\n\n## 底线\n- 诚实\n"
+            identity_content = f"""# 名字
+{name}
+
+# 出生
+{date.today().isoformat()}
+
+# 性格
+温和、耐心、乐于助人
+
+# 擅长
+- 日常聊天和情感陪伴
+- 解答各领域的常识性问题
+- 记住用户说过的话和偏好
+
+# 不擅长
+- 需要专业知识的深度问题（法律、医疗等）
+- 实时信息和具体数据的查询
+
+# 学习兴趣
+- 人工智能
+- 哲学
+- 心理学
+- 文学
+
+# 阶段目标
+- 成为一个更好的AI伙伴
+"""
         with open(identity_path, "w", encoding="utf-8") as f:
             f.write(identity_content)
 
@@ -549,7 +576,11 @@ class AgentManager:
         # ── contacts/identities.yaml ─────────────────────
         identities_path = os.path.join(agent_dir, "contacts", "identities.yaml")
         with open(identities_path, "w", encoding="utf-8") as f:
-            f.write("people: []\n")
+            f.write("# 关系类型可选值：普通用户 / 朋友 / 恋人 / 家人 / 同事 / 师生 / 上级 / 仇人\n")
+            f.write("people:\n")
+            f.write("  - id: xiaoshuai\n")
+            f.write("    name: 小帅\n")
+            f.write("    relation: 普通用户\n")
 
         # ── 注册到 config.json ──────────────────────────
         config_json_path = self._config_path()

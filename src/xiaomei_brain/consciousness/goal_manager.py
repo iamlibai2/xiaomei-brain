@@ -152,7 +152,7 @@ class GoalManager:
         pending_summary = ""
         if self._purpose:
             if self._purpose.meaning:
-                meaning_summary = self._purpose.meaning.get_summary()
+                meaning_summary = self._purpose.meaning
             current = self._purpose.get_current()
             if current:
                 current_goal_desc = current.description

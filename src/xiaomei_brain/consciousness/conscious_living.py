@@ -130,7 +130,7 @@ class ConsciousLiving(Living):
 
         # SelfModel 加载（从 identity.md）
         identity_path = os.path.expanduser(
-            f"~/.xiaomei-brain/{self._agent_id}/consciousness/identity.md"
+            f"~/.xiaomei-brain/{self._agent_id}/identity.md"
         )
         if os.path.exists(identity_path):
             from ..memory.self_model import SelfModel
@@ -256,6 +256,7 @@ class ConsciousLiving(Living):
             llm_client=llm_client,
             drive=self.drive,
             load=False,
+            essence=self.agent._essence,
         )
         boot_line("Purpose 前额叶", "OK")
 
@@ -948,10 +949,14 @@ class ConsciousLiving(Living):
 
         # 4. 从 identity.md 加载身份字段（L0-L3 + 追求/热爱/底线/自我认知）
         import os
-        identity_path = os.path.expanduser(f"~/.xiaomei-brain/{self._agent_id}/consciousness/identity.md")
+        identity_path = os.path.expanduser(f"~/.xiaomei-brain/{self._agent_id}/identity.md")
         with open(identity_path, "r", encoding="utf-8") as f:
             self.consciousness.being.init_from_identity_md(f.read())
         logger.info("[ConsciousLiving] 从 identity.md 初始化身份")
+
+        # 将 Being 的阶段目标同步到 PurposeEngine
+        if self.consciousness.being.phase_goals:
+            self.purpose.set_phase_goals(self.consciousness.being.phase_goals)
 
         # 如果还是没有数据，使用默认值
         si = self.consciousness.get_self_image()

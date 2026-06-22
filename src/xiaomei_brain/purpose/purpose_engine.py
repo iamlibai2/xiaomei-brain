@@ -34,36 +34,6 @@ from xiaomei_brain.prompts import GOAL_LLM_DECOMPOSE_PROMPT
 logger = logging.getLogger(__name__)
 
 
-def _parse_identity_sections(md_text: str) -> dict[str, str]:
-    """解析 identity.md，按 # 标题切分为 {section_name: content}"""
-    import re
-    sections: dict[str, str] = {}
-    current_key = ""
-    current_lines: list[str] = []
-    for line in md_text.split("\n"):
-        m = re.match(r"^#\s+(.+)", line)
-        if m:
-            if current_key:
-                sections[current_key] = "\n".join(current_lines).strip()
-            current_key = m.group(1).strip()
-            current_lines = []
-        else:
-            current_lines.append(line)
-    if current_key:
-        sections[current_key] = "\n".join(current_lines).strip()
-    return sections
-
-
-def _parse_identity_list(text: str) -> list[str]:
-    """从 identity.md 的段落中提取列表项（以 '- ' 开头的行）"""
-    items: list[str] = []
-    for line in text.split("\n"):
-        line = line.strip()
-        if line.startswith("- "):
-            items.append(line[2:].strip())
-    return items
-
-
 class PurposeEngine:
     """
     目的引擎 - 前额叶层核心
@@ -80,6 +50,8 @@ class PurposeEngine:
         llm_client: Any = None,
         drive: Any = None,
         load: bool = True,
+        essence: Any = None,
+        phase_goals: list[str] | None = None,
     ):
         """初始化 Purpose 引擎
 
@@ -88,10 +60,14 @@ class PurposeEngine:
             llm_client: LLM 客户端
             drive: Drive 引擎引用
             load: 是否加载数据（False = 纯结构创建，支持"生命存在但无意识"）
+            essence: Essence 底色存储引用（用于加载 Meaning）
+            phase_goals: 阶段目标列表（从 identity.md 读取）
         """
         self.agent_id = agent_id
         self.llm = llm_client
         self.drive = drive
+        self.essence = essence
+        self._phase_goals = phase_goals or []
         self._loaded = False  # 标记是否已加载
         self.longterm_memory: Any = None  # 统一叙事存储引用
         self.exp_stream: Any = None       # 经验流引用
@@ -113,41 +89,30 @@ class PurposeEngine:
             self.meaning = self._load_meaning()
             self._restore_from_storage()
             self._init_strategic_goal()
+            self._init_phase_goals()
             self._loaded = True
 
             logger.info(
                 f"[PurposeEngine] 初始化完成: "
                 f"goals={len(self.goals)}, "
-                f"meaning={self.meaning.identity if self.meaning else 'none'}"
+                f"meaning={self.meaning[:40] if self.meaning else 'none'}"
             )
 
     # ========== 初始化 ==========
 
-    def _load_meaning(self) -> Meaning:
-        """加载存在意义（从 identity.md）"""
-        import os
-        identity_path = os.path.expanduser(
-            f"~/.xiaomei-brain/{self.agent_id}/identity.md",
-        )
+    def _load_meaning(self) -> str:
+        """加载存在意义（从 Essence 底色表 meaning 类别）。"""
+        if self.essence is None:
+            return self.agent_id
+
         try:
-            with open(identity_path, "r", encoding="utf-8") as f:
-                md_text = f.read()
-            sections = _parse_identity_sections(md_text)
-            identity = sections.get("身份", self.agent_id)
-            values = _parse_identity_list(sections.get("价值观", ""))
-            constraints = _parse_identity_list(sections.get("底线", ""))
-            aspirations = _parse_identity_list(sections.get("热爱", ""))
-            meaning = Meaning(
-                identity=identity,
-                values=values,
-                constraints=constraints,
-                aspirations=aspirations,
-            )
-            logger.info("[PurposeEngine] 从 identity.md 加载存在意义")
-            return meaning
+            meaning_items = self.essence.get_by_category("meaning")
+            identity = meaning_items[0]["content"] if meaning_items else self.agent_id
+            logger.info("[PurposeEngine] 从 Essence 加载存在意义: %s", identity[:40])
+            return identity
         except Exception as e:
-            logger.warning(f"[PurposeEngine] 加载存在意义失败: {e}")
-            return Meaning()
+            logger.warning("[PurposeEngine] 从 Essence 加载存在意义失败: %s", e)
+            return self.agent_id
 
     def _restore_from_storage(self) -> None:
         """从存储恢复目标树"""
@@ -187,10 +152,29 @@ class PurposeEngine:
     def _init_strategic_goal(self) -> None:
         """初始化战略目标（根）"""
         if "meaning-root" not in self.goals:
-            strategic_data = self.meaning.to_strategic_goal()
-            strategic_goal = Goal()
-            strategic_goal.from_dict(strategic_data)
-            self.goals["meaning-root"] = strategic_goal
+            goal = Goal()
+            goal.id = "meaning-root"
+            goal.description = f"实现{self.meaning}的存在意义"
+            goal.goal_type = GoalType.STRATEGIC
+            goal.status = GoalStatus.ACTIVE
+            goal.priority = 0.1
+            self.goals["meaning-root"] = goal
+
+    def _init_phase_goals(self) -> None:
+        """从 Being.phase_goals 创建阶段目标（仅首次，不重复创建）。"""
+        if not self._phase_goals:
+            return
+        # 检查是否已有 PHASE 类型的目标
+        existing_phase = [g for g in self.goals.values() if g.goal_type == GoalType.PHASE]
+        if existing_phase:
+            return
+        for desc in self._phase_goals:
+            self.add_goal(description=desc, goal_type=GoalType.PHASE, priority=0.7)
+
+    def set_phase_goals(self, phase_goals: list[str]) -> None:
+        """延迟注入阶段目标（在 Being 从 identity.md 加载后调用）。"""
+        self._phase_goals = phase_goals
+        self._init_phase_goals()
 
     def load(self) -> None:
         """手动加载数据（支持延迟初始化）"""
@@ -201,12 +185,13 @@ class PurposeEngine:
         self.meaning = self._load_meaning()
         self._restore_from_storage()
         self._init_strategic_goal()
+        self._init_phase_goals()
         self._loaded = True
 
         logger.info(
             f"[PurposeEngine] 加载完成: "
             f"goals={len(self.goals)}, "
-            f"meaning={self.meaning.identity if self.meaning else 'none'}"
+            f"meaning={self.meaning[:40] if self.meaning else 'none'}"
         )
 
     def set_longterm_memory(self, ltm: Any) -> None:
@@ -715,7 +700,7 @@ class PurposeEngine:
     def get_goal_tree(self) -> dict:
         """获取目标树结构"""
         return {
-            "meaning": self.meaning.to_dict(),
+            "meaning": self.meaning,
             "goals": {id: g.to_dict() for id, g in self.goals.items()},
             "current": self.current_goal.id if self.current_goal else None,
             "pending": self.pending_queue,
@@ -818,8 +803,7 @@ class PurposeEngine:
         lines = []
 
         # 存在意义
-        lines.append(f"我是{self.meaning.identity}")
-        lines.append(f"价值观：{', '.join(self.meaning.values[:2])}")
+        lines.append(self.meaning)
 
         # 当前目标
         if self.current_goal:

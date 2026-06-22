@@ -212,7 +212,7 @@ class Consciousness:
         """
         import os
         identity_path = os.path.expanduser(
-            f"~/.xiaomei-brain/{self._agent_id}/consciousness/identity.md",
+            f"~/.xiaomei-brain/{self._agent_id}/identity.md",
         )
         with open(identity_path, "r", encoding="utf-8") as f:
             self.being.init_from_identity_md(f.read())

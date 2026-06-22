@@ -388,7 +388,7 @@ def _step_done(name: str, preset: dict, agent_dir: str, essence_count: int) -> N
     _centered_panel(inner, padding=(3, 6))
 
     _br()
-    console.print(f"  [{C['muted']}]身份档案[/]  {agent_dir}/consciousness/identity.md")
+    console.print(f"  [{C['muted']}]身份档案[/]  {agent_dir}/identity.md")
     console.print(f"  [{C['muted']}]记忆底色[/]  {essence_count} 条 essence 已播种")
     _br()
     console.print(f"  [{C['primary']}]❯[/] [bold]xiaomei-brain run {name} --cli[/]  [{C['muted']}]# 开始对话[/]")

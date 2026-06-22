@@ -274,9 +274,7 @@ def cmd_show_purpose(living: ConsciousLiving, args: str = "") -> None:
     print(f"\n  {V}══ Purpose · 前额叶层 ══{R}", flush=True)
 
     print(f"\n  {G}存在意义{R}", flush=True)
-    print(f"  {D}我是{R}    {living.purpose.meaning.identity}", flush=True)
-    print(f"  {D}价值观{R}  {', '.join(living.purpose.meaning.values[:3])}", flush=True)
-    print(f"  {D}底线{R}    {', '.join(living.purpose.meaning.constraints[:2])}", flush=True)
+    print(f"  {D}存在意义{R}  {living.purpose.meaning}", flush=True)
 
     current = living.purpose.get_current()
     if current and current.parent_id is None:

@@ -456,6 +456,8 @@ def _render_being(si) -> list[str]:
             lines.append(f"你不擅长{'、'.join(weaknesses[:5])}。")
     if b.learning_interests:
         lines.append(f"你对这些领域感兴趣：{'、'.join(b.learning_interests[:5])}。")
+    if b.phase_goals:
+        lines.append(f"你当前关注的阶段目标：{'、'.join(b.phase_goals)}。")
 
     lines.append("</身份>")
 

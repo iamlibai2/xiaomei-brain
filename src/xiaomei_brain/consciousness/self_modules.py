@@ -43,6 +43,9 @@ class Being:
     personality: str = ""
     learning_interests: list[str] = field(default_factory=list)
 
+    # 阶段目标（从 identity.md 读取，用户设定）
+    phase_goals: list[str] = field(default_factory=list)
+
     # 自我认知（生长而来）
     self_cognition: dict[str, list[str]] = field(default_factory=lambda: {
         "擅长": [], "不擅长": [],
@@ -85,6 +88,7 @@ class Being:
             "birth_date": self.birth_date,
             "personality": self.personality,
             "learning_interests": self.learning_interests,
+            "phase_goals": self.phase_goals,
             "self_cognition": self.self_cognition,
         }
 
@@ -93,7 +97,7 @@ class Being:
 
     def from_dict(self, data: dict) -> None:
         for key in ["name", "birth_date", "personality",
-                     "learning_interests", "self_cognition"]:
+                     "learning_interests", "phase_goals", "self_cognition"]:
             if key in data:
                 setattr(self, key, data[key])
         # 关系字段（relationship_status / relationship_depth / trust_level）是运行时值，
@@ -138,6 +142,10 @@ class Being:
             items = _as_list(sections["不擅长"])
             if items:
                 self.self_cognition["不擅长"] = items
+        if "阶段目标" in sections:
+            items = _as_list(sections["阶段目标"])
+            if items:
+                self.phase_goals = items
 
     @staticmethod
     def _extract_name(text: str) -> str:
