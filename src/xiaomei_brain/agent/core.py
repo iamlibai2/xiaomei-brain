@@ -343,10 +343,11 @@ class Agent:
                     if rec:
                         rec.result = str(result)
 
+                    args_dict = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
                     if tc.name == "edit_file":
-                        _ped(idx, tc.name, tc.arguments, result)
+                        _ped(idx, tc.name, args_dict, result)
                     elif tc.name == "write_file":
-                        _pwr(idx, tc.name, tc.arguments, result)
+                        _pwr(idx, tc.name, args_dict, result)
                     else:
                         _ptr(idx, result)
                     if self.on_tool_complete:
@@ -597,10 +598,11 @@ class Agent:
                     else:
                         _tool_failure_counts.pop(call_key, None)
 
+                    args_dict = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
                     if tc.name == "edit_file":
-                        print_edit_diff(_idx, tc.name, tc.arguments, result)
+                        print_edit_diff(_idx, tc.name, args_dict, result)
                     elif tc.name == "write_file":
-                        print_write_result(_idx, tc.name, tc.arguments, result)
+                        print_write_result(_idx, tc.name, args_dict, result)
                     else:
                         print_tool_result(_idx, result)
 

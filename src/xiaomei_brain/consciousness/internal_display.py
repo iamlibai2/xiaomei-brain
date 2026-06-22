@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 # ── 颜色（与 boot.py 保持一致）────────────────────────────
 C_DIM = "\033[38;5;73m"   # dusty teal
 C_OK = "\033[38;5;203m"  # coral pink — 内部动作标题
+C_FREE = "\033[32m"       # green — 自由表达正文
 RESET = "\033[0m"
 
 
@@ -61,6 +62,8 @@ class InternalDisplay:
     _intent_reason: str = ""
     _recall_count: int = 0
     _recall_tags: list[str] = field(default_factory=list)
+    _procedure_count: int = 0
+    _narrative_count: int = 0
 
     # ── Record ────────────────────────────────────────────
 
@@ -105,6 +108,16 @@ class InternalDisplay:
         self._recall_count = count
         self._recall_tags = list(tags)
 
+    def record_procedure_learn(self, count: int) -> None:
+        """记录流程学习结果。"""
+        if count > 0:
+            self._procedure_count = count
+
+    def record_narrative_learn(self, count: int) -> None:
+        """记录叙事学习结果。"""
+        if count > 0:
+            self._narrative_count = count
+
     # ── Has Data ──────────────────────────────────────────
 
     def has_data(self) -> bool:
@@ -115,6 +128,8 @@ class InternalDisplay:
             or self._periodic_count
             or self._intent_type
             or self._recall_count
+            or self._procedure_count
+            or self._narrative_count
         )
 
     # ── CLI 输出 ──────────────────────────────────────────
@@ -173,6 +188,12 @@ class InternalDisplay:
         if self._periodic_count:
             lines.append(f"🗂 定期提取: {self._periodic_count} 条记忆")
 
+        if self._procedure_count:
+            lines.append(f"🧭 流程学习: {self._procedure_count} 条")
+
+        if self._narrative_count:
+            lines.append(f"📖 叙事学习: {self._narrative_count} 条")
+
         return lines
 
     # ── WS/TUI 结构化输出 ─────────────────────────────────
@@ -214,6 +235,12 @@ class InternalDisplay:
         if self._recall_count:
             data["recall"] = {"count": self._recall_count, "tags": self._recall_tags}
 
+        if self._procedure_count:
+            data["procedure"] = {"count": self._procedure_count}
+
+        if self._narrative_count:
+            data["narrative"] = {"count": self._narrative_count}
+
         return {"type": "internal_display", "data": data}
 
     def clear(self) -> None:
@@ -229,6 +256,8 @@ class InternalDisplay:
         self._intent_reason = ""
         self._recall_count = 0
         self._recall_tags.clear()
+        self._procedure_count = 0
+        self._narrative_count = 0
 
 
 # ── 记忆块解析 ────────────────────────────────────────────

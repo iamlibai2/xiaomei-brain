@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from .intent import Intent, IntentType, create_wait_intent, create_greet_intent, create_reflect_intent, create_dream_intent, create_care_intent, create_sleep_intent
 from xiaomei_brain.consciousness.context_pipeline import build_simple_context
-from xiaomei_brain.prompts import L2_EMERGENCE_PROMPT
+from xiaomei_brain.prompts import L2_EMERGENCE_PROMPT, L2_EMERGENCE_FORMAT_APPENDIX
 
 if TYPE_CHECKING:
     from .core import Consciousness, ConsciousnessReport
@@ -241,9 +241,9 @@ class L2Engine:
 
                 # 终端展示自由表达
                 if emergence_text:
-                    from .internal_display import print_section
+                    from .internal_display import C_FREE, RESET, print_section
                     print_section("自由表达", icon="✨")
-                    print(emergence_text, flush=True)
+                    print(f"{C_FREE}{emergence_text}{RESET}", flush=True)
 
                 # 清空累积变化
                 c._state_buffer.clear()
@@ -453,9 +453,9 @@ class L2Engine:
                     logger.info("[Consciousness L2] 自我不确定: %d 条", len(doubts))
 
                 if emergence_text:
-                    from .internal_display import print_section
+                    from .internal_display import C_FREE, RESET, print_section
                     print_section("自由表达", icon="✨")
-                    print(emergence_text, flush=True)
+                    print(f"{C_FREE}{emergence_text}{RESET}", flush=True)
 
                 c._state_buffer.clear()
                 c.history.last_llm_fuel_time = time.time()
@@ -469,7 +469,7 @@ class L2Engine:
 
         # 后处理
         self._store_emergence(emergence_text)
-        # Narrative Memory 已拆到 RoundScheduler._invoke_narrative_learn()
+        self._store_narr_blocks(emergence_text)
 
         self._drop_to_desk(context, None, emergence_text)
         self._log_to_experience_stream(context, None, emergence_text)
@@ -788,6 +788,7 @@ class L2Engine:
         return L2_EMERGENCE_PROMPT.format(
             consciousness_context=consciousness_context,
             conflict_hint=conflict_hint,
+            format_appendix=L2_EMERGENCE_FORMAT_APPENDIX,
         )
 
     def _call_emergence_react(self, llm, prompt: str, exclude_tools: set[str] | None = None) -> str:
@@ -856,7 +857,7 @@ class L2Engine:
                 return resp.content or ""
 
         resp = llm.chat(
-            messages=messages + [{"role": "user", "content": "请基于以上探索，输出你的内心独白和事件分析。"}],
+            messages=messages + [{"role": "user", "content": "请基于以上探索，输出你的内心独白。" + L2_EMERGENCE_FORMAT_APPENDIX}],
             tools=None,
         )
         return resp.content or ""

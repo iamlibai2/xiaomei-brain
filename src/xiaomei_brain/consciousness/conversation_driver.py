@@ -552,11 +552,13 @@ class ConversationDriver:
             _pm = self._procedure_memory
             _db = db
             _since = since
+            display = self.display
 
             def _run():
                 try:
                     new_ids = _pm.learn_from_conversation_db(_db, since=_since)
                     if new_ids:
+                        display.record_procedure_learn(len(new_ids))
                         logger.info("[Procedure] 学到新流程: %s", new_ids)
                 except Exception as e:
                     logger.warning("[Procedure] 学习失败: %s", e)
@@ -599,6 +601,7 @@ class ConversationDriver:
             _user_id = user_id
             _agent_name = agent_name
             _ctx = consciousness_context
+            display = self.display
 
             def _run():
                 try:
@@ -613,6 +616,7 @@ class ConversationDriver:
                         consciousness_context=_ctx,
                     )
                     if new_ids:
+                        display.record_narrative_learn(len(new_ids))
                         logger.info("[NARR] 学到新叙事: %s", new_ids)
                 except Exception as e:
                     logger.warning("[NARR] 学习失败: %s", e)
