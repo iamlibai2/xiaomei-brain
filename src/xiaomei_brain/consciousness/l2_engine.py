@@ -241,10 +241,9 @@ class L2Engine:
 
                 # 终端展示自由表达
                 if emergence_text:
-                    _C_FREE = "\033[32m"  # Green
-                    _C_RST = "\033[0m"
-                    print(f"\n{_C_FREE}── 自由表达 ──{_C_RST}", flush=True)
-                    print(f"{_C_FREE}{emergence_text}{_C_RST}", flush=True)
+                    from .internal_display import print_section
+                    print_section("自由表达", icon="✨")
+                    print(emergence_text, flush=True)
 
                 # 清空累积变化
                 c._state_buffer.clear()
@@ -454,9 +453,9 @@ class L2Engine:
                     logger.info("[Consciousness L2] 自我不确定: %d 条", len(doubts))
 
                 if emergence_text:
-                    _C_FREE = "\033[32m"; _C_RST = "\033[0m"
-                    print(f"\n{_C_FREE}── 自由表达 ──{_C_RST}", flush=True)
-                    print(f"{_C_FREE}{emergence_text}{_C_RST}", flush=True)
+                    from .internal_display import print_section
+                    print_section("自由表达", icon="✨")
+                    print(emergence_text, flush=True)
 
                 c._state_buffer.clear()
                 c.history.last_llm_fuel_time = time.time()
@@ -527,9 +526,8 @@ class L2Engine:
                     len(system_prompt), len(question))
 
         # 提示用户意图决策开始（silent 模式下 react_nodb 不打印 header）
-        _C_ACCENT = "\033[38;5;203m"
-        _C_RST = "\033[0m"
-        print(f"\n  {_C_ACCENT}── 🧠 意图决策 ──{_C_RST}", flush=True)
+        from .internal_display import print_section
+        print_section("意图决策", icon="🧠")
 
         t0 = time.time()
         try:

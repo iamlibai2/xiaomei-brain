@@ -12,7 +12,25 @@ from dataclasses import dataclass, field
 
 # ── 颜色（与 boot.py 保持一致）────────────────────────────
 C_DIM = "\033[38;5;73m"   # dusty teal
+C_OK = "\033[38;5;203m"  # coral pink — 内部动作标题
 RESET = "\033[0m"
+
+
+def print_section(title: str, subtitle: str = "", icon: str = "", color: str = "") -> None:
+    """打印内部动作标题行（统一格式）。
+
+    Args:
+        title: 标题文本（如 "意图决策"、"进入睡眠"）
+        subtitle: 可选的副标题（dim 颜色）
+        icon: 可选的 emoji 前缀（如 "🧠"、"🌙"）
+        color: 可选的颜色覆盖，默认 C_OK
+    """
+    c = color or C_OK
+    prefix = f"{icon} " if icon else ""
+    print()
+    print(f"  {c}── {prefix}{title} ──{RESET}", flush=True)
+    if subtitle:
+        print(f"  {C_DIM}{subtitle}{RESET}", flush=True)
 
 
 @dataclass

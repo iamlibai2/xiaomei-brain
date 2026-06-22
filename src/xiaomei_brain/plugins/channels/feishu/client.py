@@ -53,7 +53,7 @@ class FeishuChannel:
         handler = EventDispatcherHandler.builder(
             encrypt_key="",
             verification_token=self.verification_token,
-            level=LogLevel.INFO
+            level=LogLevel.ERROR
         ).register_p2_im_message_receive_v1(
             self._on_message
         ).register_p2_im_message_reaction_created_v1(
@@ -69,7 +69,7 @@ class FeishuChannel:
         return Client(
             app_id=self.app_id,
             app_secret=self.app_secret,
-            log_level=LogLevel.INFO,
+            log_level=LogLevel.ERROR,
             event_handler=handler
         )
 

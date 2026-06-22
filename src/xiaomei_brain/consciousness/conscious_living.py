@@ -1081,6 +1081,10 @@ class ConsciousLiving(Living):
             si = self.consciousness.get_self_image()
             si.contribute_perception(agent_state=new_state.value)
 
+        # 终端展示状态转换（启动期由 boot screen 展示，之后由 print_section 展示）
+        if old in (LivingState.AWAKE, LivingState.IDLE) and new_state == LivingState.IDLE:
+            self._print_section("进入个人时间", "轻度待机，随时响应", icon="🍵")
+
         # 写入经验流（里程碑提取器从中读取生命周期节点）
         es = getattr(self.consciousness, "exp_stream", None)
         if es and old.value != new_state.value:
@@ -1314,14 +1318,8 @@ class ConsciousLiving(Living):
 
     def _print_section(self, title: str, subtitle: str = "", icon: str = "") -> None:
         """打印内部动作标题（睡眠/梦境/醒来/意图决策等）。"""
-        C_OK = "\033[38;5;203m"
-        C_DIM = "\033[38;5;73m"
-        RESET = "\033[0m"
-        prefix = f"{icon} " if icon else ""
-        print()
-        print(f"  {C_OK}── {prefix}{title} ──{RESET}", flush=True)
-        if subtitle:
-            print(f"  {C_DIM}{subtitle}{RESET}", flush=True)
+        from .internal_display import print_section
+        print_section(title, subtitle=subtitle, icon=icon)
 
     def _print_dream_results(self, report) -> None:
         """打印梦境结果摘要。"""

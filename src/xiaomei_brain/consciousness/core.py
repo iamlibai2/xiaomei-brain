@@ -704,10 +704,9 @@ class Consciousness:
                 full_report = resp.content or ""
                 logger.debug("[Consciousness L3] LLM 沉思 (%d 字):\n%s", len(full_report), full_report)
                 if full_report:
-                    _C_L3 = "\033[31m"  # Red — deepest level
-                    _C_RST = "\033[0m"
-                    print(f"\n{_C_L3}── L3 沉思 ──{_C_RST}", flush=True)
-                    print(f"{_C_L3}{full_report}{_C_RST}", flush=True)
+                    from .internal_display import print_section
+                    print_section("L3 沉思", icon="🕯️")
+                    print(full_report, flush=True)
 
                 # L3 沉思消耗更多能量
                 if self.drive:
