@@ -39,7 +39,12 @@ def print_tool_call(idx: int, name: str, arguments: dict) -> None:
             if len(v) > 60:
                 v = v[:57] + "..."
             parts.append(f'{k}="{v}"')
-    args_str = ", ".join(parts) if parts else f"...({len(arguments)} args)"
+    if parts:
+        args_str = ", ".join(parts)
+    elif arguments:
+        args_str = f"...({len(arguments)} args)"
+    else:
+        args_str = ""
     print(f"  \033[36m▶ [{idx}] {name}({args_str})\033[0m", flush=True)
 
 

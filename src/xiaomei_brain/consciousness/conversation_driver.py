@@ -684,6 +684,8 @@ class ConversationDriver:
         """创建工具事件 callback，通过 Router 投递到各通道。"""
         import json as _json
         def callback(idx: int, name: str, data, *args):
+            if not self._should_deliver(session_id):
+                return
             router = getattr(parent, '_router', None)
             if not router:
                 return

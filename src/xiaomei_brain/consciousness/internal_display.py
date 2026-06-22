@@ -150,9 +150,11 @@ class InternalDisplay:
         if not self.has_data():
             return
         lines = self.render_lines()
-        # 粗略估算最长行的显示宽度（非 ASCII 算 2 列），让标题线不短于内容
-        max_w = max((sum(2 if ord(c) > 127 else 1 for c in line) for line in lines), default=30)
-        # "── 📋 本轮内部处理 ──" 核心约 20 列，补齐到比内容略宽
+        # 粗略估算最长行的显示宽度（非 ASCII 算 2 列），上限 60 避免过长
+        max_w = min(
+            max((sum(2 if ord(c) > 127 else 1 for c in line) for line in lines), default=30),
+            60,
+        )
         extra = max(max_w - 20, 0)
         pad = "─" * (extra // 2 + 2)
         print()
