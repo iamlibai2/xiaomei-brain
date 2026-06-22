@@ -164,10 +164,18 @@ def _run_agent(
 ) -> None:
     """启动 Agent 主循环（CLI 交互模式）。"""
     _stream_lock = threading.Lock()
+    _login_done = threading.Event()
+    _pending_proactive: list[tuple[str, str]] = []  # [(content, user_id), ...]
+    _MAX_PENDING = 200  # 防止长时间未登录积压大量消息
 
-    def on_proactive(content):
+    def on_proactive(content, user_id=""):
         with _stream_lock:
-            print(f"\n{C_ACCENT}[{agent_name}]\033[0m {content}\n", end="", flush=True)
+            if _login_done.is_set():
+                print(f"\n{C_ACCENT}[{agent_name}]\033[0m {content}\n", end="", flush=True)
+            else:
+                if len(_pending_proactive) >= _MAX_PENDING:
+                    _pending_proactive.pop(0)
+                _pending_proactive.append((content, user_id))
 
     _in_thinking = False  # 跟踪 LLM 输出是否处于思考段
 
@@ -260,6 +268,14 @@ def _run_agent(
                     cli_sid = f"cli-{agent_id}"
                     living._attention.save_session(cli_sid)
                     living._attention._current_session = cli_sid
+                # 在 Router 注册 CLI peer，主动消息才能路由到 CLI
+                if hasattr(living, '_router') and living._router:
+                    living._router.register_peer(
+                        peer_type="human", peer_id=user_id, channel="cli",
+                        session_id=f"cli-{agent_id}",
+                        output_type="cli", output_target="stdout",
+                        priority=10,
+                    )
             else:
                 print(f"  \033[31m用户 '{user_id}' 不存在\033[0m", flush=True)
                 user_id = None
@@ -268,6 +284,19 @@ def _run_agent(
         living.stop()
         import sys as _sys
         _sys.exit(0)
+
+    # 登录完成，重放登录期间缓冲的主动输出（仅当前用户）
+    _login_done.set()
+    with _stream_lock:
+        own, others = [], []
+        for content, uid in _pending_proactive:
+            if uid == user_id or not uid:
+                own.append(content)
+            else:
+                others.append((content, uid))
+        _pending_proactive[:] = others
+    for content in own:
+        print(f"\n{C_ACCENT}[{agent_name}]\033[0m {content}\n", end="", flush=True)
 
     _exiting = False  # 防止退出阶段重复触发
     _DOUBLE_PRESS_WINDOW = 2.0

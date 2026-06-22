@@ -338,14 +338,14 @@ class ConversationDriver:
                             c.self_image._last_recall_summary = None
 
                     self.display.display()
-                    if self.display.has_data() and current_msg.session_id not in ("main", ""):
+                    if self.display.has_data() and self._should_deliver(current_msg.session_id):
                         self._deliver_internal_display(parent, current_msg.session_id, self.display.to_dict())
                     self.display.clear()
 
                     if parent._load_consciousness:
                         parent.consciousness.on_user_interaction(current_msg.content, display_content, user_id=current_msg.user_id)
 
-                    if display_content and current_msg.session_id not in ("main", ""):
+                    if display_content and self._should_deliver(current_msg.session_id):
                         logger.info("[ConversationDriver/Deliver] 尝试送达: session=%s len=%d",
                                     current_msg.session_id, len(display_content))
                         self._deliver_response(parent, current_msg.session_id, display_content)
@@ -702,6 +702,15 @@ class ConversationDriver:
                 payload["result"] = args[0] if args else ""
             router.deliver(_json.dumps(payload, ensure_ascii=False), route, msg_type=event_type)
         return callback
+
+    @staticmethod
+    def _should_deliver(session_id: str) -> bool:
+        """CLI 和 main 会话已有流式输出，不需要 Router 送达。"""
+        if not session_id or session_id == "main":
+            return False
+        if session_id.startswith("cli-"):
+            return False
+        return True
 
     @staticmethod
     def _deliver_response(parent, session_id: str, content: str) -> None:

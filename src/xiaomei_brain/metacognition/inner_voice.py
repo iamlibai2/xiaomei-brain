@@ -214,7 +214,7 @@ class InnerVoice:
             return
 
         try:
-            json_match = re.search(r"\{[\s\S]*\}", events_text)
+            json_match = re.search(r"\{[^{}]*\}", events_text)
             if json_match:
                 events = json.loads(json_match.group())
             else:

@@ -87,6 +87,7 @@ class Router:
         self._rules: list[PeerRule] = []
         self._adapters: dict[str, Any] = {}   # channel_type → ChannelAdapter
         self._default_route = OutputRoute("cli", "stdout")
+        self._last_active: dict[str, OutputRoute] = {}  # user_id → 最近活跃渠道
 
     # ── Rules ──────────────────────────────────────────────
 
@@ -156,6 +157,10 @@ class Router:
                     best_rule = rule
 
             if best_rule:
+                # 记录最近活跃渠道（用于主动消息的出口路由）
+                if msg.peer_type == "human" and msg.peer_id:
+                    self._last_active[msg.peer_id] = best_rule.output_route
+
                 return RoutedMsg(
                     session_id=best_rule.session_id,
                     content=msg.content,
@@ -182,6 +187,11 @@ class Router:
                 if rule.session_id == session_id:
                     return rule.output_route
         return None
+
+    def route_for_user(self, user_id: str) -> OutputRoute | None:
+        """查询指定用户最近活跃的输出路由（用于主动消息）。"""
+        with self._lock:
+            return self._last_active.get(user_id)
 
     # ── Delivery ────────────────────────────────────────────
 

@@ -207,11 +207,20 @@ class SocialCognition:
 
     @staticmethod
     def _split_events(text: str) -> tuple[str, str]:
-        """分离 ---EVENTS--- JSON。"""
-        if "---EVENTS---" in text:
-            parts = text.split("---EVENTS---", 1)
-            return parts[0].strip(), parts[1].strip() if len(parts) > 1 else ""
-        return text, ""
+        """分离 ---EVENTS--- JSON，在下一个分隔符处裁断。"""
+        if "---EVENTS---" not in text:
+            return text, ""
+        parts = text.split("---EVENTS---", 1)
+        events_content = parts[1].strip() if len(parts) > 1 else ""
+        # 找到下一个分隔符，裁断
+        next_pos = None
+        for sep in ["---PERCEPTION---", "---SIGNAL---"]:
+            pos = events_content.find(sep)
+            if pos != -1 and (next_pos is None or pos < next_pos):
+                next_pos = pos
+        if next_pos is not None:
+            events_content = events_content[:next_pos].strip()
+        return parts[0].strip(), events_content
 
     @staticmethod
     def _split_signal(text: str) -> tuple[str, str]:

@@ -1590,23 +1590,46 @@ class ConsciousLiving(Living):
         if len(cleaned) < len(restored):
             logger.info("[ConsciousLiving] 清理 %d 条 ReAct 残留消息", len(restored) - len(cleaned))
 
-        # 第五遍：过滤主动输出（没有前置 user 消息的孤立 assistant）
-        filtered = []
-        prev_role = None
-        for m in cleaned:
+        # 第五遍：合并连续主动输出（保留时间戳，让 LLM 区分各条消息）
+        merged = []
+        i = 0
+        while i < len(cleaned):
+            m = cleaned[i]
             role = m.get("role", "")
-            if role == "assistant" and not m.get("tool_calls"):
-                if prev_role != "user":
-                    continue
-            filtered.append(m)
-            prev_role = role
-        if len(filtered) < len(cleaned):
+            is_plain_assistant = (role == "assistant" and not m.get("tool_calls"))
+            if is_plain_assistant:
+                # 收集连续的纯文本 assistant 消息（含对话回复 + 主动输出）
+                run = [m]
+                j = i + 1
+                while j < len(cleaned):
+                    nm = cleaned[j]
+                    if nm.get("role") == "assistant" and not nm.get("tool_calls"):
+                        run.append(nm)
+                        j += 1
+                    else:
+                        break
+                if len(run) == 1:
+                    merged.append(run[0])
+                else:
+                    parts = [rm.get("content", "") for rm in run]
+                    merged_msg = dict(run[-1])
+                    merged_msg["content"] = "\n\n".join(parts)
+                    merged.append(merged_msg)
+                i = j
+            else:
+                merged.append(m)
+                i += 1
+        if len(merged) < len(cleaned):
             logger.info(
-                "[ConsciousLiving] 过滤 %d 条主动输出消息",
-                len(cleaned) - len(filtered),
+                "[ConsciousLiving] 合并 %d 条连续 assistant → %d 条",
+                len(cleaned), len(merged),
             )
 
-        agent.messages = filtered
+        # 确保首条为 user（DeepSeek 要求 system 后第一条必须是 user）
+        if merged and merged[0].get("role") != "user":
+            merged.insert(0, {"role": "user", "content": ""})
+
+        agent.messages = merged
         logger.info("[ConsciousLiving] 加载 fresh_tail: %d 条消息 (user_id=%s)", len(agent.messages), self.user_id)
 
     def _get_sleep_reason(self, si) -> str:
@@ -1688,10 +1711,9 @@ class ConsciousLiving(Living):
     # ── Proactive output ─────────────────────────────────────────
 
     def _send_proactive(self, content: str, user_id: str | None = None) -> None:
-        """发送主动消息"""
+        """发送主动消息。按用户最近活跃渠道路由，CLI 回调兜底。"""
         target_user = user_id or self.user_id
         logger.info("[ConsciousLiving/Proactive] 主动发送 (%d 字) to %s", len(content), target_user)
-        print(f"\033[32m── 主动输出 → {target_user} ──\033[0m", flush=True)
 
         if self.agent.conversation_db:
             try:
@@ -1704,17 +1726,41 @@ class ConsciousLiving(Living):
             except Exception as e:
                 logger.warning("[ConsciousLiving/Proactive] 对话日志写入失败: %s", e)
 
-        if self.on_proactive:
-            self.on_proactive(content)
-        elif hasattr(self, '_router') and self._router:
-            # 通过 Router 分发到当前会话的输出路由
+        # 合并到 agent.messages：让 agent 感知自己发过主动消息
+        try:
+            agent = self.agent._get_agent()
+            msgs = agent.messages
+            last_user = getattr(self.agent, '_last_user_msg_time', 0) or getattr(agent, '_last_user_msg_time', 0)
+            gap = time.time() - last_user if last_user else float('inf')
+            if (msgs and msgs[-1].get("role") == "assistant"
+                    and not msgs[-1].get("tool_calls")
+                    and gap < 1800):
+                # 短间隔：合并到上一条 assistant
+                msgs[-1]["content"] = msgs[-1].get("content", "") + "\n\n" + content
+            else:
+                # 长间隔或第一条：插空 user 保持交替
+                if msgs and msgs[-1].get("role") == "assistant":
+                    msgs.append({"role": "user", "content": ""})
+                msgs.append({"role": "assistant", "content": content})
+        except Exception as e:
+            logger.debug("[ConsciousLiving/Proactive] agent.messages 合并失败: %s", e)
+
+        # Router 优先：按用户最近活跃渠道分发
+        if hasattr(self, '_router') and self._router:
+            route = self._router.route_for_user(target_user)
+            if route:
+                text = re.sub(r'\x1b\[[0-9;]*m', '', content) if route.type != "cli" else content
+                if self._router.deliver(text, route):
+                    return
+            # 无活跃记录时回退到 session 路由
             route = self._router.route_for_session(self.session_id)
             if route:
-                self._router.deliver(re.sub(r'\x1b\[[0-9;]*m', '', content), route)
-            else:
-                # 兜底：CLI 模式直接打印
-                print(f"\n\033[36m[{self.agent.name or self._agent_id}] {content}\033[0m", flush=True)
+                text = re.sub(r'\x1b\[[0-9;]*m', '', content) if route.type != "cli" else content
+                if self._router.deliver(text, route):
+                    return
+
+        # 兜底：on_proactive 回调（CLI 登录缓冲等场景）
+        if self.on_proactive:
+            self.on_proactive(content, target_user)
         else:
-            # CLI 模式：直接打印
             print(f"\n\033[36m[{self.agent.name or self._agent_id}] {content}\033[0m", flush=True)
-            self._print_prompt()

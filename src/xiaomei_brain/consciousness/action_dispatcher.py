@@ -270,10 +270,7 @@ class ActionExecutor:
             clean_result = self._extract_work_memories(agent_core, result)
 
             # 输出（用去除 MEMORY 块后的干净文本）
-            if cl.on_proactive:
-                cl.on_proactive(clean_result)
-            else:
-                print(f"\n\033[36m[{self._living.agent.name or self._living._agent_id} WORK] {clean_result}\033[0m", flush=True)
+            cl._send_proactive(clean_result, user_id=cl.user_id)
 
             if cl.agent.conversation_db:
                 try:
@@ -969,11 +966,7 @@ class ActionExecutor:
         logger.info("[ActionExecutor] 自发 pleasure_lever: %s", sensation[:80])
 
         # 通过 proactive 输出感受
-        if cl.on_proactive:
-            cl.on_proactive(sensation)
-        else:
-            ts = time.strftime("%H:%M:%S")
-            print(f"\n\033[35m[{ts} pleasure_lever]\033[0m {sensation[:200]}", flush=True)
+        cl._send_proactive(sensation, user_id=cl.user_id)
 
         # 消费 craving（按压后 craving 已在 on_pleasure_hit 中归零）
         return True
@@ -1070,7 +1063,7 @@ class ActionExecutor:
 
         if desc:
             msg = f"想起来之前的「{desc}」还没完成，要继续吗？回复'继续'我就开始。"
-            living.on_proactive(msg)
+            living._send_proactive(msg, user_id=living.user_id)
             logger.info("[ActionExecutor] 目标提醒: %s", desc)
 
         if living.drive:
