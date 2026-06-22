@@ -448,6 +448,7 @@ class L2Engine:
         # 后处理
         self._store_emergence(emergence_text)
         narr_count = self._store_narr_blocks(emergence_text)
+        c._last_emergence_stored = 1 if emergence_text else 0
         c._last_emergence_narr = narr_count
         c._last_emergence_doubt = len(doubts)
 
@@ -640,9 +641,8 @@ class L2Engine:
         """展示意图决策的思考过程，过滤掉 ---INTENT--- 结构块。"""
         thinking = self._strip_block(response, "---INTENT---")
         if thinking:
-            _C_YELLOW = "\033[33m"
-            _C_RST = "\033[0m"
-            print(f"{_C_YELLOW}{thinking}{_C_RST}", flush=True)
+            from .internal_display import C_FREE, RESET
+            print(f"{C_FREE}{thinking}{RESET}", flush=True)
 
     def _parse_intent_response(self, response: str) -> Intent | None:
         """解析 LLM 返回的意图。优先从 ---INTENT--- 块提取，兼容旧格式。"""

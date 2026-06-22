@@ -503,14 +503,17 @@ class Consciousness:
             self._l2_engine = L2Engine(self)
         return self._l2_engine.tick_emergence(context)
 
-    def tick_social_cognition(self, context: str) -> None:
+    def tick_social_cognition(self, context: str) -> dict | None:
         """委托 SocialCognition 进行对话后社会感知。
 
         从 ConversationDB 读取 _last_sc_time 到现在的增量对话，
         格式化为对话文本传给 SocialCognition 分析。
+
+        Returns:
+            结构化结果 dict，供 InternalDisplay 展示，或 None
         """
         if self._social_cognition is None:
-            return
+            return None
 
         user_name = "对方"
         try:
@@ -530,6 +533,23 @@ class Consciousness:
             )
         except Exception as e:
             logger.warning("[Consciousness] social_cognition 调用失败: %s", e)
+            return None
+
+        sc = self._social_cognition
+        signal_type = getattr(sc, 'last_signal_type', '')
+        intensity = getattr(sc, 'last_signal_intensity', 0)
+        events_summary = getattr(sc, 'last_events_summary', [])
+        perception = getattr(sc, 'last_perception', '')
+        if not signal_type or intensity <= 0:
+            signal_type = ""
+        result: dict = {}
+        if signal_type:
+            result["signal"] = f"{signal_type}({min(intensity, 1.0):.1f})"
+        if events_summary:
+            result["events"] = events_summary
+        if perception:
+            result["perception"] = perception
+        return result if result else None
 
     def _get_recent_conversation_since(self, since: float) -> str:
         """获取从 since 时间戳到现在的对话文本（从 ConversationDB 读取）。"""

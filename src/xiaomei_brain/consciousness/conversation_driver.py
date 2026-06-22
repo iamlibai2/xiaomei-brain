@@ -447,6 +447,18 @@ class ConversationDriver:
                     signal = getattr(iv, 'last_social_signal', '')
                     if thought or deltas or signal:
                         display.record_inner_voice(thought, deltas, signal)
+                    # GAPS / INSERT / MODE
+                    gaps_count = getattr(iv, 'last_gaps_count', 0)
+                    gaps_topics = getattr(iv, 'last_gaps_topics', [])
+                    if gaps_count:
+                        display.record_gaps(gaps_count, gaps_topics)
+                    inserts = getattr(iv, '_last_inserts', [])
+                    if inserts:
+                        previews = [ins.get("description", "")[:30] for ins in inserts]
+                        display.record_inserts(len(inserts), previews)
+                    mode = getattr(iv, '_last_mode', '')
+                    if mode:
+                        display.record_inner_voice_mode(mode)
                 except Exception as e:
                     logger.debug("[ConversationDriver] InnerVoice chat_turn 失败: %s", e)
 

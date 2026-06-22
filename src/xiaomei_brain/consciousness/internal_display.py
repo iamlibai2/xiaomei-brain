@@ -55,11 +55,20 @@ class InternalDisplay:
     _inner_voice_thought: str = ""
     _inner_voice_drive: list[str] = field(default_factory=list)
     _inner_voice_signal: str = ""
+    _social_signal: str = ""
+    _social_events: list[str] = field(default_factory=list)
+    _social_perception: str = ""
+    _gaps_count: int = 0
+    _gaps_topics: list[str] = field(default_factory=list)
+    _insert_count: int = 0
+    _insert_previews: list[str] = field(default_factory=list)
+    _inner_voice_mode: str = ""
     _dag_msg_count: int = 0
     _dag_summary_tokens: int = 0
     _periodic_count: int = 0
     _intent_type: str = ""
     _intent_reason: str = ""
+    _emergence_stored: int = 0
     _narr_extracted: int = 0
     _doubt_count: int = 0
     _recall_count: int = 0
@@ -89,6 +98,38 @@ class InternalDisplay:
         if signal:
             self._inner_voice_signal = signal
 
+    def record_social_cognition(self, signal: str) -> None:
+        """记录社交感知结果（来自 L2 SocialCognition.reflect()）。"""
+        if signal:
+            self._social_signal = signal
+
+    def record_social_events(self, events: list[str]) -> None:
+        """记录社交事件摘要（来自 L2 SocialCognition EVENTS 解析）。"""
+        if events:
+            self._social_events = list(events)
+
+    def record_social_perception(self, text: str) -> None:
+        """记录社交感知文本（来自 L2 SocialCognition PERCEPTION，只取第一条截断）。"""
+        if text:
+            self._social_perception = text[:60] + ("…" if len(text) > 60 else "")
+
+    def record_gaps(self, count: int, topics: list[str]) -> None:
+        """记录 InnerVoice 识别到的知识盲区。"""
+        if count > 0:
+            self._gaps_count = count
+            self._gaps_topics = list(topics[:4])
+
+    def record_inserts(self, count: int, previews: list[str]) -> None:
+        """记录 InnerVoice 建议插入的步骤。"""
+        if count > 0:
+            self._insert_count = count
+            self._insert_previews = list(previews[:2])
+
+    def record_inner_voice_mode(self, mode: str) -> None:
+        """记录 InnerVoice 上下文模式判断。"""
+        if mode:
+            self._inner_voice_mode = mode
+
     def record_dag_compact(self, msg_count: int, summary_tokens: int) -> None:
         """记录 DAG 压缩结果。"""
         self._dag_msg_count = msg_count
@@ -104,6 +145,11 @@ class InternalDisplay:
             self._intent_type = intent_type
         if reason:
             self._intent_reason = reason
+
+    def record_emergence_stored(self, count: int) -> None:
+        """记录自由表达全文已存储。"""
+        if count:
+            self._emergence_stored = count
 
     def record_emergence_stats(self, narr_count: int, doubt_count: int) -> None:
         """记录自由表达后处理结果。"""
@@ -133,12 +179,19 @@ class InternalDisplay:
         return bool(
             self._memory_actions
             or self._inner_voice_thought
+            or self._social_signal
+            or self._social_events
+            or self._social_perception
+            or self._gaps_count
+            or self._insert_count
+            or self._inner_voice_mode
             or self._dag_msg_count
             or self._periodic_count
             or self._intent_type
             or self._recall_count
             or self._procedure_count
             or self._narrative_count
+            or self._emergence_stored
             or self._narr_extracted
             or self._doubt_count
         )
@@ -193,8 +246,28 @@ class InternalDisplay:
         if self._inner_voice_drive:
             lines.append("📈 Drive: " + " · ".join(self._inner_voice_drive))
 
-        if self._inner_voice_signal:
+        if self._gaps_count:
+            topics_str = " · ".join(self._gaps_topics[:3])
+            lines.append(f"📚 知识盲区: {self._gaps_count} 个（{topics_str}）")
+
+        if self._insert_count:
+            previews_str = " · ".join(f'"{p}"' for p in self._insert_previews)
+            lines.append(f"📝 步骤建议: {self._insert_count} 条（{previews_str}）")
+
+        if self._inner_voice_mode:
+            label = {"daily": "日常", "task": "任务", "flow": "心流"}.get(self._inner_voice_mode, self._inner_voice_mode)
+            lines.append(f"🔀 模式感知: {label}")
+
+        if self._social_signal:
+            lines.append(f"👤 社交感知: {self._social_signal}")
+        elif self._inner_voice_signal:
             lines.append(f"👤 社交感知: {self._inner_voice_signal}")
+
+        if self._social_events:
+            lines.append("🎭 社交事件: " + " · ".join(self._social_events))
+
+        if self._social_perception:
+            lines.append(f'👁 感知: "{self._social_perception}"')
 
         if self._dag_msg_count:
             lines.append(f"📦 DAG: {self._dag_msg_count} 条消息 → 摘要 ({self._dag_summary_tokens} tokens)")
@@ -208,8 +281,11 @@ class InternalDisplay:
         if self._narrative_count:
             lines.append(f"📖 叙事学习: {self._narrative_count} 条")
 
+        if self._emergence_stored:
+            lines.append(f"🗂  自由表达记忆: {self._emergence_stored} 篇")
+
         if self._narr_extracted:
-            lines.append(f"✨ 叙事记忆: {self._narr_extracted} 条（自由表达）")
+            lines.append(f"✨ 叙事记忆: {self._narr_extracted} 条（NARR 结构化块）")
 
         if self._doubt_count:
             lines.append(f"🔮 自我不确定: {self._doubt_count} 条")
@@ -240,6 +316,20 @@ class InternalDisplay:
         if inner_voice:
             data["inner_voice"] = inner_voice
 
+        if self._social_signal:
+            data["social_signal"] = self._social_signal
+        if self._social_events:
+            data["social_events"] = self._social_events
+        if self._social_perception:
+            data["social_perception"] = self._social_perception
+
+        if self._gaps_count:
+            data["gaps"] = {"count": self._gaps_count, "topics": self._gaps_topics}
+        if self._insert_count:
+            data["inserts"] = {"count": self._insert_count, "previews": self._insert_previews}
+        if self._inner_voice_mode:
+            data["inner_voice_mode"] = self._inner_voice_mode
+
         if self._dag_msg_count:
             data["dag"] = {
                 "msg_count": self._dag_msg_count,
@@ -261,6 +351,8 @@ class InternalDisplay:
         if self._narrative_count:
             data["narrative"] = {"count": self._narrative_count}
 
+        if self._emergence_stored:
+            data["emergence_stored"] = self._emergence_stored
         if self._narr_extracted:
             data["narr_extracted"] = self._narr_extracted
         if self._doubt_count:
@@ -274,6 +366,14 @@ class InternalDisplay:
         self._inner_voice_thought = ""
         self._inner_voice_drive.clear()
         self._inner_voice_signal = ""
+        self._social_signal = ""
+        self._social_events.clear()
+        self._social_perception = ""
+        self._gaps_count = 0
+        self._gaps_topics.clear()
+        self._insert_count = 0
+        self._insert_previews.clear()
+        self._inner_voice_mode = ""
         self._dag_msg_count = 0
         self._dag_summary_tokens = 0
         self._periodic_count = 0
@@ -283,6 +383,7 @@ class InternalDisplay:
         self._recall_tags.clear()
         self._procedure_count = 0
         self._narrative_count = 0
+        self._emergence_stored = 0
         self._narr_extracted = 0
         self._doubt_count = 0
 

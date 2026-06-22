@@ -179,6 +179,12 @@ class SocialCognition:
             except Exception as e:
                 logger.warning("[SocialCognition] PERCEPTION 写入失败: %s", e)
 
+        # 存储 PERCEPTION 文本供 InternalDisplay 展示（取第一条）
+        if perceptions:
+            self.last_perception = perceptions[0].get("content", "")
+        else:
+            self.last_perception = ""
+
         # 写入 ExpStream
         if self._exp_stream:
             try:
@@ -306,6 +312,22 @@ class SocialCognition:
         if expression > 0.3:
             self._drive.on_insight(expression * 0.1)
 
+        # 存储供 InternalDisplay 展示
+        summary_parts: list[str] = []
+        if praise > 0.1:
+            summary_parts.append(f"表扬({min(praise, 1.0):.1f})")
+        if criticism > 0.1:
+            summary_parts.append(f"批评({min(criticism, 1.0):.1f})")
+        if boundary > 0.3:
+            summary_parts.append(f"冒犯({min(boundary, 1.0):.1f})")
+        if goal_progress > 0.1:
+            summary_parts.append(f"进展({min(goal_progress, 1.0):.1f})")
+        if curiosity > 0.3:
+            summary_parts.append(f"好奇({curiosity:.1f})")
+        if expression > 0.3:
+            summary_parts.append(f"表达欲({expression:.1f})")
+        self.last_events_summary = summary_parts
+
         # 写入内部记忆
         summary = events.get("summary", "")
         tags = ["social_cognition", "drive_events"]
@@ -372,6 +394,10 @@ class SocialCognition:
 
         signal_type = signal.get("social_signal", "")
         intensity = float(signal.get("intensity", 0))
+
+        # 存储供外部读取（InternalDisplay 展示）
+        self.last_signal_type = signal_type
+        self.last_signal_intensity = intensity
 
         if signal_type and intensity > 0.1:
             try:

@@ -141,6 +141,8 @@ class InnerVoice:
         # 最近一次 drive/signal 变化（供 InternalDisplay 读取）
         self.last_drive_deltas: list[str] = []
         self.last_social_signal: str = ""
+        self.last_gaps_count: int = 0
+        self.last_gaps_topics: list[str] = []
 
     # ── 响应解析 ──────────────────────────────────────────────
 
@@ -339,6 +341,10 @@ class InnerVoice:
         gap_topics = [g.get("topic", "?") for g in gaps if isinstance(g, dict)]
         logger.info("[InnerVoice] %s GAPS 识别到 %d 个知识盲区: %s",
                     trigger_label, len(gap_topics), ", ".join(gap_topics[:5]))
+
+        # 存储供 InternalDisplay 展示
+        self.last_gaps_count = len(gap_topics)
+        self.last_gaps_topics = gap_topics
 
         # 委托 LearningQueue（如果已注入）
         learn_queue = getattr(self, "_learn_queue", None)

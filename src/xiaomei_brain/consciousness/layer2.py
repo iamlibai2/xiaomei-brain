@@ -87,13 +87,24 @@ class Layer2DefaultNetwork:
             except Exception as ex:
                 logger.warning("[Layer2] 写调试日志失败: %s", ex)
 
-    def _display_internal(self, intent=None) -> None:
+    def _display_internal(self, intent=None, sc_result=None) -> None:
         """idle 路径展示 InternalDisplay（无 ConversationDriver）。"""
         from xiaomei_brain.consciousness.internal_display import InternalDisplay
         c = self._c
         display = InternalDisplay()
         if intent:
             display.record_intent(intent.type.value, intent.content or "")
+        if sc_result:
+            if sc_result.get("signal"):
+                display.record_social_cognition(sc_result["signal"])
+            if sc_result.get("events"):
+                display.record_social_events(sc_result["events"])
+            if sc_result.get("perception"):
+                display.record_social_perception(sc_result["perception"])
+        stored = getattr(c, "_last_emergence_stored", 0)
+        if stored:
+            display.record_emergence_stored(stored)
+            c._last_emergence_stored = 0
         narr = getattr(c, "_last_emergence_narr", 0)
         doubt = getattr(c, "_last_emergence_doubt", 0)
         if narr or doubt:
@@ -161,7 +172,8 @@ class Layer2DefaultNetwork:
                         self._log(f"{ts} social_cognition 触发 agent_state={agent_state}")
                         logger.info("[Layer2] social_cognition 触发（agent_state=%s）", agent_state)
                         try:
-                            self._c.tick_social_cognition(agent_state)
+                            sc_result = self._c.tick_social_cognition(agent_state)
+                            self._display_internal(sc_result=sc_result)
                             self._log(f"{ts} social_cognition 完成")
                         except Exception as e:
                             self._log(f"{ts} social_cognition ERROR: {e}")
