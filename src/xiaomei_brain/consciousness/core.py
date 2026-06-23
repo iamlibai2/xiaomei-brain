@@ -953,8 +953,8 @@ class Consciousness:
         si = self.self_image
         elapsed = time.time() - self._last_intent_time
 
-        # SLEEPING/DREAMING 中不决策
-        if agent_state in ("sleeping", "dreaming"):
+        # SLEEPING/DREAMING/WORKING 中不决策
+        if agent_state in ("sleeping", "dreaming", "working"):
             return False
 
         # 动态冷却（低能量时冷却加倍，节省 token）
@@ -1004,7 +1004,7 @@ class Consciousness:
         elapsed = time.time() - self._last_emerge_time
 
         # SLEEPING/DREAMING 中不做意识涌现
-        if agent_state in ("sleeping", "dreaming"):
+        if agent_state in ("sleeping", "dreaming", "working"):
             return False
 
         if si.body.energy < 0.2:
@@ -1035,7 +1035,7 @@ class Consciousness:
         elapsed = time.time() - self._last_sc_time
 
         # SLEEPING/DREAMING 中不触发
-        if agent_state in ("sleeping", "dreaming"):
+        if agent_state in ("sleeping", "dreaming", "working"):
             return False
 
         # 只在 IDLE 时触发（DMN 在任务态被 TPN 抑制）
@@ -1074,7 +1074,7 @@ class Consciousness:
         条件：冷却 + 足够能量 + 累积素材充足。
         """
         # SLEEPING/DREAMING 中不做沉思
-        if agent_state in ("sleeping", "dreaming"):
+        if agent_state in ("sleeping", "dreaming", "working"):
             return False
 
         # 能量不足，无法沉思

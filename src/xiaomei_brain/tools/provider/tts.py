@@ -76,12 +76,14 @@ class TTSProvider:
             raise RuntimeError(f"MiniMax API error {status_code}: {status_msg}")
 
     def speak(self, text: str,
+              voice_id: str | None = None,
               speed: float | None = None, emotion: str | None = None,
               pitch: float | None = None) -> bytes:
         """Generate speech synchronously (blocking).
 
         Args:
             text: Text to convert to speech (max 10000 chars)
+            voice_id: Per-call voice override (None = use config default)
             speed: Per-call speed override (None = use config default)
             emotion: Per-call emotion override (None = use config default)
             pitch: Per-call pitch override (None = use config default)
@@ -90,6 +92,7 @@ class TTSProvider:
             Audio data as bytes
         """
         payload = self._build_payload(text, stream=False,
+                                      voice_id=voice_id,
                                       speed=speed, emotion=emotion, pitch=pitch)
 
         headers = {
@@ -116,6 +119,7 @@ class TTSProvider:
         self,
         text: str,
         on_chunk: Callable[[bytes], None] | None = None,
+        voice_id: str | None = None,
         speed: float | None = None,
         emotion: str | None = None,
         pitch: float | None = None,
@@ -125,11 +129,13 @@ class TTSProvider:
         Args:
             text: Text to convert to speech
             on_chunk: Callback function that receives audio chunks as they arrive
+            voice_id: Per-call voice override (None = use config default)
             speed: Per-call speed override (None = use config default)
             emotion: Per-call emotion override (None = use config default)
             pitch: Per-call pitch override (None = use config default)
         """
         payload = self._build_payload(text, stream=True,
+                                      voice_id=voice_id,
                                       speed=speed, emotion=emotion, pitch=pitch)
 
         headers = {
@@ -183,6 +189,7 @@ class TTSProvider:
             raise RuntimeError("MiniMax TTS streaming returned no audio chunks")
 
     def speak_to_file(self, text: str, output_path: str,
+                      voice_id: str | None = None,
                       speed: float | None = None, emotion: str | None = None,
                       pitch: float | None = None) -> None:
         """Generate speech and save to file.
@@ -190,25 +197,36 @@ class TTSProvider:
         Args:
             text: Text to convert to speech
             output_path: Path to save the audio file
+            voice_id: Per-call voice override (None = use config default)
             speed: Per-call speed override (None = use config default)
             emotion: Per-call emotion override (None = use config default)
             pitch: Per-call pitch override (None = use config default)
         """
-        audio_data = self.speak(text, speed=speed, emotion=emotion, pitch=pitch)
+        audio_data = self.speak(text, voice_id=voice_id,
+                                speed=speed, emotion=emotion, pitch=pitch)
         with open(output_path, "wb") as f:
             f.write(audio_data)
         logger.info("Saved TTS audio to: %s", output_path)
 
+    _VALID_EMOTIONS = frozenset({
+        "happy", "sad", "angry", "fearful", "disgusted",
+        "surprised", "calm", "fluent", "whisper",
+    })
+
     def _build_payload(self, text: str, stream: bool,
+                       voice_id: str | None = None,
                        speed: float | None = None, emotion: str | None = None,
                        pitch: float | None = None) -> dict:
         """Build API request payload."""
+        if emotion and emotion not in self._VALID_EMOTIONS:
+            logger.warning("Invalid emotion=%r, falling back to default", emotion)
+            emotion = None
         return {
             "model": DEFAULT_MODEL,
             "text": text[:10000],  # Max 10000 chars
             "stream": stream,
             "voice_setting": {
-                "voice_id": self.voice_config.voice_id,
+                "voice_id": voice_id or self.voice_config.voice_id,
                 "speed": speed if speed is not None else self.voice_config.speed,
                 "vol": self.voice_config.vol,
                 "pitch": pitch if pitch is not None else self.voice_config.pitch,
@@ -353,16 +371,45 @@ class StreamingTTSPlayer:
 def get_available_voices() -> list[dict]:
     """Return list of available voice IDs and their descriptions.
 
-    This is a simplified list - MiniMax has 300+ voices.
+    Simplified selection from MiniMax 300+ system voices.
+    Covers the most useful Chinese voices + a few English ones.
+    Full list: https://platform.minimaxi.com/docs/llms.txt
     """
     return [
-        {"id": "female-tianmei", "name": "甜美女声", "gender": "female"},
-        {"id": "female-baiyan", "name": "知性女声", "gender": "female"},
-        {"id": "male-qn-qingse", "name": "清新男声", "gender": "male"},
-        {"id": "male-qn-jingsong", "name": "低沉男声", "gender": "male"},
-        {"id": "male-yunyang", "name": "播音男声", "gender": "male"},
-        {"id": "female-sichuan", "name": "四川女声", "gender": "female"},
-        {"id": "male-shaoxing", "name": "绍兴男声", "gender": "male"},
+        # ── 中文女声 ──
+        {"id": "female-tianmei", "name": "甜美女声", "gender": "female", "lang": "zh"},
+        {"id": "female-yujie", "name": "御姐音色", "gender": "female", "lang": "zh"},
+        {"id": "female-shaonv", "name": "少女音色", "gender": "female", "lang": "zh"},
+        {"id": "female-chengshu", "name": "成熟女性", "gender": "female", "lang": "zh"},
+        {"id": "Chinese (Mandarin)_Warm_Bestie", "name": "温暖闺蜜", "gender": "female", "lang": "zh"},
+        {"id": "Chinese (Mandarin)_Sweet_Lady", "name": "甜美女声2", "gender": "female", "lang": "zh"},
+        {"id": "Chinese (Mandarin)_Crisp_Girl", "name": "清脆少女", "gender": "female", "lang": "zh"},
+        {"id": "Chinese (Mandarin)_Soft_Girl", "name": "柔和少女", "gender": "female", "lang": "zh"},
+        # ── 中文男声 ──
+        {"id": "male-qn-qingse", "name": "青涩青年", "gender": "male", "lang": "zh"},
+        {"id": "male-qn-jingying", "name": "精英青年", "gender": "male", "lang": "zh"},
+        {"id": "male-qn-badao", "name": "霸道青年", "gender": "male", "lang": "zh"},
+        {"id": "Chinese (Mandarin)_Male_Announcer", "name": "播报男声", "gender": "male", "lang": "zh"},
+        {"id": "Chinese (Mandarin)_Gentleman", "name": "温润男声", "gender": "male", "lang": "zh"},
+        {"id": "Chinese (Mandarin)_Radio_Host", "name": "电台男主播", "gender": "male", "lang": "zh"},
+        {"id": "Chinese (Mandarin)_Gentle_Youth", "name": "温润青年", "gender": "male", "lang": "zh"},
+        # ── 角色扮演 ──
+        {"id": "bingjiao_didi", "name": "病娇弟弟", "gender": "male", "lang": "zh"},
+        {"id": "junlang_nanyou", "name": "俊朗男友", "gender": "male", "lang": "zh"},
+        {"id": "tianxin_xiaoling", "name": "甜心小玲", "gender": "female", "lang": "zh"},
+        {"id": "qiaopi_mengmei", "name": "俏皮萌妹", "gender": "female", "lang": "zh"},
+        # ── 方言 ──
+        {"id": "female-sichuan", "name": "四川女声", "gender": "female", "lang": "zh-sichuan"},
+        {"id": "Cantonese_GentleLady", "name": "粤语温柔女声", "gender": "female", "lang": "yue"},
+        {"id": "Cantonese_ProfessionalHost（M）", "name": "粤语专业男主持", "gender": "male", "lang": "yue"},
+        # ── 英文 ──
+        {"id": "Sweet_Girl", "name": "Sweet Girl", "gender": "female", "lang": "en"},
+        {"id": "English_Graceful_Lady", "name": "Graceful Lady", "gender": "female", "lang": "en"},
+        {"id": "English_Trustworthy_Man", "name": "Trustworthy Man", "gender": "male", "lang": "en"},
+        {"id": "English_Gentle-voiced_man", "name": "Gentle-voiced Man", "gender": "male", "lang": "en"},
+        # ── 童声 ──
+        {"id": "clever_boy", "name": "聪明男童", "gender": "male", "lang": "zh"},
+        {"id": "lovely_girl", "name": "萌萌女童", "gender": "female", "lang": "zh"},
     ]
 
 
@@ -375,5 +422,7 @@ def get_available_emotions() -> list[str]:
         "fearful",    # 害怕
         "disgusted",  # 厌恶
         "surprised",  # 惊讶
-        "neutral",    # 中性
+        "calm",       # 中性
+        "fluent",     # 生动（仅 speech-2.6）
+        "whisper",    # 低语（仅 speech-2.6）
     ]

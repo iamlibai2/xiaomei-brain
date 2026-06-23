@@ -118,6 +118,7 @@ class ActionExecutor:
 
         agent_core = cl.agent._get_agent()
         consciousness = cl.consciousness
+        es = getattr(agent_core, "exp_stream", None)
 
         # 构建消息
         system_prompt = build_simple_context(consciousness, mode="daily")
@@ -141,7 +142,8 @@ class ActionExecutor:
         try:
             # 纯内部 ReAct（不写 DB、不加 MEMORY_PROMPT、不提取记忆）
             # react_nodb() 已将完整过程打印到控制台，不再推送给用户渠道
-            result = agent_core.react_nodb(messages=messages, max_steps=50, label="alarm")
+            result = agent_core.react_nodb(messages=messages, max_steps=50, label="alarm",
+                                           exp_stream=es, summarize=True)
 
             # 消费已执行的 ALARM intent（避免 cooldown 过后重复触发）
             intent_type = item.metadata.get("intent_type", "")
@@ -197,6 +199,7 @@ class ActionExecutor:
 
         agent_core = cl.agent._get_agent()
         consciousness = cl.consciousness
+        es = getattr(agent_core, "exp_stream", None)
 
         # 从长期记忆按 tag 直接查目标/任务（不走语义搜索）
         longterm = getattr(cl.agent, "longterm_memory", None)
@@ -264,7 +267,8 @@ class ActionExecutor:
             # 纯内部 ReAct（不污染对话历史，和 _do_alarm / L2 一致）
             # WORK 场景需要足够步数：写代码、调试等每次工具调用算一步
             _work_start = time.time()
-            result = agent_core.react_nodb(messages=messages, max_steps=50, label="work")
+            result = agent_core.react_nodb(messages=messages, max_steps=50, label="work",
+                                           exp_stream=es, summarize=True)
 
             # 手动内存提取：提取 MEMORY 块，拿到干净文本用于输出
             clean_result = self._extract_work_memories(agent_core, result)
@@ -935,7 +939,14 @@ class ActionExecutor:
         """主动学习 → 委托给 LearningEngine"""
         engine = getattr(self, "_learn_engine", None)
         if engine:
-            return engine.learn()
+            ok = engine.learn()
+            if ok:
+                topic = getattr(engine, "_last_topic", "") or "未知主题"
+                words = getattr(engine, "_last_word_count", 0) or 0
+                db_id = getattr(engine, "_last_db_id", 0) or 0
+                md_path = getattr(engine, "_last_md_path", "") or ""
+                item.reason = f"学习「{topic}」→ LTM #{db_id}，{words} 字，{md_path}"
+            return ok
         return False
 
     # ── TOOL: meta_skill_pull ──────────────────────────────────
@@ -1090,6 +1101,9 @@ class ActionDispatcher:
         # 是否已加载规则
         self._rules_loaded = False
 
+        # 记录本轮已执行的动作（供 display 使用）
+        self._last_executed: list[ActionItem] = []
+
     # ── Public API ─────────────────────────────────────────
 
     def load_rules(self, rules: list) -> None:
@@ -1138,7 +1152,7 @@ class ActionDispatcher:
             # 能量门控：低能量时抑制主动行为
             item = self._clone_action_item(rule.action_item)
 
-            # 注入 intent 中携带的 user_id（供多用户路由）
+            # 注入 intent 中携带的 user_id 和预生成消息（供多用户路由和 PROACTIVE）
             if item.source == "intent" and self_image:
                 intent_type = item.metadata.get("intent_type", "")
                 if intent_type:
@@ -1148,6 +1162,12 @@ class ActionDispatcher:
                             if uid:
                                 item.metadata["user_id"] = uid
                                 logger.debug("[ActionDispatcher] intent user_id: %s → %s", intent_type, uid)
+                            # 对话类意图：注入预生成的消息内容
+                            msg = (i.get("params", {}) or {}).get("message", "")
+                            if msg and not item.content:
+                                item.content = msg
+                                item.reason = i.get("content", "") or item.reason
+                                logger.info("[ActionDispatcher] intent 预生成消息: %s → %s", intent_type, msg[:60])
                             break
             if silent and item.action_type.value != "notify":
                 logger.debug("[ActionDispatcher] 能量沉寂(%.2f)，跳过: %s", energy, rule.cooldown_key)
@@ -1188,11 +1208,13 @@ class ActionDispatcher:
 
         logger.info("[ActionDispatcher] 队列执行: %d 个动作", len(self._queue))
         executed = False
+        self._last_executed = []
         for item in self._queue:
             try:
                 success = self._executor.execute(item)
                 if success:
                     self._record_fired(item.cooldown_key)
+                    self._last_executed.append(item)
                     executed = True
             except Exception as e:
                 logger.error("[ActionDispatcher] 执行失败: %s, error=%s", item, e)
@@ -1207,6 +1229,31 @@ class ActionDispatcher:
     def clear_queue(self) -> None:
         """清空队列"""
         self._queue.clear()
+
+    def display_action_summary(self) -> None:
+        """展示本轮已执行动作摘要（InternalDisplay）。"""
+        if not self._last_executed:
+            return
+        from .internal_display import InternalDisplay
+        display = InternalDisplay()
+        for item in self._last_executed:
+            atype = item.action_type.value
+            icon = {"work": "🔧", "alarm": "⏰", "proactive": "💬",
+                    "tool": "⚙️", "notify": "🔔", "talk_to_agent": "💬",
+                    "trigger_l3": "🕯️"}.get(atype, "⚡")
+            # 把 TOOL 子类型翻译成可读标签
+            tool_label = atype.upper()
+            if atype == "tool":
+                sub = (item.content or "").lower()
+                tool_label = {
+                    "learn_topic": "学习", "progress_goal": "推进目标",
+                    "pleasure_lever": "快乐中枢", "pleasure_release": "释放",
+                    "meta_skill_pull": "元技能",
+                }.get(sub, "TOOL")
+            reason = item.reason or item.content or ""
+            display.record_action(icon, tool_label, reason)
+        display.display()
+        display.clear()
 
     # ── 内部 ─────────────────────────────────────────────
 

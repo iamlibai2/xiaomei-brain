@@ -54,6 +54,9 @@ class LivingState(Enum):
     # Idle -- light idle, ready to respond.
     # 空闲 -- 轻度空闲，随时响应。
     IDLE = "idle"
+    # Working -- autonomous task execution (ReAct).  IDLE sub-state.
+    # 工作 -- 自主任务执行（ReAct），IDLE 子状态。
+    WORKING = "working"
     # Sleeping -- deeper idle, may trigger dreaming.
     # 睡眠 -- 深度空闲，可能触发梦境。
     SLEEPING = "sleeping"
@@ -331,6 +334,8 @@ class Living:
                         self._loop_sleeping()
                     elif self.state == LivingState.DREAMING:
                         self._loop_dreaming()
+                    elif self.state == LivingState.WORKING:
+                        self._loop_idle()   # fallback: WORKING 应只由 _run_idle 内管理
                     elif self.state == LivingState.DORMANT:
                         self._loop_dormant()
                     else:

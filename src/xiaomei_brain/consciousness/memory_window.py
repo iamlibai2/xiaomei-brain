@@ -226,6 +226,32 @@ def refresh_memory_window(
         except Exception as e:
             logger.warning("[MemoryWindow] 最近对话获取失败: %s", e)
 
+    # ── 7b. 其他用户的最近对话 ─────────────────────────
+    cross_user_dialog: list[dict] = []
+    if conversation_db:
+        try:
+            conn = conversation_db._get_conn()
+            all_others = conn.execute(
+                """SELECT * FROM messages
+                   WHERE user_id IS NOT NULL AND user_id != ? AND user_id != 'global'
+                   ORDER BY created_at DESC LIMIT 60""",
+                (user_id,),
+            ).fetchall()
+            # 按 user_id 分组，每组取最近 3 条
+            by_user: dict[str, list[dict]] = {}
+            for r in all_others:
+                uid = r["user_id"]
+                if uid not in by_user:
+                    by_user[uid] = []
+                if len(by_user[uid]) < 3:
+                    by_user[uid].append(dict(r))
+            cross_user_dialog = [
+                {"user_id": uid, "messages": msgs}
+                for uid, msgs in by_user.items()
+            ]
+        except Exception as e:
+            logger.warning("[MemoryWindow] 跨用户对话获取失败: %s", e)
+
     # ── 8. 内部叙事（L2 历史独白）────────────────────────
     if longterm:
         try:
@@ -320,6 +346,7 @@ def refresh_memory_window(
             "relation_chains": relation_chains,
             "procedures": procedures,
             "recent_dialog": recent_dialog,
+            "cross_user_dialog": cross_user_dialog,
             "internal_narratives": internal_narratives,
             "experience_timeline": experience_timeline,
             "patterns": patterns,
@@ -338,10 +365,10 @@ def refresh_memory_window(
     )
     logger.info(
         "[MemoryWindow] 刷新完成: narr=%d dag=%d important=%d recalled=%d "
-        "chains=%d proc=%d dialog=%d internal=%d project_map=%d exp=%d timeline=%d patterns=%d milestones=%d total=%d",
+        "chains=%d proc=%d dialog=%d cross_user=%d internal=%d project_map=%d exp=%d timeline=%d patterns=%d milestones=%d total=%d",
         len(narratives), len(dag_summaries), len(important_memories),
         len(recalled_memories), len(relation_chains), len(procedures),
-        len(recent_dialog), len(internal_narratives),
+        len(recent_dialog), len(cross_user_dialog), len(internal_narratives),
         len(project_map), len(experience),
         len(experience_timeline), len(patterns), len(milestones), _total,
     )

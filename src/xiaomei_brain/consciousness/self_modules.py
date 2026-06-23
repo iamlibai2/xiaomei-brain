@@ -612,6 +612,7 @@ class SelfMemory:
     relation_chains: list[dict] = field(default_factory=list)
     procedures: list[dict] = field(default_factory=list)
     recent_dialog: list[dict] = field(default_factory=list)
+    cross_user_dialog: list[dict] = field(default_factory=list)  # 其他用户的最近对话 [{user_id, user_name, messages: [{role, content, created_at}]}]
     experience_timeline: list[dict] = field(default_factory=list)  # 经验流（统一时间线）
     experience: list[dict] = field(default_factory=list)  # 经验记忆召回（ExperienceMemory.recall()，top-5）
     patterns: list[dict] = field(default_factory=list)  # 模式记忆（跨时间统计规律，top-5 高置信度）

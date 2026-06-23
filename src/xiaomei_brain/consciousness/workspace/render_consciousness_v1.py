@@ -671,7 +671,9 @@ def _render_experience_timeline(si) -> list[str]:
     if not timeline:
         return []
     lines = ["\n****以下是你近期的经历时间线（统一经验流）****"]
-    for entry in reversed(timeline[-20:]):
+    for entry in reversed(timeline[:20]):
+        if entry["type"] in ("tool_exec", "user_msg", "assistant_msg"):
+            continue
         ts = datetime.fromtimestamp(entry["created_at"]).strftime("%H:%M")
         type_icons = {
             "user_msg": "\U0001f465",         # 👥

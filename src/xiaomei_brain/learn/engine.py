@@ -39,6 +39,11 @@ class LearningEngine:
         self._queue = queue
         self._storage = storage
         self._meta_skill = meta_skill
+        self._last_topic: str = ""
+        self._last_preview: str = ""
+        self._last_word_count: int = 0
+        self._last_db_id: int = 0
+        self._last_md_path: str = ""
 
     # ── 主入口 ────────────────────────────────────────────
 
@@ -58,19 +63,28 @@ class LearningEngine:
             logger.warning("[LearningEngine] 学习失败: %s", topic)
             return False
 
-        self._storage.save(topic, knowledge)
+        memory_id = self._storage.save(topic, knowledge)
 
         if self._cl.drive:
             self._cl.drive.on_desire_satisfied("cognition", 0.1)
+
+        # 取第一段非标题文本作为摘要
+        lines = [l for l in knowledge.split("\n") if l.strip() and not l.startswith("#")]
+        preview = " ".join(lines[:2])[:120] if lines else knowledge[:120]
+
+        # 记录以供 ActionDispatcher 展示
+        filename = KnowledgeStorage._clean_filename(topic)
+        self._last_topic = topic
+        self._last_preview = preview
+        self._last_word_count = len(knowledge)
+        self._last_db_id = memory_id or 0
+        self._last_md_path = str(self._storage._knowledge_dir / f"{filename}.md")
 
         # 经验流：学到了什么
         try:
             agent_core = self._cl.agent._get_agent()
             es = getattr(agent_core, "exp_stream", None)
             if es:
-                # 取第一段非标题文本作为摘要
-                lines = [l for l in knowledge.split("\n") if l.strip() and not l.startswith("#")]
-                preview = " ".join(lines[:2])[:120] if lines else knowledge[:120]
                 es.log(
                     type="internal_action",
                     content=f"学习完成「{topic}」: {preview}",
@@ -175,6 +189,7 @@ class LearningEngine:
             return None
 
         agent_core = agent._get_agent()
+        es = getattr(agent_core, "exp_stream", None)
         consciousness = self._cl.consciousness
         if not consciousness:
             return None
@@ -197,7 +212,8 @@ class LearningEngine:
         logger.info("[LearningEngine] ReAct 学习开始: %s", topic)
 
         try:
-            result = agent_core.react_nodb(messages=messages, max_steps=15, label="work")
+            result = agent_core.react_nodb(messages=messages, max_steps=15, label="work",
+                                           exp_stream=es, summarize=True)
             return result.strip() if result else None
         except Exception as e:
             logger.warning("[LearningEngine] ReAct 学习失败: %s", e)

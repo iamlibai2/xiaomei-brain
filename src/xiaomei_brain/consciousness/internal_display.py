@@ -99,6 +99,7 @@ class InternalDisplay:
     _recall_tags: list[str] = field(default_factory=list)
     _procedure_count: int = 0
     _narrative_count: int = 0
+    _action_items: list[str] = field(default_factory=list)
 
     # ── Record ────────────────────────────────────────────
 
@@ -197,6 +198,10 @@ class InternalDisplay:
         if count > 0:
             self._narrative_count = count
 
+    def record_action(self, icon: str, action_type: str, reason: str) -> None:
+        """记录自主行为动作。"""
+        self._action_items.append(f"{icon} {action_type.upper()}: {reason}")
+
     # ── Has Data ──────────────────────────────────────────
 
     def has_data(self) -> bool:
@@ -218,35 +223,54 @@ class InternalDisplay:
             or self._emergence_stored
             or self._narr_extracted
             or self._doubt_count
+            or self._action_items
         )
 
     # ── CLI 输出 ──────────────────────────────────────────
 
     def display(self) -> None:
-        """CLI：直接打印 ANSI 格式化区块。无数据则 silence。"""
+        """CLI：使用 Rich Panel 渲染内部处理结果。无数据则 silence。"""
         if not self.has_data():
             return
         lines = self.render_lines()
-        # 粗略估算最长行的显示宽度（非 ASCII 算 2 列），上限 60 避免过长
-        max_w = min(
-            max((sum(2 if ord(c) > 127 else 1 for c in line) for line in lines), default=30),
-            60,
+        if not lines:
+            return
+
+        from rich.panel import Panel
+        from rich.box import MINIMAL
+
+        content = "\n".join(lines)
+        console = _get_console()
+        panel = Panel(
+            content,
+            title="── 📋 本轮内部处理 ──",
+            title_align="left",
+            border_style="color(73)",
+            box=MINIMAL,
+            padding=(0, 1),
         )
-        extra = max(max_w - 20, 0)
-        pad = "─" * (extra // 2 + 2)
         print()
-        print(f"  {C_DIM}──{pad} 📋 本轮内部处理 {pad}──{RESET}", flush=True)
-        for line in lines:
-            print(f"    {line}", flush=True)
+        console.print(panel)
 
     def render_lines(self) -> list[str]:
         """返回 ANSI 格式化的行列表（不含边框头尾）。"""
         lines: list[str] = []
 
+        # 自主行为动作（最先展示）
+        if self._action_items:
+            lines.extend(self._action_items)
+
         if self._intent_type:
             lines.append(f"🎯 意图决策结论: {self._intent_type}")
             if self._intent_reason:
-                lines.append(f"💡 决策原因: {self._intent_reason}")
+                reason = self._intent_reason.replace("\n", " ").strip()
+                if len(reason) > 60:
+                    lines.append(f"💡 决策原因:")
+                    # 按 60 字符折行
+                    for i in range(0, len(reason), 60):
+                        lines.append(f"   {reason[i:i+60].strip()}")
+                else:
+                    lines.append(f"💡 决策原因: {reason}")
 
         if self._recall_count:
             tags_str = " · ".join(self._recall_tags[:4]) if self._recall_tags else "匹配记忆"
@@ -282,9 +306,9 @@ class InternalDisplay:
             lines.append(f"🔀 模式感知: {label}")
 
         if self._social_signal:
-            lines.append(f"🤝  社交感知: {self._social_signal}")
+            lines.append(f"🤝 社交感知: {self._social_signal}")
         elif self._inner_voice_signal:
-            lines.append(f"🤝  社交感知: {self._inner_voice_signal}")
+            lines.append(f"🤝 社交感知: {self._inner_voice_signal}")
 
         if self._social_events:
             lines.append("🎭 社交事件: " + " · ".join(self._social_events))
@@ -296,7 +320,7 @@ class InternalDisplay:
             lines.append(f"📦 DAG: {self._dag_msg_count} 条消息 → 摘要 ({self._dag_summary_tokens} tokens)")
 
         if self._periodic_count:
-            lines.append(f"🗂 定期提取: {self._periodic_count} 条记忆")
+            lines.append(f"🗂  定期提取: {self._periodic_count} 条记忆")
 
         if self._procedure_count:
             lines.append(f"🧭 流程学习: {self._procedure_count} 条")
@@ -409,6 +433,7 @@ class InternalDisplay:
         self._emergence_stored = 0
         self._narr_extracted = 0
         self._doubt_count = 0
+        self._action_items.clear()
 
 
 # ── 记忆块解析 ────────────────────────────────────────────

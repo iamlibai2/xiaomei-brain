@@ -482,6 +482,7 @@ class Agent:
         exp_stream: Any = None,
         label: str = "",
         silent: bool = False,
+        summarize: bool = False,
     ) -> str:
         """纯内部推理 ReAct — 非流式，不写 DB、不加 MEMORY_PROMPT、不提取记忆。
 
@@ -496,6 +497,12 @@ class Agent:
         """
         if exp_stream is None:
             exp_stream = getattr(self, "exp_stream", None)
+
+        def _co_write(stream, typ, content, meta=None):
+            try:
+                stream.log(type=typ, content=content, metadata=meta or {})
+            except Exception as e:
+                logger.debug("[ExpStream] react_nodb write failed: %s", e)
 
         from xiaomei_brain.agent.cli_display import (
             get_hint, print_tool_call, print_tool_result,
@@ -605,20 +612,18 @@ class Agent:
                             logger.debug("[ExpStream] react_nodb tool_exec failed: %s", e)
             else:
                 final_text = response.content or response.reasoning or ""
-                if final_text:
-                    if not silent:
-                        print_react_result(final_text, label)
+                if not final_text:
+                    return ""
 
-                # Co-write final result to experience stream
-                if exp_stream and final_text:
-                    try:
-                        exp_stream.log(
-                            type="internal_action",
-                            content=final_text,
-                        )
-                    except Exception as e:
-                        logger.debug("[ExpStream] react_nodb final failed: %s", e)
+                if summarize:
+                    summary = self._summarize_react_trace(all_messages, final_text)
+                    if summary and exp_stream:
+                        _co_write(exp_stream, "react_summary", summary, {"label": label})
+                elif exp_stream:
+                    _co_write(exp_stream, "internal_action", final_text, {"label": label})
 
+                if not silent:
+                    print_react_result(final_text, label)
                 return final_text
 
         # 步数用尽仍未收敛 → 最后一轮不带工具，基于已有探索做最终输出
@@ -627,20 +632,33 @@ class Agent:
         all_messages = clean_messages(all_messages)
         resp = self.llm.chat(messages=all_messages, tools=None)
         final_text = resp.content or resp.reasoning or ""
-        if final_text and not silent:
-            print_react_result(final_text, label)
 
-        # Co-write to experience stream (fallback path)
-        if exp_stream and final_text:
-            try:
-                exp_stream.log(
-                    type="internal_action",
-                    content=final_text,
-                )
-            except Exception as e:
-                logger.debug("[ExpStream] react_nodb fallback failed: %s", e)
+        if final_text:
+            if summarize:
+                summary = self._summarize_react_trace(all_messages, final_text)
+                if summary and exp_stream:
+                    _co_write(exp_stream, "react_summary", summary, {"label": label})
+            elif exp_stream:
+                _co_write(exp_stream, "internal_action", final_text, {"label": label})
+
+            if not silent:
+                print_react_result(final_text, label)
 
         return final_text
+
+    def _summarize_react_trace(self, messages: list[dict], result: str) -> str:
+        """用一次非工具 LLM 调用生成 ReAct 过程的 2-3 句摘要。"""
+        summary_prompt = {
+            "role": "user",
+            "content": "请用2-3句话总结你刚刚做了什么，包括关键步骤和最终结论。不要调用工具。",
+        }
+        try:
+            msgs = clean_messages(messages + [summary_prompt])
+            resp = self.llm.chat(messages=msgs, tools=None)
+            return (resp.content or "").strip()
+        except Exception as e:
+            logger.debug("[Agent] react summary failed: %s", e)
+            return result[:200] if result else ""
 
     # ── LLM calling ──────────────────────────────────────────────
 

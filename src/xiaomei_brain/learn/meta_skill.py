@@ -52,6 +52,7 @@ class MetaSkillPuller:
                 return True
 
         agent_core = self._agent._get_agent()
+        es = getattr(agent_core, "exp_stream", None)
         system_prompt = build_simple_context(self._consciousness, mode="daily")
         prompt = META_SKILL_PROMPT.format(skill_domain=skill_domain)
         messages = [
@@ -62,7 +63,8 @@ class MetaSkillPuller:
         logger.info("[MetaSkillPuller] 拉取技能: %s", skill_domain)
 
         try:
-            result = agent_core.react_nodb(messages=messages, max_steps=15, label="work")
+            result = agent_core.react_nodb(messages=messages, max_steps=15, label="work",
+                                           exp_stream=es, summarize=True)
         except Exception as e:
             logger.warning("[MetaSkillPuller] ReAct 失败: %s", e)
             return False

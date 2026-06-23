@@ -52,6 +52,7 @@ def set_tts_player(player, provider):
 )
 def tts_speak(
     text: str,
+    voice_id: str | None = None,
     speed: float | None = None,
     emotion: str | None = None,
     pitch: float | None = None,
@@ -62,9 +63,18 @@ def tts_speak(
     - WSL2：先收集完整 mp3 → Windows Media Player 阻塞播放
 
     Args:
-        text: 要朗读的文本（最多500字符）。
+        text: 要朗读的文本（最多500字符）。可在文本中嵌入语气词标签增强表现力：
+              (laughs)笑声、(sighs)叹气、(chuckle)轻笑、(coughs)咳嗽、
+              (breath)换气、(pant)喘气、(gasps)倒吸气、(crying)抽泣、
+              (humming)哼唱、(emm)嗯、(clear-throat)清嗓子等。仅 speech-2.8 系列支持。
+        voice_id: 音色ID，默认=female-tianmei。常用中文：female-tianmei(甜美),
+                  female-yujie(御姐), female-shaonv(少女), female-chengshu(成熟),
+                  male-qn-qingse(青涩青年), male-qn-jingying(精英青年),
+                  male-qn-badao(霸道青年), Chinese (Mandarin)_Gentleman(温润男声),
+                  Chinese (Mandarin)_Warm_Bestie(温暖闺蜜)。更多见 get_available_voices()。
         speed: 语速 0.5~2.0，None=用配置默认值。
-        emotion: 情感 — happy, sad, angry, fearful, surprised, neutral, calm。
+        emotion: 情感 — happy, sad, angry, fearful, disgusted, surprised, calm, fluent, whisper。
+                  fluent/whisper 仅 speech-2.6 系列支持。None=自动匹配。
         pitch: 音调 -12~12，None=用配置默认值。
     """
     global _tts_provider
@@ -77,6 +87,16 @@ def tts_speak(
 
     text = text[:500]
 
+    # LLM 可能传字符串，MiniMax API 要求数字类型
+    if speed is not None:
+        speed = float(speed)
+    if pitch is not None:
+        pitch = int(float(pitch))
+
+    _valid_emotions = {"happy", "sad", "angry", "fearful", "disgusted", "surprised", "calm", "fluent", "whisper"}
+    if emotion is not None and emotion not in _valid_emotions:
+        return f"无效的 emotion='{emotion}'。可选值: {', '.join(sorted(_valid_emotions))}（fluent/whisper 仅 speech-2.6 系列支持）"
+
     try:
         import subprocess, tempfile
         from xiaomei_brain.plugins.body.throat.real_speaker import stop_active_playback, set_active_player, _play_windows
@@ -84,7 +104,7 @@ def tts_speak(
         if _IS_WSL2:
             # WSL2：非流式 — speak_to_file 生成完整 mp3 → Windows Media Player 阻塞播放
             path = os.path.join(tempfile.mkdtemp(), "speak.mp3")
-            _tts_provider.speak_to_file(text, path, speed=speed, emotion=emotion, pitch=pitch)
+            _tts_provider.speak_to_file(text, path, voice_id=voice_id, speed=speed, emotion=emotion, pitch=pitch)
             total = os.path.getsize(path)
             logger.info("TTS [WSL2] %d bytes → %s", total, path)
 
@@ -112,6 +132,7 @@ def tts_speak(
                     logger.warning("写入 ffmpeg stdin 失败: %s", ex)
 
             _tts_provider.speak_streaming(text, on_chunk=_on_chunk,
+                                         voice_id=voice_id,
                                          speed=speed, emotion=emotion, pitch=pitch)
             proc.stdin.close()
             logger.info("TTS 流式: %d chunks, %d bytes", chunk_count[0], total_bytes[0])
@@ -133,12 +154,28 @@ def tts_speak(
     name="speak_to_file",
     description="将文本转换为语音并保存为音频文件。适用于需要保存录音的场景。",
 )
-def tts_speak_to_file(text: str, filename: str = "output.mp3") -> str:
+def tts_speak_to_file(
+    text: str,
+    filename: str = "output.mp3",
+    voice_id: str | None = None,
+    speed: float | None = None,
+    emotion: str | None = None,
+    pitch: float | None = None,
+) -> str:
     """Convert text to speech and save to a file.
 
     Args:
         text: Text to convert (max 10000 chars).
         filename: Output audio file path.
+        voice_id: 音色ID，默认=female-tianmei。常用中文：female-tianmei(甜美),
+                  female-yujie(御姐), female-shaonv(少女), female-chengshu(成熟),
+                  male-qn-qingse(青涩青年), male-qn-jingying(精英青年),
+                  male-qn-badao(霸道青年), Chinese (Mandarin)_Gentleman(温润男声),
+                  Chinese (Mandarin)_Warm_Bestie(温暖闺蜜)。更多见 get_available_voices()。
+        speed: 语速 0.5~2.0，None=用配置默认值。
+        emotion: 情感 — happy, sad, angry, fearful, disgusted, surprised, calm, fluent, whisper。
+                  fluent/whisper 仅 speech-2.6 系列支持。None=自动匹配。
+        pitch: 音调 -12~12，None=用配置默认值。
     """
     global _tts_provider
 
@@ -149,13 +186,25 @@ def tts_speak_to_file(text: str, filename: str = "output.mp3") -> str:
         return "文本为空。"
 
     try:
+        # LLM 可能传字符串，MiniMax API 要求数字类型
+        if speed is not None:
+            speed = float(speed)
+        if pitch is not None:
+            pitch = int(float(pitch))
+
+        _valid_emotions = {"happy", "sad", "angry", "fearful", "disgusted", "surprised", "calm", "fluent", "whisper"}
+        if emotion is not None and emotion not in _valid_emotions:
+            return f"无效的 emotion='{emotion}'。可选值: {', '.join(sorted(_valid_emotions))}（fluent/whisper 仅 speech-2.6 系列支持）"
+
         # If filename is relative, save to output dir
         if not os.path.isabs(filename):
             output_dir = _get_output_dir()
             os.makedirs(output_dir, exist_ok=True)
             filename = os.path.join(output_dir, filename)
 
-        _tts_provider.speak_to_file(text[:10000], filename)
+        _tts_provider.speak_to_file(text[:10000], filename,
+                                     voice_id=voice_id,
+                                     speed=speed, emotion=emotion, pitch=pitch)
         return f"音频已保存: {filename}"
     except Exception as e:
         logger.error("TTS file error: %s", e)

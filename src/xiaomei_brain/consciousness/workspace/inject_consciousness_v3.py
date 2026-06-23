@@ -23,7 +23,7 @@ from .render_consciousness_v3 import (
     _render_dag_summaries,
     _render_essence, _render_narratives, _render_internal_narratives,
     _render_experience, _render_experience_timeline, _render_learn_queue, _render_desk,
-    _render_procedures, _render_recent_dialog,
+    _render_procedures, _render_recent_dialog, _render_cross_user_dialog,
 )
 
 logger = logging.getLogger(__name__)
@@ -84,6 +84,7 @@ def _assemble_daily(si) -> str:
         + _render_dag_summaries(si)
         + _render_narratives(si)
         + _render_internal_narratives(si)
+        + _render_cross_user_dialog(si)
         + _render_experience_timeline(si)
         + _render_learn_queue(si)
         + _render_desk(si)
@@ -160,6 +161,7 @@ def _assemble_proactive(si) -> str:
         + _render_narratives(si)
         + _render_internal_narratives(si)
         + _render_recent_dialog(si)
+        + _render_cross_user_dialog(si)
         + _render_experience_timeline(si)
         + _render_learn_queue(si)
         + _render_desk(si)
@@ -185,6 +187,7 @@ def _assemble_internal(si) -> str:
         + _render_narratives(si)
         + _render_internal_narratives(si)
         + _render_recent_dialog(si)
+        + _render_cross_user_dialog(si)
         + _render_experience_timeline(si)
         + _render_learn_queue(si)
         + _render_desk(si)

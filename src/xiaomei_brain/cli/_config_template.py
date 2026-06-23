@@ -104,7 +104,7 @@ consciousness:
     monthly_token_budget: 0    # 月度 token 预算（0=不限制）
     daily_token_reset_hour: 4  # 每日配额重置时间（0-23，默认凌晨4点）
     comms_port:         0      # 0=自动分配, -1=禁用
-    ws_port:            -1      # WebSocket 端口（-1=禁用）
+    ws_port:            -1      # WebSocket 端口（-1=禁用, 0=自动分配）
   # ── 行为冷却时间（秒）───────────────────────────────────
   action:
     intent_greet_cooldown:    3600.0  # 主动问候

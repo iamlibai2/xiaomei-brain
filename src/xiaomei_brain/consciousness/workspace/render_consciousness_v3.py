@@ -986,10 +986,12 @@ def _render_experience_timeline(si) -> list[str]:
     }
 
     lines = ["\n<经验流>"]
-    for entry in reversed(timeline[-20:]):
+    for entry in reversed(timeline[:20]):
+        etype = entry.get("type", "")
+        if etype in ("tool_exec", "user_msg", "assistant_msg"):
+            continue
         ts = entry.get("created_at", 0)
         time_str = datetime.fromtimestamp(ts).strftime("%H:%M") if ts else "--:--"
-        etype = entry.get("type", "")
         content = entry.get("content", "")[:120]
         label = type_labels.get(etype, etype)
         if etype == "user_msg":
@@ -1013,6 +1015,28 @@ def _render_recent_dialog(si) -> list[str]:
         content = d.get('content', '')
         lines.append(f"- 对话{i}[{role}]：{content}")
     lines.append("</最近对话>")
+    return lines
+
+
+def _render_cross_user_dialog(si) -> list[str]:
+    """渲染其他用户的最近对话，让 agent 知道刚才和谁聊了什么。"""
+    mem = si.memory
+    entries = getattr(mem, 'cross_user_dialog', []) or []
+    if not entries:
+        return []
+    lines = ["\n<与其他用户的互动>"]
+    for entry in entries:
+        uid = entry.get("user_id", "?")
+        msgs = entry.get("messages", [])
+        lines.append(f"\n 和 {uid}：")
+        for m in reversed(msgs):
+            role = m.get("role", "")
+            content = m.get("content", "")[:120]
+            ts = m.get("created_at", 0)
+            time_str = datetime.fromtimestamp(ts).strftime("%H:%M") if ts else ""
+            label = "对方" if role == "user" else "我"
+            lines.append(f"  [{time_str}] {label}：{content}")
+    lines.append("</与其他用户的互动>")
     return lines
 
 

@@ -78,7 +78,7 @@ class ConversationDriver:
         self._scheduler = RoundScheduler()
         self._scheduler.every(1, self._salience_feedback)
         self._scheduler.every(3, self._invoke_inner_voice_chat_turn)
-        self._scheduler.every(8, self._invoke_dag_compact)
+        self._scheduler.every(3, self._invoke_dag_compact)
         self._scheduler.every(10, self._invoke_memory_extract)
         self._scheduler.every(15, self._invoke_procedure_learn)
         self._scheduler.every(20, self._invoke_narrative_learn)

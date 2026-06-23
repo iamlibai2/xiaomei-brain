@@ -994,6 +994,11 @@ class ConsciousLiving(Living):
         if channel_count:
             boot_line("频道适配器", "OK", f"{channel_count} 个")
 
+        # P2P 通讯端口（open_channels 后由 HTTPP2PAdapter.setup() 分配）
+        if self._comms_server is not None:
+            comms_port = self._comms_server.server_port
+            boot_line("P2P 通讯服务", "OK", f"http://{host}:{comms_port}")
+
         # 更新 send_message 工具的上下文
         try:
             from xiaomei_brain.tools.builtin.send_message import set_context
@@ -1007,7 +1012,12 @@ class ConsciousLiving(Living):
         self._admin_thread = None
         self._admin_server = None
         ws_port = self._config.living.ws_port
-        if ws_port > 0:
+        if ws_port >= 0:  # >=0 启用（0=自动分配，>0=指定端口）
+            if ws_port == 0:
+                import socket
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.bind(("", 0))
+                    ws_port = s.getsockname()[1]
             from ..gateway.server import create_app
             import uvicorn
             ws_app = create_app(
@@ -1189,7 +1199,18 @@ class ConsciousLiving(Living):
             if self._load_consciousness:
                 si = self.consciousness.get_self_image()
                 self._dispatcher.tick(si)
-                executed = self._dispatcher.process_queue()
+
+                # 有动作才标记 WORKING，Layer2 在此期间跳过触发
+                if self._dispatcher._queue:
+                    self.consciousness._agent_state = "working"
+                    try:
+                        executed = self._dispatcher.process_queue()
+                    finally:
+                        self.consciousness._agent_state = "idle"
+                    if executed:
+                        self._dispatcher.display_action_summary()
+                else:
+                    executed = False
 
                 # 检查是否有 SLEEP 意图（agent 自己决定要睡了）
                 if self._has_sleep_intent(si):

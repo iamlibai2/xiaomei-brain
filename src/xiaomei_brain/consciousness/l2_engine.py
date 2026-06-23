@@ -649,7 +649,8 @@ class L2Engine:
                    "REASON: <理由，一句话>\n"
                    "TARGET_USER: <目标用户ID>（greet/care/express/talk 等主动消息必填，其他意图填 \"-\"）\n"
                    "TOPIC: <学习主题>（LEARN 意图必填！从你的 REASON 中提取要学什么，必须填）\n"
-                   "  其他意图不输出此行")
+                   "MESSAGE: <对话内容>（greet/care/express/talk 意图必填！直接输出你想说的话，50-300字，"
+                   "自然随意像朋友聊天，不要加引号。其他意图不输出此行）\n")
         return prompt
 
     @staticmethod
@@ -701,6 +702,10 @@ class L2Engine:
         topic_match = re.search(r"TOPIC:\s*(.+)", block_content)
         learn_topic = topic_match.group(1).strip() if topic_match else ""
 
+        # 解析 MESSAGE 字段（对话类意图预生成内容）
+        message_match = re.search(r"MESSAGE:\s*(.+)", block_content)
+        message = message_match.group(1).strip() if message_match else ""
+
         if intent_type == IntentType.LEARN and learn_topic:
             logger.info("[Consciousness L2] 意图: LEARN → %s", learn_topic)
 
@@ -718,6 +723,8 @@ class L2Engine:
         }
 
         params = {"learn_topic": learn_topic} if learn_topic else {}
+        if message:
+            params["message"] = message
         if target_user:
             params["user_id"] = target_user
 

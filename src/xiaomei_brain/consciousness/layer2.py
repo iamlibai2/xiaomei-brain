@@ -139,6 +139,7 @@ class Layer2DefaultNetwork:
                             logger.warning("[Layer2] tick_L2_intent(%s) 出错: %s", anomaly_type, e)
 
                     # L2 意图决策（"我该做什么"——欲望驱动 + 时间兜底）
+                    skip_l3 = False
                     if self._c._should_intent(agent_state):
                         ctx = "idle" if agent_state == "idle" else "periodic"
                         self._log(f"{ts} L2 意图决策触发 agent_state={agent_state} ctx={ctx}")
@@ -148,6 +149,12 @@ class Layer2DefaultNetwork:
                             intent = self._c.tick_L2_intent(ctx)
                             self._display_internal(intent=intent)
                             self._log(f"{ts} L2 tick_L2_intent({ctx}) 完成")
+                            # 如果 L2 决定睡眠，跳过同轮 L3（状态切换由主循环处理，DMN 线程看到的还是旧状态）
+                            if intent and getattr(intent, 'type', None):
+                                itype = intent.type.value if hasattr(intent.type, 'value') else str(intent.type)
+                                if itype.lower() == 'sleep':
+                                    skip_l3 = True
+                                    self._log(f"{ts} L2 intent=SLEEP → 跳过本轮 L3")
                         except Exception as e:
                             self._log(f"{ts} L2 tick_L2_intent({ctx}) ERROR: {e}")
                             logger.warning("[Layer2] tick_L2_intent(%s) 出错: %s", ctx, e)
@@ -179,8 +186,8 @@ class Layer2DefaultNetwork:
                             self._log(f"{ts} social_cognition ERROR: {e}")
                             logger.warning("[Layer2] social_cognition 出错: %s", e)
 
-                    # L3: 沉思（sleep guard 在 _should_l3() 内）
-                    if self._c._should_l3(agent_state):
+                    # L3: 沉思（sleep guard 在 _should_l3() 内，同轮 L2=SLEEP 也跳过）
+                    if not skip_l3 and self._c._should_l3(agent_state):
                         self._log(f"{ts} L3 触发 [沉思] agent_state={agent_state} → tick_L3")
                         logger.info("[Layer2] L3 触发（沉思，agent_state=%s）", agent_state)
                         self._c._last_l3_time = time.time()
