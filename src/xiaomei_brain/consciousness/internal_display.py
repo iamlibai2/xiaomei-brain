@@ -16,6 +16,30 @@ C_OK = "\033[38;5;203m"  # coral pink — 内部动作标题
 C_FREE = "\033[32m"       # green — 自由表达正文
 RESET = "\033[0m"
 
+# ── Rich Markdown 渲染 ────────────────────────────────────
+_rich_console: "Console | None" = None
+
+
+def _get_console():
+    """延迟初始化 Rich Console（避免导入开销）。"""
+    global _rich_console
+    if _rich_console is None:
+        from rich.console import Console
+        _rich_console = Console(highlight=False, markup=False)
+    return _rich_console
+
+
+def print_markdown(text: str, style: str = "") -> None:
+    """用 Rich 渲染 Markdown 文本并打印。
+
+    自动处理：粗体、列表、代码块、标题等 Markdown 语法。
+    style: 可选，Rich 样式字符串（如 "green"）。
+    """
+    from rich.markdown import Markdown
+    console = _get_console()
+    md = Markdown(text, code_theme="monokai")
+    console.print(md, soft_wrap=True, style=style)
+
 
 def print_section(title: str, subtitle: str = "", icon: str = "", color: str = "") -> None:
     """打印内部动作标题行（统一格式）。
@@ -229,13 +253,12 @@ class InternalDisplay:
             lines.append(f"🔍 记忆召回: {self._recall_count} 条（{tags_str}）")
 
         if self._memory_actions:
-            parts = []
-            for a in self._memory_actions:
+            lines.append("🧠 记忆操作:")
+            for i, a in enumerate(self._memory_actions, 1):
                 action = a.get("action", "?")
-                label = {"ADD": "新增", "UPDATE": "更新", "MERGE": "合并", "DELETE": "删除"}.get(action, action)
+                label = {"ADD": "新增", "UPDATE": "更新", "MERGE": "合并", "DELETE": "删除", "NOOP": "保留"}.get(action, action)
                 preview = a.get("preview", "")
-                parts.append(f'{label} "{preview}"')
-            lines.append("🧠 " + " · ".join(parts))
+                lines.append(f"  {label}记忆{i}: {preview}")
 
         if self._inner_voice_thought:
             thought = self._inner_voice_thought.replace("\n", " ").strip()
@@ -259,15 +282,15 @@ class InternalDisplay:
             lines.append(f"🔀 模式感知: {label}")
 
         if self._social_signal:
-            lines.append(f"👤 社交感知: {self._social_signal}")
+            lines.append(f"🤝  社交感知: {self._social_signal}")
         elif self._inner_voice_signal:
-            lines.append(f"👤 社交感知: {self._inner_voice_signal}")
+            lines.append(f"🤝  社交感知: {self._inner_voice_signal}")
 
         if self._social_events:
             lines.append("🎭 社交事件: " + " · ".join(self._social_events))
 
         if self._social_perception:
-            lines.append(f'👁 感知: "{self._social_perception}"')
+            lines.append(f'👁  感知: "{self._social_perception}"')
 
         if self._dag_msg_count:
             lines.append(f"📦 DAG: {self._dag_msg_count} 条消息 → 摘要 ({self._dag_summary_tokens} tokens)")
@@ -404,14 +427,16 @@ def _parse_memory_actions(memory_block: str) -> list[dict]:
     try:
         data = json.loads(block)
         if isinstance(data, dict) and "actions" in data:
-            return [
-                {
-                    "action": a.get("type", a.get("action", "?")),
-                    "preview": _truncate(a.get("content", "")),
-                }
-                for a in data["actions"]
-                if isinstance(a, dict)
-            ]
+            result = []
+            for a in data["actions"]:
+                if not isinstance(a, dict):
+                    continue
+                action = a.get("type", a.get("action", "?"))
+                content = a.get("content", "")
+                if action.upper() == "NOOP":
+                    content = a.get("reason", "") or a.get("tag", "") or content or "无意义/重复"
+                result.append({"action": action, "preview": _truncate(content)})
+            return result
     except (json.JSONDecodeError, TypeError):
         pass
 
@@ -425,15 +450,17 @@ def _parse_memory_actions(memory_block: str) -> list[dict]:
         if len(parts) < 2:
             continue
         action = parts[0].strip().upper()
-        if action not in ("ADD", "UPDATE", "MERGE", "DELETE"):
+        if action not in ("ADD", "UPDATE", "MERGE", "DELETE", "NOOP"):
             continue
         content = parts[2].strip() if len(parts) > 2 else ""
+        if not content:
+            content = parts[1].strip() if len(parts) > 1 else ""
         actions.append({"action": action, "preview": _truncate(content)})
 
     return actions
 
 
-def _truncate(text: str, max_len: int = 30) -> str:
+def _truncate(text: str, max_len: int = 60) -> str:
     t = text.replace("\n", " ").strip()
     if len(t) > max_len:
         return t[:max_len] + "…"

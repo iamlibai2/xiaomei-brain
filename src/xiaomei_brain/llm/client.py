@@ -223,6 +223,7 @@ class LLMClient:
         response.raise_for_status()
 
         try:
+            content_raw = ""
             for text, extra in self._transport.stream_iter(response, self._model_def, self._profile):
                 if text:
                     if not (extra and extra.get("is_reasoning")):
@@ -235,14 +236,19 @@ class LLMClient:
                         tool_calls_raw = extra["tool_calls"]
                     if extra.get("reasoning"):
                         reasoning_text = extra["reasoning"]
+                    if extra.get("content_raw"):
+                        content_raw = extra["content_raw"]
         except Exception as e:
             logger.warning("[LLM] Streaming failed: %s", e)
             raise
 
-        # 构建最终响应 — content 由 content_parts 累积（过滤 ANSI 控制字符）
-        content = "".join(c for c in content_parts
-                          if c not in ("\n", "\033[0m", "\033[0m\n\n", "\033[2m"))
-        content = ChatCompletionsTransport._strip_thinking(content)
+        # 构建最终响应 — 优先使用 content_raw（包含 <MEMORY> 块等完整内容）
+        if content_raw:
+            content = ChatCompletionsTransport._strip_thinking(content_raw)
+        else:
+            content = "".join(c for c in content_parts
+                              if c not in ("\n", "\033[0m", "\033[0m\n\n", "\033[2m"))
+            content = ChatCompletionsTransport._strip_thinking(content)
 
         try:
             content = content.encode("utf-8", "surrogatepass").decode("utf-8", "replace") if content else content

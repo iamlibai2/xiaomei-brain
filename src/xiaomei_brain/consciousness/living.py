@@ -201,6 +201,7 @@ class Living:
         # 回调。
         self.on_proactive: Callable[[Any], Any] | None = None
         self.on_chat_chunk: Callable[[str], Any] | None = None
+        self.on_chat_flush: Callable[[], Any] | None = None  # 段落 buffer flush
         self.on_confirm_required: Callable[[dict], Any] | None = None
 
         # CLI prompt flag.

@@ -179,9 +179,8 @@ class ConversationDriver:
         logger.info("[ConversationDriver] 聊天模式: %s", msg.content[:50])
         intent_result = IntentResult(
             intent_type=PurposeIntentType.CHAT, confidence=1.0, reasoning="聊天模式，跳过意图分析")
-        intent_context = gm.build_intent_context(intent_result)
-        gm.log_intent_context(intent_result, intent_context, msg.content)
-        self._run_chat(msg, intent_context)
+        gm.log_intent_context(intent_result, "", msg.content)
+        self._run_chat(msg, "")
 
     # ── Chat dispatch ─────────────────────────────────────────
 
@@ -255,6 +254,10 @@ class ConversationDriver:
                         if current_msg.session_id not in ("main", ""):
                             self._deliver_chunk(parent, current_msg.session_id, chunk)
                     content = "".join(chunks)
+                    # flush 段落缓冲（CLI markdown 渲染）
+                    on_chat_flush = getattr(parent, "on_chat_flush", None)
+                    if on_chat_flush:
+                        on_chat_flush()
                     elapsed = time.time() - t0
                     tc_count = agent.tool_call_buffer.last_index - tc_before
 

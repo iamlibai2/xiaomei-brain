@@ -721,12 +721,17 @@ class Consciousness:
                     messages=[{"role": "user", "content": prompt}],
                     tools=None,
                 )
-                full_report = resp.content or ""
-                logger.debug("[Consciousness L3] LLM 沉思 (%d 字):\n%s", len(full_report), full_report)
-                if full_report:
-                    from .internal_display import print_section
+                reasoning = resp.reasoning or ""
+                content = resp.content or ""
+                logger.debug("[Consciousness L3] LLM 沉思 (%d 字):\n%s", len(content), content)
+                if reasoning or content:
+                    from .internal_display import print_section, C_DIM, RESET
+                    from .internal_display import print_markdown
                     print_section("L3 沉思", icon="🕯️")
-                    print(full_report, flush=True)
+                    if reasoning:
+                        print(f"\033[2m{reasoning}{RESET}", flush=True)
+                    if content:
+                        print_markdown(content, style="color(73)")
 
                 # L3 沉思消耗更多能量
                 if self.drive:

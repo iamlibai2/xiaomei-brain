@@ -1164,6 +1164,15 @@ class ConsciousLiving(Living):
             self._heartbeat_result = HEARTBEAT_NORMAL
             self._tick_periodic(self.state)
 
+            # 0. 检查 LLM 存活（L2 线程挂了或欠费 → 进入 DORMANT）
+            if getattr(self.interoception, 'sos', False):
+                sos_msg = getattr(self.interoception, 'sos_message', 'LLM 致命错误') or 'LLM 致命错误'
+                logger.warning("[ConsciousLiving/IDLE] interoception SOS → DORMANT: %s", sos_msg)
+                self._print_section("进入休眠", f"LLM 不可用：{sos_msg}", icon="⏸️")
+                self._suspended_reason = sos_msg
+                self._transition(LivingState.DORMANT)
+                return
+
             # 1. 先检查消息
             msg = self._wait_message(self.tick_interval)
             if msg is not None:
@@ -1361,10 +1370,22 @@ class ConsciousLiving(Living):
     _RECOVER_CHECK_INTERVAL = 300  # 5 分钟探活一次
 
     def _loop_dormant(self) -> None:
-        """DORMANT 状态：死亡休眠，收到消息 → 复活。"""
+        """DORMANT 状态：死亡休眠，收到消息 → 复活。
+
+        LLM 致命错误（402）导致的暂停：先探活，未恢复则拒收消息。
+        其他原因导致的暂停：直接复活处理。
+        """
         msg = self._wait_message(timeout=self.tick_interval)
         if msg is not None:
+            # LLM 致命错误导致暂停 → 先探活再处理消息
+            if self._suspended_reason and "LLM" in self._suspended_reason:
+                if not self._probe_llm_health():
+                    logger.warning("[ConsciousLiving/DORMANT] LLM 未恢复，忽略消息: %.50s", msg.content)
+                    self._print_section("消息被搁置", f"LLM 未恢复，忽略: {msg.content[:40]}", icon="📪")
+                    self.send_sos_to_channels(f"LLM 余额不足，暂时无法处理消息: {msg.content[:80]}")
+                    return
             logger.info("[ConsciousLiving/DORMANT] 收到消息，复活")
+            self._print_section("从休眠中醒来", "收到消息，恢复活动", icon="💫")
             if self.drive:
                 self.drive.revive()
             self._suspended_reason = ""
@@ -1387,20 +1408,39 @@ class ConsciousLiving(Living):
             return
         if now - last >= self._RECOVER_CHECK_INTERVAL:
             self._last_recover_check = now
-            self._probe_llm_health()
+            if self._probe_llm_health():
+                self._print_section("恢复运行", "LLM 余额已恢复，L2 线程已重启", icon="🔄")
+                agent_name = getattr(self.agent, 'name', None) or self._agent_id
+                self.send_sos_to_channels(f"{agent_name} 已恢复运行")
+                self._suspended_reason = ""
+                self._on_wake_up()
+                self._transition(LivingState.AWAKE)
 
-    def _probe_llm_health(self) -> None:
-        """发送轻量 LLM 请求检查余额是否恢复。"""
+    def _probe_llm_health(self) -> bool:
+        """发送轻量 LLM 请求检查余额是否恢复。
+
+        Returns:
+            True 表示 LLM 已恢复，False 表示仍然不可用。
+        恢复时自动重启 L2 线程并清除 interoception SOS 标记。
+        """
         try:
             llm = self.agent.llm
             llm.chat(messages=[{"role": "user", "content": "hi"}], tools=None, log_level=logging.DEBUG)
             # 成功了 = 余额恢复
-            logger.info("[ConsciousLiving] LLM 探活成功，余额已恢复，复活")
-            self._suspended_reason = ""
-            agent_name = getattr(self.agent, 'name', None) or self._agent_id
-            self.send_sos_to_channels(f"{agent_name} 已恢复运行")
-            self._on_wake_up()
-            self._transition(LivingState.AWAKE)
+            logger.info("[ConsciousLiving] LLM 探活成功，余额已恢复")
+            # 重启 L2 DMN 线程（Python 线程不能 restart，创建新 Thread 对象）
+            if hasattr(self, '_layer2') and self._layer2:
+                self._layer2.start()
+                # 更新内感受的线程引用（新 Thread 对象）
+                self.interoception.set_threads({
+                    "layer0": self._layer0._thread,
+                    "layer2": self._layer2._thread,
+                })
+            # 清除 SOS 标记
+            self.interoception.sos = False
+            self.interoception.sos_message = ""
+            self.interoception.stress_level = "normal"
+            return True
         except FatalLLMError as e:
             if e.status_code == 402:
                 logger.debug("[ConsciousLiving] LLM 探活: 仍欠费 (%.0f分钟后重试)",
@@ -1409,6 +1449,7 @@ class ConsciousLiving(Living):
                 raise
         except Exception:
             logger.debug("[ConsciousLiving] LLM 探活: 网络异常，继续等待")
+        return False
 
     # ── Hooks ────────────────────────────────────────────────────
 

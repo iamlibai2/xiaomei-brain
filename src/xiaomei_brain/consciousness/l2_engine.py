@@ -217,7 +217,7 @@ class L2Engine:
                 emergence_prompt = self._build_l2_prompt(
                     context, user_name=user_name, conflict=conflict_desc,
                 )
-                emergence_text = self._call_emergence_react(llm, emergence_prompt)
+                emergence_text, reasoning_list = self._call_emergence_react(llm, emergence_prompt)
 
                 if c.drive:
                     c.drive.consume_energy(0.02)
@@ -234,12 +234,15 @@ class L2Engine:
                     c.self_image.contribute_self_doubts(doubts)
                     logger.info("[Consciousness L2] 自我不确定: %d 条", len(doubts))
 
-                # 终端展示内心独白（过滤 NARR 块）
-                if emergence_text:
-                    from .internal_display import C_FREE, RESET, print_section
-                    display_text = self._strip_narr(emergence_text)
+                # 终端展示内心独白（推理 dim + 正文 Rich Markdown 灰绿）
+                if reasoning_list or emergence_text:
+                    from .internal_display import C_DIM, RESET, print_section, print_markdown
                     print_section("内心独白", icon="✨")
-                    print(f"{C_FREE}{display_text}{RESET}", flush=True)
+                    for r in reasoning_list:
+                        print(f"\033[2m{r}{RESET}", flush=True)
+                    if emergence_text:
+                        display_text = self._strip_narr(emergence_text)
+                        print_markdown(display_text, style="color(73)")
 
                 # 清空累积变化
                 c._state_buffer.clear()
@@ -426,7 +429,7 @@ class L2Engine:
                         )
 
                 emergence_prompt = self._build_l2_prompt(context, user_name=user_name, conflict=conflict_desc)
-                emergence_text = self._call_emergence_react(llm, emergence_prompt)
+                emergence_text, reasoning_list = self._call_emergence_react(llm, emergence_prompt)
 
                 if c.drive:
                     c.drive.consume_energy(0.02)
@@ -443,13 +446,15 @@ class L2Engine:
                     c.self_image.contribute_self_doubts(doubts)
                     logger.info("[Consciousness L2] 自我不确定: %d 条", len(doubts))
 
-                # 分离 NARR 块（结构化叙事，展示时过滤）
-                display_text = self._strip_narr(emergence_text)
-
-                if display_text:
-                    from .internal_display import C_FREE, RESET, print_section
+                # 终端展示内心独白（推理 dim + 正文 Rich Markdown 灰绿）
+                if reasoning_list or emergence_text:
+                    from .internal_display import C_DIM, RESET, print_section, print_markdown
                     print_section("内心独白", icon="✨")
-                    print(f"{C_FREE}{display_text}{RESET}", flush=True)
+                    for r in reasoning_list:
+                        print(f"\033[2m{r}{RESET}", flush=True)
+                    if emergence_text:
+                        display_text = self._strip_narr(emergence_text)
+                        print_markdown(display_text, style="color(73)")
 
                 c._state_buffer.clear()
                 c.history.last_llm_fuel_time = time.time()
@@ -643,7 +648,8 @@ class L2Engine:
                    "INTENT: <意图类型>\n"
                    "REASON: <理由，一句话>\n"
                    "TARGET_USER: <目标用户ID>（greet/care/express/talk 等主动消息必填，其他意图填 \"-\"）\n"
-                   "TOPIC: <学习主题>（仅 LEARN 意图时需要，其他意图不输出此行）")
+                   "TOPIC: <学习主题>（LEARN 意图必填！从你的 REASON 中提取要学什么，必须填）\n"
+                   "  其他意图不输出此行")
         return prompt
 
     @staticmethod
@@ -657,8 +663,8 @@ class L2Engine:
         """展示意图决策的思考过程，过滤掉 ---INTENT--- 结构块。"""
         thinking = self._strip_block(response, "---INTENT---")
         if thinking:
-            from .internal_display import C_FREE, RESET
-            print(f"{C_FREE}{thinking}{RESET}", flush=True)
+            from .internal_display import print_markdown
+            print_markdown(thinking, style="color(73)")
 
     def _parse_intent_response(self, response: str) -> Intent | None:
         """解析 LLM 返回的意图。优先从 ---INTENT--- 块提取，兼容旧格式。"""
@@ -779,9 +785,15 @@ class L2Engine:
             format_appendix=L2_EMERGENCE_FORMAT_APPENDIX,
         )
 
-    def _call_emergence_react(self, llm, prompt: str, exclude_tools: set[str] | None = None) -> str:
-        """意识涌现 ReAct 循环（带探索工具），最多 2 轮工具调用。"""
+    def _call_emergence_react(self, llm, prompt: str, exclude_tools: set[str] | None = None) -> tuple[str, list[str]]:
+        """意识涌现 ReAct 循环（带探索工具），最多 2 轮工具调用。
+
+        Returns:
+            (content, reasoning_list) — content 为正文，reasoning_list 为各轮推理过程
+        """
         from ..tools.registry import ToolRegistry
+
+        all_reasoning: list[str] = []
 
         # 从 L2 独立 Agent 获取探索类工具
         l2_agent = self._get_l2_agent()
@@ -801,7 +813,9 @@ class L2Engine:
                 messages=[{"role": "user", "content": prompt}],
                 tools=None,
             )
-            return resp.content or ""
+            if resp.reasoning:
+                all_reasoning.append(resp.reasoning)
+            return (resp.content or "", all_reasoning)
 
         tmp_registry = ToolRegistry()
         for t in explore_tools:
@@ -813,6 +827,8 @@ class L2Engine:
         max_rounds = 2
         for _round in range(max_rounds):
             resp = llm.chat(messages=messages, tools=openai_tools)
+            if resp.reasoning:
+                all_reasoning.append(resp.reasoning)
 
             if resp.tool_calls:
                 assistant_msg = {
@@ -842,13 +858,15 @@ class L2Engine:
                     _round + 1, [tc.name for tc in resp.tool_calls],
                 )
             else:
-                return resp.content or ""
+                return (resp.content or "", all_reasoning)
 
         resp = llm.chat(
             messages=messages + [{"role": "user", "content": "请基于以上探索，输出你的内心独白。" + L2_EMERGENCE_FORMAT_APPENDIX}],
             tools=None,
         )
-        return resp.content or ""
+        if resp.reasoning:
+            all_reasoning.append(resp.reasoning)
+        return (resp.content or "", all_reasoning)
 
     # ── 后处理 ──────────────────────────────────────────────
 

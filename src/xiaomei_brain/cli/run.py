@@ -178,9 +178,47 @@ def _run_agent(
                 _pending_proactive.append((content, user_id))
 
     _in_thinking = False  # 跟踪 LLM 输出是否处于思考段
+    _para_buf = ""        # 段落缓冲（按 \n\n 拆分渲染）
+
+    # Rich console for paragraph-based markdown rendering
+    from rich.console import Console as _RichConsole
+    from rich.markdown import Markdown as _RichMarkdown
+    _rich_console = _RichConsole(highlight=False)
+
+    def _count_open_fences(text: str) -> int:
+        """统计代码围栏是否打开。返回1表示当前在围栏内（奇数个```）。"""
+        count = 0
+        for line in text.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("```") or stripped.startswith("~~~"):
+                count += 1
+        return count & 1
+
+    def _split_stable(text: str) -> tuple[str, str]:
+        """在代码围栏外的第一个 \\n\\n 处切分。返回 (paragraph, rest)。"""
+        idx = 0
+        while True:
+            pos = text.find("\n\n", idx)
+            if pos == -1:
+                return text, ""
+            before = text[:pos]
+            if not _count_open_fences(before):
+                return before, text[pos + 2:]
+            idx = pos + 2
+
+    def _render_para(text: str) -> None:
+        """渲染一个段落，交 Rich Markdown。"""
+        t = text.strip()
+        if t:
+            _rich_console.print(_RichMarkdown(t, code_theme="monokai"))
+
+    def _flush_para():
+        nonlocal _para_buf
+        _render_para(_para_buf)
+        _para_buf = ""
 
     def on_chat_chunk(chunk):
-        nonlocal _in_thinking
+        nonlocal _in_thinking, _para_buf
         with _stream_lock:
             # 思考段由 stream_iter 用 \033[2m (dim) 标记，保持原样
             if "\033[2m" in chunk:
@@ -189,17 +227,24 @@ def _run_agent(
                 _in_thinking = False
 
             if _in_thinking or "\033" in chunk:
-                # 思考内容 / ANSI 控制码：不变
+                # 思考内容 / ANSI 控制码：先 flush 缓冲的段落，再原样输出
+                _flush_para()
                 print(chunk, end="", flush=True)
-                # 思考结束后的第一个内容 chunk，输出浅灰色
-                if not _in_thinking and "\033[0m" in chunk:
-                    print(C_CONTENT, end="", flush=True)
             else:
-                # 正文内容：浅灰色
-                print(f"{C_CONTENT}{chunk}\033[0m", end="", flush=True)
+                _para_buf += chunk
+                # 段落边界：只在代码围栏外切分
+                while True:
+                    para, rest = _split_stable(_para_buf)
+                    if rest:
+                        _render_para(para)
+                        _rich_console.print()
+                        _para_buf = rest
+                    else:
+                        break
 
     living.on_proactive = on_proactive
     living.on_chat_chunk = on_chat_chunk
+    living.on_chat_flush = _flush_para
 
     thread = threading.Thread(target=living.run, daemon=True)
     thread.start()

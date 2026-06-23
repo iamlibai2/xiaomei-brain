@@ -82,6 +82,7 @@ class AgentLiving:
         # Channel callbacks
         self.on_proactive: Callable[[Any], Any] | None = None
         self.on_chat_chunk: Callable[[str], Any] | None = None
+        self.on_chat_flush: Callable[[], Any] | None = None  # 段落 buffer flush
 
         # ── Hooks ────────────────────────────────────────────────
         self.on_wake: Callable[[], Any] | None = None
@@ -254,6 +255,8 @@ class AgentLiving:
                 user_id=msg.user_id,
                 on_chunk=self.on_chat_chunk,
             )
+            if self.on_chat_flush:
+                self.on_chat_flush()
             if self.on_chat_chunk:
                 print()  # 换行，避免后续日志接在输出后面
             logger.info("[Living] Response: %s", content[:80].replace("\n", "\\n"))
