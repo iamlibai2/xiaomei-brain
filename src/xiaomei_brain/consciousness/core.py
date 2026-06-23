@@ -731,7 +731,7 @@ class Consciousness:
                     if reasoning:
                         print(f"\033[2m{reasoning}{RESET}", flush=True)
                     if content:
-                        print_markdown(content, style="color(73)")
+                        print_markdown(content, style="color(144)")
 
                 # L3 沉思消耗更多能量
                 if self.drive:
@@ -1003,6 +1003,10 @@ class Consciousness:
         si = self.self_image
         elapsed = time.time() - self._last_emerge_time
 
+        # SLEEPING/DREAMING 中不做意识涌现
+        if agent_state in ("sleeping", "dreaming"):
+            return False
+
         if si.body.energy < 0.2:
             return False
 
@@ -1061,7 +1065,7 @@ class Consciousness:
         """[deprecated] Use _should_intent() or _should_emerge() instead."""
         return self._should_intent(agent_state)
 
-    def _should_l3(self) -> bool:
+    def _should_l3(self, agent_state: str = "awake") -> bool:
         """判断是否应该触发 L3 沉思。
 
         L3 和 DREAMING 正交：任何状态都可触发（像人类沉思），
@@ -1069,6 +1073,10 @@ class Consciousness:
 
         条件：冷却 + 足够能量 + 累积素材充足。
         """
+        # SLEEPING/DREAMING 中不做沉思
+        if agent_state in ("sleeping", "dreaming"):
+            return False
+
         # 能量不足，无法沉思
         energy = self.self_image.body.energy
         if energy < 0.3:

@@ -179,8 +179,8 @@ class Layer2DefaultNetwork:
                             self._log(f"{ts} social_cognition ERROR: {e}")
                             logger.warning("[Layer2] social_cognition 出错: %s", e)
 
-                    # L3: 沉思（不在 DREAMING 中，由 _loop_dreaming 处理）
-                    if agent_state != "dreaming" and self._c._should_l3():
+                    # L3: 沉思（sleep guard 在 _should_l3() 内）
+                    if self._c._should_l3(agent_state):
                         self._log(f"{ts} L3 触发 [沉思] agent_state={agent_state} → tick_L3")
                         logger.info("[Layer2] L3 触发（沉思，agent_state=%s）", agent_state)
                         self._c._last_l3_time = time.time()

@@ -442,6 +442,8 @@ def _render_being(si) -> list[str]:
     lines: list[str] = ["\n<身份>"]
     if b.name:
         lines.append(f"你叫{b.name}。")
+    if b.gender:
+        lines.append(f"你的性别是{b.gender}。")
     if b.birth_date:
         lines.append(f"出生于{b.birth_date}。")
     if b.personality:

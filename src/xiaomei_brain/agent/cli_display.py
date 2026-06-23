@@ -9,6 +9,32 @@ import json
 from typing import Any
 
 
+# ── Internal ReAct result labels ──────────────────────────────
+
+_LABEL_STYLES: dict[str, tuple[str, str]] = {
+    "intent":   ("意图决策", "🧠"),
+    "alarm":    ("闹钟",     "⏰"),
+    "pleasure": ("PLEASURE", "😊"),
+    "work":     ("自由工作", "🔧"),
+    "comms":    ("Agent间",  "💬"),
+}
+
+
+def print_react_result(text: str, label: str = "") -> None:
+    """打印 react_nodb() 的最终结果（section header + Rich Markdown 正文）。
+
+    Args:
+        text: LLM 返回的最终文本
+        label: 标签（intent/alarm/pleasure/work/comms），控制 header 显示
+    """
+    from xiaomei_brain.consciousness.internal_display import print_section, print_markdown
+
+    label_name, label_icon = _LABEL_STYLES.get(label, ("", ""))
+    if label_name:
+        print_section(label_name, icon=label_icon)
+    print_markdown(text, style="color(144)")
+
+
 # ── Dynamic status hints ──────────────────────────────────────
 
 _HINTS: dict[str, str] = {

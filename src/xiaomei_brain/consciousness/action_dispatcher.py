@@ -1020,7 +1020,7 @@ class ActionExecutor:
             if goal_obj.is_completed():
                 logger.info("[ActionExecutor] 目标已完成: %s", goal_obj.description[:40])
                 if living.drive:
-                    living.drive.on_desire_satisfied("achievement", 0.3)
+                    living.drive.on_desire_satisfied("achievement", 0.1)
                 return True
             active_sub = goal_obj
 
@@ -1045,7 +1045,7 @@ class ActionExecutor:
         gm._run_pace(msg, intent_context)
 
         if living.drive:
-            living.drive.on_desire_satisfied("achievement", 0.3)
+            living.drive.on_desire_satisfied("achievement", 0.1)
         return True
 
     def _remind_progress_goal(self, goal) -> bool:

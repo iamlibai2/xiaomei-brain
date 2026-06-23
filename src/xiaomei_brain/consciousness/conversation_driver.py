@@ -506,13 +506,18 @@ class ConversationDriver:
 
             def _run():
                 try:
+                    logger.info("[ConversationDriver] DAG compact 开始 (session=%s)", _session_id)
                     _agent._auto_compact(_session_id, max_tokens=4000, messages=None)
                     count = _compact_data.get("compact_count", 0)
                     tokens = _compact_data.get("summary_tokens", 0)
                     if count:
+                        logger.info("[ConversationDriver] DAG compact 完成: %d msgs → summary (%d tokens)", count, tokens)
                         display.record_dag_compact(count, tokens)
+                    else:
+                        logger.debug("[ConversationDriver] DAG compact 跳过: 未达阈值")
                 except Exception as e:
-                    logger.debug("[ConversationDriver] DAG compact 失败: %s", e)
+                    import traceback
+                    logger.warning("[ConversationDriver] DAG compact 失败: %s\n%s", e, traceback.format_exc())
 
             threading.Thread(target=_run, daemon=True, name="dag_compact").start()
         except Exception as e:

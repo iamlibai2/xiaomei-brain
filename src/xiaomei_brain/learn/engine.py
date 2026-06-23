@@ -61,7 +61,7 @@ class LearningEngine:
         self._storage.save(topic, knowledge)
 
         if self._cl.drive:
-            self._cl.drive.on_desire_satisfied("cognition", 0.3)
+            self._cl.drive.on_desire_satisfied("cognition", 0.1)
 
         # 经验流：学到了什么
         try:

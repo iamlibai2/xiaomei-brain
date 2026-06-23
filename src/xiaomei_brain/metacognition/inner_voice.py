@@ -249,7 +249,7 @@ class InnerVoice:
                 logger.warning("[InnerVoice] on_insight 失败: %s", e)
         if curiosity > 0.3:
             try:
-                self._drive.on_curiosity(curiosity * 0.08)
+                self._drive.on_curiosity(curiosity * 0.15)
             except Exception as e:
                 logger.warning("[InnerVoice] on_curiosity 失败: %s", e)
         if boundary > 0.3:

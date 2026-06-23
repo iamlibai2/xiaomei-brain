@@ -39,6 +39,7 @@ class Being:
 
     # 基本身份
     name: str = ""
+    gender: str = ""
     birth_date: str = ""
     personality: str = ""
     learning_interests: list[str] = field(default_factory=list)
@@ -85,6 +86,7 @@ class Being:
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
+            "gender": self.gender,
             "birth_date": self.birth_date,
             "personality": self.personality,
             "learning_interests": self.learning_interests,
@@ -96,7 +98,7 @@ class Being:
     # 代理自 RelationshipEngine，不持久化到 SelfImage 快照。
 
     def from_dict(self, data: dict) -> None:
-        for key in ["name", "birth_date", "personality",
+        for key in ["name", "gender", "birth_date", "personality",
                      "learning_interests", "phase_goals", "self_cognition"]:
             if key in data:
                 setattr(self, key, data[key])
@@ -126,6 +128,8 @@ class Being:
         # 只映射 Being 自身的字段（活的部分）
         if "名字" in sections:
             self.name = self._extract_name(sections["名字"].strip())
+        if "性别" in sections:
+            self.gender = sections["性别"].strip()
         if "出生" in sections:
             self.birth_date = sections["出生"].strip()
         if "性格" in sections:

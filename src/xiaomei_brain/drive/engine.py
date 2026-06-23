@@ -338,7 +338,7 @@ class DriveEngine:
         self.motivation.expected_reward = self.motivation.expected_reward * (1 - weight) + progress * weight
 
         # 成就欲满足
-        self.desire.achievement = max(0.0, self.desire.achievement - 0.3)
+        self.desire.achievement = max(0.0, self.desire.achievement - 0.1)
         # 目标完成 → 确认存在价值
         self.desire.survival = min(1.0, self.desire.survival + 0.05)
 
@@ -489,7 +489,7 @@ class DriveEngine:
                 importance=0.4,
             )
 
-    def on_curiosity(self, amount: float = 0.08) -> None:
+    def on_curiosity(self, amount: float = 0.15) -> None:
         """
         好奇心被激发（探索/搜索/学习新知识）。
 

@@ -12,6 +12,7 @@ import logging
 import os
 import readline
 import select
+import shutil
 import sys
 import threading
 import time
@@ -168,15 +169,6 @@ def _run_agent(
     _pending_proactive: list[tuple[str, str]] = []  # [(content, user_id), ...]
     _MAX_PENDING = 200  # 防止长时间未登录积压大量消息
 
-    def on_proactive(content, user_id=""):
-        with _stream_lock:
-            if _login_done.is_set():
-                print(f"\n{C_ACCENT}[{agent_name}]\033[0m {content}\n", end="", flush=True)
-            else:
-                if len(_pending_proactive) >= _MAX_PENDING:
-                    _pending_proactive.pop(0)
-                _pending_proactive.append((content, user_id))
-
     _in_thinking = False  # 跟踪 LLM 输出是否处于思考段
     _para_buf = ""        # 段落缓冲（按 \n\n 拆分渲染）
 
@@ -184,6 +176,23 @@ def _run_agent(
     from rich.console import Console as _RichConsole
     from rich.markdown import Markdown as _RichMarkdown
     _rich_console = _RichConsole(highlight=False)
+
+    _term_width = shutil.get_terminal_size().columns
+
+    def _render_proactive(content: str) -> None:
+        """以对话回复统一格式渲染主动消息。"""
+        print("\n\033[90m" + "─" * _term_width + "\033[0m", flush=True)
+        print(f"  \033[38;5;203m{agent_name}\033[0m: ", end="", flush=True)
+        _rich_console.print(_RichMarkdown(content, code_theme="monokai"))
+
+    def on_proactive(content, user_id=""):
+        with _stream_lock:
+            if _login_done.is_set():
+                _render_proactive(content)
+            else:
+                if len(_pending_proactive) >= _MAX_PENDING:
+                    _pending_proactive.pop(0)
+                _pending_proactive.append((content, user_id))
 
     def _count_open_fences(text: str) -> int:
         """统计代码围栏是否打开。返回1表示当前在围栏内（奇数个```）。"""
@@ -341,7 +350,7 @@ def _run_agent(
                 others.append((content, uid))
         _pending_proactive[:] = others
     for content in own:
-        print(f"\n{C_ACCENT}[{agent_name}]\033[0m {content}\n", end="", flush=True)
+        _render_proactive(content)
 
     _exiting = False  # 防止退出阶段重复触发
     _DOUBLE_PRESS_WINDOW = 2.0
@@ -515,7 +524,7 @@ def cmd_run(args: list[str]) -> None:
         datefmt="%H:%M:%S",
         stream=sys.stderr,
     )
-    logging.getLogger().handlers[0].setLevel(logging.INFO)
+    logging.getLogger().handlers[0].setLevel(logging.WARNING)
 
     agent_log_dir = os.path.expanduser(f"~/.xiaomei-brain/{agent_id}/logs")
     os.makedirs(agent_log_dir, exist_ok=True)

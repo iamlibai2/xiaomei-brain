@@ -242,7 +242,7 @@ class L2Engine:
                         print(f"\033[2m{r}{RESET}", flush=True)
                     if emergence_text:
                         display_text = self._strip_narr(emergence_text)
-                        print_markdown(display_text, style="color(73)")
+                        print_markdown(display_text, style="color(144)")
 
                 # 清空累积变化
                 c._state_buffer.clear()
@@ -454,7 +454,7 @@ class L2Engine:
                         print(f"\033[2m{r}{RESET}", flush=True)
                     if emergence_text:
                         display_text = self._strip_narr(emergence_text)
-                        print_markdown(display_text, style="color(73)")
+                        print_markdown(display_text, style="color(144)")
 
                 c._state_buffer.clear()
                 c.history.last_llm_fuel_time = time.time()
@@ -664,7 +664,7 @@ class L2Engine:
         thinking = self._strip_block(response, "---INTENT---")
         if thinking:
             from .internal_display import print_markdown
-            print_markdown(thinking, style="color(73)")
+            print_markdown(thinking, style="color(144)")
 
     def _parse_intent_response(self, response: str) -> Intent | None:
         """解析 LLM 返回的意图。优先从 ---INTENT--- 块提取，兼容旧格式。"""

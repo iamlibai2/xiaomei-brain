@@ -720,6 +720,8 @@ class MemoryConsole:
         b = si.being
         lines.append(f"\n  {G}身份{R}")
         lines.append(f"  {D}名称{R}        {V}{b.name}{R}")
+        if b.gender:
+            lines.append(f"  {D}性别{R}        {V}{b.gender}{R}")
         lines.append(f"  {D}性格{R}        {X}{b.personality}{R}")
         lines.append(f"  {D}当前对话者{R}  {V}{si.current_user_name or '—'}{R}")
 

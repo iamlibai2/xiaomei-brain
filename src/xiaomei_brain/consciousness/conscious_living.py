@@ -1795,20 +1795,24 @@ class ConsciousLiving(Living):
             logger.debug("[ConsciousLiving/Proactive] agent.messages 合并失败: %s", e)
 
         # Router 优先：按用户最近活跃渠道分发
+        # CLI 渠道走 on_proactive 回调（Rich Markdown 格式化），
+        # 其他渠道（WS/飞书等）走 Router.deliver()
         if hasattr(self, '_router') and self._router:
-            route = self._router.route_for_user(target_user)
-            if route:
-                text = re.sub(r'\x1b\[[0-9;]*m', '', content) if route.type != "cli" else content
-                if self._router.deliver(text, route):
+            for try_session in (True, False):
+                route = (
+                    self._router.route_for_user(target_user) if try_session
+                    else self._router.route_for_session(self.session_id)
+                )
+                if route and route.type == "cli" and self.on_proactive:
+                    self.on_proactive(content, target_user)
                     return
-            # 无活跃记录时回退到 session 路由
-            route = self._router.route_for_session(self.session_id)
-            if route:
-                text = re.sub(r'\x1b\[[0-9;]*m', '', content) if route.type != "cli" else content
-                if self._router.deliver(text, route):
-                    return
+                if route and route.type != "cli":
+                    text = re.sub(r'\x1b\[[0-9;]*m', '', content)
+                    if self._router.deliver(text, route):
+                        return
+            # 非 CLI 路由没配上 → 下面的兜底
 
-        # 兜底：on_proactive 回调（CLI 登录缓冲等场景）
+        # 兜底：on_proactive 回调 / 裸 print
         if self.on_proactive:
             self.on_proactive(content, target_user)
         else:

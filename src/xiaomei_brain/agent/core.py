@@ -112,12 +112,11 @@ class Agent:
             if messages is not None:
                 unsummarized = self._unsummarized_from_messages(session_id, messages)
             else:
-                cfg = self._get_ctx_cfg()
                 unsummarized = self.dag.get_unsummarized_messages(
                     session_id, limit=100,
-                    since=time.time() - cfg.get("compact_time_window", 7200.0),
                 )
             if not unsummarized:
+                logger.debug("[DAG] Auto compact: no unsummarized messages")
                 return
 
             cfg = self._get_ctx_cfg()
@@ -233,20 +232,14 @@ class Agent:
             # 缓存当前完整上下文（供 context 命令使用）
             self._last_all_messages = all_messages
 
-            # Append MEMORY_DECISION_PROMPT to the last user message (MiniMax follows user message better)
-            appended = False
-            for i in range(len(all_messages) - 1, -1, -1):
-                if all_messages[i].get("role") == "user":
-                    all_messages[i] = dict(all_messages[i])
-                    mem_prompt = MEMORY_DECISION_PROMPT.format(user_name=self.user_display_name)
-                    all_messages[i]["content"] = append_to_content(all_messages[i]["content"], mem_prompt)
-                    appended = True
-                    content_repr = all_messages[i]["content"]
-                    content_len = len(content_repr) if isinstance(content_repr, str) else sum(len(str(p)) for p in content_repr)
-                    logger.info("[Memory] appended MEMORY_DECISION_PROMPT to msg[%d], content_len=%d", i, content_len)
-                    break
-            if not appended:
-                logger.warning("[Memory] No user message found to append MEMORY_DECISION_PROMPT")
+            # Inject MEMORY_DECISION_PROMPT into system message (not user message)
+            mem_prompt = MEMORY_DECISION_PROMPT.format(user_name=self.user_display_name)
+            if all_messages and all_messages[0].get("role") == "system":
+                all_messages[0] = dict(all_messages[0])
+                all_messages[0]["content"] = all_messages[0]["content"] + "\n\n" + mem_prompt
+                logger.info("[Memory] injected MEMORY_DECISION_PROMPT into system message")
+            else:
+                logger.warning("[Memory] No system message found for MEMORY_DECISION_PROMPT")
 
             # Clean surrogate characters from all message content before sending to LLM
             all_messages = clean_messages(all_messages)
@@ -481,15 +474,6 @@ class Agent:
 
         yield "Agent reached maximum steps without producing a final answer."
 
-    # ── 颜色标签映射 ──
-    _LABEL_STYLES: dict[str, tuple[str, str]] = {
-        "intent":   ("\033[33m", "意图决策"),   # Yellow
-        "alarm":    ("\033[34m", "闹钟"),        # Blue
-        "pleasure": ("\033[32m", "PLEASURE"),    # Green
-        "work":     ("\033[34m", "自由工作"),    # Blue
-        "comms":    ("\033[35m", "Agent间"),     # Magenta
-    }
-
     def react_nodb(
         self,
         messages: list[dict[str, Any]],
@@ -515,7 +499,7 @@ class Agent:
 
         from xiaomei_brain.agent.cli_display import (
             get_hint, print_tool_call, print_tool_result,
-            print_edit_diff, print_write_result,
+            print_edit_diff, print_write_result, print_react_result,
         )
 
         openai_tools = self.tools.to_openai_tools() if self.tools.list_tools() else None
@@ -523,9 +507,6 @@ class Agent:
         _last_tool = ""
         _tool_failure_counts: dict[tuple, int] = {}
         _idx = 0
-
-        _color, _label_name = self._LABEL_STYLES.get(label, ("", ""))
-        _reset = "\033[0m"
 
         for step in range(max_steps):
             if cancel_check and cancel_check():
@@ -626,9 +607,7 @@ class Agent:
                 final_text = response.content or response.reasoning or ""
                 if final_text:
                     if not silent:
-                        if _label_name:
-                            print(f"\n{_color}── {_label_name} ──{_reset}", flush=True)
-                        print(f"{_color}{final_text}{_reset}", flush=True)
+                        print_react_result(final_text, label)
 
                 # Co-write final result to experience stream
                 if exp_stream and final_text:
@@ -649,9 +628,7 @@ class Agent:
         resp = self.llm.chat(messages=all_messages, tools=None)
         final_text = resp.content or resp.reasoning or ""
         if final_text and not silent:
-            if _label_name:
-                print(f"\n{_color}── {_label_name} ──{_reset}", flush=True)
-            print(f"{_color}{final_text}{_reset}", flush=True)
+            print_react_result(final_text, label)
 
         # Co-write to experience stream (fallback path)
         if exp_stream and final_text:

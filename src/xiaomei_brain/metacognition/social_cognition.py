@@ -308,7 +308,7 @@ class SocialCognition:
         expression = events.get("expression_urge", 0)
 
         if curiosity > 0.3:
-            self._drive.on_curiosity(curiosity * 0.08)
+            self._drive.on_curiosity(curiosity * 0.15)
         if expression > 0.3:
             self._drive.on_insight(expression * 0.1)
 

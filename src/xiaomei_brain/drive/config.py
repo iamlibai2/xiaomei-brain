@@ -26,7 +26,7 @@ class DesireConfig:
     """欲望配置"""
     # 基础张力（初始值）
     survival: float = 0.3
-    achievement: float = 0.5
+    achievement: float = 0.8
     belonging: float = 0.5
     cognition: float = 0.6
     expression: float = 0.4
