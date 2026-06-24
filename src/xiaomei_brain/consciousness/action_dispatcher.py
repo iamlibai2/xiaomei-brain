@@ -84,9 +84,13 @@ class ActionExecutor:
             es = getattr(agent_core, "exp_stream", None)
             if es:
                 try:
+                    # 摘要化：只取第一句，避免几百字原文塞入经验流
+                    summary = content.split("。")[0].strip()
+                    if len(summary) > 80:
+                        summary = summary[:80] + "…"
                     es.log(
                         type="internal_action",
-                        content=f"{intent_type or source}: {content[:200]}",
+                        content=f"{intent_type or source}: {summary}",
                         importance=0.4,
                     )
                 except Exception as e:

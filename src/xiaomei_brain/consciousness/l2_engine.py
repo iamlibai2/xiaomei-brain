@@ -1030,10 +1030,15 @@ class L2Engine:
             return
         c = self._c
 
-        logger.info("[Consciousness L2] 内心独白已存储 (%d 字)", len(emergence_text))
-        if c.agent and hasattr(c.agent, "longterm_memory") and c.agent.longterm_memory and emergence_text:
+        # 剥离 NARR/DOUBT 等结构化块，只保留纯内心独白
+        clean_text = self._strip_narr(emergence_text)
+        # DOUBT 块也剥离（和 NARR 一样是结构化输出，不应混入独白）
+        if "---DOUBT---" in clean_text:
+            clean_text, _ = self._split_doubt(clean_text)
+        logger.info("[Consciousness L2] 内心独白已存储 (%d 字)", len(clean_text))
+        if c.agent and hasattr(c.agent, "longterm_memory") and c.agent.longterm_memory and clean_text:
             c.agent.longterm_memory.store_narrative(
-                content=emergence_text,
+                content=clean_text,
                 trigger='L2_light',
                 energy_level=c.body.energy if c.self_image else None,
                 user_idle_duration=c.perception.user_idle_duration if c.self_image else None,
@@ -1123,9 +1128,15 @@ class L2Engine:
             except Exception as e:
                 logger.debug("[L2 ExpStream] intent write failed: %s", e)
 
-        # 意识涌现摘要（取第一句，不存完整独白）
+        # 意识涌现摘要（取第一句，不存完整独白；先剥离 NARR/DOUBT 结构化块）
         if emergence_text and len(emergence_text) > 20:
-            first_line = emergence_text.split("\n")[0].strip()
+            clean = self._strip_narr(emergence_text)
+            if "---DOUBT---" in clean:
+                clean, _ = self._split_doubt(clean)
+            first_line = clean.split("\n")[0].strip()
+            # 剥离后为空或只剩分隔符 → 跳过（纯 NARR 块，没有实质独白）
+            if not first_line or first_line in ("---",):
+                return
             if len(first_line) > 120:
                 # 找第一个自然断句点
                 for sep in ("。", "？", "！", "…"):

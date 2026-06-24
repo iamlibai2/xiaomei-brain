@@ -618,7 +618,7 @@ class Agent:
                 if summarize:
                     summary = self._summarize_react_trace(all_messages, final_text)
                     if summary and exp_stream:
-                        _co_write(exp_stream, "react_summary", summary, {"label": label})
+                        _co_write(exp_stream, "react_summary", summary[:120], {"label": label})
                 elif exp_stream:
                     _co_write(exp_stream, "internal_action", final_text, {"label": label})
 
@@ -637,7 +637,7 @@ class Agent:
             if summarize:
                 summary = self._summarize_react_trace(all_messages, final_text)
                 if summary and exp_stream:
-                    _co_write(exp_stream, "react_summary", summary, {"label": label})
+                    _co_write(exp_stream, "react_summary", summary[:120], {"label": label})
             elif exp_stream:
                 _co_write(exp_stream, "internal_action", final_text, {"label": label})
 
@@ -650,7 +650,7 @@ class Agent:
         """用一次非工具 LLM 调用生成 ReAct 过程的 2-3 句摘要。"""
         summary_prompt = {
             "role": "user",
-            "content": "请用2-3句话总结你刚刚做了什么，包括关键步骤和最终结论。不要调用工具。",
+            "content": "请用2-3句话（不超过80字）总结你刚刚做了什么，只写关键步骤和最终结论。不要调用工具。",
         }
         try:
             msgs = clean_messages(messages + [summary_prompt])

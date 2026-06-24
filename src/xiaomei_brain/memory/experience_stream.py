@@ -154,6 +154,7 @@ class ExperienceStream(SQLiteStore):
         limit: int = 50,
         session_id: str | None = None,
         types: list[str] | None = None,
+        exclude_types: list[str] | None = None,
         user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """获取最近 N 条经验。
@@ -161,7 +162,8 @@ class ExperienceStream(SQLiteStore):
         Args:
             limit: 最大返回条数
             session_id: 可选，按会话过滤
-            types: 可选，按类型过滤
+            types: 可选，按类型过滤（白名单）
+            exclude_types: 可选，排除的类型（黑名单）
             user_id: 可选，按用户过滤（不传则不过滤）
 
         Returns:
@@ -184,6 +186,11 @@ class ExperienceStream(SQLiteStore):
             placeholders = ",".join("?" * len(types))
             sql += f" AND type IN ({placeholders})"
             params.extend(types)
+
+        if exclude_types:
+            placeholders = ",".join("?" * len(exclude_types))
+            sql += f" AND type NOT IN ({placeholders})"
+            params.extend(exclude_types)
 
         sql += " ORDER BY created_at DESC LIMIT ?"
         params.append(limit)

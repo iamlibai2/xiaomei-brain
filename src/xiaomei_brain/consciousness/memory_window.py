@@ -282,15 +282,19 @@ def refresh_memory_window(
     # ── 11. 经验流（统一时间线）────────────────────────
     if exp_stream:
         try:
-            experience_timeline = exp_stream.get_recent(limit=50, user_id=user_id)
+            experience_timeline = exp_stream.get_recent(
+                limit=50, user_id=user_id,
+                exclude_types=["tool_exec", "user_msg", "assistant_msg"],
+            )
         except Exception as e:
             logger.warning("[MemoryWindow] 经验流获取失败: %s", e)
 
-    # ── 11b. 今日关键节点（从经验流提取）──────────────
+    # ── 11b. 今日关键节点（从经验流提取，需要 tool_exec/user_msg）──
     milestones: list[dict] = []
-    if experience_timeline:
+    if exp_stream:
         try:
-            milestones = extract_milestones(experience_timeline)
+            raw_events = exp_stream.get_recent(limit=100, user_id=user_id)
+            milestones = extract_milestones(raw_events)
         except Exception as e:
             logger.warning("[MemoryWindow] 今日关键节点提取失败: %s", e)
 

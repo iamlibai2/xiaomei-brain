@@ -986,7 +986,7 @@ def _render_experience_timeline(si) -> list[str]:
     }
 
     lines = ["\n<经验流>"]
-    for entry in reversed(timeline[:20]):
+    for entry in reversed(timeline[:50]):
         etype = entry.get("type", "")
         if etype in ("tool_exec", "user_msg", "assistant_msg"):
             continue
