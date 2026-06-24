@@ -190,6 +190,7 @@ class Consciousness:
         self._l3_engine: L3Engine | None = None
         self._l4_engine: L4Engine | None = None
         self._last_l4_time: float = time.time()      # 启动后等冷却才触发 L4
+        self._last_emotion_snapshot: dict[str, float] = {}  # 上次情绪快照（波动检测用）
 
     def init_procedure_memory(self, db_path: str | None = None) -> None:
         """Initialize ProcedureMemory. Call after agent is set up."""
@@ -777,6 +778,16 @@ class Consciousness:
         # 皮质醇偏高
         if drive.hormone.cortisol > self._cc.l4_cortisol_threshold:
             return True
+
+        # 情绪波动：任一情绪相较于上次快照变化 > 0.2
+        current_emotions = dict(drive.emotion.emotions)
+        if self._last_emotion_snapshot:
+            for name, value in current_emotions.items():
+                prev = self._last_emotion_snapshot.get(name, 0.0)
+                if abs(value - prev) > 0.2:
+                    self._last_emotion_snapshot = current_emotions
+                    return True
+        self._last_emotion_snapshot = current_emotions
 
         return False
 
