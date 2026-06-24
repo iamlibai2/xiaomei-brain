@@ -38,9 +38,10 @@ from .intent import Intent, IntentType, create_wait_intent, create_greet_intent,
 from .config import ConsciousnessConfig
 from .memory_window import refresh_memory_window
 from .l2_engine import L2Engine
+from .l3_engine import L3Engine
+from .l4_engine import L4Engine
 from .state_buffer import StateChangeBuffer
 from ..purpose import PurposeEngine
-from ..prompts import CONSCIOUSNESS_PROMPT_DEEP
 from ..memory.procedure import ProcedureMemory
 
 logger = logging.getLogger(__name__)
@@ -186,6 +187,9 @@ class Consciousness:
 
         # L2 引擎（延迟初始化）
         self._l2_engine: L2Engine | None = None
+        self._l3_engine: L3Engine | None = None
+        self._l4_engine: L4Engine | None = None
+        self._last_l4_time: float = time.time()      # 启动后等冷却才触发 L4
 
     def init_procedure_memory(self, db_path: str | None = None) -> None:
         """Initialize ProcedureMemory. Call after agent is set up."""
@@ -703,140 +707,78 @@ class Consciousness:
     # ── L3: LLM 沉思（清醒态，独立于梦境） ───────────────────────────
 
     def tick_L3(self) -> ConsciousnessReport:
-        """LLM 沉思（清醒态，独立于梦境）。
-
-        完整 LLM 调用，让火焰深度燃烧。
-        不规定格式，让 LLM 自由涌现完整意识报告。
-        与梦境（DreamEngine._run_dream_burn）是不同的路径。
-        """
-        # 构建深度意识 prompt（含 Drive/Purpose/Memory 状态）
-        prompt = self._build_deep_prompt()
-
-        # 调用LLM（真正的燃烧）
-        full_report = ""
-        llm = getattr(self.agent, "llm", None)
-        if llm:
-            try:
-                resp = llm.chat(
-                    messages=[{"role": "user", "content": prompt}],
-                    tools=None,
-                )
-                reasoning = resp.reasoning or ""
-                content = resp.content or ""
-                logger.debug("[Consciousness L3] LLM 沉思 (%d 字):\n%s", len(content), content)
-                if reasoning or content:
-                    from .internal_display import print_section, C_DIM, RESET
-                    from .internal_display import print_markdown
-                    print_section("L3 沉思", icon="🕯️")
-                    if reasoning:
-                        print(f"\033[2m{reasoning}{RESET}", flush=True)
-                    if content:
-                        print_markdown(content, style="color(144)")
-
-                # L3 沉思消耗更多能量
-                if self.drive:
-                    self.drive.consume_energy(0.1)
-            except Exception as e:
-                logger.warning("[Consciousness L3] LLM调用失败: %s", e)
-                full_report = self._fallback_deep_report()
-
-        # 提取摘要（不强制格式）
-        summary = self._extract_summary(full_report)
-
-        # 更新火焰状态（内存）
-        self.history.last_l3_summary = summary
-        # 燃烧后能量恢复（通过 Drive）
-        if self.drive:
-            self.drive.restore_energy(0.2)
+        """LLM 沉思（清醒态，独立于梦境）→ 委托给 L3Engine。"""
+        if self._l3_engine is None:
+            self._l3_engine = L3Engine(self)
+        report = self._l3_engine.tick_l3()
         self._state_buffer.clear()
-
-        self.history.update_l3_summary(summary)
-
-        # 生成报告
-        report = ConsciousnessReport(
-            trigger="L3",
-            depth="deep",
-            summary=summary,
-            full_report=full_report,
-            self_image_snapshot=self.self_image.to_dict(),
-            anomaly=detect_anomaly(self.self_image),
-        )
-
-        self._last_report = report
-
-        # 存储
-        if self._storage:
-            self._storage.save(report)
-
-        # 写入统一叙事（L3 沉思完整报告）
-        if self.agent and hasattr(self.agent, "longterm_memory") and self.agent.longterm_memory and full_report:
-            self.agent.longterm_memory.store_narrative(
-                content=full_report[:500],
-                trigger='L3_deep',
-                energy_level=self.body.energy if self.self_image else None,
-                user_idle_duration=self.perception.user_idle_duration if self.self_image else None,
-                user_id=getattr(self.agent, "user_id", "global"),
-            )
-
         return report
 
-    def _build_deep_prompt(self) -> str:
-        """构建深度意识 prompt"""
-        si = self.self_image
-        time_info = datetime.now().strftime("%Y-%m-%d %H:%M")
+    def _get_l3_engine(self) -> L3Engine:
+        """懒初始化 L3Engine。"""
+        if self._l3_engine is None:
+            self._l3_engine = L3Engine(self)
+        return self._l3_engine
 
-        # 获取最近记忆
-        recent_memories = []
-        if self.agent and hasattr(self.agent, "longterm_memory"):
-            ltm = self.agent.longterm_memory
-            if ltm:
-                try:
-                    for m in ltm.get_recent(5):
-                        recent_memories.append(m.get("content", "")[:50])
-                except Exception as e:
-                    logger.warning("[L3] 获取最近记忆失败: %s", e)
+    # ── L4: 深度联想（低频，多次 LLM 调用） ───────────────────────
 
-        # 内部叙事：直接用 L1 消化后的自我感知（不再重复读 ltm）
-        internal_parts = [
-            t for t in [si.history.emotional_trajectory, si.history.goal_rhythm, si.history.consciousness_rhythm]
-            if t
-        ]
-        internal_narratives_text = "".join(internal_parts) if internal_parts else ""
+    def tick_L4(self):
+        """L4 深度联想 → 委托给 L4Engine。"""
+        if self._l4_engine is None:
+            self._l4_engine = L4Engine(self)
+        report = self._l4_engine.run()
+        return report
 
-        # Drive 状态（L3 独立 LLM 调用，不经过 system prompt，需直接注入数值）
-        drive_state_text = ""
-        if self.drive:
-            h = self.drive.hormone
-            d = self.drive.desire
-            drive_state_text = (
-                f"多巴胺{h.dopamine:.2f} 血清素{h.serotonin:.2f} 皮质醇{h.cortisol:.2f} "
-                f"催产素{h.oxytocin:.2f} 去甲肾上腺素{h.norepinephrine:.2f} | "
-                f"欲望：生存{d.survival:.2f} 归属{d.belonging:.2f} 认知{d.cognition:.2f} "
-                f"成就{d.achievement:.2f} 表达{d.expression:.2f}"
-            )
+    def _should_l4(self, agent_state: str = "awake") -> bool:
+        """判断是否应该触发 L4 深度联想。
 
-        # Purpose 状态文本（目标）
-        purpose_state_text = ""
-        if self.purpose:
-            purpose_state_text = self.purpose.get_state_summary()
+        条件：冷却 + 足够能量 + 有素材。
+        """
+        # SLEEPING/DREAMING/WORKING 中不做深度联想（成本高）
+        if agent_state in ("sleeping", "dreaming", "working"):
+            return False
 
-        return CONSCIOUSNESS_PROMPT_DEEP.format(
-            identity=si.being.name,
-            time_info=time_info,
-            mood=si.body.mood,
-            energy=f"{si.body.energy:.2f}",
-            drive_state=drive_state_text or "状态平稳",
-            user_last_active=datetime.fromtimestamp(si.perception.last_user_activity_time).strftime("%H:%M") if si.perception.last_user_activity_time > 0 else "未知",
-            user_idle=int(si.perception.user_idle_duration / 60),  # 分钟
-            trust_level=f"{si.being.trust_level:.2f}",
-            relationship_depth=f"{si.being.relationship_depth:.2f}",
-            goal=si.mind.primary_goal,
-            goal_progress=f"{si.mind.goal_progress:.2f}",
-            memory_count=si.mind.memory_count,
-            recent_memories="；".join(recent_memories) or "无",
-            internal_narratives=internal_narratives_text or "无",
-            anomaly=detect_anomaly(si) or "无",
-        )
+        # 能量不足
+        energy = self.self_image.body.energy
+        if energy < 0.3:
+            return False
+
+        # 冷却检查
+        elapsed_since_last = time.time() - self._last_l4_time
+        if elapsed_since_last < self._cc.l4_cooldown:
+            return False
+
+        # 有张力素材
+        if self._has_l4_tension():
+            return True
+
+        # 时间兜底
+        if elapsed_since_last >= self._cc.l4_timeout:
+            return True
+
+        return False
+
+    def _has_l4_tension(self) -> bool:
+        """检查是否有足够的张力驱动 L4。"""
+        drive = self.drive
+        if not drive:
+            return False
+
+        # 欲望超阈值
+        for d in [
+            drive.desire.belonging,
+            drive.desire.cognition,
+            drive.desire.achievement,
+            drive.desire.expression,
+        ]:
+            if d > self._cc.l4_desire_threshold:
+                return True
+
+        # 皮质醇偏高
+        if drive.hormone.cortisol > self._cc.l4_cortisol_threshold:
+            return True
+
+        return False
 
     def _fallback_light_report(self) -> ConsciousnessReport:
         """规则生成轻度报告（不适合 L3 时的 fallback）"""
@@ -852,35 +794,6 @@ class Consciousness:
             self_image_snapshot=si.to_dict(),
             anomaly=None,
         )
-
-    def _fallback_deep_report(self) -> str:
-        """规则生成深度报告（LLM 失败时）"""
-        si = self.self_image
-        time_info = datetime.now().strftime("%H:%M")
-
-        lines = [
-            f"现在是{time_info}。",
-            f"我（{si.being.name}）的意识运行了{int(self.history.consciousness_age)}秒。",
-            f"我的情绪基调是{si.body.mood}，能量水平{si.body.energy:.2f}。",
-            f"对方最后活跃在{datetime.fromtimestamp(si.perception.last_user_activity_time).strftime('%H:%M') if si.perception.last_user_activity_time > 0 else '很久前'}，",
-            f"已经空闲{int(si.perception.user_idle_duration / 60)}分钟。",
-            f"我的目标是{si.mind.primary_goal}，进展{si.mind.goal_progress:.2f}。",
-            f"我目前有{si.mind.memory_count}条长期记忆。",
-        ]
-
-        return "\n".join(lines)
-
-    def _extract_summary(self, full_report: str) -> str:
-        """从完整报告提取摘要"""
-        if not full_report:
-            return ""
-        # 取前50字符或第一句
-        for sep in ["。", "\n", "！", "？"]:
-            if sep in full_report:
-                sentence = full_report.split(sep)[0] + sep
-                if len(sentence) <= 50:
-                    return sentence
-        return full_report[:50]
 
     # ── 统一入口 tick() ──────────────────────────────────────
 
