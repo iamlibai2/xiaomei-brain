@@ -46,6 +46,9 @@ todos.json
 # Build artifacts
 dist/
 
+# Local docs (conversation records, dev notes)
+docs-local/
+
 # TensorFlow / ML models (large)
 *.h5
 *.pt
