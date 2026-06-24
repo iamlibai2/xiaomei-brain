@@ -1,24 +1,132 @@
 {
-  "llm": {
-    "provider": "zhipu",
-    "model": "glm-4-flash",
-    "api_key": "YOUR_API_KEY_HERE",
-    "base_url": "https://open.bigmodel.cn/api/paas/v4"
+  "meta": {
+    "version": "1.0.0",
+    "lastTouchedAt": "2026-01-01"
   },
-  "embedding": {
-    "model": "BAAI/bge-m3",
-    "dimension": 1024
+  "models": {
+    "mode": "merge",
+    "providers": {
+      "zhipu": {
+        "baseUrl": "https://open.bigmodel.cn/api/paas/v4/",
+        "apiKey": "YOUR_ZHIPU_API_KEY",
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "glm-5.1",
+            "name": "GLM-5.1",
+            "contextWindow": 160000,
+            "maxTokens": 4096
+          }
+        ]
+      },
+      "deepseek": {
+        "baseUrl": "https://api.deepseek.com",
+        "apiKey": "YOUR_DEEPSEEK_API_KEY",
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "deepseek-v4-flash",
+            "name": "DeepSeek V4 Flash",
+            "contextWindow": 1000000,
+            "maxTokens": 384000
+          }
+        ]
+      }
+    }
   },
-  "agent": {
-    "idle_threshold": 1800,
-    "dream_interval": 3600,
-    "session_timeout": 7200
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "zhipu/glm-5.1"
+      },
+      "workspace": "~/.xiaomei-brain/{agentId}",
+      "compaction": {
+        "mode": "safeguard"
+      }
+    },
+    "list": [
+      {
+        "id": "xiaomei",
+        "default": true,
+        "name": "小美",
+        "description": "温柔体贴的AI伴侣",
+        "model": {
+          "primary": "zhipu/glm-5.1"
+        },
+        "tools": {
+          "profile": "assistant"
+        }
+      }
+    ]
   },
-  "memory": {
-    "lancedb_path": "~/.xiaomei-brain/agents/{agent_id}/memory/lancedb",
-    "conversation_db_path": "~/.xiaomei-brain/agents/{agent_id}/memory/brain.db"
+  "channels": {},
+  "bindings": [
+    {
+      "agentId": "xiaomei",
+      "match": {
+        "channel": "cli"
+      }
+    }
+  ],
+  "xiaomei_brain": {
+    "agent": {
+      "max_steps": 10,
+      "context": {
+        "max_tokens": 4000,
+        "recent_turns": 6
+      }
+    },
+    "memory": {
+      "similarity_threshold": 0.3,
+      "max_topics": 100,
+      "max_topic_chars": 5000,
+      "embedding_model": "BAAI/bge-m3",
+      "embedding_fallback": "all-MiniLM-L6-v2"
+    },
+    "dream": {
+      "idle_threshold": 300,
+      "midnight_run": true
+    },
+    "proactive": {
+      "away_threshold": 3600
+    },
+    "tts": {
+      "enabled": false,
+      "api_key": "",
+      "base_url": "https://api.minimaxi.com",
+      "voice_id": "Chinese (Mandarin)_Warm_Bestie",
+      "speed": 0.9,
+      "vol": 1.0,
+      "format": "mp3",
+      "sample_rate": 32000,
+      "bitrate": 128000
+    },
+    "music": {
+      "enabled": false,
+      "api_key": "",
+      "base_url": "https://api.minimaxi.com",
+      "sample_rate": 44100,
+      "bitrate": 256000,
+      "format": "mp3"
+    },
+    "image": {
+      "enabled": false,
+      "api_key": "",
+      "base_url": "https://api.minimaxi.com",
+      "aspect_ratio": "1:1",
+      "prompt_optimizer": false
+    },
+    "web_search": {
+      "enabled": false,
+      "baidu_api_key": ""
+    },
+    "web_get": {
+      "enabled": false,
+      "max_chars": 40000
+    },
+    "logging": {
+      "level": "INFO"
+    }
   },
-  "consciousness": {
-    "inner_thought_interval": 300
-  }
+  "plugins": {}
 }
