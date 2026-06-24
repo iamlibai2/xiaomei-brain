@@ -43,6 +43,9 @@ bak/
 test_result.txt
 todos.json
 
+# Build artifacts
+dist/
+
 # TensorFlow / ML models (large)
 *.h5
 *.pt
