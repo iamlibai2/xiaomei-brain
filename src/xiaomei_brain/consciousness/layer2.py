@@ -187,7 +187,9 @@ class Layer2DefaultNetwork:
                             logger.warning("[Layer2] social_cognition 出错: %s", e)
 
                     # L3: 沉思（sleep guard 在 _should_l3() 内，同轮 L2=SLEEP 也跳过）
+                    l3_triggered = False
                     if not skip_l3 and self._c._should_l3(agent_state):
+                        l3_triggered = True
                         self._log(f"{ts} L3 触发 [沉思] agent_state={agent_state} → tick_L3")
                         logger.info("[Layer2] L3 触发（沉思，agent_state=%s）", agent_state)
                         self._c._last_l3_time = time.time()
@@ -197,6 +199,18 @@ class Layer2DefaultNetwork:
                         except Exception as e:
                             self._log(f"{ts} L3 tick_L3 ERROR: {e}")
                             logger.warning("[Layer2] tick_L3 出错: %s", e)
+
+                    # L4: 深度联想（与 L3 同轮互斥，L3 优先，L4 成本更高）
+                    if not skip_l3 and not l3_triggered and self._c._should_l4(agent_state):
+                        self._log(f"{ts} L4 触发 [深度联想] agent_state={agent_state} → tick_L4")
+                        logger.info("[Layer2] L4 触发（深度联想，agent_state=%s）", agent_state)
+                        self._c._last_l4_time = time.time()
+                        try:
+                            self._c.tick_L4()
+                            self._log(f"{ts} L4 tick_L4 完成")
+                        except Exception as e:
+                            self._log(f"{ts} L4 tick_L4 ERROR: {e}")
+                            logger.warning("[Layer2] tick_L4 出错: %s", e)
 
                     # DREAM: 入梦信号（仅 SLEEPING，每次睡眠只触发一次）
                     if agent_state == "sleeping":
