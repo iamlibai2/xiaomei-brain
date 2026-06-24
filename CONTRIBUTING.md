@@ -114,10 +114,16 @@ PYTHONPATH=src python3 -m pytest tests/ -v --cov=src/xiaomei_brain
 
 ## 架构指引
 
-- [ARCHITECTURE.md](./docs/ARCHITECTURE.md) — 系统架构、启动流程、消息流程
-- [CONFIG.md](./docs/CONFIG.md) — 配置系统
-- [IDENTITY.md](./docs/IDENTITY.md) — Agent 身份定制
-- [PLUGIN.md](./docs/PLUGIN.md) — 插件开发指南
+完整的技术文档在 `docs/` 目录：
+
+- [架构总览](./docs/architecture/01-OVERVIEW.md) — 系统架构全景
+- [Consciousness 详解](./docs/architecture/02-CONSCIOUSNESS.md) — 意识系统
+- [Memory 详解](./docs/architecture/03-MEMORY.md) — 记忆系统
+- [Drive 详解](./docs/architecture/04-DRIVE.md) — 情绪/激素/欲望/动机
+- [配置参考](./docs/reference/02-CONFIGURATION.md) — 完整配置项
+- [Agent 配置指南](./docs/guides/01-AGENT-CONFIGURATION.md) — Agent 身份定制
+- [插件开发指南](./docs/guides/04-PLUGIN-DEVELOPMENT.md) — 插件扩展
+- [更多...](./docs/SUMMARY.md)
 
 ---
 
