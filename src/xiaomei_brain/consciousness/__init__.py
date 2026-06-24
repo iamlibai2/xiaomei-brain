@@ -49,6 +49,7 @@ from .config import LivingConfig
 from .memory_window import refresh_memory_window
 from .attention import select_attention
 from .dream import DreamEngine, DreamReport, EmotionProcessor, DreamStorage, ReinforceJob, ExtractJob
+from .associative_chain import AssociativeChain, AssociativeResult, AssociationHop
 
 __all__ = [
     # SelfImage
@@ -101,4 +102,8 @@ __all__ = [
     "DreamStorage",
     "ReinforceJob",
     "ExtractJob",
+    # AssociativeChain
+    "AssociativeChain",
+    "AssociativeResult",
+    "AssociationHop",
 ]
