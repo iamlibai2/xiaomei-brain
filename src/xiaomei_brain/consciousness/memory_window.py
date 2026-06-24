@@ -233,7 +233,7 @@ def refresh_memory_window(
             conn = conversation_db._get_conn()
             all_others = conn.execute(
                 """SELECT * FROM messages
-                   WHERE user_id IS NOT NULL AND user_id != ? AND user_id != 'global'
+                   WHERE user_id IS NOT NULL AND user_id != ? AND user_id NOT IN ('global', 'system')
                    ORDER BY created_at DESC LIMIT 60""",
                 (user_id,),
             ).fetchall()

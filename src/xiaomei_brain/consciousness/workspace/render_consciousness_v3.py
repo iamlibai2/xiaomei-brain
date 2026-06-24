@@ -1020,6 +1020,8 @@ def _render_recent_dialog(si) -> list[str]:
 
 def _render_cross_user_dialog(si) -> list[str]:
     """渲染其他用户的最近对话，让 agent 知道刚才和谁聊了什么。"""
+    import re
+
     mem = si.memory
     entries = getattr(mem, 'cross_user_dialog', []) or []
     if not entries:
@@ -1031,7 +1033,13 @@ def _render_cross_user_dialog(si) -> list[str]:
         lines.append(f"\n 和 {uid}：")
         for m in reversed(msgs):
             role = m.get("role", "")
-            content = m.get("content", "")[:120]
+            content = m.get("content", "") or ""
+            # 去掉结构化标签块（PROGRESS/NARR/THINK 等），只留自然语言
+            content = re.sub(r'<(PROGRESS|NARR|THINK)>.*?</\1>', '', content, flags=re.DOTALL)
+            content = re.sub(r'<PROGRESS\s*/>', '', content)  # self-closing variant
+            content = content.strip()[:150]
+            if not content:
+                continue
             ts = m.get("created_at", 0)
             time_str = datetime.fromtimestamp(ts).strftime("%H:%M") if ts else ""
             label = "对方" if role == "user" else "我"

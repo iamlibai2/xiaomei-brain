@@ -1141,11 +1141,12 @@ class ConsciousLiving(Living):
             elif self.drive and sig.stress_level == "none":
                 self.drive.on_system_healthy()
 
-        # ── SOS（短路：直接从 Interoception 实例读，不经过 4 层链路）──
+        # ── SOS 广播（不清除标志位，由 _loop_idle 消费后进入 DORMANT）──
         intero = getattr(self, 'interoception', None)
         if intero and intero.sos and intero.sos_message:
-            intero.sos = False  # 消费后清空，避免重复发送
-            self.send_sos_to_channels(intero.sos_message)
+            if not getattr(self, '_sos_sent', False):
+                self._sos_sent = True
+                self.send_sos_to_channels(intero.sos_message)
 
         # 检查 Layer 2 发出的入梦信号
         if getattr(self.consciousness, '_dream_signal', False):
@@ -1180,6 +1181,11 @@ class ConsciousLiving(Living):
                 logger.warning("[ConsciousLiving/IDLE] interoception SOS → DORMANT: %s", sos_msg)
                 self._print_section("进入休眠", f"LLM 不可用：{sos_msg}", icon="⏸️")
                 self._suspended_reason = sos_msg
+                # 写入经验流，让 agent 醒来后知道自己为什么休眠
+                self._log_sos_event("sos", "精力突然耗尽，意识一片空白，陷入沉寂")
+                self.interoception.sos = False
+                self.interoception.sos_message = ""
+                self._sos_sent = False
                 self._transition(LivingState.DORMANT)
                 return
 
@@ -1386,6 +1392,16 @@ class ConsciousLiving(Living):
         然后 ConversationDriver 做对话路由。"""
         self._gateway.handle(msg, self)
 
+    def _log_sos_event(self, event_type: str, content: str) -> None:
+        """写入经验流：SOS / 恢复事件。"""
+        try:
+            agent = self.agent._get_agent()
+            es = getattr(agent, "exp_stream", None)
+            if es:
+                es.log(type=event_type, content=content, importance=0.9)
+        except Exception as e:
+            logger.debug("[SOS ExpStream] write failed: %s", e)
+
     # ── Death & Revival ────────────────────────────────────────
 
     _RECOVER_CHECK_INTERVAL = 300  # 5 分钟探活一次
@@ -1449,6 +1465,7 @@ class ConsciousLiving(Living):
             llm.chat(messages=[{"role": "user", "content": "hi"}], tools=None, log_level=logging.DEBUG)
             # 成功了 = 余额恢复
             logger.info("[ConsciousLiving] LLM 探活成功，余额已恢复")
+            self._log_sos_event("recovery", "精力重新恢复，我又能思考了")
             # 重启 L2 DMN 线程（Python 线程不能 restart，创建新 Thread 对象）
             if hasattr(self, '_layer2') and self._layer2:
                 self._layer2.start()

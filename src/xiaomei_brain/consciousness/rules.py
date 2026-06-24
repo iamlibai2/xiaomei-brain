@@ -197,7 +197,7 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
                 cooldown_key="intent_learn",
                 metadata={"intent_type": "LEARN"},
             ))
-            .cooldown("intent_learn", ac.intent_learn_cooldown)
+            .cooldown("intent_learn", 60)
     )
 
     # EXPRESS 意图 → 分享想法
@@ -287,7 +287,7 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
                 cooldown_key="intent_talk",
                 metadata={"intent_type": "TALK"},
             ))
-            .cooldown("intent_talk", ac.intent_greet_cooldown)
+            .cooldown("intent_talk", 60)
     )
 
     # TALK_AGENT 意图 → 主动和其他 agent 聊天

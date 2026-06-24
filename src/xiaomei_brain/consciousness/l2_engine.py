@@ -708,6 +708,8 @@ class L2Engine:
 
         if intent_type == IntentType.LEARN and learn_topic:
             logger.info("[Consciousness L2] 意图: LEARN → %s", learn_topic)
+        elif intent_type == IntentType.LEARN:
+            logger.warning("[Consciousness L2] LEARN 意图缺 TOPIC 字段，意图将留在 buffer 等待下次匹配")
 
         priority_map = {
             IntentType.WAIT: 10,
@@ -1081,6 +1083,7 @@ class L2Engine:
         # 1. 意图决策
         # SLEEP intent 不放 desk：它是纯状态切换信号，只有 IDLE 循环消费，
         # 不需要让 ActionDispatcher / chat 上下文渲染等看到。
+        dropped = False
         if intent and intent.is_actionable() and intent.type != IntentType.SLEEP:
             intent_type = intent.type.value
             intent_content = getattr(intent, "content", "")
@@ -1090,20 +1093,18 @@ class L2Engine:
                 intent=intent_type,
                 confidence=0.8,
             )
-
-        # 2. 意识涌现摘要（取前 300 字作为上下文）
-        if emergence_text and len(emergence_text) > 20:
-            desk.drop(
-                content=f"L2 内心独白：{emergence_text[:300]}",
-                source="L2",
-                intent="reflect",
-                confidence=0.6,
-            )
-
-        logger.info("[L2 Desk] 已投放 %d 条到桌面", (1 if intent else 0) + (1 if emergence_text else 0))
+            dropped = True
+            logger.info("[L2 Desk] 已投放意图决策到桌面 (%s)", intent_type)
+        elif intent:
+            ity = intent.type.value if hasattr(intent.type, 'value') else str(intent.type)
+            logger.debug("[L2 Desk] 跳过桌面投放 (%s, actionable=%s)", ity, intent.is_actionable())
 
     def _log_to_experience_stream(self, context: str, intent: Intent | None, emergence_text: str) -> None:
-        """把 L2 的思考写入经验流。"""
+        """把 L2 的思考和决策写入经验流。
+
+        只写摘要（做了什么），不存完整独白。
+        完整独白在 consciousness_stream（→ 内部叙事）中。
+        """
         c = self._c
         es = getattr(c.agent, "exp_stream", None)
         if not es:
@@ -1122,13 +1123,23 @@ class L2Engine:
             except Exception as e:
                 logger.debug("[L2 ExpStream] intent write failed: %s", e)
 
-        # 意识涌现摘要
+        # 意识涌现摘要（取第一句，不存完整独白）
         if emergence_text and len(emergence_text) > 20:
+            first_line = emergence_text.split("\n")[0].strip()
+            if len(first_line) > 120:
+                # 找第一个自然断句点
+                for sep in ("。", "？", "！", "…"):
+                    idx = first_line.find(sep, 60)
+                    if idx != -1:
+                        first_line = first_line[:idx + 1]
+                        break
+                else:
+                    first_line = first_line[:120] + "…"
             try:
                 es.log(
                     type="internal_thought",
-                    content=f"内心独白：{emergence_text}",
-                    importance=0.6,
+                    content=f"意识涌现：{first_line}",
+                    importance=0.5,
                 )
             except Exception as e:
                 logger.debug("[L2 ExpStream] emergence write failed: %s", e)

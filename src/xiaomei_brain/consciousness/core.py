@@ -602,7 +602,7 @@ class Consciousness:
             conversation_db=getattr(agent, "conversation_db", None),
             procedure_memory=getattr(agent, "_procedure_memory", None),
             session_id=session_id,
-            user_id=user_id if user_id is not None else "global",
+            user_id=user_id if user_id is not None else getattr(agent, "user_id", "global"),
             user_input=user_input,
             exp_stream=self.exp_stream,
         )

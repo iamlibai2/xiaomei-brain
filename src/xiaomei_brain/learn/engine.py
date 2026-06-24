@@ -113,12 +113,22 @@ class LearningEngine:
         # 2. L2 LEARN intent 的 TOPIC 字段
         si = self._cl.consciousness.get_self_image() if self._cl.consciousness else None
         if si and hasattr(si.intent, "intent_buffer"):
+            valid = []
             for intent_dict in si.intent.intent_buffer:
                 if intent_dict.get("type", "").upper() == "LEARN":
                     topic = (intent_dict.get("params", {}) or {}).get("learn_topic", "")
                     if topic:
+                        valid.append(intent_dict)
                         logger.info("[LearningEngine] 从 LEARN intent 提取主题: %s", topic)
-                        return topic
+                    else:
+                        logger.warning("[LearningEngine] 移除无效 LEARN intent（缺 TOPIC）")
+            # 清理掉无效的（已尝试提取的都已处理）
+            si.intent.intent_buffer = [
+                i for i in si.intent.intent_buffer
+                if i.get("type", "").upper() != "LEARN" or (i.get("params", {}) or {}).get("learn_topic", "")
+            ]
+            if valid:
+                return (valid[0].get("params", {}) or {}).get("learn_topic", "")
 
         # 3. Purpose 当前目标
         if hasattr(self._cl, 'purpose') and self._cl.purpose:

@@ -468,8 +468,8 @@ class ActionExecutor:
                 except Exception as e:
                     logger.debug("[ExpStream] tool write failed: %s", e)
 
-        # 消费已执行的 intent（避免下一 tick 重复匹配）
-        if item.source == "intent":
+        # 消费已执行的 intent（仅在成功时消费，失败保留供重试）
+        if success and item.source == "intent":
             intent_type = item.metadata.get("intent_type", "")
             if intent_type:
                 si = self.dispatcher._get_self_image()
