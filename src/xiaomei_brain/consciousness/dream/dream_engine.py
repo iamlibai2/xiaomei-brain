@@ -31,7 +31,6 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from typing import Any
 
-from ...prompts import DREAM_ENGINE_PROMPT
 from .emotion_processor import EmotionProcessor
 from .memory_jobs import ReinforceJob, ExtractJob, RelationReinforceJob
 from .reflection import Reflection
@@ -258,27 +257,30 @@ class DreamEngine:
         return report
 
     def _run_dream_burn(self, report: DreamReport) -> None:
-        """梦境深度燃烧 — 调用 LLM 生成梦境意识报告。
+        """梦境深度燃烧 → 委托给 L3Engine。
 
         与清醒态的 tick_L3() 是不同的路径：
         - tick_L3(): 清醒时触发，产出 → last_l3_summary，trigger="L3"
-        - _run_dream_burn(): DREAMING 中触发，产出 → last_dream_summary，trigger="dream"
+        - burn_dream(): DREAMING 中触发，产出 → last_dream_summary，trigger="dream"
         """
-        prompt = self._build_dream_prompt()
+        # 构建上下文
+        messages_text = self._get_today_messages()
+        desire_text = self._get_desire_text()
+        internal_text = self._get_internal_text()
 
-        try:
-            resp = self.llm.chat(
-                messages=[{"role": "user", "content": prompt}],
-                tools=None,
-            )
-            full_report = resp.content or ""
-        except Exception as e:
-            logger.error("[DreamEngine] LLM 调用失败: %s", e)
-            report.errors += 1
-            full_report = ""
+        # 委托给 L3Engine（manage_side_effects=False，由 DreamEngine 编排后续）
+        from ..l3_engine import L3Engine
+        l3_engine = L3Engine(self.cs)
+        result = l3_engine.burn_dream(
+            messages_text=messages_text,
+            desire_text=desire_text,
+            internal_text=internal_text,
+            manage_side_effects=False,
+        )
 
+        full_report = result.full_report
         report.full_report = full_report
-        report.summary = self._extract_summary(full_report)
+        report.summary = result.summary
 
         # 消耗 + 恢复能量
         if self.drive:
@@ -288,21 +290,41 @@ class DreamEngine:
         # 同步到 SelfImage（写 last_dream_summary，不是 last_l3_summary）
         self.cs.self_image.contribute_dream(report.summary)
 
+        # 存储到 consciousness_stream
+        if full_report:
+            ltm = self.ltm
+            if ltm:
+                try:
+                    ltm.store_narrative(
+                        content=full_report[:500],
+                        trigger='dream',
+                        energy_level=self.cs.body.energy if self.cs.self_image else None,
+                        user_id=getattr(self.cs.agent, "user_id", "global"),
+                    )
+                except Exception as e:
+                    logger.debug("[DreamEngine] store_narrative failed: %s", e)
+
+        # 经验流
+        if self.exp_stream:
+            try:
+                self.exp_stream.log(
+                    type="dream",
+                    content=f"梦境完成: {report.summary[:120]}" if report.summary else "梦境完成（无摘要）",
+                    importance=0.6,
+                )
+            except Exception as e:
+                logger.debug("[ExpStream] dream write failed: %s", e)
+
         # 情绪整理：从梦境报告中提取 ---EMOTION--- 块，应用 Drive 变更，生成后续 intent
         changes = self.emotion_processor.process(self.drive, full_report, self.cs)
         report.emotion_changes = changes
         if changes:
             logger.info("[DreamEngine] 情绪整理: %s", changes)
 
-        logger.info("[DreamEngine] 梦境深度燃烧完成:\n%s", full_report[:200])
+        logger.info("[DreamEngine] 梦境深度燃烧完成 (%d 字)", len(full_report))
 
-    def _build_dream_prompt(self) -> str:
-        """构建梦境 prompt"""
-        si = self.cs.self_image
-        time_info = datetime.now().strftime("%Y-%m-%d %H:%M")
-
-        # 今日对话
-        messages_text = ""
+    def _get_today_messages(self) -> str:
+        """获取今日对话片段（供 L3Engine.burn_dream() 使用）。"""
         if self.extractor and self.extractor.db:
             today_start = datetime.now().replace(
                 hour=0, minute=0, second=0, microsecond=0,
@@ -316,50 +338,27 @@ class DreamEngine:
                     content = m.get("content", "")[:200]
                     label = f"{role}:{uid}" if uid else role
                     lines.append(f"[{label}] {content}")
-                messages_text = "\n".join(lines)
+                return "\n".join(lines)
+        return ""
 
-        # Drive 状态
-        desire_text = ""
+    def _get_desire_text(self) -> str:
+        """获取欲望状态文本（供 L3Engine.burn_dream() 使用）。"""
         if self.drive:
             d = self.drive.desire
-            desire_text = (
+            return (
                 f"归属欲：{d.belonging:.2f}，"
                 f"认知欲：{d.cognition:.2f}，"
                 f"成就欲：{d.achievement:.2f}，"
                 f"表达欲：{d.expression:.2f}"
             )
+        return ""
 
+    def _get_internal_text(self) -> str:
+        """获取近况自述文本（供 L3Engine.burn_dream() 使用）。"""
+        si = self.cs.self_image
         history = si.history
-        internal = "".join(filter(None, [
+        return "".join(filter(None, [
             history.emotional_trajectory,
             history.goal_rhythm,
             history.consciousness_rhythm,
         ])) or "无"
-
-        identity = si.being.name
-        energy = f"{si.body.energy:.2f}"
-        mood = si.body.mood
-        msgs = messages_text or "（无今日对话）"
-        return DREAM_ENGINE_PROMPT.format(
-            identity=identity,
-            time_info=time_info,
-            energy=energy,
-            mood=mood,
-            desire_text=desire_text,
-            internal=internal,
-            messages_text=msgs,
-        )
-
-    @staticmethod
-    def _extract_summary(full_report: str) -> str:
-        """从完整报告提取一句话摘要（排除 ---EMOTION--- 块）"""
-        if not full_report:
-            return ""
-        # 取 EMOTION 块之前的部分作为摘要来源
-        text = full_report.split("---EMOTION---")[0]
-        for sep in ["。", "\n", "！", "？"]:
-            if sep in text:
-                sentence = text.split(sep)[0] + sep
-                if len(sentence) <= 60:
-                    return sentence
-        return text[:60]

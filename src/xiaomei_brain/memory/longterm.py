@@ -491,6 +491,215 @@ class LongTermMemory(SQLiteStore):
         except Exception as e:
             logger.warning("[LanceDB] Failed to delete narrative %s: %s", nm_id, e)
 
+    # ── Consciousness Stream LanceDB ────────────────────────────────
+
+    def _get_consciousness_lance_table(self) -> Any:
+        """Lazy-open/create separate LanceDB table for consciousness_stream vectors."""
+        if getattr(self, "_cs_lance_table", None) is not None:
+            return self._cs_lance_table
+
+        import lancedb
+        import pyarrow as pa
+
+        if self._lance_db is None:
+            self._lance_db = lancedb.connect(str(self._lance_dir))
+
+        expected_dim = self._get_embedding_dim()
+        existing_tables = self._lance_db.table_names()
+
+        if "consciousness_stream" in existing_tables:
+            tbl = self._lance_db.open_table("consciousness_stream")
+            actual_schema = tbl.to_arrow().schema
+            vector_field = actual_schema.field("vector")
+            actual_dim_size = vector_field.type.list_size
+
+            id_field = actual_schema.field("id")
+            id_type = id_field.type
+            needs_rebuild = False
+            if actual_dim_size != expected_dim:
+                logger.warning(
+                    "[LanceDB] consciousness_stream dimension mismatch: table=%d vs model=%d. "
+                    "Dropping and rebuilding.",
+                    actual_dim_size, expected_dim,
+                )
+                needs_rebuild = True
+            elif not pa.types.is_integer(id_type):
+                logger.warning(
+                    "[LanceDB] consciousness_stream id type is %s, expected integer. "
+                    "Dropping and rebuilding.",
+                    id_type,
+                )
+                needs_rebuild = True
+
+            if needs_rebuild:
+                self._lance_db.drop_table("consciousness_stream")
+            else:
+                self._cs_lance_table = tbl
+                logger.info("LanceDB consciousness_stream table opened: %s", self._lance_dir)
+                return self._cs_lance_table
+
+        schema = pa.schema([
+            pa.field("id", pa.int64()),
+            pa.field("vector", pa.list_(pa.float32(), expected_dim)),
+            pa.field("user_id", pa.string()),
+        ])
+        self._cs_lance_table = self._lance_db.create_table("consciousness_stream", schema=schema)
+        logger.info(
+            "LanceDB consciousness_stream table created: %s (dim=%d)",
+            self._lance_dir, expected_dim,
+        )
+
+        # Rebuild vectors from SQLite consciousness_stream (fresh table or schema migration)
+        self._rebuild_consciousness_lancedb()
+        return self._cs_lance_table
+
+    def _add_consciousness_vector(self, cs_id: int, content: str, user_id: str) -> None:
+        """Add a consciousness_stream vector to LanceDB."""
+        try:
+            vector = self._embed(content)
+            table = self._get_consciousness_lance_table()
+            import pyarrow as pa
+
+            data = pa.table({
+                "id": [cs_id],
+                "vector": [vector],
+                "user_id": [user_id],
+            })
+            table.add(data)
+            logger.debug("[LanceDB] Added consciousness_stream %d", cs_id)
+        except Exception as e:
+            logger.warning("[LanceDB] Failed to add consciousness_stream %d: %s", cs_id, e)
+
+    def _rebuild_consciousness_lancedb(self) -> None:
+        """Rebuild consciousness_stream LanceDB vectors from SQLite.
+
+        Only rebuilds if LanceDB table is empty and SQLite has data.
+        Safe to call on every startup — no-op if already in sync.
+        """
+        table = self._cs_lance_table
+        if table is None:
+            return
+
+        try:
+            if table.count_rows() > 0:
+                return
+        except Exception as e:
+            logger.debug("[LanceDB] count_rows failed (consciousness_stream): %s", e)
+
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT id, content, user_id FROM consciousness_stream"
+            ).fetchall()
+        except Exception:
+            return
+
+        if not rows:
+            return
+
+        logger.info(
+            "[LanceDB] Rebuilding consciousness_stream vectors: %d rows -> LanceDB", len(rows)
+        )
+
+        batch_size = 32
+        import pyarrow as pa
+
+        for i in range(0, len(rows), batch_size):
+            batch = rows[i : i + batch_size]
+            ids = []
+            contents = []
+            user_ids = []
+            for r in batch:
+                ids.append(r["id"])
+                contents.append(r["content"])
+                user_ids.append(r["user_id"] if "user_id" in r.keys() else "global")
+
+            try:
+                vectors = self._embed_batch(contents)
+                data = pa.table({
+                    "id": ids,
+                    "vector": vectors,
+                    "user_id": user_ids,
+                })
+                table.add(data)
+            except Exception as e:
+                logger.warning(
+                    "[LanceDB] consciousness_stream rebuild batch %d-%d failed: %s",
+                    i, i + len(batch), e,
+                )
+
+        logger.info("[LanceDB] consciousness_stream rebuild complete: %d vectors", len(rows))
+
+        try:
+            table.optimize()
+        except Exception as e:
+            logger.debug("[LanceDB] optimize failed (consciousness_stream): %s", e)
+
+    def search_consciousness_stream(
+        self,
+        query: str,
+        user_id: str | None = None,
+        top_k: int = 10,
+        trigger: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Semantic recall for consciousness_stream using LanceDB vector search.
+
+        Args:
+            query: 搜索文本，编码为向量搜索
+            user_id: 可选，多用户隔离（不传则不过滤）
+            top_k: 返回条数
+            trigger: 可选，按 trigger 类型过滤（'L2_light', 'L3_deep', 'dream'）
+        """
+        query_vector = self._embed(query)
+        table = self._get_consciousness_lance_table()
+
+        # Build LanceDB filter
+        if user_id:
+            safe_user_id = self._safe_user_id(user_id)
+            lance_filter = f"user_id = '{safe_user_id}' OR user_id = 'global'"
+        else:
+            lance_filter = None
+
+        search = table.search(query_vector).limit(top_k * 3)
+        if lance_filter:
+            search = search.where(lance_filter)
+        results = search.to_pandas()
+
+        if results.empty:
+            return []
+
+        conn = self._get_conn()
+        cs_ids = results["id"].tolist()
+        distances = dict(zip(results["id"].tolist(), results["_distance"].tolist()))
+
+        placeholders = ",".join("?" * len(cs_ids))
+        sql = f"SELECT * FROM consciousness_stream WHERE id IN ({placeholders})"
+        params = list(cs_ids)
+        if trigger:
+            sql += " AND trigger = ?"
+            params.append(trigger)
+        rows = conn.execute(sql, params).fetchall()
+
+        if not rows:
+            return []
+
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["related_memory_ids"] = json.loads(d.get("related_memory_ids", "[]"))
+            d["extracted_procedures"] = json.loads(d.get("extracted_procedures", "[]"))
+            # LanceDB cosine distance: 0 = identical, 2 = opposite
+            distance = distances.get(d["id"], 1.0)
+            d["score"] = round(max(0.0, 1.0 - distance / 2), 3)
+            result.append(d)
+
+        result.sort(key=lambda x: x["score"], reverse=True)
+        logger.debug(
+            "[search_consciousness_stream] found %d results for query='%s'",
+            len(result), query[:50],
+        )
+        return result[:top_k]
+
     def search_narratives(
         self,
         query: str,
@@ -1065,6 +1274,10 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
             "Stored narrative #%d [trigger=%s user=%s] len=%d",
             narrative_id, trigger, user_id, len(content),
         )
+
+        # Write vector to LanceDB for semantic search
+        self._add_consciousness_vector(narrative_id, content, user_id)
+
         return narrative_id
 
     def get_narratives(
@@ -1073,15 +1286,29 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
         limit: int = 10,
         since: float | None = None,
         user_id: str | None = None,
+        query: str | None = None,
     ) -> list[dict[str, Any]]:
         """Get consciousness narratives.
+
+        Two modes:
+        - Time-ordered (default): ORDER BY created_at DESC
+        - Semantic search: when query is provided, uses LanceDB vector search
 
         Args:
             trigger: filter by trigger type ('L2_light', 'L3_deep', etc.)
             limit: max number of results
-            since: only narratives created after this timestamp
+            since: only narratives created after this timestamp (time-ordered mode only)
             user_id: filter by user (不传则不过滤)
+            query: semantic search query (enables vector search mode)
         """
+        if query:
+            return self.search_consciousness_stream(
+                query=query,
+                user_id=user_id,
+                top_k=limit,
+                trigger=trigger,
+            )
+
         conn = self._get_conn()
         sql = "SELECT * FROM consciousness_stream WHERE 1=1"
         params: list = []
