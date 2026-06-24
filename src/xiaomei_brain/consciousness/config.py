@@ -30,6 +30,10 @@ class ConsciousnessConfig:
     l2_emergence_cooldown: float = 600.0    # 意识涌现冷却（秒）
     sleep_to_dream_threshold: float = 300.0  # 入梦触发（SLEEPING 持续秒数→入梦信号）
     l3_cooldown: float = 1800.0       # L3 沉思冷却（秒）
+    l4_cooldown: float = 14400.0       # L4 深度联想冷却（秒，默认 4 小时）
+    l4_timeout: float = 28800.0        # L4 定期兜底（秒，默认 8 小时）
+    l4_desire_threshold: float = 0.7   # L4 欲望张力触发阈值
+    l4_cortisol_threshold: float = 0.6 # L4 皮质醇张力触发阈值
     sc_cooldown: float = 900.0              # social_cognition 冷却时间（秒）
     sc_interval: float = 3600.0             # social_cognition 定期兜底间隔（秒）
     sc_energy_threshold: float = 0.25       # social_cognition 最低能量阈值
