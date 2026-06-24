@@ -114,8 +114,10 @@ PYTHONPATH=src python3 -m pytest tests/ -v --cov=src/xiaomei_brain
 
 ## 架构指引
 
-- [README.md](./README.md) — 系统架构概览
-- [config.example.json](./config.example.json) — 配置文件格式参考
+- [ARCHITECTURE.md](./docs/ARCHITECTURE.md) — 系统架构、启动流程、消息流程
+- [CONFIG.md](./docs/CONFIG.md) — 配置系统
+- [IDENTITY.md](./docs/IDENTITY.md) — Agent 身份定制
+- [PLUGIN.md](./docs/PLUGIN.md) — 插件开发指南
 
 ---
 
