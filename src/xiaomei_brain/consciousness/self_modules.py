@@ -211,6 +211,10 @@ class Being:
                 "擅长": list(self_model.self_cognition.get("擅长", [])),
                 "不擅长": list(self_model.self_cognition.get("不擅长", [])),
             }
+            # 保留 identity.md 中其他动态添加的键（如 L4 的 "深层模式"）
+            for k, v in self_model.self_cognition.items():
+                if k not in self.self_cognition:
+                    self.self_cognition[k] = list(v) if isinstance(v, list) else [str(v)]
     def get_summary(self) -> str:
         parts = [f"我是{self.name}。性格{self.personality}。"]
         if self.self_cognition.get("擅长"):

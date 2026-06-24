@@ -289,7 +289,7 @@ class L4Engine:
         return examination[:100]
 
     def _integrate(self, pattern_insight: str) -> None:
-        """将核心发现写入 SelfModel.growth_events。"""
+        """将核心发现写入 SelfModel.growth_events 和 self_cognition。"""
         if not pattern_insight:
             return
         si = self._c.self_image
@@ -299,7 +299,17 @@ class L4Engine:
                 content=f"[L4 深度联想] {pattern_insight}",
                 date=now,
             )
-            logger.info("[L4Engine] 发现已记录到 growth_events")
+            # 写入 self_cognition（深层模式），供自我认知渲染
+            if "深层模式" not in si.mind.self_cognition:
+                si.mind.self_cognition["深层模式"] = []
+            si.mind.self_cognition["深层模式"].append(
+                f"[{now}] {pattern_insight}"
+            )
+            # 保留最近 10 条
+            if len(si.mind.self_cognition["深层模式"]) > 10:
+                si.mind.self_cognition["深层模式"] = \
+                    si.mind.self_cognition["深层模式"][-10:]
+            logger.info("[L4Engine] 发现已记录到 growth_events + self_cognition")
 
     # ── Phase 5: 转化 ──────────────────────────────────────────
 
