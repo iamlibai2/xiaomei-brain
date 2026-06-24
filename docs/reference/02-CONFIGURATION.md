@@ -6,81 +6,78 @@
 
 ## 全局配置
 
-`~/.xiaomei-brain/config.json`：
+`~/.xiaomei-brain/config.json`（OpenClaw 兼容格式）：
 
 ```json
 {
-  "agents": {
-    "xiaomei": {
-      "identity": "~/.xiaomei-brain/xiaomei/identity.md",
-      "drive_config": "~/.xiaomei-brain/xiaomei/drive_config.yaml",
-      "perception": "~/.xiaomei-brain/xiaomei/perception.md"
+  "models": {
+    "mode": "merge",
+    "providers": {
+      "zhipu": {
+        "baseUrl": "https://open.bigmodel.cn/api/paas/v4/",
+        "apiKey": "YOUR_API_KEY",
+        "api": "openai-completions",
+        "models": [
+          { "id": "glm-5.1", "name": "GLM-5.1", "contextWindow": 160000, "maxTokens": 4096 }
+        ]
+      },
+      "deepseek": {
+        "baseUrl": "https://api.deepseek.com",
+        "apiKey": "YOUR_API_KEY",
+        "api": "openai-completions",
+        "models": [
+          { "id": "deepseek-v4-flash", "name": "DeepSeek V4 Flash", "contextWindow": 1000000, "maxTokens": 384000 }
+        ]
+      }
     }
   },
-  "llm": {
-    "providers": [
+  "agents": {
+    "defaults": {
+      "model": { "primary": "zhipu/glm-5.1" },
+      "workspace": "~/.xiaomei-brain/{agentId}"
+    },
+    "list": [
       {
-        "name": "zhipu",
-        "api_key": "xxx",
-        "api_base": "https://open.bigmodel.cn/api/paas/v4",
-        "models": ["GLM-5.1", "GLM-4-Flash"]
-      },
-      {
-        "name": "deepseek",
-        "api_key": "xxx",
-        "api_base": "https://api.deepseek.com",
-        "models": ["deepseek-chat"]
+        "id": "xiaomei",
+        "default": true,
+        "name": "小美",
+        "model": { "primary": "zhipu/glm-5.1" },
+        "tools": { "profile": "assistant" }
       }
     ]
   },
-  "embedding": {
-    "model": "BAAI/bge-m3",
-    "dimension": 1024,
-    "device": "cpu"
-  },
-  "plugins": {
-    "tools": {},
-    "channels": {},
-    "providers": {}
+  "channels": {},
+  "bindings": [
+    { "agentId": "xiaomei", "match": { "channel": "cli" } }
+  ],
+  "xiaomei_brain": {
+    "agent": {
+      "max_steps": 10,
+      "context": { "max_tokens": 4000, "recent_turns": 6 }
+    },
+    "memory": {
+      "similarity_threshold": 0.3,
+      "embedding_model": "BAAI/bge-m3"
+    },
+    "logging": { "level": "INFO" }
   }
 }
 ```
 
-## Agent 配置
+参考 [config.example.json](../../config.example.json) 了解完整可配置项。
 
-### identity.md
+## Agent 级配置
 
-`~/.xiaomei-brain/<agent_id>/identity.md` — 身份文件，修改即时生效。
+每个 Agent 的专属文件位于 `~/.xiaomei-brain/{agent_id}/`：
 
-### drive_config.yaml
+### consciousness/identity.md
 
-`~/.xiaomei-brain/<agent_id>/drive_config.yaml` — Drive 参数配置。
+`~/.xiaomei-brain/<agent_id>/consciousness/identity.md` — 身份文件，系统提示词，修改即时生效。
 
-### perception.md
+### drive/drive_config.yaml
 
-`~/.xiaomei-brain/<agent_id>/perception.md` — 社交感知规则。
+`~/.xiaomei-brain/<agent_id>/drive/drive_config.yaml` — Drive 参数（欲望初始值、阈值、情绪衰减率、激素衰减率）。
 
-## Living 配置
+### consciousness/perception.md
 
-`~/.xiaomei-brain/<agent_id>/living_config.yaml`：
-
-```yaml
-# 心跳间隔（秒）
-heartbeat:
-  l0_skeleton: 1
-  l1_anomaly: 60
-  l2_fueling: dynamic
-  l3_dream: 300
-
-# 对话配置
-conversation:
-  max_context_messages: 50
-  dag_leaf_size: 8
-  batch_extract_interval: 10
-
-# 记忆配置
-memory:
-  recall_top_k: 8
-  strength_decay_per_tick: 0.001
-  extinction_threshold: 0.01
-```
+`~/.xiaomei-brain/<agent_id>/consciousness/perception.md` — 社交感知规则。

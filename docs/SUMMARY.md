@@ -30,4 +30,4 @@
 
 ## 贡献
 
-- [贡献指南](contributing/01-CONTRIBUTING.md) — 如何参与开发
+- [贡献指南](../CONTRIBUTING.md) — 如何参与开发

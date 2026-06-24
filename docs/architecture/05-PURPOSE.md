@@ -100,7 +100,7 @@ Intent 是"这一 tick 做什么"。由 ConsciousLiving 主循环每 tick 重新
 # 意图决策流程
 if not messages_in_queue:
     if belonging > 0.7:         return Intent.GREET
-    elif curiosity > 0.7:       return Intent.LEARN
+    elif cognition > 0.7:       return Intent.LEARN
     elif achievement > 0.7:     return Intent.PROGRESS
     elif expression > 0.7:      return Intent.EXPRESS
     elif idle_time > 5*60:      return Intent.DREAM
