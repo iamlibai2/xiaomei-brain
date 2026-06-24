@@ -1,6 +1,6 @@
 # Xiaomei Brain
 
-A multi-agent AI framework inspired by human brain architecture. Agents have memory, consciousness, drive, purpose, and metacognition — not just ReAct loops.
+受大脑分层架构启发的多 Agent AI 框架。Agent 拥有记忆、意识、欲望、目的和元认知——不只是 ReAct 循环。
 
 ## Architecture
 
@@ -158,82 +158,82 @@ docker compose run --rm xiaomei-brain           # 启动
 
 > 镜像已预装 Embedding 模型，首次启动无需等待加载。
 
-## LLM Providers
+## LLM 提供商
 
-Supports multiple providers configured via `~/.xiaomei-brain/config.json`:
+通过 `~/.xiaomei-brain/config.json` 配置，支持多种 LLM：
 
-- **Zhipu** (GLM series)
+- **智谱**（GLM 系列）
 - **MiniMax**
-- **Volcengine** (Doubao)
-- OpenAI-compatible APIs
+- **火山引擎**（豆包）
+- OpenAI 兼容 API
 
-## Features
+## 功能特性
 
-### Consciousness System
-- Flame skeleton: code maintains structure, LLM adds fuel
-- 4-layer heartbeat: L0 skeleton maintenance (1s) → L1 anomaly detection (1min) → L2 dynamic fueling (LLM) → L3 deep burn (dream)
-- 13 intent types: WAIT, GREET, REMIND, RECALL, REFLECT, ACT, DREAM, CARE, LEARN, EXPRESS, PROGRESS, WORK, ALARM, TALK
-- SelfImage: unified identity body/mind/memory/intent with context injection
+### 意识系统
+- 火焰骨架：代码维护结构，LLM 动态加柴
+- 四层心跳：L0 骨架维护（1秒）→ L1 异常检测（1分钟）→ L2 动态加柴（LLM）→ L3 深度反省 → L4 深度联想
+- 意图类型：等待、问候、提醒、回忆、反省、行动、梦境、关怀、学习、表达、推进目标、工作、闹钟、交谈
+- SelfImage：统一的自我形象（身体/心理/记忆/意图），注入上下文
 
-### Drive System (Edge)
-- 4 subsystems: Emotion (minute decay), Hormone (hour decay), Motivation (RPE), Desire (tension)
-- Desire-driven behaviors: greet, learn, progress goals, express ideas
-- Cross-session persistence
+### Drive 系统（边缘层）
+- 四个子系统：情绪（分钟级衰减）、激素（小时级衰减）、动机（RPE）、欲望（内在张力）
+- 欲望驱动行为：问候、学习、推进目标、表达想法
+- 跨会话持久化
 
-### Purpose System
-- 3-level goal hierarchy: Meaning → Phase Goals → Executable Goals
-- LLM-assisted goal decomposition and intent understanding
-- Priority calculation with deadline and reinforcement weighting
+### Purpose 系统
+- 三层目标层级：存在意义 → 阶段目标 → 执行目标
+- LLM 辅助目标分解和意图理解
+- 优先级计算（截止时间 + 强化次数加权）
 
-### Memory System
-- Raw conversation logs with FTS5 search
-- Hierarchical DAG summarization (8 messages → leaf → higher)
-- Vector semantic search via LanceDB + BAAI/bge-m3 embeddings
-- Strength decay model (5 levels: active → extinct)
-- Multi-user isolation with shared global knowledge
-- Context → decision → outcome → lesson experience tuples
+### 记忆系统
+- 原始对话日志 + FTS5 全文搜索
+- 分层 DAG 摘要（8条消息 → 叶子摘要 → 高层摘要）
+- LanceDB + BAAI/bge-m3 向量语义搜索
+- 记忆强度衰减模型（5级：活跃 → 消亡）
+- 多用户隔离 + 全局共享知识
+- 经验元组：上下文 → 决策 → 结果 → 教训
 
-### Metacognition
-- Inner voice: self-reflection every 2+ turns
-- Social perception: detects user mood changes, maps to Drive signals
-- Self-review: budget-controlled step checking (rule-based + lightweight LLM)
+### 元认知
+- 内心独白：每 2+ 轮对话后自我反省
+- 社交感知：检测用户情绪变化，映射到 Drive 信号
+- 自我审查：预算控制的步骤检查（规则 + 轻量 LLM）
 
-### Plugin System
-- Channel adapters: CLI, Feishu/Lark, DingTalk, WebSocket, P2P
-- One-line plugin bootstrap: `boot_plugins(agent_id)`
-- Gateway router: rule-based message routing, LLM never sees routing logic
+### 插件系统
+- 渠道适配器：CLI、飞书/Lark、钉钉、WebSocket、P2P
+- 一行引导插件：`boot_plugins(agent_id)`
+- 网关路由：基于规则的消息路由，LLM 不感知路由逻辑
 
-### Tools
-- Shell execution, file read/write/edit
-- Web search, web fetch
-- TTS, image generation, music
-- Memory query/management
-- Custom tool registration via decorators
+### 工具
+- Shell 执行、文件读写/编辑
+- 网页搜索、网页抓取
+- TTS 语音合成、图片生成、音乐
+- 记忆查询/管理
+- 装饰器注册自定义工具
 
-## CLI Commands
+## CLI 命令
 
-Available at runtime: `/flame`, `/tick`, `/intent`, `/fuel`, `/drive`, `/purpose`, `/plan`, `/db`, `/memory`, `/context`, `/dag`, `/dream`, `/tool`, `/export`, `/model`, `/clear`, `/new`, `/users`, `/sessions`, `/switch`.
+运行时可用：`/flame`、`/tick`、`/intent`、`/fuel`、`/drive`、`/purpose`、`/plan`、`/db`、`/memory`、`/context`、`/dag`、`/dream`、`/tool`、`/export`、`/model`、`/clear`、`/new`、`/users`、`/sessions`、`/switch`。
 
-## Configuration
+## 配置
 
-- `~/.xiaomei-brain/config.json` — agent registry, LLM providers, tool config
-- `~/.xiaomei-brain/{agent_id}/identity.md` — system prompt (edit to take effect immediately)
-- `~/.xiaomei-brain/{agent_id}/perception.md` — perception rules
-- `~/.xiaomei-brain/{agent_id}/drive_config.yaml` — drive parameters
+- `~/.xiaomei-brain/config.json` — Agent 注册、LLM 提供商、工具配置
+- `~/.xiaomei-brain/{agent_id}/identity.md` — 系统提示词（编辑即生效）
+- `~/.xiaomei-brain/{agent_id}/perception.md` — 感知规则
+- `~/.xiaomei-brain/{agent_id}/drive_config.yaml` — Drive 参数
 
-## Testing
+## 测试
 
 ```bash
-# Memory system
+# 记忆系统
 PYTHONPATH=src python3 examples/test_xiaomei_new.py
 
-# Consciousness integration
+# 意识系统集成
 PYTHONPATH=src python3 examples/test_conscious_living.py
 
-# WebSocket server
+# WebSocket 服务
 PYTHONPATH=src python3 examples/ws_server.py
 ```
 
-## License
+## 许可证
 
-MIT — see [LICENSE](LICENSE)
+MIT — 详见 [LICENSE](LICENSE)
