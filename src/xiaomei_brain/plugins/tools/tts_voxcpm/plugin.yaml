@@ -1,0 +1,5 @@
+name: tts_voxcpm
+version: "1.0.0"
+description: "文本转语音工具 — vox_speak / vox_speak_to_file（VoxCPM1.5 本地模型）"
+kind: bundle
+entry: adapter:register

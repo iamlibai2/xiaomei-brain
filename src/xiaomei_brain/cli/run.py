@@ -40,7 +40,7 @@ _COMMANDS = [
     "/help", "/exit", "/quit",
     "/clear", "/new", "/users",
     "/sessions", "/switch ",
-    "/eyes", "/ears", "/see ", "/hear ",
+    "/eyes", "/ears", "/see ", "/hear ", "/l", "/touch",
 ]
 
 

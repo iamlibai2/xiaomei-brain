@@ -1,0 +1,137 @@
+# 触摸手势 → 肢体动作映射表
+#
+# 用户可以复制到 ~/.xiaomei-brain/<agent_id>/touch_map.yaml 进行自定义。
+# 不修改则使用此默认配置。
+#
+# 可用变量（在描述文本中使用）：
+#   {fingers}     — 手指数量
+#   {intensity}   — light / gentle / moderate / firm / heavy / fast / slow / warm
+#   {duration}    — 持续秒数（hold_still / long_press 有效）
+#
+# 区域：
+#   upper   (y < 0.33) — 额头/头发/耳朵
+#   middle  (0.33 <= y < 0.66) — 胸口/背部/腰部
+#   lower   (y >= 0.66) — 小腹/大腿
+#
+# 强度语义：
+#   light   — 蜻蜓点水
+#   gentle  — 温柔
+#   moderate — 普通
+#   warm    — 温暖的多指覆盖
+#   firm    — 用力的
+#   heavy   — 沉重的
+#   fast    — 快速的
+#   slow    — 缓慢的
+#   quick   — 急促的
+#   double  — 双击
+
+zones:
+  upper:  "额头/头发/耳朵"
+  middle: "胸口/背部/腰部"
+  lower:  "小腹/大腿"
+
+gestures:
+  tap:
+    upper:  "轻轻点了一下我的额头"
+    middle: "在我胸口点了一下"
+    lower:  "在我小腹上轻轻戳了一下"
+
+  double_tap:
+    upper:  "在我额头上敲了两下，像在敲门"
+    middle: "在我胸口敲了敲"
+    lower:  "在我小腹上轻敲了两下"
+
+  long_press:
+    upper:  "把手掌贴在我的额头上，停留了很久"
+    middle: "把手按在我胸口，像在感受心跳"
+    lower:  "把手捂在我小腹上，没有移开"
+
+  hold_still:
+    upper:  "手一直放在我的头顶，很安静"
+    middle: "手贴着我的胸口，没有动"
+    lower:  "手搭在我身上，很安静"
+
+  slide_up:
+    upper:  "手指沿着额头向上滑去"
+    middle: "手指从胸口向上滑到脖子"
+    lower:  "手指从大腿向上滑去"
+
+  slide_down:
+    upper:  "手指从头顶滑下来，抚过我的脸"
+    middle: "手指从胸口缓缓往下滑"
+    lower:  "手指向下滑去"
+
+  slide_left:
+    upper:  "手指在额头上向左划去"
+    middle: "手指在胸口向左侧划动"
+    lower:  "手指在腿上向左划去"
+
+  slide_right:
+    upper:  "手指在额头上向右划去"
+    middle: "手指在胸口向右侧划动"
+    lower:  "手指在腿上向右划去"
+
+  circle:
+    upper:  "手指在我太阳穴上慢慢画着圈"
+    middle: "手指在胸口画着圈"
+    lower:  "手指在小腹上打着圈"
+
+  back_and_forth:
+    upper:  "手指在我额头上反复摩挲"
+    middle: "手指在胸口来回摩挲"
+    lower:  "手指在腿上来回摩挲"
+
+  two_finger_tap:
+    upper:  "两根手指在我额头上轻碰了一下"
+    middle: "两根手指一起落在我的胸口"
+    lower:  "两根手指轻轻碰了碰我的小腹"
+
+  two_finger_slide_up:
+    upper:  "两根手指沿着额头向上滑"
+    middle: "两根手指从胸口向上滑动"
+    lower:  "两根手指沿着大腿向上滑"
+
+  two_finger_slide_down:
+    upper:  "两根手指从头顶滑下来"
+    middle: "两根手指从胸口往下滑动"
+    lower:  "两根手指向下滑去"
+
+  two_finger_slide_left:
+    upper:  "两根手指在额头上向左滑动"
+    middle: "两根手指在胸口向左侧游走"
+    lower:  "两根手指在腿上向左滑动"
+
+  two_finger_slide_right:
+    upper:  "两根手指在额头上向右滑动"
+    middle: "两根手指在胸口向右侧游走"
+    lower:  "两根手指在腿上向右滑动"
+
+  two_finger_circle:
+    upper:  "两根手指在我太阳穴周围画圈"
+    middle: "两根手指在胸口慢慢画着圈"
+    lower:  "两根手指在小腹上打着圈"
+
+  two_finger_long_press:
+    upper:  "两根手指用力按在我的额头上"
+    middle: "两根手指按着我的胸口"
+    lower:  "两根手指按在我的小腹上"
+
+  two_finger_hold_still:
+    upper:  "两根手指放在我的头顶"
+    middle: "两根手指贴着我的胸口"
+    lower:  "两根手指搭在我身上"
+
+  three_finger:
+    upper:  "整个手掌覆在我的头顶"
+    middle: "手掌覆盖在我的胸口"
+    lower:  "手掌放在我的小腹上"
+
+  # ── 非手势状态（手势尚未识别或刚结束）──
+  raw_contact:
+    upper:  "{finger_text}轻轻搭在我额头上"
+    middle: "{finger_text}轻轻贴在我胸口"
+    lower:  "{finger_text}轻轻搭在我身上"
+  brief_touch:
+    upper:  "刚刚碰了一下我的额头"
+    middle: "刚刚碰了一下我的胸口"
+    lower:  "刚刚碰了我一下"

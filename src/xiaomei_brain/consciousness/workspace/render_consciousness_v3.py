@@ -604,8 +604,30 @@ def _render_body(si) -> list[str]:
     if _oxy_gain <= 0.3:
         lines.append(f"催产素增益降至{_oxy_gain:.0%}，社交温暖几乎感受不到了。")
 
-    # ── 环境感知（插件 sensory 槽位）──
+    # ── 触觉感知（特殊渲染：自然语言肢体动作）──
     _sensory: dict = getattr(bo, 'sensory', None) or {}
+    _touch_data = _sensory.pop("触觉", None)
+    if _touch_data and _touch_data.get("active"):
+        # 新鲜度检查：超过 15 秒的触觉数据视为过期
+        import time as _time
+        _ts = _touch_data.get("_ts", 0)
+        if _time.time() - _ts > 15:
+            _touch_data = None
+    if _touch_data:
+        # 用户称呼：优先当前用户名 → 首选称呼 → 回退
+        _user_name = si.current_user_name or (
+            si.preferred_names[0] if si.preferred_names else "有人")
+        descs = _touch_data.get("descriptions", [])
+        if descs:
+            # 取最近1-3条，去重
+            unique = list(dict.fromkeys(descs))
+            recent = unique[-3:]
+            touch_text = "；".join(recent)
+            lines.append("")
+            lines.append("### 被触摸")
+            lines.append(f"{_user_name}正在触摸你：{touch_text}。")
+
+    # ── 环境感知（插件 sensory 槽位）──
     if _sensory:
         lines.append("")
         for section, items in _sensory.items():

@@ -51,6 +51,8 @@ class Layer0Autonomous:
         self._debug_file = debug_file
         self._interoception = interoception           # 内感受
         self._body = body                             # 身体感官
+        self._last_touch_check: float = 0.0           # 触觉在线检测节流
+        self._touch_available: bool = False           # 触觉当前是否可用
 
         # TUI 日志缓冲区
         self._log_buffer: deque[str] = deque(maxlen=200)
@@ -112,6 +114,23 @@ class Layer0Autonomous:
                     if self._body:
                         body_state = self._body.tick()
                         si.contribute_body_senses(body_state)
+
+                        # 触觉快速通道：与 Drive 同级，直接进 SelfImage
+                        # is_available() 会 spawn powershell（吃 stdin），节流到每 5s 一次
+                        touch = self._body.get_sense("touch")
+                        if touch:
+                            _t = time.time()
+                            if _t - self._last_touch_check >= 5.0:
+                                self._last_touch_check = _t
+                                self._touch_available = touch.is_available()
+                            if self._touch_available:
+                                try:
+                                    touch_data = touch.feel_body(window_seconds=5.0)
+                                    if touch_data and touch_data.get("active"):
+                                        touch_data["_ts"] = time.time()
+                                        si.body.sensory["触觉"] = touch_data
+                                except Exception:
+                                    pass
                     # ── 身体感官结束 ──
 
                     si = self._c.get_self_image()

@@ -1,0 +1,5 @@
+name: body_touch
+version: "1.0.0"
+description: "触觉器官 — Windows 全局滚轮监听"
+kind: bundle
+entry: adapter:register

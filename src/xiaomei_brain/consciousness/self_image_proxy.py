@@ -251,7 +251,8 @@ class SelfImage:
             self.body.visual_scene = state.visual_scene[:500]
         if state.audio_scene:
             self.body.audio_scene = state.audio_scene[:500]
-        self.body.sensory = dict(state.sensory)
+        if state.sensory:
+            self.body.sensory = dict(state.sensory)
 
     def contribute_perception(self, *,
                                agent_state: str | None = None,

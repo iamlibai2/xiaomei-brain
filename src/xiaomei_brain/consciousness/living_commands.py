@@ -763,24 +763,99 @@ def cmd_ears(living, args: str) -> None:
 
 def cmd_see(living, args: str) -> None:
     """看当前场景。"""
+    import os
+    import time
+
     G, V, D, X, R = "\033[32m", "\033[38;5;203m", "\033[38;5;73m", "\033[90m", "\033[0m"
     body = getattr(living, 'body', None)
     if not body or not body.eyes:
-        print(f"\n  {V}眼睛不可用{R}", flush=True)
+        print(f"\n  {V}眼睛未注册{R}", flush=True)
         return
+    _ensure_body_online(living)
     if not body.eyes.is_available():
-        print(f"\n  {V}眼睛离线{R}", flush=True)
+        print(f"\n  {V}眼睛离线 — 摄像头不可用{R}", flush=True)
         return
-    scene = body.eyes.see(args or "描述这个画面")
-    faces = body.eyes.recognize_faces()
-    print(f"\n  {G}场景{R}  {scene or f'{X}无{R}'}", flush=True)
-    if faces:
-        identity_mgr = getattr(living, '_identity_mgr', None)
-        for f in faces:
-            fid = f.get("face_id", "")
-            name = identity_mgr.get_display_name(fid) if identity_mgr else ""
-            print(f"  {D}人脸{R}  {name or fid}", flush=True)
-    print(flush=True)
+
+    print(f"\n  {G}📷 拍照中 ...{R}", end="", flush=True)
+    jpeg = body.eyes.device.capture()
+    if not jpeg:
+        print(f"\r\033[K  {V}拍照失败{R}", flush=True)
+        return
+
+    agent_id = getattr(living, '_agent_id', 'unknown')
+    out_dir = os.path.expanduser(f"~/.xiaomei-brain/{agent_id}/tmp")
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"photo_{int(time.time())}.jpg")
+    with open(path, "wb") as f:
+        f.write(jpeg)
+    print(f"\r\033[K  {G}拍照完成{R}  {X}{len(jpeg)} bytes → {path}{R}", flush=True)
+
+    # TODO: 多模态 LLM 描述（Eyes.see(prompt)）
+    print(f"  {X}(多模态描述待接入){R}", flush=True)
+
+
+def cmd_touch(living, args: str) -> None:
+    """感知触觉 — 滚轮 + 触摸板。"""
+    G, V, D, X, R = "\033[32m", "\033[38;5;203m", "\033[38;5;73m", "\033[90m", "\033[0m"
+    body = getattr(living, 'body', None)
+    touch = body.get_sense("touch") if body else None
+    if not touch:
+        print(f"\n  {V}触觉未注册{R}", flush=True)
+        return
+    _ensure_body_online(living)
+    if not touch.is_available():
+        print(f"\n  {V}触觉离线 — 无可用触觉设备{R}", flush=True)
+        return
+
+    window = 5.0
+    result = touch.feel(window_seconds=window)
+    if not result:
+        print(f"\n  {V}感知失败{R}", flush=True)
+        return
+
+    # ── 滚轮 ──
+    scroll = result.get("scroll") or {}
+    scroll_events = scroll.get("events", [])
+    scroll_total = scroll.get("total_delta", 0)
+    scroll_active = scroll.get("active", False)
+
+    # ── 触摸板 ──
+    tp = result.get("touchpad") or {}
+    tp_events = tp.get("events", [])
+    tp_active = tp.get("active", False)
+    tp_fingers = tp.get("fingers", 0)
+    tp_pos = tp.get("position")
+    tp_moving = tp.get("moving", False)
+    tp_speed = tp.get("speed", 0)
+
+    active = scroll_active or tp_active
+    status = f"{G}活跃{R}" if active else f"{X}静默{R}"
+    print(f"\n  {G}触觉{R}  {status}", flush=True)
+
+    if scroll_active:
+        direction = f"{G}↓{R}" if scroll_total > 0 else (f"{V}↑{R}" if scroll_total < 0 else "—")
+        print(f"  {D}滚轮{R}  {direction} {abs(scroll_total)}行 ({len(scroll_events)}次, {window:.0f}s)", flush=True)
+        if scroll_events:
+            speeds = [abs(e["delta"]) for e in scroll_events]
+            avg = sum(speeds) / len(speeds)
+            bursts = sum(1 for i in range(1, len(scroll_events)) if scroll_events[i]["ts"] - scroll_events[i-1]["ts"] < 500)
+            print(f"  {X}  速度 {avg:.0f}行/次  连续 {bursts}次{R}", flush=True)
+
+    if tp_active:
+        finger_str = f"{G}{tp_fingers}指{R}" if tp_fingers > 0 else f"{X}0指{R}"
+        move_str = f"{D}滑动中{R}" if tp_moving else f"{X}静止{R}"
+        pos_str = ""
+        if tp_pos:
+            pos_str = f"  ({tp_pos[0]:.2f}, {tp_pos[1]:.2f})"
+        print(f"  {D}触摸板{R}  {finger_str}  {move_str}{pos_str}", flush=True)
+        if tp_events:
+            print(f"  {X}  事件 {len(tp_events)}次  速度 {tp_speed:.3f}{R}", flush=True)
+
+    # ── 肢体动作翻译 ──
+    body_descs = result.get("body_descriptions", [])
+    if body_descs:
+        for desc in body_descs[-5:]:  # 最近5条
+            print(f"  {V}  ╰─ {desc}{R}", flush=True)
 
 
 def cmd_hear(living, args: str) -> None:
@@ -788,8 +863,9 @@ def cmd_hear(living, args: str) -> None:
     G, V, D, X, R = "\033[32m", "\033[38;5;203m", "\033[38;5;73m", "\033[90m", "\033[0m"
     body = getattr(living, 'body', None)
     if not body or not body.ears:
-        print(f"\n  {V}耳朵不可用{R}", flush=True)
+        print(f"\n  {V}耳朵未注册{R}", flush=True)
         return
+    _ensure_body_online(living)
     if not body.ears.is_available():
         print(f"\n  {V}耳朵离线{R}", flush=True)
         return
@@ -797,6 +873,79 @@ def cmd_hear(living, args: str) -> None:
     voice_id = body.ears.recognize_voice()
     print(f"\n  {G}音频{R}  {result or f'{X}无{R}'}", flush=True)
     print(f"  {D}声纹{R}  {voice_id or f'{X}未识别{R}'}", flush=True)
+
+
+def _ensure_body_online(living) -> bool:
+    """确保 Body 感官上线（_on_wake 在后台线程，可能尚未执行）。"""
+    body = getattr(living, 'body', None)
+    if not body:
+        return False
+    body.open()
+    return True
+
+
+def cmd_l(living, args: str) -> None:
+    """录音并转写（/l = listen）。"""
+    import os
+    import struct
+    import time
+
+    G, V, D, X, R = "\033[32m", "\033[38;5;203m", "\033[38;5;73m", "\033[90m", "\033[0m"
+    body = getattr(living, 'body', None)
+    if not body or not body.ears:
+        print(f"\n  {V}耳朵未注册{R}", flush=True)
+        return
+    _ensure_body_online(living)
+    if not body.ears.is_available():
+        print(f"\n  {V}耳朵离线 — 麦克风不可用{R}", flush=True)
+        return
+
+    seconds = 5
+    try:
+        if args.strip():
+            seconds = max(1, min(30, int(args.strip())))
+    except ValueError:
+        pass
+
+    print(f"\n  {G}🎙 录音中 {seconds}s ...{R}", end="", flush=True)
+
+    device = body.ears.device
+    pcm = device.capture(seconds=seconds)
+    if not pcm:
+        print(f"\r\033[K  {V}录音失败{R}", flush=True)
+        return
+
+    dur = len(pcm) / 32000  # 16kHz 16-bit mono → 32000 bytes/s
+    print(f"\r\033[K  {G}录音完成{R}  {V}{dur:.1f}s{R}  {X}({len(pcm)} bytes PCM){R}", flush=True)
+
+    # 保存 WAV（方便后续 STT 调用）
+    agent_id = getattr(living, '_agent_id', 'unknown')
+    out_dir = os.path.expanduser(f"~/.xiaomei-brain/{agent_id}/tmp")
+    os.makedirs(out_dir, exist_ok=True)
+    wav_path = os.path.join(out_dir, f"listen_{int(time.time())}.wav")
+
+    with open(wav_path, "wb") as f:
+        data_size = len(pcm)
+        # WAV header
+        f.write(b"RIFF")
+        f.write(struct.pack("<I", 36 + data_size))
+        f.write(b"WAVE")
+        f.write(b"fmt ")
+        f.write(struct.pack("<I", 16))       # chunk size
+        f.write(struct.pack("<H", 1))         # PCM
+        f.write(struct.pack("<H", 1))         # mono
+        f.write(struct.pack("<I", 16000))     # sample rate
+        f.write(struct.pack("<I", 32000))     # byte rate
+        f.write(struct.pack("<H", 2))         # block align
+        f.write(struct.pack("<H", 16))        # bits per sample
+        f.write(b"data")
+        f.write(struct.pack("<I", data_size))
+        f.write(pcm)
+
+    print(f"  {D}已保存{R}  {X}{wav_path}{R}", flush=True)
+
+    # TODO: STT → text → put_message(living, text, source="voice")
+    print(f"  {X}(STT 待接入){R}", flush=True)
 
 
 # ── 命令注册表 ──────────────────────────────────────────────────
@@ -823,4 +972,6 @@ COMMAND_REGISTRY: dict[str, tuple] = {
     "ears":      (cmd_ears,           False),
     "see":       (cmd_see,            True),
     "hear":      (cmd_hear,           True),
+    "l":         (cmd_l,              True),
+    "touch":     (cmd_touch,          False),
 }
