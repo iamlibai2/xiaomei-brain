@@ -21,6 +21,7 @@ class IdentityManager:
     """管理多用户身份。从 identities.yaml 加载。
 
     支持别名：alias_ids 字段将平台级 ID（如飞书 open_id）映射到主 id。
+    集成生物特征：人脸 (face_id) 和声纹 (speaker_id)。
     """
 
     def __init__(self, data_dir: str | Path) -> None:
@@ -28,12 +29,28 @@ class IdentityManager:
         self._dir.mkdir(parents=True, exist_ok=True)
         self._identities: dict[str, dict] = {}  # id → {name, relation, aliases}
         self._alias_map: dict[str, str] = {}     # alias → id
+
+        # 生物特征子目录
+        self._faces_dir = self._dir / "faces"
+        self._voices_dir = self._dir / "voices"
+
+        # 感知模块（由 IdentityManager 持有，供 sense.py 使用）
+        self._face_id = None
+        self._speaker_id = None
+
         self._load()
+        self._load_biometrics()
 
     # ── lookup ─────────────────────────────────────────────────
 
     def resolve(self, identity_id: str) -> dict | None:
-        """根据 id 或别名查找身份信息。返回 {id, name} 或 None。"""
+        """根据 id、别名或显示名查找身份信息。返回 {id, name, ...} 或 None。
+
+        支持三种查询方式（按优先级）：
+        1. 主 id（如 "libai"）
+        2. 平台别名（如飞书 open_id）
+        3. 显示名反向查找（如 "李白" → "libai"）
+        """
         entry = self._identities.get(identity_id)
         if entry:
             return entry
@@ -41,6 +58,10 @@ class IdentityManager:
         resolved_id = self._alias_map.get(identity_id)
         if resolved_id:
             return self._identities.get(resolved_id)
+        # 按显示名反向查找
+        for pid, info in self._identities.items():
+            if info.get("name") == identity_id:
+                return info
         return None
 
     def get_display_name(self, identity_id: str) -> str:
@@ -80,6 +101,68 @@ class IdentityManager:
         self._save()
         logger.info("[Contacts] 添加别名: %s → %s", alias, target_id)
         return True
+
+    # ── biometrics ─────────────────────────────────────────────
+
+    @property
+    def face_id(self):
+        """懒加载 FaceID（含持久化人脸特征）。"""
+        if self._face_id is None:
+            from xiaomei_brain.body.perception import FaceID
+            self._face_id = FaceID()
+            self._face_id.load(str(self._faces_dir))
+        return self._face_id
+
+    @property
+    def speaker_id(self):
+        """懒加载 SpeakerID（含持久化声纹）。"""
+        if self._speaker_id is None:
+            from xiaomei_brain.body.perception import SpeakerID
+            self._speaker_id = SpeakerID()
+            self._speaker_id.load(str(self._voices_dir))
+        return self._speaker_id
+
+    def register_face(self, image_path: str, identity_id: str) -> bool:
+        """为指定身份注册人脸。
+
+        从 image_path 提取人脸编码，持久化到 faces/ 目录。
+        以 identity_id 为 key（而非显示名），确保识别结果可直接用于 resolve()。
+        """
+        entry = self.resolve(identity_id)
+        if not entry:
+            logger.warning("[Contacts] 注册人脸失败: 身份 %s 不存在", identity_id)
+            return False
+        ok = self.face_id.register(identity_id, image_path)
+        if ok:
+            self.face_id.save(str(self._faces_dir))
+        return ok
+
+    def register_voice(self, pcm: bytes, identity_id: str, sample_rate: int = 16000) -> bool:
+        """为指定身份注册声纹。
+
+        pcm: 至少 5 秒的 16kHz 16-bit mono PCM。
+        以 identity_id 为 key（而非显示名），确保识别结果可直接用于 resolve()。
+        """
+        entry = self.resolve(identity_id)
+        if not entry:
+            logger.warning("[Contacts] 注册声纹失败: 身份 %s 不存在", identity_id)
+            return False
+        ok = self.speaker_id.enroll(identity_id, pcm, sample_rate)
+        if ok:
+            self.speaker_id.save(str(self._voices_dir))
+        return ok
+
+    def _load_biometrics(self) -> None:
+        """从 faces/ 和 voices/ 目录加载已保存的生物特征。
+
+        只在 FaceID/SpeakerID 尚未创建时预加载。
+        如果已通过属性访问创建，跳过。
+        """
+        # 如果尚未创建，提前加载以复用
+        if self._face_id is None:
+            _ = self.face_id  # 触发懒加载 + load()
+        if self._speaker_id is None:
+            _ = self.speaker_id
 
     # ── persistence ────────────────────────────────────────────
 

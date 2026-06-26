@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import time
+
 from .sense import Sense, Eyes, Ears, Throat
 from .device import Device, Camera, Microphone, Speaker
 from .state import BodyState
@@ -26,10 +28,10 @@ class Body:
     def __init__(self) -> None:
         self._senses: dict[str, Sense] = {}
         self._last_state: BodyState | None = None
-        # 节流时间戳
-        self._last_online_check: float = 0.0
-        self._last_capture: float = 0.0
-        self._last_analyze: float = 0.0
+        # 节流时间戳 — 初始化为当前时间，避免首次 tick 立即触发采集
+        self._last_online_check: float = time.time()
+        self._last_capture: float = time.time()
+        self._last_analyze: float = time.time()
 
     def register_sense(self, sense: Sense, device: Device) -> None:
         """注册一个感官及其关联设备。"""
@@ -52,8 +54,6 @@ class Body:
           - 5分钟：采集原始数据（拍照/录音，不分析）
           - 10分钟：分析识别（人脸/声纹/变化检测）
         """
-        import time
-
         now = time.time()
         # 如果有上一次状态，复制在线信息作为缓存
         state = BodyState(timestamp=now)

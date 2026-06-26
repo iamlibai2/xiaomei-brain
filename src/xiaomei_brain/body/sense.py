@@ -47,39 +47,73 @@ class Eyes(Sense):
     """看的能力。
 
     - see(prompt): 通用视觉 → 拍照 → 多模态 LLM 描述
-    - recognize_faces(): 人脸识别 → 本地 CV + 特征库比对
+    - recognize_faces(): 人脸识别 → 本地 face_recognition (dlib)
     """
 
     name = "eyes"
 
+    def __init__(self) -> None:
+        super().__init__()
+        self._face_id = None
+
+    @property
+    def face_id(self):
+        """懒加载 FaceID 模块。"""
+        if self._face_id is None:
+            from xiaomei_brain.body.perception import FaceID
+            self._face_id = FaceID()
+        return self._face_id
+
+    def inject_face_id(self, face_id) -> None:
+        """注入共享的 FaceID 实例（来自 IdentityManager）。
+
+        调用后，recognize_faces() 使用 IdentityManager 已加载的已知人脸。
+        """
+        self._face_id = face_id
+
     def see(self, prompt: str = "描述这个画面") -> str | None:
         """通用视觉。拍照 → 多模态 LLM 根据 prompt 描述。
 
-        一个方法覆盖所有视觉理解场景：
-          - "描述现场环境和人数"    → 看现场
-          - "这是什么风格的画面"    → 审美判断
-          - "读出画面中的文字"      → OCR
-          - "画面里发生了什么事"    → 理解场景
-
-        Phase 1: 返回 mock 描述
-        Phase 2: Camera.capture() → 多模态 LLM API
+        NOTE: 待多模态 LLM API 接入。
         """
         if not self.is_available():
             return None
-        return None  # 子类覆盖
+        return None
 
     def recognize_faces(self) -> list[dict]:
-        """人脸识别。本地 CV 检测 → 特征提取 → 匹配已知身份。
+        """人脸检测 + 身份匹配。
 
-        返回: [{"face_id": "feat_abc123", "bbox": [x,y,w,h]}, ...]
-        face_id 从上层的 IdentityManager 解析为名字/关系。
-
-        Phase 1: 返回 mock 数据
-        Phase 2: Camera.capture() → OpenCV 人脸检测 → 特征提取
+        返回: [{"name": "李白", "bbox": (top,right,bottom,left)}, ...]
+        无匹配则 name 为 None，无检测则返回空列表。
         """
         if not self.is_available():
             return []
-        return []
+
+        captured = self._device.capture()
+        if not captured:
+            return []
+
+        # 兼容两种 capture() 返回：bytes（RealCamera）或 str/Path（MockCamera）
+        import tempfile
+        import os as _os
+        if isinstance(captured, bytes):
+            fd, photo_path = tempfile.mkstemp(suffix=".jpg", prefix="face_")
+            _os.close(fd)
+            with open(photo_path, "wb") as f:
+                f.write(captured)
+        else:
+            photo_path = str(captured)
+
+        try:
+            detected = self.face_id.detect(photo_path)
+            results = []
+            for d in detected:
+                name = self.face_id.match(d["encoding"])
+                results.append({"name": name, "bbox": d["bbox"]})
+            return results
+        finally:
+            if isinstance(captured, bytes) and _os.path.exists(photo_path):
+                _os.unlink(photo_path)
 
     def contribute_to(self, state) -> None:
         """贡献视觉数据到 BodyState。10分钟一次，本地CV分析。"""
@@ -98,28 +132,81 @@ class Eyes(Sense):
 class Ears(Sense):
     """听的能力。
 
-    - listen(prompt): 通用听觉 → 录音 → 多模态 LLM 分析
-    - recognize_voice(): 声纹识别 → 本地特征库比对
+    - listen(seconds): 录音 → STT 转文字 + 情感识别
+    - recognize_voice(): 声纹识别 → speechbrain ECAPA-TDNN
     """
 
     name = "ears"
 
-    def listen(self, prompt: str = "分析这个音频") -> str | None:
-        """通用听觉。录音 → 多模态 LLM 根据 prompt 分析。
+    def __init__(self) -> None:
+        super().__init__()
+        self._last_stt_result: dict = {}
+        self._stt = None
+        self._speaker_id = None
 
-          - "转写音频内容"           → 语音转文字
-          - "说话人的情绪是什么"      → 语气分析
-          - "这是什么声音"           → 环境音识别
+    @property
+    def stt(self):
+        """懒加载 STT 模块（SenseVoice）。"""
+        if self._stt is None:
+            from xiaomei_brain.body.perception import STT
+            self._stt = STT()
+        return self._stt
+
+    @property
+    def speaker_id(self):
+        """懒加载 SpeakerID 模块。"""
+        if self._speaker_id is None:
+            from xiaomei_brain.body.perception import SpeakerID
+            self._speaker_id = SpeakerID()
+        return self._speaker_id
+
+    def inject_speaker_id(self, speaker_id) -> None:
+        """注入共享的 SpeakerID 实例（来自 IdentityManager）。
+
+        调用后，recognize_voice() 使用 IdentityManager 已加载的已知声纹。
+        """
+        self._speaker_id = speaker_id
+
+    def listen(self, seconds: int = 4) -> dict | None:
+        """录音 → STT 转文字 + 情感识别。
+
+        返回: {"text": "...", "emotion": "开心", "events": []}
         """
         if not self.is_available():
             return None
-        return None
+
+        pcm = self._device.capture(seconds=seconds)
+        if not pcm:
+            return None
+
+        result = self.stt.transcribe(pcm, sample_rate=16000)
+        self._last_stt_result = result
+        return result
+
+    @property
+    def last_emotion(self) -> str:
+        """最近一次 listen() 识别到的用户情绪（中文名，如"开心"）。"""
+        return self._last_stt_result.get("emotion", "")
+
+    @property
+    def last_text(self) -> str:
+        """最近一次 listen() 转写的文本。"""
+        return self._last_stt_result.get("text", "")
 
     def recognize_voice(self) -> str | None:
-        """声纹识别。返回 voice_id 或 None。"""
+        """声纹识别。录音 → 声纹特征提取 → 匹配已知身份。
+
+        返回匹配到的 name 或 None。
+        需要至少 5 秒有效语音。
+        """
         if not self.is_available():
             return None
-        return None
+
+        pcm = self._device.capture(seconds=5)
+        if not pcm:
+            return None
+
+        return self.speaker_id.identify(pcm, sample_rate=16000)
 
     def contribute_to(self, state) -> None:
         """贡献听觉数据到 BodyState。10分钟一次，声纹识别。"""

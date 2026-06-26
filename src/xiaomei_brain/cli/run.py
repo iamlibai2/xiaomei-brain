@@ -87,6 +87,24 @@ def _read_multiline(first_line: str, timeout: float = 0.05) -> str:
     return result
 
 
+# ── 单字符读取（空格/Tab 快捷登录）─────────────────────────
+
+def _read_char() -> str | None:
+    """读取单个字符，不回显。仅登录阶段使用。"""
+    try:
+        import tty
+        import termios
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            return sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    except Exception:
+        return None
+
+
 # ── Token 估算 ─────────────────────────────────────────────
 
 def _count_context_tokens(all_messages) -> int:
@@ -172,17 +190,23 @@ def _run_agent(
     _in_thinking = False  # 跟踪 LLM 输出是否处于思考段
     _para_buf = ""        # 段落缓冲（按 \n\n 拆分渲染）
 
-    # Rich console for paragraph-based markdown rendering
+    # Rich console for markdown rendering
     from rich.console import Console as _RichConsole
     from rich.markdown import Markdown as _RichMarkdown
-    _rich_console = _RichConsole(highlight=False)
 
-    _term_width = shutil.get_terminal_size().columns
+    def _get_term_width() -> int:
+        try:
+            return os.get_terminal_size().columns
+        except Exception:
+            return 78
+
+    _rich_console = _RichConsole(highlight=False)
 
     def _render_proactive(content: str) -> None:
         """以对话回复统一格式渲染主动消息。"""
-        print("\n\033[90m" + "─" * _term_width + "\033[0m", flush=True)
-        print(f"  \033[38;5;203m{agent_name}\033[0m: ", end="", flush=True)
+        bar_w = _get_term_width()
+        print("\n\033[90m" + "─" * bar_w + "\033[0m", flush=True)
+        print(f"  \033[38;5;203m{agent_name}\033[0m:", flush=True)
         _rich_console.print(_RichMarkdown(content, code_theme="monokai"))
 
     def on_proactive(content, user_id=""):
@@ -216,7 +240,7 @@ def _run_agent(
             idx = pos + 2
 
     def _render_para(text: str) -> None:
-        """渲染一个段落，交 Rich Markdown。"""
+        """渲染一个段落。"""
         t = text.strip()
         if t:
             _rich_console.print(_RichMarkdown(t, code_theme="monokai"))
@@ -267,29 +291,158 @@ def _run_agent(
         identity_mgr = IdentityManager(contacts_dir)
         ids = identity_mgr.list_ids()
 
+        def _apply_login(_user_id, identity):
+            display_name = identity["name"]
+            living.user_id = _user_id
+            agent_core = agent._get_agent()
+            agent_core.user_id = _user_id
+            agent_core.user_display_name = display_name
+            if hasattr(living, 'consciousness') and living.consciousness:
+                si = living.consciousness.get_self_image()
+                if si:
+                    si.current_user_name = display_name
+                    si.current_user_id = _user_id
+                    si.current_user_relation = identity_mgr.get_relation(_user_id)
+                    ltm = getattr(agent, 'longterm_memory', None)
+                    si.load_preferred_names(_user_id, ltm)
+            print(f"\n  {C_ACCENT}你好，{display_name}\033[0m\n")
+            ltm = getattr(agent, 'longterm_memory', None)
+            if ltm and not ltm.is_embedder_ready():
+                print(f"  \033[90m[....] Embedding 模型加载中（首次约 20 秒），请稍候...\033[0m", flush=True)
+                ltm.wait_embedder()
+                print(f"  \033[90m[ OK ] Embedding 模型就绪\033[0m", flush=True)
+            living.load_fresh_tail()
+            if hasattr(living, '_attention') and living._attention:
+                cli_sid = f"cli-{agent_id}"
+                living._attention.save_session(cli_sid)
+                living._attention._current_session = cli_sid
+            if hasattr(living, '_router') and living._router:
+                living._router.register_peer(
+                    peer_type="human", peer_id=_user_id, channel="cli",
+                    session_id=f"cli-{agent_id}",
+                    output_type="cli", output_target="stdout",
+                    priority=10,
+                )
+
+        def _try_face_login():
+            body = getattr(living, 'body', None)
+            if not body or not body.eyes:
+                print(f"\r  ❌ 摄像头未配置，请手动登录", flush=True)
+                return None
+            eyes = body.eyes
+            if not eyes.is_available():
+                eyes._device.open()
+                eyes.online = True
+            if not eyes.is_available():
+                print(f"\r  ❌ 摄像头不可用，请手动登录", flush=True)
+                return None
+            print(f"\r  📷 拍照识别中...", end="", flush=True)
+            try:
+                faces = eyes.recognize_faces()
+            except Exception as e:
+                print(f"\r  ❌ 拍照失败: {e}", flush=True)
+                return None
+            if not faces:
+                print(f"\r  ❌ 未检测到人脸，请重试或按[回车]手动登录  ", flush=True)
+                return None
+            name = faces[0].get("name")
+            if not name:
+                print(f"\r  ❌ 未识别出身份，请重试或按[回车]手动登录  ", flush=True)
+                return None
+            identity = identity_mgr.resolve(name)
+            if not identity:
+                print(f"\r  ❌ 人脸匹配到 '{name}' 但身份不存在，请手动登录", flush=True)
+                return None
+            print(f"\r\033[K  ✅ \033[32m人脸识别成功\033[0m", flush=True)
+            return name
+
+        def _try_voice_login():
+            body = getattr(living, 'body', None)
+            if not body or not body.ears:
+                print(f"\r  ❌ 麦克风未配置，请手动登录", flush=True)
+                return None
+            ears = body.ears
+            if not ears.is_available():
+                ears._device.open()
+                ears.online = True
+            if not ears.is_available():
+                print(f"\r  ❌ 麦克风不可用，请手动登录", flush=True)
+                return None
+            print(f"\r  🎙 录音识别中 5s，请说话...", end="", flush=True)
+            try:
+                voice_id = ears.recognize_voice()
+            except Exception as e:
+                print(f"\r  ❌ 录音失败: {e}", flush=True)
+                return None
+            if not voice_id:
+                print(f"\r  ❌ 未识别出声纹，请重试或按[回车]手动登录  ", flush=True)
+                return None
+            identity = identity_mgr.resolve(voice_id)
+            if not identity:
+                print(f"\r  ❌ 声纹匹配到 '{voice_id}' 但身份不存在，请手动登录", flush=True)
+                return None
+            print(f"\r\033[K  ✅ \033[32m声纹识别成功\033[0m", flush=True)
+            return voice_id
+
         if ids:
             print()
+            print(f"  \033[90m按 {C_ACCENT}[空格]\033[90m 拍照登录 {C_ACCENT}[Tab]\033[90m 声纹登录，或按 {C_ACCENT}[回车]\033[90m 输入身份ID/序号手动登录\033[0m")
             parts = []
             for i, uid in enumerate(ids, 1):
                 info = identity_mgr._identities.get(uid, {})
                 name = info.get("name", uid)
                 parts.append(f"{C_ACCENT2}{i}. {name}\033[0m\033[90m({uid})\033[0m")
-            print(f"  \033[90m请登录，可用身份：\033[0m " + " ".join(parts))
+            print(f"  \033[90m可用登录身份：\033[0m " + " ".join(parts))
             print()
 
         user_id = None
         while not user_id:
             try:
-                user_id = input("  login: ").strip()
-            except (KeyboardInterrupt, EOFError):
+                ch = _read_char()
+            except Exception:
+                ch = None
+
+            if ch is None or ch in ('\r', '\n'):
+                pass  # 回车 → 走 input()
+            elif ch == '\x03':  # Ctrl+C
                 print("\r\033[K" + C_ACCENT + "  再见\033[0m", flush=True)
+                living.stop()
                 import sys as _sys
                 _sys.exit(0)
+            elif ch == ' ':
+                user_id = _try_face_login()
+                if user_id:
+                    identity = identity_mgr.resolve(user_id)
+                    if identity:
+                        _apply_login(user_id, identity)
+                        break
+                continue
+            elif ch == '\t':
+                user_id = _try_voice_login()
+                if user_id:
+                    identity = identity_mgr.resolve(user_id)
+                    if identity:
+                        _apply_login(user_id, identity)
+                        break
+                continue
+            else:
+                sys.stdout.write(ch)
+                sys.stdout.flush()
+                rest = input()
+                user_id = (ch + rest).strip()
+
+            if not user_id:
+                try:
+                    user_id = input("  login: ").strip()
+                except (KeyboardInterrupt, EOFError):
+                    print("\r\033[K" + C_ACCENT + "  再见\033[0m", flush=True)
+                    living.stop()
+                    import sys as _sys
+                    _sys.exit(0)
 
             if not user_id:
                 continue
 
-            # 尝试按序号选择
             try:
                 idx = int(user_id) - 1
                 if 0 <= idx < len(ids):
@@ -299,37 +452,7 @@ def _run_agent(
 
             identity = identity_mgr.resolve(user_id)
             if identity:
-                display_name = identity["name"]
-                living.user_id = user_id
-                agent_core = agent._get_agent()
-                agent_core.user_id = user_id
-                agent_core.user_display_name = display_name
-                if hasattr(living, 'consciousness') and living.consciousness:
-                    si = living.consciousness.get_self_image()
-                    if si:
-                        si.current_user_name = display_name
-                        ltm = getattr(agent, 'longterm_memory', None)
-                        si.load_preferred_names(user_id, ltm)
-                print(f"\n  {C_ACCENT}你好，{display_name}\033[0m\n")
-                # ── 等待 Embedding 模型就绪 ──────────────────
-                ltm = getattr(agent, 'longterm_memory', None)
-                if ltm and not ltm.is_embedder_ready():
-                    print(f"  \033[90m[....] Embedding 模型加载中（首次约 20 秒），请稍候...\033[0m", flush=True)
-                    ltm.wait_embedder()
-                    print(f"  \033[90m[ OK ] Embedding 模型就绪\033[0m", flush=True)
-                living.load_fresh_tail()
-                if hasattr(living, '_attention') and living._attention:
-                    cli_sid = f"cli-{agent_id}"
-                    living._attention.save_session(cli_sid)
-                    living._attention._current_session = cli_sid
-                # 在 Router 注册 CLI peer，主动消息才能路由到 CLI
-                if hasattr(living, '_router') and living._router:
-                    living._router.register_peer(
-                        peer_type="human", peer_id=user_id, channel="cli",
-                        session_id=f"cli-{agent_id}",
-                        output_type="cli", output_target="stdout",
-                        priority=10,
-                    )
+                _apply_login(user_id, identity)
             else:
                 print(f"  \033[31m用户 '{user_id}' 不存在\033[0m", flush=True)
                 user_id = None
@@ -338,6 +461,24 @@ def _run_agent(
         living.stop()
         import sys as _sys
         _sys.exit(0)
+
+    # ── 启动语音监听（能量 VAD 持续监听）─────────────
+    voice_listener = None
+    body = getattr(living, 'body', None)
+    if body and body.ears:
+        from xiaomei_brain.body.perception.voice_listener import VoiceListener
+
+        def _on_voice(text: str) -> None:
+            if getattr(living, '_suppress_voice', False):
+                return
+            if not getattr(living, '_chatting', False):
+                with _stream_lock:
+                    print(f"\n  🎙  \033[90m{text}\033[0m", flush=True)
+            living.put_message(text, source="voice", user_id=user_id)
+
+        voice_listener = VoiceListener(body, on_speech=_on_voice)
+        if voice_listener.start():
+            print(f"  \033[90m👂 语音监听已启动...\033[0m", flush=True)
 
     # 登录完成，重放登录期间缓冲的主动输出（仅当前用户）
     _login_done.set()
@@ -356,6 +497,7 @@ def _run_agent(
     _DOUBLE_PRESS_WINDOW = 2.0
     _last_interrupt = 0.0
     _in_exit_window = False  # 第一次 Ctrl+C 后跳过 status/分隔线
+    _skip_separator = False  # 命令触发了新消息时，跳过本轮分隔线（_run_react 会打印）
 
     def _do_exit(reason: str = "再见") -> None:
         """退出：保存关键状态，通知 living 线程停止，立即退出。
@@ -373,6 +515,8 @@ def _run_agent(
 
         # 主线程保存关键状态
         try:
+            if voice_listener:
+                voice_listener.stop()
             if living.drive:
                 living.drive.save()
             if living.purpose:
@@ -417,7 +561,8 @@ def _run_agent(
         while living.is_running:
             try:
                 # 第一次 Ctrl+C 后跳过 status/分隔线，保持界面干净
-                if not _in_exit_window:
+                # 命令触发了新消息（如 /l）也跳过，_run_react 会打印分隔线
+                if not _in_exit_window and not _skip_separator:
                     status = _status_line(living)
                     if status:
                         print(f"\n\033[90m{status}\033[0m", flush=True)
@@ -426,9 +571,10 @@ def _run_agent(
                     except Exception:
                         bar_w = 78
                     print("\033[90m" + "─" * bar_w + "\033[0m")
+                _skip_separator = False
                 first_line = input(PROMPT)
                 msg = _read_multiline(first_line)
-                _in_exit_window = False  # 正常输入了，退出窗口结束
+                _in_exit_window = False
             except (KeyboardInterrupt, EOFError):
                 # 清掉当前行（❯ 提示符），不残留
                 print("\r\033[K", end="", flush=True)
@@ -483,6 +629,7 @@ def _run_agent(
 
             if msg.startswith("/"):
                 living._command_done.wait(timeout=3)
+                _skip_separator = True  # _run_react 会打印分隔线，避免双横线
                 continue
 
             from xiaomei_brain.tools.builtin.clarify import _clarify_request_ready

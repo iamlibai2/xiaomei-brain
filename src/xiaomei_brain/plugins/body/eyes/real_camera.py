@@ -84,6 +84,12 @@ if ($latest) {
 } else {
     [Console]::Error.WriteLine("FAIL no photo found")
 }
+
+# 拍照完成，关闭 Camera App
+$cameraProc = Get-Process "WindowsCamera" -ErrorAction SilentlyContinue
+if ($cameraProc) {
+    $cameraProc | Stop-Process -Force
+}
 '''
 
 
@@ -138,6 +144,7 @@ class RealCamera(Camera):
                 ],
                 check=True,
                 timeout=30,
+                stderr=subprocess.DEVNULL,
             )
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             logger.error("拍照失败: %s", e)

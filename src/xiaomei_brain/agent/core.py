@@ -212,7 +212,6 @@ class Agent:
         _ptr = print_tool_result
         _ped = print_edit_diff
         _pwr = print_write_result
-        _last_tool = ""
         _tool_failure_counts: dict[tuple, int] = {}  # (name, args_json) -> 失败次数
 
         # 记录此时的 messages 长度，后续只拼接 ReAct 循环中新增的消息
@@ -245,8 +244,7 @@ class Agent:
             all_messages = clean_messages(all_messages)
 
             logger.debug("Step %d: calling LLM", step + 1)
-            hint = get_hint(_last_tool)
-            _print(hint)
+            _print("💭 思考中...")
 
             # 真流式：逐个 yield chunk，生成器结束后从 _last_stream_response 取结果
             gen = self._call_llm(all_messages, openai_tools)
@@ -299,10 +297,10 @@ class Agent:
                         args_dict = {}
                     # Collapsed display + buffer storage
                     idx = self.tool_call_buffer.add(tc.name, args_dict, "")  # placeholder
+                    _print(get_hint(tc.name))
                     _ptc(idx, tc.name, args_dict)
                     if self.on_tool_start:
                         self.on_tool_start(idx, tc.name, args_dict)
-                    _last_tool = tc.name
                     logger.debug("Tool call: %s(%s)", tc.name, args_dict)
 
                     # 重试检测：同一工具+参数失败超过2次则拦截
@@ -511,7 +509,6 @@ class Agent:
 
         openai_tools = self.tools.to_openai_tools() if self.tools.list_tools() else None
         loop_messages: list[dict[str, Any]] = []
-        _last_tool = ""
         _tool_failure_counts: dict[tuple, int] = {}
         _idx = 0
 
@@ -525,8 +522,7 @@ class Agent:
             all_messages = strip_orphaned_assistant_tool_calls(all_messages)
             all_messages = clean_messages(all_messages)
 
-            hint = get_hint(_last_tool)
-            print(hint, flush=True)
+            print("💭 思考中...", flush=True)
 
             response = self.llm.chat(messages=all_messages, tools=openai_tools)
 
@@ -559,8 +555,8 @@ class Agent:
                     except json.JSONDecodeError:
                         args_dict = {}
                     _idx += 1
+                    print(get_hint(tc.name), flush=True)
                     print_tool_call(_idx, tc.name, args_dict)
-                    _last_tool = tc.name
 
                     call_key = (tc.name, json.dumps(args_dict, sort_keys=True))
                     fail_count = _tool_failure_counts.get(call_key, 0)

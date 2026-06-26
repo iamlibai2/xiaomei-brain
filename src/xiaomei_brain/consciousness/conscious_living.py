@@ -518,6 +518,16 @@ class ConsciousLiving(Living):
         body_ref[0] = self.body
         identity_mgr_ref[0] = self._identity_mgr
 
+        # 将 IdentityManager 的共享生物特征注入感官层
+        if self._identity_mgr.face_id.known_names:
+            if self.body.eyes:
+                self.body.eyes.inject_face_id(self._identity_mgr.face_id)
+                logger.info("[ConsciousLiving] 人脸特征已注入 Eyes")
+        if self._identity_mgr.speaker_id.known_voices:
+            if self.body.ears:
+                self.body.ears.inject_speaker_id(self._identity_mgr.speaker_id)
+                logger.info("[ConsciousLiving] 声纹已注入 Ears")
+
         organ_count = len(pending)
         logger.info("[ConsciousLiving] Body 身体感官层已创建（%d 个器官），引用已注入插件",
                     organ_count)

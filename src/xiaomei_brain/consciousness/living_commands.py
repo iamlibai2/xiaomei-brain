@@ -875,6 +875,131 @@ def cmd_hear(living, args: str) -> None:
     print(f"  {D}声纹{R}  {voice_id or f'{X}未识别{R}'}", flush=True)
 
 
+def cmd_register(living, args: str) -> None:
+    """注册人脸或声纹: /register face <identity> | /register voice <identity>"""
+    G, V, D, X, R = "\033[32m", "\033[38;5;203m", "\033[38;5;73m", "\033[90m", "\033[0m"
+
+    identity_mgr = getattr(living, '_identity_mgr', None)
+    if not identity_mgr:
+        print(f"\n  {V}IdentityManager 未初始化{R}", flush=True)
+        living._print_prompt()
+        return
+
+    parts = args.strip().split(maxsplit=1)
+    if len(parts) < 2:
+        print(f"\n  {X}用法:{R}", flush=True)
+        print(f"  /register face <identity>   — 拍照注册人脸", flush=True)
+        print(f"  /register voice <identity>  — 录音注册声纹", flush=True)
+        print(f"  {X}可用身份: {', '.join(identity_mgr.list_ids())}{R}", flush=True)
+        living._print_prompt()
+        return
+
+    mode, identity_id = parts[0].lower(), parts[1]
+
+    if not identity_mgr.exists(identity_id):
+        print(f"\n  {V}身份 '{identity_id}' 不存在{R}", flush=True)
+        print(f"  {X}可用: {', '.join(identity_mgr.list_ids())}{R}", flush=True)
+        living._print_prompt()
+        return
+
+    display_name = identity_mgr.get_display_name(identity_id)
+
+    if mode == "face":
+        _cmd_register_face(living, identity_id, display_name, G, V, D, X, R)
+    elif mode == "voice":
+        _cmd_register_voice(living, identity_id, display_name, G, V, D, X, R)
+    else:
+        print(f"\n  {V}未知模式: {mode}{R}  {X}(支持: face, voice){R}", flush=True)
+
+    living._print_prompt()
+
+
+def _cmd_register_face(living, identity_id: str, display_name: str,
+                       G: str, V: str, D: str, X: str, R: str) -> None:
+    """拍照 → 提取人脸编码 → 注册到 IdentityManager。"""
+    import os
+    import time
+
+    body = getattr(living, 'body', None)
+    if not body or not body.eyes:
+        print(f"\n  ❌ 眼睛未注册 — 需要摄像头设备", flush=True)
+        return
+    _ensure_body_online(living)
+    if not body.eyes.is_available():
+        print(f"\n  ❌ 眼睛离线 — 摄像头不可用", flush=True)
+        return
+
+    print(f"\n  {G}📷 拍照注册人脸 → {V}{display_name}{R}  {X}(id={identity_id}){R}", flush=True)
+    # 倒计时，让用户准备
+    import time as _time
+    for i in (3, 2, 1):
+        print(f"  ⏱ {D}{i}...{R}", end="", flush=True)
+        _time.sleep(1)
+    print(f"\r  📷 {G}拍照中 ...{R}", end="", flush=True)
+    jpeg = body.eyes.device.capture()
+    if not jpeg:
+        print(f"\r\033[K  ❌ 拍照失败", flush=True)
+        return
+
+    agent_id = getattr(living, '_agent_id', 'unknown')
+    out_dir = os.path.expanduser(f"~/.xiaomei-brain/{agent_id}/tmp")
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"register_face_{int(time.time())}.jpg")
+    with open(path, "wb") as f:
+        f.write(jpeg)
+    print(f"\r\033[K  📷 {G}拍照完成{R}  {X}{len(jpeg)} bytes{R}", flush=True)
+
+    # 注册人脸
+    identity_mgr = getattr(living, '_identity_mgr', None)
+    ok = identity_mgr.register_face(path, identity_id)
+    if ok:
+        # 重新注入到 eyes
+        if body.eyes and identity_mgr.face_id.known_names:
+            body.eyes.inject_face_id(identity_mgr.face_id)
+        print(f"  ✅ 人脸已注册  {V}{display_name}{R}  {X}({len(identity_mgr.face_id.known_names)} 个已注册){R}", flush=True)
+    else:
+        print(f"  ❌ 注册失败 — 未检测到人脸", flush=True)
+
+
+def _cmd_register_voice(living, identity_id: str, display_name: str,
+                        G: str, V: str, D: str, X: str, R: str) -> None:
+    """录音 → 注册声纹到 IdentityManager。"""
+    body = getattr(living, 'body', None)
+    if not body or not body.ears:
+        print(f"\n  ❌ 耳朵未注册 — 需要麦克风设备", flush=True)
+        return
+    _ensure_body_online(living)
+    if not body.ears.is_available():
+        print(f"\n  ❌ 耳朵离线 — 麦克风不可用", flush=True)
+        return
+
+    print(f"\n  {G}🎙 录音注册声纹 → {V}{display_name}{R}  {X}(id={identity_id}){R}", flush=True)
+    # 倒计时，让用户准备好
+    import time as _time
+    for i in (3, 2, 1):
+        print(f"  ⏱ {D}{i}...{R}", end="", flush=True)
+        _time.sleep(1)
+    print(f"\r  🎙 {G}录音中 8s，请开始说话 ...{R}", end="", flush=True)
+    pcm = body.ears.device.capture(seconds=8)
+    if not pcm:
+        print(f"\r\033[K  ❌ 录音失败", flush=True)
+        return
+
+    dur = len(pcm) / 32000
+    print(f"\r\033[K  🎙 {G}录音完成{R}  {V}{dur:.1f}s{R}  {X}({len(pcm)} bytes PCM){R}", flush=True)
+
+    # 注册声纹
+    identity_mgr = getattr(living, '_identity_mgr', None)
+    ok = identity_mgr.register_voice(pcm, identity_id)
+    if ok:
+        # 重新注入到 ears
+        if body.ears and identity_mgr.speaker_id.known_voices:
+            body.ears.inject_speaker_id(identity_mgr.speaker_id)
+        print(f"  ✅ 声纹已注册  {V}{display_name}{R}  {X}({len(identity_mgr.speaker_id.known_voices)} 个已注册){R}", flush=True)
+    else:
+        print(f"  ❌ 注册失败 — 声纹提取失败（可能是语音太短或无有效人声）", flush=True)
+
+
 def _ensure_body_online(living) -> bool:
     """确保 Body 感官上线（_on_wake 在后台线程，可能尚未执行）。"""
     body = getattr(living, 'body', None)
@@ -886,10 +1011,6 @@ def _ensure_body_online(living) -> bool:
 
 def cmd_l(living, args: str) -> None:
     """录音并转写（/l = listen）。"""
-    import os
-    import struct
-    import time
-
     G, V, D, X, R = "\033[32m", "\033[38;5;203m", "\033[38;5;73m", "\033[90m", "\033[0m"
     body = getattr(living, 'body', None)
     if not body or not body.ears:
@@ -907,45 +1028,36 @@ def cmd_l(living, args: str) -> None:
     except ValueError:
         pass
 
-    print(f"\n  {G}🎙 录音中 {seconds}s ...{R}", end="", flush=True)
+    print(f"\n  🎙  {G}录音中 {seconds}s，请说话 ...{R}", end="", flush=True)
 
-    device = body.ears.device
-    pcm = device.capture(seconds=seconds)
+    # 抑制 VoiceListener，避免同一段语音被两次转录
+    living._suppress_voice = True
+    try:
+        device = body.ears.device
+        pcm = device.capture(seconds=seconds)
+    finally:
+        living._suppress_voice = False
+
     if not pcm:
-        print(f"\r\033[K  {V}录音失败{R}", flush=True)
+        print(f"\r\033[K  ❌ 录音失败", flush=True)
         return
 
     dur = len(pcm) / 32000  # 16kHz 16-bit mono → 32000 bytes/s
-    print(f"\r\033[K  {G}录音完成{R}  {V}{dur:.1f}s{R}  {X}({len(pcm)} bytes PCM){R}", flush=True)
+    print(f"\r\033[K  🎙  {G}录音完成{R}  {V}{dur:.1f}s{R}", flush=True)
 
-    # 保存 WAV（方便后续 STT 调用）
-    agent_id = getattr(living, '_agent_id', 'unknown')
-    out_dir = os.path.expanduser(f"~/.xiaomei-brain/{agent_id}/tmp")
-    os.makedirs(out_dir, exist_ok=True)
-    wav_path = os.path.join(out_dir, f"listen_{int(time.time())}.wav")
+    # ── STT 转写 ──
+    print(f"  ⚡ 识别中...", end="", flush=True)
+    result = body.ears.stt.transcribe(pcm)
+    text = result.get("text", "")
+    emotion = result.get("emotion", "")
 
-    with open(wav_path, "wb") as f:
-        data_size = len(pcm)
-        # WAV header
-        f.write(b"RIFF")
-        f.write(struct.pack("<I", 36 + data_size))
-        f.write(b"WAVE")
-        f.write(b"fmt ")
-        f.write(struct.pack("<I", 16))       # chunk size
-        f.write(struct.pack("<H", 1))         # PCM
-        f.write(struct.pack("<H", 1))         # mono
-        f.write(struct.pack("<I", 16000))     # sample rate
-        f.write(struct.pack("<I", 32000))     # byte rate
-        f.write(struct.pack("<H", 2))         # block align
-        f.write(struct.pack("<H", 16))        # bits per sample
-        f.write(b"data")
-        f.write(struct.pack("<I", data_size))
-        f.write(pcm)
-
-    print(f"  {D}已保存{R}  {X}{wav_path}{R}", flush=True)
-
-    # TODO: STT → text → put_message(living, text, source="voice")
-    print(f"  {X}(STT 待接入){R}", flush=True)
+    if text:
+        emotion_str = f" {V}{emotion}{R}" if emotion else ""
+        print(f"\r\033[K  📝 {text}{emotion_str}", flush=True)
+        # 作为语音消息输入，触发对话
+        living.put_message(text, source="voice", user_id=living.user_id)
+    else:
+        print(f"\r\033[K  {X}(未识别到语音内容){R}", flush=True)
 
 
 # ── 命令注册表 ──────────────────────────────────────────────────
@@ -974,4 +1086,5 @@ COMMAND_REGISTRY: dict[str, tuple] = {
     "hear":      (cmd_hear,           True),
     "l":         (cmd_l,              True),
     "touch":     (cmd_touch,          False),
+    "register":  (cmd_register,       True),
 }
