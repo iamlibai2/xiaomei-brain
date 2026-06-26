@@ -386,7 +386,7 @@ class ConversationDriver:
                     or isinstance(e, _requests.ConnectionError)
                 )
                 if is_retryable:
-                    print(f"\n\033[33m[网络异常] LLM 接口暂时不可用，稍后自动重试\033[0m", flush=True)
+                    print(f"\n\033[33m[网络不通] LLM 接口无法连接，请检查网络后重新发送消息\033[0m", flush=True)
                     logger.warning("[ConversationDriver] Chat 网络异常: %s", e)
                 else:
                     tb = traceback.format_exc()

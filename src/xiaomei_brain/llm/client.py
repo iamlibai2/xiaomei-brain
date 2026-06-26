@@ -13,6 +13,7 @@ import datetime
 import json
 import logging
 import os
+import sys
 import time
 from typing import Any, Generator
 
@@ -199,28 +200,7 @@ class LLMClient:
         tool_calls_raw: list[dict] | None = None
         finish_reason = ""
 
-        response = requests.post(
-            self._transport.get_endpoint(self._profile.base_url),
-            headers=headers,
-            json=payload,
-            timeout=self._timeout,
-            stream=True,
-        )
-
-        if response.status_code in self.FATAL_STATUS_CODES:
-            raise FatalLLMError(
-                f"LLM API 致命错误 (HTTP {response.status_code}): {response.text[:200]}",
-                status_code=response.status_code,
-            )
-        if response.status_code >= 400:
-            logger.warning(
-                "[LLM DEBUG] HTTP %d | msgs=%d roles=%s | body=%s",
-                response.status_code,
-                len(api_messages),
-                [m.get("role") for m in api_messages],
-                response.text[:500],
-            )
-        response.raise_for_status()
+        response = self._request_with_retry(payload, headers, stream=True)
 
         try:
             content_raw = ""
@@ -285,7 +265,13 @@ class LLMClient:
     # ── Retry logic ────────────────────────────────────────
 
     def _request_with_retry(self, payload: dict, headers: dict,
-                            log_level: int | None = None) -> NormalizedResponse:
+                            log_level: int | None = None,
+                            stream: bool = False):
+        """发送 HTTP 请求，含重试/退避。
+
+        stream=False: 返回 NormalizedResponse（非流式）
+        stream=True:  返回 raw requests.Response（流式，body 未消费）
+        """
         url = self._transport.get_endpoint(self._profile.base_url)
         t0 = time.time()
 
@@ -298,13 +284,15 @@ class LLMClient:
         last_error = None
         for attempt in range(self._max_retries + 1):
             try:
-                response = requests.post(url, headers=headers, json=payload, timeout=self._timeout)
+                response = requests.post(url, headers=headers, json=payload,
+                                         timeout=self._timeout, stream=stream)
 
                 if response.status_code in self.RETRYABLE_STATUS_CODES:
                     retry_after = self._calc_retry_after(response)
                     if attempt < self._max_retries:
                         logger.warning("API 返回 %d，%.1fs 后重试（第 %d/%d 次）",
                                        response.status_code, retry_after, attempt + 1, self._max_retries)
+                        self._print_retry(attempt + 1)
                         time.sleep(retry_after)
                         continue
                     raise LLMError(f"API 返回 {response.status_code}，重试耗尽", retryable=False)
@@ -319,19 +307,26 @@ class LLMClient:
                     logger.warning("[LLM] HTTP %d: %s", response.status_code, response.text[:500])
                 response.raise_for_status()
 
+                elapsed = (time.time() - t0) * 1000
+                self._last_call_latency_ms = elapsed
+
+                if stream:
+                    if attempt > 0:
+                        print(file=sys.stderr, flush=True)  # 清除重试行
+                    return response
+
                 data = response.json()
                 try:
                     self._transport.validate_raw_response(data)
                 except ValueError as e:
                     raise LLMError(str(e), retryable=True)
 
-                elapsed = (time.time() - t0) * 1000
-                self._last_call_latency_ms = elapsed
                 return self._transport.normalize_response(data, self._model_def, self._profile)
 
             except requests.Timeout:
                 last_error = LLMError(f"请求超时（{self._timeout}s）", retryable=True)
                 if attempt < self._max_retries:
+                    self._print_retry(attempt + 1)
                     time.sleep(2 ** attempt)
                     continue
                 self._record_call((time.time() - t0) * 1000, True)
@@ -340,6 +335,7 @@ class LLMClient:
             except requests.ConnectionError as e:
                 last_error = LLMError(f"连接错误：{e}", retryable=True)
                 if attempt < self._max_retries:
+                    self._print_retry(attempt + 1)
                     time.sleep(2 ** attempt)
                     continue
                 self._record_call((time.time() - t0) * 1000, True)
@@ -354,6 +350,11 @@ class LLMClient:
 
         self._record_call((time.time() - t0) * 1000, True)
         raise last_error or LLMError("未知错误", retryable=False)
+
+    @staticmethod
+    def _print_retry(attempt: int) -> None:
+        """打印重试提示到终端（CLI 可见）。"""
+        print(f"\r\033[33m[重连中... {attempt}/3]\033[0m", end="", file=sys.stderr, flush=True)
 
     def _calc_retry_after(self, response) -> float:
         retry_after = response.headers.get("Retry-After")

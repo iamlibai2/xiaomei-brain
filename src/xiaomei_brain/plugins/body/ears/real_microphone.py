@@ -96,10 +96,8 @@ public class MicRecorder {
 }
 "@ -ReferencedAssemblies "System.Windows.Forms"
 
-Write-Output "Recording ${Seconds}s..."
 $audio = [MicRecorder]::Record($Seconds, 16000)
 [System.IO.File]::WriteAllBytes($OutputPath, $audio)
-Write-Output "OK $($audio.Length)"
 '''
 
 
@@ -116,12 +114,11 @@ class RealMicrophone(Microphone):
         self._opened = False
 
     def _deploy_script(self) -> None:
-        """部署录音 PowerShell 脚本到 C:\\Temp。"""
+        """部署录音 PowerShell 脚本到 C:\\Temp。始终覆盖确保最新。"""
         os.makedirs(os.path.dirname(_SCRIPT_WSL), exist_ok=True)
-        if not os.path.exists(_SCRIPT_WSL):
-            with open(_SCRIPT_WSL, "w", encoding="utf-8-sig") as f:
-                f.write(_RECORD_SCRIPT)
-            logger.info("录音脚本已部署: %s", _SCRIPT_WSL)
+        with open(_SCRIPT_WSL, "w", encoding="utf-8-sig") as f:
+            f.write(_RECORD_SCRIPT)
+        logger.info("录音脚本已部署: %s", _SCRIPT_WSL)
 
     def open(self) -> bool:
         self._deploy_script()

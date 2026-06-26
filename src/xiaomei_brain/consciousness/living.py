@@ -339,12 +339,14 @@ class Living:
                     elif self.state == LivingState.DORMANT:
                         self._loop_dormant()
                     else:
+                        print(f"\n[异常] 生命状态异常: {self.state}", flush=True)
                         logger.warning("[Living] Unexpected state: %s", self.state)
                         time.sleep(1)
                 except FatalLLMError as e:
                     if e.status_code == 402:
                         # Insufficient balance -> suspend, periodic recovery.
                         # 欠费 -> 暂停，定期探活。
+                        print("\n[欠费] LLM API 余额不足，暂停服务。充值后自动恢复。", flush=True)
                         logger.warning("[Living] LLM 欠费，暂停（进入 DORMANT）")
                         self._suspended_reason = f"LLM API 欠费 (HTTP 402)"
                         self._transition(LivingState.DORMANT)
@@ -647,6 +649,7 @@ class Living:
 
             elapsed = time.time() - dream_start
             if elapsed >= self.dream_interval * 2:
+                print(f"\n[超时] 梦境处理超时({elapsed:.0f}秒)，强制切回睡眠", flush=True)
                 logger.warning("[Living/DREAMING] 超时(%.1f秒)，强制切回 SLEEPING", elapsed)
                 self._transition(LivingState.SLEEPING)
                 return

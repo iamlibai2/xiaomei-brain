@@ -86,9 +86,13 @@ class Eyes(Sense):
         state.visual_faces = self.recognize_faces()
 
     def capture_raw(self) -> None:
-        """采集一帧原始画面。5分钟一次，不分析，只存入设备缓冲。"""
-        if self.is_available() and self._device:
-            self._device.capture()
+        """采集一帧原始画面。5分钟一次，不分析，只存入设备缓冲。
+        NOTE: 已禁用定时抓拍（隐私考量 — Camera App 弹窗提醒用户摄像头正在使用）。
+        需要时取消注释即可恢复。
+        """
+        # if self.is_available() and self._device:
+        #     self._device.capture()
+        pass
 
 
 class Ears(Sense):

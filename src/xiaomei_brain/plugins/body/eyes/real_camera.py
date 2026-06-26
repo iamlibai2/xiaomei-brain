@@ -80,9 +80,9 @@ if (-not $latest) {
 
 if ($latest) {
     Copy-Item $latest.FullName $OutputPath -Force
-    Write-Output "OK $($latest.Length)"
+    [Console]::Error.WriteLine("OK $($latest.Length)")
 } else {
-    Write-Output "FAIL no photo found"
+    [Console]::Error.WriteLine("FAIL no photo found")
 }
 '''
 
@@ -100,12 +100,11 @@ class RealCamera(Camera):
         self._opened = False
 
     def _deploy_script(self) -> None:
-        """部署拍照 PowerShell 脚本到 C:\\Temp。"""
+        """部署拍照 PowerShell 脚本到 C:\\Temp。始终覆盖确保最新。"""
         os.makedirs(os.path.dirname(_CAMERA_SCRIPT_WSL), exist_ok=True)
-        if not os.path.exists(_CAMERA_SCRIPT_WSL):
-            with open(_CAMERA_SCRIPT_WSL, "w", encoding="utf-8-sig") as f:
-                f.write(_SNAP_SCRIPT)
-            logger.info("拍照脚本已部署: %s", _CAMERA_SCRIPT_WSL)
+        with open(_CAMERA_SCRIPT_WSL, "w", encoding="utf-8-sig") as f:
+            f.write(_SNAP_SCRIPT)
+        logger.info("拍照脚本已部署: %s", _CAMERA_SCRIPT_WSL)
 
     def open(self) -> bool:
         self._deploy_script()

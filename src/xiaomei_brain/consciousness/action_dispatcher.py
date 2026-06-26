@@ -189,6 +189,7 @@ class ActionExecutor:
                         logger.debug("[ExpStream] alarm write failed: %s", e)
 
         except Exception as e:
+            print(f"\n[闹钟] 闹钟响应失败: {e}", flush=True)
             logger.warning("[ActionExecutor] 闹钟 ReAct 失败: %s", e)
             return False
 

@@ -2,14 +2,15 @@
 """Embedding 模型服务 — 常驻进程，保持模型加载在内存。
 
 使用方式：
-    # 启动（默认 18765 端口）
+    # 启动（默认 18765 端口，CPU）
     python3 scripts/embedding_server.py
 
-    # 指定端口
-    EMBED_PORT=9999 python3 scripts/embedding_server.py
+    # 指定端口和设备
+    python3 scripts/embedding_server.py --port 9999 --device cuda
+    python3 scripts/embedding_server.py -p 9999 -d cpu
 
     # 后台运行
-    nohup python3 scripts/embedding_server.py > /tmp/embed_server.log 2>&1 &
+    nohup python3 scripts/embedding_server.py -d cpu > /tmp/embed_server.log 2>&1 &
 
 设计：
 - 零外部依赖（只用 stdlib）
@@ -17,6 +18,7 @@
 - longterm.py 自动检测服务器是否存在，存在则走远程，不存在则回退本地加载
 """
 
+import argparse
 import json
 import logging
 import os
@@ -34,11 +36,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger("embed_server")
 
-# ── 配置 ──────────────────────────────────────────────────────────────
+# ── 全局配置（main() 中由命令行参数覆盖）──────────────────────────────
 
-HOST = os.environ.get("EMBED_HOST", "127.0.0.1")
-PORT = int(os.environ.get("EMBED_PORT", "18765"))
-MODEL_NAME = os.environ.get("EMBED_MODEL", "BAAI/bge-m3")
+HOST = "127.0.0.1"
+PORT = 18765
+DEVICE = "cpu"
+MODEL_NAME = "BAAI/bge-m3"
 
 
 # ── Handler ────────────────────────────────────────────────────────────
@@ -74,7 +77,8 @@ class EmbedHandler(BaseHTTPRequestHandler):
             self._send_json(200, {
                 "status": "ok",
                 "model": MODEL_NAME,
-                "dim": self.model.get_sentence_embedding_dimension(),
+                "dim": self.model.get_sentence_embedding_dimension() if hasattr(self.model, "get_sentence_embedding_dimension") else self.model.get_embedding_dimension(),
+                "device": DEVICE,
             })
         else:
             self._send_json(404, {"error": "not_found"})
@@ -85,10 +89,6 @@ class EmbedHandler(BaseHTTPRequestHandler):
         请求体：
             {"text": "..."}            → 单条，返回 {"vector": [...]}
             {"texts": ["...", "..."]}   → 批量，返回 {"vectors": [[...], [...]]}
-
-        返回：
-            {"vector": [...], "dim": 1024, "model": "BAAI/bge-m3"}  或
-            {"vectors": [[...], [...]], "dim": 1024, "model": "BAAI/bge-m3"}
         """
         parsed = urlparse(self.path)
         if parsed.path != "/embed":
@@ -146,6 +146,24 @@ def check_port(host: str, port: int) -> bool:
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Embedding 模型常驻服务")
+    parser.add_argument("-p", "--port", type=int, default=18765, help="监听端口 (默认 18765)")
+    parser.add_argument("-d", "--device", default="cpu", choices=["cpu", "cuda", "cuda:0", "cuda:1"], help="运行设备 (默认 cpu)")
+    parser.add_argument("--host", default="127.0.0.1", help="监听地址 (默认 127.0.0.1)")
+    parser.add_argument("--model", default="BAAI/bge-m3", help="模型名或本地路径 (默认 BAAI/bge-m3)")
+    args = parser.parse_args()
+
+    global HOST, PORT, DEVICE, MODEL_NAME
+    HOST = args.host
+    PORT = args.port
+    DEVICE = args.device
+    MODEL_NAME = args.model
+
+    # 本地路径优先
+    _local = os.path.expanduser("~/bge-m3")
+    if os.path.isdir(_local):
+        MODEL_NAME = _local
+
     # 检查端口
     if check_port(HOST, PORT):
         logger.warning("端口 %s:%d 已被占用，可能已有实例在运行", HOST, PORT)
@@ -153,23 +171,23 @@ def main():
         sys.exit(1)
 
     # 加载模型（这是唯一一次慢加载）
-    logger.info("Loading embedding model: %s ...", MODEL_NAME)
+    logger.info("Loading embedding model: %s on %s ...", MODEL_NAME, DEVICE)
     os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
     os.environ["HF_HUB_OFFLINE"] = "1"
 
     from sentence_transformers import SentenceTransformer
-    model = SentenceTransformer(MODEL_NAME)
+    model = SentenceTransformer(MODEL_NAME, device=DEVICE)
     EmbedHandler.model = model
 
-    dim = model.get_sentence_embedding_dimension()
-    logger.info("Model loaded: %s (dim=%d)", MODEL_NAME, dim)
+    dim = model.get_sentence_embedding_dimension() if hasattr(model, "get_sentence_embedding_dimension") else model.get_embedding_dimension()
+    logger.info("Model loaded: %s (dim=%d, device=%s)", MODEL_NAME, dim, DEVICE)
 
     # 启动 HTTP 服务
     server = HTTPServer((HOST, PORT), EmbedHandler)
     logger.info("Embedding server running on http://%s:%d", HOST, PORT)
     logger.info("  POST /embed   — 文本嵌入")
     logger.info("  GET  /health  — 健康检查")
-    logger.info("  model=%s  dim=%d", MODEL_NAME, dim)
+    logger.info("  model=%s  dim=%d  device=%s", MODEL_NAME, dim, DEVICE)
 
     try:
         server.serve_forever()
