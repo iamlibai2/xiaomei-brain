@@ -217,6 +217,10 @@ class VoiceListener:
 
         # ── 声纹匹配（登录模式）────────────────────────
         if self._on_voiceprint and self._speaker_id:
+            # 登录模式也做 VAD 预检：过滤环境噪音，避免无效声纹推理
+            if not stt.is_speech(pcm):
+                logger.debug("VoiceListener 登录模式: VAD 判定非人声，跳过声纹匹配（peak=%d rms=%.1f）", peak, rms)
+                return
             if len(pcm) >= VP_MIN_BYTES:
                 # 单段足够长，直接匹配，避免跨段拼接污染
                 seg_s = len(pcm) / 32000
