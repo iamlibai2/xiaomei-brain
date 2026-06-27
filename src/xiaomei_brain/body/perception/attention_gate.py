@@ -161,9 +161,39 @@ class AttentionGate:
 
     # ── 唤醒词检测 ────────────────────────────────────────
 
+    @staticmethod
+    def _edit_distance(a: str, b: str) -> int:
+        """Levenshtein 距离。"""
+        if len(a) < len(b):
+            a, b = b, a
+        prev = list(range(len(b) + 1))
+        for i, ca in enumerate(a, 1):
+            curr = [i]
+            for j, cb in enumerate(b, 1):
+                curr.append(min(
+                    prev[j] + 1,
+                    curr[j - 1] + 1,
+                    prev[j - 1] + (0 if ca == cb else 1),
+                ))
+            prev = curr
+        return prev[-1]
+
     def _has_wake_word(self, text: str) -> bool:
         t = text.lower()
-        return any(w.lower() in t for w in self._wake_words)
+        for w in self._wake_words:
+            wl = w.lower()
+            # 1) 精确匹配
+            if wl in t:
+                return True
+            # 2) 模糊匹配：容忍1字符差异（STT 听错如 bot→boot）
+            if len(wl) >= 3:
+                n = len(wl)
+                for i in range(len(t) - n + 1):
+                    sub = t[i:i + n]
+                    if self._edit_distance(sub, wl) <= 1:
+                        logger.warning("AttentionGate 模糊匹配唤醒词: '%s' ≈ '%s' (text='%s')", wl, sub, text[:40])
+                        return True
+        return False
 
     # ── Cheap 声学特征 ────────────────────────────────────
 
