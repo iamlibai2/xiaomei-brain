@@ -17,9 +17,13 @@ from __future__ import annotations
 import logging
 import os
 import io
+import warnings
 import wave
 import numpy as np
 from typing import Any
+
+# pydub (funasr 依赖) 在 Python 3.13 下报 SyntaxWarning
+warnings.filterwarnings("ignore", category=SyntaxWarning, module="pydub")
 
 logger = logging.getLogger(__name__)
 

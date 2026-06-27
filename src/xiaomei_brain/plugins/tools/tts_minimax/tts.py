@@ -102,15 +102,24 @@ def tts_speak(
         from xiaomei_brain.plugins.body.throat.real_speaker import stop_active_playback, set_active_player, _play_windows
 
         if _IS_WSL2:
-            # WSL2：非流式 — speak_to_file 生成完整 mp3 → Windows Media Player 阻塞播放
-            path = os.path.join(tempfile.mkdtemp(), "speak.mp3")
-            _tts_provider.speak_to_file(text, path, voice_id=voice_id, speed=speed, emotion=emotion, pitch=pitch)
-            total = os.path.getsize(path)
-            logger.info("TTS [WSL2] %d bytes → %s", total, path)
+            # WSL2：非流式 — speak_to_file 生成完整 mp3 → 转 WAV → SoundPlayer 播放
+            mp3_path = os.path.join(tempfile.mkdtemp(), "speak.mp3")
+            _tts_provider.speak_to_file(text, mp3_path, voice_id=voice_id, speed=speed, emotion=emotion, pitch=pitch)
+            total = os.path.getsize(mp3_path)
+            logger.info("TTS [WSL2] %d bytes → %s", total, mp3_path)
+
+            # SoundPlayer 只支持 WAV，转成 16-bit PCM
+            wav_path = os.path.join(tempfile.mkdtemp(), "speak.wav")
+            subprocess.run(
+                ["ffmpeg", "-i", mp3_path, "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "1",
+                 "-loglevel", "quiet", "-y", wav_path],
+                check=True, timeout=15,
+            )
+            logger.info("TTS [WSL2] mp3→wav: %s (%d bytes)", wav_path, os.path.getsize(wav_path))
 
             stop_active_playback()
             play_sec = max(30, min(120, total * 8 / 128000 + 10))
-            _play_windows(path, blocking=True, timeout=play_sec)
+            _play_windows(wav_path, blocking=True, timeout=play_sec)
 
         else:
             # 非 WSL：真正的流式 — chunk → ffmpeg stdin → PulseAudio 实时播放

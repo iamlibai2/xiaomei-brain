@@ -84,14 +84,23 @@ def _speak_wsl2(text: str, sample_rate: int) -> None:
     from xiaomei_brain.plugins.body.throat.real_speaker import _play_windows
 
     path = os.path.join(tempfile.mkdtemp(), "speak_voxcpm.wav")
+    logger.warning("[_speak_wsl2] generating TTS for: %s", text[:60])
     _provider.generate_to_file(text, path)
 
+    logger.warning("[_speak_wsl2] file=%s exists=%s size=%d", path, os.path.exists(path), os.path.getsize(path) if os.path.exists(path) else 0)
     if not os.path.exists(path) or os.path.getsize(path) == 0:
         logger.error("生成文件失败或为空: %s", path)
         return
 
     import soundfile as sf
+
+    # VoxCPM 输出 float32，SoundPlayer 只支持 16-bit PCM，需要转换
+    data, sr = sf.read(path)
+    sf.write(path, data, sr, subtype='PCM_16')
+    logger.warning("[_speak_wsl2] samples=%d sr=%d dur=%.1fs path=%s", len(data), sr, len(data)/sr, path)
+
     info = sf.info(path)
+    # _play_windows 用 SoundPlayer.PlaySync()，无 UI，播完自动返回，无需杀进程
     _play_windows(path, blocking=True, timeout=max(30, int(info.duration) + 15))
 
 
@@ -117,6 +126,7 @@ def voxcpm_speak(text: str) -> str:
         from xiaomei_brain.plugins.body.throat.real_speaker import _IS_WSL2
 
         sr = _provider.sample_rate
+        logger.warning("[vox_speak] IS_WSL2=%s sr=%d text=%s", _IS_WSL2, sr, text[:50])
         if _IS_WSL2:
             _speak_wsl2(text, sr)
         else:

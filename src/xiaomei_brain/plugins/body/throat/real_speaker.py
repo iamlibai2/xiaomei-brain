@@ -28,8 +28,8 @@ _active_player: subprocess.Popen | None = None
 
 
 def _to_win_path(linux_path: str) -> str:
-    r"""Linux 路径 -> Windows UNC 路径（\\wsl$\Ubuntu\...）。"""
-    return r"\\wsl$\Ubuntu" + os.path.abspath(linux_path).replace("/", "\\")
+    r"""Linux 路径 -> Windows UNC 路径（\\wsl.localhost\Ubuntu\...）。"""
+    return r"\\wsl.localhost\Ubuntu" + os.path.abspath(linux_path).replace("/", "\\")
 
 
 def set_active_player(proc: subprocess.Popen) -> None:
@@ -51,7 +51,7 @@ def stop_active_playback() -> None:
             except Exception:
                 pass
         _active_player = None
-    # WSL2: 也杀掉 Windows 侧 wmplayer
+    # WSL2: 也杀掉 Windows 侧 wmplayer（非阻塞模式的兜底清理）
     if _IS_WSL2:
         try:
             subprocess.run(
@@ -67,20 +67,28 @@ def _play_windows(audio_path: str, blocking: bool = False, timeout: float = 120)
     """WSL2 Windows 侧播放。blocking=True 时等待播放完成。"""
     win_path = _to_win_path(audio_path)
     if blocking:
-        # PowerShell 启动 wmplayer 并等待退出
+        # 复制到 Windows 临时目录，用 SoundPlayer.PlaySync() 播放
+        # 无 UI，播完自动返回，无需杀进程
         ps_cmd = (
-            f"$p = Start-Process wmplayer.exe -ArgumentList '{win_path}', '/play', '/close' -PassThru; "
-            f"$p.WaitForExit({int(timeout * 1000)})"
+            f"$tmp = [System.IO.Path]::Combine($env:TEMP, 'xiaomei_speak.wav'); "
+            f"Copy-Item '{win_path}' $tmp -Force; "
+            f"$player = New-Object System.Media.SoundPlayer; "
+            f"$player.SoundLocation = $tmp; "
+            f"try {{ $player.PlaySync() }} finally {{ $player.Dispose(); Remove-Item $tmp -Force -ErrorAction SilentlyContinue }}"
         )
-        subprocess.run(
+        logger.warning("[_play_windows] src=%s win_path=%s", audio_path, win_path)
+        result = subprocess.run(
             ["powershell.exe", "-Command", ps_cmd],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            capture_output=True, text=True,
             timeout=timeout + 10,
         )
+        if result.returncode != 0 or result.stderr.strip():
+            logger.error("[_play_windows] PS failed rc=%d stdout=%s stderr=%s",
+                         result.returncode, result.stdout.strip(), result.stderr.strip())
         return None
     else:
         proc = subprocess.Popen(
-            ["cmd.exe", "/c", "start", "/min", "wmplayer.exe", win_path],
+            ["cmd.exe", "/c", "start", "/min", "", win_path],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         return proc

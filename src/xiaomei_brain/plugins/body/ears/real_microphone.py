@@ -295,6 +295,7 @@ class RealMicrophone(Microphone):
         返回 None 表示流已结束或超时。
         """
         if not self.is_streaming:
+            logger.warning("[read_chunk] is_streaming=False，流可能已断开")
             return None
 
         try:
@@ -307,9 +308,13 @@ class RealMicrophone(Microphone):
                 return b""
             data = self._stream_proc.stdout.read(8000)
             if not data:
-                return None  # 流结束
+                # 流结束：检查进程是否还活着
+                rc = self._stream_proc.poll() if self._stream_proc else None
+                logger.warning("[read_chunk] stdout EOF, 进程退出码=%s", rc)
+                return None
             return data
         except Exception:
+            logger.exception("[read_chunk] 异常")
             return None
 
     def stop_stream(self) -> None:

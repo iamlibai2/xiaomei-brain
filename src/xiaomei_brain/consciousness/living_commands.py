@@ -1030,13 +1030,20 @@ def cmd_l(living, args: str) -> None:
 
     print(f"\n  🎙  {G}录音中 {seconds}s，请说话 ...{R}", end="", flush=True)
 
+    # 暂停流式录音（VoiceListener），释放麦克风给 capture()
+    device = body.ears.device
+    was_streaming = device.is_streaming
+    if was_streaming:
+        device.stop_stream()
+
     # 抑制 VoiceListener，避免同一段语音被两次转录
     living._suppress_voice = True
     try:
-        device = body.ears.device
         pcm = device.capture(seconds=seconds)
     finally:
         living._suppress_voice = False
+        if was_streaming:
+            device.start_stream()
 
     if not pcm:
         print(f"\r\033[K  ❌ 录音失败", flush=True)

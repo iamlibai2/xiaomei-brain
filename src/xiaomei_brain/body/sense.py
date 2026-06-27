@@ -167,6 +167,16 @@ class Ears(Sense):
         """
         self._speaker_id = speaker_id
 
+    def _pause_stream(self) -> bool:
+        """暂停流式录音（VoiceListener），返回是否需要恢复。"""
+        if getattr(self._device, 'is_streaming', False):
+            self._device.stop_stream()
+            return True
+        return False
+
+    def _resume_stream(self) -> None:
+        self._device.start_stream()
+
     def listen(self, seconds: int = 4) -> dict | None:
         """录音 → STT 转文字 + 情感识别。
 
@@ -175,7 +185,13 @@ class Ears(Sense):
         if not self.is_available():
             return None
 
-        pcm = self._device.capture(seconds=seconds)
+        was_streaming = self._pause_stream()
+        try:
+            pcm = self._device.capture(seconds=seconds)
+        finally:
+            if was_streaming:
+                self._resume_stream()
+
         if not pcm:
             return None
 
@@ -202,7 +218,13 @@ class Ears(Sense):
         if not self.is_available():
             return None
 
-        pcm = self._device.capture(seconds=5)
+        was_streaming = self._pause_stream()
+        try:
+            pcm = self._device.capture(seconds=5)
+        finally:
+            if was_streaming:
+                self._resume_stream()
+
         if not pcm:
             return None
 

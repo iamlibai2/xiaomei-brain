@@ -28,6 +28,7 @@ CHUNK_BYTES = 8000        # 每块 250ms（16000 * 2 * 0.25）
 SILENCE_GRACE_MS = 1000   # 声音消失后等待多久结束语音段
 MAX_SPEECH_S = 30         # 单段语音最长时长
 MIN_SPEECH_S = 0.5        # 单段语音最短时长
+DEBUG_PEAK = True         # 临时：观察触发的声音特征
 
 
 class VoiceListener:
@@ -84,70 +85,94 @@ class VoiceListener:
     # ── 主循环 ────────────────────────────────────────────
 
     def _run(self) -> None:
-        mic = self._body.ears.device
-        stt = self._body.ears.stt
-
         # 启动静音期：丢掉前 2s 的音频，避免误触发（bot 问候、启动杂音等）
         startup_mute = time.time() + 2.0
 
-        gathering = False
-        voice_buf = bytearray()
-        silence_count = 0
-        gather_start = 0.0
+        fail_count = 0
+        while self._running:
+            mic = self._body.ears.device
+            stt = self._body.ears.stt
 
-        try:
-            while self._running:
-                data = mic.read_chunk(timeout=0.5)
-                if data is None:
-                    break  # 流结束
-                if not data:
-                    continue  # 超时无数据
+            gathering = False
+            voice_buf = bytearray()
+            silence_count = 0
+            gather_start = 0.0
 
-                # 启动静音期：丢弃启动初期的音频
-                if time.time() < startup_mute:
-                    continue
+            try:
+                while self._running:
+                    data = mic.read_chunk(timeout=0.5)
+                    if data is None:
+                        # 流结束（进程崩溃、管道断开等）
+                        fail_count += 1
+                        logger.warning("VoiceListener read_chunk 返回 None（第%d次），流可能已断开", fail_count)
+                        break  # 跳出内层循环，外层会尝试重连
+                    if not data:
+                        continue  # 超时无数据
 
-                arr = np.frombuffer(data, dtype=np.int16)
-                peak = int(np.max(np.abs(arr)))
-                now = time.time()
+                    # 启动静音期：丢弃启动初期的音频
+                    if time.time() < startup_mute:
+                        continue
 
-                if peak >= ENERGY_THRESHOLD:
-                    if not gathering:
-                        gathering = True
-                        gather_start = now
-                        voice_buf = bytearray()
+                    arr = np.frombuffer(data, dtype=np.int16)
+                    peak = int(np.max(np.abs(arr)))
+                    now = time.time()
 
-                    voice_buf.extend(data)
-                    silence_count = 0
+                    if peak >= ENERGY_THRESHOLD:
+                        if not gathering:
+                            gathering = True
+                            gather_start = now
+                            voice_buf = bytearray()
 
-                elif gathering:
-                    voice_buf.extend(data)
-                    silence_count += 1
+                        voice_buf.extend(data)
+                        silence_count = 0
 
-                    silent_ms = silence_count * 250  # each chunk is 250ms
-                    elapsed = now - gather_start
+                    elif gathering:
+                        voice_buf.extend(data)
+                        silence_count += 1
 
-                    # 静音足够久 或 超长 → 结束
-                    if silent_ms >= SILENCE_GRACE_MS or elapsed > MAX_SPEECH_S:
+                        silent_ms = silence_count * 250  # each chunk is 250ms
+                        elapsed = now - gather_start
+
+                        # 静音足够久 或 超长 → 结束
+                        if silent_ms >= SILENCE_GRACE_MS or elapsed > MAX_SPEECH_S:
+                            dur = len(voice_buf) / 32000
+                            gathering = False
+
+                            if dur >= MIN_SPEECH_S:
+                                self._process(bytes(voice_buf), stt)
+                            voice_buf = bytearray()
+
+                    # 超时保护：如果 gathering 但一直没结束
+                    if gathering and (time.time() - gather_start > MAX_SPEECH_S):
                         dur = len(voice_buf) / 32000
                         gathering = False
-
                         if dur >= MIN_SPEECH_S:
                             self._process(bytes(voice_buf), stt)
                         voice_buf = bytearray()
 
-                # 超时保护：如果 gathering 但一直没结束
-                if gathering and (time.time() - gather_start > MAX_SPEECH_S):
-                    dur = len(voice_buf) / 32000
-                    gathering = False
-                    if dur >= MIN_SPEECH_S:
-                        self._process(bytes(voice_buf), stt)
-                    voice_buf = bytearray()
+            except Exception:
+                logger.exception("VoiceListener 异常")
+                break
 
-        except Exception:
-            logger.exception("VoiceListener 异常")
-        finally:
-            logger.info("VoiceListener 主循环退出")
+            if not self._running:
+                break
+
+            # 尝试重连：停掉旧流，重新启动
+            if fail_count >= 5:
+                logger.error("VoiceListener 连续断开%d次，放弃重连", fail_count)
+                break
+            logger.warning("VoiceListener 尝试重连（第%d次）...", fail_count)
+            try:
+                mic.stop_stream()
+            except Exception:
+                pass
+            time.sleep(1)
+            if not mic.start_stream():
+                logger.error("VoiceListener 重连失败")
+                break
+
+        if not self._running or fail_count >= 5:
+            logger.info("VoiceListener 主循环退出（fail_count=%d）", fail_count)
 
     def _process(self, pcm: bytes, stt) -> None:
         """处理一段语音：STT → 回调。"""
@@ -164,18 +189,20 @@ class VoiceListener:
             logger.debug("VoiceListener _process: 跳过噪声 peak=%d rms=%.1f", peak, rms)
             return
 
-        logger.warning("VoiceListener _process: peak=%d rms=%.1f len=%.1fs", peak, rms, len(pcm) / 32000)
+        if DEBUG_PEAK:
+            logger.warning("VoiceListener _process: peak=%d rms=%.1f len=%.1fs", peak, rms, len(pcm) / 32000)
 
         result = stt.transcribe(pcm)
         text = result.get("text", "")
         emotion = result.get("emotion", "")
 
         if text:
-            # 单字/单音节丢弃（99% 是噪声幻觉：그, H, 아, 그. 等）
+            # 碎片丢弃：CJK < 2 字 且 英文 < 2 词 → 99% STT 幻觉
             import re
-            clean = re.sub(r'[^\w\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]', '', text)
-            if len(clean) <= 1:
-                logger.debug("VoiceListener _process: 丢弃单字 '%s'", text)
+            cjk = len(re.findall(r'[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]', text))
+            words = re.sub(r'[^a-zA-Z ]', ' ', text).split()
+            if cjk < 2 and len(words) < 2:
+                logger.debug("VoiceListener _process: 丢弃碎片 cjk=%d words=%d '%s'", cjk, len(words), text)
                 return
             logger.info("VoiceListener 识别: '%s' emotion=%s", text, emotion)
             try:
