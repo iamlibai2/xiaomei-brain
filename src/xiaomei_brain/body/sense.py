@@ -116,8 +116,11 @@ class Eyes(Sense):
                 _os.unlink(photo_path)
 
     def contribute_to(self, state) -> None:
-        """贡献视觉数据到 BodyState。10分钟一次，本地CV分析。"""
-        state.visual_faces = self.recognize_faces()
+        """贡献视觉数据到 BodyState。10分钟一次，本地CV分析。
+        NOTE: 已禁用（隐私考量 — 和 capture_raw 一样）。需要时取消注释。
+        """
+        # state.visual_faces = self.recognize_faces()
+        pass
 
     def capture_raw(self) -> None:
         """采集一帧原始画面。5分钟一次，不分析，只存入设备缓冲。
