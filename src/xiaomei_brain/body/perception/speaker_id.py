@@ -96,6 +96,59 @@ class SpeakerID:
         logger.info("已注册声纹: %s", name)
         return True
 
+    @staticmethod
+    def check_enrollment_quality(pcm: bytes, sample_rate: int = 16000,
+                                  min_chunk_s: float = 2.5) -> tuple[float, str]:
+        """评估注册音频的声纹质量。
+
+        将音频拆成多段，提取每段 embedding，计算两两之间的余弦相似度。
+        平均相似度越高，说明声纹越一致，注册质量越好。
+
+        返回: (quality_score, label)
+            >= 0.7 → "优秀"（嵌入很稳定）
+            >= 0.5 → "一般"（勉强可用）
+            < 0.5  → "较差"（建议重新注册，说话更稳定些）
+        """
+        chunk_bytes = int(sample_rate * 2 * min_chunk_s)
+        total = len(pcm)
+        if total < chunk_bytes * 2:
+            return 0.0, "太短"
+
+        # 拆成不重叠的多段
+        n = total // chunk_bytes
+        if n < 2:
+            return 0.0, "太短"
+        if n > 5:
+            n = 5  # 最多取 5 段
+
+        temp_sp = SpeakerID()
+        temp_sp._ensure_loaded()
+        embeddings = []
+        for i in range(n):
+            start = i * chunk_bytes
+            end = start + chunk_bytes
+            emb = temp_sp._extract_embedding(pcm[start:end], sample_rate)
+            if emb is not None:
+                embeddings.append(emb)
+
+        if len(embeddings) < 2:
+            return 0.0, "未能提取特征"
+
+        # 两两相似度
+        sims = []
+        for i in range(len(embeddings)):
+            for j in range(i + 1, len(embeddings)):
+                sims.append(SpeakerID._cosine_sim(embeddings[i], embeddings[j]))
+
+        avg = sum(sims) / len(sims)
+        if avg >= 0.7:
+            label = "优秀"
+        elif avg >= 0.5:
+            label = "一般"
+        else:
+            label = "较差"
+        return avg, label
+
     def identify(self, pcm: bytes, sample_rate: int = 16000) -> str | None:
         """识别说话人。返回匹配的 name 或 None。"""
         embedding = self._extract_embedding(pcm, sample_rate)

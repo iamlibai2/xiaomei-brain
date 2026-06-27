@@ -251,6 +251,10 @@ class VoiceListener:
                     except Exception:
                         logger.exception("声纹识别异常")
 
+        # 登录模式下声纹已尝试匹配 → 跳过 VAD 和 STT，不需要转写
+        if self._on_voiceprint:
+            return
+
         # VAD 预检：过滤环境噪音，避免无效 STT 推理
         if not stt.is_speech(pcm):
             logger.warning("VoiceListener: VAD 判定非人声，跳过 STT（peak=%d rms=%.1f len=%.1fs）", peak, rms, len(pcm) / 32000)

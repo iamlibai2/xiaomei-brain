@@ -974,6 +974,12 @@ def _cmd_register_voice(living, identity_id: str, display_name: str,
         return
 
     print(f"\n  {G}🎙 录音注册声纹 → {V}{display_name}{R}  {X}(id={identity_id}){R}", flush=True)
+
+    # 暂停后台监听，避免注册录音被 VoiceListener 当作对话处理
+    listener = getattr(living, '_voice_listener', None)
+    if listener and listener.is_running:
+        listener.stop()
+
     # 倒计时，让用户准备好
     import time as _time
     for i in (3, 2, 1):
@@ -983,13 +989,33 @@ def _cmd_register_voice(living, identity_id: str, display_name: str,
     pcm = body.ears.device.capture(seconds=8)
     if not pcm:
         print(f"\r\033[K  ❌ 录音失败", flush=True)
+        if listener:
+            listener.start()
         return
+
+    # 恢复后台监听
+    if listener:
+        listener.start()
 
     dur = len(pcm) / 32000
     print(f"\r\033[K  🎙 {G}录音完成{R}  {V}{dur:.1f}s{R}  {X}({len(pcm)} bytes PCM){R}", flush=True)
 
     # 注册声纹
     identity_mgr = getattr(living, '_identity_mgr', None)
+    # 质量评估：检查各段自相似度
+    from xiaomei_brain.body.perception import SpeakerID
+    quality, q_label = SpeakerID.check_enrollment_quality(pcm)
+    if quality < 0.5:
+        qc = V
+    elif quality < 0.7:
+        qc = D
+    else:
+        qc = G
+    print(f"  📊 声纹质量: {qc}{q_label}{R} ({quality:.3f})", flush=True)
+
+    if quality < 0.5:
+        print(f"  {V}⚠ 声纹一致性较差，建议重新注册（说话更稳定、环境更安静）{R}", flush=True)
+
     ok = identity_mgr.register_voice(pcm, identity_id)
     if ok:
         # 重新注入到 ears

@@ -588,6 +588,7 @@ def _run_agent(
             living.put_message(text, source="voice", user_id=attention_gate.current_user_id if attention_gate else user_id)
 
         voice_listener = VoiceListener(body, on_speech=_on_voice)
+        living._voice_listener = voice_listener
         if voice_listener.start():
             print(f"  \033[90m👂 语音监听已启动...\033[0m", flush=True)
 
