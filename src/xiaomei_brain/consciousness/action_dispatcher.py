@@ -862,7 +862,7 @@ class ActionExecutor:
         else:
             period = "深夜"
 
-        prompt = TALK_PROMPT.format(period=period)
+        prompt = TALK_PROMPT.format(period=period, topic_hint="")
 
         llm = None
         cl = self.dispatcher._conscious_living
