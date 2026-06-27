@@ -98,6 +98,37 @@ class STT:
         arr = np.frombuffer(pcm, dtype=np.int16)
         return np.max(np.abs(arr)) < STT._SILENCE_PEAK
 
+    @staticmethod
+    def is_speech(pcm: bytes, sample_rate: int = 16000) -> bool:
+        """WebRTC VAD 预检：判断 PCM 中是否包含足够的人声。
+
+        将音频拆成 20ms 帧，逐帧 VAD 分类。人声帧占比 >= 50% 返回 True。
+        用于过滤空调、车流、电视等环境噪音，避免无效 STT 推理。
+        """
+        try:
+            import webrtcvad
+        except ImportError:
+            return True  # 未安装则放行，不做过滤
+
+        vad = webrtcvad.Vad(1)  # aggressiveness: 0~3，1=中等
+        frame_ms = 20
+        frame_size = sample_rate * 2 * frame_ms // 1000  # 640 bytes
+
+        speech_frames = 0
+        total_frames = 0
+        for i in range(0, len(pcm) - frame_size + 1, frame_size):
+            frame = pcm[i:i + frame_size]
+            try:
+                if vad.is_speech(frame, sample_rate):
+                    speech_frames += 1
+                total_frames += 1
+            except Exception:
+                pass
+
+        if total_frames == 0:
+            return False
+        return speech_frames / total_frames >= 0.5
+
     def transcribe(self, pcm: bytes, sample_rate: int = 16000) -> dict:
         """PCM → {text, emotion, events}。
 

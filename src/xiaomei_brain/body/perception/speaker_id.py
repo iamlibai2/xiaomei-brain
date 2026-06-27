@@ -107,10 +107,13 @@ class SpeakerID:
         best_name = None
         for v in self._voices:
             sim = self._cosine_sim(embedding, v["embedding"])
+            logger.info("SpeakerID 比对 %s: score=%.4f", v["name"], sim)
             if sim > best_score:
                 best_score = sim
                 best_name = v["name"]
 
+        logger.warning("SpeakerID identify: best=%s score=%.4f threshold=0.5 → %s",
+                       best_name, best_score, best_name if best_score > 0.5 else "NO MATCH")
         if best_score > 0.5:
             return best_name
         return None

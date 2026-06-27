@@ -1,13 +1,22 @@
-"""VoiceListener — 后台持续监听，能量 VAD 触发 STT。
+"""VoiceListener — 后台持续监听，能量 VAD 触发 STT + 可选声纹识别。
 
 基于 RealMicrophone 的流式录音，后台线程持续读取 PCM 块，
 能量检测到声音后收集语音段，通过 STT 转写，回调通知上层。
 
+也支持声纹登录模式：传入 on_voiceprint 回调 + speaker_id，
+语音段累积到足够长度后自动尝试声纹匹配。
+
 用法：
+    # 对话监听
     listener = VoiceListener(body, on_speech=lambda text: print(text))
     listener.start()
-    ...
-    listener.stop()
+
+    # 声纹登录监听
+    listener = VoiceListener(body,
+        on_speech=lambda t: None,
+        on_voiceprint=lambda name: print(f"识别到: {name}"),
+        speaker_id=identity_mgr.speaker_id,
+    )
 """
 
 from __future__ import annotations
@@ -30,23 +39,37 @@ MAX_SPEECH_S = 30         # 单段语音最长时长
 MIN_SPEECH_S = 0.5        # 单段语音最短时长
 DEBUG_PEAK = True         # 临时：观察触发的声音特征
 
+# ── 声纹累积 ──────────────────────────────────────────────
+VP_MIN_BYTES = 64000      # 至少 2s 才尝试匹配（16000*2*2）
+VP_TARGET_BYTES = 160000  # 目标 5s，匹配后清空（16000*2*5）
+VP_MAX_BYTES = 320000     # 最多 10s，超过截断
+
 
 class VoiceListener:
     """后台语音监听器。
 
     start() 启动后台线程，持续监听麦克风。
-    检测到声音 → 收集语音段 → STT → on_speech(text)。
+    检测到声音 → 收集语音段 → 声纹匹配（可选）→ STT → on_speech(text)。
     """
 
     def __init__(
         self,
         body,
         on_speech: Callable[[str], None],
+        on_voiceprint: Callable[[str], None] | None = None,
+        speaker_id=None,
     ) -> None:
         self._body = body
         self._on_speech = on_speech
+        self._on_voiceprint = on_voiceprint
+        self._speaker_id = speaker_id
+        self._vp_buf = bytearray()  # 声纹累积缓冲
         self._thread: threading.Thread | None = None
         self._running = False
+
+    def inject_speaker_id(self, speaker_id) -> None:
+        """注入已加载声纹的 SpeakerID 实例（用于自动声纹登录）。"""
+        self._speaker_id = speaker_id
 
     # ── 公开 API ──────────────────────────────────────────
 
@@ -158,7 +181,7 @@ class VoiceListener:
                 break
 
             # 尝试重连：停掉旧流，重新启动
-            if fail_count >= 5:
+            if fail_count >= 10:
                 logger.error("VoiceListener 连续断开%d次，放弃重连", fail_count)
                 break
             logger.warning("VoiceListener 尝试重连（第%d次）...", fail_count)
@@ -171,11 +194,11 @@ class VoiceListener:
                 logger.error("VoiceListener 重连失败")
                 break
 
-        if not self._running or fail_count >= 5:
+        if not self._running or fail_count >= 10:
             logger.info("VoiceListener 主循环退出（fail_count=%d）", fail_count)
 
     def _process(self, pcm: bytes, stt) -> None:
-        """处理一段语音：STT → 回调。"""
+        """处理一段语音：声纹累积/匹配（可选）→ STT → 回调。"""
         if stt.is_silence(pcm):
             return
 
@@ -191,6 +214,36 @@ class VoiceListener:
 
         if DEBUG_PEAK:
             logger.warning("VoiceListener _process: peak=%d rms=%.1f len=%.1fs", peak, rms, len(pcm) / 32000)
+
+        # ── 声纹累积 & 匹配（登录模式）────────────────────
+        if self._on_voiceprint and self._speaker_id:
+            self._vp_buf.extend(pcm)
+            buf_s = len(self._vp_buf) / 32000
+            # 超过上限截断尾部
+            if len(self._vp_buf) > VP_MAX_BYTES:
+                self._vp_buf = self._vp_buf[-VP_MAX_BYTES:]
+            # 攒到最小长度就尝试匹配（1s），失败继续累积
+            if len(self._vp_buf) >= VP_MIN_BYTES:
+                logger.warning("VoiceListener 声纹匹配尝试: buffer=%.1fs", len(self._vp_buf) / 32000)
+                try:
+                    name = self._speaker_id.identify(bytes(self._vp_buf), 16000)
+                    if name:
+                        logger.warning("VoiceListener 声纹匹配成功: %s（buffer=%.1fs）", name, len(self._vp_buf) / 32000)
+                        self._on_voiceprint(name)
+                        self._vp_buf = bytearray()  # 匹配成功清空
+                    else:
+                        logger.warning("VoiceListener 声纹匹配失败: 未匹配任何已知声纹（buffer=%.1fs）", len(self._vp_buf) / 32000)
+                        # 未匹配，保留最近 5s 继续累积
+                        self._vp_buf = self._vp_buf[-VP_TARGET_BYTES:]
+                except Exception:
+                    logger.exception("声纹识别异常")
+
+        # VAD 预检：过滤环境噪音，避免无效 STT 推理
+        if not stt.is_speech(pcm):
+            logger.warning("VoiceListener: VAD 判定非人声，跳过 STT（peak=%d rms=%.1f len=%.1fs）", peak, rms, len(pcm) / 32000)
+            return
+
+        logger.warning("VoiceListener: VAD 判定人声，进入 STT（peak=%d rms=%.1f len=%.1fs）", peak, rms, len(pcm) / 32000)
 
         result = stt.transcribe(pcm)
         text = result.get("text", "")

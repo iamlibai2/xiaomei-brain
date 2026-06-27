@@ -105,6 +105,25 @@ def _read_char() -> str | None:
         return None
 
 
+def _read_char_timeout(timeout: float = 0.1) -> str | None:
+    """非阻塞读取单个字符。timeout 秒内无输入返回 None。"""
+    try:
+        import tty
+        import termios
+        fd = sys.stdin.fileno()
+        r, _, _ = select.select([sys.stdin], [], [], timeout)
+        if not r:
+            return None
+        old = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            return sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    except Exception:
+        return None
+
+
 # ── Token 估算 ─────────────────────────────────────────────
 
 def _count_context_tokens(all_messages) -> int:
@@ -291,6 +310,8 @@ def _run_agent(
         identity_mgr = IdentityManager(contacts_dir)
         ids = identity_mgr.list_ids()
 
+        login_listener = None
+
         def _apply_login(_user_id, identity):
             display_name = identity["name"]
             living.user_id = _user_id
@@ -395,14 +416,54 @@ def _run_agent(
             print(f"  \033[90m可用登录身份：\033[0m " + " ".join(parts))
             print()
 
+        # ── 声纹自动登录：后台监听 + 跨片段累积匹配 ──
+        auto_login_user_id = [None]
+        body = getattr(living, 'body', None)
+        if body and body.ears and ids:
+            from xiaomei_brain.body.perception.voice_listener import VoiceListener
+
+            sp_id = identity_mgr.speaker_id
+            if sp_id.known_voices:
+                body.ears.inject_speaker_id(sp_id)
+
+                def _on_voiceprint(name: str) -> None:
+                    auto_login_user_id[0] = name
+
+                mic = body.ears.device
+                if not mic.is_operational():
+                    mic.open()
+                if mic.start_stream():
+                    login_listener = VoiceListener(
+                        body,
+                        on_speech=lambda t: None,
+                        on_voiceprint=_on_voiceprint,
+                        speaker_id=sp_id,
+                    )
+                    login_listener.start()
+                    print(f"  \033[90m正在听... 请说话进行声纹登录（或按键手动登录）\033[0m")
+
         user_id = None
         while not user_id:
+            # ── 检查声纹自动登录 ──
+            if auto_login_user_id[0]:
+                name = auto_login_user_id[0]
+                identity = identity_mgr.resolve(name)
+                if identity:
+                    user_id = name
+                    print(f"\r\033[K  ✅ \033[32m声纹自动识别成功\033[0m", flush=True)
+                    _apply_login(user_id, identity)
+                    break
+                else:
+                    auto_login_user_id[0] = None
+
             try:
-                ch = _read_char()
+                ch = _read_char_timeout(0.1)
             except Exception:
                 ch = None
 
-            if ch is None or ch in ('\r', '\n'):
+            if ch is None:
+                continue  # 无按键，继续监听
+            elif ch in ('\r', '\n'):
                 pass  # 回车 → 走 input()
             elif ch == '\x03':  # Ctrl+C
                 print("\r\033[K" + C_ACCENT + "  再见\033[0m", flush=True)
@@ -418,12 +479,18 @@ def _run_agent(
                         break
                 continue
             elif ch == '\t':
+                # 暂停自动登录监听，避免与手动声纹登录冲突
+                if login_listener:
+                    login_listener.stop()
                 user_id = _try_voice_login()
                 if user_id:
                     identity = identity_mgr.resolve(user_id)
                     if identity:
                         _apply_login(user_id, identity)
                         break
+                # 重启自动登录监听
+                if login_listener and not user_id:
+                    login_listener.start()
                 continue
             else:
                 sys.stdout.write(ch)
@@ -461,6 +528,10 @@ def _run_agent(
         living.stop()
         import sys as _sys
         _sys.exit(0)
+
+    # ── 停止登录 VoiceListener ──
+    if login_listener:
+        login_listener.stop()
 
     # ── 启动语音监听（能量 VAD 持续监听）─────────────
     voice_listener = None

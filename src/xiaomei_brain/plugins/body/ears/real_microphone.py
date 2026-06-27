@@ -276,7 +276,7 @@ class RealMicrophone(Microphone):
                 [
                     "powershell.exe", "-ExecutionPolicy", "Bypass",
                     "-File", _STREAM_SCRIPT_WIN,
-                    "-Seconds", "3600",
+                    "-Seconds", "86400",
                 ],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
