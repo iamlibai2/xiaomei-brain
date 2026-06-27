@@ -8,12 +8,12 @@
 
 用法：
     # 对话监听
-    listener = VoiceListener(body, on_speech=lambda text: print(text))
+    listener = VoiceListener(body, on_speech=lambda text, pcm, emotion: print(text))
     listener.start()
 
     # 声纹登录监听
     listener = VoiceListener(body,
-        on_speech=lambda t: None,
+        on_speech=lambda t, p, e: None,
         on_voiceprint=lambda name: print(f"识别到: {name}"),
         speaker_id=identity_mgr.speaker_id,
     )
@@ -55,7 +55,7 @@ class VoiceListener:
     def __init__(
         self,
         body,
-        on_speech: Callable[[str], None],
+        on_speech: Callable[[str, bytes, str], None],
         on_voiceprint: Callable[[str], None] | None = None,
         speaker_id=None,
     ) -> None:
@@ -259,6 +259,6 @@ class VoiceListener:
                 return
             logger.info("VoiceListener 识别: '%s' emotion=%s", text, emotion)
             try:
-                self._on_speech(text)
+                self._on_speech(text, pcm, emotion)
             except Exception:
                 logger.exception("on_speech 回调异常")

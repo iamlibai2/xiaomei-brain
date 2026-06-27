@@ -345,6 +345,24 @@ def _run_agent(
                     priority=10,
                 )
 
+        def _switch_user(_user_id):
+            """轻量用户切换（对话中换人，不重新加载上下文）。"""
+            identity = identity_mgr.resolve(_user_id)
+            if not identity:
+                return
+            display_name = identity["name"]
+            living.user_id = _user_id
+            agent_core = agent._get_agent()
+            agent_core.user_id = _user_id
+            agent_core.user_display_name = display_name
+            if hasattr(living, 'consciousness') and living.consciousness:
+                si = living.consciousness.get_self_image()
+                if si:
+                    si.current_user_name = display_name
+                    si.current_user_id = _user_id
+                    si.current_user_relation = identity_mgr.get_relation(_user_id)
+            print(f"\n  {C_ACCENT2}⇄ 对话切换至 {display_name}\033[0m\n", flush=True)
+
         def _try_face_login():
             body = getattr(living, 'body', None)
             if not body or not body.eyes:
@@ -435,7 +453,7 @@ def _run_agent(
                 if mic.start_stream():
                     login_listener = VoiceListener(
                         body,
-                        on_speech=lambda t: None,
+                        on_speech=lambda t, p, e: None,
                         on_voiceprint=_on_voiceprint,
                         speaker_id=sp_id,
                     )
@@ -533,19 +551,41 @@ def _run_agent(
     if login_listener:
         login_listener.stop()
 
+    # ── 注意力门控 ──────────────────────────────
+    attention_gate = None
+    if body and body.ears and identity_mgr:
+        from xiaomei_brain.body.perception.attention_gate import AttentionGate
+
+        sp_id = getattr(body.ears, 'speaker_id', None)
+        if sp_id:
+            attention_gate = AttentionGate(sp_id, identity_mgr, wake_words=[agent_name])
+            attention_gate.set_current_user(user_id)
+            attention_gate.set_on_user_change(_switch_user)
+            print(f"  \033[90m🚪 注意力门控已就绪（唤醒词：{agent_name}，对话超时：3分钟）\033[0m", flush=True)
+
     # ── 启动语音监听（能量 VAD 持续监听）─────────────
     voice_listener = None
-    body = getattr(living, 'body', None)
     if body and body.ears:
         from xiaomei_brain.body.perception.voice_listener import VoiceListener
 
-        def _on_voice(text: str) -> None:
+        def _on_voice(text: str, pcm: bytes, emotion: str) -> None:
             if getattr(living, '_suppress_voice', False):
                 return
+
+            # 注意力门控
+            if attention_gate:
+                should_pass, target_user = attention_gate.process(text, pcm, emotion)
+                logger = logging.getLogger(__name__)
+                logger.warning("_on_voice attention: should_pass=%s target_user=%s", should_pass, target_user)
+                if not should_pass:
+                    return
+                if target_user and target_user != living.user_id:
+                    _switch_user(target_user)
+
             if not getattr(living, '_chatting', False):
                 with _stream_lock:
                     print(f"\n  🎙  \033[90m{text}\033[0m", flush=True)
-            living.put_message(text, source="voice", user_id=user_id)
+            living.put_message(text, source="voice", user_id=attention_gate.current_user_id if attention_gate else user_id)
 
         voice_listener = VoiceListener(body, on_speech=_on_voice)
         if voice_listener.start():
