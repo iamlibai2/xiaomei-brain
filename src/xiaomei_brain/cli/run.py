@@ -22,6 +22,8 @@ from xiaomei_brain.llm.client import FatalLLMError
 from xiaomei_brain.base.message_utils import estimate_tokens
 from xiaomei_brain.consciousness.conscious_living import ConsciousLiving
 
+logger = logging.getLogger(__name__)
+
 # ── 提示符（纯 ASCII，WSL 下 readline 无法正确计算中文 prompt 宽度）──
 PROMPT = "❯ "
 
@@ -472,6 +474,7 @@ def _run_agent(
                     _apply_login(user_id, identity)
                     break
                 else:
+                    logger.warning("声纹匹配到 '%s' 但 identity_mgr.resolve() 返回 None（身份不存在？）", name)
                     auto_login_user_id[0] = None
 
             try:
