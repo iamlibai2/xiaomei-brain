@@ -162,7 +162,8 @@ class AttentionGate:
     # ── 唤醒词检测 ────────────────────────────────────────
 
     def _has_wake_word(self, text: str) -> bool:
-        return any(w in text for w in self._wake_words)
+        t = text.lower()
+        return any(w.lower() in t for w in self._wake_words)
 
     # ── Cheap 声学特征 ────────────────────────────────────
 
