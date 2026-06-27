@@ -189,7 +189,7 @@ class VoiceListener:
                 mic.stop_stream()
             except Exception:
                 pass
-            time.sleep(1)
+            time.sleep(3)
             if not mic.start_stream():
                 logger.error("VoiceListener 重连失败")
                 break
@@ -215,28 +215,41 @@ class VoiceListener:
         if DEBUG_PEAK:
             logger.warning("VoiceListener _process: peak=%d rms=%.1f len=%.1fs", peak, rms, len(pcm) / 32000)
 
-        # ── 声纹累积 & 匹配（登录模式）────────────────────
+        # ── 声纹匹配（登录模式）────────────────────────
         if self._on_voiceprint and self._speaker_id:
-            self._vp_buf.extend(pcm)
-            buf_s = len(self._vp_buf) / 32000
-            # 超过上限截断尾部
-            if len(self._vp_buf) > VP_MAX_BYTES:
-                self._vp_buf = self._vp_buf[-VP_MAX_BYTES:]
-            # 攒到最小长度就尝试匹配（1s），失败继续累积
-            if len(self._vp_buf) >= VP_MIN_BYTES:
-                logger.warning("VoiceListener 声纹匹配尝试: buffer=%.1fs", len(self._vp_buf) / 32000)
+            if len(pcm) >= VP_MIN_BYTES:
+                # 单段足够长，直接匹配，避免跨段拼接污染
+                seg_s = len(pcm) / 32000
+                logger.warning("VoiceListener 声纹匹配尝试: segment=%.1fs", seg_s)
                 try:
-                    name = self._speaker_id.identify(bytes(self._vp_buf), 16000)
+                    name = self._speaker_id.identify(pcm, 16000)
                     if name:
-                        logger.warning("VoiceListener 声纹匹配成功: %s（buffer=%.1fs）", name, len(self._vp_buf) / 32000)
+                        logger.warning("VoiceListener 声纹匹配成功: %s（segment=%.1fs）", name, seg_s)
                         self._on_voiceprint(name)
-                        self._vp_buf = bytearray()  # 匹配成功清空
+                        self._vp_buf = bytearray()
                     else:
-                        logger.warning("VoiceListener 声纹匹配失败: 未匹配任何已知声纹（buffer=%.1fs）", len(self._vp_buf) / 32000)
-                        # 未匹配，保留最近 5s 继续累积
-                        self._vp_buf = self._vp_buf[-VP_TARGET_BYTES:]
+                        logger.warning("VoiceListener 声纹匹配失败: 未匹配任何已知声纹（segment=%.1fs）", seg_s)
                 except Exception:
                     logger.exception("声纹识别异常")
+            else:
+                # 短片段累积，攒到 VP_MIN_BYTES 再试
+                self._vp_buf.extend(pcm)
+                if len(self._vp_buf) > VP_MAX_BYTES:
+                    self._vp_buf = self._vp_buf[-VP_MAX_BYTES:]
+                if len(self._vp_buf) >= VP_MIN_BYTES:
+                    buf_s = len(self._vp_buf) / 32000
+                    logger.warning("VoiceListener 声纹匹配尝试: buffer=%.1fs", buf_s)
+                    try:
+                        name = self._speaker_id.identify(bytes(self._vp_buf), 16000)
+                        if name:
+                            logger.warning("VoiceListener 声纹匹配成功: %s（buffer=%.1fs）", name, buf_s)
+                            self._on_voiceprint(name)
+                            self._vp_buf = bytearray()
+                        else:
+                            logger.warning("VoiceListener 声纹匹配失败: 未匹配任何已知声纹（buffer=%.1fs）", buf_s)
+                            self._vp_buf = self._vp_buf[-VP_TARGET_BYTES:]
+                    except Exception:
+                        logger.exception("声纹识别异常")
 
         # VAD 预检：过滤环境噪音，避免无效 STT 推理
         if not stt.is_speech(pcm):

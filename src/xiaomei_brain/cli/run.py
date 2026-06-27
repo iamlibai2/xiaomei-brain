@@ -111,12 +111,12 @@ def _read_char_timeout(timeout: float = 0.1) -> str | None:
         import tty
         import termios
         fd = sys.stdin.fileno()
-        r, _, _ = select.select([sys.stdin], [], [], timeout)
-        if not r:
-            return None
         old = termios.tcgetattr(fd)
+        tty.setraw(fd)
         try:
-            tty.setraw(fd)
+            r, _, _ = select.select([sys.stdin], [], [], timeout)
+            if not r:
+                return None
             return sys.stdin.read(1)
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
@@ -366,61 +366,61 @@ def _run_agent(
         def _try_face_login():
             body = getattr(living, 'body', None)
             if not body or not body.eyes:
-                print(f"\r  ❌ 摄像头未配置，请手动登录", flush=True)
+                print("  ❌ 摄像头未配置，请手动登录", flush=True)
                 return None
             eyes = body.eyes
             if not eyes.is_available():
                 eyes._device.open()
                 eyes.online = True
             if not eyes.is_available():
-                print(f"\r  ❌ 摄像头不可用，请手动登录", flush=True)
+                print("  ❌ 摄像头不可用，请手动登录", flush=True)
                 return None
-            print(f"\r  📷 拍照识别中...", end="", flush=True)
+            print("  📷 拍照识别中...", end="", flush=True)
             try:
                 faces = eyes.recognize_faces()
             except Exception as e:
-                print(f"\r  ❌ 拍照失败: {e}", flush=True)
+                print(f"\n  ❌ 拍照失败: {e}", flush=True)
                 return None
             if not faces:
-                print(f"\r  ❌ 未检测到人脸，请重试或按[回车]手动登录  ", flush=True)
+                print("  ❌ 未检测到人脸，请重试或按[回车]手动登录", flush=True)
                 return None
             name = faces[0].get("name")
             if not name:
-                print(f"\r  ❌ 未识别出身份，请重试或按[回车]手动登录  ", flush=True)
+                print("  ❌ 未识别出身份，请重试或按[回车]手动登录", flush=True)
                 return None
             identity = identity_mgr.resolve(name)
             if not identity:
-                print(f"\r  ❌ 人脸匹配到 '{name}' 但身份不存在，请手动登录", flush=True)
+                print(f"  ❌ 人脸匹配到 '{name}' 但身份不存在，请手动登录", flush=True)
                 return None
-            print(f"\r\033[K  ✅ \033[32m人脸识别成功\033[0m", flush=True)
+            print(f"  ✅ \033[32m人脸识别成功\033[0m", flush=True)
             return name
 
         def _try_voice_login():
             body = getattr(living, 'body', None)
             if not body or not body.ears:
-                print(f"\r  ❌ 麦克风未配置，请手动登录", flush=True)
+                print("  ❌ 麦克风未配置，请手动登录", flush=True)
                 return None
             ears = body.ears
             if not ears.is_available():
                 ears._device.open()
                 ears.online = True
             if not ears.is_available():
-                print(f"\r  ❌ 麦克风不可用，请手动登录", flush=True)
+                print("  ❌ 麦克风不可用，请手动登录", flush=True)
                 return None
-            print(f"\r  🎙 录音识别中 5s，请说话...", end="", flush=True)
+            print("  🎙 录音识别中 5s，请说话...", flush=True)
             try:
                 voice_id = ears.recognize_voice()
             except Exception as e:
-                print(f"\r  ❌ 录音失败: {e}", flush=True)
+                print(f"  ❌ 录音失败: {e}", flush=True)
                 return None
             if not voice_id:
-                print(f"\r  ❌ 未识别出声纹，请重试或按[回车]手动登录  ", flush=True)
+                print("  ❌ 未识别出声纹，请重试或按[回车]手动登录", flush=True)
                 return None
             identity = identity_mgr.resolve(voice_id)
             if not identity:
-                print(f"\r  ❌ 声纹匹配到 '{voice_id}' 但身份不存在，请手动登录", flush=True)
+                print(f"  ❌ 声纹匹配到 '{voice_id}' 但身份不存在，请手动登录", flush=True)
                 return None
-            print(f"\r\033[K  ✅ \033[32m声纹识别成功\033[0m", flush=True)
+            print(f"  ✅ \033[32m声纹识别成功\033[0m", flush=True)
             return voice_id
 
         if ids:
@@ -468,7 +468,7 @@ def _run_agent(
                 identity = identity_mgr.resolve(name)
                 if identity:
                     user_id = name
-                    print(f"\r\033[K  ✅ \033[32m声纹自动识别成功\033[0m", flush=True)
+                    print(f"  ✅ \033[32m声纹自动识别成功\033[0m", flush=True)
                     _apply_login(user_id, identity)
                     break
                 else:

@@ -294,22 +294,22 @@ class RealMicrophone(Microphone):
 
         返回 None 表示流已结束或超时。
         """
-        if not self.is_streaming:
-            logger.warning("[read_chunk] is_streaming=False，流可能已断开")
+        proc = self._stream_proc
+        if proc is None:
             return None
 
         try:
             # 非阻塞检查是否有数据可读
             import select
             ready, _, _ = select.select(
-                [self._stream_proc.stdout], [], [], timeout
+                [proc.stdout], [], [], timeout
             )
             if not ready:
                 return b""
-            data = self._stream_proc.stdout.read(8000)
+            data = proc.stdout.read(8000)
             if not data:
                 # 流结束：检查进程是否还活着
-                rc = self._stream_proc.poll() if self._stream_proc else None
+                rc = proc.poll()
                 logger.warning("[read_chunk] stdout EOF, 进程退出码=%s", rc)
                 return None
             return data
@@ -320,19 +320,28 @@ class RealMicrophone(Microphone):
     def stop_stream(self) -> None:
         """停止持续录音。"""
         proc = getattr(self, '_stream_proc', None)
+        self._stream_proc = None  # 先设 None，防止 read_chunk 继续读
         if proc is None:
             return
+        pid = proc.pid
         try:
             proc.terminate()
             proc.wait(3)
         except Exception:
+            pass
+        # WSL 下 terminate() 可能失效，用 taskkill 兜底
+        if proc.poll() is None and pid:
             try:
-                proc.kill()
-                proc.wait(2)
+                subprocess.run(
+                    ["powershell.exe", "-Command", f"Stop-Process -Id {pid} -Force"],
+                    timeout=5,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
             except Exception:
                 pass
-        self._stream_proc = None
-        logger.info("流式录音已停止")
+        logger.info("流式录音已停止 (pid=%s)", pid)
 
     def _deploy_stream_script(self) -> None:
         """部署流式录音 PowerShell 脚本。"""
