@@ -798,6 +798,10 @@ def cmd_run(args: list[str]) -> None:
     ))
     logging.getLogger().addHandler(_file_handler)
 
+    # 压制第三方库 DEBUG 噪音
+    for _noisy in ["markdown_it", "httpx", "httpcore", "urllib3", "asyncio"]:
+        logging.getLogger(_noisy).setLevel(logging.WARNING)
+
     from xiaomei_brain.llm.client import set_log_agent as _set_llm_log
     from xiaomei_brain.consciousness.goal_manager import set_log_agent as _set_intent_log
     _set_llm_log(agent_id)

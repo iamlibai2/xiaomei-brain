@@ -97,8 +97,6 @@ class SelfImage:
         if state_buffer is not None:
             state_buffer.tick(prev, self._snapshot())
 
-        logger.debug("[SelfImage.tick] #%d: age=%ds", self.history.cycle_count, int(self.history.consciousness_age))
-
     def _snapshot(self) -> dict[str, float | str]:
         """轻量快照：只收集 _diff 需要的 6 个字段。"""
         return {

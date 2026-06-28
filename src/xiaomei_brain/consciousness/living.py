@@ -489,9 +489,6 @@ class Living:
     def _loop_awake(self) -> None:
         # AWAKE loop -- process messages, transition to IDLE/SLEEPING on idle.
         # 活跃循环 -- 处理消息，空闲时进入 IDLE 或 SLEEPING。
-        logger.debug("[Living/AWAKE] tick 间隔=%.1f秒, idle阈值=%.1f秒",
-                     self.tick_interval, self.idle_threshold)
-
         self._heartbeat_result = HEARTBEAT_NORMAL
         self._tick_periodic(self.state)
 

@@ -71,8 +71,6 @@ class StateChangeBuffer:
             "changes": diff,
         })
         self._trim()
-        logger.debug("[StateBuffer] 记录变化 #%d: %s",
-                     self._cycle_count, list(diff.keys()))
 
     def _diff(self, prev: dict, cur: dict) -> dict[str, Any]:
         """对比快照差异。"""
