@@ -24,6 +24,7 @@ from .render_consciousness_v3 import (
     _render_essence, _render_narratives, _render_internal_narratives,
     _render_experience, _render_experience_timeline, _render_learn_queue, _render_desk,
     _render_procedures, _render_recent_dialog, _render_cross_user_dialog,
+    _render_skills_index,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,23 +62,25 @@ def inject_consciousness(si, mode: str = "daily", user_input: str = "",
 # ── Mode 组装方法 ──────────────────────────────────────
 
 def _assemble_flow(si) -> str:
-    """flow: 最小化 — 身份、身体、底色、历史摘要"""
+    """flow: 最小化 — 身份、身体、底色、技能索引、历史摘要"""
     return "\n".join(
         _render_header(si)
         + _render_being(si)
         + _render_essence(si)
         + _render_body(si)
+        + _render_skills_index(si)
         + _render_dag_summaries(si)
     )
 
 
 def _assemble_daily(si) -> str:
-    """daily: 完整日常 — 身份、身体、记忆、叙事、桌面"""
+    """daily: 完整日常 — 身份、身体、技能索引、记忆、叙事、桌面"""
     return "\n".join(
         _render_header(si)
         + _render_being(si)
         + _render_essence(si)
         + _render_body(si)
+        + _render_skills_index(si)
         + _render_procedures(si)
         + _render_longterm_memories(si)
         + _render_relation_chains(si)
@@ -92,12 +95,13 @@ def _assemble_daily(si) -> str:
 
 
 def _assemble_task(si) -> str:
-    """task: 任务导向 — 身份、身体、记忆、经验、学习队列、桌面（不含叙事和关系链）"""
+    """task: 任务导向 — 身份、身体、技能索引、记忆、经验、学习队列、桌面（不含叙事和关系链）"""
     return "\n".join(
         _render_header(si)
         + _render_being(si)
         + _render_essence(si)
         + _render_body(si)
+        + _render_skills_index(si)
         + _render_experience(si)
         + _render_longterm_memories(si)
         + _render_dag_summaries(si)

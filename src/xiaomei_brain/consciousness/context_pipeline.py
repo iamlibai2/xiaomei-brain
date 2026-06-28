@@ -231,6 +231,12 @@ def build_context(
         # 传递上条用户消息的时间戳，供 _render_header 计算时差
         self_image._last_user_msg_time = getattr(agent, '_last_user_msg_time', None)
         profile = _load_salience_profile(agent)
+        # 技能索引：根据用户输入语义召回相关技能，推入 SelfImage 供 render 渲染
+        skill_loader = getattr(agent, '_skill_loader', None)
+        if skill_loader:
+            self_image.memory.skill_index = skill_loader.build_skill_index_prompt(user_input)
+        else:
+            self_image.memory.skill_index = ""
         system_content = inject_consciousness(self_image, mode=mode, user_input=user_input, profile=profile)
         # 记录当前消息的时间，供下次使用
         agent._last_user_msg_time = _time.time()

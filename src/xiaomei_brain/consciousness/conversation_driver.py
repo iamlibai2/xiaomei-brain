@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from typing import Any, TYPE_CHECKING
@@ -56,7 +57,6 @@ class ConversationDriver:
         self._longterm_memory = longterm_memory
         self._last_pl_time: float = time.time()
         self._last_narr_time: float = time.time()
-        self.term_width: int = 80  # 终端宽度，由 CLI 入口在初始化后设置
 
         # 任务模式标记（GoalManager 通过 driver._task_mode 读写）
         self._task_mode: bool = False
@@ -78,7 +78,7 @@ class ConversationDriver:
         self._scheduler = RoundScheduler()
         self._scheduler.every(1, self._salience_feedback)
         self._scheduler.every(3, self._invoke_inner_voice_chat_turn)
-        self._scheduler.every(3, self._invoke_dag_compact)
+        self._scheduler.every(1, self._invoke_dag_compact)
         self._scheduler.every(10, self._invoke_memory_extract)
         self._scheduler.every(15, self._invoke_procedure_learn)
         self._scheduler.every(20, self._invoke_narrative_learn)
@@ -93,6 +93,13 @@ class ConversationDriver:
         self.has_active_goal = self._goal_manager.has_active_goal
         self.handle_command = self._goal_manager.handle_command
 
+    def _term_width(self) -> int:
+        """动态获取终端宽度，终端缩放后自动适配。"""
+        try:
+            return os.get_terminal_size().columns
+        except Exception:
+            return 80
+
     # ── Public API ─────────────────────────────────────────────
 
     @property
@@ -106,6 +113,9 @@ class ConversationDriver:
         """核心入口：处理用户消息。"""
         gm = self._goal_manager
         parent = self._parent
+
+        # 斜杠命令拦截：/skill-name 注入技能内容
+        self._handle_slash_command(msg)
 
         # PACE 等待 → 用户回复时自动恢复
         if gm.is_pace_waiting():
@@ -182,6 +192,41 @@ class ConversationDriver:
         gm.log_intent_context(intent_result, "", msg.content)
         self._run_chat(msg, "")
 
+    # ── Slash command ────────────────────────────────────────
+
+    def _handle_slash_command(self, msg: LivingMessage) -> None:
+        """拦截 /skill-name 斜杠命令，注入技能内容到用户消息。
+
+        所有渠道（CLI、飞书、钉钉等）共用此入口。
+        匹配到技能时，将 SKILL.md 正文包装为 [IMPORTANT] 标记注入 msg.content，
+        后续正常流程无需感知。
+
+        格式:
+            /skill-name 剩余的用户输入
+        """
+        content = msg.content.strip()
+        if not content.startswith("/"):
+            return
+
+        parts = content.split(None, 1)
+        cmd = parts[0][1:]  # 去掉 /
+        user_input = parts[1] if len(parts) > 1 else ""
+
+        loader = getattr(self._agent, '_skill_loader', None)
+        if not loader:
+            return
+
+        skill = loader.view_skill(cmd)
+        if not skill:
+            return
+
+        msg.content = (
+            f'[IMPORTANT: 用户激活了技能 "{cmd}"，请严格按其指示执行。]\n\n'
+            f"{skill['content']}\n\n"
+            f"{user_input or '请按此技能的要求执行。'}"
+        )
+        logger.info("[ConversationDriver] 斜杠命令: /%s → 技能已注入", cmd)
+
     # ── Chat dispatch ─────────────────────────────────────────
 
     def _run_chat(self, msg: LivingMessage, intent_context: str = "") -> None:
@@ -216,7 +261,7 @@ class ConversationDriver:
                 agent.internal_display = self.display
 
                 while True:
-                    print("\033[90m" + "─" * self.term_width + "\033[0m", flush=True)
+                    print("\033[90m" + "─" * self._term_width() + "\033[0m", flush=True)
                     print(f"  \033[38;5;203m{parent.agent.name or parent._agent_id}\033[0m: ", end="", flush=True)
                     cs = parent._get_consciousness_state()
                     t0 = time.time()
@@ -315,7 +360,7 @@ class ConversationDriver:
 
                     display_content = gm.remove_progress_tag(content)
 
-                    print("\033[90m" + "─" * self.term_width + "\033[0m", flush=True)
+                    print("\033[90m" + "─" * self._term_width() + "\033[0m", flush=True)
 
                     tc_str = f"，{tc_count}次工具调用" if tc_count else ""
                     print(f"\033[90m[本轮耗时 {elapsed:.1f}s{tc_str}]\033[0m", flush=True)
@@ -477,14 +522,16 @@ class ConversationDriver:
             logger.debug("[ConversationDriver] InnerVoice chat_turn 失败: %s", e)
 
     def _invoke_dag_compact(self, **kwargs: Any) -> None:
-        """每 8 轮对话预压缩 DAG：提前 summarize，减少下次 build_context 延迟。"""
+        """每 3 轮对话预压缩 DAG：提前 summarize，减少下次 build_context 延迟。"""
         try:
             agent_core = self._parent.agent._get_agent()
             dag = getattr(agent_core, 'dag', None)
             if not dag:
+                logger.debug("[ConversationDriver] DAG compact 跳过: dag=None")
                 return
             session_id = getattr(agent_core, 'session_id', None)
             if not session_id:
+                logger.debug("[ConversationDriver] DAG compact 跳过: session_id=None")
                 return
 
             # 快照数据，daemon 线程异步执行
@@ -514,14 +561,14 @@ class ConversationDriver:
                         logger.info("[ConversationDriver] DAG compact 完成: %d msgs → summary (%d tokens)", count, tokens)
                         display.record_dag_compact(count, tokens)
                     else:
-                        logger.debug("[ConversationDriver] DAG compact 跳过: 未达阈值")
+                        logger.info("[ConversationDriver] DAG compact 跳过: 未达阈值 (session=%s)", _session_id)
                 except Exception as e:
                     import traceback
                     logger.warning("[ConversationDriver] DAG compact 失败: %s\n%s", e, traceback.format_exc())
 
             threading.Thread(target=_run, daemon=True, name="dag_compact").start()
         except Exception as e:
-            logger.debug("[ConversationDriver] DAG compact 失败: %s", e)
+            logger.warning("[ConversationDriver] DAG compact 调度失败: %s", e)
 
     def _invoke_memory_extract(self, **kwargs: Any) -> None:
         """每 10 轮对话提取增量记忆。复用 MemoryExtractor.extract_periodic()。"""

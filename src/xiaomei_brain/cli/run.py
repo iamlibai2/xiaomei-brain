@@ -815,6 +815,15 @@ def cmd_run(args: list[str]) -> None:
             pass
     atexit.register(lambda p=_hist_path: readline.write_history_file(p))
 
+    # ── PID 锁：防止重复启动 ─────────────────────────────────
+    from xiaomei_brain.cli.lifecycle import write_pid_file, read_pid_file
+    existing = read_pid_file(agent_id)
+    if existing:
+        print(f"\033[31m[错误] agent '{agent_id}' 已在运行 (PID {existing['pid']})。"
+              f"请先停止或等待退出后再启动。\033[0m")
+        sys.exit(1)
+    write_pid_file(agent_id)
+
     # ── 验证 agent ──────────────────────────────────────────
     manager = AgentManager()
     available = [a.id for a in manager.list()]
@@ -897,11 +906,6 @@ def cmd_run(args: list[str]) -> None:
     boot_sep(tagline)
 
     living.assemble_context = True
-    # daemon 线程里 os.get_terminal_size() 拿不到正确值，从主线程传入
-    try:
-        living.conversation_driver.term_width = os.get_terminal_size().columns
-    except Exception:
-        living.conversation_driver.term_width = 80
     living._show_prompt = False  # CLI 模式：主循环统一管理提示符
 
     if parsed.legacy:

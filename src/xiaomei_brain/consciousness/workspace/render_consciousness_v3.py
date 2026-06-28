@@ -1070,6 +1070,18 @@ def _render_cross_user_dialog(si) -> list[str]:
     return lines
 
 
+def _render_skills_index(si) -> list[str]:
+    """渲染技能索引。
+
+    从 si.memory.skill_index 读取预生成的索引文本。
+    若为空字符串或 None，返回空列表（不注入）。
+    """
+    text = getattr(si.memory, 'skill_index', None) or ""
+    if not text.strip():
+        return []
+    return ["\n" + text]
+
+
 def _render_token_budget(si) -> list[str]:
     """渲染 Token 预算（已废弃）。
 

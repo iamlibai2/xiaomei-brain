@@ -36,6 +36,8 @@ _CORE_TOOL_NAMES = frozenset({
     "memory_add",
     "memory_list",
     "dag",
+    "skills_list",
+    "skill_view",
 })
 
 DEFAULT_TOP_K = 10
@@ -75,10 +77,19 @@ class DynamicToolLoader:
         self._built = False
 
     def _get_embedder(self):
-        """懒加载 embedding 模型。"""
-        if self._embedder is None:
-            from xiaomei_brain.memory.search import Embedder
-            self._embedder = Embedder(model_name="BAAI/bge-m3")
+        """懒加载 embedding 模型 — 优先远程服务器，fallback 本地。"""
+        if self._embedder is not None:
+            return self._embedder
+
+        from xiaomei_brain.base.embedding_client import RemoteEmbedder
+        remote = RemoteEmbedder()
+        if remote.available:
+            self._embedder = remote
+            return self._embedder
+
+        logger.info("DynamicToolLoader: loading local embedding model BAAI/bge-m3 ...")
+        from xiaomei_brain.memory.search import Embedder
+        self._embedder = Embedder(model_name="BAAI/bge-m3")
         return self._embedder
 
     def _tool_embedding_text(self, tool: Tool) -> str:

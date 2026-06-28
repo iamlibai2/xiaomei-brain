@@ -147,6 +147,10 @@ def main() -> None:
         from xiaomei_brain.cli.install import cmd_install
         cmd_install(args)
 
+    elif cmd == "skill":
+        from xiaomei_brain.cli.skill import cmd_skill
+        cmd_skill(args)
+
     else:
         print(f"Unknown command: {cmd}")
         sys.exit(1)

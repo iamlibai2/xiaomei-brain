@@ -74,12 +74,8 @@ class LongTermMemory(SQLiteStore):
         self._embed_lock = threading.Lock()
 
         # Remote embedding server（常驻进程，跨进程复用模型）
-        # 设置 EMBED_SERVER_URL 环境变量覆盖默认地址
-        self._embed_server_url = os.environ.get(
-            "EMBED_SERVER_URL", "http://127.0.0.1:18765"
-        )
-        self._remote_available: bool | None = None  # None=未检测, True/False
-        self._remote_dim: int | None = None  # 远程服务器返回的向量维度
+        from xiaomei_brain.base.embedding_client import RemoteEmbedder
+        self._remote = RemoteEmbedder()
 
         # LanceDB (lazy open)
         self._lance_dir = self.db_path.parent / "lancedb"
@@ -111,7 +107,7 @@ class LongTermMemory(SQLiteStore):
         try:
             from sentence_transformers import SentenceTransformer  # noqa: F401
             # 先检查远端服务，已独立运行则不加载本地模型
-            if self._check_remote():
+            if self._remote.available:
                 logger.info("Remote embedding server available, using remote (skip local warmup)")
                 return
             logger.info("No remote embedding server, pre-loading local model: %s", self._embedding_model_name)
@@ -164,57 +160,6 @@ class LongTermMemory(SQLiteStore):
             self._warmup_complete.set()
             return self._embedder
 
-    # ── Remote Embedding Server ──────────────────────────────────
-
-    def _check_remote(self) -> bool:
-        """检测远程 embedding 服务器是否可用，缓存向量维度。"""
-        try:
-            import urllib.request
-            url = f"{self._embed_server_url}/health"
-            resp = urllib.request.urlopen(url, timeout=2)
-            if resp.status == 200:
-                data = json.loads(resp.read())
-                dim = data.get("dim")
-                if not dim:
-                    logger.debug("[Embed] Remote health returned 200 but no dim field, treating as unavailable")
-                    return False
-                self._remote_dim = dim
-                logger.info(
-                    "[Embed] Remote server available at %s (dim=%s)",
-                    self._embed_server_url, self._remote_dim,
-                )
-                return True
-            return False
-        except Exception as e:
-            logger.debug("[Embed] Remote server not available: %s", e)
-            return False
-
-    def _remote_embed(self, text: str) -> list[float]:
-        """通过远程服务器 embedding（单条）。"""
-        import urllib.request
-        data = json.dumps({"text": text}).encode("utf-8")
-        req = urllib.request.Request(
-            f"{self._embed_server_url}/embed",
-            data=data,
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            result = json.loads(resp.read())
-        return result["vector"]
-
-    def _remote_embed_batch(self, texts: list[str]) -> list[list[float]]:
-        """通过远程服务器 embedding（批量）。"""
-        import urllib.request
-        data = json.dumps({"texts": texts}).encode("utf-8")
-        req = urllib.request.Request(
-            f"{self._embed_server_url}/embed",
-            data=data,
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            result = json.loads(resp.read())
-        return result["vectors"]
-
     # ── Embedding ───────────────────────────────────────────────
 
     def _embed(self, text: str) -> list[float]:
@@ -222,14 +167,11 @@ class LongTermMemory(SQLiteStore):
 
         优先走远程服务器（常驻进程），回退本地（GPU → CPU）。
         """
-        if self._remote_available is None:
-            self._remote_available = self._check_remote()
-        if self._remote_available:
+        if self._remote.available:
             try:
-                return self._remote_embed(text)
+                return self._remote.embed(text)
             except Exception as e:
                 logger.warning("[Embed] Remote failed, falling back to local: %s", e)
-                self._remote_available = False
 
         model = self._get_embedder()
         return self._safe_local_encode(model, text)
@@ -239,14 +181,11 @@ class LongTermMemory(SQLiteStore):
 
         优先走远程服务器（常驻进程），回退本地（GPU → CPU）。
         """
-        if self._remote_available is None:
-            self._remote_available = self._check_remote()
-        if self._remote_available:
+        if self._remote.available:
             try:
-                return self._remote_embed_batch(texts)
+                return self._remote.embed_batch(texts)
             except Exception as e:
                 logger.warning("[Embed] Remote batch failed, falling back to local: %s", e)
-                self._remote_available = False
 
         model = self._get_embedder()
         return self._safe_local_encode(model, texts, batch=True)
@@ -321,11 +260,8 @@ class LongTermMemory(SQLiteStore):
 
     def _get_embedding_dim(self) -> int:
         """Get embedding dimension — remote first, local fallback."""
-        # Remote server already cached the dimension
-        if self._remote_available is None:
-            self._remote_available = self._check_remote()
-        if self._remote_available and self._remote_dim is not None:
-            return self._remote_dim
+        if self._remote.dim is not None:
+            return self._remote.dim
 
         # Fall back to local model
         model = self._get_embedder()

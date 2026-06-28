@@ -207,6 +207,12 @@ class AgentInstance:
 
         # 构建预组装消息
         system_prompt = self.get_system_prompt()
+        # 技能索引（简化路径：无 ConsciousLiving 时在此拼接）
+        skill_loader = getattr(agent, '_skill_loader', None)
+        if skill_loader:
+            skill_index = skill_loader.build_skill_index_prompt(user_input)
+            if skill_index:
+                system_prompt = system_prompt + "\n\n" + skill_index if system_prompt else skill_index
         if intent_context:
             system_prompt = system_prompt + "\n\n" + intent_context if system_prompt else intent_context
         assembled = []
@@ -1006,6 +1012,16 @@ class AgentManager:
 
         from xiaomei_brain.tools.builtin.clarify import clarify_tool
         tools.register(clarify_tool)
+
+        # ── 技能系统 ──────────────────────────────────────────────────
+        from xiaomei_brain.skills import SkillLoader, create_skill_tools
+        skills_dir = os.path.join(self._agent_dir(agent.id), "skills")
+        brain_db_path = os.path.join(self._agent_dir(agent.id), "brain.db")
+        skill_loader = SkillLoader(skills_dir=skills_dir, db_path=brain_db_path)
+        skill_loader.scan()
+        agent._skill_loader = skill_loader
+        for skill_tool in create_skill_tools(agent):
+            tools.register(skill_tool)
 
         # ── 动态工具加载 ───────────────────────────────────────────────
         dynamic_cfg = {}

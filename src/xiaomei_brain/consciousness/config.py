@@ -105,7 +105,7 @@ class ContextConfig:
 
     # DAG 压缩
     messages_per_compact: int = 8      # 每次压缩的消息条数
-    reserved_fresh_count: int = 10     # 保留的新鲜消息条数
+    reserved_fresh_count: int = 10     # 保留的新鲜消息条数（≥18条未摘要即触发，压8留10）
     compact_token_ratio: float = 0.5   # 未摘要消息 token 占比阈值
     compact_time_window: float = 7200.0  # 压缩时间窗口（秒）
 

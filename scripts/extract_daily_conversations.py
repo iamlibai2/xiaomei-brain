@@ -23,7 +23,7 @@ TRANSCRIPT_PATHS = sorted(
     key=lambda p: p.stat().st_size,
     reverse=True,
 )
-OUTPUT_DIR = Path("/home/iamlibai/workspace/claude-project/xiaomei-brain/docs/analyze")
+OUTPUT_DIR = Path("/home/iamlibai/workspace/claude-project/xiaomei-brain/docs-local/analyze")
 
 
 def parse_timestamp(ts_str: str) -> datetime | None:
