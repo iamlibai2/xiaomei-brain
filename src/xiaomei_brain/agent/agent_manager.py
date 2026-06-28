@@ -973,12 +973,51 @@ class AgentManager:
         _reloader.add_listener(_on_config_changed)
         _reloader.start()
 
+        # ── 注册延迟绑定工具（依赖 ConsciousLiving 后期初始化的组件）─────
+        # 这些工具注册时传入 agent 引用，调用时从 agent 身上实时拿依赖
+        from xiaomei_brain.tools.builtin.dag_expand import create_dag_tools
+        for dag_tool in create_dag_tools(agent):
+            tools.register(dag_tool)
+
+        from xiaomei_brain.tools.builtin.thought_search import create_thought_tools
+        for thought_tool in create_thought_tools(agent):
+            tools.register(thought_tool)
+
+        from xiaomei_brain.tools.builtin.memory_search import create_memory_search_tools
+        for ms_tool in create_memory_search_tools(agent):
+            tools.register(ms_tool)
+
+        from xiaomei_brain.tools.builtin.goal import create_goal_tools
+        for goal_tool in create_goal_tools(agent):
+            tools.register(goal_tool)
+
+        from xiaomei_brain.tools.builtin.being import create_being_tool
+        tools.register(create_being_tool(agent))
+
+        from xiaomei_brain.tools.builtin.pleasure import create_pleasure_lever
+        tools.register(create_pleasure_lever(agent))
+
+        from xiaomei_brain.schedule import create_cron_tools
+        for cron_tool in create_cron_tools(agent):
+            tools.register(cron_tool)
+
+        from xiaomei_brain.tools.builtin.manage_session import create_session_tool
+        tools.register(create_session_tool(agent))
+
+        from xiaomei_brain.tools.builtin.clarify import clarify_tool
+        tools.register(clarify_tool)
+
         # ── 动态工具加载 ───────────────────────────────────────────────
-        from xiaomei_brain.tools.dynamic import DynamicToolLoader, set_active_loader
-        loader = DynamicToolLoader(tools)
-        loader.build_index()
-        agent._dynamic_loader = loader
-        set_active_loader(loader)
+        dynamic_cfg = {}
+        if raw_config:
+            dynamic_cfg = raw_config.get("xiaomei_brain", {}).get("tools", {}).get("dynamic", {})
+        if dynamic_cfg.get("enabled", True):
+            from xiaomei_brain.tools.dynamic import DynamicToolLoader, set_active_loader
+            top_k = dynamic_cfg.get("top_k", 10)
+            loader = DynamicToolLoader(tools, top_k=top_k)
+            loader.build_index()
+            agent._dynamic_loader = loader
+            set_active_loader(loader)
 
         session_manager = SessionManager(session_dir=self._sessions_dir(agent.id))
 

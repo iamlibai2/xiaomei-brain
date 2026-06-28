@@ -226,7 +226,7 @@ class Agent:
 
             # 每步根据累积上下文动态选择工具
             if self._dynamic_loader:
-                openai_tools = self._dynamic_loader.select_openai_tools(_accumulated_context)
+                openai_tools = self._dynamic_loader.select_openai_tools(_accumulated_context, step=step)
             else:
                 openai_tools = self.tools.to_openai_tools() if self.tools.list_tools() else None
 
@@ -534,7 +534,7 @@ class Agent:
 
             # 每步根据累积上下文动态选择工具
             if self._dynamic_loader:
-                openai_tools = self._dynamic_loader.select_openai_tools(_accumulated_context)
+                openai_tools = self._dynamic_loader.select_openai_tools(_accumulated_context, step=step)
             else:
                 openai_tools = self.tools.to_openai_tools() if self.tools.list_tools() else None
 

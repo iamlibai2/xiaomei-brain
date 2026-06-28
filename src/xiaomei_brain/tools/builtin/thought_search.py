@@ -10,12 +10,15 @@ if TYPE_CHECKING:
     from ...memory.longterm import LongTermMemory
 
 
-def create_thought_tools(longterm: "LongTermMemory | None" = None) -> list[Tool]:
+def create_thought_tools(agent: Any = None) -> list[Tool]:
     """Create thought/think search tools.
 
     Args:
-        longterm: LongTermMemory instance for thoughts table access.
+        agent: AgentInstance reference for lazy dependency resolution.
     """
+
+    def _longterm():
+        return getattr(agent, "longterm_memory", None) if agent else None
 
     @tool(
         name="thought_search",
@@ -33,6 +36,7 @@ def create_thought_tools(longterm: "LongTermMemory | None" = None) -> list[Tool]
             user_id: 用户ID，默认为 global
             limit: 最多返回几条记录
         """
+        longterm = _longterm()
         if not longterm:
             return "记忆系统未初始化。"
 

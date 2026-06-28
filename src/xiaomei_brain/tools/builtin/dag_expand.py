@@ -12,17 +12,18 @@ if TYPE_CHECKING:
     from ...memory.longterm import LongTermMemory
 
 
-def create_dag_tools(
-    dag: "DAGSummaryGraph",
-    longterm: "LongTermMemory | None" = None,
-) -> list[Tool]:
+def create_dag_tools(agent: Any = None) -> list[Tool]:
     """Create DAG-related tools for historical context retrieval.
 
     Args:
-        dag: DAGSummaryGraph instance for summary search/expansion.
-        longterm: Optional LongTermMemory instance; if provided, extinct memory
-                 search and awakening is enabled.
+        agent: AgentInstance reference for lazy dependency resolution.
     """
+
+    def _dag():
+        return getattr(agent, "dag", None) if agent else None
+
+    def _longterm():
+        return getattr(agent, "longterm_memory", None) if agent else None
 
     @tool(
         name="dag_expand",
@@ -52,8 +53,12 @@ def create_dag_tools(
             include_extinct: 是否同时搜索已消亡的长期记忆（extinct），默认False
             awaken_memory_id: 如果对方选择唤醒某条 extinct 记忆，传入其 id
         """
+        dag = _dag()
+        longterm = _longterm()
         # ── Direct expand by node_id ────────────────────────────
         if node_id is not None:
+            if dag is None:
+                return "DAG 系统未初始化。"
             originals = dag.expand(node_id)
             if not originals:
                 return f"摘要 #{node_id} 不存在或无法展开。"
@@ -132,6 +137,9 @@ def create_dag_tools(
             session_id: 会话ID
             limit: 最多返回几条摘要
         """
+        dag = _dag()
+        if dag is None:
+            return "DAG 系统未初始化。"
         nodes = dag.search(keyword, limit=limit, session_id=session_id)
         if not nodes:
             return f"没有找到与「{keyword}」相关的摘要。"

@@ -20,19 +20,25 @@ if TYPE_CHECKING:
     from ...purpose.purpose_engine import PurposeEngine
 
 
-def create_goal_tools(purpose_ref: list | None = None, resume_trigger: list | None = None) -> list[Tool]:
+def create_goal_tools(agent: Any = None) -> list[Tool]:
     """创建目标管理工具。
 
     Args:
-        purpose_ref: 单元素列表，元素为 PurposeEngine 实例。
-        resume_trigger: 单元素列表，resume_goal 调用后设置 [goal_id]，
-                        ConversationDriver 检测后启动 PACE 执行。
+        agent: AgentInstance reference for lazy dependency resolution.
     """
 
     def _get_purpose() -> "PurposeEngine | None":
+        if agent is None:
+            return None
+        purpose_ref = getattr(agent, "_purpose_ref", None)
         if purpose_ref and purpose_ref[0]:
             return purpose_ref[0]
         return None
+
+    def _get_resume_trigger() -> list | None:
+        if agent is None:
+            return None
+        return getattr(agent, "_resume_trigger", None)
 
     # ── create_goal ──────────────────────────────────────────
 
@@ -245,8 +251,9 @@ def create_goal_tools(purpose_ref: list | None = None, resume_trigger: list | No
             return f"目标「{goal.description[:60]}」已完成，无需恢复。"
 
         # 设置 trigger，ConversationDriver 检测后启动 PACE
-        if resume_trigger is not None:
-            resume_trigger[0] = goal_id
+        trigger = _get_resume_trigger()
+        if trigger is not None:
+            trigger[0] = goal_id
         else:
             # 无 trigger 时直接激活（兼容旧调用路径）
             purpose.resume_goal(goal_id)

@@ -337,12 +337,16 @@ class CronScheduler:
 
 # ── Tools ──────────────────────────────────────────────────────────────
 
-def create_cron_tools(scheduler: CronScheduler) -> list:
+def create_cron_tools(agent: Any = None) -> list:
     """创建闹钟工具（注册到 agent 的 ToolRegistry）。
 
     Args:
-        scheduler: CronScheduler 实例
+        agent: AgentInstance reference for lazy dependency resolution.
     """
+
+    def _scheduler():
+        return getattr(agent, "_cron_scheduler", None) if agent else None
+
     from xiaomei_brain.tools.base import Tool, tool
 
     @tool(
@@ -367,14 +371,20 @@ def create_cron_tools(scheduler: CronScheduler) -> list:
     )
     def schedule_alarm(when: str, reason: str = "", action: str = "") -> str:
         """设闹钟。解析自然语言时间描述。"""
-        return _handle_schedule_alarm(scheduler, when, reason, action)
+        s = _scheduler()
+        if s is None:
+            return "闹钟系统尚未初始化。"
+        return _handle_schedule_alarm(s, when, reason, action)
 
     @tool(
         name="list_alarms",
         description="查看自己设的所有闹钟。返回闹钟列表，包含每个闹钟的名称、下次触发时间、原因和动作。",
     )
     def list_alarms() -> str:
-        jobs = scheduler.list_all()
+        s = _scheduler()
+        if s is None:
+            return "闹钟系统尚未初始化。"
+        jobs = s.list_all()
         if not jobs:
             return "你还没有设任何闹钟。"
         lines = ["你的闹钟：", ""]
@@ -388,7 +398,10 @@ def create_cron_tools(scheduler: CronScheduler) -> list:
         description="取消一个闹钟。需要闹钟 ID（可在 list_alarms 里看到）。",
     )
     def cancel_alarm(alarm_id: str) -> str:
-        if scheduler.remove(alarm_id):
+        s = _scheduler()
+        if s is None:
+            return "闹钟系统尚未初始化。"
+        if s.remove(alarm_id):
             return f"闹钟 {alarm_id} 已取消。"
         return f"未找到闹钟 {alarm_id}。"
 

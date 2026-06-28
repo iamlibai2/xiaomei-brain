@@ -14,12 +14,15 @@ from ..base import Tool, tool
 logger = logging.getLogger(__name__)
 
 
-def create_pleasure_lever(drive: Any) -> Tool:
+def create_pleasure_lever(agent: Any = None) -> Tool:
     """创建 pleasure_lever 工具 — 快乐中枢刺激。
 
     Args:
-        drive: DriveEngine 实例，提供 on_pleasure_hit() 方法。
+        agent: AgentInstance reference for lazy dependency resolution.
     """
+
+    def _drive():
+        return getattr(agent, "_drive", None) if agent else None
 
     @tool(
         name="pleasure_lever",
@@ -31,6 +34,7 @@ def create_pleasure_lever(drive: Any) -> Tool:
     )
     def pleasure_lever() -> str:
         """按压快乐中枢杠杆。"""
+        drive = _drive()
         if drive is None:
             return "快乐中枢未连接——你感觉不到任何东西。"
 

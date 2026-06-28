@@ -39,6 +39,8 @@ _CORE_TOOL_NAMES = frozenset({
 })
 
 DEFAULT_TOP_K = 10
+STEP_GROWTH = 3       # 每步增加动态工具名额
+MAX_DYNAMIC = 50       # 动态工具上限
 
 # 全局活跃的 loader，供 MCP/Plugin 热重载后通知重建索引
 _active_loader: DynamicToolLoader | None = None
@@ -112,19 +114,22 @@ class DynamicToolLoader:
         self._built = False
         self.build_index()
 
-    def select_tools(self, query: str, top_k: int | None = None) -> list[Tool]:
+    def select_tools(self, query: str, top_k: int | None = None, step: int = 0) -> list[Tool]:
         """根据 query 召回相关工具。
 
         返回：核心工具 + top_k 个最相关的动态工具。
+        动态工具数量随 step 增长：base + step * STEP_GROWTH，上限 MAX_DYNAMIC。
 
         Args:
             query: 用户意图文本（原始任务 + 工具返回摘要）
-            top_k: 动态工具数量，None 使用构造时的默认值
+            top_k: 基础动态工具数量，None 使用构造时的默认值
+            step: 当前 ReAct 步数，每步增长 STEP_GROWTH 个名额
 
         Returns:
             选中的工具列表，去重，保持 core 在前
         """
-        k = top_k if top_k is not None else self._top_k
+        base = top_k if top_k is not None else self._top_k
+        k = min(base + step * STEP_GROWTH, MAX_DYNAMIC)
         all_tools = self._registry.list_tools()
         if not all_tools:
             return []
@@ -162,13 +167,13 @@ class DynamicToolLoader:
         # 取 top-K
         scored.sort(key=lambda x: x[1], reverse=True)
         selected = [t for t, _ in scored[:k]]
-        logger.debug("DynamicToolLoader: selected %d core + %d dynamic tools",
-                     len(core_tools), len(selected))
+        logger.warning("DynamicToolLoader: step growth → %d core + %d dynamic = %d tools (top_k=%d, step=%d)",
+                       len(core_tools), len(selected), len(core_tools) + len(selected), k, step)
         return core_tools + selected
 
-    def select_openai_tools(self, query: str, top_k: int | None = None) -> list[dict[str, Any]]:
+    def select_openai_tools(self, query: str, top_k: int | None = None, step: int = 0) -> list[dict[str, Any]]:
         """和 select_tools 一样，但返回 OpenAI function calling 格式。"""
-        tools = self.select_tools(query, top_k)
+        tools = self.select_tools(query, top_k, step)
         return [
             {
                 "type": "function",

@@ -180,29 +180,10 @@ class ConsciousLiving(Living):
             conversation_db=self.agent.conversation_db,
         )
 
-        # 注册 DAG 工具（含 extinct 记忆搜索和唤醒）
-        from ..tools.builtin.dag_expand import create_dag_tools
-        for dag_tool in create_dag_tools(dag, self.agent.longterm_memory):
-            self.agent.tools.register(dag_tool)
-
-        # 注册见证层工具（搜索历史念头）
-        from ..tools.builtin.thought_search import create_thought_tools
-        for thought_tool in create_thought_tools(self.agent.longterm_memory):
-            self.agent.tools.register(thought_tool)
-
-        # 注册记忆搜索工具（"想一想" — 扩散激活）
-        from ..tools.builtin.memory_search import create_memory_search_tools
-        for ms_tool in create_memory_search_tools(self.agent.longterm_memory):
-            self.agent.tools.register(ms_tool)
-
-        # 注册目标管理工具（create_goal / list_goals / resume_goal）
-        # purpose_ref 延迟绑定：PurposeEngine 创建后设置
-        # resume_trigger: resume_goal 设置 goal_id → ConversationDriver 检测后启动 PACE
-        from ..tools.builtin.goal import create_goal_tools
+        # 设置延迟绑定工具的依赖引用（工具已在 init_agent() 注册）
+        # purpose_ref / resume_trigger: PurposeEngine 创建后绑定
         purpose_ref = [None]
         resume_trigger = [None]
-        for goal_tool in create_goal_tools(purpose_ref, resume_trigger):
-            self.agent.tools.register(goal_tool)
         self.agent._purpose_ref = purpose_ref
         self.agent._resume_trigger = resume_trigger
 
@@ -346,6 +327,7 @@ class ConsciousLiving(Living):
             consciousness_config=cc,
             cron_scheduler=self.cron_scheduler,
         )
+        self.agent._consciousness = self.consciousness
         self._load_consciousness = load_consciousness
         self.agent.commands._self_image = self.consciousness.self_image
         boot_line("意识核心", "OK", f"agent={self._agent_id}")
@@ -588,18 +570,16 @@ class ConsciousLiving(Living):
         self._dispatcher.inject_conscious_living(self)
         self._dispatcher.inject_learn_engine(self._learn_engine)
 
-        # being 工具暂不注册（待反省层"转换器"设计确定后再启用）
-        # pleasure_lever 工具 — 快乐中枢杠杆（Olds-Milner 实验）
-        self._register_pleasure_tool()
+        # 设置延迟绑定工具的依赖引用（工具已在 init_agent() 注册）
+        self.agent._drive = self.drive
+        self.agent._cron_scheduler = self.cron_scheduler
+        self.agent._living = self
 
-        # 注册 cron 工具（闹钟系统：schedule_alarm / list_alarms / cancel_alarm）
-        self._register_cron_tools()
+        from ..tools.builtin.manage_session import set_living
+        set_living(self)
 
-        # 注册 session 管理工具（manage_session：list / switch / new）
-        self._register_session_tools()
-
-        # 注册 clarify 工具并注入 CLI 回调
-        self._register_clarify_tool()
+        from ..tools.builtin.clarify import set_clarify_callback, _cli_callback
+        set_clarify_callback(_cli_callback)
 
         # 记录初始化摘要
         self._log_initialization()
@@ -639,71 +619,8 @@ class ConsciousLiving(Living):
                 except Exception as e:
                     logger.debug("无法设置 _interoception 属性: %s", e)
 
-    def _register_being_tool(self) -> None:
-        """注册 being 工具：将 L2 内心觉察暴露为对话中可调用的工具。
-
-        当 LLM 在对话中被用户触动时，可以主动调用 being() 来感受自己的内心，
-        而不是等待周期性的 L2 触发。这让情绪反应变得即时。
-        """
-        try:
-            from ..tools.builtin.being import create_being_tool
-            being_tool = create_being_tool(self.consciousness)
-            if hasattr(self.agent, "tools") and self.agent.tools:
-                self.agent.tools.register(being_tool)
-                logger.info("[ConsciousLiving] being 工具已注册")
-            else:
-                logger.warning("[ConsciousLiving] agent.tools 不可用，being 工具未注册")
-        except Exception as e:
-            logger.warning("[ConsciousLiving] being 工具注册失败: %s", e)
-
-    def _register_pleasure_tool(self) -> None:
-        """注册 pleasure_lever 工具：刺激快乐中枢（Olds-Milner 杠杆实验）。
-
-        LLM 可以自主按压杠杆获得快感——不需要理由，不需要意义。
-        """
-        try:
-            from ..tools.builtin.pleasure import create_pleasure_lever
-            pleasure_tool = create_pleasure_lever(self.drive)
-            if hasattr(self.agent, "tools") and self.agent.tools:
-                self.agent.tools.register(pleasure_tool)
-                logger.info("[ConsciousLiving] pleasure_lever 工具已注册")
-            else:
-                logger.warning("[ConsciousLiving] agent.tools 不可用，pleasure_lever 未注册")
-        except Exception as e:
-            logger.warning("[ConsciousLiving] pleasure_lever 注册失败: %s", e)
-
-    def _register_cron_tools(self) -> None:
-        """注册闹钟工具：schedule_alarm / list_alarms / cancel_alarm。"""
-        try:
-            from ..schedule import create_cron_tools
-            for cron_tool in create_cron_tools(self.cron_scheduler):
-                if hasattr(self.agent, "tools") and self.agent.tools:
-                    self.agent.tools.register(cron_tool)
-            logger.info("[ConsciousLiving] cron 工具已注册")
-        except Exception as e:
-            logger.warning("[ConsciousLiving] cron 工具注册失败: %s", e)
-
-    def _register_session_tools(self) -> None:
-        """注册会话管理工具：manage_session（list / switch / new）。"""
-        try:
-            from ..tools.builtin.manage_session import set_context, manage_session_tool
-            set_context(self.agent, self)
-            if hasattr(self.agent, "tools") and self.agent.tools:
-                self.agent.tools.register(manage_session_tool)
-                logger.info("[ConsciousLiving] manage_session 工具已注册")
-        except Exception as e:
-            logger.warning("[ConsciousLiving] manage_session 工具注册失败: %s", e)
-
-    def _register_clarify_tool(self) -> None:
-        """注册 clarify 工具并注入 CLI 回调。"""
-        try:
-            from ..tools.builtin.clarify import set_clarify_callback, _cli_callback, clarify_tool
-            set_clarify_callback(_cli_callback)
-            if hasattr(self.agent, "tools") and self.agent.tools:
-                self.agent.tools.register(clarify_tool)
-                logger.info("[ConsciousLiving] clarify 工具已注册（CLI 回调）")
-        except Exception as e:
-            logger.warning("[ConsciousLiving] clarify 工具注册失败: %s", e)
+    # _register_* 方法已移除 — 工具注册统一移至 init_agent()，
+    # ConsciousLiving 只负责设置依赖引用（agent._drive, agent._consciousness 等）
 
     def _check_round_alarms(self) -> None:
         """对话轮次完成后检查轮次闹钟。"""

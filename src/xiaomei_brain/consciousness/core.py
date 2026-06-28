@@ -665,7 +665,8 @@ class Consciousness:
 
     def _call_emergence_react(self, llm, prompt: str, exclude_tools: set[str] | None = None) -> str:
         """意识涌现 ReAct 循环 → L2Engine。"""
-        return self._get_l2_engine()._call_emergence_react(llm, prompt, exclude_tools=exclude_tools)
+        content, _ = self._get_l2_engine()._call_emergence_react(llm, prompt, exclude_tools=exclude_tools)
+        return content
 
     def _split_consciousness_events(self, response: str) -> tuple[str, str]:
         """分离意识涌现文本和驱动事件 JSON → L2Engine。"""

@@ -23,12 +23,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def create_being_tool(consciousness: Any) -> Tool:
+def create_being_tool(agent: Any = None) -> Tool:
     """创建 being 工具 — 实时内心觉察。
 
     Args:
-        consciousness: Consciousness 实例，提供 L2 prompt 构建和 LLM 调用能力。
+        agent: AgentInstance reference for lazy dependency resolution.
     """
+
+    def _consciousness():
+        return getattr(agent, "_consciousness", None) if agent else None
 
     @tool(
         name="being",
@@ -53,6 +56,7 @@ def create_being_tool(consciousness: Any) -> Tool:
     )
     def being() -> str:
         """执行实时内心觉察。"""
+        consciousness = _consciousness()
         if consciousness is None:
             return "意识系统未初始化，无法进行内心觉察。"
 

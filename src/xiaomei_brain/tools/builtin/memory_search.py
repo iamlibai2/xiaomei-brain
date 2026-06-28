@@ -24,12 +24,15 @@ if TYPE_CHECKING:
     from ...memory.longterm import LongTermMemory
 
 
-def create_memory_search_tools(longterm: "LongTermMemory | None" = None) -> list[Tool]:
+def create_memory_search_tools(agent: Any = None) -> list[Tool]:
     """Create memory_search tool with spreading activation.
 
     Args:
-        longterm: LongTermMemory instance for semantic recall and relation chains.
+        agent: AgentInstance reference for lazy dependency resolution.
     """
+
+    def _longterm():
+        return getattr(agent, "longterm_memory", None) if agent else None
 
     @tool(
         name="memory_search",
@@ -47,6 +50,7 @@ def create_memory_search_tools(longterm: "LongTermMemory | None" = None) -> list
             user_id: 用户ID，默认 global
             top_k: 种子记忆条数，默认 5
         """
+        longterm = _longterm()
         if not longterm:
             return "记忆系统未初始化。"
 
