@@ -58,6 +58,7 @@ class Agent:
 
         self._messages: dict[str, list[dict[str, Any]]] = {}  # user_id → messages
         self.user_id: str = "global"
+        self._dynamic_loader: Any = None      # DynamicToolLoader, set by agent_manager
         self.user_display_name: str = "这位用户"  # 当前用户的显示名，identity 绑定后设置
         self.session_id: str = "main"
         self.tool_call_buffer: ToolCallBuffer = ToolCallBuffer()  # 实例级，每个 Agent 独立
@@ -201,8 +202,6 @@ class Agent:
         Args:
             messages: 预组装好的消息列表，直接进 ReAct。
         """
-        openai_tools = self.tools.to_openai_tools() if self.tools.list_tools() else None
-
         from xiaomei_brain.agent.cli_display import (
             get_hint, print_tool_call, print_tool_result,
             print_edit_diff, print_write_result,
@@ -217,10 +216,20 @@ class Agent:
         # 记录此时的 messages 长度，后续只拼接 ReAct 循环中新增的消息
         _pre_count = len(self.messages)
 
+        # 动态工具加载：累积上下文供每步 embed 召回
+        _accumulated_context = messages[-1]["content"] if messages else ""
+
         for step in range(self.max_steps):
             if cancel_check and cancel_check():
                 logger.info("[Agent] ReAct 已取消 (step=%d)", step)
                 break
+
+            # 每步根据累积上下文动态选择工具
+            if self._dynamic_loader:
+                openai_tools = self._dynamic_loader.select_openai_tools(_accumulated_context)
+            else:
+                openai_tools = self.tools.to_openai_tools() if self.tools.list_tools() else None
+
             all_messages = list(messages) + self.messages[_pre_count:]
 
             # Remove orphaned tool messages (tool without preceding assistant tool_calls)
@@ -386,6 +395,10 @@ class Agent:
                             "id": tool_msg_id,
                         }
                     )
+
+                    # 累积上下文供下步动态工具召回
+                    _accumulated_context += f"\n{tc.name}: {str(result)[:500]}"
+
             else:
                 content = response.content or ""
                 if content:
@@ -507,15 +520,23 @@ class Agent:
             print_edit_diff, print_write_result, print_react_result,
         )
 
-        openai_tools = self.tools.to_openai_tools() if self.tools.list_tools() else None
         loop_messages: list[dict[str, Any]] = []
         _tool_failure_counts: dict[tuple, int] = {}
         _idx = 0
+
+        # 动态工具加载：累积上下文供每步 embed 召回
+        _accumulated_context = messages[-1]["content"] if messages else ""
 
         for step in range(max_steps):
             if cancel_check and cancel_check():
                 logger.info("[Agent] react_nodb 已取消 (step=%d)", step)
                 return ""
+
+            # 每步根据累积上下文动态选择工具
+            if self._dynamic_loader:
+                openai_tools = self._dynamic_loader.select_openai_tools(_accumulated_context)
+            else:
+                openai_tools = self.tools.to_openai_tools() if self.tools.list_tools() else None
 
             all_messages = list(messages) + loop_messages
             all_messages = strip_orphaned_tool_messages(all_messages)
@@ -595,6 +616,9 @@ class Agent:
                         "tool_call_id": tc.id,
                         "content": str(result),
                     })
+
+                    # 累积上下文供下步动态工具召回
+                    _accumulated_context += f"\n{tc.name}: {str(result)[:500]}"
 
                     # Co-write to experience stream (internal tool exec)
                     if exp_stream:

@@ -154,6 +154,7 @@ class AgentInstance:
             self._agent.longterm_memory = self.longterm_memory
             self._agent.memory_extractor = self.memory_extractor
             self._agent._procedure_memory = getattr(self, "_procedure_memory", None)
+            self._agent._dynamic_loader = getattr(self, "_dynamic_loader", None)
         return self._agent
 
     def chat(
@@ -971,6 +972,13 @@ class AgentManager:
         _reloader = ConfigReloader(os.path.expanduser("~/.xiaomei-brain/config.json"))
         _reloader.add_listener(_on_config_changed)
         _reloader.start()
+
+        # ── 动态工具加载 ───────────────────────────────────────────────
+        from xiaomei_brain.tools.dynamic import DynamicToolLoader, set_active_loader
+        loader = DynamicToolLoader(tools)
+        loader.build_index()
+        agent._dynamic_loader = loader
+        set_active_loader(loader)
 
         session_manager = SessionManager(session_dir=self._sessions_dir(agent.id))
 

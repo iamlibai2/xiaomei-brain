@@ -447,6 +447,9 @@ def _on_config_changed(data: dict):
     new_count = bootstrap_mcp_servers(_mcp_tool_registry, data)
     if new_count > 0:
         logger.info("Config reload: %d new MCP tool(s) registered", new_count)
+    # 通知 DynamicToolLoader 重建索引
+    from xiaomei_brain.tools.dynamic import notify_tools_changed
+    notify_tools_changed()
 
 
 def get_mcp_status() -> list[dict]:
