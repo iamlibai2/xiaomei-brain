@@ -55,6 +55,7 @@ class Eyes(Sense):
     def __init__(self) -> None:
         super().__init__()
         self._face_id = None
+        self._vision = None
 
     @property
     def face_id(self):
@@ -71,14 +72,36 @@ class Eyes(Sense):
         """
         self._face_id = face_id
 
-    def see(self, prompt: str = "描述这个画面") -> str | None:
+    @property
+    def vision(self):
+        """懒加载 VisionUnderstanding 模块。"""
+        if self._vision is None:
+            from xiaomei_brain.body.perception import VisionUnderstanding
+            self._vision = VisionUnderstanding()
+        return self._vision
+
+    def see(self, prompt: str = "描述这个画面", image_bytes: bytes | None = None) -> str | None:
         """通用视觉。拍照 → 多模态 LLM 根据 prompt 描述。
 
-        NOTE: 待多模态 LLM API 接入。
+        Args:
+            prompt: 引导视觉关注什么
+            image_bytes: 可选的已拍摄图片 bytes。不传则内部拍照。
+
+        Returns:
+            LLM 的文字描述，不可用时返回 None。
         """
         if not self.is_available():
             return None
-        return None
+
+        if not self.vision.is_available:
+            return None
+
+        if image_bytes is None:
+            image_bytes = self._device.capture()
+        if not image_bytes:
+            return None
+
+        return self.vision.describe(image_bytes, prompt)
 
     def recognize_faces(self) -> list[dict]:
         """人脸检测 + 身份匹配。

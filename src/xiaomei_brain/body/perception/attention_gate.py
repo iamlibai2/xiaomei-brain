@@ -31,7 +31,6 @@ DEFAULT_TIMEOUT_MINUTES = 3  # 沉默超时退出对话态
 WAKE_WORDS = {"小美", "小米", "晓美", "小妹"}  # STT 同音词容错
 # Cheap 特征阈值：ZCR 偏离 > 50% 或 RMS 偏离 > 80% 视为不同说话人
 ZCR_DEVIATION_THRESHOLD = 0.5
-RMS_DEVIATION_THRESHOLD = 0.8
 
 
 class AttentionGate:
@@ -127,8 +126,10 @@ class AttentionGate:
                            f"{self._profile_rms:.1f}" if self._profile_rms else "None",
                            is_same)
 
+            # 先更新声学画像（无论判定结果，避免 profile 锁死）
+            self._update_profile(pcm)
+
             if is_same:
-                self._update_profile(pcm)
                 logger.warning("AttentionGate 同一说话人 → 放行")
                 return True, None  # 同一个人，不切用户
 
@@ -143,7 +144,6 @@ class AttentionGate:
                     user_id = "global"
                     if user_id != self._current_user_id:
                         self._do_switch(user_id)
-                self._update_profile(pcm)
                 logger.warning("AttentionGate 切换完成 → 放行 (user=%s)", self._current_user_id)
                 return True, None
 
@@ -224,17 +224,13 @@ class AttentionGate:
             self._profile_rms = self._ema_smooth * self._profile_rms + (1 - self._ema_smooth) * rms
 
     def _is_same_speaker(self, pcm: bytes) -> bool:
-        """用 cheap 特征判断是否同一说话人。"""
+        """用 cheap 特征（ZCR）判断是否同一说话人。"""
         if self._profile_zcr is None:
             return True  # 还没有画像，先放行
 
         zcr = self._extract_zcr(pcm)
-        rms = self._extract_rms(pcm)
-
         zcr_dev = abs(zcr - self._profile_zcr) / (self._profile_zcr + 1e-6)
-        rms_dev = abs(rms - self._profile_rms) / (self._profile_rms + 1e-6)
-
-        return zcr_dev < ZCR_DEVIATION_THRESHOLD and rms_dev < RMS_DEVIATION_THRESHOLD
+        return zcr_dev < ZCR_DEVIATION_THRESHOLD
 
     # ── 声纹验证 ──────────────────────────────────────────
 

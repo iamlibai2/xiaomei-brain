@@ -33,9 +33,19 @@ def _python_type_to_json_schema(py_type: Any) -> dict[str, Any]:
     Handles both direct types (int, str) and stringified annotations
     from 'from __future__ import annotations' (PEP 563).
     """
+    import typing
+
     # Resolve stringified type names (from PEP 563 postponed annotations)
     if isinstance(py_type, str):
         py_type = _resolve_annotated_type(py_type)
+
+    # Unwrap Optional[X] / X | None → X
+    origin = typing.get_origin(py_type)
+    if origin is not None:
+        args = typing.get_args(py_type)
+        non_none = [a for a in args if a is not type(None)]
+        if len(non_none) == 1:
+            py_type = non_none[0]
 
     type_map = {
         str: {"type": "string"},

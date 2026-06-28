@@ -131,6 +131,10 @@ class Config:
     # Internal: store all provider configs from file
     _provider_configs: dict[str, dict] = field(default_factory=dict, repr=False)
 
+    # Internal: store the raw JSON dict for consumers that need unschema'd fields
+    # (e.g. mcp_servers, plugin config)
+    _raw: dict = field(default_factory=dict, repr=False)
+
     def __post_init__(self) -> None:
         """Resolve configuration with fallbacks."""
         self._resolve_provider_settings()
@@ -288,6 +292,7 @@ class Config:
 
         # Build kwargs for Config constructor
         kwargs = {
+            "_raw": data,
             "_provider_configs": provider_configs,
             "provider": provider,
             "model": model,
@@ -658,3 +663,69 @@ class Config:
             yaml.dump(self.to_dict(), f, allow_unicode=True, default_flow_style=False, indent=2)
 
         logger.info("Config saved to: %s", config_path)
+
+
+# ── Config 热重载 ────────────────────────────────────────────────────
+
+
+class ConfigReloader:
+    """通用 config.json 热重载，变化时通知所有订阅者。
+
+    基于 FileWatcher 实现文件监听，增加多 listener 管理 + config 自动解析。
+
+    用法::
+
+        reloader = ConfigReloader("/path/to/config.json")
+        reloader.add_listener(mcp_handler)
+        reloader.add_listener(plugin_handler)
+        reloader.start()
+    """
+
+    def __init__(self, config_path: str | Path):
+        import threading
+
+        self._config_path = str(config_path)
+        self._listeners: list = []
+        self._lock = threading.Lock()
+
+        from .file_watcher import FileWatcher
+        self._watcher = FileWatcher(
+            self._config_path,
+            callback=self._on_changed,
+            poll_interval=5.0,
+        )
+
+    def add_listener(self, fn) -> None:
+        """注册回调 fn(raw_config_dict)。config 变化时自动调用。"""
+        with self._lock:
+            self._listeners.append(fn)
+
+    def start(self):
+        """启动后台监听。"""
+        self._watcher.start()
+
+    def stop(self):
+        """停止后台监听。"""
+        self._watcher.stop()
+
+    def _on_changed(self):
+        """FileWatcher 回调：重新加载 config 并通知所有 listener。"""
+        import json
+
+        try:
+            with open(self._config_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            logger.warning("ConfigReloader: failed to reload config: %s", e)
+            return
+
+        with self._lock:
+            listeners = list(self._listeners)
+        for fn in listeners:
+            try:
+                fn(data)
+            except Exception as e:
+                logger.warning(
+                    "ConfigReloader: listener %s failed: %s",
+                    getattr(fn, "__name__", fn), e,
+                )

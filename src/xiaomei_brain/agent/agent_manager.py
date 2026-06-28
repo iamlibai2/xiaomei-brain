@@ -43,7 +43,7 @@ def _read_config_dict() -> dict | None:
 _DEFAULT_CONFIG_TEMPLATE = {
     "agents": {
         "defaults": {
-            "model": {"primary": "deepseek/deepseek-v4-flash"},
+            "model": {"primary": "deepseek/deepseek-v4-flash", "vision": "minimax/MiniMax-M3"},
             "tools": {"profile": "assistant"},
         }
     },
@@ -115,6 +115,7 @@ class AgentInstance:
     # Agent-specific config overrides (optional)
     provider: str = ""
     model: str = ""
+    vision_model: str = ""      # e.g. "minimax/MiniMax-M3"
     api_key: str = ""
     base_url: str = ""
 
@@ -333,7 +334,9 @@ class AgentManager:
             return
 
         # Load agents from config.json's agents.list
-        agents_list = data.get("agents", {}).get("list", [])
+        agents = data.get("agents", {})
+        agents_list = agents.get("list", [])
+        defaults = agents.get("defaults", {})
         if not agents_list:
             self._ensure_default_agent()
             return
@@ -352,8 +355,11 @@ class AgentManager:
 
             # Parse model config (e.g., "minimax/MiniMax-M2.7" -> provider, model)
             model_primary = ""
+            vision_model = ""
             if isinstance(agent_data.get("model"), dict):
-                model_primary = agent_data.get("model", {}).get("primary", "")
+                model_cfg = agent_data.get("model", {})
+                model_primary = model_cfg.get("primary", "")
+                vision_model = model_cfg.get("vision", "")
             elif isinstance(agent_data.get("model"), str):
                 model_primary = agent_data.get("model", "")
 
@@ -382,6 +388,7 @@ class AgentManager:
                 identity_path=identity_path,
                 provider=provider or agent_data.get("provider", ""),
                 model=model or agent_data.get("model", ""),
+                vision_model=vision_model or defaults.get("model", {}).get("vision", ""),
                 api_key=agent_data.get("api_key", ""),
                 base_url=agent_data.get("base_url", ""),
             )
@@ -906,6 +913,25 @@ class AgentManager:
                 image_tools.set_image_provider(image_provider)
                 # generate_image 由插件 image_minimax 注册，不再在此硬编码
 
+        # ── Vision 视觉理解（perception 层） ──────────────────────────────
+        if agent.vision_model and "/" in agent.vision_model:
+            vis_provider, vis_model = agent.vision_model.split("/", 1)
+            vis_api_key = ""
+            if vis_provider in global_config._provider_configs:
+                vis_api_key = global_config._provider_configs[vis_provider].get("api_key", "")
+            vis_profile = registry.get_provider(vis_provider)
+            if not vis_api_key and vis_profile:
+                for ev in vis_profile.env_vars:
+                    vis_api_key = os.environ.get(ev, "")
+                    if vis_api_key:
+                        break
+            vis_api_key = vis_api_key or api_key
+            vis_base_url = vis_profile.base_url if vis_profile else "https://api.minimaxi.com/v1"
+            if vis_api_key:
+                from xiaomei_brain.body.perception.vision import set_vision_config
+                set_vision_config(api_key=vis_api_key, base_url=vis_base_url, model=vis_model)
+                logger.info("[Vision] 已启用: %s/%s", vis_provider, vis_model)
+
         # ── Web Search Provider ─────────────────────────────────────────
         # 设置 registry 引用供 web_search 工具调度
         websearch_tools.set_registry(registry)
@@ -932,6 +958,19 @@ class AgentManager:
 
         if register_tools_fn:
             register_tools_fn(tools)
+
+        # ── 加载 MCP Server 工具 ────────────────────────────────────────
+        from xiaomei_brain.mcp.client import bootstrap_mcp_servers, register_config_listener, _on_config_changed
+
+        mcp_config = global_config._raw if hasattr(global_config, '_raw') else None
+        bootstrap_mcp_servers(tools, mcp_config)
+        register_config_listener(tools)
+
+        # ── 启动 config.json 热重载 ─────────────────────────────────────
+        from xiaomei_brain.base.config import ConfigReloader
+        _reloader = ConfigReloader(os.path.expanduser("~/.xiaomei-brain/config.json"))
+        _reloader.add_listener(_on_config_changed)
+        _reloader.start()
 
         session_manager = SessionManager(session_dir=self._sessions_dir(agent.id))
 

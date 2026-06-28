@@ -790,8 +790,49 @@ def cmd_see(living, args: str) -> None:
         f.write(jpeg)
     print(f"\r\033[K  {G}拍照完成{R}  {X}{len(jpeg)} bytes → {path}{R}", flush=True)
 
-    # TODO: 多模态 LLM 描述（Eyes.see(prompt)）
-    print(f"  {X}(多模态描述待接入){R}", flush=True)
+    # 多模态 LLM 描述
+    desc = body.eyes.see(prompt="描述这个画面", image_bytes=jpeg)
+    if desc:
+        print(f"  {G}描述{R}  {desc}{R}", flush=True)
+    else:
+        print(f"  {X}(多模态描述暂不可用){R}", flush=True)
+
+
+def cmd_look(living, args: str) -> None:
+    """看一张图片文件（多模态视觉理解）。"""
+    import os as _os
+
+    G, V, D, X, R = "\033[32m", "\033[38;5;203m", "\033[38;5;73m", "\033[90m", "\033[0m"
+    body = getattr(living, 'body', None)
+    if not body or not body.eyes:
+        print(f"\n  {V}眼睛未注册{R}", flush=True)
+        return
+
+    path = args.strip()
+    if not path:
+        print(f"\n  {V}用法: /look <图片路径>{R}", flush=True)
+        return
+
+    path = _os.path.expanduser(path)
+    if not _os.path.isfile(path):
+        print(f"\n  {V}图片不存在: {path}{R}", flush=True)
+        return
+
+    suffix = _os.path.splitext(path)[1].lower()
+    SUPPORTED = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+    if suffix not in SUPPORTED:
+        print(f"\n  {V}不支持的格式: {suffix}，支持: {list(SUPPORTED)}{R}", flush=True)
+        return
+
+    with open(path, "rb") as f:
+        img = f.read()
+    print(f"\n  {G}📷 {path}{R}  {X}{len(img)} bytes{R}", flush=True)
+
+    desc = body.eyes.see(prompt="描述这个画面", image_bytes=img)
+    if desc:
+        print(f"  {G}描述{R}  {desc}{R}", flush=True)
+    else:
+        print(f"  {X}(多模态描述暂不可用){R}", flush=True)
 
 
 def cmd_touch(living, args: str) -> None:
@@ -1093,6 +1134,68 @@ def cmd_l(living, args: str) -> None:
         print(f"\r\033[K  {X}(未识别到语音内容){R}", flush=True)
 
 
+def cmd_mcp(living: ConsciousLiving, args: str = "") -> None:
+    """显示 MCP Server 状态。 /mcp reload 重载配置。"""
+    logger.info("[CLI] 执行命令: mcp %s", args)
+    G, V, D, X, R = "\033[32m", "\033[38;5;203m", "\033[38;5;73m", "\033[90m", "\033[0m"
+
+    try:
+        from xiaomei_brain.mcp.client import get_mcp_status
+    except ImportError:
+        print(f"\n  {X}MCP SDK 未安装{R}", flush=True)
+        living._print_prompt()
+        return
+
+    # /mcp reload — 重载配置，连接新增的 MCP Server
+    if args.strip() == "reload":
+        _cmd_mcp_reload(living, G, V, D, X, R)
+        return
+
+    servers = get_mcp_status()
+    if not servers:
+        print(f"\n  {X}无已连接的 MCP Server{R}", flush=True)
+        print(f"  {D}配置方式:{R} 在 config.json 中添加 mcp_servers 配置", flush=True)
+        living._print_prompt()
+        return
+
+    print(f"\n  {V}══ MCP Servers ══{R}  {len(servers)} 个", flush=True)
+    total_tools = 0
+    for s in servers:
+        name = s["name"]
+        transport = s["transport"]
+        tools = s["tools"]
+        connected = s["connected"]
+        total_tools += tools
+
+        status_icon = f"{G}●{R}" if connected else f"{V}○{R}"
+        transport_str = f"{X}({transport}){R}"
+        print(f"  {status_icon} {D}{name}{R} {transport_str}  {V}{tools}{R} tools", flush=True)
+
+    print(f"  {X}──{R}", flush=True)
+    print(f"  {D}总计{R}  {V}{total_tools}{R} tools  from  {V}{len(servers)}{R} servers", flush=True)
+    print(f"  {D}/mcp reload{R} 重载配置连接新 Server", flush=True)
+    living._print_prompt()
+
+
+def _cmd_mcp_reload(living: ConsciousLiving, G: str, V: str, D: str, X: str, R: str) -> None:
+    """重载 MCP Server 配置，自动连接新增的 Server。"""
+    from xiaomei_brain.mcp.client import bootstrap_mcp_servers, get_mcp_status
+
+    before = len(get_mcp_status())
+    new_count = bootstrap_mcp_servers(living.agent.tools)
+    after = len(get_mcp_status())
+
+    if after > before:
+        added = after - before
+        print(f"  {G}✓{R} 新增 {V}{added}{R} 个 MCP Server，共注册 {V}{new_count}{R} 个工具", flush=True)
+    elif new_count > 0:
+        print(f"  {V}─{R} 无新增 MCP Server（{D}共 {after} 个已连接{R}）", flush=True)
+    else:
+        print(f"  {X}─{R} 未发现新的 MCP Server 配置", flush=True)
+
+    living._print_prompt()
+
+
 # ── 命令注册表 ──────────────────────────────────────────────────
 
 # 所有 CLI 命令，ConsciousLiving 用此表注册
@@ -1116,8 +1219,10 @@ COMMAND_REGISTRY: dict[str, tuple] = {
     "eyes":      (cmd_eyes,           False),
     "ears":      (cmd_ears,           False),
     "see":       (cmd_see,            True),
+    "look":      (cmd_look,           True),
     "hear":      (cmd_hear,           True),
     "l":         (cmd_l,              True),
     "touch":     (cmd_touch,          False),
     "register":  (cmd_register,       True),
+    "mcp":       (cmd_mcp,            False),
 }

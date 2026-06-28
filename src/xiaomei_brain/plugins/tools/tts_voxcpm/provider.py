@@ -37,7 +37,7 @@ class VoxCPMProvider:
         model_id: str | None = None,
         voice_desc: str = DEFAULT_VOICE_DESC,
         cfg_value: float = 2.0,
-        inference_timesteps: int = 6,
+        inference_timesteps: int = 10,
         device: str | None = None,
         local_files_only: bool = False,
         agent_id: str = "default",
@@ -159,13 +159,18 @@ class VoxCPMProvider:
 
     def _ensure_voice_reference(self) -> None:
         """确保声音参考存在。首次使用时自动生成种子音频。"""
-        if self._prompt_wav_path is not None:
+        if self._prompt_wav_path is not None and self._prompt_text is not None:
             return
 
         ref_wav = os.path.join(self._voice_ref_dir, "reference.wav")
         if os.path.exists(ref_wav):
             self._prompt_wav_path = ref_wav
-            self._prompt_text = self._load_prompt_text()
+            # 重新尝试加载 prompt_text（可能在 init 之后才放置 reference.txt）
+            if not self._prompt_text:
+                self._prompt_text = self._load_prompt_text()
+            # 仍然没有则用种子文本兜底
+            if not self._prompt_text:
+                self._prompt_text = BOOTSTRAP_SEED_TEXT
             return
 
         logger.info("自举声音参考（首次使用 voice_desc 生成种子音频）...")
@@ -189,7 +194,7 @@ class VoxCPMProvider:
 
         sf.write(ref_wav, wav, sr)
         self._prompt_wav_path = ref_wav
-        self._prompt_text = None
+        self._prompt_text = BOOTSTRAP_SEED_TEXT
         logger.info("声音参考自举完成: %s (%.1fs)", ref_wav, len(wav) / sr)
 
     @property
