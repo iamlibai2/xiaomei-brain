@@ -23,24 +23,19 @@ def masked_input(prompt: str, *, mask: str = "*") -> str:
         return input(prompt)
 
     try:
-        import termios
-        import tty
-
-        fd = sys.stdin.fileno()
-        old_attrs = termios.tcgetattr(fd)
+        from xiaomei_brain.cli.platform_utils import get_single_char
 
         def read_char() -> str:
-            return sys.stdin.read(1)
+            return get_single_char() or ""
 
         def write(text: str) -> None:
             sys.stdout.write(text)
             sys.stdout.flush()
 
         try:
-            tty.setraw(fd)
             return _collect_masked_input(read_char, write, prompt, mask=mask)
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
+        except Exception:
+            return input(prompt)
 
     except Exception:
         return input(prompt)
