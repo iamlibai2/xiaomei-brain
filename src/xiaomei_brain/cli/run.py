@@ -27,6 +27,7 @@ from xiaomei_brain.agent.agent_manager import AgentManager
 from xiaomei_brain.llm.client import FatalLLMError
 from xiaomei_brain.base.message_utils import estimate_tokens
 from xiaomei_brain.consciousness.conscious_living import ConsciousLiving
+from xiaomei_brain.consciousness.living_commands import load_ears_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -296,6 +297,8 @@ def _run_agent(
         contacts_dir = os.path.expanduser(f"~/.xiaomei-brain/{agent_id}/contacts")
         identity_mgr = IdentityManager(contacts_dir)
         ids = identity_mgr.list_ids()
+        ears_enabled = load_ears_enabled(agent_id)
+        living._ears_enabled = ears_enabled
 
         login_listener = None
 
@@ -412,7 +415,10 @@ def _run_agent(
 
         if ids:
             print()
-            print(f"  \033[90m按 {C_ACCENT}[空格]\033[90m 拍照登录 {C_ACCENT}[Tab]\033[90m 声纹登录，或按 {C_ACCENT}[回车]\033[90m 输入身份ID/序号手动登录\033[0m")
+            if ears_enabled:
+                print(f"  \033[90m按 {C_ACCENT}[空格]\033[90m 拍照登录 {C_ACCENT}[Tab]\033[90m 声纹登录，或按 {C_ACCENT}[回车]\033[90m 输入身份ID/序号手动登录\033[0m")
+            else:
+                print(f"  \033[90m按 {C_ACCENT}[空格]\033[90m 拍照登录，或按 {C_ACCENT}[回车]\033[90m 输入身份ID/序号手动登录\033[0m")
             parts = []
             for i, uid in enumerate(ids, 1):
                 info = identity_mgr._identities.get(uid, {})
@@ -424,7 +430,7 @@ def _run_agent(
         # ── 声纹自动登录：后台监听 + 跨片段累积匹配 ──
         auto_login_user_id = [None]
         body = getattr(living, 'body', None)
-        if body and body.ears and ids:
+        if body and body.ears and ids and ears_enabled:
             from xiaomei_brain.body.perception.voice_listener import VoiceListener
 
             sp_id = identity_mgr.speaker_id
@@ -485,6 +491,8 @@ def _run_agent(
                         break
                 continue
             elif ch == '\t':
+                if not ears_enabled:
+                    continue
                 # 暂停自动登录监听，避免与手动声纹登录冲突
                 if login_listener:
                     login_listener.stop()
@@ -541,7 +549,7 @@ def _run_agent(
 
     # ── 注意力门控 ──────────────────────────────
     attention_gate = None
-    if body and body.ears and identity_mgr:
+    if body and body.ears and identity_mgr and ears_enabled:
         from xiaomei_brain.body.perception.attention_gate import AttentionGate
 
         sp_id = getattr(body.ears, 'speaker_id', None)
@@ -553,11 +561,13 @@ def _run_agent(
 
     # ── 启动语音监听（能量 VAD 持续监听）─────────────
     voice_listener = None
-    if body and body.ears:
+    if body and body.ears and ears_enabled:
         from xiaomei_brain.body.perception.voice_listener import VoiceListener
 
         def _on_voice(text: str, pcm: bytes, emotion: str) -> None:
             if getattr(living, '_suppress_voice', False):
+                return
+            if not getattr(living, '_ears_enabled', True):
                 return
 
             # 注意力门控

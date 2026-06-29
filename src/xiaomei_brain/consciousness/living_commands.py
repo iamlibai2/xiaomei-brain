@@ -742,8 +742,73 @@ def cmd_eyes(living, args: str) -> None:
         print(f"  {D}人脸{R}  {face_str}", flush=True)
 
 
+def _ears_config_path(living) -> str:
+    """ears_enabled 持久化到 agent 的 config.yaml。"""
+    return os.path.join(os.path.expanduser("~/.xiaomei-brain"), living.agent.id, "config.yaml")
+
+
+def _save_ears_config(living, enabled: bool) -> None:
+    """持久化耳朵开关状态 — 文本级 upsert，不破坏 YAML 格式。"""
+    path = _ears_config_path(living)
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        else:
+            lines = ["body:\n", f"  ears_enabled: {str(enabled).lower()}\n"]
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.writelines(lines)
+            return
+
+        new_line = f"  ears_enabled: {str(enabled).lower()}\n"
+        in_body = False
+        found = False
+        body_idx = None
+
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("body:") and not stripped.startswith("body."):
+                in_body = True
+                body_idx = i
+            elif in_body and stripped.startswith("ears_enabled:"):
+                lines[i] = new_line
+                found = True
+                break
+            elif in_body and line and not line.startswith((" ", "\t", "#")):
+                # 离开 body 段
+                in_body = False
+
+        if not found:
+            if body_idx is not None:
+                lines.insert(body_idx + 1, new_line)
+            else:
+                lines.append("\nbody:\n")
+                lines.append(new_line)
+
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+    except Exception as e:
+        logger.warning("[cmd_ears] 持久化失败: %s", e)
+
+
+def load_ears_enabled(agent_id: str) -> bool:
+    """读取持久化的耳朵状态，默认 True。"""
+    path = os.path.join(os.path.expanduser("~/.xiaomei-brain"), agent_id, "config.yaml")
+    try:
+        if not os.path.exists(path):
+            return True
+        import yaml
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        return data.get("body", {}).get("ears_enabled", True)
+    except Exception:
+        return True
+
+
 def cmd_ears(living, args: str) -> None:
-    """显示耳朵状态。"""
+    """耳朵开关: on/off 开启或关闭语音监听，无参数显示状态"""
     G, V, D, X, R = "\033[32m", "\033[38;5;203m", "\033[38;5;73m", "\033[90m", "\033[0m"
     body = getattr(living, 'body', None)
     if not body:
@@ -753,10 +818,48 @@ def cmd_ears(living, args: str) -> None:
     if not ears:
         print(f"\n  {V}耳朵未注册{R}", flush=True)
         return
+
+    # 开关控制
+    action = args.strip().lower()
+    if action in ("on", "off"):
+        vl = getattr(living, '_voice_listener', None)
+        if action == "off":
+            living._ears_enabled = False
+            _save_ears_config(living, False)
+            if vl and vl.is_running:
+                vl.stop()
+                print(f"\n  {X}耳朵已关闭{R}", flush=True)
+            else:
+                print(f"\n  {X}耳朵已处于关闭状态{R}", flush=True)
+        else:  # on
+            living._ears_enabled = True
+            _save_ears_config(living, True)
+            if vl and vl.is_running:
+                print(f"\n  {G}耳朵已在监听中{R}", flush=True)
+            elif vl:
+                # 重启启动时创建的 VoiceListener（保留完整回调：注意力门控等）
+                if vl.start():
+                    print(f"\n  {G}耳朵已开启{R}", flush=True)
+                else:
+                    print(f"\n  {V}耳朵启动失败（麦克风不可用？）{R}", flush=True)
+            else:
+                print(f"\n  {V}VoiceListener 未初始化，请重启 agent{R}", flush=True)
+        return
+
+    # 状态显示
     available = ears.is_available()
-    status = f"{G}在线{R}" if available else f"{V}离线{R}"
+    vl = getattr(living, '_voice_listener', None)
+    enabled = getattr(living, '_ears_enabled', True)
+    if not enabled:
+        status = f"{V}已关闭{R}"
+    elif available and vl and vl.is_running:
+        status = f"{G}监听中{R}"
+    elif available:
+        status = f"{G}在线{R}"
+    else:
+        status = f"{V}离线{R}"
     print(f"\n  {G}耳朵{R} {D}[{ears.name}]{R} {status}", flush=True)
-    if available:
+    if available and enabled:
         voice_id = ears.recognize_voice()
         print(f"  {D}声纹{R}  {voice_id or f'{X}未识别{R}'}", flush=True)
 
@@ -1076,8 +1179,8 @@ def _ensure_body_online(living) -> bool:
     return True
 
 
-def cmd_l(living, args: str) -> None:
-    """录音并转写（/l = listen）。"""
+def cmd_listen(living, args: str) -> None:
+    """录音并转写"""
     G, V, D, X, R = "\033[32m", "\033[38;5;203m", "\033[38;5;73m", "\033[90m", "\033[0m"
     body = getattr(living, 'body', None)
     if not body or not body.ears:
@@ -1221,7 +1324,7 @@ COMMAND_REGISTRY: dict[str, tuple] = {
     "see":       (cmd_see,            True),
     "look":      (cmd_look,           True),
     "hear":      (cmd_hear,           True),
-    "l":         (cmd_l,              True),
+    "listen":    (cmd_listen,         True),
     "touch":     (cmd_touch,          False),
     "register":  (cmd_register,       True),
     "mcp":       (cmd_mcp,            False),

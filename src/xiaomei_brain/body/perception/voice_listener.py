@@ -86,6 +86,18 @@ class VoiceListener:
             logger.error("无法启动流式录音")
             return False
 
+        # 验证流确实在工作（避免子进程已退出但仍提示"已启动"）
+        import time
+        t0 = time.time()
+        while time.time() - t0 < 1.0:
+            data = mic.read_chunk(timeout=0.3)
+            if data is not None:
+                break
+        else:
+            mic.stop_stream()
+            logger.warning("VoiceListener 流验证失败（无音频设备）")
+            return False
+
         self._running = True
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -128,6 +140,11 @@ class VoiceListener:
                         # 流结束（进程崩溃、管道断开等）
                         fail_count += 1
                         logger.warning("VoiceListener read_chunk 返回 None（第%d次），流可能已断开", fail_count)
+                        # 子进程干净退出（exit 0）= 无音频设备，不该重连
+                        mic_proc = getattr(mic, '_stream_proc', None)
+                        if mic_proc is not None and mic_proc.returncode == 0:
+                            logger.warning("VoiceListener 子进程干净退出（无可用音频设备），放弃监听")
+                            self._running = False
                         break  # 跳出内层循环，外层会尝试重连
                     if not data:
                         continue  # 超时无数据
@@ -180,8 +197,8 @@ class VoiceListener:
             if not self._running:
                 break
 
-            # 尝试重连：停掉旧流，重新启动
-            if fail_count >= 10:
+            # 尝试重连：停掉旧流，重新启动（最多 3 次）
+            if fail_count >= 3:
                 logger.error("VoiceListener 连续断开%d次，放弃重连", fail_count)
                 break
             logger.warning("VoiceListener 尝试重连（第%d次）...", fail_count)
@@ -194,7 +211,7 @@ class VoiceListener:
                 logger.error("VoiceListener 重连失败")
                 break
 
-        if not self._running or fail_count >= 10:
+        if not self._running or fail_count >= 3:
             logger.info("VoiceListener 主循环退出（fail_count=%d）", fail_count)
 
     def _process(self, pcm: bytes, stt) -> None:
