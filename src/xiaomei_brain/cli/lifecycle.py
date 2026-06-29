@@ -124,14 +124,18 @@ def setup_signal_handlers(living: Any = None) -> None:
     """注册 SIGTERM/SIGINT 信号处理器。"""
 
     def _graceful_shutdown(signum: int, _frame) -> None:
-        sig_name = signal.Signals(signum).name
+        try:
+            sig_name = signal.Signals(signum).name
+        except Exception:
+            sig_name = str(signum)
         logger.info("[Lifecycle] 收到 %s，正在停止...", sig_name)
         if living:
             living.stop()
         remove_pid_file(_agent_id_from_args())
         sys.exit(0)
 
-    signal.signal(signal.SIGTERM, _graceful_shutdown)
+    from xiaomei_brain.cli.platform_utils import register_signal_handlers
+    register_signal_handlers(_graceful_shutdown, sigterm=True, sigint=False)
     # SIGINT is handled by the CLI main loop's KeyboardInterrupt handler
     # (double-press → _do_exit with polling, not signal-based exit)
 
