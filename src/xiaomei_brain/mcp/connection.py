@@ -848,25 +848,23 @@ class MCPConnection:
         self._cleanup_stdio_pids()
 
     def _cleanup_stdio_pids(self):
-        """清理 stdio 子进程：先 SIGTERM，2s 后 SIGKILL。"""
+        """清理 stdio 子进程：先 SIGTERM，2s 后强制终止。"""
         if not self._new_pids:
             return
-        import signal
+
+        from xiaomei_brain.cli.platform_utils import send_signal
+
+        _SIGTERM = signal.SIGTERM if hasattr(signal, 'SIGTERM') else signal.SIGINT
+        _SIGKILL = signal.SIGKILL if hasattr(signal, 'SIGKILL') else signal.SIGTERM if hasattr(signal, 'SIGTERM') else signal.SIGINT
 
         for pid in self._new_pids:
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
+            send_signal(pid, _SIGTERM)
 
         if self._new_pids:
             time.sleep(2)
 
         for pid in self._new_pids:
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
+            send_signal(pid, _SIGKILL)
 
         with _pids_lock:
             for pid in self._new_pids:
