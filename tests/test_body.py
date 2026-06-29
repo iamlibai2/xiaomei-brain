@@ -146,9 +146,7 @@ class TestMockDevices:
         from xiaomei_brain.body.device.mock import MockSpeaker
         s = MockSpeaker()
         s.open()
-        s.speak("hello")
         s.play("/path/to/song.mp3")
-        assert s.last_spoken == "hello"
         assert s.last_played == "/path/to/song.mp3"
 
 
@@ -215,9 +213,7 @@ class TestMockSenses:
         body.register_sense(MockThroat(), speaker)
         body.open()
 
-        body.throat.speak("hello")
         body.throat.play("/music/song.mp3")
-        assert speaker.last_spoken == "hello"
         assert speaker.last_played == "/music/song.mp3"
 
 
@@ -241,7 +237,7 @@ class TestBodyTools:
     def test_look_around_with_mock(self):
         from xiaomei_brain.body import Body
         from xiaomei_brain.body.device.mock import MockCamera, MockEyes
-        from xiaomei_brain.body.tools import look_around
+        from xiaomei_brain.plugins.tools.look_around.adapter import look_around
 
         body = Body()
         camera = MockCamera()
@@ -260,7 +256,7 @@ class TestBodyTools:
     def test_look_around_with_identity_resolution(self):
         from xiaomei_brain.body import Body
         from xiaomei_brain.body.device.mock import MockCamera, MockEyes
-        from xiaomei_brain.body.tools import look_around
+        from xiaomei_brain.plugins.tools.look_around.adapter import look_around
         from xiaomei_brain.contacts.manager import IdentityManager
         import tempfile, os
 
@@ -291,7 +287,7 @@ class TestBodyTools:
         assert result["faces"][1]["name"] == "陌生人"
 
     def test_look_around_unavailable(self):
-        from xiaomei_brain.body.tools import look_around
+        from xiaomei_brain.plugins.tools.look_around.adapter import look_around
 
         self._clear_refs()
         result = look_around()
@@ -300,7 +296,7 @@ class TestBodyTools:
     def test_play_music_with_mock(self):
         from xiaomei_brain.body import Body
         from xiaomei_brain.body.device.mock import MockSpeaker, MockThroat
-        from xiaomei_brain.body.tools import play_music
+        from xiaomei_brain.plugins.tools.play_music.adapter import play_music
 
         body = Body()
         speaker = MockSpeaker()
@@ -317,7 +313,7 @@ class TestBodyTools:
     def test_listen_to_environment_with_mock(self):
         from xiaomei_brain.body import Body
         from xiaomei_brain.body.device.mock import MockMicrophone, MockEars
-        from xiaomei_brain.body.tools import listen_to_environment
+        from xiaomei_brain.plugins.tools.listen_to_environment.adapter import listen_to_environment
 
         body = Body()
         mic = MockMicrophone()
@@ -393,9 +389,9 @@ class TestRealSpeaker:
         finally:
             os.unlink(tmp)
 
-    def test_speak_skips_when_no_tts(self):
-        """TTS 未配置时 speak() 不崩溃，静默跳过。"""
+    def test_play_skips_when_file_missing(self):
+        """文件不存在时 play() 不崩溃，静默跳过。"""
         from xiaomei_brain.plugins.body.throat.wsl2 import RealSpeaker
         s = RealSpeaker()
         s.open()
-        s.speak("你好")  # 不应崩溃
+        s.play("/tmp/not_exists.mp3")  # 不应崩溃

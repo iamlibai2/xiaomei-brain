@@ -1,29 +1,25 @@
-"""TTS (Text-to-Speech) tool using MiniMax API."""
+"""TTS (Text-to-Speech) tool using MiniMax API.
+
+speak: 流式生成 mp3 → throat.play_stream() → 平台原生流式播放
+speak_to_file: 生成 mp3 文件
+"""
 
 from __future__ import annotations
 
 import logging
 import os
+import queue
+import threading
 
 from xiaomei_brain.tools.base import tool
 
 logger = logging.getLogger(__name__)
 
-# Global TTS player instance (set by integration code)
-_tts_player = None
+# Global TTS provider instance (set by integration code)
 _tts_provider = None
 
 # 默认输出目录（LLM 生成 TTS 音频时如果给相对路径，自动拼接到此目录）
-# 可通过 set_output_base() 按 agent 隔离
 _output_base: str | None = None
-
-# WSL2 检测（WSL2 上 PulseAudio 跨边界延迟不稳定，流式播放容易卡）
-_IS_WSL2 = False
-try:
-    with open("/proc/version", "r") as _f:
-        _IS_WSL2 = "microsoft" in _f.read().lower() or "wsl" in _f.read().lower()
-except Exception:
-    pass
 
 
 def _get_output_dir() -> str:
@@ -39,11 +35,61 @@ def set_output_base(base_dir: str) -> None:
     _output_base = base_dir
 
 
-def set_tts_player(player, provider):
-    """Set the global TTS player and provider instances."""
-    global _tts_player, _tts_provider
-    _tts_player = player
+def set_tts_provider(provider) -> None:
+    """Set the global TTS provider instance."""
+    global _tts_provider
     _tts_provider = provider
+
+
+# 保留旧接口兼容
+def set_tts_player(player, provider):
+    """Set the global TTS player and provider instances (deprecated)."""
+    global _tts_provider
+    _tts_provider = provider
+
+
+def _get_throat():
+    """通过 body_ref 获取 Throat 感官。"""
+    from xiaomei_brain.plugins.body._refs import body_ref
+    body = body_ref[0]
+    if body is None:
+        return None
+    return body.throat
+
+
+def _speak_streaming_to_gen(text, voice_id=None, speed=None, emotion=None, pitch=None):
+    """将 MiniMax speak_streaming 的 callback 模式转为 generator。
+
+    用 thread + queue：speak_streaming 在子线程中调用 callback put chunk，
+    主线程 yield 出来喂给 play_stream。
+    """
+    global _tts_provider
+    q: queue.Queue = queue.Queue()
+
+    def _on_chunk(chunk: bytes) -> None:
+        q.put(chunk)
+
+    def _run() -> None:
+        try:
+            _tts_provider.speak_streaming(
+                text, on_chunk=_on_chunk,
+                voice_id=voice_id, speed=speed, emotion=emotion, pitch=pitch,
+            )
+        except Exception as e:
+            q.put(e)
+        finally:
+            q.put(None)  # sentinel
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+
+    while True:
+        chunk = q.get()
+        if chunk is None:
+            break
+        if isinstance(chunk, Exception):
+            raise chunk
+        yield chunk
 
 
 @tool(
@@ -59,8 +105,7 @@ def tts_speak(
 ) -> str:
     """Convert text to speech and play it.
 
-    - 非 WSL：流式管道（chunk → ffmpeg stdin → PulseAudio 实时播放）
-    - WSL2：先收集完整 mp3 → Windows Media Player 阻塞播放
+    流式生成 mp3 → throat.play_stream(gen, codec="mp3") → 平台播放。
 
     Args:
         text: 要朗读的文本（最多500字符）。可在文本中嵌入语气词标签增强表现力：
@@ -97,62 +142,14 @@ def tts_speak(
     if emotion is not None and emotion not in _valid_emotions:
         return f"无效的 emotion='{emotion}'。可选值: {', '.join(sorted(_valid_emotions))}（fluent/whisper 仅 speech-2.6 系列支持）"
 
+    throat = _get_throat()
+    if throat is None:
+        return "语音系统未初始化。请确保 body 插件已加载。"
+
     try:
-        import subprocess, tempfile
-        from xiaomei_brain.plugins.body.throat.wsl2 import stop_active_playback, set_active_player, _play_windows
-
-        if _IS_WSL2:
-            # WSL2：非流式 — speak_to_file 生成完整 mp3 → 转 WAV → SoundPlayer 播放
-            mp3_path = os.path.join(tempfile.mkdtemp(), "speak.mp3")
-            _tts_provider.speak_to_file(text, mp3_path, voice_id=voice_id, speed=speed, emotion=emotion, pitch=pitch)
-            total = os.path.getsize(mp3_path)
-            logger.info("TTS [WSL2] %d bytes → %s", total, mp3_path)
-
-            # SoundPlayer 只支持 WAV，转成 16-bit PCM
-            wav_path = os.path.join(tempfile.mkdtemp(), "speak.wav")
-            subprocess.run(
-                ["ffmpeg", "-i", mp3_path, "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "1",
-                 "-loglevel", "quiet", "-y", wav_path],
-                check=True, timeout=15,
-            )
-            logger.info("TTS [WSL2] mp3→wav: %s (%d bytes)", wav_path, os.path.getsize(wav_path))
-
-            stop_active_playback()
-            play_sec = max(30, min(120, total * 8 / 128000 + 10))
-            _play_windows(wav_path, blocking=True, timeout=play_sec)
-
-        else:
-            # 非 WSL：真正的流式 — chunk → ffmpeg stdin → PulseAudio 实时播放
-            stop_active_playback()
-            proc = subprocess.Popen(
-                ["ffmpeg", "-f", "mp3", "-i", "-", "-f", "pulse", "-loglevel", "quiet", "default"],
-                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-            set_active_player(proc)
-
-            chunk_count = [0]
-            total_bytes = [0]
-            def _on_chunk(chunk: bytes) -> None:
-                try:
-                    proc.stdin.write(chunk)
-                    chunk_count[0] += 1
-                    total_bytes[0] += len(chunk)
-                except Exception as ex:
-                    logger.warning("写入 ffmpeg stdin 失败: %s", ex)
-
-            _tts_provider.speak_streaming(text, on_chunk=_on_chunk,
-                                         voice_id=voice_id,
-                                         speed=speed, emotion=emotion, pitch=pitch)
-            proc.stdin.close()
-            logger.info("TTS 流式: %d chunks, %d bytes", chunk_count[0], total_bytes[0])
-
-            play_sec = total_bytes[0] * 8 / 128000 + 10
-            try:
-                proc.wait(timeout=max(30, min(120, play_sec)))
-            except subprocess.TimeoutExpired:
-                stop_active_playback()
-                logger.warning("TTS 播放超时，已停止")
-
+        gen = _speak_streaming_to_gen(text, voice_id=voice_id, speed=speed,
+                                       emotion=emotion, pitch=pitch)
+        throat.play_stream(gen, codec="mp3")
         return f"已朗读: {text[:50]}{'...' if len(text) > 50 else ''}"
     except Exception as e:
         logger.error("TTS speak error: %s", e)

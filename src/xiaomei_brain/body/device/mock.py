@@ -7,14 +7,17 @@ from typing import Any
 from ..device import Speaker
 from ..sense import Eyes, Ears, Throat
 
+# 从子模块 re-export Mock 设备（兼容旧导入路径）
+from xiaomei_brain.plugins.body.eyes.mock import MockCamera  # noqa: F401
+from xiaomei_brain.plugins.body.ears.mock import MockMicrophone  # noqa: F401
+
 
 class MockSpeaker(Speaker):
-    """模拟扬声器：记录最后播放的文本和音频路径。"""
+    """模拟扬声器：记录最后播放的音频路径。"""
 
     def __init__(self, source: str = "mock") -> None:
         super().__init__(source=source)
         self._opened = False
-        self.last_spoken: str | None = None
         self.last_played: str | None = None
 
     def open(self) -> bool:
@@ -29,9 +32,6 @@ class MockSpeaker(Speaker):
 
     def capture(self) -> Any:
         return None
-
-    def speak(self, text: str) -> None:
-        self.last_spoken = text
 
     def play(self, audio_path: str) -> None:
         self.last_played = audio_path
@@ -79,14 +79,7 @@ class MockEars(Ears):
 
 
 class MockThroat(Throat):
-    """模拟喉咙：将 TTS/播放文本记录到 MockSpeaker。"""
-
-    def speak(self, text: str) -> None:
-        if not self.is_available():
-            return
-        device = self.device
-        if isinstance(device, MockSpeaker):
-            device.speak(text)
+    """模拟喉咙：播放委托到 MockSpeaker。"""
 
     def play(self, audio_path: str) -> None:
         if not self.is_available():

@@ -1,7 +1,7 @@
-"""Real 设备 — 真实硬件驱动。
+"""WSL2 音频播放 — 通过 Windows 侧播放。
 
-Phase 2: 替换 Mock 实现，接入真实设备。
-WSL2 音频走 Windows Media Player（Linux PulseAudio 管道不稳定）。
+WSL2 上 PulseAudio 跨边界延迟不稳定，流式播放容易卡。
+流式兜底：缓冲到文件 → Windows Media Player / SoundPlayer 播放。
 """
 
 from __future__ import annotations
@@ -9,6 +9,8 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import tempfile
+from typing import Any
 
 from xiaomei_brain.body.device import Speaker
 
@@ -22,6 +24,46 @@ try:
         _IS_WSL2 = "microsoft" in ver or "wsl" in ver
 except Exception:
     pass
+
+def _write_wav(filepath: str, pcm: bytes, sample_rate: int,
+              channels: int = 1, sample_width: int = 2) -> None:
+    """写入 WAV 文件（纯标准库，零依赖）。"""
+    import struct
+    byte_rate = sample_rate * channels * sample_width
+    block_align = channels * sample_width
+    bits = sample_width * 8
+    # float32 → 16-bit PCM 转换（Windows 播放器兼容性更好）
+    if sample_width == 4:
+        import numpy as np
+        data = np.frombuffer(pcm, dtype=np.float32)
+        data = (data * 32767).clip(-32768, 32767).astype(np.int16).tobytes()
+        pcm = data
+        bits = 16
+        sample_width = 2
+        byte_rate = sample_rate * channels * sample_width
+        block_align = channels * sample_width
+
+    fmt = {1: 'PCM', 3: 'IEEE float'}.get(1, 'PCM') if sample_width == 2 else 'PCM'
+    audio_format = 1  # PCM
+    subchunk1_size = 16
+    data_size = len(pcm)
+    riff_size = 36 + data_size
+
+    with open(filepath, "wb") as f:
+        f.write(b"RIFF")
+        f.write(struct.pack("<I", riff_size))
+        f.write(b"WAVE")
+        f.write(b"fmt ")
+        f.write(struct.pack("<I", subchunk1_size))
+        f.write(struct.pack("<H", audio_format))
+        f.write(struct.pack("<H", channels))
+        f.write(struct.pack("<I", sample_rate))
+        f.write(struct.pack("<I", byte_rate))
+        f.write(struct.pack("<H", block_align))
+        f.write(struct.pack("<H", bits))
+        f.write(b"data")
+        f.write(struct.pack("<I", data_size))
+        f.write(pcm)
 
 # 跟踪当前活跃的播放进程，确保同一时间只有一个音频输出
 _active_player: subprocess.Popen | None = None
@@ -150,26 +192,37 @@ class RealSpeaker(Speaker):
         except Exception:
             logger.exception("[RealSpeaker] 播放失败: %s", audio_path)
 
-    def speak(self, text: str) -> None:
-        """TTS 生成音频并播放。文字 → MiniMax TTS → ffplay。
+    def play_stream(self, gen, codec: str = "pcm_s16",
+                    sample_rate: int = 24000, channels: int = 1) -> None:
+        """流式播放。WSL2 PulseAudio 跨边界延迟大，缓冲到文件后播放。"""
+        import numpy as np
 
-        上限 500 字符。TTS 未配置时静默跳过。
-        """
-        from xiaomei_brain.plugins.tools.tts_minimax.tts import _tts_provider
-        import tempfile, os
+        stop_active_playback()
 
-        text = text[:500]
-        if not text.strip():
-            return
+        suffix = ".mp3" if codec == "mp3" else ".wav"
+        fd, path = tempfile.mkstemp(suffix=suffix, prefix="speak_")
+        os.close(fd)
 
-        if _tts_provider is None:
-            logger.warning("[RealSpeaker] TTS 未配置，speak() 跳过")
-            return
-
-        path = os.path.join(tempfile.mkdtemp(), "speak.mp3")
         try:
-            _tts_provider.speak_to_file(text, path)
-            logger.info("[RealSpeaker] TTS 生成完毕: %s", path)
+            if codec == "mp3":
+                with open(path, "wb") as f:
+                    for chunk in gen:
+                        if isinstance(chunk, np.ndarray):
+                            chunk = chunk.tobytes()
+                        f.write(chunk)
+            else:
+                sz = 2 if codec == "pcm_s16" else 4
+                all_raw = bytearray()
+                for chunk in gen:
+                    if isinstance(chunk, np.ndarray):
+                        dtype = np.int16 if sz == 2 else np.float32
+                        chunk = chunk.astype(dtype).tobytes()
+                    elif isinstance(chunk, bytes):
+                        pass
+                    all_raw.extend(chunk)
+                _write_wav(path, bytes(all_raw), sample_rate, channels, sz)
+
+            logger.info("[RealSpeaker] 流式缓冲完毕: %s (%d bytes)", path, os.path.getsize(path))
             self.play(path)
         except Exception:
-            logger.exception("[RealSpeaker] TTS 失败")
+            logger.exception("[RealSpeaker] 流式播放失败")

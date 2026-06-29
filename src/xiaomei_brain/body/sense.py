@@ -271,14 +271,6 @@ class Throat(Sense):
 
     name = "throat"
 
-    def speak(self, text: str) -> None:
-        """TTS 朗读。"""
-        if not self.is_available():
-            return
-        device = self.device
-        if device and hasattr(device, "speak"):
-            device.speak(text)
-
     def play(self, audio_path: str) -> None:
         """播放音频文件。"""
         if not self.is_available():
@@ -287,9 +279,25 @@ class Throat(Sense):
         if device and hasattr(device, "play"):
             device.play(audio_path)
 
+    def play_stream(self, gen, codec: str = "pcm_s16",
+                    sample_rate: int = 24000, channels: int = 1) -> None:
+        """流式播放 — 工具层生成 chunk，喉咙层实时播放。
+
+        Args:
+            gen: generator，yield bytes 或 numpy 数组
+            codec: "mp3" | "pcm_s16" | "pcm_f32"
+            sample_rate: 采样率（仅 PCM codec 使用）
+            channels: 声道数
+        """
+        if not self.is_available():
+            return
+        device = self.device
+        if device and hasattr(device, "play_stream"):
+            device.play_stream(gen, codec=codec, sample_rate=sample_rate,
+                               channels=channels)
+
     def contribute_to(self, state) -> None:
         """贡献发声数据到 BodyState。读取设备最近输出记录。"""
         device = self.device
         if device:
-            state.last_spoken = getattr(device, "last_spoken", "") or ""
             state.last_played = getattr(device, "last_played", "") or ""

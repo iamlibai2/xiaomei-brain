@@ -30,6 +30,11 @@ def _stop_active_playback() -> None:
         _active_player = None
 
 
+def _set_active_player(proc: subprocess.Popen) -> None:
+    global _active_player
+    _active_player = proc
+
+
 def _play_audio_file(audio_path: str) -> subprocess.Popen:
     """播放音频文件（非阻塞）。"""
 
@@ -53,7 +58,7 @@ def _play_audio_file(audio_path: str) -> subprocess.Popen:
 
 
 class RealSpeaker(Speaker):
-    """Linux/macOS 原生音箱（ffplay / PulseAudio）。"""
+    """Linux 原生音箱（ffplay / PulseAudio）。"""
 
     def __init__(self, source: str = "local") -> None:
         super().__init__(source=source)
@@ -82,34 +87,53 @@ class RealSpeaker(Speaker):
         _stop_active_playback()
         self.last_played = audio_path
         try:
-            global _active_player
-            _active_player = _play_audio_file(audio_path)
+            _set_active_player(_play_audio_file(audio_path))
             logger.info("播放中: %s", audio_path)
         except FileNotFoundError:
             logger.warning("[RealSpeaker] 无可用播放器 (ffplay/ffmpeg): %s", audio_path)
         except Exception:
             logger.exception("[RealSpeaker] 播放失败: %s", audio_path)
 
-    def speak(self, text: str) -> None:
-        """TTS 生成音频并播放（MiniMax TTS → mp3 → ffplay）。
+    def play_stream(self, gen, codec: str = "pcm_s16",
+                    sample_rate: int = 24000, channels: int = 1) -> None:
+        """流式播放。PCM → ffmpeg stdin → PulseAudio；mp3 → ffmpeg stdin → PulseAudio。"""
+        import numpy as np
 
-        上限 500 字符。TTS 未配置时静默跳过。
-        """
-        from xiaomei_brain.plugins.tools.tts_minimax.tts import _tts_provider
-        import tempfile
+        _stop_active_playback()
 
-        text = text[:500]
-        if not text.strip():
+        if codec == "mp3":
+            fmt = "mp3"
+        elif codec == "pcm_f32":
+            fmt = "f32le"
+        elif codec == "pcm_s16":
+            fmt = "s16le"
+        else:
+            logger.warning("[RealSpeaker] 不支持的 codec: %s", codec)
             return
 
-        if _tts_provider is None:
-            logger.warning("[RealSpeaker] TTS 未配置，speak() 跳过")
-            return
+        proc = subprocess.Popen(
+            ["ffmpeg", "-f", fmt, "-ar", str(sample_rate), "-ac", str(channels),
+             "-i", "-", "-f", "pulse", "-loglevel", "quiet", "default"],
+            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        _set_active_player(proc)
 
-        path = os.path.join(tempfile.mkdtemp(), "speak.mp3")
+        total_bytes = 0
         try:
-            _tts_provider.speak_to_file(text, path)
-            logger.info("[RealSpeaker] TTS 生成完毕: %s", path)
-            self.play(path)
-        except Exception:
-            logger.exception("[RealSpeaker] TTS 失败")
+            for chunk in gen:
+                if isinstance(chunk, np.ndarray):
+                    chunk = chunk.astype(np.float32).tobytes() if codec == "pcm_f32" \
+                        else chunk.astype(np.int16).tobytes()
+                proc.stdin.write(chunk)
+                total_bytes += len(chunk)
+        except Exception as e:
+            logger.warning("流式播放错误: %s", e)
+        finally:
+            proc.stdin.close()
+
+        try:
+            proc.wait(timeout=30)
+            logger.info("流式播放完成: %d KB", total_bytes // 1024)
+        except subprocess.TimeoutExpired:
+            _stop_active_playback()
+            logger.warning("流式播放超时")
