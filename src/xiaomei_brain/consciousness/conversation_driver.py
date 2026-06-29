@@ -279,12 +279,17 @@ class ConversationDriver:
                         agent.on_tool_start = None
                         agent.on_tool_complete = None
 
+                    si = getattr(getattr(parent, "consciousness", None), "self_image", None)
+                    if si:
+                        skill_loader = getattr(parent.agent, '_skill_loader', None)
+                        si.memory.skill_index = skill_loader.build_skill_index_prompt(current_msg.content) if skill_loader else ""
+
                     assembled = build_context(
                         agent, current_msg.content,
                         consciousness_state=cs, intent_context=current_context,
                         assemble=getattr(parent, "assemble_context", True),
                         images=getattr(current_msg, "images", None),
-                        self_image=getattr(getattr(parent, "consciousness", None), "self_image", None),
+                        self_image=si,
                         force_mode=getattr(parent, "force_mode", ""),
                         inner_voice_mode=self._inner_voice.get_last_mode() if self._inner_voice else "",
                     )

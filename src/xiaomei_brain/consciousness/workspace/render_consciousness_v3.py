@@ -662,6 +662,7 @@ def _render_longterm_memories(si) -> list[str]:
     if not items:
         return []
 
+    MAX_MEM_CONTENT = 300
     lines = [
         "\n<长期记忆>",
         "以下是你的长期记忆，当对方问及相关信息时，你必须主动引用这些记忆来回答，"
@@ -670,6 +671,8 @@ def _render_longterm_memories(si) -> list[str]:
     ]
     for m in items:
         content = m.get("content", "")
+        if len(content) > MAX_MEM_CONTENT:
+            content = content[:MAX_MEM_CONTENT] + "..."
         eff = m.get("effective_strength", 0)
         level = _strength_level(eff)
         tags = m.get("tags") or []
@@ -689,7 +692,9 @@ def _render_relation_chains(si) -> list[str]:
     """渲染记忆关联链 — 内容之间的因果/时序/对比等关系。
 
     从 si.memory.relation_chains 取原始数据，在 render 层统一格式化。
+    单条内容截断到 MAX_CHAIN_CONTENT 字符，超长知识不会撑爆上下文。
     """
+    MAX_CHAIN_CONTENT = 300
     chains = getattr(si.memory, 'relation_chains', None) or []
     if not chains:
         return []
@@ -704,6 +709,8 @@ def _render_relation_chains(si) -> list[str]:
         rel_type = c.get("relation_type", "")
         rel_label = _REL_LABELS.get(rel_type, rel_type)
         if content:
+            if len(content) > MAX_CHAIN_CONTENT:
+                content = content[:MAX_CHAIN_CONTENT] + "..."
             lines.append(f"- [跳{hop}] {content} （{rel_label}）")
     lines.append("</记忆关联链>")
     return lines
@@ -1079,7 +1086,7 @@ def _render_skills_index(si) -> list[str]:
     text = getattr(si.memory, 'skill_index', None) or ""
     if not text.strip():
         return []
-    return ["\n" + text]
+    return [text]
 
 
 def _render_token_budget(si) -> list[str]:

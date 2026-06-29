@@ -228,14 +228,14 @@ class Agent:
             if self._dynamic_loader:
                 openai_tools = self._dynamic_loader.select_openai_tools(_accumulated_context, step=step)
             else:
-                openai_tools = self.tools.to_openai_tools() if self.tools.list_tools() else None
+                openai_tools = self.tools.to_openai_tools() if self.tools and self.tools.list_tools() else None
 
             all_messages = list(messages) + self.messages[_pre_count:]
 
             # Remove orphaned tool messages (tool without preceding assistant tool_calls)
             # and orphaned assistant(tool_calls) (tool responses missing after DAG compression)
-            all_messages = strip_orphaned_tool_messages(all_messages)
             all_messages = strip_orphaned_assistant_tool_calls(all_messages)
+            all_messages = strip_orphaned_tool_messages(all_messages)
 
             # 缓存当前完整上下文（供 context 命令使用）
             self._last_all_messages = all_messages
@@ -323,11 +323,15 @@ class Agent:
                         )
                         logger.warning("[Agent] 拦截重复失败工具调用(%d次): %s", fail_count, tc.name)
                     else:
-                        try:
-                            result = self.tools.execute(tc.name, **args_dict)
-                        except Exception as e:
-                            result = f"Error executing tool '{tc.name}': {e}"
-                            logger.error("Tool error: %s", e)
+                        if self.tools is None:
+                            result = "Error: ToolRegistry not initialized. Please restart the agent."
+                            logger.error("[Agent] self.tools is None, cannot execute %s", tc.name)
+                        else:
+                            try:
+                                result = self.tools.execute(tc.name, **args_dict)
+                            except Exception as e:
+                                result = f"Error executing tool '{tc.name}': {e}"
+                                logger.error("Tool error: %s", e)
 
                     # 记录失败次数，成功则清除
                     if isinstance(result, str) and (
@@ -536,11 +540,11 @@ class Agent:
             if self._dynamic_loader:
                 openai_tools = self._dynamic_loader.select_openai_tools(_accumulated_context, step=step)
             else:
-                openai_tools = self.tools.to_openai_tools() if self.tools.list_tools() else None
+                openai_tools = self.tools.to_openai_tools() if self.tools and self.tools.list_tools() else None
 
             all_messages = list(messages) + loop_messages
-            all_messages = strip_orphaned_tool_messages(all_messages)
             all_messages = strip_orphaned_assistant_tool_calls(all_messages)
+            all_messages = strip_orphaned_tool_messages(all_messages)
             all_messages = clean_messages(all_messages)
 
             print("💭 思考中...", flush=True)
@@ -589,11 +593,15 @@ class Agent:
                         )
                         logger.warning("[Agent] 拦截重复失败工具调用(%d次): %s", fail_count, tc.name)
                     else:
-                        try:
-                            result = self.tools.execute(tc.name, **args_dict)
-                        except Exception as e:
-                            result = f"Error executing tool '{tc.name}': {e}"
-                            logger.error("Tool error: %s", e)
+                        if self.tools is None:
+                            result = "Error: ToolRegistry not initialized. Please restart the agent."
+                            logger.error("[Agent] self.tools is None, cannot execute %s", tc.name)
+                        else:
+                            try:
+                                result = self.tools.execute(tc.name, **args_dict)
+                            except Exception as e:
+                                result = f"Error executing tool '{tc.name}': {e}"
+                                logger.error("Tool error: %s", e)
 
                     if isinstance(result, str) and (
                         result.startswith("Error:") or result.startswith("Blocked")
