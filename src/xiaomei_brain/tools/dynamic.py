@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import logging
-import math
+from pathlib import Path
 from typing import Any
 
 from .base import Tool
@@ -63,18 +63,26 @@ def notify_tools_changed() -> None:
 class DynamicToolLoader:
     """按用户意图动态召回相关工具。
 
-    - 为所有工具建 embedding 索引
-    - 每次 select_tools() 计算 query embedding，召回 top-K 动态工具
+    - 为所有工具建 embedding 索引，缓存到 LanceDB
+    - 每次 select_tools() embed query，LanceDB 原生搜索 top-K
     - 核心工具（文件/内存/消息）始终保留，不受 embedding 影响
     """
 
-    def __init__(self, registry: ToolRegistry, top_k: int = DEFAULT_TOP_K) -> None:
+    def __init__(
+        self,
+        registry: ToolRegistry,
+        top_k: int = DEFAULT_TOP_K,
+        lance_db_path: str | Path | None = None,
+    ) -> None:
         self._registry = registry
         self._top_k = top_k
+        self._lance_db_path = Path(lance_db_path) if lance_db_path else None
         self._embedder: Any = None
-        self._tool_names: list[str] = []       # 索引中的工具名（按顺序）
-        self._tool_embeddings: list = []        # 对应的 embedding 向量（list[float]）
         self._built = False
+
+        # LanceDB 实例
+        self._lance_db: Any = None
+        self._lance_table: Any = None
 
     def _get_embedder(self):
         """懒加载 embedding 模型 — 优先远程服务器，fallback 本地。"""
@@ -96,34 +104,162 @@ class DynamicToolLoader:
         """构造每个工具的 embedding 文本。"""
         return f"{tool.name}: {tool.description} {tool.category}"
 
+    # ── LanceDB 缓存 ──────────────────────────────────────────
+
+    def _get_lance_table(self):
+        """懒打开 LanceDB tool_embeddings 表。"""
+        if self._lance_table is not None:
+            return self._lance_table
+
+        if self._lance_db_path is None:
+            return None
+
+        import lancedb
+        import pyarrow as pa
+
+        self._lance_db_path.mkdir(parents=True, exist_ok=True)
+        self._lance_db = lancedb.connect(str(self._lance_db_path))
+
+        # 尝试直接打开（list_tables() 有时不返回已存在的表）
+        try:
+            self._lance_table = self._lance_db.open_table("tool_embeddings")
+            logger.info("DynamicToolLoader: LanceDB cache opened (%s)", self._lance_db_path)
+            return self._lance_table
+        except Exception:
+            pass
+
+        # 不存在 → 新建
+        embedder = self._get_embedder()
+        sample_vec = embedder.embed("dim check")
+        expected_dim = len(sample_vec)
+
+        schema = pa.schema([
+            pa.field("id", pa.string()),
+            pa.field("vector", pa.list_(pa.float32(), expected_dim)),
+        ])
+        self._lance_table = self._lance_db.create_table("tool_embeddings", schema=schema)
+        logger.info("DynamicToolLoader: LanceDB cache created (%s)", self._lance_db_path)
+        return self._lance_table
+
+    def _get_cached_names(self) -> set[str]:
+        """LanceDB 中已缓存的工具名集合。"""
+        table = self._get_lance_table()
+        if table is None:
+            return set()
+        try:
+            n = table.count_rows()
+            if n == 0:
+                return set()
+            names = set(table.to_pandas()["id"].tolist())
+            logger.debug("DynamicToolLoader: read %d cached names from LanceDB", len(names))
+            return names
+        except Exception:
+            logger.warning("DynamicToolLoader: failed to read cached names", exc_info=True)
+            return set()
+
+    # ── 索引构建 ──────────────────────────────────────────
+
     def build_index(self) -> None:
-        """为 registry 中所有工具建 embedding 索引。"""
+        """为 registry 中所有工具建 embedding 索引（优先缓存）。"""
         tools = self._registry.list_tools()
         if not tools:
             logger.warning("DynamicToolLoader: no tools registered, skip index build")
             self._built = True
             return
 
+        # 按名称排序，确保 texts 和 names 对齐
+        tools.sort(key=lambda t: t.name)
+        current_names = [t.name for t in tools]
+        name_to_tool = {t.name: t for t in tools}
+        cached_names = self._get_cached_names()
+
+        if cached_names:
+            if sorted(cached_names) == current_names:
+                self._built = True
+                logger.info("DynamicToolLoader: cache hit, %d tools (skipped embed)", len(tools))
+                return
+
+            # 增量更新
+            added = set(current_names) - cached_names
+            removed = cached_names - set(current_names)
+            logger.info(
+                "DynamicToolLoader: cache stale — added=%d removed=%d",
+                len(added), len(removed),
+            )
+
+            table = self._get_lance_table()
+            if removed and table:
+                for name in removed:
+                    try:
+                        table.delete(f"id = '{name}'")
+                    except Exception:
+                        pass
+
+            if added and table:
+                new_tools = [name_to_tool[n] for n in current_names if n in added]
+                embedder = self._get_embedder()
+                try:
+                    texts = [self._tool_embedding_text(t) for t in new_tools]
+                    vectors = embedder.embed_batch(texts)
+                except Exception:
+                    logger.warning("DynamicToolLoader: incremental embed failed")
+                    self._built = True
+                    return
+
+                import pyarrow as pa
+                data = pa.table({
+                    "id": [t.name for t in new_tools],
+                    "vector": vectors,
+                })
+                table.add(data)
+
+            self._built = True
+            logger.info("DynamicToolLoader: incremental update done, %d tools", len(current_names))
+            return
+
+        # 缓存未命中 → 全量构建
+        self._full_build(tools, current_names)
+
+    def _full_build(self, tools: list[Tool], current_names: list[str]) -> None:
+        """全量 embed + 写入 LanceDB。"""
         texts = [self._tool_embedding_text(t) for t in tools]
+        total_chars = sum(len(t) for t in texts)
+        logger.info("DynamicToolLoader: embedding %d tools (%d KB)...", len(texts), total_chars // 1024)
         try:
             embedder = self._get_embedder()
             vectors = embedder.embed_batch(texts)
-        except Exception:
-            logger.warning("DynamicToolLoader: embedding failed, disabled")
-            self._built = True  # 标记已构建但空索引，fallback 到全量
+        except Exception as e:
+            logger.warning("DynamicToolLoader: embedding failed, disabled: %s", e)
+            self._built = True
             return
 
-        self._tool_names = [t.name for t in tools]
-        self._tool_embeddings = vectors
+        table = self._get_lance_table()
+        if table is not None:
+            # 先清理旧数据（drop + recreate 比 delete 更可靠，避免 LanceDB 残留）
+            try:
+                self._lance_db.drop_table("tool_embeddings", ignore_missing=True)
+            except Exception:
+                pass
+            self._lance_table = None
+            table = self._get_lance_table()
+            if table is None:
+                self._built = True
+                return
+
+            import pyarrow as pa
+            data = pa.table({"id": current_names, "vector": vectors})
+            table.add(data)
+            logger.info("DynamicToolLoader: saved %d tool embeddings to cache", len(current_names))
+
         self._built = True
         logger.info("DynamicToolLoader: built index for %d tools", len(tools))
 
     def rebuild(self) -> None:
         """重建索引（工具变更后调用）。"""
-        self._tool_names = []
-        self._tool_embeddings = []
         self._built = False
         self.build_index()
+
+    # ── 搜索 ──────────────────────────────────────────────
 
     def select_tools(self, query: str, top_k: int | None = None, step: int = 0) -> list[Tool]:
         """根据 query 召回相关工具。
@@ -145,59 +281,78 @@ class DynamicToolLoader:
         if not all_tools:
             return []
 
-        # 分离核心工具和候选工具
-        core_tools: list[Tool] = []
-        candidates: list[tuple[Tool, int]] = []  # (tool, index_in_embeddings)
+        name_to_tool = {t.name: t for t in all_tools}
 
-        for t in all_tools:
-            if t.name in _CORE_TOOL_NAMES:
-                core_tools.append(t)
-            else:
-                idx = self._tool_names.index(t.name) if t.name in self._tool_names else -1
-                candidates.append((t, idx))
+        # 分离核心工具
+        core_tools = [t for t in all_tools if t.name in _CORE_TOOL_NAMES]
 
-        if not candidates or not self._tool_embeddings:
-            return core_tools + [t for t, _ in candidates]
+        # LanceDB 搜索
+        table = self._get_lance_table()
+        if table is None or table.count_rows() == 0:
+            return core_tools + [t for t in all_tools if t.name not in _CORE_TOOL_NAMES]
 
-        # Embed query → 计算相似度
         try:
             embedder = self._get_embedder()
             query_vec = embedder.embed(query)
         except Exception:
             logger.debug("DynamicToolLoader: embed query failed, fallback to all tools")
-            return core_tools + [t for t, _ in candidates]
+            return core_tools + [t for t in all_tools if t.name not in _CORE_TOOL_NAMES]
 
-        scored: list[tuple[Tool, float]] = []
-        for tool, idx in candidates:
-            if idx >= 0 and idx < len(self._tool_embeddings):
-                sim = self._dot_similarity(query_vec, self._tool_embeddings[idx])
-            else:
-                sim = 0.0
-            scored.append((tool, sim))
+        try:
+            results = table.search(query_vec).limit(k).to_list()
+        except Exception:
+            logger.debug("DynamicToolLoader: LanceDB search failed, fallback to all tools")
+            return core_tools + [t for t in all_tools if t.name not in _CORE_TOOL_NAMES]
 
-        # 取 top-K
-        scored.sort(key=lambda x: x[1], reverse=True)
-        selected = [t for t, _ in scored[:k]]
-        logger.warning("DynamicToolLoader: step growth → %d core + %d dynamic = %d tools (top_k=%d, step=%d)",
-                       len(core_tools), len(selected), len(core_tools) + len(selected), k, step)
+        # 映射回 Tool 对象（排除已包含的核心工具）
+        selected = []
+        seen = set()
+        for r in results:
+            name = r["id"]
+            if name in seen or name in _CORE_TOOL_NAMES:
+                continue
+            tool = name_to_tool.get(name)
+            if tool:
+                selected.append(tool)
+                seen.add(name)
+
+        # 规则兜底：query 中明确出现工具名 → 强制入选
+        # 避免用户说 "generate_music" 时 embedding 没把它排在 top-K
+        for name, tool in name_to_tool.items():
+            if name in seen or name in _CORE_TOOL_NAMES:
+                continue
+            # 支持原始名 (generate_music) 和 normalize 名 (generate music)
+            normalized = name.replace("_", " ").replace("-", " ")
+            if name in query or normalized in query:
+                selected.append(tool)
+                seen.add(name)
+
+        # 兜底过多时截断（embedding 结果优先，兜底补到末尾）
+        if len(selected) > k:
+            selected = selected[:k]
+
+        logger.info(
+            "DynamicToolLoader: step growth → %d core + %d dynamic = %d tools (top_k=%d, step=%d)",
+            len(core_tools), len(selected), len(core_tools) + len(selected), k, step,
+        )
         return core_tools + selected
 
     def select_openai_tools(self, query: str, top_k: int | None = None, step: int = 0) -> list[dict[str, Any]]:
         """和 select_tools 一样，但返回 OpenAI function calling 格式。"""
         tools = self.select_tools(query, top_k, step)
-        return [
-            {
+        result = []
+        seen = set()
+        for t in tools:
+            if t.name in seen:
+                logger.warning("DynamicToolLoader: duplicate tool '%s', skipping", t.name)
+                continue
+            seen.add(t.name)
+            result.append({
                 "type": "function",
                 "function": {
                     "name": t.name,
                     "description": t.description,
                     "parameters": t.parameters,
                 },
-            }
-            for t in tools
-        ]
-
-    @staticmethod
-    def _dot_similarity(a: list[float], b: list[float]) -> float:
-        """向量已 normalize 过，dot product = cosine similarity。"""
-        return sum(x * y for x, y in zip(a, b))
+            })
+        return result

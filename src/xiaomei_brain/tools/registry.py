@@ -65,9 +65,9 @@ class ToolRegistry:
         """按来源列出工具。source 可以是 "core" 或 "plugin:<id>" 前缀。"""
         return [t for t in self._tools.values() if t.source == source or t.source.startswith(source)]
 
-    def execute(self, name: str, **kwargs: Any) -> str:
+    def execute(self, tool_name: str, **kwargs: Any) -> str:
         """Execute a tool by name with given arguments."""
-        tool = self._tools.get(name)
+        tool = self._tools.get(tool_name)
         if tool is None:
-            raise ValueError(f"Tool '{name}' not found")
+            raise ValueError(f"Tool '{tool_name}' not found")
         return tool.execute(**kwargs)
