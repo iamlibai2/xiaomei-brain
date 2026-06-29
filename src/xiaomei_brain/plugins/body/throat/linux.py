@@ -76,6 +76,9 @@ class RealSpeaker(Speaker):
 
     def play(self, audio_path: str) -> None:
         """播放音频（非阻塞）。"""
+        if not os.path.isfile(audio_path):
+            logger.warning("[RealSpeaker] 文件不存在: %s", audio_path)
+            return
         _stop_active_playback()
         self.last_played = audio_path
         try:

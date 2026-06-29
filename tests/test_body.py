@@ -353,24 +353,45 @@ class TestRealSpeaker:
 
     def test_real_speaker_play_records(self):
         from xiaomei_brain.plugins.body.throat.wsl2 import RealSpeaker
+        import tempfile, os
         s = RealSpeaker()
         s.open()
+        # 文件不存在 → 跳过播放，不设置 last_played
         s.play("/tmp/test.mp3")
-        assert s.last_played == "/tmp/test.mp3"
+        assert s.last_played is None
+        # 文件存在 → 正常播放
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+            tmp = f.name
+        try:
+            s.play(tmp)
+            assert s.last_played == tmp
+        finally:
+            os.unlink(tmp)
 
     def test_throat_with_real_speaker(self):
         """Throat + RealSpeaker 组合：play 委托到 RealSpeaker。"""
         from xiaomei_brain.body import Body
         from xiaomei_brain.body.sense import Throat
         from xiaomei_brain.plugins.body.throat.wsl2 import RealSpeaker
+        import tempfile, os
 
         body = Body()
         speaker = RealSpeaker()
         body.register_sense(Throat(), speaker)
         body.open()
 
+        # 文件不存在 → 不崩溃，不设置 last_played
         body.throat.play("/music/song.mp3")
-        assert speaker.last_played == "/music/song.mp3"
+        assert speaker.last_played is None
+
+        # 文件存在 → 正常
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+            tmp = f.name
+        try:
+            body.throat.play(tmp)
+            assert speaker.last_played == tmp
+        finally:
+            os.unlink(tmp)
 
     def test_speak_skips_when_no_tts(self):
         """TTS 未配置时 speak() 不崩溃，静默跳过。"""

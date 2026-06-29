@@ -57,6 +57,9 @@ class RealSpeaker(Speaker):
 
         WAV 文件直接用 winsound；其他格式用 PowerShell SoundPlayer。
         """
+        if not os.path.isfile(audio_path):
+            logger.warning("[RealSpeaker] 文件不存在: %s", audio_path)
+            return
         _stop_active_playback()
         self.last_played = audio_path
 
