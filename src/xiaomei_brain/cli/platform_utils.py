@@ -21,6 +21,44 @@ import time
 
 # ── WSL2 检测 ──────────────────────────────────────────────
 
+# ── Windows 控制台编码 ────────────────────────────────────
+
+def ensure_utf8_output() -> None:
+    """确保 stdout/stderr/stdin 使用 UTF-8 编码。
+
+    Windows 默认控制台编码是 cp1252，中文输出会崩溃。
+    这个函数在 Windows 上修复编码，在 POSIX 上完全无操作。
+    """
+    if sys.platform != "win32":
+        return
+
+    # 1. 让子进程继承 UTF-8 模式
+    os.environ.setdefault("PYTHONUTF8", "1")
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+
+    # 2. 重新配置当前进程的 stdio
+    for stream in (sys.stdout, sys.stderr, sys.stdin):
+        try:
+            if hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+    # 3. 设置控制台编码页为 UTF-8 (65001)
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        for cp in (kernel32.GetConsoleOutputCP(), kernel32.GetConsoleCP()):
+            if cp != 65001:
+                kernel32.SetConsoleOutputCP(65001)
+                kernel32.SetConsoleCP(65001)
+                break
+    except Exception:
+        pass
+
+
+# ── WSL2 检测 ──────────────────────────────────────────────
+
 def is_wsl2() -> bool:
     """检测是否运行在 WSL2 环境中。"""
     if sys.platform != "linux":

@@ -70,6 +70,9 @@ def _bootstrap_xiaomei() -> None:
 
 def main() -> None:
     """CLI 入口"""
+    from xiaomei_brain.cli.platform_utils import ensure_utf8_output
+    ensure_utf8_output()
+
     if len(sys.argv) < 2:
         _bootstrap_xiaomei()
         from xiaomei_brain.cli.run import cmd_run
