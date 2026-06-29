@@ -10,12 +10,18 @@ import argparse
 import atexit
 import logging
 import os
-import readline
-import select
 import shutil
 import sys
 import threading
 import time
+
+from xiaomei_brain.cli.platform_utils import (
+    import_readline,
+    get_single_char,
+    get_single_char_timeout,
+    stdin_has_data,
+    register_signal_handlers,
+)
 
 from xiaomei_brain.agent.agent_manager import AgentManager
 from xiaomei_brain.llm.client import FatalLLMError
@@ -54,26 +60,29 @@ def _completer(text: str, state: int) -> str | None:
     return None
 
 
-readline.parse_and_bind("tab: complete")
-readline.parse_and_bind("set enable-bracketed-paste on")
-readline.parse_and_bind("set input-meta on")
-readline.parse_and_bind("set output-meta on")
-readline.parse_and_bind("set convert-meta off")
-readline.set_completer(_completer)
+_readline = import_readline()
+if _readline is not None:
+    try:
+        _readline.parse_and_bind("tab: complete")
+        _readline.parse_and_bind("set enable-bracketed-paste on")
+        _readline.parse_and_bind("set input-meta on")
+        _readline.parse_and_bind("set output-meta on")
+        _readline.parse_and_bind("set convert-meta off")
+        _readline.set_completer(_completer)
+    except Exception:
+        pass  # macOS libedit / Windows pyreadline3 可能不支持某些 bind
 
 
 # ── 多行粘贴检测 ─────────────────────────────────────────
 
 def _read_multiline(first_line: str, timeout: float = 0.05) -> str:
     """检测粘贴多行文本并一次性读取。"""
-    r, _, _ = select.select([sys.stdin], [], [], timeout)
-    if not r:
+    if not stdin_has_data(timeout):
         return first_line
 
     lines = [first_line]
     while True:
-        r, _, _ = select.select([sys.stdin], [], [], timeout)
-        if not r:
+        if not stdin_has_data(timeout):
             break
         line = sys.stdin.readline()
         if not line:
@@ -82,9 +91,9 @@ def _read_multiline(first_line: str, timeout: float = 0.05) -> str:
         lines.append(line)
 
     result = '\n'.join(lines)
-    if len(lines) > 1:
+    if len(lines) > 1 and _readline is not None:
         try:
-            readline.add_history(result)
+            _readline.add_history(result)
         except Exception:
             pass
     return result
@@ -94,37 +103,12 @@ def _read_multiline(first_line: str, timeout: float = 0.05) -> str:
 
 def _read_char() -> str | None:
     """读取单个字符，不回显。仅登录阶段使用。"""
-    try:
-        import tty
-        import termios
-        fd = sys.stdin.fileno()
-        old = termios.tcgetattr(fd)
-        try:
-            tty.setraw(fd)
-            return sys.stdin.read(1)
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old)
-    except Exception:
-        return None
+    return get_single_char()
 
 
 def _read_char_timeout(timeout: float = 0.1) -> str | None:
     """非阻塞读取单个字符。timeout 秒内无输入返回 None。"""
-    try:
-        import tty
-        import termios
-        fd = sys.stdin.fileno()
-        old = termios.tcgetattr(fd)
-        tty.setraw(fd)
-        try:
-            r, _, _ = select.select([sys.stdin], [], [], timeout)
-            if not r:
-                return None
-            return sys.stdin.read(1)
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old)
-    except Exception:
-        return None
+    return get_single_char_timeout(timeout)
 
 
 # ── Token 估算 ─────────────────────────────────────────────
@@ -808,12 +792,13 @@ def cmd_run(args: list[str]) -> None:
     _set_intent_log(agent_id)
 
     _hist_path = os.path.join(agent_log_dir, "cli_history")
-    if os.path.exists(_hist_path):
-        try:
-            readline.read_history_file(_hist_path)
-        except Exception:
-            pass
-    atexit.register(lambda p=_hist_path: readline.write_history_file(p))
+    if _readline is not None:
+        if os.path.exists(_hist_path):
+            try:
+                _readline.read_history_file(_hist_path)
+            except Exception:
+                pass
+        atexit.register(lambda p=_hist_path: _readline.write_history_file(p))
 
     # ── PID 锁：防止重复启动 ─────────────────────────────────
     from xiaomei_brain.cli.lifecycle import write_pid_file, read_pid_file
