@@ -5,16 +5,16 @@
 用法::
 
     loader = SkillLoader(
-        skills_dir="~/.xiaomei-brain/xiaomei/skills",
-        db_path="~/.xiaomei-brain/xiaomei/brain.db",
+        skills_dir="~/.xiaomei-brain/{agent_id}/skills",
+        db_path="~/.xiaomei-brain/{agent_id}/memory/brain.db",
     )
     loader.scan()       # 从 SKILL.md 文件导入到数据库
     loader.build_index()  # 构建向量索引（Storage 内部处理）
 
     # 渐进式披露
-    results = loader.list_skills(query="浏览器自动化")
-    skill = loader.view_skill("browser-automation")
-    loader.record_usage("browser-automation")
+    results = loader.list_skills(query="web scraping")
+    skill = loader.view_skill("web-artifacts-builder")
+    loader.record_usage("web-artifacts-builder")
 """
 
 from __future__ import annotations
@@ -63,9 +63,15 @@ class SkillLoader:
     - record_usage() → 记录使用，驱动排序
     """
 
-    def __init__(self, skills_dir: str, db_path: str) -> None:
+    def __init__(
+        self,
+        skills_dir: str,
+        db_path: str,
+        extra_dirs: list[str] | None = None,
+    ) -> None:
         self._skills_dir = Path(skills_dir)
         self._db_path = Path(db_path)
+        self._extra_dirs: list[Path] = [Path(d) for d in (extra_dirs or [])]
         self._storage: Any = None
 
     def _get_storage(self):
@@ -78,14 +84,27 @@ class SkillLoader:
     # ── 导入与索引 ───────────────────────────────────────────────
 
     def scan(self) -> list[Skill]:
-        """从 skills_dir 导入 SKILL.md 文件到数据库。
+        """从 skills_dir + extra_dirs 导入 SKILL.md 文件到数据库。
 
         首次运行：导入所有文件并建向量索引。
         后续运行：增量更新（已有技能按名称更新，新技能追加）。
+        extra_dirs（如 .agents/skills/）的技能导入 but 不覆盖同名已有技能。
         """
         storage = self._get_storage()
+
+        # 1. 先导入 agent 自己的技能（优先级最高）
         n = storage.import_from_dir(self._skills_dir)
         logger.info("SkillLoader: imported %d skills from %s", n, self._skills_dir)
+
+        # 2. 再导入额外目录（如 .agents/skills/）
+        for extra_dir in self._extra_dirs:
+            if extra_dir.is_dir():
+                m = storage.import_from_dir(extra_dir)
+                if m:
+                    logger.info("SkillLoader: imported %d skills from %s", m, extra_dir)
+            else:
+                logger.debug("SkillLoader: extra dir not found: %s", extra_dir)
+
         return []  # Phase 2 no longer returns Skill objects from scan
 
     def build_index(self) -> None:

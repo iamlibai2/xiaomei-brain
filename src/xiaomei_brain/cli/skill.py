@@ -39,7 +39,7 @@ def _resolve_agent(agent_id: str | None) -> str:
 
 
 def _brain_db_path(agent_id: str) -> str:
-    return os.path.expanduser(f"~/.xiaomei-brain/{agent_id}/brain.db")
+    return os.path.expanduser(f"~/.xiaomei-brain/{agent_id}/memory/brain.db")
 
 
 def _skills_dir(agent_id: str) -> str:
@@ -126,7 +126,21 @@ def _cmd_install(identifier: str, agent_id: str, name_override: str | None) -> N
     with open(skill_md_path, "w", encoding="utf-8") as f:
         f.write(bundle.content)
 
-    console.print(f"  [dim]写入: {skill_md_path}[/]")
+    # 写入额外的代码/资源文件（支持子目录）
+    extra_count = 0
+    for filename, file_content in bundle.files.items():
+        file_path = os.path.join(skill_dir, filename)
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        mode = "wb" if isinstance(file_content, bytes) else "w"
+        encoding = None if isinstance(file_content, bytes) else "utf-8"
+        with open(file_path, mode, encoding=encoding) as f:
+            f.write(file_content)
+        extra_count += 1
+
+    if extra_count:
+        console.print(f"  [dim]写入: {skill_md_path} (+{extra_count} 个附加文件)[/]")
+    else:
+        console.print(f"  [dim]写入: {skill_md_path}[/]")
 
     # 5. 导入索引
     from xiaomei_brain.skills.storage import SkillStorage

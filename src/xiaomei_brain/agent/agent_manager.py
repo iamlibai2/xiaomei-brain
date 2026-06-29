@@ -11,6 +11,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from xiaomei_brain.cli.boot import boot_section, boot_line
 from xiaomei_brain.llm.client import LLMClient, set_log_agent
 from xiaomei_brain.llm.types import load_config_providers
 from xiaomei_brain.plugin.bootstrap import boot_plugins
@@ -67,7 +68,7 @@ _DEFAULT_CONFIG_TEMPLATE = {
     },
     "memory": {
         "lancedb_path": "~/.xiaomei-brain/{agent_id}/memory/lancedb",
-        "conversation_db_path": "~/.xiaomei-brain/{agent_id}/brain.db",
+        "conversation_db_path": "~/.xiaomei-brain/{agent_id}/memory/brain.db",
     },
 }
 
@@ -141,6 +142,12 @@ class AgentInstance:
     def _get_agent(self) -> Any:
         """Get or create persistent Agent instance."""
         if self._agent is None:
+            if self.tools is None:
+                logger.warning(
+                    "[AgentInstance] _get_agent() called before init_agent() set self.tools. "
+                    "llm=%s agent_id=%s",
+                    self.llm is not None, self.id,
+                )
             from xiaomei_brain.agent.core import Agent
             self._agent = Agent(
                 llm=self.llm,
@@ -970,7 +977,21 @@ class AgentManager:
         from xiaomei_brain.mcp.client import bootstrap_mcp_servers, register_config_listener, _on_config_changed
 
         mcp_config = global_config._raw if hasattr(global_config, '_raw') else None
-        bootstrap_mcp_servers(tools, mcp_config)
+        servers_cfg = (mcp_config or {}).get("mcp_servers", {})
+        enabled_servers = [n for n, c in servers_cfg.items() if isinstance(c, dict) and c.get("enabled", True)]
+        if enabled_servers:
+            boot_section("MCP 工具")
+
+            def _on_mcp_status(name, ok, tool_count, error=None):
+                label = name if len(name) <= 20 else name[:17] + "..."
+                if ok:
+                    boot_line(label, "OK", f"{tool_count} 个工具")
+                else:
+                    boot_line(label, "FAIL", error or "连接失败")
+
+            bootstrap_mcp_servers(tools, mcp_config, on_status=_on_mcp_status)
+        else:
+            bootstrap_mcp_servers(tools, mcp_config)
         register_config_listener(tools)
 
         # ── 启动 config.json 热重载 ─────────────────────────────────────
@@ -1016,9 +1037,24 @@ class AgentManager:
         # ── 技能系统 ──────────────────────────────────────────────────
         from xiaomei_brain.skills import SkillLoader, create_skill_tools
         skills_dir = os.path.join(self._agent_dir(agent.id), "skills")
-        brain_db_path = os.path.join(self._agent_dir(agent.id), "brain.db")
-        skill_loader = SkillLoader(skills_dir=skills_dir, db_path=brain_db_path)
+        brain_db_path = os.path.join(self._agent_dir(agent.id), "memory", "brain.db")
+
+        # 兼容 .agents/skills/ 生态（npx skills add 的标准安装路径）
+        extra_dirs = []
+        for candidate in [".agents/skills", "../.agents/skills"]:
+            p = os.path.abspath(candidate)
+            if os.path.isdir(p):
+                extra_dirs.append(p)
+
+        boot_section("技能系统")
+        skill_loader = SkillLoader(
+            skills_dir=skills_dir,
+            db_path=brain_db_path,
+            extra_dirs=extra_dirs,
+        )
         skill_loader.scan()
+        skill_names = skill_loader.list_names()
+        boot_line("加载技能", "OK", f"{len(skill_names)} 个" if skill_names else "空")
         agent._skill_loader = skill_loader
         for skill_tool in create_skill_tools(agent):
             tools.register(skill_tool)
@@ -1030,8 +1066,12 @@ class AgentManager:
         if dynamic_cfg.get("enabled", True):
             from xiaomei_brain.tools.dynamic import DynamicToolLoader, set_active_loader
             top_k = dynamic_cfg.get("top_k", 10)
-            loader = DynamicToolLoader(tools, top_k=top_k)
+            lance_path = os.path.join(self._agent_dir(agent.id), "memory", "lancedb")
+            boot_section("工具索引")
+            loader = DynamicToolLoader(tools, top_k=top_k, lance_db_path=lance_path)
             loader.build_index()
+            total_tools = len(tools.list_tools())
+            boot_line("向量索引", "OK", f"{total_tools} 个工具")
             agent._dynamic_loader = loader
             set_active_loader(loader)
 

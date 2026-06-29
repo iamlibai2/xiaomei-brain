@@ -15,7 +15,7 @@
 
     loader = SkillLoader(
         skills_dir="~/.xiaomei-brain/xiaomei/skills",
-        db_path="~/.xiaomei-brain/xiaomei/brain.db",
+        db_path="~/.xiaomei-brain/xiaomei/memory/brain.db",
     )
     loader.scan()
 

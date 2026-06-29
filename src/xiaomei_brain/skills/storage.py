@@ -6,16 +6,15 @@
 
 用法::
 
-    store = SkillStorage(db_path="~/.xiaomei-brain/xiaomei/brain.db",
-                         lance_dir="~/.xiaomei-brain/xiaomei/skills/lancedb")
-    store.import_from_dir("~/.xiaomei-brain/xiaomei/skills")
+    store = SkillStorage(db_path="~/.xiaomei-brain/{agent_id}/memory/brain.db")
+    store.import_from_dir("~/.xiaomei-brain/{agent_id}/skills")
 
     # 语义搜索
-    results = store.list_skills(query="浏览器自动化")
+    results = store.list_skills(query="web scraping")
 
     # 查看详情 + 记录使用
-    skill = store.view_skill("browser-automation")
-    store.record_usage("browser-automation")
+    skill = store.view_skill("web-artifacts-builder")
+    store.record_usage("web-artifacts-builder")
 """
 
 from __future__ import annotations
@@ -33,7 +32,7 @@ from xiaomei_brain.base.sqlite_store import SQLiteStore
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class SkillStorage(SQLiteStore):
@@ -49,7 +48,7 @@ class SkillStorage(SQLiteStore):
         super().__init__(db_path)
         self._init_tables()
 
-        # LanceDB 目录 — 与 LongTermMemory 共用同一 lancedb 实例
+        # LanceDB 目录 — brain.db 已在 memory/ 下，lancedb 同级
         if lance_dir is None:
             lance_dir = self.db_path.parent / "lancedb"
         self._lance_dir = Path(lance_dir)
@@ -84,12 +83,22 @@ class SkillStorage(SQLiteStore):
                 usage_count INTEGER DEFAULT 0,
                 last_used_at REAL DEFAULT 0,
                 created_at REAL NOT NULL,
-                updated_at REAL NOT NULL
+                updated_at REAL NOT NULL,
+                content_hash TEXT DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS idx_skills_name ON skills(name);
             CREATE INDEX IF NOT EXISTS idx_skills_source ON skills(source);
         """)
         conn.commit()
+
+        # 迁移：v1 → v2（添加 content_hash 列）
+        if current_version == 1:
+            try:
+                conn.execute("ALTER TABLE skills ADD COLUMN content_hash TEXT DEFAULT ''")
+                conn.commit()
+            except Exception:
+                pass  # 列已存在
+
         self._set_schema_version("skills", SCHEMA_VERSION)
 
     # ── Embedding ────────────────────────────────────────────────
@@ -191,25 +200,36 @@ class SkillStorage(SQLiteStore):
             pa.field("id", pa.int64()),
             pa.field("vector", pa.list_(pa.float32(), expected_dim)),
         ])
-        self._lance_table = self._lance_db.create_table("skills", schema=schema)
-        self._rebuild_lancedb()
+        try:
+            self._lance_table = self._lance_db.create_table("skills", schema=schema)
+            # 新表 → 全量构建
+            self._rebuild_lancedb()
+        except ValueError:
+            # list_tables() 有时不返回 "skills"，但实际已存在 → 直接打开
+            # content_hash 在后续 import 中处理增量，不重建
+            self._lance_table = self._lance_db.open_table("skills")
+            logger.info("SkillStorage: LanceDB skills table opened (existing, skip rebuild)")
         return self._lance_table
 
     def _rebuild_lancedb(self) -> None:
-        """从 SQLite 重建 LanceDB 向量索引。"""
+        """从 SQLite 重建 LanceDB 向量索引。清空已有数据，全量重建。"""
         table = self._lance_table
         if table is None:
             return
-        try:
-            if table.count_rows() > 0:
-                return
-        except Exception:
-            pass
 
         conn = self._get_conn()
         rows = conn.execute("SELECT id, name, description, tags FROM skills").fetchall()
         if not rows:
             return
+
+        # 清空旧数据
+        try:
+            n_before = table.count_rows()
+            if n_before > 0:
+                table.delete("id >= 0")
+                logger.info("SkillStorage: cleared %d old LanceDB vectors", n_before)
+        except Exception:
+            pass
 
         logger.info("SkillStorage: rebuilding LanceDB index for %d skills", len(rows))
         texts = []
@@ -324,14 +344,24 @@ class SkillStorage(SQLiteStore):
         source: str,
         tool_bindings: list[str] | None = None,
     ) -> int:
-        """插入或更新技能。返回 skill id。"""
+        """插入或更新技能。返回 skill id。
+
+        内容未变时跳过 LanceDB 更新，只更新元数据（usage_count 等不在此方法更新）。
+        """
+        import hashlib
+
         conn = self._get_conn()
         now = time.time()
         tags_json = json.dumps(tags, ensure_ascii=False)
         bindings_json = json.dumps(tool_bindings or [], ensure_ascii=False)
 
+        # 内容指纹：name + description + tags + content — 用于判断是否需要重新 embed
+        content_fp = hashlib.sha256(
+            f"{name}|{description}|{tags_json}|{content}".encode("utf-8")
+        ).hexdigest()
+
         existing = conn.execute(
-            "SELECT id FROM skills WHERE name = ?", (name,)
+            "SELECT id, content_hash FROM skills WHERE name = ?", (name,)
         ).fetchone()
 
         if existing:
@@ -339,20 +369,25 @@ class SkillStorage(SQLiteStore):
             conn.execute("""
                 UPDATE skills SET
                     description = ?, version = ?, tags = ?, content = ?,
-                    source = ?, tool_bindings = ?, updated_at = ?
+                    source = ?, tool_bindings = ?, updated_at = ?, content_hash = ?
                 WHERE id = ?
-            """, (description, version, tags_json, content, source, bindings_json, now, skill_id))
+            """, (description, version, tags_json, content, source, bindings_json, now, content_fp, skill_id))
+            conn.commit()
+
+            # 内容未变 → 跳过 LanceDB 更新
+            if existing["content_hash"] == content_fp:
+                logger.debug("SkillStorage: %s content unchanged, skip embed", name)
+                return skill_id
         else:
             cursor = conn.execute("""
                 INSERT INTO skills (name, description, version, tags, content, source,
-                                    tool_bindings, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (name, description, version, tags_json, content, source, bindings_json, now, now))
+                                    tool_bindings, created_at, updated_at, content_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (name, description, version, tags_json, content, source, bindings_json, now, now, content_fp))
             skill_id = cursor.lastrowid
+            conn.commit()
 
-        conn.commit()
-
-        # 更新向量索引
+        # 更新向量索引（新技能 或 内容已变）
         try:
             self._upsert_lance(skill_id)
         except Exception:
@@ -481,24 +516,25 @@ class SkillStorage(SQLiteStore):
             return ""
 
         lines = [
-            "## Skills（技能）\n"
+            "\n<技能>",
             "在回复前先浏览以下技能。如果某个技能与当前任务相关或部分相关，"
             "你必须用 skill_view(技能名) 加载该技能并严格按其指示执行。"
             "宁可多加载一个不需要的技能，也不要漏掉关键步骤、陷阱或既定工作流程。"
             "技能包含针对特定任务的深入知识——API 端点、工具专用命令和经过验证的"
             "高效工作流程，优于通用方法。即使你觉得用基础工具就能处理，也先加载技能——"
-            "因为技能定义了该任务在此环境中的正确做法。\n"
+            "因为技能定义了该任务在此环境中的正确做法。"
             "技能可能包含你的项目记忆、用户偏好或之前确定的约定，"
             "忽略它们意味着丢失上下文。遇到困难或需要反复尝试的任务，"
-            "完成后请主动提出将其保存为技能。\n"
-            "如果确实没有相关技能，可以跳过。\n"
+            "完成后请主动提出将其保存为技能。"
+            "如果确实没有相关技能，可以跳过。",
             "<available_skills>",
         ]
         for s in skills:
             tags_str = f" [{', '.join(s.get('tags', []))}]" if s.get("tags") else ""
             lines.append(f"  - {s['name']}: {s['description']}{tags_str}")
-        lines.append("</available_skills>\n")
+        lines.append("</available_skills>")
         lines.append("使用 skill_view(name) 加载技能完整内容。")
+        lines.append("</技能>")
 
         return "\n".join(lines)
 
