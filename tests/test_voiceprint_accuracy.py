@@ -112,7 +112,7 @@ def main():
 
     # ── 启动麦克风 ──────────────────────────────────────────
     print("  启动麦克风...", flush=True)
-    from xiaomei_brain.plugins.body.ears.real_microphone import RealMicrophone
+    from xiaomei_brain.plugins.body.ears.wsl2 import RealMicrophone
     mic = RealMicrophone()
     mic.open()
     if not mic.start_stream():

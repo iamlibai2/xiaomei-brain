@@ -32,7 +32,7 @@ def _stream_play(gen, sample_rate: int) -> tuple[int, float]:
     每个 chunk 是 float32 numpy 数组或 raw bytes，直接喂 ffmpeg 裸 PCM。
     返回 (总字节数, 实际播放时长秒数)。
     """
-    from xiaomei_brain.plugins.body.throat.real_speaker import (
+    from xiaomei_brain.plugins.body.throat.wsl2 import (
         stop_active_playback,
         set_active_player,
     )
@@ -81,7 +81,7 @@ def _speak_wsl2(text: str, sample_rate: int) -> None:
     """WSL2: 生成 WAV → Windows Media Player 原生播放。"""
     import tempfile
 
-    from xiaomei_brain.plugins.body.throat.real_speaker import _play_windows
+    from xiaomei_brain.plugins.body.throat.wsl2 import _play_windows
 
     path = os.path.join(tempfile.mkdtemp(), "speak_voxcpm.wav")
     logger.warning("[_speak_wsl2] generating TTS for: %s", text[:60])
@@ -123,7 +123,7 @@ def voxcpm_speak(text: str) -> str:
         return "文本为空，无需朗读。"
 
     try:
-        from xiaomei_brain.plugins.body.throat.real_speaker import _IS_WSL2
+        from xiaomei_brain.plugins.body.throat.wsl2 import _IS_WSL2
 
         sr = _provider.sample_rate
         logger.warning("[vox_speak] IS_WSL2=%s sr=%d text=%s", _IS_WSL2, sr, text[:50])

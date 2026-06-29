@@ -99,7 +99,7 @@ def tts_speak(
 
     try:
         import subprocess, tempfile
-        from xiaomei_brain.plugins.body.throat.real_speaker import stop_active_playback, set_active_player, _play_windows
+        from xiaomei_brain.plugins.body.throat.wsl2 import stop_active_playback, set_active_player, _play_windows
 
         if _IS_WSL2:
             # WSL2：非流式 — speak_to_file 生成完整 mp3 → 转 WAV → SoundPlayer 播放
