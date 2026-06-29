@@ -21,6 +21,7 @@ class SourceBundle:
         identifier: 用户输入的原始标识符
         resolved_url: 最终 fetch 的 URL
         metadata: 源特有元数据（如 GitHub 的 repo_owner、ref 等）
+        files: 额外文件，文件名 → 内容（GitHub 目录中 SKILL.md 外的代码/资源）
     """
 
     content: str
@@ -28,6 +29,7 @@ class SourceBundle:
     identifier: str
     resolved_url: str
     metadata: dict[str, Any] = field(default_factory=dict)
+    files: dict[str, str] = field(default_factory=dict)
 
 
 class BaseSourceAdapter(ABC):

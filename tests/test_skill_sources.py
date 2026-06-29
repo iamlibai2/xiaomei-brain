@@ -210,7 +210,8 @@ class TestGitHubSourceAdapter:
         mock_requests.return_value = mock_resp
 
         adapter = GitHubSourceAdapter()
-        bundle = adapter.fetch("owner/repo")
+        with patch.object(adapter, "_download_directory", return_value={}):
+            bundle = adapter.fetch("owner/repo")
         assert bundle.content == "---\nname: test\n---\n# My Skill"
         assert bundle.source == "github"
         assert bundle.metadata["repo_owner"] == "owner"
@@ -250,7 +251,8 @@ class TestGitHubSourceAdapter:
         github_mod._MIRRORS.clear()
 
         adapter = GitHubSourceAdapter()
-        bundle = adapter.fetch("owner/repo")
+        with patch.object(adapter, "_download_directory", return_value={}):
+            bundle = adapter.fetch("owner/repo")
         assert bundle.content == "---\nname: test\n---\n# Content"
         # Should have used the mirror URL
         assert "raw.githubusercontent.com" not in bundle.resolved_url
@@ -427,6 +429,7 @@ class TestCmdInstall:
     def test_install_from_github(self, tmp_agent_dir, mock_requests):
         """Install a skill from GitHub shorthand."""
         from xiaomei_brain.cli.skill import _cmd_install
+        from xiaomei_brain.skills.sources.github import GitHubSourceAdapter
 
         mock_resp = Mock()
         mock_resp.text = (
@@ -442,15 +445,13 @@ class TestCmdInstall:
 
         with patch("xiaomei_brain.cli.skill._skills_dir", return_value=os.path.join(tmp_agent_dir, "skills")):
             with patch("xiaomei_brain.cli.skill._brain_db_path", return_value=os.path.join(tmp_agent_dir, "brain.db")):
-                with patch.object(
-                    __import__("xiaomei_brain.skills.storage", fromlist=["SkillStorage"]).SkillStorage,
-                    "_get_lance_table",
-                    return_value=None,
-                ):
+                with patch.object(GitHubSourceAdapter, "_download_directory", return_value={}):
                     with patch.object(
                         __import__("xiaomei_brain.skills.storage", fromlist=["SkillStorage"]).SkillStorage,
-                        "_upsert_lance",
-                        return_value=None,
+                        "_get_lance_table", return_value=None,
+                    ), patch.object(
+                        __import__("xiaomei_brain.skills.storage", fromlist=["SkillStorage"]).SkillStorage,
+                        "_upsert_lance", return_value=None,
                     ):
                         _cmd_install("owner/repo", "testbot", None)
 
