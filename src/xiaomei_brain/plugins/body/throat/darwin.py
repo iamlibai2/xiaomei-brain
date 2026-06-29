@@ -1,4 +1,4 @@
-"""Linux 原生音箱 — 基于 ffplay / PulseAudio 实现。"""
+"""macOS 原生音箱 — 基于 afplay 实现（macOS 内置，零依赖）。"""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ _active_player: subprocess.Popen | None = None
 
 
 def _stop_active_playback() -> None:
-    """停止当前正在播放的音频。"""
     global _active_player
     if _active_player is not None:
         try:
@@ -31,29 +30,15 @@ def _stop_active_playback() -> None:
 
 
 def _play_audio_file(audio_path: str) -> subprocess.Popen:
-    """播放音频文件（非阻塞）。"""
-
-    af = ["-af", "aresample=async=1000:min_comp=0.001:first_pts=0"]
-
-    # 优先 ffmpeg pulse 输出（Linux 原生 PulseAudio）
-    try:
-        proc = subprocess.Popen(
-            ["ffmpeg", "-i", audio_path, *af, "-f", "pulse", "-loglevel", "quiet", "default"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        return proc
-    except FileNotFoundError:
-        pass
-
-    # fallback: ffplay 直接播放
+    """播放音频文件（非阻塞）。macOS afplay 内置支持 WAV/MP3/AAC。"""
     return subprocess.Popen(
-        ["ffplay", "-nodisp", "-autoexit", "-infbuf", *af, "-loglevel", "quiet", audio_path],
+        ["afplay", audio_path],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
 
 
 class RealSpeaker(Speaker):
-    """Linux/macOS 原生音箱（ffplay / PulseAudio）。"""
+    """macOS 原生音箱（afplay）。"""
 
     def __init__(self, source: str = "local") -> None:
         super().__init__(source=source)
@@ -83,12 +68,12 @@ class RealSpeaker(Speaker):
             _active_player = _play_audio_file(audio_path)
             logger.info("播放中: %s", audio_path)
         except FileNotFoundError:
-            logger.warning("[RealSpeaker] 无可用播放器 (ffplay/ffmpeg): %s", audio_path)
+            logger.warning("[RealSpeaker] afplay 不可用: %s", audio_path)
         except Exception:
             logger.exception("[RealSpeaker] 播放失败: %s", audio_path)
 
     def speak(self, text: str) -> None:
-        """TTS 生成音频并播放（MiniMax TTS → mp3 → ffplay）。
+        """TTS 生成音频并播放（MiniMax TTS → mp3 → afplay）。
 
         上限 500 字符。TTS 未配置时静默跳过。
         """
