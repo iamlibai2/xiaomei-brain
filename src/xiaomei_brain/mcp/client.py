@@ -314,7 +314,7 @@ def _load_mcp_config(config: dict | None = None) -> dict[str, dict]:
     return mcp_servers
 
 
-def bootstrap_mcp_servers(tool_registry, config: dict | None = None) -> int:
+def bootstrap_mcp_servers(tool_registry, config: dict | None = None, on_status=None) -> int:
     """启动所有配置的 MCP Server，发现工具并注册。
 
     在 agent_manager.init_agent() 中调用。
@@ -322,6 +322,7 @@ def bootstrap_mcp_servers(tool_registry, config: dict | None = None) -> int:
     Args:
         tool_registry: ToolRegistry 实例
         config: 完整 config.json 字典
+        on_status: 可选回调 (name, ok, tool_count, error) — 每台 Server 连接完成时调用
 
     Returns:
         注册的工具数量
@@ -345,8 +346,13 @@ def bootstrap_mcp_servers(tool_registry, config: dict | None = None) -> int:
     if not servers_config:
         return 0
 
-    total_tools = 0
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
+    total_tools = 0
+    loop = _ensure_mcp_loop()
+    pending: dict[str, tuple[MCPConnection, asyncio.Event]] = {}
+
+    # Phase 1: 提交所有连接的 run() 协程到事件循环（并行启动子进程）
     for name, srv_config in servers_config.items():
         if not isinstance(srv_config, dict):
             continue
@@ -363,18 +369,51 @@ def bootstrap_mcp_servers(tool_registry, config: dict | None = None) -> int:
 
         logger.info("MCP server '%s': connecting...", name)
         conn = MCPConnection(name, srv_config)
+        conn._ready = asyncio.Event()
+        conn._shutdown_event = asyncio.Event()
+        conn._rpc_lock = asyncio.Lock()
+        conn._task = asyncio.run_coroutine_threadsafe(conn.run(), loop)
+        pending[name] = (conn, conn._ready)
 
-        if not conn.start():
-            logger.error("MCP server '%s': failed to connect", name)
+    if not pending:
+        return 0
+
+    # Phase 2: 并行等待所有连接就绪
+    def _wait_one(name: str, ready: asyncio.Event) -> tuple[str, bool]:
+        try:
+            _run_on_mcp_loop(ready.wait(), timeout=_DEFAULT_CONNECT_TIMEOUT)
+            return name, True
+        except Exception:
+            return name, False
+
+    with ThreadPoolExecutor(max_workers=len(pending)) as pool:
+        futures = {pool.submit(_wait_one, name, ready): name for name, (_, ready) in pending.items()}
+        for future in as_completed(futures):
+            name, ok = future.result()
+            conn, _ = pending[name]
+            if ok and conn.session and conn._tools:
+                with _lock:
+                    _servers[name] = conn
+                logger.info("MCP server '%s': connected (%d tools)", name, len(conn._tools))
+                if on_status:
+                    on_status(name, True, len(conn._tools))
+            else:
+                logger.error("MCP server '%s': failed to connect in %.0fs", name, _DEFAULT_CONNECT_TIMEOUT)
+                if on_status:
+                    on_status(name, False, 0, "连接超时")
+
+    # Phase 3: 注册工具
+    for name, srv_config in servers_config.items():
+        if not isinstance(srv_config, dict):
+            continue
+        if not srv_config.get("enabled", True):
+            continue
+        conn = _servers.get(name)
+        if not conn or not conn._tools:
             continue
 
-        with _lock:
-            _servers[name] = conn
-
-        # 工具过滤（include / exclude）
         filtered_tools = _apply_tool_filters(conn._tools, srv_config, name)
 
-        # 注册工具
         for mcp_tool in filtered_tools:
             schema = _convert_mcp_schema(name, mcp_tool)
             handler = _make_tool_handler(conn, mcp_tool.name)
