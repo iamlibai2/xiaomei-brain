@@ -282,23 +282,85 @@ class Gateway:
         return False
 
     def _list_all_commands(self) -> None:
-        """列出所有可用命令（数据 + 模式 + 系统）。"""
+        """列出所有可用命令，按功能分组。"""
         living = self._living
+        G, D, R = "\033[32m", "\033[38;5;73m", "\033[0m"
+        C = "\033[36m"
+        CW = 20  # 命令列宽度
 
-        print()
-        print("\033[36m命令列表:\033[0m")
-        print()
+        # ── 收集所有命令 → 描述映射 ────────────────────────────
+        cmd_desc: dict[str, str] = {}
 
         # 数据命令
-        if self._agent_commands:
-            result = self._agent_commands.execute("help")
-            if result:
-                print(result.output, flush=True)
+        data_cmds = [
+            ("/user <name>",   "切换用户身份"),
+            ("/db",            "查看数据库大小/表/行数"),
+            ("/memory",        "查看最近长期记忆"),
+            ("/stats",         "全局统计面板"),
+            ("/stream <N>",    "查看最近经验流（默认20条）"),
+            ("/context",       "查看完整上下文"),
+            ("/user-memories", "查看用户记忆分布"),
+            ("/dag <kw>",      "搜索DAG摘要"),
+            ("/expand <kw>",   "展开DAG摘要原文"),
+            ("/summarize",     "手动触发DAG压缩"),
+            ("/periodic",      "手动触发定时记忆提取"),
+            ("/dream",         "手动触发梦境深度提取"),
+            ("/relationship",  "查看当前用户的关系数据"),
+            ("/self",          "查看当前自我画像"),
+            ("/essence",       "查看底色（性格基线）"),
+            ("/projects",      "查看项目心智模型"),
+            ("/learn",         "查看学习情况（队列 + 已学程序）"),
+            ("/clear",         "清空当前会话上下文（数据保留）"),
+            ("/new",           "新建会话"),
+        ]
+        for name, desc in data_cmds:
+            cmd_desc[name] = desc
+
+        # 系统命令（从 COMMAND_REGISTRY 取 docstring）
+        from ..consciousness.living_commands import COMMAND_REGISTRY
+        for name, (handler, _) in COMMAND_REGISTRY.items():
+            full = f"/{name}"
+            if full not in cmd_desc:  # 数据命令优先
+                cmd_desc[full] = (handler.__doc__ or "").strip()
 
         # 模式切换
-        print(f"  \033[32m/intask\033[0m        进入任务模式")
-        print(f"  \033[32m/inchat\033[0m        退出任务模式")
+        cmd_desc["/intask"] = "进入任务模式"
+        cmd_desc["/inchat"] = "退出任务模式"
 
-        # 系统命令
-        if hasattr(living, '_list_commands'):
-            living._list_commands()
+        # ── 分组 ──────────────────────────────────────────────
+        groups = [
+            ("记忆与查询", [
+                "/db", "/memory", "/stats", "/stream <N>", "/context",
+                "/user-memories",
+                "/dag <kw>", "/expand <kw>", "/summarize",
+                "/periodic", "/dream",
+            ]),
+            ("会话", [
+                "/user <name>", "/clear", "/new", "/sessions", "/switch <id>",
+                "/export", "/intask", "/inchat",
+            ]),
+            ("自我认知", [
+                "/self", "/essence", "/identity", "/flame", "/projects",
+            ]),
+            ("意识与驱动", [
+                "/intent", "/fuel", "/tick", "/think",
+                "/drive", "/purpose", "/pace-stats",
+                "/relationship", "/learn",
+            ]),
+            ("身体与感官", [
+                "/ears", "/eyes", "/hear", "/listen", "/look", "/see",
+                "/register", "/touch",
+            ]),
+            ("系统", ["/model", "/mcp", "/plan", "/tool"]),
+        ]
+
+        # ── 渲染 ──────────────────────────────────────────────
+        print()
+        print(f"  {C}命令列表{R}")
+        for group_name, cmd_names in groups:
+            entries = [(n, cmd_desc.get(n, "")) for n in cmd_names if n in cmd_desc]
+            if not entries:
+                continue
+            print(f"\n  {C}── {group_name} ──{R}")
+            for name, desc in entries:
+                print(f"  {G}{name:<{CW}}{R} {D}{desc}{R}", flush=True)

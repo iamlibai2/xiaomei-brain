@@ -1192,25 +1192,30 @@ class MemoryConsole:
 
     def _cmd_help(self) -> CommandResult:
         """Show available commands."""
+        G, D, R = "\033[32m", "\033[38;5;73m", "\033[0m"
+        cmds = [
+            ("/user <名字>",   "切换用户身份"),
+            ("/db",            "查看数据库大小/表/行数"),
+            ("/memory",        "查看最近长期记忆"),
+            ("/self",          "查看当前自我画像"),
+            ("/essence",       "查看底色（性格基线）"),
+            ("/stats",         "全局统计面板"),
+            ("/stream [N]",    "查看最近经验流（默认20条）"),
+            ("/projects",      "查看项目心智模型"),
+            ("/clear",         "清空当前会话上下文（数据保留）"),
+            ("/new",           "新建会话"),
+            ("/context",       "查看完整上下文"),
+            ("/summarize",     "手动触发DAG压缩"),
+            ("/dag <关键词>",  "搜索DAG摘要"),
+            ("/expand <关键词>","展开DAG摘要原文"),
+            ("/periodic",      "手动触发定时记忆提取"),
+            ("/dream",         "手动触发梦境深度提取"),
+            ("/user-memories", "查看用户记忆分布"),
+            ("/relationship",  "查看当前用户的关系数据"),
+            ("/learn",         "查看学习情况（队列 + 已学程序）"),
+        ]
         lines = [
-            "  \033[32m/user <名字>\033[0m   切换用户身份",
-            "  \033[32m/db\033[0m            查看数据库大小/表/行数",
-            "  \033[32m/memory\033[0m        查看最近长期记忆",
-            "  \033[32m/self\033[0m          查看当前自我画像",
-            "  \033[32m/essence\033[0m       查看底色（性格基线）",
-            "  \033[32m/stats\033[0m         全局统计面板",
-            "  \033[32m/stream [N]\033[0m    查看最近经验流（默认20条）",
-            "  \033[32m/projects\033[0m      查看项目心智模型",
-            "  \033[32m/clear\033[0m         清空当前会话上下文（数据保留）",
-            "  \033[32m/new\033[0m           新建会话",
-            "  \033[32m/context\033[0m       查看完整上下文",
-            "  \033[32m/summarize\033[0m     手动触发DAG压缩",
-            "  \033[32m/dag <关键词>\033[0m  搜索DAG摘要",
-            "  \033[32m/expand <关键词>\033[0m 展开DAG摘要原文",
-            "  \033[32m/periodic\033[0m      手动触发定时记忆提取",
-            "  \033[32m/dream\033[0m         手动触发梦境深度提取",
-            "  \033[32m/user-memories\033[0m 查看用户记忆分布",
-            "  \033[32m/relationship\033[0m  查看当前用户的关系数据",
-            "  \033[32m/learn\033[0m         查看学习情况（队列 + 已学程序）",
+            f"  {G}{name:<18}{R} {D}{desc}{R}"
+            for name, desc in cmds
         ]
         return CommandResult(output="\n".join(lines))
