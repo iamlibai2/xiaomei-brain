@@ -87,7 +87,7 @@ class RemoteEmbedder:
             data=data,
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=300) as resp:
             result = json.loads(resp.read())
             if "vectors" in result:
                 return result["vectors"]

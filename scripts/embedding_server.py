@@ -80,7 +80,7 @@ class EmbedHandler(BaseHTTPRequestHandler):
             self._send_json(200, {
                 "status": "ok",
                 "model": MODEL_NAME,
-                "dim": self.model.get_sentence_embedding_dimension() if hasattr(self.model, "get_sentence_embedding_dimension") else self.model.get_embedding_dimension(),
+                "dim": self.model.get_embedding_dimension() if hasattr(self.model, "get_embedding_dimension") else self.model.get_sentence_embedding_dimension(),
                 "device": DEVICE,
             })
         else:
@@ -182,7 +182,7 @@ def main():
     model = SentenceTransformer(MODEL_NAME, device=DEVICE)
     EmbedHandler.model = model
 
-    dim = model.get_sentence_embedding_dimension() if hasattr(model, "get_sentence_embedding_dimension") else model.get_embedding_dimension()
+    dim = model.get_embedding_dimension() if hasattr(model, "get_embedding_dimension") else model.get_sentence_embedding_dimension()
     logger.info("Model loaded: %s (dim=%d, device=%s)", MODEL_NAME, dim, DEVICE)
 
     # 启动 HTTP 服务

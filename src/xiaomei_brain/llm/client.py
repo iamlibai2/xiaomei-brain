@@ -304,7 +304,7 @@ class LLMClient:
                     )
 
                 if response.status_code >= 400:
-                    logger.warning("[LLM] HTTP %d: %s", response.status_code, response.text[:500])
+                    logger.error("[LLM] HTTP %d: %s", response.status_code, response.text[:500])
                 response.raise_for_status()
 
                 elapsed = (time.time() - t0) * 1000

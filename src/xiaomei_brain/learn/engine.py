@@ -60,7 +60,7 @@ class LearningEngine:
 
         knowledge = self._react_learn(topic)
         if not knowledge:
-            logger.warning("[LearningEngine] 学习失败: %s", topic)
+            logger.error("[LearningEngine] 学习失败: %s", topic)
             return False
 
         memory_id = self._storage.save(topic, knowledge)
@@ -226,5 +226,5 @@ class LearningEngine:
                                            exp_stream=es, summarize=True)
             return result.strip() if result else None
         except Exception as e:
-            logger.warning("[LearningEngine] ReAct 学习失败: %s", e)
+            logger.error("[LearningEngine] ReAct 学习失败: %s", e)
             return None
