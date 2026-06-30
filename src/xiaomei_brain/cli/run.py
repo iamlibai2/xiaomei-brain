@@ -561,7 +561,7 @@ def _run_agent(
 
     # ── 启动语音监听（能量 VAD 持续监听）─────────────
     voice_listener = None
-    if body and body.ears and ears_enabled:
+    if body and body.ears:
         from xiaomei_brain.body.perception.voice_listener import VoiceListener
 
         def _on_voice(text: str, pcm: bytes, emotion: str) -> None:
@@ -587,8 +587,9 @@ def _run_agent(
 
         voice_listener = VoiceListener(body, on_speech=_on_voice)
         living._voice_listener = voice_listener
-        if voice_listener.start():
-            print(f"  \033[90m👂 语音监听已启动...\033[0m", flush=True)
+        if ears_enabled:
+            if voice_listener.start():
+                print(f"  \033[90m👂 语音监听已启动...\033[0m", flush=True)
 
     # 登录完成，重放登录期间缓冲的主动输出（仅当前用户）
     _login_done.set()
