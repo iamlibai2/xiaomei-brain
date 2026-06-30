@@ -171,10 +171,10 @@ class IdentityManager:
         if yaml_file.exists():
             try:
                 if yaml is not None:
-                    data = yaml.safe_load(yaml_file.read_text())
+                    data = yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
                 else:
                     # 无 PyYAML 时尝试基本解析
-                    data = _parse_simple_yaml(yaml_file.read_text())
+                    data = _parse_simple_yaml(yaml_file.read_text(encoding="utf-8"))
                 for person in data.get("people", []):
                     pid = person["id"]
                     self._identities[pid] = {

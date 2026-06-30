@@ -63,7 +63,8 @@ class RealSpeaker(Speaker):
     def play(self, audio_path: str) -> None:
         """播放音频（非阻塞）。
 
-        优先 winsound（WAV），非 WAV 用 ffmpeg 转码后播放。
+        WAV → winsound（轻量快速）；其他格式 → os.startfile() 调 Windows 默认播放器。
+        与 WSL2 方案一致：不需要 ffmpeg，利用系统原生能力。
         """
         if not os.path.isfile(audio_path):
             logger.warning("[RealSpeaker] 文件不存在: %s", audio_path)
@@ -73,49 +74,20 @@ class RealSpeaker(Speaker):
 
         ext = os.path.splitext(audio_path)[1].lower()
 
-        # 非 WAV → 转码
-        if ext != ".wav":
-            wav_path = os.path.join(tempfile.mkdtemp(), "play.wav")
+        # WAV → winsound（轻量，无需启动外部播放器）
+        if ext == ".wav":
             try:
-                subprocess.run(
-                    ["ffmpeg", "-i", audio_path, "-acodec", "pcm_s16le",
-                     "-ar", "44100", "-ac", "1", "-loglevel", "quiet", "-y", wav_path],
-                    check=True, timeout=30,
-                )
-                audio_path = wav_path
-            except FileNotFoundError:
-                logger.warning("[RealSpeaker] ffmpeg 不可用，无法播放非 WAV: %s", audio_path)
+                import winsound
+                winsound.PlaySound(audio_path, winsound.SND_ASYNC | winsound.SND_FILENAME)
+                logger.info("播放中 (winsound): %s", audio_path)
                 return
-            except Exception:
-                logger.exception("[RealSpeaker] 转码失败: %s", audio_path)
-                return
+            except Exception as e:
+                logger.debug("winsound 不可用，降级默认播放器: %s", e)
 
-        # WAV → winsound
+        # 非 WAV 或 winsound 不可用 → Windows 默认播放器
         try:
-            import winsound
-            winsound.PlaySound(audio_path, winsound.SND_ASYNC | winsound.SND_FILENAME)
-            logger.info("播放中 (winsound): %s", audio_path)
-            return
-        except ImportError:
-            pass
-        except Exception as e:
-            logger.warning("winsound 播放失败: %s", e)
-
-        # fallback: PowerShell SoundPlayer
-        try:
-            global _active_player
-            ps_cmd = (
-                "$player = New-Object System.Media.SoundPlayer;"
-                f"$player.SoundLocation = '{audio_path}';"
-                "try { $player.Play() } catch {}"
-            )
-            _active_player = subprocess.Popen(
-                ["powershell.exe", "-Command", ps_cmd],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-            logger.info("播放中 (SoundPlayer): %s", audio_path)
-        except FileNotFoundError:
-            logger.warning("[RealSpeaker] 无可用播放器: %s", audio_path)
+            logger.info("[RealSpeaker] 播放中 (default player): %s", audio_path)
+            os.startfile(audio_path)
         except Exception:
             logger.exception("[RealSpeaker] 播放失败: %s", audio_path)
 
@@ -145,8 +117,11 @@ class RealSpeaker(Speaker):
             def _callback(outdata, frames, time_info, status):
                 if status:
                     logger.warning("[RealSpeaker] sounddevice status: %s", status)
+                bytes_per_sample = channels * np.dtype(dtype).itemsize
+                needed_bytes = frames * bytes_per_sample
+
                 try:
-                    while len(q._data) < frames * channels * np.dtype(dtype).itemsize and not q._closed:
+                    while len(q._data) < needed_bytes and not q._closed:
                         try:
                             chunk = next(gen)
                         except StopIteration:
@@ -155,19 +130,22 @@ class RealSpeaker(Speaker):
                         if isinstance(chunk, np.ndarray):
                             chunk = chunk.astype(dtype).tobytes()
                         q._data.extend(chunk)
-                    available = min(frames * channels * np.dtype(dtype).itemsize, len(q._data))
-                    if available > 0:
-                        outdata[:available] = np.frombuffer(q._data[:available], dtype=dtype).reshape(-1, channels)
-                        q._data = q._data[available:]
-                    if available < outdata.size:
-                        outdata[available:] = 0
+                    available_bytes = min(needed_bytes, len(q._data))
+                    available_samples = available_bytes // bytes_per_sample
+                    if available_samples > 0:
+                        outdata[:available_samples] = np.frombuffer(
+                            q._data[:available_bytes], dtype=dtype
+                        ).reshape(-1, channels)
+                        del q._data[:available_bytes]
+                    if available_samples < frames:
+                        outdata[available_samples:] = 0
                 except Exception as e:
                     logger.warning("[RealSpeaker] 流式填充错误: %s", e)
                     q._closed = True
 
             sd.default.samplerate = sample_rate
             sd.default.channels = channels
-            with sd.OutputStream(callback=_callback, dtype=dtype.name, channels=channels):
+            with sd.OutputStream(callback=_callback, dtype=np.dtype(dtype).name, channels=channels):
                 import time
                 while not q._closed:
                     time.sleep(0.1)

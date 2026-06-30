@@ -164,7 +164,7 @@ class RealSpeaker(Speaker):
                 return
 
             with sd.OutputStream(samplerate=sample_rate, channels=channels,
-                                 dtype=dtype.name) as sd_stream:
+                                 dtype=np.dtype(dtype).name) as sd_stream:
                 sd_stream.write(first_chunk)
                 for chunk in stream:
                     sd_stream.write(chunk)

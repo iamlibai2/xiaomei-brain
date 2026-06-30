@@ -54,10 +54,14 @@ Metacognition —— 元认知层（自我监督与反省）
 ### 安装
 
 ```bash
+# Linux / macOS / WSL2
 pip install xiaomei-brain
+
+# Windows 原生
+pip install xiaomei-brain[windows]
 ```
 
-建议安装后预下载 Embedding 模型（BAAI/bge-m3，约 1.3GB），免去首次启动等待：
+建议安装后预下载所有本地模型，免去首次启动等待：
 
 ```bash
 xiaomei-brain install
@@ -69,6 +73,36 @@ xiaomei-brain install
 git clone https://github.com/iamlibai2/xiaomei-brain.git
 cd xiaomei-brain && pip install -e .
 ```
+
+#### Body 感官（可选）
+
+摄像头、麦克风、音箱、本地 TTS 等硬件感知与输出能力：
+
+```bash
+# Linux / macOS
+pip install xiaomei-brain[body]
+
+# Windows 原生
+pip install xiaomei-brain[windows,body]
+```
+
+> **Windows GPU 用户**：PyTorch 默认装 CPU 版，有 NVIDIA 显卡需重装 CUDA 版：
+> ```bash
+> pip install --reinstall torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+> ```
+>
+> **Windows 人脸识别**：`face_recognition` 依赖 `dlib`（无 Windows wheel），需手动安装：
+> ```bash
+> pip install face-recognition-models click Pillow
+> pip install --no-deps face_recognition
+> ```
+
+#### TTS 语音合成
+
+| 方案 | 类型 | 要求 | 说明 |
+|------|------|------|------|
+| MiniMax API | 在线 | API Key | 默认推荐，零门槛 |
+| VoxCPM | 本地 | NVIDIA GPU + CUDA | 离线场景，无 GPU 不可用 |
 
 ### 创建 Agent
 

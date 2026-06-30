@@ -174,12 +174,22 @@ def main():
         sys.exit(1)
 
     # 加载模型（这是唯一一次慢加载）
-    logger.info("Loading embedding model: %s on %s ...", MODEL_NAME, DEVICE)
+    # 优先用 ModelScope 缓存 → HF 缓存
+    ms_dir = os.path.join(
+        os.path.expanduser("~/.cache/modelscope/hub/models"),
+        MODEL_NAME,
+    )
+    model_path = MODEL_NAME
+    if os.path.isfile(os.path.join(ms_dir, "pytorch_model.bin")):
+        model_path = ms_dir
+        logger.info("Found model in ModelScope cache: %s", ms_dir)
+
+    logger.info("Loading embedding model: %s on %s ...", model_path, DEVICE)
     os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
     os.environ["HF_HUB_OFFLINE"] = "1"
 
     from sentence_transformers import SentenceTransformer
-    model = SentenceTransformer(MODEL_NAME, device=DEVICE)
+    model = SentenceTransformer(model_path, device=DEVICE)
     EmbedHandler.model = model
 
     dim = model.get_embedding_dimension() if hasattr(model, "get_embedding_dimension") else model.get_sentence_embedding_dimension()

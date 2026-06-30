@@ -1,7 +1,4 @@
 """豆包 Seedream 图片生成（火山引擎方舟平台）。
-
-使用 OpenAI 兼容 SDK，接口与 DALL-E 类似：
-- client.images.generate(model, prompt, size, n, response_format)
 """
 
 from __future__ import annotations
@@ -11,6 +8,8 @@ import os
 import time
 import uuid
 from typing import Any
+
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +44,7 @@ def set_image_provider(provider) -> None:
 class SeedreamProvider:
     """豆包 Seedream 图片生成 provider。
 
-    使用 OpenAI 兼容 SDK（openai.OpenAI）调用火山引擎方舟 API。
+    直接通过 HTTP POST 调用火山引擎方舟 API（OpenAI 兼容接口）。
     """
 
     def __init__(
@@ -55,9 +54,8 @@ class SeedreamProvider:
         model: str = DEFAULT_MODEL,
         watermark: bool = False,
     ) -> None:
-        from openai import OpenAI
-
-        self.client = OpenAI(base_url=base_url, api_key=api_key)
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
         self.model = model
         self.watermark = watermark
 
@@ -83,22 +81,31 @@ class SeedreamProvider:
             size = VALID_SIZES[0]
         n = max(1, min(n, MAX_IMAGES))
 
-        response = self.client.images.generate(
-            model=self.model,
-            prompt=prompt,
-            size=size,
-            n=n,
-            response_format=response_format,
-            extra_body={"watermark": self.watermark},
-        )
+        url = f"{self.base_url}/images/generations"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        body = {
+            "model": self.model,
+            "prompt": prompt,
+            "size": size,
+            "n": n,
+            "response_format": response_format,
+            "watermark": self.watermark,
+        }
+
+        r = requests.post(url, json=body, headers=headers, timeout=300)
+        r.raise_for_status()
+        data = r.json()
 
         images = []
-        for img in response.data:
+        for img in data.get("data", []):
             image_data = {}
-            if hasattr(img, "url") and img.url:
-                image_data["url"] = img.url
-            if hasattr(img, "b64_json") and img.b64_json:
-                image_data["b64_json"] = img.b64_json
+            if img.get("url"):
+                image_data["url"] = img["url"]
+            if img.get("b64_json"):
+                image_data["b64_json"] = img["b64_json"]
             images.append(image_data)
 
         return images
@@ -115,8 +122,6 @@ class SeedreamProvider:
         Returns:
             保存的文件路径列表。
         """
-        import requests as req
-
         images = self.generate(prompt, size=size, n=n, response_format="url")
 
         os.makedirs(output_dir, exist_ok=True)
@@ -132,7 +137,7 @@ class SeedreamProvider:
             filepath = os.path.join(output_dir, filename)
 
             try:
-                r = req.get(url, timeout=120)
+                r = requests.get(url, timeout=120)
                 r.raise_for_status()
                 with open(filepath, "wb") as f:
                     f.write(r.content)

@@ -33,6 +33,11 @@ class RealCamera(Camera):
             self._cap.release()
             self._cap = None
             return False
+
+        # 预热，丢弃前几帧
+        for _ in range(10):
+            self._cap.read()
+
         self._opened = True
         logger.info("摄像头已打开 index=%d backend=%s",
                     self._camera_index, self._cap.getBackendName())

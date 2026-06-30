@@ -46,7 +46,7 @@ class VoxCPMProvider:
         self.voice_desc = voice_desc
         self.cfg_value = cfg_value
         self.inference_timesteps = inference_timesteps
-        self.device = device or "auto"
+        self.device = device or "cuda"
         self.local_files_only = local_files_only
         self._model = None
 

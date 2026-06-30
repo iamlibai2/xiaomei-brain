@@ -225,7 +225,9 @@ class RealSpeaker(Speaker):
                     all_raw.extend(chunk)
                 _write_wav(path, bytes(all_raw), sample_rate, channels, sz)
 
-            logger.info("[RealSpeaker] 流式缓冲完毕: %s (%d bytes)", path, os.path.getsize(path))
+            wav_size = os.path.getsize(path)
+            expected_dur = wav_size / (sample_rate * channels * (2 if codec == "pcm_s16" else 4))
+            logger.info("[RealSpeaker] 流式缓冲完毕: %s (%d bytes, %.1fs audio)", path, wav_size, expected_dur)
             self.play(path, blocking=True)
         except Exception:
             logger.exception("[RealSpeaker] 流式播放失败")

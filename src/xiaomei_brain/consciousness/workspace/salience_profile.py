@@ -150,7 +150,7 @@ class SalienceProfile:
         if not p.exists():
             return cls()
         try:
-            data = json.loads(p.read_text())
+            data = json.loads(p.read_text(encoding="utf-8"))
             return cls.from_dict(data)
         except (json.JSONDecodeError, ValueError) as e:
             logger.debug("[SalienceProfile] 加载失败，使用空 profile: %s", e)

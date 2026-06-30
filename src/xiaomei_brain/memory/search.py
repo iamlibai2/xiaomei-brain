@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import re
 import unicodedata
 from typing import Any
@@ -31,6 +32,32 @@ def sanitize_text(text: str) -> str:
     return text.strip()
 
 
+def _resolve_model_path(model_name: str) -> str:
+    """Resolve model to a local path that SentenceTransformer can load.
+
+    Checks HuggingFace cache first, then ModelScope (魔搭) cache.
+    Returns the original model_name if no local cache found.
+    """
+    # ModelScope cache (优先): ~/.cache/modelscope/hub/models/BAAI/bge-m3/
+    ms_dir = os.path.normpath(os.path.join(
+        os.path.expanduser("~/.cache/modelscope/hub/models"),
+        model_name,
+    ))
+    if os.path.isfile(os.path.join(ms_dir, "pytorch_model.bin")):
+        logger.info("Found model in ModelScope cache: %s", ms_dir)
+        return ms_dir
+
+    # HuggingFace cache: ~/.cache/huggingface/hub/models--BAAI--bge-m3/
+    hf_dir = os.path.join(
+        os.path.expanduser("~/.cache/huggingface/hub"),
+        "models--" + model_name.replace("/", "--"),
+    )
+    if os.path.isdir(hf_dir):
+        return model_name
+
+    return model_name
+
+
 class Embedder:
     """Local text embedding using sentence-transformers."""
 
@@ -55,8 +82,9 @@ class Embedder:
             )
             raise RuntimeError("sentence_transformers not installed")
 
-        logger.info("Loading embedding model: %s", self.model_name)
-        self._model = SentenceTransformer(self.model_name)
+        model_path = _resolve_model_path(self.model_name)
+        logger.info("Loading embedding model: %s", model_path)
+        self._model = SentenceTransformer(model_path)
         logger.info("Embedding model loaded successfully")
         return self._model
 

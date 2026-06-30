@@ -22,8 +22,12 @@ classifiers = [
 dependencies = [
     "requests>=2.31.0",
     "sentence-transformers>=2.2.0",
+    "modelscope>=1.14.0",
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
     "pyyaml>=6.0",
     "lancedb>=0.4.0",
+    "pylance",
     "rich>=13.0.0",
     "pydantic>=2.0",
     "numpy>=1.24.0",
@@ -42,11 +46,6 @@ xiaomei-brain = "xiaomei_brain.cli:main"
 [project.optional-dependencies]
 feishu = ["lark-oapi"]
 dingtalk = ["dingtalk-stream"]
-tts = ["sounddevice>=0.4.0"]
-server = [
-    "fastapi>=0.109.0",
-    "uvicorn[standard]>=0.27.0",
-]
 tui = ["prompt-toolkit>=3.0", "websocket-client>=1.0"]
 ws = ["websockets>=12.0"]
 schedule = ["croniter"]
@@ -55,7 +54,17 @@ windows = [
     "pyreadline3>=3.4.0; sys_platform == 'win32'",
     "windows-curses>=2.3.0; sys_platform == 'win32'",
 ]
-
+body = [
+    "pyaudio>=0.2.11",
+    "opencv-python-headless>=4.8.0",
+    "dlib-bin",
+    "sounddevice>=0.4.0",
+    "funasr>=1.0.0",
+    "webrtcvad-wheels>=2.0.11",
+    "voxcpm",
+    "soundfile>=0.12.0",
+    "speechbrain>=1.0.0",
+]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

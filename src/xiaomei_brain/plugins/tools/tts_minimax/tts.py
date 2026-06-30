@@ -84,13 +84,25 @@ def _speak_streaming_to_gen(text, voice_id=None, speed=None, emotion=None, pitch
     t = threading.Thread(target=_run, daemon=True)
     t.start()
 
+    total_yielded = 0
+    chunk_count = 0
     while True:
         chunk = q.get()
         if chunk is None:
             break
         if isinstance(chunk, Exception):
             raise chunk
+        chunk_count += 1
+        total_yielded += len(chunk)
+        logger.debug(
+            "[speak] gen chunk #%d: %d bytes (total=%d)",
+            chunk_count, len(chunk), total_yielded,
+        )
         yield chunk
+    logger.info(
+        "[speak] gen done: chunks=%d, total_bytes=%d",
+        chunk_count, total_yielded,
+    )
 
 
 @tool(

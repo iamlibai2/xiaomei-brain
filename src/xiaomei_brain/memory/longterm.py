@@ -141,16 +141,19 @@ class LongTermMemory(SQLiteStore):
             from io import StringIO
             from sentence_transformers import SentenceTransformer
 
+            from xiaomei_brain.memory.search import _resolve_model_path
+            model_path = _resolve_model_path(self._embedding_model_name)
+
             try:
-                logger.info("Loading embedding model: %s", self._embedding_model_name)
+                logger.info("Loading embedding model: %s", model_path)
                 with redirect_stderr(StringIO()):
-                    self._embedder = SentenceTransformer(self._embedding_model_name)
-                logger.info("Embedding model loaded: %s", self._embedding_model_name)
+                    self._embedder = SentenceTransformer(model_path)
+                logger.info("Embedding model loaded: %s", model_path)
             except Exception as e:
                 if self._embedding_model_name != self._embedding_fallback:
                     logger.warning(
                         "Failed to load %s, falling back to %s: %s",
-                        self._embedding_model_name, self._embedding_fallback, e,
+                        model_path, self._embedding_fallback, e,
                     )
                     self._embedding_model_name = self._embedding_fallback
                     self._embedder = SentenceTransformer(self._embedding_fallback)

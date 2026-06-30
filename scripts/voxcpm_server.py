@@ -216,13 +216,19 @@ def main():
 
     torch.set_float32_matmul_precision("high")
 
+    if not torch.cuda.is_available():
+        logger.error("CUDA 不可用，VoxCPM 需要 GPU 推理以得到流畅体验，建议使用在线 TTS 代替")
+        sys.exit(1)
+    device = "cuda"
+    logger.info("Using device: %s", device)
+
     if os.path.isdir(MODEL_ID):
         model = VoxCPM(
-            voxcpm_model_path=MODEL_ID, enable_denoiser=False, device="cuda",
+            voxcpm_model_path=MODEL_ID, enable_denoiser=False, device=device,
         )
     else:
         model = VoxCPM.from_pretrained(
-            MODEL_ID, load_denoiser=False, device="cuda",
+            MODEL_ID, load_denoiser=False, device=device,
         )
 
     VoxCPMHandler.model = model

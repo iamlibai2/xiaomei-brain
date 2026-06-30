@@ -157,6 +157,7 @@ class TTSProvider:
         response.raise_for_status()
 
         chunk_count = 0
+        total_bytes = 0
         for line in response.iter_lines():
             if not line:
                 continue
@@ -184,11 +185,22 @@ class TTSProvider:
                 if audio_hex:
                     chunk = bytes.fromhex(audio_hex)
                     chunk_count += 1
+                    total_bytes += len(chunk)
+                    logger.debug(
+                        "[TTS] chunk #%d: hex_len=%d → bytes=%d (total=%d)",
+                        chunk_count, len(audio_hex), len(chunk), total_bytes,
+                    )
                     if on_chunk:
                         on_chunk(chunk)
             except json.JSONDecodeError:
                 logger.debug("Failed to parse streaming response: %s", data_str[:100])
 
+        logger.info(
+            "[TTS] speak_streaming done: chunks=%d, total_bytes=%d, "
+            "text_len=%d, expected_duration≈%.1fs",
+            chunk_count, total_bytes, len(text),
+            total_bytes / (self.audio_config.sample_rate * 2) if total_bytes > 0 else 0,
+        )
         if chunk_count == 0:
             raise RuntimeError("MiniMax TTS streaming returned no audio chunks")
 

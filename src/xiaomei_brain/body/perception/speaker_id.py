@@ -24,6 +24,36 @@ os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 _MODEL_SOURCE = "speechbrain/spkrec-ecapa-voxceleb"
 
 
+def _resolve_savedir(hf_dir_name: str, fallback: str) -> str:
+    """解析 SpeechBrain savedir，优先复用 HF 缓存目录（绕过 Windows symlink 权限问题）。"""
+    hf_cache = os.path.expanduser(
+        f"~/.cache/huggingface/hub/{hf_dir_name}/snapshots"
+    )
+    if os.path.isdir(hf_cache):
+        snapshots = sorted(os.listdir(hf_cache))
+        if snapshots:
+            return os.path.join(hf_cache, snapshots[-1])
+    return fallback
+
+
+def _precopy_symlink_targets(savedir: str) -> None:
+    """SpeechBrain Pretrainer 会将 label_encoder.txt symlink 为 label_encoder.ckpt。
+
+    Windows 无 symlink 权限（[WinError 1314]），提前硬拷贝绕过。
+    文件都很小（~几 KB），不影响性能。
+    """
+    import shutil
+    for filename in os.listdir(savedir):
+        base, ext = os.path.splitext(filename)
+        if ext == ".txt":
+            target = os.path.join(savedir, base + ".ckpt")
+            if not os.path.exists(target):
+                try:
+                    shutil.copy2(os.path.join(savedir, filename), target)
+                except OSError:
+                    pass
+
+
 class SpeakerID:
     """声纹注册 + 验证 + 识别。
 
@@ -41,13 +71,25 @@ class SpeakerID:
     def _ensure_loaded(self) -> None:
         if SpeakerID._loaded:
             return
-        from speechbrain.inference.speaker import SpeakerRecognition
         import torch
+
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
         logger.info("加载声纹模型: %s (device=%s)...", _MODEL_SOURCE, device)
+
+        savedir = _resolve_savedir(
+            "models--speechbrain--spkrec-ecapa-voxceleb",
+            fallback=os.path.expanduser("~/.cache/speechbrain/"),
+        )
+
+        # Windows 无符号链接权限，SpeechBrain 的 Pretrainer 也会在 savedir 内部
+        # 创建 symlink（如 label_encoder.txt → label_encoder.ckpt），导致 [WinError 1314]。
+        # 提前把 txt 文件硬拷贝为 .ckpt，让 Pretrainer 发现文件已存在跳过 symlink。
+        _precopy_symlink_targets(savedir)
+
+        from speechbrain.inference.speaker import SpeakerRecognition
         SpeakerID._recognizer = SpeakerRecognition.from_hparams(
             source=_MODEL_SOURCE,
-            savedir=os.path.expanduser("~/.cache/speechbrain/"),
+            savedir=savedir,
             run_opts={"device": device},
         )
         SpeakerID._loaded = True
@@ -181,11 +223,20 @@ class SpeakerID:
     def _extract_embedding(self, pcm: bytes, sample_rate: int) -> np.ndarray | None:
         """PCM → 声纹特征向量。"""
         self._ensure_loaded()
+        import soundfile as sf
+        import torch
+
         wav_path = self._pcm_to_wav_path(pcm, sample_rate)
         try:
-            embedding = SpeakerID._recognizer.encode_batch(
-                SpeakerID._recognizer.load_audio(wav_path).unsqueeze(0)
-            )
+            signal, sr = sf.read(wav_path, dtype="float32")
+            # 重采样到 16kHz（模型要求）
+            if sr != 16000:
+                import torchaudio.functional as F
+                signal = torch.from_numpy(signal).unsqueeze(0)
+                signal = F.resample(signal, sr, 16000)
+                signal = signal.squeeze(0).numpy()
+            waveform = torch.from_numpy(signal).unsqueeze(0)  # (1, samples)
+            embedding = SpeakerID._recognizer.encode_batch(waveform)
             return embedding.squeeze().detach().cpu().numpy()
         except Exception:
             logger.exception("声纹提取失败")
