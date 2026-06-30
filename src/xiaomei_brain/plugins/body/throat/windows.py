@@ -111,52 +111,108 @@ class RealSpeaker(Speaker):
         # PCM → sounddevice 真流式
         try:
             import sounddevice as sd
-            dtype = np.float32 if codec == "pcm_f32" else np.int16
-            q = type('', (), {'_data': bytearray(), '_closed': False})()
-
-            def _callback(outdata, frames, time_info, status):
-                if status:
-                    logger.warning("[RealSpeaker] sounddevice status: %s", status)
-                bytes_per_sample = channels * np.dtype(dtype).itemsize
-                needed_bytes = frames * bytes_per_sample
-
-                try:
-                    while len(q._data) < needed_bytes and not q._closed:
-                        try:
-                            chunk = next(gen)
-                        except StopIteration:
-                            q._closed = True
-                            break
-                        if isinstance(chunk, np.ndarray):
-                            chunk = chunk.astype(dtype).tobytes()
-                        q._data.extend(chunk)
-                    available_bytes = min(needed_bytes, len(q._data))
-                    available_samples = available_bytes // bytes_per_sample
-                    if available_samples > 0:
-                        outdata[:available_samples] = np.frombuffer(
-                            q._data[:available_bytes], dtype=dtype
-                        ).reshape(-1, channels)
-                        del q._data[:available_bytes]
-                    if available_samples < frames:
-                        outdata[available_samples:] = 0
-                except Exception as e:
-                    logger.warning("[RealSpeaker] 流式填充错误: %s", e)
-                    q._closed = True
-
-            sd.default.samplerate = sample_rate
-            sd.default.channels = channels
-            with sd.OutputStream(callback=_callback, dtype=np.dtype(dtype).name, channels=channels):
-                import time
-                while not q._closed:
-                    time.sleep(0.1)
-
-            logger.info("流式播放完成 (sounddevice)")
-            return
         except ImportError:
             logger.info("[RealSpeaker] sounddevice 未安装，降级缓冲文件")
+            self._play_stream_buffered(gen, codec, sample_rate, channels)
+            return
 
-        # 降级：缓冲 PCM → WAV → play()
-        self._play_stream_buffered(gen, codec, sample_rate, channels)
+        import threading
+        import queue
+        import time
+
+        dtype = np.float32 if codec == "pcm_f32" else np.int16
+        bytes_per_sample = channels * np.dtype(dtype).itemsize
+
+        # Producer thread: drives the generator, puts chunks into a thread-safe queue.
+        # This decouples GPU/HTTP latency from the WASAPI audio callback.
+        data_q: queue.Queue = queue.Queue()
+        gen_done = threading.Event()
+
+        def _producer():
+            try:
+                for chunk in gen:
+                    if isinstance(chunk, np.ndarray):
+                        chunk = chunk.astype(dtype).tobytes()
+                    data_q.put(chunk)
+            except Exception as e:
+                data_q.put(e)
+            finally:
+                gen_done.set()
+
+        threading.Thread(target=_producer, daemon=True).start()
+
+        # Pre-fill: wait for at least 3 seconds of audio before starting OutputStream.
+        # VoxCPM1.5 yields 80ms chunks with 100-300ms inter-chunk latency (diffusion).
+        # 3s pre-fill provides extra runway for long utterances where generation
+        # speed barely keeps up with real-time playback.
+        prefill_target = sample_rate * bytes_per_sample * 3  # 3 seconds
+        buf_data = bytearray()
+
+        while len(buf_data) < prefill_target and not gen_done.is_set():
+            try:
+                chunk = data_q.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if isinstance(chunk, Exception):
+                raise chunk
+            buf_data.extend(chunk)
+
+        logger.warning("[RealSpeaker] 预缓冲完成: %d bytes (%.1fs audio), sr=%d, "
+                       "generator_done=%s",
+                       len(buf_data), len(buf_data) / (sample_rate * bytes_per_sample),
+                       sample_rate, gen_done.is_set())
+
+        buf = type('', (), {'_data': buf_data, '_closed': False})()
+        underflows = 0
+        total_callbacks = 0
+
+        def _callback(outdata, frames, time_info, status):
+            nonlocal underflows, total_callbacks
+            total_callbacks += 1
+            if status:
+                logger.warning("[RealSpeaker] sounddevice status: %s", status)
+
+            needed_bytes = frames * bytes_per_sample
+
+            # Drain producer queue into buffer (non-blocking — MUST never block)
+            try:
+                while True:
+                    chunk = data_q.get_nowait()
+                    if isinstance(chunk, Exception):
+                        buf._closed = True
+                        break
+                    buf._data.extend(chunk)
+            except queue.Empty:
+                pass
+
+            available_bytes = min(needed_bytes, len(buf._data))
+            available_samples = available_bytes // bytes_per_sample
+
+            if available_samples > 0:
+                outdata[:available_samples] = np.frombuffer(
+                    buf._data[:available_bytes], dtype=dtype
+                ).reshape(-1, channels)
+                del buf._data[:available_bytes]
+
+            if available_samples < frames:
+                outdata[available_samples:] = 0
+                underflows += 1
+
+            # End playback when generator is done AND buffer is drained
+            if gen_done.is_set() and len(buf._data) == 0:
+                buf._closed = True
+
+        sd.default.samplerate = sample_rate
+        sd.default.channels = channels
+        with sd.OutputStream(
+            callback=_callback, dtype=np.dtype(dtype).name,
+            channels=channels, blocksize=4096, latency="high",
+        ):
+            while not buf._closed:
+                time.sleep(0.1)
+
+        logger.warning("[RealSpeaker] 流式播放完成 (sounddevice) — "
+                       "callbacks=%d, underflows=%d", total_callbacks, underflows)
 
     def _play_stream_buffered(self, gen, codec, sample_rate, channels) -> None:
         """缓冲 chunk 到文件后播放（用于 mp3 或 sounddevice 不可用时降级）。"""

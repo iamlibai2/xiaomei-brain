@@ -56,6 +56,30 @@ def ensure_utf8_output() -> None:
     except Exception:
         pass
 
+    # 4. Patch builtins.open — 默认 encoding="utf-8"
+    #    VoxCPM 等第三方库内部用 open() 不带 encoding，Windows 会走 GBK
+    _patch_open_utf8()
+
+
+def _patch_open_utf8() -> None:
+    """Monkey-patch builtins.open，让文本模式默认使用 UTF-8。"""
+    import builtins
+
+    if getattr(_patch_open_utf8, "_done", False):
+        return
+
+    _orig = builtins.open
+
+    def _open(file, mode="r", buffering=-1, encoding=None,
+              errors=None, newline=None, closefd=True, opener=None):
+        if encoding is None and "b" not in mode:
+            encoding = "utf-8"
+        return _orig(file, mode, buffering, encoding, errors,
+                     newline, closefd, opener)
+
+    builtins.open = _open
+    _patch_open_utf8._done = True
+
 
 # ── WSL2 检测 ──────────────────────────────────────────────
 

@@ -49,34 +49,10 @@ def voxcpm_speak(text: str) -> str:
 
     try:
         sr = _provider.sample_rate
-        # 用 thread+queue 解耦：GPU 推理在子线程，不阻塞 audio callback 的 next(gen)
-        # 和 MiniMax 的 _speak_streaming_to_gen 同一模式
-        import queue
-        import threading
-        q: queue.Queue = queue.Queue()
-
-        def _run() -> None:
-            try:
-                for chunk in _provider.generate_streaming(text):
-                    q.put(chunk)
-            except Exception as e:
-                q.put(e)
-            finally:
-                q.put(None)  # sentinel
-
-        t = threading.Thread(target=_run, daemon=True)
-        t.start()
-
-        def _gen():
-            while True:
-                chunk = q.get()
-                if chunk is None:
-                    break
-                if isinstance(chunk, Exception):
-                    raise chunk
-                yield chunk
-
-        throat.play_stream(_gen(), codec="pcm_f32", sample_rate=sr)
+        logger.warning("[vox_speak] 流式播放开始, sr=%d", sr)
+        # play_stream 内部用 producer 线程驱动生成器 + 预填充 + 非阻塞回调，
+        # 确保 WASAPI 音频回调永不阻塞。
+        throat.play_stream(_provider.generate_streaming(text), codec="pcm_f32", sample_rate=sr)
         return f"已朗读: {text[:50]}{'...' if len(text) > 50 else ''}"
     except Exception as e:
         logger.error("VoxCPM speak error: %s", e)

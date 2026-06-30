@@ -37,7 +37,7 @@ class VoxCPMProvider:
         model_id: str | None = None,
         voice_desc: str = DEFAULT_VOICE_DESC,
         cfg_value: float = 2.0,
-        inference_timesteps: int = 10,
+        inference_timesteps: int = 6,
         device: str | None = None,
         local_files_only: bool = False,
         agent_id: str = "default",
@@ -152,7 +152,7 @@ class VoxCPMProvider:
         """加载 prompt_text。优先 reference.txt，否则用 voice_desc 去掉括号。"""
         txt_file = os.path.join(self._voice_ref_dir, "reference.txt")
         if os.path.exists(txt_file):
-            with open(txt_file, "r") as f:
+            with open(txt_file, "r", encoding="utf-8") as f:
                 return f.read().strip()
         # 兜底：用 voice_desc，但不保留括号（VoxCPM1.5 参考音频不含描述）
         return None
@@ -246,8 +246,13 @@ class VoxCPMProvider:
         self._ensure_voice_reference()
 
         if self._check_remote():
+            logger.warning("[VoxCPM] 流式路径: remote (%s), sr=%d",
+                           self._server_url, self._remote_sample_rate or 44100)
             yield from self._generate_streaming_remote(text)
         else:
+            sr = self.model.tts_model.sample_rate
+            logger.warning("[VoxCPM] 流式路径: local (%s), sr=%d",
+                           type(self.model.tts_model).__name__, sr)
             if self._use_cloning:
                 logger.info("VoxCPM stream (clone): %s", text[:60])
             else:
