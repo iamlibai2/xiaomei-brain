@@ -1,6 +1,6 @@
 """TTS (Text-to-Speech) tool using MiniMax API.
 
-speak: 流式生成 mp3 → throat.play_stream() → 平台原生流式播放
+speak: 流式生成 PCM → throat.play_stream() → 平台原生流式播放
 speak_to_file: 生成 mp3 文件
 """
 
@@ -74,6 +74,7 @@ def _speak_streaming_to_gen(text, voice_id=None, speed=None, emotion=None, pitch
             _tts_provider.speak_streaming(
                 text, on_chunk=_on_chunk,
                 voice_id=voice_id, speed=speed, emotion=emotion, pitch=pitch,
+                audio_format="pcm",
             )
         except Exception as e:
             q.put(e)
@@ -105,7 +106,7 @@ def tts_speak(
 ) -> str:
     """Convert text to speech and play it.
 
-    流式生成 mp3 → throat.play_stream(gen, codec="mp3") → 平台播放。
+    流式生成 PCM → throat.play_stream(gen, codec="pcm_s16") → 平台播放。
 
     Args:
         text: 要朗读的文本（最多500字符）。可在文本中嵌入语气词标签增强表现力：
@@ -149,7 +150,8 @@ def tts_speak(
     try:
         gen = _speak_streaming_to_gen(text, voice_id=voice_id, speed=speed,
                                        emotion=emotion, pitch=pitch)
-        throat.play_stream(gen, codec="mp3")
+        sr = _tts_provider.audio_config.sample_rate if _tts_provider else 32000
+        throat.play_stream(gen, codec="pcm_s16", sample_rate=sr)
         return f"已朗读: {text[:50]}{'...' if len(text) > 50 else ''}"
     except Exception as e:
         logger.error("TTS speak error: %s", e)

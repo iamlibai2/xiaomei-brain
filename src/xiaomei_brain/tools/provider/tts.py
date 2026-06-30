@@ -123,6 +123,7 @@ class TTSProvider:
         speed: float | None = None,
         emotion: str | None = None,
         pitch: float | None = None,
+        audio_format: str | None = None,
     ) -> None:
         """Generate speech with streaming callback (non-blocking).
 
@@ -133,10 +134,13 @@ class TTSProvider:
             speed: Per-call speed override (None = use config default)
             emotion: Per-call emotion override (None = use config default)
             pitch: Per-call pitch override (None = use config default)
+            audio_format: Per-call audio format override (None = use config default).
+                          "pcm" for raw PCM (real streaming), "mp3" for compressed.
         """
         payload = self._build_payload(text, stream=True,
                                       voice_id=voice_id,
-                                      speed=speed, emotion=emotion, pitch=pitch)
+                                      speed=speed, emotion=emotion, pitch=pitch,
+                                      audio_format=audio_format)
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -216,7 +220,8 @@ class TTSProvider:
     def _build_payload(self, text: str, stream: bool,
                        voice_id: str | None = None,
                        speed: float | None = None, emotion: str | None = None,
-                       pitch: float | None = None) -> dict:
+                       pitch: float | None = None,
+                       audio_format: str | None = None) -> dict:
         """Build API request payload."""
         if emotion and emotion not in self._VALID_EMOTIONS:
             logger.warning("Invalid emotion=%r, falling back to default", emotion)
@@ -235,7 +240,7 @@ class TTSProvider:
             "audio_setting": {
                 "sample_rate": self.audio_config.sample_rate,
                 "bitrate": self.audio_config.bitrate,
-                "format": self.audio_config.format,
+                "format": audio_format or self.audio_config.format,
                 "channel": self.audio_config.channel,
             },
         }

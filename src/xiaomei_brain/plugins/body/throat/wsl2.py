@@ -136,11 +136,12 @@ def _play_windows(audio_path: str, blocking: bool = False, timeout: float = 120)
         return proc
 
 
-def _play_audio_file(audio_path: str) -> subprocess.Popen:
-    """播放音频文件（非阻塞）。自动选择最佳播放方式。"""
+def _play_audio_file(audio_path: str, blocking: bool = False) -> subprocess.Popen | None:
+    """播放音频文件。WSL2 上 blocking=True → SoundPlayer 静默，False → wmplayer。"""
     if _IS_WSL2:
-        logger.info("[RealSpeaker] 播放中（Windows wmplayer）: %s", audio_path)
-        return _play_windows(audio_path, blocking=False)
+        logger.info("[RealSpeaker] 播放中（Windows %s）: %s",
+                    "SoundPlayer" if blocking else "wmplayer", audio_path)
+        return _play_windows(audio_path, blocking=blocking)
 
     af = ["-af", "aresample=async=1000:min_comp=0.001:first_pts=0"]
     try:
@@ -178,15 +179,17 @@ class RealSpeaker(Speaker):
 
     # ── 播放逻辑 ──────────────────────────────────────────
 
-    def play(self, audio_path: str) -> None:
-        """播放音频（非阻塞）。启动前停止当前播放。"""
+    def play(self, audio_path: str, blocking: bool = False) -> None:
+        """播放音频。blocking=True → SoundPlayer 静默阻塞；False → wmplayer 非阻塞。"""
         if not os.path.isfile(audio_path):
             logger.warning("[RealSpeaker] 文件不存在: %s", audio_path)
             return
         stop_active_playback()
         self.last_played = audio_path
         try:
-            set_active_player(_play_audio_file(audio_path))
+            proc = _play_audio_file(audio_path, blocking=blocking)
+            if proc is not None:
+                set_active_player(proc)
         except FileNotFoundError:
             logger.warning("[RealSpeaker] 无可用播放器: %s", audio_path)
         except Exception:
@@ -223,6 +226,11 @@ class RealSpeaker(Speaker):
                 _write_wav(path, bytes(all_raw), sample_rate, channels, sz)
 
             logger.info("[RealSpeaker] 流式缓冲完毕: %s (%d bytes)", path, os.path.getsize(path))
-            self.play(path)
+            self.play(path, blocking=True)
         except Exception:
             logger.exception("[RealSpeaker] 流式播放失败")
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
