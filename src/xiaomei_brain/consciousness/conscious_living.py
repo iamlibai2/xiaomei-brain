@@ -496,9 +496,10 @@ class ConsciousLiving(Living):
                         sense.name, device.__class__.__name__)
 
         # 填充延迟绑定引用，使工具函数能解析到 body/identity_mgr
-        from ..plugins.body._refs import body_ref, identity_mgr_ref
+        from ..plugins.body._refs import body_ref, identity_mgr_ref, living_ref
         body_ref[0] = self.body
         identity_mgr_ref[0] = self._identity_mgr
+        living_ref[0] = self
 
         # 将 IdentityManager 的共享生物特征注入感官层
         if self._identity_mgr.face_id.known_names:

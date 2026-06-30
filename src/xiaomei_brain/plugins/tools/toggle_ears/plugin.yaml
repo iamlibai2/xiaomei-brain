@@ -1,0 +1,5 @@
+name: toggle_ears
+version: "1.0.0"
+description: "耳朵开关 — 通过自然语言控制语音监听"
+kind: bundle
+entry: adapter:register
