@@ -70,6 +70,14 @@ def _bootstrap_xiaomei() -> None:
 
 def main() -> None:
     """CLI 入口"""
+    try:
+        _main_impl()
+    except KeyboardInterrupt:
+        print("\n  已取消", flush=True)
+        sys.exit(0)
+
+
+def _main_impl() -> None:
     from xiaomei_brain.cli.platform_utils import ensure_utf8_output
     ensure_utf8_output()
 

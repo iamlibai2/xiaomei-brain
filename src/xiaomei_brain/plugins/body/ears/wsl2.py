@@ -281,6 +281,7 @@ class RealMicrophone(Microphone):
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
+                start_new_session=True,
             )
         except Exception:
             logger.exception("启动流式录音失败")
@@ -377,8 +378,12 @@ class RealMicrophone(Microphone):
                 timeout=seconds + 10,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
+                start_new_session=True,
             )
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            if isinstance(e, subprocess.CalledProcessError) and e.returncode == -2:
+                logger.debug("录音被中断 (SIGINT)")
+                return None
             stderr_info = e.stderr.decode().strip() if getattr(e, 'stderr', None) else ""
             logger.error("录音失败: %s%s", e, f" [{stderr_info}]" if stderr_info else "")
             return None

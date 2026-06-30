@@ -667,36 +667,23 @@ def _run_agent(
         answer_clarify_request(response)
         return True
 
-    try:
-        while living.is_running:
-            try:
-                # 第一次 Ctrl+C 后跳过 status/分隔线，保持界面干净
-                # 命令触发了新消息（如 /l）也跳过，_run_react 会打印分隔线
-                if not _in_exit_window and not _skip_separator:
-                    status = _status_line(living)
-                    if status:
-                        print(f"\n\033[90m{status}\033[0m", flush=True)
-                    try:
-                        bar_w = os.get_terminal_size().columns
-                    except Exception:
-                        bar_w = 78
-                    print("\033[90m" + "─" * bar_w + "\033[0m")
-                _skip_separator = False
-                first_line = input(PROMPT)
-                msg = _read_multiline(first_line)
-                _in_exit_window = False
-            except (KeyboardInterrupt, EOFError):
-                # 清掉当前行（❯ 提示符），不残留
-                print("\r\033[K", end="", flush=True)
-                now = time.time()
-                if now - _last_interrupt < _DOUBLE_PRESS_WINDOW:
-                    _do_exit("再见")
-                    break
-                _last_interrupt = now
-                _in_exit_window = True
-                living.cancel()
-                print(C_ACCENT + "  再按一次 Ctrl+C 退出\033[0m", flush=True)
-                continue
+    while living.is_running:
+        try:
+            # 第一次 Ctrl+C 后跳过 status/分隔线，保持界面干净
+            # 命令触发了新消息（如 /l）也跳过，_run_react 会打印分隔线
+            if not _in_exit_window and not _skip_separator:
+                status = _status_line(living)
+                if status:
+                    print(f"\n\033[90m{status}\033[0m", flush=True)
+                try:
+                    bar_w = os.get_terminal_size().columns
+                except Exception:
+                    bar_w = 78
+                print("\033[90m" + "─" * bar_w + "\033[0m")
+            _skip_separator = False
+            first_line = input(PROMPT)
+            msg = _read_multiline(first_line)
+            _in_exit_window = False
 
             msg = msg.strip()
             if msg.lower() in ("exit", "quit", "stop"):
@@ -749,8 +736,18 @@ def _run_agent(
                     if _clarify_request_ready.wait(timeout=1):
                         _handle_clarify_if_needed()
 
-    except KeyboardInterrupt:
-        _do_exit("正在停止...")
+        except (KeyboardInterrupt, EOFError):
+            # 清掉当前行（❯ 提示符），不残留
+            print("\r\033[K", end="", flush=True)
+            now = time.time()
+            if now - _last_interrupt < _DOUBLE_PRESS_WINDOW:
+                _do_exit("再见")
+                break
+            _last_interrupt = now
+            _in_exit_window = True
+            living.cancel()
+            print(C_ACCENT + "  再按一次 Ctrl+C 退出\033[0m", flush=True)
+            continue
 
 
 # ── CLI 入口 ─────────────────────────────────────────────
@@ -867,6 +864,15 @@ def cmd_run(args: list[str]) -> None:
         cfg = agent_cfg.consciousness
         cfg.living.comms_port = comms_port
         living = ConsciousLiving(agent, load_consciousness=not parsed.no_consciousness, config=cfg)
+
+        # 音乐生成完成通知 → 推入 living 消息队列
+        try:
+            from xiaomei_brain.plugins.tools.music_minimax.music import set_generation_callback
+            def _on_music_done(filename: str, success: bool, message: str):
+                living.put_message(message, source="system")
+            set_generation_callback(_on_music_done)
+        except Exception:
+            pass
 
     # ── 上线标语 ──────────────────────────────────────────
     from xiaomei_brain.cli.boot import C_OK, C_DIM, BOLD, RESET, boot_sep

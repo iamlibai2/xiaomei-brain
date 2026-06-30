@@ -407,8 +407,10 @@ class Living:
 
     def cancel(self) -> None:
         # Request cancellation of current action.
-        # 请求取消当前动作。
+        # Also clear _chatting so Gateway accepts new messages immediately.
+        # 请求取消当前动作，同时清除 _chatting 允许立即接收新消息。
         self._cancel_requested = True
+        self._chatting = False
 
     def abort_chat(self) -> None:
         """Abort current LLM generation.
