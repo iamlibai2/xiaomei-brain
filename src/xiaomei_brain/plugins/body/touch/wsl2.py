@@ -33,17 +33,11 @@ _SCRIPT_WSL = "/mnt/c/Temp/scroll_monitor.ps1"
 
 # 内联滚轮监听脚本（Add-Type C# → Application.Run 消息泵）
 _SCROLL_MONITOR_SCRIPT = r'''
-# 单实例检查
+# 单实例：杀掉旧进程
 $pidFile = "C:\Temp\scroll_monitor.pid"
-if (Test-Path $pidFile) {
-    try {
-        $existingPid = [int](Get-Content $pidFile -Raw)
-        $existing = Get-Process -Id $existingPid -ErrorAction Stop
-        if ($existing.ProcessName -match "powershell|pwsh") {
-            exit 0
-        }
-    } catch { }
-}
+$oldPid = Get-Content $pidFile -ErrorAction SilentlyContinue
+if ($oldPid) { Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue }
+Start-Sleep -Seconds 1
 
 # 写入 PID（当前 PowerShell 进程）
 $myPid = [System.Diagnostics.Process]::GetCurrentProcess().Id
@@ -137,33 +131,31 @@ class ScrollSensor(Device):
     def __init__(self, source: str = "scroll_hook") -> None:
         super().__init__(source=source)
         self._opened = False
-        self._monitor_pid: int | None = None
+        self._proc: subprocess.Popen | None = None
         self._log_offset: int = 0
 
     # ------------------------------------------------------------------
     # 生命周期
     # ------------------------------------------------------------------
 
-    # 日志超过此大小（字节）自动截断
-    _LOG_MAX_SIZE = 100 * 1024  # 100KB
+    # 日志保留最近约 30 秒的滚轮数据（够所有 capture() 窗口使用）
+    _LOG_MAX_SIZE = 32 * 1024  # 32KB
 
     def open(self) -> bool:
         """部署脚本并后台启动滚轮监听进程。"""
         self._deploy_script()
-        self._truncate_log_if_needed()
 
-        # 检查是否已有监听进程在运行
-        pid = self._read_pid()
-        if pid is not None and self._process_running(pid):
-            self._monitor_pid = pid
-            logger.info("滚轮监听已运行 PID=%d", pid)
-        else:
-            # 启动监听进程
-            self._monitor_pid = self._start_monitor()
-            if self._monitor_pid is not None:
-                logger.info("滚轮监听已启动 PID=%d", self._monitor_pid)
-            else:
-                logger.warning("滚轮监听启动失败")
+        try:
+            self._proc = subprocess.Popen(
+                ["powershell.exe", "-WindowStyle", "Hidden",
+                 "-ExecutionPolicy", "Bypass", "-File", _SCRIPT_WIN],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            logger.info("滚轮监听已启动")
+        except Exception as e:
+            logger.warning("滚轮监听启动失败: %s", e)
 
         self._opened = True
         self._log_offset = self._log_size()
@@ -172,31 +164,26 @@ class ScrollSensor(Device):
     def close(self) -> None:
         """停止滚轮监听进程。"""
         self._opened = False
-        if self._monitor_pid is not None:
+        if self._proc:
             try:
-                subprocess.run(
-                    ["powershell.exe", "-Command",
-                     f"Stop-Process -Id {self._monitor_pid} -Force -ErrorAction SilentlyContinue"],
-                    timeout=5,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
+                self._proc.terminate()
+                self._proc.wait(timeout=3)
             except Exception:
-                pass
+                try:
+                    self._proc.kill()
+                except Exception:
+                    pass
+            self._proc = None
         try:
             os.remove(_PID_FILE_WSL)
         except OSError:
             pass
-        self._monitor_pid = None
         logger.info("滚轮监听已停止")
 
     def is_operational(self) -> bool:
-        if not self._opened:
+        if not self._opened or self._proc is None:
             return False
-        if self._monitor_pid is not None:
-            return self._process_running(self._monitor_pid)
-        return False
+        return self._proc.poll() is None
 
     # ------------------------------------------------------------------
     # 数据采集
@@ -269,86 +256,26 @@ class ScrollSensor(Device):
         logger.info("滚轮监听脚本已部署: %s", _SCRIPT_WSL)
 
     def _truncate_log_if_needed(self) -> None:
-        """日志过大时截断并重启监控进程，防止无限增长。"""
+        """日志过大时截断头部，保留尾部（不杀进程，不删文件）。"""
         try:
-            if os.path.getsize(_LOG_WSL) > self._LOG_MAX_SIZE:
-                logger.info("滚轮日志超标 (>%dKB)，截断并重启监控", self._LOG_MAX_SIZE // 1024)
-                self._stop_monitor()
-                os.remove(_LOG_WSL)
-                self._log_offset = 0
-                self._monitor_pid = self._start_monitor()
+            size = os.path.getsize(_LOG_WSL)
+            if size <= self._LOG_MAX_SIZE:
+                return
+            # 保留尾部的一半
+            keep = self._LOG_MAX_SIZE // 2
+            with open(_LOG_WSL, "rb") as f:
+                f.seek(size - keep)
+                tail = f.read()
+            with open(_LOG_WSL, "wb") as f:
+                f.write(tail)
+            self._log_offset = len(tail)
+            logger.info("滚轮日志截断: %dKB → %dKB", size // 1024, len(tail) // 1024)
         except OSError:
             pass
-
-    def _stop_monitor(self) -> None:
-        """停止监控进程。"""
-        if self._monitor_pid:
-            try:
-                subprocess.run(
-                    ["powershell.exe", "-Command",
-                     f"Stop-Process -Id {self._monitor_pid} -Force -ErrorAction SilentlyContinue"],
-                    timeout=5,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            except Exception:
-                pass
-            self._monitor_pid = None
-
-    def _start_monitor(self) -> int | None:
-        """后台启动监听进程，返回 PID 或 None。"""
-        try:
-            # 清理残留 PID 文件
-            try:
-                os.remove(_PID_FILE_WSL)
-            except OSError:
-                pass
-
-            subprocess.Popen(
-                ["powershell.exe", "-WindowStyle", "Hidden",
-                 "-ExecutionPolicy", "Bypass", "-File", _SCRIPT_WIN],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-
-            # 等待 PID 文件出现
-            for _ in range(30):
-                time.sleep(0.2)
-                pid = self._read_pid()
-                if pid is not None:
-                    return pid
-
-            logger.error("滚轮监听启动超时（PID 文件未出现）")
-            return None
-        except Exception as e:
-            logger.error("滚轮监听启动失败: %s", e)
-            return None
 
     # ------------------------------------------------------------------
     # 内部
     # ------------------------------------------------------------------
-
-    def _read_pid(self) -> int | None:
-        try:
-            if os.path.exists(_PID_FILE_WSL):
-                return int(open(_PID_FILE_WSL).read().strip())
-        except Exception:
-            pass
-        return None
-
-    def _process_running(self, pid: int) -> bool:
-        try:
-            result = subprocess.run(
-                ["powershell.exe", "-Command",
-                 f"(Get-Process -Id {pid} -ErrorAction SilentlyContinue).Id"],
-                capture_output=True, text=True, timeout=5,
-                stdin=subprocess.DEVNULL,
-            )
-            return str(pid) in result.stdout
-        except Exception:
-            return False
 
     def _log_size(self) -> int:
         try:
@@ -512,11 +439,22 @@ class TouchpadSensor(Device):
         self._deploy_script()
         self._truncate_log_if_needed()
 
-        pid = self._read_pid()
-        if pid is not None and self._process_running(pid):
-            logger.info("触摸板传感器已运行 PID=%d", pid)
-        else:
-            self._start_monitor()
+        if self._proc is not None:
+            self._opened = True
+            self._log_offset = self._log_size()
+            return True
+
+        try:
+            self._proc = subprocess.Popen(
+                ["powershell.exe", "-WindowStyle", "Hidden",
+                 "-ExecutionPolicy", "Bypass", "-File", _SCRIPT_WIN],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+            )
+            logger.info("触摸板传感器已启动")
+        except Exception as e:
+            logger.warning("触摸板传感器启动失败: %s", e)
 
         self._opened = True
         self._log_offset = self._log_size()
@@ -534,30 +472,16 @@ class TouchpadSensor(Device):
                 except Exception:
                     pass
             self._proc = None
-        pid = self._read_pid()
-        if pid is not None:
-            try:
-                subprocess.run(
-                    ["powershell.exe", "-Command",
-                     f"Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue"],
-                    timeout=5,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            except Exception:
-                pass
-            try:
-                os.remove(_PID_FILE_WSL)
-            except OSError:
-                pass
+        try:
+            os.remove(_PID_FILE_WSL)
+        except OSError:
+            pass
         logger.info("触摸板传感器已停止")
 
     def is_operational(self) -> bool:
-        if not self._opened:
+        if not self._opened or self._proc is None:
             return False
-        pid = self._read_pid()
-        return pid is not None and self._process_running(pid)
+        return self._proc.poll() is None
 
     # ------------------------------------------------------------------
     # 数据采集
@@ -705,87 +629,26 @@ class TouchpadSensor(Device):
         logger.info("触摸板监听脚本已部署: %s", _SCRIPT_WSL)
 
     def _truncate_log_if_needed(self) -> None:
-        """日志过大时截断并重启监控进程，防止无限增长。"""
+        """日志过大时截断头部，保留尾部（不杀进程，不删文件）。"""
         try:
-            if os.path.getsize(_LOG_WSL) > self._LOG_MAX_SIZE:
-                logger.info("触摸板日志超标 (>%dMB)，截断并重启监控", self._LOG_MAX_SIZE // (1024 * 1024))
-                self._stop_monitor()
-                os.remove(_LOG_WSL)
-                self._log_offset = 0
-                self._start_monitor()
+            size = os.path.getsize(_LOG_WSL)
+            if size <= self._LOG_MAX_SIZE:
+                return
+            # 保留尾部的一半
+            keep = self._LOG_MAX_SIZE // 2
+            with open(_LOG_WSL, "rb") as f:
+                f.seek(size - keep)
+                tail = f.read()
+            with open(_LOG_WSL, "wb") as f:
+                f.write(tail)
+            self._log_offset = len(tail)
+            logger.info("触摸板日志截断: %dKB → %dKB", size // 1024, len(tail) // 1024)
         except OSError:
             pass
-
-    def _stop_monitor(self) -> None:
-        """停止监控进程。"""
-        if self._proc:
-            try:
-                self._proc.terminate()
-                self._proc.wait(timeout=3)
-            except Exception:
-                try:
-                    self._proc.kill()
-                except Exception:
-                    pass
-            self._proc = None
-        # 也按 PID 杀（兼容外部启动的情况）
-        pid = self._read_pid()
-        if pid is not None:
-            try:
-                subprocess.run(
-                    ["powershell.exe", "-Command",
-                     f"Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue"],
-                    timeout=5,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            except Exception:
-                pass
-
-    def _start_monitor(self) -> None:
-        """后台启动监控进程。"""
-        try:
-            self._proc = subprocess.Popen(
-                ["powershell.exe", "-WindowStyle", "Hidden",
-                 "-ExecutionPolicy", "Bypass", "-File", _SCRIPT_WIN],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL,
-            )
-            for _ in range(20):
-                time.sleep(0.25)
-                pid = self._read_pid()
-                if pid is not None and self._process_running(pid):
-                    logger.info("触摸板传感器已重启 PID=%d", pid)
-                    return
-            logger.warning("触摸板传感器重启超时")
-        except Exception as e:
-            logger.warning("触摸板传感器重启异常: %s", e)
 
     # ------------------------------------------------------------------
     # 内部
     # ------------------------------------------------------------------
-
-    def _read_pid(self) -> int | None:
-        try:
-            if os.path.exists(_PID_FILE_WSL):
-                return int(open(_PID_FILE_WSL).read().strip())
-        except Exception:
-            pass
-        return None
-
-    def _process_running(self, pid: int) -> bool:
-        try:
-            result = subprocess.run(
-                ["powershell.exe", "-Command",
-                 f"(Get-Process -Id {pid} -ErrorAction SilentlyContinue).Id"],
-                capture_output=True, text=True, timeout=5,
-                stdin=subprocess.DEVNULL,
-            )
-            return str(pid) in result.stdout
-        except Exception:
-            return False
 
     def _log_size(self) -> int:
         try:
