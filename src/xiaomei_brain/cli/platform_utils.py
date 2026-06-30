@@ -130,11 +130,19 @@ def get_single_char_timeout(timeout: float) -> str | None:
             time.sleep(0.05)
         return None
     else:
-        import select
-        r, _, _ = select.select([sys.stdin], [], [], timeout)
-        if not r:
-            return None
-        return get_single_char()
+        import termios
+        import tty
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            import select
+            r, _, _ = select.select([sys.stdin], [], [], timeout)
+            if not r:
+                return None
+            return sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
 # ── stdin 多行检测 ─────────────────────────────────────────
