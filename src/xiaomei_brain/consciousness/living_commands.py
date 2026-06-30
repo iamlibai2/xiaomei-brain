@@ -825,6 +825,7 @@ def cmd_ears(living, args: str) -> None:
         vl = getattr(living, '_voice_listener', None)
         if action == "off":
             living._ears_enabled = False
+            ears.enabled = False
             _save_ears_config(living, False)
             if vl and vl.is_running:
                 vl.stop()
@@ -833,6 +834,7 @@ def cmd_ears(living, args: str) -> None:
                 print(f"\n  {X}耳朵已处于关闭状态{R}", flush=True)
         else:  # on
             living._ears_enabled = True
+            ears.enabled = True
             _save_ears_config(living, True)
             if vl and vl.is_running:
                 print(f"\n  {G}耳朵已在监听中{R}", flush=True)

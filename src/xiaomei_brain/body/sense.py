@@ -169,6 +169,7 @@ class Ears(Sense):
         self._last_stt_result: dict = {}
         self._stt = None
         self._speaker_id = None
+        self.enabled: bool = True  # 由 /ears on/off 控制
 
     @property
     def stt(self):
@@ -258,10 +259,14 @@ class Ears(Sense):
 
     def contribute_to(self, state) -> None:
         """贡献听觉数据到 BodyState。10分钟一次，声纹识别。"""
+        if not self.enabled:
+            return
         state.audio_voice_id = self.recognize_voice()
 
     def capture_raw(self) -> None:
         """采集一段原始音频。5分钟一次，不分析，只存入设备缓冲。"""
+        if not self.enabled:
+            return
         if self.is_available() and self._device:
             self._device.capture()
 
