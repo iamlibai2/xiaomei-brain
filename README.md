@@ -1,6 +1,8 @@
 # Xiaomei Brain
 
-仿脑架构 AI Agent 框架。受大脑分层结构启发，Agent 拥有意识、驱动、目的、记忆和元认知能力。
+**一个会成长、能自驱的 AI Agent 大脑框架。** 受大脑分层结构启发，让 Agent 拥有持久记忆、自主驱动、经验学习、目标管理和自我反省能力——不是数字生命，是数字劳动力。
+
+> 当前 AI Agent 只会执行任务，但不会成长。每次运行结束就死了。xiaomei-brain 让 Agent 记住一切，自己推进，越用越强。
 
 ## 架构
 
@@ -42,6 +44,11 @@ Metacognition —— 元认知层（自我监督与反省）
   ├─ InnerVoice     内心独白（LLM，4 种触发）
   ├─ SocialCognition 社交感知（LLM，用户情绪检测 → Drive 信号映射）
   └─ PACERunner     认知循环（任务执行元认知）
+
+Body —— 感官层（多模态输入/输出）
+  ├─ Eyes          摄像头 → 人脸识别 (dlib) + 多模态视觉理解
+  ├─ Ears          麦克风 → 声纹识别 (ECAPA-TDNN) + 语音转文字 (SenseVoice)
+  └─ Throat        音箱 → 多引擎 TTS 流式播放
 ```
 
 ## 快速开始
@@ -131,8 +138,9 @@ xiaomei-brain run <名字> --cli
 
   你好，博士
 
-❯ 今天心情不太好
-  怎么啦？和我说说，我在这里听着呢。
+❯ 上次那个 Bug 我定位到了，是 Redis 连接池的竞态条件
+  找到了就好。我已经把这个排查过程记下来了——以后类似的
+  连接池问题可以直接查之前的经验，不用从头追。
 ```
 
 ### CLI 命令
@@ -217,6 +225,16 @@ PYTHONPATH=src python3 examples/ws_server.py
 - [Metacognition 层](docs/architecture/06-METACOGNITION.md)
 - [配置参考](docs/reference/02-CONFIGURATION.md)
 - [贡献指南](CONTRIBUTING.md)
+
+## 愿景
+
+> **让小美自己走进会议室，看到投资人，调取记忆中每个人的背景，自主决定讲什么——生成 PPT，自己讲解，实时看反应调整策略。最终打动他们。**
+
+人类不输入密码登录——看一眼就知道谁在。不敲键盘沟通——开口说话比打字快 3 倍。Agent 也应该这样。所有的感官能力（视觉、语音、人脸识别）不是为了让 Agent "更像人"，是为了让它在没有人类指令的情况下，自己感知、判断、行动。
+
+[完整定位文档 →](docs-local/项目定位.md)
+
+---
 
 ## 许可证
 

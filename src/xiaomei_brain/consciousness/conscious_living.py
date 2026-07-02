@@ -516,6 +516,20 @@ class ConsciousLiving(Living):
                     organ_count)
         boot_line("Body 身体感官", "OK", f"{organ_count} 个器官")
 
+        # ExpressionMonitor：实时表情监控（独立后台线程，Windows cv2，~10 FPS）
+        self._expression_monitor = None
+        try:
+            from ..body.perception.expression_monitor import ExpressionMonitor
+            self._expression_monitor = ExpressionMonitor(
+                drive=self.drive,
+                self_image=self.consciousness.self_image,
+                face_id=self._identity_mgr.face_id if self._identity_mgr else None,
+            )
+            self._expression_monitor.start()
+            boot_line("实时表情监控 (ExpressionMonitor)", "OK")
+        except Exception as e:
+            logger.debug("[ConsciousLiving] ExpressionMonitor 启动失败（非 Windows/无摄像头环境会跳过）: %s", e)
+
         # Layer 0：自主层线程（火焰骨架 + Drive 衰减 + 异常检测 + 内感受 + 身体感官）
         self._layer0 = Layer0Autonomous(
             consciousness=self.consciousness,
@@ -1708,6 +1722,11 @@ class ConsciousLiving(Living):
         layer2 = getattr(self, '_layer2', None)
         if layer2:
             layer2.stop()
+
+        # 停止 ExpressionMonitor（后台表情监控线程）
+        em = getattr(self, '_expression_monitor', None)
+        if em:
+            em.stop()
 
         # 关闭所有通道适配器
         self._gateway_inbound.close_channels()

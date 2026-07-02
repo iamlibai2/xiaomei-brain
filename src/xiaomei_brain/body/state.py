@@ -34,6 +34,10 @@ class BodyState:
     last_spoken: str = ""
     last_played: str = ""
 
+    # 观察到的情绪事件（Path A：ExpressionMonitor 阈值触发 → LLM 上下文）
+    # 每项: {"time": float, "event": str, "identity": str|None, "emotion": str, "intensity": float}
+    observed_emotions: list[dict] = field(default_factory=list)
+
     # 通用感官槽位。插件往里塞 section → {key: value}，渲染器自动遍历。
     # 例: {"环境感知": {"温度": 36.5}, "危险感知": {"烟雾浓度": 0.8}}
     sensory: dict[str, dict[str, Any]] = field(default_factory=dict)

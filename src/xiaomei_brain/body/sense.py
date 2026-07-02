@@ -56,6 +56,7 @@ class Eyes(Sense):
         super().__init__()
         self._face_id = None
         self._vision = None
+        self._emotion_detector = None
 
     @property
     def face_id(self):
@@ -79,6 +80,14 @@ class Eyes(Sense):
             from xiaomei_brain.body.perception import VisionUnderstanding
             self._vision = VisionUnderstanding()
         return self._vision
+
+    @property
+    def emotion_detector(self):
+        """懒加载 FaceEmotionDetector 模块。"""
+        if self._emotion_detector is None:
+            from xiaomei_brain.body.perception import FaceEmotionDetector
+            self._emotion_detector = FaceEmotionDetector()
+        return self._emotion_detector
 
     def see(self, prompt: str = "描述这个画面", image_bytes: bytes | None = None) -> str | None:
         """通用视觉。拍照 → 多模态 LLM 根据 prompt 描述。
@@ -104,9 +113,10 @@ class Eyes(Sense):
         return self.vision.describe(image_bytes, prompt)
 
     def recognize_faces(self) -> list[dict]:
-        """人脸检测 + 身份匹配。
+        """人脸检测 + 身份匹配 + 情绪分析。
 
-        返回: [{"name": "李白", "bbox": (top,right,bottom,left)}, ...]
+        返回: [{"name": "李白", "bbox": (top,right,bottom,left),
+                 "emotion": {"dominant": "happy", "indicators": {...}}}, ...]
         无匹配则 name 为 None，无检测则返回空列表。
         """
         if not self.is_available():
@@ -128,11 +138,19 @@ class Eyes(Sense):
             photo_path = str(captured)
 
         try:
-            detected = self.face_id.detect(photo_path)
+            detected = self.face_id.detect_all(photo_path)
             results = []
             for d in detected:
                 name = self.face_id.match(d["encoding"])
-                results.append({"name": name, "bbox": d["bbox"]})
+                result = {"name": name, "bbox": d["bbox"]}
+                if "landmarks" in d:
+                    try:
+                        result["emotion"] = self.emotion_detector.analyze(
+                            d["landmarks"]
+                        )
+                    except Exception:
+                        logger.debug("情绪检测失败，跳过", exc_info=True)
+                results.append(result)
             return results
         finally:
             if isinstance(captured, bytes) and _os.path.exists(photo_path):

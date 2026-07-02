@@ -263,6 +263,9 @@ class SelfBody:
     # 通用感官槽位（同 BodyState.sensory）
     sensory: dict = field(default_factory=dict)
 
+    # 观察到的情绪事件（ExpressionMonitor Path A 推送）
+    observed_emotions: list = field(default_factory=list)
+
     # ── 代理读取辅助 ──────────────────────────
 
     def _d(self, path: str, default: Any = 0.0) -> Any:
@@ -357,6 +360,7 @@ class SelfBody:
             "last_spoken": self.last_spoken,
             "last_played": self.last_played,
             "sensory": self.sensory,
+            "observed_emotions": self.observed_emotions,
         }
 
     def from_dict(self, data: dict) -> None:
@@ -376,7 +380,7 @@ class SelfBody:
             "senses_online", "visual_scene", "visual_faces", "visual_changed",
             "audio_scene", "audio_voice_id", "audio_level", "audio_changed",
             "last_spoken", "last_played",
-            "sensory",
+            "sensory", "observed_emotions",
         ):
             if key in data:
                 setattr(self, key, data[key])

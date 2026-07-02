@@ -251,6 +251,8 @@ class SelfImage:
             self.body.audio_scene = state.audio_scene[:500]
         if state.sensory:
             self.body.sensory = dict(state.sensory)
+        if getattr(state, "observed_emotions", None):
+            self.body.observed_emotions = list(state.observed_emotions)
 
     def contribute_perception(self, *,
                                agent_state: str | None = None,

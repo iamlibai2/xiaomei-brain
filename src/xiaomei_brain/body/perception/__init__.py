@@ -12,7 +12,8 @@
 
 from .stt import STT
 from .face_id import FaceID
+from .face_emotion import FaceEmotionDetector, EmotiEffLibRecognizer
 from .speaker_id import SpeakerID
 from .vision import VisionUnderstanding
 
-__all__ = ["STT", "FaceID", "SpeakerID", "VisionUnderstanding"]
+__all__ = ["STT", "FaceID", "FaceEmotionDetector", "EmotiEffLibRecognizer", "SpeakerID", "VisionUnderstanding"]

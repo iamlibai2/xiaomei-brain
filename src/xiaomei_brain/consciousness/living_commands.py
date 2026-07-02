@@ -896,7 +896,8 @@ def cmd_see(living, args: str) -> None:
     print(f"\r\033[K  {G}拍照完成{R}  {X}{len(jpeg)} bytes → {path}{R}", flush=True)
 
     # 多模态 LLM 描述
-    desc = body.eyes.see(prompt="描述这个画面", image_bytes=jpeg)
+    prompt = args.strip() or "描述这个画面"
+    desc = body.eyes.see(prompt=prompt, image_bytes=jpeg)
     if desc:
         print(f"  {G}描述{R}  {desc}{R}", flush=True)
     else:

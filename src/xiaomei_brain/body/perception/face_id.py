@@ -69,6 +69,39 @@ class FaceID:
             logger.exception("人脸检测失败")
             return []
 
+    def detect_all(self, image_path: str) -> list[dict]:
+        """检测人脸 + 提取关键点。
+
+        比 detect() 多返回 68 点 landmarks，用于表情分析等场景。
+        复用同一次图片加载和 face_locations 调用。
+
+        返回: [{"bbox": (top,right,bottom,left), "encoding": np.array,
+                 "landmarks": {chin, left_eye, ...}}, ...]
+        """
+        self._ensure_loaded()
+        import face_recognition
+
+        if not os.path.exists(image_path):
+            logger.warning("图片不存在: %s", image_path)
+            return []
+
+        try:
+            image = face_recognition.load_image_file(image_path)
+            locations = face_recognition.face_locations(image)
+            if not locations:
+                return []
+
+            encodings = face_recognition.face_encodings(image, known_face_locations=locations)
+            landmarks_list = face_recognition.face_landmarks(image, face_locations=locations)
+
+            return [
+                {"bbox": loc, "encoding": enc, "landmarks": lm}
+                for loc, enc, lm in zip(locations, encodings, landmarks_list)
+            ]
+        except Exception:
+            logger.exception("人脸检测失败")
+            return []
+
     def match(self, encoding, tolerance: float = 0.5) -> str | None:
         """单个特征向量 → 匹配已知身份。
 
