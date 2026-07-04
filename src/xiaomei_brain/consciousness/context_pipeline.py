@@ -35,7 +35,7 @@ def determine_mode(
     Args:
         user_input: The user's current message.
         energy_level: Flame/energy level (0-1), from SelfImage.
-        desire_state: Drive desire state dict {belonging, cognition, achievement, expression}.
+        desire_state: Drive desire state dict {belonging, cognition, achievement, expression, significance}.
         pending_intents: Pending intents from SelfImage.
         has_active_goal: Whether there is an active goal in PurposeEngine.
         recent_has_tool_calls: Whether recent exchanges involved tool calls.

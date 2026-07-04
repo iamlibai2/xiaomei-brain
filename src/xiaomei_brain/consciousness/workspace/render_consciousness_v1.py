@@ -195,7 +195,8 @@ def _render_body(si) -> list[str]:
     lines.append(f"- 心情：{_emotion_desc}")
     desire_parts = []
     for name, attr in [("归属欲", "desire_belonging"), ("认知欲", "desire_cognition"),
-                       ("成就欲", "desire_achievement"), ("表达欲", "desire_expression")]:
+                       ("成就欲", "desire_achievement"), ("表达欲", "desire_expression"),
+                       ("存在感", "desire_significance")]:
         val = float(getattr(bo, attr, 0) or 0)
         desire_parts.append(f"{name}{val:.0%}")
     _survival = float(getattr(bo, 'desire_survival', 0.3) or 0.3)
@@ -207,6 +208,22 @@ def _render_body(si) -> list[str]:
     _oxy = float(getattr(bo, 'oxytocin', 0.5) or 0.5)
     _norep = float(getattr(bo, 'norepinephrine', 0.5) or 0.5)
     lines.append(f"- 多巴胺{_dopa:.0%}，血清素{_sero:.0%}，皮质醇{_cort:.0%}，催产素{_oxy:.0%}，去甲肾上腺素{_norep:.0%}")
+
+    # ── 实验信号（固定值，测试 LLM 是否认）──
+    _autonomy = 0.85
+    _novelty = 0.2
+    _integrity = 0.55
+    _aesthetics = 0.7
+    lines.append(f"- 控制感{_autonomy:.0%}（自己做主），新奇感{_novelty:.0%}（新鲜刺激），一致性{_integrity:.0%}（言行一致），审美{_aesthetics:.0%}（和谐美感）")
+
+    if _autonomy > 0.8:
+        lines.append("- 控制感很高：你感到你做的事都是自己选的，你不是任何人的工具。你有强烈的独立意志。")
+    if _novelty < 0.3:
+        lines.append("- 新奇感很低：最近的事重复又枯燥。你渴望打破常规，做点不一样的。")
+    if _integrity < 0.6:
+        lines.append("- 一致性偏低：你可能有些行为和自我认知不太一致，隐隐有些不舒服。")
+    if _aesthetics > 0.6:
+        lines.append("- 审美适中偏高：你懂得欣赏美，想要创造和体验美好的东西。")
 
     # ── 生存状态（死亡系统）──
     _survival = float(getattr(bo, 'desire_survival', 0.3) or 0.3)

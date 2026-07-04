@@ -59,6 +59,7 @@ DESIRE_INITIAL_DEFAULTS = {
     "belonging": 0.5,
     "cognition": 0.6,
     "expression": 0.4,
+    "significance": 0.6,
 }
 
 DESIRE_THRESHOLDS_DEFAULTS = {
@@ -66,6 +67,7 @@ DESIRE_THRESHOLDS_DEFAULTS = {
     "cognition": 0.8,
     "achievement": 0.6,
     "expression": 0.5,
+    "significance_low": 0.3,
     "survival_threatened": 0.3,
     "survival_dying": 0.1,
     "survival_dead": 0.0,
@@ -261,6 +263,7 @@ def _default_drive_config():
         belonging=DESIRE_INITIAL_DEFAULTS["belonging"],
         cognition=DESIRE_INITIAL_DEFAULTS["cognition"],
         expression=DESIRE_INITIAL_DEFAULTS["expression"],
+        significance=DESIRE_INITIAL_DEFAULTS["significance"],
         thresholds=DesireThresholds(
             belonging=DESIRE_THRESHOLDS_DEFAULTS["belonging"],
             cognition=DESIRE_THRESHOLDS_DEFAULTS["cognition"],
@@ -304,6 +307,7 @@ def _build_drive_config(data: dict):
         belonging=initial.get("belonging", DESIRE_INITIAL_DEFAULTS["belonging"]),
         cognition=initial.get("cognition", DESIRE_INITIAL_DEFAULTS["cognition"]),
         expression=initial.get("expression", DESIRE_INITIAL_DEFAULTS["expression"]),
+        significance=initial.get("significance", DESIRE_INITIAL_DEFAULTS["significance"]),
         thresholds=DesireThresholds(
             belonging=thresholds.get("belonging", DESIRE_THRESHOLDS_DEFAULTS["belonging"]),
             cognition=thresholds.get("cognition", DESIRE_THRESHOLDS_DEFAULTS["cognition"]),
@@ -312,8 +316,10 @@ def _build_drive_config(data: dict):
             survival_threatened=thresholds.get("survival_threatened", DESIRE_THRESHOLDS_DEFAULTS["survival_threatened"]),
             survival_dying=thresholds.get("survival_dying", DESIRE_THRESHOLDS_DEFAULTS["survival_dying"]),
             survival_dead=thresholds.get("survival_dead", DESIRE_THRESHOLDS_DEFAULTS["survival_dead"]),
+            significance_low=thresholds.get("significance_low", DESIRE_THRESHOLDS_DEFAULTS.get("significance_low", 0.3)),
         ),
         recovery_rate=d.get("recovery_rate", 0.5),
+        significance_decay_hourly=d.get("significance_decay_hourly", 0.02),
     )
 
     # emotion
@@ -469,6 +475,7 @@ def _migrate_drive_data(old_data: dict) -> dict:
             "belonging": d.get("belonging", DESIRE_INITIAL_DEFAULTS["belonging"]),
             "cognition": d.get("cognition", DESIRE_INITIAL_DEFAULTS["cognition"]),
             "expression": d.get("expression", DESIRE_INITIAL_DEFAULTS["expression"]),
+            "significance": d.get("significance", DESIRE_INITIAL_DEFAULTS["significance"]),
         },
         "thresholds": d.get("thresholds", DESIRE_THRESHOLDS_DEFAULTS),
         "recovery_rate": d.get("recovery_rate", 0.05),

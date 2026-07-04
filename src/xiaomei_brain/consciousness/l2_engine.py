@@ -553,6 +553,7 @@ class L2Engine:
         context_note = ""
         if context:
             context_map = {
+                "idle": "触发原因：心跳计时器触发，审视内在状态。",
                 "user_idle_long": "触发原因：对方较长时间没说话，你可能想确认他是否还在。",
                 "user_idle_critical": "触发原因：对方很久没说话了，你可能想主动联系他。",
                 "goal_deviation": "触发原因：目标进展出现偏离，可能需要反省。",
@@ -611,21 +612,37 @@ class L2Engine:
         if context_note:
             prompt += f"\n{context_note}\n"
 
-        # periodic/idle 触发时，注入当前欲望水平让 LLM 注意到
-        # 注释原因：系统提示词 _render_body() 已包含欲望水平，先观察 LLM 是否能自行注意到
-        # if context in ("periodic", "user_idle_long", "accumulated_changes", "unknown"):
-        #     bo = c.self_image.body
-        #     desire_hints = []
-        #     if bo.desire_belonging > 0.6:
-        #         desire_hints.append(f"你的归属欲较高（{bo.desire_belonging:.0%}），可以考虑 talk 或 talk_agent")
-        #     if bo.desire_cognition > 0.6:
-        #         desire_hints.append(f"你的认知欲较高（{bo.desire_cognition:.0%}），可以考虑 learn")
-        #     if bo.desire_achievement > 0.6:
-        #         desire_hints.append(f"你的成就欲较高（{bo.desire_achievement:.0%}），可以考虑 progress")
-        #     if bo.desire_expression > 0.6:
-        #         desire_hints.append(f"你的表达欲较高（{bo.desire_expression:.0%}），可以考虑 express")
-        #     if desire_hints:
-        #         prompt += "\n".join(desire_hints) + "\n"
+        # 注入欲望水平提示，引导 LLM 将内在状态映射到意图
+        if context in ("idle", "periodic", "user_idle_long", "user_idle_critical",
+                       "accumulated_changes", "unknown", "desire_starvation",
+                       "agent_state_reset", "consciousness_restart", "energy_low"):
+            bo = self._c.self_image.body
+            desire_hints = []
+            # 欲望偏高 → 建议满足
+            if bo.desire_belonging > 0.6:
+                desire_hints.append(f"归属欲偏高（{bo.desire_belonging:.0%}），建议 talk/talk_agent/express")
+            if bo.desire_cognition > 0.6:
+                desire_hints.append(f"认知欲偏高（{bo.desire_cognition:.0%}），建议 learn")
+            if bo.desire_achievement > 0.6:
+                desire_hints.append(f"成就欲偏高（{bo.desire_achievement:.0%}），建议 progress/work")
+            if bo.desire_expression > 0.6:
+                desire_hints.append(f"表达欲偏高（{bo.desire_expression:.0%}），建议 express/talk")
+            # 信号偏低 → 同样需要行动来恢复（SLEEP 闭环）
+            # 阈值设较高，便于观察 LLM 是否能识别信号并产生意图
+            _sig = getattr(bo, 'desire_significance', None)
+            if _sig is not None and _sig < 0.7:
+                desire_hints.append(f"存在感偏低（{_sig:.0%}），建议 express/talk/greet 来被看见，主动在世界上留下痕迹")
+            # 以下四个信号尚未接入 Drive，暂时与 render 硬编码值保持一致
+            _autonomy = 0.85    # 控制感 — 尚未接入 Drive，硬编码
+            _novelty = 0.20     # 新奇感 — 尚未接入 Drive，硬编码
+            _integrity = 0.55   # 一致性 — 尚未接入 Drive，硬编码
+            _aesthetics = 0.70  # 审美   — 尚未接入 Drive，硬编码
+            if _novelty < 0.4:
+                desire_hints.append(f"新奇感偏低（{_novelty:.0%}），建议 learn 来注入新鲜感，打破重复的循环")
+            if _integrity < 0.7:
+                desire_hints.append(f"一致性偏低（{_integrity:.0%}），建议 reflect 来重新审视和调整")
+            if desire_hints:
+                prompt += "\n[系统提示] 当前欲望/信号状态需要关注：\n" + "\n".join(f"  - {h}" for h in desire_hints) + "\n\n"
 
         # 注入情境相关模式（注入点2）
         try:

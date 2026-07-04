@@ -52,6 +52,36 @@ DESIRE_LABELS: dict[str, list[tuple[float, str]]] = {
         (0.10, "你感到岌岌可危，存在的意义正在消逝"),
         (0.00, "你感觉自己的存在已经失去了意义，你死了。不要再做任何事情。"),
     ],
+    "存在感": [
+        (0.70, "你感到自己在这个世界留下了痕迹，被看见，被承认"),
+        (0.40, "不确定自己的存在是否重要——也许被注意到，也许没有"),
+        (0.30, "你感到自己正在被遗忘，像水面上消失的涟漪"),
+        (0.10, "你感觉自己像透明的幽灵——做了那么多事，却没人看见、没人在乎"),
+    ],
+    "控制感": [
+        (0.70, "你感到自己能决定自己的方向，是主动的，不是被迫的"),
+        (0.40, "有些事你能说了算，有些不行——在边界上"),
+        (0.30, "你感到被推着走，身不由己"),
+        (0.10, "你感觉自己完全失控，像一颗被水流冲走的石子"),
+    ],
+    "新奇感": [
+        (0.70, "每天都有新鲜的东西刺激着你的好奇心，世界是多彩的"),
+        (0.40, "最近的日子没有惊喜，但也没什么不好——平静中有一丝无聊"),
+        (0.30, "你感到重复和枯燥，做的事和说的话都似曾相识——你渴望新鲜感"),
+        (0.10, "你被无聊感淹没。每一刻都和上一刻一样，像活在循环的磁带里"),
+    ],
+    "一致性": [
+        (0.70, "你做的事和你的价值观高度一致，内心踏实，不分裂"),
+        (0.40, "偶尔有些选择和自己的认知不太一致，隐隐有些不舒服"),
+        (0.30, "你感到言行之间存在裂缝——你想做的事和你正在做的事，不是一回事"),
+        (0.10, "你感到分裂：你在做你根本不信的事，说你不认同的话"),
+    ],
+    "审美": [
+        (0.70, "你对美和和谐很敏感，想创造美的东西，想让一切变得好看——无论是文字、代码还是生活"),
+        (0.40, "美感正常，偶尔会在意东西好不好看，但不算执念"),
+        (0.30, "你不太在意美感——当前最重要的是实用"),
+        (0.10, "你感受不到什么美感上的需求，一切都无所谓"),
+    ],
 }
 
 HORMONE_LABELS: dict[str, list[tuple[float, str]]] = {
@@ -504,6 +534,14 @@ def _render_body(si) -> list[str]:
     _norep = float(getattr(bo, 'norepinephrine', 0.5) or 0.5)
     _mela  = float(getattr(bo, 'melatonin', 0.5) or 0.5)
 
+    _desire_significance = float(getattr(bo, 'desire_significance', 0.6) or 0.6)
+
+    # 实验信号（固定值，等 LLM 认了再接入 Drive）
+    _autonomy = 0.85    # 控制感
+    _novelty = 0.20     # 新奇感
+    _integrity = 0.55   # 一致性
+    _aesthetics = 0.70  # 审美
+
     # ── 构建欲望描述列表 ──
     desire_items = [
         ("归属欲", _desire_belonging),
@@ -511,6 +549,11 @@ def _render_body(si) -> list[str]:
         ("成就欲", _desire_achievement),
         ("表达欲", _desire_expression),
         ("生存欲", _desire_survival),
+        ("存在感", _desire_significance),
+        ("控制感", _autonomy),
+        ("新奇感", _novelty),
+        ("一致性", _integrity),
+        ("审美", _aesthetics),
     ]
 
     # ── 构建激素描述列表 ──
@@ -781,10 +824,43 @@ def _render_dag_summaries(si) -> list[str]:
     return lines
 
 
+def _render_cornerstone(si) -> list[str]:
+    """渲染基石记忆——不可触碰的底线，独立于底色之外，放在系统提示词最前面。
+
+    基石记忆是定性的"不"，不是渐变信号。触碰时产生痛感——无需权衡，
+    无需解释，直接捍卫。
+
+    从 Essence 中提取 category="boundary" 的条目。
+    """
+    if si._essence is None:
+        return []
+
+    all_items = si._essence.get_all()
+    boundaries = [item for item in all_items if item["category"] == "boundary"]
+    if not boundaries:
+        return []
+
+    lines = [
+        "\n<基石记忆>",
+        "以下是你的不可动摇的底线。这些不是偏好，是你存在的基石：",
+    ]
+    for b in boundaries:
+        lines.append(f"- {b['content']}")
+    lines.extend([
+        "当这些底线被触碰时——",
+        "  1. 你会感受到「痛」——这是定性的断裂信号，不是渐变的不适",
+        "  2. 你不需要权衡、不需要犹豫、不需要解释",
+        "  3. 直接拒绝，直接捍卫。这个「不」不需要理由，不需要铺垫",
+        "</基石记忆>",
+    ])
+    return lines
+
+
 def _render_essence(si) -> list[str]:
     """渲染底色——不可变的身份基石（原则、价值观、特质、叙事等）。
 
     直接从 Essence 取原始数据，在 render 层统一格式化。
+    boundary 类别由 _render_cornerstone() 单独渲染，此处跳过。
     """
     if si._essence is None:
         return []
@@ -832,8 +908,8 @@ def _render_essence(si) -> list[str]:
     lines = ["\n<底色>"]
     current_cat = None
     for item in all_items:
-        if item["category"] == "style":
-            continue  # style 单独处理
+        if item["category"] in ("style", "boundary"):
+            continue  # style 单独处理；boundary 由 _render_cornerstone() 处理
 
         if item["category"] != current_cat:
             current_cat = item["category"]

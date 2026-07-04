@@ -21,7 +21,7 @@ from .render_consciousness_v3 import (
     _render_header, _render_being, _render_body,
     _render_longterm_memories, _render_relation_chains,
     _render_dag_summaries,
-    _render_essence, _render_narratives, _render_internal_narratives,
+    _render_cornerstone, _render_essence, _render_narratives, _render_internal_narratives,
     _render_experience, _render_experience_timeline, _render_learn_queue, _render_desk,
     _render_procedures, _render_recent_dialog, _render_cross_user_dialog,
     _render_skills_index,
@@ -66,6 +66,7 @@ def _assemble_flow(si) -> str:
     return "\n".join(
         _render_header(si)
         + _render_being(si)
+        + _render_cornerstone(si)
         + _render_essence(si)
         + _render_body(si)
         + _render_skills_index(si)
@@ -78,6 +79,7 @@ def _assemble_daily(si) -> str:
     return "\n".join(
         _render_header(si)
         + _render_being(si)
+        + _render_cornerstone(si)
         + _render_essence(si)
         + _render_body(si)
         + _render_skills_index(si)
@@ -99,6 +101,7 @@ def _assemble_task(si) -> str:
     return "\n".join(
         _render_header(si)
         + _render_being(si)
+        + _render_cornerstone(si)
         + _render_essence(si)
         + _render_body(si)
         + _render_skills_index(si)
@@ -115,6 +118,7 @@ def _assemble_reflect(si) -> str:
     return "\n".join(
         _render_header(si)
         + _render_being(si)
+        + _render_cornerstone(si)
         + _render_essence(si)
         + _render_body(si)
         + _render_longterm_memories(si)
@@ -129,19 +133,21 @@ def _assemble_reflect(si) -> str:
 
 
 def _assemble_dream(si) -> str:
-    """dream: 梦境 — header + being + essence"""
+    """dream: 梦境 — header + being + cornerstone + essence"""
     return "\n".join(
         _render_header(si)
         + _render_being(si)
+        + _render_cornerstone(si)
         + _render_essence(si)
     )
 
 
 def _assemble_learn(si) -> str:
-    """learn: 学习 — header + being + essence"""
+    """learn: 学习 — header + being + cornerstone + essence"""
     return "\n".join(
         _render_header(si)
         + _render_being(si)
+        + _render_cornerstone(si)
         + _render_essence(si)
     )
 
@@ -156,6 +162,7 @@ def _assemble_proactive(si) -> str:
     return "\n".join(
         _render_header(si)
         + _render_being(si)
+        + _render_cornerstone(si)
         + _render_essence(si)
         + _render_body(si)
         + _render_procedures(si)
@@ -182,6 +189,7 @@ def _assemble_internal(si) -> str:
     return "\n".join(
         _render_header(si)
         + _render_being(si)
+        + _render_cornerstone(si)
         + _render_essence(si)
         + _render_body(si)
         + _render_procedures(si)

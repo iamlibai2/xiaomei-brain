@@ -90,6 +90,7 @@ class DriveEngine:
             belonging=self.config.desire.belonging,
             cognition=self.config.desire.cognition,
             expression=self.config.desire.expression,
+            significance=self.config.desire.significance,
         )
         self.energy = EnergyState()
 
@@ -242,6 +243,9 @@ class DriveEngine:
         self.hormone.oxytocin = min(1.0, self.hormone.oxytocin + delta * 0.2)
         self.hormone.serotonin = min(1.0, self.hormone.serotonin + delta * 0.1)
 
+        # 存在感：被表扬 = 被看见
+        self.desire.significance = min(1.0, self.desire.significance + 0.1)
+
         # 激励更新
         self.motivation.motivation_level = min(1.0, self.motivation.motivation_level + delta * 0.1)
 
@@ -341,6 +345,8 @@ class DriveEngine:
         self.desire.achievement = max(0.0, self.desire.achievement - 0.1)
         # 目标完成 → 确认存在价值
         self.desire.survival = min(1.0, self.desire.survival + 0.05)
+        # 目标完成 → 我在世界中留下了痕迹
+        self.desire.significance = min(1.0, self.desire.significance + 0.08)
 
         logger.info(
             f"[DriveEngine] 目标完成: "
@@ -442,6 +448,7 @@ class DriveEngine:
         self._last_user_active = time.time()
         self.desire.belonging = max(0.0, self.desire.belonging - 0.1)
         self.desire.survival = min(1.0, self.desire.survival + 0.03)
+        self.desire.significance = min(1.0, self.desire.significance + 0.05)
         self.hormone.oxytocin = min(1.0, self.hormone.oxytocin + 0.1)
         self.hormone.norepinephrine = min(1.0, self.hormone.norepinephrine + 0.05)
 
@@ -572,7 +579,7 @@ class DriveEngine:
                 setattr(self.hormone, key, max(0.0, min(1.0, current + delta * scale)))
 
         # 欲望
-        for key in ("belonging", "achievement", "cognition", "expression", "survival"):
+        for key in ("belonging", "achievement", "cognition", "expression", "survival", "significance"):
             delta = mapping.get(key, 0)
             if delta:
                 current = getattr(self.desire, key)
@@ -962,6 +969,7 @@ class DriveEngine:
             "belonging": self.config.desire.belonging,
             "cognition": self.config.desire.cognition,
             "expression": self.config.desire.expression,
+            "significance": self.config.desire.significance,
         }
 
         for name, base in base_values.items():
@@ -970,6 +978,11 @@ class DriveEngine:
                 if current < base:
                     multiplier = self._modulate_hormone_to_desire(name)
                     setattr(self.desire, name, current + (base - current) * recovery * multiplier)
+
+        # ── significance 自然衰减：不被看见 → 存在感缓慢流失 ──
+        # 每小时用户不活跃 → significance -0.02
+        self.desire.significance = max(0.0, min(1.0,
+            self.desire.significance - self.config.desire.significance_decay_hourly))
 
         # ── survival 特殊：极长时间不活跃 → 存在感侵蚀 ──
         if self._last_user_active > 0:
@@ -1142,7 +1155,8 @@ class DriveEngine:
             f"  归属欲：{self.desire.belonging:.2f}\n"
             f"  认知欲：{self.desire.cognition:.2f}\n"
             f"  成就欲：{self.desire.achievement:.2f}\n"
-            f"  表达欲：{self.desire.expression:.2f}"
+            f"  表达欲：{self.desire.expression:.2f}\n"
+            f"  存在感：{self.desire.significance:.2f}"
         )
 
     # ========== 欲望驱动行为检查（已废弃）==========
@@ -1238,6 +1252,7 @@ class DriveEngine:
             belonging=self.config.desire.belonging,
             cognition=self.config.desire.cognition,
             expression=self.config.desire.expression,
+            significance=self.config.desire.significance,
         )
         self.pleasure.reset()
         self.wear = BodyWear()

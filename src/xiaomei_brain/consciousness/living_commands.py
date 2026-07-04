@@ -248,6 +248,8 @@ def cmd_show_drive(living: ConsciousLiving, args: str = "") -> None:
     print(f"  {D}认知欲{R}  {living.drive.desire.cognition:.2f}  {X}>={cfg.cognition:.2f}{R}", flush=True)
     print(f"  {D}成就欲{R}  {living.drive.desire.achievement:.2f}  {X}>={cfg.achievement:.2f}{R}", flush=True)
     print(f"  {D}表达欲{R}  {living.drive.desire.expression:.2f}  {X}>={cfg.expression:.2f}{R}", flush=True)
+    _sig_low = getattr(cfg, 'significance_low', 0.3)
+    print(f"  {D}存在感{R}  {living.drive.desire.significance:.2f}  {X}<{_sig_low}触发{R}", flush=True)
 
     print(f"\n  {G}激励{R}", flush=True)
     print(f"  {D}动力水平{R}  {living.drive.motivation.motivation_level:.2f}", flush=True)

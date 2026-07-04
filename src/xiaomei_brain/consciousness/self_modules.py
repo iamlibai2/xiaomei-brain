@@ -298,6 +298,8 @@ class SelfBody:
     @property
     def desire_survival(self) -> float:    return self._d("desire.survival", 0.3)
     @property
+    def desire_significance(self) -> float: return self._d("desire.significance", 0.6)
+    @property
     def dopamine(self) -> float:           return self._d("hormone.dopamine", 0.5)
     @property
     def serotonin(self) -> float:          return self._d("hormone.serotonin", 0.5)

@@ -224,6 +224,7 @@ class DesireState:
     - belonging: 归属欲 - 社交连接
     - cognition: 认知欲 - 好奇、探索
     - expression: 表达欲 - 输出、创造
+    - significance: 存在感 - 被看见、留下痕迹
 
     特点：
     - 有基础张力（即使满足也会慢慢回升）
@@ -235,6 +236,7 @@ class DesireState:
     belonging: float = 0.5
     cognition: float = 0.6
     expression: float = 0.4
+    significance: float = 0.6
     last_updated: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict:
@@ -244,6 +246,7 @@ class DesireState:
             "belonging": self.belonging,
             "cognition": self.cognition,
             "expression": self.expression,
+            "significance": self.significance,
             "last_updated": self.last_updated,
         }
 
@@ -253,6 +256,7 @@ class DesireState:
         self.belonging = data.get("belonging", 0.5)
         self.cognition = data.get("cognition", 0.6)
         self.expression = data.get("expression", 0.4)
+        self.significance = data.get("significance", 0.6)
         self.last_updated = data.get("last_updated", time.time())
 
 

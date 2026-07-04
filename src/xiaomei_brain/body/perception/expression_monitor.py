@@ -55,12 +55,15 @@ class ExpressionMonitor:
         face_id: Any = None,  # FaceID 实例（可选）
         interval: float = 0.1,  # 采样间隔（秒），~10 FPS
         camera_id: int = 0,
+        shared_cap: Any = None,  # 复用的 cv2.VideoCapture（避免多实例冲突）
     ) -> None:
         self._drive = drive
         self._si = self_image
         self._face_id = face_id
         self._interval = interval
         self._camera_id = camera_id
+        self._shared_cap = shared_cap  # 外部传入的摄像头
+        self._own_cap = False  # 是否自己打开了摄像头
 
         self._running = False
         self._thread: threading.Thread | None = None
@@ -72,6 +75,7 @@ class ExpressionMonitor:
 
         # 懒加载
         self._recognizer: Any = None
+        self._recognizer_failed: bool = False  # 缓存失败，避免反复重试
         self._cap: Any = None
 
     # ── 生命周期 ──────────────────────────────────────────
@@ -96,10 +100,18 @@ class ExpressionMonitor:
         """后台主循环：取帧 → 检测 → 识别 → 推送。"""
         import cv2
 
-        self._cap = cv2.VideoCapture(self._camera_id)
-        if not self._cap.isOpened():
-            logger.warning("[ExpressionMonitor] 无法打开摄像头 camera_id=%d", self._camera_id)
-            return
+        # 优先复用外部传入的摄像头，避免多个 VideoCapture 冲突
+        if self._shared_cap is not None and self._shared_cap.isOpened():
+            self._cap = self._shared_cap
+            self._own_cap = False
+            logger.debug("[ExpressionMonitor] 复用外部摄像头")
+        else:
+            self._cap = cv2.VideoCapture(self._camera_id)
+            self._own_cap = True
+            if not self._cap.isOpened():
+                logger.warning("[ExpressionMonitor] 无法打开摄像头 camera_id=%d", self._camera_id)
+                return
+            logger.debug("[ExpressionMonitor] 独立打开摄像头 camera_id=%d", self._camera_id)
 
         try:
             while self._running:
@@ -116,7 +128,8 @@ class ExpressionMonitor:
 
                 time.sleep(self._interval)
         finally:
-            self._cap.release()
+            if self._own_cap:
+                self._cap.release()
             self._cap = None
 
     def _process_frame(self, frame) -> None:
@@ -165,10 +178,18 @@ class ExpressionMonitor:
             return None
 
     def _init_recognizer(self) -> None:
-        """懒加载 EmotiEffLib ONNX 推理器。"""
-        if self._recognizer is None:
+        """懒加载 EmotiEffLib ONNX 推理器。只尝试一次，失败后不再重试。"""
+        if self._recognizer is not None:
+            return
+        if self._recognizer_failed:
+            raise RuntimeError("EmotiEffLib 已初始化失败（ONNX 模型未下载），跳过")
+        try:
             from .face_emotion import EmotiEffLibRecognizer
             self._recognizer = EmotiEffLibRecognizer()
+        except Exception:
+            self._recognizer_failed = True
+            logger.debug("[ExpressionMonitor] EmotiEffLib 初始化失败（ONNX 模型可能未下载），跳过情绪分类")
+            raise
 
     # ── 身份识别 ──────────────────────────────────────────
 

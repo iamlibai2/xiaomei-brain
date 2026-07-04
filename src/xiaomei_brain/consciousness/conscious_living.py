@@ -517,18 +517,30 @@ class ConsciousLiving(Living):
         boot_line("Body 身体感官", "OK", f"{organ_count} 个器官")
 
         # ExpressionMonitor：实时表情监控（独立后台线程，Windows cv2，~10 FPS）
+        # 需要 EmotiEffLib ONNX 模型，不存在时跳过（避免 ONNX Runtime 反复加载失败导致崩溃）
         self._expression_monitor = None
         try:
-            from ..body.perception.expression_monitor import ExpressionMonitor
-            self._expression_monitor = ExpressionMonitor(
-                drive=self.drive,
-                self_image=self.consciousness.self_image,
-                face_id=self._identity_mgr.face_id if self._identity_mgr else None,
-            )
-            self._expression_monitor.start()
-            boot_line("实时表情监控 (ExpressionMonitor)", "OK")
+            _onnx_model = os.path.expanduser("~/.cache/emotiefflib/enet_b2_7.onnx")
+            if not os.path.exists(_onnx_model):
+                logger.debug("[ConsciousLiving] EmotiEffLib ONNX 模型未下载，跳过 ExpressionMonitor")
+            else:
+                from ..body.perception.expression_monitor import ExpressionMonitor
+
+                # 复用 Eyes 插件的摄像头，避免两个 cv2.VideoCapture 抢占 DirectShow
+                _shared_cap = None
+                if self.body and self.body.eyes and self.body.eyes.device:
+                    _shared_cap = getattr(self.body.eyes.device, '_cap', None)
+
+                self._expression_monitor = ExpressionMonitor(
+                    drive=self.drive,
+                    self_image=self.consciousness.self_image,
+                    face_id=self._identity_mgr.face_id if self._identity_mgr else None,
+                    shared_cap=_shared_cap,
+                )
+                self._expression_monitor.start()
+                boot_line("实时表情监控 (ExpressionMonitor)", "OK")
         except Exception as e:
-            logger.debug("[ConsciousLiving] ExpressionMonitor 启动失败（非 Windows/无摄像头环境会跳过）: %s", e)
+            logger.debug("[ConsciousLiving] ExpressionMonitor 启动失败: %s", e)
 
         # Layer 0：自主层线程（火焰骨架 + Drive 衰减 + 异常检测 + 内感受 + 身体感官）
         self._layer0 = Layer0Autonomous(
@@ -762,6 +774,7 @@ class ConsciousLiving(Living):
                 "cognition": d.cognition,
                 "achievement": d.achievement,
                 "expression": d.expression,
+                "significance": d.significance,
             }
         return {
             "energy_level": energy,

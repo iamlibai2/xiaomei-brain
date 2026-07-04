@@ -15,6 +15,7 @@ class DesireThresholds:
     cognition: float = 0.8      # 认知欲阈值 → 主动学习
     achievement: float = 0.6    # 成就欲阈值 → 推进目标
     expression: float = 0.5     # 表达欲阈值 → 主动输出（初始0.4 + 1次insight=0.5即可触发）
+    significance_low: float = 0.3  # 存在感低阈值 → 触发"被看见"行为
     # survival 阈值用于死亡系统，不驱动主动行为
     survival_threatened: float = 0.3   # 低于此 → 受威胁
     survival_dying: float = 0.1        # 低于此 → 濒死
@@ -30,12 +31,16 @@ class DesireConfig:
     belonging: float = 0.5
     cognition: float = 0.6
     expression: float = 0.4
+    significance: float = 0.6
 
     # 阈值
     thresholds: DesireThresholds = field(default_factory=DesireThresholds)
 
     # 回升速度（每小时，乘法系数）
     recovery_rate: float = 0.5
+
+    # 存在感每小时自然衰减（不被看见 → 0.02/h）
+    significance_decay_hourly: float = 0.02
 
 
 @dataclass
