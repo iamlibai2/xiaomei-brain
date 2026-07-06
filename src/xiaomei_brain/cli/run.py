@@ -743,6 +743,10 @@ def _run_agent(
             em = getattr(living, '_expression_monitor', None)
             if em:
                 em.stop()
+            # 立即释放摄像头硬件（cv2.VideoCapture 不在 daemon 线程退出时自动释放）
+            body = getattr(living, 'body', None)
+            if body and body.eyes and body.eyes._device:
+                body.eyes._device.close()
             if living.drive:
                 living.drive.save()
             if living.purpose:

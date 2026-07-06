@@ -59,10 +59,13 @@ class RealCamera(Camera):
 
     def close(self) -> None:
         self._opened = False
-        with self._cap_lock:
-            if self._cap is not None:
-                self._cap.release()
-                self._cap = None
+        cap = self._cap
+        if cap is None:
+            return
+        self._cap = None  # 先置空，防止 reader 线程继续用
+        # reader 线程可能正卡在 _cap.read() 里，不需要等锁，直接 release
+        # cap.read() 异常由 reader 的 except Exception 兜底
+        cap.release()
 
     def is_operational(self) -> bool:
         return self._opened and self._cap is not None and self._cap.isOpened()
@@ -94,6 +97,8 @@ class RealCamera(Camera):
         def _reader() -> None:
             while not stop_event.is_set():
                 with self._cap_lock:
+                    if self._cap is None:
+                        break  # 摄像头已被 close() 释放
                     ret, frame = self._cap.read()
                 if ret and frame is not None:
                     try:

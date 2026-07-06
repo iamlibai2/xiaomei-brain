@@ -38,8 +38,17 @@ import threading
 import time
 from typing import Any
 
+# Windows: speechbrain 会懒加载 k2_fsa（无依赖），失败后污染导入链
+# 导致后续所有基于 huggingface_hub 的模块（embedding、longterm）无法正常 import。
+# 必须在 speechbrain 被导入之前，把 k2_fsa 注册为假模块，阻止懒加载触发。
+import sys as _sys
+_k2_fsa = type(_sys)("speechbrain.integrations.k2_fsa")
+_k2_fsa.__package__ = "speechbrain.integrations"
+_sys.modules.setdefault("speechbrain.integrations", type(_sys)("speechbrain.integrations"))
+_sys.modules.setdefault("speechbrain.integrations.k2_fsa", _k2_fsa)
+
 from .action_dispatcher import ActionDispatcher
-from .living import Living, LivingState, LivingMessage, HEARTBEAT_NORMAL, HEARTBEAT_DREAM
+from .living import Living, LivingState, LivingMessage, HEARTBEAT_NORMAL, HEARTBEAT_DREAM, _STOP_SENTINEL
 from .core import Consciousness, ConsciousnessReport
 from .intent import Intent
 from .storage import ConsciousnessStorage
@@ -1166,6 +1175,8 @@ class ConsciousLiving(Living):
 
             # 1. 先检查消息
             msg = self._wait_message(self.tick_interval)
+            if msg is _STOP_SENTINEL:
+                return
             if msg is not None:
                 self._on_wake_up()
                 self._transition(LivingState.AWAKE)
@@ -1388,6 +1399,8 @@ class ConsciousLiving(Living):
         其他原因导致的暂停：直接复活处理。
         """
         msg = self._wait_message(timeout=self.tick_interval)
+        if msg is _STOP_SENTINEL:
+            return
         if msg is not None:
             # LLM 致命错误导致暂停 → 先探活再处理消息
             if self._suspended_reason and "LLM" in self._suspended_reason:

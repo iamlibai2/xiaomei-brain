@@ -1,6 +1,7 @@
 """Windows 原生摄像头 — 基于 cv2.VideoCapture 实现。
 
-依次尝试 CAP_DSHOW → MSMF → 默认后端，任一成功即停止。
+依次尝试 CAP_DSHOW → 默认后端，任一成功即停止。
+DSHOW 优先，避免 MSMF 后端的 Camera Frame Server 残留问题。
 """
 
 from __future__ import annotations
@@ -17,10 +18,12 @@ from xiaomei_brain.body.device import Camera, FrameSubscription
 
 logger = logging.getLogger(__name__)
 
-# 按优先级排列的后端列表（默认优先，DSHOW 备选）
+# 按优先级排列的后端列表（DSHOW 优先，避免 MSMF Frame Server 残留）
+# MSMF 后端依赖 Windows Camera Frame Server，cap.release() 后 Frame Server
+# 进程不会退出，导致程序关闭后摄像头指示灯仍亮。DSHOW 无此问题。
 _BACKENDS = [
-    (cv2.CAP_ANY,   "默认"),
     (cv2.CAP_DSHOW, "CAP_DSHOW"),
+    (cv2.CAP_ANY,   "默认"),
 ]
 
 
@@ -86,10 +89,13 @@ class RealCamera(Camera):
 
     def close(self) -> None:
         self._opened = False
-        with self._cap_lock:
-            if self._cap is not None:
-                self._cap.release()
-                self._cap = None
+        cap = self._cap
+        if cap is None:
+            return
+        self._cap = None  # 先置空，防止 reader 线程继续用
+        # reader 线程可能正卡在 _cap.read() 里，不需要等锁，直接 release
+        # cap.read() 异常由 reader 的 except Exception 兜底
+        cap.release()
 
     def is_operational(self) -> bool:
         return self._opened and self._cap is not None and self._cap.isOpened()
@@ -121,6 +127,8 @@ class RealCamera(Camera):
         def _reader() -> None:
             while not stop_event.is_set():
                 with self._cap_lock:
+                    if self._cap is None:
+                        break  # 摄像头已被 close() 释放
                     ret, frame = self._cap.read()
                 if ret and frame is not None:
                     try:
