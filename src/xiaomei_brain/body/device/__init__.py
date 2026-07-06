@@ -2,8 +2,38 @@
 
 from __future__ import annotations
 
+import threading
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Callable
+
+import numpy as np
+
+
+class FrameSubscription:
+    """subscribe_frames() 返回的订阅句柄。
+
+    Usage:
+        sub = camera.subscribe_frames(my_callback, fps=10)
+        # ... 后台运行 ...
+        sub.unsubscribe()  # 停止帧流
+    """
+
+    def __init__(self, thread: threading.Thread, stop_event: threading.Event) -> None:
+        self._thread = thread
+        self._stop_event = stop_event
+
+    def unsubscribe(self) -> None:
+        """停止帧流，信号 reader 线程退出。"""
+        self._stop_event.set()
+
+    def wait(self, timeout: float | None = None) -> None:
+        """等待 reader 线程结束。"""
+        self._thread.join(timeout=timeout)
+
+    @property
+    def active(self) -> bool:
+        """reader 线程是否仍在运行。"""
+        return self._thread.is_alive()
 
 
 class Device(ABC):
@@ -55,6 +85,20 @@ class Camera(Device):
 
     def capture(self) -> Any:
         raise NotImplementedError
+
+    def subscribe_frames(
+        self, callback: Callable[[np.ndarray], None], fps: float = 10
+    ) -> FrameSubscription | None:
+        """订阅持续 BGR 帧流。不支持流式取帧的子类返回 None。
+
+        Args:
+            callback: 每帧回调，接收 BGR 格式的 np.ndarray (uint8, H×W×3)。
+            fps: 目标帧率，默认 10。
+
+        Returns:
+            FrameSubscription 订阅句柄，或 None（不支持流式取帧）。
+        """
+        return None
 
 
 class Microphone(Device):

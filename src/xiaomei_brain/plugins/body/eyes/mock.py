@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+import threading
+import time
+from typing import Any, Callable
 
-from xiaomei_brain.body.device import Camera
+import numpy as np
+
+from xiaomei_brain.body.device import Camera, FrameSubscription
 
 
 class MockCamera(Camera):
@@ -37,3 +41,26 @@ class MockCamera(Camera):
 
     def set_scene(self, text: str) -> None:
         self._scene_text = text
+
+    def subscribe_frames(
+        self, callback: Callable[[np.ndarray], None], fps: float = 10
+    ) -> FrameSubscription | None:
+        """订阅虚拟 BGR 帧流（测试用）。"""
+        if not self._opened:
+            return None
+
+        stop_event = threading.Event()
+        interval = 1.0 / fps
+
+        def _reader() -> None:
+            while not stop_event.is_set():
+                frame = np.zeros((480, 640, 3), dtype=np.uint8)
+                try:
+                    callback(frame)
+                except Exception:
+                    pass
+                time.sleep(interval)
+
+        thread = threading.Thread(target=_reader, daemon=True, name="MockCameraFrameReader")
+        thread.start()
+        return FrameSubscription(thread, stop_event)

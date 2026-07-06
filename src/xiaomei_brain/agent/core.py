@@ -263,6 +263,11 @@ class Agent:
                 yield chunk
             response = self.llm._last_stream_response
 
+            # 流式输出期间可能已被 Ctrl+C 取消
+            if cancel_check and cancel_check():
+                logger.info("[Agent] ReAct LLM stream 后检测到取消 (step=%d)", step)
+                break
+
             if response.tool_calls:
                 tool_calls_data = [
                     {
@@ -550,6 +555,11 @@ class Agent:
             print("💭 思考中...", flush=True)
 
             response = self.llm.chat(messages=all_messages, tools=openai_tools)
+
+            # LLM 调用期间可能已被 Ctrl+C 取消，及时丢弃结果
+            if cancel_check and cancel_check():
+                logger.info("[Agent] react_nodb LLM 返回后检测到取消 (step=%d)", step)
+                return ""
 
             # 展示思考过程（ANSI 灰色，不进入后续消息）
             if response.reasoning:

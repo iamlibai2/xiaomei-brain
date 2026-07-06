@@ -15,6 +15,8 @@ import threading
 import time
 from typing import Any
 
+import numpy as np
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,13 +38,15 @@ _STRANGER_SCALE: float = 0.4    # 陌生人信号强度系数
 
 
 class ExpressionMonitor:
-    """后台线程：cv2 取帧 → dlib 人脸检测 → FaceID + EmotiEffLib → 双通道推送。
+    """后台线程：Camera 订阅帧 → dlib 人脸检测 → FaceID + EmotiEffLib → 双通道推送。
 
     Path B（每帧）: identity + emotion → drive.apply_social_signal()
     Path A（阈值触发）: 情绪剧变 / 极端情绪 / 持续高强度 → SelfBody.observed_emotions
 
+    纯算法处理器——不持有摄像头，通过 Camera.subscribe_frames() 消费帧。
+
     Usage:
-        monitor = ExpressionMonitor(drive, self_image, face_id)
+        monitor = ExpressionMonitor(drive, self_image, face_id, camera)
         monitor.start()
         # ... 后台运行 ...
         monitor.stop()
@@ -53,30 +57,30 @@ class ExpressionMonitor:
         drive: Any,           # DriveEngine 实例
         self_image: Any,      # SelfImage 实例
         face_id: Any = None,  # FaceID 实例（可选）
-        interval: float = 0.1,  # 采样间隔（秒），~10 FPS
-        camera_id: int = 0,
-        shared_cap: Any = None,  # 复用的 cv2.VideoCapture（避免多实例冲突）
+        camera: Any = None,   # Camera 设备（body.device.Camera）
+        interval: float = 3.0,  # 采样间隔（秒），默认每 3 秒一次
     ) -> None:
         self._drive = drive
         self._si = self_image
         self._face_id = face_id
+        self._camera = camera
         self._interval = interval
-        self._camera_id = camera_id
-        self._shared_cap = shared_cap  # 外部传入的摄像头
-        self._own_cap = False  # 是否自己打开了摄像头
 
         self._running = False
         self._thread: threading.Thread | None = None
+        self._subscription: Any = None  # FrameSubscription | None
 
         # Path A 状态跟踪
         self._emotion_history: list[tuple[str, float, float]] = []  # [(emotion, prob, ts), ...]
         self._current_emotion: str | None = None
         self._emotion_start_time: float = 0.0
 
+        # 最近识别到的熟人（供登录等场景复用，避免重复拍照）
+        self._last_seen: dict[str, float] = {}  # {identity_name: timestamp}
+
         # 懒加载
         self._recognizer: Any = None
         self._recognizer_failed: bool = False  # 缓存失败，避免反复重试
-        self._cap: Any = None
 
     # ── 生命周期 ──────────────────────────────────────────
 
@@ -87,57 +91,64 @@ class ExpressionMonitor:
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True, name="ExpressionMonitor")
         self._thread.start()
-        logger.info("[ExpressionMonitor] 启动，interval=%.2fs", self._interval)
+        logger.warning("[ExpressionMonitor] 启动，interval=%.2fs", self._interval)
 
     def stop(self) -> None:
         """停止后台监控。"""
         self._running = False
-        logger.info("[ExpressionMonitor] 停止")
+        if self._subscription is not None:
+            self._subscription.unsubscribe()
+        logger.warning("[ExpressionMonitor] 停止")
+
+    def recent_familiar(self, within_seconds: float = 5.0) -> str | None:
+        """返回最近 N 秒内识别到的熟人 identity_name，没有则返回 None。"""
+        now = time.time()
+        for name, ts in self._last_seen.items():
+            if now - ts < within_seconds:
+                return name
+        # 清理过期条目
+        self._last_seen = {n: t for n, t in self._last_seen.items() if now - t < within_seconds}
+        return None
 
     # ── 主循环 ────────────────────────────────────────────
 
     def _loop(self) -> None:
-        """后台主循环：取帧 → 检测 → 识别 → 推送。"""
-        import cv2
+        """后台主循环：通过 Camera.subscribe_frames() 订阅帧 → 处理。"""
+        if self._camera is None:
+            logger.warning("[ExpressionMonitor] 无摄像头设备，跳过")
+            return
 
-        # 优先复用外部传入的摄像头，避免多个 VideoCapture 冲突
-        if self._shared_cap is not None and self._shared_cap.isOpened():
-            self._cap = self._shared_cap
-            self._own_cap = False
-            logger.debug("[ExpressionMonitor] 复用外部摄像头")
-        else:
-            self._cap = cv2.VideoCapture(self._camera_id)
-            self._own_cap = True
-            if not self._cap.isOpened():
-                logger.warning("[ExpressionMonitor] 无法打开摄像头 camera_id=%d", self._camera_id)
-                return
-            logger.debug("[ExpressionMonitor] 独立打开摄像头 camera_id=%d", self._camera_id)
+        if not hasattr(self._camera, 'subscribe_frames'):
+            logger.warning("[ExpressionMonitor] 摄像头不支持流式取帧，跳过")
+            return
 
-        try:
-            while self._running:
-                ret, frame = self._cap.read()
-                if not ret:
-                    time.sleep(self._interval)
-                    continue
+        sub = self._camera.subscribe_frames(
+            self._process_frame, fps=1.0 / self._interval
+        )
+        if sub is None:
+            logger.warning("[ExpressionMonitor] 摄像头流式取帧不可用（设备不支持 subscribe_frames），跳过")
+            return
 
-                # 处理一帧
-                try:
-                    self._process_frame(frame)
-                except Exception:
-                    logger.debug("[ExpressionMonitor] 帧处理异常", exc_info=True)
+        self._subscription = sub
+        logger.warning("[ExpressionMonitor] 已订阅摄像头帧流，interval=%.1fs，开始监控", self._interval)
 
-                time.sleep(self._interval)
-        finally:
-            if self._own_cap:
-                self._cap.release()
-            self._cap = None
+        # 阻塞等待停止信号
+        while self._running:
+            time.sleep(0.5)
+
+        sub.unsubscribe()
+        self._subscription = None
 
     def _process_frame(self, frame) -> None:
         """处理单帧：人脸检测 → 情绪分类 → Path B + Path A。"""
         import face_recognition
 
-        # BGR → RGB
-        rgb = frame[:, :, ::-1]  # cv2 默认 BGR
+        t0 = time.time()
+        h, w = frame.shape[:2]
+        logger.debug("[ExpressionMonitor] 收到帧 %dx%d", w, h)
+
+        # BGR → RGB（ascontiguousarray 必须：切片逆序产生负步长，dlib C++ 不认）
+        rgb = np.ascontiguousarray(frame[:, :, ::-1])
 
         # HOG 人脸检测（快）
         face_locations = face_recognition.face_locations(rgb)
@@ -148,8 +159,7 @@ class ExpressionMonitor:
             face_img = rgb[top:bottom, left:right]
 
             # 跳过太小的人脸
-            h, w = face_img.shape[:2]
-            if h < 60 or w < 60:
+            if face_img.shape[0] < 60 or face_img.shape[1] < 60:
                 continue
 
             # 情绪分类
@@ -165,6 +175,8 @@ class ExpressionMonitor:
 
             # Path A: 阈值检测 → 事件
             self._check_path_a(identity, result)
+
+        logger.debug("[ExpressionMonitor] 帧处理完成 (%.0fms)", (time.time() - t0) * 1000)
 
     # ── 情绪分类 ──────────────────────────────────────────
 
@@ -205,9 +217,11 @@ class ExpressionMonitor:
         try:
             import face_recognition
             top, right, bottom, left = bbox
-            encoding = face_recognition.face_encodings(rgb, [(top, right, bottom, left)])
+            encoding = face_recognition.face_encodings(rgb, known_face_locations=[(top, right, bottom, left)])
             if encoding:
                 name = self._face_id.match(encoding[0])
+                if name:
+                    self._last_seen[name] = time.time()
                 return {"name": name, "familiar": name is not None}
         except Exception:
             logger.debug("[ExpressionMonitor] 身份识别失败", exc_info=True)
@@ -260,8 +274,8 @@ class ExpressionMonitor:
 
         event = None
 
-        # 条件 1: 极端情绪（概率 >0.9）
-        if prob > 0.9:
+        # 条件 1: 极端情绪（概率 >0.6）
+        if prob > 0.6:
             event = {
                 "time": now,
                 "event": "extreme_emotion",
@@ -344,9 +358,9 @@ class ExpressionMonitor:
             # 只保留最近 20 条
             if len(self._si.body.observed_emotions) > 20:
                 self._si.body.observed_emotions = self._si.body.observed_emotions[-20:]
-            logger.info(
-                "[ExpressionMonitor] Path A 事件: %s emotion=%s identity=%s",
-                event["event"], event.get("emotion", ""), event.get("identity", "?"),
+            logger.warning(
+                "[ExpressionMonitor] Path A 事件: %s emotion=%s identity=%s probability=%.2f",
+                event["event"], event.get("emotion", ""), event.get("identity", "?"), event.get("intensity", 0),
             )
         except Exception:
             logger.debug("[ExpressionMonitor] Path A 推送失败", exc_info=True)

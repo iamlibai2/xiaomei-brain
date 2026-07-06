@@ -18,7 +18,7 @@ from typing import Any, TYPE_CHECKING
 
 from ..self_modules import SelfPerception
 from .render_consciousness_v3 import (
-    _render_header, _render_being, _render_body,
+    _render_header, _render_being, _render_body, _render_observed,
     _render_longterm_memories, _render_relation_chains,
     _render_dag_summaries,
     _render_cornerstone, _render_essence, _render_narratives, _render_internal_narratives,
@@ -69,6 +69,7 @@ def _assemble_flow(si) -> str:
         + _render_cornerstone(si)
         + _render_essence(si)
         + _render_body(si)
+        + _render_observed(si)
         + _render_skills_index(si)
         + _render_dag_summaries(si)
     )
@@ -82,6 +83,7 @@ def _assemble_daily(si) -> str:
         + _render_cornerstone(si)
         + _render_essence(si)
         + _render_body(si)
+        + _render_observed(si)
         + _render_skills_index(si)
         + _render_procedures(si)
         + _render_longterm_memories(si)
@@ -104,6 +106,7 @@ def _assemble_task(si) -> str:
         + _render_cornerstone(si)
         + _render_essence(si)
         + _render_body(si)
+        + _render_observed(si)
         + _render_skills_index(si)
         + _render_experience(si)
         + _render_longterm_memories(si)
@@ -121,6 +124,7 @@ def _assemble_reflect(si) -> str:
         + _render_cornerstone(si)
         + _render_essence(si)
         + _render_body(si)
+        + _render_observed(si)
         + _render_longterm_memories(si)
         + _render_relation_chains(si)
         + _render_dag_summaries(si)
@@ -165,6 +169,7 @@ def _assemble_proactive(si) -> str:
         + _render_cornerstone(si)
         + _render_essence(si)
         + _render_body(si)
+        + _render_observed(si)
         + _render_procedures(si)
         + _render_longterm_memories(si)
         + _render_relation_chains(si)
@@ -192,6 +197,7 @@ def _assemble_internal(si) -> str:
         + _render_cornerstone(si)
         + _render_essence(si)
         + _render_body(si)
+        + _render_observed(si)
         + _render_procedures(si)
         + _render_longterm_memories(si)
         + _render_relation_chains(si)

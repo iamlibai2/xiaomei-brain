@@ -45,6 +45,7 @@ class Layer2DefaultNetwork:
         self._thread: threading.Thread | None = None
         self._lock: threading.RLock = threading.RLock()
         self._debug_file = debug_file
+        self._generation = 0          # 代际计数器：start() 递增，旧线程检测到变化后自动退出
 
         # TUI 日志缓冲区
         self._log_buffer: deque[str] = deque(maxlen=200)
@@ -59,10 +60,14 @@ class Layer2DefaultNetwork:
         if self._running:
             logger.warning("[Layer2] 已在运行，跳过")
             return
+        self._generation += 1
+        gen = self._generation
         self._running = True
-        self._thread = threading.Thread(target=self._run, daemon=True, name="Layer2")
+        self._thread = threading.Thread(
+            target=self._run, args=(gen,), daemon=True, name=f"Layer2-{gen}"
+        )
         self._thread.start()
-        logger.info("[Layer2] 线程已启动（daemon, interval=%.1fs）", self._check_interval)
+        logger.info("[Layer2] 线程已启动（daemon, gen=%d, interval=%.1fs）", gen, self._check_interval)
 
     def stop(self) -> None:
         """停止 Layer 2 线程。"""
@@ -114,10 +119,10 @@ class Layer2DefaultNetwork:
         if display.has_data():
             display.display()
 
-    def _run(self) -> None:
+    def _run(self, generation: int) -> None:
         """主循环：每 check_interval 秒检查一次 L2/L3/DREAM。"""
-        logger.info("[Layer2] 进入主循环")
-        while self._running:
+        logger.info("[Layer2] 进入主循环 gen=%d", generation)
+        while self._running and self._generation == generation:
             with self._lock:
                 try:
                     agent_state = self._get_agent_state()
@@ -256,3 +261,8 @@ class Layer2DefaultNetwork:
                     self._running = False
 
             time.sleep(self._check_interval)
+
+        if self._generation != generation:
+            logger.info("[Layer2] gen=%d 线程已退役（当前 gen=%d）", generation, self._generation)
+        else:
+            logger.info("[Layer2] gen=%d 线程正常退出", generation)

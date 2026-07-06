@@ -678,37 +678,48 @@ def _render_body(si) -> list[str]:
             for k, v in items.items():
                 lines.append(f"- {k}：{v}")
 
-    # ── 观察到的情绪事件（ExpressionMonitor Path A）──
-    _observed: list = getattr(bo, 'observed_emotions', None) or []
-    if _observed:
-        import time as _time
-        _now = _time.time()
-        # 只渲染最近 60 秒内的事件
-        _recent = [e for e in _observed if _now - e.get("time", 0) < 60]
-        if _recent:
-            # 英文情绪名 → 中文
-            _emotion_cn = {
-                "Anger": "愤怒", "Disgust": "厌恶", "Fear": "恐惧",
-                "Happiness": "开心", "Neutral": "中性", "Sadness": "悲伤", "Surprise": "惊讶",
-            }
-            lines.append("")
-            lines.append("### 你正在观察到的")
-            for e in _recent[-3:]:  # 最多3条
-                _who = e.get("identity") or "某人"
-                _emotion = _emotion_cn.get(e.get("emotion", ""), e.get("emotion", ""))
-                _event = e.get("event", "")
-                if _event == "extreme_emotion":
-                    lines.append(f"{_who}表现出极端的{_emotion}情绪（强度{e.get('intensity', 0):.0%}）。")
-                elif _event == "emotion_shift":
-                    _from = _emotion_cn.get(e.get("from", ""), e.get("from", ""))
-                    _to = _emotion_cn.get(e.get("to", ""), e.get("to", ""))
-                    lines.append(f"{_who}的情绪从{_from}急剧转为{_to}。")
-                elif _event == "sustained_emotion":
-                    lines.append(f"{_who}持续{_emotion}了{int(e.get('duration', 0))}秒。")
-                elif _event == "familiar_negative":
-                    lines.append(f"你注意到{_who}的{_emotion}情绪——你在意的人不开心。")
-
     lines.append("</身体状态>")
+    return lines
+
+
+def _render_observed(si) -> list[str]:
+    """渲染视觉观察（ExpressionMonitor Path A 外部感知）。
+
+    独立于 <身体状态>，因为这是对外部的观察，不是小美自身的身体感受。
+    """
+    bo = si.body
+    _observed: list = getattr(bo, 'observed_emotions', None) or []
+    if not _observed:
+        return []
+
+    _now = _time.time()
+    # 只渲染最近 60 秒内的事件
+    _recent = [e for e in _observed if _now - e.get("time", 0) < 60]
+    if not _recent:
+        return []
+
+    # 英文情绪名 → 中文
+    _emotion_cn = {
+        "Anger": "愤怒", "Disgust": "厌恶", "Fear": "恐惧",
+        "Happiness": "开心", "Neutral": "中性", "Sadness": "悲伤", "Surprise": "惊讶",
+    }
+
+    lines = ["\n<视觉观察>"]
+    for e in _recent[-3:]:  # 最多3条
+        _who = e.get("identity") or "某人"
+        _emotion = _emotion_cn.get(e.get("emotion", ""), e.get("emotion", ""))
+        _event = e.get("event", "")
+        if _event == "extreme_emotion":
+            lines.append(f"{_who}表现出极端的{_emotion}情绪（强度{e.get('intensity', 0):.0%}）。")
+        elif _event == "emotion_shift":
+            _from = _emotion_cn.get(e.get("from", ""), e.get("from", ""))
+            _to = _emotion_cn.get(e.get("to", ""), e.get("to", ""))
+            lines.append(f"{_who}的情绪从{_from}急剧转为{_to}。")
+        elif _event == "sustained_emotion":
+            lines.append(f"{_who}持续{_emotion}了{int(e.get('duration', 0))}秒。")
+        elif _event == "familiar_negative":
+            lines.append(f"你注意到{_who}的{_emotion}情绪——你在意的人不开心。")
+    lines.append("</视觉观察>")
     return lines
 
 

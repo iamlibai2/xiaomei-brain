@@ -98,6 +98,10 @@ HEARTBEAT_NORMAL = "normal"
 # 触发 DREAMING 状态切换。
 HEARTBEAT_DREAM = "dream"
 
+# Sentinel sent by stop() to wake inner state loops.
+# stop() 发出的停止信号，唤醒内层状态循环。
+_STOP_SENTINEL = object()
+
 
 #---------------------------------------------------------------------------
 #   Periodic Task
@@ -371,7 +375,7 @@ class Living:
         # 停止主循环 — 只发信号，不做 I/O。
         # _on_stop() 在线程退出的 finally 块中执行。
         self._running = False
-        self._queue.put_nowait(None)
+        self._queue.put_nowait(_STOP_SENTINEL)
 
     #---------------------------------------------------------------------------
     #   SOS emergency push
@@ -495,6 +499,8 @@ class Living:
         self._tick_periodic(self.state)
 
         msg = self._wait_message(timeout=self.tick_interval)
+        if msg is _STOP_SENTINEL:
+            return
         if msg is not None:
             logger.debug("[Living/AWAKE] 收到消息")
             self._handle_message(msg)
@@ -524,6 +530,8 @@ class Living:
             self._tick_periodic(self.state)
 
             msg = self._wait_message(timeout=self.tick_interval)
+            if msg is _STOP_SENTINEL:
+                return
             if msg is not None:
                 logger.info("[Living/IDLE] 收到消息，唤醒回 AWAKE")
                 self._on_wake_up()
@@ -559,6 +567,8 @@ class Living:
                 return
 
             msg = self._wait_message(timeout=self.tick_interval)
+            if msg is _STOP_SENTINEL:
+                return
             if msg is not None:
                 logger.info("[Living/SLEEPING] 收到消息，唤醒回 AWAKE")
                 self._on_wake_up()
@@ -584,6 +594,8 @@ class Living:
         暂停恢复 -> 子类覆盖 _try_recover() 实现。
         """
         msg = self._wait_message(timeout=self.tick_interval)
+        if msg is _STOP_SENTINEL:
+            return
         if msg is not None:
             logger.info("[Living/DORMANT] 收到消息，复活 -> AWAKE")
             self._on_wake_up()
@@ -638,6 +650,8 @@ class Living:
                 return
 
             msg = self._wait_message(timeout=self.dream_interval)
+            if msg is _STOP_SENTINEL:
+                return
             if msg is not None:
                 logger.info("[Living/DREAMING] 收到消息，唤醒回 AWAKE")
                 self._on_wake_up()

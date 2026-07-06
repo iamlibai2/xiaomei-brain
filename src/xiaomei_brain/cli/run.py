@@ -286,7 +286,7 @@ def _run_agent(
     living.on_chat_chunk = on_chat_chunk
     living.on_chat_flush = _flush_para
 
-    thread = threading.Thread(target=living.run, daemon=True)
+    thread = threading.Thread(target=living.run, daemon=False)
     thread.start()
 
     try:
@@ -453,15 +453,35 @@ def _run_agent(
                     login_listener.start()
                     print(f"  \033[90m正在听... 请说话进行声纹登录（或按键手动登录）\033[0m")
 
+        _login_exit_window = False
+        _login_last_ctrlc = 0.0
         user_id = None
+        sys.stdout.write("  login: ")
+        sys.stdout.flush()
         while not user_id:
+            # 超时自动重置退出窗口，防止误触一次 Ctrl+C 后永久生效
+            if _login_exit_window and time.time() - _login_last_ctrlc > 5.0:
+                _login_exit_window = False
+
+            # ── 检查人脸自动登录（ExpressionMonitor 后台持续识别）──
+            em = getattr(living, '_expression_monitor', None)
+            if em:
+                familiar = em.recent_familiar(within_seconds=5.0)
+                if familiar:
+                    identity = identity_mgr.resolve(familiar)
+                    if identity:
+                        user_id = familiar
+                        print(f"\r\033[K  ✅ \033[32m人脸自动识别成功：{identity.get('name', familiar)}\033[0m", flush=True)
+                        _apply_login(user_id, identity)
+                        break
+
             # ── 检查声纹自动登录 ──
             if auto_login_user_id[0]:
                 name = auto_login_user_id[0]
                 identity = identity_mgr.resolve(name)
                 if identity:
                     user_id = name
-                    print(f"  ✅ \033[32m声纹自动识别成功\033[0m", flush=True)
+                    print(f"\r\033[K  ✅ \033[32m声纹自动识别成功\033[0m", flush=True)
                     _apply_login(user_id, identity)
                     break
                 else:
@@ -470,18 +490,33 @@ def _run_agent(
 
             try:
                 ch = _read_char_timeout(0.1)
+            except KeyboardInterrupt:
+                ch = '\x03'  # 统一走 Ctrl+C 处理
             except Exception:
                 ch = None
 
             if ch is None:
                 continue  # 无按键，继续监听
             elif ch in ('\r', '\n'):
-                pass  # 回车 → 走 input()
+                sys.stdout.write("\r  login: ")
+                sys.stdout.flush()
+                continue  # 空回车，同行刷新提示，不换行
             elif ch == '\x03':  # Ctrl+C
-                print("\r\033[K" + C_ACCENT + "  再见\033[0m", flush=True)
-                living.stop()
-                import sys as _sys
-                _sys.exit(0)
+                now = time.time()
+                if _login_exit_window or (now - _login_last_ctrlc < 5.0):
+                    print("\r\033[K" + C_ACCENT + "  再见\033[0m", flush=True)
+                    if login_listener:
+                        login_listener.stop()
+                    living.stop()
+                    thread.join(timeout=5)
+                    import sys as _sys
+                    _sys.exit(0)
+                _login_last_ctrlc = now
+                _login_exit_window = True
+                if login_listener:
+                    login_listener.stop()
+                print("\r\033[K" + C_ACCENT + "  再按一次 Ctrl+C 退出\033[0m", flush=True)
+                continue
             elif ch == ' ':
                 user_id = _try_face_login()
                 if user_id:
@@ -507,19 +542,51 @@ def _run_agent(
                     login_listener.start()
                 continue
             else:
+                # 逐字读取完整输入行，自己处理退格，避免 input() 不知道 getwch() 吃掉的首字符
+                buffer = [ch]
                 sys.stdout.write(ch)
                 sys.stdout.flush()
-                rest = input()
-                user_id = (ch + rest).strip()
+                while True:
+                    c = get_single_char()
+                    if c is None:
+                        continue
+                    if c in ('\r', '\n'):
+                        print()
+                        break
+                    if c in ('\x08', '\x7f'):  # Backspace / DEL
+                        if buffer:
+                            buffer.pop()
+                            sys.stdout.write('\b \b')
+                            sys.stdout.flush()
+                    elif c == '\x03':  # Ctrl+C
+                        raise KeyboardInterrupt
+                    elif c == '\t':
+                        continue  # Tab 忽略
+                    elif c and ord(c) >= 32:  # 可打印字符
+                        buffer.append(c)
+                        sys.stdout.write(c)
+                        sys.stdout.flush()
+                user_id = ''.join(buffer).strip()
 
             if not user_id:
                 try:
                     user_id = input("  login: ").strip()
                 except (KeyboardInterrupt, EOFError):
-                    print("\r\033[K" + C_ACCENT + "  再见\033[0m", flush=True)
-                    living.stop()
-                    import sys as _sys
-                    _sys.exit(0)
+                    now = time.time()
+                    if _login_exit_window or (now - _login_last_ctrlc < 5.0):
+                        print("\r\033[K" + C_ACCENT + "  再见\033[0m", flush=True)
+                        if login_listener:
+                            login_listener.stop()
+                        living.stop()
+                        thread.join(timeout=5)
+                        import sys as _sys
+                        _sys.exit(0)
+                    _login_last_ctrlc = now
+                    _login_exit_window = True
+                    if login_listener:
+                        login_listener.stop()
+                    print("\r\033[K" + C_ACCENT + "  再按一次 Ctrl+C 退出\033[0m", flush=True)
+                    continue
 
             if not user_id:
                 continue
@@ -538,10 +605,53 @@ def _run_agent(
                 print(f"  \033[31m用户 '{user_id}' 不存在\033[0m", flush=True)
                 user_id = None
     except KeyboardInterrupt:
-        print("\r\033[K" + C_ACCENT + "  再见\033[0m", flush=True)
-        living.stop()
-        import sys as _sys
-        _sys.exit(0)
+        now = time.time()
+        if _login_exit_window or (now - _login_last_ctrlc < 5.0):
+            print("\r\033[K" + C_ACCENT + "  再见\033[0m", flush=True)
+            if login_listener:
+                login_listener.stop()
+            living.stop()
+            thread.join(timeout=5)
+            import sys as _sys
+            _sys.exit(0)
+        _login_last_ctrlc = now
+        _login_exit_window = True
+        if login_listener:
+            login_listener.stop()
+        print("\r\033[K" + C_ACCENT + "  再按一次 Ctrl+C 退出\033[0m", flush=True)
+        # 重新进入登录循环
+        user_id = None
+        while not user_id:
+            if _login_exit_window and time.time() - _login_last_ctrlc > 5.0:
+                _login_exit_window = False
+            try:
+                user_id = input("  login: ").strip()
+            except (KeyboardInterrupt, EOFError):
+                now2 = time.time()
+                if _login_exit_window or (now2 - _login_last_ctrlc < 5.0):
+                    print("\r\033[K" + C_ACCENT + "  再见\033[0m", flush=True)
+                    living.stop()
+                    thread.join(timeout=5)
+                    import sys as _sys
+                    _sys.exit(0)
+                _login_last_ctrlc = now2
+                _login_exit_window = True
+                print("\r\033[K" + C_ACCENT + "  再按一次 Ctrl+C 退出\033[0m", flush=True)
+                continue
+            if not user_id:
+                continue
+            try:
+                idx = int(user_id) - 1
+                if 0 <= idx < len(ids):
+                    user_id = ids[idx]
+            except ValueError:
+                pass
+            identity = identity_mgr.resolve(user_id)
+            if identity:
+                _apply_login(user_id, identity)
+            else:
+                print(f"  \033[31m用户 '{user_id}' 不存在\033[0m", flush=True)
+                user_id = None
 
     # ── 停止登录 VoiceListener ──
     if login_listener:
@@ -611,40 +721,53 @@ def _run_agent(
     _skip_separator = False  # 命令触发了新消息时，跳过本轮分隔线（_run_react 会打印）
 
     def _do_exit(reason: str = "再见") -> None:
-        """退出：保存关键状态，通知 living 线程停止，立即退出。
+        """退出：保存关键状态，通知 living 线程停止，等待清理后退出。
 
-        living 线程在 run() 的 finally 块中自行清理（_on_stop），
-        主线程不等待 —— 用 os._exit(0) 瞬间退出，不等 daemon 线程。
+        living 线程是非 daemon，主线程退出前会等它完成 _on_stop() 清理。
+        全程捕获 KeyboardInterrupt，任何阶段 Ctrl+C 都直接 os._exit(0)，
+        防止漏到 main() → sys.exit(0) 卡在非 daemon 线程上。
         """
+        import os as _os
         nonlocal _exiting
         if _exiting:
             return
         _exiting = True
 
-        # \033[1A 上移一行（覆盖 "再按 Ctrl+C 退出"），\r\033[K 清到行尾
-        print(f"\r\033[K\033[1A\r\033[K{C_ACCENT}  {reason}\033[0m", flush=True)
-
-        # 主线程保存关键状态
         try:
+            # \033[1A 上移一行（覆盖 "再按 Ctrl+C 退出"），\r\033[K 清到行尾
+            print(f"\r\033[K\033[1A\r\033[K{C_ACCENT}  {reason}\033[0m", flush=True)
+
+            # 主线程保存关键状态
             if voice_listener:
                 voice_listener.stop()
+            em = getattr(living, '_expression_monitor', None)
+            if em:
+                em.stop()
             if living.drive:
                 living.drive.save()
             if living.purpose:
                 living.purpose.save()
-        except Exception:
-            pass
 
-        # 通知 living 线程停止（它在 finally 里自行 _on_stop）
-        living.stop()
+            # 通知 living 线程停止并等待清理
+            living.stop()
+            thread.join(timeout=10)
+        except KeyboardInterrupt:
+            # 任何阶段 Ctrl+C → 直接强制退出，不等待
+            _os._exit(0)
 
         # 清理 PID 文件
         from xiaomei_brain.cli.lifecycle import remove_pid_file
         remove_pid_file(agent_id)
 
-        # 立即退出，不等待 daemon 线程
-        import os as _os
-        _os._exit(0)
+        # living 线程正常退出 → 优雅退出（走 atexit，保存 readline 历史）
+        # living 线程超时/被中断 → 强制退出，避免 _shutdown 死等
+        if not thread.is_alive():
+            import sys as _sys
+            _sys.exit(0)
+        else:
+            logger = logging.getLogger(__name__)
+            logger.warning("living 线程未退出，强制终止")
+            _os._exit(0)
 
     def _handle_clarify_if_needed() -> bool:
         """处理 clarify 请求（如果有）。返回 True 表示处理了请求。"""
@@ -682,6 +805,9 @@ def _run_agent(
                     bar_w = 78
                 print("\033[90m" + "─" * bar_w + "\033[0m")
             _skip_separator = False
+            # 超时自动重置退出窗口，防止误触一次 Ctrl+C 后永久生效
+            if _in_exit_window and time.time() - _last_interrupt > 5.0:
+                _in_exit_window = False
             first_line = input(PROMPT)
             msg = _read_multiline(first_line)
             _in_exit_window = False
@@ -689,7 +815,6 @@ def _run_agent(
             msg = msg.strip()
             if msg.lower() in ("exit", "quit", "stop"):
                 _do_exit("正在停止...")
-                break
             if not msg:
                 continue
 
@@ -741,9 +866,8 @@ def _run_agent(
             # 清掉当前行（❯ 提示符），不残留
             print("\r\033[K", end="", flush=True)
             now = time.time()
-            if now - _last_interrupt < _DOUBLE_PRESS_WINDOW:
+            if _in_exit_window or (now - _last_interrupt < _DOUBLE_PRESS_WINDOW):
                 _do_exit("再见")
-                break
             _last_interrupt = now
             _in_exit_window = True
             living.cancel()

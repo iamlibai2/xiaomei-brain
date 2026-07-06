@@ -29,7 +29,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 from .self_image_proxy import SelfImage
 from .self_modules import Being, SelfBody, SelfPerception, SelfMind, SelfHistory
@@ -146,6 +146,9 @@ class Consciousness:
         # StateChangeBuffer：L1→L2/L3 状态变化缓冲（不属于 SelfImage）
         self._state_buffer = StateChangeBuffer()
         self.self_image._state_buffer = self._state_buffer
+        # 取消检查回调（由 ConsciousLiving 注入，供 L2Engine 等使用）
+        self._cancel_check: Callable[[], bool] = lambda: False
+
         # 快捷引用
         self.being = self.self_image.being
         self.body = self.self_image.body

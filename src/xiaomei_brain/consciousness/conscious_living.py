@@ -163,6 +163,21 @@ class ConsciousLiving(Living):
         ltm_count = self.agent.longterm_memory.count() if hasattr(self.agent.longterm_memory, 'count') else 0
         boot_line("长期记忆", "OK", f"{ltm_count} 条" if ltm_count else "")
 
+        # 确保 embedding 模型在 speechbrain 之前加载完毕（Windows speechbrain k2_fsa 懒加载会污染 HF Hub 导入链）
+        if not self.agent.longterm_memory._remote.available:
+            if not self.agent.longterm_memory.wait_embedder(timeout=60):
+                logger.warning("[ConsciousLiving] Embedding 模型 warmup 超时，将在首次使用时重试")
+            elif self.agent.longterm_memory._embedder is not None:
+                boot_line("Embedding 模型", "OK", "已就绪")
+            else:
+                # warmup 完成但 embedder 为 None → 加载失败，提前重试
+                logger.info("[ConsciousLiving] Embedding warmup 未成功，尝试同步加载...")
+                try:
+                    self.agent.longterm_memory._embed("test warmup")
+                    boot_line("Embedding 模型", "OK", "同步加载成功")
+                except Exception as e:
+                    logger.warning("[ConsciousLiving] Embedding 模型加载失败: %s", e)
+
         # ProcedureMemory（过程记忆：学习 + 关键词触发）
         from ..memory.procedure import ProcedureMemory
         self.agent._procedure_memory = ProcedureMemory(db_path, llm_client=_llm)
@@ -328,6 +343,7 @@ class ConsciousLiving(Living):
             cron_scheduler=self.cron_scheduler,
         )
         self.agent._consciousness = self.consciousness
+        self.consciousness._cancel_check = lambda: self._cancel_requested
         self._load_consciousness = load_consciousness
         self.agent.commands._self_image = self.consciousness.self_image
         boot_line("意识核心", "OK", f"agent={self._agent_id}")
@@ -516,31 +532,35 @@ class ConsciousLiving(Living):
                     organ_count)
         boot_line("Body 身体感官", "OK", f"{organ_count} 个器官")
 
-        # ExpressionMonitor：实时表情监控（独立后台线程，Windows cv2，~10 FPS）
-        # 需要 EmotiEffLib ONNX 模型，不存在时跳过（避免 ONNX Runtime 反复加载失败导致崩溃）
+        # ExpressionMonitor：实时表情监控（独立后台线程，~10 FPS）
+        # 需要 EmotiEffLib ONNX 模型，不存在时跳过
+        print("[ExpressionMonitor] 开始初始化...", flush=True)
         self._expression_monitor = None
         try:
             _onnx_model = os.path.expanduser("~/.cache/emotiefflib/enet_b2_7.onnx")
             if not os.path.exists(_onnx_model):
-                logger.debug("[ConsciousLiving] EmotiEffLib ONNX 模型未下载，跳过 ExpressionMonitor")
+                logger.warning("[ExpressionMonitor] ONNX 模型未下载 (%s)，跳过", _onnx_model)
+            elif self.body is None or self.body.eyes is None or self.body.eyes.device is None:
+                logger.warning("[ExpressionMonitor] 无摄像头设备，跳过 (body=%s eyes=%s device=%s)",
+                            self.body is not None,
+                            self.body.eyes is not None if self.body else False,
+                            self.body.eyes.device is not None if self.body and self.body.eyes else False)
             else:
                 from ..body.perception.expression_monitor import ExpressionMonitor
 
-                # 复用 Eyes 插件的摄像头，避免两个 cv2.VideoCapture 抢占 DirectShow
-                _shared_cap = None
-                if self.body and self.body.eyes and self.body.eyes.device:
-                    _shared_cap = getattr(self.body.eyes.device, '_cap', None)
+                camera = self.body.eyes.device
+                logger.warning("[ExpressionMonitor] 创建中... camera=%s interval=3.0s", type(camera).__name__)
 
                 self._expression_monitor = ExpressionMonitor(
                     drive=self.drive,
                     self_image=self.consciousness.self_image,
                     face_id=self._identity_mgr.face_id if self._identity_mgr else None,
-                    shared_cap=_shared_cap,
+                    camera=camera,
                 )
                 self._expression_monitor.start()
                 boot_line("实时表情监控 (ExpressionMonitor)", "OK")
         except Exception as e:
-            logger.debug("[ConsciousLiving] ExpressionMonitor 启动失败: %s", e)
+            logger.warning("[ExpressionMonitor] 启动失败: %s", e)
 
         # Layer 0：自主层线程（火焰骨架 + Drive 衰减 + 异常检测 + 内感受 + 身体感官）
         self._layer0 = Layer0Autonomous(

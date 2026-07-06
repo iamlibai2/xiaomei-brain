@@ -41,6 +41,10 @@ class RealMicrophone(Microphone):
         self._queue: Any = None
 
     def open(self) -> bool:
+        # 幂等：已经打开就直接返回
+        if self.is_operational():
+            return True
+
         self._pa = pyaudio.PyAudio()
 
         idx = self._device_index
@@ -129,17 +133,30 @@ class RealMicrophone(Microphone):
 
     def stop_stream(self) -> None:
         """停止流式录音。"""
+        if not self._stream_running:
+            return
         self._stream_running = False
-        if self._stream_thread is not None:
+
+        # 等 reader 线程退出
+        reader_alive = (
+            self._stream_thread is not None and self._stream_thread.is_alive()
+        )
+        if reader_alive:
             self._stream_thread.join(timeout=1.0)
-            self._stream_thread = None
+
         if self._stream is not None:
-            try:
-                self._stream.stop_stream()
-                self._stream.close()
-            except Exception:
-                pass
+            if not self._stream_thread or not self._stream_thread.is_alive():
+                # reader 线程已退出 → 正常关闭
+                try:
+                    self._stream.stop_stream()
+                    self._stream.close()
+                except Exception:
+                    pass
+            # reader 线程还卡在 Pa_ReadStream（Windows WASAPI）→ 跳过 close
+            # Pa_Terminate 在 close() 中强制清理，避免 Pa_CloseStream 死锁
             self._stream = None
+
+        self._stream_thread = None
         self._queue = None
 
     # ── 批量录音（capture 用）─────────────────────────────

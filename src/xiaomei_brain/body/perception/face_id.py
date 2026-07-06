@@ -109,11 +109,17 @@ class FaceID:
         返回匹配到的 name 或 None。
         """
         if not self._known_faces:
+            logger.warning("[FaceID] match: 已知人脸为空，无法匹配")
             return None
 
         import face_recognition
         known_encodings = [f["encoding"] for f in self._known_faces]
+        distances = face_recognition.face_distance(known_encodings, encoding)
         results = face_recognition.compare_faces(known_encodings, encoding, tolerance=tolerance)
+        logger.debug("[FaceID] match: %d 个已知人脸, distances=%s, matched=%s",
+                    len(self._known_faces),
+                    [round(float(d), 3) for d in distances],
+                    any(results))
         if any(results):
             idx = results.index(True)
             return self._known_faces[idx]["name"]

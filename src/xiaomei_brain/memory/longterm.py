@@ -109,17 +109,18 @@ class LongTermMemory(SQLiteStore):
             # 先检查远端服务，已独立运行则不加载本地模型
             if self._remote.available:
                 logger.info("Remote embedding server available, using remote (skip local warmup)")
+                self._warmup_complete.set()
                 return
             logger.info("No remote embedding server, pre-loading local model: %s", self._embedding_model_name)
             self._get_embedder()
+            self._warmup_complete.set()
         except ImportError:
             logger.debug("sentence_transformers not installed, skipping embedder warmup")
+            self._warmup_complete.set()  # 没有依赖，标记完成避免阻塞
         except RuntimeError:
             pass  # Will retry on first use
         except Exception as e:
             logger.debug("[Embed] warmup failed: %s", e)
-        finally:
-            self._warmup_complete.set()
 
     def _get_embedder(self) -> Any:
         """Lazy-load the embedding model (thread-safe).

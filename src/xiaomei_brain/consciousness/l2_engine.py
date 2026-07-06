@@ -533,7 +533,10 @@ class L2Engine:
 
         t0 = time.time()
         try:
-            result = l2_agent.react_nodb(messages=messages, max_steps=12, label="intent", silent=True)
+            result = l2_agent.react_nodb(
+                messages=messages, max_steps=12, label="intent", silent=True,
+                cancel_check=self._c._cancel_check,
+            )
             elapsed = time.time() - t0
             logger.info("[Consciousness] ReAct 意图决策完成, elapsed=%.1fs, result_len=%d",
                         elapsed, len(result))

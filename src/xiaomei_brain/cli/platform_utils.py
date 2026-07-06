@@ -118,11 +118,7 @@ def get_single_char() -> str | None:
     if sys.platform == "win32":
         try:
             import msvcrt
-            ch = msvcrt.getch()
-            # msvcrt.getch() returns bytes, decode to str
-            if isinstance(ch, bytes):
-                return ch.decode("utf-8", errors="replace")
-            return ch
+            return msvcrt.getwch()  # getwch 返回完整 Unicode 字符，CJK 不乱码
         except Exception:
             return None
     else:
@@ -147,10 +143,7 @@ def get_single_char_timeout(timeout: float) -> str | None:
         deadline = time.time() + timeout
         while time.time() < deadline:
             if msvcrt.kbhit():
-                ch = msvcrt.getch()
-                if isinstance(ch, bytes):
-                    return ch.decode("utf-8", errors="replace")
-                return ch
+                return msvcrt.getwch()  # getwch 返回完整 Unicode 字符，CJK 不乱码
             time.sleep(0.05)
         return None
     else:
