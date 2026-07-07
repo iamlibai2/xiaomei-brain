@@ -98,6 +98,7 @@ class ConversationDriver:
         try:
             return os.get_terminal_size().columns
         except Exception:
+            logger.debug("get_terminal_size failed, using 80 columns", exc_info=True)
             return 80
 
     # ── Public API ─────────────────────────────────────────────
@@ -462,7 +463,7 @@ class ConversationDriver:
                     agent_core.on_tool_start = None
                     agent_core.on_tool_complete = None
                 except Exception:
-                    pass
+                    logger.debug("Failed to cleanup tool callbacks", exc_info=True)
 
         run()
 

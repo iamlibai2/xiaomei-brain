@@ -188,6 +188,7 @@ class LearningEngine:
                         topics.add(tag[6:])
             return list(topics)
         except Exception:
+            logger.warning("Failed to get known topics from LTM", exc_info=True)
             return []
 
     # ── ReAct 学习 ────────────────────────────────────────

@@ -21,6 +21,13 @@ Usage:
     xiaomei-brain install                     # 预下载 Embedding 模型
 """
 
+import os
+
+# WSL2 / Windows PyTorch segfault 预防：必须在任何第三方 import 之前设置
+for _key in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+    os.environ.setdefault(_key, "1")
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 import signal
 
 from xiaomei_brain.cli import main

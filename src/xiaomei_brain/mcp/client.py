@@ -460,7 +460,7 @@ def shutdown_mcp_servers():
             try:
                 _mcp_loop.call_soon_threadsafe(_mcp_loop.stop)
             except Exception:
-                pass
+                logger.debug("MCP event loop stop failed during shutdown", exc_info=True)
         _mcp_loop = None
 
 

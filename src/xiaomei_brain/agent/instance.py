@@ -229,5 +229,5 @@ def _extract_name_from_identity(identity_path: str) -> str | None:
                 ):
                     return content
     except Exception:
-        pass
+        logger.debug("Failed to extract name from identity: %s", identity_path, exc_info=True)
     return None

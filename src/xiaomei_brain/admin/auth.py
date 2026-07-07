@@ -32,6 +32,7 @@ def _get_admin_token() -> str:
         _TOKEN_CACHE = cfg.admin.token
         return _TOKEN_CACHE
     except Exception:
+        logger.warning("Failed to load admin token", exc_info=True)
         return ""
 
 

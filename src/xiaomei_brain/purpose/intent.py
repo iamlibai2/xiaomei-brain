@@ -301,6 +301,7 @@ class IntentUnderstanding:
                 "response_guidance": data.get("response_guidance", ""),
             }
         except Exception:
+            logger.warning("Failed to parse LLM intent response, falling back to rule classify", exc_info=True)
             return self._rule_classify("")
 
     def _parse_decompose_response(self, response: str) -> list[str]:
@@ -314,6 +315,7 @@ class IntentUnderstanding:
             subs = data.get("sub_goals", [])
             return subs if isinstance(subs, list) else []
         except Exception:
+            logger.warning("Failed to parse LLM goal decomposition response", exc_info=True)
             return []
 
     def _rule_classify(self, user_input: str) -> dict:

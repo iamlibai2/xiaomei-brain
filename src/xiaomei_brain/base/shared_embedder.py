@@ -50,6 +50,11 @@ class SharedEmbedder:
         self._model_lock = threading.Lock()
         self._ready = threading.Event()
 
+        # WSL2 / Windows PyTorch 线程数限制，防止 segfault
+        for _key in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+            os.environ.setdefault(_key, "1")
+        os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
         # 远程 embedding 服务
         from xiaomei_brain.base.embedding_client import RemoteEmbedder
         self._remote = RemoteEmbedder()
@@ -110,12 +115,15 @@ class SharedEmbedder:
     # ── Warmup ────────────────────────────────────────────────
 
     def _warmup(self) -> None:
-        """后台线程：不联网检测，只根据环境变量决定加载策略。"""
+        """后台线程：不联网检测，只根据环境变量决定加载策略。
+
+        注意：不在此预加载模型。PyTorch 在 Windows 上跨线程使用模型可能导致
+        segfault，因此模型由首次 embed() 调用同步加载。
+        """
         os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
-        # 配置了远程 URL：只尝试远程，不加载本地模型
+        # 配置了远程 URL：只尝试远程
         if self._remote_url:
-            # 后台异步检测远程可用性（不阻塞 warmup 完成标记）
             if self._remote.available:
                 logger.info("Remote embedding server available, using remote (skip local load)")
             else:
@@ -124,20 +132,8 @@ class SharedEmbedder:
             self._ready.set()
             return
 
-        # 未配置远程：直接加载本地模型
-        try:
-            from sentence_transformers import SentenceTransformer  # noqa: F401
-            logger.info("No remote embedding server configured, pre-loading local model: %s",
-                        self._model_name)
-            self._load_model()
-            self._ready.set()
-        except ImportError:
-            logger.debug("sentence_transformers not installed, skipping embedder warmup")
-            self._ready.set()
-        except RuntimeError:
-            pass  # Will retry on first use
-        except Exception as e:
-            logger.debug("[Embed] warmup failed: %s", e)
+        # 不预加载本地模型，让首次 embed() 同步加载
+        self._ready.set()
 
     # ── Model Loading ─────────────────────────────────────────
 
@@ -162,7 +158,7 @@ class SharedEmbedder:
             try:
                 logger.info("Loading embedding model: %s", model_path)
                 with redirect_stderr(StringIO()):
-                    self._model = SentenceTransformer(model_path)
+                    self._model = SentenceTransformer(model_path, device="cpu")
                 logger.info("Embedding model loaded: %s", model_path)
             except Exception as e:
                 if self._model_name != self._fallback_model:
@@ -171,7 +167,7 @@ class SharedEmbedder:
                         model_path, self._fallback_model, e,
                     )
                     self._model_name = self._fallback_model
-                    self._model = SentenceTransformer(self._fallback_model)
+                    self._model = SentenceTransformer(self._fallback_model, device="cpu")
                 else:
                     raise
 
@@ -211,7 +207,10 @@ class SharedEmbedder:
     def _safe_encode(self, model: Any, texts, batch: bool = False) -> list:
         """本地 encode，GPU 优先，CUDA 错误时自动切 CPU 并记住该状态。"""
         try:
+            text_count = len(texts) if isinstance(texts, list) else 1
+            logger.warning("[Embed] encoding %d text(s)...", text_count)
             vectors = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
+            logger.warning("[Embed] encoding done")
             return vectors.tolist()
         except RuntimeError as e:
             if "CUDA" not in str(e):

@@ -907,12 +907,21 @@ def cmd_run(args: list[str]) -> None:
         datefmt="%H:%M:%S",
         stream=sys.stderr,
     )
-    logging.getLogger().handlers[0].setLevel(logging.WARNING)
+    logging.getLogger().handlers[0].setLevel(logging.INFO)
 
     agent_log_dir = os.path.expanduser(f"~/.xiaomei-brain/{agent_id}/logs")
     os.makedirs(agent_log_dir, exist_ok=True)
+
+    # 文件日志级别：跟随 config.json 的 logging.level，默认 INFO
+    try:
+        from xiaomei_brain.base.config import Config
+        _cfg = Config.from_json()
+        _file_level = getattr(logging, _cfg.log_level.upper(), logging.INFO)
+    except Exception:
+        _file_level = logging.INFO
+
     _file_handler = logging.FileHandler(os.path.join(agent_log_dir, "agent.log"), encoding="utf-8")
-    _file_handler.setLevel(logging.DEBUG)
+    _file_handler.setLevel(_file_level)
     _file_handler.setFormatter(logging.Formatter(
         "%(asctime)s [%(name)s] %(levelname)s %(message)s", datefmt="%H:%M:%S"
     ))
@@ -956,7 +965,7 @@ def cmd_run(args: list[str]) -> None:
     agent_info = next(a for a in manager.list() if a.id == agent_id)
     agent_name = agent_info.name or agent_id
 
-    from xiaomei_brain.cli.boot import boot_banner, boot_muted
+    from xiaomei_brain.cli.boot import boot_banner
     model = getattr(agent_info, 'model', '')
     extra = []
     if parsed.no_consciousness:
@@ -970,38 +979,43 @@ def cmd_run(args: list[str]) -> None:
         extra_lines=extra or None,
     )
 
-    with boot_muted():
-        agent = manager.build_agent(agent_id)
+    # ── 启动 Embedding（必须在 build_agent 之前，让 SkillStorage 等拿到正确的 model）───
+    from xiaomei_brain.base.config import Config as _Config
+    from xiaomei_brain.base.shared_embedder import SharedEmbedder
+    _emb_cfg = _Config.from_json()
+    SharedEmbedder.get_or_create(model_name=_emb_cfg.embedding_model if _emb_cfg else "BAAI/bge-m3")
 
-        # ── 通讯端口 ──────────────────────────────────────────
-        comms_port = parsed.port
-        if comms_port == 0:
-            config_json = os.path.expanduser("~/.xiaomei-brain/config.json")
-            if os.path.exists(config_json):
-                try:
-                    import json
-                    with open(config_json) as f:
-                        data = json.load(f)
-                    agents_cfg = data.get("xiaomei_brain", {}).get("agents", {})
-                    agent_cfg = agents_cfg.get(agent_id, {})
-                    comms_port = agent_cfg.get("comms_port", 0)
-                except Exception:
-                    pass
+    agent = manager.build_agent(agent_id)
 
-        from xiaomei_brain.config.agent_config import load_agent_config
-        agent_cfg = load_agent_config(agent_id)
-        cfg = agent_cfg.consciousness
-        cfg.living.comms_port = comms_port
-        living = ConsciousLiving(agent, load_consciousness=not parsed.no_consciousness, config=cfg)
+    # ── 通讯端口 ──────────────────────────────────────────
+    comms_port = parsed.port
+    if comms_port == 0:
+        config_json = os.path.expanduser("~/.xiaomei-brain/config.json")
+        if os.path.exists(config_json):
+            try:
+                import json
+                with open(config_json) as f:
+                    data = json.load(f)
+                agents_cfg = data.get("xiaomei_brain", {}).get("agents", {})
+                agent_cfg = agents_cfg.get(agent_id, {})
+                comms_port = agent_cfg.get("comms_port", 0)
+            except Exception:
+                pass
 
-        # 音乐生成完成通知 → 推入 living 消息队列
-        try:
-            from xiaomei_brain.plugins.tools.music_minimax.music import set_generation_callback
-            def _on_music_done(filename: str, success: bool, message: str):
-                living.put_message(message, source="system")
-            set_generation_callback(_on_music_done)
-        except Exception:
-            pass
+    from xiaomei_brain.config.agent_config import load_agent_config
+    agent_cfg = load_agent_config(agent_id)
+    cfg = agent_cfg.consciousness
+    cfg.living.comms_port = comms_port
+    living = ConsciousLiving(agent, load_consciousness=not parsed.no_consciousness, config=cfg)
+
+    # 音乐生成完成通知 → 推入 living 消息队列
+    try:
+        from xiaomei_brain.plugins.tools.music_minimax.music import set_generation_callback
+        def _on_music_done(filename: str, success: bool, message: str):
+            living.put_message(message, source="system")
+        set_generation_callback(_on_music_done)
+    except Exception:
+        pass
 
     # ── 上线标语 ──────────────────────────────────────────
     from xiaomei_brain.cli.boot import C_OK, C_DIM, BOLD, RESET, boot_sep

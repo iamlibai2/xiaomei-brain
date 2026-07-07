@@ -184,7 +184,7 @@ class AgentRegistry:
                 with open(agent_config_path, "r", encoding="utf-8") as f:
                     agent_config = json.load(f)
             except Exception:
-                pass
+                logger.warning("Failed to read agent config: %s", agent_config_path, exc_info=True)
 
         # 读全局 defaults
         global_data = self._read_global_config()
@@ -251,6 +251,7 @@ class AgentRegistry:
             with open(global_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
         except Exception:
+            logger.warning("Failed to read global config for migration check", exc_info=True)
             return False
 
         agents_list = data.get("agents", {}).get("list", [])

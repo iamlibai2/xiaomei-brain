@@ -356,6 +356,10 @@ class AgentManager:
         from xiaomei_brain.tools.builtin.clarify import clarify_tool
         tools.register(clarify_tool)
 
+        # ── 全局 Embedding 初始化（必须在 SkillStorage / DynamicToolLoader 之前）──
+        from xiaomei_brain.base.shared_embedder import SharedEmbedder
+        SharedEmbedder.get_or_create(model_name=global_config.embedding_model)
+
         # ── 技能系统 ──────────────────────────────────────────────────
         from xiaomei_brain.skills import SkillLoader, create_skill_tools
         skills_dir = os.path.join(self._agent_dir(agent.id), "skills")
@@ -374,16 +378,17 @@ class AgentManager:
             db_path=brain_db_path,
             extra_dirs=extra_dirs,
         )
-        skill_loader.scan()
-        skill_names = skill_loader.list_names()
-        boot_line("加载技能", "OK", f"{len(skill_names)} 个" if skill_names else "空")
+        try:
+            skill_loader.scan()
+            skill_names = skill_loader.list_names()
+            boot_line("加载技能", "OK", f"{len(skill_names)} 个" if skill_names else "空")
+        except Exception:
+            logger.exception("[技能系统] 加载失败")
+            boot_line("加载技能", "FAIL", "扫描或向量索引出错，已跳过")
+            skill_names = []
         agent._skill_loader = skill_loader
         for skill_tool in create_skill_tools(agent):
             tools.register(skill_tool)
-
-        # ── 全局 Embedding 初始化（必须在 DynamicToolLoader 之前） ─────
-        from xiaomei_brain.base.shared_embedder import SharedEmbedder
-        SharedEmbedder.get_or_create(model_name=global_config.embedding_model)
 
         # ── 动态工具加载 ───────────────────────────────────────────────
         dynamic_cfg = {}

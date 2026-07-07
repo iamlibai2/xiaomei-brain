@@ -126,6 +126,7 @@ class PluginLoader:
         try:
             eps = importlib.metadata.entry_points(group="xiaomei_brain.plugins")
         except Exception:
+            logger.debug("Entry point discovery failed, skipping third-party plugins", exc_info=True)
             return result
 
         for ep in eps:

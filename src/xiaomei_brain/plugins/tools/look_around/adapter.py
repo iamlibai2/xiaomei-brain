@@ -70,7 +70,7 @@ def look_at(image_path: str, prompt: str = "描述这张图片") -> dict:
                     if _os.path.isfile(resolved):
                         path = resolved
         except Exception:
-            pass
+            logger.debug("Image path resolution failed, using original path", exc_info=True)
 
     if not _os.path.isfile(path):
         return {"error": f"图片不存在: {image_path}"}

@@ -1059,7 +1059,7 @@ class PACERunner:
         try:
             pmm_ctx = self._project_mental_model.get_context()
         except Exception:
-            pass
+            logger.debug("Failed to get PMM context for perspective broadening", exc_info=True)
 
         result = broaden_perspective(
             target=target, stage=stage, context=context,

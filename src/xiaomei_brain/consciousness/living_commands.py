@@ -43,7 +43,7 @@ def cmd_show_intent(living: ConsciousLiving, args: str = "") -> None:
                     "SELECT type, content, priority, status, created_at FROM intent_buffer ORDER BY created_at DESC LIMIT 5"
                 ).fetchall()
         except Exception:
-            pass
+            logger.debug("Failed to query intent buffer for display", exc_info=True)
 
     print(f"\n  {G}意图{R}", flush=True)
 
@@ -382,6 +382,7 @@ def _load_model_choices() -> list[tuple[str, str, str, str]]:
         with open(config_path) as f:
             cfg = json.load(f)
     except Exception:
+        logger.warning("Failed to read config for model list", exc_info=True)
         return []
 
     choices: list[tuple[str, str, str, str]] = []
@@ -802,6 +803,7 @@ def load_ears_enabled(agent_id: str) -> bool:
             data = yaml.safe_load(f) or {}
         return data.get("body", {}).get("ears_enabled", True)
     except Exception:
+        logger.warning("Failed to read ears config, defaulting to enabled", exc_info=True)
         return True
 
 

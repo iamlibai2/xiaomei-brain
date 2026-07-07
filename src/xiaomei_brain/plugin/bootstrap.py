@@ -137,6 +137,7 @@ def _read_merged_config(agent_id: str = "") -> dict | None:
     try:
         agent_data = json.loads(agent_config_path.read_text(encoding="utf-8"))
     except Exception:
+        logger.warning("Failed to read agent config: %s", agent_config_path, exc_info=True)
         return global_data
 
     if global_data:

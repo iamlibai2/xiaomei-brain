@@ -205,7 +205,7 @@ class VoiceListener:
             try:
                 mic.stop_stream()
             except Exception:
-                pass
+                logger.debug("VoiceListener: stop_stream failed during reconnect", exc_info=True)
             time.sleep(3)
             if not mic.start_stream():
                 logger.error("VoiceListener 重连失败")

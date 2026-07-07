@@ -137,6 +137,7 @@ class PatternStorage:
         try:
             return self._ltm.search_by_tags(["pattern"], user_id="global")
         except Exception:
+            logger.warning("PatternStore.get_all() failed")
             return []
 
     def get_top(self, top_k: int = 3) -> list[dict]:
@@ -152,6 +153,7 @@ class PatternStorage:
         try:
             return self._ltm.search_by_tags(tags, user_id="global")
         except Exception:
+            logger.warning("PatternStore.search_by_tags() failed", exc_info=True)
             return []
 
     def decay_unobserved(self, observed_ids: set[int]) -> int:
@@ -305,6 +307,7 @@ class PatternExtractor:
                 lines.append(f"[{e.get('created_at', 0)}] {content}")
             return "\n".join(lines)
         except Exception:
+            logger.warning("PatternMiner._get_internal_reflections() failed", exc_info=True)
             return ""
 
     def _parse_response(self, raw: str) -> list[Pattern]:
@@ -416,6 +419,7 @@ class PatternInjector:
             )
             return f"当前情境相关模式：{content}"
         except Exception:
+            logger.warning("PatternInjector.inject_intent() failed", exc_info=True)
             return ""
 
     # ── 注入点 3: 对话上下文 ──────────────────────────────
@@ -440,6 +444,7 @@ class PatternInjector:
             )
             return f"\n[话题趋势] {content}"
         except Exception:
+            logger.warning("PatternInjector.inject_context() failed", exc_info=True)
             return ""
 
     # ── 注入点 4: 学习选题加权 ────────────────────────────
@@ -467,4 +472,5 @@ class PatternInjector:
                     boosts[candidate] = min(boost, 0.5)
             return boosts
         except Exception:
+            logger.warning("PatternInjector.boost_learning_topics() failed", exc_info=True)
             return {}

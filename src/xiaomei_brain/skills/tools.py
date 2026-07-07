@@ -111,7 +111,7 @@ def create_skill_tools(agent: "AgentInstance") -> list[Tool]:
         try:
             loader.record_usage(name)
         except Exception:
-            pass
+            logger.debug("Failed to record skill usage for '%s'", name, exc_info=True)
 
         lines = [
             f"# {skill['name']}",

@@ -123,7 +123,7 @@ class STT:
                     speech_frames += 1
                 total_frames += 1
             except Exception:
-                pass
+                logger.debug("VAD is_speech check failed for frame", exc_info=True)
 
         if total_frames == 0:
             return False

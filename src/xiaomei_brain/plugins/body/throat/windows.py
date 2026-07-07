@@ -170,7 +170,7 @@ class RealSpeaker(Speaker):
             nonlocal underflows, total_callbacks
             total_callbacks += 1
             if status:
-                logger.warning("[RealSpeaker] sounddevice status: %s", status)
+                logger.debug("[RealSpeaker] sounddevice status: %s", status)
 
             needed_bytes = frames * bytes_per_sample
 
@@ -211,7 +211,7 @@ class RealSpeaker(Speaker):
             while not buf._closed:
                 time.sleep(0.1)
 
-        logger.warning("[RealSpeaker] 流式播放完成 (sounddevice) — "
+        logger.debug("[RealSpeaker] 流式播放完成 (sounddevice) — "
                        "callbacks=%d, underflows=%d", total_callbacks, underflows)
 
     def _play_stream_buffered(self, gen, codec, sample_rate, channels) -> None:

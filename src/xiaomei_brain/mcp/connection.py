@@ -302,7 +302,7 @@ def _write_audit(entry: dict) -> None:
             fh.write(line)
             fh.flush()
     except Exception:
-        pass
+        logger.debug("MCP audit log write failed", exc_info=True)
 
 
 # ── Schema 校验 ──────────────────────────────────────────────────────
@@ -844,7 +844,7 @@ class MCPConnection:
             try:
                 self._task.cancel()
             except Exception:
-                pass
+                logger.debug("MCP task cancel failed during close", exc_info=True)
         self._cleanup_stdio_pids()
 
     def _cleanup_stdio_pids(self):

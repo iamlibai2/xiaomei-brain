@@ -73,7 +73,7 @@ class Body:
                     try:
                         sense.capture_raw()
                     except Exception:
-                        pass
+                        logger.warning("[Sense] capture_raw failed for %s", name, exc_info=True)
             self._last_capture = now
 
         # ── 10分钟：分析识别 ──
@@ -83,7 +83,7 @@ class Body:
                     try:
                         sense.contribute_to(state)
                     except Exception:
-                        pass
+                        logger.warning("[Sense] contribute_to failed for %s", name, exc_info=True)
             self._last_analyze = now
 
         self._last_state = state

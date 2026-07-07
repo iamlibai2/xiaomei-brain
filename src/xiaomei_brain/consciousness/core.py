@@ -403,6 +403,7 @@ class Consciousness:
         try:
             narratives = ltm.get_recent(30, sources=["internal", "dream"])
         except Exception:
+            logger.warning("Failed to get recent narratives for self-cognition", exc_info=True)
             return
 
         if not narratives:
@@ -634,6 +635,7 @@ class Consciousness:
                     lines.append(f"{self.being.name or '我'}：{content[:150]}")
             return "\n".join(reversed(lines)) if lines else "（无最近对话）"
         except Exception:
+            logger.warning("Failed to read recent conversation for procedure learning", exc_info=True)
             return "（获取对话失败）"
 
     def _learn_procedures_from_conversation(self) -> None:

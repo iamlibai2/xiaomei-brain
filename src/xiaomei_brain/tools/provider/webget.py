@@ -71,6 +71,7 @@ def _is_private_url(url: str) -> bool:
                 return True
         return False
     except Exception:
+        logger.warning("SSRF check failed: DNS resolution error", exc_info=True)
         return False
 
 

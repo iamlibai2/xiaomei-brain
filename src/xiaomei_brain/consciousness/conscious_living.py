@@ -1282,7 +1282,7 @@ class ConsciousLiving(Living):
                     if intent_val and str(intent_val).lower() == 'sleep':
                         return True
         except Exception:
-            pass
+            logger.debug("Sleep intent check failed", exc_info=True)
         return False
 
     def _consume_sleep_intent(self, si) -> None:
@@ -1590,7 +1590,7 @@ class ConsciousLiving(Living):
                 try:
                     time_prefix = datetime.fromtimestamp(created_ts).strftime("[%m-%d %H:%M] ")
                 except Exception:
-                    pass
+                    logger.debug("Timestamp formatting failed for message", exc_info=True)
             if role == "user":
                 msg = {"role": "user", "content": f"{time_prefix}{m.get('content', '')}"}
                 if db_id is not None:

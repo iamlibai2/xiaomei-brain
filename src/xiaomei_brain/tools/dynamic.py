@@ -111,18 +111,30 @@ class DynamicToolLoader:
         self._lance_db_path.mkdir(parents=True, exist_ok=True)
         self._lance_db = lancedb.connect(str(self._lance_db_path))
 
+        # 获取当前模型的 embedding 维度
+        dim = self._shared.dim
+        if dim is None:
+            dim = len(self._get_embedder().embed("dim check"))
+        expected_dim = dim
+
         # 尝试直接打开（list_tables() 有时不返回已存在的表）
         try:
-            self._lance_table = self._lance_db.open_table("tool_embeddings")
-            logger.info("DynamicToolLoader: LanceDB cache opened (%s)", self._lance_db_path)
-            return self._lance_table
+            tbl = self._lance_db.open_table("tool_embeddings")
+            actual = tbl.to_arrow().schema.field("vector").type.list_size
+            if actual != expected_dim:
+                logger.warning(
+                    "DynamicToolLoader: dim mismatch (table=%d vs model=%d), dropping and rebuilding",
+                    actual, expected_dim,
+                )
+                self._lance_db.drop_table("tool_embeddings")
+            else:
+                self._lance_table = tbl
+                logger.info("DynamicToolLoader: LanceDB cache opened (%s)", self._lance_db_path)
+                return self._lance_table
         except Exception:
             pass
 
-        # 不存在 → 新建
-        embedder = self._get_embedder()
-        sample_vec = embedder.embed("dim check")
-        expected_dim = len(sample_vec)
+        # 不存在或维度不匹配 → 新建
 
         schema = pa.schema([
             pa.field("id", pa.string()),
@@ -184,7 +196,7 @@ class DynamicToolLoader:
                     try:
                         table.delete(f"id = '{name}'")
                     except Exception:
-                        pass
+                        logger.debug("DynamicToolLoader: delete stale embedding failed for '%s'", name, exc_info=True)
 
             if added and table:
                 new_tools = [name_to_tool[n] for n in current_names if n in added]
@@ -230,7 +242,7 @@ class DynamicToolLoader:
             try:
                 self._lance_db.drop_table("tool_embeddings", ignore_missing=True)
             except Exception:
-                pass
+                logger.debug("DynamicToolLoader: drop_table failed, will retry with recreate", exc_info=True)
             self._lance_table = None
             table = self._get_lance_table()
             if table is None:

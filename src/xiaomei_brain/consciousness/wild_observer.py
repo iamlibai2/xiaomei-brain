@@ -83,6 +83,7 @@ class WildObserver:
                 "priority": getattr(intent, "priority", 0),
             }
         except Exception:
+            logger.debug("Failed to serialize intent to dict", exc_info=True)
             return {"raw": str(intent)}
 
     def _write_entry(self, entry: dict) -> None:

@@ -404,7 +404,7 @@ class CognitiveLoop:
                     iv_insert = inserts
                     p._inner_voice.reset_inserted_steps()
             except Exception:
-                pass
+                logger.debug("Failed to get inner voice inserts", exc_info=True)
 
         # 经验提取（保留原有逻辑）
         if p._inner_voice and p._experience_memory:

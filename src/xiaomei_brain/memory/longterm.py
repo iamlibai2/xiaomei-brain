@@ -259,6 +259,7 @@ class LongTermMemory(SQLiteStore):
                     "SELECT id, content FROM narrative_memories WHERE status = 'active'"
                 ).fetchall()
             except Exception:
+                logger.warning("[LanceDB] Failed to read narratives for rebuild", exc_info=True)
                 return
 
         if not rows:
@@ -413,6 +414,7 @@ class LongTermMemory(SQLiteStore):
                 "SELECT id, content, user_id FROM consciousness_stream"
             ).fetchall()
         except Exception:
+            logger.warning("[LanceDB] Failed to read consciousness_stream for rebuild", exc_info=True)
             return
 
         if not rows:
@@ -1382,6 +1384,7 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
                 if m.get("score", 0) >= 0.6 and m.get("user_id") == user_id
             ]
         except Exception:
+            logger.warning("Failed to recall nicknames for user_id=%s", user_id, exc_info=True)
             return []
 
     def get_important(
@@ -2351,6 +2354,7 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
                 return False
             return scene in tags
         except Exception:
+            logger.debug("Scene tag parse failed", exc_info=True)
             return False  # Parse error → no match (safe default)
 
     def _safe_sql_name(self, name: str) -> str:

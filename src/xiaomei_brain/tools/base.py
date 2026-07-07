@@ -71,6 +71,7 @@ def _resolve_annotated_type(type_str: str) -> Any:
     try:
         return eval(type_str, {"typing": typing})
     except Exception:
+        logger.debug("Failed to resolve type annotation: %s", type_str, exc_info=True)
         return str
 
 

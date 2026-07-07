@@ -90,7 +90,7 @@ class SkillStorage(SQLiteStore):
                 conn.execute("ALTER TABLE skills ADD COLUMN content_hash TEXT DEFAULT ''")
                 conn.commit()
             except Exception:
-                pass  # 列已存在
+                logger.debug("ALTER TABLE skills ADD content_hash failed (column may already exist)", exc_info=True)
 
         self._set_schema_version("skills", SCHEMA_VERSION)
 
@@ -168,9 +168,7 @@ class SkillStorage(SQLiteStore):
                 table.delete("id >= 0")
                 logger.info("SkillStorage: cleared %d old LanceDB vectors", n_before)
         except Exception:
-            pass
-
-        logger.info("SkillStorage: rebuilding LanceDB index for %d skills", len(rows))
+            logger.warning("SkillStorage: failed to clear old LanceDB vectors", exc_info=True)
         texts = []
         ids = []
         for row in rows:
@@ -179,7 +177,12 @@ class SkillStorage(SQLiteStore):
             texts.append(f"{row['name']}: {row['description']} {tags_str}")
             ids.append(row["id"])
 
-        vectors = self._embed_batch(texts)
+        logger.warning("SkillStorage: embedding %d texts for LanceDB rebuild...", len(texts))
+        try:
+            vectors = self._embed_batch(texts)
+        except Exception:
+            logger.exception("SkillStorage: embedding failed during LanceDB rebuild")
+            return
 
         import pyarrow as pa
         batch_data = [{"id": i, "vector": v} for i, v in zip(ids, vectors)]
@@ -206,7 +209,7 @@ class SkillStorage(SQLiteStore):
         try:
             table.delete(f"id = {skill_id}")
         except Exception:
-            pass
+            logger.debug("SkillStorage: delete old vector failed for skill %d", skill_id, exc_info=True)
         table.add([{"id": skill_id, "vector": vector}])
 
     # ── 导入 ─────────────────────────────────────────────────────
@@ -330,7 +333,7 @@ class SkillStorage(SQLiteStore):
         try:
             self._upsert_lance(skill_id)
         except Exception:
-            logger.debug("SkillStorage: LanceDB upsert failed for %s", name, exc_info=True)
+            logger.warning("SkillStorage: LanceDB upsert failed for %s", name, exc_info=True)
 
         return skill_id
 
@@ -524,7 +527,7 @@ class SkillStorage(SQLiteStore):
             table = self._get_lance_table()
             table.delete(f"id = {skill_id}")
         except Exception:
-            pass
+            logger.debug("SkillStorage: delete vector failed for skill %d", skill_id, exc_info=True)
         return True
 
     # ── 工具 ─────────────────────────────────────────────────────

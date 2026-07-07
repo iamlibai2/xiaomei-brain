@@ -99,6 +99,7 @@ class ConsciousnessStorage:
                 data = json.load(f)
                 return data.get("records", [])
         except Exception:
+            logger.warning("Failed to read consciousness records: %s", file_path, exc_info=True)
             return []
 
     def get_recent_records(self, limit: int = 10) -> list[dict]:

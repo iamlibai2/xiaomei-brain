@@ -1172,7 +1172,7 @@ class ActionDispatcher:
                             if msg and not item.content:
                                 item.content = msg
                                 item.reason = i.get("content", "") or item.reason
-                                logger.info("[ActionDispatcher] intent 预生成消息: %s → %s", intent_type, msg[:60])
+                                logger.debug("[ActionDispatcher] intent 预生成消息: %s → %s", intent_type, msg[:60])
                             break
             if silent and item.action_type.value != "notify":
                 logger.debug("[ActionDispatcher] 能量沉寂(%.2f)，跳过: %s", energy, rule.cooldown_key)
