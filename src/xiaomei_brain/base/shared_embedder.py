@@ -112,7 +112,6 @@ class SharedEmbedder:
     def _warmup(self) -> None:
         """后台线程：不联网检测，只根据环境变量决定加载策略。"""
         os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-        os.environ["HF_HUB_OFFLINE"] = "1"
 
         # 配置了远程 URL：只尝试远程，不加载本地模型
         if self._remote_url:
@@ -152,7 +151,6 @@ class SharedEmbedder:
                 return self._model
 
             os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-            os.environ["HF_HUB_OFFLINE"] = "1"
 
             from contextlib import redirect_stderr
             from io import StringIO
