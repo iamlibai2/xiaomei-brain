@@ -71,13 +71,15 @@ def _extract_plugins_config(agent_id: str = "") -> dict:
       - plugins.allow / plugins.deny → 启用/禁用特定插件
       - channels.<name>.accounts.<accountId> → 频道插件配置
       - bindings → 按 agent_id 过滤 channels（无 bindings 时全加载）
+
+    Agent config.json 中的 channels / bindings / plugins 会覆盖全局配置。
     """
     entries: dict[str, dict] = {}
     allow: list[str] = []
     deny: list[str] = []
 
     try:
-        raw = _read_raw_config()
+        raw = _read_merged_config(agent_id)
 
         # ── plugins.allow / plugins.deny ──────────
         plugins_cfg = raw.get("plugins", {}) if raw else {}
@@ -113,6 +115,41 @@ def _read_raw_config() -> dict | None:
             except Exception as e:
                 logger.debug("failed to load config from %s, trying next path: %s", p, e)
     return None
+
+
+def _read_merged_config(agent_id: str = "") -> dict | None:
+    """浅合并 agent config.json 与全局 config.json。
+
+    agent 的 channels / bindings / plugins 覆盖全局同名 key。
+    """
+    import json
+    from pathlib import Path
+
+    global_data = _read_raw_config()
+
+    if not agent_id:
+        return global_data
+
+    agent_config_path = Path.home() / ".xiaomei-brain" / agent_id / "config.json"
+    if not agent_config_path.is_file():
+        return global_data
+
+    try:
+        agent_data = json.loads(agent_config_path.read_text(encoding="utf-8"))
+    except Exception:
+        return global_data
+
+    if global_data:
+        merged = dict(global_data)
+    else:
+        merged = {}
+
+    # Agent 的 channels / bindings / plugins 覆盖全局
+    for key in ("channels", "bindings", "plugins"):
+        if key in agent_data:
+            merged[key] = agent_data[key]
+
+    return merged
 
 
 def _map_channel_configs(raw: dict | None, entries: dict, agent_id: str = "") -> None:

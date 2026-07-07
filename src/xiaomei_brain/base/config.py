@@ -66,28 +66,8 @@ class Config:
     api_key: str = ""
     base_url: str = ""
 
-    # Agent behavior
-    max_steps: int = 20
-    system_prompt: str = "You are a helpful assistant."
-
-    # Context management
-    context_max_tokens: int = 4000
-    context_recent_turns: int = 6
-
-    # Memory system
-    memory_dir: str = ""
-    memory_similarity_threshold: float = 0.3
-    memory_max_topics: int = 100
-    memory_max_topic_chars: int = 5000
-    embedding_model: str = "BAAI/bge-m3"
-    embedding_fallback: str = "all-MiniLM-L6-v2"
-
-    # Dream system
-    dream_idle_threshold: int = 300
-    dream_midnight_run: bool = True
-
-    # Proactive engine
-    proactive_away_threshold: int = 3600
+    # Embedding
+    embedding_model: str = "BAAI/bge-small-zh-v1.5"
 
     # Logging
     log_level: str = "INFO"
@@ -117,8 +97,6 @@ class Config:
     image_enabled: bool = False
     image_api_key: str = ""
     image_base_url: str = ""
-    image_aspect_ratio: str = "1:1"
-    image_prompt_optimizer: bool = True
 
     # Web search settings
     web_search_enabled: bool = False
@@ -126,7 +104,6 @@ class Config:
 
     # Web get settings
     web_get_enabled: bool = False
-    web_get_max_chars: int = 40000
 
     # Internal: store all provider configs from file
     _provider_configs: dict[str, dict] = field(default_factory=dict, repr=False)
@@ -139,7 +116,6 @@ class Config:
         """Resolve configuration with fallbacks."""
         self._resolve_provider_settings()
         self._resolve_service_settings()
-        self._resolve_memory_dir()
         self._validate()
 
     def _resolve_provider_settings(self) -> None:
@@ -189,14 +165,6 @@ class Config:
             if not base_url and enabled:
                 setattr(self, f"{service}_base_url", defaults["base_url"])
 
-    def _resolve_memory_dir(self) -> None:
-        """Resolve memory directory."""
-        if not self.memory_dir:
-            self.memory_dir = os.environ.get(
-                "XIAOMEI_MEMORY_DIR",
-                os.path.expanduser("~/.xiaomei-brain/default/memory"),
-            )
-
     def _validate(self) -> None:
         """Validate configuration values."""
         if not self.api_key:
@@ -207,12 +175,6 @@ class Config:
             logger.warning("No base_url configured for provider '%s'", self.provider)
         if not self.model:
             logger.warning("No model configured for provider '%s'", self.provider)
-        if self.max_steps < 1:
-            raise ValueError("max_steps must be >= 1")
-        if self.context_max_tokens < 100:
-            raise ValueError("context_max_tokens must be >= 100")
-        if not 0.0 <= self.memory_similarity_threshold <= 1.0:
-            raise ValueError("memory_similarity_threshold must be between 0.0 and 1.0")
 
     @classmethod
     def from_json(cls, config_path: str | Path | None = None) -> Config:
@@ -298,46 +260,10 @@ class Config:
             "model": model,
         }
 
-        # Agent settings from xiaomei_brain.agent or data.agent
-        agent_data = xiaomei_cfg.get("agent", {})
-        if "max_steps" in agent_data:
-            kwargs["max_steps"] = agent_data["max_steps"]
-        if "system_prompt" in agent_data:
-            kwargs["system_prompt"] = agent_data["system_prompt"]
-
-        # Context settings
-        ctx_data = agent_data.get("context", {})
-        if "max_tokens" in ctx_data:
-            kwargs["context_max_tokens"] = ctx_data["max_tokens"]
-        if "recent_turns" in ctx_data:
-            kwargs["context_recent_turns"] = ctx_data["recent_turns"]
-
-        # Memory settings
-        mem_data = xiaomei_cfg.get("memory", {})
-        if "dir" in mem_data and mem_data["dir"]:
-            kwargs["memory_dir"] = mem_data["dir"]
-        if "similarity_threshold" in mem_data:
-            kwargs["memory_similarity_threshold"] = mem_data["similarity_threshold"]
-        if "max_topics" in mem_data:
-            kwargs["memory_max_topics"] = mem_data["max_topics"]
-        if "max_topic_chars" in mem_data:
-            kwargs["memory_max_topic_chars"] = mem_data["max_topic_chars"]
-        if "embedding_model" in mem_data:
-            kwargs["embedding_model"] = mem_data["embedding_model"]
-        if "embedding_fallback" in mem_data:
-            kwargs["embedding_fallback"] = mem_data["embedding_fallback"]
-
-        # Dream settings
-        dream_data = xiaomei_cfg.get("dream", {})
-        if "idle_threshold" in dream_data:
-            kwargs["dream_idle_threshold"] = dream_data["idle_threshold"]
-        if "midnight_run" in dream_data:
-            kwargs["dream_midnight_run"] = dream_data["midnight_run"]
-
-        # Proactive settings
-        proactive_data = xiaomei_cfg.get("proactive", {})
-        if "away_threshold" in proactive_data:
-            kwargs["proactive_away_threshold"] = proactive_data["away_threshold"]
+        # Embedding settings (top-level "embedding" node, matching config template)
+        emb_data = data.get("embedding", {})
+        if "model" in emb_data:
+            kwargs["embedding_model"] = emb_data["model"]
 
         # Logging settings
         log_data = xiaomei_cfg.get("logging", {})
@@ -375,8 +301,6 @@ class Config:
             kwargs["image_enabled"] = image_data.get("enabled", False)
             kwargs["image_api_key"] = image_data.get("api_key", "")
             kwargs["image_base_url"] = image_data.get("base_url", "")  # resolved by _resolve_service_settings
-            kwargs["image_aspect_ratio"] = image_data.get("aspect_ratio", "1:1")
-            kwargs["image_prompt_optimizer"] = image_data.get("prompt_optimizer", False)
 
         # Web search settings
         ws_data = xiaomei_cfg.get("web_search", {})
@@ -388,7 +312,6 @@ class Config:
         wf_data = xiaomei_cfg.get("web_get", {})
         if wf_data:
             kwargs["web_get_enabled"] = wf_data.get("enabled", False)
-            kwargs["web_get_max_chars"] = wf_data.get("max_chars", 40000)
 
         return cls(**kwargs)
 
@@ -455,48 +378,6 @@ class Config:
         if "provider" in data:
             kwargs["provider"] = data["provider"]
 
-        # Agent settings
-        if "agent" in data:
-            agent_data = data["agent"]
-            if "max_steps" in agent_data:
-                kwargs["max_steps"] = agent_data["max_steps"]
-            if "system_prompt" in agent_data:
-                kwargs["system_prompt"] = agent_data["system_prompt"]
-
-        # Context settings
-        if "context" in data:
-            ctx_data = data["context"]
-            if "max_tokens" in ctx_data:
-                kwargs["context_max_tokens"] = ctx_data["max_tokens"]
-            if "recent_turns" in ctx_data:
-                kwargs["context_recent_turns"] = ctx_data["recent_turns"]
-
-        # Memory settings
-        if "memory" in data:
-            mem_data = data["memory"]
-            if "dir" in mem_data:
-                kwargs["memory_dir"] = mem_data["dir"]
-            if "similarity_threshold" in mem_data:
-                kwargs["memory_similarity_threshold"] = mem_data["similarity_threshold"]
-            if "max_topics" in mem_data:
-                kwargs["memory_max_topics"] = mem_data["max_topics"]
-            if "max_topic_chars" in mem_data:
-                kwargs["memory_max_topic_chars"] = mem_data["max_topic_chars"]
-
-        # Dream settings
-        if "dream" in data:
-            dream_data = data["dream"]
-            if "idle_threshold" in dream_data:
-                kwargs["dream_idle_threshold"] = dream_data["idle_threshold"]
-            if "midnight_run" in dream_data:
-                kwargs["dream_midnight_run"] = dream_data["midnight_run"]
-
-        # Proactive settings
-        if "proactive" in data:
-            proactive_data = data["proactive"]
-            if "away_threshold" in proactive_data:
-                kwargs["proactive_away_threshold"] = proactive_data["away_threshold"]
-
         # Logging settings
         if "logging" in data:
             log_data = data["logging"]
@@ -554,10 +435,6 @@ class Config:
                 kwargs["image_api_key"] = image_data["api_key"]
             if "base_url" in image_data:
                 kwargs["image_base_url"] = image_data["base_url"]
-            if "aspect_ratio" in image_data:
-                kwargs["image_aspect_ratio"] = image_data["aspect_ratio"]
-            if "prompt_optimizer" in image_data:
-                kwargs["image_prompt_optimizer"] = image_data["prompt_optimizer"]
 
         # Web search settings
         if "web_search" in data:
@@ -572,8 +449,6 @@ class Config:
             wf_data = data["web_get"]
             if "enabled" in wf_data:
                 kwargs["web_get_enabled"] = wf_data["enabled"]
-            if "max_chars" in wf_data:
-                kwargs["web_get_max_chars"] = wf_data["max_chars"]
 
         return cls(**kwargs)
 
@@ -588,28 +463,8 @@ class Config:
         return {
             "provider": self.provider,
             "providers": self._provider_configs,
-            "agent": {
-                "max_steps": self.max_steps,
-                "system_prompt": self.system_prompt,
-            },
-            "context": {
-                "max_tokens": self.context_max_tokens,
-                "recent_turns": self.context_recent_turns,
-            },
             "memory": {
-                "dir": self.memory_dir,
-                "similarity_threshold": self.memory_similarity_threshold,
-                "max_topics": self.memory_max_topics,
-                "max_topic_chars": self.memory_max_topic_chars,
                 "embedding_model": self.embedding_model,
-                "embedding_fallback": self.embedding_fallback,
-            },
-            "dream": {
-                "idle_threshold": self.dream_idle_threshold,
-                "midnight_run": self.dream_midnight_run,
-            },
-            "proactive": {
-                "away_threshold": self.proactive_away_threshold,
             },
             "logging": {
                 "level": self.log_level,
@@ -639,8 +494,6 @@ class Config:
                 "enabled": self.image_enabled,
                 "api_key": self.image_api_key,
                 "base_url": self.image_base_url,
-                "aspect_ratio": self.image_aspect_ratio,
-                "prompt_optimizer": self.image_prompt_optimizer,
             },
             "web_search": {
                 "enabled": self.web_search_enabled,
@@ -648,7 +501,6 @@ class Config:
             },
             "web_get": {
                 "enabled": self.web_get_enabled,
-                "max_chars": self.web_get_max_chars,
             },
         }
 

@@ -27,7 +27,7 @@ from xiaomei_brain.base.sqlite_store import SQLiteStore
 logger = logging.getLogger(__name__)
 
 # Default embedding models (used when Config doesn't specify)
-DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"
+DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-zh-v1.5"
 FALLBACK_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
 # ── Memory Strength Constants ──────────────────────────────────
@@ -67,151 +67,36 @@ class LongTermMemory(SQLiteStore):
         super().__init__(db_path)
         self._init_tables()
 
-        # Embedding model (lazy load, 远程服务器优先)
-        self._embedding_model_name = embedding_model or DEFAULT_EMBEDDING_MODEL
-        self._embedding_fallback = embedding_fallback or FALLBACK_EMBEDDING_MODEL
-        self._embedder: Any = None
-        self._embed_lock = threading.Lock()
-
-        # Remote embedding server（常驻进程，跨进程复用模型）
-        from xiaomei_brain.base.embedding_client import RemoteEmbedder
-        self._remote = RemoteEmbedder()
+        # SharedEmbedder — 全局唯一 embedding 单例
+        from xiaomei_brain.base.shared_embedder import SharedEmbedder
+        self._shared = SharedEmbedder.get_or_create(
+            model_name=embedding_model or DEFAULT_EMBEDDING_MODEL,
+        )
+        # 向后兼容
+        self._remote = self._shared._remote
 
         # LanceDB (lazy open)
         self._lance_dir = self.db_path.parent / "lancedb"
         self._lance_db: Any = None
         self._lance_table: Any = None
 
-        # Background warmup: pre-load embedding model in background thread
-        self._warmup_complete = threading.Event()
-        t = threading.Thread(target=self._warmup_embedder, daemon=True)
-        t.start()
-
     # ── Embedding ───────────────────────────────────────────────
 
     def is_embedder_ready(self) -> bool:
-        """Embedding 模型是否已加载完成（包括后台 warmup）。"""
-        return self._warmup_complete.is_set()
+        """Embedding 模型是否已加载完成。"""
+        return self._shared.is_ready()
 
     def wait_embedder(self, timeout: float | None = None) -> bool:
         """阻塞等待 embedding 模型加载完成。返回 True 表示就绪。"""
-        return self._warmup_complete.wait(timeout=timeout)
-
-    def _warmup_embedder(self) -> None:
-        """如果远端 embedding 服务未独立启动，才预加载本地模型。
-        避免 model 已经在远端单独运行时还加载本地副本浪费内存。"""
-        # 设置环境变量，确保 sentence_transformers 离线模式
-        os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-        os.environ["HF_HUB_OFFLINE"] = "1"
-
-        try:
-            from sentence_transformers import SentenceTransformer  # noqa: F401
-            # 先检查远端服务，已独立运行则不加载本地模型
-            if self._remote.available:
-                logger.info("Remote embedding server available, using remote (skip local warmup)")
-                self._warmup_complete.set()
-                return
-            logger.info("No remote embedding server, pre-loading local model: %s", self._embedding_model_name)
-            self._get_embedder()
-            self._warmup_complete.set()
-        except ImportError:
-            logger.debug("sentence_transformers not installed, skipping embedder warmup")
-            self._warmup_complete.set()  # 没有依赖，标记完成避免阻塞
-        except RuntimeError:
-            pass  # Will retry on first use
-        except Exception as e:
-            logger.debug("[Embed] warmup failed: %s", e)
-
-    def _get_embedder(self) -> Any:
-        """Lazy-load the embedding model (thread-safe).
-
-        仅在远程服务器不可用时调用。
-        """
-        if self._embedder is not None:
-            return self._embedder
-
-        with self._embed_lock:
-            if self._embedder is not None:
-                return self._embedder
-
-            # 离线模式：避免加载时检查 HuggingFace Hub
-            os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-            os.environ["HF_HUB_OFFLINE"] = "1"
-
-            from contextlib import redirect_stderr
-            from io import StringIO
-            from sentence_transformers import SentenceTransformer
-
-            from xiaomei_brain.memory.search import _resolve_model_path
-            model_path = _resolve_model_path(self._embedding_model_name)
-
-            try:
-                logger.info("Loading embedding model: %s", model_path)
-                with redirect_stderr(StringIO()):
-                    self._embedder = SentenceTransformer(model_path)
-                logger.info("Embedding model loaded: %s", model_path)
-            except Exception as e:
-                if self._embedding_model_name != self._embedding_fallback:
-                    logger.warning(
-                        "Failed to load %s, falling back to %s: %s",
-                        model_path, self._embedding_fallback, e,
-                    )
-                    self._embedding_model_name = self._embedding_fallback
-                    self._embedder = SentenceTransformer(self._embedding_fallback)
-                else:
-                    raise
-
-            self._warmup_complete.set()
-            return self._embedder
-
-    # ── Embedding ───────────────────────────────────────────────
+        return self._shared.wait_ready(timeout=timeout)
 
     def _embed(self, text: str) -> list[float]:
-        """Embed a single text string.
-
-        优先走远程服务器（常驻进程），回退本地（GPU → CPU）。
-        """
-        if self._remote.available:
-            try:
-                return self._remote.embed(text)
-            except Exception as e:
-                logger.warning("[Embed] Remote failed, falling back to local: %s", e)
-
-        model = self._get_embedder()
-        return self._safe_local_encode(model, text)
+        """Embed a single text string. 委托给 SharedEmbedder。"""
+        return self._shared.embed(text)
 
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
-        """Embed multiple texts.
-
-        优先走远程服务器（常驻进程），回退本地（GPU → CPU）。
-        """
-        if self._remote.available:
-            try:
-                return self._remote.embed_batch(texts)
-            except Exception as e:
-                logger.warning("[Embed] Remote batch failed, falling back to local: %s", e)
-
-        model = self._get_embedder()
-        return self._safe_local_encode(model, texts, batch=True)
-
-    def _safe_local_encode(self, model: Any, texts, batch: bool = False) -> list:
-        """Encode with GPU-first, CPU fallback on CUDA error."""
-        try:
-            vectors = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
-            return vectors.tolist()
-        except RuntimeError as e:
-            if "CUDA" not in str(e):
-                raise
-            from sentence_transformers import SentenceTransformer
-            if str(model.device) == "cpu":
-                raise
-            logger.warning("[Embed] CUDA error, switching to CPU: %s", e)
-            # 把当前实例切到 CPU（后续调用也走 CPU，不需要每次重试）
-            self._embedder = model.to("cpu")
-            vectors = self._embedder.encode(
-                texts, normalize_embeddings=True, show_progress_bar=False,
-            )
-            return vectors.tolist()
+        """Embed multiple texts. 委托给 SharedEmbedder。"""
+        return self._shared.embed_batch(texts)
 
     # ── LanceDB ─────────────────────────────────────────────────
 
@@ -264,14 +149,10 @@ class LongTermMemory(SQLiteStore):
 
     def _get_embedding_dim(self) -> int:
         """Get embedding dimension — remote first, local fallback."""
-        if self._remote.dim is not None:
-            return self._remote.dim
-
-        # Fall back to local model
-        model = self._get_embedder()
-        if hasattr(model, "get_embedding_dimension"):
-            return model.get_embedding_dimension()
-        return model.get_sentence_embedding_dimension()
+        dim = self._shared.dim
+        if dim is not None:
+            return dim
+        return 512  # bge-small-zh-v1.5 default
 
     # ── Narrative LanceDB ────────────────────────────────────────
 

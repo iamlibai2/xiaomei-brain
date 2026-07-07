@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 from ..tools.base import Tool, tool
 
 if TYPE_CHECKING:
-    from ..agent.agent_manager import AgentInstance
+    from ..agent.instance import AgentInstance
 
 logger = logging.getLogger(__name__)
 

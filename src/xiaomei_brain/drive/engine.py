@@ -52,7 +52,7 @@ class DriveEngine:
             agent_id: Agent ID
             base_dir: 基础目录
             load: 是否加载数据（False = 纯结构创建，支持"生命存在但无意识"）
-            config: Drive 配置。如不提供，从共享 config.yaml 加载。
+            config: Drive 配置。如不提供，从 brain.yaml 加载。
         """
         self.agent_id = agent_id
         self._loaded = False  # 标记是否已加载
@@ -60,7 +60,7 @@ class DriveEngine:
         self.exp_stream: Any = None  # 经验流引用，用于写入 drive_event
         self._last_user_active: float = 0  # 用户最后活跃时间（用于 tick_minute 判断）
 
-        # 配置：优先使用传入的 config，否则从共享 config.yaml 加载
+        # 配置：优先使用传入的 config，否则从 brain.yaml 加载
         if base_dir is None:
             base_dir = Path.home() / ".xiaomei-brain" / agent_id
         self.base_dir = Path(base_dir)

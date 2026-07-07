@@ -23,6 +23,26 @@ from rich.box import ROUNDED
 console = Console()
 
 
+def _discover_agents() -> list[str]:
+    """扫描 ~/.xiaomei-brain/*/ 目录，发现所有 agent ID。"""
+    base = Path.home() / ".xiaomei-brain"
+    if not base.is_dir():
+        return []
+    agents = []
+    try:
+        for entry in sorted(base.iterdir()):
+            if not entry.is_dir():
+                continue
+            has_brain = (entry / "brain.yaml").exists()
+            has_identity = (entry / "identity.md").exists()
+            has_ci = (entry / "consciousness" / "identity.md").exists()
+            if has_brain or has_identity or has_ci:
+                agents.append(entry.name)
+    except OSError:
+        pass
+    return agents
+
+
 def _config_path() -> Path:
     """Find config.json."""
     for p in [Path("config.json"), Path.home() / ".xiaomei-brain" / "config.json"]:
@@ -116,14 +136,11 @@ def _cmd_add() -> None:
     chan_config["accounts"]["default"] = account
 
     # 如果已有 agent，自动绑定
-    agents = config.get("agents", {}).get("list", [])
+    agents = _discover_agents()
     if agents:
         config.setdefault("bindings", [])
         existing = [b for b in config.get("bindings", [])]
-        for agent in agents:
-            agent_id = agent.get("id") or agent.get("agentId", "")
-            if not agent_id:
-                continue
+        for agent_id in agents:
             if not any(
                 b.get("agentId") == agent_id and b.get("match", {}).get("channel") == ch["id"]
                 for b in existing
@@ -150,7 +167,7 @@ def _cmd_list() -> None:
     config = _read_config()
     channels = config.get("channels", {})
     bindings = config.get("bindings", [])
-    agents = {a.get("id") or a.get("agentId", ""): a for a in config.get("agents", {}).get("list", [])}
+    agent_ids = _discover_agents()
 
     if not channels:
         console.print(f"\n  [dim]暂无渠道配置，运行 xiaomei-brain channel add 添加[/]\n")

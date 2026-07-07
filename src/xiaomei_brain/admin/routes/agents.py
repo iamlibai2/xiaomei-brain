@@ -49,7 +49,7 @@ def create_agent(data: dict) -> dict:
         result = _AGENT_MANAGER.create_agent(
             name, copy_from=copy_from,
             identity_content=identity_content,
-            config_yaml_content=config_yaml,
+            brain_yaml_content=config_yaml,
         )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))

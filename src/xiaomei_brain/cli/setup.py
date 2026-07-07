@@ -499,11 +499,11 @@ def _build_essence(name: str, preset: dict) -> list[dict]:
 
 
 def _build_config_yaml(provider: dict, api_key: str) -> str:
-    """为选定的 provider 生成 config.yaml（覆盖模型配置的默认值）。"""
-    from xiaomei_brain.cli._config_template import CONFIG_YAML_TEMPLATE
+    """为选定的 provider 生成 brain.yaml（覆盖模型配置的默认值）。"""
+    from xiaomei_brain.cli._config_template import BRAIN_YAML_TEMPLATE
 
     if not api_key:
-        return CONFIG_YAML_TEMPLATE
+        return BRAIN_YAML_TEMPLATE
 
     # 在模板末尾追加模型配置
     extra = f"""
@@ -561,7 +561,7 @@ def cmd_setup(args: list[str]) -> None:
 
     identity_md = _build_identity(name, preset)
     config_yaml = _build_config_yaml(provider, api_key)
-    info = manager.create_agent(name, identity_content=identity_md, config_yaml_content=config_yaml)
+    info = manager.create_agent(name, identity_content=identity_md, brain_yaml_content=config_yaml)
     agent_dir = info["agent_dir"]
 
     essence_items = _build_essence(name, preset)

@@ -1,6 +1,6 @@
 """AgentConfig: 进程级统一配置。
 
-一个 agent 一个配置文件：~/.xiaomei-brain/{agent_id}/config.yaml
+一个 agent 一个配置文件：~/.xiaomei-brain/{agent_id}/brain.yaml
 
 YAML 结构：
     drive:
@@ -90,8 +90,8 @@ def _config_dir(agent_id: str) -> Path:
 
 
 def _config_path(agent_id: str) -> Path:
-    """共享配置文件路径"""
-    return _config_dir(agent_id) / "config.yaml"
+    """大脑参数文件路径"""
+    return _config_dir(agent_id) / "brain.yaml"
 
 
 def _drive_config_path(agent_id: str) -> Path:
@@ -162,7 +162,7 @@ class AgentConfig:
 
     @classmethod
     def _migrate_if_needed(cls, agent_id: str) -> None:
-        """如果存在旧的 drive_config.yaml，迁移内容到新的 config.yaml"""
+        """如果存在旧的 drive_config.yaml，迁移内容到新的 brain.yaml"""
         old_path = _drive_config_path(agent_id)
         if not old_path.exists():
             return
@@ -525,7 +525,7 @@ def _format_config_yaml(data: dict) -> str:
     _w("# ============================================================")
     _w("#  xiaomei-brain 进程配置")
     _w("# ")
-    _w("#  位置: ~/.xiaomei-brain/{agent_id}/config.yaml")
+    _w("#  位置: ~/.xiaomei-brain/{agent_id}/brain.yaml")
     _w("#  首次启动时自动生成，可手动编辑。修改后重启生效。")
     _w("# ============================================================")
     _w("")

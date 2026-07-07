@@ -1,7 +1,7 @@
 """
 Drive 配置结构定义。
 
-实际配置值由 config/agent_config.py 从 config.yaml 加载。
+实际配置值由 config/agent_config.py 从 brain.yaml 加载。
 此处定义 dataclass 结构及默认值（作为 fallback）。
 """
 

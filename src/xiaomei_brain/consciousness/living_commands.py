@@ -395,30 +395,26 @@ def _load_model_choices() -> list[tuple[str, str, str, str]]:
 
 
 def _persist_model_choice(agent_id: str, provider: str, model: str) -> None:
-    """将模型选择写回 config.json，重启后保持。"""
+    """将模型选择写回 agent 的 config.json，重启后保持。"""
     import json
-    config_path = os.path.expanduser("~/.xiaomei-brain/config.json")
-    if not os.path.exists(config_path):
-        return
+    agent_config_path = os.path.expanduser(f"~/.xiaomei-brain/{agent_id}/config.json")
     try:
-        with open(config_path) as f:
-            cfg = json.load(f)
+        if os.path.exists(agent_config_path):
+            with open(agent_config_path) as f:
+                cfg = json.load(f)
+        else:
+            cfg = {}
     except Exception:
         return
 
-    agent_list = cfg.get("agents", {}).get("list", [])
-    for entry in agent_list:
-        if entry.get("id") == agent_id:
-            entry.setdefault("model", {})["primary"] = f"{provider}/{model}"
-            break
-    else:
-        return
+    cfg["model"] = {"primary": f"{provider}/{model}"}
 
     try:
-        with open(config_path, "w") as f:
+        os.makedirs(os.path.dirname(agent_config_path), exist_ok=True)
+        with open(agent_config_path, "w") as f:
             json.dump(cfg, f, indent=2, ensure_ascii=False)
             f.write("\n")
-        logger.info("[CLI] 模型选择已持久化: %s/%s → %s", provider, model, config_path)
+        logger.info("[CLI] 模型选择已持久化: %s/%s → %s", provider, model, agent_config_path)
     except Exception as e:
         logger.warning("[CLI] 持久化模型选择失败: %s", e)
 
@@ -745,8 +741,8 @@ def cmd_eyes(living, args: str) -> None:
 
 
 def _ears_config_path(living) -> str:
-    """ears_enabled 持久化到 agent 的 config.yaml。"""
-    return os.path.join(os.path.expanduser("~/.xiaomei-brain"), living.agent.id, "config.yaml")
+    """ears_enabled 持久化到 agent 的 brain.yaml。"""
+    return os.path.join(os.path.expanduser("~/.xiaomei-brain"), living.agent.id, "brain.yaml")
 
 
 def _save_ears_config(living, enabled: bool) -> None:
@@ -797,7 +793,7 @@ def _save_ears_config(living, enabled: bool) -> None:
 
 def load_ears_enabled(agent_id: str) -> bool:
     """读取持久化的耳朵状态，默认 True。"""
-    path = os.path.join(os.path.expanduser("~/.xiaomei-brain"), agent_id, "config.yaml")
+    path = os.path.join(os.path.expanduser("~/.xiaomei-brain"), agent_id, "brain.yaml")
     try:
         if not os.path.exists(path):
             return True

@@ -221,7 +221,7 @@ class Doctor:
     def check_memory(self) -> Section:
         sec = Section("Memory")
         cfg = self.config
-        mem_dir = Path(cfg.memory_dir).expanduser()
+        mem_dir = Path(os.path.expanduser("~/.xiaomei-brain/xiaomei/memory"))
         db_path = mem_dir / "brain.db"
 
         # DB file
@@ -273,10 +273,10 @@ class Doctor:
 
         # Embedding model
         try:
-            from xiaomei_brain.memory.longterm import LongTermMemory
-            ltm = LongTermMemory(db_path=str(db_path))
-            embedder = ltm._get_embedder()
-            vec = embedder.embed("hello")
+            from xiaomei_brain.base.shared_embedder import SharedEmbedder
+            shared = SharedEmbedder.get_or_create()
+            shared.wait_ready(timeout=30)
+            vec = shared.embed("hello")
             sec.checks.append(self._ok("embedding", f"{len(vec)}-dim vector"))
         except ImportError:
             sec.checks.append(self._skip("embedding", "sentence_transformers not installed"))

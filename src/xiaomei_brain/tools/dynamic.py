@@ -77,28 +77,19 @@ class DynamicToolLoader:
         self._registry = registry
         self._top_k = top_k
         self._lance_db_path = Path(lance_db_path) if lance_db_path else None
-        self._embedder: Any = None
         self._built = False
+
+        # 共享全局 embedding 单例
+        from xiaomei_brain.base.shared_embedder import SharedEmbedder
+        self._shared = SharedEmbedder.get_or_create()
 
         # LanceDB 实例
         self._lance_db: Any = None
         self._lance_table: Any = None
 
     def _get_embedder(self):
-        """懒加载 embedding 模型 — 优先远程服务器，fallback 本地。"""
-        if self._embedder is not None:
-            return self._embedder
-
-        from xiaomei_brain.base.embedding_client import RemoteEmbedder
-        remote = RemoteEmbedder()
-        if remote.available:
-            self._embedder = remote
-            return self._embedder
-
-        logger.info("DynamicToolLoader: loading local embedding model BAAI/bge-m3 ...")
-        from xiaomei_brain.memory.search import Embedder
-        self._embedder = Embedder(model_name="BAAI/bge-m3")
-        return self._embedder
+        """返回全局共享的 embedding 单例。"""
+        return self._shared
 
     def _tool_embedding_text(self, tool: Tool) -> str:
         """构造每个工具的 embedding 文本。"""

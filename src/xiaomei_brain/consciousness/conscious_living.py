@@ -173,19 +173,12 @@ class ConsciousLiving(Living):
         boot_line("长期记忆", "OK", f"{ltm_count} 条" if ltm_count else "")
 
         # 确保 embedding 模型在 speechbrain 之前加载完毕（Windows speechbrain k2_fsa 懒加载会污染 HF Hub 导入链）
-        if not self.agent.longterm_memory._remote.available:
-            if not self.agent.longterm_memory.wait_embedder(timeout=60):
-                logger.warning("[ConsciousLiving] Embedding 模型 warmup 超时，将在首次使用时重试")
-            elif self.agent.longterm_memory._embedder is not None:
-                boot_line("Embedding 模型", "OK", "已就绪")
-            else:
-                # warmup 完成但 embedder 为 None → 加载失败，提前重试
-                logger.info("[ConsciousLiving] Embedding warmup 未成功，尝试同步加载...")
-                try:
-                    self.agent.longterm_memory._embed("test warmup")
-                    boot_line("Embedding 模型", "OK", "同步加载成功")
-                except Exception as e:
-                    logger.warning("[ConsciousLiving] Embedding 模型加载失败: %s", e)
+        from xiaomei_brain.base.shared_embedder import SharedEmbedder
+        shared = SharedEmbedder.get_or_create()
+        if not shared.wait_ready(timeout=60):
+            logger.warning("[ConsciousLiving] Embedding 模型 warmup 超时，将在首次使用时重试")
+        else:
+            boot_line("Embedding 模型", "OK", "已就绪")
 
         # ProcedureMemory（过程记忆：学习 + 关键词触发）
         from ..memory.procedure import ProcedureMemory
@@ -1033,7 +1026,7 @@ class ConsciousLiving(Living):
         if admin_port > 0:
             from ..admin.server import create_admin_app
             import uvicorn
-            config_path = os.path.expanduser(f"~/.xiaomei-brain/{self._agent_id}/config.yaml")
+            config_path = os.path.expanduser(f"~/.xiaomei-brain/{self._agent_id}/brain.yaml")
             admin_app = create_admin_app(
                 agent_id=self._agent_id,
                 living=self,

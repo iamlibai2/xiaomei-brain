@@ -2,7 +2,8 @@
 
 from .core import Agent
 from .session import SessionManager, AgentSession
-from .agent_manager import AgentManager, AgentInstance
+from .agent_manager import AgentManager
+from .instance import AgentInstance
 from .reminder import ReminderManager
 from .proactive_output import ProactiveOutput, ProactiveTrigger, ProactiveMessage
 

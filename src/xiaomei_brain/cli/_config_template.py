@@ -1,13 +1,13 @@
-"""Agent config.yaml 模板。
+"""Agent brain.yaml 模板。
 
 首次创建 agent 时自动生成，可手动编辑。修改后重启生效。
 """
 
-CONFIG_YAML_TEMPLATE = """\
+BRAIN_YAML_TEMPLATE = """\
 # ============================================================
 #  xiaomei-brain 进程配置
 #
-#  位置: ~/.xiaomei-brain/{agent_id}/config.yaml
+#  位置: ~/.xiaomei-brain/{agent_id}/brain.yaml
 #  首次启动时自动生成，可手动编辑。修改后重启生效。
 # ============================================================
 

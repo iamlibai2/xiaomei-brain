@@ -21,9 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import sqlite3
-import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -55,14 +53,9 @@ class SkillStorage(SQLiteStore):
         self._lance_db: Any = None
         self._lance_table: Any = None
 
-        # Embedding: 共享 RemoteEmbedder，fallback 本地
-        self._embedder: Any = None
-        self._embed_lock = threading.Lock()
-
-        # 预热 embedder
-        self._warmup_complete = threading.Event()
-        t = threading.Thread(target=self._warmup_embedder, daemon=True)
-        t.start()
+        # Embedding: 共享全局单例
+        from xiaomei_brain.base.shared_embedder import SharedEmbedder
+        self._shared = SharedEmbedder.get_or_create()
 
     # ── SQLite ───────────────────────────────────────────────────
 
@@ -103,71 +96,17 @@ class SkillStorage(SQLiteStore):
 
     # ── Embedding ────────────────────────────────────────────────
 
-    def _warmup_embedder(self) -> None:
-        os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-        os.environ["HF_HUB_OFFLINE"] = "1"
-        try:
-            from xiaomei_brain.base.embedding_client import RemoteEmbedder
-            remote = RemoteEmbedder()
-            if remote.available:
-                logger.info("SkillStorage: remote embedding server available")
-                return
-            logger.info("SkillStorage: pre-loading local embedding model BAAI/bge-m3")
-            self._get_embedder()
-        except ImportError:
-            logger.debug("sentence_transformers not installed")
-        except Exception as e:
-            logger.debug("SkillStorage: embedder warmup failed: %s", e)
-        finally:
-            self._warmup_complete.set()
-
-    def _get_embedder(self) -> Any:
-        if self._embedder is not None:
-            return self._embedder
-        with self._embed_lock:
-            if self._embedder is not None:
-                return self._embedder
-
-            from xiaomei_brain.base.embedding_client import RemoteEmbedder
-            remote = RemoteEmbedder()
-            if remote.available:
-                self._embedder = remote
-                return self._embedder
-
-            os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-            os.environ["HF_HUB_OFFLINE"] = "1"
-            from xiaomei_brain.memory.search import Embedder
-            self._embedder = Embedder(model_name="BAAI/bge-m3")
-            self._warmup_complete.set()
-            return self._embedder
-
     def _embed(self, text: str) -> list[float]:
-        embedder = self._get_embedder()
-        if hasattr(embedder, 'embed_batch'):
-            # RemoteEmbedder
-            return embedder.embed(text)
-        # Local Embedder
-        return embedder._model.encode(
-            [text], normalize_embeddings=True, show_progress_bar=False,
-        ).tolist()[0]
+        return self._shared.embed(text)
 
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
-        embedder = self._get_embedder()
-        if hasattr(embedder, 'embed_batch'):
-            return embedder.embed_batch(texts)
-        return embedder._model.encode(
-            texts, normalize_embeddings=True, show_progress_bar=False,
-        ).tolist()
+        return self._shared.embed_batch(texts)
 
     def _get_embedding_dim(self) -> int:
-        from xiaomei_brain.base.embedding_client import RemoteEmbedder
-        remote = RemoteEmbedder()
-        if remote.dim is not None:
-            return remote.dim
-        embedder = self._get_embedder()
-        if hasattr(embedder, '_model'):
-            return embedder._model.get_sentence_embedding_dimension()
-        return 1024  # BAAI/bge-m3 default
+        dim = self._shared.dim
+        if dim is not None:
+            return dim
+        return 512  # bge-small-zh-v1.5 default
 
     # ── LanceDB ──────────────────────────────────────────────────
 

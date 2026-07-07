@@ -53,10 +53,10 @@ def _bootstrap_xiaomei() -> None:
 
     seed_dir = Path(__file__).parent.parent / "seed" / "xiaomei"
     identity = (seed_dir / "identity.md").read_text(encoding="utf-8")
-    config_yaml = (seed_dir / "config.yaml").read_text(encoding="utf-8")
+    brain_yaml = (seed_dir / "brain.yaml").read_text(encoding="utf-8")
     contacts_yaml = (seed_dir / "contacts" / "identities.yaml").read_text(encoding="utf-8")
 
-    info = manager.create_agent("xiaomei", identity_content=identity, config_yaml_content=config_yaml)
+    info = manager.create_agent("xiaomei", identity_content=identity, brain_yaml_content=brain_yaml)
 
     # 写入预置联系人
     contacts_path = Path(info["agent_dir"]) / "contacts" / "identities.yaml"

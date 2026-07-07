@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 def _config_path(agent_id: str) -> str:
-    return os.path.join(os.path.expanduser("~/.xiaomei-brain"), agent_id, "config.yaml")
+    return os.path.join(os.path.expanduser("~/.xiaomei-brain"), agent_id, "brain.yaml")
 
 
 def _save_config(agent_id: str, enabled: bool) -> None:
