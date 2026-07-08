@@ -152,20 +152,22 @@ class SharedEmbedder:
 
             os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
-            from xiaomei_brain.memory.search import _resolve_model_path
-            model_path = _resolve_model_path(self._model_name)
-            # 模型已缓存 → 禁止联网检查，加快加载
+            # 模型已缓存 → 禁止联网检查，加快加载（必须在 import 之前设置）
             os.environ["TRANSFORMERS_OFFLINE"] = "1"
             os.environ["HF_HUB_OFFLINE"] = "1"
 
+            from xiaomei_brain.memory.search import _resolve_model_path
+            model_path = _resolve_model_path(self._model_name)
+
             from contextlib import redirect_stderr
             from io import StringIO
+            import pyarrow  # 必须在 sentence_transformers 之前，防止 Windows DLL 冲突  # noqa: F811
             from sentence_transformers import SentenceTransformer
 
             try:
                 logger.info("Loading embedding model: %s", model_path)
                 with redirect_stderr(StringIO()):
-                    self._model = SentenceTransformer(model_path, device="cpu")
+                    self._model = SentenceTransformer(model_path)
                 logger.info("Embedding model loaded: %s", model_path)
             except Exception as e:
                 if self._model_name != self._fallback_model:
@@ -174,7 +176,7 @@ class SharedEmbedder:
                         model_path, self._fallback_model, e,
                     )
                     self._model_name = self._fallback_model
-                    self._model = SentenceTransformer(self._fallback_model, device="cpu")
+                    self._model = SentenceTransformer(self._fallback_model)
                 else:
                     raise
 
