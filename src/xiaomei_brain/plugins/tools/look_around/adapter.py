@@ -17,7 +17,11 @@ def look_around(prompt: str = "描述你看到的画面和现场情况") -> dict
         {"faces": [{"face_id": ..., "name": ..., "relation": ...}], "scene": "..."}
     """
     b = body_ref[0]
-    if not b or not b.eyes or not b.eyes.is_available():
+    if not b or not b.eyes:
+        return {"error": "眼睛不可用"}
+    if not b.eyes.enabled:
+        return {"error": "视觉感知已关闭"}
+    if not b.eyes.is_available():
         return {"error": "眼睛不可用"}
 
     # 1. 人脸识别（本地 CV，不需要 LLM）
@@ -55,6 +59,8 @@ def look_at(image_path: str, prompt: str = "描述这张图片") -> dict:
     b = body_ref[0]
     if not b or not b.eyes:
         return {"error": "眼睛不可用"}
+    if not b.eyes.enabled:
+        return {"error": "视觉感知已关闭"}
 
     image_path = image_path.strip()
     path = _os.path.expanduser(image_path)

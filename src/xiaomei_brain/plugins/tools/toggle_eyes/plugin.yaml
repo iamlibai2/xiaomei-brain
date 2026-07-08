@@ -1,0 +1,5 @@
+name: toggle_eyes
+version: "1.0.0"
+description: "眼睛开关 — 通过自然语言控制视觉感知"
+kind: bundle
+entry: adapter:register

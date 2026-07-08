@@ -10,40 +10,24 @@ logger = logging.getLogger(__name__)
 
 
 def _config_path(agent_id: str) -> str:
-    return os.path.join(os.path.expanduser("~/.xiaomei-brain"), agent_id, "brain.yaml")
+    return os.path.join(os.path.expanduser("~/.xiaomei-brain"), agent_id, "config.json")
 
 
 def _save_config(agent_id: str, enabled: bool) -> None:
-    """持久化耳朵开关状态 — 文本级 upsert。"""
+    """持久化耳朵开关状态到 config.json。"""
+    import json
     path = _config_path(agent_id)
     try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
+                cfg = json.load(f)
         else:
-            lines = ["body:\n", f"  ears_enabled: {str(enabled).lower()}\n"]
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                f.writelines(lines)
-            return
-
-        new_line = f"  ears_enabled: {str(enabled).lower()}\n"
-        in_body = False
-        found = False
-        for i, line in enumerate(lines):
-            if line.startswith("body:"):
-                in_body = True
-            elif in_body and line.startswith("  ears_enabled:"):
-                lines[i] = new_line
-                found = True
-                break
-        if not found:
-            if not in_body:
-                lines.append("body:\n")
-            lines.append(new_line)
-
+            cfg = {}
+        cfg["ears_enabled"] = enabled
         with open(path, "w", encoding="utf-8") as f:
-            f.writelines(lines)
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+            f.write("\n")
     except OSError as e:
         logger.warning("保存耳朵配置失败: %s", e)
 

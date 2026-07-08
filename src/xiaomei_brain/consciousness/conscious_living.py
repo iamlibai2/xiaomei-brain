@@ -551,7 +551,7 @@ class ConsciousLiving(Living):
                 from ..body.perception.expression_monitor import ExpressionMonitor
 
                 camera = self.body.eyes.device
-                logger.warning("[ExpressionMonitor] 创建中... camera=%s interval=3.0s", type(camera).__name__)
+                logger.info("[ExpressionMonitor] 创建中... camera=%s interval=3.0s", type(camera).__name__)
 
                 self._expression_monitor = ExpressionMonitor(
                     drive=self.drive,
@@ -559,8 +559,11 @@ class ConsciousLiving(Living):
                     face_id=self._identity_mgr.face_id if self._identity_mgr else None,
                     camera=camera,
                 )
-                self._expression_monitor.start()
-                boot_line("实时表情监控 (ExpressionMonitor)", "OK")
+                if self.body.eyes.enabled:
+                    self._expression_monitor.start()
+                    boot_line("实时表情监控 (ExpressionMonitor)", "OK")
+                else:
+                    logger.info("[ExpressionMonitor] eyes.enabled=False，已创建但未启动")
         except Exception as e:
             logger.warning("[ExpressionMonitor] 启动失败: %s", e)
 

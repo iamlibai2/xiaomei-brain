@@ -721,8 +721,42 @@ def cmd_switch(living: ConsciousLiving, args: str = "") -> None:
 
 # ── Body 感官命令 ──────────────────────────────────────────────
 
+def load_eyes_enabled(agent_id: str) -> bool:
+    """读取持久化的眼睛状态，默认 True。"""
+    import json
+    path = os.path.join(os.path.expanduser("~/.xiaomei-brain"), agent_id, "config.json")
+    try:
+        if not os.path.exists(path):
+            return True
+        with open(path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        return cfg.get("eyes_enabled", True)
+    except Exception:
+        logger.warning("Failed to read eyes config, defaulting to enabled", exc_info=True)
+        return True
+
+
+def _save_eyes_config(living, enabled: bool) -> None:
+    """持久化眼睛开关状态到 config.json。"""
+    import json
+    path = os.path.join(os.path.expanduser("~/.xiaomei-brain"), living.agent.id, "config.json")
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+        else:
+            cfg = {}
+        cfg["eyes_enabled"] = enabled
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+    except Exception as e:
+        logger.warning("[cmd_eyes] 持久化失败: %s", e)
+
+
 def cmd_eyes(living, args: str) -> None:
-    """显示眼睛状态。"""
+    """眼睛开关: on/off 开启或关闭视觉感知，无参数显示状态"""
     G, V, D, X, R = "\033[32m", "\033[38;5;203m", "\033[38;5;73m", "\033[90m", "\033[0m"
     body = getattr(living, 'body', None)
     if not body:
@@ -732,76 +766,77 @@ def cmd_eyes(living, args: str) -> None:
     if not eyes:
         print(f"\n  {V}眼睛未注册{R}", flush=True)
         return
+
+    # 开关控制
+    action = args.strip().lower()
+    if action in ("on", "off"):
+        em = getattr(living, '_expression_monitor', None)
+        if action == "off":
+            living._eyes_enabled = False
+            eyes.enabled = False
+            _save_eyes_config(living, False)
+            if em is not None:
+                em.stop()
+            print(f"\n  {X}眼睛已关闭{R}", flush=True)
+        else:  # on
+            living._eyes_enabled = True
+            eyes.enabled = True
+            _save_eyes_config(living, True)
+            if em is not None:
+                em.start()
+            print(f"\n  {G}眼睛已开启{R}", flush=True)
+        return
+
+    # 状态显示
     available = eyes.is_available()
-    status = f"{G}在线{R}" if available else f"{V}离线{R}"
+    enabled = eyes.enabled
+    if not enabled:
+        status = f"{V}已关闭{R}"
+    elif available:
+        status = f"{G}在线{R}"
+    else:
+        status = f"{V}离线{R}"
     print(f"\n  {G}眼睛{R} {D}[{eyes.name}]{R} {status}", flush=True)
-    if available:
+    if available and enabled:
         faces = eyes.recognize_faces()
         face_str = ", ".join(f.get("face_id", "?") for f in faces) if faces else f"{X}无人{R}"
         print(f"  {D}人脸{R}  {face_str}", flush=True)
 
 
 def _ears_config_path(living) -> str:
-    """ears_enabled 持久化到 agent 的 brain.yaml。"""
-    return os.path.join(os.path.expanduser("~/.xiaomei-brain"), living.agent.id, "brain.yaml")
+    """ears_enabled 持久化到 agent 的 config.json。"""
+    return os.path.join(os.path.expanduser("~/.xiaomei-brain"), living.agent.id, "config.json")
 
 
 def _save_ears_config(living, enabled: bool) -> None:
-    """持久化耳朵开关状态 — 文本级 upsert，不破坏 YAML 格式。"""
+    """持久化耳朵开关状态到 config.json。"""
+    import json
     path = _ears_config_path(living)
     try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
+                cfg = json.load(f)
         else:
-            lines = ["body:\n", f"  ears_enabled: {str(enabled).lower()}\n"]
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                f.writelines(lines)
-            return
-
-        new_line = f"  ears_enabled: {str(enabled).lower()}\n"
-        in_body = False
-        found = False
-        body_idx = None
-
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-            if stripped.startswith("body:") and not stripped.startswith("body."):
-                in_body = True
-                body_idx = i
-            elif in_body and stripped.startswith("ears_enabled:"):
-                lines[i] = new_line
-                found = True
-                break
-            elif in_body and line and not line.startswith((" ", "\t", "#")):
-                # 离开 body 段
-                in_body = False
-
-        if not found:
-            if body_idx is not None:
-                lines.insert(body_idx + 1, new_line)
-            else:
-                lines.append("\nbody:\n")
-                lines.append(new_line)
-
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+            cfg = {}
+        cfg["ears_enabled"] = enabled
         with open(path, "w", encoding="utf-8") as f:
-            f.writelines(lines)
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+            f.write("\n")
     except Exception as e:
         logger.warning("[cmd_ears] 持久化失败: %s", e)
 
 
 def load_ears_enabled(agent_id: str) -> bool:
     """读取持久化的耳朵状态，默认 True。"""
-    path = os.path.join(os.path.expanduser("~/.xiaomei-brain"), agent_id, "brain.yaml")
+    import json
+    path = os.path.join(os.path.expanduser("~/.xiaomei-brain"), agent_id, "config.json")
     try:
         if not os.path.exists(path):
             return True
-        import yaml
         with open(path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-        return data.get("body", {}).get("ears_enabled", True)
+            cfg = json.load(f)
+        return cfg.get("ears_enabled", True)
     except Exception:
         logger.warning("Failed to read ears config, defaulting to enabled", exc_info=True)
         return True
@@ -839,7 +874,6 @@ def cmd_ears(living, args: str) -> None:
             if vl and vl.is_running:
                 print(f"\n  {G}耳朵已在监听中{R}", flush=True)
             elif vl:
-                # 重启启动时创建的 VoiceListener（保留完整回调：注意力门控等）
                 if vl.start():
                     print(f"\n  {G}耳朵已开启{R}", flush=True)
                 else:
@@ -851,7 +885,7 @@ def cmd_ears(living, args: str) -> None:
     # 状态显示
     available = ears.is_available()
     vl = getattr(living, '_voice_listener', None)
-    enabled = getattr(living, '_ears_enabled', True)
+    enabled = ears.enabled
     if not enabled:
         status = f"{V}已关闭{R}"
     elif available and vl and vl.is_running:

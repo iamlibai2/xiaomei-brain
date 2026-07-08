@@ -54,7 +54,7 @@ def boot_plugins(agent_id: str = "", extra_dirs: list[str] | None = None) -> Plu
         loaded = loader.boot(plugin_dirs=extra_dirs)
     for plugin in loaded:
         if plugin.status == "error":
-            logger.error("[Plugin] %s 加载失败: %s", plugin.manifest.name, plugin.error)
+            logger.info("[Plugin] %s 未加载: %s", plugin.manifest.name, plugin.error)
         elif plugin.status == "disabled":
             logger.info("[Plugin] %s 已禁用", plugin.manifest.name)
         else:

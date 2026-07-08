@@ -27,7 +27,7 @@ from xiaomei_brain.agent.agent_manager import AgentManager
 from xiaomei_brain.llm.client import FatalLLMError
 from xiaomei_brain.base.message_utils import estimate_tokens
 from xiaomei_brain.consciousness.conscious_living import ConsciousLiving
-from xiaomei_brain.consciousness.living_commands import load_ears_enabled
+from xiaomei_brain.consciousness.living_commands import load_ears_enabled, load_eyes_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -304,6 +304,8 @@ def _run_agent(
         ids = identity_mgr.list_ids()
         ears_enabled = load_ears_enabled(agent_id)
         living._ears_enabled = ears_enabled
+        eyes_enabled = load_eyes_enabled(agent_id)
+        living._eyes_enabled = eyes_enabled
 
         login_listener = None
 
@@ -364,6 +366,9 @@ def _run_agent(
                 print("  ❌ 摄像头未配置，请手动登录", flush=True)
                 return None
             eyes = body.eyes
+            if not eyes.enabled:
+                print("  ❌ 视觉感知已关闭，请手动登录", flush=True)
+                return None
             if not eyes.is_available():
                 eyes._device.open()
                 eyes.online = True
@@ -420,10 +425,14 @@ def _run_agent(
 
         if ids:
             print()
-            if ears_enabled:
-                print(f"  \033[90m按 {C_ACCENT}[空格]\033[90m 拍照登录 {C_ACCENT}[Tab]\033[90m 声纹登录，或按 {C_ACCENT}[回车]\033[90m 输入身份ID/序号手动登录\033[0m")
+            face_hint = f"按 {C_ACCENT}[空格]\033[90m 拍照登录 " if eyes_enabled else ""
+            voice_hint = f"{C_ACCENT}[Tab]\033[90m 声纹登录，" if ears_enabled else ""
+            if face_hint or voice_hint:
+                if not face_hint:
+                    voice_hint = "按 " + voice_hint
+                print(f"  \033[90m{face_hint}{voice_hint}或按 {C_ACCENT}[回车]\033[90m 输入身份ID/序号手动登录\033[0m")
             else:
-                print(f"  \033[90m按 {C_ACCENT}[空格]\033[90m 拍照登录，或按 {C_ACCENT}[回车]\033[90m 输入身份ID/序号手动登录\033[0m")
+                print(f"  \033[90m按 {C_ACCENT}[回车]\033[90m 输入身份ID/序号手动登录\033[0m")
             parts = []
             for i, uid in enumerate(ids, 1):
                 info = identity_mgr._identities.get(uid, {})
@@ -523,6 +532,8 @@ def _run_agent(
                 print("\r\033[K" + C_ACCENT + "  再按一次 Ctrl+C 退出\033[0m", flush=True)
                 continue
             elif ch == ' ':
+                if not eyes_enabled:
+                    continue
                 user_id = _try_face_login()
                 if user_id:
                     identity = identity_mgr.resolve(user_id)

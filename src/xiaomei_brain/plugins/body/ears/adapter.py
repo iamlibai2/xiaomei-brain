@@ -14,13 +14,13 @@ logger = logging.getLogger(__name__)
 
 
 def register(ctx):
-    # 检查 ears_enabled 配置：禁用时不初始化麦克风
+    # 始终初始化麦克风，ears.enabled 仅控制运行时 contribute_to()/capture_raw()
+    # 这样 /ears on/off 同一会话无需重启。
     agent_id = getattr(ctx, 'agent_id', '') or ''
+    ears_enabled = True
     if agent_id:
         from xiaomei_brain.consciousness.living_commands import load_ears_enabled
-        if not load_ears_enabled(agent_id):
-            logger.info("ears_enabled=false，跳过耳朵初始化")
-            return
+        ears_enabled = load_ears_enabled(agent_id)
 
     try:
         from xiaomei_brain.cli.platform_utils import is_wsl2
@@ -34,9 +34,12 @@ def register(ctx):
         else:
             from .linux import RealMicrophone as Device
 
+        ears = Ears()
+        ears.enabled = ears_enabled
+
         mic = Device()
         if mic.open():
-            ctx.register_sense(Ears(), mic)
+            ctx.register_sense(ears, mic)
             logger.info("耳朵已就绪（%s）", Device.__name__)
         else:
             logger.warning("%s 不可用", Device.__name__)

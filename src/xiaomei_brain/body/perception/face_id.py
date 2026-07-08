@@ -8,6 +8,10 @@
 from __future__ import annotations
 
 import logging
+import warnings
+
+# face_recognition_models 使用了过时的 pkg_resources，消除噪声
+warnings.filterwarnings("ignore", message="pkg_resources is deprecated", category=UserWarning)
 import os
 from typing import Any
 

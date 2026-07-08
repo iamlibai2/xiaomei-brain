@@ -57,6 +57,7 @@ class Eyes(Sense):
         self._face_id = None
         self._vision = None
         self._emotion_detector = None
+        self.enabled: bool = True  # 由 /eyes on/off 控制
 
     @property
     def face_id(self):
@@ -99,6 +100,8 @@ class Eyes(Sense):
         Returns:
             LLM 的文字描述，不可用时返回 None。
         """
+        if not self.enabled:
+            return None
         if not self.is_available():
             return None
 
@@ -119,6 +122,8 @@ class Eyes(Sense):
                  "emotion": {"dominant": "happy", "indicators": {...}}}, ...]
         无匹配则 name 为 None，无检测则返回空列表。
         """
+        if not self.enabled:
+            return []
         if not self.is_available():
             return []
 
@@ -144,12 +149,15 @@ class Eyes(Sense):
                 name = self.face_id.match(d["encoding"])
                 result = {"name": name, "bbox": d["bbox"]}
                 if "landmarks" in d:
-                    try:
-                        result["emotion"] = self.emotion_detector.analyze(
-                            d["landmarks"]
-                        )
-                    except Exception:
-                        logger.debug("情绪检测失败，跳过", exc_info=True)
+                    # NOTE: FaceEmotionDetector 几何情绪计算结果暂无消费者，
+                    # ExpressionMonitor 走 EmotiEffLib CNN 通道。先注释掉避免空转。
+                    # try:
+                    #     result["emotion"] = self.emotion_detector.analyze(
+                    #         d["landmarks"]
+                    #     )
+                    # except Exception:
+                    #     logger.debug("情绪检测失败，跳过", exc_info=True)
+                    pass
                 results.append(result)
             return results
         finally:
@@ -160,17 +168,19 @@ class Eyes(Sense):
         """贡献视觉数据到 BodyState。10分钟一次，本地CV分析。
         NOTE: 已禁用（隐私考量 — 和 capture_raw 一样）。需要时取消注释。
         """
+        if not self.enabled:
+            return
         # state.visual_faces = self.recognize_faces()
-        pass
 
     def capture_raw(self) -> None:
         """采集一帧原始画面。5分钟一次，不分析，只存入设备缓冲。
         NOTE: 已禁用定时抓拍（隐私考量 — Camera App 弹窗提醒用户摄像头正在使用）。
         需要时取消注释即可恢复。
         """
+        if not self.enabled:
+            return
         # if self.is_available() and self._device:
         #     self._device.capture()
-        pass
 
 
 class Ears(Sense):

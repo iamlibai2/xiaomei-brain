@@ -13,7 +13,11 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import warnings
 from typing import Any
+
+# face_recognition_models 使用了过时的 pkg_resources，消除噪声
+warnings.filterwarnings("ignore", message="pkg_resources is deprecated", category=UserWarning)
 
 import numpy as np
 
@@ -94,11 +98,13 @@ class ExpressionMonitor:
         logger.warning("[ExpressionMonitor] 启动，interval=%.2fs", self._interval)
 
     def stop(self) -> None:
-        """停止后台监控。"""
+        """停止后台监控（幂等）。"""
+        if not self._running:
+            return
         self._running = False
         if self._subscription is not None:
             self._subscription.unsubscribe()
-        logger.warning("[ExpressionMonitor] 停止")
+        logger.info("[ExpressionMonitor] 停止")
 
     def recent_familiar(self, within_seconds: float = 5.0) -> str | None:
         """返回最近 N 秒内识别到的熟人 identity_name，没有则返回 None。"""
