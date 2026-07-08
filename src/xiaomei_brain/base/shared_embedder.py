@@ -118,13 +118,9 @@ class SharedEmbedder:
         """后台线程：预加载 embedding 模型，避免首次 embed() 时延迟。"""
         os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
-        # 配置了远程 URL：只尝试远程
-        if self._remote_url:
-            if self._remote.available:
-                logger.info("Remote embedding server available, using remote (skip local load)")
-            else:
-                logger.info("EMBED_SERVER_URL configured but remote not reachable, "
-                            "will retry on first use")
+        # 优先尝试远端 embedding 服务（默认 http://127.0.0.1:18765）
+        if self._remote.available:
+            logger.info("Remote embedding server available (%s), skip local load", self._remote_url or "default")
             self._ready.set()
             return
 
