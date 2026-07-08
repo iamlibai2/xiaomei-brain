@@ -115,11 +115,7 @@ class SharedEmbedder:
     # ── Warmup ────────────────────────────────────────────────
 
     def _warmup(self) -> None:
-        """后台线程：不联网检测，只根据环境变量决定加载策略。
-
-        注意：不在此预加载模型。PyTorch 在 Windows 上跨线程使用模型可能导致
-        segfault，因此模型由首次 embed() 调用同步加载。
-        """
+        """后台线程：预加载 embedding 模型，避免首次 embed() 时延迟。"""
         os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
         # 配置了远程 URL：只尝试远程
@@ -132,8 +128,16 @@ class SharedEmbedder:
             self._ready.set()
             return
 
-        # 不预加载本地模型，让首次 embed() 同步加载
-        self._ready.set()
+        # 后台预加载本地模型
+        try:
+            logger.info("Embedding warmup: loading %s in background...", self._model_name)
+            import pyarrow  # 必须在 sentence_transformers 之前导入，避免 pyarrow C 扩展 DLL 首次加载冲突  # noqa: F811
+            self._get_model()
+            logger.info("Embedding warmup: %s loaded", self._model_name)
+        except Exception:
+            logger.warning("Embedding warmup failed, will retry on first use", exc_info=True)
+        finally:
+            self._ready.set()
 
     # ── Model Loading ─────────────────────────────────────────
 
@@ -148,12 +152,15 @@ class SharedEmbedder:
 
             os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
+            from xiaomei_brain.memory.search import _resolve_model_path
+            model_path = _resolve_model_path(self._model_name)
+            # 模型已缓存 → 禁止联网检查，加快加载
+            os.environ["TRANSFORMERS_OFFLINE"] = "1"
+            os.environ["HF_HUB_OFFLINE"] = "1"
+
             from contextlib import redirect_stderr
             from io import StringIO
             from sentence_transformers import SentenceTransformer
-
-            from xiaomei_brain.memory.search import _resolve_model_path
-            model_path = _resolve_model_path(self._model_name)
 
             try:
                 logger.info("Loading embedding model: %s", model_path)

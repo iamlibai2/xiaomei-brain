@@ -904,7 +904,7 @@ def cmd_run(args: list[str]) -> None:
     logging.basicConfig(
         level=logging.DEBUG,
         format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
-        datefmt="%H:%M:%S",
+        datefmt="%Y-%m-%d %H:%M:%S",
         stream=sys.stderr,
     )
     logging.getLogger().handlers[0].setLevel(logging.INFO)
@@ -923,7 +923,7 @@ def cmd_run(args: list[str]) -> None:
     _file_handler = logging.FileHandler(os.path.join(agent_log_dir, "agent.log"), encoding="utf-8")
     _file_handler.setLevel(_file_level)
     _file_handler.setFormatter(logging.Formatter(
-        "%(asctime)s [%(name)s] %(levelname)s %(message)s", datefmt="%H:%M:%S"
+        "%(asctime)s [%(name)s] %(levelname)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
     ))
     logging.getLogger().addHandler(_file_handler)
 
@@ -961,6 +961,13 @@ def cmd_run(args: list[str]) -> None:
         print(f"\033[31m[错误] agent '{agent_id}' 不存在。可用: {', '.join(available)}\033[0m")
         sys.exit(1)
 
+    # ── 预热 Embedding（banner 之前：避免 pyarrow 导入耗时卡在 banner 后面）───
+    import pyarrow  # 必须在 sentence_transformers 之前导入，避免 DLL 首次加载冲突
+    from xiaomei_brain.base.config import Config as _Config
+    from xiaomei_brain.base.shared_embedder import SharedEmbedder
+    _emb_cfg = _Config.from_json()
+    SharedEmbedder.get_or_create(model_name=_emb_cfg.embedding_model if _emb_cfg else "BAAI/bge-m3")
+
     # 获取 agent 名称（在 build 之前，避免 boot 信息夹在 banner 中间）
     agent_info = next(a for a in manager.list() if a.id == agent_id)
     agent_name = agent_info.name or agent_id
@@ -978,12 +985,6 @@ def cmd_run(args: list[str]) -> None:
         model=model,
         extra_lines=extra or None,
     )
-
-    # ── 启动 Embedding（必须在 build_agent 之前，让 SkillStorage 等拿到正确的 model）───
-    from xiaomei_brain.base.config import Config as _Config
-    from xiaomei_brain.base.shared_embedder import SharedEmbedder
-    _emb_cfg = _Config.from_json()
-    SharedEmbedder.get_or_create(model_name=_emb_cfg.embedding_model if _emb_cfg else "BAAI/bge-m3")
 
     agent = manager.build_agent(agent_id)
 
