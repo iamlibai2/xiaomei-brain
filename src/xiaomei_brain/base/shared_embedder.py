@@ -219,9 +219,7 @@ class SharedEmbedder:
         """本地 encode，GPU 优先，CUDA 错误时自动切 CPU 并记住该状态。"""
         try:
             text_count = len(texts) if isinstance(texts, list) else 1
-            logger.warning("[Embed] encoding %d text(s)...", text_count)
             vectors = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
-            logger.warning("[Embed] encoding done")
             return vectors.tolist()
         except RuntimeError as e:
             if "CUDA" not in str(e):
