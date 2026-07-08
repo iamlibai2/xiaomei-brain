@@ -156,8 +156,14 @@ class SharedEmbedder:
             os.environ["TRANSFORMERS_OFFLINE"] = "1"
             os.environ["HF_HUB_OFFLINE"] = "1"
 
-            from xiaomei_brain.memory.search import _resolve_model_path
-            model_path = _resolve_model_path(self._model_name)
+            # 解析本地模型路径（内联避免 from xiaomei_brain.memory.search import 拉入全家桶）
+            model_path = self._model_name
+            ms_dir = os.path.normpath(os.path.join(
+                os.path.expanduser("~/.cache/modelscope/hub/models"),
+                self._model_name,
+            ))
+            if os.path.isfile(os.path.join(ms_dir, "pytorch_model.bin")):
+                model_path = ms_dir
 
             from contextlib import redirect_stderr
             from io import StringIO
