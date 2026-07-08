@@ -211,10 +211,15 @@ def _run_agent(
 
     def _render_proactive(content: str) -> None:
         """以对话回复统一格式渲染主动消息。"""
+        import io
         bar_w = _get_term_width()
-        print("\n\033[90m" + "─" * bar_w + "\033[0m", flush=True)
-        print(f"  \033[38;5;203m{agent_name}\033[0m:", flush=True)
-        _rich_console.print(_RichMarkdown(content, code_theme="monokai"))
+        # Rich 分段渲染时会和 logger (stderr) 竞争终端 → 先渲染到内存，再原子输出
+        buf = io.StringIO()
+        cap_console = _RichConsole(file=buf, highlight=False, force_terminal=True, color_system="auto", width=bar_w)
+        cap_console.print(_RichMarkdown(content, code_theme="monokai"))
+        rendered = buf.getvalue()
+        # 一次性输出，防止 logger 插入
+        print(f"\n\033[90m{'─' * bar_w}\033[0m\n  \033[38;5;203m{agent_name}\033[0m:\n{rendered}", end="", flush=True)
 
     def on_proactive(content, user_id=""):
         with _stream_lock:
@@ -907,7 +912,7 @@ def cmd_run(args: list[str]) -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
         stream=sys.stderr,
     )
-    logging.getLogger().handlers[0].setLevel(logging.INFO)
+    logging.getLogger().handlers[0].setLevel(logging.WARNING)
 
     agent_log_dir = os.path.expanduser(f"~/.xiaomei-brain/{agent_id}/logs")
     os.makedirs(agent_log_dir, exist_ok=True)
