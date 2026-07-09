@@ -107,7 +107,7 @@ class SharedEmbedder:
             return self._remote.dim
         if self._model is not None:
             try:
-                return self._model.get_sentence_embedding_dimension()
+                return self._model.get_embedding_dimension()
             except Exception:
                 pass
         return None

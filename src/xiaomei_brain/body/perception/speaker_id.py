@@ -87,11 +87,14 @@ class SpeakerID:
         _precopy_symlink_targets(savedir)
 
         from speechbrain.inference.speaker import SpeakerRecognition
-        SpeakerID._recognizer = SpeakerRecognition.from_hparams(
-            source=_MODEL_SOURCE,
-            savedir=savedir,
-            run_opts={"device": device},
-        )
+        import warnings
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Requested Pretrainer collection using symlinks")
+            SpeakerID._recognizer = SpeakerRecognition.from_hparams(
+                source=_MODEL_SOURCE,
+                savedir=savedir,
+                run_opts={"device": device},
+            )
         SpeakerID._loaded = True
         logger.info("SpeakerID 就绪")
 

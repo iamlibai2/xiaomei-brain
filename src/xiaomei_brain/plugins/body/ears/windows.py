@@ -105,7 +105,7 @@ class RealMicrophone(Microphone):
             target=self._stream_read_loop, daemon=True,
         )
         self._stream_thread.start()
-        logger.warning("流式录音已启动 device=%d", self._device_index)
+        logger.info("流式录音已启动 device=%d", self._device_index)
         return True
 
     def _stream_read_loop(self) -> None:
