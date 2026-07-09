@@ -384,6 +384,7 @@ def _build_living_config(data: dict):
                 daily_token_reset_hour=living.get("daily_token_reset_hour", 4),
                 comms_port=living.get("comms_port", 0),
                 ws_port=living.get("ws_port", -1),
+                admin_port=living.get("admin_port", -1),
             )
 
         action = data.get("action", {})
@@ -653,6 +654,7 @@ def _format_config_yaml(data: dict) -> str:
     _w(f"    max_context_tokens: {living.get('max_context_tokens', 50000)}  # 上下文最大 token 数")
     _w(f"    comms_port:         {living.get('comms_port', 0)}      # 0=自动分配, -1=禁用")
     _w(f"    ws_port:            {living.get('ws_port', -1)}      # WebSocket 端口（-1=禁用）")
+    _w(f"    admin_port:         {living.get('admin_port', -1)}      # Admin 管理门端口（-1=禁用，0=自动分配）")
 
     # action
     action = consciousness.get("action", {})

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from .protocol import build_res, build_event, error_shape, ErrorCodes
+from .protocol import build_response, build_error, ErrorCode
 from .schemas import ConnectParams, ChatSendParams, ChatAbortParams, ChatHistoryParams, format_error
 from .auth import check_token
 
@@ -36,21 +36,18 @@ class MethodRouter:
         """
         # 非 connect 方法需要先认证
         if method != "connect" and conn_id not in self._auth_sessions:
-            return build_res(req_id, ok=False,
-                             error=error_shape(ErrorCodes.UNAUTHORIZED, "请先 connect"))
+            return build_error(req_id, ErrorCode.UNAUTHORIZED, "请先 connect")
 
         handler = self._handlers.get(method)
         if handler is None:
-            return build_res(req_id, ok=False,
-                             error=error_shape(ErrorCodes.METHOD_NOT_FOUND,
-                                               f"未知方法: {method}"))
+            return build_error(req_id, ErrorCode.METHOD_NOT_FOUND,
+                               f"未知方法: {method}")
 
         try:
             return handler(conn_id, req_id, params)
         except Exception as e:
             logger.error("[MethodRouter] %s 处理失败: %s", method, e)
-            return build_res(req_id, ok=False,
-                             error=error_shape(ErrorCodes.INTERNAL_ERROR, str(e)))
+            return build_error(req_id, ErrorCode.INTERNAL_ERROR, str(e))
 
     # ── Handlers ──────────────────────────────
 
@@ -58,12 +55,10 @@ class MethodRouter:
         try:
             p = ConnectParams.model_validate(params)
         except Exception as e:
-            return build_res(req_id, ok=False,
-                             error=error_shape(ErrorCodes.INVALID_REQUEST, f"参数无效: {format_error(e)}"))
+            return build_error(req_id, ErrorCode.INVALID_REQUEST, f"参数无效: {format_error(e)}")
 
         if not check_token(p.token, self._config):
-            return build_res(req_id, ok=False,
-                             error=error_shape(ErrorCodes.UNAUTHORIZED, "Token 无效"))
+            return build_error(req_id, ErrorCode.UNAUTHORIZED, "Token 无效")
 
         self._auth_sessions.add(conn_id)
         logger.info("[Gateway] 客户端已认证: conn=%s client=%s", conn_id[:8], p.client)
@@ -85,7 +80,7 @@ class MethodRouter:
                 self._living._attention._current_session = ws_sid
             logger.info("[Gateway] fresh_tail 已加载: user_id=%s session=%s", p.user_id, session_id)
 
-        return build_res(req_id, ok=True, payload={
+        return build_response(req_id, result={
             "session_id": session_id,
             "agent_name": getattr(self._living, "_agent_id", ""),
             "reconnect": bool(p.session_id),
@@ -96,8 +91,7 @@ class MethodRouter:
         try:
             p = ChatSendParams.model_validate(params)
         except Exception as e:
-            return build_res(req_id, ok=False,
-                             error=error_shape(ErrorCodes.INVALID_REQUEST, f"参数无效: {format_error(e)}"))
+            return build_error(req_id, ErrorCode.INVALID_REQUEST, f"参数无效: {format_error(e)}")
 
         content = p.content.strip()
         session_id = p.session_id or f"ws-{conn_id[:8]}"
@@ -105,8 +99,7 @@ class MethodRouter:
 
         living = self._living
         if living is None:
-            return build_res(req_id, ok=False,
-                             error=error_shape(ErrorCodes.GATEWAY_NOT_READY, "Gateway 未就绪"))
+            return build_error(req_id, ErrorCode.GATEWAY_NOT_READY, "Gateway 未就绪")
 
         gw = getattr(living, '_gateway_inbound', None)
         if gw:
@@ -117,46 +110,41 @@ class MethodRouter:
                 session_id=session_id,
             ))
             accepted = isinstance(result, Accepted)
-            return build_res(req_id, ok=accepted, payload={"accepted": accepted, "session_id": session_id})
+            return build_response(req_id, result={"accepted": accepted, "session_id": session_id})
         else:
             # Fallback: Gateway not yet initialized
             living.put_message(content, session_id=session_id, user_id=user_id)
-            return build_res(req_id, ok=True, payload={"accepted": True, "session_id": session_id})
+            return build_response(req_id, result={"accepted": True, "session_id": session_id})
 
     def _handle_chat_abort(self, conn_id: str, req_id: str, params: dict) -> dict:
         try:
             ChatAbortParams.model_validate(params)
         except Exception as e:
-            return build_res(req_id, ok=False,
-                             error=error_shape(ErrorCodes.INVALID_REQUEST, f"参数无效: {format_error(e)}"))
+            return build_error(req_id, ErrorCode.INVALID_REQUEST, f"参数无效: {format_error(e)}")
 
         living = self._living
         if living is None:
-            return build_res(req_id, ok=False,
-                             error=error_shape(ErrorCodes.GATEWAY_NOT_READY, "Gateway 未就绪"))
+            return build_error(req_id, ErrorCode.GATEWAY_NOT_READY, "Gateway 未就绪")
         try:
             living.abort_chat()
-            return build_res(req_id, ok=True, payload={"aborted": True})
+            return build_response(req_id, result={"aborted": True})
         except Exception as e:
-            return build_res(req_id, ok=False,
-                             error=error_shape(ErrorCodes.INTERNAL_ERROR, str(e)))
+            return build_error(req_id, ErrorCode.INTERNAL_ERROR, str(e))
 
     def _handle_chat_history(self, conn_id: str, req_id: str, params: dict) -> dict:
         try:
             p = ChatHistoryParams.model_validate(params)
         except Exception as e:
-            return build_res(req_id, ok=False,
-                             error=error_shape(ErrorCodes.INVALID_REQUEST, f"参数无效: {format_error(e)}"))
+            return build_error(req_id, ErrorCode.INVALID_REQUEST, f"参数无效: {format_error(e)}")
 
         living = self._living
         if living is None:
-            return build_res(req_id, ok=False,
-                             error=error_shape(ErrorCodes.GATEWAY_NOT_READY, "Gateway 未就绪"))
+            return build_error(req_id, ErrorCode.GATEWAY_NOT_READY, "Gateway 未就绪")
 
         try:
             db = getattr(getattr(living, 'agent', None), 'conversation_db', None)
             if db is None:
-                return build_res(req_id, ok=True, payload={"messages": []})
+                return build_response(req_id, result={"messages": []})
 
             session_id = p.session_id or None
             rows = db.get_recent(n=min(p.limit, 200), session_id=session_id)
@@ -169,17 +157,15 @@ class MethodRouter:
                 }
                 for r in rows
             ]
-            return build_res(req_id, ok=True, payload={"messages": messages})
+            return build_response(req_id, result={"messages": messages})
         except Exception as e:
-            return build_res(req_id, ok=False,
-                             error=error_shape(ErrorCodes.INTERNAL_ERROR, str(e)))
+            return build_error(req_id, ErrorCode.INTERNAL_ERROR, str(e))
 
     def _handle_identity_list(self, conn_id: str, req_id: str, params: dict) -> dict:
         """返回 agent 配置的可登录身份列表（来自 contacts/identities.yaml）。"""
         living = self._living
         if living is None:
-            return build_res(req_id, ok=False,
-                             error=error_shape(ErrorCodes.GATEWAY_NOT_READY, "Gateway 未就绪"))
+            return build_error(req_id, ErrorCode.GATEWAY_NOT_READY, "Gateway 未就绪")
 
         agent_core = living.agent._get_agent() if hasattr(living, 'agent') else None
         mgr = getattr(agent_core, 'identity_mgr', None)
@@ -193,7 +179,7 @@ class MethodRouter:
                     "relation": mgr.get_relation(id_),
                 })
 
-        return build_res(req_id, ok=True, payload={"identities": identities})
+        return build_response(req_id, result={"identities": identities})
 
     def drop_session(self, conn_id: str) -> None:
         """断开连接时清除认证状态。"""

@@ -60,6 +60,7 @@ class LivingParams:
     daily_token_reset_hour: int = 4   # 每日 token 配额重置时间（0-23），默认凌晨 4 点
     comms_port: int = 0               # 0=自动分配, -1=禁用, >0=指定端口
     ws_port: int = -1                 # WebSocket Gateway 端口（-1=禁用, 0=自动分配, >0=指定端口）
+    admin_port: int = -1              # Admin HTTP 管理门端口（-1=禁用, 0=自动分配, >0=指定端口）
 
 
 # ── 欲望行为参数 ────────────────────────────────────────────────────

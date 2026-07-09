@@ -95,14 +95,14 @@ class GatewayClient:
             "token": token, "client": "tui", "user_id": user_id,
         })
 
-        if not result.get("ok"):
+        if "error" in result:
             err = result.get("error", {})
             self.state.connection_status = ConnectionStatus.ERROR
             return False, {"error": err.get("message", "auth failed")}
 
-        payload = result.get("payload", {})
+        payload = result.get("result", {})
         self.state.session_id = payload.get("session_id", "")
-        self.state.agent_name = payload.get("agent", "")
+        self.state.agent_name = payload.get("agent_name", "")
         self.state.connection_status = ConnectionStatus.CONNECTED
         self.state.activity_state = ActivityState.IDLE
 
@@ -137,7 +137,7 @@ class GatewayClient:
         result = await self._rpc(self._next_id("hist"), "chat.history", {
             "session_id": sid, "limit": limit,
         })
-        return result.get("payload", {}) if result.get("ok") else {}
+        return result.get("result", {}) if "result" in result else {}
 
     # ── 关闭 ────────────────────────────────────────────────
 
@@ -216,19 +216,19 @@ class GatewayClient:
                 _trace(f"_recv_loop: JSON decode failed")
                 continue
 
-            mt = data.get("type", "")
-            _trace(f"_recv_loop: msg type={mt}, event={data.get('event', 'N/A')}")
+            _trace(f"_recv_loop: msg keys={list(data.keys())[:5]}")
 
             try:
-                if mt == "event":
-                    event_name = data.get("event", "")
-                    payload = data.get("payload", {})
+                if data.get("method") == "event":
+                    params = data.get("params", {})
+                    event_name = params.get("event", "")
+                    payload = params.get("data", {})
                     _trace(f"_recv_loop: dispatching event {event_name}")
                     if self._on_event:
                         self._on_event(event_name, payload)
                     _trace(f"_recv_loop: event {event_name} dispatched")
 
-                elif mt == "res":
+                elif "result" in data or "error" in data:
                     req_id = data.get("id", "")
                     _trace(f"_recv_loop: res for {req_id}")
                     if req_id in self._pending:
@@ -236,7 +236,7 @@ class GatewayClient:
                         if not fut.done():
                             fut.set_result(data)
 
-                elif mt == "pong":
+                elif data.get("type") == "pong":
                     self.state.latency = int(
                         (time.monotonic() - getattr(self, '_last_ping', 0)) * 1000
                     )
@@ -282,7 +282,7 @@ class GatewayClient:
         try:
             _trace(f"_send_req: sending {req_id} {method}")
             await self._ws.send(json.dumps({
-                "type": "req", "id": req_id,
+                "jsonrpc": "2.0", "id": req_id,
                 "method": method, "params": params,
             }, ensure_ascii=False))
             _trace(f"_send_req: sent {req_id} OK")

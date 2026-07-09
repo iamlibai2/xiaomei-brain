@@ -48,7 +48,7 @@ class EventHandler:
 
     def handle_res(self, data: dict) -> None:
         """处理 res 帧（由 GatewayClient 传入）。"""
-        if data.get("ok"):
+        if "result" in data:
             return
         err = data.get("error", {})
         msg = err.get("message", str(err))

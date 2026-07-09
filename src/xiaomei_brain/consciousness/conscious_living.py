@@ -70,6 +70,22 @@ from ..cli.boot import boot_section, boot_line
 logger = logging.getLogger(__name__)
 
 
+# ── 配置辅助 ──────────────────────────────────────────────────────
+
+def _load_port_from_config_json(agent_id: str, key: str) -> int:
+    """从 agent 的 config.json 读取端口配置，默认 -1 表示未设置。"""
+    import json
+    path = os.path.join(os.path.expanduser("~/.xiaomei-brain"), agent_id, "config.json")
+    try:
+        if not os.path.exists(path):
+            return -1
+        with open(path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        return cfg.get(key, -1)
+    except Exception:
+        return -1
+
+
 # ── Re-exports（向后兼容）───────────────────────────────────────────────
 # LivingState, LivingMessage 移动到 living.py，此处保持导入路径兼容
 
@@ -991,7 +1007,9 @@ class ConsciousLiving(Living):
         self._ws_server = None
         self._admin_thread = None
         self._admin_server = None
-        ws_port = self._config.living.ws_port
+        ws_port = _load_port_from_config_json(self._agent_id, "ws_port")
+        if ws_port < 0:
+            ws_port = self._config.living.ws_port  # brain.yaml fallback
         if ws_port >= 0:  # >=0 启用（0=自动分配，>0=指定端口）
             if ws_port == 0:
                 import socket
@@ -1018,13 +1036,11 @@ class ConsciousLiving(Living):
             boot_line("WebSocket 服务", "OK", f"ws://{host}:{ws_port}/ws")
 
         # ── Admin 管理门（独立端口，强制认证）────────────────────
-        admin_port = getattr(self._config, 'admin_port', 0)
-        if admin_port <= 0:
-            lc = getattr(self._config, 'living', None)
-            if lc:
-                admin_port = getattr(lc, 'admin_port', 0)
-        if admin_port <= 0:
-            admin_port = ws_port + 1 if ws_port > 0 else 0
+        admin_port = _load_port_from_config_json(self._agent_id, "admin_port")
+        if admin_port < 0:
+            admin_port = getattr(self._config.living, 'admin_port', -1)  # brain.yaml fallback
+        if admin_port < 0:
+            admin_port = ws_port + 1 if ws_port > 0 else 0  # 最终 fallback
 
         if admin_port > 0:
             from ..admin.server import create_admin_app

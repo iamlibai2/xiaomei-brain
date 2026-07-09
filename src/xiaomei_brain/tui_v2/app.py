@@ -754,7 +754,7 @@ class TUIApp:
     def _send_chat_bg(self, text: str) -> None:
         """后台线程发送消息。"""
         res = self.client.send_chat(text, user_id=self.user_id)
-        if not res.get("ok"):
+        if "result" not in res:
             err = res.get("error", {}).get("message", "发送失败")
             self._event_queue.put((EVENT_ERROR, {"text": err}))
 

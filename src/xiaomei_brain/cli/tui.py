@@ -270,10 +270,10 @@ async def _recv_loop(ws, app) -> None:
                 data = json.loads(raw)
             except json.JSONDecodeError:
                 continue
-            mt = data.get("type", "")
-            if mt == "event":
-                event_name = data.get("event", "")
-                payload = data.get("payload", {})
+            if data.get("method") == "event":
+                params = data.get("params", {})
+                event_name = params.get("event", "")
+                payload = params.get("data", {})
                 text = payload.get("text", "")
                 if event_name == "chat.chunk":
                     _on_text_chunk(text)
@@ -281,12 +281,11 @@ async def _recv_loop(ws, app) -> None:
                     state.msg_count += 1
                     _on_text(text)
                     app.invalidate()
-            elif mt == "res":
-                if not data.get("ok"):
-                    err = data.get("error", {})
-                    _on_error(err.get("code", ""), err.get("message", ""))
-                    app.invalidate()
-            elif mt == "pong":
+            elif "error" in data:
+                err = data.get("error", {})
+                _on_error(err.get("code", ""), err.get("message", ""))
+                app.invalidate()
+            elif data.get("type") == "pong":
                 pass
     finally:
         pass
@@ -308,7 +307,7 @@ async def _login(ws, host: str, port: int) -> tuple[str, str]:
 
     token = os.environ.get("GATEWAY_TOKEN", "")
     connect_req = {
-        "type": "req", "id": "connect-1", "method": "connect",
+        "jsonrpc": "2.0", "id": "connect-1", "method": "connect",
         "params": {"token": token, "client": "tui", "user_id": uid},
     }
     await ws.send(json.dumps(connect_req, ensure_ascii=False))
@@ -317,10 +316,10 @@ async def _login(ws, host: str, port: int) -> tuple[str, str]:
     try:
         raw = await asyncio.wait_for(ws.recv(), timeout=5)
         data = json.loads(raw)
-        if data.get("type") == "res" and data.get("ok"):
-            payload = data.get("payload", {})
+        if "result" in data:
+            payload = data.get("result", {})
             session_id = payload.get("session_id", "")
-            agent_name = payload.get("agent", "")
+            agent_name = payload.get("agent_name", "")
             # 显示连接信息
             _cprint(f"\n{C['dim']}━━ 已连接 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{C['rst']}")
             _cprint(f"  {C['dim']}Gateway:{C['rst']}  ws://{host}:{port}")
@@ -532,7 +531,7 @@ def _build_app(ws, agent_name: str, user_id: str, host: str, port: int):
             return
 
         msg = {
-            "type": "req",
+            "jsonrpc": "2.0",
             "id": f"msg-{s.msg_count + 1}",
             "method": "chat.send",
             "params": {"content": text, "user_id": s.user_id},
@@ -576,7 +575,7 @@ def _build_app(ws, agent_name: str, user_id: str, host: str, port: int):
             async def _send_abort() -> None:
                 try:
                     abort_msg = {
-                        "type": "req", "id": f"abort-{s.msg_count + 1}",
+                        "jsonrpc": "2.0", "id": f"abort-{s.msg_count + 1}",
                         "method": "chat.abort", "params": {},
                     }
                     await s.ws.send(json.dumps(abort_msg, ensure_ascii=False))

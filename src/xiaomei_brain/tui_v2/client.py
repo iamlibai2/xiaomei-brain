@@ -69,9 +69,7 @@ class GatewayClient:
                 data = json.loads(raw)
             except json.JSONDecodeError:
                 return
-            msg_type = data.get("type", "")
-
-            if msg_type == "res":
+            if "result" in data or "error" in data:
                 req_id = data.get("id", "")
                 with self._lock:
                     self._pending[req_id] = data
@@ -79,13 +77,14 @@ class GatewayClient:
                 if evt:
                     evt.set()
 
-            elif msg_type == "event":
-                event_name = data.get("event", "")
-                payload = data.get("payload", {})
+            elif data.get("method") == "event":
+                params = data.get("params", {})
+                event_name = params.get("event", "")
+                payload = params.get("data", {})
                 if self._on_event:
                     self._on_event(event_name, payload)
 
-            elif msg_type == "pong":
+            elif data.get("type") == "pong":
                 pass
 
         def on_error(ws, error):
@@ -127,11 +126,11 @@ class GatewayClient:
             "user_id": user_id,
         })
 
-        if not res.get("ok"):
+        if "error" in res:
             self.close()
             raise ConnectionError(f"认证失败: {res.get('error', {})}")
 
-        payload = res.get("payload", {})
+        payload = res.get("result", {})
         self._session_id = payload.get("session_id", "")
         self._agent_name = payload.get("agent_name", "")
         logger.info("[GatewayClient] connect response payload keys: %s, agent_name=%r",
@@ -167,8 +166,8 @@ class GatewayClient:
             "session_id": session_id or self._session_id,
             "limit": limit,
         })
-        if res.get("ok"):
-            return res.get("payload", {}).get("messages", [])
+        if "result" in res:
+            return res.get("result", {}).get("messages", [])
         return []
 
     def list_identities(self) -> list[dict]:
@@ -176,8 +175,8 @@ class GatewayClient:
         if not self._connected:
             return []
         res = self._rpc_sync("identity.list", {})
-        if res.get("ok"):
-            return res.get("payload", {}).get("identities", [])
+        if "result" in res:
+            return res.get("result", {}).get("identities", [])
         return []
 
     def close(self) -> None:
@@ -197,7 +196,7 @@ class GatewayClient:
         """发送 RPC 请求并同步等待响应。"""
         req_id = str(uuid.uuid4())[:8]
         frame = {
-            "type": "req",
+            "jsonrpc": "2.0",
             "id": req_id,
             "method": method,
             "params": params,

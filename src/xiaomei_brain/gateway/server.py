@@ -1,6 +1,6 @@
 """WebSocket server — Gateway 对话门。
 
-FastAPI + WebSocket，req/res/event 协议。
+FastAPI + WebSocket，JSON-RPC 2.0 协议。
 所有消息经 MethodRouter → Living，输出经 WSAdapter 推回客户端。
 """
 
@@ -15,7 +15,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from .connection import ConnectionManager, cm
 from .protocol import (
-    MsgType, build_res, build_event, error_shape, ErrorCodes,
+    build_response, build_error, ErrorCode,
 )
 from .schemas import ReqFrame, format_error
 from .server_methods import MethodRouter
@@ -68,16 +68,19 @@ async def ws_endpoint(ws: WebSocket) -> None:
 
             msg_type = raw.get("type", "")
 
-            # ping → pong
+            # ping → pong（传输层心跳，非 JSON-RPC）
             if msg_type == "ping":
                 await send_frame({"type": "pong"})
                 continue
 
-            # 非 req 类型 → 错误
-            if msg_type != MsgType.REQ.value:
-                await send_frame(build_res(
-                    raw.get("id", "?"), ok=False,
-                    error=error_shape(ErrorCodes.INVALID_REQUEST, f"未知消息类型: {msg_type}"),
+            # JSON-RPC 请求：必须有 jsonrpc + method + id
+            if not (raw.get("jsonrpc") == "2.0" and "method" in raw and "id" in raw):
+                # 有 jsonrpc 但缺 id → 通知（不需响应），当前忽略
+                if raw.get("jsonrpc") == "2.0" and "method" in raw:
+                    continue
+                await send_frame(build_error(
+                    raw.get("id", "?"), ErrorCode.INVALID_REQUEST,
+                    f"非 JSON-RPC 请求",
                 ))
                 continue
 
@@ -85,9 +88,8 @@ async def ws_endpoint(ws: WebSocket) -> None:
             try:
                 req = ReqFrame.model_validate(raw)
             except Exception as e:
-                await send_frame(build_res(
-                    raw.get("id", "?"), ok=False,
-                    error=error_shape(ErrorCodes.PARSE_ERROR, format_error(e)),
+                await send_frame(build_error(
+                    raw.get("id", "?"), ErrorCode.PARSE_ERROR, format_error(e),
                 ))
                 continue
 
@@ -96,8 +98,8 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 await send_frame(res)
 
                 # connect 成功后注册 Peer 路由（使用 handler 返回的 session_id）
-                if req.method == "connect" and res.get("ok") and _global_router and not _peer_registered:
-                    session_id = res["payload"]["session_id"]
+                if req.method == "connect" and "result" in res and _global_router and not _peer_registered:
+                    session_id = res["result"]["session_id"]
                     _global_router.register_peer(
                         peer_type="human", peer_id=conn_id,
                         channel="ws", session_id=session_id,
@@ -106,9 +108,8 @@ async def ws_endpoint(ws: WebSocket) -> None:
                     cm.set_session(session_id, conn_id)
                     _peer_registered = True
             else:
-                await send_frame(build_res(
-                    req.id, ok=False,
-                    error=error_shape(ErrorCodes.GATEWAY_NOT_READY, "Gateway 未就绪"),
+                await send_frame(build_error(
+                    req.id, ErrorCode.GATEWAY_NOT_READY, "Gateway 未就绪",
                 ))
 
     except WebSocketDisconnect:

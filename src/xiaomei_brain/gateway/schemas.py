@@ -60,21 +60,20 @@ class ChatHistoryParams(BaseModel):
 # ── Wire frames ──────────────────────────────
 
 class ReqFrame(BaseModel):
-    type: str = "req"
+    jsonrpc: str = "2.0"
     id: str
     method: str
     params: dict = {}
 
 
 class ResFrame(BaseModel):
-    type: str = "res"
+    jsonrpc: str = "2.0"
     id: str
-    ok: bool
-    payload: dict = {}
+    result: dict | None = None
     error: dict | None = None
 
 
 class EventFrame(BaseModel):
-    type: str = "event"
-    event: str
-    payload: dict = {}
+    jsonrpc: str = "2.0"
+    method: str = "event"
+    params: dict = {}
