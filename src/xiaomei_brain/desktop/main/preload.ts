@@ -53,3 +53,14 @@ const api: GatewayAPI = {
 };
 
 contextBridge.exposeInMainWorld("gateway", api);
+
+contextBridge.exposeInMainWorld("win", {
+  minimize: () => ipcRenderer.send("window:minimize"),
+  maximize: () => ipcRenderer.send("window:maximize"),
+  close: () => ipcRenderer.send("window:close"),
+  isMaximized: () => ipcRenderer.invoke("window:isMaximized"),
+  onMaximizeChange: (callback: (maximized: boolean) => void) => {
+    const handler = (_event: unknown, maximized: boolean) => callback(maximized);
+    ipcRenderer.on("window:maximizeChanged", handler);
+  },
+});

@@ -50,5 +50,12 @@ export interface GatewayAPI {
 declare global {
   interface Window {
     gateway: GatewayAPI;
+    win: {
+      minimize: () => void;
+      maximize: () => void;
+      close: () => void;
+      isMaximized: () => Promise<boolean>;
+      onMaximizeChange: (callback: (maximized: boolean) => void) => void;
+    };
   }
 }
