@@ -1,7 +1,8 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { useGateway } from "./hooks/useGateway";
 import { ConnectPage } from "./components/ConnectPage";
-import { ChatLayout } from "./components/ChatLayout";
+import { MenuBar } from "./components/MenuBar";
+import { MainShell } from "./components/MainShell";
 
 export function App() {
   const gateway = useGateway();
@@ -11,10 +12,11 @@ export function App() {
 
   return (
     <div className="app">
+      <MenuBar />
       {page === "connect" ? (
         <ConnectPage gateway={gateway} onConnected={handleConnected} />
       ) : (
-        <ChatLayout gateway={gateway} />
+        <MainShell gateway={gateway} />
       )}
     </div>
   );

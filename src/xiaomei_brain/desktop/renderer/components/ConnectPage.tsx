@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useGateway } from "../hooks/useGateway";
 
 interface Props {
@@ -15,10 +15,10 @@ export function ConnectPage({ gateway, onConnected }: Props) {
 
   useEffect(() => {
     window.gateway.getConfig("last_host").then((h) => {
-      if (h) setHost(h);
+      if (h) setHost(h as string);
     });
     window.gateway.getConfig("last_port").then((p) => {
-      if (p) setPort(p);
+      if (p) setPort(p as string);
     });
   }, []);
 
