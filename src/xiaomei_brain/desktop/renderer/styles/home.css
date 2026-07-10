@@ -1,0 +1,423 @@
+/* ─── Main Content (右侧主区) ─── */
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--wb-bg-primary);
+  position: relative;
+}
+
+/* ─── Home Page ─── */
+.wb-home-page {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 32px 24px 48px;
+  box-sizing: border-box;
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.wb-home-page::-webkit-scrollbar {
+  display: none;
+}
+
+/* ─── Activity Banner (右上角悬浮) ─── */
+.activity-banner {
+  position: absolute;
+  top: 16px;
+  right: 24px;
+  z-index: 10;
+}
+
+.activity-banner-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  border: none;
+  border-radius: var(--wb-radius-full);
+  background: var(--wb-brand-primary);
+  color: white;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: var(--wb-font-family);
+  transition: background 0.15s ease;
+}
+
+.activity-banner-button:hover {
+  background: var(--wb-palette-brand-7);
+}
+
+/* ─── Home Header (大标题) ─── */
+.wb-home-header {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 96px;
+  gap: 0;
+  text-align: left;
+  margin-bottom: 24px;
+}
+
+.wb-home-header__title,
+.wb-home-header__subtitle {
+  margin: 0;
+  font-family: var(--wb-font-family);
+  font-size: 36px;
+  font-weight: 600;
+  line-height: 48px;
+  color: var(--wb-color-text-primary);
+  letter-spacing: 0;
+}
+
+/* ─── Scene Tabs (场景标签) ─── */
+.scene-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.scene-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: none;
+  border-radius: var(--wb-radius-lg);
+  font-size: 13px;
+  font-family: var(--wb-font-family);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.scene-tab svg {
+  width: 14px;
+  height: 14px;
+}
+
+.scene-tab.selected {
+  background: var(--wb-palette-black-100);
+  color: var(--wb-palette-white-100);
+}
+
+.scene-tab:not(.selected) {
+  background: var(--wb-bg-tertiary);
+  color: var(--wb-color-text-primary);
+}
+
+.scene-tab:not(.selected):hover {
+  background: var(--wb-palette-gray-5);
+}
+
+/* ─── GrowthBuddy (宠物通知) ─── */
+.growth-buddy {
+  position: absolute;
+  right: 24px;
+  top: 200px;
+  z-index: 5;
+  display: flex;
+  align-items: flex-end;
+  gap: 0;
+}
+
+.growth-buddy-bubble {
+  position: relative;
+  background: var(--wb-bg-primary);
+  border: 1px solid var(--wb-border-default);
+  border-radius: var(--wb-radius-xl);
+  padding: 12px 14px;
+  box-shadow: var(--wb-shadow-lg);
+  max-width: 220px;
+  margin-right: -8px;
+}
+
+.growth-buddy-bubble::after {
+  content: "";
+  position: absolute;
+  right: -8px;
+  bottom: 16px;
+  width: 0;
+  height: 0;
+  border-top: 8px solid transparent;
+  border-bottom: 8px solid transparent;
+  border-left: 8px solid var(--wb-bg-primary);
+}
+
+.growth-buddy-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--wb-brand-primary);
+  margin-bottom: 4px;
+}
+
+.growth-buddy-desc {
+  font-size: 12px;
+  color: var(--wb-color-text-secondary);
+  line-height: 18px;
+  margin-bottom: 8px;
+}
+
+.growth-buddy-action {
+  display: inline-block;
+  padding: 4px 10px;
+  background: var(--wb-bg-primary);
+  border: 1px solid var(--wb-border-default);
+  border-radius: var(--wb-radius-lg);
+  font-size: 12px;
+  color: var(--wb-color-text-primary);
+  cursor: pointer;
+}
+
+.growth-buddy-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--wb-color-text-tertiary);
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--wb-radius-sm);
+}
+
+.growth-buddy-close:hover {
+  background: var(--wb-bg-hover);
+  color: var(--wb-color-text-primary);
+}
+
+.growth-buddy-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--wb-palette-black-100);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  flex-shrink: 0;
+}
+
+/* ─── Home Composer (快捷功能 + 输入区) ─── */
+.wb-home-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.wb-home-composer__chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.quick-action-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: var(--wb-radius-lg);
+  background: var(--wb-bg-tertiary);
+  color: var(--wb-color-text-primary);
+  font-size: 12px;
+  font-family: var(--wb-font-family);
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.quick-action-chip:hover {
+  background: var(--wb-palette-gray-5);
+  transform: translateY(-1px);
+}
+
+.quick-action-chip svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ─── Chat Input (核心输入框) ─── */
+.chat-input-container {
+  background: var(--wb-bg-secondary);
+  border: 1px solid var(--wb-border-default);
+  border-radius: var(--wb-radius-2xl);
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-input-textarea {
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--wb-color-text-primary);
+  font-size: 14px;
+  font-family: var(--wb-font-family);
+  resize: none;
+  outline: none;
+  line-height: 1.5;
+  min-height: 24px;
+}
+
+.chat-input-textarea::placeholder {
+  color: var(--wb-color-text-tertiary);
+}
+
+.chat-input-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chat-input-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-input-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-input-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--wb-radius-lg);
+  background: transparent;
+  color: var(--wb-color-text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.chat-input-btn:hover {
+  background: var(--wb-bg-hover);
+  color: var(--wb-color-text-primary);
+}
+
+.chat-input-dropdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: var(--wb-radius-lg);
+  background: transparent;
+  color: var(--wb-color-text-secondary);
+  font-size: 12px;
+  font-family: var(--wb-font-family);
+  cursor: pointer;
+}
+
+.chat-input-dropdown:hover {
+  background: var(--wb-bg-hover);
+}
+
+.chat-input-send {
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--wb-radius-full);
+  background: var(--wb-palette-black-100);
+  color: var(--wb-palette-white-100);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s ease;
+}
+
+.chat-input-send:hover {
+  opacity: 0.85;
+}
+
+.chat-input-send:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.chat-input-abort {
+  padding: 6px 14px;
+  background: #F64041;
+  color: white;
+  border: none;
+  border-radius: var(--wb-radius-lg);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: var(--wb-font-family);
+}
+
+.chat-input-abort:hover {
+  opacity: 0.9;
+}
+
+/* ─── Context Bar (底部上下文栏) ─── */
+.context-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+  padding: 8px 16px;
+  background: var(--wb-bg-secondary);
+  border-radius: var(--wb-radius-2xl);
+}
+
+.context-bar-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: var(--wb-color-text-secondary);
+  font-size: 12px;
+  font-family: var(--wb-font-family);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--wb-radius-lg);
+}
+
+.context-bar-item:hover {
+  background: var(--wb-bg-hover);
+  color: var(--wb-color-text-primary);
+}
+
+.context-bar-item svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ─── 窄屏适配 ─── */
+@media (max-width: 640px) {
+  .wb-home-page {
+    padding: 24px 20px 32px;
+    gap: 24px;
+  }
+  .wb-home-header__title,
+  .wb-home-header__subtitle {
+    font-size: 26px;
+    line-height: 36px;
+  }
+  .growth-buddy {
+    display: none;
+  }
+}

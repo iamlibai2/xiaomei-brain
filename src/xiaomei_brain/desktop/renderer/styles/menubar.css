@@ -1,0 +1,143 @@
+.menubar {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 8px;
+  background: var(--wb-sidebar-bg);
+  border-bottom: 1px solid var(--wb-border-subtle);
+  -webkit-app-region: drag;
+  user-select: none;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.menubar-logo {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  -webkit-app-region: no-drag;
+}
+
+.menubar-logo-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--wb-radius-sm);
+  background: var(--wb-brand-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.menubar-logo-text {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--wb-color-text-primary);
+}
+
+.menubar-items {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  -webkit-app-region: no-drag;
+}
+
+.menubar-item {
+  position: relative;
+}
+
+.menubar-item-button {
+  height: 30px;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  color: var(--wb-color-text-primary);
+  font-size: 12px;
+  font-family: var(--wb-font-family);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+
+.menubar-item-button:hover {
+  background: var(--wb-bg-hover);
+}
+
+.menubar-item-button.open {
+  background: var(--wb-bg-active);
+}
+
+.menubar-dropdown {
+  position: absolute;
+  top: 30px;
+  left: 0;
+  min-width: 160px;
+  background: var(--wb-bg-primary);
+  border: 1px solid var(--wb-border-default);
+  border-radius: var(--wb-radius-lg);
+  box-shadow: var(--wb-shadow-lg);
+  padding: 4px;
+  z-index: 9999;
+}
+
+.menubar-dropdown-item {
+  width: 100%;
+  height: 28px;
+  padding: 0 10px;
+  border: none;
+  background: transparent;
+  color: var(--wb-color-text-primary);
+  font-size: 12px;
+  font-family: var(--wb-font-family);
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--wb-radius-sm);
+  display: flex;
+  align-items: center;
+}
+
+.menubar-dropdown-item:hover {
+  background: var(--wb-bg-hover);
+}
+
+.menubar-dropdown-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--wb-border-default);
+}
+
+.menubar-spacer {
+  flex: 1;
+}
+
+.menubar-window-controls {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  -webkit-app-region: no-drag;
+}
+
+.menubar-window-btn {
+  width: 46px;
+  height: 30px;
+  border: none;
+  background: transparent;
+  color: var(--wb-color-text-primary);
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.menubar-window-btn:hover {
+  background: var(--wb-bg-hover);
+}
+
+.menubar-window-btn-close:hover {
+  background: #e81123;
+  color: white;
+}
