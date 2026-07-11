@@ -37,6 +37,7 @@ export function MenuBar() {
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (!window.win) return;
     window.win.isMaximized().then(setMaximized);
     window.win.onMaximizeChange(setMaximized);
   }, []);
@@ -55,7 +56,6 @@ export function MenuBar() {
     <div className="menubar" ref={menuRef}>
       <div className="menubar-logo">
         <div className="menubar-logo-icon">小</div>
-        <span className="menubar-logo-text">xiaomei-brain</span>
       </div>
 
       <div className="menubar-items">
@@ -93,29 +93,31 @@ export function MenuBar() {
 
       <div className="menubar-spacer" />
 
-      <div className="menubar-window-controls">
-        <button
-          className="menubar-window-btn"
-          onClick={() => window.win.minimize()}
-          title="最小化"
-        >
-          &#x2212;
-        </button>
-        <button
-          className="menubar-window-btn"
-          onClick={() => window.win.maximize()}
-          title={maximized ? "还原" : "最大化"}
-        >
-          {maximized ? "\u29C9" : "\u25A1"}
-        </button>
-        <button
-          className="menubar-window-btn menubar-window-btn-close"
-          onClick={() => window.win.close()}
-          title="关闭"
-        >
-          &#x2715;
-        </button>
-      </div>
+      {window.win && (
+        <div className="menubar-window-controls">
+          <button
+            className="menubar-window-btn"
+            onClick={() => window.win.minimize()}
+            title="最小化"
+          >
+            &#x2212;
+          </button>
+          <button
+            className="menubar-window-btn"
+            onClick={() => window.win.maximize()}
+            title={maximized ? "还原" : "最大化"}
+          >
+            {maximized ? "\u29C9" : "\u25A1"}
+          </button>
+          <button
+            className="menubar-window-btn menubar-window-btn-close"
+            onClick={() => window.win.close()}
+            title="关闭"
+          >
+            &#x2715;
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,29 +1,23 @@
 import { useState, useRef } from "react";
-import { useGateway } from "../../hooks/useGateway";
+import { useCoreStore } from "../../store";
 
 interface ChatInputProps {
-  gateway: ReturnType<typeof useGateway>;
+  onSend: (text: string) => void;
+  sending: boolean;
+  onAbort: () => void;
 }
 
-export function ChatInput({ gateway }: ChatInputProps) {
+export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
   const [input, setInput] = useState("");
-  const [sending, setSending] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const connected = useCoreStore((s) => s.connection.status === "connected");
 
-  const handleSend = async () => {
+  const handleSend = () => {
     const text = input.trim();
     if (!text) return;
-
     setInput("");
-    setSending(true);
-    await gateway.sendMessage(text);
-    setSending(false);
+    onSend(text);
     textareaRef.current?.focus();
-  };
-
-  const handleAbort = async () => {
-    await gateway.abortMessage();
-    setSending(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -43,7 +37,7 @@ export function ChatInput({ gateway }: ChatInputProps) {
         onKeyDown={handleKeyDown}
         placeholder="今天帮你做些什么？ @ 引用对话文件，/ 调用技能与指令"
         rows={2}
-        disabled={gateway.conn.status !== "connected"}
+        disabled={!connected}
       />
       <div className="chat-input-toolbar">
         <div className="chat-input-toolbar-left">
@@ -66,14 +60,14 @@ export function ChatInput({ gateway }: ChatInputProps) {
             </svg>
           </button>
           {sending ? (
-            <button className="chat-input-abort" onClick={handleAbort}>
+            <button className="chat-input-abort" onClick={onAbort}>
               中断
             </button>
           ) : (
             <button
               className="chat-input-send"
               onClick={handleSend}
-              disabled={!input.trim() || gateway.conn.status !== "connected"}
+              disabled={!input.trim() || !connected}
               title="发送"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

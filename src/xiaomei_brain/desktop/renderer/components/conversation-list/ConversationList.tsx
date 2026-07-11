@@ -1,6 +1,6 @@
 import { useState } from "react";
+import { useCoreStore } from "../../store";
 import { SidebarTopbar } from "./SidebarTopbar";
-import { SidebarHeader } from "./SidebarHeader";
 import { NewTaskButton } from "./NewTaskButton";
 import { NavTabs, NavIcons } from "./NavTabs";
 import { CollapsibleSection } from "./CollapsibleSection";
@@ -42,18 +42,39 @@ const mockSpaces: SpaceItem[] = [
 
 export function ConversationList({ userName = "李白", onNewTask }: ConversationListProps) {
   const [collapsed, setCollapsed] = useState(false);
-  const [activeNav, setActiveNav] = useState("assistant");
+  const activeNav = useCoreStore((s) => s.activeNav);
+  const setActiveNav = useCoreStore((s) => s.setActiveNav);
 
   return (
     <div className={`conversation-list ${collapsed ? "collapsed" : ""}`}>
       <SidebarTopbar
+        collapsed={collapsed}
         onToggleCollapse={() => setCollapsed(!collapsed)}
         onSearch={() => {}}
         onRefresh={() => {}}
       />
-      {!collapsed && (
+
+      {collapsed ? (
+        <div className="sidebar-collapsed-body">
+          <button className="sidebar-collapsed-icon-btn" onClick={() => onNewTask?.()} title="新建任务">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+          {navItems.map((item) => (
+            <button
+              key={item.id}
+              className={`sidebar-collapsed-icon-btn ${activeNav === item.id ? "active" : ""}`}
+              onClick={() => setActiveNav(item.id)}
+              title={item.label}
+            >
+              {item.icon}
+            </button>
+          ))}
+        </div>
+      ) : (
         <>
-          <SidebarHeader />
           <NewTaskButton onClick={() => onNewTask?.()} />
           <NavTabs items={navItems} onSelect={setActiveNav} />
           <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
@@ -79,6 +100,14 @@ export function ConversationList({ userName = "李白", onNewTask }: Conversatio
           </div>
           <SidebarFooter userName={userName} />
         </>
+      )}
+
+      {collapsed && (
+        <div className="sidebar-collapsed-footer">
+          <div className="sidebar-footer-avatar" title={userName}>
+            {userName.charAt(0)}
+          </div>
+        </div>
       )}
     </div>
   );

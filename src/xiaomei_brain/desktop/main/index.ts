@@ -29,11 +29,6 @@ function createWindow(): void {
     },
     ...isWindows && {
       frame: false,
-      titleBarOverlay: {
-        height: 30,
-        color: "#00000000",
-        symbolColor: "#ffffff",
-      },
     },
     ...!isMac && !isWindows && {
       frame: false,

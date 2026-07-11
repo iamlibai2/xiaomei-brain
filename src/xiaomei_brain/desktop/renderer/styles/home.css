@@ -28,6 +28,362 @@
   display: none;
 }
 
+/* ─── Message List (WorkBuddy 风格) ─── */
+.message-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--wb-scrollbar-thumb) transparent;
+}
+
+.message-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.message-list::-webkit-scrollbar-thumb {
+  background-color: var(--wb-scrollbar-thumb, rgba(100, 100, 100, 0.4));
+  border-radius: 3px;
+}
+
+/* ─── User Message (WorkBuddy 风格) ─── */
+.user-message-row {
+  display: flex;
+  justify-content: flex-end;
+  padding: 32px 16px;
+}
+
+.user-message-bubble {
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border-radius: 16px 16px 0 16px;
+  background: var(--wb-user-bubble-bg, #242424);
+  color: var(--wb-color-text-primary);
+  font-size: 13px;
+  line-height: 19px;
+  max-width: 70%;
+  max-height: 310px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* ─── Assistant Message (WorkBuddy 风格 - 无气泡) ─── */
+.assistant-message-row {
+  display: flex;
+  flex-direction: column;
+  padding: 0 12px;
+  position: relative;
+}
+
+.assistant-message-row:hover .message-time-tip {
+  opacity: 1;
+}
+
+.assistant-avatar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 12px;
+}
+
+.assistant-avatar-face {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--wb-brand-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.assistant-avatar-name {
+  font-family: "Montserrat", var(--wb-font-family);
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--wb-color-text-primary);
+}
+
+.assistant-text-content {
+  font-size: 13px;
+  line-height: 19px;
+  color: var(--wb-color-text-primary);
+  overflow: hidden;
+}
+
+.assistant-text-content:empty {
+  display: none;
+}
+
+/* ─── Markdown 内容 (WorkBuddy 风格) ─── */
+.message-md {
+  font-size: 13px;
+  line-height: 19px;
+  color: var(--wb-color-text-primary);
+  word-wrap: break-word;
+}
+
+.message-md p {
+  margin: 0;
+  padding-bottom: 12px;
+}
+
+.message-md p:last-child {
+  padding-bottom: 0;
+}
+
+.message-md ul,
+.message-md ol {
+  margin: 0;
+  padding-left: 18px;
+  padding-bottom: 12px;
+}
+
+.message-md ul li,
+.message-md ol li {
+  padding-bottom: 4px;
+}
+
+.message-md h1, .message-md h2, .message-md h3,
+.message-md h4, .message-md h5, .message-md h6 {
+  margin: 0 0 4px 0;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.message-md code:not(pre > code) {
+  padding: 0 4px;
+  border-radius: 3px;
+  background-color: var(--wb-markdown-code-bg, rgba(255, 255, 255, 0.1));
+  color: var(--wb-color-text-primary);
+  font-size: 12px;
+  font-family: var(--wb-font-family-mono, "Menlo", "Monaco", "Courier New", monospace);
+}
+
+.message-md .md-pre-wrapper {
+  padding-bottom: 12px;
+}
+
+.message-md .md-pre-container {
+  border: 1px solid var(--wb-pre-border, #454545);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.message-md .md-pre-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  padding: 6px 8px 6px 16px;
+  background: var(--wb-pre-header-bg, rgba(255, 255, 255, 0.05));
+  font-size: 12px;
+  color: var(--wb-color-text-secondary);
+}
+
+.message-md .md-pre-lang {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--wb-color-text-primary);
+}
+
+.message-md .md-pre-copy {
+  display: flex;
+  height: 24px;
+  padding: 0 6px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: var(--wb-color-text-secondary);
+  font-size: 12px;
+  font-family: var(--wb-font-family);
+}
+
+.message-md .md-pre-copy:hover {
+  background: var(--wb-bg-hover);
+}
+
+.message-md pre {
+  margin: 0;
+  padding: 12px 16px;
+  background: var(--wb-pre-bg, rgba(0, 0, 0, 0.2));
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.message-md pre code {
+  font-size: 12px;
+  line-height: 1.5;
+  font-family: var(--wb-font-family-mono, "Menlo", "Monaco", "Courier New", monospace);
+  color: var(--wb-color-text-primary);
+}
+
+.message-md a {
+  color: var(--wb-color-link, #4a9eff);
+  text-decoration: none;
+}
+
+.message-md a:hover {
+  text-decoration: underline;
+}
+
+.message-md blockquote {
+  margin: 0 0 12px 0;
+  padding: 4px 12px;
+  border-left: 4px solid var(--wb-reasoning-border, #3c3c3c);
+  color: var(--wb-color-text-secondary);
+}
+
+.message-md table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--wb-border-default);
+  border-radius: 16px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.message-md thead th {
+  background: var(--wb-bg-tertiary);
+  font-weight: 600;
+  text-align: left;
+  padding: 8px 16px;
+  font-size: 13px;
+}
+
+.message-md tbody td {
+  padding: 8px 16px;
+  font-size: 13px;
+  border-top: 1px solid var(--wb-border-default);
+}
+
+/* ─── Reasoning / Thinking Block (WorkBuddy 风格) ─── */
+.thinking-block {
+  margin: 2px 0;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--wb-color-text-tertiary);
+}
+
+.thinking-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 14px;
+  line-height: 1.75;
+  transition: color 0.16s ease;
+}
+
+.thinking-header:hover {
+  color: var(--wb-color-text-primary);
+}
+
+.thinking-title {
+  flex-shrink: 0;
+}
+
+/* WorkBuddy: shining text animation while thinking */
+.thinking-loading .thinking-title {
+  position: relative;
+  width: fit-content;
+  background: linear-gradient(110deg,
+    color-mix(in srgb, var(--wb-color-text-primary) 26%, transparent) 0%,
+    color-mix(in srgb, var(--wb-color-text-primary) 26%, transparent) 35%,
+    color-mix(in srgb, var(--wb-color-text-primary) 55%, transparent) 50%,
+    color-mix(in srgb, var(--wb-color-text-primary) 26%, transparent) 65%,
+    color-mix(in srgb, var(--wb-color-text-primary) 26%, transparent) 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: thinking-shine 2.2s linear infinite;
+}
+
+@keyframes thinking-shine {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Chevron: WorkBuddy only shows when complete */
+.thinking-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  transition: transform 0.2s ease, opacity 0.16s ease;
+  opacity: 0;
+}
+
+.thinking-header:hover .thinking-chevron {
+  opacity: 1;
+}
+
+.thinking-chevron.expanded {
+  opacity: 1;
+}
+
+/* Collapsed: chevron rotated -90deg, transparent until hover */
+.thinking-collapsed .thinking-chevron {
+  transform: rotate(-90deg);
+  opacity: 0;
+}
+
+.thinking-collapsed .thinking-header:hover .thinking-chevron {
+  opacity: 1;
+}
+
+.thinking-content {
+  margin: 2px 0 6px 2px;
+  padding-left: 12px;
+  border-left: 4px solid var(--wb-reasoning-border, #3c3c3c);
+  line-height: 20px;
+  max-height: 200px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  color: var(--wb-color-text-secondary);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+/* Collapsed: content hidden */
+.thinking-collapsed .thinking-content {
+  display: none;
+}
+
+.thinking-content::-webkit-scrollbar {
+  width: 4px;
+}
+
+.thinking-content::-webkit-scrollbar-thumb {
+  background: var(--wb-scrollbar-thumb, rgba(100, 100, 100, 0.4));
+  border-radius: 2px;
+}
+
 /* ─── Activity Banner (右上角悬浮) ─── */
 .activity-banner {
   position: absolute;
@@ -251,7 +607,7 @@
 
 /* ─── Chat Input (核心输入框) ─── */
 .chat-input-container {
-  background: var(--wb-bg-secondary);
+  background: var(--wb-bg-primary);
   border: 1px solid var(--wb-border-default);
   border-radius: var(--wb-radius-2xl);
   padding: 12px 16px;

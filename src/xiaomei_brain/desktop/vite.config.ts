@@ -6,6 +6,12 @@ export default defineConfig({
   plugins: [react()],
   root: "renderer",
   base: "./",
+  server: {
+    watch: {
+      usePolling: true,
+      interval: 500,
+    },
+  },
   build: {
     outDir: "../dist/renderer",
     emptyOutDir: true,

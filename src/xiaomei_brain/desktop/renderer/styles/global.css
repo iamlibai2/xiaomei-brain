@@ -56,14 +56,10 @@ body {
 }
 
 /* ─── 平台分支 ─── */
-/* Windows/Linux: root 让位菜单栏 30px */
-body[data-platform="windows"] #root,
-body:not([data-platform="mac"]):not([data-platform="windows"]) #root {
-  margin-top: 30px;
-  height: calc(100% - 30px);
-}
+/* MenuBar 在 React app 内部，#root 不需要让位 */
+/* 窗口控件通过 menubar-spacer (flex:1) 自然靠右，无需额外 padding */
 
-/* Mac: 菜单栏隐藏 */
+/* Mac: 菜单栏隐藏，用原生红绿灯 */
 body[data-platform="mac"] .menubar {
   display: none;
 }

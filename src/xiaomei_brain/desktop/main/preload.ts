@@ -1,66 +1,80 @@
 import { contextBridge, ipcRenderer } from "electron";
 
-export interface GatewayAPI {
-  connect: (args: {
-    host: string;
-    port: number;
-    token: string;
-    userId: string;
-  }) => Promise<unknown>;
-  disconnect: () => Promise<void>;
-  sendMessage: (args: { content: string }) => Promise<unknown>;
-  abortMessage: () => Promise<unknown>;
-  getHistory: (args: {
-    sessionId?: string;
-    limit?: number;
-  }) => Promise<unknown>;
-  listIdentities: () => Promise<unknown>;
-  getSessions: () => Promise<unknown>;
-  getMessages: (args: {
-    sessionId: string;
-    limit?: number;
-  }) => Promise<unknown>;
-  getConfig: (key: string) => Promise<unknown>;
-  onEvent: (callback: (event: string, data: unknown) => void) => void;
-  removeEventListener: () => void;
+// ── CHANNEL_MAP — 声明式 IPC 通道定义 ──
+// 在 preload 中内联，避免 Electron 沙箱 require("./channels") 失败
+
+interface InvokeChannel {
+  invoke: string;
 }
 
-const api: GatewayAPI = {
-  connect: (args) => ipcRenderer.invoke("gateway:connect", args),
-  disconnect: () => ipcRenderer.invoke("gateway:disconnect"),
-  sendMessage: (args) => ipcRenderer.invoke("gateway:sendMessage", args),
-  abortMessage: () => ipcRenderer.invoke("gateway:abortMessage"),
-  getHistory: (args) => ipcRenderer.invoke("gateway:getHistory", args),
-  listIdentities: () => ipcRenderer.invoke("gateway:listIdentities"),
-  getSessions: () => ipcRenderer.invoke("store:getSessions"),
-  getMessages: (args) => ipcRenderer.invoke("store:getMessages", args),
-  getConfig: (key) => ipcRenderer.invoke("store:getConfig", key),
+interface SendChannel {
+  send: string;
+}
 
-  onEvent: (callback) => {
-    const handler = (_event: unknown, data: { event: string; data: unknown }) => {
-      callback(data.event, data.data);
-    };
-    ipcRenderer.on("gateway:event", handler);
-    (api as unknown as Record<string, unknown>)["_eventHandler"] = handler;
+interface EventChannel {
+  event: string;
+}
+
+const CHANNEL_MAP = {
+  gateway: {
+    connect:         { invoke: "gateway:connect" },
+    disconnect:      { invoke: "gateway:disconnect" },
+    sendMessage:     { invoke: "gateway:sendMessage" },
+    abortMessage:    { invoke: "gateway:abortMessage" },
+    getHistory:      { invoke: "gateway:getHistory" },
+    listIdentities:  { invoke: "gateway:listIdentities" },
+    getSessions:     { invoke: "store:getSessions" },
+    getMessages:     { invoke: "store:getMessages" },
+    getConfig:       { invoke: "store:getConfig" },
+    onEvent:         { event: "gateway:event" },
   },
+  win: {
+    minimize:          { send: "window:minimize" },
+    maximize:          { send: "window:maximize" },
+    close:             { send: "window:close" },
+    isMaximized:       { invoke: "window:isMaximized" },
+    onMaximizeChange:  { event: "window:maximizeChanged" },
+  },
+} as const;
 
-  removeEventListener: () => {
-    const handler = (api as unknown as Record<string, unknown>)["_eventHandler"];
-    if (handler) {
-      ipcRenderer.removeListener("gateway:event", handler as (...args: unknown[]) => void);
+// ── buildBridge: 从 CHANNEL_MAP 自动生成 contextBridge API ──
+
+function isInvoke(def: unknown): def is InvokeChannel {
+  return typeof def === "object" && def !== null && "invoke" in def;
+}
+
+function isSend(def: unknown): def is SendChannel {
+  return typeof def === "object" && def !== null && "send" in def;
+}
+
+function isEvent(def: unknown): def is EventChannel {
+  return typeof def === "object" && def !== null && "event" in def;
+}
+
+function buildBridge(map: typeof CHANNEL_MAP): void {
+  for (const [namespace, methods] of Object.entries(map)) {
+    const api: Record<string, unknown> = {};
+
+    for (const [name, def] of Object.entries(methods)) {
+      if (isInvoke(def)) {
+        api[name] = (args: unknown) => ipcRenderer.invoke(def.invoke, args);
+      } else if (isSend(def)) {
+        api[name] = (...args: unknown[]) => ipcRenderer.send(def.send, ...args);
+      } else if (isEvent(def)) {
+        api[name] = (callback: (...cbArgs: unknown[]) => void) => {
+          const handler = (_event: Electron.IpcRendererEvent, ...cbArgs: unknown[]) => {
+            callback(...cbArgs);
+          };
+          ipcRenderer.on(def.event, handler);
+          return () => {
+            ipcRenderer.removeListener(def.event, handler);
+          };
+        };
+      }
     }
-  },
-};
 
-contextBridge.exposeInMainWorld("gateway", api);
+    contextBridge.exposeInMainWorld(namespace, api);
+  }
+}
 
-contextBridge.exposeInMainWorld("win", {
-  minimize: () => ipcRenderer.send("window:minimize"),
-  maximize: () => ipcRenderer.send("window:maximize"),
-  close: () => ipcRenderer.send("window:close"),
-  isMaximized: () => ipcRenderer.invoke("window:isMaximized"),
-  onMaximizeChange: (callback: (maximized: boolean) => void) => {
-    const handler = (_event: unknown, maximized: boolean) => callback(maximized);
-    ipcRenderer.on("window:maximizeChanged", handler);
-  },
-});
+buildBridge(CHANNEL_MAP);

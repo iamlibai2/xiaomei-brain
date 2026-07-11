@@ -106,23 +106,26 @@ export function registerIpcHandlers(
   });
 
   // ─── Gateway events → renderer ──────────────
+  // GatewayClient.emit("event", eventName, data) — 所有事件通过 "event" 频道分发
 
-  const events = [
-    "chat.chunk",
-    "session.message",
-    "tool.start",
-    "tool.complete",
-    "chat.error",
-    "reconnecting",
-    "pong",
-  ];
+  gateway.on("event", (eventName: string, data: unknown) => {
+    const win = getWindow();
+    if (win) {
+      win.webContents.send("gateway:event", { event: eventName, data });
+    }
+  });
 
-  for (const eventName of events) {
-    gateway.on(eventName, (data: unknown) => {
-      const win = getWindow();
-      if (win) {
-        win.webContents.send("gateway:event", { event: eventName, data });
-      }
-    });
-  }
+  gateway.on("reconnecting", () => {
+    const win = getWindow();
+    if (win) {
+      win.webContents.send("gateway:event", { event: "reconnecting", data: {} });
+    }
+  });
+
+  gateway.on("pong", () => {
+    const win = getWindow();
+    if (win) {
+      win.webContents.send("gateway:event", { event: "pong", data: {} });
+    }
+  });
 }
