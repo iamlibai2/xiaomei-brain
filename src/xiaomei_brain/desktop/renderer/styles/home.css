@@ -4,7 +4,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--wb-bg-primary);
+  background: var(--ui-bg-primary);
   position: relative;
 }
 
@@ -28,7 +28,7 @@
   display: none;
 }
 
-/* ─── Message List (WorkBuddy 风格) ─── */
+/* ─── Message List () ─── */
 .message-list {
   flex: 1;
   overflow-y: auto;
@@ -36,7 +36,7 @@
   flex-direction: column;
   padding: 0;
   scrollbar-width: thin;
-  scrollbar-color: var(--wb-scrollbar-thumb) transparent;
+  scrollbar-color: var(--ui-scrollbar-thumb) transparent;
 }
 
 .message-list::-webkit-scrollbar {
@@ -44,11 +44,11 @@
 }
 
 .message-list::-webkit-scrollbar-thumb {
-  background-color: var(--wb-scrollbar-thumb, rgba(100, 100, 100, 0.4));
+  background-color: var(--ui-scrollbar-thumb, rgba(100, 100, 100, 0.4));
   border-radius: 3px;
 }
 
-/* ─── User Message (WorkBuddy 风格) ─── */
+/* ─── User Message () ─── */
 .user-message-row {
   display: flex;
   justify-content: flex-end;
@@ -59,8 +59,8 @@
   box-sizing: border-box;
   padding: 8px 12px;
   border-radius: 16px 16px 0 16px;
-  background: var(--wb-user-bubble-bg, #242424);
-  color: var(--wb-color-text-primary);
+  background: var(--ui-user-bubble-bg, #242424);
+  color: var(--ui-color-text-primary);
   font-size: 13px;
   line-height: 19px;
   max-width: 70%;
@@ -71,7 +71,7 @@
   overflow-wrap: break-word;
 }
 
-/* ─── Assistant Message (WorkBuddy 风格 - 无气泡) ─── */
+/* ─── Assistant Message ( - 无气泡) ─── */
 .assistant-message-row {
   display: flex;
   flex-direction: column;
@@ -94,7 +94,7 @@
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: var(--wb-brand-primary);
+  background: var(--ui-brand-primary);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -106,17 +106,17 @@
 }
 
 .assistant-avatar-name {
-  font-family: "Montserrat", var(--wb-font-family);
+  font-family: "Montserrat", var(--ui-font-family);
   font-weight: 600;
   font-size: 14px;
   line-height: 1.75;
-  color: var(--wb-color-text-primary);
+  color: var(--ui-color-text-primary);
 }
 
 .assistant-text-content {
   font-size: 13px;
   line-height: 19px;
-  color: var(--wb-color-text-primary);
+  color: var(--ui-color-text-primary);
   overflow: hidden;
 }
 
@@ -124,11 +124,11 @@
   display: none;
 }
 
-/* ─── Markdown 内容 (WorkBuddy 风格) ─── */
+/* ─── Markdown 内容 () ─── */
 .message-md {
   font-size: 13px;
   line-height: 19px;
-  color: var(--wb-color-text-primary);
+  color: var(--ui-color-text-primary);
   word-wrap: break-word;
 }
 
@@ -163,10 +163,10 @@
 .message-md code:not(pre > code) {
   padding: 0 4px;
   border-radius: 3px;
-  background-color: var(--wb-markdown-code-bg, rgba(255, 255, 255, 0.1));
-  color: var(--wb-color-text-primary);
+  background-color: var(--ui-markdown-code-bg, rgba(255, 255, 255, 0.1));
+  color: var(--ui-color-text-primary);
   font-size: 12px;
-  font-family: var(--wb-font-family-mono, "Menlo", "Monaco", "Courier New", monospace);
+  font-family: var(--ui-font-family-mono, "Menlo", "Monaco", "Courier New", monospace);
 }
 
 .message-md .md-pre-wrapper {
@@ -174,7 +174,7 @@
 }
 
 .message-md .md-pre-container {
-  border: 1px solid var(--wb-pre-border, #454545);
+  border: 1px solid var(--ui-pre-border, #454545);
   border-radius: 16px;
   overflow: hidden;
 }
@@ -185,9 +185,9 @@
   justify-content: space-between;
   height: 36px;
   padding: 6px 8px 6px 16px;
-  background: var(--wb-pre-header-bg, rgba(255, 255, 255, 0.05));
+  background: var(--ui-pre-header-bg, rgba(255, 255, 255, 0.05));
   font-size: 12px;
-  color: var(--wb-color-text-secondary);
+  color: var(--ui-color-text-secondary);
 }
 
 .message-md .md-pre-lang {
@@ -198,7 +198,7 @@
   white-space: nowrap;
   font-size: 14px;
   font-weight: 400;
-  color: var(--wb-color-text-primary);
+  color: var(--ui-color-text-primary);
 }
 
 .message-md .md-pre-copy {
@@ -212,19 +212,19 @@
   cursor: pointer;
   border: none;
   background: transparent;
-  color: var(--wb-color-text-secondary);
+  color: var(--ui-color-text-secondary);
   font-size: 12px;
-  font-family: var(--wb-font-family);
+  font-family: var(--ui-font-family);
 }
 
 .message-md .md-pre-copy:hover {
-  background: var(--wb-bg-hover);
+  background: var(--ui-bg-hover);
 }
 
 .message-md pre {
   margin: 0;
   padding: 12px 16px;
-  background: var(--wb-pre-bg, rgba(0, 0, 0, 0.2));
+  background: var(--ui-pre-bg, rgba(0, 0, 0, 0.2));
   overflow-x: auto;
   scrollbar-width: thin;
 }
@@ -232,12 +232,12 @@
 .message-md pre code {
   font-size: 12px;
   line-height: 1.5;
-  font-family: var(--wb-font-family-mono, "Menlo", "Monaco", "Courier New", monospace);
-  color: var(--wb-color-text-primary);
+  font-family: var(--ui-font-family-mono, "Menlo", "Monaco", "Courier New", monospace);
+  color: var(--ui-color-text-primary);
 }
 
 .message-md a {
-  color: var(--wb-color-link, #4a9eff);
+  color: var(--ui-color-link, #4a9eff);
   text-decoration: none;
 }
 
@@ -248,21 +248,21 @@
 .message-md blockquote {
   margin: 0 0 12px 0;
   padding: 4px 12px;
-  border-left: 4px solid var(--wb-reasoning-border, #3c3c3c);
-  color: var(--wb-color-text-secondary);
+  border-left: 4px solid var(--ui-reasoning-border, #3c3c3c);
+  color: var(--ui-color-text-secondary);
 }
 
 .message-md table {
   width: 100%;
   border-collapse: collapse;
-  border: 1px solid var(--wb-border-default);
+  border: 1px solid var(--ui-border-default);
   border-radius: 16px;
   overflow: hidden;
   margin-bottom: 12px;
 }
 
 .message-md thead th {
-  background: var(--wb-bg-tertiary);
+  background: var(--ui-bg-tertiary);
   font-weight: 600;
   text-align: left;
   padding: 8px 16px;
@@ -272,17 +272,17 @@
 .message-md tbody td {
   padding: 8px 16px;
   font-size: 13px;
-  border-top: 1px solid var(--wb-border-default);
+  border-top: 1px solid var(--ui-border-default);
 }
 
-/* ─── Reasoning / Thinking Block (WorkBuddy 风格) ─── */
+/* ─── Reasoning / Thinking Block () ─── */
 .thinking-block {
   margin: 2px 0;
   font-size: 12px;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  color: var(--wb-color-text-tertiary);
+  color: var(--ui-color-text-tertiary);
 }
 
 .thinking-header {
@@ -297,23 +297,23 @@
 }
 
 .thinking-header:hover {
-  color: var(--wb-color-text-primary);
+  color: var(--ui-color-text-primary);
 }
 
 .thinking-title {
   flex-shrink: 0;
 }
 
-/* WorkBuddy: shining text animation while thinking */
+/* shining text animation while thinking */
 .thinking-loading .thinking-title {
   position: relative;
   width: fit-content;
   background: linear-gradient(110deg,
-    color-mix(in srgb, var(--wb-color-text-primary) 26%, transparent) 0%,
-    color-mix(in srgb, var(--wb-color-text-primary) 26%, transparent) 35%,
-    color-mix(in srgb, var(--wb-color-text-primary) 55%, transparent) 50%,
-    color-mix(in srgb, var(--wb-color-text-primary) 26%, transparent) 65%,
-    color-mix(in srgb, var(--wb-color-text-primary) 26%, transparent) 100%);
+    color-mix(in srgb, var(--ui-color-text-primary) 26%, transparent) 0%,
+    color-mix(in srgb, var(--ui-color-text-primary) 26%, transparent) 35%,
+    color-mix(in srgb, var(--ui-color-text-primary) 55%, transparent) 50%,
+    color-mix(in srgb, var(--ui-color-text-primary) 26%, transparent) 65%,
+    color-mix(in srgb, var(--ui-color-text-primary) 26%, transparent) 100%);
   background-size: 200% 100%;
   -webkit-background-clip: text;
   background-clip: text;
@@ -327,7 +327,7 @@
   100% { background-position: -200% 0; }
 }
 
-/* Chevron: WorkBuddy only shows when complete */
+/* Chevron: only shows when complete */
 .thinking-chevron {
   display: inline-flex;
   align-items: center;
@@ -358,13 +358,13 @@
 .thinking-content {
   margin: 2px 0 6px 2px;
   padding-left: 12px;
-  border-left: 4px solid var(--wb-reasoning-border, #3c3c3c);
+  border-left: 4px solid var(--ui-reasoning-border, #3c3c3c);
   line-height: 20px;
   max-height: 200px;
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: thin;
-  color: var(--wb-color-text-secondary);
+  color: var(--ui-color-text-secondary);
   font-size: 12px;
   white-space: pre-wrap;
   word-wrap: break-word;
@@ -380,7 +380,7 @@
 }
 
 .thinking-content::-webkit-scrollbar-thumb {
-  background: var(--wb-scrollbar-thumb, rgba(100, 100, 100, 0.4));
+  background: var(--ui-scrollbar-thumb, rgba(100, 100, 100, 0.4));
   border-radius: 2px;
 }
 
@@ -398,18 +398,18 @@
   gap: 4px;
   padding: 6px 14px;
   border: none;
-  border-radius: var(--wb-radius-full);
-  background: var(--wb-brand-primary);
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-brand-primary);
   color: white;
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  font-family: var(--wb-font-family);
+  font-family: var(--ui-font-family);
   transition: background 0.15s ease;
 }
 
 .activity-banner-button:hover {
-  background: var(--wb-palette-brand-7);
+  background: var(--ui-palette-brand-7);
 }
 
 /* ─── Home Header (大标题) ─── */
@@ -426,11 +426,11 @@
 .wb-home-header__title,
 .wb-home-header__subtitle {
   margin: 0;
-  font-family: var(--wb-font-family);
+  font-family: var(--ui-font-family);
   font-size: 36px;
   font-weight: 600;
   line-height: 48px;
-  color: var(--wb-color-text-primary);
+  color: var(--ui-color-text-primary);
   letter-spacing: 0;
 }
 
@@ -448,9 +448,9 @@
   gap: 6px;
   padding: 6px 14px;
   border: none;
-  border-radius: var(--wb-radius-lg);
+  border-radius: var(--ui-radius-lg);
   font-size: 13px;
-  font-family: var(--wb-font-family);
+  font-family: var(--ui-font-family);
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
@@ -461,17 +461,17 @@
 }
 
 .scene-tab.selected {
-  background: var(--wb-palette-black-100);
-  color: var(--wb-palette-white-100);
+  background: var(--ui-palette-black-100);
+  color: var(--ui-palette-white-100);
 }
 
 .scene-tab:not(.selected) {
-  background: var(--wb-bg-tertiary);
-  color: var(--wb-color-text-primary);
+  background: var(--ui-bg-tertiary);
+  color: var(--ui-color-text-primary);
 }
 
 .scene-tab:not(.selected):hover {
-  background: var(--wb-palette-gray-5);
+  background: var(--ui-palette-gray-5);
 }
 
 /* ─── GrowthBuddy (宠物通知) ─── */
@@ -487,11 +487,11 @@
 
 .growth-buddy-bubble {
   position: relative;
-  background: var(--wb-bg-primary);
-  border: 1px solid var(--wb-border-default);
-  border-radius: var(--wb-radius-xl);
+  background: var(--ui-bg-primary);
+  border: 1px solid var(--ui-border-default);
+  border-radius: var(--ui-radius-xl);
   padding: 12px 14px;
-  box-shadow: var(--wb-shadow-lg);
+  box-shadow: var(--ui-shadow-lg);
   max-width: 220px;
   margin-right: -8px;
 }
@@ -505,19 +505,19 @@
   height: 0;
   border-top: 8px solid transparent;
   border-bottom: 8px solid transparent;
-  border-left: 8px solid var(--wb-bg-primary);
+  border-left: 8px solid var(--ui-bg-primary);
 }
 
 .growth-buddy-title {
   font-size: 13px;
   font-weight: 600;
-  color: var(--wb-brand-primary);
+  color: var(--ui-brand-primary);
   margin-bottom: 4px;
 }
 
 .growth-buddy-desc {
   font-size: 12px;
-  color: var(--wb-color-text-secondary);
+  color: var(--ui-color-text-secondary);
   line-height: 18px;
   margin-bottom: 8px;
 }
@@ -525,11 +525,11 @@
 .growth-buddy-action {
   display: inline-block;
   padding: 4px 10px;
-  background: var(--wb-bg-primary);
-  border: 1px solid var(--wb-border-default);
-  border-radius: var(--wb-radius-lg);
+  background: var(--ui-bg-primary);
+  border: 1px solid var(--ui-border-default);
+  border-radius: var(--ui-radius-lg);
   font-size: 12px;
-  color: var(--wb-color-text-primary);
+  color: var(--ui-color-text-primary);
   cursor: pointer;
 }
 
@@ -541,25 +541,25 @@
   height: 20px;
   border: none;
   background: transparent;
-  color: var(--wb-color-text-tertiary);
+  color: var(--ui-color-text-tertiary);
   cursor: pointer;
   font-size: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--wb-radius-sm);
+  border-radius: var(--ui-radius-sm);
 }
 
 .growth-buddy-close:hover {
-  background: var(--wb-bg-hover);
-  color: var(--wb-color-text-primary);
+  background: var(--ui-bg-hover);
+  color: var(--ui-color-text-primary);
 }
 
 .growth-buddy-avatar {
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  background: var(--wb-palette-black-100);
+  background: var(--ui-palette-black-100);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -586,17 +586,17 @@
   gap: 6px;
   padding: 6px 12px;
   border: none;
-  border-radius: var(--wb-radius-lg);
-  background: var(--wb-bg-tertiary);
-  color: var(--wb-color-text-primary);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-bg-tertiary);
+  color: var(--ui-color-text-primary);
   font-size: 12px;
-  font-family: var(--wb-font-family);
+  font-family: var(--ui-font-family);
   cursor: pointer;
   transition: background 0.15s ease, transform 0.15s ease;
 }
 
 .quick-action-chip:hover {
-  background: var(--wb-palette-gray-5);
+  background: var(--ui-palette-gray-5);
   transform: translateY(-1px);
 }
 
@@ -607,9 +607,9 @@
 
 /* ─── Chat Input (核心输入框) ─── */
 .chat-input-container {
-  background: var(--wb-bg-primary);
-  border: 1px solid var(--wb-border-default);
-  border-radius: var(--wb-radius-2xl);
+  background: var(--ui-bg-primary);
+  border: 1px solid var(--ui-border-default);
+  border-radius: var(--ui-radius-2xl);
   padding: 12px 16px;
   display: flex;
   flex-direction: column;
@@ -620,9 +620,9 @@
   width: 100%;
   background: transparent;
   border: none;
-  color: var(--wb-color-text-primary);
+  color: var(--ui-color-text-primary);
   font-size: 14px;
-  font-family: var(--wb-font-family);
+  font-family: var(--ui-font-family);
   resize: none;
   outline: none;
   line-height: 1.5;
@@ -630,7 +630,7 @@
 }
 
 .chat-input-textarea::placeholder {
-  color: var(--wb-color-text-tertiary);
+  color: var(--ui-color-text-tertiary);
 }
 
 .chat-input-toolbar {
@@ -655,9 +655,9 @@
   width: 32px;
   height: 32px;
   border: none;
-  border-radius: var(--wb-radius-lg);
+  border-radius: var(--ui-radius-lg);
   background: transparent;
-  color: var(--wb-color-text-secondary);
+  color: var(--ui-color-text-secondary);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -666,8 +666,8 @@
 }
 
 .chat-input-btn:hover {
-  background: var(--wb-bg-hover);
-  color: var(--wb-color-text-primary);
+  background: var(--ui-bg-hover);
+  color: var(--ui-color-text-primary);
 }
 
 .chat-input-dropdown {
@@ -676,25 +676,25 @@
   gap: 4px;
   padding: 4px 10px;
   border: none;
-  border-radius: var(--wb-radius-lg);
+  border-radius: var(--ui-radius-lg);
   background: transparent;
-  color: var(--wb-color-text-secondary);
+  color: var(--ui-color-text-secondary);
   font-size: 12px;
-  font-family: var(--wb-font-family);
+  font-family: var(--ui-font-family);
   cursor: pointer;
 }
 
 .chat-input-dropdown:hover {
-  background: var(--wb-bg-hover);
+  background: var(--ui-bg-hover);
 }
 
 .chat-input-send {
   width: 32px;
   height: 32px;
   border: none;
-  border-radius: var(--wb-radius-full);
-  background: var(--wb-palette-black-100);
-  color: var(--wb-palette-white-100);
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-palette-black-100);
+  color: var(--ui-palette-white-100);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -716,11 +716,11 @@
   background: #F64041;
   color: white;
   border: none;
-  border-radius: var(--wb-radius-lg);
+  border-radius: var(--ui-radius-lg);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  font-family: var(--wb-font-family);
+  font-family: var(--ui-font-family);
 }
 
 .chat-input-abort:hover {
@@ -734,8 +734,8 @@
   justify-content: space-between;
   margin-top: 12px;
   padding: 8px 16px;
-  background: var(--wb-bg-secondary);
-  border-radius: var(--wb-radius-2xl);
+  background: var(--ui-bg-secondary);
+  border-radius: var(--ui-radius-2xl);
 }
 
 .context-bar-item {
@@ -744,17 +744,17 @@
   gap: 6px;
   border: none;
   background: transparent;
-  color: var(--wb-color-text-secondary);
+  color: var(--ui-color-text-secondary);
   font-size: 12px;
-  font-family: var(--wb-font-family);
+  font-family: var(--ui-font-family);
   cursor: pointer;
   padding: 4px 8px;
-  border-radius: var(--wb-radius-lg);
+  border-radius: var(--ui-radius-lg);
 }
 
 .context-bar-item:hover {
-  background: var(--wb-bg-hover);
-  color: var(--wb-color-text-primary);
+  background: var(--ui-bg-hover);
+  color: var(--ui-color-text-primary);
 }
 
 .context-bar-item svg {

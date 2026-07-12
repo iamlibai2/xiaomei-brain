@@ -17,12 +17,6 @@ export interface DisplayMessage {
 
 export type HomeMode = "working" | "coding" | "design";
 
-export interface SessionInfo {
-  id: string;
-  agent_name: string;
-  last_active: number;
-}
-
 export interface ConnectionState {
   status: "disconnected" | "connecting" | "connected" | "error";
   sessionId: string;
@@ -34,8 +28,6 @@ interface CoreState {
   connection: ConnectionState;
   messages: DisplayMessage[];
   sending: boolean;
-  sessions: SessionInfo[];
-  activeSessionId: string | null;
   activeNav: string;
   mode: HomeMode;
   page: "connect" | "chat";
@@ -48,9 +40,7 @@ interface CoreActions {
   setSending: (v: boolean) => void;
   sendMessage: (text: string) => void;
   abortMessage: () => Promise<void>;
-  loadSessions: () => Promise<void>;
-  loadSessionMessages: (sessionId: string) => Promise<void>;
-  newTask: (agentName: string) => Promise<void>;
+  newTask: (agentName: string) => void;
   setActiveNav: (nav: string) => void;
   setMode: (mode: HomeMode) => void;
   setPage: (page: "connect" | "chat") => void;
@@ -62,8 +52,6 @@ export const useCoreStore = create<CoreState & CoreActions>((set, get) => ({
   connection: { status: "disconnected", sessionId: "", agentName: "", error: "" },
   messages: [],
   sending: false,
-  sessions: [],
-  activeSessionId: null,
   activeNav: "assistant",
   mode: "working" as HomeMode,
   page: "connect" as "connect" | "chat",
@@ -91,10 +79,7 @@ export const useCoreStore = create<CoreState & CoreActions>((set, get) => ({
         s.connection.sessionId = sessionId;
         s.connection.agentName = agentName;
         s.connection.error = "";
-        s.activeSessionId = sessionId;
       }));
-      // 加载历史会话和当前会话消息
-      await get().loadSessions();
       return true;
     } catch (err) {
       set(produce((s: CoreState) => {
@@ -121,11 +106,6 @@ export const useCoreStore = create<CoreState & CoreActions>((set, get) => ({
     _sessionMessageReceived = false;
     const userMsg: DisplayMessage = { id: "user-" + Date.now(), role: "user", content: text, streaming: false };
     get().appendMessage(userMsg);
-    // 持久化用户消息
-    const sid = get().activeSessionId;
-    if (sid) {
-      window.gateway.saveMessage({ sessionId: sid, role: "user", content: text });
-    }
     get().setSending(true);
     window.gateway.sendMessage({ content: text });
   },
@@ -137,47 +117,9 @@ export const useCoreStore = create<CoreState & CoreActions>((set, get) => ({
     set(produce((s: CoreState) => { s.sending = false; }));
   },
 
-  // ── Sessions ──
-  loadSessions: async () => {
-    const sessions = await window.gateway.getSessions();
-    set(produce((s: CoreState) => {
-      s.sessions = sessions.map((ses: { id: string; agent_name: string; last_active: number }) => ({
-        id: ses.id,
-        agent_name: ses.agent_name,
-        last_active: ses.last_active,
-      }));
-    }));
-    // 加载当前会话的消息
-    const activeId = get().activeSessionId;
-    if (activeId) {
-      await get().loadSessionMessages(activeId);
-    }
-  },
-
-  loadSessionMessages: async (sessionId: string) => {
-    const msgs = await window.gateway.getMessages({ sessionId });
-    const displayMsgs: DisplayMessage[] = msgs.map((m: { id: number; role: string; content: string }) => ({
-      id: `db-${m.id}`,
-      role: m.role as "user" | "agent",
-      content: m.content,
-      streaming: false,
-    }));
-    set(produce((s: CoreState) => {
-      s.activeSessionId = sessionId;
-      s.messages = displayMsgs;
-    }));
-  },
-
-  newTask: async (agentName: string) => {
-    // 如果当前会话已经是空白的，不重复创建，直接复用
-    const { messages, activeSessionId } = get();
-    if (activeSessionId && messages.length === 0) return;
-    const res = await window.gateway.createSession({ agentName });
-    set(produce((s: CoreState) => {
-      s.activeSessionId = res.id;
-      s.messages = [];
-    }));
-    await get().loadSessions();
+  // ── New task ──
+  newTask: (_agentName) => {
+    set(produce((s: CoreState) => { s.messages = []; }));
   },
 
   // ── UI ──
@@ -210,9 +152,8 @@ export function initGatewayEvents() {
     } else if (event === "session.message") {
       if (_sessionMessageReceived) return;
       _sessionMessageReceived = true;
-      let finalText = "";
       if (_streamingId) {
-        finalText = _streamRef || text;
+        const finalText = _streamRef || text;
         useCoreStore.setState(produce((s: CoreState) => {
           const idx = s.messages.findIndex(m => m.id === _streamingId);
           if (idx !== -1) {
@@ -223,13 +164,7 @@ export function initGatewayEvents() {
         _streamingId = null;
         _streamRef = "";
       } else if (text) {
-        finalText = text;
         store().appendMessage({ id: "msg-" + Date.now(), role: "agent", content: text, streaming: false });
-      }
-      // 持久化 agent 消息
-      const sid = useCoreStore.getState().activeSessionId;
-      if (sid && finalText) {
-        window.gateway.saveMessage({ sessionId: sid, role: "agent", content: finalText });
       }
       store().setSending(false);
     } else if (event === "chat.error") {

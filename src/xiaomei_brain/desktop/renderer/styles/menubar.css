@@ -3,8 +3,8 @@
   align-items: center;
   height: 30px;
   padding: 0 8px;
-  background: var(--wb-sidebar-bg);
-  border-bottom: 1px solid var(--wb-border-subtle);
+  background: var(--ui-sidebar-bg);
+  border-bottom: 1px solid var(--ui-border-subtle);
   -webkit-app-region: drag;
   user-select: none;
   flex-shrink: 0;
@@ -22,8 +22,8 @@
 .menubar-logo-icon {
   width: 18px;
   height: 18px;
-  border-radius: var(--wb-radius-sm);
-  background: var(--wb-brand-primary);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-brand-primary);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -35,7 +35,7 @@
 .menubar-logo-text {
   font-size: 12px;
   font-weight: 700;
-  color: var(--wb-color-text-primary);
+  color: var(--ui-color-text-primary);
 }
 
 .menubar-items {
@@ -54,20 +54,20 @@
   padding: 0 8px;
   border: none;
   background: transparent;
-  color: var(--wb-color-text-primary);
+  color: var(--ui-color-text-primary);
   font-size: 12px;
-  font-family: var(--wb-font-family);
+  font-family: var(--ui-font-family);
   cursor: pointer;
   display: flex;
   align-items: center;
 }
 
 .menubar-item-button:hover {
-  background: var(--wb-bg-hover);
+  background: var(--ui-bg-hover);
 }
 
 .menubar-item-button.open {
-  background: var(--wb-bg-active);
+  background: var(--ui-bg-active);
 }
 
 .menubar-dropdown {
@@ -75,10 +75,10 @@
   top: 30px;
   left: 0;
   min-width: 160px;
-  background: var(--wb-bg-primary);
-  border: 1px solid var(--wb-border-default);
-  border-radius: var(--wb-radius-lg);
-  box-shadow: var(--wb-shadow-lg);
+  background: var(--ui-bg-primary);
+  border: 1px solid var(--ui-border-default);
+  border-radius: var(--ui-radius-lg);
+  box-shadow: var(--ui-shadow-lg);
   padding: 4px;
   z-index: 9999;
 }
@@ -89,24 +89,24 @@
   padding: 0 10px;
   border: none;
   background: transparent;
-  color: var(--wb-color-text-primary);
+  color: var(--ui-color-text-primary);
   font-size: 12px;
-  font-family: var(--wb-font-family);
+  font-family: var(--ui-font-family);
   text-align: left;
   cursor: pointer;
-  border-radius: var(--wb-radius-sm);
+  border-radius: var(--ui-radius-sm);
   display: flex;
   align-items: center;
 }
 
 .menubar-dropdown-item:hover {
-  background: var(--wb-bg-hover);
+  background: var(--ui-bg-hover);
 }
 
 .menubar-dropdown-separator {
   height: 1px;
   margin: 4px 6px;
-  background: var(--wb-border-default);
+  background: var(--ui-border-default);
 }
 
 .menubar-spacer {
@@ -125,7 +125,7 @@
   height: 30px;
   border: none;
   background: transparent;
-  color: var(--wb-color-text-primary);
+  color: var(--ui-color-text-primary);
   font-size: 14px;
   cursor: pointer;
   display: flex;
@@ -134,7 +134,7 @@
 }
 
 .menubar-window-btn:hover {
-  background: var(--wb-bg-hover);
+  background: var(--ui-bg-hover);
 }
 
 .menubar-window-btn-close:hover {

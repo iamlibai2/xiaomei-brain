@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import path from "path";
 import { GatewayClient } from "./gateway-client";
-import { Store } from "./store";
+import { ConfigStore } from "./config-store";
 import { registerIpcHandlers } from "./ipc-handlers";
 
 const isMac = process.platform === "darwin";
@@ -9,7 +9,7 @@ const isWindows = process.platform === "win32";
 
 let mainWindow: BrowserWindow | null = null;
 const gateway = new GatewayClient();
-const store = new Store();
+const config = new ConfigStore();
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -72,7 +72,7 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   createWindow();
-  registerIpcHandlers(gateway, store, () => mainWindow);
+  registerIpcHandlers(gateway, config, () => mainWindow);
 });
 
 app.on("window-all-closed", () => {

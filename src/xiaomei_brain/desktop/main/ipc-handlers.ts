@@ -1,10 +1,10 @@
 import { ipcMain, BrowserWindow } from "electron";
 import { GatewayClient } from "./gateway-client";
-import { Store } from "./store";
+import { ConfigStore } from "./config-store";
 
 export function registerIpcHandlers(
   gateway: GatewayClient,
-  store: Store,
+  config: ConfigStore,
   getWindow: () => BrowserWindow | null
 ): void {
   // ─── connect ────────────────────────────────
@@ -33,9 +33,9 @@ export function registerIpcHandlers(
       const sessionId = (result["session_id"] as string) || "";
       const agentName = (result["agent_name"] as string) || "";
 
-      store.upsertSession(sessionId, agentName);
-      store.setConfig("last_host", args.host);
-      store.setConfig("last_port", String(args.port));
+      // Persist last connection params (JSON file — no SQLite)
+      config.set("last_host", args.host);
+      config.set("last_port", String(args.port));
 
       return { result: { session_id: sessionId, agent_name: agentName } };
     }
@@ -86,50 +86,13 @@ export function registerIpcHandlers(
     return res;
   });
 
-  // ─── Sessions (local) ───────────────────────
-
-  ipcMain.handle("store:getSessions", async () => {
-    return store.getSessions();
-  });
-
-  ipcMain.handle(
-    "store:getMessages",
-    async (_event, args: { sessionId: string; limit?: number }) => {
-      return store.getMessages(args.sessionId, args.limit || 200);
-    }
-  );
-
-  // ─── Config ─────────────────────────────────
+  // ─── Config (local JSON) ────────────────────
 
   ipcMain.handle("store:getConfig", async (_event, key: string) => {
-    return store.getConfig(key);
+    return config.get(key);
   });
 
-  // ─── Message persistence ────────────────────
-
-  ipcMain.handle(
-    "store:saveMessage",
-    async (
-      _event,
-      args: { sessionId: string; role: string; content: string }
-    ) => {
-      store.addMessage(args.sessionId, args.role as "user" | "agent", args.content);
-    }
-  );
-
-  // ─── Create session ─────────────────────────
-
-  ipcMain.handle(
-    "store:createSession",
-    async (_event, args: { agentName: string }) => {
-      const id = "session-" + Date.now();
-      store.upsertSession(id, args.agentName);
-      return { id, agent_name: args.agentName };
-    }
-  );
-
   // ─── Gateway events → renderer ──────────────
-  // GatewayClient.emit("event", eventName, data) — 所有事件通过 "event" 频道分发
 
   gateway.on("event", (eventName: string, data: unknown) => {
     const win = getWindow();

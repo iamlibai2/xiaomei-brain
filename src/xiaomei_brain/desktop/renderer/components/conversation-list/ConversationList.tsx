@@ -18,26 +18,12 @@ const navItems = [
   { id: "more", label: "更多", icon: NavIcons.more },
 ];
 
-function formatTime(ts: number): string {
-  const diff = Date.now() - ts;
-  const minutes = Math.floor(diff / 60000);
-  if (minutes < 1) return "刚刚";
-  if (minutes < 60) return `${minutes}分钟前`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}小时前`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}天前`;
-  return new Date(ts).toLocaleDateString();
-}
-
 export function ConversationList({ userName = "李白" }: ConversationListProps) {
   const [collapsed, setCollapsed] = useState(false);
   const activeNav = useCoreStore((s) => s.activeNav);
   const setActiveNav = useCoreStore((s) => s.setActiveNav);
-  const sessions = useCoreStore((s) => s.sessions);
-  const activeSessionId = useCoreStore((s) => s.activeSessionId);
   const agentName = useCoreStore((s) => s.connection.agentName);
-  const loadSessionMessages = useCoreStore((s) => s.loadSessionMessages);
+  const sessionId = useCoreStore((s) => s.connection.sessionId);
   const newTask = useCoreStore((s) => s.newTask);
 
   const handleNewTask = () => {
@@ -77,28 +63,23 @@ export function ConversationList({ userName = "李白" }: ConversationListProps)
           <NewTaskButton onClick={handleNewTask} />
           <NavTabs items={navItems} onSelect={setActiveNav} />
           <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-            <CollapsibleSection title="任务" count={sessions.length}>
-              {sessions.map((ses) => (
-                <div
-                  key={ses.id}
-                  className={`task-item ${ses.id === activeSessionId ? "task-item-active" : ""}`}
-                  onClick={() => loadSessionMessages(ses.id)}
-                >
+            <CollapsibleSection title="任务" count={sessionId ? 1 : 0}>
+              {sessionId ? (
+                <div className="task-item task-item-active">
                   <span className="task-item-name">
-                    {ses.agent_name}
-                    {ses.id === activeSessionId && <span className="task-item-active-dot" />}
+                    {agentName || "当前会话"}
+                    <span className="task-item-active-dot" />
                   </span>
-                  <span className="task-item-time">{formatTime(ses.last_active)}</span>
+                  <span className="task-item-time">刚刚</span>
                 </div>
-              ))}
-              {sessions.length === 0 && (
-                <div className="task-item" style={{ color: "var(--wb-color-text-disabled)", cursor: "default" }}>
+              ) : (
+                <div className="task-item" style={{ color: "var(--ui-color-text-disabled)", cursor: "default" }}>
                   <span className="task-item-name">暂无任务</span>
                 </div>
               )}
             </CollapsibleSection>
             <CollapsibleSection title="空间" count={0}>
-              <div className="task-item" style={{ color: "var(--wb-color-text-disabled)", cursor: "default" }}>
+              <div className="task-item" style={{ color: "var(--ui-color-text-disabled)", cursor: "default" }}>
                 <span className="task-item-name">暂无空间</span>
               </div>
             </CollapsibleSection>

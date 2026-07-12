@@ -1,6 +1,6 @@
 /* ─── ConversationList 容器 ─── */
 .conversation-list {
-  background: var(--wb-sidebar-bg);
+  background: var(--ui-sidebar-bg);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -55,10 +55,10 @@ body[data-platform="mac"] .sidebar-topbar {
   width: 28px;
   height: 28px;
   padding: 0;
-  border-radius: var(--wb-radius-md);
+  border-radius: var(--ui-radius-md);
   background: transparent;
   border: none;
-  color: var(--wb-color-text-secondary);
+  color: var(--ui-color-text-secondary);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -67,18 +67,18 @@ body[data-platform="mac"] .sidebar-topbar {
 }
 
 .sidebar-expand-btn:hover {
-  background: var(--wb-button-ghost-bg-hover);
-  color: var(--wb-icon-primary);
+  background: var(--ui-button-ghost-bg-hover);
+  color: var(--ui-icon-primary);
 }
 
 .sidebar-icon-btn {
   width: 32px;
   height: 32px;
   padding: 0;
-  border-radius: var(--wb-radius-lg);
+  border-radius: var(--ui-radius-lg);
   background: transparent;
   border: none;
-  color: var(--wb-color-text-secondary);
+  color: var(--ui-color-text-secondary);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -88,8 +88,8 @@ body[data-platform="mac"] .sidebar-topbar {
 }
 
 .sidebar-icon-btn:hover {
-  background: var(--wb-button-ghost-bg-hover);
-  color: var(--wb-icon-primary);
+  background: var(--ui-button-ghost-bg-hover);
+  color: var(--ui-icon-primary);
 }
 
 /* ─── Sidebar Header (Logo + Version) ─── */
@@ -121,8 +121,8 @@ body[data-platform="mac"] .sidebar-topbar {
 .sidebar-logo-icon {
   width: 20px;
   height: 20px;
-  border-radius: var(--wb-radius-sm);
-  background: var(--wb-brand-primary);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-brand-primary);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -135,14 +135,14 @@ body[data-platform="mac"] .sidebar-topbar {
 .sidebar-logo-text {
   font-size: 13px;
   font-weight: 700;
-  color: var(--wb-color-text-primary);
+  color: var(--ui-color-text-primary);
   line-height: 18px;
 }
 
 .sidebar-version-badge {
   font-size: 10px;
   font-weight: 400;
-  color: var(--wb-text-version-badge);
+  color: var(--ui-text-version-badge);
   line-height: 1;
   white-space: nowrap;
 }
@@ -156,17 +156,17 @@ body[data-platform="mac"] .sidebar-topbar {
   gap: 8px;
   padding: 0 12px;
   border: none;
-  border-radius: var(--wb-radius-lg);
-  background: var(--wb-bg-tertiary);
-  color: var(--wb-color-text-primary);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-bg-tertiary);
+  color: var(--ui-color-text-primary);
   font-size: 13px;
-  font-family: var(--wb-font-family);
+  font-family: var(--ui-font-family);
   cursor: pointer;
   transition: background-color 0.15s ease;
 }
 
 .new-task-button:hover {
-  background: var(--wb-palette-gray-5);
+  background: var(--ui-palette-gray-5);
 }
 
 .new-task-button svg {
@@ -188,9 +188,9 @@ body[data-platform="mac"] .sidebar-topbar {
   width: 100%;
   height: 30px;
   border: none;
-  border-radius: var(--wb-radius-lg);
+  border-radius: var(--ui-radius-lg);
   background: transparent;
-  color: var(--wb-todo-menu-text-default);
+  color: var(--ui-todo-menu-text-default);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -202,28 +202,28 @@ body[data-platform="mac"] .sidebar-topbar {
   text-align: left;
   overflow: hidden;
   transition: background-color 0.15s ease, color 0.15s ease;
-  font-family: var(--wb-font-family);
+  font-family: var(--ui-font-family);
 }
 
 .nav-tab svg {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
-  color: var(--wb-todo-menu-icon-default);
+  color: var(--ui-todo-menu-icon-default);
   transition: color 0.15s ease;
 }
 
 .nav-tab:hover {
-  background: var(--wb-todo-menu-bg-hover);
+  background: var(--ui-todo-menu-bg-hover);
 }
 
 .nav-tab.active {
-  background: var(--wb-bg-active);
-  color: var(--wb-color-text-primary);
+  background: var(--ui-bg-active);
+  color: var(--ui-color-text-primary);
 }
 
 .nav-tab.active svg {
-  color: var(--wb-color-text-primary);
+  color: var(--ui-color-text-primary);
 }
 
 .nav-tab-label {
@@ -266,14 +266,14 @@ body[data-platform="mac"] .sidebar-topbar {
   background: transparent;
   color: inherit;
   cursor: pointer;
-  border-radius: var(--wb-radius-sm);
+  border-radius: var(--ui-radius-sm);
   transition: background 0.15s;
   text-align: left;
-  font-family: var(--wb-font-family);
+  font-family: var(--ui-font-family);
 }
 
 .section-header:hover {
-  background: var(--wb-todo-menu-bg-hover);
+  background: var(--ui-todo-menu-bg-hover);
 }
 
 .section-header-text {
@@ -281,12 +281,12 @@ body[data-platform="mac"] .sidebar-topbar {
   font-size: 12px;
   font-weight: 600;
   line-height: 16px;
-  color: var(--wb-todo-menu-text-heading);
+  color: var(--ui-todo-menu-text-heading);
 }
 
 .section-chevron {
   flex: 0 0 14px;
-  color: var(--wb-color-text-tertiary);
+  color: var(--ui-color-text-tertiary);
   transition: transform 0.2s ease;
   font-size: 14px;
 }
@@ -316,21 +316,21 @@ body[data-platform="mac"] .sidebar-topbar {
   padding: 6px 12px 6px 36px;
   margin: 0 12px;
   height: 30px;
-  border-radius: var(--wb-radius-sm);
+  border-radius: var(--ui-radius-sm);
   cursor: pointer;
   transition: background-color 0.15s ease;
   gap: 8px;
 }
 
 .task-item:hover {
-  background: var(--wb-todo-menu-bg-hover);
+  background: var(--ui-todo-menu-bg-hover);
 }
 
 .task-item-name {
   flex: 1;
   min-width: 0;
   font-size: 13px;
-  color: var(--wb-color-text-primary);
+  color: var(--ui-color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -342,14 +342,14 @@ body[data-platform="mac"] .sidebar-topbar {
 .task-item-time {
   flex-shrink: 0;
   font-size: 12px;
-  color: var(--wb-color-text-disabled);
+  color: var(--ui-color-text-disabled);
 }
 
 .task-item-active-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--wb-brand-primary);
+  background: var(--ui-brand-primary);
   flex-shrink: 0;
 }
 
@@ -358,19 +358,19 @@ body[data-platform="mac"] .sidebar-topbar {
   flex-direction: column;
   padding: 6px 12px 6px 36px;
   margin: 0 12px;
-  border-radius: var(--wb-radius-sm);
+  border-radius: var(--ui-radius-sm);
   cursor: pointer;
   transition: background-color 0.15s ease;
   gap: 2px;
 }
 
 .space-item:hover {
-  background: var(--wb-todo-menu-bg-hover);
+  background: var(--ui-todo-menu-bg-hover);
 }
 
 .space-item-title {
   font-size: 13px;
-  color: var(--wb-color-text-primary);
+  color: var(--ui-color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -378,7 +378,7 @@ body[data-platform="mac"] .sidebar-topbar {
 
 .space-item-subtitle {
   font-size: 12px;
-  color: var(--wb-color-text-disabled);
+  color: var(--ui-color-text-disabled);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -391,16 +391,16 @@ body[data-platform="mac"] .sidebar-topbar {
   align-items: center;
   justify-content: flex-start;
   flex-shrink: 0;
-  border-top: 1px solid var(--wb-border-subtle);
+  border-top: 1px solid var(--ui-border-subtle);
 }
 
 .sidebar-footer-avatar {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  border: 2px solid var(--wb-brand-primary);
-  background: var(--wb-palette-gray-5);
-  color: var(--wb-color-text-primary);
+  border: 2px solid var(--ui-brand-primary);
+  background: var(--ui-palette-gray-5);
+  color: var(--ui-color-text-primary);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -416,7 +416,7 @@ body[data-platform="mac"] .sidebar-topbar {
   margin-left: 10px;
   font-size: 13px;
   font-weight: 500;
-  color: var(--wb-color-text-primary);
+  color: var(--ui-color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -443,10 +443,10 @@ body[data-platform="mac"] .sidebar-topbar {
   width: 36px;
   height: 36px;
   padding: 0;
-  border-radius: var(--wb-radius-lg);
+  border-radius: var(--ui-radius-lg);
   background: transparent;
   border: none;
-  color: var(--wb-todo-menu-icon-default);
+  color: var(--ui-todo-menu-icon-default);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -456,13 +456,13 @@ body[data-platform="mac"] .sidebar-topbar {
 }
 
 .sidebar-collapsed-icon-btn:hover {
-  background: var(--wb-button-ghost-bg-hover);
-  color: var(--wb-icon-primary);
+  background: var(--ui-button-ghost-bg-hover);
+  color: var(--ui-icon-primary);
 }
 
 .sidebar-collapsed-icon-btn.active {
-  background: var(--wb-bg-active);
-  color: var(--wb-color-text-primary);
+  background: var(--ui-bg-active);
+  color: var(--ui-color-text-primary);
 }
 
 /* ─── Sidebar: Collapsed Footer ─── */
@@ -473,5 +473,5 @@ body[data-platform="mac"] .sidebar-topbar {
   justify-content: center;
   flex-shrink: 0;
   width: 100%;
-  border-top: 1px solid var(--wb-border-subtle);
+  border-top: 1px solid var(--ui-border-subtle);
 }

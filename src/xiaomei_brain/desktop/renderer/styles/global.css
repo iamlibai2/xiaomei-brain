@@ -17,9 +17,9 @@ body,
 }
 
 body {
-  background: var(--wb-bg-primary);
-  color: var(--wb-color-text-primary);
-  font-family: var(--wb-font-family);
+  background: var(--ui-bg-primary);
+  color: var(--ui-color-text-primary);
+  font-family: var(--ui-font-family);
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -70,13 +70,13 @@ body[data-platform="mac"] .menubar {
   align-items: center;
   justify-content: center;
   flex: 1;
-  background: var(--wb-bg-primary);
+  background: var(--ui-bg-primary);
 }
 
 .connect-card {
-  background: var(--wb-bg-secondary);
-  border: 1px solid var(--wb-border-default);
-  border-radius: var(--wb-radius-2xl);
+  background: var(--ui-bg-secondary);
+  border: 1px solid var(--ui-border-default);
+  border-radius: var(--ui-radius-2xl);
   padding: 40px;
   width: 420px;
   max-width: 90vw;
@@ -86,12 +86,12 @@ body[data-platform="mac"] .menubar {
 .connect-card h1 {
   font-size: 28px;
   font-weight: 800;
-  color: var(--wb-color-text-primary);
+  color: var(--ui-color-text-primary);
   margin-bottom: 4px;
 }
 
 .connect-subtitle {
-  color: var(--wb-color-text-secondary);
+  color: var(--ui-color-text-secondary);
   margin-bottom: 28px;
   font-size: 14px;
 }
@@ -104,7 +104,7 @@ body[data-platform="mac"] .menubar {
 .connect-field label {
   display: block;
   font-size: 12px;
-  color: var(--wb-color-text-secondary);
+  color: var(--ui-color-text-secondary);
   margin-bottom: 6px;
   font-weight: 500;
 }
@@ -112,17 +112,17 @@ body[data-platform="mac"] .menubar {
 .connect-field input {
   width: 100%;
   padding: 10px 14px;
-  background: var(--wb-bg-primary);
-  border: 1px solid var(--wb-border-default);
-  border-radius: var(--wb-radius-lg);
-  color: var(--wb-color-text-primary);
+  background: var(--ui-bg-primary);
+  border: 1px solid var(--ui-border-default);
+  border-radius: var(--ui-radius-lg);
+  color: var(--ui-color-text-primary);
   font-size: 14px;
-  font-family: var(--wb-font-family);
+  font-family: var(--ui-font-family);
   outline: none;
 }
 
 .connect-field input:focus {
-  border-color: var(--wb-brand-primary);
+  border-color: var(--ui-brand-primary);
 }
 
 .connect-error {
@@ -135,19 +135,19 @@ body[data-platform="mac"] .menubar {
 .connect-btn {
   width: 100%;
   padding: 12px;
-  background: var(--wb-brand-primary);
+  background: var(--ui-brand-primary);
   color: white;
   border: none;
-  border-radius: var(--wb-radius-lg);
+  border-radius: var(--ui-radius-lg);
   font-size: 15px;
   font-weight: 600;
-  font-family: var(--wb-font-family);
+  font-family: var(--ui-font-family);
   cursor: pointer;
   margin-top: 4px;
 }
 
 .connect-btn:hover {
-  background: var(--wb-palette-brand-7);
+  background: var(--ui-palette-brand-7);
 }
 
 .connect-btn:disabled {

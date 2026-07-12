@@ -1,7 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 // ── CHANNEL_MAP — 声明式 IPC 通道定义 ──
-// 在 preload 中内联，避免 Electron 沙箱 require("./channels") 失败
 
 interface InvokeChannel {
   invoke: string;
@@ -23,11 +22,7 @@ const CHANNEL_MAP = {
     abortMessage:    { invoke: "gateway:abortMessage" },
     getHistory:      { invoke: "gateway:getHistory" },
     listIdentities:  { invoke: "gateway:listIdentities" },
-    getSessions:     { invoke: "store:getSessions" },
-    getMessages:     { invoke: "store:getMessages" },
     getConfig:       { invoke: "store:getConfig" },
-    saveMessage:     { invoke: "store:saveMessage" },
-    createSession:   { invoke: "store:createSession" },
     onEvent:         { event: "gateway:event" },
   },
   win: {
@@ -39,7 +34,7 @@ const CHANNEL_MAP = {
   },
 } as const;
 
-// ── buildBridge: 从 CHANNEL_MAP 自动生成 contextBridge API ──
+// ── buildBridge ──
 
 function isInvoke(def: unknown): def is InvokeChannel {
   return typeof def === "object" && def !== null && "invoke" in def;

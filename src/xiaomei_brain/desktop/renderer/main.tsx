@@ -6,7 +6,7 @@ import "./styles/menubar.css";
 import "./styles/sidebar.css";
 import "./styles/home.css";
 
-// ─── 平台标记 (WorkBuddy 风格) ───
+// ─── 平台标记 ───
 document.body.setAttribute("data-electron-desktop", "true");
 document.body.setAttribute("data-application-name", "xiaomei-brain");
 const isMac = navigator.platform.toLowerCase().includes("mac");
