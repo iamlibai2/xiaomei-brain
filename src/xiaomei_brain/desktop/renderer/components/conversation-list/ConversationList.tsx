@@ -6,20 +6,8 @@ import { NavTabs, NavIcons } from "./NavTabs";
 import { CollapsibleSection } from "./CollapsibleSection";
 import { SidebarFooter } from "./SidebarFooter";
 
-interface TaskItem {
-  name: string;
-  time: string;
-  active?: boolean;
-}
-
-interface SpaceItem {
-  title: string;
-  subtitle: string;
-}
-
 interface ConversationListProps {
   userName?: string;
-  onNewTask?: () => void;
 }
 
 const navItems = [
@@ -30,20 +18,31 @@ const navItems = [
   { id: "more", label: "更多", icon: NavIcons.more },
 ];
 
-const mockTasks: TaskItem[] = [
-  { name: "JSON-RPC 协议讨论", time: "3天前", active: true },
-  { name: "代码 Review", time: "昨天" },
-  { name: "Python 环境配置", time: "5天前" },
-];
+function formatTime(ts: number): string {
+  const diff = Date.now() - ts;
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return "刚刚";
+  if (minutes < 60) return `${minutes}分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}小时前`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}天前`;
+  return new Date(ts).toLocaleDateString();
+}
 
-const mockSpaces: SpaceItem[] = [
-  { title: "xiaomei-brain 开发", subtitle: "3 个任务" },
-];
-
-export function ConversationList({ userName = "李白", onNewTask }: ConversationListProps) {
+export function ConversationList({ userName = "李白" }: ConversationListProps) {
   const [collapsed, setCollapsed] = useState(false);
   const activeNav = useCoreStore((s) => s.activeNav);
   const setActiveNav = useCoreStore((s) => s.setActiveNav);
+  const sessions = useCoreStore((s) => s.sessions);
+  const activeSessionId = useCoreStore((s) => s.activeSessionId);
+  const agentName = useCoreStore((s) => s.connection.agentName);
+  const loadSessionMessages = useCoreStore((s) => s.loadSessionMessages);
+  const newTask = useCoreStore((s) => s.newTask);
+
+  const handleNewTask = () => {
+    newTask(agentName || "小美");
+  };
 
   return (
     <div className={`conversation-list ${collapsed ? "collapsed" : ""}`}>
@@ -56,7 +55,7 @@ export function ConversationList({ userName = "李白", onNewTask }: Conversatio
 
       {collapsed ? (
         <div className="sidebar-collapsed-body">
-          <button className="sidebar-collapsed-icon-btn" onClick={() => onNewTask?.()} title="新建任务">
+          <button className="sidebar-collapsed-icon-btn" onClick={handleNewTask} title="新建任务">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="12" y1="5" x2="12" y2="19" />
               <line x1="5" y1="12" x2="19" y2="12" />
@@ -75,27 +74,33 @@ export function ConversationList({ userName = "李白", onNewTask }: Conversatio
         </div>
       ) : (
         <>
-          <NewTaskButton onClick={() => onNewTask?.()} />
+          <NewTaskButton onClick={handleNewTask} />
           <NavTabs items={navItems} onSelect={setActiveNav} />
           <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-            <CollapsibleSection title="任务" count={mockTasks.length}>
-              {mockTasks.map((task, i) => (
-                <div key={i} className="task-item">
+            <CollapsibleSection title="任务" count={sessions.length}>
+              {sessions.map((ses) => (
+                <div
+                  key={ses.id}
+                  className={`task-item ${ses.id === activeSessionId ? "task-item-active" : ""}`}
+                  onClick={() => loadSessionMessages(ses.id)}
+                >
                   <span className="task-item-name">
-                    {task.name}
-                    {task.active && <span className="task-item-active-dot" />}
+                    {ses.agent_name}
+                    {ses.id === activeSessionId && <span className="task-item-active-dot" />}
                   </span>
-                  <span className="task-item-time">{task.time}</span>
+                  <span className="task-item-time">{formatTime(ses.last_active)}</span>
                 </div>
               ))}
+              {sessions.length === 0 && (
+                <div className="task-item" style={{ color: "var(--wb-color-text-disabled)", cursor: "default" }}>
+                  <span className="task-item-name">暂无任务</span>
+                </div>
+              )}
             </CollapsibleSection>
-            <CollapsibleSection title="空间" count={mockSpaces.length}>
-              {mockSpaces.map((space, i) => (
-                <div key={i} className="space-item">
-                  <span className="space-item-title">{space.title}</span>
-                  <span className="space-item-subtitle">{space.subtitle}</span>
-                </div>
-              ))}
+            <CollapsibleSection title="空间" count={0}>
+              <div className="task-item" style={{ color: "var(--wb-color-text-disabled)", cursor: "default" }}>
+                <span className="task-item-name">暂无空间</span>
+              </div>
             </CollapsibleSection>
           </div>
           <SidebarFooter userName={userName} />

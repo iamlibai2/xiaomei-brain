@@ -36,6 +36,8 @@ export interface GatewayBridge {
   getSessions(): Promise<Session[]>;
   getMessages(args: { sessionId: string; limit?: number }): Promise<Message[]>;
   getConfig(key: string): Promise<string | null>;
+  saveMessage(args: { sessionId: string; role: string; content: string }): Promise<void>;
+  createSession(args: { agentName: string }): Promise<{ id: string; agent_name: string }>;
 
   /**
    * 订阅 gateway 推送事件。

@@ -105,6 +105,29 @@ export function registerIpcHandlers(
     return store.getConfig(key);
   });
 
+  // ─── Message persistence ────────────────────
+
+  ipcMain.handle(
+    "store:saveMessage",
+    async (
+      _event,
+      args: { sessionId: string; role: string; content: string }
+    ) => {
+      store.addMessage(args.sessionId, args.role as "user" | "agent", args.content);
+    }
+  );
+
+  // ─── Create session ─────────────────────────
+
+  ipcMain.handle(
+    "store:createSession",
+    async (_event, args: { agentName: string }) => {
+      const id = "session-" + Date.now();
+      store.upsertSession(id, args.agentName);
+      return { id, agent_name: args.agentName };
+    }
+  );
+
   // ─── Gateway events → renderer ──────────────
   // GatewayClient.emit("event", eventName, data) — 所有事件通过 "event" 频道分发
 

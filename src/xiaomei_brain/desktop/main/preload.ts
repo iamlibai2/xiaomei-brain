@@ -26,6 +26,8 @@ const CHANNEL_MAP = {
     getSessions:     { invoke: "store:getSessions" },
     getMessages:     { invoke: "store:getMessages" },
     getConfig:       { invoke: "store:getConfig" },
+    saveMessage:     { invoke: "store:saveMessage" },
+    createSession:   { invoke: "store:createSession" },
     onEvent:         { event: "gateway:event" },
   },
   win: {
