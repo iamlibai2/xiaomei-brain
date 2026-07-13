@@ -1,10 +1,13 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import "./i18n";
+import "./styles/ui.css";
 import "./styles/global.css";
 import "./styles/menubar.css";
 import "./styles/sidebar.css";
 import "./styles/home.css";
+import "./styles/terminal.css";
 
 // ─── 平台标记 ───
 document.body.setAttribute("data-electron-desktop", "true");

@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import path from "path";
+import { autoUpdater } from "electron-updater";
 import { GatewayClient } from "./gateway-client";
 import { ConfigStore } from "./config-store";
 import { registerIpcHandlers } from "./ipc-handlers";
@@ -73,6 +74,11 @@ function createWindow(): void {
 app.whenReady().then(() => {
   createWindow();
   registerIpcHandlers(gateway, config, () => mainWindow);
+
+  // Auto-update: dev 环境跳过，打包后才生效
+  if (!process.env.NODE_ENV || process.env.NODE_ENV !== "development") {
+    autoUpdater.checkForUpdatesAndNotify();
+  }
 });
 
 app.on("window-all-closed", () => {

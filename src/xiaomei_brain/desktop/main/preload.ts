@@ -32,6 +32,14 @@ const CHANNEL_MAP = {
     isMaximized:       { invoke: "window:isMaximized" },
     onMaximizeChange:  { event: "window:maximizeChanged" },
   },
+  terminal: {
+    spawn:    { invoke: "terminal:spawn" },
+    write:    { invoke: "terminal:write" },
+    resize:   { invoke: "terminal:resize" },
+    dispose:  { invoke: "terminal:dispose" },
+    onData:   { event: "terminal:data" },
+    onExit:   { event: "terminal:exit" },
+  },
 } as const;
 
 // ── buildBridge ──

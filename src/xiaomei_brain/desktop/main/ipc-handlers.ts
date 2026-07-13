@@ -1,89 +1,135 @@
 import { ipcMain, BrowserWindow } from "electron";
 import { GatewayClient } from "./gateway-client";
 import { ConfigStore } from "./config-store";
+import { TerminalManager } from "./terminal-manager";
+
+const connections = new Map<string, GatewayClient>();
 
 export function registerIpcHandlers(
-  gateway: GatewayClient,
+  _gateway: GatewayClient,
   config: ConfigStore,
   getWindow: () => BrowserWindow | null
 ): void {
+  const terminalMgr = new TerminalManager();
+
+  // Helper: get or warn
+  function getClient(agentId: string): GatewayClient | undefined {
+    const c = connections.get(agentId);
+    if (!c) console.warn(`[ipc] No connection for agent ${agentId}`);
+    return c;
+  }
+
   // ─── connect ────────────────────────────────
 
   ipcMain.handle(
     "gateway:connect",
     async (
       _event,
-      args: { host: string; port: number; token: string; userId: string }
+      args: { host: string; port: number; token: string; userId: string; agentId: string }
     ) => {
       try {
-        await gateway.connect(args.host, args.port);
+        // Disconnect existing connection for this agent
+        const existing = connections.get(args.agentId);
+        if (existing) existing.disconnect();
+
+        const client = new GatewayClient();
+
+        // Forward events with agentId tag
+        client.on("event", (eventName: string, data: unknown) => {
+          const win = getWindow();
+          if (win) {
+            win.webContents.send("gateway:event", { event: eventName, data, agentId: args.agentId });
+          }
+        });
+        client.on("reconnecting", () => {
+          const win = getWindow();
+          if (win) {
+            win.webContents.send("gateway:event", { event: "reconnecting", data: {}, agentId: args.agentId });
+          }
+        });
+        client.on("pong", () => {
+          const win = getWindow();
+          if (win) {
+            win.webContents.send("gateway:event", { event: "pong", data: {}, agentId: args.agentId });
+          }
+        });
+
+        connections.set(args.agentId, client);
+
+        await client.connect(args.host, args.port);
+
+        const res = await client.rpc("connect", {
+          token: args.token,
+          client: "desktop",
+          user_id: args.userId,
+        });
+
+        if (res.error) return res;
+
+        const result = res.result || {};
+        const sessionId = (result["session_id"] as string) || "";
+        const agentName = (result["agent_name"] as string) || "";
+
+        // Persist last connection params
+        config.set("last_host", args.host);
+        config.set("last_port", String(args.port));
+
+        return { result: { session_id: sessionId, agent_name: agentName } };
       } catch (e) {
         return { error: { code: -32099, message: `Connection failed: ${e}` } };
       }
-
-      const res = await gateway.rpc("connect", {
-        token: args.token,
-        client: "desktop",
-        user_id: args.userId,
-      });
-
-      if (res.error) return res;
-
-      const result = res.result || {};
-      const sessionId = (result["session_id"] as string) || "";
-      const agentName = (result["agent_name"] as string) || "";
-
-      // Persist last connection params (JSON file — no SQLite)
-      config.set("last_host", args.host);
-      config.set("last_port", String(args.port));
-
-      return { result: { session_id: sessionId, agent_name: agentName } };
     }
   );
 
   // ─── disconnect ─────────────────────────────
 
-  ipcMain.handle("gateway:disconnect", async () => {
-    gateway.disconnect();
+  ipcMain.handle("gateway:disconnect", async (_event, args: { agentId: string }) => {
+    const client = connections.get(args.agentId);
+    if (client) {
+      client.disconnect();
+      connections.delete(args.agentId);
+    }
   });
 
   // ─── chat.send ──────────────────────────────
 
   ipcMain.handle(
     "gateway:sendMessage",
-    async (_event, args: { content: string }) => {
-      const res = await gateway.rpc("chat.send", {
-        content: args.content,
-      });
-      return res;
+    async (_event, args: { content: string; agentId: string }) => {
+      const client = getClient(args.agentId);
+      if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+      return client.rpc("chat.send", { content: args.content });
     }
   );
 
   // ─── chat.abort ─────────────────────────────
 
-  ipcMain.handle("gateway:abortMessage", async () => {
-    const res = await gateway.rpc("chat.abort", {});
-    return res;
+  ipcMain.handle("gateway:abortMessage", async (_event, args: { agentId: string }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("chat.abort", {});
   });
 
   // ─── chat.history ───────────────────────────
 
   ipcMain.handle(
     "gateway:getHistory",
-    async (_event, args: { sessionId?: string; limit?: number }) => {
-      const res = await gateway.rpc("chat.history", {
+    async (_event, args: { sessionId?: string; limit?: number; agentId: string }) => {
+      const client = getClient(args.agentId);
+      if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+      return client.rpc("chat.history", {
         session_id: args.sessionId || "",
         limit: args.limit || 50,
       });
-      return res;
     }
   );
 
   // ─── identity.list ──────────────────────────
 
-  ipcMain.handle("gateway:listIdentities", async () => {
-    const res = await gateway.rpc("identity.list", {});
-    return res;
+  ipcMain.handle("gateway:listIdentities", async (_event, args: { agentId: string }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("identity.list", {});
   });
 
   // ─── Config (local JSON) ────────────────────
@@ -92,26 +138,43 @@ export function registerIpcHandlers(
     return config.get(key);
   });
 
-  // ─── Gateway events → renderer ──────────────
+  // ─── Terminal ────────────────────────────────
 
-  gateway.on("event", (eventName: string, data: unknown) => {
-    const win = getWindow();
-    if (win) {
-      win.webContents.send("gateway:event", { event: eventName, data });
-    }
-  });
+  ipcMain.handle(
+    "terminal:spawn",
+    async (_event, args: { cols: number; rows: number }) => {
+      const win = getWindow();
+      if (!win) return { error: "No window" };
 
-  gateway.on("reconnecting", () => {
-    const win = getWindow();
-    if (win) {
-      win.webContents.send("gateway:event", { event: "reconnecting", data: {} });
+      const result = terminalMgr.spawn(
+        args.cols || 80,
+        args.rows || 24,
+        (data: string) => {
+          win.webContents.send("terminal:data", data);
+        },
+        (code: number) => {
+          win.webContents.send("terminal:exit", code);
+        }
+      );
+      return result;
     }
-  });
+  );
 
-  gateway.on("pong", () => {
-    const win = getWindow();
-    if (win) {
-      win.webContents.send("gateway:event", { event: "pong", data: {} });
+  ipcMain.handle(
+    "terminal:write",
+    async (_event, data: string) => {
+      terminalMgr.write(data);
     }
+  );
+
+  ipcMain.handle(
+    "terminal:resize",
+    async (_event, args: { cols: number; rows: number }) => {
+      terminalMgr.resize(args.cols, args.rows);
+    }
+  );
+
+  ipcMain.handle("terminal:dispose", async () => {
+    terminalMgr.kill();
   });
 }

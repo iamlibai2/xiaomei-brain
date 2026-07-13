@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 
 interface MenuItem {
   label: string;
@@ -6,35 +7,35 @@ interface MenuItem {
   separator?: boolean;
 }
 
-const menus: Record<string, MenuItem[]> = {
-  "编辑(E)": [
-    { label: "撤销", action: () => document.execCommand("undo") },
-    { label: "重做", action: () => document.execCommand("redo") },
-    { separator: true, label: "" },
-    { label: "剪切", action: () => document.execCommand("cut") },
-    { label: "复制", action: () => document.execCommand("copy") },
-    { label: "粘贴", action: () => document.execCommand("paste") },
-    { label: "全选", action: () => document.execCommand("selectAll") },
-  ],
-  "窗口(W)": [
-    { label: "重新加载", action: () => location.reload() },
-    { label: "开发者工具", action: () => {} },
-    { separator: true, label: "" },
-    { label: "关闭", action: () => window.win.close() },
-  ],
-  "帮助(H)": [
-    {
-      label: "关于 xiaomei-brain",
-      action: () =>
-        alert("xiaomei-brain Desktop\n版本 1.0.0\nAI Agent 大脑框架"),
-    },
-  ],
-};
-
 export function MenuBar() {
+  const { t } = useTranslation();
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [maximized, setMaximized] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const menus: Record<string, MenuItem[]> = useMemo(() => ({
+    [t("menu.edit")]: [
+      { label: t("menu.undo"), action: () => document.execCommand("undo") },
+      { label: t("menu.redo"), action: () => document.execCommand("redo") },
+      { separator: true, label: "" },
+      { label: t("menu.cut"), action: () => document.execCommand("cut") },
+      { label: t("menu.copy"), action: () => document.execCommand("copy") },
+      { label: t("menu.paste"), action: () => document.execCommand("paste") },
+      { label: t("menu.selectAll"), action: () => document.execCommand("selectAll") },
+    ],
+    [t("menu.window")]: [
+      { label: t("menu.reload"), action: () => location.reload() },
+      { label: t("menu.devtools"), action: () => {} },
+      { separator: true, label: "" },
+      { label: t("menu.close"), action: () => window.win.close() },
+    ],
+    [t("menu.help")]: [
+      {
+        label: t("menu.about"),
+        action: () => alert(t("menu.aboutDetail")),
+      },
+    ],
+  }), [t]);
 
   useEffect(() => {
     if (!window.win) return;
@@ -55,7 +56,7 @@ export function MenuBar() {
   return (
     <div className="menubar" ref={menuRef}>
       <div className="menubar-logo">
-        <div className="menubar-logo-icon">小</div>
+        <div className="menubar-logo-icon">{t("menu.logo")}</div>
       </div>
 
       <div className="menubar-items">
@@ -98,21 +99,21 @@ export function MenuBar() {
           <button
             className="menubar-window-btn"
             onClick={() => window.win.minimize()}
-            title="最小化"
+            title={t("menu.minimize")}
           >
             &#x2212;
           </button>
           <button
             className="menubar-window-btn"
             onClick={() => window.win.maximize()}
-            title={maximized ? "还原" : "最大化"}
+            title={maximized ? t("menu.restore") : t("menu.maximize")}
           >
             {maximized ? "\u29C9" : "\u25A1"}
           </button>
           <button
             className="menubar-window-btn menubar-window-btn-close"
             onClick={() => window.win.close()}
-            title="关闭"
+            title={t("menu.close")}
           >
             &#x2715;
           </button>

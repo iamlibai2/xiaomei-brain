@@ -1,4 +1,5 @@
 import { useState, ReactNode } from "react";
+import { Icon } from "../ui";
 
 interface CollapsibleSectionProps {
   title: string;
@@ -25,9 +26,11 @@ export function CollapsibleSection({
           {title}
           {count !== undefined && ` (${count})`}
         </span>
-        <span className={`section-chevron ${!expanded ? "collapsed" : ""}`}>
-          ▾
-        </span>
+        <Icon
+          name="chevron-down"
+          size={12}
+          className={`section-chevron ${!expanded ? "collapsed" : ""}`}
+        />
       </button>
       <div className={`section-body ${!expanded ? "collapsed" : ""}`}>
         {children}

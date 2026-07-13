@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import { useCoreStore, DisplayMessage, HomeMode } from "../../store";
+import { Icon } from "../ui";
 import { HomeHeader } from "./HomeHeader";
 import { SceneTabs } from "./SceneTabs";
 import { GrowthBuddy } from "./GrowthBuddy";
@@ -9,10 +11,16 @@ import { ChatInput } from "./ChatInput";
 import { ContextBar } from "./ContextBar";
 
 export function HomePage() {
-  const messages = useCoreStore((s) => s.messages);
+  const { t } = useTranslation();
+  const activeAgentId = useCoreStore((s) => s.activeAgentId);
+  const messages = useCoreStore((s) => s.messagesByAgent[s.activeAgentId || ""] || []);
   const sending = useCoreStore((s) => s.sending);
   const mode = useCoreStore((s) => s.mode);
-  const agentName = useCoreStore((s) => s.connection.agentName);
+  const agentName = useCoreStore((s) => {
+    const agentId = s.activeAgentId;
+    if (!agentId) return t("home.defaultAgentName");
+    return s.connectionByAgent[agentId]?.agentName || t("home.defaultAgentName");
+  });
   const sendMessage = useCoreStore((s) => s.sendMessage);
   const abortMessage = useCoreStore((s) => s.abortMessage);
   const setMode = useCoreStore((s) => s.setMode);
@@ -30,7 +38,7 @@ export function HomePage() {
       {!hasMessages && (
         <div className="activity-banner">
           <button className="activity-banner-button">
-            📈 做任务赢积分好礼 &gt;
+            {t("home.earnPoints")}
           </button>
         </div>
       )}
@@ -45,7 +53,7 @@ export function HomePage() {
         {hasMessages && (
           <div className="message-list">
             {messages.map((m) => (
-              <MessageRow key={m.id} message={m} agentName={agentName || "小美"} />
+              <MessageRow key={m.id} message={m} agentName={agentName || t("home.defaultAgentName")} />
             ))}
             <div ref={bottomRef} />
           </div>
@@ -97,6 +105,7 @@ function parseThinkingContent(raw: string, streaming: boolean): { thinking: stri
 }
 
 function MessageRow({ message, agentName }: { message: DisplayMessage; agentName: string }) {
+  const { t } = useTranslation();
   const isUser = message.role === "user";
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
 
@@ -128,7 +137,7 @@ function MessageRow({ message, agentName }: { message: DisplayMessage; agentName
             className={`thinking-header ${!thinkingComplete ? "thinking-loading" : ""}`}
             onClick={() => setThinkingExpanded(!thinkingExpanded)}
           >
-            <span className="thinking-title">深度思考</span>
+            <span className="thinking-title">{t("home.deepThink")}</span>
             {thinkingComplete && (
               <span className={`thinking-chevron ${thinkingExpanded ? "expanded" : ""}`}>▼</span>
             )}
@@ -162,7 +171,8 @@ function MessageRow({ message, agentName }: { message: DisplayMessage; agentName
                       className="md-pre-copy"
                       onClick={() => navigator.clipboard.writeText(codeStr)}
                     >
-                      复制
+                      <Icon name="copy" size={14} />
+                      {t("home.copy")}
                     </button>
                   </div>
                   <pre><code className={className} {...props}>{children}</code></pre>

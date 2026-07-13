@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
+import { Button } from "../ui";
 
 interface GrowthBuddyProps {
   title?: string;
@@ -8,29 +10,36 @@ interface GrowthBuddyProps {
 }
 
 export function GrowthBuddy({
-  title = "活动通知",
-  description = "xiaomei-brain 新版本发布，快来体验记忆系统升级",
-  actionText = "立即体验",
+  title,
+  description,
+  actionText,
   onAction,
 }: GrowthBuddyProps) {
+  const { t } = useTranslation();
   const [visible, setVisible] = useState(true);
 
   if (!visible) return null;
 
+  const displayTitle = title ?? t("home.activityNotice");
+  const displayDesc = description ?? t("home.activityContent");
+  const displayAction = actionText ?? t("home.activityAction");
+
   return (
     <div className="growth-buddy">
       <div className="growth-buddy-bubble">
-        <button
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          icon="x"
           className="growth-buddy-close"
           onClick={() => setVisible(false)}
-        >
-          ✕
-        </button>
-        <div className="growth-buddy-title">{title}</div>
-        <div className="growth-buddy-desc">{description}</div>
-        <button className="growth-buddy-action" onClick={onAction}>
-          {actionText}
-        </button>
+          title={t("sidebar.close")}
+        />
+        <div className="growth-buddy-title">{displayTitle}</div>
+        <div className="growth-buddy-desc">{displayDesc}</div>
+        <Button variant="primary" size="sm" className="growth-buddy-action" onClick={onAction}>
+          {displayAction}
+        </Button>
       </div>
       <div className="growth-buddy-avatar">🐱</div>
     </div>

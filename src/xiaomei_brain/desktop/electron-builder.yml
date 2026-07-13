@@ -14,3 +14,6 @@ mac:
 linux:
   target: AppImage
   icon: assets/icon.png
+publish:
+  - provider: generic
+    url: https://releases.xiaomei-brain.com/updates/

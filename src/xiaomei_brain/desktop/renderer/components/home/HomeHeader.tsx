@@ -1,20 +1,23 @@
-export type HomeMode = "working" | "coding" | "design";
+import { useTranslation } from "react-i18next";
 
-const SUBTITLES: Record<HomeMode, string> = {
-  working: "你的职场超能力",
-  coding: "你的开发超能力",
-  design: "你的设计超能力",
-};
+export type HomeMode = "working" | "coding" | "design";
 
 interface HomeHeaderProps {
   mode: HomeMode;
 }
 
+const SUBTITLE_KEYS: Record<HomeMode, string> = {
+  working: "home.superpowerWorking",
+  coding: "home.superpowerCoding",
+  design: "home.superpowerDesign",
+};
+
 export function HomeHeader({ mode }: HomeHeaderProps) {
+  const { t } = useTranslation();
   return (
     <header className="wb-home-header">
       <h1 className="wb-home-header__title">xiaomei-brain</h1>
-      <p className="wb-home-header__subtitle">{SUBTITLES[mode]}</p>
+      <p className="wb-home-header__subtitle">{t(SUBTITLE_KEYS[mode])}</p>
     </header>
   );
 }

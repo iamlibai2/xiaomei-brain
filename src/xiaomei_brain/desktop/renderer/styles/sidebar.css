@@ -475,3 +475,255 @@ body[data-platform="mac"] .sidebar-topbar {
   width: 100%;
   border-top: 1px solid var(--ui-border-subtle);
 }
+
+/* ─── Agent List Header ─── */
+.agent-list-header {
+  display: flex;
+  align-items: center;
+  padding: 6px 0 6px 16px;
+  margin: 8px 12px 4px;
+  height: 36px;
+  gap: 8px;
+}
+
+.agent-list-header-text {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+  color: var(--ui-todo-menu-text-heading);
+}
+
+.agent-list-header-add {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  border: none;
+  color: var(--ui-color-text-tertiary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.agent-list-header-add:hover {
+  background: var(--ui-todo-menu-bg-hover);
+  color: var(--ui-color-text-primary);
+}
+
+/* ─── Agent Item ─── */
+.agent-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  margin: 1px 12px;
+  height: 44px;
+  border-radius: var(--ui-radius-lg);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+  position: relative;
+}
+.agent-item:hover {
+  background: var(--ui-todo-menu-bg-hover);
+}
+.agent-item.active {
+  background: var(--ui-bg-active);
+}
+
+.agent-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--ui-palette-gray-4);
+  color: var(--ui-color-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.agent-item.active .agent-avatar {
+  background: var(--ui-brand-primary);
+  color: var(--ui-palette-white-100);
+}
+
+.agent-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.agent-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ui-color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 18px;
+}
+
+.agent-host {
+  font-size: 11px;
+  color: var(--ui-color-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 14px;
+}
+
+.agent-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.agent-status-dot.connected {
+  background: var(--ui-status-success);
+}
+.agent-status-dot.connecting {
+  background: var(--ui-status-warning);
+  animation: agent-pulse 1.5s ease-in-out infinite;
+}
+.agent-status-dot.disconnected {
+  background: var(--ui-color-text-disabled);
+}
+
+.agent-unread-badge {
+  background: var(--ui-status-warning);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 4px;
+}
+
+@keyframes agent-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.agent-remove-btn {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  border: none;
+  color: var(--ui-color-text-tertiary);
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+.agent-item:hover .agent-remove-btn {
+  display: flex;
+}
+.agent-remove-btn:hover {
+  background: var(--ui-button-ghost-bg-hover);
+  color: var(--ui-color-text-error-default);
+}
+
+.agent-new-conv-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  border: none;
+  color: var(--ui-color-text-tertiary);
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.agent-item:hover .agent-new-conv-btn {
+  display: flex;
+}
+.agent-new-conv-btn:hover {
+  background: var(--ui-button-ghost-bg-hover);
+  color: var(--ui-color-text-primary);
+}
+
+/* ─── Add Agent Form ─── */
+.add-agent-form {
+  margin: 4px 12px;
+  padding: 8px;
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-bg-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.add-agent-form input {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-bg-primary);
+  color: var(--ui-color-text-primary);
+  font-size: 12px;
+  font-family: var(--ui-font-family);
+}
+
+.add-agent-form input::placeholder {
+  color: var(--ui-color-text-tertiary);
+}
+
+.add-agent-form-buttons {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+/* ─── Collapsed Agent List ─── */
+.sidebar-collapsed-agent-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+  flex: 1;
+}
+
+.sidebar-collapsed-agent-btn {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: var(--ui-radius-full);
+  background: transparent;
+  border: none;
+  color: var(--ui-color-text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+  transition: background-color 0.15s ease;
+  flex-shrink: 0;
+}
+.sidebar-collapsed-agent-btn:hover {
+  background: var(--ui-button-ghost-bg-hover);
+}
+.sidebar-collapsed-agent-btn.active {
+  background: var(--ui-brand-primary);
+  color: var(--ui-palette-white-100);
+}

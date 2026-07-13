@@ -1,0 +1,48 @@
+/* ─── Terminal Panel ─── */
+.terminal-panel {
+  width: 420px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  border-left: 1px solid var(--ui-border-default, #e5e7eb);
+  background: var(--ui-bg-primary, #ffffff);
+}
+
+.terminal-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--ui-border-default, #e5e7eb);
+  flex-shrink: 0;
+}
+
+.terminal-panel-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ui-color-text-secondary, #6b7280);
+  font-family: var(--ui-font-family);
+}
+
+.terminal-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.terminal-container {
+  flex: 1;
+  overflow: hidden;
+  padding: 4px;
+}
+
+.terminal-container .xterm {
+  height: 100%;
+  padding: 4px;
+}
+
+.terminal-container .xterm-viewport {
+  scrollbar-width: thin;
+}

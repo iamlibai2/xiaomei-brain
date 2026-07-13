@@ -1,0 +1,208 @@
+/* ─── Primitives: Button ─── */
+
+.ui-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+}
+.ui-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Variants ── */
+
+.ui-btn-primary {
+  background: var(--ui-brand-primary);
+  color: #fff;
+  border-radius: 8px;
+}
+.ui-btn-primary:hover:not(:disabled) {
+  background: var(--ui-palette-brand-7);
+}
+
+.ui-btn-secondary {
+  background: var(--ui-bg-primary);
+  color: var(--ui-color-text-primary);
+  border: 1px solid var(--ui-border-default);
+  border-radius: 8px;
+}
+.ui-btn-secondary:hover:not(:disabled) {
+  background: var(--ui-bg-hover);
+}
+
+.ui-btn-ghost {
+  background: transparent;
+  color: var(--ui-color-text-secondary);
+  border-radius: 8px;
+}
+.ui-btn-ghost:hover:not(:disabled) {
+  background: var(--ui-button-ghost-bg-hover);
+  color: var(--ui-icon-primary);
+}
+
+.ui-btn-danger {
+  background: #F64041;
+  color: #fff;
+  border-radius: 8px;
+}
+.ui-btn-danger:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.ui-btn-chip {
+  background: var(--ui-bg-tertiary);
+  color: var(--ui-color-text-primary);
+  border-radius: 8px;
+}
+.ui-btn-chip:hover:not(:disabled) {
+  background: var(--ui-palette-gray-5);
+}
+
+.ui-btn-text {
+  background: transparent;
+  color: var(--ui-color-text-secondary);
+  border-radius: 6px;
+}
+.ui-btn-text:hover:not(:disabled) {
+  background: var(--ui-bg-hover);
+}
+
+/* ── Sizes ── */
+
+.ui-btn-xs {
+  padding: 4px 8px;
+  font-size: 12px;
+  height: 24px;
+}
+.ui-btn-sm {
+  padding: 6px 12px;
+  font-size: 12px;
+  height: 28px;
+}
+.ui-btn-md {
+  padding: 8px 16px;
+  font-size: 13px;
+  height: 34px;
+}
+.ui-btn-lg {
+  padding: 12px 20px;
+  font-size: 15px;
+  height: 44px;
+}
+
+.ui-btn-icon-sm {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+}
+.ui-btn-icon-md {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 8px;
+}
+.ui-btn-icon-lg {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 8px;
+}
+
+/* ── Modifiers ── */
+
+.ui-btn-pill {
+  border-radius: 9999px;
+}
+
+.ui-btn-block {
+  display: flex;
+  width: 100%;
+}
+
+/* ─── Primitives: Input ─── */
+
+.ui-input {
+  padding: 10px 14px;
+  background: var(--ui-bg-primary);
+  border: 1px solid var(--ui-border-default);
+  border-radius: 8px;
+  color: var(--ui-color-text-primary);
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s ease;
+  width: 100%;
+  box-sizing: border-box;
+}
+.ui-input:focus {
+  border-color: var(--ui-brand-primary);
+}
+.ui-input::placeholder {
+  color: var(--ui-color-text-tertiary);
+}
+
+.ui-textarea {
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--ui-color-text-primary);
+  font-size: 14px;
+  font-family: inherit;
+  resize: none;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+}
+.ui-textarea::placeholder {
+  color: var(--ui-color-text-tertiary);
+}
+
+/* ─── Primitives: Avatar ─── */
+
+.ui-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ui-brand-primary);
+  color: #fff;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.ui-avatar-circle { border-radius: 50%; }
+.ui-avatar-square { border-radius: 4px; }
+.ui-avatar-xs  { width: 18px; height: 18px; font-size: 10px; }
+.ui-avatar-sm  { width: 20px; height: 20px; font-size: 11px; }
+.ui-avatar-md  { width: 24px; height: 24px; font-size: 12px; }
+.ui-avatar-lg  { width: 32px; height: 32px; font-size: 14px; }
+
+/* ─── Primitives: Badge ─── */
+
+.ui-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.ui-badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.ui-badge-dot-red { background: #e53e3e; }
+.ui-badge-dot-brand { background: var(--ui-brand-primary); }
+.ui-badge-text {
+  padding: 0 6px;
+  height: 18px;
+  border-radius: 4px;
+  background: var(--ui-bg-tertiary);
+  color: var(--ui-color-text-tertiary);
+  font-size: 10px;
+  font-weight: 500;
+}
