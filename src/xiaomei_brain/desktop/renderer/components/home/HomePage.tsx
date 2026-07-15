@@ -9,11 +9,14 @@ import { GrowthBuddy } from "./GrowthBuddy";
 import { QuickActions } from "./QuickActions";
 import { ChatInput } from "./ChatInput";
 import { ContextBar } from "./ContextBar";
+import { ChatTopbar } from "./ChatTopbar";
+
+const EMPTY_MSGS: DisplayMessage[] = [];
 
 export function HomePage() {
   const { t } = useTranslation();
   const activeAgentId = useCoreStore((s) => s.activeAgentId);
-  const messages = useCoreStore((s) => s.messagesByAgent[s.activeAgentId || ""] || []);
+  const messages = useCoreStore((s) => s.messagesByAgent[s.activeAgentId || ""] || EMPTY_MSGS);
   const sending = useCoreStore((s) => s.sending);
   const mode = useCoreStore((s) => s.mode);
   const agentName = useCoreStore((s) => {
@@ -24,6 +27,10 @@ export function HomePage() {
   const sendMessage = useCoreStore((s) => s.sendMessage);
   const abortMessage = useCoreStore((s) => s.abortMessage);
   const setMode = useCoreStore((s) => s.setMode);
+  const activeSessionId = useCoreStore((s) => s.activeSessionId);
+  const sessionsByAgent = useCoreStore((s) => s.sessionsByAgent);
+
+  const [rightPanelOpen, setRightPanelOpen] = useState(false);
 
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -32,6 +39,15 @@ export function HomePage() {
   }, [messages]);
 
   const hasMessages = messages.length > 0;
+
+  const taskName = (() => {
+    if (activeSessionId && activeAgentId) {
+      const sessions = sessionsByAgent[activeAgentId] || [];
+      const s = sessions.find((x) => x.id === activeSessionId);
+      if (s) return s.name;
+    }
+    return agentName || t("home.defaultAgentName");
+  })();
 
   return (
     <div className="main-content">
@@ -51,12 +67,20 @@ export function HomePage() {
           </>
         )}
         {hasMessages && (
-          <div className="message-list">
-            {messages.map((m) => (
-              <MessageRow key={m.id} message={m} agentName={agentName || t("home.defaultAgentName")} />
-            ))}
-            <div ref={bottomRef} />
-          </div>
+          <>
+            <ChatTopbar
+              taskName={taskName}
+              onSearch={() => {}}
+              onToggleRightPanel={() => setRightPanelOpen(!rightPanelOpen)}
+              rightPanelOpen={rightPanelOpen}
+            />
+            <div className="message-list">
+              {messages.map((m) => (
+                <MessageRow key={m.id} message={m} agentName={agentName || t("home.defaultAgentName")} />
+              ))}
+              <div ref={bottomRef} />
+            </div>
+          </>
         )}
         <div className="wb-home-composer">
           {!hasMessages && <QuickActions onAction={() => {}} />}

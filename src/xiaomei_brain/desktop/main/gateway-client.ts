@@ -22,6 +22,7 @@ export class GatewayClient extends EventEmitter {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelay = 1000;
   private _connected = false;
+  private _closed = false;
 
   get connected(): boolean {
     return this._connected;
@@ -29,6 +30,7 @@ export class GatewayClient extends EventEmitter {
 
   connect(host: string, port: number): Promise<void> {
     return new Promise((resolve, reject) => {
+      this._closed = false;
       const url = `ws://${host}:${port}/ws`;
       this.ws = new WebSocket(url);
 
@@ -62,6 +64,7 @@ export class GatewayClient extends EventEmitter {
   }
 
   disconnect(): void {
+    this._closed = true;
     this._connected = false;
     this.stopPing();
     if (this.reconnectTimer) {
@@ -135,11 +138,13 @@ export class GatewayClient extends EventEmitter {
   }
 
   private scheduleReconnect(host: string, port: number): void {
-    if (this.reconnectTimer) return;
+    if (this._closed || this.reconnectTimer) return;
     this.emit("reconnecting");
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
+      if (this._closed) return;
       this.connect(host, port).catch(() => {
+        if (this._closed) return;
         this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000);
         this.scheduleReconnect(host, port);
       });

@@ -3,8 +3,6 @@ import { useTranslation } from "react-i18next";
 import { useCoreStore, AgentEntry } from "../../store";
 import { Icon, Button } from "../ui";
 import { SidebarTopbar } from "./SidebarTopbar";
-import { NewTaskButton } from "./NewTaskButton";
-import { CollapsibleSection } from "./CollapsibleSection";
 import { SidebarFooter } from "./SidebarFooter";
 
 export function ConversationList() {
@@ -18,7 +16,11 @@ export function ConversationList() {
   const userId = useCoreStore((s) => s.userId);
   const switchAgent = useCoreStore((s) => s.switchAgent);
   const addAgent = useCoreStore((s) => s.addAgent);
-  const newTask = useCoreStore((s) => s.newTask);
+  const newSession = useCoreStore((s) => s.newSession);
+  const switchSession = useCoreStore((s) => s.switchSession);
+  const sessionsByAgent = useCoreStore((s) => s.sessionsByAgent);
+  const activeSessionId = useCoreStore((s) => s.activeSessionId);
+  const messagesByAgent = useCoreStore((s) => s.messagesByAgent);
   const terminalOpen = useCoreStore((s) => s.terminalOpen);
   const setTerminalOpen = useCoreStore((s) => s.setTerminalOpen);
   const unreadByAgent = useCoreStore((s) => s.unreadByAgent);
@@ -30,10 +32,6 @@ export function ConversationList() {
   const [addPort, setAddPort] = useState("19767");
   const [addToken, setAddToken] = useState("");
 
-  const activeConn = activeAgentId ? connectionByAgent[activeAgentId] : undefined;
-  const isConnected = activeConn?.status === "connected";
-  const agentName = activeConn?.agentName || "";
-
   function handleAddAgent() {
     const port = parseInt(addPort) || 19767;
     addAgent(addHost, port, addToken);
@@ -43,9 +41,13 @@ export function ConversationList() {
     setAddToken("");
   }
 
-  function handleNewTask() {
-    newTask();
+  function handleNewSession() {
+    newSession();
   }
+
+  const activeSessions = activeAgentId ? (sessionsByAgent[activeAgentId] || []) : [];
+  const isConnected = activeAgentId ? connectionByAgent[activeAgentId]?.status === "connected" : false;
+  const hasCurrentChat = activeAgentId && (messagesByAgent[activeAgentId]?.length > 0 || isConnected);
 
   return (
     <div className={`conversation-list ${collapsed ? "collapsed" : ""}`}>
@@ -85,8 +87,6 @@ export function ConversationList() {
         </div>
       ) : (
         <>
-          <NewTaskButton onClick={handleNewTask} />
-
           {/* Agent list header */}
           <div className="agent-list-header">
             <span className="agent-list-header-text">
@@ -149,29 +149,41 @@ export function ConversationList() {
             ))
           )}
 
-          {/* Task & Workspace sections */}
-          <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-            <CollapsibleSection title={t("sidebar.task")} count={isConnected ? 1 : 0}>
-              {isConnected ? (
-                <div className="task-item task-item-active">
-                  <span className="task-item-name">
-                    {agentName || t("sidebar.currentSession")}
-                    <span className="task-item-active-dot" />
-                  </span>
-                  <span className="task-item-time">{t("sidebar.justNow")}</span>
-                </div>
-              ) : (
-                <div className="task-item" style={{ color: "var(--ui-color-text-disabled)", cursor: "default" }}>
-                  <span className="task-item-name">{t("sidebar.noTask")}</span>
-                </div>
-              )}
-            </CollapsibleSection>
-            <CollapsibleSection title={t("sidebar.space")} count={0}>
-              <div className="task-item" style={{ color: "var(--ui-color-text-disabled)", cursor: "default" }}>
-                <span className="task-item-name">{t("sidebar.noSpace")}</span>
+          {/* Sessions list for active agent */}
+          {activeAgentId && (
+            <div className="session-section" style={{ flex: 1, minHeight: 0, overflow: "hidden auto", display: "flex", flexDirection: "column" }}>
+              <div className="session-section-header">
+                <span className="session-section-title">
+                  {t("sidebar.sessions")} ({activeSessions.length + (hasCurrentChat ? 1 : 0)})
+                </span>
+                <button
+                  className="session-new-btn"
+                  onClick={handleNewSession}
+                  title={t("sidebar.newSession")}
+                >
+                  <Icon name="plus" size={14} />
+                </button>
               </div>
-            </CollapsibleSection>
-          </div>
+              <div className="session-list">
+                {/* Current chat (always shown when active agent has messages or is connected) */}
+                <SessionItem
+                  name={t("sidebar.currentSession")}
+                  isActive={!activeSessionId}
+                  isCurrent={true}
+                  onClick={() => {}}
+                />
+                {activeSessions.map((s) => (
+                  <SessionItem
+                    key={s.id}
+                    name={s.name}
+                    isActive={s.id === activeSessionId}
+                    isCurrent={false}
+                    onClick={() => switchSession(s.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
 
           <SidebarFooter userName={displayName} />
         </>
@@ -221,6 +233,33 @@ function AgentItem({
       {unreadCount > 0 && (
         <span className="agent-unread-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>
       )}
+    </div>
+  );
+}
+
+// ── Session item ──
+
+function SessionItem({
+  name,
+  isActive,
+  isCurrent,
+  onClick,
+}: {
+  name: string;
+  isActive: boolean;
+  isCurrent: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <div
+      className={`session-item ${isActive ? "active" : ""} ${isCurrent ? "current" : ""}`}
+      onClick={onClick}
+      style={{ cursor: isCurrent ? "default" : "pointer" }}
+    >
+      <span className="session-item-name">
+        {isCurrent && <span className="session-item-dot" />}
+        {name}
+      </span>
     </div>
   );
 }

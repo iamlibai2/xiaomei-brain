@@ -353,6 +353,95 @@ body[data-platform="mac"] .sidebar-topbar {
   flex-shrink: 0;
 }
 
+/* ─── Session Section ─── */
+.session-section {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.session-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px 0 12px;
+  height: 28px;
+}
+
+.session-section-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ui-color-text-disabled);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.session-new-btn {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--ui-color-text-disabled);
+  border-radius: var(--ui-radius-sm);
+  cursor: pointer;
+  padding: 0;
+}
+
+.session-new-btn:hover {
+  background: var(--ui-todo-menu-bg-hover);
+  color: var(--ui-color-text-primary);
+}
+
+.session-list {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.session-item {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px 6px 36px;
+  margin: 0 12px;
+  height: 30px;
+  border-radius: var(--ui-radius-sm);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.session-item:hover {
+  background: var(--ui-todo-menu-bg-hover);
+}
+
+.session-item.active {
+  background: var(--ui-brand-primary-light, rgba(99, 102, 241, 0.1));
+}
+
+.session-item-name {
+  font-size: 13px;
+  color: var(--ui-color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.session-item-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ui-brand-primary);
+  flex-shrink: 0;
+}
+
 .space-item {
   display: flex;
   flex-direction: column;

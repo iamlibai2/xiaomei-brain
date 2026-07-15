@@ -8,6 +8,41 @@
   position: relative;
 }
 
+/* ─── Chat Topbar ─── */
+.chat-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 56px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--ui-border-default, color-mix(in srgb, #000 8%, transparent));
+  flex-shrink: 0;
+  background: var(--ui-bg-primary);
+}
+
+.chat-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chat-topbar-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ui-color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
 /* ─── Home Page ─── */
 .wb-home-page {
   display: flex;

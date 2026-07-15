@@ -17,6 +17,14 @@ export interface AgentEntry {
   token: string;
 }
 
+// ── Session (conversation) entry ──
+
+export interface SessionEntry {
+  id: string;       // unique session id
+  name: string;     // user-given name or auto date-based
+  createdAt: number; // timestamp ms
+}
+
 // ── Bridge API ──
 
 export interface GatewayBridge {

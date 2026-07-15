@@ -1,12 +1,12 @@
 import { create } from "zustand";
 import { produce } from "immer";
-import type { AgentEntry } from "../types";
+import type { AgentEntry, SessionEntry } from "../types";
 
 // ── Persistence (manual, avoid zustand/persist rehydration during render) ──
 
 const STORAGE_KEY = "xiaomei-brain-agents";
 
-function loadPersisted(): { agents?: AgentEntry[]; userId?: string; activeAgentId?: string | null } {
+function loadPersisted(): { agents?: AgentEntry[]; userId?: string; activeAgentId?: string | null; sessionsByAgent?: Record<string, SessionEntry[]> } {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return JSON.parse(raw);
@@ -20,6 +20,7 @@ function savePersisted(state: CoreState) {
       agents: state.agents,
       userId: state.userId,
       activeAgentId: state.activeAgentId,
+      sessionsByAgent: state.sessionsByAgent,
     }));
   } catch { /* quota exceeded */ }
 }
@@ -56,6 +57,9 @@ interface CoreState {
   terminalOpen: boolean;
   activeNav: string;
   unreadByAgent: Record<string, number>;
+  sessionsByAgent: Record<string, SessionEntry[]>;
+  sessionMessages: Record<string, Record<string, DisplayMessage[]>>;
+  activeSessionId: string | null;
 }
 
 interface CoreActions {
@@ -67,7 +71,8 @@ interface CoreActions {
   disconnectAgent: (agentId: string) => Promise<void>;
   sendMessage: (text: string) => void;
   abortMessage: () => Promise<void>;
-  newTask: () => void;
+  newSession: (name?: string) => void;
+  switchSession: (sessionId: string) => void;
   setMode: (mode: HomeMode) => void;
   setPage: (page: "connect" | "chat") => void;
   setTerminalOpen: (open: boolean) => void;
@@ -91,6 +96,9 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   terminalOpen: false,
   activeNav: "assistant",
   unreadByAgent: {},
+  sessionsByAgent: persisted.sessionsByAgent ?? {},
+  sessionMessages: {},
+  activeSessionId: null,
 
   // ── Connect (first-time from ConnectPage) ──
 
@@ -215,10 +223,13 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     set(produce((s: CoreState) => {
       delete s.connectionByAgent[agentId];
       delete s.messagesByAgent[agentId];
+      delete s.sessionsByAgent[agentId];
+      delete s.sessionMessages[agentId];
       s.agents = s.agents.filter(a => a.id !== agentId);
       if (s.activeAgentId === agentId) {
         s.activeAgentId = s.agents.length > 0 ? s.agents[0].id : null;
       }
+      if (s.activeSessionId) s.activeSessionId = null;
     }));
 
     delete _streamingByAgent[agentId];
@@ -264,13 +275,41 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     set(produce((s: CoreState) => { s.sending = false; }));
   },
 
-  // ── New task ──
+  // ── Session management ──
 
-  newTask: () => {
+  newSession: (name) => {
     const agentId = get().activeAgentId;
     if (!agentId) return;
+    const currentMsgs = get().messagesByAgent[agentId];
+    const hasContent = currentMsgs && currentMsgs.length > 0;
+
+    if (hasContent || name) {
+      const sessionName = name || new Date().toLocaleDateString("zh-CN");
+      const sessionId = "s-" + Date.now();
+      set(produce((s: CoreState) => {
+        if (!s.sessionsByAgent[agentId]) s.sessionsByAgent[agentId] = [];
+        s.sessionsByAgent[agentId].push({ id: sessionId, name: sessionName, createdAt: Date.now() });
+        if (hasContent) {
+          if (!s.sessionMessages[agentId]) s.sessionMessages[agentId] = {};
+          s.sessionMessages[agentId][sessionId] = [...currentMsgs!];
+        }
+        s.messagesByAgent[agentId] = [];
+        s.activeSessionId = null;
+      }));
+    } else {
+      set(produce((s: CoreState) => {
+        s.messagesByAgent[agentId] = [];
+      }));
+    }
+  },
+
+  switchSession: (sessionId) => {
+    const agentId = get().activeAgentId;
+    if (!agentId) return;
+    const msgs = get().sessionMessages[agentId]?.[sessionId] || [];
     set(produce((s: CoreState) => {
-      s.messagesByAgent[agentId] = [];
+      s.messagesByAgent[agentId] = msgs;
+      s.activeSessionId = sessionId;
     }));
   },
 
