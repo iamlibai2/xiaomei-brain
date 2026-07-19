@@ -15,10 +15,15 @@ interface JsonRpcResponse {
   error?: { code: number; message: string };
 }
 
+interface PendingRequest {
+  resolve: (res: JsonRpcResponse) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 export class GatewayClient extends EventEmitter {
   private ws: WebSocket | null = null;
   private counter = 0;
-  private pending = new Map<string, (res: JsonRpcResponse) => void>();
+  private pending = new Map<string, PendingRequest>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelay = 1000;
   private _connected = false;
@@ -38,6 +43,7 @@ export class GatewayClient extends EventEmitter {
         this._connected = true;
         this.reconnectDelay = 1000;
         this.startPing();
+        this.emit("connected");
         resolve();
       });
 
@@ -73,24 +79,44 @@ export class GatewayClient extends EventEmitter {
     }
     this.ws?.close();
     this.ws = null;
-    for (const [id, resolve] of this.pending) {
-      resolve({ jsonrpc: "2.0", id, error: { code: -32099, message: "Disconnected" } });
+    for (const [id, request] of this.pending) {
+      clearTimeout(request.timer);
+      request.resolve({ jsonrpc: "2.0", id, error: { code: -32099, message: "Disconnected" } });
     }
     this.pending.clear();
   }
 
   async rpc(method: string, params: Record<string, unknown> = {}): Promise<JsonRpcResponse> {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      return {
+        jsonrpc: "2.0",
+        id: this.nextId(),
+        error: { code: -32099, message: "Not connected" },
+      };
+    }
+
     return new Promise((resolve) => {
       const id = this.nextId();
       const req: JsonRpcRequest = { jsonrpc: "2.0", id, method, params };
-      this.pending.set(id, resolve);
-      this.ws?.send(JSON.stringify(req));
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         if (this.pending.has(id)) {
           this.pending.delete(id);
           resolve({ jsonrpc: "2.0", id, error: { code: -32099, message: "Timeout" } });
         }
       }, 30000);
+
+      this.pending.set(id, { resolve, timer });
+      try {
+        this.ws!.send(JSON.stringify(req));
+      } catch (error) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        resolve({
+          jsonrpc: "2.0",
+          id,
+          error: { code: -32099, message: `Send failed: ${error}` },
+        });
+      }
     });
   }
 
@@ -105,9 +131,10 @@ export class GatewayClient extends EventEmitter {
 
     const id = data["id"] as string;
     if (id && this.pending.has(id)) {
-      const resolve = this.pending.get(id)!;
+      const request = this.pending.get(id)!;
       this.pending.delete(id);
-      resolve(data as unknown as JsonRpcResponse);
+      clearTimeout(request.timer);
+      request.resolve(data as unknown as JsonRpcResponse);
     }
 
     if (data["type"] === "pong") {

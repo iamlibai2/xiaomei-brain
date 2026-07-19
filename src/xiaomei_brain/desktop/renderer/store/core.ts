@@ -342,6 +342,59 @@ export function initGatewayEvents() {
     }
     const stream = _streamingByAgent[agentId];
 
+    if (event === "reconnecting") {
+      setState(produce((s: CoreState) => {
+        const previous = s.connectionByAgent[agentId];
+        s.connectionByAgent[agentId] = {
+          status: "connecting",
+          agentName: previous?.agentName || "",
+          error: "",
+        };
+      }));
+      return;
+    }
+
+    if (event === "reconnected") {
+      setState(produce((s: CoreState) => {
+        const previous = s.connectionByAgent[agentId];
+        s.connectionByAgent[agentId] = {
+          status: "connected",
+          agentName: (d.agent_name as string) || previous?.agentName || "",
+          error: "",
+        };
+      }));
+      return;
+    }
+
+    if (event === "reconnect.error") {
+      setState(produce((s: CoreState) => {
+        const previous = s.connectionByAgent[agentId];
+        s.connectionByAgent[agentId] = {
+          status: "error",
+          agentName: previous?.agentName || "",
+          error: (d.message as string) || "Reconnect authentication failed",
+        };
+      }));
+      return;
+    }
+
+    // Internal cognition metadata has its own event and must never finalize
+    // the visible assistant message stream.
+    if (event === "internal.display" || event === "pong") return;
+
+    // Backward compatibility for agents that still publish internal_display
+    // JSON through session.message. They may remain online during a Desktop
+    // upgrade, so filter the legacy frame without requiring an immediate
+    // backend restart.
+    if (event === "session.message" && text.startsWith("{")) {
+      try {
+        const payload = JSON.parse(text) as Record<string, unknown>;
+        if (payload.type === "internal_display") return;
+      } catch {
+        // A normal assistant response may legitimately begin with "{".
+      }
+    }
+
     if (!store().messagesByAgent[agentId]) {
       setState(produce((s: CoreState) => { s.messagesByAgent[agentId] = []; }));
     }

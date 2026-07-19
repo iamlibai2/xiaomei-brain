@@ -33,25 +33,55 @@ export function registerIpcHandlers(
         if (existing) existing.disconnect();
 
         const client = new GatewayClient();
+        let sessionId = "";
+        let authenticated = false;
+        let reauthenticating = false;
+
+        const sendGatewayEvent = (event: string, data: unknown = {}) => {
+          const win = getWindow();
+          if (win) {
+            win.webContents.send("gateway:event", { event, data, agentId: args.agentId });
+          }
+        };
 
         // Forward events with agentId tag
         client.on("event", (eventName: string, data: unknown) => {
-          const win = getWindow();
-          if (win) {
-            win.webContents.send("gateway:event", { event: eventName, data, agentId: args.agentId });
-          }
+          sendGatewayEvent(eventName, data);
         });
         client.on("reconnecting", () => {
-          const win = getWindow();
-          if (win) {
-            win.webContents.send("gateway:event", { event: "reconnecting", data: {}, agentId: args.agentId });
-          }
+          sendGatewayEvent("reconnecting");
         });
         client.on("pong", () => {
-          const win = getWindow();
-          if (win) {
-            win.webContents.send("gateway:event", { event: "pong", data: {}, agentId: args.agentId });
-          }
+          sendGatewayEvent("pong");
+        });
+        client.on("connected", () => {
+          // The initial socket is authenticated below. Subsequent opens are
+          // transport reconnects and must restore Gateway authentication.
+          if (!authenticated || reauthenticating) return;
+
+          reauthenticating = true;
+          void client.rpc("connect", {
+            token: args.token,
+            client: "desktop",
+            user_id: args.userId,
+            session_id: sessionId,
+          }).then((res) => {
+            if (res.error) {
+              sendGatewayEvent("reconnect.error", { message: res.error.message });
+              return;
+            }
+
+            const result = res.result || {};
+            sessionId = (result["session_id"] as string) || sessionId;
+            sendGatewayEvent("reconnected", {
+              session_id: sessionId,
+              agent_name: (result["agent_name"] as string) || "",
+            });
+          }).catch((error) => {
+            sendGatewayEvent("reconnect.error", { message: String(error) });
+          }).finally(() => {
+            reauthenticating = false;
+          });
         });
 
         connections.set(args.agentId, client);
@@ -67,8 +97,9 @@ export function registerIpcHandlers(
         if (res.error) return res;
 
         const result = res.result || {};
-        const sessionId = (result["session_id"] as string) || "";
+        sessionId = (result["session_id"] as string) || "";
         const agentName = (result["agent_name"] as string) || "";
+        authenticated = true;
 
         // Persist last connection params
         config.set("last_host", args.host);
