@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from "electron";
+import { ipcMain, BrowserWindow, Notification } from "electron";
 import { GatewayClient } from "./gateway-client";
 import { ConfigStore } from "./config-store";
 import { TerminalManager } from "./terminal-manager";
@@ -8,6 +8,7 @@ import { AgentLifecycleAction, RuntimeManager } from "./runtime-manager";
 const connections = new Map<string, GatewayClient>();
 const connectionSessions = new Map<string, string>();
 const connectionUsers = new Map<string, string>();
+const activeNotifications = new Set<Notification>();
 
 export function registerIpcHandlers(
   _gateway: GatewayClient,
@@ -225,6 +226,36 @@ export function registerIpcHandlers(
         offset: args.offset || 0,
         query: args.query || "",
       });
+    }
+  );
+
+  ipcMain.handle(
+    "notification:show",
+    async (_event, args: { title: string; body: string; agentId: string; sessionId: string }) => {
+      const win = getWindow();
+      if (!win || win.isDestroyed() || win.isFocused() || !Notification.isSupported()) {
+        return { shown: false };
+      }
+
+      const notification = new Notification({ title: args.title, body: args.body });
+      activeNotifications.add(notification);
+      const releaseNotification = () => activeNotifications.delete(notification);
+      notification.on("click", () => {
+        releaseNotification();
+        const target = getWindow();
+        if (!target || target.isDestroyed()) return;
+        if (target.isMinimized()) target.restore();
+        target.show();
+        target.focus();
+        target.webContents.send("notification:selected", {
+          agentId: args.agentId,
+          sessionId: args.sessionId,
+        });
+      });
+      notification.on("close", releaseNotification);
+      notification.on("failed", releaseNotification);
+      notification.show();
+      return { shown: true };
     }
   );
 

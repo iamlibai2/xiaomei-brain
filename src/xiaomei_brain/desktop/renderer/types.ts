@@ -72,6 +72,11 @@ export interface LocalAgentsBridge {
   control(args: { agentId: string; connectionId: string; action: AgentLifecycleAction }): Promise<AgentLifecycleResult>;
 }
 
+export interface NotificationsBridge {
+  show(args: { title: string; body: string; agentId: string; sessionId: string }): Promise<{ shown: boolean }>;
+  onSelect(callback: (target: { agentId: string; sessionId: string }) => void): () => void;
+}
+
 export interface WinBridge {
   minimize(): void;
   maximize(): void;
@@ -93,6 +98,7 @@ declare global {
   interface Window {
     gateway: GatewayBridge;
     localAgents: LocalAgentsBridge;
+    notifications: NotificationsBridge;
     win: WinBridge;
     terminal: TerminalBridge;
   }

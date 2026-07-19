@@ -9,6 +9,10 @@ import { registerIpcHandlers } from "./ipc-handlers";
 const isMac = process.platform === "darwin";
 const isWindows = process.platform === "win32";
 
+if (isWindows) {
+  app.setAppUserModelId("com.xiaomei.brain.desktop");
+}
+
 let mainWindow: BrowserWindow | null = null;
 const gateway = new GatewayClient();
 const config = new ConfigStore();

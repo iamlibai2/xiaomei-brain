@@ -30,6 +30,10 @@ const CHANNEL_MAP = {
     discover:        { invoke: "localAgents:discover" },
     control:         { invoke: "localAgents:control" },
   },
+  notifications: {
+    show:             { invoke: "notification:show" },
+    onSelect:         { event: "notification:selected" },
+  },
   win: {
     minimize:          { send: "window:minimize" },
     maximize:          { send: "window:maximize" },

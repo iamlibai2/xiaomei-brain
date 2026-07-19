@@ -983,6 +983,21 @@ useCoreStore.subscribe((state) => savePersisted(state));
 // ── Gateway event handler ──
 
 export function initGatewayEvents() {
+  window.notifications.onSelect((target) => {
+    const state = useCoreStore.getState();
+    if (!state.agents.some((agent) => agent.id === target.agentId)) return;
+
+    state.setPage("chat");
+    state.setActiveNav("assistant");
+    state.setTerminalOpen(false);
+    void state.switchAgent(target.agentId).then(async () => {
+      const nextState = useCoreStore.getState();
+      if (target.sessionId && nextState.activeSessionByAgent[target.agentId] !== target.sessionId) {
+        await nextState.switchSession(target.sessionId);
+      }
+    });
+  });
+
   window.gateway.onEvent((raw: { event: string; data: unknown; agentId: string }) => {
     const { event, data: rawData, agentId } = raw;
     const d = (rawData || {}) as Record<string, unknown>;
@@ -1088,8 +1103,12 @@ export function initGatewayEvents() {
       const eventSessionId = typeof d.session_id === "string" && d.session_id
         ? d.session_id
         : store().activeSessionByAgent[agentId] || "";
+      let completedText = "";
       if (stream.id) {
         const finalText = stream.ref || text;
+        const streamingMessageExists = store().messagesByAgent[agentId]
+          .some((message) => message.id === stream.id);
+        if (streamingMessageExists) completedText = finalText;
         setState(produce((s: CoreState) => {
           const idx = s.messagesByAgent[agentId].findIndex(m => m.id === stream.id);
           if (idx !== -1) {
@@ -1106,6 +1125,7 @@ export function initGatewayEvents() {
         const lastMsg = msgs && msgs.length > 0 ? msgs[msgs.length - 1] : null;
         const isDuplicate = lastMsg && lastMsg.role === "agent" && lastMsg.content === text;
         if (!isDuplicate) {
+          completedText = text;
           setState(produce((s: CoreState) => {
             s.messagesByAgent[agentId].push({
               id: "msg-" + Date.now(), role: "agent", content: text, streaming: false,
@@ -1115,10 +1135,22 @@ export function initGatewayEvents() {
         }
       }
       setState(produce((s: CoreState) => { s.sendingByAgent[agentId] = false; }));
-      if (agentId !== store().activeAgentId) {
+      if (completedText && agentId !== store().activeAgentId) {
         // Increment unread for background agent
         const current = store().unreadByAgent[agentId] || 0;
         setState(produce((s: CoreState) => { s.unreadByAgent[agentId] = current + 1; }));
+      }
+      if (completedText) {
+        const state = store();
+        const agent = state.agents.find((entry) => entry.id === agentId);
+        const agentName = state.connectionByAgent[agentId]?.agentName || agent?.name || "Agent";
+        const summary = completedText.replace(/\s+/g, " ").trim();
+        void window.notifications.show({
+          title: agentName,
+          body: summary.length > 160 ? `${summary.slice(0, 160)}...` : summary,
+          agentId,
+          sessionId: eventSessionId,
+        }).catch(() => {});
       }
     } else if (event === "chat.error") {
       const err = (d.text || "Unknown error") as string;
