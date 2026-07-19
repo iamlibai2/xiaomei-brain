@@ -8,7 +8,7 @@ import { registerIpcHandlers } from "./ipc-handlers";
 
 const isMac = process.platform === "darwin";
 const isWindows = process.platform === "win32";
-const windowsAppId = app.isPackaged ? "com.xiaomei.brain.desktop" : process.execPath;
+const windowsAppId = "com.xiaomei.brain.desktop";
 
 if (isWindows) {
   app.setAppUserModelId(windowsAppId);

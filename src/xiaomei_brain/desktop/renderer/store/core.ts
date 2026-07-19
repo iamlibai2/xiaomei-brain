@@ -1147,7 +1147,7 @@ export function initGatewayEvents() {
         const summary = completedText.replace(/\s+/g, " ").trim();
         void window.notifications.show({
           title: agentName,
-          body: summary.length > 160 ? `${summary.slice(0, 160)}...` : summary,
+          body: summary,
           agentId,
           sessionId: eventSessionId,
         }).catch(() => {});

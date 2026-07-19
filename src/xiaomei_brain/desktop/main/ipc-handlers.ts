@@ -4,6 +4,7 @@ import { ConfigStore } from "./config-store";
 import { TerminalManager } from "./terminal-manager";
 import { discoverLocalAgents } from "./local-agent-discovery";
 import { AgentLifecycleAction, RuntimeManager } from "./runtime-manager";
+import { sanitizeNotificationText } from "./notification-text";
 
 const connections = new Map<string, GatewayClient>();
 const connectionSessions = new Map<string, string>();
@@ -237,7 +238,9 @@ export function registerIpcHandlers(
         return { shown: false };
       }
 
-      const notification = new Notification({ title: args.title, body: args.body });
+      const title = sanitizeNotificationText(args?.title, 80) || "xiaomei-brain";
+      const body = sanitizeNotificationText(args?.body, 160);
+      const notification = new Notification({ title, body });
       activeNotifications.add(notification);
       const releaseNotification = () => activeNotifications.delete(notification);
       notification.on("click", () => {
