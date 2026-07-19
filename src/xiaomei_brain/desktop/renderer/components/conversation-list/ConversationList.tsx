@@ -25,6 +25,8 @@ export function ConversationList() {
   const setTerminalOpen = useCoreStore((s) => s.setTerminalOpen);
   const unreadByAgent = useCoreStore((s) => s.unreadByAgent);
   const sendingByAgent = useCoreStore((s) => s.sendingByAgent);
+  const localAvailabilityByAgent = useCoreStore((s) => s.localAvailabilityByAgent);
+  const refreshLocalAgents = useCoreStore((s) => s.refreshLocalAgents);
 
   const displayName = userId || t("sidebar.defaultUserName");
 
@@ -56,7 +58,7 @@ export function ConversationList() {
         collapsed={collapsed}
         onToggleCollapse={() => setCollapsed(!collapsed)}
         onSearch={() => {}}
-        onRefresh={() => {}}
+        onRefresh={() => { void refreshLocalAgents(); }}
         onTerminalToggle={() => setTerminalOpen(!terminalOpen)}
       />
 
@@ -146,6 +148,7 @@ export function ConversationList() {
                 connection={connectionByAgent[a.id]}
                 isWorking={sendingByAgent[a.id] || false}
                 unreadCount={unreadByAgent[a.id] || 0}
+                localOnline={a.source === "local" ? localAvailabilityByAgent[a.id] : undefined}
                 onSelect={() => switchAgent(a.id)}
               />
             ))
@@ -213,6 +216,7 @@ function AgentItem({
   connection,
   isWorking,
   unreadCount,
+  localOnline,
   onSelect,
 }: {
   agent: AgentEntry;
@@ -220,6 +224,7 @@ function AgentItem({
   connection: import("../../store").ConnectionState | undefined;
   isWorking: boolean;
   unreadCount: number;
+  localOnline?: boolean;
   onSelect: () => void;
 }) {
   const { t } = useTranslation();
@@ -241,12 +246,24 @@ function AgentItem({
       <div className="agent-info">
         <span className="agent-name">{agent.name}</span>
         <span className="agent-host">
-          {isWorking ? t("sidebar.agentWorking") : `${agent.host}:${agent.port}`}
+          {isWorking
+            ? t("sidebar.agentWorking")
+            : localOnline === false
+              ? t("sidebar.agentOffline")
+              : localOnline === true && status !== "connected"
+                ? t("sidebar.agentAvailable")
+                : `${agent.host}:${agent.port}`}
         </span>
       </div>
       <span
-        className={`agent-status-dot ${statusClass}`}
-        title={isWorking ? t("sidebar.agentWorking") : status}
+        className={`agent-status-dot ${localOnline === true && status === "disconnected" ? "available" : statusClass}`}
+        title={isWorking
+          ? t("sidebar.agentWorking")
+          : localOnline === false
+            ? t("sidebar.agentOffline")
+            : localOnline === true && status !== "connected"
+              ? t("sidebar.agentAvailable")
+              : status}
       />
       {unreadCount > 0 && (
         <span className="agent-unread-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>

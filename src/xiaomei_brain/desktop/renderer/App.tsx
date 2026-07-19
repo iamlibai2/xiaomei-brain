@@ -9,20 +9,28 @@ export function App() {
   const agents = useCoreStore((s) => s.agents);
   const connectToAgent = useCoreStore((s) => s.connectToAgent);
   const setPage = useCoreStore((s) => s.setPage);
+  const refreshLocalAgents = useCoreStore((s) => s.refreshLocalAgents);
+  const localDiscoveryComplete = useCoreStore((s) => s.localDiscoveryComplete);
+  const localAvailabilityByAgent = useCoreStore((s) => s.localAvailabilityByAgent);
 
   useEffect(() => {
     initGatewayEvents();
+    void refreshLocalAgents();
   }, []);
 
   // Auto-connect saved agents on first render when agents are loaded
   const didAutoConnect = useRef(false);
   useEffect(() => {
-    if (!didAutoConnect.current && agents.length > 0) {
+    if (localDiscoveryComplete && !didAutoConnect.current && agents.length > 0) {
       didAutoConnect.current = true;
       if (page === "connect") setPage("chat");
-      agents.forEach((a) => connectToAgent(a.id));
+      agents.forEach((agent) => {
+        if (agent.source !== "local" || localAvailabilityByAgent[agent.id]) {
+          void connectToAgent(agent.id);
+        }
+      });
     }
-  }, [agents]);
+  }, [agents, localDiscoveryComplete]);
 
   return (
     <div className="app">

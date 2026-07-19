@@ -15,6 +15,16 @@ export interface AgentEntry {
   host: string;
   port: number;
   token: string;
+  source?: "manual" | "local";
+  localAgentId?: string;
+}
+
+export interface LocalAgentInfo {
+  agentId: string;
+  name: string;
+  host: string;
+  port: number;
+  online: boolean;
 }
 
 // ── Session (conversation) entry ──
@@ -42,6 +52,10 @@ export interface GatewayBridge {
   onEvent(callback: (raw: { event: string; data: unknown; agentId: string }) => void): () => void;
 }
 
+export interface LocalAgentsBridge {
+  discover(): Promise<LocalAgentInfo[]>;
+}
+
 export interface WinBridge {
   minimize(): void;
   maximize(): void;
@@ -62,6 +76,7 @@ export interface TerminalBridge {
 declare global {
   interface Window {
     gateway: GatewayBridge;
+    localAgents: LocalAgentsBridge;
     win: WinBridge;
     terminal: TerminalBridge;
   }

@@ -58,6 +58,8 @@
       "noAgents": "暂无 Agent，请先连接",
       "newConversation": "新建会话",
       "agentDisconnected": "未连接",
+      "agentOffline": "离线",
+      "agentAvailable": "可连接",
       "agentWorking": "工作中",
       "defaultUserName": "李白",
       "newSession": "新建会话",

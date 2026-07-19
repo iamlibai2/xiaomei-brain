@@ -2,6 +2,7 @@ import { ipcMain, BrowserWindow } from "electron";
 import { GatewayClient } from "./gateway-client";
 import { ConfigStore } from "./config-store";
 import { TerminalManager } from "./terminal-manager";
+import { discoverLocalAgents } from "./local-agent-discovery";
 
 const connections = new Map<string, GatewayClient>();
 
@@ -11,6 +12,10 @@ export function registerIpcHandlers(
   getWindow: () => BrowserWindow | null
 ): void {
   const terminalMgr = new TerminalManager();
+
+  ipcMain.handle("localAgents:discover", async () => {
+    return discoverLocalAgents();
+  });
 
   // Helper: get or warn
   function getClient(agentId: string): GatewayClient | undefined {

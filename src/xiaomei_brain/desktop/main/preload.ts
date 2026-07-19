@@ -25,6 +25,9 @@ const CHANNEL_MAP = {
     getConfig:       { invoke: "store:getConfig" },
     onEvent:         { event: "gateway:event" },
   },
+  localAgents: {
+    discover:        { invoke: "localAgents:discover" },
+  },
   win: {
     minimize:          { send: "window:minimize" },
     maximize:          { send: "window:maximize" },

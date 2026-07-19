@@ -679,6 +679,10 @@ body[data-platform="mac"] .sidebar-topbar {
   background: var(--ui-status-warning);
   animation: agent-pulse 1.5s ease-in-out infinite;
 }
+.agent-status-dot.available {
+  background: transparent;
+  border: 1.5px solid var(--ui-status-success);
+}
 .agent-status-dot.working {
   background: var(--ui-brand-primary);
   animation: agent-pulse 1s ease-in-out infinite;

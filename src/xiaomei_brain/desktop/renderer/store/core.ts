@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { produce } from "immer";
-import type { AgentEntry, SessionEntry } from "../types";
+import type { AgentEntry, LocalAgentInfo, SessionEntry } from "../types";
 
 // ── Persistence (manual, avoid zustand/persist rehydration during render) ──
 
@@ -61,6 +61,9 @@ interface CoreState {
   sessionsByAgent: Record<string, SessionEntry[]>;
   sessionMessages: Record<string, Record<string, DisplayMessage[]>>;
   activeSessionByAgent: Record<string, string | null>;
+  localAvailabilityByAgent: Record<string, boolean>;
+  localDiscoveryComplete: boolean;
+  localDiscoveryError: string;
 }
 
 interface CoreActions {
@@ -80,6 +83,7 @@ interface CoreActions {
   setTerminalOpen: (open: boolean) => void;
   setActiveNav: (nav: string) => void;
   clearUnread: (agentId: string) => void;
+  refreshLocalAgents: () => Promise<void>;
 }
 
 // ── Store ──
@@ -102,6 +106,68 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   sessionsByAgent: persisted.sessionsByAgent ?? {},
   sessionMessages: {},
   activeSessionByAgent: {},
+  localAvailabilityByAgent: {},
+  localDiscoveryComplete: false,
+  localDiscoveryError: "",
+
+  refreshLocalAgents: async () => {
+    try {
+      const localAgents = await window.localAgents.discover();
+      set(produce((s: CoreState) => {
+        const discoveredIds = new Set<string>();
+
+        for (const localAgent of localAgents as LocalAgentInfo[]) {
+          const existing = s.agents.find((agent) =>
+            agent.port === localAgent.port
+            && ["localhost", "127.0.0.1"].includes(agent.host.toLowerCase()));
+          const agentId = existing?.id || `${localAgent.host}:${localAgent.port}`;
+          discoveredIds.add(agentId);
+
+          if (existing) {
+            existing.name = localAgent.name;
+            existing.source = "local";
+            existing.localAgentId = localAgent.agentId;
+          } else {
+            s.agents.push({
+              id: agentId,
+              name: localAgent.name,
+              host: localAgent.host,
+              port: localAgent.port,
+              token: "",
+              source: "local",
+              localAgentId: localAgent.agentId,
+            });
+          }
+
+          s.localAvailabilityByAgent[agentId] = localAgent.online;
+          if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
+          if (!s.connectionByAgent[agentId]) {
+            s.connectionByAgent[agentId] = {
+              status: "disconnected",
+              agentName: localAgent.name,
+              error: "",
+            };
+          }
+        }
+
+        for (const agent of s.agents) {
+          if (agent.source === "local" && !discoveredIds.has(agent.id)) {
+            s.localAvailabilityByAgent[agent.id] = false;
+          }
+        }
+
+        if (!s.activeAgentId && s.agents.length > 0) s.activeAgentId = s.agents[0].id;
+        if (s.agents.length > 0) s.page = "chat";
+        s.localDiscoveryComplete = true;
+        s.localDiscoveryError = "";
+      }));
+    } catch (error) {
+      set(produce((s: CoreState) => {
+        s.localDiscoveryComplete = true;
+        s.localDiscoveryError = String(error);
+      }));
+    }
+  },
 
   // ── Connect (first-time from ConnectPage) ──
 
@@ -128,7 +194,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       const existing = get().agents.find(a => a.id === agentId);
       if (!existing) {
         set(produce((s: CoreState) => {
-          s.agents.push({ id: agentId, name: agentName, host, port, token });
+          s.agents.push({ id: agentId, name: agentName, host, port, token, source: "manual" });
           s.activeAgentId = agentId;
           s.connectionByAgent[agentId] = { status: "connected", agentName, error: "" };
           if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
@@ -154,6 +220,17 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   connectToAgent: async (agentId) => {
     const agent = get().agents.find(a => a.id === agentId);
     if (!agent) return;
+
+    if (agent.source === "local" && get().localAvailabilityByAgent[agentId] === false) {
+      set(produce((s: CoreState) => {
+        s.connectionByAgent[agentId] = {
+          status: "disconnected",
+          agentName: agent.name,
+          error: "",
+        };
+      }));
+      return;
+    }
 
     const current = get().connectionByAgent[agentId];
     if (current?.status === "connected" || current?.status === "connecting") return;
@@ -181,6 +258,8 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
 
       set(produce((s: CoreState) => {
         s.connectionByAgent[agentId] = { status: "connected", agentName, error: "" };
+        const savedAgent = s.agents.find(a => a.id === agentId);
+        if (savedAgent && savedAgent.source !== "local") savedAgent.name = agentName;
         if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
       }));
     } catch (err) {
@@ -211,7 +290,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     if (get().agents.find(a => a.id === agentId)) return;
 
     set(produce((s: CoreState) => {
-      s.agents.push({ id: agentId, name: agentId, host, port, token });
+      s.agents.push({ id: agentId, name: agentId, host, port, token, source: "manual" });
       if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
     }));
 
