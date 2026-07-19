@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useCoreStore } from "../../store";
 import { Icon } from "../ui";
@@ -11,8 +11,9 @@ interface ChatInputProps {
 
 export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
   const { t } = useTranslation();
-  const [input, setInput] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const input = useCoreStore((s) => s.draftByAgent[s.activeAgentId || ""] || "");
+  const setInput = useCoreStore((s) => s.setDraft);
   const connected = useCoreStore((s) => {
     const agentId = s.activeAgentId;
     if (!agentId) return false;
@@ -22,7 +23,6 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
   const handleSend = () => {
     const text = input.trim();
     if (!text) return;
-    setInput("");
     onSend(text);
     textareaRef.current?.focus();
   };

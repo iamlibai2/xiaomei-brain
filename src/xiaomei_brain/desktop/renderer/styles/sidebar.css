@@ -679,6 +679,10 @@ body[data-platform="mac"] .sidebar-topbar {
   background: var(--ui-status-warning);
   animation: agent-pulse 1.5s ease-in-out infinite;
 }
+.agent-status-dot.working {
+  background: var(--ui-brand-primary);
+  animation: agent-pulse 1s ease-in-out infinite;
+}
 .agent-status-dot.disconnected {
   background: var(--ui-color-text-disabled);
 }
@@ -808,6 +812,13 @@ body[data-platform="mac"] .sidebar-topbar {
   font-weight: 600;
   transition: background-color 0.15s ease;
   flex-shrink: 0;
+  position: relative;
+}
+
+.session-new-btn:disabled,
+.session-item.disabled {
+  opacity: 0.45;
+  pointer-events: none;
 }
 .sidebar-collapsed-agent-btn:hover {
   background: var(--ui-button-ghost-bg-hover);
@@ -815,4 +826,16 @@ body[data-platform="mac"] .sidebar-topbar {
 .sidebar-collapsed-agent-btn.active {
   background: var(--ui-brand-primary);
   color: var(--ui-palette-white-100);
+}
+.sidebar-collapsed-agent-btn.working::after {
+  content: "";
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  width: 7px;
+  height: 7px;
+  border: 2px solid var(--ui-sidebar-bg);
+  border-radius: 50%;
+  background: var(--ui-status-warning);
+  animation: agent-pulse 1s ease-in-out infinite;
 }

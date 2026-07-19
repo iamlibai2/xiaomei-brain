@@ -19,11 +19,12 @@ export function ConversationList() {
   const newSession = useCoreStore((s) => s.newSession);
   const switchSession = useCoreStore((s) => s.switchSession);
   const sessionsByAgent = useCoreStore((s) => s.sessionsByAgent);
-  const activeSessionId = useCoreStore((s) => s.activeSessionId);
+  const activeSessionId = useCoreStore((s) => s.activeSessionByAgent[s.activeAgentId || ""] || null);
   const messagesByAgent = useCoreStore((s) => s.messagesByAgent);
   const terminalOpen = useCoreStore((s) => s.terminalOpen);
   const setTerminalOpen = useCoreStore((s) => s.setTerminalOpen);
   const unreadByAgent = useCoreStore((s) => s.unreadByAgent);
+  const sendingByAgent = useCoreStore((s) => s.sendingByAgent);
 
   const displayName = userId || t("sidebar.defaultUserName");
 
@@ -68,7 +69,7 @@ export function ConversationList() {
               return (
                 <button
                   key={a.id}
-                  className={`sidebar-collapsed-agent-btn ${isActive ? "active" : ""}`}
+                  className={`sidebar-collapsed-agent-btn ${isActive ? "active" : ""} ${sendingByAgent[a.id] ? "working" : ""}`}
                   onClick={() => switchAgent(a.id)}
                   title={`${a.name} (${a.host}:${a.port}) — ${conn?.status || "disconnected"}`}
                 >
@@ -143,6 +144,7 @@ export function ConversationList() {
                 agent={a}
                 isActive={a.id === activeAgentId}
                 connection={connectionByAgent[a.id]}
+                isWorking={sendingByAgent[a.id] || false}
                 unreadCount={unreadByAgent[a.id] || 0}
                 onSelect={() => switchAgent(a.id)}
               />
@@ -159,6 +161,7 @@ export function ConversationList() {
                 <button
                   className="session-new-btn"
                   onClick={handleNewSession}
+                  disabled={sendingByAgent[activeAgentId] || false}
                   title={t("sidebar.newSession")}
                 >
                   <Icon name="plus" size={14} />
@@ -178,6 +181,7 @@ export function ConversationList() {
                     name={s.name}
                     isActive={s.id === activeSessionId}
                     isCurrent={false}
+                    disabled={sendingByAgent[activeAgentId] || false}
                     onClick={() => switchSession(s.id)}
                   />
                 ))}
@@ -207,17 +211,26 @@ function AgentItem({
   agent,
   isActive,
   connection,
+  isWorking,
   unreadCount,
   onSelect,
 }: {
   agent: AgentEntry;
   isActive: boolean;
   connection: import("../../store").ConnectionState | undefined;
+  isWorking: boolean;
   unreadCount: number;
   onSelect: () => void;
 }) {
+  const { t } = useTranslation();
   const status = connection?.status || "disconnected";
-  const statusClass = status === "connected" ? "connected" : status === "connecting" ? "connecting" : "disconnected";
+  const statusClass = isWorking && status === "connected"
+    ? "working"
+    : status === "connected"
+      ? "connected"
+      : status === "connecting"
+        ? "connecting"
+        : "disconnected";
 
   return (
     <div
@@ -227,9 +240,14 @@ function AgentItem({
       <div className="agent-avatar">{agent.name.charAt(0)}</div>
       <div className="agent-info">
         <span className="agent-name">{agent.name}</span>
-        <span className="agent-host">{agent.host}:{agent.port}</span>
+        <span className="agent-host">
+          {isWorking ? t("sidebar.agentWorking") : `${agent.host}:${agent.port}`}
+        </span>
       </div>
-      <span className={`agent-status-dot ${statusClass}`} />
+      <span
+        className={`agent-status-dot ${statusClass}`}
+        title={isWorking ? t("sidebar.agentWorking") : status}
+      />
       {unreadCount > 0 && (
         <span className="agent-unread-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>
       )}
@@ -243,18 +261,20 @@ function SessionItem({
   name,
   isActive,
   isCurrent,
+  disabled = false,
   onClick,
 }: {
   name: string;
   isActive: boolean;
   isCurrent: boolean;
+  disabled?: boolean;
   onClick: () => void;
 }) {
   return (
     <div
-      className={`session-item ${isActive ? "active" : ""} ${isCurrent ? "current" : ""}`}
-      onClick={onClick}
-      style={{ cursor: isCurrent ? "default" : "pointer" }}
+      className={`session-item ${isActive ? "active" : ""} ${isCurrent ? "current" : ""} ${disabled ? "disabled" : ""}`}
+      onClick={disabled ? undefined : onClick}
+      style={{ cursor: isCurrent || disabled ? "default" : "pointer" }}
     >
       <span className="session-item-name">
         {isCurrent && <span className="session-item-dot" />}

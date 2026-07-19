@@ -48,7 +48,8 @@ export interface ConnectionState {
 interface CoreState {
   connectionByAgent: Record<string, ConnectionState>;
   messagesByAgent: Record<string, DisplayMessage[]>;
-  sending: boolean;
+  sendingByAgent: Record<string, boolean>;
+  draftByAgent: Record<string, string>;
   activeAgentId: string | null;
   agents: AgentEntry[];
   userId: string;
@@ -59,7 +60,7 @@ interface CoreState {
   unreadByAgent: Record<string, number>;
   sessionsByAgent: Record<string, SessionEntry[]>;
   sessionMessages: Record<string, Record<string, DisplayMessage[]>>;
-  activeSessionId: string | null;
+  activeSessionByAgent: Record<string, string | null>;
 }
 
 interface CoreActions {
@@ -71,6 +72,7 @@ interface CoreActions {
   disconnectAgent: (agentId: string) => Promise<void>;
   sendMessage: (text: string) => void;
   abortMessage: () => Promise<void>;
+  setDraft: (text: string) => void;
   newSession: (name?: string) => void;
   switchSession: (sessionId: string) => void;
   setMode: (mode: HomeMode) => void;
@@ -87,7 +89,8 @@ const persisted = loadPersisted();
 export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   connectionByAgent: {},
   messagesByAgent: {},
-  sending: false,
+  sendingByAgent: {},
+  draftByAgent: {},
   activeAgentId: persisted.activeAgentId ?? null,
   agents: persisted.agents ?? [],
   userId: persisted.userId ?? "",
@@ -98,7 +101,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   unreadByAgent: {},
   sessionsByAgent: persisted.sessionsByAgent ?? {},
   sessionMessages: {},
-  activeSessionId: null,
+  activeSessionByAgent: {},
 
   // ── Connect (first-time from ConnectPage) ──
 
@@ -223,13 +226,15 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     set(produce((s: CoreState) => {
       delete s.connectionByAgent[agentId];
       delete s.messagesByAgent[agentId];
+      delete s.sendingByAgent[agentId];
+      delete s.draftByAgent[agentId];
       delete s.sessionsByAgent[agentId];
       delete s.sessionMessages[agentId];
+      delete s.activeSessionByAgent[agentId];
       s.agents = s.agents.filter(a => a.id !== agentId);
       if (s.activeAgentId === agentId) {
         s.activeAgentId = s.agents.length > 0 ? s.agents[0].id : null;
       }
-      if (s.activeSessionId) s.activeSessionId = null;
     }));
 
     delete _streamingByAgent[agentId];
@@ -256,10 +261,36 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       s.messagesByAgent[agentId].push({
         id: "user-" + Date.now(), role: "user", content: text, streaming: false,
       });
-      s.sending = true;
+      s.sendingByAgent[agentId] = true;
+      s.draftByAgent[agentId] = "";
     }));
 
-    window.gateway.sendMessage({ content: text, agentId });
+    void window.gateway.sendMessage({ content: text, agentId }).then((res) => {
+      if (!res.error && res.result?.accepted !== false) return;
+
+      const message = res.error?.message || "Message was not accepted";
+      set(produce((s: CoreState) => {
+        if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
+        s.messagesByAgent[agentId].push({
+          id: `send-error-${Date.now()}`,
+          role: "agent",
+          content: `Error: ${message}`,
+          streaming: false,
+        });
+        s.sendingByAgent[agentId] = false;
+      }));
+    }).catch((error) => {
+      set(produce((s: CoreState) => {
+        if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
+        s.messagesByAgent[agentId].push({
+          id: `send-error-${Date.now()}`,
+          role: "agent",
+          content: `Error: ${error}`,
+          streaming: false,
+        });
+        s.sendingByAgent[agentId] = false;
+      }));
+    });
   },
 
   // ── Abort message ──
@@ -268,11 +299,29 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     const agentId = get().activeAgentId;
     if (!agentId) return;
 
-    await window.gateway.abortMessage({ agentId });
+    const res = await window.gateway.abortMessage({ agentId });
+    if (res.error) {
+      set(produce((s: CoreState) => {
+        if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
+        s.messagesByAgent[agentId].push({
+          id: `abort-error-${Date.now()}`,
+          role: "agent",
+          content: `Error: ${res.error!.message}`,
+          streaming: false,
+        });
+      }));
+      return;
+    }
 
     const ss = _streamingByAgent[agentId];
     if (ss) { ss.id = null; ss.ref = ""; }
-    set(produce((s: CoreState) => { s.sending = false; }));
+    set(produce((s: CoreState) => { s.sendingByAgent[agentId] = false; }));
+  },
+
+  setDraft: (text) => {
+    const agentId = get().activeAgentId;
+    if (!agentId) return;
+    set(produce((s: CoreState) => { s.draftByAgent[agentId] = text; }));
   },
 
   // ── Session management ──
@@ -280,6 +329,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   newSession: (name) => {
     const agentId = get().activeAgentId;
     if (!agentId) return;
+    if (get().sendingByAgent[agentId]) return;
     const currentMsgs = get().messagesByAgent[agentId];
     const hasContent = currentMsgs && currentMsgs.length > 0;
 
@@ -294,7 +344,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
           s.sessionMessages[agentId][sessionId] = [...currentMsgs!];
         }
         s.messagesByAgent[agentId] = [];
-        s.activeSessionId = null;
+        s.activeSessionByAgent[agentId] = null;
       }));
     } else {
       set(produce((s: CoreState) => {
@@ -306,10 +356,11 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   switchSession: (sessionId) => {
     const agentId = get().activeAgentId;
     if (!agentId) return;
+    if (get().sendingByAgent[agentId]) return;
     const msgs = get().sessionMessages[agentId]?.[sessionId] || [];
     set(produce((s: CoreState) => {
       s.messagesByAgent[agentId] = msgs;
-      s.activeSessionId = sessionId;
+      s.activeSessionByAgent[agentId] = sessionId;
     }));
   },
 
@@ -439,9 +490,8 @@ export function initGatewayEvents() {
           }));
         }
       }
-      if (agentId === store().activeAgentId) {
-        setState(produce((s: CoreState) => { s.sending = false; }));
-      } else {
+      setState(produce((s: CoreState) => { s.sendingByAgent[agentId] = false; }));
+      if (agentId !== store().activeAgentId) {
         // Increment unread for background agent
         const current = store().unreadByAgent[agentId] || 0;
         setState(produce((s: CoreState) => { s.unreadByAgent[agentId] = current + 1; }));
@@ -455,9 +505,7 @@ export function initGatewayEvents() {
       }));
       stream.id = null;
       stream.ref = "";
-      if (agentId === store().activeAgentId) {
-        setState(produce((s: CoreState) => { s.sending = false; }));
-      }
+      setState(produce((s: CoreState) => { s.sendingByAgent[agentId] = false; }));
     }
   });
 }

@@ -17,7 +17,7 @@ export function HomePage() {
   const { t } = useTranslation();
   const activeAgentId = useCoreStore((s) => s.activeAgentId);
   const messages = useCoreStore((s) => s.messagesByAgent[s.activeAgentId || ""] || EMPTY_MSGS);
-  const sending = useCoreStore((s) => s.sending);
+  const sending = useCoreStore((s) => s.sendingByAgent[s.activeAgentId || ""] || false);
   const mode = useCoreStore((s) => s.mode);
   const agentName = useCoreStore((s) => {
     const agentId = s.activeAgentId;
@@ -27,7 +27,7 @@ export function HomePage() {
   const sendMessage = useCoreStore((s) => s.sendMessage);
   const abortMessage = useCoreStore((s) => s.abortMessage);
   const setMode = useCoreStore((s) => s.setMode);
-  const activeSessionId = useCoreStore((s) => s.activeSessionId);
+  const activeSessionId = useCoreStore((s) => s.activeSessionByAgent[s.activeAgentId || ""] || null);
   const sessionsByAgent = useCoreStore((s) => s.sessionsByAgent);
 
   const [rightPanelOpen, setRightPanelOpen] = useState(false);

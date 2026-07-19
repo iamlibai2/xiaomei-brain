@@ -58,6 +58,7 @@
       "noAgents": "No agents, connect first",
       "newConversation": "New Conversation",
       "agentDisconnected": "Disconnected",
+      "agentWorking": "Working",
       "defaultUserName": "Li Bai",
       "newSession": "New Session",
       "sessions": "Sessions",
