@@ -131,6 +131,41 @@ function pinActiveSession(
   return result;
 }
 
+function touchSession(
+  state: CoreState,
+  agentId: string,
+  sessionId: string,
+  messageDelta: number,
+  firstUserText?: string,
+): void {
+  if (!sessionId) return;
+  if (!state.sessionsByAgent[agentId]) state.sessionsByAgent[agentId] = [];
+  let session = state.sessionsByAgent[agentId].find((entry) => entry.id === sessionId);
+  const now = Date.now();
+  if (!session) {
+    session = {
+      id: sessionId,
+      name: defaultSessionName([]),
+      createdAt: now,
+      updatedAt: now,
+      messageCount: 0,
+    };
+    state.sessionsByAgent[agentId].push(session);
+  }
+  if (firstUserText && (session.messageCount || 0) === 0) {
+    const title = firstUserText.replace(/\s+/g, " ").trim();
+    if (title) session.name = title.length > 24 ? `${title.slice(0, 24)}...` : title;
+  }
+  session.updatedAt = now;
+  session.messageCount = Math.max(0, (session.messageCount || 0) + messageDelta);
+  const activeSessionId = state.activeSessionByAgent[agentId];
+  state.sessionsByAgent[agentId].sort((left, right) => {
+    if (left.id === activeSessionId) return -1;
+    if (right.id === activeSessionId) return 1;
+    return (right.updatedAt || right.createdAt) - (left.updatedAt || left.createdAt);
+  });
+}
+
 async function fetchAgentSessions(
   agentId: string,
   activeSessionId: string,
@@ -602,19 +637,10 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
 
     set(produce((s: CoreState) => {
       if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
-      const wasEmpty = s.messagesByAgent[agentId].length === 0;
       s.messagesByAgent[agentId].push({
         id: "user-" + Date.now(), role: "user", content: text, streaming: false,
       });
-      const sessionId = s.activeSessionByAgent[agentId];
-      const session = sessionId
-        ? s.sessionsByAgent[agentId]?.find((entry) => entry.id === sessionId)
-        : undefined;
-      if (session) {
-        if (wasEmpty) session.name = defaultSessionName(s.messagesByAgent[agentId]);
-        session.updatedAt = Date.now();
-        session.messageCount = (session.messageCount || 0) + 1;
-      }
+      touchSession(s, agentId, s.activeSessionByAgent[agentId] || "", 1, text);
       s.sendingByAgent[agentId] = true;
       s.draftByAgent[agentId] = "";
     }));
@@ -725,10 +751,13 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
           };
           if (!s.sessionsByAgent[agentId]) s.sessionsByAgent[agentId] = [];
           if (!s.sessionsByAgent[agentId].some((session) => session.id === sessionId)) {
+            const now = Date.now();
             s.sessionsByAgent[agentId].unshift({
               id: sessionId,
               name: name || defaultSessionName([]),
-              createdAt: Date.now(),
+              createdAt: now,
+              updatedAt: now,
+              messageCount: 0,
             });
           }
         }
@@ -993,7 +1022,14 @@ export function initGatewayEvents() {
           s.activeSessionByAgent[agentId] = sessionId;
           if (!s.sessionsByAgent[agentId]) s.sessionsByAgent[agentId] = [];
           if (!s.sessionsByAgent[agentId].some((session) => session.id === sessionId)) {
-            s.sessionsByAgent[agentId].unshift({ id: sessionId, name: defaultSessionName([]), createdAt: Date.now() });
+            const now = Date.now();
+            s.sessionsByAgent[agentId].unshift({
+              id: sessionId,
+              name: defaultSessionName([]),
+              createdAt: now,
+              updatedAt: now,
+              messageCount: 0,
+            });
           }
         }
       }));
@@ -1049,6 +1085,9 @@ export function initGatewayEvents() {
         }));
       }
     } else if (event === "session.message") {
+      const eventSessionId = typeof d.session_id === "string" && d.session_id
+        ? d.session_id
+        : store().activeSessionByAgent[agentId] || "";
       if (stream.id) {
         const finalText = stream.ref || text;
         setState(produce((s: CoreState) => {
@@ -1056,6 +1095,7 @@ export function initGatewayEvents() {
           if (idx !== -1) {
             s.messagesByAgent[agentId][idx].content = finalText;
             s.messagesByAgent[agentId][idx].streaming = false;
+            touchSession(s, agentId, eventSessionId, 1);
           }
         }));
         stream.id = null;
@@ -1070,6 +1110,7 @@ export function initGatewayEvents() {
             s.messagesByAgent[agentId].push({
               id: "msg-" + Date.now(), role: "agent", content: text, streaming: false,
             });
+            touchSession(s, agentId, eventSessionId, 1);
           }));
         }
       }
