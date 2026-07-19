@@ -211,6 +211,15 @@ export function registerIpcHandlers(
     }
   );
 
+  ipcMain.handle(
+    "gateway:listSessions",
+    async (_event, args: { limit?: number; agentId: string }) => {
+      const client = getClient(args.agentId);
+      if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+      return client.rpc("chat.sessions", { limit: args.limit || 100 });
+    }
+  );
+
   // ─── identity.list ──────────────────────────
 
   ipcMain.handle("gateway:listIdentities", async (_event, args: { agentId: string }) => {

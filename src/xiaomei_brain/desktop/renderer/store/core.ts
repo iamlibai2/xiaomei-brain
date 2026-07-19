@@ -5,14 +5,13 @@ import type { AgentEntry, AgentLifecycleAction, LocalAgentInfo, SessionEntry } f
 // ── Persistence (manual, avoid zustand/persist rehydration during render) ──
 
 const STORAGE_KEY = "xiaomei-brain-agents";
-const STORAGE_VERSION = 2;
+const STORAGE_VERSION = 3;
 
 interface PersistedState {
   version?: number;
   agents?: AgentEntry[];
   userId?: string;
   activeAgentId?: string | null;
-  sessionsByAgent?: Record<string, SessionEntry[]>;
   activeSessionByAgent?: Record<string, string | null>;
 }
 
@@ -23,15 +22,14 @@ function loadPersisted(): PersistedState {
       const state = JSON.parse(raw) as PersistedState;
       if (state.version === STORAGE_VERSION) return state;
 
-      // Version 1 sessions used renderer-only IDs and their message bodies
-      // lived only in memory, so they cannot be restored from the Agent DB.
+      // Session lists are now authoritative in each Agent's brain.db. Keep
+      // only the selected real session ID when migrating older Desktop data.
       return {
         version: STORAGE_VERSION,
         agents: state.agents,
         userId: state.userId,
         activeAgentId: state.activeAgentId,
-        sessionsByAgent: {},
-        activeSessionByAgent: {},
+        activeSessionByAgent: state.activeSessionByAgent ?? {},
       };
     }
   } catch { /* corrupted data */ }
@@ -45,7 +43,6 @@ function savePersisted(state: CoreState) {
       agents: state.agents,
       userId: state.userId,
       activeAgentId: state.activeAgentId,
-      sessionsByAgent: state.sessionsByAgent,
       activeSessionByAgent: state.activeSessionByAgent,
     }));
   } catch { /* quota exceeded */ }
@@ -76,6 +73,50 @@ function defaultSessionName(messages: DisplayMessage[]): string {
     return firstUserMessage.length > 24 ? `${firstUserMessage.slice(0, 24)}...` : firstUserMessage;
   }
   return new Date().toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function sessionEntries(result: Record<string, unknown> | undefined): SessionEntry[] {
+  const rows = Array.isArray(result?.sessions) ? result.sessions : [];
+  return rows.flatMap((value) => {
+    if (!value || typeof value !== "object") return [];
+    const row = value as Record<string, unknown>;
+    if (typeof row.session_id !== "string" || !row.session_id) return [];
+    const createdAt = typeof row.created_at === "number" ? row.created_at * 1000 : Date.now();
+    const updatedAt = typeof row.updated_at === "number" ? row.updated_at * 1000 : createdAt;
+    const rawTitle = typeof row.first_user_message === "string"
+      ? row.first_user_message.replace(/\s+/g, " ").trim()
+      : "";
+    const name = rawTitle
+      ? rawTitle.length > 24 ? `${rawTitle.slice(0, 24)}...` : rawTitle
+      : new Date(createdAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    return [{
+      id: row.session_id,
+      name,
+      createdAt,
+      updatedAt,
+      messageCount: typeof row.message_count === "number" ? row.message_count : undefined,
+    } satisfies SessionEntry];
+  });
+}
+
+async function fetchAgentSessions(
+  agentId: string,
+  activeSessionId: string,
+  activeMessages: DisplayMessage[],
+  fallback: SessionEntry[],
+): Promise<SessionEntry[]> {
+  const response = await window.gateway.listSessions({ agentId, limit: 200 });
+  const sessions = response.error ? [...fallback] : sessionEntries(response.result);
+  if (activeSessionId && !sessions.some((session) => session.id === activeSessionId)) {
+    sessions.unshift({
+      id: activeSessionId,
+      name: defaultSessionName(activeMessages),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      messageCount: activeMessages.length,
+    });
+  }
+  return sessions;
 }
 
 // ── Types ──
@@ -160,7 +201,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   terminalOpen: false,
   activeNav: "assistant",
   unreadByAgent: {},
-  sessionsByAgent: persisted.sessionsByAgent ?? {},
+  sessionsByAgent: {},
   activeSessionByAgent: persisted.activeSessionByAgent ?? {},
   localAvailabilityByAgent: {},
   localInfoByAgent: {},
@@ -322,36 +363,24 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         ? await window.gateway.getHistory({ agentId, sessionId, limit: 200 })
         : undefined;
       const messages = history && !history.error ? historyMessages(history.result, sessionId) : [];
+      const sessions = await fetchAgentSessions(
+        agentId,
+        sessionId,
+        messages,
+        get().sessionsByAgent[agentId] || [],
+      );
 
       const existing = get().agents.find(a => a.id === agentId);
-      if (!existing) {
-        set(produce((s: CoreState) => {
+      set(produce((s: CoreState) => {
+        if (!existing) {
           s.agents.push({ id: agentId, name: agentName, host, port, token, source: "manual" });
-          s.activeAgentId = agentId;
-          s.connectionByAgent[agentId] = { status: "connected", agentName, error: "" };
-          s.messagesByAgent[agentId] = messages;
-          if (sessionId) {
-            s.activeSessionByAgent[agentId] = sessionId;
-            if (!s.sessionsByAgent[agentId]) s.sessionsByAgent[agentId] = [];
-            if (!s.sessionsByAgent[agentId].some((session) => session.id === sessionId)) {
-              s.sessionsByAgent[agentId].unshift({ id: sessionId, name: defaultSessionName(messages), createdAt: Date.now() });
-            }
-          }
-        }));
-      } else {
-        set(produce((s: CoreState) => {
-          s.activeAgentId = agentId;
-          s.connectionByAgent[agentId] = { status: "connected", agentName, error: "" };
-          s.messagesByAgent[agentId] = messages;
-          if (sessionId) {
-            s.activeSessionByAgent[agentId] = sessionId;
-            if (!s.sessionsByAgent[agentId]) s.sessionsByAgent[agentId] = [];
-            if (!s.sessionsByAgent[agentId].some((session) => session.id === sessionId)) {
-              s.sessionsByAgent[agentId].unshift({ id: sessionId, name: defaultSessionName(messages), createdAt: Date.now() });
-            }
-          }
-        }));
-      }
+        }
+        s.activeAgentId = agentId;
+        s.connectionByAgent[agentId] = { status: "connected", agentName, error: "" };
+        s.messagesByAgent[agentId] = messages;
+        s.sessionsByAgent[agentId] = sessions;
+        if (sessionId) s.activeSessionByAgent[agentId] = sessionId;
+      }));
 
       return true;
     } catch (err) {
@@ -408,19 +437,20 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         ? await window.gateway.getHistory({ agentId, sessionId, limit: 200 })
         : undefined;
       const messages = history && !history.error ? historyMessages(history.result, sessionId) : [];
+      const sessions = await fetchAgentSessions(
+        agentId,
+        sessionId,
+        messages,
+        get().sessionsByAgent[agentId] || [],
+      );
 
       set(produce((s: CoreState) => {
         s.connectionByAgent[agentId] = { status: "connected", agentName, error: "" };
         const savedAgent = s.agents.find(a => a.id === agentId);
         if (savedAgent && savedAgent.source !== "local") savedAgent.name = agentName;
         s.messagesByAgent[agentId] = messages;
-        if (sessionId) {
-          s.activeSessionByAgent[agentId] = sessionId;
-          if (!s.sessionsByAgent[agentId]) s.sessionsByAgent[agentId] = [];
-          if (!s.sessionsByAgent[agentId].some((session) => session.id === sessionId)) {
-            s.sessionsByAgent[agentId].unshift({ id: sessionId, name: defaultSessionName(messages), createdAt: Date.now() });
-          }
-        }
+        s.sessionsByAgent[agentId] = sessions;
+        if (sessionId) s.activeSessionByAgent[agentId] = sessionId;
       }));
     } catch (err) {
       set(produce((s: CoreState) => {
@@ -499,9 +529,19 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
 
     set(produce((s: CoreState) => {
       if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
+      const wasEmpty = s.messagesByAgent[agentId].length === 0;
       s.messagesByAgent[agentId].push({
         id: "user-" + Date.now(), role: "user", content: text, streaming: false,
       });
+      const sessionId = s.activeSessionByAgent[agentId];
+      const session = sessionId
+        ? s.sessionsByAgent[agentId]?.find((entry) => entry.id === sessionId)
+        : undefined;
+      if (session) {
+        if (wasEmpty) session.name = defaultSessionName(s.messagesByAgent[agentId]);
+        session.updatedAt = Date.now();
+        session.messageCount = (session.messageCount || 0) + 1;
+      }
       s.sendingByAgent[agentId] = true;
       s.draftByAgent[agentId] = "";
     }));

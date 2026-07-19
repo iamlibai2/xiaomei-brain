@@ -45,6 +45,8 @@ export interface SessionEntry {
   id: string;       // unique session id
   name: string;     // user-given name or auto date-based
   createdAt: number; // timestamp ms
+  updatedAt?: number;
+  messageCount?: number;
 }
 
 // ── Bridge API ──
@@ -55,6 +57,7 @@ export interface GatewayBridge {
   sendMessage(args: { content: string; agentId: string }): Promise<JsonRpcResponse>;
   abortMessage(args: { agentId: string }): Promise<JsonRpcResponse>;
   getHistory(args: { sessionId?: string; limit?: number; agentId: string }): Promise<JsonRpcResponse>;
+  listSessions(args: { limit?: number; agentId: string }): Promise<JsonRpcResponse>;
   listIdentities(args: { agentId: string }): Promise<JsonRpcResponse>;
   getConfig(key: string): Promise<string | null>;
 

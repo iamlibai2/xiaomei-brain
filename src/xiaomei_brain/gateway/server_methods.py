@@ -6,7 +6,14 @@ import logging
 from typing import Any
 
 from .protocol import build_response, build_error, ErrorCode
-from .schemas import ConnectParams, ChatSendParams, ChatAbortParams, ChatHistoryParams, format_error
+from .schemas import (
+    ConnectParams,
+    ChatSendParams,
+    ChatAbortParams,
+    ChatHistoryParams,
+    ChatSessionsParams,
+    format_error,
+)
 from .auth import check_token
 
 logger = logging.getLogger(__name__)
@@ -23,6 +30,7 @@ class MethodRouter:
             "chat.send": self._handle_chat_send,
             "chat.abort": self._handle_chat_abort,
             "chat.history": self._handle_chat_history,
+            "chat.sessions": self._handle_chat_sessions,
             "identity.list": self._handle_identity_list,
         }
         # 已认证的 session
@@ -158,6 +166,27 @@ class MethodRouter:
                 for r in rows
             ]
             return build_response(req_id, result={"messages": messages})
+        except Exception as e:
+            return build_error(req_id, ErrorCode.INTERNAL_ERROR, str(e))
+
+    def _handle_chat_sessions(self, conn_id: str, req_id: str, params: dict) -> dict:
+        try:
+            p = ChatSessionsParams.model_validate(params)
+        except Exception as e:
+            return build_error(req_id, ErrorCode.INVALID_REQUEST, f"参数无效: {format_error(e)}")
+
+        living = self._living
+        if living is None:
+            return build_error(req_id, ErrorCode.GATEWAY_NOT_READY, "Gateway 未就绪")
+
+        try:
+            db = getattr(getattr(living, "agent", None), "conversation_db", None)
+            if db is None:
+                return build_response(req_id, result={"sessions": []})
+            return build_response(
+                req_id,
+                result={"sessions": db.list_sessions(limit=p.limit)},
+            )
         except Exception as e:
             return build_error(req_id, ErrorCode.INTERNAL_ERROR, str(e))
 

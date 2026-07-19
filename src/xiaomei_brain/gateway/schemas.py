@@ -57,6 +57,10 @@ class ChatHistoryParams(BaseModel):
     limit: int = 50
 
 
+class ChatSessionsParams(BaseModel):
+    limit: int = 100
+
+
 # ── Wire frames ──────────────────────────────
 
 class ReqFrame(BaseModel):
