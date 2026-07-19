@@ -20,7 +20,6 @@ export function ConversationList() {
   const switchSession = useCoreStore((s) => s.switchSession);
   const sessionsByAgent = useCoreStore((s) => s.sessionsByAgent);
   const activeSessionId = useCoreStore((s) => s.activeSessionByAgent[s.activeAgentId || ""] || null);
-  const messagesByAgent = useCoreStore((s) => s.messagesByAgent);
   const terminalOpen = useCoreStore((s) => s.terminalOpen);
   const setTerminalOpen = useCoreStore((s) => s.setTerminalOpen);
   const unreadByAgent = useCoreStore((s) => s.unreadByAgent);
@@ -48,12 +47,13 @@ export function ConversationList() {
   }
 
   function handleNewSession() {
-    newSession();
+    void newSession();
   }
 
   const activeSessions = activeAgentId ? (sessionsByAgent[activeAgentId] || []) : [];
-  const isConnected = activeAgentId ? connectionByAgent[activeAgentId]?.status === "connected" : false;
-  const hasCurrentChat = activeAgentId && (messagesByAgent[activeAgentId]?.length > 0 || isConnected);
+  const sessionBusy = activeAgentId
+    ? Boolean(sendingByAgent[activeAgentId] || connectionByAgent[activeAgentId]?.status === "connecting")
+    : false;
 
   return (
     <div className={`conversation-list ${collapsed ? "collapsed" : ""}`}>
@@ -171,33 +171,26 @@ export function ConversationList() {
             <div className="session-section" style={{ flex: 1, minHeight: 0, overflow: "hidden auto", display: "flex", flexDirection: "column" }}>
               <div className="session-section-header">
                 <span className="session-section-title">
-                  {t("sidebar.sessions")} ({activeSessions.length + (hasCurrentChat ? 1 : 0)})
+                  {t("sidebar.sessions")} ({activeSessions.length})
                 </span>
                 <button
                   className="session-new-btn"
                   onClick={handleNewSession}
-                  disabled={sendingByAgent[activeAgentId] || false}
+                  disabled={sessionBusy}
                   title={t("sidebar.newSession")}
                 >
                   <Icon name="plus" size={14} />
                 </button>
               </div>
               <div className="session-list">
-                {/* Current chat (always shown when active agent has messages or is connected) */}
-                <SessionItem
-                  name={t("sidebar.currentSession")}
-                  isActive={!activeSessionId}
-                  isCurrent={true}
-                  onClick={() => {}}
-                />
                 {activeSessions.map((s) => (
                   <SessionItem
                     key={s.id}
                     name={s.name}
                     isActive={s.id === activeSessionId}
-                    isCurrent={false}
-                    disabled={sendingByAgent[activeAgentId] || false}
-                    onClick={() => switchSession(s.id)}
+                    isCurrent={s.id === activeSessionId}
+                    disabled={sessionBusy}
+                    onClick={() => { void switchSession(s.id); }}
                   />
                 ))}
               </div>

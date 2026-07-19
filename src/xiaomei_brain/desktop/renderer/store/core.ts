@@ -5,11 +5,35 @@ import type { AgentEntry, AgentLifecycleAction, LocalAgentInfo, SessionEntry } f
 // ── Persistence (manual, avoid zustand/persist rehydration during render) ──
 
 const STORAGE_KEY = "xiaomei-brain-agents";
+const STORAGE_VERSION = 2;
 
-function loadPersisted(): { agents?: AgentEntry[]; userId?: string; activeAgentId?: string | null; sessionsByAgent?: Record<string, SessionEntry[]> } {
+interface PersistedState {
+  version?: number;
+  agents?: AgentEntry[];
+  userId?: string;
+  activeAgentId?: string | null;
+  sessionsByAgent?: Record<string, SessionEntry[]>;
+  activeSessionByAgent?: Record<string, string | null>;
+}
+
+function loadPersisted(): PersistedState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const state = JSON.parse(raw) as PersistedState;
+      if (state.version === STORAGE_VERSION) return state;
+
+      // Version 1 sessions used renderer-only IDs and their message bodies
+      // lived only in memory, so they cannot be restored from the Agent DB.
+      return {
+        version: STORAGE_VERSION,
+        agents: state.agents,
+        userId: state.userId,
+        activeAgentId: state.activeAgentId,
+        sessionsByAgent: {},
+        activeSessionByAgent: {},
+      };
+    }
   } catch { /* corrupted data */ }
   return {};
 }
@@ -17,16 +41,42 @@ function loadPersisted(): { agents?: AgentEntry[]; userId?: string; activeAgentI
 function savePersisted(state: CoreState) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      version: STORAGE_VERSION,
       agents: state.agents,
       userId: state.userId,
       activeAgentId: state.activeAgentId,
       sessionsByAgent: state.sessionsByAgent,
+      activeSessionByAgent: state.activeSessionByAgent,
     }));
   } catch { /* quota exceeded */ }
 }
 
 // ── Module-level per-agent streaming state ──
 const _streamingByAgent: Record<string, { ref: string; id: string | null }> = {};
+
+function historyMessages(result: Record<string, unknown> | undefined, sessionId: string): DisplayMessage[] {
+  const rows = Array.isArray(result?.messages) ? result.messages : [];
+  return rows.flatMap((value, index) => {
+    if (!value || typeof value !== "object") return [];
+    const row = value as Record<string, unknown>;
+    const role = row.role === "user" ? "user" : row.role === "assistant" ? "agent" : null;
+    if (!role || typeof row.content !== "string") return [];
+    return [{
+      id: `history-${sessionId}-${String(row.created_at || index)}-${index}`,
+      role,
+      content: row.content,
+      streaming: false,
+    } satisfies DisplayMessage];
+  });
+}
+
+function defaultSessionName(messages: DisplayMessage[]): string {
+  const firstUserMessage = messages.find((message) => message.role === "user")?.content.trim();
+  if (firstUserMessage) {
+    return firstUserMessage.length > 24 ? `${firstUserMessage.slice(0, 24)}...` : firstUserMessage;
+  }
+  return new Date().toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
 
 // ── Types ──
 
@@ -64,7 +114,6 @@ interface CoreState {
   activeNav: string;
   unreadByAgent: Record<string, number>;
   sessionsByAgent: Record<string, SessionEntry[]>;
-  sessionMessages: Record<string, Record<string, DisplayMessage[]>>;
   activeSessionByAgent: Record<string, string | null>;
   localAvailabilityByAgent: Record<string, boolean>;
   localInfoByAgent: Record<string, LocalAgentInfo>;
@@ -83,8 +132,8 @@ interface CoreActions {
   sendMessage: (text: string) => void;
   abortMessage: () => Promise<void>;
   setDraft: (text: string) => void;
-  newSession: (name?: string) => void;
-  switchSession: (sessionId: string) => void;
+  newSession: (name?: string) => Promise<void>;
+  switchSession: (sessionId: string) => Promise<void>;
   setMode: (mode: HomeMode) => void;
   setPage: (page: "connect" | "chat") => void;
   setTerminalOpen: (open: boolean) => void;
@@ -112,8 +161,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   activeNav: "assistant",
   unreadByAgent: {},
   sessionsByAgent: persisted.sessionsByAgent ?? {},
-  sessionMessages: {},
-  activeSessionByAgent: {},
+  activeSessionByAgent: persisted.activeSessionByAgent ?? {},
   localAvailabilityByAgent: {},
   localInfoByAgent: {},
   lifecycleByAgent: {},
@@ -211,9 +259,18 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
 
     const expectedOnline = action !== "stop";
     let reachedExpectedState = false;
+    let observedAgentProcess = false;
+    let agentProcessExited = false;
     for (let attempt = 0; attempt < 90; attempt += 1) {
       await get().refreshLocalAgents();
-      if (get().localAvailabilityByAgent[agentId] === expectedOnline) {
+      const state = get();
+      const processIsRunning = Boolean(state.localInfoByAgent[agentId]?.pid);
+      if (processIsRunning) observedAgentProcess = true;
+      if (expectedOnline && observedAgentProcess && !processIsRunning) {
+        agentProcessExited = true;
+        break;
+      }
+      if (state.localAvailabilityByAgent[agentId] === expectedOnline) {
         reachedExpectedState = true;
         break;
       }
@@ -224,7 +281,9 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       set(produce((s: CoreState) => {
         s.lifecycleByAgent[agentId] = {
           status: "error",
-          error: `Agent did not become ${expectedOnline ? "online" : "offline"} in time`,
+          error: agentProcessExited
+            ? "Agent process exited during startup; check logs/agent.err.log"
+            : `Agent did not become ${expectedOnline ? "online" : "offline"} in time`,
         };
       }));
       return;
@@ -247,7 +306,8 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     }));
 
     try {
-      const res = await window.gateway.connect({ host, port, token, userId, agentId });
+      const requestedSessionId = get().activeSessionByAgent[agentId] || undefined;
+      const res = await window.gateway.connect({ host, port, token, userId, agentId, sessionId: requestedSessionId });
       if (res.error) {
         set(produce((s: CoreState) => {
           s.connectionByAgent[agentId] = { status: "error", agentName: "", error: res.error!.message };
@@ -257,6 +317,11 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
 
       const result = (res.result || {}) as Record<string, unknown>;
       const agentName = (result.agent_name as string) || host;
+      const sessionId = (result.session_id as string) || requestedSessionId || "";
+      const history = sessionId
+        ? await window.gateway.getHistory({ agentId, sessionId, limit: 200 })
+        : undefined;
+      const messages = history && !history.error ? historyMessages(history.result, sessionId) : [];
 
       const existing = get().agents.find(a => a.id === agentId);
       if (!existing) {
@@ -264,12 +329,27 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
           s.agents.push({ id: agentId, name: agentName, host, port, token, source: "manual" });
           s.activeAgentId = agentId;
           s.connectionByAgent[agentId] = { status: "connected", agentName, error: "" };
-          if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
+          s.messagesByAgent[agentId] = messages;
+          if (sessionId) {
+            s.activeSessionByAgent[agentId] = sessionId;
+            if (!s.sessionsByAgent[agentId]) s.sessionsByAgent[agentId] = [];
+            if (!s.sessionsByAgent[agentId].some((session) => session.id === sessionId)) {
+              s.sessionsByAgent[agentId].unshift({ id: sessionId, name: defaultSessionName(messages), createdAt: Date.now() });
+            }
+          }
         }));
       } else {
         set(produce((s: CoreState) => {
           s.activeAgentId = agentId;
           s.connectionByAgent[agentId] = { status: "connected", agentName, error: "" };
+          s.messagesByAgent[agentId] = messages;
+          if (sessionId) {
+            s.activeSessionByAgent[agentId] = sessionId;
+            if (!s.sessionsByAgent[agentId]) s.sessionsByAgent[agentId] = [];
+            if (!s.sessionsByAgent[agentId].some((session) => session.id === sessionId)) {
+              s.sessionsByAgent[agentId].unshift({ id: sessionId, name: defaultSessionName(messages), createdAt: Date.now() });
+            }
+          }
         }));
       }
 
@@ -308,9 +388,10 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     }));
 
     try {
+      const requestedSessionId = get().activeSessionByAgent[agentId] || undefined;
       const res = await window.gateway.connect({
         host: agent.host, port: agent.port, token: agent.token,
-        userId: get().userId, agentId,
+        userId: get().userId, agentId, sessionId: requestedSessionId,
       });
 
       if (res.error) {
@@ -322,12 +403,24 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
 
       const result = (res.result || {}) as Record<string, unknown>;
       const agentName = (result.agent_name as string) || agent.name;
+      const sessionId = (result.session_id as string) || requestedSessionId || "";
+      const history = sessionId
+        ? await window.gateway.getHistory({ agentId, sessionId, limit: 200 })
+        : undefined;
+      const messages = history && !history.error ? historyMessages(history.result, sessionId) : [];
 
       set(produce((s: CoreState) => {
         s.connectionByAgent[agentId] = { status: "connected", agentName, error: "" };
         const savedAgent = s.agents.find(a => a.id === agentId);
         if (savedAgent && savedAgent.source !== "local") savedAgent.name = agentName;
-        if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
+        s.messagesByAgent[agentId] = messages;
+        if (sessionId) {
+          s.activeSessionByAgent[agentId] = sessionId;
+          if (!s.sessionsByAgent[agentId]) s.sessionsByAgent[agentId] = [];
+          if (!s.sessionsByAgent[agentId].some((session) => session.id === sessionId)) {
+            s.sessionsByAgent[agentId].unshift({ id: sessionId, name: defaultSessionName(messages), createdAt: Date.now() });
+          }
+        }
       }));
     } catch (err) {
       set(produce((s: CoreState) => {
@@ -375,7 +468,6 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       delete s.sendingByAgent[agentId];
       delete s.draftByAgent[agentId];
       delete s.sessionsByAgent[agentId];
-      delete s.sessionMessages[agentId];
       delete s.activeSessionByAgent[agentId];
       delete s.localAvailabilityByAgent[agentId];
       delete s.localInfoByAgent[agentId];
@@ -475,42 +567,118 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
 
   // ── Session management ──
 
-  newSession: (name) => {
+  newSession: async (name) => {
     const agentId = get().activeAgentId;
     if (!agentId) return;
     if (get().sendingByAgent[agentId]) return;
-    const currentMsgs = get().messagesByAgent[agentId];
-    const hasContent = currentMsgs && currentMsgs.length > 0;
+    if (get().connectionByAgent[agentId]?.status === "connecting") return;
+    const agent = get().agents.find((entry) => entry.id === agentId);
+    if (!agent) return;
 
-    if (hasContent || name) {
-      const sessionName = name || new Date().toLocaleDateString("zh-CN");
-      const sessionId = "s-" + Date.now();
+    set(produce((s: CoreState) => {
+      s.connectionByAgent[agentId] = {
+        status: "connecting",
+        agentName: s.connectionByAgent[agentId]?.agentName || agent.name,
+        error: "",
+      };
+    }));
+
+    try {
+      const res = await window.gateway.connect({
+        host: agent.host,
+        port: agent.port,
+        token: agent.token,
+        userId: get().userId,
+        agentId,
+      });
+      if (res.error) {
+        set(produce((s: CoreState) => {
+          s.connectionByAgent[agentId] = { status: "error", agentName: agent.name, error: res.error!.message };
+        }));
+        return;
+      }
+
+      const result = (res.result || {}) as Record<string, unknown>;
+      const sessionId = (result.session_id as string) || "";
+      const agentName = (result.agent_name as string) || agent.name;
       set(produce((s: CoreState) => {
-        if (!s.sessionsByAgent[agentId]) s.sessionsByAgent[agentId] = [];
-        s.sessionsByAgent[agentId].push({ id: sessionId, name: sessionName, createdAt: Date.now() });
-        if (hasContent) {
-          if (!s.sessionMessages[agentId]) s.sessionMessages[agentId] = {};
-          s.sessionMessages[agentId][sessionId] = [...currentMsgs!];
+        s.messagesByAgent[agentId] = [];
+        s.connectionByAgent[agentId] = { status: "connected", agentName, error: "" };
+        if (sessionId) {
+          s.activeSessionByAgent[agentId] = sessionId;
+          if (!s.sessionsByAgent[agentId]) s.sessionsByAgent[agentId] = [];
+          if (!s.sessionsByAgent[agentId].some((session) => session.id === sessionId)) {
+            s.sessionsByAgent[agentId].unshift({
+              id: sessionId,
+              name: name || defaultSessionName([]),
+              createdAt: Date.now(),
+            });
+          }
         }
-        s.messagesByAgent[agentId] = [];
-        s.activeSessionByAgent[agentId] = null;
       }));
-    } else {
+    } catch (error) {
       set(produce((s: CoreState) => {
-        s.messagesByAgent[agentId] = [];
+        s.connectionByAgent[agentId] = { status: "error", agentName: agent.name, error: String(error) };
       }));
     }
   },
 
-  switchSession: (sessionId) => {
+  switchSession: async (sessionId) => {
     const agentId = get().activeAgentId;
     if (!agentId) return;
     if (get().sendingByAgent[agentId]) return;
-    const msgs = get().sessionMessages[agentId]?.[sessionId] || [];
+    if (get().connectionByAgent[agentId]?.status === "connecting") return;
+    if (get().activeSessionByAgent[agentId] === sessionId) return;
+    const agent = get().agents.find((entry) => entry.id === agentId);
+    if (!agent) return;
+
     set(produce((s: CoreState) => {
-      s.messagesByAgent[agentId] = msgs;
-      s.activeSessionByAgent[agentId] = sessionId;
+      s.connectionByAgent[agentId] = {
+        status: "connecting",
+        agentName: s.connectionByAgent[agentId]?.agentName || agent.name,
+        error: "",
+      };
     }));
+
+    try {
+      const res = await window.gateway.connect({
+        host: agent.host,
+        port: agent.port,
+        token: agent.token,
+        userId: get().userId,
+        agentId,
+        sessionId,
+      });
+      if (res.error) {
+        set(produce((s: CoreState) => {
+          s.connectionByAgent[agentId] = { status: "error", agentName: agent.name, error: res.error!.message };
+        }));
+        return;
+      }
+
+      const history = await window.gateway.getHistory({ agentId, sessionId, limit: 200 });
+      if (history.error) {
+        set(produce((s: CoreState) => {
+          s.connectionByAgent[agentId] = { status: "error", agentName: agent.name, error: history.error!.message };
+        }));
+        return;
+      }
+      const messages = historyMessages(history.result, sessionId);
+      const result = (res.result || {}) as Record<string, unknown>;
+      set(produce((s: CoreState) => {
+        s.messagesByAgent[agentId] = messages;
+        s.activeSessionByAgent[agentId] = sessionId;
+        s.connectionByAgent[agentId] = {
+          status: "connected",
+          agentName: (result.agent_name as string) || agent.name,
+          error: "",
+        };
+      }));
+    } catch (error) {
+      set(produce((s: CoreState) => {
+        s.connectionByAgent[agentId] = { status: "error", agentName: agent.name, error: String(error) };
+      }));
+    }
   },
 
   // ── UI ──
@@ -557,11 +725,19 @@ export function initGatewayEvents() {
     if (event === "reconnected") {
       setState(produce((s: CoreState) => {
         const previous = s.connectionByAgent[agentId];
+        const sessionId = typeof d.session_id === "string" ? d.session_id : "";
         s.connectionByAgent[agentId] = {
           status: "connected",
           agentName: (d.agent_name as string) || previous?.agentName || "",
           error: "",
         };
+        if (sessionId) {
+          s.activeSessionByAgent[agentId] = sessionId;
+          if (!s.sessionsByAgent[agentId]) s.sessionsByAgent[agentId] = [];
+          if (!s.sessionsByAgent[agentId].some((session) => session.id === sessionId)) {
+            s.sessionsByAgent[agentId].unshift({ id: sessionId, name: defaultSessionName([]), createdAt: Date.now() });
+          }
+        }
       }));
       return;
     }

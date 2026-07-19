@@ -6,6 +6,8 @@ import { discoverLocalAgents } from "./local-agent-discovery";
 import { AgentLifecycleAction, RuntimeManager } from "./runtime-manager";
 
 const connections = new Map<string, GatewayClient>();
+const connectionSessions = new Map<string, string>();
+const connectionUsers = new Map<string, string>();
 
 export function registerIpcHandlers(
   _gateway: GatewayClient,
@@ -37,6 +39,8 @@ export function registerIpcHandlers(
         client.disconnect();
         connections.delete(args.connectionId);
       }
+      connectionSessions.delete(args.connectionId);
+      connectionUsers.delete(args.connectionId);
     }
     return runtimeManager.control(args.agentId, args.action);
   });
@@ -54,15 +58,18 @@ export function registerIpcHandlers(
     "gateway:connect",
     async (
       _event,
-      args: { host: string; port: number; token: string; userId: string; agentId: string }
+      args: { host: string; port: number; token: string; userId: string; agentId: string; sessionId?: string }
     ) => {
       try {
         // Disconnect existing connection for this agent
         const existing = connections.get(args.agentId);
         if (existing) existing.disconnect();
+        connections.delete(args.agentId);
+        connectionSessions.delete(args.agentId);
+        connectionUsers.delete(args.agentId);
 
         const client = new GatewayClient();
-        let sessionId = "";
+        let sessionId = args.sessionId || "";
         let authenticated = false;
         let reauthenticating = false;
 
@@ -102,6 +109,7 @@ export function registerIpcHandlers(
 
             const result = res.result || {};
             sessionId = (result["session_id"] as string) || sessionId;
+            connectionSessions.set(args.agentId, sessionId);
             sendGatewayEvent("reconnected", {
               session_id: sessionId,
               agent_name: (result["agent_name"] as string) || "",
@@ -121,14 +129,21 @@ export function registerIpcHandlers(
           token: args.token,
           client: "desktop",
           user_id: args.userId,
+          session_id: sessionId,
         });
 
-        if (res.error) return res;
+        if (res.error) {
+          client.disconnect();
+          connections.delete(args.agentId);
+          return res;
+        }
 
         const result = res.result || {};
         sessionId = (result["session_id"] as string) || "";
         const agentName = (result["agent_name"] as string) || "";
         authenticated = true;
+        connectionSessions.set(args.agentId, sessionId);
+        connectionUsers.set(args.agentId, args.userId);
 
         // Persist last connection params
         config.set("last_host", args.host);
@@ -136,6 +151,10 @@ export function registerIpcHandlers(
 
         return { result: { session_id: sessionId, agent_name: agentName } };
       } catch (e) {
+        connections.get(args.agentId)?.disconnect();
+        connections.delete(args.agentId);
+        connectionSessions.delete(args.agentId);
+        connectionUsers.delete(args.agentId);
         return { error: { code: -32099, message: `Connection failed: ${e}` } };
       }
     }
@@ -149,6 +168,8 @@ export function registerIpcHandlers(
       client.disconnect();
       connections.delete(args.agentId);
     }
+    connectionSessions.delete(args.agentId);
+    connectionUsers.delete(args.agentId);
   });
 
   // ─── chat.send ──────────────────────────────
@@ -158,7 +179,11 @@ export function registerIpcHandlers(
     async (_event, args: { content: string; agentId: string }) => {
       const client = getClient(args.agentId);
       if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
-      return client.rpc("chat.send", { content: args.content });
+      return client.rpc("chat.send", {
+        content: args.content,
+        session_id: connectionSessions.get(args.agentId) || "",
+        user_id: connectionUsers.get(args.agentId) || "",
+      });
     }
   );
 
@@ -167,7 +192,9 @@ export function registerIpcHandlers(
   ipcMain.handle("gateway:abortMessage", async (_event, args: { agentId: string }) => {
     const client = getClient(args.agentId);
     if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
-    return client.rpc("chat.abort", {});
+    return client.rpc("chat.abort", {
+      session_id: connectionSessions.get(args.agentId) || "",
+    });
   });
 
   // ─── chat.history ───────────────────────────
@@ -178,7 +205,7 @@ export function registerIpcHandlers(
       const client = getClient(args.agentId);
       if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
       return client.rpc("chat.history", {
-        session_id: args.sessionId || "",
+        session_id: args.sessionId || connectionSessions.get(args.agentId) || "",
         limit: args.limit || 50,
       });
     }

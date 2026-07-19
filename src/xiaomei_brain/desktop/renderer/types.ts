@@ -50,7 +50,7 @@ export interface SessionEntry {
 // ── Bridge API ──
 
 export interface GatewayBridge {
-  connect(args: { host: string; port: number; token: string; userId: string; agentId: string }): Promise<JsonRpcResponse>;
+  connect(args: { host: string; port: number; token: string; userId: string; agentId: string; sessionId?: string }): Promise<JsonRpcResponse>;
   disconnect(args: { agentId: string }): Promise<void>;
   sendMessage(args: { content: string; agentId: string }): Promise<JsonRpcResponse>;
   abortMessage(args: { agentId: string }): Promise<JsonRpcResponse>;

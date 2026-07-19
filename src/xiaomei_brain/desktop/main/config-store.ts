@@ -17,7 +17,7 @@ export class ConfigStore {
 
   private read(): Record<string, string> {
     try {
-      const raw = fs.readFileSync(this.filePath, "utf-8");
+      const raw = fs.readFileSync(this.filePath, "utf-8").replace(/^\uFEFF/, "");
       return JSON.parse(raw);
     } catch {
       return {};
