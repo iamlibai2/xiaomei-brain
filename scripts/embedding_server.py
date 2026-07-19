@@ -188,6 +188,9 @@ def main():
     os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
     os.environ["HF_HUB_OFFLINE"] = "1"
 
+    # Windows 上必须先加载 pyarrow 的 C 扩展，避免其与
+    # sentence_transformers/PyTorch 的 DLL 首次加载顺序冲突。
+    import pyarrow  # noqa: F401
     from sentence_transformers import SentenceTransformer
     model = SentenceTransformer(model_path, device=DEVICE)
     EmbedHandler.model = model
