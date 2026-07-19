@@ -39,7 +39,10 @@
       "earnPoints": "📈 做任务赢积分好礼 >",
       "defaultAgentName": "小美",
       "deepThink": "深度思考",
-      "copy": "复制"
+      "copy": "复制",
+      "loadingOlder": "正在加载更早消息...",
+      "retryOlder": "加载失败，点击重试",
+      "oldestReached": "已到达会话起点"
     },
     "sidebar": {
       "navAssistant": "助理",

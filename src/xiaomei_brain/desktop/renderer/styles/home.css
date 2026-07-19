@@ -83,6 +83,28 @@
   border-radius: 3px;
 }
 
+.history-page-status {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--ui-color-text-tertiary);
+  font-size: 12px;
+}
+
+.history-page-status button {
+  border: 0;
+  background: transparent;
+  color: var(--ui-color-primary);
+  cursor: pointer;
+  font: inherit;
+}
+
+.history-page-status button:hover {
+  text-decoration: underline;
+}
+
 /* ─── User Message () ─── */
 .user-message-row {
   display: flex;

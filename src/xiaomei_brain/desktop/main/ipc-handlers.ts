@@ -201,12 +201,13 @@ export function registerIpcHandlers(
 
   ipcMain.handle(
     "gateway:getHistory",
-    async (_event, args: { sessionId?: string; limit?: number; agentId: string }) => {
+    async (_event, args: { sessionId?: string; limit?: number; beforeId?: number; agentId: string }) => {
       const client = getClient(args.agentId);
       if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
       return client.rpc("chat.history", {
         session_id: args.sessionId || connectionSessions.get(args.agentId) || "",
         limit: args.limit || 50,
+        before_id: args.beforeId,
       });
     }
   );

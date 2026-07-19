@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import { useCoreStore, DisplayMessage, HomeMode } from "../../store";
@@ -29,14 +29,51 @@ export function HomePage() {
   const setMode = useCoreStore((s) => s.setMode);
   const activeSessionId = useCoreStore((s) => s.activeSessionByAgent[s.activeAgentId || ""] || null);
   const sessionsByAgent = useCoreStore((s) => s.sessionsByAgent);
+  const historyPage = useCoreStore((s) => {
+    const agentId = s.activeAgentId;
+    const sessionId = agentId ? s.activeSessionByAgent[agentId] : null;
+    return agentId && sessionId ? s.historyPaginationByAgent[agentId]?.[sessionId] : undefined;
+  });
+  const loadOlderMessages = useCoreStore((s) => s.loadOlderMessages);
 
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
 
   const bottomRef = useRef<HTMLDivElement>(null);
+  const topRef = useRef<HTMLDivElement>(null);
+  const messageListRef = useRef<HTMLDivElement>(null);
+  const previousFirstMessageId = useRef<string | null>(null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const firstMessageId = messages[0]?.id || null;
+    const previousFirst = previousFirstMessageId.current;
+    const historyWasPrepended = Boolean(
+      previousFirst
+      && firstMessageId !== previousFirst
+      && messages.some((message) => message.id === previousFirst),
+    );
+    if (!historyWasPrepended) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    previousFirstMessageId.current = firstMessageId;
   }, [messages]);
+
+  const loadOlderPreservingPosition = useCallback(async () => {
+    const list = messageListRef.current;
+    const previousHeight = list?.scrollHeight || 0;
+    await loadOlderMessages();
+    requestAnimationFrame(() => {
+      if (list) list.scrollTop += list.scrollHeight - previousHeight;
+    });
+  }, [loadOlderMessages]);
+
+  useEffect(() => {
+    const sentinel = topRef.current;
+    const list = messageListRef.current;
+    if (!sentinel || !list || !historyPage?.hasMore || historyPage.loading || historyPage.error) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) void loadOlderPreservingPosition();
+    }, { root: list, threshold: 0.1 });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [activeAgentId, activeSessionId, historyPage?.hasMore, historyPage?.loading, historyPage?.error, loadOlderPreservingPosition]);
 
   const hasMessages = messages.length > 0;
 
@@ -74,7 +111,18 @@ export function HomePage() {
               onToggleRightPanel={() => setRightPanelOpen(!rightPanelOpen)}
               rightPanelOpen={rightPanelOpen}
             />
-            <div className="message-list">
+            <div className="message-list" ref={messageListRef}>
+              <div ref={topRef} className="history-page-status">
+                {historyPage?.loading && t("home.loadingOlder")}
+                {historyPage?.error && (
+                  <button type="button" onClick={() => { void loadOlderPreservingPosition(); }}>
+                    {t("home.retryOlder")}
+                  </button>
+                )}
+                {historyPage && !historyPage.hasMore && !historyPage.loading && !historyPage.error
+                  ? t("home.oldestReached")
+                  : null}
+              </div>
               {messages.map((m) => (
                 <MessageRow key={m.id} message={m} agentName={agentName || t("home.defaultAgentName")} />
               ))}

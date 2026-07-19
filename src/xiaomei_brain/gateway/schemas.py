@@ -54,11 +54,12 @@ class ChatAbortParams(BaseModel):
 
 class ChatHistoryParams(BaseModel):
     session_id: str = ""
-    limit: int = 50
+    limit: int = Field(default=50, ge=1, le=200)
+    before_id: int | None = Field(default=None, ge=1)
 
 
 class ChatSessionsParams(BaseModel):
-    limit: int = 100
+    limit: int = Field(default=100, ge=1, le=500)
 
 
 # ── Wire frames ──────────────────────────────

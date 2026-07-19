@@ -39,7 +39,10 @@
       "earnPoints": "Complete tasks, earn rewards >",
       "defaultAgentName": "Xiaomei",
       "deepThink": "Deep Thinking",
-      "copy": "Copy"
+      "copy": "Copy",
+      "loadingOlder": "Loading earlier messages...",
+      "retryOlder": "Failed to load. Retry",
+      "oldestReached": "Beginning of conversation"
     },
     "sidebar": {
       "navAssistant": "Assistant",

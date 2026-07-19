@@ -52,6 +52,41 @@ class GatewaySessionsTest(unittest.TestCase):
         self.assertEqual(session["session_id"], "desktop-session")
         self.assertEqual(session["first_user_message"], "restore me")
 
+    def test_chat_history_uses_message_id_cursor_without_duplicates(self):
+        message_ids = [
+            self.db.log("paged-session", "user", f"message {index}")
+            for index in range(5)
+        ]
+        living = SimpleNamespace(agent=SimpleNamespace(conversation_db=self.db))
+        router = MethodRouter(living=living)
+        router._auth_sessions.add("desktop-connection")
+
+        newest = router.dispatch(
+            "desktop-connection",
+            "history-1",
+            "chat.history",
+            {"session_id": "paged-session", "limit": 2},
+        )["result"]
+        older = router.dispatch(
+            "desktop-connection",
+            "history-2",
+            "chat.history",
+            {
+                "session_id": "paged-session",
+                "limit": 2,
+                "before_id": newest["next_before_id"],
+            },
+        )["result"]
+
+        self.assertEqual([message["id"] for message in newest["messages"]], message_ids[-2:])
+        self.assertEqual([message["id"] for message in older["messages"]], message_ids[1:3])
+        self.assertTrue(newest["has_more"])
+        self.assertTrue(older["has_more"])
+        self.assertFalse(
+            {message["id"] for message in newest["messages"]}
+            & {message["id"] for message in older["messages"]}
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -152,12 +152,19 @@ class MethodRouter:
         try:
             db = getattr(getattr(living, 'agent', None), 'conversation_db', None)
             if db is None:
-                return build_response(req_id, result={"messages": []})
+                return build_response(req_id, result={
+                    "messages": [], "has_more": False, "next_before_id": None,
+                })
 
             session_id = p.session_id or None
-            rows = db.get_recent(n=min(p.limit, 200), session_id=session_id)
+            rows, has_more = db.get_history_page(
+                limit=p.limit,
+                session_id=session_id,
+                before_id=p.before_id,
+            )
             messages = [
                 {
+                    "id": r.get("id"),
                     "role": r.get("role", "user"),
                     "content": r.get("content", ""),
                     "created_at": r.get("created_at", 0),
@@ -165,7 +172,11 @@ class MethodRouter:
                 }
                 for r in rows
             ]
-            return build_response(req_id, result={"messages": messages})
+            return build_response(req_id, result={
+                "messages": messages,
+                "has_more": has_more,
+                "next_before_id": rows[0].get("id") if has_more and rows else None,
+            })
         except Exception as e:
             return build_error(req_id, ErrorCode.INTERNAL_ERROR, str(e))
 

@@ -324,6 +324,37 @@ class ConversationDB(SQLiteStore):
         # Return in chronological order
         return [dict(r) for r in reversed(rows)]
 
+    def get_history_page(
+        self,
+        limit: int = 50,
+        session_id: str | None = None,
+        before_id: int | None = None,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Return one reverse-cursor page in chronological display order."""
+        safe_limit = max(1, min(int(limit), 200))
+        clauses: list[str] = []
+        params: list[Any] = []
+        if session_id:
+            clauses.append("session_id = ?")
+            params.append(session_id)
+            with self._cleared_at_lock:
+                cleared_at = self._cleared_at.get(session_id, 0.0)
+            clauses.append("created_at > ?")
+            params.append(cleared_at)
+        if before_id is not None:
+            clauses.append("id < ?")
+            params.append(before_id)
+
+        where = " AND ".join(clauses) if clauses else "1=1"
+        params.append(safe_limit + 1)
+        rows = self._get_conn().execute(
+            f"SELECT * FROM messages WHERE {where} ORDER BY id DESC LIMIT ?",
+            params,
+        ).fetchall()
+        has_more = len(rows) > safe_limit
+        page = rows[:safe_limit]
+        return [dict(row) for row in reversed(page)], has_more
+
     def count(self, session_id: str | None = None) -> int:
         """Total message count."""
         conn = self._get_conn()

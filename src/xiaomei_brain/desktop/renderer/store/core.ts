@@ -59,12 +59,23 @@ function historyMessages(result: Record<string, unknown> | undefined, sessionId:
     const role = row.role === "user" ? "user" : row.role === "assistant" ? "agent" : null;
     if (!role || typeof row.content !== "string") return [];
     return [{
-      id: `history-${sessionId}-${String(row.created_at || index)}-${index}`,
+      id: typeof row.id === "number"
+        ? `history-${sessionId}-${row.id}`
+        : `history-${sessionId}-${String(row.created_at || index)}-${index}`,
       role,
       content: row.content,
       streaming: false,
     } satisfies DisplayMessage];
   });
+}
+
+function historyPagination(result: Record<string, unknown> | undefined): HistoryPaginationState {
+  return {
+    hasMore: result?.has_more === true,
+    beforeId: typeof result?.next_before_id === "number" ? result.next_before_id : null,
+    loading: false,
+    error: "",
+  };
 }
 
 function defaultSessionName(messages: DisplayMessage[]): string {
@@ -136,6 +147,13 @@ export interface ConnectionState {
   error: string;
 }
 
+export interface HistoryPaginationState {
+  hasMore: boolean;
+  beforeId: number | null;
+  loading: boolean;
+  error: string;
+}
+
 export interface AgentLifecycleState {
   status: "idle" | "starting" | "stopping" | "restarting" | "error";
   error: string;
@@ -156,6 +174,7 @@ interface CoreState {
   unreadByAgent: Record<string, number>;
   sessionsByAgent: Record<string, SessionEntry[]>;
   activeSessionByAgent: Record<string, string | null>;
+  historyPaginationByAgent: Record<string, Record<string, HistoryPaginationState>>;
   localAvailabilityByAgent: Record<string, boolean>;
   localInfoByAgent: Record<string, LocalAgentInfo>;
   lifecycleByAgent: Record<string, AgentLifecycleState>;
@@ -175,6 +194,7 @@ interface CoreActions {
   setDraft: (text: string) => void;
   newSession: (name?: string) => Promise<void>;
   switchSession: (sessionId: string) => Promise<void>;
+  loadOlderMessages: () => Promise<void>;
   setMode: (mode: HomeMode) => void;
   setPage: (page: "connect" | "chat") => void;
   setTerminalOpen: (open: boolean) => void;
@@ -203,6 +223,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   unreadByAgent: {},
   sessionsByAgent: {},
   activeSessionByAgent: persisted.activeSessionByAgent ?? {},
+  historyPaginationByAgent: {},
   localAvailabilityByAgent: {},
   localInfoByAgent: {},
   lifecycleByAgent: {},
@@ -360,9 +381,11 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       const agentName = (result.agent_name as string) || host;
       const sessionId = (result.session_id as string) || requestedSessionId || "";
       const history = sessionId
-        ? await window.gateway.getHistory({ agentId, sessionId, limit: 200 })
+        ? await window.gateway.getHistory({ agentId, sessionId, limit: 50 })
         : undefined;
       const messages = history && !history.error ? historyMessages(history.result, sessionId) : [];
+      const pagination = historyPagination(history?.result);
+      if (history?.error) pagination.error = history.error.message;
       const sessions = await fetchAgentSessions(
         agentId,
         sessionId,
@@ -379,7 +402,11 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         s.connectionByAgent[agentId] = { status: "connected", agentName, error: "" };
         s.messagesByAgent[agentId] = messages;
         s.sessionsByAgent[agentId] = sessions;
-        if (sessionId) s.activeSessionByAgent[agentId] = sessionId;
+        if (sessionId) {
+          s.activeSessionByAgent[agentId] = sessionId;
+          if (!s.historyPaginationByAgent[agentId]) s.historyPaginationByAgent[agentId] = {};
+          s.historyPaginationByAgent[agentId][sessionId] = pagination;
+        }
       }));
 
       return true;
@@ -434,9 +461,11 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       const agentName = (result.agent_name as string) || agent.name;
       const sessionId = (result.session_id as string) || requestedSessionId || "";
       const history = sessionId
-        ? await window.gateway.getHistory({ agentId, sessionId, limit: 200 })
+        ? await window.gateway.getHistory({ agentId, sessionId, limit: 50 })
         : undefined;
       const messages = history && !history.error ? historyMessages(history.result, sessionId) : [];
+      const pagination = historyPagination(history?.result);
+      if (history?.error) pagination.error = history.error.message;
       const sessions = await fetchAgentSessions(
         agentId,
         sessionId,
@@ -450,7 +479,11 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         if (savedAgent && savedAgent.source !== "local") savedAgent.name = agentName;
         s.messagesByAgent[agentId] = messages;
         s.sessionsByAgent[agentId] = sessions;
-        if (sessionId) s.activeSessionByAgent[agentId] = sessionId;
+        if (sessionId) {
+          s.activeSessionByAgent[agentId] = sessionId;
+          if (!s.historyPaginationByAgent[agentId]) s.historyPaginationByAgent[agentId] = {};
+          s.historyPaginationByAgent[agentId][sessionId] = pagination;
+        }
       }));
     } catch (err) {
       set(produce((s: CoreState) => {
@@ -499,6 +532,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       delete s.draftByAgent[agentId];
       delete s.sessionsByAgent[agentId];
       delete s.activeSessionByAgent[agentId];
+      delete s.historyPaginationByAgent[agentId];
       delete s.localAvailabilityByAgent[agentId];
       delete s.localInfoByAgent[agentId];
       delete s.lifecycleByAgent[agentId];
@@ -646,6 +680,10 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         s.connectionByAgent[agentId] = { status: "connected", agentName, error: "" };
         if (sessionId) {
           s.activeSessionByAgent[agentId] = sessionId;
+          if (!s.historyPaginationByAgent[agentId]) s.historyPaginationByAgent[agentId] = {};
+          s.historyPaginationByAgent[agentId][sessionId] = {
+            hasMore: false, beforeId: null, loading: false, error: "",
+          };
           if (!s.sessionsByAgent[agentId]) s.sessionsByAgent[agentId] = [];
           if (!s.sessionsByAgent[agentId].some((session) => session.id === sessionId)) {
             s.sessionsByAgent[agentId].unshift({
@@ -696,7 +734,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         return;
       }
 
-      const history = await window.gateway.getHistory({ agentId, sessionId, limit: 200 });
+      const history = await window.gateway.getHistory({ agentId, sessionId, limit: 50 });
       if (history.error) {
         set(produce((s: CoreState) => {
           s.connectionByAgent[agentId] = { status: "error", agentName: agent.name, error: history.error!.message };
@@ -704,10 +742,13 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         return;
       }
       const messages = historyMessages(history.result, sessionId);
+      const pagination = historyPagination(history.result);
       const result = (res.result || {}) as Record<string, unknown>;
       set(produce((s: CoreState) => {
         s.messagesByAgent[agentId] = messages;
         s.activeSessionByAgent[agentId] = sessionId;
+        if (!s.historyPaginationByAgent[agentId]) s.historyPaginationByAgent[agentId] = {};
+        s.historyPaginationByAgent[agentId][sessionId] = pagination;
         s.connectionByAgent[agentId] = {
           status: "connected",
           agentName: (result.agent_name as string) || agent.name,
@@ -722,6 +763,53 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   },
 
   // ── UI ──
+
+  loadOlderMessages: async () => {
+    const agentId = get().activeAgentId;
+    if (!agentId) return;
+    const sessionId = get().activeSessionByAgent[agentId];
+    if (!sessionId) return;
+    const pagination = get().historyPaginationByAgent[agentId]?.[sessionId];
+    if (!pagination?.hasMore || pagination.loading || !pagination.beforeId) return;
+
+    set(produce((s: CoreState) => {
+      const page = s.historyPaginationByAgent[agentId]?.[sessionId];
+      if (page) {
+        page.loading = true;
+        page.error = "";
+      }
+    }));
+
+    try {
+      const response = await window.gateway.getHistory({
+        agentId,
+        sessionId,
+        limit: 50,
+        beforeId: pagination.beforeId,
+      });
+      if (response.error) throw new Error(response.error.message);
+      const olderMessages = historyMessages(response.result, sessionId);
+      const nextPage = historyPagination(response.result);
+
+      set(produce((s: CoreState) => {
+        if (!s.historyPaginationByAgent[agentId]) s.historyPaginationByAgent[agentId] = {};
+        s.historyPaginationByAgent[agentId][sessionId] = nextPage;
+        if (s.activeSessionByAgent[agentId] !== sessionId) return;
+        const currentMessages = s.messagesByAgent[agentId] || [];
+        const currentIds = new Set(currentMessages.map((message) => message.id));
+        const uniqueOlder = olderMessages.filter((message) => !currentIds.has(message.id));
+        s.messagesByAgent[agentId] = [...uniqueOlder, ...currentMessages];
+      }));
+    } catch (error) {
+      set(produce((s: CoreState) => {
+        const page = s.historyPaginationByAgent[agentId]?.[sessionId];
+        if (page) {
+          page.loading = false;
+          page.error = String(error);
+        }
+      }));
+    }
+  },
 
   setMode: (mode) => set(produce((s: CoreState) => { s.mode = mode; })),
   setPage: (page) => set(produce((s: CoreState) => { s.page = page; })),
