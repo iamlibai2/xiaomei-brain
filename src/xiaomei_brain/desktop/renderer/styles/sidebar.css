@@ -404,12 +404,49 @@ body[data-platform="mac"] .sidebar-topbar {
   overflow-x: hidden;
 }
 
-.session-item {
+.session-search {
+  height: 30px;
+  margin: 2px 12px 6px;
+  padding: 0 9px;
   display: flex;
   align-items: center;
-  padding: 6px 12px 6px 36px;
+  gap: 6px;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-color-text-disabled);
+  background: var(--ui-input-bg, transparent);
+}
+
+.session-search:focus-within {
+  border-color: var(--ui-brand-primary);
+  color: var(--ui-color-text-secondary);
+}
+
+.session-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ui-color-text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.session-group-label {
+  padding: 7px 16px 3px;
+  color: var(--ui-color-text-disabled);
+  font-size: 11px;
+}
+
+.session-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 6px 24px;
   margin: 0 12px;
-  height: 30px;
+  min-height: 34px;
   border-radius: var(--ui-radius-sm);
   cursor: pointer;
   transition: background-color 0.15s ease;
@@ -432,6 +469,44 @@ body[data-platform="mac"] .sidebar-topbar {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.session-item-meta {
+  color: var(--ui-color-text-disabled);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.session-list-status {
+  padding: 18px 12px;
+  color: var(--ui-color-text-disabled);
+  font-size: 12px;
+  text-align: center;
+}
+
+.session-load-more {
+  display: block;
+  margin: 8px auto 12px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-brand-primary);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.session-load-more:hover:not(:disabled) {
+  background: var(--ui-todo-menu-bg-hover);
+}
+
+.session-load-more:disabled {
+  color: var(--ui-color-text-disabled);
+  cursor: default;
+}
+
+.session-load-more.error {
+  color: var(--ui-color-danger, #d14343);
 }
 
 .session-item-dot {

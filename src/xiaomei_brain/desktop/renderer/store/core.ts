@@ -110,24 +110,47 @@ function sessionEntries(result: Record<string, unknown> | undefined): SessionEnt
   });
 }
 
+function pinActiveSession(
+  sessions: SessionEntry[],
+  activeSessionId: string,
+  activeMessages: DisplayMessage[],
+): SessionEntry[] {
+  if (!activeSessionId) return sessions;
+  const result = [...sessions];
+  const existingIndex = result.findIndex((session) => session.id === activeSessionId);
+  const active = existingIndex >= 0
+    ? result.splice(existingIndex, 1)[0]
+    : {
+        id: activeSessionId,
+        name: defaultSessionName(activeMessages),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        messageCount: activeMessages.length,
+      };
+  result.unshift(active);
+  return result;
+}
+
 async function fetchAgentSessions(
   agentId: string,
   activeSessionId: string,
   activeMessages: DisplayMessage[],
   fallback: SessionEntry[],
-): Promise<SessionEntry[]> {
-  const response = await window.gateway.listSessions({ agentId, limit: 200 });
-  const sessions = response.error ? [...fallback] : sessionEntries(response.result);
-  if (activeSessionId && !sessions.some((session) => session.id === activeSessionId)) {
-    sessions.unshift({
-      id: activeSessionId,
-      name: defaultSessionName(activeMessages),
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      messageCount: activeMessages.length,
-    });
-  }
-  return sessions;
+): Promise<{ sessions: SessionEntry[]; listState: SessionListState }> {
+  const response = await window.gateway.listSessions({ agentId, limit: 30, offset: 0, query: "" });
+  const fetched = response.error ? [...fallback] : sessionEntries(response.result);
+  const sessions = pinActiveSession(fetched, activeSessionId, activeMessages);
+  return {
+    sessions,
+    listState: {
+      query: "",
+      loading: false,
+      loadingMore: false,
+      hasMore: response.result?.has_more === true,
+      nextOffset: typeof response.result?.next_offset === "number" ? response.result.next_offset : null,
+      error: response.error?.message || "",
+    },
+  };
 }
 
 // ── Types ──
@@ -154,6 +177,15 @@ export interface HistoryPaginationState {
   error: string;
 }
 
+export interface SessionListState {
+  query: string;
+  loading: boolean;
+  loadingMore: boolean;
+  hasMore: boolean;
+  nextOffset: number | null;
+  error: string;
+}
+
 export interface AgentLifecycleState {
   status: "idle" | "starting" | "stopping" | "restarting" | "error";
   error: string;
@@ -173,6 +205,7 @@ interface CoreState {
   activeNav: string;
   unreadByAgent: Record<string, number>;
   sessionsByAgent: Record<string, SessionEntry[]>;
+  sessionListByAgent: Record<string, SessionListState>;
   activeSessionByAgent: Record<string, string | null>;
   historyPaginationByAgent: Record<string, Record<string, HistoryPaginationState>>;
   localAvailabilityByAgent: Record<string, boolean>;
@@ -195,6 +228,8 @@ interface CoreActions {
   newSession: (name?: string) => Promise<void>;
   switchSession: (sessionId: string) => Promise<void>;
   loadOlderMessages: () => Promise<void>;
+  searchSessions: (query: string) => Promise<void>;
+  loadMoreSessions: () => Promise<void>;
   setMode: (mode: HomeMode) => void;
   setPage: (page: "connect" | "chat") => void;
   setTerminalOpen: (open: boolean) => void;
@@ -222,6 +257,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   activeNav: "assistant",
   unreadByAgent: {},
   sessionsByAgent: {},
+  sessionListByAgent: {},
   activeSessionByAgent: persisted.activeSessionByAgent ?? {},
   historyPaginationByAgent: {},
   localAvailabilityByAgent: {},
@@ -386,7 +422,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       const messages = history && !history.error ? historyMessages(history.result, sessionId) : [];
       const pagination = historyPagination(history?.result);
       if (history?.error) pagination.error = history.error.message;
-      const sessions = await fetchAgentSessions(
+      const sessionResult = await fetchAgentSessions(
         agentId,
         sessionId,
         messages,
@@ -401,7 +437,8 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         s.activeAgentId = agentId;
         s.connectionByAgent[agentId] = { status: "connected", agentName, error: "" };
         s.messagesByAgent[agentId] = messages;
-        s.sessionsByAgent[agentId] = sessions;
+        s.sessionsByAgent[agentId] = sessionResult.sessions;
+        s.sessionListByAgent[agentId] = sessionResult.listState;
         if (sessionId) {
           s.activeSessionByAgent[agentId] = sessionId;
           if (!s.historyPaginationByAgent[agentId]) s.historyPaginationByAgent[agentId] = {};
@@ -466,7 +503,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       const messages = history && !history.error ? historyMessages(history.result, sessionId) : [];
       const pagination = historyPagination(history?.result);
       if (history?.error) pagination.error = history.error.message;
-      const sessions = await fetchAgentSessions(
+      const sessionResult = await fetchAgentSessions(
         agentId,
         sessionId,
         messages,
@@ -478,7 +515,8 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         const savedAgent = s.agents.find(a => a.id === agentId);
         if (savedAgent && savedAgent.source !== "local") savedAgent.name = agentName;
         s.messagesByAgent[agentId] = messages;
-        s.sessionsByAgent[agentId] = sessions;
+        s.sessionsByAgent[agentId] = sessionResult.sessions;
+        s.sessionListByAgent[agentId] = sessionResult.listState;
         if (sessionId) {
           s.activeSessionByAgent[agentId] = sessionId;
           if (!s.historyPaginationByAgent[agentId]) s.historyPaginationByAgent[agentId] = {};
@@ -531,6 +569,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       delete s.sendingByAgent[agentId];
       delete s.draftByAgent[agentId];
       delete s.sessionsByAgent[agentId];
+      delete s.sessionListByAgent[agentId];
       delete s.activeSessionByAgent[agentId];
       delete s.historyPaginationByAgent[agentId];
       delete s.localAvailabilityByAgent[agentId];
@@ -763,6 +802,97 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   },
 
   // ── UI ──
+
+  searchSessions: async (query) => {
+    const agentId = get().activeAgentId;
+    if (!agentId || get().connectionByAgent[agentId]?.status !== "connected") return;
+    const normalizedQuery = query.trim();
+    set(produce((s: CoreState) => {
+      s.sessionListByAgent[agentId] = {
+        query: normalizedQuery,
+        loading: true,
+        loadingMore: false,
+        hasMore: false,
+        nextOffset: null,
+        error: "",
+      };
+    }));
+
+    try {
+      const response = await window.gateway.listSessions({
+        agentId,
+        limit: 30,
+        offset: 0,
+        query: normalizedQuery,
+      });
+      if (response.error) throw new Error(response.error.message);
+      const activeSessionId = get().activeSessionByAgent[agentId] || "";
+      const sessions = pinActiveSession(
+        sessionEntries(response.result),
+        activeSessionId,
+        get().messagesByAgent[agentId] || [],
+      );
+      set(produce((s: CoreState) => {
+        if (s.sessionListByAgent[agentId]?.query !== normalizedQuery) return;
+        s.sessionsByAgent[agentId] = sessions;
+        s.sessionListByAgent[agentId] = {
+          query: normalizedQuery,
+          loading: false,
+          loadingMore: false,
+          hasMore: response.result?.has_more === true,
+          nextOffset: typeof response.result?.next_offset === "number" ? response.result.next_offset : null,
+          error: "",
+        };
+      }));
+    } catch (error) {
+      set(produce((s: CoreState) => {
+        const list = s.sessionListByAgent[agentId];
+        if (list?.query === normalizedQuery) {
+          list.loading = false;
+          list.error = String(error);
+        }
+      }));
+    }
+  },
+
+  loadMoreSessions: async () => {
+    const agentId = get().activeAgentId;
+    if (!agentId) return;
+    const list = get().sessionListByAgent[agentId];
+    if (!list?.hasMore || list.loading || list.loadingMore || list.nextOffset === null) return;
+    const query = list.query;
+    const offset = list.nextOffset;
+    set(produce((s: CoreState) => {
+      const current = s.sessionListByAgent[agentId];
+      if (current) {
+        current.loadingMore = true;
+        current.error = "";
+      }
+    }));
+
+    try {
+      const response = await window.gateway.listSessions({ agentId, limit: 30, offset, query });
+      if (response.error) throw new Error(response.error.message);
+      const nextSessions = sessionEntries(response.result);
+      set(produce((s: CoreState) => {
+        const current = s.sessionListByAgent[agentId];
+        if (!current || current.query !== query || current.nextOffset !== offset) return;
+        const existingIds = new Set((s.sessionsByAgent[agentId] || []).map((session) => session.id));
+        s.sessionsByAgent[agentId].push(...nextSessions.filter((session) => !existingIds.has(session.id)));
+        current.loadingMore = false;
+        current.hasMore = response.result?.has_more === true;
+        current.nextOffset = typeof response.result?.next_offset === "number" ? response.result.next_offset : null;
+      }));
+    } catch (error) {
+      set(produce((s: CoreState) => {
+        const current = s.sessionListByAgent[agentId];
+        if (current?.query === query) {
+          current.loadingMore = false;
+          current.error = String(error);
+        }
+      }));
+    }
+  },
 
   loadOlderMessages: async () => {
     const agentId = get().activeAgentId;

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useCoreStore, AgentEntry } from "../../store";
 import { Icon, Button } from "../ui";
@@ -19,6 +19,9 @@ export function ConversationList() {
   const newSession = useCoreStore((s) => s.newSession);
   const switchSession = useCoreStore((s) => s.switchSession);
   const sessionsByAgent = useCoreStore((s) => s.sessionsByAgent);
+  const sessionListByAgent = useCoreStore((s) => s.sessionListByAgent);
+  const searchSessions = useCoreStore((s) => s.searchSessions);
+  const loadMoreSessions = useCoreStore((s) => s.loadMoreSessions);
   const activeSessionId = useCoreStore((s) => s.activeSessionByAgent[s.activeAgentId || ""] || null);
   const terminalOpen = useCoreStore((s) => s.terminalOpen);
   const setTerminalOpen = useCoreStore((s) => s.setTerminalOpen);
@@ -36,6 +39,7 @@ export function ConversationList() {
   const [addHost, setAddHost] = useState("localhost");
   const [addPort, setAddPort] = useState("19767");
   const [addToken, setAddToken] = useState("");
+  const [sessionQuery, setSessionQuery] = useState("");
 
   function handleAddAgent() {
     const port = parseInt(addPort) || 19767;
@@ -51,9 +55,25 @@ export function ConversationList() {
   }
 
   const activeSessions = activeAgentId ? (sessionsByAgent[activeAgentId] || []) : [];
+  const sessionListState = activeAgentId ? sessionListByAgent[activeAgentId] : undefined;
   const sessionBusy = activeAgentId
     ? Boolean(sendingByAgent[activeAgentId] || connectionByAgent[activeAgentId]?.status === "connecting")
     : false;
+
+  useEffect(() => {
+    setSessionQuery(sessionListState?.query || "");
+  }, [activeAgentId]);
+
+  useEffect(() => {
+    if (!activeAgentId || sessionQuery.trim() === (sessionListState?.query || "")) return;
+    const timer = window.setTimeout(() => { void searchSessions(sessionQuery); }, 250);
+    return () => window.clearTimeout(timer);
+  }, [activeAgentId, sessionQuery, sessionListState?.query, searchSessions]);
+
+  const groupedSessions = useMemo(
+    () => groupSessions(activeSessions, activeSessionId),
+    [activeSessions, activeSessionId],
+  );
 
   return (
     <div className={`conversation-list ${collapsed ? "collapsed" : ""}`}>
@@ -182,17 +202,49 @@ export function ConversationList() {
                   <Icon name="plus" size={14} />
                 </button>
               </div>
+              <div className="session-search">
+                <Icon name="search" size={13} />
+                <input
+                  value={sessionQuery}
+                  onChange={(event) => setSessionQuery(event.target.value)}
+                  placeholder={t("sidebar.searchSessions")}
+                  aria-label={t("sidebar.searchSessions")}
+                />
+              </div>
               <div className="session-list">
-                {activeSessions.map((s) => (
-                  <SessionItem
-                    key={s.id}
-                    name={s.name}
-                    isActive={s.id === activeSessionId}
-                    isCurrent={s.id === activeSessionId}
-                    disabled={sessionBusy}
-                    onClick={() => { void switchSession(s.id); }}
-                  />
+                {sessionListState?.loading ? (
+                  <div className="session-list-status">{t("sidebar.loadingSessions")}</div>
+                ) : groupedSessions.length === 0 ? (
+                  <div className="session-list-status">{t("sidebar.noSessionsFound")}</div>
+                ) : groupedSessions.map((group) => (
+                  <div className="session-group" key={group.key}>
+                    <div className="session-group-label">{t(`sidebar.${group.key}`)}</div>
+                    {group.sessions.map((session) => (
+                      <SessionItem
+                        key={session.id}
+                        session={session}
+                        isActive={session.id === activeSessionId}
+                        isCurrent={session.id === activeSessionId}
+                        disabled={sessionBusy}
+                        onClick={() => { void switchSession(session.id); }}
+                      />
+                    ))}
+                  </div>
                 ))}
+                {sessionListState?.error && (
+                  <button className="session-load-more error" onClick={() => { void searchSessions(sessionQuery); }}>
+                    {t("sidebar.retrySessions")}
+                  </button>
+                )}
+                {sessionListState?.hasMore && !sessionListState.loading && !sessionListState.error && (
+                  <button
+                    className="session-load-more"
+                    disabled={sessionListState.loadingMore}
+                    onClick={() => { void loadMoreSessions(); }}
+                  >
+                    {sessionListState.loadingMore ? t("sidebar.loadingSessions") : t("sidebar.loadMoreSessions")}
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -330,13 +382,13 @@ function AgentItem({
 // ── Session item ──
 
 function SessionItem({
-  name,
+  session,
   isActive,
   isCurrent,
   disabled = false,
   onClick,
 }: {
-  name: string;
+  session: import("../../types").SessionEntry;
   isActive: boolean;
   isCurrent: boolean;
   disabled?: boolean;
@@ -350,8 +402,40 @@ function SessionItem({
     >
       <span className="session-item-name">
         {isCurrent && <span className="session-item-dot" />}
-        {name}
+        {session.name}
       </span>
+      <span className="session-item-meta">{formatSessionMeta(session)}</span>
     </div>
   );
+}
+
+function groupSessions(sessions: import("../../types").SessionEntry[], activeSessionId: string | null) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const yesterday = today - 24 * 60 * 60 * 1000;
+  const groups = [
+    { key: "currentSession", sessions: sessions.filter((session) => session.id === activeSessionId) },
+    { key: "today", sessions: [] as import("../../types").SessionEntry[] },
+    { key: "yesterday", sessions: [] as import("../../types").SessionEntry[] },
+    { key: "earlier", sessions: [] as import("../../types").SessionEntry[] },
+  ];
+  for (const session of sessions) {
+    if (session.id === activeSessionId) continue;
+    const timestamp = session.updatedAt || session.createdAt;
+    if (timestamp >= today) groups[1].sessions.push(session);
+    else if (timestamp >= yesterday) groups[2].sessions.push(session);
+    else groups[3].sessions.push(session);
+  }
+  return groups.filter((group) => group.sessions.length > 0);
+}
+
+function formatSessionMeta(session: import("../../types").SessionEntry): string {
+  const timestamp = session.updatedAt || session.createdAt;
+  const date = new Date(timestamp);
+  const now = new Date();
+  const sameDay = date.toDateString() === now.toDateString();
+  const time = sameDay
+    ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : date.toLocaleDateString([], { month: "numeric", day: "numeric" });
+  return session.messageCount === undefined ? time : `${time} · ${session.messageCount}`;
 }

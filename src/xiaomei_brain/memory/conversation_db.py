@@ -417,37 +417,50 @@ class ConversationDB(SQLiteStore):
         ).fetchall()
         return [r[0] for r in rows]
 
-    def list_sessions(self, limit: int = 100) -> list[dict[str, Any]]:
+    def list_sessions(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        query: str = "",
+    ) -> list[dict[str, Any]]:
         """Return recent chat sessions with display metadata.
 
         Only user/assistant messages participate in the summary so internal
         tool traces do not create or inflate visible Desktop conversations.
         """
-        safe_limit = max(1, min(int(limit), 500))
+        safe_limit = max(1, min(int(limit), 501))
+        safe_offset = max(0, int(offset))
+        normalized_query = query.strip()
         conn = self._get_conn()
         rows = conn.execute(
             """
-            SELECT
-                m.session_id,
-                MIN(m.created_at) AS created_at,
-                MAX(m.created_at) AS updated_at,
-                COUNT(*) AS message_count,
-                COALESCE((
-                    SELECT SUBSTR(first_user.content, 1, 200)
-                    FROM messages AS first_user
-                    WHERE first_user.session_id = m.session_id
-                      AND first_user.role = 'user'
-                    ORDER BY first_user.created_at ASC, first_user.id ASC
-                    LIMIT 1
-                ), '') AS first_user_message
-            FROM messages AS m
-            WHERE m.session_id <> ''
-              AND m.role IN ('user', 'assistant')
-            GROUP BY m.session_id
+            WITH summaries AS (
+                SELECT
+                    m.session_id,
+                    MIN(m.created_at) AS created_at,
+                    MAX(m.created_at) AS updated_at,
+                    COUNT(*) AS message_count,
+                    COALESCE((
+                        SELECT SUBSTR(first_user.content, 1, 200)
+                        FROM messages AS first_user
+                        WHERE first_user.session_id = m.session_id
+                          AND first_user.role = 'user'
+                        ORDER BY first_user.created_at ASC, first_user.id ASC
+                        LIMIT 1
+                    ), '') AS first_user_message
+                FROM messages AS m
+                WHERE m.session_id <> ''
+                  AND m.role IN ('user', 'assistant')
+                GROUP BY m.session_id
+            )
+            SELECT * FROM summaries
+            WHERE ? = ''
+               OR INSTR(LOWER(session_id), LOWER(?)) > 0
+               OR INSTR(LOWER(first_user_message), LOWER(?)) > 0
             ORDER BY updated_at DESC
-            LIMIT ?
+            LIMIT ? OFFSET ?
             """,
-            (safe_limit,),
+            (normalized_query, normalized_query, normalized_query, safe_limit, safe_offset),
         ).fetchall()
         return [dict(row) for row in rows]
 

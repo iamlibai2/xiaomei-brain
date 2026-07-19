@@ -59,7 +59,9 @@ class ChatHistoryParams(BaseModel):
 
 
 class ChatSessionsParams(BaseModel):
-    limit: int = Field(default=100, ge=1, le=500)
+    limit: int = Field(default=30, ge=1, le=200)
+    offset: int = Field(default=0, ge=0)
+    query: str = Field(default="", max_length=100)
 
 
 # ── Wire frames ──────────────────────────────

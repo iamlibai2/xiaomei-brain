@@ -214,10 +214,14 @@ export function registerIpcHandlers(
 
   ipcMain.handle(
     "gateway:listSessions",
-    async (_event, args: { limit?: number; agentId: string }) => {
+    async (_event, args: { limit?: number; offset?: number; query?: string; agentId: string }) => {
       const client = getClient(args.agentId);
       if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
-      return client.rpc("chat.sessions", { limit: args.limit || 100 });
+      return client.rpc("chat.sessions", {
+        limit: args.limit || 30,
+        offset: args.offset || 0,
+        query: args.query || "",
+      });
     }
   );
 

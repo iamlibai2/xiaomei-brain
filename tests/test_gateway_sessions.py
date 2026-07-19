@@ -87,6 +87,42 @@ class GatewaySessionsTest(unittest.TestCase):
             & {message["id"] for message in older["messages"]}
         )
 
+    def test_chat_sessions_supports_search_and_offset_pagination(self):
+        self.db.log("session-alpha", "user", "ordinary discussion")
+        self.db.log("session-beta", "user", "needle in the title")
+        self.db.log("session-gamma", "user", "another discussion")
+        living = SimpleNamespace(agent=SimpleNamespace(conversation_db=self.db))
+        router = MethodRouter(living=living)
+        router._auth_sessions.add("desktop-connection")
+
+        first_page = router.dispatch(
+            "desktop-connection",
+            "sessions-1",
+            "chat.sessions",
+            {"limit": 2, "offset": 0},
+        )["result"]
+        second_page = router.dispatch(
+            "desktop-connection",
+            "sessions-2",
+            "chat.sessions",
+            {"limit": 2, "offset": first_page["next_offset"]},
+        )["result"]
+        search = router.dispatch(
+            "desktop-connection",
+            "sessions-3",
+            "chat.sessions",
+            {"query": "needle", "limit": 30},
+        )["result"]
+
+        self.assertEqual(len(first_page["sessions"]), 2)
+        self.assertTrue(first_page["has_more"])
+        self.assertEqual(len(second_page["sessions"]), 1)
+        self.assertFalse(second_page["has_more"])
+        self.assertEqual(
+            [session["session_id"] for session in search["sessions"]],
+            ["session-beta"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

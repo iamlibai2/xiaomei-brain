@@ -193,10 +193,23 @@ class MethodRouter:
         try:
             db = getattr(getattr(living, "agent", None), "conversation_db", None)
             if db is None:
-                return build_response(req_id, result={"sessions": []})
+                return build_response(req_id, result={
+                    "sessions": [], "has_more": False, "next_offset": None,
+                })
+            rows = db.list_sessions(
+                limit=p.limit + 1,
+                offset=p.offset,
+                query=p.query,
+            )
+            has_more = len(rows) > p.limit
+            sessions = rows[:p.limit]
             return build_response(
                 req_id,
-                result={"sessions": db.list_sessions(limit=p.limit)},
+                result={
+                    "sessions": sessions,
+                    "has_more": has_more,
+                    "next_offset": p.offset + len(sessions) if has_more else None,
+                },
             )
         except Exception as e:
             return build_error(req_id, ErrorCode.INTERNAL_ERROR, str(e))
