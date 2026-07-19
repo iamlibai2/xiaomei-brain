@@ -14,6 +14,9 @@ export function registerIpcHandlers(
 ): void {
   const terminalMgr = new TerminalManager();
   const runtimeManager = new RuntimeManager(config);
+  void runtimeManager.warmup().catch((error) => {
+    console.error("[runtime] background initialization failed", error);
+  });
 
   ipcMain.handle("localAgents:discover", async () => {
     return discoverLocalAgents();

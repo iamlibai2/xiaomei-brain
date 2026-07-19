@@ -1,2 +1,5 @@
 node_modules/
 *.log
+runtime-stage/
+release/
+.electron-builder-cache/

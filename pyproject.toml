@@ -72,6 +72,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/xiaomei_brain"]
+exclude = [
+    "src/xiaomei_brain/desktop/**",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

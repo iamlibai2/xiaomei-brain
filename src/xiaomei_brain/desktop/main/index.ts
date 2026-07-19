@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain } from "electron";
+import { existsSync } from "fs";
 import path from "path";
 import { autoUpdater } from "electron-updater";
 import { GatewayClient } from "./gateway-client";
@@ -76,8 +77,14 @@ app.whenReady().then(() => {
   registerIpcHandlers(gateway, config, () => mainWindow);
 
   // Auto-update: dev 环境跳过，打包后才生效
-  if (!process.env.NODE_ENV || process.env.NODE_ENV !== "development") {
-    autoUpdater.checkForUpdatesAndNotify();
+  const updateConfig = path.join(process.resourcesPath, "app-update.yml");
+  if (
+    (!process.env.NODE_ENV || process.env.NODE_ENV !== "development")
+    && existsSync(updateConfig)
+  ) {
+    void autoUpdater.checkForUpdatesAndNotify().catch((error) => {
+      console.error("[updater] update check failed", error);
+    });
   }
 });
 

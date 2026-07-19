@@ -1,13 +1,28 @@
 appId: com.xiaomei.brain.desktop
 productName: xiaomei-brain
+npmRebuild: false
 directories:
   output: release
 files:
   - dist/**/*
   - package.json
+asarUnpack:
+  - node_modules/node-pty/**/*
+extraResources:
+  - from: runtime-stage/package
+    to: runtime-package
+    filter:
+      - "**/*"
 win:
-  target: nsis
-  icon: assets/icon.ico
+  target: msi
+  icon: assets/icon.png
+  artifactName: "xiaomei-brain-${version}-setup.${ext}"
+  signAndEditExecutable: false
+msi:
+  oneClick: true
+  perMachine: false
+  additionalLightArgs:
+    - -sval
 mac:
   target: dmg
   icon: assets/icon.icns

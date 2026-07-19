@@ -1,0 +1,15 @@
+# Core dependencies bundled into the Desktop Agent Runtime.
+# Local embedding dependencies (sentence-transformers, modelscope, torch) are
+# intentionally omitted; Desktop uses the shared HTTP embedding service.
+requests>=2.31.0
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pyyaml>=6.0
+lancedb>=0.4.0
+pylance
+rich>=13.0.0
+pydantic>=2.0
+numpy>=1.24.0
+jsonschema>=4.0
+psutil>=5.9.0
+mcp>=1.0.0
