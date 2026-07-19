@@ -252,8 +252,14 @@ export function registerIpcHandlers(
           sessionId: args.sessionId,
         });
       });
+      notification.on("show", () => {
+        console.info(`[notification] shown for agent ${args.agentId}`);
+      });
       notification.on("close", releaseNotification);
-      notification.on("failed", releaseNotification);
+      notification.on("failed", (_event, error) => {
+        console.error(`[notification] failed for agent ${args.agentId}: ${error}`);
+        releaseNotification();
+      });
       notification.show();
       return { shown: true };
     }

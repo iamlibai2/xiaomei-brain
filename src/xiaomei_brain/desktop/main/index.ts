@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, shell } from "electron";
 import { existsSync } from "fs";
 import path from "path";
 import { autoUpdater } from "electron-updater";
@@ -8,14 +8,40 @@ import { registerIpcHandlers } from "./ipc-handlers";
 
 const isMac = process.platform === "darwin";
 const isWindows = process.platform === "win32";
+const windowsAppId = app.isPackaged ? "com.xiaomei.brain.desktop" : process.execPath;
 
 if (isWindows) {
-  app.setAppUserModelId("com.xiaomei.brain.desktop");
+  app.setAppUserModelId(windowsAppId);
 }
 
 let mainWindow: BrowserWindow | null = null;
 const gateway = new GatewayClient();
 const config = new ConfigStore();
+
+function registerDevelopmentNotificationIdentity(): void {
+  if (!isWindows || app.isPackaged) return;
+
+  const shortcutPath = path.join(
+    app.getPath("appData"),
+    "Microsoft",
+    "Windows",
+    "Start Menu",
+    "Programs",
+    "xiaomei-brain Development.lnk",
+  );
+  const shortcutDetails: Electron.ShortcutDetails = {
+    target: process.execPath,
+    description: "Electron development runtime for xiaomei-brain",
+    appUserModelId: windowsAppId,
+    icon: process.execPath,
+    iconIndex: 0,
+  };
+  const operation = existsSync(shortcutPath) ? "update" : "create";
+  const registered = shell.writeShortcutLink(shortcutPath, operation, shortcutDetails);
+  if (!registered) {
+    console.warn(`[notification] failed to register development shortcut: ${shortcutPath}`);
+  }
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -77,6 +103,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  registerDevelopmentNotificationIdentity();
   createWindow();
   registerIpcHandlers(gateway, config, () => mainWindow);
 
