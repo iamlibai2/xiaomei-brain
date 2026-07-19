@@ -27,6 +27,7 @@ const CHANNEL_MAP = {
   },
   localAgents: {
     discover:        { invoke: "localAgents:discover" },
+    control:         { invoke: "localAgents:control" },
   },
   win: {
     minimize:          { send: "window:minimize" },

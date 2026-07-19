@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { produce } from "immer";
-import type { AgentEntry, LocalAgentInfo, SessionEntry } from "../types";
+import type { AgentEntry, AgentLifecycleAction, LocalAgentInfo, SessionEntry } from "../types";
 
 // ── Persistence (manual, avoid zustand/persist rehydration during render) ──
 
@@ -45,6 +45,11 @@ export interface ConnectionState {
   error: string;
 }
 
+export interface AgentLifecycleState {
+  status: "idle" | "starting" | "stopping" | "restarting" | "error";
+  error: string;
+}
+
 interface CoreState {
   connectionByAgent: Record<string, ConnectionState>;
   messagesByAgent: Record<string, DisplayMessage[]>;
@@ -62,6 +67,8 @@ interface CoreState {
   sessionMessages: Record<string, Record<string, DisplayMessage[]>>;
   activeSessionByAgent: Record<string, string | null>;
   localAvailabilityByAgent: Record<string, boolean>;
+  localInfoByAgent: Record<string, LocalAgentInfo>;
+  lifecycleByAgent: Record<string, AgentLifecycleState>;
   localDiscoveryComplete: boolean;
   localDiscoveryError: string;
 }
@@ -84,6 +91,7 @@ interface CoreActions {
   setActiveNav: (nav: string) => void;
   clearUnread: (agentId: string) => void;
   refreshLocalAgents: () => Promise<void>;
+  controlLocalAgent: (agentId: string, action: AgentLifecycleAction) => Promise<void>;
 }
 
 // ── Store ──
@@ -107,6 +115,8 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   sessionMessages: {},
   activeSessionByAgent: {},
   localAvailabilityByAgent: {},
+  localInfoByAgent: {},
+  lifecycleByAgent: {},
   localDiscoveryComplete: false,
   localDiscoveryError: "",
 
@@ -140,6 +150,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
           }
 
           s.localAvailabilityByAgent[agentId] = localAgent.online;
+          s.localInfoByAgent[agentId] = localAgent;
           if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
           if (!s.connectionByAgent[agentId]) {
             s.connectionByAgent[agentId] = {
@@ -167,6 +178,62 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         s.localDiscoveryError = String(error);
       }));
     }
+  },
+
+  controlLocalAgent: async (agentId, action) => {
+    const agent = get().agents.find((entry) => entry.id === agentId);
+    if (!agent || agent.source !== "local" || !agent.localAgentId) return;
+
+    const pendingStatus = action === "start"
+      ? "starting"
+      : action === "stop"
+        ? "stopping"
+        : "restarting";
+    set(produce((s: CoreState) => {
+      s.lifecycleByAgent[agentId] = { status: pendingStatus, error: "" };
+      if (action !== "start" && s.connectionByAgent[agentId]) {
+        s.connectionByAgent[agentId].status = "disconnected";
+      }
+    }));
+
+    const result = await window.localAgents.control({
+      agentId: agent.localAgentId,
+      connectionId: agentId,
+      action,
+    });
+    if (!result.ok) {
+      await get().refreshLocalAgents();
+      set(produce((s: CoreState) => {
+        s.lifecycleByAgent[agentId] = { status: "error", error: result.message };
+      }));
+      return;
+    }
+
+    const expectedOnline = action !== "stop";
+    let reachedExpectedState = false;
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+      await get().refreshLocalAgents();
+      if (get().localAvailabilityByAgent[agentId] === expectedOnline) {
+        reachedExpectedState = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+
+    if (!reachedExpectedState) {
+      set(produce((s: CoreState) => {
+        s.lifecycleByAgent[agentId] = {
+          status: "error",
+          error: `Agent did not become ${expectedOnline ? "online" : "offline"} in time`,
+        };
+      }));
+      return;
+    }
+
+    set(produce((s: CoreState) => {
+      s.lifecycleByAgent[agentId] = { status: "idle", error: "" };
+    }));
+    if (expectedOnline) await get().connectToAgent(agentId);
   },
 
   // ── Connect (first-time from ConnectPage) ──
@@ -310,6 +377,9 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       delete s.sessionsByAgent[agentId];
       delete s.sessionMessages[agentId];
       delete s.activeSessionByAgent[agentId];
+      delete s.localAvailabilityByAgent[agentId];
+      delete s.localInfoByAgent[agentId];
+      delete s.lifecycleByAgent[agentId];
       s.agents = s.agents.filter(a => a.id !== agentId);
       if (s.activeAgentId === agentId) {
         s.activeAgentId = s.agents.length > 0 ? s.agents[0].id : null;

@@ -25,6 +25,18 @@ export interface LocalAgentInfo {
   host: string;
   port: number;
   online: boolean;
+  pid?: number;
+  startedAt?: string;
+}
+
+export type AgentLifecycleAction = "start" | "stop" | "restart";
+
+export interface AgentLifecycleResult {
+  ok: boolean;
+  action: AgentLifecycleAction;
+  agentId: string;
+  message: string;
+  runtimeSource?: "environment" | "config" | "virtualenv" | "bundled" | "path";
 }
 
 // ── Session (conversation) entry ──
@@ -54,6 +66,7 @@ export interface GatewayBridge {
 
 export interface LocalAgentsBridge {
   discover(): Promise<LocalAgentInfo[]>;
+  control(args: { agentId: string; connectionId: string; action: AgentLifecycleAction }): Promise<AgentLifecycleResult>;
 }
 
 export interface WinBridge {

@@ -27,7 +27,9 @@ export type IconName =
   | "clock"
   | "info"
   | "external-link"
-  | "terminal";
+  | "terminal"
+  | "play"
+  | "power";
 
 interface IconProps {
   name: IconName;
@@ -198,6 +200,13 @@ const ICON_PATHS: Record<IconName, React.ReactNode> = {
       <rect x="2" y="3" width="20" height="18" rx="2" />
       <polyline points="6 8 10 12 6 16" />
       <line x1="12" y1="16" x2="18" y2="16" />
+    </>
+  ),
+  play: <polygon points="5 3 19 12 5 21 5 3" />,
+  power: (
+    <>
+      <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
+      <line x1="12" y1="2" x2="12" y2="12" />
     </>
   ),
 };

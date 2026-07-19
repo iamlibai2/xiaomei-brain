@@ -706,6 +706,54 @@ body[data-platform="mac"] .sidebar-topbar {
   margin-right: 4px;
 }
 
+.agent-lifecycle-actions {
+  display: none;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.agent-item:hover .agent-lifecycle-actions,
+.agent-lifecycle-actions:has(.agent-lifecycle-spinner) {
+  display: flex;
+}
+
+.agent-lifecycle-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-color-text-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.agent-lifecycle-btn:hover {
+  background: var(--ui-button-ghost-bg-hover);
+  color: var(--ui-color-text-primary);
+}
+
+.agent-lifecycle-btn.start {
+  color: var(--ui-status-success);
+}
+
+.agent-lifecycle-btn.danger:hover {
+  color: var(--ui-color-text-error-default);
+}
+
+.agent-lifecycle-spinner {
+  color: var(--ui-color-text-tertiary);
+  animation: agent-spin 1s linear infinite;
+}
+
+@keyframes agent-spin {
+  to { transform: rotate(360deg); }
+}
+
 @keyframes agent-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }

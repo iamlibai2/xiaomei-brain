@@ -5,7 +5,8 @@ import { app } from "electron";
 /**
  * Thin JSON-file config for Electron-local settings.
  * Only stores what the desktop needs before the Python backend is available
- * (last connection host/port). Everything else lives in the Python backend.
+ * (last connection host/port and an optional development runtime override).
+ * Everything else lives in the Python backend.
  */
 export class ConfigStore {
   private filePath: string;

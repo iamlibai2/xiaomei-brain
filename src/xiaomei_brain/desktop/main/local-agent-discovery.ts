@@ -10,6 +10,8 @@ export interface LocalAgentInfo {
   host: string;
   port: number;
   online: boolean;
+  pid?: number;
+  startedAt?: string;
 }
 
 interface LocalAgentConfig {
@@ -86,6 +88,27 @@ async function readBrainYamlPort(agentDir: string): Promise<number | null> {
   }
 }
 
+async function readPidInfo(agentDir: string): Promise<{ pid?: number; startedAt?: string }> {
+  try {
+    const data = JSON.parse(await fs.readFile(path.join(agentDir, "agent.pid"), "utf8")) as {
+      pid?: unknown;
+      started_at?: unknown;
+    };
+    if (!Number.isInteger(data.pid) || (data.pid as number) <= 0) return {};
+    try {
+      process.kill(data.pid as number, 0);
+    } catch {
+      return {};
+    }
+    return {
+      pid: data.pid as number,
+      startedAt: typeof data.started_at === "string" ? data.started_at : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
 function probePort(host: string, port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = net.createConnection({ host, port });
@@ -123,12 +146,14 @@ export async function discoverLocalAgents(baseDir = path.join(os.homedir(), ".xi
 
       const configuredName = typeof config.name === "string" ? config.name.trim() : "";
       const name = configuredName || await readIdentityName(agentDir) || entry.name;
+      const pidInfo = await readPidInfo(agentDir);
       return {
         agentId: entry.name,
         name,
         host: LOCAL_HOST,
         port,
         online: await probePort(LOCAL_HOST, port),
+        ...pidInfo,
       };
     }));
 

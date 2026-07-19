@@ -3,6 +3,7 @@ import { GatewayClient } from "./gateway-client";
 import { ConfigStore } from "./config-store";
 import { TerminalManager } from "./terminal-manager";
 import { discoverLocalAgents } from "./local-agent-discovery";
+import { AgentLifecycleAction, RuntimeManager } from "./runtime-manager";
 
 const connections = new Map<string, GatewayClient>();
 
@@ -12,9 +13,29 @@ export function registerIpcHandlers(
   getWindow: () => BrowserWindow | null
 ): void {
   const terminalMgr = new TerminalManager();
+  const runtimeManager = new RuntimeManager(config);
 
   ipcMain.handle("localAgents:discover", async () => {
     return discoverLocalAgents();
+  });
+
+  ipcMain.handle("localAgents:control", async (_event, args: {
+    agentId: string;
+    connectionId: string;
+    action: AgentLifecycleAction;
+  }) => {
+    if (!["start", "stop", "restart"].includes(args.action)) {
+      return { ok: false, action: args.action, agentId: args.agentId, message: "Invalid lifecycle action" };
+    }
+
+    if (args.action === "stop" || args.action === "restart") {
+      const client = connections.get(args.connectionId);
+      if (client) {
+        client.disconnect();
+        connections.delete(args.connectionId);
+      }
+    }
+    return runtimeManager.control(args.agentId, args.action);
   });
 
   // Helper: get or warn

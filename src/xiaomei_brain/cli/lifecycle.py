@@ -105,11 +105,14 @@ def _is_process_alive(pid: int, agent_id: str) -> bool:
     import psutil
     try:
         proc = psutil.Process(pid)
-        # 验证进程是 Python 且命令行包含该 agent_id
+        # 支持两种标准启动形式：
+        #   python -m xiaomei_brain run <agent_id>
+        #   <venv>/Scripts/xiaomei-brain run <agent_id>
         if not proc.is_running():
             return False
         cmdline = proc.cmdline()
-        if not any("xiaomei_brain" in arg for arg in cmdline):
+        normalized = " ".join(cmdline).lower()
+        if "xiaomei_brain" not in normalized and "xiaomei-brain" not in normalized:
             return False
         if agent_id not in cmdline:
             return False
@@ -296,20 +299,24 @@ def cmd_restart(args: list[str]) -> None:
     # 停止
     cmd_stop([agent_id])
 
-    # 提取原参数（跳过 stop 命令本身的参数）
-    if old_args:
-        # args 格式: ["/path/python", "-m", "xiaomei_brain", "run", "xiaomei", ...]
-        # 找到 "run" 之后的参数
-        try:
-            run_idx = old_args.index("run")
-            restart_args = old_args[run_idx + 1:]  # e.g. ["xiaomei", "--cli"]
-        except ValueError:
-            restart_args = [agent_id]
-    else:
-        restart_args = [agent_id]
+    restart_args = _build_restart_args(agent_id, old_args)
 
     print(f"正在重启 agent '{agent_id}'...")
     cmd_start(restart_args)
+
+
+def _build_restart_args(agent_id: str, old_args: list[str]) -> list[str]:
+    """将旧的 ``run`` 参数转换为 ``start`` 支持的参数。
+
+    ``cmd_start`` 会自动为子进程添加 ``--cli``，因此不能把旧进程中的
+    ``--cli`` 原样传给 start 的 argparse。
+    """
+    restart_args = [agent_id]
+    if "-n" in old_args or "--no-consciousness" in old_args:
+        restart_args.append("--no-consciousness")
+    if "--legacy" in old_args:
+        restart_args.append("--legacy")
+    return restart_args
 
 
 # ── 状态可视化常量和工具 ─────────────────────────────────────

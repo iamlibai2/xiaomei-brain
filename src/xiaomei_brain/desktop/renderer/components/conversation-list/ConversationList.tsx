@@ -27,6 +27,9 @@ export function ConversationList() {
   const sendingByAgent = useCoreStore((s) => s.sendingByAgent);
   const localAvailabilityByAgent = useCoreStore((s) => s.localAvailabilityByAgent);
   const refreshLocalAgents = useCoreStore((s) => s.refreshLocalAgents);
+  const localInfoByAgent = useCoreStore((s) => s.localInfoByAgent);
+  const lifecycleByAgent = useCoreStore((s) => s.lifecycleByAgent);
+  const controlLocalAgent = useCoreStore((s) => s.controlLocalAgent);
 
   const displayName = userId || t("sidebar.defaultUserName");
 
@@ -72,7 +75,13 @@ export function ConversationList() {
                 <button
                   key={a.id}
                   className={`sidebar-collapsed-agent-btn ${isActive ? "active" : ""} ${sendingByAgent[a.id] ? "working" : ""}`}
-                  onClick={() => switchAgent(a.id)}
+                  onClick={() => {
+                    if (a.source === "local" && localAvailabilityByAgent[a.id] === false) {
+                      void controlLocalAgent(a.id, "start");
+                    } else {
+                      void switchAgent(a.id);
+                    }
+                  }}
                   title={`${a.name} (${a.host}:${a.port}) — ${conn?.status || "disconnected"}`}
                 >
                   {a.name.charAt(0)}
@@ -149,7 +158,10 @@ export function ConversationList() {
                 isWorking={sendingByAgent[a.id] || false}
                 unreadCount={unreadByAgent[a.id] || 0}
                 localOnline={a.source === "local" ? localAvailabilityByAgent[a.id] : undefined}
+                localInfo={localInfoByAgent[a.id]}
+                lifecycle={lifecycleByAgent[a.id]}
                 onSelect={() => switchAgent(a.id)}
+                onLifecycle={(action) => { void controlLocalAgent(a.id, action); }}
               />
             ))
           )}
@@ -217,7 +229,10 @@ function AgentItem({
   isWorking,
   unreadCount,
   localOnline,
+  localInfo,
+  lifecycle,
   onSelect,
+  onLifecycle,
 }: {
   agent: AgentEntry;
   isActive: boolean;
@@ -225,7 +240,10 @@ function AgentItem({
   isWorking: boolean;
   unreadCount: number;
   localOnline?: boolean;
+  localInfo?: import("../../types").LocalAgentInfo;
+  lifecycle?: import("../../store").AgentLifecycleState;
   onSelect: () => void;
+  onLifecycle: (action: import("../../types").AgentLifecycleAction) => void;
 }) {
   const { t } = useTranslation();
   const status = connection?.status || "disconnected";
@@ -236,6 +254,14 @@ function AgentItem({
       : status === "connecting"
         ? "connecting"
         : "disconnected";
+  const lifecycleBusy = lifecycle && !["idle", "error"].includes(lifecycle.status);
+  const lifecycleLabel = lifecycle?.status === "starting"
+    ? t("sidebar.agentStarting")
+    : lifecycle?.status === "stopping"
+      ? t("sidebar.agentStopping")
+      : lifecycle?.status === "restarting"
+        ? t("sidebar.agentRestarting")
+        : "";
 
   return (
     <div
@@ -246,18 +272,54 @@ function AgentItem({
       <div className="agent-info">
         <span className="agent-name">{agent.name}</span>
         <span className="agent-host">
-          {isWorking
-            ? t("sidebar.agentWorking")
+          {lifecycleBusy
+            ? lifecycleLabel
+            : isWorking
+              ? t("sidebar.agentWorking")
             : localOnline === false
               ? t("sidebar.agentOffline")
               : localOnline === true && status !== "connected"
                 ? t("sidebar.agentAvailable")
-                : `${agent.host}:${agent.port}`}
+                : `${agent.host}:${agent.port}${localInfo?.pid ? ` · PID ${localInfo.pid}` : ""}`}
         </span>
       </div>
+      {agent.source === "local" && (
+        <div className="agent-lifecycle-actions">
+          {lifecycleBusy ? (
+            <Icon name="refresh" size={13} className="agent-lifecycle-spinner" />
+          ) : localOnline ? (
+            <>
+              <button
+                className="agent-lifecycle-btn"
+                onClick={(event) => { event.stopPropagation(); onLifecycle("restart"); }}
+                title={t("sidebar.restartAgent")}
+              >
+                <Icon name="refresh" size={13} />
+              </button>
+              <button
+                className="agent-lifecycle-btn danger"
+                onClick={(event) => { event.stopPropagation(); onLifecycle("stop"); }}
+                title={t("sidebar.stopAgent")}
+              >
+                <Icon name="power" size={13} />
+              </button>
+            </>
+          ) : (
+            <button
+              className="agent-lifecycle-btn start"
+              onClick={(event) => { event.stopPropagation(); onLifecycle("start"); }}
+              title={t("sidebar.startAgent")}
+            >
+              <Icon name="play" size={13} />
+            </button>
+          )}
+        </div>
+      )}
       <span
         className={`agent-status-dot ${localOnline === true && status === "disconnected" ? "available" : statusClass}`}
-        title={isWorking
+        title={lifecycle?.status === "error"
+          ? lifecycle.error
+          : isWorking
           ? t("sidebar.agentWorking")
           : localOnline === false
             ? t("sidebar.agentOffline")
