@@ -1,0 +1,140 @@
+.about-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(12, 16, 24, 0.58);
+  backdrop-filter: blur(3px);
+  -webkit-app-region: no-drag;
+}
+
+.about-dialog {
+  width: min(680px, 92vw);
+  max-height: 86vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--ui-bg-primary);
+  border: 1px solid var(--ui-border-default);
+  border-radius: var(--ui-radius-2xl);
+  box-shadow: var(--ui-shadow-lg);
+}
+
+.about-dialog.with-log {
+  width: min(880px, 94vw);
+}
+
+.about-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 22px 24px 16px;
+  border-bottom: 1px solid var(--ui-border-subtle);
+}
+
+.about-header h2 {
+  margin: 0;
+  font-size: 19px;
+}
+
+.about-header p {
+  margin: 5px 0 0;
+  color: var(--ui-color-text-secondary);
+  font-size: 12px;
+}
+
+.about-close {
+  border: 0;
+  background: transparent;
+  color: var(--ui-color-text-secondary);
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.about-details {
+  padding: 12px 24px 6px;
+}
+
+.about-info-row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+  min-height: 34px;
+}
+
+.about-info-row > span {
+  color: var(--ui-color-text-secondary);
+  font-size: 12px;
+}
+
+.about-info-row code {
+  overflow: hidden;
+  color: var(--ui-color-text-primary);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.about-loading {
+  padding: 32px 24px;
+  color: var(--ui-color-text-secondary);
+}
+
+.about-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 24px 20px;
+}
+
+.about-error {
+  margin: -8px 24px 16px;
+  color: #f64041;
+  font-size: 12px;
+}
+
+.about-log-panel {
+  min-height: 220px;
+  margin: 0 24px 24px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--ui-border-default);
+  border-radius: var(--ui-radius-lg);
+  background: #11151d;
+}
+
+.about-log-header {
+  height: 34px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  color: #c7cedb;
+  font-size: 12px;
+}
+
+.about-log-header button {
+  border: 0;
+  background: transparent;
+  color: #91a7ff;
+  cursor: pointer;
+}
+
+.about-log-panel pre {
+  min-height: 0;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  color: #c7cedb;
+  font: 11px/1.55 Consolas, "Cascadia Mono", monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

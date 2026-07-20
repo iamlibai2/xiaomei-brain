@@ -44,7 +44,14 @@ export function registerIpcHandlers(
       connectionSessions.delete(args.connectionId);
       connectionUsers.delete(args.connectionId);
     }
-    return runtimeManager.control(args.agentId, args.action);
+    console.info(`[runtime] ${args.action} requested for agent ${args.agentId}`);
+    const result = await runtimeManager.control(args.agentId, args.action);
+    if (result.ok) {
+      console.info(`[runtime] ${args.action} succeeded for agent ${args.agentId}: ${result.message}`);
+    } else {
+      console.error(`[runtime] ${args.action} failed for agent ${args.agentId}: ${result.message}`);
+    }
+    return result;
   });
 
   // Helper: get or warn

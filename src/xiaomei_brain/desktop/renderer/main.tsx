@@ -8,6 +8,7 @@ import "./styles/menubar.css";
 import "./styles/sidebar.css";
 import "./styles/home.css";
 import "./styles/terminal.css";
+import "./styles/about.css";
 
 // ─── 平台标记 ───
 document.body.setAttribute("data-electron-desktop", "true");

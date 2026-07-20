@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { AboutDialog } from "./AboutDialog";
 
 interface MenuItem {
   label: string;
@@ -11,6 +12,7 @@ export function MenuBar() {
   const { t } = useTranslation();
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [maximized, setMaximized] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const menus: Record<string, MenuItem[]> = useMemo(() => ({
@@ -32,7 +34,7 @@ export function MenuBar() {
     [t("menu.help")]: [
       {
         label: t("menu.about"),
-        action: () => alert(t("menu.aboutDetail")),
+        action: () => setAboutOpen(true),
       },
     ],
   }), [t]);
@@ -54,71 +56,74 @@ export function MenuBar() {
   }, []);
 
   return (
-    <div className="menubar" ref={menuRef}>
-      <div className="menubar-logo">
-        <div className="menubar-logo-icon">{t("menu.logo")}</div>
-      </div>
-
-      <div className="menubar-items">
-        {Object.keys(menus).map((key) => (
-          <div className="menubar-item" key={key}>
-            <button
-              className={`menubar-item-button ${openMenu === key ? "open" : ""}`}
-              onClick={() => setOpenMenu(openMenu === key ? null : key)}
-            >
-              {key}
-            </button>
-            {openMenu === key && (
-              <div className="menubar-dropdown">
-                {menus[key].map((item, i) =>
-                  item.separator ? (
-                    <div className="menubar-dropdown-separator" key={i} />
-                  ) : (
-                    <button
-                      key={i}
-                      className="menubar-dropdown-item"
-                      onClick={() => {
-                        item.action?.();
-                        setOpenMenu(null);
-                      }}
-                    >
-                      {item.label}
-                    </button>
-                  )
-                )}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-
-      <div className="menubar-spacer" />
-
-      {window.win && (
-        <div className="menubar-window-controls">
-          <button
-            className="menubar-window-btn"
-            onClick={() => window.win.minimize()}
-            title={t("menu.minimize")}
-          >
-            &#x2212;
-          </button>
-          <button
-            className="menubar-window-btn"
-            onClick={() => window.win.maximize()}
-            title={maximized ? t("menu.restore") : t("menu.maximize")}
-          >
-            {maximized ? "\u29C9" : "\u25A1"}
-          </button>
-          <button
-            className="menubar-window-btn menubar-window-btn-close"
-            onClick={() => window.win.close()}
-            title={t("menu.close")}
-          >
-            &#x2715;
-          </button>
+    <>
+      <div className="menubar" ref={menuRef}>
+        <div className="menubar-logo">
+          <div className="menubar-logo-icon">{t("menu.logo")}</div>
         </div>
-      )}
-    </div>
+
+        <div className="menubar-items">
+          {Object.keys(menus).map((key) => (
+            <div className="menubar-item" key={key}>
+              <button
+                className={`menubar-item-button ${openMenu === key ? "open" : ""}`}
+                onClick={() => setOpenMenu(openMenu === key ? null : key)}
+              >
+                {key}
+              </button>
+              {openMenu === key && (
+                <div className="menubar-dropdown">
+                  {menus[key].map((item, i) =>
+                    item.separator ? (
+                      <div className="menubar-dropdown-separator" key={i} />
+                    ) : (
+                      <button
+                        key={i}
+                        className="menubar-dropdown-item"
+                        onClick={() => {
+                          item.action?.();
+                          setOpenMenu(null);
+                        }}
+                      >
+                        {item.label}
+                      </button>
+                    )
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="menubar-spacer" />
+
+        {window.win && (
+          <div className="menubar-window-controls">
+            <button
+              className="menubar-window-btn"
+              onClick={() => window.win.minimize()}
+              title={t("menu.minimize")}
+            >
+              &#x2212;
+            </button>
+            <button
+              className="menubar-window-btn"
+              onClick={() => window.win.maximize()}
+              title={maximized ? t("menu.restore") : t("menu.maximize")}
+            >
+              {maximized ? "\u29C9" : "\u25A1"}
+            </button>
+            <button
+              className="menubar-window-btn menubar-window-btn-close"
+              onClick={() => window.win.close()}
+              title={t("menu.close")}
+            >
+              &#x2715;
+            </button>
+          </div>
+        )}
+      </div>
+      {aboutOpen && <AboutDialog onClose={() => setAboutOpen(false)} />}
+    </>
   );
 }

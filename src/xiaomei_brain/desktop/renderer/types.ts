@@ -77,6 +77,31 @@ export interface NotificationsBridge {
   onSelect(callback: (target: { agentId: string; sessionId: string }) => void): () => void;
 }
 
+export interface DesktopInfo {
+  version: string;
+  environment: "development" | "production";
+  platform: string;
+  arch: string;
+  electronVersion: string;
+  nodeVersion: string;
+  configDirectory: string;
+  agentDirectory: string;
+  logDirectory: string;
+  logFile: string;
+}
+
+export interface DirectoryOpenResult {
+  ok: boolean;
+  error?: string;
+}
+
+export interface DesktopBridge {
+  getInfo(): Promise<DesktopInfo>;
+  readLog(): Promise<{ content: string }>;
+  openLogDirectory(): Promise<DirectoryOpenResult>;
+  openConfigDirectory(): Promise<DirectoryOpenResult>;
+}
+
 export interface WinBridge {
   minimize(): void;
   maximize(): void;
@@ -99,6 +124,7 @@ declare global {
     gateway: GatewayBridge;
     localAgents: LocalAgentsBridge;
     notifications: NotificationsBridge;
+    desktop: DesktopBridge;
     win: WinBridge;
     terminal: TerminalBridge;
   }

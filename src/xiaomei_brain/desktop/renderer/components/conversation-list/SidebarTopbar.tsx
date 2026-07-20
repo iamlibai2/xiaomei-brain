@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { Icon, Button } from "../ui";
+import { useDesktopInfo } from "../../desktop-info";
 
 interface SidebarTopbarProps {
   collapsed: boolean;
@@ -11,6 +12,7 @@ interface SidebarTopbarProps {
 
 export function SidebarTopbar({ collapsed, onToggleCollapse, onSearch, onRefresh, onTerminalToggle }: SidebarTopbarProps) {
   const { t } = useTranslation();
+  const desktopInfo = useDesktopInfo();
   return (
     <div className={`sidebar-topbar ${collapsed ? "sidebar-topbar-collapsed" : ""}`}>
       {collapsed ? (
@@ -26,7 +28,7 @@ export function SidebarTopbar({ collapsed, onToggleCollapse, onSearch, onRefresh
         <>
           <div className="sidebar-logo-row">
             <span className="sidebar-logo-text">xiaomei-brain</span>
-            <span className="sidebar-version-badge">v1.0.0</span>
+            <span className="sidebar-version-badge">v{desktopInfo?.version || "…"}</span>
           </div>
           <div className="sidebar-topbar-actions">
             <Button variant="ghost" size="icon-md" icon="refresh" onClick={onRefresh} title={t("sidebar.refresh")} />

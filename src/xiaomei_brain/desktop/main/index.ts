@@ -1,10 +1,10 @@
 import { app, BrowserWindow, ipcMain, shell } from "electron";
 import { existsSync } from "fs";
 import path from "path";
-import { autoUpdater } from "electron-updater";
 import { GatewayClient } from "./gateway-client";
 import { ConfigStore } from "./config-store";
 import { registerIpcHandlers } from "./ipc-handlers";
+import { initializeDesktopDiagnostics, registerDesktopDiagnosticsIpc } from "./desktop-diagnostics";
 
 const isMac = process.platform === "darwin";
 const isWindows = process.platform === "win32";
@@ -126,20 +126,12 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  initializeDesktopDiagnostics();
   registerWindowsShortcutIdentity();
   createWindow();
+  registerDesktopDiagnosticsIpc();
   registerIpcHandlers(gateway, config, () => mainWindow);
 
-  // Auto-update: dev 环境跳过，打包后才生效
-  const updateConfig = path.join(process.resourcesPath, "app-update.yml");
-  if (
-    (!process.env.NODE_ENV || process.env.NODE_ENV !== "development")
-    && existsSync(updateConfig)
-  ) {
-    void autoUpdater.checkForUpdatesAndNotify().catch((error) => {
-      console.error("[updater] update check failed", error);
-    });
-  }
 });
 
 app.on("window-all-closed", () => {

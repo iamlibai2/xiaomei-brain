@@ -1,6 +1,6 @@
 {
   "name": "xiaomei-brain-desktop",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "xiaomei-brain Desktop Client",
   "author": "李白 libai <iamlibai2@gmail.com>",
   "main": "dist/main/index.js",
@@ -17,7 +17,6 @@
     "start": "electron ."
   },
   "dependencies": {
-    "electron-updater": "^6.6.2",
     "extract-zip": "^2.0.1",
     "immer": "^11.1.11",
     "node-pty": "^1.0.0",

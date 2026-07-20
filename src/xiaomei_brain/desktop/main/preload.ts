@@ -34,6 +34,12 @@ const CHANNEL_MAP = {
     show:             { invoke: "notification:show" },
     onSelect:         { event: "notification:selected" },
   },
+  desktop: {
+    getInfo:                { invoke: "desktop:getInfo" },
+    readLog:                { invoke: "desktop:readLog" },
+    openLogDirectory:       { invoke: "desktop:openLogDirectory" },
+    openConfigDirectory:    { invoke: "desktop:openConfigDirectory" },
+  },
   win: {
     minimize:          { send: "window:minimize" },
     maximize:          { send: "window:maximize" },
