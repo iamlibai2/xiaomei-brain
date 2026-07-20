@@ -1,6 +1,7 @@
 appId: com.xiaomei.brain.desktop
 productName: xiaomei-brain
 npmRebuild: false
+msiProjectCreated: scripts/patch-msi-project.cjs
 directories:
   output: release
 files:

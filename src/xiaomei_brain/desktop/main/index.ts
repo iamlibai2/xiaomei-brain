@@ -18,28 +18,51 @@ let mainWindow: BrowserWindow | null = null;
 const gateway = new GatewayClient();
 const config = new ConfigStore();
 
-function registerDevelopmentNotificationIdentity(): void {
-  if (!isWindows || app.isPackaged) return;
+function registerWindowsShortcutIdentity(): void {
+  if (!isWindows) return;
 
+  const isDevelopment = !app.isPackaged;
   const shortcutPath = path.join(
     app.getPath("appData"),
     "Microsoft",
     "Windows",
     "Start Menu",
     "Programs",
-    "xiaomei-brain Development.lnk",
+    isDevelopment ? "xiaomei-brain Development.lnk" : "xiaomei-brain.lnk",
   );
+  const shortcutArgs = isDevelopment ? `"${app.getAppPath()}"` : "";
   const shortcutDetails: Electron.ShortcutDetails = {
     target: process.execPath,
-    description: "Electron development runtime for xiaomei-brain",
+    args: shortcutArgs,
+    description: isDevelopment
+      ? "xiaomei-brain Desktop development client"
+      : "xiaomei-brain Desktop client",
     appUserModelId: windowsAppId,
     icon: process.execPath,
     iconIndex: 0,
   };
-  const operation = existsSync(shortcutPath) ? "update" : "create";
+
+  let operation: "create" | "update" = "create";
+  if (existsSync(shortcutPath)) {
+    operation = "update";
+    try {
+      const current = shell.readShortcutLink(shortcutPath);
+      const sameTarget = path.resolve(current.target).toLowerCase() === path.resolve(process.execPath).toLowerCase();
+      if (
+        sameTarget
+        && current.appUserModelId === windowsAppId
+        && (current.args || "") === shortcutArgs
+      ) {
+        return;
+      }
+    } catch (error) {
+      console.warn(`[shortcut] failed to inspect ${shortcutPath}: ${error}`);
+    }
+  }
+
   const registered = shell.writeShortcutLink(shortcutPath, operation, shortcutDetails);
   if (!registered) {
-    console.warn(`[notification] failed to register development shortcut: ${shortcutPath}`);
+    console.warn(`[shortcut] failed to register ${shortcutPath}`);
   }
 }
 
@@ -103,7 +126,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  registerDevelopmentNotificationIdentity();
+  registerWindowsShortcutIdentity();
   createWindow();
   registerIpcHandlers(gateway, config, () => mainWindow);
 
