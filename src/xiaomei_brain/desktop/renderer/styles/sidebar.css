@@ -882,37 +882,6 @@ body[data-platform="mac"] .sidebar-topbar {
 }
 
 /* ─── Add Agent Form ─── */
-.add-agent-form {
-  margin: 4px 12px;
-  padding: 8px;
-  border-radius: var(--ui-radius-lg);
-  background: var(--ui-bg-secondary);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.add-agent-form input {
-  height: 28px;
-  padding: 0 8px;
-  border: 1px solid var(--ui-border-subtle);
-  border-radius: var(--ui-radius-sm);
-  background: var(--ui-bg-primary);
-  color: var(--ui-color-text-primary);
-  font-size: 12px;
-  font-family: var(--ui-font-family);
-}
-
-.add-agent-form input::placeholder {
-  color: var(--ui-color-text-tertiary);
-}
-
-.add-agent-form-buttons {
-  display: flex;
-  gap: 4px;
-  justify-content: flex-end;
-}
-
 /* ─── Collapsed Agent List ─── */
 .sidebar-collapsed-agent-list {
   display: flex;

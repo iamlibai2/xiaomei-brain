@@ -2,6 +2,8 @@ import { execFile } from "child_process";
 import { createHash } from "crypto";
 import { createReadStream } from "fs";
 import { promises as fs } from "fs";
+import net from "net";
+import os from "os";
 import path from "path";
 import { promisify } from "util";
 import { app } from "electron";
@@ -37,6 +39,16 @@ export interface AgentLifecycleResult {
   runtimeSource?: RuntimeDescriptor["source"];
 }
 
+export interface AgentCreationResult {
+  ok: boolean;
+  name: string;
+  description: string;
+  message: string;
+  agentId?: string;
+  port?: number;
+  runtimeSource?: RuntimeDescriptor["source"];
+}
+
 function pythonExecutable(venvDir: string): string {
   return process.platform === "win32"
     ? path.join(venvDir, "Scripts", "python.exe")
@@ -51,8 +63,28 @@ async function isFile(filePath: string): Promise<boolean> {
   }
 }
 
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function canListen(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.unref();
+    server.once("error", () => resolve(false));
+    server.listen(port, "127.0.0.1", () => {
+      server.close(() => resolve(true));
+    });
+  });
 }
 
 async function renameWithRetry(source: string, destination: string): Promise<void> {
@@ -317,6 +349,119 @@ export class RuntimeManager {
     return descriptorForExecutable(process.platform === "win32" ? "python.exe" : "python3", "path");
   }
 
+  private commandEnvironment(): NodeJS.ProcessEnv {
+    const sourceRoot = path.resolve(__dirname, "../../../..");
+    const pythonPath = app.isPackaged
+      ? process.env.PYTHONPATH
+      : [sourceRoot, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter);
+    return {
+      ...process.env,
+      PYTHONDONTWRITEBYTECODE: "1",
+      PYTHONUTF8: "1",
+      ...(pythonPath ? { PYTHONPATH: pythonPath } : {}),
+    };
+  }
+
+  private async nextAgentId(displayName: string): Promise<string> {
+    const normalized = displayName
+      .normalize("NFKD")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40) || "employee";
+    const baseDir = path.join(os.homedir(), ".xiaomei-brain");
+    let candidate = normalized;
+    let suffix = 2;
+    while (await pathExists(path.join(baseDir, candidate))) {
+      candidate = `${normalized}-${suffix}`;
+      suffix += 1;
+    }
+    return candidate;
+  }
+
+  private async nextGatewayPort(): Promise<number> {
+    const baseDir = path.join(os.homedir(), ".xiaomei-brain");
+    const reserved = new Set<number>();
+    try {
+      const entries = await fs.readdir(baseDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        try {
+          const config = JSON.parse(await fs.readFile(path.join(baseDir, entry.name, "config.json"), "utf8")) as {
+            ws_port?: unknown;
+            admin_port?: unknown;
+          };
+          let wsPort = Number(config.ws_port);
+          if (!Number.isInteger(wsPort) || wsPort <= 0 || wsPort > 65535) {
+            const brain = await fs.readFile(path.join(baseDir, entry.name, "brain.yaml"), "utf8").catch(() => "");
+            wsPort = Number(brain.match(/^\s*ws_port:\s*(\d+)/m)?.[1]);
+          }
+          for (const value of [wsPort, config.admin_port, Number.isInteger(wsPort) ? wsPort + 1 : undefined]) {
+            const port = Number(value);
+            if (Number.isInteger(port) && port > 0 && port <= 65535) reserved.add(port);
+          }
+        } catch {
+          // Agents without a JSON config do not reserve a Desktop-managed port.
+        }
+      }
+    } catch {
+      // The Agent root is created by the backend command when needed.
+    }
+
+    for (let port = 19766; port <= 65534; port += 2) {
+      if (reserved.has(port) || reserved.has(port + 1)) continue;
+      if (await canListen(port) && await canListen(port + 1)) return port;
+    }
+    throw new Error("No available local Agent port pair was found");
+  }
+
+  async createAgent(displayName: string, description: string): Promise<AgentCreationResult> {
+    const name = displayName.trim();
+    const role = description.trim();
+    if (!name || name.length > 80) {
+      return { ok: false, name, description: role, message: "Agent name must be between 1 and 80 characters" };
+    }
+    if (!role || role.length > 500) {
+      return { ok: false, name, description: role, message: "Agent responsibility must be between 1 and 500 characters" };
+    }
+
+    try {
+      const runtime = await this.resolve();
+      const agentId = await this.nextAgentId(name);
+      const port = await this.nextGatewayPort();
+      const args = [
+        ...runtime.prefixArgs,
+        "agent", "create", agentId,
+        "--display-name", name,
+        "--description", role,
+        "--ws-port", String(port),
+      ];
+      const { stdout, stderr } = await execFileAsync(runtime.executable, args, {
+        windowsHide: true,
+        timeout: 45_000,
+        maxBuffer: 1024 * 1024,
+        env: this.commandEnvironment(),
+      });
+      const message = [stdout, stderr].map((value) => value.trim()).filter(Boolean).join("\n");
+      return {
+        ok: true,
+        name,
+        description: role,
+        agentId,
+        port,
+        message: message || `Agent ${name} created`,
+        runtimeSource: runtime.source,
+      };
+    } catch (error) {
+      const detail = error as Error & { stdout?: string; stderr?: string };
+      const message = [detail.stderr, detail.stdout, detail.message]
+        .map((value) => value?.trim())
+        .filter(Boolean)
+        .join("\n");
+      return { ok: false, name, description: role, message: message || String(error) };
+    }
+  }
+
   async control(agentId: string, action: AgentLifecycleAction): Promise<AgentLifecycleResult> {
     if (!/^[A-Za-z0-9_-]+$/.test(agentId)) {
       return { ok: false, action, agentId, message: "Invalid local Agent ID" };
@@ -325,21 +470,11 @@ export class RuntimeManager {
     try {
       const runtime = await this.resolve();
       const args = [...runtime.prefixArgs, action, agentId];
-      const sourceRoot = path.resolve(__dirname, "../../../..");
-      const pythonPath = app.isPackaged
-        ? process.env.PYTHONPATH
-        : [sourceRoot, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter);
-
       const { stdout, stderr } = await execFileAsync(runtime.executable, args, {
         windowsHide: true,
         timeout: 45_000,
         maxBuffer: 1024 * 1024,
-        env: {
-          ...process.env,
-          PYTHONDONTWRITEBYTECODE: "1",
-          PYTHONUTF8: "1",
-          ...(pythonPath ? { PYTHONPATH: pythonPath } : {}),
-        },
+        env: this.commandEnvironment(),
       });
       const message = [stdout, stderr].map((value) => value.trim()).filter(Boolean).join("\n");
       return {

@@ -26,6 +26,17 @@ export function registerIpcHandlers(
     return discoverLocalAgents();
   });
 
+  ipcMain.handle("localAgents:create", async (_event, args: { name: string; description: string }) => {
+    console.info(`[runtime] create requested for agent ${args.name}`);
+    const result = await runtimeManager.createAgent(args.name, args.description);
+    if (result.ok) {
+      console.info(`[runtime] create succeeded for agent ${result.agentId} on port ${result.port}`);
+    } else {
+      console.error(`[runtime] create failed for agent ${args.name}: ${result.message}`);
+    }
+    return result;
+  });
+
   ipcMain.handle("localAgents:control", async (_event, args: {
     agentId: string;
     connectionId: string;

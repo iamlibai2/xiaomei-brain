@@ -175,7 +175,7 @@ def cmd_start(args: list[str]) -> None:
     existing = read_pid_file(agent_id)
     if existing:
         print(f"Agent '{agent_id}' 已在运行 (PID {existing['pid']})")
-        sys.exit(1)
+        return
 
     # 后台启动
     run_args = [sys.executable, "-m", "xiaomei_brain", "run", agent_id, "--cli"]

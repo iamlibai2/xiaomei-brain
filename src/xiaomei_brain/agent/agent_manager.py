@@ -62,6 +62,9 @@ class AgentManager:
         copy_from: str = "",
         identity_content: str = "",
         brain_yaml_content: str = "",
+        display_name: str = "",
+        description: str = "",
+        ws_port: int = -1,
     ) -> dict:
         """Create a new agent: directories + brain.yaml + identity.md + agent config.json.
 
@@ -72,6 +75,9 @@ class AgentManager:
             copy_from=copy_from,
             identity_content=identity_content,
             brain_yaml_content=brain_yaml_content,
+            display_name=display_name,
+            description=description,
+            ws_port=ws_port,
         )
 
     def delete_agent(self, agent_id: str) -> dict:

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { produce } from "immer";
-import type { AgentEntry, AgentLifecycleAction, LocalAgentInfo, SessionEntry } from "../types";
+import type { AgentCreationResult, AgentEntry, AgentLifecycleAction, LocalAgentInfo, SessionEntry } from "../types";
 
 // ── Persistence (manual, avoid zustand/persist rehydration during render) ──
 
@@ -271,6 +271,7 @@ interface CoreActions {
   setActiveNav: (nav: string) => void;
   clearUnread: (agentId: string) => void;
   refreshLocalAgents: () => Promise<void>;
+  createLocalAgent: (name: string, description: string) => Promise<AgentCreationResult>;
   controlLocalAgent: (agentId: string, action: AgentLifecycleAction) => Promise<void>;
 }
 
@@ -316,12 +317,14 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
 
           if (existing) {
             existing.name = localAgent.name;
+            existing.description = localAgent.description;
             existing.source = "local";
             existing.localAgentId = localAgent.agentId;
           } else {
             s.agents.push({
               id: agentId,
               name: localAgent.name,
+              description: localAgent.description,
               host: localAgent.host,
               port: localAgent.port,
               token: "",
@@ -359,6 +362,21 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         s.localDiscoveryError = String(error);
       }));
     }
+  },
+
+  createLocalAgent: async (name, description) => {
+    const result = await window.localAgents.create({ name, description });
+    if (!result.ok || !result.agentId) return result;
+
+    await get().refreshLocalAgents();
+    set(produce((s: CoreState) => {
+      const created = s.agents.find((agent) => agent.localAgentId === result.agentId);
+      if (created) {
+        s.activeAgentId = created.id;
+        s.page = "chat";
+      }
+    }));
+    return result;
   },
 
   controlLocalAgent: async (agentId, action) => {

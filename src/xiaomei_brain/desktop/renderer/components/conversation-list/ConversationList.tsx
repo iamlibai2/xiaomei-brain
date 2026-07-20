@@ -4,18 +4,18 @@ import { useCoreStore, AgentEntry } from "../../store";
 import { Icon, Button } from "../ui";
 import { SidebarTopbar } from "./SidebarTopbar";
 import { SidebarFooter } from "./SidebarFooter";
+import { AddAgentDialog } from "./AddAgentDialog";
 
 export function ConversationList() {
   const { t } = useTranslation();
   const [collapsed, setCollapsed] = useState(false);
-  const [showAddForm, setShowAddForm] = useState(false);
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
 
   const agents = useCoreStore((s) => s.agents);
   const activeAgentId = useCoreStore((s) => s.activeAgentId);
   const connectionByAgent = useCoreStore((s) => s.connectionByAgent);
   const userId = useCoreStore((s) => s.userId);
   const switchAgent = useCoreStore((s) => s.switchAgent);
-  const addAgent = useCoreStore((s) => s.addAgent);
   const newSession = useCoreStore((s) => s.newSession);
   const switchSession = useCoreStore((s) => s.switchSession);
   const sessionsByAgent = useCoreStore((s) => s.sessionsByAgent);
@@ -35,20 +35,7 @@ export function ConversationList() {
 
   const displayName = userId || t("sidebar.defaultUserName");
 
-  // Add-agent form state
-  const [addHost, setAddHost] = useState("localhost");
-  const [addPort, setAddPort] = useState("19767");
-  const [addToken, setAddToken] = useState("");
   const [sessionQuery, setSessionQuery] = useState("");
-
-  function handleAddAgent() {
-    const port = parseInt(addPort) || 19767;
-    addAgent(addHost, port, addToken);
-    setShowAddForm(false);
-    setAddHost("localhost");
-    setAddPort("19767");
-    setAddToken("");
-  }
 
   function handleNewSession() {
     void newSession();
@@ -110,7 +97,7 @@ export function ConversationList() {
             })}
             <button
               className="sidebar-collapsed-agent-btn"
-              onClick={() => { setCollapsed(false); setShowAddForm(true); }}
+              onClick={() => { setAddDialogOpen(true); }}
               title={t("sidebar.addAgent")}
             >
               <Icon name="plus" size={16} />
@@ -126,42 +113,12 @@ export function ConversationList() {
             </span>
             <button
               className="agent-list-header-add"
-              onClick={() => setShowAddForm(!showAddForm)}
+              onClick={() => setAddDialogOpen(true)}
               title={t("sidebar.addAgent")}
             >
               <Icon name="plus" size={16} />
             </button>
           </div>
-
-          {/* Add agent form */}
-          {showAddForm && (
-            <div className="add-agent-form">
-              <input
-                value={addHost}
-                onChange={(e) => setAddHost(e.target.value)}
-                placeholder={t("sidebar.addAgentHost")}
-              />
-              <input
-                value={addPort}
-                onChange={(e) => setAddPort(e.target.value)}
-                placeholder={t("sidebar.addAgentPort")}
-              />
-              <input
-                value={addToken}
-                onChange={(e) => setAddToken(e.target.value)}
-                placeholder={t("sidebar.addAgentToken")}
-                type="password"
-              />
-              <div className="add-agent-form-buttons">
-                <Button variant="ghost" size="icon-sm" onClick={() => setShowAddForm(false)}>
-                  {t("sidebar.addAgentCancel")}
-                </Button>
-                <Button variant="primary" size="icon-sm" onClick={handleAddAgent}>
-                  {t("sidebar.addAgentSubmit")}
-                </Button>
-              </div>
-            </div>
-          )}
 
           {/* Agent list */}
           {agents.length === 0 ? (
@@ -261,6 +218,7 @@ export function ConversationList() {
           </div>
         </div>
       )}
+      {addDialogOpen && <AddAgentDialog onClose={() => setAddDialogOpen(false)} />}
     </div>
   );
 }
@@ -352,10 +310,10 @@ function AgentItem({
           ) : (
             <button
               className="agent-lifecycle-btn start"
-              onClick={(event) => { event.stopPropagation(); onLifecycle("start"); }}
-              title={t("sidebar.startAgent")}
+              onClick={(event) => { event.stopPropagation(); onLifecycle(localInfo?.pid ? "restart" : "start"); }}
+              title={localInfo?.pid ? t("sidebar.restartAgent") : t("sidebar.startAgent")}
             >
-              <Icon name="play" size={13} />
+              <Icon name={localInfo?.pid ? "refresh" : "play"} size={13} />
             </button>
           )}
         </div>

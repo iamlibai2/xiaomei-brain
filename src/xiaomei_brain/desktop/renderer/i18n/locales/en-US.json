@@ -42,7 +42,15 @@
       "copy": "Copy",
       "loadingOlder": "Loading earlier messages...",
       "retryOlder": "Failed to load. Retry",
-      "oldestReached": "Beginning of conversation"
+      "oldestReached": "Beginning of conversation",
+      "agentCreatedTitle": "{{name}} has been created",
+      "agentDisconnectedTitle": "{{name}} is disconnected",
+      "agentDisconnectedHint": "The Agent process still exists. Try restarting it.",
+      "agentResponsibility": "Responsibility",
+      "agentResponsibilityFallback": "Local AI Agent",
+      "startAgent": "Start {{name}}",
+      "restartAgent": "Restart {{name}}",
+      "agentStarting": "Starting..."
     },
     "sidebar": {
       "navAssistant": "Assistant",
@@ -110,6 +118,27 @@
       "restore": "Restore",
       "maximize": "Maximize",
       "logo": "X"
+    },
+    "agentDialog": {
+      "createTitle": "Create local Agent",
+      "createSubtitle": "Create an employee that can accept tasks independently",
+      "remoteTitle": "Connect remote Agent",
+      "remoteSubtitle": "Connect to an existing Agent at another address",
+      "nameLabel": "Name",
+      "namePlaceholder": "For example: Xiaoming",
+      "roleLabel": "Responsibility",
+      "rolePlaceholder": "For example: Software development, code review, and troubleshooting",
+      "connectRemote": "Connect an existing remote Agent",
+      "backToCreate": "Back to local Agent creation",
+      "hostLabel": "Host",
+      "portLabel": "Port",
+      "tokenLabel": "Token (optional)",
+      "invalidRemoteAddress": "Enter a valid host and port.",
+      "cancel": "Cancel",
+      "create": "Create",
+      "creating": "Creating...",
+      "connect": "Connect",
+      "close": "Close"
     },
     "about": {
       "subtitle": "Application information and diagnostics",

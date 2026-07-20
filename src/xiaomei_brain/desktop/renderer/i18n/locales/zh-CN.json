@@ -42,7 +42,15 @@
       "copy": "复制",
       "loadingOlder": "正在加载更早消息...",
       "retryOlder": "加载失败，点击重试",
-      "oldestReached": "已到达会话起点"
+      "oldestReached": "已到达会话起点",
+      "agentCreatedTitle": "{{name}} 已创建完成",
+      "agentDisconnectedTitle": "{{name}} 当前未连接",
+      "agentDisconnectedHint": "检测到 Agent 进程仍然存在，可以尝试重新启动。",
+      "agentResponsibility": "职责",
+      "agentResponsibilityFallback": "本地 AI Agent",
+      "startAgent": "启动 {{name}}",
+      "restartAgent": "重新启动 {{name}}",
+      "agentStarting": "正在启动..."
     },
     "sidebar": {
       "navAssistant": "助理",
@@ -110,6 +118,27 @@
       "restore": "还原",
       "maximize": "最大化",
       "logo": "小"
+    },
+    "agentDialog": {
+      "createTitle": "创建本地 Agent",
+      "createSubtitle": "创建一个可以独立接受任务的员工",
+      "remoteTitle": "连接远程 Agent",
+      "remoteSubtitle": "连接运行在其他地址的现有 Agent",
+      "nameLabel": "名字",
+      "namePlaceholder": "例如：小明",
+      "roleLabel": "职责",
+      "rolePlaceholder": "例如：负责软件开发、代码审查和问题排查",
+      "connectRemote": "连接已有远程 Agent",
+      "backToCreate": "返回创建本地 Agent",
+      "hostLabel": "地址",
+      "portLabel": "端口",
+      "tokenLabel": "Token（可选）",
+      "invalidRemoteAddress": "请输入有效的地址和端口。",
+      "cancel": "取消",
+      "create": "创建",
+      "creating": "创建中...",
+      "connect": "连接",
+      "close": "关闭"
     },
     "about": {
       "subtitle": "应用信息与问题诊断",

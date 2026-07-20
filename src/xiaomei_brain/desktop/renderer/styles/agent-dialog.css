@@ -1,0 +1,134 @@
+.agent-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(12, 16, 24, 0.58);
+  backdrop-filter: blur(3px);
+  -webkit-app-region: no-drag;
+}
+
+.agent-dialog {
+  width: min(480px, 92vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--ui-bg-primary);
+  border: 1px solid var(--ui-border-default);
+  border-radius: var(--ui-radius-2xl);
+  box-shadow: var(--ui-shadow-lg);
+}
+
+.agent-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 24px 24px 18px;
+  border-bottom: 1px solid var(--ui-border-subtle);
+}
+
+.agent-dialog-header h2 {
+  margin: 0;
+  color: var(--ui-color-text-primary);
+  font-size: 19px;
+}
+
+.agent-dialog-header p {
+  margin: 6px 0 0;
+  color: var(--ui-color-text-secondary);
+  font-size: 12px;
+}
+
+.agent-dialog-close {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-color-text-secondary);
+  cursor: pointer;
+}
+
+.agent-dialog-close:hover:not(:disabled) {
+  background: var(--ui-bg-hover);
+}
+
+.agent-dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 22px 24px 24px;
+}
+
+.agent-dialog-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.agent-dialog-form label > span {
+  color: var(--ui-color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.agent-dialog-form input,
+.agent-dialog-form textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--ui-border-default);
+  border-radius: var(--ui-radius-lg);
+  outline: 0;
+  background: var(--ui-bg-secondary);
+  color: var(--ui-color-text-primary);
+  font: 13px var(--ui-font-family);
+}
+
+.agent-dialog-form textarea {
+  min-height: 96px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.agent-dialog-form input:focus,
+.agent-dialog-form textarea:focus {
+  border-color: var(--ui-brand-primary);
+}
+
+.agent-dialog-secondary-entry,
+.agent-dialog-back {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ui-brand-primary);
+  font: 12px var(--ui-font-family);
+  cursor: pointer;
+}
+
+.agent-dialog-secondary-entry span {
+  font-size: 16px;
+  vertical-align: -1px;
+}
+
+.agent-dialog-error {
+  padding: 9px 11px;
+  border-radius: var(--ui-radius-sm);
+  background: rgba(209, 67, 67, 0.1);
+  color: var(--ui-color-danger, #d14343);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.agent-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}

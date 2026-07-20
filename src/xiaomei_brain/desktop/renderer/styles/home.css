@@ -63,6 +63,70 @@
   display: none;
 }
 
+.agent-start-state {
+  flex: 1;
+  min-height: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.agent-start-avatar {
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 18px;
+  border-radius: 50%;
+  background: var(--ui-brand-primary);
+  color: white;
+  font-size: 26px;
+  font-weight: 650;
+  box-shadow: 0 10px 28px rgba(99, 102, 241, 0.24);
+}
+
+.agent-start-state h1 {
+  margin: 0;
+  color: var(--ui-color-text-primary);
+  font-size: 22px;
+}
+
+.agent-start-role {
+  max-width: 520px;
+  margin: 12px 0 24px;
+  color: var(--ui-color-text-secondary);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.agent-start-status-hint {
+  margin: -14px 0 20px;
+  color: var(--ui-color-text-tertiary);
+  font-size: 12px;
+}
+
+.agent-start-role span {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--ui-color-text-tertiary);
+  font-size: 11px;
+}
+
+.agent-start-error {
+  max-width: 560px;
+  margin-top: 16px;
+  padding: 9px 12px;
+  border-radius: var(--ui-radius-sm);
+  background: rgba(209, 67, 67, 0.1);
+  color: var(--ui-color-danger, #d14343);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
 /* ─── Message List () ─── */
 .message-list {
   flex: 1;

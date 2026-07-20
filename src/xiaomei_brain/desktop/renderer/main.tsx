@@ -9,6 +9,7 @@ import "./styles/sidebar.css";
 import "./styles/home.css";
 import "./styles/terminal.css";
 import "./styles/about.css";
+import "./styles/agent-dialog.css";
 
 // ─── 平台标记 ───
 document.body.setAttribute("data-electron-desktop", "true");

@@ -388,11 +388,21 @@ class AgentRegistry:
         copy_from: str = "",
         identity_content: str = "",
         brain_yaml_content: str = "",
+        display_name: str = "",
+        description: str = "",
+        ws_port: int = -1,
     ) -> dict:
         """创建新 agent：目录 + brain.yaml + identity.md + agent config.json。
 
         不再修改全局 config.json。
         """
+        if not name or name in {".", ".."} or os.path.basename(name) != name or "/" in name or "\\" in name:
+            raise ValueError("Agent ID must be a single directory name")
+        if ws_port != -1 and not 1 <= ws_port <= 65534:
+            raise ValueError("WebSocket port must be between 1 and 65534")
+
+        display_name = display_name.strip() or name
+        description = description.strip()
         agent_dir = self.agent_dir(name)
         if os.path.exists(agent_dir):
             raise ValueError(f"Agent '{name}' 已存在")
@@ -423,7 +433,19 @@ class AgentRegistry:
 
         # identity.md
         identity_path = os.path.join(agent_dir, "identity.md")
-        if not identity_content:
+        if not identity_content and (display_name != name or description):
+            identity_content = f"""# 名字
+{display_name}
+
+# 职责
+{description or "通用 AI 助手"}
+
+# 工作方式
+- 认真理解任务目标，必要时先澄清关键信息
+- 主动推进工作，并清楚说明结果和阻碍
+- 记住与职责有关的背景、偏好和经验
+"""
+        elif not identity_content:
             identity_content = f"""# 名字
 {name}
 
@@ -473,11 +495,14 @@ class AgentRegistry:
 
         # agent config.json（per-agent，不修改全局 config.json）
         agent_config = {
-            "name": name,
-            "description": "",
+            "name": display_name,
+            "description": description,
             "enabled": True,
             "model": model_config,
         }
+        if ws_port >= 0:
+            agent_config["ws_port"] = ws_port
+            agent_config["admin_port"] = ws_port + 1
         agent_config_path = os.path.join(agent_dir, "config.json")
         with open(agent_config_path, "w", encoding="utf-8") as f:
             json.dump(agent_config, f, indent=2, ensure_ascii=False)
@@ -488,7 +513,7 @@ class AgentRegistry:
             provider, model = model_config["primary"].split("/", 1)
 
         instance = self.register(AgentConfig(
-            id=name, name=name,
+            id=name, name=display_name, description=description,
             provider=provider, model=model,
             identity_content=identity_content,
         ))
@@ -496,6 +521,8 @@ class AgentRegistry:
         return {
             "id": instance.id,
             "name": instance.name,
+            "description": instance.description,
+            "ws_port": ws_port,
             "model": model_config.get("primary", ""),
             "enabled": instance.enabled,
             "created_at": instance.created_at,

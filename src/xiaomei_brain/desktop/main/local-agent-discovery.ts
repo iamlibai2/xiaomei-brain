@@ -7,6 +7,7 @@ import path from "path";
 export interface LocalAgentInfo {
   agentId: string;
   name: string;
+  description?: string;
   host: string;
   port: number;
   online: boolean;
@@ -16,6 +17,7 @@ export interface LocalAgentInfo {
 
 interface LocalAgentConfig {
   name?: unknown;
+  description?: unknown;
   ws_port?: unknown;
 }
 
@@ -146,10 +148,12 @@ export async function discoverLocalAgents(baseDir = path.join(os.homedir(), ".xi
 
       const configuredName = typeof config.name === "string" ? config.name.trim() : "";
       const name = configuredName || await readIdentityName(agentDir) || entry.name;
+      const description = typeof config.description === "string" ? config.description.trim() : "";
       const pidInfo = await readPidInfo(agentDir);
       return {
         agentId: entry.name,
         name,
+        ...(description ? { description } : {}),
         host: LOCAL_HOST,
         port,
         online: await probePort(LOCAL_HOST, port),

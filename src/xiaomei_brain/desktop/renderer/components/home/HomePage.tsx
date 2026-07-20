@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import { useCoreStore, DisplayMessage, HomeMode } from "../../store";
-import { Icon } from "../ui";
+import { Button, Icon } from "../ui";
 import { HomeHeader } from "./HomeHeader";
 import { SceneTabs } from "./SceneTabs";
 import { GrowthBuddy } from "./GrowthBuddy";
@@ -22,8 +22,15 @@ export function HomePage() {
   const agentName = useCoreStore((s) => {
     const agentId = s.activeAgentId;
     if (!agentId) return t("home.defaultAgentName");
-    return s.connectionByAgent[agentId]?.agentName || t("home.defaultAgentName");
+    return s.connectionByAgent[agentId]?.agentName
+      || s.agents.find((agent) => agent.id === agentId)?.name
+      || t("home.defaultAgentName");
   });
+  const activeAgent = useCoreStore((s) => s.agents.find((agent) => agent.id === s.activeAgentId));
+  const activeAgentOnline = useCoreStore((s) => s.localAvailabilityByAgent[s.activeAgentId || ""]);
+  const activeAgentInfo = useCoreStore((s) => s.localInfoByAgent[s.activeAgentId || ""]);
+  const activeAgentLifecycle = useCoreStore((s) => s.lifecycleByAgent[s.activeAgentId || ""]);
+  const controlLocalAgent = useCoreStore((s) => s.controlLocalAgent);
   const sendMessage = useCoreStore((s) => s.sendMessage);
   const abortMessage = useCoreStore((s) => s.abortMessage);
   const setMode = useCoreStore((s) => s.setMode);
@@ -76,6 +83,9 @@ export function HomePage() {
   }, [activeAgentId, activeSessionId, historyPage?.hasMore, historyPage?.loading, historyPage?.error, loadOlderPreservingPosition]);
 
   const hasMessages = messages.length > 0;
+  const showAgentStart = !hasMessages && activeAgent?.source === "local" && activeAgentOnline === false;
+  const agentStarting = activeAgentLifecycle?.status === "starting" || activeAgentLifecycle?.status === "restarting";
+  const agentNeedsRestart = Boolean(activeAgentInfo?.pid);
 
   const taskName = (() => {
     if (activeSessionId && activeAgentId) {
@@ -88,7 +98,7 @@ export function HomePage() {
 
   return (
     <div className="main-content">
-      {!hasMessages && (
+      {!hasMessages && !showAgentStart && (
         <div className="activity-banner">
           <button className="activity-banner-button">
             {t("home.earnPoints")}
@@ -96,7 +106,40 @@ export function HomePage() {
         </div>
       )}
       <div className="wb-home-page">
-        {!hasMessages && (
+        {showAgentStart && activeAgent && activeAgentId && (
+          <div className="agent-start-state">
+            <div className="agent-start-avatar">{activeAgent.name.charAt(0)}</div>
+            <h1>
+              {agentNeedsRestart
+                ? t("home.agentDisconnectedTitle", { name: activeAgent.name })
+                : t("home.agentCreatedTitle", { name: activeAgent.name })}
+            </h1>
+            <p className="agent-start-role">
+              <span>{t("home.agentResponsibility")}</span>
+              {activeAgent.description || t("home.agentResponsibilityFallback")}
+            </p>
+            {agentNeedsRestart && (
+              <p className="agent-start-status-hint">{t("home.agentDisconnectedHint")}</p>
+            )}
+            <Button
+              variant="primary"
+              size="lg"
+              icon={agentStarting ? "refresh" : "play"}
+              disabled={agentStarting}
+              onClick={() => { void controlLocalAgent(activeAgentId, agentNeedsRestart ? "restart" : "start"); }}
+            >
+              {agentStarting
+                ? t("home.agentStarting")
+                : agentNeedsRestart
+                  ? t("home.restartAgent", { name: activeAgent.name })
+                  : t("home.startAgent", { name: activeAgent.name })}
+            </Button>
+            {activeAgentLifecycle?.status === "error" && (
+              <div className="agent-start-error">{activeAgentLifecycle.error}</div>
+            )}
+          </div>
+        )}
+        {!hasMessages && !showAgentStart && (
           <>
             <HomeHeader mode={mode} />
             <SceneTabs selected={mode} onSelect={(m) => setMode(m as HomeMode)} />
@@ -130,11 +173,13 @@ export function HomePage() {
             </div>
           </>
         )}
-        <div className="wb-home-composer">
-          {!hasMessages && <QuickActions onAction={() => {}} />}
-          <ChatInput onSend={sendMessage} sending={sending} onAbort={abortMessage} />
-          {!hasMessages && <ContextBar />}
-        </div>
+        {!showAgentStart && (
+          <div className="wb-home-composer">
+            {!hasMessages && <QuickActions onAction={() => {}} />}
+            <ChatInput onSend={sendMessage} sending={sending} onAbort={abortMessage} />
+            {!hasMessages && <ContextBar />}
+          </div>
+        )}
       </div>
     </div>
   );

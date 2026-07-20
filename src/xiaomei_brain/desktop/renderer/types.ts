@@ -12,6 +12,7 @@ export interface JsonRpcResponse {
 export interface AgentEntry {
   id: string;       // `${host}:${port}`
   name: string;     // agent display name (from connect RPC agent_name)
+  description?: string;
   host: string;
   port: number;
   token: string;
@@ -22,6 +23,7 @@ export interface AgentEntry {
 export interface LocalAgentInfo {
   agentId: string;
   name: string;
+  description?: string;
   host: string;
   port: number;
   online: boolean;
@@ -36,6 +38,16 @@ export interface AgentLifecycleResult {
   action: AgentLifecycleAction;
   agentId: string;
   message: string;
+  runtimeSource?: "environment" | "config" | "virtualenv" | "bundled" | "path";
+}
+
+export interface AgentCreationResult {
+  ok: boolean;
+  name: string;
+  description: string;
+  message: string;
+  agentId?: string;
+  port?: number;
   runtimeSource?: "environment" | "config" | "virtualenv" | "bundled" | "path";
 }
 
@@ -69,6 +81,7 @@ export interface GatewayBridge {
 
 export interface LocalAgentsBridge {
   discover(): Promise<LocalAgentInfo[]>;
+  create(args: { name: string; description: string }): Promise<AgentCreationResult>;
   control(args: { agentId: string; connectionId: string; action: AgentLifecycleAction }): Promise<AgentLifecycleResult>;
 }
 

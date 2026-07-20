@@ -28,6 +28,7 @@ const CHANNEL_MAP = {
   },
   localAgents: {
     discover:        { invoke: "localAgents:discover" },
+    create:          { invoke: "localAgents:create" },
     control:         { invoke: "localAgents:control" },
   },
   notifications: {

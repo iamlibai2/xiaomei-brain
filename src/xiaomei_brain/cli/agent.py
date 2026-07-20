@@ -21,6 +21,9 @@ def cmd_agent(args: list[str]) -> None:
     p_create = sub.add_parser("create", help="创建空白 agent")
     p_create.add_argument("name", help="Agent ID")
     p_create.add_argument("--copy-from", default="", help="从已有 agent 复制 LLM 模型配置")
+    p_create.add_argument("--display-name", default="", help="Agent 显示名称")
+    p_create.add_argument("--description", default="", help="Agent 职责描述")
+    p_create.add_argument("--ws-port", type=int, default=-1, help="WebSocket 端口")
 
     p_clone = sub.add_parser("clone", help="克隆已有 agent（完整复制身份+配置+联系人）")
     p_clone.add_argument("source", help="源 agent ID")
@@ -53,7 +56,13 @@ def cmd_agent(args: list[str]) -> None:
 
     elif parsed.action == "create":
         try:
-            info = manager.create_agent(parsed.name, copy_from=parsed.copy_from)
+            info = manager.create_agent(
+                parsed.name,
+                copy_from=parsed.copy_from,
+                display_name=parsed.display_name,
+                description=parsed.description,
+                ws_port=parsed.ws_port,
+            )
         except ValueError as e:
             print(f"\033[31m[错误] {e}\033[0m")
             sys.exit(1)
