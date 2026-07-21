@@ -48,8 +48,20 @@ function savePersisted(state: CoreState) {
   } catch { /* quota exceeded */ }
 }
 
-// ── Module-level per-agent streaming state ──
-const _streamingByAgent: Record<string, { ref: string; id: string | null }> = {};
+// ── Module-level streaming state, isolated by Agent + session + turn ──
+interface StreamingState { ref: string; id: string | null }
+const _streamingByTurn: Record<string, StreamingState> = {};
+
+function streamingKey(agentId: string, sessionId: string, turnId: string): string {
+  return `${agentId}\u0000${sessionId || "legacy"}\u0000${turnId || "legacy"}`;
+}
+
+function clearAgentStreams(agentId: string): void {
+  const prefix = `${agentId}\u0000`;
+  for (const key of Object.keys(_streamingByTurn)) {
+    if (key.startsWith(prefix)) delete _streamingByTurn[key];
+  }
+}
 
 function historyMessages(result: Record<string, unknown> | undefined, sessionId: string): DisplayMessage[] {
   const rows = Array.isArray(result?.messages) ? result.messages : [];
@@ -672,7 +684,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       }
     }));
 
-    delete _streamingByAgent[agentId];
+    clearAgentStreams(agentId);
   },
 
   // ── Disconnect agent ──
@@ -749,8 +761,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       return;
     }
 
-    const ss = _streamingByAgent[agentId];
-    if (ss) { ss.id = null; ss.ref = ""; }
+    clearAgentStreams(agentId);
     set(produce((s: CoreState) => { s.sendingByAgent[agentId] = false; }));
   },
 
@@ -1091,10 +1102,15 @@ export function initGatewayEvents() {
 
     if (!agentId) return;
 
-    if (!_streamingByAgent[agentId]) {
-      _streamingByAgent[agentId] = { ref: "", id: null };
+    const eventSessionId = typeof d.session_id === "string" && d.session_id
+      ? d.session_id
+      : store().activeSessionByAgent[agentId] || "";
+    const eventTurnId = typeof d.turn_id === "string" ? d.turn_id : "";
+    const activeStreamKey = streamingKey(agentId, eventSessionId, eventTurnId);
+    if (!_streamingByTurn[activeStreamKey]) {
+      _streamingByTurn[activeStreamKey] = { ref: "", id: null };
     }
-    const stream = _streamingByAgent[agentId];
+    const stream = _streamingByTurn[activeStreamKey];
 
     if (event === "reconnecting") {
       setState(produce((s: CoreState) => {
@@ -1147,78 +1163,77 @@ export function initGatewayEvents() {
       return;
     }
 
-    if (event === "interaction.requested") {
-      try {
-        const payload = JSON.parse(text) as Record<string, unknown>;
-        const requestId = typeof payload.id === "string" ? payload.id : "";
-        const question = typeof payload.question === "string" ? payload.question : "";
-        if (!requestId || !question) return;
-        const choices = Array.isArray(payload.choices)
-          ? payload.choices.filter((choice): choice is string => typeof choice === "string")
-          : [];
-        const activeStreamId = stream.id;
-        let inserted = false;
-        setState(produce((s: CoreState) => {
-          if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
-          if (s.messagesByAgent[agentId].some((message) => message.interaction?.id === requestId)) return;
+    if (event === "message.start") {
+      stream.ref = "";
+      stream.id = null;
+      setState(produce((s: CoreState) => { s.sendingByAgent[agentId] = true; }));
+      return;
+    }
 
-          // A tool call can happen in the middle of one ReAct stream. Close
-          // any text emitted before the question so content produced after
-          // the answer starts a new message below the interaction card.
-          if (activeStreamId) {
-            const activeMessage = s.messagesByAgent[agentId]
-              .find((message) => message.id === activeStreamId);
-            if (activeMessage) {
-              activeMessage.content = stream.ref;
-              activeMessage.streaming = false;
-            }
+    if (event === "interaction.requested") {
+      const payload = d;
+      const requestId = typeof payload.id === "string" ? payload.id : "";
+      const question = typeof payload.question === "string" ? payload.question : "";
+      if (!requestId || !question) return;
+      const choices = Array.isArray(payload.choices)
+        ? payload.choices.filter((choice): choice is string => typeof choice === "string")
+        : [];
+      const activeStreamId = stream.id;
+      let inserted = false;
+      setState(produce((s: CoreState) => {
+        if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
+        if (s.messagesByAgent[agentId].some((message) => message.interaction?.id === requestId)) return;
+
+        // A tool call can happen in the middle of one ReAct stream. Close
+        // any text emitted before the question so content produced after
+        // the answer starts a new message below the interaction card.
+        if (activeStreamId) {
+          const activeMessage = s.messagesByAgent[agentId]
+            .find((message) => message.id === activeStreamId);
+          if (activeMessage) {
+            activeMessage.content = stream.ref;
+            activeMessage.streaming = false;
           }
-          s.messagesByAgent[agentId].push({
-            id: requestId,
-            role: "agent",
-            content: "",
-            streaming: false,
-            interaction: {
-              id: requestId,
-              question,
-              choices,
-              sessionId: typeof payload.session_id === "string" ? payload.session_id : "",
-              status: "pending",
-              response: "",
-            },
-          });
-          inserted = true;
-        }));
-        if (inserted && activeStreamId && stream.id === activeStreamId) {
-          stream.id = null;
-          stream.ref = "";
         }
-      } catch {
-        // Ignore malformed structured interaction events.
+        s.messagesByAgent[agentId].push({
+          id: requestId,
+          role: "agent",
+          content: "",
+          streaming: false,
+          interaction: {
+            id: requestId,
+            question,
+            choices,
+            sessionId: typeof payload.session_id === "string" ? payload.session_id : "",
+            status: "pending",
+            response: "",
+          },
+        });
+        inserted = true;
+      }));
+      if (inserted && activeStreamId && stream.id === activeStreamId) {
+        stream.id = null;
+        stream.ref = "";
       }
       return;
     }
 
     if (event === "interaction.updated") {
-      try {
-        const payload = JSON.parse(text) as Record<string, unknown>;
-        const requestId = typeof payload.id === "string" ? payload.id : "";
-        const status = typeof payload.status === "string" ? payload.status : "";
-        const response = typeof payload.response === "string" ? payload.response : "";
-        if (!requestId) return;
-        setState(produce((s: CoreState) => {
-          const message = (s.messagesByAgent[agentId] || [])
-            .find((entry) => entry.interaction?.id === requestId);
-          if (!message?.interaction) return;
-          if (["answered", "cancelled", "expired"].includes(status)) {
-            message.interaction.status = status as "answered" | "cancelled" | "expired";
-          }
-          message.interaction.response = response;
-          message.interaction.error = "";
-        }));
-      } catch {
-        // Ignore malformed structured interaction events.
-      }
+      const payload = d;
+      const requestId = typeof payload.id === "string" ? payload.id : "";
+      const status = typeof payload.status === "string" ? payload.status : "";
+      const response = typeof payload.response === "string" ? payload.response : "";
+      if (!requestId) return;
+      setState(produce((s: CoreState) => {
+        const message = (s.messagesByAgent[agentId] || [])
+          .find((entry) => entry.interaction?.id === requestId);
+        if (!message?.interaction) return;
+        if (["answered", "cancelled", "expired"].includes(status)) {
+          message.interaction.status = status as "answered" | "cancelled" | "expired";
+        }
+        message.interaction.response = response;
+        message.interaction.error = "";
+      }));
       return;
     }
 
@@ -1228,24 +1243,11 @@ export function initGatewayEvents() {
     // the visible assistant message stream.
     if (event === "internal.display" || event === "pong") return;
 
-    // Backward compatibility for agents that still publish internal_display
-    // JSON through session.message. They may remain online during a Desktop
-    // upgrade, so filter the legacy frame without requiring an immediate
-    // backend restart.
-    if (event === "session.message" && text.startsWith("{")) {
-      try {
-        const payload = JSON.parse(text) as Record<string, unknown>;
-        if (payload.type === "internal_display") return;
-      } catch {
-        // A normal assistant response may legitimately begin with "{".
-      }
-    }
-
     if (!store().messagesByAgent[agentId]) {
       setState(produce((s: CoreState) => { s.messagesByAgent[agentId] = []; }));
     }
 
-    if (event === "chat.chunk") {
+    if (event === "message.delta") {
       stream.ref += text;
       if (!stream.id) {
         stream.id = "streaming-" + Date.now();
@@ -1260,13 +1262,17 @@ export function initGatewayEvents() {
           if (idx !== -1) s.messagesByAgent[agentId][idx].content = stream.ref;
         }));
       }
-    } else if (event === "session.message") {
-      const eventSessionId = typeof d.session_id === "string" && d.session_id
-        ? d.session_id
-        : store().activeSessionByAgent[agentId] || "";
+    } else if (event === "message.complete") {
+      const status = typeof d.status === "string" ? d.status : "complete";
+      const error = d.error && typeof d.error === "object"
+        ? d.error as Record<string, unknown>
+        : null;
+      const terminalText = text || (status === "error"
+        ? `Error: ${String(error?.message || "Unknown error")}`
+        : "");
       let completedText = "";
       if (stream.id) {
-        const finalText = stream.ref || text;
+        const finalText = stream.ref || terminalText;
         const streamingMessageExists = store().messagesByAgent[agentId]
           .some((message) => message.id === stream.id);
         if (streamingMessageExists) completedText = finalText;
@@ -1280,21 +1286,22 @@ export function initGatewayEvents() {
         }));
         stream.id = null;
         stream.ref = "";
-      } else if (text) {
-        // Skip if the last agent message already has the same content (duplicate session.message)
+      } else if (terminalText) {
+        // Skip a duplicate final message if the local stream already finalized it.
         const msgs = store().messagesByAgent[agentId];
         const lastMsg = msgs && msgs.length > 0 ? msgs[msgs.length - 1] : null;
-        const isDuplicate = lastMsg && lastMsg.role === "agent" && lastMsg.content === text;
+        const isDuplicate = lastMsg && lastMsg.role === "agent" && lastMsg.content === terminalText;
         if (!isDuplicate) {
-          completedText = text;
+          completedText = terminalText;
           setState(produce((s: CoreState) => {
             s.messagesByAgent[agentId].push({
-              id: "msg-" + Date.now(), role: "agent", content: text, streaming: false,
+              id: "msg-" + Date.now(), role: "agent", content: terminalText, streaming: false,
             });
             touchSession(s, agentId, eventSessionId, 1);
           }));
         }
       }
+      delete _streamingByTurn[activeStreamKey];
       setState(produce((s: CoreState) => { s.sendingByAgent[agentId] = false; }));
       if (completedText && agentId !== store().activeAgentId) {
         // Increment unread for background agent
@@ -1313,7 +1320,7 @@ export function initGatewayEvents() {
           sessionId: eventSessionId,
         }).catch(() => {});
       }
-    } else if (event === "chat.error") {
+    } else if (event === "error") {
       const err = (d.text || "Unknown error") as string;
       setState(produce((s: CoreState) => {
         s.messagesByAgent[agentId].push({

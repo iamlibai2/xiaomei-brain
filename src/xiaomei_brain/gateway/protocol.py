@@ -47,15 +47,27 @@ def build_error(req_id: str, code: int, message: str) -> dict:
     }
 
 
-def build_event(event: str, data: Any = None) -> dict:
-    """构建 JSON-RPC 2.0 通知（事件推送，无 id 字段）。
-
-    参考 Hermes 模式：method 固定为 "event"，具体事件类型放在 params.event 中。
-    """
+def build_event(
+    event: str,
+    payload: Any = None,
+    *,
+    session_id: str = "",
+    turn_id: str = "",
+) -> dict:
+    """构建 Gateway V2 事件。"""
+    body = payload or {}
+    params = {
+        "type": event,
+        "payload": body,
+    }
+    if session_id:
+        params["session_id"] = session_id
+    if turn_id:
+        params["turn_id"] = turn_id
     return {
         "jsonrpc": JSONRPC_VERSION,
         "method": "event",
-        "params": {"event": event, "data": data or {}},
+        "params": params,
     }
 
 

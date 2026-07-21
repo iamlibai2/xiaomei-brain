@@ -79,8 +79,12 @@ class GatewayClient:
 
             elif data.get("method") == "event":
                 params = data.get("params", {})
-                event_name = params.get("event", "")
-                payload = params.get("data", {})
+                event_name = params.get("type", "")
+                payload = dict(params.get("payload", {}))
+                if params.get("session_id"):
+                    payload["session_id"] = params["session_id"]
+                if params.get("turn_id"):
+                    payload["turn_id"] = params["turn_id"]
                 if self._on_event:
                     self._on_event(event_name, payload)
 

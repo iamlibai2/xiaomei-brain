@@ -35,13 +35,11 @@ class EventHandler:
 
     def handle(self, event_name: str, payload: dict) -> None:
         """主分发入口。"""
-        if event_name == "chat.chunk":
+        if event_name == "message.delta":
             self._on_chat_chunk(payload)
-        elif event_name == "session.message":
+        elif event_name == "message.complete":
             self._on_session_message(payload)
-        elif event_name == "chat.aborted":
-            self._on_aborted(payload)
-        elif event_name == "chat.error":
+        elif event_name == "error":
             self._on_error(payload)
         else:
             logger.debug("Unknown event: %s", event_name)
@@ -78,6 +76,14 @@ class EventHandler:
 
     def _on_session_message(self, payload: dict) -> None:
         """最终完整消息。"""
+        status = payload.get("status", "complete")
+        if status == "interrupted":
+            self._on_aborted(payload)
+            return
+        if status == "error" and not payload.get("text"):
+            error = payload.get("error") or {}
+            self._on_error({"text": error.get("message", "未知错误")})
+            return
         text = payload.get("text", "")
         run_id = payload.get("run_id", "default")
 

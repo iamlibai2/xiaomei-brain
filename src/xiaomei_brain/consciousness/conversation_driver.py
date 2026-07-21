@@ -255,6 +255,10 @@ class ConversationDriver:
         def run():
             parent._chatting = True
             parent._clarify_listening.set()
+            terminal_status = "complete"
+            terminal_text = ""
+            terminal_error: dict[str, str] | None = None
+            self._deliver_message_start(parent, msg.session_id, msg.turn_id)
             try:
                 current_msg = msg
                 current_context = intent_context
@@ -270,6 +274,7 @@ class ConversationDriver:
 
                     agent.user_id = current_msg.user_id
                     agent.session_id = current_msg.session_id
+                    agent.turn_id = current_msg.turn_id
                     agent.user_display_name = getattr(current_msg, 'user_display_name', agent.user_display_name)
 
                     # 注册工具事件 callback（非 CLI 通道通过 Router 投递）
@@ -303,7 +308,7 @@ class ConversationDriver:
                             on_chunk(chunk)
                         # 流式推送到 WS 通道
                         if current_msg.session_id not in ("main", ""):
-                            self._deliver_chunk(parent, current_msg.session_id, chunk)
+                            self._deliver_chunk(parent, current_msg.session_id, current_msg.turn_id, chunk)
                     content = "".join(chunks)
                     # flush 段落缓冲（CLI markdown 渲染）
                     on_chat_flush = getattr(parent, "on_chat_flush", None)
@@ -322,6 +327,7 @@ class ConversationDriver:
                         self._drive.consume_energy(0.05)
 
                     if parent._cancel_requested:
+                        terminal_status = "interrupted"
                         logger.info("[ConversationDriver] LLM 结果已丢弃（取消请求）")
                         print("\n[取消] 已中断", flush=True)
                         return
@@ -365,6 +371,7 @@ class ConversationDriver:
                         gm._purpose.save()
 
                     display_content = gm.remove_progress_tag(content)
+                    terminal_text = display_content
 
                     print("\033[90m" + "─" * self._term_width() + "\033[0m", flush=True)
 
@@ -394,7 +401,6 @@ class ConversationDriver:
                     if display_content and self._should_deliver(current_msg.session_id):
                         logger.info("[ConversationDriver/Deliver] 尝试送达: session=%s len=%d",
                                     current_msg.session_id, len(display_content))
-                        self._deliver_response(parent, current_msg.session_id, display_content)
 
                     if not gm.should_auto_advance(progress_data):
                         # ReAct 模式下的等待：Agent 在等用户回复（如询问、确认）
@@ -424,7 +430,8 @@ class ConversationDriver:
                     current_context = gm.build_intent_context_for_goal(next_goal)
                     current_msg = LivingMessage(
                         content=f"[系统] 子目标：{next_goal.description}",
-                        user_id=msg.user_id, session_id=msg.session_id, source="system")
+                        user_id=msg.user_id, session_id=msg.session_id, source="system",
+                        turn_id=msg.turn_id)
                     siblings = gm._purpose.get_sub_goals(next_goal.parent_id)
                     gm.print_sub_goal_progress(next_goal, siblings)
 
@@ -436,6 +443,11 @@ class ConversationDriver:
                     (isinstance(e, LLMError) and e.retryable)
                     or isinstance(e, _requests.ConnectionError)
                 )
+                terminal_status = "error"
+                terminal_error = {
+                    "code": "LLM_UNAVAILABLE" if is_retryable else "INTERNAL_ERROR",
+                    "message": str(e),
+                }
                 if is_retryable:
                     print(f"\n\033[33m[网络不通] LLM 接口无法连接，请检查网络后重新发送消息\033[0m", flush=True)
                     logger.warning("[ConversationDriver] Chat 网络异常: %s", e)
@@ -455,6 +467,14 @@ class ConversationDriver:
                         if result["status_msg"]:
                             print(f"\033[33m{result['status_msg']}\033[0m", flush=True)
             finally:
+                self._deliver_response(
+                    parent,
+                    msg.session_id,
+                    msg.turn_id,
+                    terminal_text,
+                    status=terminal_status,
+                    error=terminal_error,
+                )
                 parent._chatting = False
                 parent._clarify_listening.clear()
                 # 清理工具回调，避免 PACE/CognitiveLoop 执行时陈旧回调触发
@@ -462,6 +482,7 @@ class ConversationDriver:
                     agent_core = parent.agent._get_agent()
                     agent_core.on_tool_start = None
                     agent_core.on_tool_complete = None
+                    agent_core.turn_id = ""
                 except Exception:
                     logger.debug("Failed to cleanup tool callbacks", exc_info=True)
 
@@ -750,14 +771,36 @@ class ConversationDriver:
             router.deliver(_json.dumps(data, ensure_ascii=False), route, msg_type="internal_display")
 
     @staticmethod
-    def _deliver_chunk(parent, session_id: str, chunk: str) -> None:
+    def _deliver_message_start(parent, session_id: str, turn_id: str) -> None:
+        """声明一轮对话输出开始。"""
+        if not ConversationDriver._should_deliver(session_id):
+            return
+        router = getattr(parent, '_router', None)
+        route = router.route_for_session(session_id) if router else None
+        if route:
+            router.deliver_event(
+                "message.start",
+                {},
+                route,
+                session_id=session_id,
+                turn_id=turn_id,
+            )
+
+    @staticmethod
+    def _deliver_chunk(parent, session_id: str, turn_id: str, chunk: str) -> None:
         """流式推送单个 chunk 到 WS 通道（仅 WS，其他通道忽略）。"""
         router = getattr(parent, '_router', None)
         if not router:
             return
         route = router.route_for_session(session_id)
         if route and route.type == "ws":
-            router.deliver(chunk, route, msg_type="text_chunk")
+            router.deliver_event(
+                "message.delta",
+                {"text": chunk},
+                route,
+                session_id=session_id,
+                turn_id=turn_id,
+            )
 
     @staticmethod
     def _make_tool_event_callback(event_type: str, session_id: str, parent: Any):
@@ -791,7 +834,15 @@ class ConversationDriver:
         return True
 
     @staticmethod
-    def _deliver_response(parent, session_id: str, content: str) -> None:
+    def _deliver_response(
+        parent,
+        session_id: str,
+        turn_id: str,
+        content: str,
+        *,
+        status: str = "complete",
+        error: dict[str, str] | None = None,
+    ) -> None:
         import re
         content = re.sub(r'\x1b\[[0-9;]*m', '', content)
         router = getattr(parent, '_router', None)
@@ -802,7 +853,16 @@ class ConversationDriver:
         if route:
             logger.info("[ConversationDriver/Deliver] session=%s -> %s/%s (%d chars)",
                         session_id, route.type, route.target, len(content))
-            router.deliver(content, route)
+            payload: dict[str, Any] = {"text": content, "status": status}
+            if error:
+                payload["error"] = error
+            router.deliver_event(
+                "message.complete",
+                payload,
+                route,
+                session_id=session_id,
+                turn_id=turn_id,
+            )
         else:
             if session_id and not session_id.startswith("cli-"):
                 logger.warning("[ConversationDriver/Deliver] 无输出路由: session=%s", session_id)

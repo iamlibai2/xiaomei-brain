@@ -125,7 +125,16 @@ export class GatewayClient extends EventEmitter {
   private handleMessage(data: Record<string, unknown>): void {
     if (data["method"] === "event") {
       const params = (data["params"] || {}) as Record<string, unknown>;
-      this.emit("event", params["event"] as string, params["data"] || {});
+      const eventName = params["type"] as string;
+      const rawPayload = params["payload"] ?? {};
+      const payload = rawPayload && typeof rawPayload === "object" && !Array.isArray(rawPayload)
+        ? {
+            ...(rawPayload as Record<string, unknown>),
+            ...(typeof params["session_id"] === "string" ? { session_id: params["session_id"] } : {}),
+            ...(typeof params["turn_id"] === "string" ? { turn_id: params["turn_id"] } : {}),
+          }
+        : rawPayload;
+      this.emit("event", eventName, payload);
       return;
     }
 

@@ -216,6 +216,33 @@ class Router:
             logger.debug("[Router] 无适配器: %s", route.type)
             return False
 
+    def deliver_event(
+        self,
+        event: str,
+        payload: dict,
+        route: OutputRoute,
+        *,
+        session_id: str = "",
+        turn_id: str = "",
+    ) -> bool:
+        """分发结构化出站事件，避免在 Router 内二次序列化 JSON。"""
+        adapter = self._adapters.get(route.type)
+        if not adapter:
+            logger.debug("[Router] 无适配器: %s", route.type)
+            return False
+        try:
+            adapter.send_event(
+                route.target,
+                event,
+                payload,
+                session_id=session_id,
+                turn_id=turn_id,
+            )
+            return True
+        except Exception as e:
+            logger.warning("[Router] 事件分发失败 (%s/%s/%s): %s", route.type, route.target, event, e)
+            return False
+
     # ── Broadcast ──────────────────────────────────────────
 
     def broadcast(self, text: str, msg_type: str = "text") -> int:

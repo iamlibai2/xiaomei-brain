@@ -32,6 +32,20 @@ class ChannelAdapter(ABC):
         """
         ...
 
+    def send_event(
+        self,
+        target: str,
+        event: str,
+        payload: dict,
+        *,
+        session_id: str = "",
+        turn_id: str = "",
+    ) -> None:
+        """发送结构化事件；非实时通道退化为可展示文本。"""
+        text = str(payload.get("text") or payload.get("summary") or "")
+        if text:
+            self.send(target, text)
+
     def receive(self) -> InboundMsg | None:
         """非阻塞接收一条消息。无消息时返回 None。
 

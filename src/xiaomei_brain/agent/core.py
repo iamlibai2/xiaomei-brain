@@ -61,6 +61,7 @@ class Agent:
         self._dynamic_loader: Any = None      # DynamicToolLoader, set by agent_manager
         self.user_display_name: str = "这位用户"  # 当前用户的显示名，identity 绑定后设置
         self.session_id: str = "main"
+        self.turn_id: str = ""
         self.tool_call_buffer: ToolCallBuffer = ToolCallBuffer()  # 实例级，每个 Agent 独立
 
         # ── Intent context (from ConsciousLiving) ──────────────────────

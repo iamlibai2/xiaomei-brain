@@ -975,9 +975,8 @@ class ConsciousLiving(Living):
 
     def _publish_interaction(self, event: str, payload: dict) -> None:
         """Publish a structured interaction to the conversation that created it."""
-        import json
-
         session_id = str(payload.get("session_id", ""))
+        turn_id = str(payload.get("turn_id", ""))
         db = getattr(self.agent, "conversation_db", None)
         if db is not None:
             try:
@@ -990,7 +989,13 @@ class ConsciousLiving(Living):
             return
         route = router.route_for_session(session_id)
         if route:
-            router.deliver(json.dumps(payload, ensure_ascii=False), route, msg_type=event)
+            router.deliver_event(
+                event,
+                payload,
+                route,
+                session_id=session_id,
+                turn_id=turn_id,
+            )
 
     def _setup_comms(self, db_path: str) -> None:
         """初始化通讯层：各通道适配器自行启动 + WS Gateway + 工具上下文。"""

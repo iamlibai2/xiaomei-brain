@@ -24,6 +24,7 @@ import logging
 import queue
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable
@@ -84,6 +85,8 @@ class LivingMessage:
     # Image paths or URLs.
     # 图片路径或 URL 列表。
     images: list[str] = field(default_factory=list)
+    # Stable identity for one user input and its complete response lifecycle.
+    turn_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
 
 #---------------------------------------------------------------------------
@@ -273,7 +276,8 @@ class Living:
         images: list[str] | None = None,
         urgent: bool = False,
         display_name: str | None = None,
-    ) -> None:
+        turn_id: str | None = None,
+    ) -> LivingMessage:
         """Enqueue a message.
 
         Sanitization, throttle, and busy checks are handled by
@@ -287,10 +291,12 @@ class Living:
             session_id=session_id or self.session_id,
             source=source,
             images=images or [],
+            turn_id=turn_id or str(uuid.uuid4()),
         )
         if display_name:
             msg.user_display_name = display_name
         self._queue.put_nowait(msg)
+        return msg
 
     @staticmethod
     def _clean_input(text: str) -> str:

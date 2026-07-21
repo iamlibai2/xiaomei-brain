@@ -160,15 +160,7 @@ class Gateway:
 
         # 8. Enqueue to Living (passes display_name through)
         from xiaomei_brain.consciousness.living import LivingMessage
-        msg = LivingMessage(
-            content=content,
-            user_id=user_id,
-            session_id=session_id,
-            source=raw.source,
-            images=raw.images,
-        )
-        msg.user_display_name = user_display_name
-        self._living.put_message(
+        msg = self._living.put_message(
             content=content,
             user_id=user_id,
             session_id=session_id,
@@ -176,6 +168,17 @@ class Gateway:
             images=raw.images,
             display_name=user_display_name,
         )
+        # Lightweight test doubles and third-party Living implementations may
+        # still return None. Preserve the accepted-message contract for them.
+        if msg is None:
+            msg = LivingMessage(
+                content=content,
+                user_id=user_id,
+                session_id=session_id,
+                source=raw.source,
+                images=raw.images,
+            )
+            msg.user_display_name = user_display_name
         return Accepted(living_message=msg)
 
     # ── Internal ───────────────────────────────────────────

@@ -527,9 +527,9 @@ class TUIApp:
         self.event_handler.handle(event_name, payload)
 
         # 同步 streaming 状态到 input_handler
-        if event_name == "chat.chunk":
+        if event_name == "message.delta":
             self.input_handler.set_streaming(True)
-        elif event_name in ("session.message", "chat.aborted", "chat.error"):
+        elif event_name in ("message.complete", "error"):
             self.input_handler.clear_streaming()
 
         # 触发重绘

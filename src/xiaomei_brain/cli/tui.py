@@ -272,12 +272,12 @@ async def _recv_loop(ws, app) -> None:
                 continue
             if data.get("method") == "event":
                 params = data.get("params", {})
-                event_name = params.get("event", "")
-                payload = params.get("data", {})
+                event_name = params.get("type", "")
+                payload = params.get("payload", {})
                 text = payload.get("text", "")
-                if event_name == "chat.chunk":
+                if event_name == "message.delta":
                     _on_text_chunk(text)
-                elif event_name == "session.message":
+                elif event_name == "message.complete":
                     state.msg_count += 1
                     _on_text(text)
                     app.invalidate()

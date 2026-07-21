@@ -155,6 +155,7 @@ def create_clarify_tool(agent_instance: Any) -> Tool:
         normalized = _normalize_choices(choices)
         core = agent_instance._get_agent()
         session_id = getattr(core, "session_id", "") or ""
+        turn_id = getattr(core, "turn_id", "") or ""
         user_id = getattr(core, "user_id", "") or ""
         living = getattr(agent_instance, "_living", None)
         broker = getattr(living, "_interaction_broker", None)
@@ -166,6 +167,7 @@ def create_clarify_tool(agent_instance: Any) -> Tool:
                     choices=normalized,
                     session_id=session_id,
                     user_id=user_id,
+                    turn_id=turn_id,
                 )
             except TimeoutError as exc:
                 return json.dumps({"error": str(exc)}, ensure_ascii=False)

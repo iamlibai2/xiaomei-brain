@@ -39,8 +39,8 @@ class WSAdapter(ChannelAdapter):
         """推送文本到指定 WebSocket 连接。
 
         target: session_id
-        msg_type: "text" 完整消息 → event:"session.message"
-                  "text_chunk" 流式块 → event:"chat.chunk"
+        msg_type: "text" 完整消息 → event:"message.complete"
+                  "text_chunk" 流式块 → event:"message.delta"
         """
         conn_id = self._conn_manager.get_conn_id(target)
         if conn_id is None:
@@ -53,7 +53,7 @@ class WSAdapter(ChannelAdapter):
             return
 
         if msg_type == "text_chunk":
-            event_name = "chat.chunk"
+            event_name = "message.delta"
         elif msg_type == "internal_display":
             event_name = "internal.display"
         elif msg_type == "tool.start":
@@ -65,9 +65,41 @@ class WSAdapter(ChannelAdapter):
         elif msg_type == "interaction.updated":
             event_name = "interaction.updated"
         else:
-            event_name = "session.message"
+            event_name = "message.complete"
 
-        frame = build_event(event_name, {"text": text})
+        self.send_event(
+            target,
+            event_name,
+            {"text": text, **({"status": "complete"} if event_name == "message.complete" else {})},
+            session_id=target,
+        )
+
+    def send_event(
+        self,
+        target: str,
+        event: str,
+        payload: dict,
+        *,
+        session_id: str = "",
+        turn_id: str = "",
+    ) -> None:
+        """向 WebSocket 原样发送结构化 Gateway 事件。"""
+        conn_id = self._conn_manager.get_conn_id(target)
+        if conn_id is None:
+            logger.warning("[WSAdapter] 丢弃事件，无连接: session=%s event=%s", target, event)
+            return
+
+        loop = self._loop
+        if loop is None:
+            logger.warning("[WSAdapter] 丢弃事件，事件循环未设置: session=%s event=%s", target, event)
+            return
+
+        frame = build_event(
+            event,
+            payload,
+            session_id=session_id or target,
+            turn_id=turn_id,
+        )
         asyncio.run_coroutine_threadsafe(
             self._conn_manager.send(conn_id, frame),
             loop,

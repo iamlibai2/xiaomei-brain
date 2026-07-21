@@ -36,12 +36,11 @@ from .tool_card import ToolCard, ToolState
 
 # ── 事件类型 ──────────────────────────────────────────
 
-EVENT_CHUNK = "chat.chunk"
-EVENT_MESSAGE = "session.message"
+EVENT_CHUNK = "message.delta"
+EVENT_MESSAGE = "message.complete"
 EVENT_TOOL_START = "tool.start"
 EVENT_TOOL_COMPLETE = "tool.complete"
-EVENT_ERROR = "chat.error"
-EVENT_ABORTED = "chat.aborted"
+EVENT_ERROR = "error"
 
 # ── 状态 ──────────────────────────────────────────────
 
@@ -335,8 +334,6 @@ class TUIApp:
             self._on_tool_complete(payload)
         elif event == EVENT_ERROR:
             self._on_error(payload)
-        elif event == EVENT_ABORTED:
-            self._on_aborted()
 
     def _on_chunk(self, payload: dict) -> None:
         raw = payload.get("text", "").replace("\r", "")
@@ -384,6 +381,14 @@ class TUIApp:
             app.invalidate()
 
     def _on_message(self, payload: dict) -> None:
+        status = payload.get("status", "complete")
+        if status == "interrupted":
+            self._on_aborted()
+            return
+        if status == "error" and not payload.get("text"):
+            error = payload.get("error") or {}
+            self._on_error({"text": error.get("message", "未知错误")})
+            return
         self._flush_chunks()
         text = payload.get("text", "")
         if self.state.streaming:

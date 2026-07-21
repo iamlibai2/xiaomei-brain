@@ -103,7 +103,10 @@ export function registerIpcHandlers(
         // Forward events with agentId tag
         client.on("event", (eventName: string, data: unknown) => {
           const eventData = data && typeof data === "object" && !Array.isArray(data)
-            ? { ...(data as Record<string, unknown>), session_id: sessionId }
+            ? {
+                ...(data as Record<string, unknown>),
+                session_id: (data as Record<string, unknown>).session_id || sessionId,
+              }
             : data;
           sendGatewayEvent(eventName, eventData);
         });

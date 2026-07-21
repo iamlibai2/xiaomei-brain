@@ -28,7 +28,8 @@ class InteractionBrokerTest(unittest.TestCase):
         result = []
         worker = threading.Thread(
             target=lambda: result.append(broker.request(
-                "先做哪个？", ["设计", "实现"], "session-a", "user-a", timeout=1,
+                "先做哪个？", ["设计", "实现"], "session-a", "user-a",
+                timeout=1, turn_id="turn-a",
             )),
         )
         worker.start()
@@ -44,6 +45,7 @@ class InteractionBrokerTest(unittest.TestCase):
             "interaction.requested", "interaction.updated",
         ])
         self.assertEqual(published[-1][1]["status"], "answered")
+        self.assertEqual(published[0][1]["turn_id"], "turn-a")
 
     def test_cancel_session_releases_only_matching_request(self):
         published = []

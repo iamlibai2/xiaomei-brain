@@ -122,7 +122,7 @@ class ChatLog:
         return entry
 
     def finalize_assistant(self, run_id: str, text: str = "") -> None:
-        """标记流式完成。如果 entry 不存在则创建（处理无 chunk 的 session.message）。"""
+        """标记流式完成。如果 entry 不存在则创建（处理无 delta 的 message.complete）。"""
         entry = self._streaming.pop(run_id, None)
         if entry is None:
             if text:

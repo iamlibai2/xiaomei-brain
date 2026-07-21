@@ -23,6 +23,7 @@ class InteractionRequest:
     choices: list[str]
     session_id: str
     user_id: str
+    turn_id: str = ""
     status: str = "pending"
     response: str = ""
     created_at: float = field(default_factory=time.time)
@@ -36,6 +37,7 @@ class InteractionRequest:
             "question": self.question,
             "choices": list(self.choices),
             "session_id": self.session_id,
+            "turn_id": self.turn_id,
             "status": self.status,
             "response": self.response,
             "created_at": self.created_at,
@@ -57,6 +59,8 @@ class InteractionBroker:
         session_id: str,
         user_id: str,
         timeout: float = 300.0,
+        *,
+        turn_id: str = "",
     ) -> str:
         request = InteractionRequest(
             id=f"interaction-{uuid.uuid4().hex}",
@@ -64,6 +68,7 @@ class InteractionBroker:
             choices=list(choices or []),
             session_id=session_id,
             user_id=user_id,
+            turn_id=turn_id,
         )
         with self._lock:
             self._requests[request.id] = request

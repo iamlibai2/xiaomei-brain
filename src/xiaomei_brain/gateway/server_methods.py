@@ -95,7 +95,12 @@ class MethodRouter:
             "session_id": session_id,
             "agent_name": getattr(self._living, "_agent_id", ""),
             "reconnect": bool(p.session_id),
-            "protocol_version": 1,
+            "protocol_version": 2,
+            "capabilities": [
+                "message.lifecycle",
+                "tool.lifecycle",
+                "interaction.question",
+            ],
         })
 
     def _handle_chat_send(self, conn_id: str, req_id: str, params: dict) -> dict:
@@ -121,11 +126,20 @@ class MethodRouter:
                 session_id=session_id,
             ))
             accepted = isinstance(result, Accepted)
-            return build_response(req_id, result={"accepted": accepted, "session_id": session_id})
+            response = {"accepted": accepted, "session_id": session_id}
+            if accepted:
+                response["turn_id"] = result.living_message.turn_id
+            else:
+                response["reason"] = getattr(result, "reason", "REJECTED")
+            return build_response(req_id, result=response)
         else:
             # Fallback: Gateway not yet initialized
-            living.put_message(content, session_id=session_id, user_id=user_id)
-            return build_response(req_id, result={"accepted": True, "session_id": session_id})
+            msg = living.put_message(content, session_id=session_id, user_id=user_id)
+            return build_response(req_id, result={
+                "accepted": True,
+                "session_id": session_id,
+                "turn_id": msg.turn_id,
+            })
 
     def _handle_chat_abort(self, conn_id: str, req_id: str, params: dict) -> dict:
         try:
