@@ -300,12 +300,20 @@ class ConversationDriver:
                         skill_loader = getattr(parent.agent, '_skill_loader', None)
                         si.memory.skill_index = skill_loader.build_skill_index_prompt(current_msg.content) if skill_loader else ""
 
+                    from xiaomei_brain.agent.vision_routing import route_chat_images
+                    routed_images, image_analysis = route_chat_images(
+                        parent.agent,
+                        current_msg.content,
+                        getattr(current_msg, "images", None),
+                    )
+
                     assembled = build_context(
                         agent, current_msg.content,
                         consciousness_state=cs, intent_context=current_context,
                         assemble=getattr(parent, "assemble_context", True),
-                        images=getattr(current_msg, "images", None),
+                        images=routed_images,
                         attachments=getattr(current_msg, "attachments", None),
+                        image_analysis=image_analysis,
                         self_image=si,
                         force_mode=getattr(parent, "force_mode", ""),
                         inner_voice_mode=self._inner_voice.get_last_mode() if self._inner_voice else "",

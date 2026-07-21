@@ -44,6 +44,7 @@ class AgentInstance:
     provider: str = ""
     model: str = ""
     vision_model: str = ""      # e.g. "minimax/MiniMax-M3"
+    vision_llm: Any = None       # Dedicated fallback LLM for image understanding.
     api_key: str = ""
     base_url: str = ""
 

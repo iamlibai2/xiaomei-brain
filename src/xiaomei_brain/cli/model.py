@@ -277,6 +277,8 @@ def _add_provider(provider, current_providers: dict) -> None:
             "contextWindow": m.context_window,
             "maxTokens": m.max_output or 8192,
             "reasoning": m.reasoning,
+            "inputModes": list(m.input_modalities) or ["text"],
+            "supportsVision": "image" in m.input_modalities,
         })
     selected_models.extend(custom_models)
 
@@ -410,6 +412,8 @@ def _edit_provider(provider, pid: str, pcfg: dict) -> None:
                     "contextWindow": m.context_window,
                     "maxTokens": m.max_output or 8192,
                     "reasoning": m.reasoning,
+                    "inputModes": list(m.input_modalities) or ["text"],
+                    "supportsVision": "image" in m.input_modalities,
                 })
             selected_models.extend(custom_models)
             current_providers[pid]["models"] = selected_models

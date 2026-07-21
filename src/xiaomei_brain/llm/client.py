@@ -133,6 +133,30 @@ class LLMClient:
     def api_key(self) -> str:
         return self._api_key
 
+    @property
+    def supports_vision(self) -> bool:
+        """Whether the selected model accepts image input.
+
+        Explicit per-model configuration wins.  Older configurations may not
+        contain capability fields, so fall back to the models.dev catalog and
+        finally the provider-wide declaration. Unknown is treated as false.
+        """
+        if self._model_def.supports_vision is not None:
+            return self._model_def.supports_vision
+        if "image" in self._model_def.input_modes:
+            return True
+        try:
+            from xiaomei_brain.llm.model_catalog import get_provider_models
+            catalog_model = next(
+                (item for item in get_provider_models(self.provider) if item.id == self._model_id),
+                None,
+            )
+            if catalog_model is not None:
+                return "image" in catalog_model.input_modalities
+        except Exception:
+            logger.debug("Unable to resolve vision capability for %s/%s", self.provider, self.model, exc_info=True)
+        return bool(self._profile.supports_vision)
+
     # ── Public API ──────────────────────────────────────────
 
     def set_model(self, model: str, base_url: str | None = None, api_key: str | None = None) -> None:

@@ -266,6 +266,15 @@ class AgentManager:
             vis_api_key = vis_api_key or api_key
             vis_base_url = vis_profile.base_url if vis_profile else "https://api.minimaxi.com/v1"
             if vis_api_key:
+                try:
+                    agent.vision_llm = LLMClient(
+                        provider=vis_provider,
+                        model=vis_model,
+                        registry=registry,
+                        api_key=vis_api_key,
+                    )
+                except ValueError as exc:
+                    logger.warning("[Vision] fallback model initialization failed: %s", exc)
                 from xiaomei_brain.body.perception.vision import set_vision_config
                 set_vision_config(api_key=vis_api_key, base_url=vis_base_url, model=vis_model)
                 logger.info("[Vision] 已启用: %s/%s", vis_provider, vis_model)

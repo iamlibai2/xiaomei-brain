@@ -96,6 +96,7 @@ def build_context(
     assemble: bool = True,
     images: list[str] | None = None,
     attachments: list[dict[str, Any]] | None = None,
+    image_analysis: str = "",
     self_image: Any = None,
     force_mode: str = "",
     inner_voice_mode: str = "",
@@ -117,6 +118,8 @@ def build_context(
     images = images or []
     attachments = attachments or []
     model_input = append_text_attachments(user_input, attachments)
+    if image_analysis:
+        model_input += f"\n\n<image_analysis>\n{image_analysis}\n</image_analysis>"
     message_content: str | list[dict] = (
         build_multimodal_content(model_input, images)
         if images
