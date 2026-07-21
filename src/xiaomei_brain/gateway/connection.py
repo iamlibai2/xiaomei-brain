@@ -45,6 +45,12 @@ class ConnectionManager:
     def get_conn_id(self, session_id: str) -> str | None:
         return self.session_to_conn.get(session_id)
 
+    def get_session_id(self, conn_id: str) -> str | None:
+        for session_id, mapped_conn_id in self.session_to_conn.items():
+            if mapped_conn_id == conn_id:
+                return session_id
+        return None
+
     @property
     def count(self) -> int:
         return len(self.connections)

@@ -209,6 +209,46 @@ class ConversationDB(SQLiteStore):
                 raise
         raise last_error  # type: ignore[misc]
 
+    def save_interaction(self, payload: dict[str, Any]) -> int | None:
+        """Insert or update one Desktop interaction timeline record.
+
+        Interaction rows share the message sequence so history pagination keeps
+        their exact position, but retrieval methods exclude them from the
+        Agent's conversational memory.
+        """
+        request_id = str(payload.get("id", "")).strip()
+        session_id = str(payload.get("session_id", "")).strip()
+        if not request_id or not session_id:
+            return None
+
+        question = str(payload.get("question", ""))
+        user_id = str(payload.get("user_id", "global")) or "global"
+        metadata = json.dumps(payload, ensure_ascii=False)
+        conn = self._get_conn()
+        existing = conn.execute(
+            "SELECT id FROM messages WHERE role = 'interaction' AND tool_call_id = ? LIMIT 1",
+            (request_id,),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """UPDATE messages
+                   SET content = ?, metadata = ?
+                   WHERE id = ?""",
+                (question, metadata, existing["id"]),
+            )
+            conn.commit()
+            return int(existing["id"])
+
+        cur = conn.execute(
+            """INSERT INTO messages
+               (user_id, session_id, role, content, token_count, tool_name,
+                tool_call_id, metadata, created_at)
+               VALUES (?, ?, 'interaction', ?, 0, 'clarify', ?, ?, ?)""",
+            (user_id, session_id, question, request_id, metadata, time.time()),
+        )
+        conn.commit()
+        return cur.lastrowid
+
     def query(
         self,
         session_id: str | None = None,
@@ -229,6 +269,8 @@ class ConversationDB(SQLiteStore):
         if role is not None:
             clauses.append("role = ?")
             params.append(role)
+        else:
+            clauses.append("role != 'interaction'")
         if since is not None:
             clauses.append("created_at >= ?")
             params.append(since)
@@ -258,7 +300,9 @@ class ConversationDB(SQLiteStore):
         if has_cjk:
             # CJK: LIKE is more reliable than FTS5
             rows = conn.execute(
-                "SELECT * FROM messages WHERE content LIKE ? ORDER BY created_at DESC LIMIT ?",
+                """SELECT * FROM messages
+                   WHERE role != 'interaction' AND content LIKE ?
+                   ORDER BY created_at DESC LIMIT ?""",
                 (f"%{keyword}%", limit),
             ).fetchall()
         else:
@@ -270,6 +314,7 @@ class ConversationDB(SQLiteStore):
                     SELECT m.* FROM messages m
                     JOIN messages_fts fts ON m.id = fts.rowid
                     WHERE messages_fts MATCH ?
+                      AND m.role != 'interaction'
                     ORDER BY rank
                     LIMIT ?
                     """,
@@ -278,7 +323,9 @@ class ConversationDB(SQLiteStore):
             except Exception:
                 # FTS5 fallback to LIKE
                 rows = conn.execute(
-                    "SELECT * FROM messages WHERE content LIKE ? ORDER BY created_at DESC LIMIT ?",
+                    """SELECT * FROM messages
+                       WHERE role != 'interaction' AND content LIKE ?
+                       ORDER BY created_at DESC LIMIT ?""",
                     (f"%{keyword}%", limit),
                 ).fetchall()
 
@@ -299,6 +346,8 @@ class ConversationDB(SQLiteStore):
         conn = self._get_conn()
         clauses = []
         params: list[Any] = []
+
+        clauses.append("role != 'interaction'")
 
         if user_id:
             clauses.append("user_id = ?")

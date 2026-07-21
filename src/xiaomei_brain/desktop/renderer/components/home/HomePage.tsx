@@ -226,6 +226,10 @@ function MessageRow({ message, agentName }: { message: DisplayMessage; agentName
   const isUser = message.role === "user";
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
 
+  if (message.interaction) {
+    return <InteractionCard message={message} agentName={agentName} />;
+  }
+
   if (isUser) {
     return (
       <div className="user-message-row">
@@ -300,6 +304,74 @@ function MessageRow({ message, agentName }: { message: DisplayMessage; agentName
         >
           {hasThinking ? content : message.content}
         </ReactMarkdown>
+      </div>
+    </div>
+  );
+}
+
+function InteractionCard({ message, agentName }: { message: DisplayMessage; agentName: string }) {
+  const { t } = useTranslation();
+  const interaction = message.interaction!;
+  const respondToInteraction = useCoreStore((s) => s.respondToInteraction);
+  const [answer, setAnswer] = useState("");
+  const canRespond = interaction.status === "pending" || interaction.status === "error";
+  const waiting = interaction.status === "responding";
+
+  const submit = (response: string) => {
+    if (!canRespond || !response.trim()) return;
+    void respondToInteraction(interaction.id, response.trim());
+  };
+
+  return (
+    <div className="assistant-message-row interaction-message-row">
+      <div className="assistant-avatar">
+        <div className="assistant-avatar-face">{agentName.charAt(0)}</div>
+        <span className="assistant-avatar-name">{agentName}</span>
+      </div>
+      <div className={`interaction-card interaction-${interaction.status}`}>
+        <div className="interaction-card-label">{t("home.interactionLabel")}</div>
+        <div className="interaction-card-question">{interaction.question}</div>
+        {canRespond && interaction.choices.length > 0 && (
+          <div className="interaction-card-choices">
+            {interaction.choices.map((choice) => (
+              <button type="button" key={choice} onClick={() => submit(choice)}>
+                {choice}
+              </button>
+            ))}
+          </div>
+        )}
+        {canRespond && interaction.choices.length === 0 && (
+          <form
+            className="interaction-card-answer"
+            onSubmit={(event) => {
+              event.preventDefault();
+              submit(answer);
+            }}
+          >
+            <input
+              value={answer}
+              onChange={(event) => setAnswer(event.target.value)}
+              placeholder={t("home.interactionAnswerPlaceholder")}
+              autoFocus
+            />
+            <button type="submit" disabled={!answer.trim()}>{t("home.interactionSubmit")}</button>
+          </form>
+        )}
+        {waiting && <div className="interaction-card-status">{t("home.interactionSending")}</div>}
+        {interaction.status === "answered" && (
+          <div className="interaction-card-status interaction-card-result">
+            {t("home.interactionAnswered", { answer: interaction.response })}
+          </div>
+        )}
+        {interaction.status === "expired" && (
+          <div className="interaction-card-status">{t("home.interactionExpired")}</div>
+        )}
+        {interaction.status === "cancelled" && (
+          <div className="interaction-card-status">{t("home.interactionCancelled")}</div>
+        )}
+        {interaction.status === "error" && interaction.error && (
+          <div className="interaction-card-error">{interaction.error}</div>
+        )}
       </div>
     </div>
   );

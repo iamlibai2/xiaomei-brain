@@ -359,8 +359,8 @@ class AgentManager:
         from xiaomei_brain.tools.builtin.manage_session import create_session_tool
         tools.register(create_session_tool(agent))
 
-        from xiaomei_brain.tools.builtin.clarify import clarify_tool
-        tools.register(clarify_tool)
+        from xiaomei_brain.tools.builtin.clarify import create_clarify_tool
+        tools.register(create_clarify_tool(agent))
 
         # ── 全局 Embedding 初始化（必须在 SkillStorage / DynamicToolLoader 之前）──
         from xiaomei_brain.base.shared_embedder import SharedEmbedder

@@ -64,6 +64,11 @@ class ChatSessionsParams(BaseModel):
     query: str = Field(default="", max_length=100)
 
 
+class InteractionRespondParams(BaseModel):
+    request_id: str = Field(..., min_length=1)
+    response: str = Field(..., min_length=1, max_length=2000)
+
+
 # ── Wire frames ──────────────────────────────
 
 class ReqFrame(BaseModel):

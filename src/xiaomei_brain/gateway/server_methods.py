@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -12,6 +13,7 @@ from .schemas import (
     ChatAbortParams,
     ChatHistoryParams,
     ChatSessionsParams,
+    InteractionRespondParams,
     format_error,
 )
 from .auth import check_token
@@ -31,6 +33,7 @@ class MethodRouter:
             "chat.abort": self._handle_chat_abort,
             "chat.history": self._handle_chat_history,
             "chat.sessions": self._handle_chat_sessions,
+            "interaction.respond": self._handle_interaction_respond,
             "identity.list": self._handle_identity_list,
         }
         # 已认证的 session
@@ -134,6 +137,14 @@ class MethodRouter:
         if living is None:
             return build_error(req_id, ErrorCode.GATEWAY_NOT_READY, "Gateway 未就绪")
         try:
+            # A clarification tool may currently be waiting rather than asking
+            # the LLM for more tokens.  Wake only this connection's session so
+            # abort never leaves the Agent blocked on an invisible question.
+            from .connection import cm
+            session_id = cm.get_session_id(conn_id)
+            broker = getattr(living, "_interaction_broker", None)
+            if broker is not None and session_id:
+                broker.cancel_session(session_id)
             living.abort_chat()
             return build_response(req_id, result={"aborted": True})
         except Exception as e:
@@ -162,16 +173,24 @@ class MethodRouter:
                 session_id=session_id,
                 before_id=p.before_id,
             )
-            messages = [
-                {
+            messages = []
+            for r in rows:
+                message = {
                     "id": r.get("id"),
                     "role": r.get("role", "user"),
                     "content": r.get("content", ""),
                     "created_at": r.get("created_at", 0),
                     "user_id": r.get("user_id", ""),
                 }
-                for r in rows
-            ]
+                if r.get("role") == "interaction":
+                    try:
+                        interaction = json.loads(r.get("metadata") or "{}")
+                    except (TypeError, json.JSONDecodeError):
+                        interaction = {}
+                    if not isinstance(interaction, dict) or not interaction.get("id"):
+                        continue
+                    message["interaction"] = interaction
+                messages.append(message)
             return build_response(req_id, result={
                 "messages": messages,
                 "has_more": has_more,
@@ -234,6 +253,32 @@ class MethodRouter:
 
         return build_response(req_id, result={"identities": identities})
 
+    def _handle_interaction_respond(self, conn_id: str, req_id: str, params: dict) -> dict:
+        try:
+            p = InteractionRespondParams.model_validate(params)
+        except Exception as e:
+            return build_error(req_id, ErrorCode.INVALID_REQUEST, f"参数无效: {format_error(e)}")
+
+        living = self._living
+        broker = getattr(living, "_interaction_broker", None) if living is not None else None
+        if broker is None:
+            return build_error(req_id, ErrorCode.GATEWAY_NOT_READY, "交互服务未就绪")
+
+        from .connection import cm
+        session_id = cm.get_session_id(conn_id)
+        if not session_id:
+            return build_error(req_id, ErrorCode.INVALID_REQUEST, "当前连接没有会话")
+        if not broker.respond(p.request_id, p.response, session_id):
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, "交互请求不存在、已结束或不属于当前会话")
+        return build_response(req_id, result={"accepted": True, "request_id": p.request_id})
+
     def drop_session(self, conn_id: str) -> None:
         """断开连接时清除认证状态。"""
+        # server.py calls this before unregistering the connection, so its
+        # session mapping is still available here.
+        from .connection import cm
+        session_id = cm.get_session_id(conn_id)
+        broker = getattr(self._living, "_interaction_broker", None)
+        if broker is not None and session_id:
+            broker.cancel_session(session_id)
         self._auth_sessions.discard(conn_id)

@@ -87,6 +87,51 @@ class GatewaySessionsTest(unittest.TestCase):
             & {message["id"] for message in older["messages"]}
         )
 
+    def test_chat_history_restores_interaction_timeline_record(self):
+        self.db.log("card-session", "user", "help me choose")
+        self.db.save_interaction({
+            "id": "interaction-1",
+            "question": "选择哪一种？",
+            "choices": ["简约", "科技"],
+            "session_id": "card-session",
+            "user_id": "desktop-user",
+            "status": "pending",
+            "response": "",
+            "created_at": 1.0,
+        })
+        self.db.save_interaction({
+            "id": "interaction-1",
+            "question": "选择哪一种？",
+            "choices": ["简约", "科技"],
+            "session_id": "card-session",
+            "user_id": "desktop-user",
+            "status": "answered",
+            "response": "科技",
+            "created_at": 1.0,
+        })
+        self.db.log("card-session", "assistant", "科技风格方案")
+
+        living = SimpleNamespace(agent=SimpleNamespace(conversation_db=self.db))
+        router = MethodRouter(living=living)
+        router._auth_sessions.add("desktop-connection")
+        result = router.dispatch(
+            "desktop-connection",
+            "history-card",
+            "chat.history",
+            {"session_id": "card-session", "limit": 20},
+        )["result"]
+
+        self.assertEqual(
+            [message["role"] for message in result["messages"]],
+            ["user", "interaction", "assistant"],
+        )
+        self.assertEqual(result["messages"][1]["interaction"]["status"], "answered")
+        self.assertEqual(result["messages"][1]["interaction"]["response"], "科技")
+        self.assertEqual(
+            [row["role"] for row in self.db.get_recent(20, session_id="card-session")],
+            ["user", "assistant"],
+        )
+
     def test_chat_sessions_supports_search_and_offset_pagination(self):
         self.db.log("session-alpha", "user", "ordinary discussion")
         self.db.log("session-beta", "user", "needle in the title")

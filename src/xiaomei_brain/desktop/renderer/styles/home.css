@@ -689,6 +689,102 @@
 }
 
 /* ─── Home Composer (快捷功能 + 输入区) ─── */
+.interaction-message-row {
+  align-items: flex-start;
+}
+
+.interaction-card {
+  width: min(520px, calc(100% - 56px));
+  padding: 16px;
+  border: 1px solid var(--ui-border-default);
+  border-radius: var(--ui-radius-xl);
+  background: var(--ui-bg-primary);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
+}
+
+.interaction-card-label {
+  margin-bottom: 8px;
+  color: var(--ui-color-text-tertiary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.interaction-card-question {
+  color: var(--ui-color-text-primary);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.interaction-card-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.interaction-card-choices button,
+.interaction-card-answer button {
+  padding: 7px 14px;
+  border: 1px solid var(--ui-border-default);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-bg-primary);
+  color: var(--ui-color-text-primary);
+  font-family: var(--ui-font-family);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.interaction-card-choices button:hover,
+.interaction-card-answer button:hover:not(:disabled) {
+  border-color: var(--ui-color-text-primary);
+  background: var(--ui-bg-hover);
+}
+
+.interaction-card-answer {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.interaction-card-answer input {
+  min-width: 0;
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid var(--ui-border-default);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-bg-primary);
+  color: var(--ui-color-text-primary);
+  font-family: var(--ui-font-family);
+  outline: none;
+}
+
+.interaction-card-answer input:focus {
+  border-color: var(--ui-color-text-primary);
+}
+
+.interaction-card-answer button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.interaction-card-status,
+.interaction-card-error {
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.interaction-card-status {
+  color: var(--ui-color-text-secondary);
+}
+
+.interaction-card-result {
+  color: var(--ui-color-text-primary);
+}
+
+.interaction-card-error {
+  color: #d93025;
+}
+
 .wb-home-composer {
   display: flex;
   flex-direction: column;

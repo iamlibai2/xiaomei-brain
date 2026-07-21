@@ -60,6 +60,10 @@ class WSAdapter(ChannelAdapter):
             event_name = "tool.start"
         elif msg_type == "tool.complete":
             event_name = "tool.complete"
+        elif msg_type == "interaction.requested":
+            event_name = "interaction.requested"
+        elif msg_type == "interaction.updated":
+            event_name = "interaction.updated"
         else:
             event_name = "session.message"
 

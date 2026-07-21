@@ -47,12 +47,21 @@ def _python_type_to_json_schema(py_type: Any) -> dict[str, Any]:
         if len(non_none) == 1:
             py_type = non_none[0]
 
+    # Re-evaluate the origin after unwrapping Optional[list[T]].  Without this,
+    # generic lists were exposed to LLM providers as strings.
+    origin = typing.get_origin(py_type)
+    if py_type is list or origin is list:
+        schema: dict[str, Any] = {"type": "array"}
+        item_types = typing.get_args(py_type)
+        if item_types:
+            schema["items"] = _python_type_to_json_schema(item_types[0])
+        return schema
+
     type_map = {
         str: {"type": "string"},
         int: {"type": "integer"},
         float: {"type": "number"},
         bool: {"type": "boolean"},
-        list: {"type": "array"},
     }
     if py_type in type_map:
         return type_map[py_type]

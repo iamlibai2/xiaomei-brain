@@ -139,6 +139,47 @@ def clarify(question: str, choices: list[str] | None = None) -> str:
 clarify_tool: Tool = clarify
 
 
+def create_clarify_tool(agent_instance: Any) -> Tool:
+    """Create a clarify tool bound to one Agent instance.
+
+    WebSocket conversations use the Agent's InteractionBroker. CLI keeps the
+    existing callback implementation for backwards compatibility.
+    """
+
+    @tool(name="clarify", description=clarify.description)
+    def bound_clarify(question: str, choices: list[str] | None = None) -> str:
+        if not question or not question.strip():
+            return json.dumps({"error": "问题不能为空"}, ensure_ascii=False)
+
+        question_text = question.strip()
+        normalized = _normalize_choices(choices)
+        core = agent_instance._get_agent()
+        session_id = getattr(core, "session_id", "") or ""
+        user_id = getattr(core, "user_id", "") or ""
+        living = getattr(agent_instance, "_living", None)
+        broker = getattr(living, "_interaction_broker", None)
+
+        if broker is not None and session_id not in ("", "main") and not session_id.startswith("cli-"):
+            try:
+                user_response = broker.request(
+                    question=question_text,
+                    choices=normalized,
+                    session_id=session_id,
+                    user_id=user_id,
+                )
+            except TimeoutError as exc:
+                return json.dumps({"error": str(exc)}, ensure_ascii=False)
+            return json.dumps({
+                "question": question_text,
+                "choices_offered": normalized,
+                "user_response": user_response,
+            }, ensure_ascii=False)
+
+        return clarify.execute(question=question_text, choices=normalized)
+
+    return bound_clarify
+
+
 # ── CLI 回调（线程安全） ─────────────────────────────────
 
 def _cli_callback(question: str, choices: list[str] | None) -> str:

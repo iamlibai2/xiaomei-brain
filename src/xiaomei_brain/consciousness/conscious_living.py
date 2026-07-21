@@ -140,6 +140,9 @@ class ConsciousLiving(Living):
             tick_interval=tick_interval or self._config.living.tick_interval,
         )
 
+        from .interaction_broker import InteractionBroker
+        self._interaction_broker = InteractionBroker(self._publish_interaction)
+
         # 自主行为计时器（独立于 _last_active，不干扰空闲检测）
         self._last_autonomous: float = 0
 
@@ -969,6 +972,25 @@ class ConsciousLiving(Living):
         self._registry = boot_plugins(agent_id=self._agent_id)
 
     # ── Agent 间通讯 ───────────────────────────────────────────────
+
+    def _publish_interaction(self, event: str, payload: dict) -> None:
+        """Publish a structured interaction to the conversation that created it."""
+        import json
+
+        session_id = str(payload.get("session_id", ""))
+        db = getattr(self.agent, "conversation_db", None)
+        if db is not None:
+            try:
+                db.save_interaction(payload)
+            except Exception as exc:
+                logger.warning("[Interaction] 保存会话记录失败: %s", exc)
+
+        router = getattr(self, "_router", None)
+        if not router or not session_id:
+            return
+        route = router.route_for_session(session_id)
+        if route:
+            router.deliver(json.dumps(payload, ensure_ascii=False), route, msg_type=event)
 
     def _setup_comms(self, db_path: str) -> None:
         """初始化通讯层：各通道适配器自行启动 + WS Gateway + 工具上下文。"""

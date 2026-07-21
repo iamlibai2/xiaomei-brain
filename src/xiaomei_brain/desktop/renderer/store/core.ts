@@ -56,6 +56,32 @@ function historyMessages(result: Record<string, unknown> | undefined, sessionId:
   return rows.flatMap((value, index) => {
     if (!value || typeof value !== "object") return [];
     const row = value as Record<string, unknown>;
+    if (row.role === "interaction" && row.interaction && typeof row.interaction === "object") {
+      const interaction = row.interaction as Record<string, unknown>;
+      const id = typeof interaction.id === "string" ? interaction.id : "";
+      const question = typeof interaction.question === "string" ? interaction.question : "";
+      if (!id || !question) return [];
+      const rawStatus = typeof interaction.status === "string" ? interaction.status : "expired";
+      const status = ["pending", "answered", "cancelled", "expired"].includes(rawStatus)
+        ? rawStatus as InteractionRequest["status"]
+        : "expired";
+      return [{
+        id,
+        role: "agent",
+        content: "",
+        streaming: false,
+        interaction: {
+          id,
+          question,
+          choices: Array.isArray(interaction.choices)
+            ? interaction.choices.filter((choice): choice is string => typeof choice === "string")
+            : [],
+          sessionId: typeof interaction.session_id === "string" ? interaction.session_id : sessionId,
+          status,
+          response: typeof interaction.response === "string" ? interaction.response : "",
+        },
+      } satisfies DisplayMessage];
+    }
     const role = row.role === "user" ? "user" : row.role === "assistant" ? "agent" : null;
     if (!role || typeof row.content !== "string") return [];
     return [{
@@ -195,6 +221,17 @@ export interface DisplayMessage {
   role: "user" | "agent";
   content: string;
   streaming: boolean;
+  interaction?: InteractionRequest;
+}
+
+export interface InteractionRequest {
+  id: string;
+  question: string;
+  choices: string[];
+  sessionId: string;
+  status: "pending" | "responding" | "answered" | "cancelled" | "expired" | "error";
+  response: string;
+  error?: string;
 }
 
 export type HomeMode = "working" | "coding" | "design";
@@ -259,6 +296,7 @@ interface CoreActions {
   disconnectAgent: (agentId: string) => Promise<void>;
   sendMessage: (text: string) => void;
   abortMessage: () => Promise<void>;
+  respondToInteraction: (requestId: string, response: string) => Promise<void>;
   setDraft: (text: string) => void;
   newSession: (name?: string) => Promise<void>;
   switchSession: (sessionId: string) => Promise<void>;
@@ -716,6 +754,34 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     set(produce((s: CoreState) => { s.sendingByAgent[agentId] = false; }));
   },
 
+  respondToInteraction: async (requestId, response) => {
+    const agentId = get().activeAgentId;
+    if (!agentId || !response.trim()) return;
+    set(produce((s: CoreState) => {
+      const message = (s.messagesByAgent[agentId] || [])
+        .find((entry) => entry.interaction?.id === requestId);
+      if (message?.interaction) {
+        message.interaction.status = "responding";
+        message.interaction.error = "";
+      }
+    }));
+    const result = await window.gateway.respondInteraction({
+      agentId,
+      requestId,
+      response: response.trim(),
+    });
+    if (result.error) {
+      set(produce((s: CoreState) => {
+        const message = (s.messagesByAgent[agentId] || [])
+          .find((entry) => entry.interaction?.id === requestId);
+        if (message?.interaction) {
+          message.interaction.status = "error";
+          message.interaction.error = result.error!.message;
+        }
+      }));
+    }
+  },
+
   setDraft: (text) => {
     const agentId = get().activeAgentId;
     if (!agentId) return;
@@ -1080,6 +1146,83 @@ export function initGatewayEvents() {
       }));
       return;
     }
+
+    if (event === "interaction.requested") {
+      try {
+        const payload = JSON.parse(text) as Record<string, unknown>;
+        const requestId = typeof payload.id === "string" ? payload.id : "";
+        const question = typeof payload.question === "string" ? payload.question : "";
+        if (!requestId || !question) return;
+        const choices = Array.isArray(payload.choices)
+          ? payload.choices.filter((choice): choice is string => typeof choice === "string")
+          : [];
+        const activeStreamId = stream.id;
+        let inserted = false;
+        setState(produce((s: CoreState) => {
+          if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
+          if (s.messagesByAgent[agentId].some((message) => message.interaction?.id === requestId)) return;
+
+          // A tool call can happen in the middle of one ReAct stream. Close
+          // any text emitted before the question so content produced after
+          // the answer starts a new message below the interaction card.
+          if (activeStreamId) {
+            const activeMessage = s.messagesByAgent[agentId]
+              .find((message) => message.id === activeStreamId);
+            if (activeMessage) {
+              activeMessage.content = stream.ref;
+              activeMessage.streaming = false;
+            }
+          }
+          s.messagesByAgent[agentId].push({
+            id: requestId,
+            role: "agent",
+            content: "",
+            streaming: false,
+            interaction: {
+              id: requestId,
+              question,
+              choices,
+              sessionId: typeof payload.session_id === "string" ? payload.session_id : "",
+              status: "pending",
+              response: "",
+            },
+          });
+          inserted = true;
+        }));
+        if (inserted && activeStreamId && stream.id === activeStreamId) {
+          stream.id = null;
+          stream.ref = "";
+        }
+      } catch {
+        // Ignore malformed structured interaction events.
+      }
+      return;
+    }
+
+    if (event === "interaction.updated") {
+      try {
+        const payload = JSON.parse(text) as Record<string, unknown>;
+        const requestId = typeof payload.id === "string" ? payload.id : "";
+        const status = typeof payload.status === "string" ? payload.status : "";
+        const response = typeof payload.response === "string" ? payload.response : "";
+        if (!requestId) return;
+        setState(produce((s: CoreState) => {
+          const message = (s.messagesByAgent[agentId] || [])
+            .find((entry) => entry.interaction?.id === requestId);
+          if (!message?.interaction) return;
+          if (["answered", "cancelled", "expired"].includes(status)) {
+            message.interaction.status = status as "answered" | "cancelled" | "expired";
+          }
+          message.interaction.response = response;
+          message.interaction.error = "";
+        }));
+      } catch {
+        // Ignore malformed structured interaction events.
+      }
+      return;
+    }
+
+    if (event === "tool.start" || event === "tool.complete") return;
 
     // Internal cognition metadata has its own event and must never finalize
     // the visible assistant message stream.
