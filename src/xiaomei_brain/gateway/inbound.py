@@ -25,6 +25,7 @@ class RawMessage:
     peer_id: str = ""             # 发送方标识
     peer_type: str = "human"      # "human" | "agent"
     images: list[str] = field(default_factory=list)
+    attachments: list[dict[str, Any]] = field(default_factory=list)
     urgent: bool = False
     session_id: str = ""          # 外部指定的 session_id，空则由 Gateway 分配
 
@@ -127,7 +128,7 @@ class Gateway:
             return Rejected(reason="EMPTY", silent=True)
 
         # 2. Empty check
-        if not content.strip():
+        if not content.strip() and not raw.attachments and not raw.images:
             logger.debug("[Gateway] 忽略空消息")
             return Rejected(reason="EMPTY", silent=True)
 
@@ -160,7 +161,7 @@ class Gateway:
 
         # 8. Enqueue to Living (passes display_name through)
         from xiaomei_brain.consciousness.living import LivingMessage
-        msg = self._living.put_message(
+        message_kwargs = dict(
             content=content,
             user_id=user_id,
             session_id=session_id,
@@ -168,6 +169,11 @@ class Gateway:
             images=raw.images,
             display_name=user_display_name,
         )
+        # Preserve compatibility with lightweight channel adapters that
+        # implement the older put_message signature when there is no attachment.
+        if raw.attachments:
+            message_kwargs["attachments"] = raw.attachments
+        msg = self._living.put_message(**message_kwargs)
         # Lightweight test doubles and third-party Living implementations may
         # still return None. Preserve the accepted-message contract for them.
         if msg is None:
@@ -177,6 +183,7 @@ class Gateway:
                 session_id=session_id,
                 source=raw.source,
                 images=raw.images,
+                attachments=raw.attachments,
             )
             msg.user_display_name = user_display_name
         return Accepted(living_message=msg)

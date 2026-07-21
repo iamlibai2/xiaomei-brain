@@ -44,11 +44,20 @@ class ConnectParams(BaseModel):
 
 # ── Chat ─────────────────────────────────────
 
+class ChatAttachment(BaseModel):
+    id: str = Field(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+    name: str = Field(..., min_length=1, max_length=255)
+    mime_type: str = Field(..., min_length=1, max_length=128)
+    size: int = Field(..., ge=1, le=5 * 1024 * 1024)
+    data_base64: str = Field(..., min_length=1)
+
+
 class ChatSendParams(BaseModel):
-    content: str = Field(..., min_length=1)
+    content: str = Field(default="", max_length=200_000)
     client_request_id: str = Field(..., min_length=1, max_length=128)
     session_id: str = ""
     user_id: str = ""
+    attachments: list[ChatAttachment] = Field(default_factory=list, max_length=4)
 
 
 class ChatAbortParams(BaseModel):

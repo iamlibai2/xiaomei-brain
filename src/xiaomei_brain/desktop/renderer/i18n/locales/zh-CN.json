@@ -39,6 +39,7 @@
       "toggleRightPanel": "打开右侧面板",
       "inputPlaceholder": "今天帮你做些什么？ @ 引用对话文件，/ 调用技能与指令",
       "addAttachment": "添加附件",
+      "removeAttachment": "移除附件",
       "mode": "模式",
       "modeAuto": "自动 ▾",
       "voiceInput": "语音输入",

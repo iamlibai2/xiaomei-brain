@@ -19,6 +19,7 @@ const CHANNEL_MAP = {
     connect:         { invoke: "gateway:connect" },
     disconnect:      { invoke: "gateway:disconnect" },
     sendMessage:     { invoke: "gateway:sendMessage" },
+    pickAttachments: { invoke: "gateway:pickAttachments" },
     abortMessage:    { invoke: "gateway:abortMessage" },
     respondInteraction: { invoke: "gateway:respondInteraction" },
     respondAction:      { invoke: "gateway:respondAction" },

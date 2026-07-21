@@ -20,6 +20,20 @@ export interface AgentEntry {
   localAgentId?: string;
 }
 
+export interface ChatAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  kind: "image" | "text" | "document";
+  dataBase64?: string;
+}
+
+export interface AttachmentPickResult {
+  attachments: ChatAttachment[];
+  error?: string;
+}
+
 export interface LocalAgentInfo {
   agentId: string;
   name: string;
@@ -66,7 +80,8 @@ export interface SessionEntry {
 export interface GatewayBridge {
   connect(args: { host: string; port: number; token: string; userId: string; agentId: string; sessionId?: string }): Promise<JsonRpcResponse>;
   disconnect(args: { agentId: string }): Promise<void>;
-  sendMessage(args: { content: string; agentId: string; clientRequestId: string }): Promise<JsonRpcResponse>;
+  sendMessage(args: { content: string; agentId: string; clientRequestId: string; attachments: ChatAttachment[] }): Promise<JsonRpcResponse>;
+  pickAttachments(): Promise<AttachmentPickResult>;
   abortMessage(args: { agentId: string }): Promise<JsonRpcResponse>;
   respondInteraction(args: { agentId: string; requestId: string; turnId: string; response: string }): Promise<JsonRpcResponse>;
   respondAction(args: { agentId: string; actionId: string; turnId: string; decision: "allow" | "deny" }): Promise<JsonRpcResponse>;

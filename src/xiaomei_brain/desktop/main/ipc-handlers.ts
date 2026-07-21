@@ -1,4 +1,6 @@
-import { ipcMain, BrowserWindow, Notification } from "electron";
+import { ipcMain, BrowserWindow, Notification, dialog } from "electron";
+import { promises as fs } from "fs";
+import path from "path";
 import { GatewayClient } from "./gateway-client";
 import { ConfigStore } from "./config-store";
 import { TerminalManager } from "./terminal-manager";
@@ -11,6 +13,23 @@ const connectionSessions = new Map<string, string>();
 const connectionUsers = new Map<string, string>();
 const connectionReady = new Map<string, boolean>();
 const activeNotifications = new Set<Notification>();
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+const MAX_TOTAL_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+const IMAGE_MIMES: Record<string, string> = {
+  ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+  ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+};
+const TEXT_EXTENSIONS = new Set([
+  ".txt", ".md", ".markdown", ".json", ".jsonl", ".yaml", ".yml", ".toml",
+  ".csv", ".tsv", ".xml", ".html", ".htm", ".css", ".js", ".jsx", ".ts",
+  ".tsx", ".py", ".java", ".kt", ".kts", ".c", ".h", ".cc", ".cpp", ".hpp",
+  ".cs", ".go", ".rs", ".rb", ".php", ".swift", ".sql", ".sh", ".bash", ".zsh",
+  ".ps1", ".bat", ".cmd", ".ini", ".cfg", ".conf", ".log",
+]);
+const OFFICE_MIMES: Record<string, string> = {
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+};
 
 export function registerIpcHandlers(
   _gateway: GatewayClient,
@@ -247,7 +266,12 @@ export function registerIpcHandlers(
 
   ipcMain.handle(
     "gateway:sendMessage",
-    async (_event, args: { content: string; agentId: string; clientRequestId: string }) => {
+    async (_event, args: {
+      content: string;
+      agentId: string;
+      clientRequestId: string;
+      attachments?: Array<{ id: string; name: string; mimeType: string; size: number; dataBase64?: string }>;
+    }) => {
       const client = getClient(args.agentId);
       if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
       const params = {
@@ -255,6 +279,13 @@ export function registerIpcHandlers(
         client_request_id: args.clientRequestId,
         session_id: connectionSessions.get(args.agentId) || "",
         user_id: connectionUsers.get(args.agentId) || "",
+        attachments: (args.attachments || []).map((attachment) => ({
+          id: attachment.id,
+          name: attachment.name,
+          mime_type: attachment.mimeType,
+          size: attachment.size,
+          data_base64: attachment.dataBase64 || "",
+        })),
       };
       const first = await client.rpc("chat.send", params);
       if (first.error?.code !== -32099) return first;
@@ -319,6 +350,52 @@ export function registerIpcHandlers(
       });
     }
   );
+
+  ipcMain.handle("gateway:pickAttachments", async () => {
+    const win = getWindow();
+    const result = win
+      ? await dialog.showOpenDialog(win, {
+          properties: ["openFile", "multiSelections"],
+          filters: [
+            { name: "Images and text files", extensions: [
+              "jpg", "jpeg", "png", "gif", "webp", "bmp", "txt", "md", "json", "yaml", "yml",
+              "toml", "csv", "tsv", "xml", "html", "css", "js", "jsx", "ts", "tsx", "py", "java",
+              "c", "h", "cpp", "cs", "go", "rs", "rb", "php", "swift", "sql", "sh", "ps1", "log",
+              "docx", "pptx",
+            ] },
+          ],
+        })
+      : await dialog.showOpenDialog({ properties: ["openFile", "multiSelections"] });
+    if (result.canceled) return { attachments: [] };
+    if (result.filePaths.length > 4) return { attachments: [], error: "一次最多选择 4 个附件" };
+
+    const attachments = [];
+    let total = 0;
+    for (const filePath of result.filePaths) {
+      const stat = await fs.stat(filePath);
+      const name = path.basename(filePath);
+      const extension = path.extname(filePath).toLowerCase();
+      if (stat.size === 0) return { attachments: [], error: `${name} 是空文件` };
+      if (stat.size > MAX_ATTACHMENT_BYTES) return { attachments: [], error: `${name} 超过 5 MB` };
+      total += stat.size;
+      if (total > MAX_TOTAL_ATTACHMENT_BYTES) return { attachments: [], error: "附件合计不能超过 8 MB" };
+      const imageMime = IMAGE_MIMES[extension];
+      const officeMime = OFFICE_MIMES[extension];
+      if (!imageMime && !officeMime && !TEXT_EXTENSIONS.has(extension)) {
+        return { attachments: [], error: `暂不支持 ${name} 的文件类型` };
+      }
+      const data = await fs.readFile(filePath);
+      attachments.push({
+        id: crypto.randomUUID(),
+        name,
+        mimeType: imageMime || officeMime || "text/plain",
+        size: stat.size,
+        kind: imageMime ? "image" : officeMime ? "document" : "text",
+        dataBase64: data.toString("base64"),
+      });
+    }
+    return { attachments };
+  });
 
   ipcMain.handle(
     "gateway:listSessions",

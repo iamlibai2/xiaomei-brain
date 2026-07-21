@@ -39,6 +39,7 @@
       "toggleRightPanel": "Toggle right panel",
       "inputPlaceholder": "What can I help you with? @ to reference files, / to invoke skills & commands",
       "addAttachment": "Add attachment",
+      "removeAttachment": "Remove attachment",
       "mode": "Mode",
       "modeAuto": "Auto ▾",
       "voiceInput": "Voice input",

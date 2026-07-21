@@ -21,6 +21,12 @@ from .schemas import (
     format_error,
 )
 from .auth import check_token
+from .attachments import (
+    AttachmentError,
+    attachment_fingerprint,
+    cleanup_attachments,
+    prepare_attachments,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +52,7 @@ class MethodRouter:
         self._auth_sessions: set[str] = set()
         self._chat_receipts_lock = threading.Lock()
         self._chat_receipts: OrderedDict[
-            tuple[str, str], tuple[str, str, dict[str, Any]]
+            tuple[str, str], tuple[str, str, str, dict[str, Any]]
         ] = OrderedDict()
 
     def dispatch(self, conn_id: str, req_id: str, method: str, params: dict) -> dict:
@@ -121,6 +127,7 @@ class MethodRouter:
                 "interaction.question",
                 "session.resume",
                 "action.approval",
+                "message.attachments",
             ],
         })
 
@@ -131,14 +138,21 @@ class MethodRouter:
             return build_error(req_id, ErrorCode.INVALID_REQUEST, f"参数无效: {format_error(e)}")
 
         content = p.content.strip()
+        if not content and not p.attachments:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, "消息内容和附件不能同时为空")
         session_id = p.session_id or f"ws-{conn_id[:8]}"
         user_id = p.user_id or "ws-user"
+        attachments_fingerprint = attachment_fingerprint(p.attachments)
         receipt_key = (session_id, p.client_request_id)
         with self._chat_receipts_lock:
             receipt = self._chat_receipts.get(receipt_key)
             if receipt is not None:
-                original_content, original_user_id, original_response = receipt
-                if original_content != content or original_user_id != user_id:
+                original_content, original_user_id, original_fingerprint, original_response = receipt
+                if (
+                    original_content != content
+                    or original_user_id != user_id
+                    or original_fingerprint != attachments_fingerprint
+                ):
                     return build_error(
                         req_id,
                         ErrorCode.INVALID_PARAMS,
@@ -151,6 +165,16 @@ class MethodRouter:
         if living is None:
             return build_error(req_id, ErrorCode.GATEWAY_NOT_READY, "Gateway 未就绪")
 
+        try:
+            prepared_attachments, image_paths, saved_paths = prepare_attachments(
+                getattr(living, "_agent_id", "default"), session_id, p.attachments,
+            )
+        except AttachmentError as exc:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, str(exc))
+        except OSError as exc:
+            logger.exception("Failed to persist chat attachments")
+            return build_error(req_id, ErrorCode.INTERNAL_ERROR, f"保存附件失败: {exc}")
+
         gw = getattr(living, '_gateway_inbound', None)
         if gw:
             from .inbound import RawMessage, Accepted
@@ -158,6 +182,8 @@ class MethodRouter:
                 content=content, source="human", channel="ws",
                 peer_id=user_id, peer_type="human",
                 session_id=session_id,
+                images=image_paths,
+                attachments=prepared_attachments,
             ))
             accepted = isinstance(result, Accepted)
             response = {"accepted": accepted, "session_id": session_id}
@@ -166,17 +192,26 @@ class MethodRouter:
             else:
                 response["reason"] = getattr(result, "reason", "REJECTED")
             if accepted:
-                self._remember_chat_receipt(receipt_key, content, user_id, response)
+                self._remember_chat_receipt(
+                    receipt_key, content, user_id, attachments_fingerprint, response,
+                )
+            else:
+                cleanup_attachments(saved_paths)
             return build_response(req_id, result=response)
         else:
             # Fallback: Gateway not yet initialized
-            msg = living.put_message(content, session_id=session_id, user_id=user_id)
+            msg = living.put_message(
+                content, session_id=session_id, user_id=user_id,
+                images=image_paths, attachments=prepared_attachments,
+            )
             response = {
                 "accepted": True,
                 "session_id": session_id,
                 "turn_id": msg.turn_id,
             }
-            self._remember_chat_receipt(receipt_key, content, user_id, response)
+            self._remember_chat_receipt(
+                receipt_key, content, user_id, attachments_fingerprint, response,
+            )
             return build_response(req_id, result=response)
 
     def _remember_chat_receipt(
@@ -184,10 +219,13 @@ class MethodRouter:
         key: tuple[str, str],
         content: str,
         user_id: str,
+        attachments_fingerprint: str,
         response: dict[str, Any],
     ) -> None:
         with self._chat_receipts_lock:
-            self._chat_receipts[key] = (content, user_id, dict(response))
+            self._chat_receipts[key] = (
+                content, user_id, attachments_fingerprint, dict(response),
+            )
             self._chat_receipts.move_to_end(key)
             while len(self._chat_receipts) > 2048:
                 self._chat_receipts.popitem(last=False)
@@ -250,6 +288,13 @@ class MethodRouter:
                     "created_at": r.get("created_at", 0),
                     "user_id": r.get("user_id", ""),
                 }
+                if r.get("role") == "user":
+                    try:
+                        user_metadata = json.loads(r.get("metadata") or "{}")
+                    except (TypeError, json.JSONDecodeError):
+                        user_metadata = {}
+                    if isinstance(user_metadata, dict) and isinstance(user_metadata.get("attachments"), list):
+                        message["attachments"] = user_metadata["attachments"]
                 if r.get("role") == "interaction":
                     try:
                         interaction = json.loads(r.get("metadata") or "{}")

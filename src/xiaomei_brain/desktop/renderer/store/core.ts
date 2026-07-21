@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { produce } from "immer";
-import type { AgentCreationResult, AgentEntry, AgentLifecycleAction, LocalAgentInfo, SessionEntry } from "../types";
+import type { AgentCreationResult, AgentEntry, AgentLifecycleAction, ChatAttachment, LocalAgentInfo, SessionEntry } from "../types";
 
 // ── Persistence (manual, avoid zustand/persist rehydration during render) ──
 
@@ -54,6 +54,30 @@ const _streamingByTurn: Record<string, StreamingState> = {};
 
 function streamingKey(agentId: string, sessionId: string, turnId: string): string {
   return `${agentId}\u0000${sessionId || "legacy"}\u0000${turnId || "legacy"}`;
+}
+
+function attachmentDraftKey(agentId: string, sessionId: string | null | undefined): string {
+  return `${agentId}\u0000${sessionId || "new"}`;
+}
+
+function displayAttachments(values: unknown): DisplayAttachment[] {
+  if (!Array.isArray(values)) return [];
+  return values.flatMap((value): DisplayAttachment[] => {
+    if (!value || typeof value !== "object") return [];
+    const item = value as Record<string, unknown>;
+    if (typeof item.id !== "string" || typeof item.name !== "string") return [];
+    const mimeType = typeof item.mime_type === "string"
+      ? item.mime_type
+      : typeof item.mimeType === "string" ? item.mimeType : "application/octet-stream";
+    const kind = item.kind === "image" ? "image" : item.kind === "document" ? "document" : "text";
+    return [{
+      id: item.id,
+      name: item.name,
+      mimeType,
+      size: typeof item.size === "number" ? item.size : 0,
+      kind,
+    }];
+  });
 }
 
 function clearAgentStreams(agentId: string): void {
@@ -183,6 +207,7 @@ function historyMessages(
       role,
       content: row.content,
       streaming: false,
+      attachments: displayAttachments(row.attachments),
     } satisfies DisplayMessage];
   });
 }
@@ -443,6 +468,16 @@ export interface DisplayMessage {
   interaction?: InteractionRequest;
   tool?: ToolActivity;
   action?: ActionRequest;
+  attachments?: DisplayAttachment[];
+}
+
+export interface DisplayAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  kind: "image" | "text" | "document";
+  previewUrl?: string;
 }
 
 export interface ToolActivity {
@@ -516,6 +551,8 @@ interface CoreState {
   messagesByAgent: Record<string, DisplayMessage[]>;
   sendingByAgent: Record<string, boolean>;
   draftByAgent: Record<string, string>;
+  attachmentsByConversation: Record<string, ChatAttachment[]>;
+  attachmentErrorByConversation: Record<string, string>;
   activeAgentId: string | null;
   agents: AgentEntry[];
   userId: string;
@@ -543,6 +580,8 @@ interface CoreActions {
   removeAgent: (agentId: string) => void;
   disconnectAgent: (agentId: string) => Promise<void>;
   sendMessage: (text: string) => void;
+  pickAttachments: () => Promise<void>;
+  removeAttachment: (attachmentId: string) => void;
   abortMessage: () => Promise<void>;
   respondToInteraction: (requestId: string, response: string) => Promise<void>;
   respondToAction: (actionId: string, decision: "allow" | "deny") => Promise<void>;
@@ -571,6 +610,8 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   messagesByAgent: {},
   sendingByAgent: {},
   draftByAgent: {},
+  attachmentsByConversation: {},
+  attachmentErrorByConversation: {},
   activeAgentId: persisted.activeAgentId ?? null,
   agents: persisted.agents ?? [],
   userId: persisted.userId ?? "",
@@ -941,19 +982,35 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   sendMessage: (text) => {
     const agentId = get().activeAgentId;
     if (!agentId) return;
+    const sessionId = get().activeSessionByAgent[agentId];
+    const draftKey = attachmentDraftKey(agentId, sessionId);
+    const attachments = get().attachmentsByConversation[draftKey] || [];
+    if (!text.trim() && attachments.length === 0) return;
     const clientRequestId = crypto.randomUUID();
 
     set(produce((s: CoreState) => {
       if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
       s.messagesByAgent[agentId].push({
         id: `user-${clientRequestId}`, role: "user", content: text, streaming: false,
+        attachments: attachments.map((attachment) => ({
+          id: attachment.id,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+          kind: attachment.kind,
+          previewUrl: attachment.kind === "image" && attachment.dataBase64
+            ? `data:${attachment.mimeType};base64,${attachment.dataBase64}`
+            : undefined,
+        })),
       });
       touchSession(s, agentId, s.activeSessionByAgent[agentId] || "", 1, text);
       s.sendingByAgent[agentId] = true;
       s.draftByAgent[agentId] = "";
+      delete s.attachmentsByConversation[draftKey];
+      delete s.attachmentErrorByConversation[draftKey];
     }));
 
-    void window.gateway.sendMessage({ content: text, agentId, clientRequestId }).then((res) => {
+    void window.gateway.sendMessage({ content: text, agentId, clientRequestId, attachments }).then((res) => {
       if (!res.error && res.result?.accepted !== false) return;
 
       const message = res.error?.message || "Message was not accepted";
@@ -979,6 +1036,51 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         s.sendingByAgent[agentId] = false;
       }));
     });
+  },
+
+  pickAttachments: async () => {
+    const agentId = get().activeAgentId;
+    if (!agentId) return;
+    const sessionId = get().activeSessionByAgent[agentId];
+    const draftKey = attachmentDraftKey(agentId, sessionId);
+    let result;
+    try {
+      result = await window.gateway.pickAttachments();
+    } catch (error) {
+      set(produce((s: CoreState) => {
+        s.attachmentErrorByConversation[draftKey] = String(error);
+      }));
+      return;
+    }
+    set(produce((s: CoreState) => {
+      s.attachmentErrorByConversation[draftKey] = result.error || "";
+      if (!result.attachments.length) return;
+      const existing = s.attachmentsByConversation[draftKey] || [];
+      const additions = result.attachments.filter((item) => !existing.some(
+        (current) => current.name === item.name && current.size === item.size,
+      ));
+      if (existing.length + additions.length > 4) {
+        s.attachmentErrorByConversation[draftKey] = "一次最多添加 4 个附件";
+        return;
+      }
+      const total = [...existing, ...additions].reduce((sum, item) => sum + item.size, 0);
+      if (total > 8 * 1024 * 1024) {
+        s.attachmentErrorByConversation[draftKey] = "附件合计不能超过 8 MB";
+        return;
+      }
+      s.attachmentsByConversation[draftKey] = [...existing, ...additions];
+    }));
+  },
+
+  removeAttachment: (attachmentId) => {
+    const agentId = get().activeAgentId;
+    if (!agentId) return;
+    const draftKey = attachmentDraftKey(agentId, get().activeSessionByAgent[agentId]);
+    set(produce((s: CoreState) => {
+      s.attachmentsByConversation[draftKey] = (s.attachmentsByConversation[draftKey] || [])
+        .filter((attachment) => attachment.id !== attachmentId);
+      delete s.attachmentErrorByConversation[draftKey];
+    }));
   },
 
   // ── Abort message ──

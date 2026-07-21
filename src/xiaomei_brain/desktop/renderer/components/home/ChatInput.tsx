@@ -14,6 +14,19 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const input = useCoreStore((s) => s.draftByAgent[s.activeAgentId || ""] || "");
   const setInput = useCoreStore((s) => s.setDraft);
+  const pendingAttachments = useCoreStore((s) => {
+    const agentId = s.activeAgentId || "";
+    const sessionId = agentId ? s.activeSessionByAgent[agentId] : null;
+    return s.attachmentsByConversation[`${agentId}\u0000${sessionId || "new"}`];
+  });
+  const attachments = pendingAttachments || [];
+  const attachmentError = useCoreStore((s) => {
+    const agentId = s.activeAgentId || "";
+    const sessionId = agentId ? s.activeSessionByAgent[agentId] : null;
+    return s.attachmentErrorByConversation[`${agentId}\u0000${sessionId || "new"}`] || "";
+  });
+  const pickAttachments = useCoreStore((s) => s.pickAttachments);
+  const removeAttachment = useCoreStore((s) => s.removeAttachment);
   const connected = useCoreStore((s) => {
     const agentId = s.activeAgentId;
     if (!agentId) return false;
@@ -22,7 +35,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
 
   const handleSend = () => {
     const text = input.trim();
-    if (!text) return;
+    if (!text && attachments.length === 0) return;
     onSend(text);
     textareaRef.current?.focus();
   };
@@ -36,6 +49,28 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
 
   return (
     <div className="chat-input-container">
+      {attachments.length > 0 && (
+        <div className="attachment-preview-list">
+          {attachments.map((attachment) => (
+            <div className="attachment-preview" key={attachment.id}>
+              {attachment.kind === "image" && attachment.dataBase64 ? (
+                <img
+                  src={`data:${attachment.mimeType};base64,${attachment.dataBase64}`}
+                  alt={attachment.name}
+                />
+              ) : (
+                <span className="attachment-file-icon">{attachment.name.split(".").pop()?.slice(0, 4).toUpperCase() || "FILE"}</span>
+              )}
+              <div className="attachment-preview-meta">
+                <span>{attachment.name}</span>
+                <small>{formatFileSize(attachment.size)}</small>
+              </div>
+              <button type="button" onClick={() => removeAttachment(attachment.id)} title={t("home.removeAttachment")}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
+      {attachmentError && <div className="attachment-error">{attachmentError}</div>}
       <textarea
         ref={textareaRef}
         className="chat-input-textarea"
@@ -48,7 +83,13 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       />
       <div className="chat-input-toolbar">
         <div className="chat-input-toolbar-left">
-          <button className="chat-input-btn" title={t("home.addAttachment")}>
+          <button
+            type="button"
+            className="chat-input-btn"
+            title={t("home.addAttachment")}
+            onClick={() => { void pickAttachments(); }}
+            disabled={!connected || sending}
+          >
             <Icon name="plus" size={18} />
           </button>
         </div>
@@ -67,7 +108,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
             <button
               className="chat-input-send"
               onClick={handleSend}
-              disabled={!input.trim() || !connected}
+              disabled={(!input.trim() && attachments.length === 0) || !connected}
               title={t("home.send")}
             >
               <Icon name="arrow-up" size={16} />
@@ -77,4 +118,10 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       </div>
     </div>
   );
+}
+
+function formatFileSize(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }

@@ -95,6 +95,7 @@ def build_context(
     max_tokens: int = 50000,
     assemble: bool = True,
     images: list[str] | None = None,
+    attachments: list[dict[str, Any]] | None = None,
     self_image: Any = None,
     force_mode: str = "",
     inner_voice_mode: str = "",
@@ -111,17 +112,24 @@ def build_context(
     # 构建 content（纯文本 或 多模态数组）
     from xiaomei_brain.agent.message_utils import build_multimodal_content
 
+    from xiaomei_brain.gateway.attachments import append_text_attachments, public_attachment_metadata
+
     images = images or []
+    attachments = attachments or []
+    model_input = append_text_attachments(user_input, attachments)
     message_content: str | list[dict] = (
-        build_multimodal_content(user_input, images)
+        build_multimodal_content(model_input, images)
         if images
-        else user_input
+        else model_input
     )
 
     # 1. 记录用户消息到 DB
     user_msg_id = None
     if agent.conversation_db:
-        meta = {"images": images} if images else None
+        public_attachments = public_attachment_metadata(attachments)
+        meta = {"attachments": public_attachments} if public_attachments else (
+            {"images": images} if images else None
+        )
         user_msg_id = agent.conversation_db.log(
             session_id=agent.session_id,
             role="user",

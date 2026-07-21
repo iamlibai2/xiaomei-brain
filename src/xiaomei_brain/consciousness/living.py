@@ -85,6 +85,8 @@ class LivingMessage:
     # Image paths or URLs.
     # 图片路径或 URL 列表。
     images: list[str] = field(default_factory=list)
+    # Prepared attachment metadata and internal text/path data.
+    attachments: list[dict[str, Any]] = field(default_factory=list)
     # Stable identity for one user input and its complete response lifecycle.
     turn_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
@@ -274,6 +276,7 @@ class Living:
         session_id: str | None = None,
         source: str = "",
         images: list[str] | None = None,
+        attachments: list[dict[str, Any]] | None = None,
         urgent: bool = False,
         display_name: str | None = None,
         turn_id: str | None = None,
@@ -291,6 +294,7 @@ class Living:
             session_id=session_id or self.session_id,
             source=source,
             images=images or [],
+            attachments=attachments or [],
             turn_id=turn_id or str(uuid.uuid4()),
         )
         if display_name:

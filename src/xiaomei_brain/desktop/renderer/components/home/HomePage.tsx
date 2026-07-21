@@ -242,7 +242,21 @@ function MessageRow({ message, agentName }: { message: DisplayMessage; agentName
     return (
       <div className="user-message-row">
         <div className="user-message-bubble">
-          {message.content}
+          {message.attachments && message.attachments.length > 0 && (
+            <div className="message-attachments">
+              {message.attachments.map((attachment) => (
+                <div className={`message-attachment ${attachment.kind}`} key={attachment.id}>
+                  {attachment.previewUrl ? (
+                    <img src={attachment.previewUrl} alt={attachment.name} />
+                  ) : (
+                    <span className="message-attachment-icon">{attachment.kind === "image" ? "IMG" : "FILE"}</span>
+                  )}
+                  <span className="message-attachment-name">{attachment.name}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {message.content && <div>{message.content}</div>}
         </div>
       </div>
     );
