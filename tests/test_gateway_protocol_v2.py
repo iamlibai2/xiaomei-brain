@@ -276,6 +276,36 @@ def test_session_resume_returns_history_and_inflight_snapshot():
     assert response["result"]["messages"][0]["content"] == "继续吗"
 
 
+def test_action_response_uses_authenticated_connection_session_and_turn():
+    class Broker:
+        def __init__(self):
+            self.calls = []
+
+        def respond(self, action_id, decision, session_id, turn_id):
+            self.calls.append((action_id, decision, session_id, turn_id))
+            return True
+
+    broker = Broker()
+    router = MethodRouter(living=SimpleNamespace(_action_broker=broker))
+    conn_id = "action-test-connection"
+    session_id = "action-test-session"
+    router._auth_sessions.add(conn_id)
+    from xiaomei_brain.gateway.connection import cm
+    cm.set_session(session_id, conn_id)
+    try:
+        response = router.dispatch(
+            conn_id,
+            "request-action",
+            "action.respond",
+            {"action_id": "action-1", "turn_id": "turn-1", "decision": "allow"},
+        )
+    finally:
+        cm.unregister(conn_id)
+
+    assert "error" not in response
+    assert broker.calls == [("action-1", "allow", session_id, "turn-1")]
+
+
 def test_reconnect_does_not_reload_context_during_active_turn():
     class Living:
         def __init__(self):

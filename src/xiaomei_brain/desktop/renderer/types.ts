@@ -69,6 +69,7 @@ export interface GatewayBridge {
   sendMessage(args: { content: string; agentId: string; clientRequestId: string }): Promise<JsonRpcResponse>;
   abortMessage(args: { agentId: string }): Promise<JsonRpcResponse>;
   respondInteraction(args: { agentId: string; requestId: string; turnId: string; response: string }): Promise<JsonRpcResponse>;
+  respondAction(args: { agentId: string; actionId: string; turnId: string; decision: "allow" | "deny" }): Promise<JsonRpcResponse>;
   getHistory(args: { sessionId?: string; limit?: number; beforeId?: number; agentId: string }): Promise<JsonRpcResponse>;
   listSessions(args: { limit?: number; offset?: number; query?: string; agentId: string }): Promise<JsonRpcResponse>;
   listIdentities(args: { agentId: string }): Promise<JsonRpcResponse>;

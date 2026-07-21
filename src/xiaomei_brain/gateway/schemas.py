@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, ValidationError
 
 
@@ -74,6 +76,12 @@ class InteractionRespondParams(BaseModel):
     request_id: str = Field(..., min_length=1)
     turn_id: str = Field(..., min_length=1)
     response: str = Field(..., min_length=1, max_length=2000)
+
+
+class ActionRespondParams(BaseModel):
+    action_id: str = Field(..., min_length=1)
+    turn_id: str = Field(..., min_length=1)
+    decision: Literal["allow", "deny"]
 
 
 # ── Wire frames ──────────────────────────────

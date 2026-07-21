@@ -21,6 +21,7 @@ const CHANNEL_MAP = {
     sendMessage:     { invoke: "gateway:sendMessage" },
     abortMessage:    { invoke: "gateway:abortMessage" },
     respondInteraction: { invoke: "gateway:respondInteraction" },
+    respondAction:      { invoke: "gateway:respondAction" },
     getHistory:      { invoke: "gateway:getHistory" },
     listSessions:    { invoke: "gateway:listSessions" },
     listIdentities:  { invoke: "gateway:listIdentities" },

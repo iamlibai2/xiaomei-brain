@@ -17,6 +17,7 @@ from .schemas import (
     ChatSessionsParams,
     SessionResumeParams,
     InteractionRespondParams,
+    ActionRespondParams,
     format_error,
 )
 from .auth import check_token
@@ -38,6 +39,7 @@ class MethodRouter:
             "chat.sessions": self._handle_chat_sessions,
             "session.resume": self._handle_session_resume,
             "interaction.respond": self._handle_interaction_respond,
+            "action.respond": self._handle_action_respond,
             "identity.list": self._handle_identity_list,
         }
         # 已认证的 session
@@ -118,6 +120,7 @@ class MethodRouter:
                 "tool.lifecycle",
                 "interaction.question",
                 "session.resume",
+                "action.approval",
             ],
         })
 
@@ -207,6 +210,9 @@ class MethodRouter:
             broker = getattr(living, "_interaction_broker", None)
             if broker is not None and session_id:
                 broker.cancel_session(session_id)
+            action_broker = getattr(living, "_action_broker", None)
+            if action_broker is not None and session_id:
+                action_broker.cancel_session(session_id)
             living.abort_chat()
             return build_response(req_id, result={"aborted": True})
         except Exception as e:
@@ -251,7 +257,10 @@ class MethodRouter:
                         interaction = {}
                     if not isinstance(interaction, dict) or not interaction.get("id"):
                         continue
-                    message["interaction"] = interaction
+                    if interaction.get("kind") == "tool_approval":
+                        message["action"] = interaction
+                    else:
+                        message["interaction"] = interaction
                 elif r.get("role") == "tool":
                     message["tool_call_id"] = r.get("tool_call_id", "")
                     message["tool_name"] = r.get("tool_name", "")
@@ -367,6 +376,34 @@ class MethodRouter:
             "accepted": True,
             "request_id": p.request_id,
             "turn_id": p.turn_id,
+        })
+
+    def _handle_action_respond(self, conn_id: str, req_id: str, params: dict) -> dict:
+        try:
+            p = ActionRespondParams.model_validate(params)
+        except Exception as e:
+            return build_error(req_id, ErrorCode.INVALID_REQUEST, f"参数无效: {format_error(e)}")
+
+        living = self._living
+        broker = getattr(living, "_action_broker", None) if living is not None else None
+        if broker is None:
+            return build_error(req_id, ErrorCode.GATEWAY_NOT_READY, "操作审批服务未就绪")
+
+        from .connection import cm
+        session_id = cm.get_session_id(conn_id)
+        if not session_id:
+            return build_error(req_id, ErrorCode.INVALID_REQUEST, "当前连接没有会话")
+        if not broker.respond(p.action_id, p.decision, session_id, p.turn_id):
+            return build_error(
+                req_id,
+                ErrorCode.INVALID_PARAMS,
+                "操作请求不存在、已结束或不属于当前会话轮次",
+            )
+        return build_response(req_id, result={
+            "accepted": True,
+            "action_id": p.action_id,
+            "turn_id": p.turn_id,
+            "decision": p.decision,
         })
 
     def drop_session(self, conn_id: str) -> None:

@@ -140,10 +140,12 @@ class ConsciousLiving(Living):
             tick_interval=tick_interval or self._config.living.tick_interval,
         )
 
+        from .action_broker import ActionBroker
         from .interaction_broker import InteractionBroker
         from .turn_registry import ActiveTurnRegistry
         self._turn_registry = ActiveTurnRegistry()
         self._interaction_broker = InteractionBroker(self._publish_interaction)
+        self._action_broker = ActionBroker(self._publish_action)
 
         # 自主行为计时器（独立于 _last_active，不干扰空闲检测）
         self._last_autonomous: float = 0
@@ -988,6 +990,33 @@ class ConsciousLiving(Living):
                 db.save_interaction(payload)
             except Exception as exc:
                 logger.warning("[Interaction] 保存会话记录失败: %s", exc)
+
+        router = getattr(self, "_router", None)
+        if not router or not session_id:
+            return
+        route = router.route_for_session(session_id)
+        if route:
+            router.deliver_event(
+                event,
+                payload,
+                route,
+                session_id=session_id,
+                turn_id=turn_id,
+            )
+
+    def _publish_action(self, event: str, payload: dict) -> None:
+        """Publish an Agent-owned action approval to its conversation."""
+        session_id = str(payload.get("session_id", ""))
+        turn_id = str(payload.get("turn_id", ""))
+        turn_registry = getattr(self, "_turn_registry", None)
+        if turn_registry is not None:
+            turn_registry.action_event(event, payload)
+        db = getattr(self.agent, "conversation_db", None)
+        if db is not None:
+            try:
+                db.save_interaction(payload)
+            except Exception as exc:
+                logger.warning("[Action] 保存会话记录失败: %s", exc)
 
         router = getattr(self, "_router", None)
         if not router or not session_id:

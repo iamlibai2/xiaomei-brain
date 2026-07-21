@@ -120,6 +120,41 @@ class ActiveTurnRegistry:
                 existing.update(data)
             turn["status"] = "waiting_user" if event == "interaction.requested" else "running"
 
+    def action_event(self, event: str, payload: dict[str, Any]) -> None:
+        session_id = str(payload.get("session_id", ""))
+        turn_id = str(payload.get("turn_id", ""))
+        action_id = str(payload.get("id", ""))
+        if not action_id:
+            return
+        with self._lock:
+            turn = self._matching_turn(session_id, turn_id)
+            if turn is None:
+                return
+            items = turn["items"]
+            existing = next(
+                (item for item in items if item.get("type") == "action" and item.get("id") == action_id),
+                None,
+            )
+            data = {
+                "type": "action",
+                "id": action_id,
+                "tool_call_id": str(payload.get("tool_call_id", "")),
+                "tool_name": str(payload.get("tool_name", "")),
+                "arguments": copy.deepcopy(payload.get("arguments", {})),
+                "summary": str(payload.get("summary", "")),
+                "reason": str(payload.get("reason", "")),
+                "risk_level": str(payload.get("risk_level", "medium")),
+                "status": str(payload.get("status", "pending")),
+                "decision": str(payload.get("decision", "")),
+                "result": str(payload.get("result", "")),
+                "error": str(payload.get("error", "")),
+            }
+            if existing is None:
+                items.append(data)
+            else:
+                existing.update(data)
+            turn["status"] = "waiting_user" if event == "action.proposed" else "running"
+
     def complete(self, session_id: str, turn_id: str) -> None:
         with self._lock:
             if self._matching_turn(session_id, turn_id) is not None:

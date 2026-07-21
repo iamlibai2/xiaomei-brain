@@ -56,3 +56,37 @@ def test_interaction_changes_resumable_turn_state():
 
     registry.complete("session-1", "turn-1")
     assert registry.snapshot("session-1") is None
+
+
+def test_action_changes_resumable_turn_state_and_preserves_sealed_arguments():
+    registry = ActiveTurnRegistry()
+    registry.start("session-1", "turn-1")
+    payload = {
+        "id": "action-1",
+        "tool_call_id": "call-1",
+        "tool_name": "shell",
+        "arguments": {"command": "mkdir approval-test"},
+        "summary": "执行 Shell 命令",
+        "reason": "可能修改文件",
+        "risk_level": "medium",
+        "session_id": "session-1",
+        "turn_id": "turn-1",
+        "status": "pending",
+    }
+
+    registry.action_event("action.proposed", payload)
+    payload["arguments"]["command"] = "changed"
+    snapshot = registry.snapshot("session-1")
+    assert snapshot["status"] == "waiting_user"
+    assert snapshot["items"][0]["arguments"]["command"] == "mkdir approval-test"
+
+    registry.action_event("action.completed", {
+        **payload,
+        "arguments": {"command": "mkdir approval-test"},
+        "status": "completed",
+        "decision": "allow",
+        "result": "created",
+    })
+    snapshot = registry.snapshot("session-1")
+    assert snapshot["status"] == "running"
+    assert snapshot["items"][0]["status"] == "completed"

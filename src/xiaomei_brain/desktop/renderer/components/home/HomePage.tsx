@@ -226,6 +226,10 @@ function MessageRow({ message, agentName }: { message: DisplayMessage; agentName
   const isUser = message.role === "user";
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
 
+  if (message.action) {
+    return <ActionApprovalCard message={message} agentName={agentName} />;
+  }
+
   if (message.interaction) {
     return <InteractionCard message={message} agentName={agentName} />;
   }
@@ -308,6 +312,67 @@ function MessageRow({ message, agentName }: { message: DisplayMessage; agentName
         >
           {hasThinking ? content : message.content}
         </ReactMarkdown>
+      </div>
+    </div>
+  );
+}
+
+function ActionApprovalCard({ message, agentName }: { message: DisplayMessage; agentName: string }) {
+  const { t } = useTranslation();
+  const action = message.action!;
+  const respondToAction = useCoreStore((s) => s.respondToAction);
+  const canRespond = action.status === "pending" || action.status === "error";
+  const command = typeof action.arguments.command === "string" ? action.arguments.command : "";
+
+  const respond = (decision: "allow" | "deny") => {
+    if (!canRespond) return;
+    void respondToAction(action.id, decision);
+  };
+
+  return (
+    <div className="assistant-message-row interaction-message-row">
+      <div className="assistant-avatar">
+        <div className="assistant-avatar-face">{agentName.charAt(0)}</div>
+        <span className="assistant-avatar-name">{agentName}</span>
+      </div>
+      <div className={`interaction-card action-card action-${action.status}`}>
+        <div className="interaction-card-label action-card-label">
+          {t("home.actionLabel")}
+          <span className={`action-risk action-risk-${action.riskLevel}`}>
+            {t(`home.actionRisk_${action.riskLevel}`, { defaultValue: action.riskLevel })}
+          </span>
+        </div>
+        <div className="interaction-card-question">{action.summary}</div>
+        {action.reason && <div className="action-card-reason">{action.reason}</div>}
+        {command && <pre className="action-card-command">{command}</pre>}
+        {canRespond && (
+          <div className="interaction-card-choices action-card-actions">
+            <button type="button" className="action-deny" onClick={() => respond("deny")}>
+              {t("home.actionDeny")}
+            </button>
+            <button type="button" className="action-allow" onClick={() => respond("allow")}>
+              {t("home.actionAllowOnce")}
+            </button>
+          </div>
+        )}
+        {action.status === "responding" && (
+          <div className="interaction-card-status">{t("home.actionResponding")}</div>
+        )}
+        {action.status === "completed" && (
+          <div className="interaction-card-status interaction-card-result">{t("home.actionCompleted")}</div>
+        )}
+        {action.status === "rejected" && (
+          <div className="interaction-card-status">{t("home.actionRejected")}</div>
+        )}
+        {action.status === "cancelled" && (
+          <div className="interaction-card-status">{t("home.actionCancelled")}</div>
+        )}
+        {action.status === "expired" && (
+          <div className="interaction-card-status">{t("home.actionExpired")}</div>
+        )}
+        {(action.status === "failed" || action.status === "error") && (
+          <div className="interaction-card-error">{action.error || t("home.actionFailed")}</div>
+        )}
       </div>
     </div>
   );

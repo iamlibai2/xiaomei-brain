@@ -12,6 +12,18 @@
       "connect": "Connect"
     },
     "home": {
+      "actionLabel": "Permission required",
+      "actionRisk_low": "Low risk",
+      "actionRisk_medium": "Review",
+      "actionRisk_high": "High risk",
+      "actionAllowOnce": "Allow once",
+      "actionDeny": "Deny",
+      "actionResponding": "Sending your decision...",
+      "actionCompleted": "Action completed",
+      "actionRejected": "You denied this action",
+      "actionCancelled": "This action was cancelled",
+      "actionExpired": "This approval request expired",
+      "actionFailed": "Action failed",
       "superpowerWorking": "Your Workplace Superpowers",
       "superpowerCoding": "Your Dev Superpowers",
       "superpowerDesign": "Your Design Superpowers",

@@ -290,6 +290,21 @@ export function registerIpcHandlers(
     });
   });
 
+  ipcMain.handle("gateway:respondAction", async (_event, args: {
+    agentId: string;
+    actionId: string;
+    turnId: string;
+    decision: "allow" | "deny";
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("action.respond", {
+      action_id: args.actionId,
+      turn_id: args.turnId,
+      decision: args.decision,
+    });
+  });
+
   // ─── chat.history ───────────────────────────
 
   ipcMain.handle(

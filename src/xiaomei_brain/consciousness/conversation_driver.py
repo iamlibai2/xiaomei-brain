@@ -285,9 +285,15 @@ class ConversationDriver:
                         agent.on_tool_complete = self._make_tool_event_callback(
                             "tool.complete", current_msg.session_id, current_msg.turn_id, parent,
                         )
+                        agent.on_tool_approval = self._make_tool_approval_callback(
+                            current_msg.session_id, current_msg.turn_id, current_msg.user_id, parent,
+                        )
+                        agent.on_action_complete = self._make_action_complete_callback(parent)
                     else:
                         agent.on_tool_start = None
                         agent.on_tool_complete = None
+                        agent.on_tool_approval = None
+                        agent.on_action_complete = None
 
                     si = getattr(getattr(parent, "consciousness", None), "self_image", None)
                     if si:
@@ -486,6 +492,8 @@ class ConversationDriver:
                     agent_core = parent.agent._get_agent()
                     agent_core.on_tool_start = None
                     agent_core.on_tool_complete = None
+                    agent_core.on_tool_approval = None
+                    agent_core.on_action_complete = None
                     agent_core.turn_id = ""
                 except Exception:
                     logger.debug("Failed to cleanup tool callbacks", exc_info=True)
@@ -868,6 +876,77 @@ class ConversationDriver:
                 session_id=session_id,
                 turn_id=turn_id,
             )
+        return callback
+
+    @staticmethod
+    def _make_tool_approval_callback(
+        session_id: str,
+        turn_id: str,
+        user_id: str,
+        parent: Any,
+    ):
+        """Create the Agent-side approval boundary for one conversation Turn."""
+        from ..tools.action_policy import assess_tool_action
+
+        def callback(tool_call_id: str, tool_name: str, arguments: dict):
+            assessment = assess_tool_action(tool_name, arguments)
+            if assessment.decision == "allow":
+                return None
+            if assessment.decision == "deny":
+                return {
+                    "approved": False,
+                    "result": f"Blocked: {assessment.reason}",
+                }
+
+            router = getattr(parent, "_router", None)
+            route = router.route_for_session(session_id) if router else None
+            if route is None or route.type != "ws":
+                return {
+                    "approved": False,
+                    "result": "Blocked: this action requires approval from an interactive Desktop session",
+                }
+
+            broker = getattr(parent, "_action_broker", None)
+            if broker is None:
+                return {
+                    "approved": False,
+                    "result": "Blocked: action approval service is unavailable",
+                }
+            request = broker.propose(
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                arguments=arguments,
+                summary=assessment.summary,
+                reason=assessment.reason,
+                risk_level=assessment.risk_level,
+                session_id=session_id,
+                user_id=user_id,
+                turn_id=turn_id,
+            )
+            approved = request.status == "approved"
+            if approved:
+                result = ""
+            elif request.status == "rejected":
+                result = "Blocked: user rejected this action"
+            elif request.status == "cancelled":
+                result = "Blocked: action was cancelled"
+            else:
+                result = request.error or "Blocked: action approval expired"
+            return {
+                "action_id": request.id,
+                "approved": approved,
+                "result": result,
+            }
+
+        return callback
+
+    @staticmethod
+    def _make_action_complete_callback(parent: Any):
+        def callback(action_id: str, result: str, failed: bool) -> None:
+            broker = getattr(parent, "_action_broker", None)
+            if broker is not None:
+                broker.complete(action_id, result, failed=failed)
+
         return callback
 
     @staticmethod

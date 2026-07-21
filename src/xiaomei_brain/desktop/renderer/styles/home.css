@@ -854,6 +854,66 @@
   color: #d93025;
 }
 
+.action-card {
+  border-color: rgba(217, 119, 6, 0.35);
+  background: linear-gradient(180deg, rgba(255, 248, 235, 0.75), var(--ui-bg-primary));
+}
+
+.action-card-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.action-risk {
+  padding: 2px 7px;
+  border-radius: var(--ui-radius-full);
+  background: rgba(217, 119, 6, 0.12);
+  color: #a15c00;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.action-risk-high {
+  background: rgba(217, 48, 37, 0.1);
+  color: #d93025;
+}
+
+.action-card-reason {
+  margin-top: 8px;
+  color: var(--ui-color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.action-card-command {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-bg-secondary);
+  color: var(--ui-color-text-primary);
+  font-family: var(--ui-font-mono, Consolas, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.action-card-actions {
+  justify-content: flex-end;
+}
+
+.action-card-actions .action-allow {
+  border-color: var(--ui-palette-black-100);
+  background: var(--ui-palette-black-100);
+  color: var(--ui-palette-white-100);
+}
+
+.action-card-actions .action-deny {
+  color: var(--ui-color-text-secondary);
+}
+
 .wb-home-composer {
   display: flex;
   flex-direction: column;

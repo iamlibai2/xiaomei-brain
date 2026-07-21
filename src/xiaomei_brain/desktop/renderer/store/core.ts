@@ -70,15 +70,59 @@ function toolResultFailed(result: string): boolean {
     || result.toLowerCase().includes("failed");
 }
 
+function actionRequest(
+  payload: Record<string, unknown>,
+  sessionId: string,
+  turnId: string,
+  status: ActionRequest["status"],
+): ActionRequest {
+  return {
+    id: typeof payload.id === "string" ? payload.id : "",
+    toolCallId: typeof payload.tool_call_id === "string" ? payload.tool_call_id : "",
+    toolName: typeof payload.tool_name === "string" ? payload.tool_name : "",
+    arguments: payload.arguments && typeof payload.arguments === "object" && !Array.isArray(payload.arguments)
+      ? payload.arguments as Record<string, unknown>
+      : {},
+    summary: typeof payload.summary === "string" ? payload.summary : "",
+    reason: typeof payload.reason === "string" ? payload.reason : "",
+    riskLevel: typeof payload.risk_level === "string" ? payload.risk_level : "medium",
+    sessionId: typeof payload.session_id === "string" ? payload.session_id : sessionId,
+    turnId: typeof payload.turn_id === "string" ? payload.turn_id : turnId,
+    status,
+    decision: typeof payload.decision === "string" ? payload.decision : "",
+    result: typeof payload.result === "string" ? payload.result : "",
+    error: typeof payload.error === "string" ? payload.error : "",
+  };
+}
+
 function historyMessages(
   result: Record<string, unknown> | undefined,
   sessionId: string,
   activeInteractionIds: Set<string> = new Set(),
+  activeActionIds: Set<string> = new Set(),
 ): DisplayMessage[] {
   const rows = Array.isArray(result?.messages) ? result.messages : [];
   return rows.flatMap((value, index) => {
     if (!value || typeof value !== "object") return [];
     const row = value as Record<string, unknown>;
+    if (row.role === "interaction" && row.action && typeof row.action === "object") {
+      const action = row.action as Record<string, unknown>;
+      const id = typeof action.id === "string" ? action.id : "";
+      const summary = typeof action.summary === "string" ? action.summary : "";
+      if (!id || !summary) return [];
+      const rawStatus = typeof action.status === "string" ? action.status : "expired";
+      let status = ["pending", "completed", "failed", "rejected", "cancelled", "expired"].includes(rawStatus)
+        ? rawStatus as ActionRequest["status"]
+        : "expired";
+      if (status === "pending" && !activeActionIds.has(id)) status = "expired";
+      return [{
+        id,
+        role: "agent",
+        content: "",
+        streaming: false,
+        action: actionRequest(action, sessionId, typeof action.turn_id === "string" ? action.turn_id : "", status),
+      } satisfies DisplayMessage];
+    }
     if (row.role === "interaction" && row.interaction && typeof row.interaction === "object") {
       const interaction = row.interaction as Record<string, unknown>;
       const id = typeof interaction.id === "string" ? interaction.id : "";
@@ -150,16 +194,19 @@ function resumeMessages(result: Record<string, unknown> | undefined, sessionId: 
   const items = inflight && Array.isArray(inflight.items) ? inflight.items : [];
   const activeInteractionIds = new Set<string>();
   const activeToolIds = new Set<string>();
+  const activeActionIds = new Set<string>();
   for (const value of items) {
     if (!value || typeof value !== "object") continue;
     const item = value as Record<string, unknown>;
     if (item.type === "interaction" && typeof item.id === "string") activeInteractionIds.add(item.id);
     if (item.type === "tool" && typeof item.id === "string") activeToolIds.add(item.id);
+    if (item.type === "action" && typeof item.id === "string") activeActionIds.add(item.id);
   }
 
-  const history = historyMessages(result, sessionId, activeInteractionIds).filter((message) => {
+  const history = historyMessages(result, sessionId, activeInteractionIds, activeActionIds).filter((message) => {
     if (message.interaction && activeInteractionIds.has(message.interaction.id)) return false;
     if (message.tool && activeToolIds.has(message.tool.id)) return false;
+    if (message.action && activeActionIds.has(message.action.id)) return false;
     return true;
   });
   if (!inflight) return history;
@@ -223,6 +270,22 @@ function resumeMessages(result: Record<string, unknown> | undefined, sessionId: 
           status,
           response: typeof item.response === "string" ? item.response : "",
         },
+      }];
+    }
+    if (item.type === "action") {
+      const id = typeof item.id === "string" ? item.id : "";
+      const summary = typeof item.summary === "string" ? item.summary : "";
+      if (!id || !summary) return [];
+      const rawStatus = typeof item.status === "string" ? item.status : "pending";
+      const status = ["pending", "completed", "failed", "rejected", "cancelled", "expired"].includes(rawStatus)
+        ? rawStatus as ActionRequest["status"]
+        : "pending";
+      return [{
+        id,
+        role: "agent",
+        content: "",
+        streaming: false,
+        action: actionRequest(item, sessionId, turnId, status),
       }];
     }
     return [];
@@ -379,6 +442,7 @@ export interface DisplayMessage {
   streaming: boolean;
   interaction?: InteractionRequest;
   tool?: ToolActivity;
+  action?: ActionRequest;
 }
 
 export interface ToolActivity {
@@ -400,6 +464,22 @@ export interface InteractionRequest {
   status: "pending" | "responding" | "answered" | "cancelled" | "expired" | "error";
   response: string;
   error?: string;
+}
+
+export interface ActionRequest {
+  id: string;
+  toolCallId: string;
+  toolName: string;
+  arguments: Record<string, unknown>;
+  summary: string;
+  reason: string;
+  riskLevel: string;
+  sessionId: string;
+  turnId: string;
+  status: "pending" | "responding" | "completed" | "failed" | "rejected" | "cancelled" | "expired" | "error";
+  decision: string;
+  result: string;
+  error: string;
 }
 
 export type HomeMode = "working" | "coding" | "design";
@@ -465,6 +545,7 @@ interface CoreActions {
   sendMessage: (text: string) => void;
   abortMessage: () => Promise<void>;
   respondToInteraction: (requestId: string, response: string) => Promise<void>;
+  respondToAction: (actionId: string, decision: "allow" | "deny") => Promise<void>;
   setDraft: (text: string) => void;
   newSession: (name?: string) => Promise<void>;
   switchSession: (sessionId: string) => Promise<void>;
@@ -956,6 +1037,38 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     }
   },
 
+  respondToAction: async (actionId, decision) => {
+    const agentId = get().activeAgentId;
+    if (!agentId) return;
+    const action = (get().messagesByAgent[agentId] || [])
+      .find((entry) => entry.action?.id === actionId)?.action;
+    if (!action?.turnId) return;
+    set(produce((s: CoreState) => {
+      const message = (s.messagesByAgent[agentId] || [])
+        .find((entry) => entry.action?.id === actionId);
+      if (message?.action) {
+        message.action.status = "responding";
+        message.action.error = "";
+      }
+    }));
+    const response = await window.gateway.respondAction({
+      agentId,
+      actionId,
+      turnId: action.turnId,
+      decision,
+    });
+    if (response.error) {
+      set(produce((s: CoreState) => {
+        const message = (s.messagesByAgent[agentId] || [])
+          .find((entry) => entry.action?.id === actionId);
+        if (message?.action) {
+          message.action.status = "error";
+          message.action.error = response.error!.message;
+        }
+      }));
+    }
+  },
+
   setDraft: (text) => {
     const agentId = get().activeAgentId;
     if (!agentId) return;
@@ -1338,6 +1451,66 @@ export function initGatewayEvents() {
       stream.ref = "";
       stream.id = null;
       setState(produce((s: CoreState) => { s.sendingByAgent[agentId] = true; }));
+      return;
+    }
+
+    if (event === "action.proposed") {
+      const actionId = typeof d.id === "string" ? d.id : "";
+      const summary = typeof d.summary === "string" ? d.summary : "";
+      if (!actionId || !summary) return;
+      const activeStreamId = stream.id;
+      let inserted = false;
+      setState(produce((s: CoreState) => {
+        if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
+        if (s.messagesByAgent[agentId].some((message) => message.action?.id === actionId)) return;
+        if (activeStreamId) {
+          const activeMessage = s.messagesByAgent[agentId]
+            .find((message) => message.id === activeStreamId);
+          if (activeMessage) {
+            activeMessage.content = stream.ref;
+            activeMessage.streaming = false;
+          }
+        }
+        s.messagesByAgent[agentId].push({
+          id: actionId,
+          role: "agent",
+          content: "",
+          streaming: false,
+          action: actionRequest(d, eventSessionId, eventTurnId, "pending"),
+        });
+        inserted = true;
+      }));
+      if (inserted && activeStreamId && stream.id === activeStreamId) {
+        stream.id = null;
+        stream.ref = "";
+      }
+      return;
+    }
+
+    if (event === "action.completed") {
+      const actionId = typeof d.id === "string" ? d.id : "";
+      if (!actionId) return;
+      const rawStatus = typeof d.status === "string" ? d.status : "failed";
+      const status = ["completed", "failed", "rejected", "cancelled", "expired"].includes(rawStatus)
+        ? rawStatus as ActionRequest["status"]
+        : "failed";
+      setState(produce((s: CoreState) => {
+        if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
+        let message = s.messagesByAgent[agentId]
+          .find((entry) => entry.action?.id === actionId);
+        if (!message) {
+          message = {
+            id: actionId,
+            role: "agent",
+            content: "",
+            streaming: false,
+            action: actionRequest(d, eventSessionId, eventTurnId, status),
+          };
+          s.messagesByAgent[agentId].push(message);
+        } else if (message.action) {
+          message.action = actionRequest(d, eventSessionId, eventTurnId, status);
+        }
+      }));
       return;
     }
 

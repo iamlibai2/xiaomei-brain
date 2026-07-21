@@ -80,6 +80,8 @@ class Agent:
         # ── Tool event callbacks (set by caller, e.g. ConversationDriver) ──
         self.on_tool_start: Callable[[int, str, str, dict], None] | None = None
         self.on_tool_complete: Callable[[int, str, str, dict, str], None] | None = None
+        self.on_tool_approval: Callable[[str, str, dict], dict | None] | None = None
+        self.on_action_complete: Callable[[str, str, bool], None] | None = None
 
         # ── Internal display (injected by ConversationDriver) ──
         self.internal_display: Any = None  # InternalDisplay 实例
@@ -333,11 +335,7 @@ class Agent:
                             result = "Error: ToolRegistry not initialized. Please restart the agent."
                             logger.error("[Agent] self.tools is None, cannot execute %s", tc.name)
                         else:
-                            try:
-                                result = self.tools.execute(tc.name, **args_dict)
-                            except Exception as e:
-                                result = f"Error executing tool '{tc.name}': {e}"
-                                logger.error("Tool error: %s", e)
+                            result = self._execute_tool_call(tc.id, tc.name, args_dict)
 
                     # 记录失败次数，成功则清除
                     if isinstance(result, str) and (
@@ -495,6 +493,39 @@ class Agent:
 
         yield "Agent reached maximum steps without producing a final answer."
 
+    def _execute_tool_call(self, tool_call_id: str, tool_name: str, arguments: dict) -> str:
+        """Apply the Agent approval boundary, then execute the sealed tool call."""
+        approval: dict | None = None
+        if self.on_tool_approval is not None:
+            try:
+                approval = self.on_tool_approval(tool_call_id, tool_name, dict(arguments))
+            except Exception as exc:
+                logger.error("Tool approval failed: %s", exc)
+                return f"Error requesting approval for tool '{tool_name}': {exc}"
+
+        action_id = str(approval.get("action_id", "")) if approval else ""
+        if approval and not approval.get("approved", False):
+            result = str(approval.get("result") or "Blocked: action was not approved")
+        else:
+            try:
+                result = self.tools.execute(tool_name, **arguments)
+            except Exception as exc:
+                result = f"Error executing tool '{tool_name}': {exc}"
+                logger.error("Tool error: %s", exc)
+
+        failed = (
+            result.startswith("Error:")
+            or result.startswith("Blocked")
+            or "timed out" in result
+            or "failed" in result.lower()
+        )
+        if action_id and self.on_action_complete is not None:
+            try:
+                self.on_action_complete(action_id, str(result), failed)
+            except Exception:
+                logger.exception("Failed to publish action completion")
+        return str(result)
+
     def react_nodb(
         self,
         messages: list[dict[str, Any]],
@@ -608,11 +639,7 @@ class Agent:
                             result = "Error: ToolRegistry not initialized. Please restart the agent."
                             logger.error("[Agent] self.tools is None, cannot execute %s", tc.name)
                         else:
-                            try:
-                                result = self.tools.execute(tc.name, **args_dict)
-                            except Exception as e:
-                                result = f"Error executing tool '{tc.name}': {e}"
-                                logger.error("Tool error: %s", e)
+                            result = self._execute_tool_call(tc.id, tc.name, args_dict)
 
                     if isinstance(result, str) and (
                         result.startswith("Error:") or result.startswith("Blocked")

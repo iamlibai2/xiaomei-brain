@@ -125,8 +125,10 @@ class InteractionBrokerTest(unittest.TestCase):
                 self.cancelled.append(session_id)
 
         broker = Broker()
+        action_broker = Broker()
         living = SimpleNamespace(
             _interaction_broker=broker,
+            _action_broker=action_broker,
             abort_chat=lambda: None,
         )
         router = MethodRouter(living=living)
@@ -142,6 +144,7 @@ class InteractionBrokerTest(unittest.TestCase):
             cm.unregister(conn_id)
 
         self.assertEqual(broker.cancelled, [session_id])
+        self.assertEqual(action_broker.cancelled, [session_id])
 
 
 if __name__ == "__main__":

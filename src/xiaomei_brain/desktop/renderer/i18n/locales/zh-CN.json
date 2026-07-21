@@ -12,6 +12,18 @@
       "connect": "连接"
     },
     "home": {
+      "actionLabel": "需要你的许可",
+      "actionRisk_low": "低风险",
+      "actionRisk_medium": "需确认",
+      "actionRisk_high": "高风险",
+      "actionAllowOnce": "允许本次",
+      "actionDeny": "拒绝",
+      "actionResponding": "正在提交你的决定...",
+      "actionCompleted": "操作已执行",
+      "actionRejected": "你拒绝了这次操作",
+      "actionCancelled": "这次操作已取消",
+      "actionExpired": "这次操作确认已超时",
+      "actionFailed": "操作执行失败",
       "superpowerWorking": "你的职场超能力",
       "superpowerCoding": "你的开发超能力",
       "superpowerDesign": "你的设计超能力",
