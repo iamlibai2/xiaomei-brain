@@ -245,6 +245,75 @@
   display: none;
 }
 
+/* ─── Tool activity ─── */
+.tool-activity {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: -4px 12px;
+  color: var(--ui-color-text-secondary);
+  font-size: 12px;
+}
+
+.tool-activity-indicator {
+  width: 7px;
+  height: 7px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--ui-color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.tool-running .tool-activity-indicator {
+  background: var(--ui-brand-primary);
+  animation: tool-activity-pulse 1.2s ease-in-out infinite;
+}
+
+.tool-error .tool-activity-indicator {
+  background: #d93025;
+}
+
+.tool-activity-title {
+  line-height: 19px;
+}
+
+.tool-activity-details summary {
+  width: max-content;
+  margin-top: 2px;
+  color: var(--ui-color-text-tertiary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.tool-activity-section {
+  margin-top: 8px;
+}
+
+.tool-activity-section > span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--ui-color-text-tertiary);
+}
+
+.tool-activity-section pre {
+  max-width: min(680px, calc(100vw - 120px));
+  max-height: 220px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-bg-secondary);
+  color: var(--ui-color-text-secondary);
+  font: 11px/1.55 var(--ui-font-mono, monospace);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@keyframes tool-activity-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
 /* ─── Markdown 内容 () ─── */
 .message-md {
   font-size: 13px;

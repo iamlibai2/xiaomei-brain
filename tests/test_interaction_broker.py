@@ -36,8 +36,9 @@ class InteractionBrokerTest(unittest.TestCase):
         self.assertTrue(requested.wait(timeout=1))
         request_id = published[0][1]["id"]
 
-        self.assertFalse(broker.respond(request_id, "实现", "session-b"))
-        self.assertTrue(broker.respond(request_id, "实现", "session-a"))
+        self.assertFalse(broker.respond(request_id, "实现", "session-b", "turn-a"))
+        self.assertFalse(broker.respond(request_id, "实现", "session-a", "turn-b"))
+        self.assertTrue(broker.respond(request_id, "实现", "session-a", "turn-a"))
         worker.join(timeout=1)
 
         self.assertEqual(result, ["实现"])
@@ -83,7 +84,7 @@ class InteractionBrokerTest(unittest.TestCase):
             payload["id"] for event, payload in published
             if event == "interaction.requested" and payload["session_id"] == "session-b"
         )
-        self.assertTrue(broker.respond(request_b, "继续", "session-b"))
+        self.assertTrue(broker.respond(request_b, "继续", "session-b", ""))
         worker_b.join(timeout=1)
         self.assertEqual(results["session-b"], "继续")
 
@@ -92,8 +93,8 @@ class InteractionBrokerTest(unittest.TestCase):
             def __init__(self):
                 self.calls = []
 
-            def respond(self, request_id, response, session_id):
-                self.calls.append((request_id, response, session_id))
+            def respond(self, request_id, response, session_id, turn_id):
+                self.calls.append((request_id, response, session_id, turn_id))
                 return True
 
         broker = Broker()
@@ -107,15 +108,15 @@ class InteractionBrokerTest(unittest.TestCase):
                 conn_id,
                 "request-1",
                 "interaction.respond",
-                {"request_id": "interaction-1", "response": "继续"},
+                {"request_id": "interaction-1", "turn_id": "turn-1", "response": "继续"},
             )
         finally:
             cm.unregister(conn_id)
 
         self.assertNotIn("error", response)
-        self.assertEqual(broker.calls, [("interaction-1", "继续", session_id)])
+        self.assertEqual(broker.calls, [("interaction-1", "继续", session_id, "turn-1")])
 
-    def test_gateway_abort_and_disconnect_cancel_connection_session(self):
+    def test_gateway_abort_cancels_but_disconnect_keeps_resumable_interaction(self):
         class Broker:
             def __init__(self):
                 self.cancelled = []
@@ -140,7 +141,7 @@ class InteractionBrokerTest(unittest.TestCase):
         finally:
             cm.unregister(conn_id)
 
-        self.assertEqual(broker.cancelled, [session_id, session_id])
+        self.assertEqual(broker.cancelled, [session_id])
 
 
 if __name__ == "__main__":

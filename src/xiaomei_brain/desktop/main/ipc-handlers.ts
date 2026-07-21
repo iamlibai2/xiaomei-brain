@@ -9,6 +9,7 @@ import { sanitizeNotificationText } from "./notification-text";
 const connections = new Map<string, GatewayClient>();
 const connectionSessions = new Map<string, string>();
 const connectionUsers = new Map<string, string>();
+const connectionReady = new Map<string, boolean>();
 const activeNotifications = new Set<Notification>();
 
 export function registerIpcHandlers(
@@ -54,6 +55,7 @@ export function registerIpcHandlers(
       }
       connectionSessions.delete(args.connectionId);
       connectionUsers.delete(args.connectionId);
+      connectionReady.delete(args.connectionId);
     }
     console.info(`[runtime] ${args.action} requested for agent ${args.agentId}`);
     const result = await runtimeManager.control(args.agentId, args.action);
@@ -72,6 +74,15 @@ export function registerIpcHandlers(
     return c;
   }
 
+  async function waitUntilConnectionReady(agentId: string, timeoutMs = 35000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (connectionReady.get(agentId) && connections.get(agentId)?.connected) return true;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return false;
+  }
+
   // ─── connect ────────────────────────────────
 
   ipcMain.handle(
@@ -87,6 +98,7 @@ export function registerIpcHandlers(
         connections.delete(args.agentId);
         connectionSessions.delete(args.agentId);
         connectionUsers.delete(args.agentId);
+        connectionReady.delete(args.agentId);
 
         const client = new GatewayClient();
         let sessionId = args.sessionId || "";
@@ -111,6 +123,7 @@ export function registerIpcHandlers(
           sendGatewayEvent(eventName, eventData);
         });
         client.on("reconnecting", () => {
+          connectionReady.set(args.agentId, false);
           sendGatewayEvent("reconnecting");
         });
         client.on("pong", () => {
@@ -127,7 +140,7 @@ export function registerIpcHandlers(
             client: "desktop",
             user_id: args.userId,
             session_id: sessionId,
-          }).then((res) => {
+          }).then(async (res) => {
             if (res.error) {
               sendGatewayEvent("reconnect.error", { message: res.error.message });
               return;
@@ -136,9 +149,19 @@ export function registerIpcHandlers(
             const result = res.result || {};
             sessionId = (result["session_id"] as string) || sessionId;
             connectionSessions.set(args.agentId, sessionId);
+            const resume = await client.rpc("session.resume", {
+              session_id: sessionId,
+              history_limit: 50,
+            });
+            if (resume.error) {
+              sendGatewayEvent("reconnect.error", { message: resume.error.message });
+              return;
+            }
+            connectionReady.set(args.agentId, true);
             sendGatewayEvent("reconnected", {
               session_id: sessionId,
               agent_name: (result["agent_name"] as string) || "",
+              resume: resume.result || {},
             });
           }).catch((error) => {
             sendGatewayEvent("reconnect.error", { message: String(error) });
@@ -171,16 +194,37 @@ export function registerIpcHandlers(
         connectionSessions.set(args.agentId, sessionId);
         connectionUsers.set(args.agentId, args.userId);
 
+        const resume = await client.rpc("session.resume", {
+          session_id: sessionId,
+          history_limit: 50,
+        });
+        if (resume.error) {
+          client.disconnect();
+          connections.delete(args.agentId);
+          connectionSessions.delete(args.agentId);
+          connectionUsers.delete(args.agentId);
+          connectionReady.delete(args.agentId);
+          return resume;
+        }
+        connectionReady.set(args.agentId, true);
+
         // Persist last connection params
         config.set("last_host", args.host);
         config.set("last_port", String(args.port));
 
-        return { result: { session_id: sessionId, agent_name: agentName } };
+        return {
+          result: {
+            session_id: sessionId,
+            agent_name: agentName,
+            resume: resume.result || {},
+          },
+        };
       } catch (e) {
         connections.get(args.agentId)?.disconnect();
         connections.delete(args.agentId);
         connectionSessions.delete(args.agentId);
         connectionUsers.delete(args.agentId);
+        connectionReady.delete(args.agentId);
         return { error: { code: -32099, message: `Connection failed: ${e}` } };
       }
     }
@@ -196,20 +240,28 @@ export function registerIpcHandlers(
     }
     connectionSessions.delete(args.agentId);
     connectionUsers.delete(args.agentId);
+    connectionReady.delete(args.agentId);
   });
 
   // ─── chat.send ──────────────────────────────
 
   ipcMain.handle(
     "gateway:sendMessage",
-    async (_event, args: { content: string; agentId: string }) => {
+    async (_event, args: { content: string; agentId: string; clientRequestId: string }) => {
       const client = getClient(args.agentId);
       if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
-      return client.rpc("chat.send", {
+      const params = {
         content: args.content,
+        client_request_id: args.clientRequestId,
         session_id: connectionSessions.get(args.agentId) || "",
         user_id: connectionUsers.get(args.agentId) || "",
-      });
+      };
+      const first = await client.rpc("chat.send", params);
+      if (first.error?.code !== -32099) return first;
+      if (!await waitUntilConnectionReady(args.agentId)) return first;
+      const reconnectedClient = getClient(args.agentId);
+      if (!reconnectedClient) return first;
+      return reconnectedClient.rpc("chat.send", params);
     }
   );
 
@@ -226,12 +278,14 @@ export function registerIpcHandlers(
   ipcMain.handle("gateway:respondInteraction", async (_event, args: {
     agentId: string;
     requestId: string;
+    turnId: string;
     response: string;
   }) => {
     const client = getClient(args.agentId);
     if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
     return client.rpc("interaction.respond", {
       request_id: args.requestId,
+      turn_id: args.turnId,
       response: args.response,
     });
   });

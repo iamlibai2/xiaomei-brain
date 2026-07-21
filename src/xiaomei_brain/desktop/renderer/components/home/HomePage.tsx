@@ -230,6 +230,10 @@ function MessageRow({ message, agentName }: { message: DisplayMessage; agentName
     return <InteractionCard message={message} agentName={agentName} />;
   }
 
+  if (message.tool) {
+    return <ToolActivityRow message={message} />;
+  }
+
   if (isUser) {
     return (
       <div className="user-message-row">
@@ -304,6 +308,46 @@ function MessageRow({ message, agentName }: { message: DisplayMessage; agentName
         >
           {hasThinking ? content : message.content}
         </ReactMarkdown>
+      </div>
+    </div>
+  );
+}
+
+function ToolActivityRow({ message }: { message: DisplayMessage }) {
+  const { t } = useTranslation();
+  const tool = message.tool!;
+  const running = tool.status === "running";
+  const failed = tool.status === "error";
+  const title = running
+    ? t("home.toolRunning", { name: tool.name })
+    : failed
+      ? t("home.toolError", { name: tool.name })
+      : t("home.toolComplete", { name: tool.name });
+  const hasArguments = Object.keys(tool.arguments).length > 0;
+  const hasDetails = hasArguments || Boolean(tool.summary) || Boolean(tool.error);
+
+  return (
+    <div className={`tool-activity tool-${tool.status}`}>
+      <span className="tool-activity-indicator" aria-hidden="true" />
+      <div className="tool-activity-body">
+        <div className="tool-activity-title">{title}</div>
+        {hasDetails && !running && (
+          <details className="tool-activity-details">
+            <summary>{t("home.toolDetails")}</summary>
+            {hasArguments && (
+              <div className="tool-activity-section">
+                <span>{t("home.toolArguments")}</span>
+                <pre>{JSON.stringify(tool.arguments, null, 2)}</pre>
+              </div>
+            )}
+            {(tool.error || tool.summary) && (
+              <div className="tool-activity-section">
+                <span>{failed ? t("home.toolErrorDetail") : t("home.toolResult")}</span>
+                <pre>{tool.error || tool.summary}{tool.truncated ? "…" : ""}</pre>
+              </div>
+            )}
+          </details>
+        )}
       </div>
     </div>
   );

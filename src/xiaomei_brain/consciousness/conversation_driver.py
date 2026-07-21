@@ -279,8 +279,12 @@ class ConversationDriver:
 
                     # 注册工具事件 callback（非 CLI 通道通过 Router 投递）
                     if current_msg.session_id not in ("main", ""):
-                        agent.on_tool_start = self._make_tool_event_callback("tool.start", current_msg.session_id, parent)
-                        agent.on_tool_complete = self._make_tool_event_callback("tool.complete", current_msg.session_id, parent)
+                        agent.on_tool_start = self._make_tool_event_callback(
+                            "tool.start", current_msg.session_id, current_msg.turn_id, parent,
+                        )
+                        agent.on_tool_complete = self._make_tool_event_callback(
+                            "tool.complete", current_msg.session_id, current_msg.turn_id, parent,
+                        )
                     else:
                         agent.on_tool_start = None
                         agent.on_tool_complete = None
@@ -773,6 +777,9 @@ class ConversationDriver:
     @staticmethod
     def _deliver_message_start(parent, session_id: str, turn_id: str) -> None:
         """声明一轮对话输出开始。"""
+        registry = getattr(parent, "_turn_registry", None)
+        if registry is not None:
+            registry.start(session_id, turn_id)
         if not ConversationDriver._should_deliver(session_id):
             return
         router = getattr(parent, '_router', None)
@@ -789,6 +796,9 @@ class ConversationDriver:
     @staticmethod
     def _deliver_chunk(parent, session_id: str, turn_id: str, chunk: str) -> None:
         """流式推送单个 chunk 到 WS 通道（仅 WS，其他通道忽略）。"""
+        registry = getattr(parent, "_turn_registry", None)
+        if registry is not None:
+            registry.append_text(session_id, turn_id, chunk)
         router = getattr(parent, '_router', None)
         if not router:
             return
@@ -803,25 +813,61 @@ class ConversationDriver:
             )
 
     @staticmethod
-    def _make_tool_event_callback(event_type: str, session_id: str, parent: Any):
+    def _make_tool_event_callback(
+        event_type: str,
+        session_id: str,
+        turn_id: str,
+        parent: Any,
+    ):
         """创建工具事件 callback，通过 Router 投递到各通道。"""
-        import json as _json
-        def callback(idx: int, name: str, data, *args):
+        import time as _time
+
+        def callback(idx: int, tool_call_id: str, name: str, data, *args):
             if not ConversationDriver._should_deliver(session_id):
                 return
+            payload: dict[str, Any] = {
+                "tool_call_id": tool_call_id,
+                "index": idx,
+                "name": name,
+            }
+            if event_type == "tool.start":
+                payload["arguments"] = data if isinstance(data, dict) else {}
+                payload["started_at"] = int(_time.time() * 1000)
+            elif event_type == "tool.complete":
+                result = str(args[0] if args else "")
+                failed = (
+                    result.startswith("Error:")
+                    or result.startswith("Blocked")
+                    or "timed out" in result
+                    or "failed" in result.lower()
+                )
+                summary_limit = 800
+                payload.update({
+                    "summary": result[:summary_limit],
+                    "truncated": len(result) > summary_limit,
+                    "completed_at": int(_time.time() * 1000),
+                })
+                if failed:
+                    payload["error"] = {
+                        "code": "TOOL_EXECUTION_FAILED",
+                        "message": result[:summary_limit],
+                    }
+            registry = getattr(parent, "_turn_registry", None)
+            if registry is not None:
+                registry.tool_event(event_type, payload, session_id, turn_id)
             router = getattr(parent, '_router', None)
             if not router:
                 return
             route = router.route_for_session(session_id)
             if not route:
                 return
-            payload = {"index": idx, "name": name, "event": event_type}
-            if event_type == "tool.start":
-                payload["arguments"] = data if isinstance(data, dict) else {}
-            elif event_type == "tool.complete":
-                payload["arguments"] = data if isinstance(data, dict) else {}
-                payload["result"] = args[0] if args else ""
-            router.deliver(_json.dumps(payload, ensure_ascii=False), route, msg_type=event_type)
+            router.deliver_event(
+                event_type,
+                payload,
+                route,
+                session_id=session_id,
+                turn_id=turn_id,
+            )
         return callback
 
     @staticmethod
@@ -845,9 +891,12 @@ class ConversationDriver:
     ) -> None:
         import re
         content = re.sub(r'\x1b\[[0-9;]*m', '', content)
+        registry = getattr(parent, "_turn_registry", None)
         router = getattr(parent, '_router', None)
         if not router:
             logger.warning("[ConversationDriver/Deliver] 无 Router，无法送达 session=%s", session_id)
+            if registry is not None:
+                registry.complete(session_id, turn_id)
             return
         route = router.route_for_session(session_id)
         if route:
@@ -866,3 +915,5 @@ class ConversationDriver:
         else:
             if session_id and not session_id.startswith("cli-"):
                 logger.warning("[ConversationDriver/Deliver] 无输出路由: session=%s", session_id)
+        if registry is not None:
+            registry.complete(session_id, turn_id)

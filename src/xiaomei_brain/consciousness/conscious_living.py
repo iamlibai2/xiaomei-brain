@@ -141,6 +141,8 @@ class ConsciousLiving(Living):
         )
 
         from .interaction_broker import InteractionBroker
+        from .turn_registry import ActiveTurnRegistry
+        self._turn_registry = ActiveTurnRegistry()
         self._interaction_broker = InteractionBroker(self._publish_interaction)
 
         # 自主行为计时器（独立于 _last_active，不干扰空闲检测）
@@ -977,6 +979,9 @@ class ConsciousLiving(Living):
         """Publish a structured interaction to the conversation that created it."""
         session_id = str(payload.get("session_id", ""))
         turn_id = str(payload.get("turn_id", ""))
+        turn_registry = getattr(self, "_turn_registry", None)
+        if turn_registry is not None:
+            turn_registry.interaction_event(event, payload)
         db = getattr(self.agent, "conversation_db", None)
         if db is not None:
             try:

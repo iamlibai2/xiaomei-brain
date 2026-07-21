@@ -78,8 +78,8 @@ class Agent:
         self._locks_lock = threading.Lock()
 
         # ── Tool event callbacks (set by caller, e.g. ConversationDriver) ──
-        self.on_tool_start: Callable[[int, str, dict], None] | None = None
-        self.on_tool_complete: Callable[[int, str, dict, str], None] | None = None
+        self.on_tool_start: Callable[[int, str, str, dict], None] | None = None
+        self.on_tool_complete: Callable[[int, str, str, dict, str], None] | None = None
 
         # ── Internal display (injected by ConversationDriver) ──
         self.internal_display: Any = None  # InternalDisplay 实例
@@ -315,7 +315,7 @@ class Agent:
                     _print(get_hint(tc.name))
                     _ptc(idx, tc.name, args_dict)
                     if self.on_tool_start:
-                        self.on_tool_start(idx, tc.name, args_dict)
+                        self.on_tool_start(idx, tc.id, tc.name, args_dict)
                     logger.debug("Tool call: %s(%s)", tc.name, args_dict)
 
                     # 重试检测：同一工具+参数失败超过2次则拦截
@@ -361,7 +361,7 @@ class Agent:
                     else:
                         _ptr(idx, result)
                     if self.on_tool_complete:
-                        self.on_tool_complete(idx, tc.name, tc.arguments, str(result))
+                        self.on_tool_complete(idx, tc.id, tc.name, args_dict, str(result))
                     logger.debug("Tool result: %s", str(result)[:200])
 
                     # 存 tool result 到 DB，保存 DB id 到消息（DAG 压缩需要）

@@ -44,6 +44,7 @@ class ConnectParams(BaseModel):
 
 class ChatSendParams(BaseModel):
     content: str = Field(..., min_length=1)
+    client_request_id: str = Field(..., min_length=1, max_length=128)
     session_id: str = ""
     user_id: str = ""
 
@@ -64,8 +65,14 @@ class ChatSessionsParams(BaseModel):
     query: str = Field(default="", max_length=100)
 
 
+class SessionResumeParams(BaseModel):
+    session_id: str = Field(..., min_length=1)
+    history_limit: int = Field(default=50, ge=1, le=200)
+
+
 class InteractionRespondParams(BaseModel):
     request_id: str = Field(..., min_length=1)
+    turn_id: str = Field(..., min_length=1)
     response: str = Field(..., min_length=1, max_length=2000)
 
 

@@ -63,7 +63,18 @@ function clearAgentStreams(agentId: string): void {
   }
 }
 
-function historyMessages(result: Record<string, unknown> | undefined, sessionId: string): DisplayMessage[] {
+function toolResultFailed(result: string): boolean {
+  return result.startsWith("Error:")
+    || result.startsWith("Blocked")
+    || result.includes("timed out")
+    || result.toLowerCase().includes("failed");
+}
+
+function historyMessages(
+  result: Record<string, unknown> | undefined,
+  sessionId: string,
+  activeInteractionIds: Set<string> = new Set(),
+): DisplayMessage[] {
   const rows = Array.isArray(result?.messages) ? result.messages : [];
   return rows.flatMap((value, index) => {
     if (!value || typeof value !== "object") return [];
@@ -74,9 +85,10 @@ function historyMessages(result: Record<string, unknown> | undefined, sessionId:
       const question = typeof interaction.question === "string" ? interaction.question : "";
       if (!id || !question) return [];
       const rawStatus = typeof interaction.status === "string" ? interaction.status : "expired";
-      const status = ["pending", "answered", "cancelled", "expired"].includes(rawStatus)
+      let status = ["pending", "answered", "cancelled", "expired"].includes(rawStatus)
         ? rawStatus as InteractionRequest["status"]
         : "expired";
+      if (status === "pending" && !activeInteractionIds.has(id)) status = "expired";
       return [{
         id,
         role: "agent",
@@ -89,13 +101,37 @@ function historyMessages(result: Record<string, unknown> | undefined, sessionId:
             ? interaction.choices.filter((choice): choice is string => typeof choice === "string")
             : [],
           sessionId: typeof interaction.session_id === "string" ? interaction.session_id : sessionId,
+          turnId: typeof interaction.turn_id === "string" ? interaction.turn_id : "",
           status,
           response: typeof interaction.response === "string" ? interaction.response : "",
         },
       } satisfies DisplayMessage];
     }
+    if (row.role === "tool") {
+      const toolCallId = typeof row.tool_call_id === "string" ? row.tool_call_id : "";
+      const name = typeof row.tool_name === "string" ? row.tool_name : "";
+      if (!toolCallId || !name || name === "clarify") return [];
+      const summary = typeof row.content === "string" ? row.content : "";
+      const failed = toolResultFailed(summary);
+      return [{
+        id: `history-tool-${sessionId}-${toolCallId}`,
+        role: "agent",
+        content: "",
+        streaming: false,
+        tool: {
+          id: toolCallId,
+          name,
+          arguments: {},
+          status: failed ? "error" : "complete",
+          summary: summary.slice(0, 800),
+          truncated: summary.length > 800,
+          error: failed ? summary.slice(0, 800) : "",
+        },
+      } satisfies DisplayMessage];
+    }
     const role = row.role === "user" ? "user" : row.role === "assistant" ? "agent" : null;
     if (!role || typeof row.content !== "string") return [];
+    if (role === "agent" && !row.content.trim()) return [];
     return [{
       id: typeof row.id === "number"
         ? `history-${sessionId}-${row.id}`
@@ -105,6 +141,114 @@ function historyMessages(result: Record<string, unknown> | undefined, sessionId:
       streaming: false,
     } satisfies DisplayMessage];
   });
+}
+
+function resumeMessages(result: Record<string, unknown> | undefined, sessionId: string): DisplayMessage[] {
+  const inflight = result?.inflight && typeof result.inflight === "object"
+    ? result.inflight as Record<string, unknown>
+    : null;
+  const items = inflight && Array.isArray(inflight.items) ? inflight.items : [];
+  const activeInteractionIds = new Set<string>();
+  const activeToolIds = new Set<string>();
+  for (const value of items) {
+    if (!value || typeof value !== "object") continue;
+    const item = value as Record<string, unknown>;
+    if (item.type === "interaction" && typeof item.id === "string") activeInteractionIds.add(item.id);
+    if (item.type === "tool" && typeof item.id === "string") activeToolIds.add(item.id);
+  }
+
+  const history = historyMessages(result, sessionId, activeInteractionIds).filter((message) => {
+    if (message.interaction && activeInteractionIds.has(message.interaction.id)) return false;
+    if (message.tool && activeToolIds.has(message.tool.id)) return false;
+    return true;
+  });
+  if (!inflight) return history;
+
+  const turnId = typeof inflight.turn_id === "string" ? inflight.turn_id : "";
+  const inflightMessages = items.flatMap((value, index): DisplayMessage[] => {
+    if (!value || typeof value !== "object") return [];
+    const item = value as Record<string, unknown>;
+    if (item.type === "message" && typeof item.text === "string" && item.text) {
+      return [{
+        id: `inflight-${turnId}-message-${index}`,
+        role: "agent",
+        content: item.text,
+        streaming: false,
+      }];
+    }
+    if (item.type === "tool") {
+      const id = typeof item.id === "string" ? item.id : "";
+      const name = typeof item.name === "string" ? item.name : "";
+      if (!id || !name || name === "clarify") return [];
+      const status = item.status === "running" || item.status === "error" ? item.status : "complete";
+      return [{
+        id: `inflight-${turnId}-tool-${id}`,
+        role: "agent",
+        content: "",
+        streaming: false,
+        tool: {
+          id,
+          name,
+          arguments: item.arguments && typeof item.arguments === "object" && !Array.isArray(item.arguments)
+            ? item.arguments as Record<string, unknown>
+            : {},
+          status,
+          summary: typeof item.summary === "string" ? item.summary : "",
+          truncated: item.truncated === true,
+          error: typeof item.error === "string" ? item.error : "",
+        },
+      }];
+    }
+    if (item.type === "interaction") {
+      const id = typeof item.id === "string" ? item.id : "";
+      const question = typeof item.question === "string" ? item.question : "";
+      if (!id || !question) return [];
+      const rawStatus = typeof item.status === "string" ? item.status : "pending";
+      const status = ["pending", "answered", "cancelled", "expired"].includes(rawStatus)
+        ? rawStatus as InteractionRequest["status"]
+        : "pending";
+      return [{
+        id,
+        role: "agent",
+        content: "",
+        streaming: false,
+        interaction: {
+          id,
+          question,
+          choices: Array.isArray(item.choices)
+            ? item.choices.filter((choice): choice is string => typeof choice === "string")
+            : [],
+          sessionId,
+          turnId,
+          status,
+          response: typeof item.response === "string" ? item.response : "",
+        },
+      }];
+    }
+    return [];
+  });
+  return [...history, ...inflightMessages];
+}
+
+function restoreStreamFromResume(
+  agentId: string,
+  sessionId: string,
+  result: Record<string, unknown> | undefined,
+): void {
+  const inflight = result?.inflight && typeof result.inflight === "object"
+    ? result.inflight as Record<string, unknown>
+    : null;
+  if (!inflight) return;
+  const turnId = typeof inflight.turn_id === "string" ? inflight.turn_id : "";
+  const items = Array.isArray(inflight.items) ? inflight.items : [];
+  const lastIndex = items.length - 1;
+  const last = lastIndex >= 0 && items[lastIndex] && typeof items[lastIndex] === "object"
+    ? items[lastIndex] as Record<string, unknown>
+    : null;
+  const key = streamingKey(agentId, sessionId, turnId);
+  _streamingByTurn[key] = last?.type === "message" && typeof last.text === "string"
+    ? { ref: last.text, id: `inflight-${turnId}-message-${lastIndex}` }
+    : { ref: "", id: null };
 }
 
 function historyPagination(result: Record<string, unknown> | undefined): HistoryPaginationState {
@@ -234,6 +378,17 @@ export interface DisplayMessage {
   content: string;
   streaming: boolean;
   interaction?: InteractionRequest;
+  tool?: ToolActivity;
+}
+
+export interface ToolActivity {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+  status: "running" | "complete" | "error";
+  summary: string;
+  truncated: boolean;
+  error: string;
 }
 
 export interface InteractionRequest {
@@ -241,6 +396,7 @@ export interface InteractionRequest {
   question: string;
   choices: string[];
   sessionId: string;
+  turnId: string;
   status: "pending" | "responding" | "answered" | "cancelled" | "expired" | "error";
   response: string;
   error?: string;
@@ -519,12 +675,11 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       const result = (res.result || {}) as Record<string, unknown>;
       const agentName = (result.agent_name as string) || host;
       const sessionId = (result.session_id as string) || requestedSessionId || "";
-      const history = sessionId
-        ? await window.gateway.getHistory({ agentId, sessionId, limit: 50 })
+      const resume = result.resume && typeof result.resume === "object"
+        ? result.resume as Record<string, unknown>
         : undefined;
-      const messages = history && !history.error ? historyMessages(history.result, sessionId) : [];
-      const pagination = historyPagination(history?.result);
-      if (history?.error) pagination.error = history.error.message;
+      const messages = resumeMessages(resume, sessionId);
+      const pagination = historyPagination(resume);
       const sessionResult = await fetchAgentSessions(
         agentId,
         sessionId,
@@ -547,7 +702,9 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
           if (!s.historyPaginationByAgent[agentId]) s.historyPaginationByAgent[agentId] = {};
           s.historyPaginationByAgent[agentId][sessionId] = pagination;
         }
+        s.sendingByAgent[agentId] = resume?.state === "running" || resume?.state === "waiting_user";
       }));
+      restoreStreamFromResume(agentId, sessionId, resume);
 
       return true;
     } catch (err) {
@@ -600,12 +757,11 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       const result = (res.result || {}) as Record<string, unknown>;
       const agentName = (result.agent_name as string) || agent.name;
       const sessionId = (result.session_id as string) || requestedSessionId || "";
-      const history = sessionId
-        ? await window.gateway.getHistory({ agentId, sessionId, limit: 50 })
+      const resume = result.resume && typeof result.resume === "object"
+        ? result.resume as Record<string, unknown>
         : undefined;
-      const messages = history && !history.error ? historyMessages(history.result, sessionId) : [];
-      const pagination = historyPagination(history?.result);
-      if (history?.error) pagination.error = history.error.message;
+      const messages = resumeMessages(resume, sessionId);
+      const pagination = historyPagination(resume);
       const sessionResult = await fetchAgentSessions(
         agentId,
         sessionId,
@@ -625,7 +781,9 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
           if (!s.historyPaginationByAgent[agentId]) s.historyPaginationByAgent[agentId] = {};
           s.historyPaginationByAgent[agentId][sessionId] = pagination;
         }
+        s.sendingByAgent[agentId] = resume?.state === "running" || resume?.state === "waiting_user";
       }));
+      restoreStreamFromResume(agentId, sessionId, resume);
     } catch (err) {
       set(produce((s: CoreState) => {
         s.connectionByAgent[agentId] = { status: "error", agentName: agent.name, error: String(err) };
@@ -702,18 +860,19 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   sendMessage: (text) => {
     const agentId = get().activeAgentId;
     if (!agentId) return;
+    const clientRequestId = crypto.randomUUID();
 
     set(produce((s: CoreState) => {
       if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
       s.messagesByAgent[agentId].push({
-        id: "user-" + Date.now(), role: "user", content: text, streaming: false,
+        id: `user-${clientRequestId}`, role: "user", content: text, streaming: false,
       });
       touchSession(s, agentId, s.activeSessionByAgent[agentId] || "", 1, text);
       s.sendingByAgent[agentId] = true;
       s.draftByAgent[agentId] = "";
     }));
 
-    void window.gateway.sendMessage({ content: text, agentId }).then((res) => {
+    void window.gateway.sendMessage({ content: text, agentId, clientRequestId }).then((res) => {
       if (!res.error && res.result?.accepted !== false) return;
 
       const message = res.error?.message || "Message was not accepted";
@@ -768,6 +927,9 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   respondToInteraction: async (requestId, response) => {
     const agentId = get().activeAgentId;
     if (!agentId || !response.trim()) return;
+    const interaction = (get().messagesByAgent[agentId] || [])
+      .find((entry) => entry.interaction?.id === requestId)?.interaction;
+    if (!interaction?.turnId) return;
     set(produce((s: CoreState) => {
       const message = (s.messagesByAgent[agentId] || [])
         .find((entry) => entry.interaction?.id === requestId);
@@ -779,6 +941,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     const result = await window.gateway.respondInteraction({
       agentId,
       requestId,
+      turnId: interaction.turnId,
       response: response.trim(),
     });
     if (result.error) {
@@ -897,16 +1060,12 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         return;
       }
 
-      const history = await window.gateway.getHistory({ agentId, sessionId, limit: 50 });
-      if (history.error) {
-        set(produce((s: CoreState) => {
-          s.connectionByAgent[agentId] = { status: "error", agentName: agent.name, error: history.error!.message };
-        }));
-        return;
-      }
-      const messages = historyMessages(history.result, sessionId);
-      const pagination = historyPagination(history.result);
       const result = (res.result || {}) as Record<string, unknown>;
+      const resume = result.resume && typeof result.resume === "object"
+        ? result.resume as Record<string, unknown>
+        : undefined;
+      const messages = resumeMessages(resume, sessionId);
+      const pagination = historyPagination(resume);
       set(produce((s: CoreState) => {
         s.messagesByAgent[agentId] = messages;
         s.activeSessionByAgent[agentId] = sessionId;
@@ -917,7 +1076,9 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
           agentName: (result.agent_name as string) || agent.name,
           error: "",
         };
+        s.sendingByAgent[agentId] = resume?.state === "running" || resume?.state === "waiting_user";
       }));
+      restoreStreamFromResume(agentId, sessionId, resume);
     } catch (error) {
       set(produce((s: CoreState) => {
         s.connectionByAgent[agentId] = { status: "error", agentName: agent.name, error: String(error) };
@@ -1125,9 +1286,14 @@ export function initGatewayEvents() {
     }
 
     if (event === "reconnected") {
+      const sessionId = typeof d.session_id === "string" ? d.session_id : "";
+      const resume = d.resume && typeof d.resume === "object"
+        ? d.resume as Record<string, unknown>
+        : undefined;
+      const messages = resumeMessages(resume, sessionId);
+      clearAgentStreams(agentId);
       setState(produce((s: CoreState) => {
         const previous = s.connectionByAgent[agentId];
-        const sessionId = typeof d.session_id === "string" ? d.session_id : "";
         s.connectionByAgent[agentId] = {
           status: "connected",
           agentName: (d.agent_name as string) || previous?.agentName || "",
@@ -1135,6 +1301,9 @@ export function initGatewayEvents() {
         };
         if (sessionId) {
           s.activeSessionByAgent[agentId] = sessionId;
+          s.messagesByAgent[agentId] = messages;
+          if (!s.historyPaginationByAgent[agentId]) s.historyPaginationByAgent[agentId] = {};
+          s.historyPaginationByAgent[agentId][sessionId] = historyPagination(resume);
           if (!s.sessionsByAgent[agentId]) s.sessionsByAgent[agentId] = [];
           if (!s.sessionsByAgent[agentId].some((session) => session.id === sessionId)) {
             const now = Date.now();
@@ -1147,7 +1316,9 @@ export function initGatewayEvents() {
             });
           }
         }
+        s.sendingByAgent[agentId] = resume?.state === "running" || resume?.state === "waiting_user";
       }));
+      restoreStreamFromResume(agentId, sessionId, resume);
       return;
     }
 
@@ -1203,9 +1374,10 @@ export function initGatewayEvents() {
           interaction: {
             id: requestId,
             question,
-            choices,
-            sessionId: typeof payload.session_id === "string" ? payload.session_id : "",
-            status: "pending",
+              choices,
+              sessionId: typeof payload.session_id === "string" ? payload.session_id : "",
+              turnId: typeof payload.turn_id === "string" ? payload.turn_id : "",
+              status: "pending",
             response: "",
           },
         });
@@ -1237,7 +1409,88 @@ export function initGatewayEvents() {
       return;
     }
 
-    if (event === "tool.start" || event === "tool.complete") return;
+    if (event === "tool.start") {
+      const toolCallId = typeof d.tool_call_id === "string" ? d.tool_call_id : "";
+      const name = typeof d.name === "string" ? d.name : "";
+      if (!toolCallId || !name || name === "clarify") return;
+      const args = d.arguments && typeof d.arguments === "object" && !Array.isArray(d.arguments)
+        ? d.arguments as Record<string, unknown>
+        : {};
+      const activeStreamId = stream.id;
+      let inserted = false;
+      setState(produce((s: CoreState) => {
+        if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
+        if (s.messagesByAgent[agentId].some((message) => message.tool?.id === toolCallId)) return;
+        if (activeStreamId) {
+          const activeMessage = s.messagesByAgent[agentId]
+            .find((message) => message.id === activeStreamId);
+          if (activeMessage) {
+            activeMessage.content = stream.ref;
+            activeMessage.streaming = false;
+          }
+        }
+        s.messagesByAgent[agentId].push({
+          id: `tool-${toolCallId}`,
+          role: "agent",
+          content: "",
+          streaming: false,
+          tool: {
+            id: toolCallId,
+            name,
+            arguments: args,
+            status: "running",
+            summary: "",
+            truncated: false,
+            error: "",
+          },
+        });
+        inserted = true;
+      }));
+      if (inserted && activeStreamId && stream.id === activeStreamId) {
+        stream.id = null;
+        stream.ref = "";
+      }
+      return;
+    }
+
+    if (event === "tool.complete") {
+      const toolCallId = typeof d.tool_call_id === "string" ? d.tool_call_id : "";
+      const name = typeof d.name === "string" ? d.name : "";
+      if (!toolCallId || !name || name === "clarify") return;
+      const summary = typeof d.summary === "string" ? d.summary : "";
+      const error = d.error && typeof d.error === "object" && !Array.isArray(d.error)
+        ? String((d.error as Record<string, unknown>).message || "")
+        : "";
+      setState(produce((s: CoreState) => {
+        if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
+        let message = s.messagesByAgent[agentId]
+          .find((entry) => entry.tool?.id === toolCallId);
+        if (!message) {
+          message = {
+            id: `tool-${toolCallId}`,
+            role: "agent",
+            content: "",
+            streaming: false,
+            tool: {
+              id: toolCallId,
+              name,
+              arguments: {},
+              status: "running",
+              summary: "",
+              truncated: false,
+              error: "",
+            },
+          };
+          s.messagesByAgent[agentId].push(message);
+        }
+        if (!message.tool) return;
+        message.tool.status = error ? "error" : "complete";
+        message.tool.summary = summary;
+        message.tool.truncated = d.truncated === true;
+        message.tool.error = error;
+      }));
+      return;
+    }
 
     // Internal cognition metadata has its own event and must never finalize
     // the visible assistant message stream.

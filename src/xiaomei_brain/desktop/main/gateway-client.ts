@@ -59,6 +59,7 @@ export class GatewayClient extends EventEmitter {
       this.ws.on("close", () => {
         this._connected = false;
         this.stopPing();
+        this.resolvePendingWithError("Connection lost");
         this.scheduleReconnect(host, port);
       });
 
@@ -79,11 +80,7 @@ export class GatewayClient extends EventEmitter {
     }
     this.ws?.close();
     this.ws = null;
-    for (const [id, request] of this.pending) {
-      clearTimeout(request.timer);
-      request.resolve({ jsonrpc: "2.0", id, error: { code: -32099, message: "Disconnected" } });
-    }
-    this.pending.clear();
+    this.resolvePendingWithError("Disconnected");
   }
 
   async rpc(method: string, params: Record<string, unknown> = {}): Promise<JsonRpcResponse> {
@@ -154,6 +151,14 @@ export class GatewayClient extends EventEmitter {
   private nextId(): string {
     this.counter += 1;
     return `gw-${this.counter}`;
+  }
+
+  private resolvePendingWithError(message: string): void {
+    for (const [id, request] of this.pending) {
+      clearTimeout(request.timer);
+      request.resolve({ jsonrpc: "2.0", id, error: { code: -32099, message } });
+    }
+    this.pending.clear();
   }
 
   private pingTimer: ReturnType<typeof setInterval> | null = null;
