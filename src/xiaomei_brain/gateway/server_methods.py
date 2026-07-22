@@ -29,7 +29,12 @@ class MethodRouter:
         self._auth_sessions: set[str] = set()
         self._registry = MethodRegistry()
 
-        self._connection_methods = ConnectionMethods(living, config, self._auth_sessions)
+        self._connection_methods = ConnectionMethods(
+            living,
+            config,
+            self._auth_sessions,
+            capability_provider=self._capabilities,
+        )
         self._chat_methods = ChatMethods(living)
         self._session_methods = SessionMethods(living, self._chat_methods.handle_history)
         self._attachment_methods = AttachmentMethods(living)
@@ -72,6 +77,32 @@ class MethodRouter:
     @property
     def method_names(self) -> tuple[str, ...]:
         return self._registry.names()
+
+    def _capabilities(self) -> list[str]:
+        """Describe features backed by the RPC methods actually registered."""
+        methods = set(self._registry.names())
+        capabilities = {
+            "event.sequence",
+            "event.timestamp",
+        }
+        requirements = {
+            "message.lifecycle": {"chat.send"},
+            "tool.lifecycle": {"chat.send"},
+            "interaction.question": {"interaction.respond"},
+            "action.approval": {"action.respond"},
+            "session.resume": {"session.resume"},
+            "session.list": {"chat.sessions"},
+            "message.attachments": {"chat.send", "attachment.get"},
+            "attachment.read": {"attachment.get"},
+            "artifact.read": {"artifact.get"},
+            "artifact.events": {"artifact.get"},
+            "message.retry": {"chat.retry"},
+            "identity.list": {"identity.list"},
+        }
+        for capability, required_methods in requirements.items():
+            if required_methods.issubset(methods):
+                capabilities.add(capability)
+        return sorted(capabilities)
 
     def drop_session(self, conn_id: str) -> None:
         """断开连接时清除认证状态。"""

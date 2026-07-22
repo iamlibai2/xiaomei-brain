@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
+import time
 
-from .channel_adapter import ChannelAdapter
+from .channel_adapter import ChannelAdapter, ChannelCapabilities
 from .connection import ConnectionManager
 from .protocol import build_event
 
@@ -26,6 +28,19 @@ class WSAdapter(ChannelAdapter):
 
     def __init__(self, conn_manager: ConnectionManager) -> None:
         self._conn_manager = conn_manager
+        self._sequence_lock = threading.Lock()
+        self._sequences: dict[str, int] = {}
+
+    @property
+    def capabilities(self) -> ChannelCapabilities:
+        return ChannelCapabilities(
+            streaming=True,
+            structured_events=True,
+            clarify=True,
+            action_approval=True,
+            attachments=True,
+            message_update=True,
+        )
 
     @classmethod
     def set_loop(cls, loop) -> None:
@@ -82,6 +97,7 @@ class WSAdapter(ChannelAdapter):
         *,
         session_id: str = "",
         turn_id: str = "",
+        timestamp: int = 0,
     ) -> None:
         """向 WebSocket 原样发送结构化 Gateway 事件。"""
         conn_id = self._conn_manager.get_conn_id(target)
@@ -94,13 +110,21 @@ class WSAdapter(ChannelAdapter):
             logger.warning("[WSAdapter] 丢弃事件，事件循环未设置: session=%s event=%s", target, event)
             return
 
-        frame = build_event(
-            event,
-            payload,
-            session_id=session_id or target,
-            turn_id=turn_id,
-        )
-        asyncio.run_coroutine_threadsafe(
-            self._conn_manager.send(conn_id, frame),
-            loop,
-        )
+        # The public sequence belongs to this delivered client stream.  The
+        # EventHub sequence is Agent-global and naturally skips when another
+        # session receives an event, so it cannot be used for gap detection.
+        with self._sequence_lock:
+            sequence = self._sequences.get(target, 0) + 1
+            self._sequences[target] = sequence
+            frame = build_event(
+                event,
+                payload,
+                session_id=session_id or target,
+                turn_id=turn_id,
+                sequence=sequence,
+                timestamp=timestamp or int(time.time() * 1000),
+            )
+            asyncio.run_coroutine_threadsafe(
+                self._conn_manager.send(conn_id, frame),
+                loop,
+            )

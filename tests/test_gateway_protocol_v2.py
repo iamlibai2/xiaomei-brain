@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 from xiaomei_brain.consciousness.conversation_driver import ConversationDriver
@@ -7,6 +8,7 @@ from xiaomei_brain.gateway.inbound import Accepted
 from xiaomei_brain.gateway.protocol import build_event
 from xiaomei_brain.gateway.router import OutputRoute, Router
 from xiaomei_brain.gateway.server_methods import MethodRouter
+from xiaomei_brain.gateway.ws_adapter import WSAdapter
 
 
 def test_v2_event_uses_one_canonical_envelope():
@@ -24,6 +26,20 @@ def test_v2_event_uses_one_canonical_envelope():
         "session_id": "session-1",
         "turn_id": "turn-1",
     }
+
+
+def test_v3_event_exposes_delivery_sequence_and_domain_timestamp():
+    frame = build_event(
+        "message.complete",
+        {"text": "完成"},
+        session_id="session-1",
+        turn_id="turn-1",
+        sequence=7,
+        timestamp=1720000000000,
+    )
+
+    assert frame["params"]["sequence"] == 7
+    assert frame["params"]["timestamp"] == 1720000000000
 
 
 def test_router_delivers_structured_event_without_json_string_roundtrip():
@@ -55,6 +71,41 @@ def test_router_delivers_structured_event_without_json_string_roundtrip():
             "turn_id": "turn-1",
         },
     )]
+
+
+def test_ws_event_sequence_is_contiguous_per_delivered_session(monkeypatch):
+    class Connections:
+        def __init__(self):
+            self.frames = []
+
+        def get_conn_id(self, session_id):
+            return f"conn-{session_id}"
+
+        async def send(self, _conn_id, frame):
+            self.frames.append(frame)
+
+    connections = Connections()
+    adapter = WSAdapter(connections)
+    adapter.set_loop(object())
+
+    def run_now(coroutine, _loop):
+        asyncio.run(coroutine)
+
+    monkeypatch.setattr(
+        "xiaomei_brain.gateway.ws_adapter.asyncio.run_coroutine_threadsafe",
+        run_now,
+    )
+
+    adapter.send_event("session-1", "message.start", {}, timestamp=1000)
+    adapter.send_event("session-2", "message.start", {}, timestamp=2000)
+    adapter.send_event("session-1", "message.complete", {"text": "好"}, timestamp=3000)
+
+    session_1 = [
+        frame["params"] for frame in connections.frames
+        if frame["params"]["session_id"] == "session-1"
+    ]
+    assert [params["sequence"] for params in session_1] == [1, 2]
+    assert [params["timestamp"] for params in session_1] == [1000, 3000]
 
 
 def test_conversation_driver_message_events_share_session_and_turn():
@@ -366,3 +417,21 @@ def test_reconnect_does_not_reload_context_during_active_turn():
     assert "error" not in response
     assert living.fresh_tail_loads == 0
     assert "session.resume" in response["result"]["capabilities"]
+    assert response["result"]["protocol_version"] == 3
+    assert "event.sequence" in response["result"]["capabilities"]
+    assert "event.timestamp" in response["result"]["capabilities"]
+
+
+def test_connect_capabilities_follow_registered_methods():
+    router = MethodRouter()
+    router._registry._methods.pop("interaction.respond")
+
+    response = router.dispatch(
+        "connection-1",
+        "request-connect",
+        "connect",
+        {"client": "desktop", "token": ""},
+    )
+
+    assert "interaction.question" not in response["result"]["capabilities"]
+    assert "action.approval" in response["result"]["capabilities"]

@@ -45,20 +45,38 @@ class GatewayEventProjection:
                 logger.warning("No output route for session=%s", event.session_id)
             return
 
+        adapter = router.get_adapter(route.type) if hasattr(router, "get_adapter") else None
+        capabilities = getattr(adapter, "capabilities", None)
+
         # Streaming deltas are a rich-client capability. Other channels receive
         # the final message and can render structured events through send_event.
-        if event.name == "message.delta" and route.type != "ws":
+        supports_streaming = (
+            bool(capabilities.streaming) if capabilities is not None
+            else route.type == "ws"
+        )
+        if event.name == "message.delta" and not supports_streaming:
+            return
+        if (
+            event.name.startswith("interaction.")
+            and capabilities is not None
+            and not capabilities.clarify
+        ):
+            return
+        if (
+            event.name.startswith("action.")
+            and capabilities is not None
+            and not capabilities.action_approval
+        ):
             return
 
-        router.deliver_event(
-            event.name,
-            event.payload,
-            route,
-            session_id=event.session_id,
-            turn_id=event.turn_id,
-        )
+        metadata = {
+            "session_id": event.session_id,
+            "turn_id": event.turn_id,
+        }
+        if event.timestamp > 0:
+            metadata["timestamp"] = event.timestamp
+        router.deliver_event(event.name, event.payload, route, **metadata)
 
     @staticmethod
     def _is_local_terminal_session(session_id: str) -> bool:
         return session_id == "main" or session_id.startswith("cli-")
-

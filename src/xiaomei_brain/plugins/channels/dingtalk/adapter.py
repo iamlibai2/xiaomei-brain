@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import time
 
-from xiaomei_brain.gateway.channel_adapter import ChannelAdapter
+from xiaomei_brain.gateway.channel_adapter import ChannelAdapter, ChannelCapabilities
 from .client import DingTalkClient
 
 logger = logging.getLogger(__name__)
@@ -46,6 +46,14 @@ class DingTalkAdapter(ChannelAdapter):
         self._client = client
         # 缓存：session_id → {"session_webhook": ..., "sdk_message": ChatbotMessage}
         self._sessions: dict[str, dict] = {}
+
+    @property
+    def capabilities(self) -> ChannelCapabilities:
+        return ChannelCapabilities(
+            clarify=True,
+            action_approval=True,
+            attachments=True,
+        )
 
     @property
     def channel_type(self) -> str:

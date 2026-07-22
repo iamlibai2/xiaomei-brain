@@ -1630,7 +1630,13 @@ export function initGatewayEvents() {
     });
   });
 
-  window.gateway.onEvent((raw: { event: string; data: unknown; agentId: string }) => {
+  window.gateway.onEvent((raw: {
+    event: string;
+    data: unknown;
+    agentId: string;
+    sequence?: number;
+    timestamp?: number;
+  }) => {
     const { event, data: rawData, agentId } = raw;
     const d = (rawData || {}) as Record<string, unknown>;
     const text = (d.text || "") as string;
@@ -1661,7 +1667,7 @@ export function initGatewayEvents() {
       return;
     }
 
-    if (event === "reconnected") {
+    if (event === "reconnected" || event === "stream.resynced") {
       const sessionId = typeof d.session_id === "string" ? d.session_id : "";
       const resume = d.resume && typeof d.resume === "object"
         ? d.resume as Record<string, unknown>

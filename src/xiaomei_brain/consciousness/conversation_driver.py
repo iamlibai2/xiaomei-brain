@@ -296,8 +296,10 @@ class ConversationDriver:
                         agent.on_tool_start = None
                         agent.on_tool_complete = None
                         agent.on_artifact = None
-                        agent.on_tool_approval = None
-                        agent.on_action_complete = None
+                        agent.on_tool_approval = self._make_tool_approval_callback(
+                            current_msg.session_id, current_msg.turn_id, current_msg.user_id, parent,
+                        )
+                        agent.on_action_complete = self._make_action_complete_callback(parent)
 
                     si = getattr(getattr(parent, "consciousness", None), "self_image", None)
                     if si:
@@ -931,10 +933,21 @@ class ConversationDriver:
 
             router = getattr(parent, "_router", None)
             route = router.route_for_session(session_id) if router else None
-            if route is None or route.type != "ws":
+            adapter = (
+                router.get_adapter(route.type)
+                if router is not None and route is not None and hasattr(router, "get_adapter")
+                else None
+            )
+            capabilities = getattr(adapter, "capabilities", None)
+            supports_approval = (
+                bool(capabilities.action_approval)
+                if capabilities is not None
+                else route is not None and route.type == "ws"
+            )
+            if not supports_approval:
                 return {
                     "approved": False,
-                    "result": "Blocked: this action requires approval from an interactive Desktop session",
+                    "result": "Blocked: this action requires an interactive human channel",
                 }
 
             broker = getattr(parent, "_action_broker", None)
@@ -953,6 +966,12 @@ class ConversationDriver:
                 session_id=session_id,
                 user_id=user_id,
                 turn_id=turn_id,
+                decision_provider=(
+                    adapter.request_action_decision
+                    if capabilities is not None
+                    and capabilities.synchronous_action_approval
+                    else None
+                ),
             )
             approved = request.status == "approved"
             if approved:

@@ -112,6 +112,22 @@ class InteractionBroker:
         self._emit("interaction.updated", request)
         return True
 
+    def respond_pending(self, response: str, session_id: str, user_id: str) -> bool:
+        """Answer the single pending question owned by a conversational channel."""
+        with self._lock:
+            matches = [
+                request for request in self._requests.values()
+                if request.status == "pending"
+                and request.session_id == session_id
+                and request.user_id == user_id
+            ]
+            if len(matches) != 1:
+                return False
+            request = matches[0]
+            request_id = request.id
+            turn_id = request.turn_id
+        return self.respond(request_id, response, session_id, turn_id)
+
     def cancel_session(self, session_id: str) -> None:
         with self._lock:
             requests = [

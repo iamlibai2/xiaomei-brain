@@ -53,8 +53,10 @@ def build_event(
     *,
     session_id: str = "",
     turn_id: str = "",
+    sequence: int = 0,
+    timestamp: int = 0,
 ) -> dict:
-    """构建 Gateway V2 事件。"""
+    """构建 Gateway 事件信封；V3 可携带流序号和发生时间。"""
     body = payload or {}
     params = {
         "type": event,
@@ -64,6 +66,10 @@ def build_event(
         params["session_id"] = session_id
     if turn_id:
         params["turn_id"] = turn_id
+    if sequence > 0:
+        params["sequence"] = sequence
+    if timestamp > 0:
+        params["timestamp"] = timestamp
     return {
         "jsonrpc": JSONRPC_VERSION,
         "method": "event",

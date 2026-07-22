@@ -95,3 +95,27 @@ def test_action_timeout_fails_closed():
     assert request.decision == "deny"
     assert [event for event, _ in published] == ["action.proposed", "action.completed"]
     assert not broker.respond(request.id, "allow", "session-timeout", "turn-timeout")
+
+
+def test_synchronous_channel_decision_uses_same_action_request():
+    published = []
+    broker = ActionBroker(lambda event, payload: published.append((event, payload)))
+
+    request = broker.propose(
+        tool_call_id="call-cli",
+        tool_name="shell",
+        arguments={"command": "mkdir cli-test"},
+        summary="执行命令",
+        reason="会修改本机文件",
+        risk_level="medium",
+        session_id="main",
+        user_id="user",
+        turn_id="turn-cli",
+        decision_provider=lambda payload: (
+            "allow" if payload["tool_call_id"] == "call-cli" else "deny"
+        ),
+    )
+
+    assert request.status == "approved"
+    assert request.decision == "allow"
+    assert [event for event, _ in published] == ["action.proposed"]

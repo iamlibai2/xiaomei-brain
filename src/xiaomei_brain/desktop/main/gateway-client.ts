@@ -20,6 +20,11 @@ interface PendingRequest {
   timer: ReturnType<typeof setTimeout>;
 }
 
+interface GatewayEventMetadata {
+  sequence?: number;
+  timestamp?: number;
+}
+
 export class GatewayClient extends EventEmitter {
   private ws: WebSocket | null = null;
   private counter = 0;
@@ -28,6 +33,7 @@ export class GatewayClient extends EventEmitter {
   private reconnectDelay = 1000;
   private _connected = false;
   private _closed = false;
+  private lastEventSequence: number | null = null;
 
   get connected(): boolean {
     return this._connected;
@@ -41,6 +47,8 @@ export class GatewayClient extends EventEmitter {
 
       this.ws.on("open", () => {
         this._connected = true;
+        // Reconnect recovery establishes a fresh baseline with session.resume.
+        this.lastEventSequence = null;
         this.reconnectDelay = 1000;
         this.startPing();
         this.emit("connected");
@@ -83,6 +91,12 @@ export class GatewayClient extends EventEmitter {
     this.resolvePendingWithError("Disconnected");
   }
 
+  reconnect(): void {
+    if (!this._closed && this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.close();
+    }
+  }
+
   async rpc(method: string, params: Record<string, unknown> = {}): Promise<JsonRpcResponse> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       return {
@@ -123,6 +137,25 @@ export class GatewayClient extends EventEmitter {
     if (data["method"] === "event") {
       const params = (data["params"] || {}) as Record<string, unknown>;
       const eventName = params["type"] as string;
+      const sequence = typeof params["sequence"] === "number" && Number.isInteger(params["sequence"])
+        ? params["sequence"] as number
+        : undefined;
+      const timestamp = typeof params["timestamp"] === "number"
+        ? params["timestamp"] as number
+        : undefined;
+      if (sequence !== undefined && sequence > 0) {
+        if (this.lastEventSequence !== null && sequence <= this.lastEventSequence) {
+          // A transport retry must not duplicate cards or streamed text.
+          return;
+        }
+        if (this.lastEventSequence !== null && sequence !== this.lastEventSequence + 1) {
+          this.emit("eventGap", {
+            expected: this.lastEventSequence + 1,
+            received: sequence,
+          });
+        }
+        this.lastEventSequence = sequence;
+      }
       const rawPayload = params["payload"] ?? {};
       const payload = rawPayload && typeof rawPayload === "object" && !Array.isArray(rawPayload)
         ? {
@@ -131,7 +164,8 @@ export class GatewayClient extends EventEmitter {
             ...(typeof params["turn_id"] === "string" ? { turn_id: params["turn_id"] } : {}),
           }
         : rawPayload;
-      this.emit("event", eventName, payload);
+      const metadata: GatewayEventMetadata = { sequence, timestamp };
+      this.emit("event", eventName, payload, metadata);
       return;
     }
 

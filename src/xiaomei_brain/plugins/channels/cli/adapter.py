@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from xiaomei_brain.gateway.channel_adapter import ChannelAdapter
+from xiaomei_brain.gateway.channel_adapter import ChannelAdapter, ChannelCapabilities
 
 
 def register(ctx):
@@ -20,6 +20,27 @@ class CLIAdapter(ChannelAdapter):
     def send(self, target: str, text: str, msg_type: str = "text") -> None:
         if text.strip():
             print(f"\n{text}", flush=True)
+
+    @property
+    def capabilities(self) -> ChannelCapabilities:
+        return ChannelCapabilities(
+            streaming=True,
+            clarify=True,
+            action_approval=True,
+            synchronous_action_approval=True,
+            attachments=True,
+        )
+
+    def request_action_decision(self, payload: dict) -> str | None:
+        from xiaomei_brain.tools.builtin.clarify import _cli_callback
+
+        summary = str(payload.get("summary", "需要确认操作"))
+        reason = str(payload.get("reason", "")).strip()
+        question = summary if not reason else f"{summary}\n原因：{reason}"
+        response = _cli_callback(question, ["允许", "拒绝"]).strip().lower()
+        if response in {"1", "允许", "allow", "yes", "y"}:
+            return "allow"
+        return "deny"
 
     @property
     def channel_type(self) -> str:

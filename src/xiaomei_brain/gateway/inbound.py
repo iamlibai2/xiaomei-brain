@@ -134,26 +134,30 @@ class Gateway:
             logger.debug("[Gateway] 忽略空消息")
             return Rejected(reason="EMPTY", silent=True)
 
-        # 3. Busy check
+        # 3. Identity and session are needed before checking whether this is a
+        # response to a Turn that is intentionally waiting for the user.
+        user_id = raw.peer_id if raw.peer_type == "human" else self._living.user_id
+        user_display_name = self._resolve_identity(raw.peer_id)
+        if not user_display_name:
+            user_display_name = "这位用户"
+        session_id = raw.session_id or self._route_session(raw)
+
+        # 4. Conversational control replies must bypass BUSY: the Agent remains
+        # _chatting while Clarify or Action is waiting for this exact response.
+        if self._handle_conversation_control(raw, content, user_id, session_id):
+            return Rejected(reason="HANDLED", silent=True)
+
+        # 5. Busy check
         if getattr(self._living, '_chatting', False):
             logger.info("[Gateway] 聊天进行中，拒绝新消息: %s", content[:30])
             return Rejected(reason="BUSY", silent=False)
 
-        # 4. Rate-limit check
+        # 6. Rate-limit check
         if raw.source != "human" and not raw.urgent:
             sig = getattr(self._living, '_interoception_signals', None)
             if sig and getattr(sig, 'throttle', False):
                 logger.warning("[Gateway] 限流激活，丢弃非紧急消息: %.50s", content)
                 return Rejected(reason="THROTTLED", silent=True)
-
-        # 5. Identity resolution
-        user_id = raw.peer_id if raw.peer_type == "human" else self._living.user_id
-        user_display_name = self._resolve_identity(raw.peer_id)
-        if not user_display_name:
-            user_display_name = "这位用户"
-
-        # 6. Session routing
-        session_id = raw.session_id or self._route_session(raw)
 
         # 7. Command dispatch — all / commands handled here
         if content.startswith("/"):
@@ -205,6 +209,56 @@ class Gateway:
             )
             msg.user_display_name = user_display_name
         return Accepted(living_message=msg)
+
+    def _handle_conversation_control(
+        self,
+        raw: RawMessage,
+        content: str,
+        user_id: str,
+        session_id: str,
+    ) -> bool:
+        """Resolve channel text as Clarify/Action control without creating a Turn."""
+        if raw.source != "human" or raw.peer_type != "human" or raw.channel == "ws":
+            return False
+        capabilities = self._channel_capabilities(raw.channel)
+
+        if content.strip().lower().startswith("/approve") and capabilities.action_approval:
+            parts = content.strip().split()
+            if len(parts) != 3 or parts[2].lower() not in {"allow", "allow-once", "deny"}:
+                self._deliver_control_message(
+                    session_id,
+                    "用法：/approve <action_id> allow 或 /approve <action_id> deny",
+                )
+                return True
+            broker = getattr(self._living, "_action_broker", None)
+            accepted = broker is not None and broker.respond_from_channel(
+                parts[1], parts[2].lower(), session_id, user_id,
+            )
+            if not accepted:
+                self._deliver_control_message(session_id, "审批请求不存在、已结束或不属于你。")
+            return True
+
+        if capabilities.clarify:
+            broker = getattr(self._living, "_interaction_broker", None)
+            if broker is not None and broker.respond_pending(content, session_id, user_id):
+                return True
+        return False
+
+    def _channel_capabilities(self, channel: str):
+        from .channel_adapter import ChannelCapabilities
+
+        adapter = self._channels.get(channel)
+        if adapter is None and hasattr(self._router, "get_adapter"):
+            adapter = self._router.get_adapter(channel)
+        return getattr(adapter, "capabilities", ChannelCapabilities())
+
+    def _deliver_control_message(self, session_id: str, text: str) -> None:
+        route = (
+            self._router.route_for_session(session_id)
+            if hasattr(self._router, "route_for_session") else None
+        )
+        if route is not None:
+            self._router.deliver(text, route)
 
     def _persist_human_message(
         self,

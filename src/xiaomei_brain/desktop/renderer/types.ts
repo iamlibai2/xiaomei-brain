@@ -98,7 +98,13 @@ export interface GatewayBridge {
   /**
    * Subscribe to gateway push events. Callback receives { event, data, agentId }.
    */
-  onEvent(callback: (raw: { event: string; data: unknown; agentId: string }) => void): () => void;
+  onEvent(callback: (raw: {
+    event: string;
+    data: unknown;
+    agentId: string;
+    sequence?: number;
+    timestamp?: number;
+  }) => void): () => void;
 }
 
 export interface LocalAgentsBridge {

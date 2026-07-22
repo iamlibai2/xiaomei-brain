@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from ..auth import check_token
 from ..protocol import ErrorCode, build_error, build_response
@@ -13,10 +13,17 @@ logger = logging.getLogger(__name__)
 
 
 class ConnectionMethods:
-    def __init__(self, living: Any, config: Any, auth_sessions: set[str]) -> None:
+    def __init__(
+        self,
+        living: Any,
+        config: Any,
+        auth_sessions: set[str],
+        capability_provider: Callable[[], list[str]] | None = None,
+    ) -> None:
         self._living = living
         self._config = config
         self._auth_sessions = auth_sessions
+        self._capability_provider = capability_provider or (lambda: [])
 
     @property
     def handlers(self) -> dict[str, Any]:
@@ -64,18 +71,6 @@ class ConnectionMethods:
             "session_id": session_id,
             "agent_name": getattr(self._living, "_agent_id", ""),
             "reconnect": bool(parsed.session_id),
-            "protocol_version": 2,
-            "capabilities": [
-                "message.lifecycle",
-                "tool.lifecycle",
-                "interaction.question",
-                "session.resume",
-                "action.approval",
-                "message.attachments",
-                "attachment.read",
-                "artifact.read",
-                "artifact.events",
-                "message.retry",
-            ],
+            "protocol_version": 3,
+            "capabilities": self._capability_provider(),
         })
-

@@ -219,6 +219,7 @@ export function registerIpcHandlers(
         let sessionId = args.sessionId || "";
         let authenticated = false;
         let reauthenticating = false;
+        let recoveringEventGap = false;
 
         const sendGatewayEvent = (event: string, data: unknown = {}) => {
           const win = getWindow();
@@ -228,14 +229,61 @@ export function registerIpcHandlers(
         };
 
         // Forward events with agentId tag
-        client.on("event", (eventName: string, data: unknown) => {
+        client.on("event", (
+          eventName: string,
+          data: unknown,
+          metadata: { sequence?: number; timestamp?: number } = {},
+        ) => {
+          // session.resume below replaces the incomplete local stream with an
+          // authoritative snapshot, so frames arriving during recovery are
+          // intentionally not projected into the renderer.
+          if (recoveringEventGap) return;
           const eventData = data && typeof data === "object" && !Array.isArray(data)
             ? {
                 ...(data as Record<string, unknown>),
                 session_id: (data as Record<string, unknown>).session_id || sessionId,
               }
             : data;
-          sendGatewayEvent(eventName, eventData);
+          const win = getWindow();
+          if (win) {
+            win.webContents.send("gateway:event", {
+              event: eventName,
+              data: eventData,
+              agentId: args.agentId,
+              ...metadata,
+            });
+          }
+        });
+        client.on("eventGap", (gap: { expected: number; received: number }) => {
+          if (!authenticated || recoveringEventGap || !sessionId) return;
+          recoveringEventGap = true;
+          connectionReady.set(args.agentId, false);
+          console.warn(
+            `[gateway] event gap for ${args.agentId}: expected ${gap.expected}, received ${gap.received}`,
+          );
+          let recovered = false;
+          void client.rpc("session.resume", {
+            session_id: sessionId,
+            history_limit: 50,
+          }).then((resume) => {
+            if (resume.error) {
+              sendGatewayEvent("reconnect.error", { message: resume.error.message });
+              return;
+            }
+            sendGatewayEvent("stream.resynced", {
+              session_id: sessionId,
+              resume: resume.result || {},
+              expected_sequence: gap.expected,
+              received_sequence: gap.received,
+            });
+            recovered = true;
+          }).catch((error) => {
+            sendGatewayEvent("reconnect.error", { message: String(error) });
+          }).finally(() => {
+            recoveringEventGap = false;
+            connectionReady.set(args.agentId, recovered);
+            if (!recovered) client.reconnect();
+          });
         });
         client.on("reconnecting", () => {
           connectionReady.set(args.agentId, false);
@@ -276,6 +324,8 @@ export function registerIpcHandlers(
             sendGatewayEvent("reconnected", {
               session_id: sessionId,
               agent_name: (result["agent_name"] as string) || "",
+              protocol_version: result["protocol_version"],
+              capabilities: result["capabilities"],
               resume: resume.result || {},
             });
           }).catch((error) => {
@@ -329,6 +379,7 @@ export function registerIpcHandlers(
 
         return {
           result: {
+            ...result,
             session_id: sessionId,
             agent_name: agentName,
             resume: resume.result || {},

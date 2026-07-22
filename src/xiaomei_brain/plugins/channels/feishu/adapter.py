@@ -14,7 +14,7 @@ import warnings
 # 飞书 SDK (lark_oapi) 内部使用了已弃用的 pkg_resources API
 warnings.filterwarnings("ignore", category=UserWarning, module="lark_oapi")
 
-from xiaomei_brain.gateway.channel_adapter import ChannelAdapter
+from xiaomei_brain.gateway.channel_adapter import ChannelAdapter, ChannelCapabilities
 from .types import OutboundMsg
 from .client import FeishuChannel
 
@@ -37,6 +37,14 @@ class FeishuAdapter(ChannelAdapter):
 
     def __init__(self, channel: FeishuChannel) -> None:
         self._channel = channel
+
+    @property
+    def capabilities(self) -> ChannelCapabilities:
+        return ChannelCapabilities(
+            clarify=True,
+            action_approval=True,
+            attachments=True,
+        )
 
     @property
     def channel_type(self) -> str:

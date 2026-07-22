@@ -160,7 +160,25 @@ def create_clarify_tool(agent_instance: Any) -> Tool:
         living = getattr(agent_instance, "_living", None)
         broker = getattr(living, "_interaction_broker", None)
 
-        if broker is not None and session_id not in ("", "main") and not session_id.startswith("cli-"):
+        is_remote_session = (
+            session_id not in ("", "main") and not session_id.startswith("cli-")
+        )
+        supports_clarify = True
+        router = getattr(living, "_router", None)
+        if router is not None and is_remote_session:
+            route = router.route_for_session(session_id)
+            adapter = (
+                router.get_adapter(route.type)
+                if route is not None and hasattr(router, "get_adapter") else None
+            )
+            capabilities = getattr(adapter, "capabilities", None)
+            supports_clarify = (
+                bool(capabilities.clarify)
+                if capabilities is not None
+                else route is not None and route.type == "ws"
+            )
+
+        if broker is not None and is_remote_session and supports_clarify:
             try:
                 user_response = broker.request(
                     question=question_text,
@@ -175,6 +193,11 @@ def create_clarify_tool(agent_instance: Any) -> Tool:
                 "question": question_text,
                 "choices_offered": normalized,
                 "user_response": user_response,
+            }, ensure_ascii=False)
+
+        if broker is not None and is_remote_session and not supports_clarify:
+            return json.dumps({
+                "error": "clarify 工具在当前通道不可用",
             }, ensure_ascii=False)
 
         return clarify.execute(question=question_text, choices=normalized)

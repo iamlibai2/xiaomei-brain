@@ -224,6 +224,7 @@ class Router:
         *,
         session_id: str = "",
         turn_id: str = "",
+        timestamp: int = 0,
     ) -> bool:
         """分发结构化出站事件，避免在 Router 内二次序列化 JSON。"""
         adapter = self._adapters.get(route.type)
@@ -231,12 +232,17 @@ class Router:
             logger.debug("[Router] 无适配器: %s", route.type)
             return False
         try:
+            metadata = {
+                "session_id": session_id,
+                "turn_id": turn_id,
+            }
+            if timestamp > 0:
+                metadata["timestamp"] = timestamp
             adapter.send_event(
                 route.target,
                 event,
                 payload,
-                session_id=session_id,
-                turn_id=turn_id,
+                **metadata,
             )
             return True
         except Exception as e:
