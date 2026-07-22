@@ -5,6 +5,7 @@ from xiaomei_brain.consciousness.conversation_driver import ConversationDriver
 from xiaomei_brain.consciousness.conscious_living import ConsciousLiving
 from xiaomei_brain.consciousness.living import LivingMessage
 from xiaomei_brain.gateway.inbound import Accepted
+from xiaomei_brain.gateway.connection import ConnectionManager
 from xiaomei_brain.gateway.protocol import build_event
 from xiaomei_brain.gateway.router import OutputRoute, Router
 from xiaomei_brain.gateway.server_methods import MethodRouter
@@ -106,6 +107,19 @@ def test_ws_event_sequence_is_contiguous_per_delivered_session(monkeypatch):
     ]
     assert [params["sequence"] for params in session_1] == [1, 2]
     assert [params["timestamp"] for params in session_1] == [1000, 3000]
+
+
+def test_replaced_websocket_loses_its_session_authority():
+    connections = ConnectionManager()
+    connections.connections["old-conn"] = object()
+    connections.connections["new-conn"] = object()
+    connections.set_session("session-1", "old-conn", "user-1")
+    connections.set_session("session-1", "new-conn", "user-1")
+
+    assert connections.resolve_session("old-conn", "session-1") is None
+    assert connections.resolve_user("old-conn", "user-1") is None
+    assert connections.resolve_session("new-conn", "session-1") == "session-1"
+    assert connections.resolve_session("new-conn", "session-2") is None
 
 
 def test_conversation_driver_message_events_share_session_and_turn():
@@ -269,6 +283,42 @@ def test_chat_send_returns_the_same_turn_id_that_enters_living():
     assert response["result"]["turn_id"] == accepted_message.turn_id
 
 
+def test_bound_connection_cannot_send_as_another_session_or_user():
+    class Inbound:
+        def __init__(self):
+            self.calls = 0
+
+        def accept(self, _raw):
+            self.calls += 1
+            raise AssertionError("out-of-scope message reached the Agent")
+
+    inbound = Inbound()
+    router = MethodRouter(living=SimpleNamespace(_gateway_inbound=inbound))
+    conn_id = "scoped-connection"
+    router._auth_sessions.add(conn_id)
+    from xiaomei_brain.gateway.connection import cm
+    cm.set_session("session-1", conn_id, "user-1")
+    try:
+        wrong_session = router.dispatch(conn_id, "rpc-1", "chat.send", {
+            "content": "越界消息",
+            "client_request_id": "request-1",
+            "session_id": "session-2",
+            "user_id": "user-1",
+        })
+        wrong_user = router.dispatch(conn_id, "rpc-2", "chat.send", {
+            "content": "冒用身份",
+            "client_request_id": "request-2",
+            "session_id": "session-1",
+            "user_id": "user-2",
+        })
+    finally:
+        cm.unregister(conn_id)
+
+    assert wrong_session["error"]["code"] == -32602
+    assert wrong_user["error"]["code"] == -32602
+    assert inbound.calls == 0
+
+
 def test_chat_send_duplicate_returns_original_turn_without_reexecution():
     accepted_message = LivingMessage(
         content="只执行一次",
@@ -357,8 +407,8 @@ def test_action_response_uses_authenticated_connection_session_and_turn():
         def __init__(self):
             self.calls = []
 
-        def respond(self, action_id, decision, session_id, turn_id):
-            self.calls.append((action_id, decision, session_id, turn_id))
+        def respond(self, action_id, decision, session_id, turn_id, user_id):
+            self.calls.append((action_id, decision, session_id, turn_id, user_id))
             return True
 
     broker = Broker()
@@ -367,7 +417,7 @@ def test_action_response_uses_authenticated_connection_session_and_turn():
     session_id = "action-test-session"
     router._auth_sessions.add(conn_id)
     from xiaomei_brain.gateway.connection import cm
-    cm.set_session(session_id, conn_id)
+    cm.set_session(session_id, conn_id, "user-1")
     try:
         response = router.dispatch(
             conn_id,
@@ -379,7 +429,7 @@ def test_action_response_uses_authenticated_connection_session_and_turn():
         cm.unregister(conn_id)
 
     assert "error" not in response
-    assert broker.calls == [("action-1", "allow", session_id, "turn-1")]
+    assert broker.calls == [("action-1", "allow", session_id, "turn-1", "user-1")]
 
 
 def test_reconnect_does_not_reload_context_during_active_turn():

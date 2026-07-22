@@ -94,7 +94,14 @@ class InteractionBroker:
             return ""
         raise TimeoutError("等待用户回答超时")
 
-    def respond(self, request_id: str, response: str, session_id: str, turn_id: str) -> bool:
+    def respond(
+        self,
+        request_id: str,
+        response: str,
+        session_id: str,
+        turn_id: str,
+        user_id: str | None = None,
+    ) -> bool:
         response = response.strip()
         if not response:
             return False
@@ -105,6 +112,8 @@ class InteractionBroker:
             if request.session_id != session_id:
                 return False
             if request.turn_id != turn_id:
+                return False
+            if user_id is not None and request.user_id != user_id:
                 return False
             request.response = response
             request.status = "answered"
@@ -126,7 +135,7 @@ class InteractionBroker:
             request = matches[0]
             request_id = request.id
             turn_id = request.turn_id
-        return self.respond(request_id, response, session_id, turn_id)
+        return self.respond(request_id, response, session_id, turn_id, user_id)
 
     def cancel_session(self, session_id: str) -> None:
         with self._lock:

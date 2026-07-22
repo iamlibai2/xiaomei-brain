@@ -58,8 +58,12 @@ class ChatMethods:
             return build_error(req_id, ErrorCode.INVALID_PARAMS, "一次最多发送 4 个附件")
         if len(parsed.attachment_refs) != len(set(parsed.attachment_refs)):
             return build_error(req_id, ErrorCode.INVALID_PARAMS, "附件引用不能重复")
-        session_id = parsed.session_id or f"ws-{conn_id[:8]}"
-        user_id = parsed.user_id or "ws-user"
+        session_id = cm.resolve_session(conn_id, parsed.session_id, f"ws-{conn_id[:8]}")
+        if session_id is None:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, "不能访问当前连接之外的会话")
+        user_id = cm.resolve_user(conn_id, parsed.user_id, "ws-user")
+        if user_id is None:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, "不能冒用当前连接之外的用户身份")
         attachments_fingerprint = (
             attachment_fingerprint(parsed.attachments)
             + ":" + ",".join(parsed.attachment_refs)
@@ -187,11 +191,14 @@ class ChatMethods:
             parsed = ChatRetryParams.model_validate(params)
         except Exception as exc:
             return build_error(req_id, ErrorCode.INVALID_REQUEST, f"参数无效: {format_error(exc)}")
+        session_id = cm.resolve_session(conn_id, parsed.session_id)
+        if session_id is None:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, "不能访问当前连接之外的会话")
         living = self._living
         db = getattr(getattr(living, "agent", None), "conversation_db", None) if living else None
         if db is None:
             return build_error(req_id, ErrorCode.GATEWAY_NOT_READY, "会话存储未就绪")
-        source = db.get_user_message(parsed.message_id, parsed.session_id)
+        source = db.get_user_message(parsed.message_id, session_id)
         if source is None:
             return build_error(req_id, ErrorCode.INVALID_PARAMS, "重试消息不属于该会话或不存在")
         try:
@@ -208,7 +215,7 @@ class ChatMethods:
         return self.handle_send(conn_id, req_id, {
             "content": source.get("content", ""),
             "client_request_id": parsed.client_request_id,
-            "session_id": parsed.session_id,
+            "session_id": session_id,
             "user_id": source.get("user_id", "ws-user"),
             "attachment_refs": attachment_refs,
             "retry_of_message_id": parsed.message_id,
@@ -235,11 +242,14 @@ class ChatMethods:
         except Exception as exc:
             return build_error(req_id, ErrorCode.INTERNAL_ERROR, str(exc))
 
-    def handle_history(self, _conn_id: str, req_id: str, params: dict) -> dict:
+    def handle_history(self, conn_id: str, req_id: str, params: dict) -> dict:
         try:
             parsed = ChatHistoryParams.model_validate(params)
         except Exception as exc:
             return build_error(req_id, ErrorCode.INVALID_REQUEST, f"参数无效: {format_error(exc)}")
+        session_id = cm.resolve_session(conn_id, parsed.session_id)
+        if session_id is None:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, "不能访问当前连接之外的会话")
         living = self._living
         if living is None:
             return build_error(req_id, ErrorCode.GATEWAY_NOT_READY, "Gateway 未就绪")
@@ -249,21 +259,21 @@ class ChatMethods:
                 return build_response(req_id, result={
                     "messages": [], "has_more": False, "next_before_id": None,
                 })
-            session_id = parsed.session_id or None
+            query_session_id = session_id or None
             rows, has_more = db.get_history_page(
                 limit=parsed.limit,
-                session_id=session_id,
+                session_id=query_session_id,
                 before_id=parsed.before_id,
             )
             list_artifacts = getattr(db, "list_artifacts", None)
             get_cursor_time = getattr(db, "get_message_created_at", None)
             cursor_time = (
-                get_cursor_time(parsed.before_id, session_id)
+                get_cursor_time(parsed.before_id, query_session_id)
                 if parsed.before_id is not None and callable(get_cursor_time)
                 else None
             )
             artifact_rows = list_artifacts(
-                session_id,
+                query_session_id,
                 since=float(rows[0].get("created_at", 0)) if rows else None,
                 until=(
                     cursor_time if cursor_time is not None
@@ -356,4 +366,3 @@ class ChatMethods:
             self._receipts.move_to_end(key)
             while len(self._receipts) > 2048:
                 self._receipts.popitem(last=False)
-

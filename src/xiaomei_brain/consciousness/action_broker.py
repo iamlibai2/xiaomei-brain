@@ -126,6 +126,7 @@ class ActionBroker:
         decision: str,
         session_id: str,
         turn_id: str,
+        user_id: str | None = None,
     ) -> bool:
         if decision not in {"allow", "deny"}:
             return False
@@ -134,6 +135,8 @@ class ActionBroker:
             if request is None or request.status != "pending":
                 return False
             if request.session_id != session_id or request.turn_id != turn_id:
+                return False
+            if user_id is not None and request.user_id != user_id:
                 return False
             request.decision = decision
             request.status = "approved" if decision == "allow" else "rejected"
@@ -159,7 +162,7 @@ class ActionBroker:
             ):
                 return False
             turn_id = request.turn_id
-        return self.respond(action_id, normalized, session_id, turn_id)
+        return self.respond(action_id, normalized, session_id, turn_id, user_id)
 
     def complete(self, action_id: str, result: str, *, failed: bool = False) -> bool:
         with self._lock:

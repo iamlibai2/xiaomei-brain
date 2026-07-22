@@ -34,7 +34,9 @@ def test_action_approval_is_bound_to_session_and_turn_and_seals_arguments():
 
     assert not broker.respond(action_id, "allow", "session-b", "turn-a")
     assert not broker.respond(action_id, "allow", "session-a", "turn-b")
-    assert broker.respond(action_id, "allow", "session-a", "turn-a")
+    assert not broker.respond(action_id, "allow", "session-a", "turn-a", "user-b")
+    assert broker.respond(action_id, "allow", "session-a", "turn-a", "user-a")
+    assert not broker.respond(action_id, "allow", "session-a", "turn-a", "user-a")
     worker.join(timeout=1)
 
     request = result[0]

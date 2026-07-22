@@ -31,7 +31,14 @@ class InteractionMethods:
         session_id = cm.get_session_id(conn_id)
         if not session_id:
             return build_error(req_id, ErrorCode.INVALID_REQUEST, "当前连接没有会话")
-        if not broker.respond(parsed.request_id, parsed.response, session_id, parsed.turn_id):
+        user_id = cm.get_user_id(conn_id)
+        if not broker.respond(
+            parsed.request_id,
+            parsed.response,
+            session_id,
+            parsed.turn_id,
+            user_id,
+        ):
             return build_error(
                 req_id,
                 ErrorCode.INVALID_PARAMS,
@@ -54,7 +61,14 @@ class InteractionMethods:
         session_id = cm.get_session_id(conn_id)
         if not session_id:
             return build_error(req_id, ErrorCode.INVALID_REQUEST, "当前连接没有会话")
-        if not broker.respond(parsed.action_id, parsed.decision, session_id, parsed.turn_id):
+        user_id = cm.get_user_id(conn_id)
+        if not broker.respond(
+            parsed.action_id,
+            parsed.decision,
+            session_id,
+            parsed.turn_id,
+            user_id,
+        ):
             return build_error(
                 req_id,
                 ErrorCode.INVALID_PARAMS,
@@ -66,4 +80,3 @@ class InteractionMethods:
             "turn_id": parsed.turn_id,
             "decision": parsed.decision,
         })
-

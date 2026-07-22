@@ -93,8 +93,8 @@ class InteractionBrokerTest(unittest.TestCase):
             def __init__(self):
                 self.calls = []
 
-            def respond(self, request_id, response, session_id, turn_id):
-                self.calls.append((request_id, response, session_id, turn_id))
+            def respond(self, request_id, response, session_id, turn_id, user_id):
+                self.calls.append((request_id, response, session_id, turn_id, user_id))
                 return True
 
         broker = Broker()
@@ -102,7 +102,7 @@ class InteractionBrokerTest(unittest.TestCase):
         conn_id = "interaction-test-connection"
         session_id = "interaction-test-session"
         router._auth_sessions.add(conn_id)
-        cm.set_session(session_id, conn_id)
+        cm.set_session(session_id, conn_id, "user-1")
         try:
             response = router.dispatch(
                 conn_id,
@@ -114,7 +114,38 @@ class InteractionBrokerTest(unittest.TestCase):
             cm.unregister(conn_id)
 
         self.assertNotIn("error", response)
-        self.assertEqual(broker.calls, [("interaction-1", "继续", session_id, "turn-1")])
+        self.assertEqual(
+            broker.calls,
+            [("interaction-1", "继续", session_id, "turn-1", "user-1")],
+        )
+
+    def test_structured_response_is_bound_to_request_user(self):
+        published = []
+        ready = threading.Event()
+        broker = InteractionBroker(lambda event, payload: (
+            published.append((event, payload)),
+            ready.set() if event == "interaction.requested" else None,
+        ))
+        result = []
+        worker = threading.Thread(target=lambda: result.append(broker.request(
+            "继续吗？", ["继续", "停止"], "session-1", "user-1",
+            timeout=1, turn_id="turn-1",
+        )))
+        worker.start()
+        self.assertTrue(ready.wait(timeout=1))
+        request_id = published[0][1]["id"]
+
+        self.assertFalse(broker.respond(
+            request_id, "继续", "session-1", "turn-1", "user-2",
+        ))
+        self.assertTrue(broker.respond(
+            request_id, "继续", "session-1", "turn-1", "user-1",
+        ))
+        self.assertFalse(broker.respond(
+            request_id, "停止", "session-1", "turn-1", "user-1",
+        ))
+        worker.join(timeout=1)
+        self.assertEqual(result, ["继续"])
 
     def test_gateway_abort_cancels_but_disconnect_keeps_resumable_interaction(self):
         class Broker:

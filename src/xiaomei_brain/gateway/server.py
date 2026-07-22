@@ -105,7 +105,11 @@ async def ws_endpoint(ws: WebSocket) -> None:
                         channel="ws", session_id=session_id,
                         output_type="ws", output_target=session_id,
                     )
-                    cm.set_session(session_id, conn_id)
+                    cm.set_session(
+                        session_id,
+                        conn_id,
+                        str(req.params.get("user_id", "")) or "ws-user",
+                    )
                     _peer_registered = True
             else:
                 await send_frame(build_error(
