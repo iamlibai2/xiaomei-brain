@@ -1,12 +1,12 @@
-"""RPC handlers for Agent-owned output artifacts."""
+"""Gateway methods for Agent-owned output artifacts."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from .artifacts import ArtifactError, read_stored_artifact
-from .protocol import ErrorCode, build_error, build_response
-from .schemas import ArtifactGetParams, format_error
+from ..artifacts import ArtifactError, read_stored_artifact
+from ..protocol import ErrorCode, build_error, build_response
+from ..schemas import ArtifactGetParams, format_error
 
 
 class ArtifactMethods:
@@ -36,3 +36,4 @@ class ArtifactMethods:
         except ArtifactError as exc:
             return build_error(req_id, ErrorCode.INVALID_PARAMS, str(exc))
         return build_response(req_id, result={"artifact": value})
+

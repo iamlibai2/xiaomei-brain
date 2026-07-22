@@ -155,7 +155,7 @@ def test_chat_send_transports_attachments_and_deduplicates(monkeypatch):
         "size": 5, "kind": "text", "text_content": "hello", "local_path": "notes.txt",
     }]
     monkeypatch.setattr(
-        "xiaomei_brain.gateway.server_methods.prepare_attachments",
+        "xiaomei_brain.gateway.methods.chat.prepare_attachments",
         lambda *_args: (prepared, [], []),
     )
 

@@ -33,7 +33,23 @@ class ConversationDB(SQLiteStore):
         self._cleared_at: dict[str, float] = {}  # session_id → cleared_at timestamp
         self._cleared_at_lock = threading.Lock()
         self._init_db()
+        self._timeline_timestamp_lock = threading.Lock()
+        row = self._get_conn().execute(
+            """SELECT MAX(value) AS latest FROM (
+                   SELECT MAX(created_at) AS value FROM messages
+                   UNION ALL
+                   SELECT MAX(created_at) AS value FROM artifacts
+               )""",
+        ).fetchone()
+        self._last_timeline_timestamp = float(row["latest"] or 0) if row else 0.0
         logger.info("ConversationDB initialized: %s", self.db_path)
+
+    def _next_timeline_timestamp(self) -> float:
+        """Return a strictly increasing timestamp for cross-table timeline rows."""
+        with self._timeline_timestamp_lock:
+            value = max(time.time(), self._last_timeline_timestamp + 0.000001)
+            self._last_timeline_timestamp = value
+            return value
 
     def _init_db(self) -> None:
         conn = self._get_conn()
@@ -240,7 +256,7 @@ class ConversationDB(SQLiteStore):
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         user_id, session_id, role, content, token_count,
-                        tool_name, tool_call_id, metadata_json, time.time(),
+                        tool_name, tool_call_id, metadata_json, self._next_timeline_timestamp(),
                     ),
                 )
                 conn.commit()
@@ -351,7 +367,7 @@ class ConversationDB(SQLiteStore):
             artifact=artifact,
             user_id=user_id,
             tool_call_id=tool_call_id,
-            created_at=time.time(),
+            created_at=self._next_timeline_timestamp(),
         )
         conn.commit()
         row = conn.execute(
@@ -496,7 +512,14 @@ class ConversationDB(SQLiteStore):
                (user_id, session_id, role, content, token_count, tool_name,
                 tool_call_id, metadata, created_at)
                VALUES (?, ?, 'interaction', ?, 0, 'clarify', ?, ?, ?)""",
-            (user_id, session_id, question, request_id, metadata, time.time()),
+            (
+                user_id,
+                session_id,
+                question,
+                request_id,
+                metadata,
+                self._next_timeline_timestamp(),
+            ),
         )
         conn.commit()
         return cur.lastrowid
