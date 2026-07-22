@@ -80,6 +80,23 @@ function displayAttachments(values: unknown): DisplayAttachment[] {
   });
 }
 
+function displayArtifact(value: unknown): DisplayArtifact | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const item = value as Record<string, unknown>;
+  if (typeof item.id !== "string" || typeof item.name !== "string") return undefined;
+  const allowedKinds = ["image", "audio", "video", "text", "document", "file"];
+  return {
+    id: item.id,
+    name: item.name,
+    mimeType: typeof item.mime_type === "string" ? item.mime_type : "application/octet-stream",
+    size: typeof item.size === "number" ? item.size : 0,
+    kind: allowedKinds.includes(String(item.kind)) ? item.kind as DisplayArtifact["kind"] : "file",
+    description: typeof item.description === "string" ? item.description : "",
+    toolCallId: typeof item.tool_call_id === "string" ? item.tool_call_id : "",
+    turnId: typeof item.turn_id === "string" ? item.turn_id : "",
+  };
+}
+
 function clearAgentStreams(agentId: string): void {
   const prefix = `${agentId}\u0000`;
   for (const key of Object.keys(_streamingByTurn)) {
@@ -173,6 +190,17 @@ function historyMessages(
           status,
           response: typeof interaction.response === "string" ? interaction.response : "",
         },
+      } satisfies DisplayMessage];
+    }
+    if (row.role === "artifact") {
+      const artifact = displayArtifact(row.artifact);
+      if (!artifact) return [];
+      return [{
+        id: `artifact-${artifact.id}`,
+        role: "agent",
+        content: "",
+        streaming: false,
+        artifact,
       } satisfies DisplayMessage];
     }
     if (row.role === "tool") {
@@ -480,6 +508,7 @@ export interface DisplayMessage {
   interaction?: InteractionRequest;
   tool?: ToolActivity;
   action?: ActionRequest;
+  artifact?: DisplayArtifact;
   attachments?: DisplayAttachment[];
   turnId?: string;
   deliveryStatus?: "processing" | "completed" | "failed" | "interrupted";
@@ -495,6 +524,17 @@ export interface DisplayAttachment {
   size: number;
   kind: "image" | "text" | "document";
   previewUrl?: string;
+}
+
+export interface DisplayArtifact {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  kind: "image" | "audio" | "video" | "text" | "document" | "file";
+  description: string;
+  toolCallId: string;
+  turnId: string;
 }
 
 export interface ToolActivity {
@@ -1892,6 +1932,28 @@ export function initGatewayEvents() {
         message.tool.summary = summary;
         message.tool.truncated = d.truncated === true;
         message.tool.error = error;
+      }));
+      return;
+    }
+
+    if (event === "artifact.created") {
+      const artifact = displayArtifact(d);
+      if (!artifact) return;
+      setState(produce((s: CoreState) => {
+        if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
+        const existing = s.messagesByAgent[agentId]
+          .find((message) => message.artifact?.id === artifact.id);
+        if (existing) {
+          existing.artifact = artifact;
+          return;
+        }
+        s.messagesByAgent[agentId].push({
+          id: `artifact-${artifact.id}`,
+          role: "agent",
+          content: "",
+          streaming: false,
+          artifact,
+        });
       }));
       return;
     }

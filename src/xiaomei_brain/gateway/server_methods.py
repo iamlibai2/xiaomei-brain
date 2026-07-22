@@ -31,6 +31,7 @@ from .attachments import (
     read_stored_attachment,
     restore_attachment_refs,
 )
+from .artifact_methods import ArtifactMethods
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,8 @@ class MethodRouter:
             "action.respond": self._handle_action_respond,
             "identity.list": self._handle_identity_list,
         }
+        self._artifact_methods = ArtifactMethods(living)
+        self._handlers.update(self._artifact_methods.handlers)
         # 已认证的 session
         self._auth_sessions: set[str] = set()
         self._chat_receipts_lock = threading.Lock()
@@ -135,6 +138,8 @@ class MethodRouter:
                 "action.approval",
                 "message.attachments",
                 "attachment.read",
+                "artifact.read",
+                "artifact.events",
                 "message.retry",
             ],
         })
@@ -370,8 +375,36 @@ class MethodRouter:
                 session_id=session_id,
                 before_id=p.before_id,
             )
+            list_artifacts = getattr(db, "list_artifacts", None)
+            get_cursor_time = getattr(db, "get_message_created_at", None)
+            cursor_time = (
+                get_cursor_time(p.before_id, session_id)
+                if p.before_id is not None and callable(get_cursor_time)
+                else None
+            )
+            artifact_rows = list_artifacts(
+                session_id,
+                since=float(rows[0].get("created_at", 0)) if rows else None,
+                until=(
+                    cursor_time if cursor_time is not None
+                    else float(rows[-1].get("created_at", 0)) if rows and p.before_id is not None
+                    else None
+                ),
+            ) if callable(list_artifacts) and (rows or p.before_id is None) else []
+            timeline_rows = [*rows, *(
+                {
+                    "id": f"artifact:{artifact.get('id', '')}",
+                    "role": "artifact",
+                    "content": artifact.get("name", ""),
+                    "created_at": artifact.get("created_at", 0),
+                    "user_id": artifact.get("user_id", ""),
+                    "artifact": artifact,
+                }
+                for artifact in artifact_rows
+            )]
+            timeline_rows.sort(key=lambda row: (float(row.get("created_at", 0)), str(row.get("id", ""))))
             messages = []
-            for r in rows:
+            for r in timeline_rows:
                 message = {
                     "id": r.get("id"),
                     "role": r.get("role", "user"),
@@ -404,6 +437,16 @@ class MethodRouter:
                 elif r.get("role") == "tool":
                     message["tool_call_id"] = r.get("tool_call_id", "")
                     message["tool_name"] = r.get("tool_name", "")
+                elif r.get("role") == "artifact":
+                    artifact = dict(r.get("artifact") or {})
+                    if not isinstance(artifact, dict) or not artifact.get("id"):
+                        continue
+                    artifact.pop("relative_path", None)
+                    artifact.pop("storage_suffix", None)
+                    artifact.pop("user_id", None)
+                    artifact.pop("session_id", None)
+                    artifact.pop("created_at", None)
+                    message["artifact"] = artifact
                 messages.append(message)
             return build_response(req_id, result={
                 "messages": messages,

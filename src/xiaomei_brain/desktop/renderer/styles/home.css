@@ -263,7 +263,7 @@
 .message-retry {
   margin-top: 6px;
   padding: 2px 8px;
-  border: 1px solid var(--ui-color-border-default);
+  border: 1px solid var(--ui-color-border-secondary);
   border-radius: 6px;
   background: transparent;
   color: var(--ui-color-text-secondary);
@@ -273,7 +273,7 @@
 }
 
 .message-retry:hover:not(:disabled) {
-  border-color: var(--ui-color-border-interactive);
+  border-color: var(--ui-color-border-tertiary);
   color: var(--ui-color-text-primary);
 }
 
@@ -337,6 +337,89 @@
 }
 
 /* ─── Tool activity ─── */
+.artifact-message-row {
+  align-items: flex-start;
+}
+
+.artifact-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: min(420px, calc(100% - 56px));
+  padding: 12px;
+  border: 1px solid var(--ui-color-border-secondary);
+  border-radius: 12px;
+  background: var(--ui-color-bg-secondary-default);
+  color: var(--ui-color-text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.artifact-card:hover:not(:disabled) {
+  border-color: var(--ui-color-border-tertiary);
+  background: var(--ui-color-bg-primary-hover);
+}
+
+.artifact-card:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.artifact-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ui-brand-primary) 12%, transparent);
+  color: var(--ui-brand-primary);
+}
+
+.artifact-icon.error {
+  color: var(--ui-color-text-error-default);
+}
+
+.artifact-preview {
+  width: 64px;
+  height: 64px;
+  flex: 0 0 64px;
+  border-radius: 9px;
+  object-fit: cover;
+}
+
+.artifact-info {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.artifact-label,
+.artifact-meta {
+  color: var(--ui-color-text-tertiary);
+  font-size: 11px;
+}
+
+.artifact-name {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-error {
+  color: var(--ui-color-text-error-default);
+  font-size: 11px;
+}
+
+.artifact-open-icon {
+  flex: 0 0 auto;
+  color: var(--ui-color-text-tertiary);
+}
+
 .tool-activity {
   display: flex;
   align-items: flex-start;

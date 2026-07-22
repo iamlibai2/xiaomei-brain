@@ -22,6 +22,8 @@ const CHANNEL_MAP = {
     pickAttachments: { invoke: "gateway:pickAttachments" },
     getAttachment:   { invoke: "gateway:getAttachment" },
     openAttachment:  { invoke: "gateway:openAttachment" },
+    getArtifact:     { invoke: "gateway:getArtifact" },
+    openArtifact:    { invoke: "gateway:openArtifact" },
     abortMessage:    { invoke: "gateway:abortMessage" },
     retryMessage:    { invoke: "gateway:retryMessage" },
     respondInteraction: { invoke: "gateway:respondInteraction" },

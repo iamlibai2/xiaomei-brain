@@ -244,6 +244,17 @@ function MessageRow({ message, agentName }: { message: DisplayMessage; agentName
     return <InteractionCard message={message} agentName={agentName} />;
   }
 
+  if (message.artifact) {
+    return (
+      <ArtifactCard
+        message={message}
+        agentName={agentName}
+        agentId={activeAgentId}
+        sessionId={activeSessionId}
+      />
+    );
+  }
+
   if (message.tool) {
     return <ToolActivityRow message={message} />;
   }
@@ -429,6 +440,96 @@ function MessageAttachment({
       )}
       <span className="message-attachment-name">{attachment.name}</span>
     </button>
+  );
+}
+
+function ArtifactCard({
+  message,
+  agentName,
+  agentId,
+  sessionId,
+}: {
+  message: DisplayMessage;
+  agentName: string;
+  agentId: string;
+  sessionId: string;
+}) {
+  const artifact = message.artifact!;
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [error, setError] = useState("");
+  const [opening, setOpening] = useState(false);
+
+  useEffect(() => {
+    setPreviewUrl("");
+    setError("");
+    if (artifact.kind !== "image" || artifact.size > 5 * 1024 * 1024 || !agentId || !sessionId) return;
+    let cancelled = false;
+    void window.gateway.getArtifact({ agentId, sessionId, artifactId: artifact.id })
+      .then((response) => {
+        if (cancelled) return;
+        if (response.error) {
+          setError(response.error.message);
+          return;
+        }
+        const raw = response.result?.artifact;
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
+        const value = raw as Record<string, unknown>;
+        const data = typeof value.dataBase64 === "string" ? value.dataBase64 : "";
+        const mime = typeof value.mimeType === "string" ? value.mimeType : artifact.mimeType;
+        if (data) setPreviewUrl(`data:${mime};base64,${data}`);
+      })
+      .catch((reason) => { if (!cancelled) setError(String(reason)); });
+    return () => { cancelled = true; };
+  }, [agentId, artifact.id, artifact.kind, artifact.mimeType, artifact.size, sessionId]);
+
+  const open = async () => {
+    if (!agentId || !sessionId || opening) return;
+    setOpening(true);
+    try {
+      const result = await window.gateway.openArtifact({
+        agentId, sessionId, artifactId: artifact.id,
+      });
+      setError(result.ok ? "" : result.error || "无法打开产物");
+    } finally {
+      setOpening(false);
+    }
+  };
+
+  const size = artifact.size < 1024
+    ? `${artifact.size} B`
+    : artifact.size < 1024 * 1024
+      ? `${(artifact.size / 1024).toFixed(1)} KB`
+      : `${(artifact.size / 1024 / 1024).toFixed(1)} MB`;
+
+  return (
+    <div className="assistant-message-row artifact-message-row">
+      <div className="assistant-avatar">
+        <div className="assistant-avatar-face">{agentName.charAt(0)}</div>
+        <span className="assistant-avatar-name">{agentName}</span>
+      </div>
+      <button
+        type="button"
+        className={`artifact-card artifact-${artifact.kind}`}
+        onClick={() => void open()}
+        disabled={opening}
+        title={error || `打开 ${artifact.name}`}
+      >
+        {previewUrl ? (
+          <img className="artifact-preview" src={previewUrl} alt={artifact.name} />
+        ) : (
+          <span className={`artifact-icon ${error ? "error" : ""}`}>
+            <Icon name={artifact.kind === "image" ? "sparkles" : "file-text"} size={20} />
+          </span>
+        )}
+        <span className="artifact-info">
+          <span className="artifact-label">Agent 产物</span>
+          <span className="artifact-name">{artifact.name}</span>
+          <span className="artifact-meta">{size}{opening ? " · 正在打开" : ""}</span>
+          {error && <span className="artifact-error">{error}</span>}
+        </span>
+        <Icon name="external-link" size={16} className="artifact-open-icon" />
+      </button>
+    </div>
   );
 }
 

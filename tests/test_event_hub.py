@@ -1,0 +1,95 @@
+from xiaomei_brain.consciousness.event_hub import EventHub
+from xiaomei_brain.consciousness.turn_registry import ActiveTurnRegistry
+from xiaomei_brain.gateway.event_projection import GatewayEventProjection
+from xiaomei_brain.gateway.router import OutputRoute
+
+
+def test_event_hub_enriches_events_and_keeps_sequence_monotonic():
+    hub = EventHub()
+    received = []
+    hub.subscribe(received.append)
+
+    source = {"session_id": "session-1", "turn_id": "turn-1", "text": "a"}
+    first = hub.publish("message.delta", source)
+    source["text"] = "changed"
+    second = hub.publish(
+        "message.complete",
+        {"text": "done"},
+        session_id="session-1",
+        turn_id="turn-1",
+    )
+
+    assert first.sequence == 1
+    assert second.sequence == 2
+    assert first.timestamp > 0
+    assert first.payload["text"] == "a"
+    assert received == [first, second]
+
+
+def test_broken_projection_does_not_hide_event_from_other_projections():
+    hub = EventHub()
+    received = []
+
+    def broken(_event):
+        raise RuntimeError("projection failed")
+
+    hub.subscribe(broken)
+    hub.subscribe(received.append)
+
+    published = hub.publish("message.start", {}, session_id="s", turn_id="t")
+
+    assert received == [published]
+
+
+def test_turn_registry_is_rebuilt_from_domain_events():
+    hub = EventHub()
+    registry = ActiveTurnRegistry()
+    hub.subscribe(registry.handle_event)
+
+    hub.publish("message.start", {}, session_id="s", turn_id="t")
+    hub.publish("message.delta", {"text": "hello"}, session_id="s", turn_id="t")
+    hub.publish(
+        "interaction.requested",
+        {
+            "id": "interaction-1",
+            "question": "continue?",
+            "choices": ["yes", "no"],
+            "status": "pending",
+            "session_id": "s",
+            "turn_id": "t",
+        },
+    )
+
+    snapshot = registry.snapshot("s")
+    assert snapshot is not None
+    assert snapshot["status"] == "waiting_user"
+    assert snapshot["items"][0] == {"type": "message", "text": "hello"}
+    assert snapshot["items"][1]["id"] == "interaction-1"
+
+    hub.publish("message.complete", {"text": "done"}, session_id="s", turn_id="t")
+    assert registry.snapshot("s") is None
+
+
+def test_gateway_projection_streams_only_to_websocket_routes():
+    class Router:
+        def __init__(self):
+            self.route = OutputRoute("feishu", "chat-1")
+            self.events = []
+
+        def route_for_session(self, _session_id):
+            return self.route
+
+        def deliver_event(self, name, payload, route, **metadata):
+            self.events.append((name, payload, route, metadata))
+
+    router = Router()
+    hub = EventHub()
+    hub.subscribe(GatewayEventProjection(lambda: router))
+
+    hub.publish("message.delta", {"text": "part"}, session_id="s", turn_id="t")
+    hub.publish("message.complete", {"text": "done"}, session_id="s", turn_id="t")
+    assert [item[0] for item in router.events] == ["message.complete"]
+
+    router.route = OutputRoute("ws", "s")
+    hub.publish("message.delta", {"text": "part"}, session_id="s", turn_id="t")
+    assert [item[0] for item in router.events] == ["message.complete", "message.delta"]

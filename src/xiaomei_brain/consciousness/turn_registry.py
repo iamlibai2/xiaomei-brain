@@ -7,6 +7,8 @@ import threading
 import time
 from typing import Any
 
+from .event_hub import DomainEvent
+
 
 class ActiveTurnRegistry:
     """Track resumable UI state for active turns, grouped by session."""
@@ -164,6 +166,21 @@ class ActiveTurnRegistry:
         with self._lock:
             turn = self._turns.get(session_id)
             return copy.deepcopy(turn) if turn is not None else None
+
+    def handle_event(self, event: DomainEvent) -> None:
+        """Project runtime events into the resumable active-turn snapshot."""
+        if event.name == "message.start":
+            self.start(event.session_id, event.turn_id)
+        elif event.name == "message.delta":
+            self.append_text(event.session_id, event.turn_id, str(event.payload.get("text", "")))
+        elif event.name in {"tool.start", "tool.complete"}:
+            self.tool_event(event.name, event.payload, event.session_id, event.turn_id)
+        elif event.name in {"interaction.requested", "interaction.updated"}:
+            self.interaction_event(event.name, event.payload)
+        elif event.name in {"action.proposed", "action.completed"}:
+            self.action_event(event.name, event.payload)
+        elif event.name == "message.complete":
+            self.complete(event.session_id, event.turn_id)
 
     def _matching_turn(self, session_id: str, turn_id: str) -> dict[str, Any] | None:
         turn = self._turns.get(session_id)

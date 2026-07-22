@@ -78,6 +78,29 @@ class ConversationDB(SQLiteStore):
                 ON tool_history(tool_name);
             CREATE INDEX IF NOT EXISTS idx_tool_history_session
                 ON tool_history(session_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS artifacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                artifact_id TEXT NOT NULL,
+                user_id TEXT NOT NULL DEFAULT 'global',
+                session_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL DEFAULT '',
+                tool_call_id TEXT NOT NULL DEFAULT '',
+                name TEXT NOT NULL,
+                mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+                size INTEGER NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'file',
+                description TEXT NOT NULL DEFAULT '',
+                source_relative_path TEXT NOT NULL DEFAULT '',
+                storage_suffix TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL,
+                UNIQUE(session_id, artifact_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_artifacts_session
+                ON artifacts(session_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_artifacts_turn
+                ON artifacts(turn_id);
         """)
 
         # FTS5 triggers (sync inserts/updates/deletes)
@@ -124,6 +147,39 @@ class ConversationDB(SQLiteStore):
             self._set_schema_version("conversation_db", 1)
             conn.commit()
             logger.info("[ConversationDB] 迁移完成: v0 → v1")
+
+        if current < 2:
+            legacy_rows = conn.execute(
+                "SELECT * FROM messages WHERE role = 'artifact' ORDER BY id",
+            ).fetchall()
+            migrated_ids: list[int] = []
+            for row in legacy_rows:
+                try:
+                    metadata = json.loads(row["metadata"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if not isinstance(metadata, dict) or not metadata.get("id"):
+                    continue
+                self._upsert_artifact_row(
+                    conn,
+                    session_id=str(row["session_id"] or ""),
+                    artifact=metadata,
+                    user_id=str(row["user_id"] or "global"),
+                    tool_call_id=str(row["tool_call_id"] or ""),
+                    created_at=float(row["created_at"]),
+                )
+                migrated_ids.append(int(row["id"]))
+            if migrated_ids:
+                conn.executemany(
+                    "DELETE FROM messages WHERE id = ?",
+                    [(value,) for value in migrated_ids],
+                )
+            self._set_schema_version("conversation_db", 2)
+            conn.commit()
+            logger.info(
+                "[ConversationDB] migrated to v2: moved %d artifacts out of messages",
+                len(migrated_ids),
+            )
 
     def store_tool(
         self,
@@ -265,6 +321,146 @@ class ConversationDB(SQLiteStore):
         ).fetchone()
         return dict(row) if row is not None else None
 
+    def get_message_created_at(self, message_id: int, session_id: str | None = None) -> float | None:
+        """Return a message timestamp for aligning cross-table history cursors."""
+        if session_id:
+            row = self._get_conn().execute(
+                "SELECT created_at FROM messages WHERE id = ? AND session_id = ? LIMIT 1",
+                (message_id, session_id),
+            ).fetchone()
+        else:
+            row = self._get_conn().execute(
+                "SELECT created_at FROM messages WHERE id = ? LIMIT 1",
+                (message_id,),
+            ).fetchone()
+        return float(row["created_at"]) if row is not None else None
+
+    def save_artifact(
+        self,
+        session_id: str,
+        artifact: dict[str, Any],
+        *,
+        user_id: str = "global",
+        tool_call_id: str = "",
+    ) -> int:
+        """Insert or refresh one Agent-owned output artifact."""
+        conn = self._get_conn()
+        self._upsert_artifact_row(
+            conn,
+            session_id=session_id,
+            artifact=artifact,
+            user_id=user_id,
+            tool_call_id=tool_call_id,
+            created_at=time.time(),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT id FROM artifacts WHERE session_id = ? AND artifact_id = ?",
+            (session_id, str(artifact.get("id", ""))),
+        ).fetchone()
+        return int(row["id"])
+
+    def get_artifact_metadata(
+        self,
+        session_id: str,
+        artifact_id: str,
+    ) -> dict[str, Any] | None:
+        """Return an artifact descriptor only from its owning session."""
+        row = self._get_conn().execute(
+            """SELECT * FROM artifacts
+               WHERE session_id = ? AND artifact_id = ? LIMIT 1""",
+            (session_id, artifact_id),
+        ).fetchone()
+        return self._artifact_from_row(row) if row is not None else None
+
+    def list_artifacts(
+        self,
+        session_id: str | None,
+        *,
+        since: float | None = None,
+        until: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """List artifacts for merging into a Desktop history page."""
+        clauses: list[str] = []
+        params: list[Any] = []
+        if session_id:
+            clauses.append("session_id = ?")
+            params.append(session_id)
+        if since is not None:
+            clauses.append("created_at >= ?")
+            params.append(since)
+        if until is not None:
+            clauses.append("created_at <= ?")
+            params.append(until)
+        where = " AND ".join(clauses) if clauses else "1=1"
+        rows = self._get_conn().execute(
+            f"SELECT * FROM artifacts WHERE {where} ORDER BY created_at ASC, id ASC",
+            params,
+        ).fetchall()
+        return [self._artifact_from_row(row) for row in rows]
+
+    def _upsert_artifact_row(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        session_id: str,
+        artifact: dict[str, Any],
+        user_id: str,
+        tool_call_id: str,
+        created_at: float,
+    ) -> None:
+        conn.execute(
+            """INSERT INTO artifacts (
+                   artifact_id, user_id, session_id, turn_id, tool_call_id,
+                   name, mime_type, size, kind, description,
+                   source_relative_path, storage_suffix, created_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(session_id, artifact_id) DO UPDATE SET
+                   user_id = excluded.user_id,
+                   turn_id = excluded.turn_id,
+                   tool_call_id = excluded.tool_call_id,
+                   name = excluded.name,
+                   mime_type = excluded.mime_type,
+                   size = excluded.size,
+                   kind = excluded.kind,
+                   description = excluded.description,
+                   source_relative_path = excluded.source_relative_path,
+                   storage_suffix = excluded.storage_suffix""",
+            (
+                str(artifact.get("id", "")),
+                user_id or "global",
+                session_id,
+                str(artifact.get("turn_id", "")),
+                tool_call_id or str(artifact.get("tool_call_id", "")),
+                str(artifact.get("name", "")),
+                str(artifact.get("mime_type", "application/octet-stream")),
+                int(artifact.get("size", 0)),
+                str(artifact.get("kind", "file")),
+                str(artifact.get("description", "")),
+                str(artifact.get("relative_path", "")),
+                str(artifact.get("storage_suffix", "")),
+                created_at,
+            ),
+        )
+
+    @staticmethod
+    def _artifact_from_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["artifact_id"],
+            "user_id": row["user_id"],
+            "session_id": row["session_id"],
+            "turn_id": row["turn_id"],
+            "tool_call_id": row["tool_call_id"],
+            "name": row["name"],
+            "mime_type": row["mime_type"],
+            "size": row["size"],
+            "kind": row["kind"],
+            "description": row["description"],
+            "relative_path": row["source_relative_path"],
+            "storage_suffix": row["storage_suffix"],
+            "created_at": row["created_at"],
+        }
+
     def save_interaction(self, payload: dict[str, Any]) -> int | None:
         """Insert or update one Desktop interaction timeline record.
 
@@ -326,7 +522,7 @@ class ConversationDB(SQLiteStore):
             clauses.append("role = ?")
             params.append(role)
         else:
-            clauses.append("role != 'interaction'")
+            clauses.append("role NOT IN ('interaction', 'artifact')")
         if since is not None:
             clauses.append("created_at >= ?")
             params.append(since)
@@ -357,7 +553,7 @@ class ConversationDB(SQLiteStore):
             # CJK: LIKE is more reliable than FTS5
             rows = conn.execute(
                 """SELECT * FROM messages
-                   WHERE role != 'interaction' AND content LIKE ?
+                   WHERE role NOT IN ('interaction', 'artifact') AND content LIKE ?
                    ORDER BY created_at DESC LIMIT ?""",
                 (f"%{keyword}%", limit),
             ).fetchall()
@@ -370,7 +566,7 @@ class ConversationDB(SQLiteStore):
                     SELECT m.* FROM messages m
                     JOIN messages_fts fts ON m.id = fts.rowid
                     WHERE messages_fts MATCH ?
-                      AND m.role != 'interaction'
+                      AND m.role NOT IN ('interaction', 'artifact')
                     ORDER BY rank
                     LIMIT ?
                     """,
@@ -380,7 +576,7 @@ class ConversationDB(SQLiteStore):
                 # FTS5 fallback to LIKE
                 rows = conn.execute(
                     """SELECT * FROM messages
-                       WHERE role != 'interaction' AND content LIKE ?
+                       WHERE role NOT IN ('interaction', 'artifact') AND content LIKE ?
                        ORDER BY created_at DESC LIMIT ?""",
                     (f"%{keyword}%", limit),
                 ).fetchall()
@@ -403,7 +599,7 @@ class ConversationDB(SQLiteStore):
         clauses = []
         params: list[Any] = []
 
-        clauses.append("role != 'interaction'")
+        clauses.append("role NOT IN ('interaction', 'artifact')")
 
         if user_id:
             clauses.append("user_id = ?")
@@ -439,6 +635,7 @@ class ConversationDB(SQLiteStore):
         safe_limit = max(1, min(int(limit), 200))
         clauses: list[str] = []
         params: list[Any] = []
+        clauses.append("role != 'artifact'")
         if session_id:
             clauses.append("session_id = ?")
             params.append(session_id)
@@ -465,11 +662,11 @@ class ConversationDB(SQLiteStore):
         conn = self._get_conn()
         if session_id:
             row = conn.execute(
-                "SELECT COUNT(*) FROM messages WHERE session_id = ?",
+                "SELECT COUNT(*) FROM messages WHERE session_id = ? AND role != 'artifact'",
                 (session_id,),
             ).fetchone()
         else:
-            row = conn.execute("SELECT COUNT(*) FROM messages").fetchone()
+            row = conn.execute("SELECT COUNT(*) FROM messages WHERE role != 'artifact'").fetchone()
         return row[0] if row else 0
 
     def get_today_code_stats(self) -> dict[str, int]:

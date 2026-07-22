@@ -83,6 +83,11 @@ class AttachmentGetParams(BaseModel):
     attachment_id: str = Field(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
 
 
+class ArtifactGetParams(BaseModel):
+    session_id: str = Field(..., min_length=1, max_length=256)
+    artifact_id: str = Field(..., min_length=32, max_length=32, pattern=r"^[a-f0-9]+$")
+
+
 class ChatSessionsParams(BaseModel):
     limit: int = Field(default=30, ge=1, le=200)
     offset: int = Field(default=0, ge=0)

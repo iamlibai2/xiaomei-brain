@@ -84,6 +84,8 @@ export interface GatewayBridge {
   pickAttachments(): Promise<AttachmentPickResult>;
   getAttachment(args: { agentId: string; sessionId: string; attachmentId: string }): Promise<JsonRpcResponse>;
   openAttachment(args: { agentId: string; sessionId: string; attachmentId: string }): Promise<{ ok: boolean; error?: string }>;
+  getArtifact(args: { agentId: string; sessionId: string; artifactId: string }): Promise<JsonRpcResponse>;
+  openArtifact(args: { agentId: string; sessionId: string; artifactId: string }): Promise<{ ok: boolean; error?: string }>;
   abortMessage(args: { agentId: string }): Promise<JsonRpcResponse>;
   retryMessage(args: { agentId: string; sessionId: string; messageId: number; clientRequestId: string }): Promise<JsonRpcResponse>;
   respondInteraction(args: { agentId: string; requestId: string; turnId: string; response: string }): Promise<JsonRpcResponse>;

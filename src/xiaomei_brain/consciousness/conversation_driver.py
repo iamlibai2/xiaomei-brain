@@ -285,6 +285,9 @@ class ConversationDriver:
                         agent.on_tool_complete = self._make_tool_event_callback(
                             "tool.complete", current_msg.session_id, current_msg.turn_id, parent,
                         )
+                        agent.on_artifact = self._make_artifact_callback(
+                            current_msg.session_id, current_msg.turn_id, current_msg.user_id, parent,
+                        )
                         agent.on_tool_approval = self._make_tool_approval_callback(
                             current_msg.session_id, current_msg.turn_id, current_msg.user_id, parent,
                         )
@@ -292,6 +295,7 @@ class ConversationDriver:
                     else:
                         agent.on_tool_start = None
                         agent.on_tool_complete = None
+                        agent.on_artifact = None
                         agent.on_tool_approval = None
                         agent.on_action_complete = None
 
@@ -503,6 +507,7 @@ class ConversationDriver:
                     agent_core = parent.agent._get_agent()
                     agent_core.on_tool_start = None
                     agent_core.on_tool_complete = None
+                    agent_core.on_artifact = None
                     agent_core.on_tool_approval = None
                     agent_core.on_action_complete = None
                     agent_core.turn_id = ""
@@ -796,40 +801,20 @@ class ConversationDriver:
     @staticmethod
     def _deliver_message_start(parent, session_id: str, turn_id: str) -> None:
         """声明一轮对话输出开始。"""
-        registry = getattr(parent, "_turn_registry", None)
-        if registry is not None:
-            registry.start(session_id, turn_id)
-        if not ConversationDriver._should_deliver(session_id):
-            return
-        router = getattr(parent, '_router', None)
-        route = router.route_for_session(session_id) if router else None
-        if route:
-            router.deliver_event(
-                "message.start",
-                {},
-                route,
-                session_id=session_id,
-                turn_id=turn_id,
-            )
+        ConversationDriver._publish_event(
+            parent, "message.start", {}, session_id=session_id, turn_id=turn_id,
+        )
 
     @staticmethod
     def _deliver_chunk(parent, session_id: str, turn_id: str, chunk: str) -> None:
         """流式推送单个 chunk 到 WS 通道（仅 WS，其他通道忽略）。"""
-        registry = getattr(parent, "_turn_registry", None)
-        if registry is not None:
-            registry.append_text(session_id, turn_id, chunk)
-        router = getattr(parent, '_router', None)
-        if not router:
-            return
-        route = router.route_for_session(session_id)
-        if route and route.type == "ws":
-            router.deliver_event(
-                "message.delta",
-                {"text": chunk},
-                route,
-                session_id=session_id,
-                turn_id=turn_id,
-            )
+        ConversationDriver._publish_event(
+            parent,
+            "message.delta",
+            {"text": chunk},
+            session_id=session_id,
+            turn_id=turn_id,
+        )
 
     @staticmethod
     def _make_tool_event_callback(
@@ -871,22 +856,57 @@ class ConversationDriver:
                         "code": "TOOL_EXECUTION_FAILED",
                         "message": result[:summary_limit],
                     }
-            registry = getattr(parent, "_turn_registry", None)
-            if registry is not None:
-                registry.tool_event(event_type, payload, session_id, turn_id)
-            router = getattr(parent, '_router', None)
-            if not router:
-                return
-            route = router.route_for_session(session_id)
-            if not route:
-                return
-            router.deliver_event(
+            ConversationDriver._publish_event(
+                parent,
                 event_type,
                 payload,
-                route,
                 session_id=session_id,
                 turn_id=turn_id,
             )
+        return callback
+
+    @staticmethod
+    def _make_artifact_callback(
+        session_id: str,
+        turn_id: str,
+        user_id: str,
+        parent: Any,
+    ):
+        """Persist and publish files produced by one Agent tool call."""
+        def callback(tool_call_id: str, tool_name: str, arguments: dict, result: str) -> None:
+            from xiaomei_brain.gateway.artifacts import (
+                discover_tool_artifacts,
+                public_artifact_metadata,
+            )
+
+            artifacts = discover_tool_artifacts(
+                getattr(parent, "_agent_id", "default"),
+                session_id,
+                turn_id,
+                tool_name,
+                arguments,
+                result,
+            )
+            if not artifacts:
+                return
+            db = getattr(getattr(parent, "agent", None), "conversation_db", None)
+            for artifact in artifacts:
+                artifact["tool_call_id"] = tool_call_id
+                if db is not None:
+                    db.save_artifact(
+                        session_id,
+                        artifact,
+                        user_id=user_id,
+                        tool_call_id=tool_call_id,
+                    )
+                ConversationDriver._publish_event(
+                    parent,
+                    "artifact.created",
+                    public_artifact_metadata(artifact),
+                    session_id=session_id,
+                    turn_id=turn_id,
+                )
+
         return callback
 
     @staticmethod
@@ -970,6 +990,43 @@ class ConversationDriver:
         return True
 
     @staticmethod
+    def _publish_event(
+        parent: Any,
+        name: str,
+        payload: dict[str, Any],
+        *,
+        session_id: str,
+        turn_id: str,
+    ) -> None:
+        """Publish a runtime fact without coupling the driver to its consumers."""
+        event_hub = getattr(parent, "_event_hub", None)
+        if event_hub is not None:
+            event_hub.publish(
+                name,
+                payload,
+                session_id=session_id,
+                turn_id=turn_id,
+            )
+            return
+
+        # Lightweight embeddings and older test doubles may not construct a
+        # full ConsciousLiving instance. Project through the same abstractions
+        # instead of reintroducing direct Router delivery in each producer.
+        from .event_hub import DomainEvent
+        from ..gateway.event_projection import GatewayEventProjection
+
+        event = DomainEvent(
+            name=name,
+            payload=payload,
+            session_id=session_id,
+            turn_id=turn_id,
+        )
+        registry = getattr(parent, "_turn_registry", None)
+        if registry is not None:
+            registry.handle_event(event)
+        GatewayEventProjection(lambda: getattr(parent, "_router", None))(event)
+
+    @staticmethod
     def _deliver_response(
         parent,
         session_id: str,
@@ -981,32 +1038,16 @@ class ConversationDriver:
     ) -> None:
         import re
         content = re.sub(r'\x1b\[[0-9;]*m', '', content)
-        registry = getattr(parent, "_turn_registry", None)
-        router = getattr(parent, '_router', None)
-        if not router:
-            logger.warning("[ConversationDriver/Deliver] 无 Router，无法送达 session=%s", session_id)
-            if registry is not None:
-                registry.complete(session_id, turn_id)
-            return
-        route = router.route_for_session(session_id)
-        if route:
-            logger.info("[ConversationDriver/Deliver] session=%s -> %s/%s (%d chars)",
-                        session_id, route.type, route.target, len(content))
-            payload: dict[str, Any] = {"text": content, "status": status}
-            if error:
-                payload["error"] = error
-            router.deliver_event(
-                "message.complete",
-                payload,
-                route,
-                session_id=session_id,
-                turn_id=turn_id,
-            )
-        else:
-            if session_id and not session_id.startswith("cli-"):
-                logger.warning("[ConversationDriver/Deliver] 无输出路由: session=%s", session_id)
-        if registry is not None:
-            registry.complete(session_id, turn_id)
+        payload: dict[str, Any] = {"text": content, "status": status}
+        if error:
+            payload["error"] = error
+        ConversationDriver._publish_event(
+            parent,
+            "message.complete",
+            payload,
+            session_id=session_id,
+            turn_id=turn_id,
+        )
 
     @staticmethod
     def _update_message_status(

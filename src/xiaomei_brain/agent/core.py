@@ -80,6 +80,7 @@ class Agent:
         # ── Tool event callbacks (set by caller, e.g. ConversationDriver) ──
         self.on_tool_start: Callable[[int, str, str, dict], None] | None = None
         self.on_tool_complete: Callable[[int, str, str, dict, str], None] | None = None
+        self.on_artifact: Callable[[str, str, dict, str], None] | None = None
         self.on_tool_approval: Callable[[str, str, dict], dict | None] | None = None
         self.on_action_complete: Callable[[str, str, bool], None] | None = None
 
@@ -381,6 +382,11 @@ class Agent:
                             user_id=self.user_id,
                             session_id=self.session_id,
                         )
+                    if self.on_artifact:
+                        try:
+                            self.on_artifact(tc.id, tc.name, args_dict, str(result))
+                        except Exception:
+                            logger.exception("Failed to publish tool artifacts")
 
                     # Co-write to experience stream
                     if self.exp_stream:

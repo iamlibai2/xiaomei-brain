@@ -1,0 +1,64 @@
+"""Projection from Agent domain events to channel/Gateway output."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Callable
+
+from xiaomei_brain.consciousness.event_hub import DomainEvent
+
+logger = logging.getLogger(__name__)
+
+
+RouterGetter = Callable[[], Any | None]
+
+
+class GatewayEventProjection:
+    """Deliver public Agent events through the session's current output route."""
+
+    PUBLIC_EVENTS = frozenset({
+        "message.start",
+        "message.delta",
+        "message.complete",
+        "tool.start",
+        "tool.complete",
+        "interaction.requested",
+        "interaction.updated",
+        "action.proposed",
+        "action.completed",
+        "artifact.created",
+    })
+
+    def __init__(self, router_getter: RouterGetter) -> None:
+        self._router_getter = router_getter
+
+    def __call__(self, event: DomainEvent) -> None:
+        if event.name not in self.PUBLIC_EVENTS or not event.session_id:
+            return
+        if self._is_local_terminal_session(event.session_id):
+            return
+
+        router = self._router_getter()
+        route = router.route_for_session(event.session_id) if router else None
+        if route is None:
+            if event.name == "message.complete":
+                logger.warning("No output route for session=%s", event.session_id)
+            return
+
+        # Streaming deltas are a rich-client capability. Other channels receive
+        # the final message and can render structured events through send_event.
+        if event.name == "message.delta" and route.type != "ws":
+            return
+
+        router.deliver_event(
+            event.name,
+            event.payload,
+            route,
+            session_id=event.session_id,
+            turn_id=event.turn_id,
+        )
+
+    @staticmethod
+    def _is_local_terminal_session(session_id: str) -> bool:
+        return session_id == "main" or session_id.startswith("cli-")
+

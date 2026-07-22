@@ -141,11 +141,20 @@ class ConsciousLiving(Living):
         )
 
         from .action_broker import ActionBroker
+        from .event_hub import EventHub
         from .interaction_broker import InteractionBroker
         from .turn_registry import ActiveTurnRegistry
+        from ..gateway.event_projection import GatewayEventProjection
+        self._event_hub = EventHub()
         self._turn_registry = ActiveTurnRegistry()
-        self._interaction_broker = InteractionBroker(self._publish_interaction)
-        self._action_broker = ActionBroker(self._publish_action)
+        self._gateway_event_projection = GatewayEventProjection(
+            lambda: getattr(self, "_router", None),
+        )
+        self._event_hub.subscribe(self._turn_registry.handle_event)
+        self._event_hub.subscribe(self._persist_interaction_event)
+        self._event_hub.subscribe(self._gateway_event_projection)
+        self._interaction_broker = InteractionBroker(self._event_hub.publish)
+        self._action_broker = ActionBroker(self._event_hub.publish)
 
         # 自主行为计时器（独立于 _last_active，不干扰空闲检测）
         self._last_autonomous: float = 0
@@ -978,58 +987,48 @@ class ConsciousLiving(Living):
     # ── Agent 间通讯 ───────────────────────────────────────────────
 
     def _publish_interaction(self, event: str, payload: dict) -> None:
-        """Publish a structured interaction to the conversation that created it."""
-        session_id = str(payload.get("session_id", ""))
-        turn_id = str(payload.get("turn_id", ""))
-        turn_registry = getattr(self, "_turn_registry", None)
-        if turn_registry is not None:
-            turn_registry.interaction_event(event, payload)
-        db = getattr(self.agent, "conversation_db", None)
-        if db is not None:
-            try:
-                db.save_interaction(payload)
-            except Exception as exc:
-                logger.warning("[Interaction] 保存会话记录失败: %s", exc)
-
-        router = getattr(self, "_router", None)
-        if not router or not session_id:
+        """Compatibility entry point for structured interaction producers."""
+        event_hub = getattr(self, "_event_hub", None)
+        if event_hub is not None:
+            event_hub.publish(event, payload)
             return
-        route = router.route_for_session(session_id)
-        if route:
-            router.deliver_event(
-                event,
-                payload,
-                route,
-                session_id=session_id,
-                turn_id=turn_id,
-            )
+        ConversationDriver._publish_event(
+            self,
+            event,
+            payload,
+            session_id=str(payload.get("session_id", "")),
+            turn_id=str(payload.get("turn_id", "")),
+        )
 
     def _publish_action(self, event: str, payload: dict) -> None:
-        """Publish an Agent-owned action approval to its conversation."""
-        session_id = str(payload.get("session_id", ""))
-        turn_id = str(payload.get("turn_id", ""))
-        turn_registry = getattr(self, "_turn_registry", None)
-        if turn_registry is not None:
-            turn_registry.action_event(event, payload)
+        """Compatibility entry point for Agent-owned action producers."""
+        event_hub = getattr(self, "_event_hub", None)
+        if event_hub is not None:
+            event_hub.publish(event, payload)
+            return
+        ConversationDriver._publish_event(
+            self,
+            event,
+            payload,
+            session_id=str(payload.get("session_id", "")),
+            turn_id=str(payload.get("turn_id", "")),
+        )
+
+    def _persist_interaction_event(self, event) -> None:
+        """Persist interaction/action cards as a domain-event projection."""
+        if event.name not in {
+            "interaction.requested",
+            "interaction.updated",
+            "action.proposed",
+            "action.completed",
+        }:
+            return
         db = getattr(self.agent, "conversation_db", None)
         if db is not None:
             try:
-                db.save_interaction(payload)
+                db.save_interaction(event.payload)
             except Exception as exc:
-                logger.warning("[Action] 保存会话记录失败: %s", exc)
-
-        router = getattr(self, "_router", None)
-        if not router or not session_id:
-            return
-        route = router.route_for_session(session_id)
-        if route:
-            router.deliver_event(
-                event,
-                payload,
-                route,
-                session_id=session_id,
-                turn_id=turn_id,
-            )
+                logger.warning("[Interaction] 保存会话记录失败: %s", exc)
 
     def _setup_comms(self, db_path: str) -> None:
         """初始化通讯层：各通道适配器自行启动 + WS Gateway + 工具上下文。"""
