@@ -100,6 +100,7 @@ def build_context(
     self_image: Any = None,
     force_mode: str = "",
     inner_voice_mode: str = "",
+    user_message_id: int | None = None,
 ) -> list[dict[str, Any]]:
     """组装完整上下文，返回可直接传入 ReAct 引擎的消息列表。
 
@@ -127,8 +128,8 @@ def build_context(
     )
 
     # 1. 记录用户消息到 DB
-    user_msg_id = None
-    if agent.conversation_db:
+    user_msg_id = user_message_id
+    if agent.conversation_db and user_msg_id is None:
         public_attachments = public_attachment_metadata(attachments)
         meta = {"attachments": public_attachments} if public_attachments else (
             {"images": images} if images else None

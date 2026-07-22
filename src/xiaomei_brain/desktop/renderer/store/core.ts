@@ -200,6 +200,13 @@ function historyMessages(
     const role = row.role === "user" ? "user" : row.role === "assistant" ? "agent" : null;
     if (!role || typeof row.content !== "string") return [];
     if (role === "agent" && !row.content.trim()) return [];
+    const rawDeliveryStatus = typeof row.status === "string" ? row.status : "";
+    const deliveryStatus = ["processing", "completed", "failed", "interrupted"].includes(rawDeliveryStatus)
+      ? rawDeliveryStatus as DisplayMessage["deliveryStatus"]
+      : undefined;
+    const deliveryError = row.error && typeof row.error === "object" && !Array.isArray(row.error)
+      ? String((row.error as Record<string, unknown>).message || "")
+      : "";
     return [{
       id: typeof row.id === "number"
         ? `history-${sessionId}-${row.id}`
@@ -208,6 +215,11 @@ function historyMessages(
       content: row.content,
       streaming: false,
       attachments: displayAttachments(row.attachments),
+      turnId: typeof row.turn_id === "string" ? row.turn_id : undefined,
+      deliveryStatus: role === "user" ? deliveryStatus : undefined,
+      deliveryError: role === "user" ? deliveryError : undefined,
+      sourceMessageId: role === "user" && typeof row.id === "number" ? row.id : undefined,
+      retryOf: role === "user" && typeof row.retry_of === "number" ? row.retry_of : undefined,
     } satisfies DisplayMessage];
   });
 }
@@ -469,6 +481,11 @@ export interface DisplayMessage {
   tool?: ToolActivity;
   action?: ActionRequest;
   attachments?: DisplayAttachment[];
+  turnId?: string;
+  deliveryStatus?: "processing" | "completed" | "failed" | "interrupted";
+  deliveryError?: string;
+  sourceMessageId?: number;
+  retryOf?: number;
 }
 
 export interface DisplayAttachment {
@@ -581,8 +598,11 @@ interface CoreActions {
   disconnectAgent: (agentId: string) => Promise<void>;
   sendMessage: (text: string) => void;
   pickAttachments: () => Promise<void>;
+  addAttachments: (attachments: ChatAttachment[]) => void;
+  setAttachmentError: (error: string) => void;
   removeAttachment: (attachmentId: string) => void;
   abortMessage: () => Promise<void>;
+  retryMessage: (messageId: number) => Promise<void>;
   respondToInteraction: (requestId: string, response: string) => Promise<void>;
   respondToAction: (actionId: string, decision: "allow" | "deny") => Promise<void>;
   setDraft: (text: string) => void;
@@ -992,6 +1012,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
       s.messagesByAgent[agentId].push({
         id: `user-${clientRequestId}`, role: "user", content: text, streaming: false,
+        deliveryStatus: "processing",
         attachments: attachments.map((attachment) => ({
           id: attachment.id,
           name: attachment.name,
@@ -1011,10 +1032,28 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     }));
 
     void window.gateway.sendMessage({ content: text, agentId, clientRequestId, attachments }).then((res) => {
-      if (!res.error && res.result?.accepted !== false) return;
+      if (!res.error && res.result?.accepted !== false) {
+        set(produce((s: CoreState) => {
+          const userMessage = (s.messagesByAgent[agentId] || [])
+            .find((message) => message.id === `user-${clientRequestId}`);
+          if (userMessage && typeof res.result?.turn_id === "string") {
+            userMessage.turnId = res.result.turn_id;
+          }
+          if (userMessage && typeof res.result?.message_id === "number") {
+            userMessage.sourceMessageId = res.result.message_id;
+          }
+        }));
+        return;
+      }
 
       const message = res.error?.message || "Message was not accepted";
       set(produce((s: CoreState) => {
+        const userMessage = (s.messagesByAgent[agentId] || [])
+          .find((entry) => entry.id === `user-${clientRequestId}`);
+        if (userMessage) {
+          userMessage.deliveryStatus = "failed";
+          userMessage.deliveryError = message;
+        }
         if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
         s.messagesByAgent[agentId].push({
           id: `send-error-${Date.now()}`,
@@ -1026,6 +1065,12 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       }));
     }).catch((error) => {
       set(produce((s: CoreState) => {
+        const userMessage = (s.messagesByAgent[agentId] || [])
+          .find((entry) => entry.id === `user-${clientRequestId}`);
+        if (userMessage) {
+          userMessage.deliveryStatus = "failed";
+          userMessage.deliveryError = String(error);
+        }
         if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
         s.messagesByAgent[agentId].push({
           id: `send-error-${Date.now()}`,
@@ -1052,11 +1097,21 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       }));
       return;
     }
+    if (result.error) {
+      get().setAttachmentError(result.error);
+      return;
+    }
+    get().addAttachments(result.attachments);
+  },
+
+  addAttachments: (attachments) => {
+    const agentId = get().activeAgentId;
+    if (!agentId || attachments.length === 0) return;
+    const draftKey = attachmentDraftKey(agentId, get().activeSessionByAgent[agentId]);
     set(produce((s: CoreState) => {
-      s.attachmentErrorByConversation[draftKey] = result.error || "";
-      if (!result.attachments.length) return;
+      s.attachmentErrorByConversation[draftKey] = "";
       const existing = s.attachmentsByConversation[draftKey] || [];
-      const additions = result.attachments.filter((item) => !existing.some(
+      const additions = attachments.filter((item) => !existing.some(
         (current) => current.name === item.name && current.size === item.size,
       ));
       if (existing.length + additions.length > 4) {
@@ -1069,6 +1124,15 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         return;
       }
       s.attachmentsByConversation[draftKey] = [...existing, ...additions];
+    }));
+  },
+
+  setAttachmentError: (error) => {
+    const agentId = get().activeAgentId;
+    if (!agentId) return;
+    const draftKey = attachmentDraftKey(agentId, get().activeSessionByAgent[agentId]);
+    set(produce((s: CoreState) => {
+      s.attachmentErrorByConversation[draftKey] = error;
     }));
   },
 
@@ -1105,6 +1169,63 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
 
     clearAgentStreams(agentId);
     set(produce((s: CoreState) => { s.sendingByAgent[agentId] = false; }));
+  },
+
+  retryMessage: async (messageId) => {
+    const agentId = get().activeAgentId;
+    const sessionId = agentId ? get().activeSessionByAgent[agentId] || "" : "";
+    if (!agentId || !sessionId || get().sendingByAgent[agentId]) return;
+    const source = (get().messagesByAgent[agentId] || [])
+      .find((message) => message.sourceMessageId === messageId);
+    if (!source || !["failed", "interrupted"].includes(source.deliveryStatus || "")) return;
+    const clientRequestId = crypto.randomUUID();
+    const optimisticId = `retry-${clientRequestId}`;
+    set(produce((s: CoreState) => {
+      s.messagesByAgent[agentId].push({
+        id: optimisticId,
+        role: "user",
+        content: source.content,
+        streaming: false,
+        attachments: source.attachments,
+        deliveryStatus: "processing",
+        retryOf: messageId,
+      });
+      s.sendingByAgent[agentId] = true;
+      touchSession(s, agentId, sessionId, 1, source.content);
+    }));
+    try {
+      const response = await window.gateway.retryMessage({
+        agentId, sessionId, messageId, clientRequestId,
+      });
+      if (response.error || response.result?.accepted === false) {
+        const error = response.error?.message || String(response.result?.reason || "Message was not accepted");
+        set(produce((s: CoreState) => {
+          s.messagesByAgent[agentId] = (s.messagesByAgent[agentId] || [])
+            .filter((message) => message.id !== optimisticId);
+          const original = s.messagesByAgent[agentId]
+            .find((message) => message.sourceMessageId === messageId);
+          if (original) original.deliveryError = error;
+          s.sendingByAgent[agentId] = false;
+        }));
+        return;
+      }
+      set(produce((s: CoreState) => {
+        const retried = s.messagesByAgent[agentId]
+          .find((message) => message.id === optimisticId);
+        if (!retried) return;
+        if (typeof response.result?.turn_id === "string") retried.turnId = response.result.turn_id;
+        if (typeof response.result?.message_id === "number") retried.sourceMessageId = response.result.message_id;
+      }));
+    } catch (error) {
+      set(produce((s: CoreState) => {
+        s.messagesByAgent[agentId] = (s.messagesByAgent[agentId] || [])
+          .filter((message) => message.id !== optimisticId);
+        const original = s.messagesByAgent[agentId]
+          .find((message) => message.sourceMessageId === messageId);
+        if (original) original.deliveryError = String(error);
+        s.sendingByAgent[agentId] = false;
+      }));
+    }
   },
 
   respondToInteraction: async (requestId, response) => {
@@ -1552,7 +1673,15 @@ export function initGatewayEvents() {
     if (event === "message.start") {
       stream.ref = "";
       stream.id = null;
-      setState(produce((s: CoreState) => { s.sendingByAgent[agentId] = true; }));
+      setState(produce((s: CoreState) => {
+        s.sendingByAgent[agentId] = true;
+        const userMessage = [...(s.messagesByAgent[agentId] || [])]
+          .reverse()
+          .find((message) => message.role === "user"
+            && message.deliveryStatus === "processing"
+            && (!message.turnId || message.turnId === eventTurnId));
+        if (userMessage && eventTurnId) userMessage.turnId = eventTurnId;
+      }));
       return;
     }
 
@@ -1798,6 +1927,18 @@ export function initGatewayEvents() {
       const terminalText = text || (status === "error"
         ? `Error: ${String(error?.message || "Unknown error")}`
         : "");
+      setState(produce((s: CoreState) => {
+        const userMessage = [...(s.messagesByAgent[agentId] || [])]
+          .reverse()
+          .find((message) => message.role === "user" && message.turnId === eventTurnId);
+        if (!userMessage) return;
+        userMessage.deliveryStatus = status === "error"
+          ? "failed"
+          : status === "interrupted" ? "interrupted" : "completed";
+        userMessage.deliveryError = status === "error"
+          ? String(error?.message || "Unknown error")
+          : "";
+      }));
       let completedText = "";
       if (stream.id) {
         const finalText = stream.ref || terminalText;

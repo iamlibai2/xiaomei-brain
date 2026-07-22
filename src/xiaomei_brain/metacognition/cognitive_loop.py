@@ -593,6 +593,7 @@ class CognitiveLoop:
             intent_context=augmented,
             assemble=callbacks.get("assemble_context", True),
             images=getattr(current_msg, "images", None),
+            user_message_id=getattr(current_msg, "message_id", None),
         )
 
         chunks = []

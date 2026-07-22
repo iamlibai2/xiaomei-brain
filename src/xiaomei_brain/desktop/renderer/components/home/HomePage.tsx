@@ -225,6 +225,16 @@ function MessageRow({ message, agentName }: { message: DisplayMessage; agentName
   const { t } = useTranslation();
   const isUser = message.role === "user";
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
+  const activeAgentId = useCoreStore((s) => s.activeAgentId || "");
+  const activeSessionId = useCoreStore((s) => {
+    const agentId = s.activeAgentId || "";
+    return s.activeSessionByAgent[agentId] || "";
+  });
+  const retryMessage = useCoreStore((s) => s.retryMessage);
+  const agentSending = useCoreStore((s) => {
+    const agentId = s.activeAgentId || "";
+    return s.sendingByAgent[agentId] || false;
+  });
 
   if (message.action) {
     return <ActionApprovalCard message={message} agentName={agentName} />;
@@ -245,18 +255,34 @@ function MessageRow({ message, agentName }: { message: DisplayMessage; agentName
           {message.attachments && message.attachments.length > 0 && (
             <div className="message-attachments">
               {message.attachments.map((attachment) => (
-                <div className={`message-attachment ${attachment.kind}`} key={attachment.id}>
-                  {attachment.previewUrl ? (
-                    <img src={attachment.previewUrl} alt={attachment.name} />
-                  ) : (
-                    <span className="message-attachment-icon">{attachment.kind === "image" ? "IMG" : "FILE"}</span>
-                  )}
-                  <span className="message-attachment-name">{attachment.name}</span>
-                </div>
+                <MessageAttachment
+                  attachment={attachment}
+                  agentId={activeAgentId}
+                  sessionId={activeSessionId}
+                  key={attachment.id}
+                />
               ))}
             </div>
           )}
           {message.content && <div>{message.content}</div>}
+          {(message.deliveryStatus === "failed" || message.deliveryStatus === "interrupted") &&
+            message.sourceMessageId && (
+              <button
+                type="button"
+                className="message-retry"
+                disabled={agentSending}
+                onClick={() => void retryMessage(message.sourceMessageId!)}
+              >
+                重试
+              </button>
+            )}
+          {message.deliveryStatus && message.deliveryStatus !== "completed" && (
+            <div className={`message-delivery-status ${message.deliveryStatus}`}>
+              {message.deliveryStatus === "processing" && "处理中"}
+              {message.deliveryStatus === "failed" && `处理失败${message.deliveryError ? `：${message.deliveryError}` : ""}`}
+              {message.deliveryStatus === "interrupted" && "已中断"}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -328,6 +354,81 @@ function MessageRow({ message, agentName }: { message: DisplayMessage; agentName
         </ReactMarkdown>
       </div>
     </div>
+  );
+}
+
+function MessageAttachment({
+  attachment,
+  agentId,
+  sessionId,
+}: {
+  attachment: NonNullable<DisplayMessage["attachments"]>[number];
+  agentId: string;
+  sessionId: string;
+}) {
+  const [previewUrl, setPreviewUrl] = useState(attachment.previewUrl || "");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setPreviewUrl(attachment.previewUrl || "");
+    setError("");
+    if (attachment.kind !== "image" || attachment.previewUrl || !agentId || !sessionId) return;
+    let cancelled = false;
+    void window.gateway.getAttachment({
+      agentId,
+      sessionId,
+      attachmentId: attachment.id,
+    }).then((response) => {
+      if (cancelled) return;
+      if (response.error) {
+        setError(response.error.message);
+        return;
+      }
+      const value = response.result?.attachment;
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        setError("附件内容无效");
+        return;
+      }
+      const item = value as Record<string, unknown>;
+      const dataBase64 = typeof item.dataBase64 === "string" ? item.dataBase64 : "";
+      const mimeType = typeof item.mimeType === "string" ? item.mimeType : attachment.mimeType;
+      if (!dataBase64) {
+        setError("附件内容为空");
+        return;
+      }
+      setPreviewUrl(`data:${mimeType};base64,${dataBase64}`);
+    }).catch((reason) => {
+      if (!cancelled) setError(String(reason));
+    });
+    return () => { cancelled = true; };
+  }, [agentId, attachment.id, attachment.kind, attachment.mimeType, attachment.previewUrl, sessionId]);
+
+  const open = async () => {
+    if (!agentId || !sessionId) return;
+    const result = await window.gateway.openAttachment({
+      agentId,
+      sessionId,
+      attachmentId: attachment.id,
+    });
+    setError(result.ok ? "" : result.error || "无法打开附件");
+  };
+
+  return (
+    <button
+      type="button"
+      className={`message-attachment ${attachment.kind}`}
+      onClick={() => { void open(); }}
+      title={error || `打开 ${attachment.name}`}
+    >
+      {previewUrl ? (
+        <img src={previewUrl} alt={attachment.name} />
+      ) : (
+        <span className={`message-attachment-icon ${error ? "error" : ""}`}>
+          {error ? "!" : attachment.kind === "image" ? "IMG" : "FILE"}
+        </span>
+      )}
+      <span className="message-attachment-name">{attachment.name}</span>
+    </button>
   );
 }
 

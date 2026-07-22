@@ -209,6 +209,62 @@ class ConversationDB(SQLiteStore):
                 raise
         raise last_error  # type: ignore[misc]
 
+    def update_message_metadata(
+        self,
+        message_id: int,
+        updates: dict[str, Any],
+    ) -> bool:
+        """Merge fields into one message's JSON metadata."""
+        conn = self._get_conn()
+        patch = json.dumps(updates, ensure_ascii=False)
+        cur = conn.execute(
+            """UPDATE messages
+               SET metadata = json_patch(
+                   CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END,
+                   ?
+               )
+               WHERE id = ?""",
+            (patch, message_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+    def get_attachment_metadata(
+        self,
+        session_id: str,
+        attachment_id: str,
+    ) -> dict[str, Any] | None:
+        """Return a public attachment descriptor owned by one session."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT metadata FROM messages
+               WHERE session_id = ? AND role = 'user' AND metadata LIKE ?
+               ORDER BY id DESC""",
+            (session_id, f'%"{attachment_id}"%'),
+        ).fetchall()
+        for row in rows:
+            try:
+                metadata = json.loads(row["metadata"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                continue
+            attachments = metadata.get("attachments", []) if isinstance(metadata, dict) else []
+            if not isinstance(attachments, list):
+                continue
+            for item in attachments:
+                if isinstance(item, dict) and item.get("id") == attachment_id:
+                    return dict(item)
+        return None
+
+    def get_user_message(self, message_id: int, session_id: str) -> dict[str, Any] | None:
+        """Return one user message only when it belongs to the given session."""
+        row = self._get_conn().execute(
+            """SELECT * FROM messages
+               WHERE id = ? AND session_id = ? AND role = 'user'
+               LIMIT 1""",
+            (message_id, session_id),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
     def save_interaction(self, payload: dict[str, Any]) -> int | None:
         """Insert or update one Desktop interaction timeline record.
 

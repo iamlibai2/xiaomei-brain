@@ -146,6 +146,37 @@ def test_build_context_conversation_db_logging():
         msgs = db.get_recent(n=10, session_id="test_session")
         assert len(msgs) >= 1
         assert msgs[0]["content"] == "你好世界"
+        db.close()
+
+
+def test_build_context_reuses_persisted_user_message():
+    """A Gateway-persisted message is not written a second time."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, "brain.db")
+        from xiaomei_brain.memory.conversation_db import ConversationDB
+
+        db = ConversationDB(db_path)
+        message_id = db.log(
+            session_id="test_session",
+            role="user",
+            content="already durable",
+            user_id="test_user",
+            metadata={"turn_id": "turn-1", "status": "processing"},
+        )
+        exp_stream = MagicMock()
+        agent = _make_mock_agent(conversation_db=db, exp_stream=exp_stream)
+
+        result = build_context(
+            agent,
+            "already durable",
+            assemble=False,
+            user_message_id=message_id,
+        )
+
+        assert len(db.get_recent(n=10, session_id="test_session")) == 1
+        assert result[0]["id"] == message_id
+        exp_stream.log.assert_not_called()
+        db.close()
 
 
 def test_build_context_no_conversation_db():

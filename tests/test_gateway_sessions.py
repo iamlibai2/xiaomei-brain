@@ -87,6 +87,32 @@ class GatewaySessionsTest(unittest.TestCase):
             & {message["id"] for message in older["messages"]}
         )
 
+    def test_chat_history_restores_user_turn_status(self):
+        self.db.log(
+            "status-session",
+            "user",
+            "please retry",
+            metadata={
+                "turn_id": "turn-1",
+                "status": "failed",
+                "error": {"code": "LLM_UNAVAILABLE", "message": "offline"},
+            },
+        )
+        living = SimpleNamespace(agent=SimpleNamespace(conversation_db=self.db))
+        router = MethodRouter(living=living)
+        router._auth_sessions.add("desktop-connection")
+
+        result = router.dispatch(
+            "desktop-connection",
+            "history-status",
+            "chat.history",
+            {"session_id": "status-session", "limit": 20},
+        )["result"]
+
+        self.assertEqual(result["messages"][0]["turn_id"], "turn-1")
+        self.assertEqual(result["messages"][0]["status"], "failed")
+        self.assertEqual(result["messages"][0]["error"]["message"], "offline")
+
     def test_chat_history_restores_interaction_timeline_record(self):
         self.db.log("card-session", "user", "help me choose")
         self.db.save_interaction({

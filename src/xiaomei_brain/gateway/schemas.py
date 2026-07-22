@@ -58,6 +58,14 @@ class ChatSendParams(BaseModel):
     session_id: str = ""
     user_id: str = ""
     attachments: list[ChatAttachment] = Field(default_factory=list, max_length=4)
+    attachment_refs: list[str] = Field(default_factory=list, max_length=4)
+    retry_of_message_id: int | None = Field(default=None, ge=1)
+
+
+class ChatRetryParams(BaseModel):
+    message_id: int = Field(..., ge=1)
+    client_request_id: str = Field(..., min_length=1, max_length=128)
+    session_id: str = Field(..., min_length=1, max_length=256)
 
 
 class ChatAbortParams(BaseModel):
@@ -68,6 +76,11 @@ class ChatHistoryParams(BaseModel):
     session_id: str = ""
     limit: int = Field(default=50, ge=1, le=200)
     before_id: int | None = Field(default=None, ge=1)
+
+
+class AttachmentGetParams(BaseModel):
+    session_id: str = Field(..., min_length=1, max_length=256)
+    attachment_id: str = Field(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
 
 
 class ChatSessionsParams(BaseModel):

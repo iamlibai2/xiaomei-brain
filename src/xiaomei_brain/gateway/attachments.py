@@ -146,6 +146,109 @@ def public_attachment_metadata(attachments: list[dict[str, Any]]) -> list[dict[s
     return [{key: item[key] for key in keys if key in item} for item in attachments]
 
 
+def read_stored_attachment(
+    agent_id: str,
+    session_id: str,
+    attachment: dict[str, Any],
+) -> dict[str, Any]:
+    """Read a session-owned attachment without accepting a filesystem path."""
+    attachment_id = str(attachment.get("id", ""))
+    name = Path(str(attachment.get("name", ""))).name
+    mime_type = str(attachment.get("mime_type", "")).lower()
+    kind = str(attachment.get("kind", ""))
+    declared_size = int(attachment.get("size", 0))
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", attachment_id):
+        raise AttachmentError("附件标识无效")
+    if not name or declared_size <= 0 or declared_size > MAX_ATTACHMENT_BYTES:
+        raise AttachmentError("附件元数据无效")
+
+    if kind == "image" and mime_type in IMAGE_MIMES:
+        suffix = IMAGE_MIMES[mime_type]
+    elif kind == "document" and Path(name).suffix.lower() in OFFICE_TYPES:
+        suffix = Path(name).suffix.lower()
+    elif kind == "text" and (
+        mime_type.startswith("text/") or Path(name).suffix.lower() in TEXT_EXTENSIONS
+    ):
+        suffix = Path(name).suffix.lower()
+    else:
+        raise AttachmentError("附件类型无效")
+
+    attachment_path = _stored_attachment_path(agent_id, session_id, attachment_id, suffix)
+    try:
+        data = attachment_path.read_bytes()
+    except FileNotFoundError as exc:
+        raise AttachmentError("附件文件不存在或已被移除") from exc
+    if len(data) != declared_size or len(data) > MAX_ATTACHMENT_BYTES:
+        raise AttachmentError("附件文件与会话记录不一致")
+
+    return {
+        **public_attachment_metadata([attachment])[0],
+        "data_base64": base64.b64encode(data).decode("ascii"),
+    }
+
+
+def restore_attachment_refs(
+    agent_id: str,
+    session_id: str,
+    attachments: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Restore Agent-owned attachments for a new turn without rewriting files."""
+    if len(attachments) > 4:
+        raise AttachmentError("一次最多引用 4 个附件")
+    prepared: list[dict[str, Any]] = []
+    image_paths: list[str] = []
+    total = 0
+    seen: set[str] = set()
+    for attachment in attachments:
+        attachment_id = str(attachment.get("id", ""))
+        if attachment_id in seen:
+            raise AttachmentError("附件引用不能重复")
+        seen.add(attachment_id)
+        stored = read_stored_attachment(agent_id, session_id, attachment)
+        data = base64.b64decode(stored["data_base64"], validate=True)
+        total += len(data)
+        if total > MAX_TOTAL_BYTES:
+            raise AttachmentError("引用附件合计不能超过 8 MB")
+
+        name = str(stored["name"])
+        mime_type = str(stored["mime_type"])
+        kind = str(stored["kind"])
+        suffix = IMAGE_MIMES[mime_type] if kind == "image" else Path(name).suffix.lower()
+        local_path = _stored_attachment_path(
+            agent_id, session_id, attachment_id, suffix,
+        )
+        item = {
+            **public_attachment_metadata([stored])[0],
+            "local_path": str(local_path),
+        }
+        if kind == "image":
+            image_paths.append(str(local_path))
+        elif kind == "document":
+            item["text_content"] = extract_office_text(data, suffix, name)
+        else:
+            try:
+                item["text_content"] = data.decode("utf-8-sig")
+            except UnicodeDecodeError as exc:
+                raise AttachmentError(f"文本附件 {name} 不是 UTF-8 编码") from exc
+        prepared.append(item)
+    return prepared, image_paths
+
+
+def _stored_attachment_path(
+    agent_id: str,
+    session_id: str,
+    attachment_id: str,
+    suffix: str,
+) -> Path:
+    safe_agent = re.sub(r"[^A-Za-z0-9_.-]", "_", agent_id or "default")
+    session_key = hashlib.sha256((session_id or "main").encode("utf-8")).hexdigest()[:16]
+    file_key = hashlib.sha256(attachment_id.encode("utf-8")).hexdigest()[:24]
+    return (
+        Path.home() / ".xiaomei-brain" / safe_agent / "attachments"
+        / session_key / f"{file_key}{suffix}"
+    )
+
+
 def append_text_attachments(content: str, attachments: list[dict[str, Any]]) -> str:
     text_items = [item for item in attachments if item.get("kind") in {"text", "document"}]
     if not text_items:

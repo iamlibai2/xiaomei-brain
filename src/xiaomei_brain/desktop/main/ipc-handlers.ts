@@ -1,4 +1,5 @@
-import { ipcMain, BrowserWindow, Notification, dialog } from "electron";
+import { ipcMain, BrowserWindow, Notification, app, dialog, shell } from "electron";
+import { createHash } from "crypto";
 import { promises as fs } from "fs";
 import path from "path";
 import { GatewayClient } from "./gateway-client";
@@ -13,6 +14,10 @@ const connectionSessions = new Map<string, string>();
 const connectionUsers = new Map<string, string>();
 const connectionReady = new Map<string, boolean>();
 const activeNotifications = new Set<Notification>();
+const attachmentCache = new Map<string, {
+  id: string; name: string; mimeType: string; size: number; kind: string; dataBase64: string;
+}>();
+const MAX_CACHED_ATTACHMENTS = 32;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 const IMAGE_MIMES: Record<string, string> = {
@@ -100,6 +105,49 @@ export function registerIpcHandlers(
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     return false;
+  }
+
+  async function fetchAttachment(agentId: string, sessionId: string, attachmentId: string) {
+    const cacheKey = `${agentId}\u0000${sessionId}\u0000${attachmentId}`;
+    const cached = attachmentCache.get(cacheKey);
+    if (cached) {
+      attachmentCache.delete(cacheKey);
+      attachmentCache.set(cacheKey, cached);
+      return { attachment: cached };
+    }
+    const client = getClient(agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${agentId} not connected` } };
+    const response = await client.rpc("attachment.get", {
+      session_id: sessionId,
+      attachment_id: attachmentId,
+    });
+    if (response.error) return { error: response.error };
+    const raw = response.result?.attachment;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return { error: { code: -32603, message: "Agent returned an invalid attachment" } };
+    }
+    const value = raw as Record<string, unknown>;
+    const dataBase64 = typeof value.data_base64 === "string" ? value.data_base64 : "";
+    const data = Buffer.from(dataBase64, "base64");
+    const size = typeof value.size === "number" ? value.size : -1;
+    if (value.id !== attachmentId || !dataBase64 || size !== data.length || size > MAX_ATTACHMENT_BYTES) {
+      return { error: { code: -32603, message: "Agent returned inconsistent attachment data" } };
+    }
+    const attachment = {
+      id: attachmentId,
+      name: typeof value.name === "string" ? path.basename(value.name) : attachmentId,
+      mimeType: typeof value.mime_type === "string" ? value.mime_type : "application/octet-stream",
+      size,
+      kind: typeof value.kind === "string" ? value.kind : "file",
+      dataBase64,
+    };
+    attachmentCache.set(cacheKey, attachment);
+    while (attachmentCache.size > MAX_CACHED_ATTACHMENTS) {
+      const oldest = attachmentCache.keys().next().value as string | undefined;
+      if (!oldest) break;
+      attachmentCache.delete(oldest);
+    }
+    return { attachment };
   }
 
   // ─── connect ────────────────────────────────
@@ -306,6 +354,18 @@ export function registerIpcHandlers(
     });
   });
 
+  ipcMain.handle("gateway:retryMessage", async (_event, args: {
+    agentId: string; sessionId: string; messageId: number; clientRequestId: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("chat.retry", {
+      session_id: args.sessionId,
+      message_id: args.messageId,
+      client_request_id: args.clientRequestId,
+    });
+  });
+
   ipcMain.handle("gateway:respondInteraction", async (_event, args: {
     agentId: string;
     requestId: string;
@@ -395,6 +455,38 @@ export function registerIpcHandlers(
       });
     }
     return { attachments };
+  });
+
+  ipcMain.handle("gateway:getAttachment", async (_event, args: {
+    agentId: string; sessionId: string; attachmentId: string;
+  }) => {
+    const result = await fetchAttachment(args.agentId, args.sessionId, args.attachmentId);
+    if (result.error) return { error: result.error };
+    return { result: { attachment: result.attachment } };
+  });
+
+  ipcMain.handle("gateway:openAttachment", async (_event, args: {
+    agentId: string; sessionId: string; attachmentId: string;
+  }) => {
+    const result = await fetchAttachment(args.agentId, args.sessionId, args.attachmentId);
+    if (result.error) return { ok: false, error: result.error.message };
+    try {
+      const attachment = result.attachment;
+      const cacheKey = createHash("sha256")
+        .update(`${args.agentId}\u0000${args.sessionId}\u0000${args.attachmentId}`)
+        .digest("hex")
+        .slice(0, 24);
+      const safeName = path.basename(attachment.name)
+        .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_") || attachment.id;
+      const cacheDir = path.join(app.getPath("temp"), "xiaomei-brain", "attachments", cacheKey);
+      await fs.mkdir(cacheDir, { recursive: true });
+      const cachePath = path.join(cacheDir, safeName);
+      await fs.writeFile(cachePath, Buffer.from(attachment.dataBase64, "base64"));
+      const error = await shell.openPath(cachePath);
+      return error ? { ok: false, error } : { ok: true };
+    } catch (error) {
+      return { ok: false, error: String(error) };
+    }
   });
 
   ipcMain.handle(

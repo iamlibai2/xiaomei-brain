@@ -92,6 +92,31 @@ def test_conversation_driver_message_events_share_session_and_turn():
     assert router.events[-1][1] == {"text": "你好", "status": "complete"}
 
 
+def test_conversation_driver_persists_terminal_message_status():
+    class DB:
+        def __init__(self):
+            self.calls = []
+
+        def update_message_metadata(self, message_id, updates):
+            self.calls.append((message_id, updates))
+
+    db = DB()
+    parent = SimpleNamespace(agent=SimpleNamespace(conversation_db=db))
+    msg = LivingMessage(content="hello", message_id=42, turn_id="turn-1")
+
+    ConversationDriver._update_message_status(
+        parent,
+        msg,
+        "error",
+        {"code": "LLM_UNAVAILABLE", "message": "offline"},
+    )
+
+    assert db.calls == [(42, {
+        "status": "failed",
+        "error": {"code": "LLM_UNAVAILABLE", "message": "offline"},
+    })]
+
+
 def test_interaction_event_is_structured_and_shares_message_turn():
     class EventRouter:
         def __init__(self):

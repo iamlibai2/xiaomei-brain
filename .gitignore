@@ -49,6 +49,7 @@ dist/
 # Local docs (conversation records, dev notes)
 docs-local/
 docs/analyze/
+docs/conversations/
 
 # TensorFlow / ML models (large)
 *.h5

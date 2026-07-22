@@ -317,6 +317,7 @@ class ConversationDriver:
                         self_image=si,
                         force_mode=getattr(parent, "force_mode", ""),
                         inner_voice_mode=self._inner_voice.get_last_mode() if self._inner_voice else "",
+                        user_message_id=getattr(current_msg, "message_id", None),
                     )
 
                     chunks = []
@@ -486,6 +487,7 @@ class ConversationDriver:
                         if result["status_msg"]:
                             print(f"\033[33m{result['status_msg']}\033[0m", flush=True)
             finally:
+                self._update_message_status(parent, msg, terminal_status, terminal_error)
                 self._deliver_response(
                     parent,
                     msg.session_id,
@@ -1005,3 +1007,37 @@ class ConversationDriver:
                 logger.warning("[ConversationDriver/Deliver] 无输出路由: session=%s", session_id)
         if registry is not None:
             registry.complete(session_id, turn_id)
+
+    @staticmethod
+    def _update_message_status(
+        parent,
+        msg: LivingMessage,
+        status: str,
+        error: dict[str, str] | None = None,
+    ) -> None:
+        """Persist the terminal state for a Gateway-accepted user message."""
+        message_id = getattr(msg, "message_id", None)
+        if message_id is None:
+            return
+        db = getattr(getattr(parent, "agent", None), "conversation_db", None)
+        if db is None:
+            return
+        stored_status = {
+            "complete": "completed",
+            "error": "failed",
+            "interrupted": "interrupted",
+        }.get(status, status)
+        updates: dict[str, Any] = {"status": stored_status}
+        if error:
+            updates["error"] = {
+                "code": str(error.get("code", ""))[:100],
+                "message": str(error.get("message", ""))[:1000],
+            }
+        try:
+            db.update_message_metadata(message_id, updates)
+        except Exception:
+            logger.exception(
+                "[ConversationDriver] failed to update message status: id=%s status=%s",
+                message_id,
+                stored_status,
+            )

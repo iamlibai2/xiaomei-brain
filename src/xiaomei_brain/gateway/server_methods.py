@@ -12,8 +12,10 @@ from .protocol import build_response, build_error, ErrorCode
 from .schemas import (
     ConnectParams,
     ChatSendParams,
+    ChatRetryParams,
     ChatAbortParams,
     ChatHistoryParams,
+    AttachmentGetParams,
     ChatSessionsParams,
     SessionResumeParams,
     InteractionRespondParams,
@@ -26,6 +28,8 @@ from .attachments import (
     attachment_fingerprint,
     cleanup_attachments,
     prepare_attachments,
+    read_stored_attachment,
+    restore_attachment_refs,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,8 +44,10 @@ class MethodRouter:
         self._handlers: dict[str, callable] = {
             "connect": self._handle_connect,
             "chat.send": self._handle_chat_send,
+            "chat.retry": self._handle_chat_retry,
             "chat.abort": self._handle_chat_abort,
             "chat.history": self._handle_chat_history,
+            "attachment.get": self._handle_attachment_get,
             "chat.sessions": self._handle_chat_sessions,
             "session.resume": self._handle_session_resume,
             "interaction.respond": self._handle_interaction_respond,
@@ -128,6 +134,8 @@ class MethodRouter:
                 "session.resume",
                 "action.approval",
                 "message.attachments",
+                "attachment.read",
+                "message.retry",
             ],
         })
 
@@ -138,11 +146,19 @@ class MethodRouter:
             return build_error(req_id, ErrorCode.INVALID_REQUEST, f"参数无效: {format_error(e)}")
 
         content = p.content.strip()
-        if not content and not p.attachments:
+        if not content and not p.attachments and not p.attachment_refs:
             return build_error(req_id, ErrorCode.INVALID_PARAMS, "消息内容和附件不能同时为空")
+        if len(p.attachments) + len(p.attachment_refs) > 4:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, "一次最多发送 4 个附件")
+        if len(p.attachment_refs) != len(set(p.attachment_refs)):
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, "附件引用不能重复")
         session_id = p.session_id or f"ws-{conn_id[:8]}"
         user_id = p.user_id or "ws-user"
-        attachments_fingerprint = attachment_fingerprint(p.attachments)
+        attachments_fingerprint = (
+            attachment_fingerprint(p.attachments)
+            + ":" + ",".join(p.attachment_refs)
+            + f":retry={p.retry_of_message_id or ''}"
+        )
         receipt_key = (session_id, p.client_request_id)
         with self._chat_receipts_lock:
             receipt = self._chat_receipts.get(receipt_key)
@@ -165,13 +181,53 @@ class MethodRouter:
         if living is None:
             return build_error(req_id, ErrorCode.GATEWAY_NOT_READY, "Gateway 未就绪")
 
+        db = getattr(getattr(living, "agent", None), "conversation_db", None)
+        if p.retry_of_message_id is not None:
+            source = db.get_user_message(p.retry_of_message_id, session_id) if db else None
+            if source is None or source.get("content", "").strip() != content:
+                return build_error(req_id, ErrorCode.INVALID_PARAMS, "重试消息不属于该会话或内容不一致")
+            try:
+                source_metadata = json.loads(source.get("metadata") or "{}")
+            except (TypeError, json.JSONDecodeError):
+                source_metadata = {}
+            if not isinstance(source_metadata, dict) or source_metadata.get("status") not in {
+                "failed", "interrupted",
+            }:
+                return build_error(req_id, ErrorCode.INVALID_PARAMS, "只有失败或已中断的消息可以重试")
+            source_attachment_ids = [
+                item.get("id") for item in source_metadata.get("attachments", [])
+                if isinstance(item, dict) and isinstance(item.get("id"), str)
+            ]
+            if source_attachment_ids != p.attachment_refs:
+                return build_error(req_id, ErrorCode.INVALID_PARAMS, "重试必须使用原消息的附件")
+
+        saved_paths = []
         try:
             prepared_attachments, image_paths, saved_paths = prepare_attachments(
                 getattr(living, "_agent_id", "default"), session_id, p.attachments,
             )
+            referenced = []
+            for attachment_id in p.attachment_refs:
+                metadata = db.get_attachment_metadata(session_id, attachment_id) if db else None
+                if metadata is None:
+                    raise AttachmentError("引用附件不属于该会话或不存在")
+                referenced.append(metadata)
+            restored, restored_images = restore_attachment_refs(
+                getattr(living, "_agent_id", "default"), session_id, referenced,
+            )
+            combined = [*prepared_attachments, *restored]
+            combined_ids = [str(item.get("id", "")) for item in combined]
+            if len(combined_ids) != len(set(combined_ids)):
+                raise AttachmentError("附件标识不能重复")
+            if sum(int(item.get("size", 0)) for item in combined) > 8 * 1024 * 1024:
+                raise AttachmentError("单条消息的附件合计不能超过 8 MB")
+            prepared_attachments.extend(restored)
+            image_paths.extend(restored_images)
         except AttachmentError as exc:
+            cleanup_attachments(saved_paths)
             return build_error(req_id, ErrorCode.INVALID_PARAMS, str(exc))
         except OSError as exc:
+            cleanup_attachments(saved_paths)
             logger.exception("Failed to persist chat attachments")
             return build_error(req_id, ErrorCode.INTERNAL_ERROR, f"保存附件失败: {exc}")
 
@@ -184,11 +240,13 @@ class MethodRouter:
                 session_id=session_id,
                 images=image_paths,
                 attachments=prepared_attachments,
+                metadata={"retry_of": p.retry_of_message_id} if p.retry_of_message_id else {},
             ))
             accepted = isinstance(result, Accepted)
             response = {"accepted": accepted, "session_id": session_id}
             if accepted:
                 response["turn_id"] = result.living_message.turn_id
+                response["message_id"] = result.living_message.message_id
             else:
                 response["reason"] = getattr(result, "reason", "REJECTED")
             if accepted:
@@ -208,11 +266,44 @@ class MethodRouter:
                 "accepted": True,
                 "session_id": session_id,
                 "turn_id": msg.turn_id,
+                "message_id": getattr(msg, "message_id", None),
             }
             self._remember_chat_receipt(
                 receipt_key, content, user_id, attachments_fingerprint, response,
             )
             return build_response(req_id, result=response)
+
+    def _handle_chat_retry(self, conn_id: str, req_id: str, params: dict) -> dict:
+        try:
+            p = ChatRetryParams.model_validate(params)
+        except Exception as e:
+            return build_error(req_id, ErrorCode.INVALID_REQUEST, f"参数无效: {format_error(e)}")
+        living = self._living
+        db = getattr(getattr(living, "agent", None), "conversation_db", None) if living else None
+        if db is None:
+            return build_error(req_id, ErrorCode.GATEWAY_NOT_READY, "会话存储未就绪")
+        source = db.get_user_message(p.message_id, p.session_id)
+        if source is None:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, "重试消息不属于该会话或不存在")
+        try:
+            metadata = json.loads(source.get("metadata") or "{}")
+        except (TypeError, json.JSONDecodeError):
+            metadata = {}
+        status = metadata.get("status") if isinstance(metadata, dict) else None
+        if status not in {"failed", "interrupted"}:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, "只有失败或已中断的消息可以重试")
+        attachment_refs = [
+            item.get("id") for item in metadata.get("attachments", [])
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        ] if isinstance(metadata, dict) else []
+        return self._handle_chat_send(conn_id, req_id, {
+            "content": source.get("content", ""),
+            "client_request_id": p.client_request_id,
+            "session_id": p.session_id,
+            "user_id": source.get("user_id", "ws-user"),
+            "attachment_refs": attachment_refs,
+            "retry_of_message_id": p.message_id,
+        })
 
     def _remember_chat_receipt(
         self,
@@ -295,6 +386,10 @@ class MethodRouter:
                         user_metadata = {}
                     if isinstance(user_metadata, dict) and isinstance(user_metadata.get("attachments"), list):
                         message["attachments"] = user_metadata["attachments"]
+                    if isinstance(user_metadata, dict):
+                        for key in ("turn_id", "status", "error", "retry_of"):
+                            if key in user_metadata:
+                                message[key] = user_metadata[key]
                 if r.get("role") == "interaction":
                     try:
                         interaction = json.loads(r.get("metadata") or "{}")
@@ -317,6 +412,32 @@ class MethodRouter:
             })
         except Exception as e:
             return build_error(req_id, ErrorCode.INTERNAL_ERROR, str(e))
+
+    def _handle_attachment_get(self, conn_id: str, req_id: str, params: dict) -> dict:
+        try:
+            p = AttachmentGetParams.model_validate(params)
+        except Exception as e:
+            return build_error(req_id, ErrorCode.INVALID_REQUEST, f"参数无效: {format_error(e)}")
+
+        living = self._living
+        if living is None:
+            return build_error(req_id, ErrorCode.GATEWAY_NOT_READY, "Gateway 未就绪")
+        db = getattr(getattr(living, "agent", None), "conversation_db", None)
+        if db is None:
+            return build_error(req_id, ErrorCode.GATEWAY_NOT_READY, "会话存储未就绪")
+
+        attachment = db.get_attachment_metadata(p.session_id, p.attachment_id)
+        if attachment is None:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, "附件不属于该会话或不存在")
+        try:
+            result = read_stored_attachment(
+                getattr(living, "_agent_id", "default"),
+                p.session_id,
+                attachment,
+            )
+        except AttachmentError as exc:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, str(exc))
+        return build_response(req_id, result={"attachment": result})
 
     def _handle_chat_sessions(self, conn_id: str, req_id: str, params: dict) -> dict:
         try:

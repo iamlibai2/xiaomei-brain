@@ -89,6 +89,8 @@ class LivingMessage:
     attachments: list[dict[str, Any]] = field(default_factory=list)
     # Stable identity for one user input and its complete response lifecycle.
     turn_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    # Database row for an external user message persisted before enqueueing.
+    message_id: int | None = None
 
 
 #---------------------------------------------------------------------------
@@ -280,6 +282,7 @@ class Living:
         urgent: bool = False,
         display_name: str | None = None,
         turn_id: str | None = None,
+        message_id: int | None = None,
     ) -> LivingMessage:
         """Enqueue a message.
 
@@ -296,6 +299,7 @@ class Living:
             images=images or [],
             attachments=attachments or [],
             turn_id=turn_id or str(uuid.uuid4()),
+            message_id=message_id,
         )
         if display_name:
             msg.user_display_name = display_name

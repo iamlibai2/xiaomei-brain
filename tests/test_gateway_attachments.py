@@ -15,10 +15,13 @@ from xiaomei_brain.gateway.attachments import (
     append_text_attachments,
     prepare_attachments,
     public_attachment_metadata,
+    read_stored_attachment,
+    restore_attachment_refs,
 )
 from xiaomei_brain.gateway.inbound import Accepted
 from xiaomei_brain.gateway.schemas import ChatAttachment
 from xiaomei_brain.gateway.server_methods import MethodRouter
+from xiaomei_brain.memory.conversation_db import ConversationDB as RealConversationDB
 
 
 def payload(name: str, mime_type: str, data: bytes, attachment_id: str = "attachment-1") -> ChatAttachment:
@@ -204,3 +207,163 @@ def test_chat_history_returns_public_attachment_metadata():
     response = router.dispatch("connection-1", "rpc-1", "chat.history", {"session_id": "session-1"})
 
     assert response["result"]["messages"][0]["attachments"] == metadata
+
+
+def test_attachment_get_reads_only_attachment_owned_by_session(tmp_path, monkeypatch):
+    monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: tmp_path))
+    data = b"image-bytes"
+    prepared, _, _ = prepare_attachments(
+        "xiaomei",
+        "session-1",
+        [payload("photo.png", "image/png", data)],
+    )
+    db = RealConversationDB(tmp_path / "brain.db")
+    db.log(
+        "session-1",
+        "user",
+        "look",
+        metadata={"attachments": public_attachment_metadata(prepared)},
+    )
+    living = SimpleNamespace(
+        _agent_id="xiaomei",
+        agent=SimpleNamespace(conversation_db=db),
+    )
+    router = MethodRouter(living=living)
+    router._auth_sessions.add("connection-1")
+
+    response = router.dispatch("connection-1", "rpc-1", "attachment.get", {
+        "session_id": "session-1",
+        "attachment_id": "attachment-1",
+    })
+    denied = router.dispatch("connection-1", "rpc-2", "attachment.get", {
+        "session_id": "another-session",
+        "attachment_id": "attachment-1",
+    })
+
+    assert base64.b64decode(response["result"]["attachment"]["data_base64"]) == data
+    assert response["result"]["attachment"]["name"] == "photo.png"
+    assert denied["error"]["code"] == -32602
+    db.close()
+
+
+def test_read_stored_attachment_rejects_metadata_size_mismatch(tmp_path, monkeypatch):
+    monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: tmp_path))
+    prepared, _, _ = prepare_attachments(
+        "xiaomei",
+        "session-1",
+        [payload("photo.png", "image/png", b"abc")],
+    )
+    metadata = public_attachment_metadata(prepared)[0]
+    metadata["size"] = 4
+
+    with pytest.raises(AttachmentError):
+        read_stored_attachment("xiaomei", "session-1", metadata)
+
+
+def test_restored_text_attachments_are_combined_in_one_model_input(tmp_path, monkeypatch):
+    monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: tmp_path))
+    prepared, _, _ = prepare_attachments(
+        "xiaomei",
+        "session-1",
+        [
+            payload("requirements.txt", "text/plain", b"requirement A", "attachment-1"),
+            payload("notes.md", "text/markdown", b"constraint B", "attachment-2"),
+        ],
+    )
+
+    restored, image_paths = restore_attachment_refs(
+        "xiaomei", "session-1", public_attachment_metadata(prepared),
+    )
+    model_input = append_text_attachments("Compare these files", restored)
+
+    assert image_paths == []
+    assert "requirement A" in model_input
+    assert "constraint B" in model_input
+    assert model_input.index("requirements.txt") < model_input.index("notes.md")
+
+
+def test_chat_retry_reuses_agent_owned_message_and_attachments(tmp_path, monkeypatch):
+    monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: tmp_path))
+    prepared, _, _ = prepare_attachments(
+        "xiaomei",
+        "session-1",
+        [payload("notes.txt", "text/plain", b"important context")],
+    )
+    db = RealConversationDB(tmp_path / "brain.db")
+    message_id = db.log(
+        "session-1",
+        "user",
+        "continue the task",
+        user_id="user-1",
+        metadata={
+            "status": "failed",
+            "attachments": public_attachment_metadata(prepared),
+        },
+    )
+
+    class Inbound:
+        def __init__(self):
+            self.messages = []
+
+        def accept(self, raw):
+            self.messages.append(raw)
+            return Accepted(LivingMessage(
+                content=raw.content,
+                session_id=raw.session_id,
+                attachments=raw.attachments,
+                images=raw.images,
+            ))
+
+    inbound = Inbound()
+    living = SimpleNamespace(
+        _agent_id="xiaomei",
+        agent=SimpleNamespace(conversation_db=db),
+        _gateway_inbound=inbound,
+    )
+    router = MethodRouter(living=living)
+    router._auth_sessions.add("connection-1")
+    params = {
+        "message_id": message_id,
+        "client_request_id": "retry-1",
+        "session_id": "session-1",
+    }
+
+    first = router.dispatch("connection-1", "rpc-1", "chat.retry", params)
+    duplicate = router.dispatch("connection-1", "rpc-2", "chat.retry", params)
+
+    assert first["result"]["accepted"] is True
+    assert duplicate["result"]["duplicate"] is True
+    assert len(inbound.messages) == 1
+    retried = inbound.messages[0]
+    assert retried.content == "continue the task"
+    assert retried.metadata == {"retry_of": message_id}
+    assert retried.attachments[0]["text_content"] == "important context"
+    assert Path(retried.attachments[0]["local_path"]).is_file()
+    db.close()
+
+
+def test_chat_retry_rejects_completed_or_other_session_message(tmp_path):
+    db = RealConversationDB(tmp_path / "brain.db")
+    message_id = db.log(
+        "session-1", "user", "done", metadata={"status": "completed"},
+    )
+    router = MethodRouter(living=SimpleNamespace(
+        _agent_id="xiaomei",
+        agent=SimpleNamespace(conversation_db=db),
+    ))
+    router._auth_sessions.add("connection-1")
+
+    completed = router.dispatch("connection-1", "rpc-1", "chat.retry", {
+        "message_id": message_id,
+        "client_request_id": "retry-1",
+        "session_id": "session-1",
+    })
+    other_session = router.dispatch("connection-1", "rpc-2", "chat.retry", {
+        "message_id": message_id,
+        "client_request_id": "retry-2",
+        "session_id": "session-2",
+    })
+
+    assert completed["error"]["code"] == -32602
+    assert other_session["error"]["code"] == -32602
+    db.close()

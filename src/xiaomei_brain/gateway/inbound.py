@@ -5,6 +5,7 @@ Gateway = 感官/运动神经：接收信号 → 过滤噪声 → 送达意识�
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
@@ -26,6 +27,7 @@ class RawMessage:
     peer_type: str = "human"      # "human" | "agent"
     images: list[str] = field(default_factory=list)
     attachments: list[dict[str, Any]] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
     urgent: bool = False
     session_id: str = ""          # 外部指定的 session_id，空则由 Gateway 分配
 
@@ -159,6 +161,17 @@ class Gateway:
             if handled:
                 return Rejected(reason="HANDLED", silent=True)
 
+        turn_id = str(uuid.uuid4())
+        message_id = self._persist_human_message(
+            raw=raw,
+            content=content,
+            user_id=user_id,
+            session_id=session_id,
+            turn_id=turn_id,
+        )
+        if message_id is False:
+            return Rejected(reason="PERSISTENCE_FAILED", silent=False)
+
         # 8. Enqueue to Living (passes display_name through)
         from xiaomei_brain.consciousness.living import LivingMessage
         message_kwargs = dict(
@@ -168,7 +181,10 @@ class Gateway:
             source=raw.source,
             images=raw.images,
             display_name=user_display_name,
+            turn_id=turn_id,
         )
+        if isinstance(message_id, int):
+            message_kwargs["message_id"] = message_id
         # Preserve compatibility with lightweight channel adapters that
         # implement the older put_message signature when there is no attachment.
         if raw.attachments:
@@ -184,9 +200,68 @@ class Gateway:
                 source=raw.source,
                 images=raw.images,
                 attachments=raw.attachments,
+                turn_id=turn_id,
+                message_id=message_id if isinstance(message_id, int) else None,
             )
             msg.user_display_name = user_display_name
         return Accepted(living_message=msg)
+
+    def _persist_human_message(
+        self,
+        *,
+        raw: RawMessage,
+        content: str,
+        user_id: str,
+        session_id: str,
+        turn_id: str,
+    ) -> int | None | bool:
+        """Persist external human input before it enters the Living queue."""
+        if raw.source != "human" or raw.peer_type != "human":
+            return None
+        agent = getattr(self._living, "agent", None)
+        db = getattr(agent, "conversation_db", None)
+        if db is None:
+            return None
+
+        from xiaomei_brain.gateway.attachments import public_attachment_metadata
+
+        metadata: dict[str, Any] = {
+            "turn_id": turn_id,
+            "status": "processing",
+        }
+        retry_of = raw.metadata.get("retry_of")
+        if isinstance(retry_of, int) and retry_of > 0:
+            metadata["retry_of"] = retry_of
+        public_attachments = public_attachment_metadata(raw.attachments)
+        if public_attachments:
+            metadata["attachments"] = public_attachments
+        elif raw.images:
+            metadata["images"] = raw.images
+        try:
+            message_id = db.log(
+                session_id=session_id,
+                role="user",
+                content=content,
+                user_id=user_id,
+                metadata=metadata,
+            )
+        except Exception:
+            logger.exception("[Gateway] failed to persist accepted human message")
+            return False
+
+        exp_stream = getattr(agent, "exp_stream", None)
+        if exp_stream:
+            try:
+                exp_stream.log(
+                    type="user_msg",
+                    content=content,
+                    session_id=session_id,
+                    related_id=str(message_id),
+                    user_id=user_id,
+                )
+            except Exception as exc:
+                logger.debug("[ExpStream] user_msg write failed: %s", exc)
+        return message_id
 
     # ── Internal ───────────────────────────────────────────
 

@@ -245,6 +245,43 @@
   display: none;
 }
 
+.message-delivery-status {
+  margin-top: 5px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--ui-color-text-tertiary);
+}
+
+.message-delivery-status.failed {
+  color: var(--ui-color-text-error-default);
+}
+
+.message-delivery-status.interrupted {
+  color: var(--ui-color-text-secondary);
+}
+
+.message-retry {
+  margin-top: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--ui-color-border-default);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ui-color-text-secondary);
+  font-size: 11px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.message-retry:hover:not(:disabled) {
+  border-color: var(--ui-color-border-interactive);
+  color: var(--ui-color-text-primary);
+}
+
+.message-retry:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
 .message-attachments {
   display: grid;
   gap: 6px;
@@ -257,6 +294,17 @@
   gap: 8px;
   min-width: 180px;
   max-width: 320px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.message-attachment:hover .message-attachment-name {
+  text-decoration: underline;
 }
 
 .message-attachment img {
@@ -275,6 +323,10 @@
   background: rgba(255, 255, 255, 0.08);
   font-size: 9px;
   font-weight: 700;
+}
+
+.message-attachment-icon.error {
+  color: var(--ui-color-text-error-default);
 }
 
 .message-attachment-name {
@@ -992,6 +1044,7 @@
 
 /* ─── Chat Input (核心输入框) ─── */
 .chat-input-container {
+  position: relative;
   background: var(--ui-bg-primary);
   border: 1px solid var(--ui-border-default);
   border-radius: var(--ui-radius-2xl);
@@ -999,6 +1052,25 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.chat-input-container.drag-active {
+  border-color: var(--ui-color-brand-default, #4f6bed);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-color-brand-default, #4f6bed) 16%, transparent);
+}
+
+.attachment-drop-hint {
+  position: absolute;
+  z-index: 5;
+  inset: 4px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--ui-color-brand-default, #4f6bed);
+  border-radius: calc(var(--ui-radius-2xl) - 4px);
+  background: color-mix(in srgb, var(--ui-bg-primary) 92%, transparent);
+  color: var(--ui-color-text-primary);
+  font-size: 13px;
+  pointer-events: none;
 }
 
 .attachment-preview-list {
