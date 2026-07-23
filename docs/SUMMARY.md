@@ -15,6 +15,8 @@
 - [Drive 层](architecture/04-DRIVE.md) — 情绪、激素、欲望、动机
 - [Purpose 层](architecture/05-PURPOSE.md) — 目标管理和意图理解
 - [Metacognition 层](architecture/06-METACOGNITION.md) — 元认知
+- [Gateway 实时交互协议](architecture/07-GATEWAY-PROTOCOL.md) — Agent 与外界的实时通信协议
+- [人物、身份与访问架构](architecture/08-IDENTITY-AND-PEOPLE.md) — 多用户身份、Agent 本地人物与企业扩展
 
 ## 开发者指南
 
