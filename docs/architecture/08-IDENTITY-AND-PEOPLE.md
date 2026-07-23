@@ -182,7 +182,9 @@ scope_id        会话或记忆的作用域
 agent_id        Agent 自身 ID
 ```
 
-因此，旧 `user_id` 将从代码、协议和数据库物理结构中删除，由具有明确外键语义的 `person_id` 取代，不保留列别名或存储映射层。代码中如果确实表示外部平台账号，应使用 `subject` 或带平台语义的字段名；如果表示作用域，则使用 `scope_type/scope_id`，不能再复用 `user_id`。
+长期目标是让身份核心、协议和新增模型使用具有明确语义的 `person_id`。代码中如果确实表示外部平台账号，应使用 `subject` 或带平台语义的字段名；如果表示作用域，则使用 `scope_type/scope_id`，不能继续扩大 `user_id` 的含义。
+
+现阶段不重命名现有数据库列，也不批量改造既有消息、记忆和意识链路中的 `user_id`。人物身份能力以新增结构接入；旧字段的语义拆分留给后续独立设计和实施，避免让本次改动扩散到整个系统。
 
 ### 3.3 IdentityBinding
 
@@ -671,7 +673,7 @@ conversation_sessions
 
 Agent 只保存身份公钥和绑定信息，不保存身份持有者的私钥或身份保险箱密码。
 
-现有数据库表中的 `user_id` 不能机械地全部改名为 `person_id`，必须根据它原本表达的真实含义拆分：
+现有数据库表中的 `user_id` 本阶段保持不变。未来如果改造，不能机械地全部改名为 `person_id`，必须根据它原本表达的真实含义拆分：
 
 | 真实含义 | 新字段 |
 |---------|--------|
@@ -688,13 +690,23 @@ Agent 只保存身份公钥和绑定信息，不保存身份持有者的私钥�
 - `memories`、`thoughts`、`experience_stream` 和 `summaries` 使用 `scope_type/scope_id`；
 - 只有确实引用本地 Person 的字段才命名为 `person_id`。
 
-项目不保留旧数据库兼容和字段映射。开发环境可以重建数据库，避免让错误命名永久进入 Agent 的领域模型。
+本阶段只执行增量升级：
+
+- 继续使用各 Agent 原有的 `brain.db`；
+- 复用 `SQLiteStore` 的 `schema_versions(component, version)`；
+- 新增独立的 `people` 组件版本；
+- 通过 `CREATE TABLE IF NOT EXISTS` 创建人物与身份新表及索引；
+- 不重命名、删除或重建现有表；
+- 不修改现有 `user_id` 列及其历史数据；
+- 升级失败时不能影响既有消息、记忆和经验数据。
+
+已有 Agent 的联系人数据可以一次性复制到新增人物表，用于建立初始 Person，但复制过程不删除或改写原文件和原表。迁移必须幂等：同一个 Agent 重复启动不会重复创建人物。
 
 `person_id` 只能引用真实的本地 Person。`global`、`system`、Agent ID、渠道账号 ID 都不能再写入 `person_id`；Agent 自身记忆和共享记忆使用明确的 `scope_type/scope_id`，系统行为使用明确的参与者类型。
 
 ### 10.3 内部身份归一
 
-以下模块统一从含义混杂的 `user_id` 改为本地 `person_id`：
+长期需要将以下模块中含义混杂的 `user_id` 拆分为人物、作用域和参与者概念：
 
 - Gateway 入站；
 - LivingMessage；
@@ -709,6 +721,8 @@ Agent 只保存身份公钥和绑定信息，不保存身份持有者的私钥�
 - ActionBroker；
 - 附件与产物服务。
 
+这项全链路改造不属于当前人物身份第一阶段。当前只在新增的 People/Identity 领域和新增协议中使用 `person_id`，既有模块维持现状。
+
 ### 10.4 CLI
 
 CLI 分为：
@@ -718,20 +732,11 @@ CLI 分为：
 
 远程客户端不能复用本地 CLI 的可信断言方式。
 
-### 10.5 废弃旧联系人身份实现
+### 10.5 旧联系人身份实现
 
-项目仍处于开发阶段，不为旧身份实现保留兼容层，也不提供数据迁移：
+本阶段不删除 `contacts/identities.yaml`、`IdentityManager` 及其调用链，避免身份改造同时影响 CLI、Gateway、感知和上下文系统。
 
-- 删除 `contacts/identities.yaml` 及其种子文件；
-- 删除现有 `IdentityManager`；
-- 删除 CLI、Gateway、感知系统和上下文系统对 `IdentityManager` 的依赖；
-- 删除手工选择 YAML 身份的登录流程；
-- 删除 `alias_ids` 旧映射方式；
-- 删除硬编码的 `xiaoshuai` 联系人；
-- 旧人脸和声纹登记不迁移，使用新身份凭证机制重新登记；
-- 删除只服务于旧实现的测试和命令。
-
-人脸识别、声纹识别等底层感知能力可以复用，但必须通过新的身份认证器绑定到 `Person`，不能继续依赖旧联系人文件。
+新增 People/Identity 结构稳定并完成真实数据验证后，再单独设计旧联系人实现的退出步骤。退出时可以删除不再需要的旧代码，但不能以删除历史 Agent 数据为代价。
 
 ---
 
@@ -765,18 +770,21 @@ CLI 分为：
 ### 阶段 A：人物与身份核心
 
 - 建立 People/Identity 领域；
-- 新增数据库表；
+- 使用现有 `schema_versions` 机制新增 `people` 组件和数据库表；
 - 实现 Person 与 IdentityBinding；
-- 删除旧联系人身份实现及硬编码联系人。
+- 从旧联系人文件幂等复制初始人物，不修改旧表和历史数据。
 
 ### 阶段 B：Gateway 身份握手
 
 - 调整 `connect` 边界；
 - 实现注册和 challenge 认证；
 - 连接绑定不可变 `IdentityContext`；
-- 未认证连接禁止访问私人能力。
+- 未认证连接禁止访问私人能力；
+- 通过边界适配接入既有对话链路，不修改现有表的 `user_id`。
 
 ### 阶段 C：内部身份统一
+
+该阶段明确延期，等人物身份闭环稳定后重新设计，不纳入本次实现范围：
 
 - Gateway 到 Turn、记忆、关系全部使用本地 `person_id`；
 - 会话建立明确 scope；
