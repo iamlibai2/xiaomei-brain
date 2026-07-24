@@ -70,3 +70,40 @@ def test_agent_max_steps(mock_llm, registry):
     response = _chat(agent, "Run tool")
     # After max_steps, stream() stops without final answer
     assert isinstance(response, str)
+
+
+def test_execute_tool_call_accepts_structured_result(mock_llm, registry):
+    """Structured tool output must not crash failure classification."""
+    from xiaomei_brain.tools import tool
+
+    @tool(name="look_around", description="Inspect the current scene")
+    def look_around() -> dict:
+        return {"faces": [], "scene": "办公室"}
+
+    registry.register(look_around)
+    agent = Agent(llm=mock_llm, tools=registry)
+
+    result = agent._execute_tool_call("call-1", "look_around", {})
+
+    assert result == '{"faces": [], "scene": "办公室"}'
+
+
+def test_structured_tool_error_marks_action_failed(mock_llm, registry):
+    """An error object should complete an approved action as failed."""
+    from xiaomei_brain.tools import tool
+
+    @tool(name="look_around", description="Inspect the current scene")
+    def look_around() -> dict:
+        return {"error": "眼睛不可用"}
+
+    registry.register(look_around)
+    agent = Agent(llm=mock_llm, tools=registry)
+    agent.on_tool_approval = Mock(
+        return_value={"approved": True, "action_id": "action-1"}
+    )
+    agent.on_action_complete = Mock()
+
+    result = agent._execute_tool_call("call-1", "look_around", {})
+
+    assert result == '{"error": "眼睛不可用"}'
+    agent.on_action_complete.assert_called_once_with("action-1", result, True)

@@ -44,6 +44,21 @@ def test_tool_registry():
     assert result == "HELLO"
 
 
+def test_tool_registry_serializes_structured_result():
+    """Structured tool results become valid JSON text for the ReAct loop."""
+    registry = ToolRegistry()
+
+    @tool(name="inspect_scene", description="Inspect a scene")
+    def inspect_scene() -> dict:
+        return {"faces": [], "scene": "办公室"}
+
+    registry.register(inspect_scene)
+
+    result = registry.execute("inspect_scene")
+
+    assert result == '{"faces": [], "scene": "办公室"}'
+
+
 def test_tool_duplicate():
     """Test that duplicate tool names raise error."""
     registry = ToolRegistry()

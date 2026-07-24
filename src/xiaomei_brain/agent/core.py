@@ -16,7 +16,7 @@ from xiaomei_brain.memory.dag import DAGSummaryGraph
 from xiaomei_brain.memory.longterm import LongTermMemory
 from xiaomei_brain.memory.extractor import MemoryExtractor
 from xiaomei_brain.prompts import MEMORY_DECISION_PROMPT
-from xiaomei_brain.tools.registry import ToolRegistry
+from xiaomei_brain.tools.registry import ToolRegistry, normalize_tool_result
 from xiaomei_brain.agent.message_utils import (
     strip_orphaned_tool_messages,
     strip_orphaned_assistant_tool_calls, clean_messages,
@@ -24,6 +24,33 @@ from xiaomei_brain.agent.message_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _tool_result_failed(result: Any) -> bool:
+    """Classify both textual and structured tool failures consistently."""
+    text = normalize_tool_result(result)
+    lowered = text.lower()
+    if (
+        text.startswith("Error:")
+        or text.startswith("Blocked")
+        or "timed out" in lowered
+        or "failed" in lowered
+    ):
+        return True
+    try:
+        payload = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    status = str(payload.get("status", "")).lower()
+    return bool(payload.get("error")) or payload.get("success") is False or status in {
+        "error",
+        "failed",
+        "blocked",
+        "timeout",
+        "timed_out",
+    }
 
 
 from xiaomei_brain.agent.tool_call_buffer import ToolCallBuffer, tool_call_buffer
@@ -339,10 +366,7 @@ class Agent:
                             result = self._execute_tool_call(tc.id, tc.name, args_dict)
 
                     # 记录失败次数，成功则清除
-                    if isinstance(result, str) and (
-                        result.startswith("Error:") or result.startswith("Blocked")
-                        or "timed out" in result or "failed" in result.lower()
-                    ):
+                    if _tool_result_failed(result):
                         _tool_failure_counts[call_key] = fail_count + 1
                     else:
                         _tool_failure_counts.pop(call_key, None)
@@ -514,17 +538,17 @@ class Agent:
             result = str(approval.get("result") or "Blocked: action was not approved")
         else:
             try:
-                result = self.tools.execute(tool_name, **arguments)
+                # ToolRegistry normally returns text.  Keep this normalization
+                # here as a defensive boundary for alternate registries used by
+                # integrations and tests.
+                result = normalize_tool_result(
+                    self.tools.execute(tool_name, **arguments)
+                )
             except Exception as exc:
                 result = f"Error executing tool '{tool_name}': {exc}"
                 logger.error("Tool error: %s", exc)
 
-        failed = (
-            result.startswith("Error:")
-            or result.startswith("Blocked")
-            or "timed out" in result
-            or "failed" in result.lower()
-        )
+        failed = _tool_result_failed(result)
         if action_id and self.on_action_complete is not None:
             try:
                 self.on_action_complete(action_id, str(result), failed)
@@ -647,10 +671,7 @@ class Agent:
                         else:
                             result = self._execute_tool_call(tc.id, tc.name, args_dict)
 
-                    if isinstance(result, str) and (
-                        result.startswith("Error:") or result.startswith("Blocked")
-                        or "timed out" in result or "failed" in result.lower()
-                    ):
+                    if _tool_result_failed(result):
                         _tool_failure_counts[call_key] = fail_count + 1
                     else:
                         _tool_failure_counts.pop(call_key, None)

@@ -14,7 +14,7 @@ class Tool:
     name: str
     description: str
     parameters: dict[str, Any]  # JSON Schema
-    func: Callable[..., str]
+    func: Callable[..., Any]
 
     # 元数据
     source: str = "core"            # "core" | "plugin:<id>"
@@ -22,7 +22,7 @@ class Tool:
     emoji: str = ""
     category: str = ""              # "fs" | "web" | "memory" | "media" | "internal" ...
 
-    def execute(self, **kwargs: Any) -> str:
+    def execute(self, **kwargs: Any) -> Any:
         """Execute the tool with given arguments."""
         return self.func(**kwargs)
 

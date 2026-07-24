@@ -2,9 +2,26 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from .base import Tool
+
+
+def normalize_tool_result(result: Any) -> str:
+    """Convert a tool result into the text representation consumed by an LLM.
+
+    Tools may naturally return structured JSON-compatible values.  The ReAct
+    loop and provider APIs require tool messages to contain text, so normalize
+    results once at the registry boundary instead of making every tool perform
+    its own serialization.
+    """
+    if isinstance(result, str):
+        return result
+    try:
+        return json.dumps(result, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return str(result)
 
 
 class ToolRegistry:
@@ -70,4 +87,4 @@ class ToolRegistry:
         tool = self._tools.get(tool_name)
         if tool is None:
             raise ValueError(f"Tool '{tool_name}' not found")
-        return tool.execute(**kwargs)
+        return normalize_tool_result(tool.execute(**kwargs))
