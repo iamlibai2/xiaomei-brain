@@ -78,7 +78,7 @@ export interface SessionEntry {
 // ── Bridge API ──
 
 export interface GatewayBridge {
-  connect(args: { host: string; port: number; token: string; userId: string; agentId: string; sessionId?: string }): Promise<JsonRpcResponse>;
+  connect(args: { host: string; port: number; token: string; agentId: string; sessionId?: string }): Promise<JsonRpcResponse>;
   disconnect(args: { agentId: string }): Promise<void>;
   sendMessage(args: { content: string; agentId: string; clientRequestId: string; attachments: ChatAttachment[] }): Promise<JsonRpcResponse>;
   pickAttachments(): Promise<AttachmentPickResult>;
@@ -93,6 +93,23 @@ export interface GatewayBridge {
   getHistory(args: { sessionId?: string; limit?: number; beforeId?: number; agentId: string }): Promise<JsonRpcResponse>;
   listSessions(args: { limit?: number; offset?: number; query?: string; agentId: string }): Promise<JsonRpcResponse>;
   listIdentities(args: { agentId: string }): Promise<JsonRpcResponse>;
+  listLegacySessions(args: { agentId: string }): Promise<JsonRpcResponse>;
+  claimLegacySession(args: { agentId: string; sessionId: string }): Promise<JsonRpcResponse>;
+  getChannelConfig(args: { agentId: string; channel: "feishu" }): Promise<JsonRpcResponse>;
+  testChannel(args: { agentId: string; channel: "feishu"; appId: string; appSecret: string }): Promise<JsonRpcResponse>;
+  configureChannel(args: {
+    agentId: string;
+    channel: "feishu";
+    appId: string;
+    appSecret: string;
+    displayName: string;
+    accountId?: string;
+  }): Promise<JsonRpcResponse>;
+  getChannelStatus(args: { agentId: string; channel: "feishu" }): Promise<JsonRpcResponse>;
+  removeChannel(args: { agentId: string; channel: "feishu" }): Promise<JsonRpcResponse>;
+  beginIdentityLink(args: { agentId: string; provider: "feishu" }): Promise<JsonRpcResponse>;
+  getIdentityLinkStatus(args: { agentId: string; requestId: string }): Promise<JsonRpcResponse>;
+  cancelIdentityLink(args: { agentId: string; requestId: string }): Promise<JsonRpcResponse>;
   getConfig(key: string): Promise<string | null>;
 
   /**
@@ -105,6 +122,32 @@ export interface GatewayBridge {
     sequence?: number;
     timestamp?: number;
   }) => void): () => void;
+}
+
+export interface IdentityStatus {
+  exists: boolean;
+  unlocked: boolean;
+  displayName?: string;
+  issuer?: string;
+  subject?: string;
+  error?: string;
+}
+
+export interface IdentityOperationResult {
+  ok: boolean;
+  status?: IdentityStatus;
+  error?: string;
+  canceled?: boolean;
+}
+
+export interface IdentityBridge {
+  status(): Promise<IdentityStatus>;
+  create(args: { displayName: string; password: string }): Promise<IdentityOperationResult>;
+  unlock(args: { password: string }): Promise<IdentityOperationResult>;
+  lock(): Promise<IdentityStatus>;
+  changePassword(args: { currentPassword: string; newPassword: string }): Promise<IdentityOperationResult>;
+  exportBackup(): Promise<IdentityOperationResult>;
+  importBackup(args: { password: string }): Promise<IdentityOperationResult>;
 }
 
 export interface LocalAgentsBridge {
@@ -163,6 +206,7 @@ export interface TerminalBridge {
 declare global {
   interface Window {
     gateway: GatewayBridge;
+    identity: IdentityBridge;
     localAgents: LocalAgentsBridge;
     notifications: NotificationsBridge;
     desktop: DesktopBridge;

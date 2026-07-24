@@ -11,7 +11,6 @@ export function ConnectPage() {
   const [host, setHost] = useState("localhost");
   const [port, setPort] = useState("19766");
   const [token, setToken] = useState("");
-  const [userId, setUserId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -27,7 +26,7 @@ export function ConnectPage() {
   const handleConnect = async () => {
     setLoading(true);
     setError("");
-    const ok = await connect(host, parseInt(port) || 19766, token, userId);
+    const ok = await connect(host, parseInt(port) || 19766, token);
     setLoading(false);
     if (ok) setPage("chat");
   };
@@ -70,16 +69,6 @@ export function ConnectPage() {
             onKeyDown={handleKeyDown}
             type="password"
             placeholder={t("connect.tokenHint")}
-          />
-        </div>
-
-        <div className="connect-field">
-          <label>{t("connect.userId")}</label>
-          <input
-            value={userId}
-            onChange={(e) => setUserId(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={t("connect.userIdPlaceholder")}
           />
         </div>
 

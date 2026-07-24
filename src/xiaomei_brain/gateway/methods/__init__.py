@@ -3,6 +3,7 @@
 from .attachments import AttachmentMethods
 from .artifacts import ArtifactMethods
 from .chat import ChatMethods
+from .channels import ChannelMethods
 from .connection import ConnectionMethods
 from .identity import IdentityMethods
 from .interactions import InteractionMethods
@@ -12,6 +13,7 @@ __all__ = [
     "AttachmentMethods",
     "ArtifactMethods",
     "ChatMethods",
+    "ChannelMethods",
     "ConnectionMethods",
     "IdentityMethods",
     "InteractionMethods",

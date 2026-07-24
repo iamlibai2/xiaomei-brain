@@ -10,6 +10,7 @@ import { QuickActions } from "./QuickActions";
 import { ChatInput } from "./ChatInput";
 import { ContextBar } from "./ContextBar";
 import { ChatTopbar } from "./ChatTopbar";
+import { AgentSettingsDialog } from "../agent-settings/AgentSettingsDialog";
 
 const EMPTY_MSGS: DisplayMessage[] = [];
 
@@ -44,6 +45,7 @@ export function HomePage() {
   const loadOlderMessages = useCoreStore((s) => s.loadOlderMessages);
 
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  const [agentSettingsOpen, setAgentSettingsOpen] = useState(false);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
@@ -106,6 +108,17 @@ export function HomePage() {
         </div>
       )}
       <div className="wb-home-page">
+        {!hasMessages && activeAgentId && (
+          <div className="agent-settings-empty-trigger">
+            <Button
+              variant="ghost"
+              size="icon-md"
+              icon="settings"
+              onClick={() => setAgentSettingsOpen(true)}
+              title={t("home.agentSettings", "Agent 设置")}
+            />
+          </div>
+        )}
         {showAgentStart && activeAgent && activeAgentId && (
           <div className="agent-start-state">
             <div className="agent-start-avatar">{activeAgent.name.charAt(0)}</div>
@@ -153,6 +166,7 @@ export function HomePage() {
               onSearch={() => {}}
               onToggleRightPanel={() => setRightPanelOpen(!rightPanelOpen)}
               rightPanelOpen={rightPanelOpen}
+              onOpenAgentSettings={() => setAgentSettingsOpen(true)}
             />
             <div className="message-list" ref={messageListRef}>
               <div ref={topRef} className="history-page-status">
@@ -181,6 +195,12 @@ export function HomePage() {
           </div>
         )}
       </div>
+      <AgentSettingsDialog
+        open={agentSettingsOpen}
+        agentId={activeAgentId || ""}
+        agentName={agentName || t("home.defaultAgentName")}
+        onClose={() => setAgentSettingsOpen(false)}
+      />
     </div>
   );
 }

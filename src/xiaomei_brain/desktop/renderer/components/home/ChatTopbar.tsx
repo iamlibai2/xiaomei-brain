@@ -6,9 +6,10 @@ interface ChatTopbarProps {
   onSearch?: () => void;
   onToggleRightPanel?: () => void;
   rightPanelOpen?: boolean;
+  onOpenAgentSettings?: () => void;
 }
 
-export function ChatTopbar({ taskName, onSearch, onToggleRightPanel, rightPanelOpen }: ChatTopbarProps) {
+export function ChatTopbar({ taskName, onSearch, onToggleRightPanel, rightPanelOpen, onOpenAgentSettings }: ChatTopbarProps) {
   const { t } = useTranslation();
 
   return (
@@ -17,6 +18,13 @@ export function ChatTopbar({ taskName, onSearch, onToggleRightPanel, rightPanelO
         <span className="chat-topbar-title">{taskName}</span>
       </div>
       <div className="chat-topbar-right">
+        <Button
+          variant="ghost"
+          size="icon-md"
+          icon="settings"
+          onClick={onOpenAgentSettings}
+          title={t("home.agentSettings", "Agent 设置")}
+        />
         <Button
           variant="ghost"
           size="icon-md"

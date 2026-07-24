@@ -5,16 +5,17 @@ import { Icon, Button } from "../ui";
 import { SidebarTopbar } from "./SidebarTopbar";
 import { SidebarFooter } from "./SidebarFooter";
 import { AddAgentDialog } from "./AddAgentDialog";
+import { IdentitySettingsDialog } from "../IdentitySettingsDialog";
 
 export function ConversationList() {
   const { t } = useTranslation();
   const [collapsed, setCollapsed] = useState(false);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [identitySettingsOpen, setIdentitySettingsOpen] = useState(false);
 
   const agents = useCoreStore((s) => s.agents);
   const activeAgentId = useCoreStore((s) => s.activeAgentId);
   const connectionByAgent = useCoreStore((s) => s.connectionByAgent);
-  const userId = useCoreStore((s) => s.userId);
   const switchAgent = useCoreStore((s) => s.switchAgent);
   const newSession = useCoreStore((s) => s.newSession);
   const switchSession = useCoreStore((s) => s.switchSession);
@@ -33,9 +34,16 @@ export function ConversationList() {
   const lifecycleByAgent = useCoreStore((s) => s.lifecycleByAgent);
   const controlLocalAgent = useCoreStore((s) => s.controlLocalAgent);
 
-  const displayName = userId || t("sidebar.defaultUserName");
+  const [identityName, setIdentityName] = useState("");
+  const displayName = identityName || t("sidebar.defaultUserName");
 
   const [sessionQuery, setSessionQuery] = useState("");
+
+  useEffect(() => {
+    void window.identity.status().then((status) => {
+      setIdentityName(status.displayName || "");
+    });
+  }, []);
 
   function handleNewSession() {
     void newSession();
@@ -206,7 +214,7 @@ export function ConversationList() {
             </div>
           )}
 
-          <SidebarFooter userName={displayName} />
+          <SidebarFooter userName={displayName} onSettings={() => setIdentitySettingsOpen(true)} />
         </>
       )}
 
@@ -219,6 +227,9 @@ export function ConversationList() {
         </div>
       )}
       {addDialogOpen && <AddAgentDialog onClose={() => setAddDialogOpen(false)} />}
+      {identitySettingsOpen && (
+        <IdentitySettingsDialog onClose={() => setIdentitySettingsOpen(false)} />
+      )}
     </div>
   );
 }

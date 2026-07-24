@@ -1,9 +1,11 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useCoreStore, initGatewayEvents } from "./store";
 import { ConnectPage } from "./components/ConnectPage";
 import { MenuBar } from "./components/MenuBar";
 import { MainShell } from "./components/MainShell";
 import { DesktopInfoProvider } from "./desktop-info";
+import { IdentityPage } from "./components/IdentityPage";
+import type { IdentityStatus } from "./types";
 
 export function App() {
   const page = useCoreStore((s) => s.page);
@@ -13,16 +15,30 @@ export function App() {
   const refreshLocalAgents = useCoreStore((s) => s.refreshLocalAgents);
   const localDiscoveryComplete = useCoreStore((s) => s.localDiscoveryComplete);
   const localAvailabilityByAgent = useCoreStore((s) => s.localAvailabilityByAgent);
+  const [identityStatus, setIdentityStatus] = useState<IdentityStatus | null>(null);
+  const didAutoConnect = useRef(false);
 
   useEffect(() => {
     initGatewayEvents();
-    void refreshLocalAgents();
+    void window.identity.status().then(setIdentityStatus);
+  }, []);
+
+  useEffect(() => {
+    if (identityStatus?.unlocked) void refreshLocalAgents();
+    else didAutoConnect.current = false;
+  }, [identityStatus?.unlocked]);
+
+  useEffect(() => {
+    const handleLocked = (event: Event) => {
+      setIdentityStatus((event as CustomEvent<IdentityStatus>).detail);
+    };
+    window.addEventListener("xiaomei:identity-locked", handleLocked);
+    return () => window.removeEventListener("xiaomei:identity-locked", handleLocked);
   }, []);
 
   // Auto-connect saved agents on first render when agents are loaded
-  const didAutoConnect = useRef(false);
   useEffect(() => {
-    if (localDiscoveryComplete && !didAutoConnect.current && agents.length > 0) {
+    if (identityStatus?.unlocked && localDiscoveryComplete && !didAutoConnect.current && agents.length > 0) {
       didAutoConnect.current = true;
       if (page === "connect") setPage("chat");
       agents.forEach((agent) => {
@@ -31,13 +47,15 @@ export function App() {
         }
       });
     }
-  }, [agents, localDiscoveryComplete]);
+  }, [agents, localDiscoveryComplete, identityStatus?.unlocked]);
 
   return (
     <DesktopInfoProvider>
       <div className="app">
         <MenuBar />
-        {page === "connect" ? (
+        {!identityStatus ? null : !identityStatus.unlocked ? (
+          <IdentityPage status={identityStatus} onReady={setIdentityStatus} />
+        ) : page === "connect" ? (
           <ConnectPage />
         ) : (
           <MainShell />

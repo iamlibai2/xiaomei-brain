@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 import warnings
 
@@ -28,8 +29,21 @@ def register(ctx):
     if not app_id or not app_secret:
         ctx.logger.warning("飞书配置缺失，跳过注册")
         return
-    channel = FeishuChannel(app_id=app_id, app_secret=app_secret)
-    ctx.register_channel("feishu", FeishuAdapter(channel))
+    ctx.register_channel("feishu", create_adapter(ctx.config))
+
+
+def create_adapter(config: dict) -> "FeishuAdapter":
+    """Build an adapter from a normalized Feishu account configuration."""
+    app_id = config.get("appId") or config.get("app_id") or os.getenv("FEISHU_APP_ID", "")
+    app_secret = config.get("appSecret") or config.get("app_secret") or os.getenv("FEISHU_APP_SECRET", "")
+    if not app_id or not app_secret:
+        raise ValueError("飞书 appId 和 appSecret 不能为空")
+    account_id = config.get("accountId") or config.get("account_id") or "default"
+    return FeishuAdapter(FeishuChannel(
+        app_id=app_id,
+        app_secret=app_secret,
+        account_id=account_id,
+    ))
 
 
 class FeishuAdapter(ChannelAdapter):
@@ -60,18 +74,65 @@ class FeishuAdapter(ChannelAdapter):
             return
 
         router = living._router
+        people = getattr(living, "_people_service", None)
+        link_service = getattr(living, "_identity_link_service", None)
+        issuer = f"feishu:app:{self._channel.app_id}"
 
         def on_message(msg_dict: dict) -> None:
             sender = msg_dict["sender"]
             conversation_id = msg_dict["conversation_id"]
             text = msg_dict["text"]
-            session_id = f"feishu-{sender}"
+            chat_type = msg_dict.get("chat_type", "p2p")
+            logger.info(
+                "[Feishu/Inbound] sender=%s chat_type=%s text=%r",
+                sender,
+                chat_type,
+                text[:200],
+            )
+
+            # Feishu replies and mentions may add a prefix before the command.
+            # Only accept a six-digit command on the final line so ordinary
+            # conversation containing the word "绑定" cannot consume a code.
+            match = re.search(
+                r"(?:^|\n)\s*(?:绑定|bind)\s+(\d{6})\s*$",
+                text,
+                re.IGNORECASE,
+            )
+            if match:
+                if chat_type != "p2p":
+                    self.send(conversation_id, "请在与机器人的私聊中完成身份绑定。")
+                    return
+                try:
+                    binding = (
+                        link_service.consume("feishu", issuer, sender, match.group(1))
+                        if link_service else None
+                    )
+                except ValueError as exc:
+                    self.send(conversation_id, str(exc))
+                    return
+                if binding is None:
+                    self.send(conversation_id, "绑定码无效或已过期，请在 Desktop 中重新生成。")
+                    return
+                self.send(conversation_id, "身份绑定成功，现在我能认出你了。")
+                return
+
+            resolved = people.resolve_verified_identity(issuer, sender) if people else None
+            if resolved is None:
+                self.send(
+                    conversation_id,
+                    "我还不能确认你是谁。请在 Desktop 的渠道配置中生成绑定码，再发送“绑定 123456”。",
+                )
+                return
+            person, _binding = resolved
+            person_id = person.person_id
+            session_id = f"feishu-{person_id}"
+            people.store.ensure_person_session(session_id, person_id)
 
             # 注册 peer（确保 Router 能匹配到）
             existing = router.route_for_session(session_id)
             if existing is None:
                 router.register_peer(
-                    peer_type="human", peer_id=sender,
+                    peer_type="human", peer_id=person_id,
                     channel="feishu", session_id=session_id,
                     output_type="feishu", output_target=conversation_id,
                     priority=10,
@@ -88,8 +149,13 @@ class FeishuAdapter(ChannelAdapter):
                 from xiaomei_brain.gateway.inbound import RawMessage
                 gw.accept(RawMessage(
                     content=text, source="human", channel="feishu",
-                    peer_id=sender, peer_type="human",
+                    peer_id=person_id, peer_type="human",
                     session_id=session_id,
+                    metadata={
+                        "external_issuer": issuer,
+                        "external_subject": sender,
+                        "external_conversation_id": conversation_id,
+                    },
                 ))
             else:
                 living.put_message(text, source="human", session_id=session_id)
@@ -109,6 +175,9 @@ class FeishuAdapter(ChannelAdapter):
                 logger.info("[FeishuAdapter] 通道已关闭")
             except Exception as e:
                 logger.warning("[FeishuAdapter] 关闭通道失败: %s", e)
+
+    def status(self) -> dict:
+        return self._channel.status()
 
     def send(self, target: str, text: str, msg_type: str = "text") -> None:
         logger.info("[FeishuAdapter] Router.deliver → target=%s text=%s", target, text[:80])

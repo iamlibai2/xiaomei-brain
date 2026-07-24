@@ -154,3 +154,15 @@ body[data-platform="mac"] .menubar {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+.identity-card {
+  width: 440px;
+}
+
+.identity-note {
+  margin: 4px 0 16px;
+  color: var(--ui-color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: left;
+}

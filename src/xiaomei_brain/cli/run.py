@@ -912,6 +912,12 @@ def cmd_run(args: list[str]) -> None:
     parser.add_argument("-n", "--no-consciousness", action="store_true", help="无意识模式")
     parser.add_argument("--legacy", action="store_true", help="旧版上下文模式")
     parser.add_argument("--port", "-p", type=int, default=0, help="通讯端口（0=自动, -1=禁用）")
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="在终端显示 INFO 级别运行日志",
+    )
     parsed = parser.parse_args(args)
 
     agent_id = parsed.agent_id
@@ -923,7 +929,10 @@ def cmd_run(args: list[str]) -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
         stream=sys.stderr,
     )
-    logging.getLogger().handlers[0].setLevel(logging.WARNING)
+    # Console output stays concise by default. Verbose only changes the
+    # terminal handler; the file handler below still follows logging.level.
+    console_level = logging.INFO if parsed.verbose else logging.WARNING
+    logging.getLogger().handlers[0].setLevel(console_level)
 
     agent_log_dir = os.path.expanduser(f"~/.xiaomei-brain/{agent_id}/logs")
     os.makedirs(agent_log_dir, exist_ok=True)

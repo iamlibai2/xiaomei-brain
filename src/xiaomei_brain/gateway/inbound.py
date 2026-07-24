@@ -87,6 +87,31 @@ class Gateway:
         self._channels[name] = adapter
         logger.info("[Gateway] 注册通道: %s", name)
 
+    def get_channel(self, name: str):
+        """Return the currently active adapter for a channel."""
+        return self._channels.get(name)
+
+    def replace_channel(self, name: str, adapter) -> None:
+        """Start a replacement adapter, then retire the previous one."""
+        previous = self._channels.get(name)
+        adapter.setup(living=self._living)
+        self._channels[name] = adapter
+        if previous is not None and previous is not adapter:
+            try:
+                previous.shutdown()
+            except Exception:
+                logger.warning("[Gateway] failed to stop old channel: %s", name, exc_info=True)
+        logger.info("[Gateway] channel hot-reloaded: %s", name)
+
+    def remove_channel(self, name: str) -> bool:
+        """Stop and unregister one external channel."""
+        adapter = self._channels.pop(name, None)
+        if adapter is None:
+            return False
+        adapter.shutdown()
+        logger.info("[Gateway] channel removed: %s", name)
+        return True
+
     def open_channels(self) -> None:
         """启动所有已注册通道。"""
         for name, adapter in self._channels.items():
@@ -328,6 +353,10 @@ class Gateway:
         return clean_input(text)
 
     def _resolve_identity(self, peer_id: str) -> str:
+        people = getattr(self._living, "_people_service", None)
+        person = people.store.get_person(peer_id) if people and peer_id else None
+        if person is not None:
+            return person.display_name
         """解析用户身份，返回 display name。"""
         if not peer_id or not self._identity_mgr:
             return ""

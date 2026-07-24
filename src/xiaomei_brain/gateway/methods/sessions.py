@@ -24,7 +24,7 @@ class SessionMethods:
             "session.resume": self.handle_resume,
         }
 
-    def handle_list(self, _conn_id: str, req_id: str, params: dict) -> dict:
+    def handle_list(self, conn_id: str, req_id: str, params: dict) -> dict:
         try:
             parsed = ChatSessionsParams.model_validate(params)
         except Exception as exc:
@@ -38,10 +38,16 @@ class SessionMethods:
                 return build_response(req_id, result={
                     "sessions": [], "has_more": False, "next_offset": None,
                 })
+            person_id = cm.get_person_id(conn_id)
+            people_service = getattr(living, "_people_service", None)
+            if not person_id or people_service is None:
+                return build_error(req_id, ErrorCode.UNAUTHORIZED, "当前连接没有人物身份")
             rows = db.list_sessions(
                 limit=parsed.limit + 1,
                 offset=parsed.offset,
                 query=parsed.query,
+                scope_type="person",
+                scope_id=person_id,
             )
             has_more = len(rows) > parsed.limit
             sessions = rows[:parsed.limit]
@@ -76,4 +82,3 @@ class SessionMethods:
             "inflight": inflight,
         })
         return build_response(req_id, result=result)
-

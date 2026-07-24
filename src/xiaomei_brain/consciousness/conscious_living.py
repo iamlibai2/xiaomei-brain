@@ -503,6 +503,24 @@ class ConsciousLiving(Living):
         self.agent._get_agent().identity_mgr = self._identity_mgr
         logger.info("[ConsciousLiving] 身份管理器已初始化")
 
+        # ── 人物与外部身份（新增域，不改动现有 user_id 数据链路）──────
+        # 这里只初始化空服务；Person 必须由登记或明确操作创建，不能从
+        # identities.yaml 自动推断，否则“旧联系人”会被误当成已确认身份。
+        from xiaomei_brain.people import PeopleService
+        self._people_service = PeopleService.for_agent_db(db_path)
+        from xiaomei_brain.people import IdentityLinkService
+        from xiaomei_brain.channels import ChannelConfigurationService
+        self._identity_link_service = IdentityLinkService(self._people_service)
+        self._channel_configuration = ChannelConfigurationService(self._agent_id)
+        self.agent.people_service = self._people_service
+        self.agent._get_agent().people_service = self._people_service
+        logger.info("[ConsciousLiving] 人物服务已初始化")
+        boot_line(
+            "人物与身份",
+            "OK",
+            f"{len(self._people_service.store.list_people())} 人物",
+        )
+
         # 统一加载所有子系统（先加载数据，确保 drive/purpose/self_image 已就绪）
         self._setup_all()
 
@@ -630,6 +648,8 @@ class ConsciousLiving(Living):
         boot_section("通讯层")
         from ..gateway import Gateway
         self._gateway_inbound = Gateway(living=self, router=self._router, config=self._config)
+        from xiaomei_brain.channels import ChannelRuntimeService
+        self._channel_runtime = ChannelRuntimeService(self)
         self._gateway_inbound.set_identity_mgr(self._identity_mgr)
         if self.agent.commands:
             self._gateway_inbound.set_agent_commands(self.agent.commands)

@@ -5,12 +5,11 @@ import type { AgentCreationResult, AgentEntry, AgentLifecycleAction, ChatAttachm
 // ── Persistence (manual, avoid zustand/persist rehydration during render) ──
 
 const STORAGE_KEY = "xiaomei-brain-agents";
-const STORAGE_VERSION = 3;
+const STORAGE_VERSION = 4;
 
 interface PersistedState {
   version?: number;
   agents?: AgentEntry[];
-  userId?: string;
   activeAgentId?: string | null;
   activeSessionByAgent?: Record<string, string | null>;
 }
@@ -27,7 +26,6 @@ function loadPersisted(): PersistedState {
       return {
         version: STORAGE_VERSION,
         agents: state.agents,
-        userId: state.userId,
         activeAgentId: state.activeAgentId,
         activeSessionByAgent: state.activeSessionByAgent ?? {},
       };
@@ -41,7 +39,6 @@ function savePersisted(state: CoreState) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       version: STORAGE_VERSION,
       agents: state.agents,
-      userId: state.userId,
       activeAgentId: state.activeAgentId,
       activeSessionByAgent: state.activeSessionByAgent,
     }));
@@ -612,7 +609,6 @@ interface CoreState {
   attachmentErrorByConversation: Record<string, string>;
   activeAgentId: string | null;
   agents: AgentEntry[];
-  userId: string;
   mode: HomeMode;
   page: "connect" | "chat";
   terminalOpen: boolean;
@@ -630,7 +626,7 @@ interface CoreState {
 }
 
 interface CoreActions {
-  connect: (host: string, port: number, token: string, userId: string) => Promise<boolean>;
+  connect: (host: string, port: number, token: string) => Promise<boolean>;
   connectToAgent: (agentId: string) => Promise<void>;
   switchAgent: (agentId: string) => Promise<void>;
   addAgent: (host: string, port: number, token: string) => void;
@@ -674,7 +670,6 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   attachmentErrorByConversation: {},
   activeAgentId: persisted.activeAgentId ?? null,
   agents: persisted.agents ?? [],
-  userId: persisted.userId ?? "",
   mode: "working" as HomeMode,
   page: (persisted.agents && persisted.agents.length > 0) ? "chat" : "connect",
   terminalOpen: false,
@@ -836,17 +831,16 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
 
   // ── Connect (first-time from ConnectPage) ──
 
-  connect: async (host, port, token, userId) => {
+  connect: async (host, port, token) => {
     const agentId = `${host}:${port}`;
 
     set(produce((s: CoreState) => {
-      s.userId = userId;
       s.connectionByAgent[agentId] = { status: "connecting", agentName: "", error: "" };
     }));
 
     try {
       const requestedSessionId = get().activeSessionByAgent[agentId] || undefined;
-      const res = await window.gateway.connect({ host, port, token, userId, agentId, sessionId: requestedSessionId });
+      const res = await window.gateway.connect({ host, port, token, agentId, sessionId: requestedSessionId });
       if (res.error) {
         set(produce((s: CoreState) => {
           s.connectionByAgent[agentId] = { status: "error", agentName: "", error: res.error!.message };
@@ -926,7 +920,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       const requestedSessionId = get().activeSessionByAgent[agentId] || undefined;
       const res = await window.gateway.connect({
         host: agent.host, port: agent.port, token: agent.token,
-        userId: get().userId, agentId, sessionId: requestedSessionId,
+        agentId, sessionId: requestedSessionId,
       });
 
       if (res.error) {
@@ -1361,7 +1355,6 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         host: agent.host,
         port: agent.port,
         token: agent.token,
-        userId: get().userId,
         agentId,
       });
       if (res.error) {
@@ -1425,7 +1418,6 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         host: agent.host,
         port: agent.port,
         token: agent.token,
-        userId: get().userId,
         agentId,
         sessionId,
       });
@@ -1609,7 +1601,8 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   clearUnread: (agentId) => set(produce((s: CoreState) => { s.unreadByAgent[agentId] = 0; })),
 }));
 
-// Persist agents / userId / activeAgentId to localStorage on every change
+// Persist connection and session selections to localStorage. Identity secrets
+// live exclusively in the Electron main-process vault.
 useCoreStore.subscribe((state) => savePersisted(state));
 
 // ── Gateway event handler ──

@@ -39,7 +39,55 @@ class ConnectParams(BaseModel):
     token: str = ""
     client: str = "unknown"
     session_id: str = ""  # 重连时带上之前的 session_id 可恢复会话
-    user_id: str = ""  # 用户身份，设置后加载该用户的对话历史
+
+
+# ── Person identity ──────────────────────────
+
+class IdentityRegisterBeginParams(BaseModel):
+    display_name: str = Field(..., min_length=1, max_length=100)
+    public_key: str = Field(..., min_length=1, max_length=256)
+
+
+class IdentityRegisterCompleteParams(BaseModel):
+    challenge_id: str = Field(..., min_length=1, max_length=128)
+    signature: str = Field(..., min_length=1, max_length=256)
+
+
+class IdentityAuthenticateBeginParams(BaseModel):
+    issuer: str = Field(..., min_length=1, max_length=256)
+    subject: str = Field(..., min_length=1, max_length=256)
+
+
+class IdentityAuthenticateCompleteParams(BaseModel):
+    challenge_id: str = Field(..., min_length=1, max_length=128)
+    signature: str = Field(..., min_length=1, max_length=256)
+
+
+class IdentityLegacySessionClaimParams(BaseModel):
+    session_id: str = Field(..., min_length=1, max_length=256)
+
+
+class ChannelNameParams(BaseModel):
+    channel: Literal["feishu"] = "feishu"
+
+
+class ChannelTestParams(BaseModel):
+    channel: Literal["feishu"] = "feishu"
+    app_id: str = Field(..., min_length=1, max_length=256)
+    app_secret: str = Field(default="", max_length=512)
+
+
+class ChannelConfigureParams(ChannelTestParams):
+    display_name: str = Field(default="", max_length=100)
+    account_id: str = Field(default="default", min_length=1, max_length=100)
+
+
+class IdentityLinkBeginParams(BaseModel):
+    provider: Literal["feishu"] = "feishu"
+
+
+class IdentityLinkRequestParams(BaseModel):
+    request_id: str = Field(..., min_length=1, max_length=128)
 
 
 # ── Chat ─────────────────────────────────────
@@ -56,7 +104,6 @@ class ChatSendParams(BaseModel):
     content: str = Field(default="", max_length=200_000)
     client_request_id: str = Field(..., min_length=1, max_length=128)
     session_id: str = ""
-    user_id: str = ""
     attachments: list[ChatAttachment] = Field(default_factory=list, max_length=4)
     attachment_refs: list[str] = Field(default_factory=list, max_length=4)
     retry_of_message_id: int | None = Field(default=None, ge=1)

@@ -42,6 +42,9 @@ class FeishuChannel:
         self._ws_client: Client | None = None
         self._ws_thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._state = "stopped"
+        self._last_error = ""
+        self._stopping = False
 
     def platform_name(self) -> str:
         return "feishu"
@@ -118,6 +121,9 @@ class FeishuChannel:
 
     def start(self) -> None:
         logger.info("[Feishu] Starting channel: app_id=%s account=%s", self.app_id, self.account_id)
+        self._state = "starting"
+        self._last_error = ""
+        self._stopping = False
 
         def run_ws():
             loop = asyncio.new_event_loop()
@@ -128,6 +134,16 @@ class FeishuChannel:
             logger.info("[Feishu/WS] daemon thread started (loop=%s)", loop)
             try:
                 self._ws_client = self._create_ws_client()
+
+                original_connect = self._ws_client._connect
+
+                async def _tracked_connect():
+                    result = await original_connect()
+                    self._state = "running"
+                    logger.info("[Feishu/WS] connected")
+                    return result
+
+                self._ws_client._connect = _tracked_connect
 
                 # 注入诊断：patch _handle_message 捕获异常帧
                 _orig_handle_msg = self._ws_client._handle_message
@@ -144,19 +160,49 @@ class FeishuChannel:
                 self._ws_client.start()
                 logger.info("[Feishu/WS] ws_client.start() returned")
             except Exception as e:
-                logger.error("[Feishu/WS] Error: %s", e, exc_info=True)
+                if not self._stopping:
+                    self._state = "error"
+                    self._last_error = str(e)
+                    logger.error("[Feishu/WS] Error: %s", e, exc_info=True)
             finally:
                 logger.info("[Feishu/WS] daemon thread exiting, closing loop")
                 loop.close()
                 self._loop = None
+                if self._state != "error":
+                    self._state = "stopped"
 
         self._ws_thread = threading.Thread(target=run_ws, daemon=True, name="feishu-ws")
         self._ws_thread.start()
 
     def stop(self) -> None:
         self._on_feishu_message = None
+        self._stopping = True
+        loop = self._loop
+        if loop and loop.is_running():
+            client = self._ws_client
+            if client is not None:
+                try:
+                    future = asyncio.run_coroutine_threadsafe(client._disconnect(), loop)
+                    future.result(timeout=3)
+                except Exception:
+                    logger.debug("[Feishu/WS] disconnect during stop failed", exc_info=True)
+            loop.call_soon_threadsafe(loop.stop)
         if self._ws_thread:
             self._ws_thread.join(timeout=5)
+        self._state = "stopped"
+
+    def test_credentials(self) -> bool:
+        """Validate credentials without opening a long-lived WebSocket."""
+        self._invalidate_token_cache(self.app_id)
+        return bool(self._get_token())
+
+    def status(self) -> dict:
+        return {
+            "state": self._state,
+            "error": self._last_error,
+            "app_id": self.app_id,
+            "account_id": self.account_id,
+        }
 
     def _get_token(self) -> str | None:
         """获取 tenant access token（与 SDK WS 共享缓存，避免互相踢 token）。

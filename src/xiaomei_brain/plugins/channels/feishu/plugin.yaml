@@ -11,6 +11,12 @@ configSchema:
       type: string
     appSecret:
       type: string
+    accountId:
+      type: string
+      description: 当前 Agent 绑定的飞书账号配置标识
+    displayName:
+      type: string
+      description: Desktop 中展示的机器人名称
     groupAllowFrom:
       type: array
       description: 允许的群聊列表（* 表示全部）

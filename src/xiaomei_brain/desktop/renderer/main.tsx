@@ -10,6 +10,8 @@ import "./styles/home.css";
 import "./styles/terminal.css";
 import "./styles/about.css";
 import "./styles/agent-dialog.css";
+import "./styles/identity-settings.css";
+import "./styles/agent-settings.css";
 
 // ─── 平台标记 ───
 document.body.setAttribute("data-electron-desktop", "true");

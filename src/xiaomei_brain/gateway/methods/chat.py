@@ -61,9 +61,12 @@ class ChatMethods:
         session_id = cm.resolve_session(conn_id, parsed.session_id, f"ws-{conn_id[:8]}")
         if session_id is None:
             return build_error(req_id, ErrorCode.INVALID_PARAMS, "不能访问当前连接之外的会话")
-        user_id = cm.resolve_user(conn_id, parsed.user_id, "ws-user")
+        # 旧客户端可能仍回显 user_id，但它只能与 Gateway 已绑定的
+        # person_id 相同；缺失时直接使用服务器身份，绝不据此切换人物。
+        requested_user_id = str(params.get("user_id", ""))
+        user_id = cm.resolve_user(conn_id, requested_user_id, "ws-user")
         if user_id is None:
-            return build_error(req_id, ErrorCode.INVALID_PARAMS, "不能冒用当前连接之外的用户身份")
+            return build_error(req_id, ErrorCode.UNAUTHORIZED, "当前连接身份无效或尚未认证")
         attachments_fingerprint = (
             attachment_fingerprint(parsed.attachments)
             + ":" + ",".join(parsed.attachment_refs)
@@ -216,7 +219,6 @@ class ChatMethods:
             "content": source.get("content", ""),
             "client_request_id": parsed.client_request_id,
             "session_id": session_id,
-            "user_id": source.get("user_id", "ws-user"),
             "attachment_refs": attachment_refs,
             "retry_of_message_id": parsed.message_id,
         })

@@ -97,18 +97,28 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 res = _method_router.dispatch(conn_id, req.id, req.method, req.params)
                 await send_frame(res)
 
-                # connect 成功后注册 Peer 路由（使用 handler 返回的 session_id）
-                if req.method == "connect" and "result" in res and _global_router and not _peer_registered:
+                # connect 只记录待恢复会话，人物认证前不注册输出路由。
+                if req.method == "connect" and "result" in res:
                     session_id = res["result"]["session_id"]
+                    cm.set_pending_session(conn_id, session_id)
+
+                # 人物签名成功后，连接才获得会话和输出路由。
+                if (
+                    req.method in {
+                        "identity.register.complete",
+                        "identity.authenticate.complete",
+                    }
+                    and res.get("result", {}).get("authenticated")
+                    and _global_router
+                    and not _peer_registered
+                ):
+                    session_id = cm.get_session_id(conn_id)
+                    if not session_id:
+                        continue
                     _global_router.register_peer(
                         peer_type="human", peer_id=conn_id,
                         channel="ws", session_id=session_id,
                         output_type="ws", output_target=session_id,
-                    )
-                    cm.set_session(
-                        session_id,
-                        conn_id,
-                        str(req.params.get("user_id", "")) or "ws-user",
                     )
                     _peer_registered = True
             else:

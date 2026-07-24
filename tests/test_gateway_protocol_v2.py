@@ -122,6 +122,22 @@ def test_replaced_websocket_loses_its_session_authority():
     assert connections.resolve_session("new-conn", "session-2") is None
 
 
+def test_pending_connection_cannot_replace_active_session_before_identity():
+    connections = ConnectionManager()
+    connections.connections["active-conn"] = object()
+    connections.connections["pending-conn"] = object()
+    connections.set_session("session-1", "active-conn", "person-1")
+    connections.set_pending_session("pending-conn", "session-1")
+
+    assert connections.get_conn_id("session-1") == "active-conn"
+    assert connections.get_session_id("pending-conn") is None
+
+    activated = connections.activate_person_session("pending-conn", "person-1")
+    assert activated == "session-1"
+    assert connections.get_conn_id("session-1") == "pending-conn"
+    assert connections.resolve_session("active-conn", "session-1") is None
+
+
 def test_conversation_driver_message_events_share_session_and_turn():
     class EventRouter:
         def __init__(self):
@@ -315,7 +331,7 @@ def test_bound_connection_cannot_send_as_another_session_or_user():
         cm.unregister(conn_id)
 
     assert wrong_session["error"]["code"] == -32602
-    assert wrong_user["error"]["code"] == -32602
+    assert wrong_user["error"]["code"] == -32001
     assert inbound.calls == 0
 
 

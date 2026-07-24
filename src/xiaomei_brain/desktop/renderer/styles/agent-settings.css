@@ -1,0 +1,57 @@
+.agent-settings-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  background: rgba(19, 21, 25, .46);
+  backdrop-filter: blur(3px);
+}
+
+.agent-settings-dialog {
+  width: min(520px, calc(100vw - 40px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  border: 1px solid var(--ui-border-default);
+  border-radius: 16px;
+  padding: 22px;
+  background: var(--ui-bg-secondary);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .28);
+}
+
+.agent-settings-dialog header,
+.agent-settings-dialog footer,
+.channel-heading,
+.channel-actions {
+  display: flex;
+  align-items: center;
+}
+
+.agent-settings-dialog header { justify-content: space-between; margin-bottom: 22px; }
+.agent-settings-dialog header h2, .channel-heading h3 { margin: 0; }
+.agent-settings-dialog header p { margin: 4px 0 0; color: var(--ui-color-text-secondary); font-size: 13px; }
+.agent-settings-close { border: 0; background: transparent; color: var(--ui-color-text-secondary); cursor: pointer; }
+.channel-heading { gap: 12px; margin-bottom: 18px; }
+.channel-logo { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 12px; color: #fff; background: #3370ff; font-weight: 700; }
+.channel-runtime { color: var(--ui-color-text-secondary); font-size: 12px; }
+.channel-runtime.running { color: #22a06b; }
+
+.agent-settings-dialog label { display: grid; gap: 7px; margin: 14px 0; color: var(--ui-color-text-secondary); font-size: 13px; }
+.agent-settings-dialog input { box-sizing: border-box; width: 100%; border: 1px solid var(--ui-border-default); border-radius: 9px; padding: 10px 12px; color: var(--ui-color-text-primary); background: var(--ui-bg-primary); outline: none; }
+.agent-settings-dialog input:focus { border-color: var(--ui-border-focus); }
+.channel-actions { justify-content: flex-end; gap: 10px; margin-top: 18px; }
+
+.identity-link-panel { margin-top: 22px; border: 1px solid var(--ui-border-default); border-radius: 12px; padding: 16px; background: var(--ui-bg-primary); }
+.identity-link-panel h3 { margin: 0 0 6px; font-size: 15px; }
+.identity-link-panel p { margin: 0 0 13px; color: var(--ui-color-text-secondary); font-size: 13px; line-height: 1.55; }
+.link-command { display: flex; width: 100%; align-items: center; justify-content: space-between; border: 1px dashed var(--ui-border-default); border-radius: 9px; padding: 12px; color: var(--ui-color-text-primary); background: var(--ui-bg-secondary); cursor: pointer; }
+.link-command code { font-size: 17px; }
+.link-command span, .link-status { color: var(--ui-color-text-secondary); font-size: 12px; }
+.link-status { margin-top: 9px; }
+.link-status.completed { color: #22a06b; }
+.channel-notice, .channel-error { margin-top: 14px; border-radius: 8px; padding: 9px 11px; font-size: 13px; }
+.channel-notice { color: #126b47; background: rgba(34, 160, 107, .12); }
+.channel-error { color: #b42318; background: rgba(240, 68, 56, .1); }
+.agent-settings-dialog footer { justify-content: flex-end; gap: 10px; margin-top: 22px; }
+.channel-remove { margin-right: auto; border: 0; color: #d04444; background: transparent; cursor: pointer; }
+.agent-settings-empty-trigger { position: absolute; top: 16px; right: 18px; z-index: 2; }

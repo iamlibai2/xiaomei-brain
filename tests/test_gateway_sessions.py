@@ -4,17 +4,40 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from xiaomei_brain.gateway.server_methods import MethodRouter
+from xiaomei_brain.gateway.connection import cm
 from xiaomei_brain.memory.conversation_db import ConversationDB
+from xiaomei_brain.people import PeopleService
 
 
 class GatewaySessionsTest(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.db = ConversationDB(Path(self.temp_dir.name) / "brain.db")
+        self.db_path = Path(self.temp_dir.name) / "brain.db"
+        self.db = ConversationDB(self.db_path)
+        self.people = PeopleService.for_agent_db(self.db_path)
+        self.person = self.people.create_person("Desktop Person")
 
     def tearDown(self):
+        cm.unregister("desktop-connection")
+        self.people.store.close()
         self.db.close()
         self.temp_dir.cleanup()
+
+    def authorized_router(self, *session_ids):
+        for session_id in session_ids:
+            self.people.store.ensure_session(
+                session_id,
+                "person",
+                self.person.person_id,
+            )
+        living = SimpleNamespace(
+            agent=SimpleNamespace(conversation_db=self.db),
+            _people_service=self.people,
+        )
+        router = MethodRouter(living=living)
+        router._auth_sessions.add("desktop-connection")
+        cm.set_session("rpc-current", "desktop-connection", self.person.person_id)
+        return router
 
     def test_list_sessions_returns_recent_chat_summaries(self):
         self.db.log("session-old", "user", "older question")
@@ -36,9 +59,7 @@ class GatewaySessionsTest(unittest.TestCase):
 
     def test_chat_sessions_rpc_uses_agent_conversation_database(self):
         self.db.log("desktop-session", "user", "restore me")
-        living = SimpleNamespace(agent=SimpleNamespace(conversation_db=self.db))
-        router = MethodRouter(living=living)
-        router._auth_sessions.add("desktop-connection")
+        router = self.authorized_router("desktop-session")
 
         response = router.dispatch(
             "desktop-connection",
@@ -162,9 +183,11 @@ class GatewaySessionsTest(unittest.TestCase):
         self.db.log("session-alpha", "user", "ordinary discussion")
         self.db.log("session-beta", "user", "needle in the title")
         self.db.log("session-gamma", "user", "another discussion")
-        living = SimpleNamespace(agent=SimpleNamespace(conversation_db=self.db))
-        router = MethodRouter(living=living)
-        router._auth_sessions.add("desktop-connection")
+        router = self.authorized_router(
+            "session-alpha",
+            "session-beta",
+            "session-gamma",
+        )
 
         first_page = router.dispatch(
             "desktop-connection",

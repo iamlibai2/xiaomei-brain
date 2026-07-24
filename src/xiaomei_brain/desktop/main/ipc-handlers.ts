@@ -8,10 +8,10 @@ import { TerminalManager } from "./terminal-manager";
 import { discoverLocalAgents } from "./local-agent-discovery";
 import { AgentLifecycleAction, RuntimeManager } from "./runtime-manager";
 import { sanitizeNotificationText } from "./notification-text";
+import { IdentityVault } from "./identity-vault";
 
 const connections = new Map<string, GatewayClient>();
 const connectionSessions = new Map<string, string>();
-const connectionUsers = new Map<string, string>();
 const connectionReady = new Map<string, boolean>();
 const activeNotifications = new Set<Notification>();
 const attachmentCache = new Map<string, {
@@ -47,9 +47,133 @@ export function registerIpcHandlers(
 ): void {
   const terminalMgr = new TerminalManager();
   const runtimeManager = new RuntimeManager(config);
+  const identityVault = new IdentityVault();
   void runtimeManager.warmup().catch((error) => {
     console.error("[runtime] background initialization failed", error);
   });
+
+  ipcMain.handle("identity:status", async () => {
+    try {
+      return identityVault.status();
+    } catch (error) {
+      return {
+        exists: true,
+        unlocked: false,
+        error: String(error instanceof Error ? error.message : error),
+      };
+    }
+  });
+  ipcMain.handle(
+    "identity:create",
+    async (_event, args: { displayName: string; password: string }) => {
+      try {
+        return { ok: true, status: identityVault.create(args.displayName, args.password) };
+      } catch (error) {
+        return { ok: false, error: String(error instanceof Error ? error.message : error) };
+      }
+    },
+  );
+  ipcMain.handle("identity:unlock", async (_event, args: { password: string }) => {
+    try {
+      return { ok: true, status: identityVault.unlock(args.password) };
+    } catch (error) {
+      return { ok: false, error: String(error instanceof Error ? error.message : error) };
+    }
+  });
+  ipcMain.handle("identity:lock", async () => identityVault.lock());
+  ipcMain.handle("identity:changePassword", async (_event, args: {
+    currentPassword: string;
+    newPassword: string;
+  }) => {
+    try {
+      return {
+        ok: true,
+        status: identityVault.changePassword(args.currentPassword, args.newPassword),
+      };
+    } catch (error) {
+      return { ok: false, error: String(error instanceof Error ? error.message : error) };
+    }
+  });
+  ipcMain.handle("identity:exportBackup", async () => {
+    try {
+      const identity = identityVault.identity();
+      const win = getWindow();
+      const result = win
+        ? await dialog.showSaveDialog(win, {
+            title: "导出加密身份备份",
+            defaultPath: `${identity.displayName}-xiaomei-identity.json`,
+            filters: [{ name: "xiaomei-brain 身份备份", extensions: ["json"] }],
+          })
+        : await dialog.showSaveDialog({
+            title: "导出加密身份备份",
+            defaultPath: `${identity.displayName}-xiaomei-identity.json`,
+            filters: [{ name: "xiaomei-brain 身份备份", extensions: ["json"] }],
+          });
+      if (result.canceled || !result.filePath) return { ok: false, canceled: true };
+      identityVault.exportBackup(result.filePath);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: String(error instanceof Error ? error.message : error) };
+    }
+  });
+  ipcMain.handle("identity:importBackup", async (_event, args: { password: string }) => {
+    try {
+      const win = getWindow();
+      const result = win
+        ? await dialog.showOpenDialog(win, {
+            title: "导入身份备份",
+            properties: ["openFile"],
+            filters: [{ name: "xiaomei-brain 身份备份", extensions: ["json"] }],
+          })
+        : await dialog.showOpenDialog({
+            title: "导入身份备份",
+            properties: ["openFile"],
+            filters: [{ name: "xiaomei-brain 身份备份", extensions: ["json"] }],
+          });
+      if (result.canceled || !result.filePaths[0]) return { ok: false, canceled: true };
+      return {
+        ok: true,
+        status: identityVault.importBackup(result.filePaths[0], args.password),
+      };
+    } catch (error) {
+      return { ok: false, error: String(error instanceof Error ? error.message : error) };
+    }
+  });
+
+  async function authenticateIdentity(client: GatewayClient): Promise<Record<string, unknown>> {
+    const identity = identityVault.identity();
+    const begin = await client.rpc("identity.authenticate.begin", {
+      issuer: identity.issuer,
+      subject: identity.subject,
+    });
+
+    if (!begin.error) {
+      const challengeId = String(begin.result?.challenge_id || "");
+      const challenge = String(begin.result?.challenge || "");
+      const complete = await client.rpc("identity.authenticate.complete", {
+        challenge_id: challengeId,
+        signature: identityVault.signChallenge(challenge),
+      });
+      if (complete.error) throw new Error(complete.error.message);
+      return complete.result || {};
+    }
+
+    // An unknown key may register only through a loopback Gateway. The Agent
+    // remains the authority that decides whether this identity may be created.
+    const register = await client.rpc("identity.register.begin", {
+      display_name: identity.displayName,
+      public_key: identity.publicKey,
+    });
+    if (register.error) throw new Error(register.error.message);
+    const challengeId = String(register.result?.challenge_id || "");
+    const challenge = String(register.result?.challenge || "");
+    const complete = await client.rpc("identity.register.complete", {
+      challenge_id: challengeId,
+      signature: identityVault.signChallenge(challenge),
+    });
+    if (complete.error) throw new Error(complete.error.message);
+    return complete.result || {};
+  }
 
   ipcMain.handle("localAgents:discover", async () => {
     return discoverLocalAgents();
@@ -82,7 +206,6 @@ export function registerIpcHandlers(
         connections.delete(args.connectionId);
       }
       connectionSessions.delete(args.connectionId);
-      connectionUsers.delete(args.connectionId);
       connectionReady.delete(args.connectionId);
     }
     console.info(`[runtime] ${args.action} requested for agent ${args.agentId}`);
@@ -204,19 +327,26 @@ export function registerIpcHandlers(
     "gateway:connect",
     async (
       _event,
-      args: { host: string; port: number; token: string; userId: string; agentId: string; sessionId?: string }
+      args: { host: string; port: number; token: string; agentId: string; sessionId?: string }
     ) => {
       try {
+        const desktopIdentity = identityVault.identity();
+        const bindingConfigKey = `identity_agent_${createHash("sha256")
+          .update(args.agentId)
+          .digest("hex")}`;
+        const identityWasSeenByAgent = config.get(bindingConfigKey) === desktopIdentity.subject;
         // Disconnect existing connection for this agent
         const existing = connections.get(args.agentId);
         if (existing) existing.disconnect();
         connections.delete(args.agentId);
         connectionSessions.delete(args.agentId);
-        connectionUsers.delete(args.agentId);
         connectionReady.delete(args.agentId);
 
         const client = new GatewayClient();
-        let sessionId = args.sessionId || "";
+        // A newly introduced Desktop identity must not silently claim an old
+        // conversation. Its first connection gets a fresh session; only after
+        // this Agent has verified the key may Desktop request saved sessions.
+        let sessionId = identityWasSeenByAgent ? (args.sessionId || "") : "";
         let authenticated = false;
         let reauthenticating = false;
         let recoveringEventGap = false;
@@ -301,7 +431,6 @@ export function registerIpcHandlers(
           void client.rpc("connect", {
             token: args.token,
             client: "desktop",
-            user_id: args.userId,
             session_id: sessionId,
           }).then(async (res) => {
             if (res.error) {
@@ -311,6 +440,7 @@ export function registerIpcHandlers(
 
             const result = res.result || {};
             sessionId = (result["session_id"] as string) || sessionId;
+            await authenticateIdentity(client);
             connectionSessions.set(args.agentId, sessionId);
             const resume = await client.rpc("session.resume", {
               session_id: sessionId,
@@ -342,7 +472,6 @@ export function registerIpcHandlers(
         const res = await client.rpc("connect", {
           token: args.token,
           client: "desktop",
-          user_id: args.userId,
           session_id: sessionId,
         });
 
@@ -355,9 +484,13 @@ export function registerIpcHandlers(
         const result = res.result || {};
         sessionId = (result["session_id"] as string) || "";
         const agentName = (result["agent_name"] as string) || "";
+        const identityResult = await authenticateIdentity(client);
+        const person = identityResult.person as Record<string, unknown> | undefined;
+        const personId = String(person?.person_id || "");
+        if (!personId) throw new Error("Agent 未返回有效的人物身份");
+        config.set(bindingConfigKey, desktopIdentity.subject);
         authenticated = true;
         connectionSessions.set(args.agentId, sessionId);
-        connectionUsers.set(args.agentId, args.userId);
 
         const resume = await client.rpc("session.resume", {
           session_id: sessionId,
@@ -367,7 +500,6 @@ export function registerIpcHandlers(
           client.disconnect();
           connections.delete(args.agentId);
           connectionSessions.delete(args.agentId);
-          connectionUsers.delete(args.agentId);
           connectionReady.delete(args.agentId);
           return resume;
         }
@@ -389,7 +521,6 @@ export function registerIpcHandlers(
         connections.get(args.agentId)?.disconnect();
         connections.delete(args.agentId);
         connectionSessions.delete(args.agentId);
-        connectionUsers.delete(args.agentId);
         connectionReady.delete(args.agentId);
         return { error: { code: -32099, message: `Connection failed: ${e}` } };
       }
@@ -405,7 +536,6 @@ export function registerIpcHandlers(
       connections.delete(args.agentId);
     }
     connectionSessions.delete(args.agentId);
-    connectionUsers.delete(args.agentId);
     connectionReady.delete(args.agentId);
   });
 
@@ -425,7 +555,6 @@ export function registerIpcHandlers(
         content: args.content,
         client_request_id: args.clientRequestId,
         session_id: connectionSessions.get(args.agentId) || "",
-        user_id: connectionUsers.get(args.agentId) || "",
         attachments: (args.attachments || []).map((attachment) => ({
           id: attachment.id,
           name: attachment.name,
@@ -678,6 +807,80 @@ export function registerIpcHandlers(
     if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
     return client.rpc("identity.list", {});
   });
+
+  ipcMain.handle("gateway:listLegacySessions", async (_event, args: { agentId: string }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("identity.legacy_sessions.list", {});
+  });
+
+  ipcMain.handle("gateway:claimLegacySession", async (_event, args: {
+    agentId: string;
+    sessionId: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("identity.legacy_sessions.claim", { session_id: args.sessionId });
+  });
+
+  const channelRpc = (
+    args: { agentId: string },
+    method: string,
+    params: Record<string, unknown>,
+  ) => {
+    const client = getClient(args.agentId);
+    if (!client) {
+      return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    }
+    return client.rpc(method, params);
+  };
+
+  ipcMain.handle("gateway:getChannelConfig", async (_event, args: {
+    agentId: string; channel: string;
+  }) => channelRpc(args, "channel.config.get", { channel: args.channel }));
+
+  ipcMain.handle("gateway:testChannel", async (_event, args: {
+    agentId: string; channel: string; appId: string; appSecret: string;
+  }) => channelRpc(args, "channel.test", {
+    channel: args.channel,
+    app_id: args.appId,
+    app_secret: args.appSecret,
+  }));
+
+  ipcMain.handle("gateway:configureChannel", async (_event, args: {
+    agentId: string;
+    channel: string;
+    appId: string;
+    appSecret: string;
+    displayName: string;
+    accountId?: string;
+  }) => channelRpc(args, "channel.configure", {
+    channel: args.channel,
+    app_id: args.appId,
+    app_secret: args.appSecret,
+    display_name: args.displayName,
+    account_id: args.accountId || "default",
+  }));
+
+  ipcMain.handle("gateway:getChannelStatus", async (_event, args: {
+    agentId: string; channel: string;
+  }) => channelRpc(args, "channel.status", { channel: args.channel }));
+
+  ipcMain.handle("gateway:removeChannel", async (_event, args: {
+    agentId: string; channel: string;
+  }) => channelRpc(args, "channel.remove", { channel: args.channel }));
+
+  ipcMain.handle("gateway:beginIdentityLink", async (_event, args: {
+    agentId: string; provider: string;
+  }) => channelRpc(args, "identity.link.begin", { provider: args.provider }));
+
+  ipcMain.handle("gateway:getIdentityLinkStatus", async (_event, args: {
+    agentId: string; requestId: string;
+  }) => channelRpc(args, "identity.link.status", { request_id: args.requestId }));
+
+  ipcMain.handle("gateway:cancelIdentityLink", async (_event, args: {
+    agentId: string; requestId: string;
+  }) => channelRpc(args, "identity.link.cancel", { request_id: args.requestId }));
 
   // ─── Config (local JSON) ────────────────────
 

@@ -747,6 +747,8 @@ class ConversationDB(SQLiteStore):
         limit: int = 100,
         offset: int = 0,
         query: str = "",
+        scope_type: str | None = None,
+        scope_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return recent chat sessions with display metadata.
 
@@ -756,9 +758,21 @@ class ConversationDB(SQLiteStore):
         safe_limit = max(1, min(int(limit), 501))
         safe_offset = max(0, int(offset))
         normalized_query = query.strip()
+        scope_join = ""
+        scope_params: list[Any] = []
+        if scope_type is not None or scope_id is not None:
+            if not scope_type or not scope_id:
+                raise ValueError("scope_type and scope_id must be supplied together")
+            scope_join = """
+                INNER JOIN conversation_sessions AS scoped
+                  ON scoped.session_id = m.session_id
+                 AND scoped.scope_type = ?
+                 AND scoped.scope_id = ?
+            """
+            scope_params.extend([scope_type, scope_id])
         conn = self._get_conn()
         rows = conn.execute(
-            """
+            f"""
             WITH summaries AS (
                 SELECT
                     m.session_id,
@@ -774,6 +788,7 @@ class ConversationDB(SQLiteStore):
                         LIMIT 1
                     ), '') AS first_user_message
                 FROM messages AS m
+                {scope_join}
                 WHERE m.session_id <> ''
                   AND m.role IN ('user', 'assistant')
                 GROUP BY m.session_id
@@ -785,7 +800,14 @@ class ConversationDB(SQLiteStore):
             ORDER BY updated_at DESC
             LIMIT ? OFFSET ?
             """,
-            (normalized_query, normalized_query, normalized_query, safe_limit, safe_offset),
+            (
+                *scope_params,
+                normalized_query,
+                normalized_query,
+                normalized_query,
+                safe_limit,
+                safe_offset,
+            ),
         ).fetchall()
         return [dict(row) for row in rows]
 
