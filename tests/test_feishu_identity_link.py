@@ -41,6 +41,27 @@ def test_wrong_link_code_does_not_create_binding(tmp_path):
     assert people.resolve_verified_identity("feishu:app:cli_demo", "ou_sender") is None
 
 
+def test_revoked_feishu_identity_can_be_rebound_to_same_person(tmp_path):
+    people = PeopleService(PeopleStore(tmp_path / "brain.db"))
+    person = people.create_person("测试人物")
+    links = IdentityLinkService(people)
+    first = links.begin(person.person_id, "feishu", "feishu:app:cli_demo")
+    binding = links.consume(
+        "feishu", "feishu:app:cli_demo", "ou_sender", first.code,
+    )
+    assert binding is not None
+    assert people.store.revoke_binding(binding.binding_id) is True
+
+    second = links.begin(person.person_id, "feishu", "feishu:app:cli_demo")
+    restored = links.consume(
+        "feishu", "feishu:app:cli_demo", "ou_sender", second.code,
+    )
+
+    assert restored is not None
+    assert restored.binding_id == binding.binding_id
+    assert restored.revoked_at is None
+
+
 def test_new_link_request_cancels_previous_request(tmp_path):
     people = PeopleService(PeopleStore(tmp_path / "brain.db"))
     person = people.create_person("测试人物")

@@ -110,6 +110,12 @@ export interface GatewayBridge {
   beginIdentityLink(args: { agentId: string; provider: "feishu" }): Promise<JsonRpcResponse>;
   getIdentityLinkStatus(args: { agentId: string; requestId: string }): Promise<JsonRpcResponse>;
   cancelIdentityLink(args: { agentId: string; requestId: string }): Promise<JsonRpcResponse>;
+  listIdentityLinks(args: { agentId: string; provider: "feishu" }): Promise<JsonRpcResponse>;
+  revokeIdentityLink(args: {
+    agentId: string;
+    provider: "feishu";
+    bindingId: string;
+  }): Promise<JsonRpcResponse>;
   getConfig(key: string): Promise<string | null>;
 
   /**

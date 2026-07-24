@@ -138,6 +138,8 @@ class MethodRouter:
                 "identity.link.begin",
                 "identity.link.status",
                 "identity.link.cancel",
+                "identity.link.list",
+                "identity.link.revoke",
             },
         }
         for capability, required_methods in requirements.items():

@@ -90,6 +90,15 @@ class IdentityLinkRequestParams(BaseModel):
     request_id: str = Field(..., min_length=1, max_length=128)
 
 
+class IdentityLinkListParams(BaseModel):
+    provider: Literal["feishu"] = "feishu"
+
+
+class IdentityLinkRevokeParams(BaseModel):
+    provider: Literal["feishu"] = "feishu"
+    binding_id: str = Field(..., min_length=1, max_length=128)
+
+
 # ── Chat ─────────────────────────────────────
 
 class ChatAttachment(BaseModel):

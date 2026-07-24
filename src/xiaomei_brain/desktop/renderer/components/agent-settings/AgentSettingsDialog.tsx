@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button, Icon } from "../ui";
 
 interface Props {
@@ -15,6 +15,13 @@ type ChannelConfig = {
   secret_configured?: boolean;
 };
 
+type IdentityLink = {
+  binding_id: string;
+  subject_hint: string;
+  created_at: number;
+  last_verified_at?: number | null;
+};
+
 export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props) {
   const [appId, setAppId] = useState("");
   const [appSecret, setAppSecret] = useState("");
@@ -27,6 +34,18 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props
   const [linkRequestId, setLinkRequestId] = useState("");
   const [linkCommand, setLinkCommand] = useState("");
   const [linkStatus, setLinkStatus] = useState("");
+  const [identityLinks, setIdentityLinks] = useState<IdentityLink[]>([]);
+
+  const refreshIdentityLinks = useCallback(async () => {
+    if (!agentId) return;
+    const response = await window.gateway.listIdentityLinks({
+      agentId,
+      provider: "feishu",
+    });
+    if (response.error) return;
+    const raw = response.result?.bindings;
+    setIdentityLinks(Array.isArray(raw) ? raw as IdentityLink[] : []);
+  }, [agentId]);
 
   useEffect(() => {
     if (!open || !agentId) return;
@@ -48,6 +67,10 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props
   }, [agentId, agentName, open]);
 
   useEffect(() => {
+    if (open) void refreshIdentityLinks();
+  }, [open, refreshIdentityLinks]);
+
+  useEffect(() => {
     if (!open || !linkRequestId || linkStatus === "completed") return;
     const timer = window.setInterval(() => {
       void window.gateway.getIdentityLinkStatus({ agentId, requestId: linkRequestId })
@@ -57,12 +80,13 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props
           setLinkStatus(status);
           if (status === "completed") {
             setNotice("飞书身份已绑定到当前人物。");
+            void refreshIdentityLinks();
             window.clearInterval(timer);
           }
         });
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [agentId, linkRequestId, linkStatus, open]);
+  }, [agentId, linkRequestId, linkStatus, open, refreshIdentityLinks]);
 
   useEffect(() => {
     if (!open || !agentId || !secretConfigured) return;
@@ -162,6 +186,29 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props
     }
   };
 
+  const revokeIdentity = async (bindingId: string) => {
+    setBusy(`revoke:${bindingId}`);
+    setError("");
+    try {
+      const response = await window.gateway.revokeIdentityLink({
+        agentId,
+        provider: "feishu",
+        bindingId,
+      });
+      if (response.error) {
+        setError(response.error.message);
+        return;
+      }
+      setNotice("飞书身份已解除绑定。");
+      setLinkRequestId("");
+      setLinkCommand("");
+      setLinkStatus("");
+      await refreshIdentityLinks();
+    } finally {
+      setBusy("");
+    }
+  };
+
   return (
     <div className="agent-settings-backdrop" onMouseDown={onClose}>
       <section className="agent-settings-dialog" onMouseDown={(event) => event.stopPropagation()}>
@@ -214,6 +261,25 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props
           <div className="identity-link-panel">
             <h3>绑定当前人物</h3>
             <p>生成绑定码后，在飞书中私聊机器人并发送下面的命令。</p>
+            {identityLinks.length > 0 && (
+              <div className="identity-link-list">
+                {identityLinks.map((binding) => (
+                  <div className="identity-link-item" key={binding.binding_id}>
+                    <div>
+                      <strong>已绑定飞书身份</strong>
+                      <code>{binding.subject_hint}</code>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={Boolean(busy)}
+                      onClick={() => void revokeIdentity(binding.binding_id)}
+                    >
+                      {busy === `revoke:${binding.binding_id}` ? "解除中…" : "解除绑定"}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             {linkCommand ? (
               <>
                 <button

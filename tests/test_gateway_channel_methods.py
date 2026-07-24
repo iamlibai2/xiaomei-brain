@@ -36,6 +36,7 @@ def test_channel_rpc_configures_current_agent_and_begins_person_link(tmp_path):
         _channel_configuration=ChannelConfigurationService("xiaomei", tmp_path),
         _channel_runtime=FakeRuntime(),
         _identity_link_service=IdentityLinkService(people),
+        _people_service=people,
     )
     methods = ChannelMethods(
         living,
@@ -57,12 +58,35 @@ def test_channel_rpc_configures_current_agent_and_begins_person_link(tmp_path):
     assert link["result"]["command"].startswith("绑定 ")
     assert link["result"]["status"] == "pending"
 
+    code = link["result"]["command"].split()[-1]
+    living._identity_link_service.consume(
+        "feishu",
+        "feishu:app:cli_demo",
+        "ou_sender_1234567890",
+        code,
+    )
+    listed = methods.handle_link_list("desktop", "3", {"provider": "feishu"})
+    assert len(listed["result"]["bindings"]) == 1
+    binding = listed["result"]["bindings"][0]
+    assert binding["subject_hint"] == "ou_sen…7890"
+    assert "ou_sender_1234567890" not in str(listed)
+
+    revoked = methods.handle_link_revoke("desktop", "4", {
+        "provider": "feishu",
+        "binding_id": binding["binding_id"],
+    })
+    assert revoked["result"]["revoked"] is True
+    assert methods.handle_link_list(
+        "desktop", "5", {"provider": "feishu"},
+    )["result"]["bindings"] == []
+
 
 def test_channel_rpc_does_not_return_configured_secret(tmp_path):
     living = SimpleNamespace(
         _channel_configuration=ChannelConfigurationService("xiaomei", tmp_path),
         _channel_runtime=FakeRuntime(),
         _identity_link_service=None,
+        _people_service=None,
     )
     living._channel_configuration.configure_feishu("cli_demo", "do-not-return")
     methods = ChannelMethods(living, {})

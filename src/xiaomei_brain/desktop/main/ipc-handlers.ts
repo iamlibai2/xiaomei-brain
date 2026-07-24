@@ -882,6 +882,17 @@ export function registerIpcHandlers(
     agentId: string; requestId: string;
   }) => channelRpc(args, "identity.link.cancel", { request_id: args.requestId }));
 
+  ipcMain.handle("gateway:listIdentityLinks", async (_event, args: {
+    agentId: string; provider: string;
+  }) => channelRpc(args, "identity.link.list", { provider: args.provider }));
+
+  ipcMain.handle("gateway:revokeIdentityLink", async (_event, args: {
+    agentId: string; provider: string; bindingId: string;
+  }) => channelRpc(args, "identity.link.revoke", {
+    provider: args.provider,
+    binding_id: args.bindingId,
+  }));
+
   // ─── Config (local JSON) ────────────────────
 
   ipcMain.handle("store:getConfig", async (_event, key: string) => {

@@ -44,6 +44,13 @@
 .identity-link-panel { margin-top: 22px; border: 1px solid var(--ui-border-default); border-radius: 12px; padding: 16px; background: var(--ui-bg-primary); }
 .identity-link-panel h3 { margin: 0 0 6px; font-size: 15px; }
 .identity-link-panel p { margin: 0 0 13px; color: var(--ui-color-text-secondary); font-size: 13px; line-height: 1.55; }
+.identity-link-list { display: grid; gap: 8px; margin-bottom: 13px; }
+.identity-link-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid var(--ui-border-default); border-radius: 9px; padding: 10px 11px; background: var(--ui-bg-secondary); }
+.identity-link-item strong, .identity-link-item code { display: block; }
+.identity-link-item strong { color: var(--ui-color-text-primary); font-size: 13px; }
+.identity-link-item code { margin-top: 3px; color: var(--ui-color-text-tertiary); font-size: 11px; }
+.identity-link-item button { border: 0; color: #d04444; background: transparent; cursor: pointer; white-space: nowrap; }
+.identity-link-item button:disabled { cursor: default; opacity: .55; }
 .link-command { display: flex; width: 100%; align-items: center; justify-content: space-between; border: 1px dashed var(--ui-border-default); border-radius: 9px; padding: 12px; color: var(--ui-color-text-primary); background: var(--ui-bg-secondary); cursor: pointer; }
 .link-command code { font-size: 17px; }
 .link-command span, .link-status { color: var(--ui-color-text-secondary); font-size: 12px; }

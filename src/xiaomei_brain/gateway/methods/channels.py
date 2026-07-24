@@ -10,6 +10,8 @@ from ..schemas import (
     ChannelNameParams,
     ChannelTestParams,
     IdentityLinkBeginParams,
+    IdentityLinkListParams,
+    IdentityLinkRevokeParams,
     IdentityLinkRequestParams,
     format_error,
 )
@@ -31,6 +33,8 @@ class ChannelMethods:
             "identity.link.begin": self.handle_link_begin,
             "identity.link.status": self.handle_link_status,
             "identity.link.cancel": self.handle_link_cancel,
+            "identity.link.list": self.handle_link_list,
+            "identity.link.revoke": self.handle_link_revoke,
         }
 
     def handle_get(self, _conn_id: str, req_id: str, params: dict) -> dict:
@@ -149,6 +153,61 @@ class ChannelMethods:
         )
         return build_response(req_id, result={"cancelled": cancelled})
 
+    def handle_link_list(self, conn_id: str, req_id: str, params: dict) -> dict:
+        parsed, error = self._parse(IdentityLinkListParams, params, req_id)
+        if error:
+            return error
+        context = self._identity_contexts.get(conn_id)
+        if context is None:
+            return build_error(req_id, ErrorCode.UNAUTHORIZED, "当前连接没有人物身份")
+        issuer = self._provider_issuer(parsed.provider)
+        if not issuer:
+            return build_response(req_id, result={"bindings": []})
+        bindings = self._living._people_service.store.list_bindings(context.person_id)
+        return build_response(req_id, result={
+            "bindings": [
+                {
+                    "binding_id": binding.binding_id,
+                    "provider": parsed.provider,
+                    "subject_hint": self._subject_hint(binding.subject),
+                    "created_at": binding.created_at,
+                    "last_verified_at": binding.last_verified_at,
+                }
+                for binding in bindings
+                if binding.issuer == issuer
+                and binding.credential_type == "feishu_account"
+            ],
+        })
+
+    def handle_link_revoke(self, conn_id: str, req_id: str, params: dict) -> dict:
+        parsed, error = self._parse(IdentityLinkRevokeParams, params, req_id)
+        if error:
+            return error
+        context = self._identity_contexts.get(conn_id)
+        if context is None:
+            return build_error(req_id, ErrorCode.UNAUTHORIZED, "当前连接没有人物身份")
+        binding = self._living._people_service.store.get_binding(parsed.binding_id)
+        issuer = self._provider_issuer(parsed.provider)
+        if (
+            binding is None
+            or binding.person_id != context.person_id
+            or binding.issuer != issuer
+            or binding.credential_type != "feishu_account"
+            or binding.revoked_at is not None
+        ):
+            return build_error(req_id, ErrorCode.INVALID_REQUEST, "身份绑定不存在")
+        revoked = self._living._people_service.store.revoke_binding(binding.binding_id)
+        if revoked:
+            self._living._people_service.store.record_identity_event(
+                "external_identity_revoked",
+                person_id=context.person_id,
+                issuer=binding.issuer,
+                subject=binding.subject,
+                outcome="success",
+                metadata={"provider": parsed.provider, "binding_id": binding.binding_id},
+            )
+        return build_response(req_id, result={"revoked": revoked})
+
     def _resolve_secret(self, app_id: str, submitted: str) -> str:
         if submitted.strip():
             return submitted.strip()
@@ -157,6 +216,11 @@ class ChannelMethods:
         if configured_app == app_id:
             return str(account.get("appSecret") or account.get("app_secret") or "")
         return ""
+
+    def _provider_issuer(self, provider: str) -> str:
+        account = self._configuration().raw_account(provider)
+        app_id = str(account.get("appId") or account.get("app_id") or "")
+        return f"feishu:app:{app_id}" if provider == "feishu" and app_id else ""
 
     def _configuration(self):
         return self._living._channel_configuration
@@ -187,3 +251,9 @@ class ChannelMethods:
             "expires_at": request.expires_at,
             "completed_at": request.completed_at,
         }
+
+    @staticmethod
+    def _subject_hint(subject: str) -> str:
+        if len(subject) <= 12:
+            return subject
+        return f"{subject[:6]}…{subject[-4:]}"

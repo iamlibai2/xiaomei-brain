@@ -400,6 +400,27 @@ class PeopleStore(SQLiteStore):
         conn.commit()
         return cur.rowcount > 0
 
+    def restore_binding(
+        self,
+        binding_id: str,
+        person_id: str,
+        *,
+        now: float | None = None,
+    ) -> bool:
+        """Restore a revoked binding only to the Person that previously owned it."""
+        timestamp = time.time() if now is None else now
+        conn = self._get_conn()
+        cur = conn.execute(
+            """
+            UPDATE identity_bindings
+            SET revoked_at = NULL, last_verified_at = ?
+            WHERE binding_id = ? AND person_id = ? AND revoked_at IS NOT NULL
+            """,
+            (timestamp, binding_id, person_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
     def mark_binding_verified(
         self,
         binding_id: str,

@@ -57,9 +57,19 @@ class IdentityLinkService:
                 include_revoked=True,
             )
             if existing is not None:
-                if existing.person_id != request.person_id or existing.revoked_at is not None:
+                if existing.person_id != request.person_id:
                     raise ValueError("该飞书身份已经绑定到其他人物")
-                binding = existing
+                if existing.revoked_at is not None:
+                    if not self.people.store.restore_binding(
+                        existing.binding_id,
+                        request.person_id,
+                    ):
+                        raise ValueError("该飞书身份无法恢复绑定")
+                    binding = self.people.store.get_binding(existing.binding_id)
+                    if binding is None:
+                        raise ValueError("该飞书身份恢复失败")
+                else:
+                    binding = existing
             else:
                 binding = self.people.store.create_binding(
                     request.person_id,

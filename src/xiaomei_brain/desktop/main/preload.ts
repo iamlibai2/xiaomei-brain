@@ -41,6 +41,8 @@ const CHANNEL_MAP = {
     beginIdentityLink: { invoke: "gateway:beginIdentityLink" },
     getIdentityLinkStatus: { invoke: "gateway:getIdentityLinkStatus" },
     cancelIdentityLink: { invoke: "gateway:cancelIdentityLink" },
+    listIdentityLinks: { invoke: "gateway:listIdentityLinks" },
+    revokeIdentityLink: { invoke: "gateway:revokeIdentityLink" },
     getConfig:       { invoke: "store:getConfig" },
     onEvent:         { event: "gateway:event" },
   },
