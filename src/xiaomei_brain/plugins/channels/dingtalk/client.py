@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from typing import Callable
 
 from dingtalk_stream import (
@@ -34,12 +35,18 @@ logger = logging.getLogger(__name__)
 class _OurHandler(ChatbotHandler):
     """内部消息处理器：桥接 SDK 回调 → adapter 的 on_message 回调。"""
 
-    def __init__(self, on_message: Callable[[dict], None],
-                 get_token: Callable[[], str | None], robot_code: str):
+    def __init__(
+        self,
+        on_message: Callable[[dict], None],
+        get_token: Callable[[], str | None],
+        robot_code: str,
+        is_duplicate: Callable[[str], bool] | None = None,
+    ):
         super().__init__()
         self._on_message = on_message
         self._get_token = get_token
         self._robot_code = robot_code
+        self._is_duplicate = is_duplicate
 
     async def raw_process(self, callback_message: CallbackMessage):
         """重写 raw_process：记录 SDK 层收到的所有消息。"""
@@ -55,6 +62,14 @@ class _OurHandler(ChatbotHandler):
         try:
             data = callback.data if isinstance(callback.data, dict) else json.loads(callback.data)
             msg = ChatbotMessage.from_dict(data)
+
+            # DingTalk may redeliver a callback after reconnecting or when an
+            # acknowledgement is delayed.  Drop it before downloading media or
+            # forwarding it into the Agent queue.
+            message_id = msg.message_id or ""
+            if message_id and self._is_duplicate and self._is_duplicate(message_id):
+                logger.info("[DingTalk] duplicate message ignored: %s", message_id)
+                return AckMessage.STATUS_OK, "OK"
 
             text = ""
             media_paths: list[str] = []
@@ -122,6 +137,14 @@ class _OurHandler(ChatbotHandler):
             sender_id = msg.sender_staff_id or msg.sender_id or ""
             sender_name = msg.sender_nick or ""
             is_group = msg.conversation_type == "2"
+            bot_mentioned: bool | None = True
+            if is_group:
+                bot_mentioned = msg.is_in_at_list
+                if bot_mentioned is None and msg.robot_code:
+                    bot_mentioned = any(
+                        user.dingtalk_id == msg.robot_code
+                        for user in (msg.at_users or [])
+                    )
 
             self._on_message({
                 "sender": sender_id,
@@ -131,6 +154,7 @@ class _OurHandler(ChatbotHandler):
                 "group_title": msg.conversation_title or "",
                 "session_webhook": msg.session_webhook or "",
                 "is_group": is_group,
+                "bot_mentioned": bot_mentioned,
                 "text": text.strip(),
                 "msg_type": msg.message_type or "text",
                 "msg_id": msg.message_id or "",
@@ -171,6 +195,10 @@ class DingTalkClient:
         client.start()  # 阻塞，在后台线程调用
     """
 
+    _DEDUP_TTL_SECONDS = 5 * 60
+    _SUPERVISOR_INTERVAL_SECONDS = 2.0
+    _RECONNECT_TIMEOUT_SECONDS = 60.0
+
     def __init__(self, client_id: str, client_secret: str):
         self.client_id = client_id
         self.client_secret = client_secret
@@ -179,12 +207,111 @@ class DingTalkClient:
         self._handler: _OurHandler | None = None
         self._stream_client: DingTalkStreamClient | None = None
         self._thread: threading.Thread | None = None
+        self._supervisor_thread: threading.Thread | None = None
         self._running = False
+        self._state = "stopped"
+        self._last_error = ""
+        self._state_since = time.monotonic()
+        self._connected_at = 0.0
+        self._last_activity_at = 0.0
+        self._reconnect_count = 0
+        self._generation = 0
+        self._stop_event = threading.Event()
+        self._cycle_stop: threading.Event | None = None
+        self._lifecycle_lock = threading.RLock()
+        self._state_lock = threading.Lock()
+        self._seen_lock = threading.Lock()
+        self._seen_messages: dict[str, float] = {}
 
     # ── Callback ──────────────────────────────────────────
 
     def set_on_message(self, callback: Callable[[dict], None]) -> None:
         self._on_message = callback
+
+    def test_credentials(self) -> bool:
+        """Validate credentials without starting a Stream connection."""
+        import requests
+
+        response = requests.post(
+            "https://api.dingtalk.com/v1.0/oauth2/accessToken",
+            json={"appKey": self.client_id, "appSecret": self.client_secret},
+            timeout=15,
+        )
+        if response.status_code != 200:
+            return False
+        return bool(response.json().get("accessToken"))
+
+    def status(self) -> dict:
+        with self._state_lock:
+            return {
+                "state": self._state,
+                "error": self._last_error,
+                "threadAlive": bool(self._thread and self._thread.is_alive()),
+                "reconnectCount": self._reconnect_count,
+                "connectedAt": self._connected_at,
+                "lastActivityAt": self._last_activity_at,
+            }
+
+    def _set_state(
+        self,
+        state: str,
+        error: str | None = None,
+        *,
+        generation: int | None = None,
+    ) -> None:
+        """Update observable connection state, ignoring stale client cycles."""
+        with self._state_lock:
+            if generation is not None and generation != self._generation:
+                return
+            if state != self._state:
+                self._state = state
+                self._state_since = time.monotonic()
+            if error is not None:
+                self._last_error = error
+
+    def _mark_online(self, generation: int) -> None:
+        with self._state_lock:
+            if generation != self._generation:
+                return
+            if self._state != "running":
+                self._state = "running"
+                self._state_since = time.monotonic()
+                self._connected_at = time.time()
+                logger.info("[DingTalk] Stream connection is online")
+            self._last_activity_at = time.time()
+            self._last_error = ""
+
+    def _is_duplicate(self, message_id: str) -> bool:
+        """Return True when a platform message was seen during the TTL window."""
+        if not message_id:
+            return False
+        now = time.monotonic()
+        cutoff = now - self._DEDUP_TTL_SECONDS
+        with self._seen_lock:
+            stale = [key for key, seen_at in self._seen_messages.items()
+                     if seen_at < cutoff]
+            for key in stale:
+                self._seen_messages.pop(key, None)
+            if message_id in self._seen_messages:
+                return True
+            self._seen_messages[message_id] = now
+        return False
+
+    @staticmethod
+    def _websocket_is_open(websocket) -> bool:
+        """Best-effort check compatible with old and new websockets releases."""
+        if websocket is None:
+            return False
+        closed = getattr(websocket, "closed", None)
+        if isinstance(closed, bool):
+            return not closed
+        state = getattr(websocket, "state", None)
+        state_name = getattr(state, "name", "")
+        if state_name:
+            return state_name.upper() == "OPEN"
+        # The SDK only assigns ``websocket`` after entering the connection
+        # context, so an object without an exposed state is considered open.
+        return True
 
     # ── Send ──────────────────────────────────────────────
 
@@ -295,77 +422,220 @@ class DingTalkClient:
 
     def start(self) -> None:
         """启动 Stream Mode 连接（后台线程）。"""
-        if self._running:
-            return
+        with self._lifecycle_lock:
+            if self._running:
+                return
+            if not self._on_message:
+                logger.warning("[DingTalk] 未设置 on_message 回调，跳过启动")
+                return
 
-        if not self._on_message:
-            logger.warning("[DingTalk] 未设置 on_message 回调，跳过启动")
-            return
+            self._running = True
+            self._stop_event.clear()
+            self._connected_at = 0.0
+            self._last_activity_at = 0.0
+            self._reconnect_count = 0
+            self._set_state("starting", "")
 
-        # 标识信息（用于诊断）
-        cid_tail = self.client_id[-8:] if self.client_id else "???"
-        logger.info("[DingTalk] 启动 Stream Mode: client_id=...%s", cid_tail)
+            cid_tail = self.client_id[-8:] if self.client_id else "???"
+            logger.info("[DingTalk] 启动 Stream Mode: client_id=...%s", cid_tail)
+            self._launch_cycle()
 
-        self._handler = _OurHandler(
-            self._on_message, self.get_access_token, self.client_id,
+            self._supervisor_thread = threading.Thread(
+                target=self._supervise,
+                daemon=True,
+                name="dingtalk-supervisor",
+            )
+            self._supervisor_thread.start()
+
+    def _launch_cycle(self) -> None:
+        """Create one SDK client generation and its owning thread."""
+        self._generation += 1
+        generation = self._generation
+        cycle_stop = threading.Event()
+        self._cycle_stop = cycle_stop
+
+        handler = _OurHandler(
+            self._on_message,
+            self.get_access_token,
+            self.client_id,
+            self._is_duplicate,
         )
-        credential = Credential(self.client_id, self.client_secret)
-        self._stream_client = DingTalkStreamClient(credential, logger=logger)
-        self._stream_client.register_callback_handler(
-            ChatbotMessage.TOPIC, self._handler
+        stream_client = DingTalkStreamClient(
+            Credential(self.client_id, self.client_secret),
+            logger=logger,
         )
+        stream_client.register_callback_handler(ChatbotMessage.TOPIC, handler)
 
-        # 注入诊断：patch route_message 记录所有消息
-        _orig_route = self._stream_client.route_message
+        # The SDK reconnect loop has no public stop switch.  Guarding
+        # open_connection lets a closed generation leave that loop cleanly
+        # instead of reconnecting forever after Channel shutdown.
+        original_open_connection = stream_client.open_connection
 
-        async def _patched_route(json_message: dict):
-            msg_type = json_message.get('type', '?')
-            topic = json_message.get('headers', {}).get('topic', '?')
-            msg_id = json_message.get('headers', {}).get('messageId', '?')
-            logger.info("[DingTalk/SDK] route_message: type=%s topic=%s msg_id=%s",
-                        msg_type, topic, msg_id)
-            return await _orig_route(json_message)
+        def managed_open_connection():
+            if cycle_stop.is_set() or self._stop_event.is_set():
+                raise KeyboardInterrupt
+            state = "reconnecting" if self._connected_at else "starting"
+            self._set_state(state, generation=generation)
+            connection = original_open_connection()
+            if not connection:
+                self._set_state(
+                    state,
+                    "open connection failed",
+                    generation=generation,
+                )
+            return connection
 
-        self._stream_client.route_message = _patched_route
+        stream_client.open_connection = managed_open_connection
 
-        self._running = True
+        # Any frame proves that this generation is online and active.  The
+        # supervisor also observes the websocket object so an idle connection
+        # can become online before the first chat message arrives.
+        original_route = stream_client.route_message
 
-        def _run_forever():
+        async def tracked_route(json_message: dict):
+            self._mark_online(generation)
+            msg_type = json_message.get("type", "?")
+            topic = json_message.get("headers", {}).get("topic", "?")
+            msg_id = json_message.get("headers", {}).get("messageId", "?")
+            logger.info(
+                "[DingTalk/SDK] route_message: type=%s topic=%s msg_id=%s",
+                msg_type,
+                topic,
+                msg_id,
+            )
+            return await original_route(json_message)
+
+        stream_client.route_message = tracked_route
+        self._handler = handler
+        self._stream_client = stream_client
+
+        def run_forever() -> None:
             try:
-                logger.info("[DingTalk] Thread started, entering start_forever...")
-                self._stream_client.start_forever()
-            except Exception as e:
-                logger.error("[DingTalk] start_forever 异常退出: %s", e, exc_info=True)
+                logger.info(
+                    "[DingTalk] Stream thread started: generation=%s",
+                    generation,
+                )
+                stream_client.start_forever()
+                if not cycle_stop.is_set() and not self._stop_event.is_set():
+                    self._set_state(
+                        "error",
+                        "stream thread exited unexpectedly",
+                        generation=generation,
+                    )
+            except Exception as exc:
+                self._set_state("error", str(exc), generation=generation)
+                logger.error(
+                    "[DingTalk] Stream thread failed: generation=%s error=%s",
+                    generation,
+                    exc,
+                    exc_info=True,
+                )
 
         self._thread = threading.Thread(
-            target=_run_forever,
+            target=run_forever,
             daemon=True,
-            name="dingtalk-stream",
+            name=f"dingtalk-stream-{generation}",
         )
         self._thread.start()
-        logger.info("[DingTalk] Stream Mode 已启动: client=...%s thread=%s",
-                    cid_tail, self._thread.name)
+
+    def _supervise(self) -> None:
+        """Observe SDK health and replace a dead or stuck client generation."""
+        while not self._stop_event.wait(self._SUPERVISOR_INTERVAL_SECONDS):
+            with self._lifecycle_lock:
+                if not self._running:
+                    return
+                stream_client = self._stream_client
+                stream_thread = self._thread
+                generation = self._generation
+
+            websocket = (
+                getattr(stream_client, "websocket", None)
+                if stream_client else None
+            )
+            if self._websocket_is_open(websocket):
+                self._mark_online(generation)
+            else:
+                with self._state_lock:
+                    state = self._state
+                    state_age = time.monotonic() - self._state_since
+                if state == "running":
+                    self._set_state("reconnecting", generation=generation)
+                    logger.warning("[DingTalk] Stream disconnected; reconnecting")
+                    state_age = 0.0
+
+                if not stream_thread or not stream_thread.is_alive():
+                    self._restart_cycle("stream thread stopped")
+                elif (
+                    state in {"starting", "reconnecting", "error"}
+                    and state_age >= self._RECONNECT_TIMEOUT_SECONDS
+                ):
+                    self._restart_cycle(f"{state} timeout")
+
+    def _restart_cycle(self, reason: str) -> None:
+        with self._lifecycle_lock:
+            if not self._running or self._stop_event.is_set():
+                return
+            old_client = self._stream_client
+            if self._cycle_stop:
+                self._cycle_stop.set()
+            with self._state_lock:
+                self._reconnect_count += 1
+            logger.warning(
+                "[DingTalk] Rebuilding Stream client: reason=%s count=%s",
+                reason,
+                self._reconnect_count,
+            )
+            self._set_state("reconnecting", reason)
+            self._close_stream(old_client)
+            self._launch_cycle()
+
+    @staticmethod
+    def _close_stream(stream_client) -> None:
+        """Close the SDK websocket on the event loop that owns it."""
+        websocket = getattr(stream_client, "websocket", None) if stream_client else None
+        if not websocket:
+            return
+        try:
+            import asyncio
+
+            loop = getattr(websocket, "loop", None)
+            if loop and loop.is_running():
+                asyncio.run_coroutine_threadsafe(websocket.close(), loop)
+            else:
+                asyncio.run(websocket.close())
+        except Exception as exc:
+            logger.debug("[DingTalk] WebSocket close failed: %s", exc)
 
     def stop(self) -> None:
         """停止 Stream Mode 连接。"""
-        self._running = False
-        self._on_message = None
-        if self._stream_client:
-            try:
-                # SDK 没有 stop() 方法，直接关闭 WebSocket
-                ws = getattr(self._stream_client, 'websocket', None)
-                if ws:
-                    import asyncio
-                    try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            asyncio.ensure_future(ws.close())
-                        else:
-                            asyncio.run(ws.close())
-                    except RuntimeError:
-                        pass
-                logger.info("[DingTalk] Stream Mode 已停止")
-            except Exception as e:
-                logger.warning("[DingTalk] 停止失败: %s", e)
-        self._stream_client = None
-        self._handler = None
+        with self._lifecycle_lock:
+            if not self._running and self._state == "stopped":
+                return
+            self._running = False
+            self._stop_event.set()
+            if self._cycle_stop:
+                self._cycle_stop.set()
+            self._generation += 1  # Invalidate callbacks from the old client.
+            stream_client = self._stream_client
+            stream_thread = self._thread
+            supervisor_thread = self._supervisor_thread
+            self._set_state("stopped", "")
+            self._close_stream(stream_client)
+
+        if stream_thread and stream_thread is not threading.current_thread():
+            stream_thread.join(timeout=2)
+        if (
+            supervisor_thread
+            and supervisor_thread is not threading.current_thread()
+        ):
+            supervisor_thread.join(timeout=2)
+
+        with self._lifecycle_lock:
+            self._stream_client = None
+            self._handler = None
+            self._thread = None
+            self._supervisor_thread = None
+            self._cycle_stop = None
+        with self._seen_lock:
+            self._seen_messages.clear()
+        logger.info("[DingTalk] Stream Mode 已停止")

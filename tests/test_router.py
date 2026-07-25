@@ -179,6 +179,27 @@ def test_route_for_session_not_found():
     assert r.route_for_session("nonexistent") is None
 
 
+def test_turn_route_disambiguates_shared_session_channels():
+    r = Router()
+    r.add_rule(PeerRule(
+        peer_type="human", peer_id="person-1", channel="feishu",
+        session_id="shared", output_route=OutputRoute("feishu", "chat-1"),
+        priority=10,
+    ))
+    r.add_rule(PeerRule(
+        peer_type="human", peer_id="desktop-1", channel="ws",
+        session_id="shared", output_route=OutputRoute("ws", "shared"),
+    ))
+
+    r.bind_turn("turn-feishu", OutputRoute("feishu", "chat-1"))
+    r.bind_turn("turn-desktop", OutputRoute("ws", "shared"))
+
+    assert r.route_for_turn("turn-feishu", "shared") == OutputRoute("feishu", "chat-1")
+    assert r.route_for_turn("turn-desktop", "shared") == OutputRoute("ws", "shared")
+    r.release_turn("turn-feishu")
+    assert r.route_for_turn("turn-feishu", "shared") == OutputRoute("feishu", "chat-1")
+
+
 # ── adapter ───────────────────────────────────────────────────────────
 
 def test_register_adapter():

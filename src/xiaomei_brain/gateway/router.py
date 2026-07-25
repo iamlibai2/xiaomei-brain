@@ -88,6 +88,10 @@ class Router:
         self._adapters: dict[str, Any] = {}   # channel_type → ChannelAdapter
         self._default_route = OutputRoute("cli", "stdout")
         self._last_active: dict[str, OutputRoute] = {}  # user_id → 最近活跃渠道
+        # A Person session can be open from multiple channels at once. Replies
+        # belong to the channel that initiated a Turn, not to the first route
+        # registered for the shared session.
+        self._turn_routes: dict[str, OutputRoute] = {}
 
     # ── Rules ──────────────────────────────────────────────
 
@@ -188,10 +192,60 @@ class Router:
                     return rule.output_route
         return None
 
+    def has_route(
+        self,
+        session_id: str,
+        output_type: str,
+        output_target: str,
+    ) -> bool:
+        """Check for one exact channel route within a shared session."""
+        with self._lock:
+            return any(
+                rule.session_id == session_id
+                and rule.output_route.type == output_type
+                and rule.output_route.target == output_target
+                for rule in self._rules
+            )
+
     def route_for_user(self, user_id: str) -> OutputRoute | None:
         """查询指定用户最近活跃的输出路由（用于主动消息）。"""
         with self._lock:
             return self._last_active.get(user_id)
+
+    def bind_turn(self, turn_id: str, route: OutputRoute) -> None:
+        """Remember the exact return channel for one accepted inbound Turn."""
+        if not turn_id:
+            return
+        with self._lock:
+            self._turn_routes[turn_id] = route
+        logger.info(
+            "[Router] bound Turn %s to %s/%s",
+            turn_id,
+            route.type,
+            route.target,
+        )
+
+    def route_for_turn(
+        self,
+        turn_id: str,
+        session_id: str = "",
+    ) -> OutputRoute | None:
+        """Resolve a Turn route, falling back for legacy/internal producers."""
+        with self._lock:
+            route = self._turn_routes.get(turn_id)
+            if route is not None:
+                return route
+            for rule in self._rules:
+                if session_id and rule.session_id == session_id:
+                    return rule.output_route
+        return None
+
+    def release_turn(self, turn_id: str) -> None:
+        """Release routing state after the Turn's terminal event is delivered."""
+        if not turn_id:
+            return
+        with self._lock:
+            self._turn_routes.pop(turn_id, None)
 
     # ── Delivery ────────────────────────────────────────────
 

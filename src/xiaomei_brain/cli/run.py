@@ -1,7 +1,7 @@
 """xiaomei-brain run — 启动并交互式运行 Agent。
 
 Usage:
-    xiaomei-brain run <agent_id> [--cli] [--no-consciousness] [--legacy] [--port <port>]
+    xiaomei-brain run <agent_id> [--cli | --headless] [--no-consciousness] [--legacy] [--port <port>]
 """
 
 from __future__ import annotations
@@ -187,8 +187,13 @@ def _run_agent(
     agent_name: str,
     no_consciousness: bool = False,
     legacy: bool = False,
+    headless: bool = False,
 ) -> None:
-    """启动 Agent 主循环（CLI 交互模式）。"""
+    """启动 Agent 主循环。
+
+    ``headless`` is used by the lifecycle ``start`` command. It deliberately
+    skips login and stdin handling; external identities enter through Gateway.
+    """
     _stream_lock = threading.Lock()
     _login_done = threading.Event()
     _pending_proactive: list[tuple[str, str]] = []  # [(content, user_id), ...]
@@ -293,6 +298,14 @@ def _run_agent(
 
     thread = threading.Thread(target=living.run, daemon=False)
     thread.start()
+
+    if headless:
+        try:
+            thread.join()
+        except KeyboardInterrupt:
+            living.stop()
+            thread.join(timeout=10)
+        return
 
     try:
         time.sleep(2)
@@ -909,6 +922,11 @@ def cmd_run(args: list[str]) -> None:
     )
     parser.add_argument("agent_id", nargs="?", default="xiaomei", help="Agent ID")
     parser.add_argument("--cli", action="store_true", default=True, help="CLI 交互模式（默认）")
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="后台服务模式：不登录、不读取终端输入",
+    )
     parser.add_argument("-n", "--no-consciousness", action="store_true", help="无意识模式")
     parser.add_argument("--legacy", action="store_true", help="旧版上下文模式")
     parser.add_argument("--port", "-p", type=int, default=0, help="通讯端口（0=自动, -1=禁用）")
@@ -1089,7 +1107,8 @@ def cmd_run(args: list[str]) -> None:
     try:
         _run_agent(living, agent, agent_id, agent_name,
                    no_consciousness=parsed.no_consciousness,
-                   legacy=parsed.legacy)
+                   legacy=parsed.legacy,
+                   headless=parsed.headless)
     except FatalLLMError as e:
         ts = time.strftime("%H:%M:%S")
         print(f"\n\033[91m[FATAL] {ts} LLM API 致命错误，程序终止\033[0m", flush=True)

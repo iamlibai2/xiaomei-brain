@@ -95,25 +95,25 @@ export interface GatewayBridge {
   listIdentities(args: { agentId: string }): Promise<JsonRpcResponse>;
   listLegacySessions(args: { agentId: string }): Promise<JsonRpcResponse>;
   claimLegacySession(args: { agentId: string; sessionId: string }): Promise<JsonRpcResponse>;
-  getChannelConfig(args: { agentId: string; channel: "feishu" }): Promise<JsonRpcResponse>;
-  testChannel(args: { agentId: string; channel: "feishu"; appId: string; appSecret: string }): Promise<JsonRpcResponse>;
+  getChannelConfig(args: { agentId: string; channel: "feishu" | "dingtalk" }): Promise<JsonRpcResponse>;
+  testChannel(args: { agentId: string; channel: "feishu" | "dingtalk"; appId: string; appSecret: string }): Promise<JsonRpcResponse>;
   configureChannel(args: {
     agentId: string;
-    channel: "feishu";
+    channel: "feishu" | "dingtalk";
     appId: string;
     appSecret: string;
     displayName: string;
     accountId?: string;
   }): Promise<JsonRpcResponse>;
-  getChannelStatus(args: { agentId: string; channel: "feishu" }): Promise<JsonRpcResponse>;
-  removeChannel(args: { agentId: string; channel: "feishu" }): Promise<JsonRpcResponse>;
-  beginIdentityLink(args: { agentId: string; provider: "feishu" }): Promise<JsonRpcResponse>;
+  getChannelStatus(args: { agentId: string; channel: "feishu" | "dingtalk" }): Promise<JsonRpcResponse>;
+  removeChannel(args: { agentId: string; channel: "feishu" | "dingtalk" }): Promise<JsonRpcResponse>;
+  beginIdentityLink(args: { agentId: string; provider: "feishu" | "dingtalk" }): Promise<JsonRpcResponse>;
   getIdentityLinkStatus(args: { agentId: string; requestId: string }): Promise<JsonRpcResponse>;
   cancelIdentityLink(args: { agentId: string; requestId: string }): Promise<JsonRpcResponse>;
-  listIdentityLinks(args: { agentId: string; provider: "feishu" }): Promise<JsonRpcResponse>;
+  listIdentityLinks(args: { agentId: string; provider: "feishu" | "dingtalk" }): Promise<JsonRpcResponse>;
   revokeIdentityLink(args: {
     agentId: string;
-    provider: "feishu";
+    provider: "feishu" | "dingtalk";
     bindingId: string;
   }): Promise<JsonRpcResponse>;
   getConfig(key: string): Promise<string | null>;

@@ -5,7 +5,13 @@ from __future__ import annotations
 import psutil
 import pytest
 
-from xiaomei_brain.cli.lifecycle import _build_restart_args, _is_process_alive
+import subprocess
+
+from xiaomei_brain.cli.lifecycle import (
+    _background_popen_options,
+    _build_restart_args,
+    _is_process_alive,
+)
 
 
 class _FakeProcess:
@@ -57,3 +63,20 @@ def test_build_restart_args_drops_cli_and_preserves_supported_modes() -> None:
     assert _build_restart_args("xiaoming", old_args) == [
         "xiaoming", "--no-consciousness", "--legacy",
     ]
+
+
+def test_background_process_options_detach_windows_console_and_stdin() -> None:
+    options = _background_popen_options("win32")
+
+    assert options["stdin"] is subprocess.DEVNULL
+    assert options["creationflags"] & 0x00000200
+    assert options["creationflags"] & 0x08000000
+    assert "start_new_session" not in options
+
+
+def test_background_process_options_start_new_unix_session() -> None:
+    options = _background_popen_options("linux")
+
+    assert options["stdin"] is subprocess.DEVNULL
+    assert options["start_new_session"] is True
+    assert "creationflags" not in options

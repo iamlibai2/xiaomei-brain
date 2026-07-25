@@ -418,7 +418,12 @@ class ConversationDriver:
 
                     self.display.display()
                     if self.display.has_data() and self._should_deliver(current_msg.session_id):
-                        self._deliver_internal_display(parent, current_msg.session_id, self.display.to_dict())
+                        self._deliver_internal_display(
+                            parent,
+                            current_msg.session_id,
+                            current_msg.turn_id,
+                            self.display.to_dict(),
+                        )
                     self.display.clear()
 
                     if parent._load_consciousness:
@@ -790,14 +795,26 @@ class ConversationDriver:
         return f"{time_str}{speaker}：{content}"
 
     @staticmethod
-    def _deliver_internal_display(parent, session_id: str, data: dict) -> None:
+    def _deliver_internal_display(
+        parent,
+        session_id: str,
+        turn_id: str,
+        data: dict,
+    ) -> None:
         """推送内部处理结果到 WS 通道（供 TUI 渲染）。"""
         import json as _json
         router = getattr(parent, '_router', None)
         if not router:
             return
-        route = router.route_for_session(session_id)
-        if route:
+        route = (
+            router.route_for_turn(turn_id, session_id)
+            if hasattr(router, "route_for_turn")
+            else router.route_for_session(session_id)
+        )
+        # Internal display is a rich Desktop/TUI diagnostic surface. Sending
+        # its JSON payload to chat channels leaks implementation details into
+        # the human conversation.
+        if route and route.type == "ws":
             router.deliver(_json.dumps(data, ensure_ascii=False), route, msg_type="internal_display")
 
     @staticmethod
@@ -932,7 +949,11 @@ class ConversationDriver:
                 }
 
             router = getattr(parent, "_router", None)
-            route = router.route_for_session(session_id) if router else None
+            route = (
+                router.route_for_turn(turn_id, session_id)
+                if router is not None and hasattr(router, "route_for_turn")
+                else router.route_for_session(session_id) if router else None
+            )
             adapter = (
                 router.get_adapter(route.type)
                 if router is not None and route is not None and hasattr(router, "get_adapter")

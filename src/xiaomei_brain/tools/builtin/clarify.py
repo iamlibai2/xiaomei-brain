@@ -166,7 +166,11 @@ def create_clarify_tool(agent_instance: Any) -> Tool:
         supports_clarify = True
         router = getattr(living, "_router", None)
         if router is not None and is_remote_session:
-            route = router.route_for_session(session_id)
+            route = (
+                router.route_for_turn(turn_id, session_id)
+                if hasattr(router, "route_for_turn")
+                else router.route_for_session(session_id)
+            )
             adapter = (
                 router.get_adapter(route.type)
                 if route is not None and hasattr(router, "get_adapter") else None

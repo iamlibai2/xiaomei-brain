@@ -35,6 +35,24 @@ _SHUTDOWN_TIMEOUT = 25  # SIGTERM 后等待进程退出的秒数
 _STOP_POLL_INTERVAL = 0.5  # 轮询间隔
 
 
+def _background_popen_options(platform: str | None = None) -> dict[str, Any]:
+    """Return process options that fully detach a background Agent.
+
+    Redirecting stdout alone does not detach Windows console control events.
+    A background Agent must neither read the parent's stdin nor receive Ctrl+C
+    broadcasts intended for another foreground process.
+    """
+    target = platform or sys.platform
+    options: dict[str, Any] = {"stdin": subprocess.DEVNULL}
+    if target == "win32":
+        new_group = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+        no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        options["creationflags"] = new_group | no_window
+    else:
+        options["start_new_session"] = True
+    return options
+
+
 # ── PID 文件 ─────────────────────────────────────────────────
 
 def _pid_file_path(agent_id: str) -> Path:
@@ -178,7 +196,7 @@ def cmd_start(args: list[str]) -> None:
         return
 
     # 后台启动
-    run_args = [sys.executable, "-m", "xiaomei_brain", "run", agent_id, "--cli"]
+    run_args = [sys.executable, "-m", "xiaomei_brain", "run", agent_id, "--headless"]
     if parsed.no_consciousness:
         run_args.append("-n")
     if parsed.legacy:
@@ -190,9 +208,7 @@ def cmd_start(args: list[str]) -> None:
     stdout = (log_dir / "agent.log").open("a")
     stderr = (log_dir / "agent.err.log").open("a")
 
-    popen_kwargs: dict = {}
-    if sys.platform != "win32":
-        popen_kwargs["start_new_session"] = True  # Unix: 脱离终端
+    popen_kwargs = _background_popen_options()
     proc = subprocess.Popen(
         run_args,
         stdout=stdout,
@@ -308,8 +324,8 @@ def cmd_restart(args: list[str]) -> None:
 def _build_restart_args(agent_id: str, old_args: list[str]) -> list[str]:
     """将旧的 ``run`` 参数转换为 ``start`` 支持的参数。
 
-    ``cmd_start`` 会自动为子进程添加 ``--cli``，因此不能把旧进程中的
-    ``--cli`` 原样传给 start 的 argparse。
+    ``cmd_start`` 会自动以 ``--headless`` 启动，因此不能把旧进程中的
+    ``--cli`` 或 ``--headless`` 原样传给 start 的 argparse。
     """
     restart_args = [agent_id]
     if "-n" in old_args or "--no-consciousness" in old_args:

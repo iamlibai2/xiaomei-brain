@@ -21,6 +21,18 @@ class ChannelRuntimeService:
             registry.register_channel("feishu", adapter)
         return adapter
 
+    def apply_dingtalk(self, config: dict[str, Any]):
+        from xiaomei_brain.plugins.channels.dingtalk.adapter import create_adapter
+
+        adapter = create_adapter(config)
+        gateway = self.living._gateway_inbound
+        gateway.replace_channel("dingtalk", adapter)
+        self.living._router.register_adapter("dingtalk", adapter)
+        registry = getattr(self.living, "_registry", None)
+        if registry is not None:
+            registry.register_channel("dingtalk", adapter)
+        return adapter
+
     def remove(self, channel: str) -> bool:
         gateway = self.living._gateway_inbound
         return gateway.remove_channel(channel)

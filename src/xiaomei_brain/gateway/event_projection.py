@@ -34,19 +34,54 @@ class GatewayEventProjection:
 
     def __call__(self, event: DomainEvent) -> None:
         if event.name not in self.PUBLIC_EVENTS or not event.session_id:
+            if event.name in {
+                "interaction.requested",
+                "action.proposed",
+            } and not event.session_id:
+                logger.warning(
+                    "Structured event has no session: event=%s turn=%s",
+                    event.name,
+                    event.turn_id,
+                )
             return
         if self._is_local_terminal_session(event.session_id):
+            self._release_terminal_turn(None, event)
             return
 
         router = self._router_getter()
-        route = router.route_for_session(event.session_id) if router else None
+        route = None
+        if router:
+            if hasattr(router, "route_for_turn"):
+                route = router.route_for_turn(event.turn_id, event.session_id)
+            else:
+                route = router.route_for_session(event.session_id)
         if route is None:
-            if event.name == "message.complete":
-                logger.warning("No output route for session=%s", event.session_id)
+            if event.name in {
+                "message.complete",
+                "interaction.requested",
+                "action.proposed",
+            }:
+                logger.warning(
+                    "No output route for event=%s session=%s turn=%s",
+                    event.name,
+                    event.session_id,
+                    event.turn_id,
+                )
+            self._release_terminal_turn(router, event)
             return
 
         adapter = router.get_adapter(route.type) if hasattr(router, "get_adapter") else None
         capabilities = getattr(adapter, "capabilities", None)
+        if adapter is None and event.name in {
+            "interaction.requested",
+            "action.proposed",
+        }:
+            logger.warning(
+                "No channel adapter for event=%s route=%s/%s",
+                event.name,
+                route.type,
+                route.target,
+            )
 
         # Streaming deltas are a rich-client capability. Other channels receive
         # the final message and can render structured events through send_event.
@@ -61,6 +96,11 @@ class GatewayEventProjection:
             and capabilities is not None
             and not capabilities.clarify
         ):
+            logger.info(
+                "Channel does not support Clarify: route=%s/%s",
+                route.type,
+                route.target,
+            )
             return
         if (
             event.name.startswith("action.")
@@ -75,7 +115,36 @@ class GatewayEventProjection:
         }
         if event.timestamp > 0:
             metadata["timestamp"] = event.timestamp
-        router.deliver_event(event.name, event.payload, route, **metadata)
+        try:
+            delivered = router.deliver_event(
+                event.name,
+                event.payload,
+                route,
+                **metadata,
+            )
+            if event.name in {"interaction.requested", "action.proposed"}:
+                log = logger.info if delivered else logger.warning
+                log(
+                    "Structured event delivery %s: event=%s session=%s "
+                    "turn=%s route=%s/%s",
+                    "succeeded" if delivered else "failed",
+                    event.name,
+                    event.session_id,
+                    event.turn_id,
+                    route.type,
+                    route.target,
+                )
+        finally:
+            self._release_terminal_turn(router, event)
+
+    @staticmethod
+    def _release_terminal_turn(router: Any | None, event: DomainEvent) -> None:
+        if (
+            event.name == "message.complete"
+            and router is not None
+            and hasattr(router, "release_turn")
+        ):
+            router.release_turn(event.turn_id)
 
     @staticmethod
     def _is_local_terminal_session(session_id: str) -> bool:

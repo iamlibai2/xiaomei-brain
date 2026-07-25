@@ -55,6 +55,7 @@ class FeishuAdapter(ChannelAdapter):
     @property
     def capabilities(self) -> ChannelCapabilities:
         return ChannelCapabilities(
+            structured_events=True,
             clarify=True,
             action_approval=True,
             attachments=True,
@@ -129,8 +130,11 @@ class FeishuAdapter(ChannelAdapter):
             people.store.ensure_person_session(session_id, person_id)
 
             # 注册 peer（确保 Router 能匹配到）
-            existing = router.route_for_session(session_id)
-            if existing is None:
+            has_route = (
+                router.has_route(session_id, "feishu", conversation_id)
+                if hasattr(router, "has_route") else False
+            )
+            if not has_route:
                 router.register_peer(
                     peer_type="human", peer_id=person_id,
                     channel="feishu", session_id=session_id,
@@ -147,7 +151,7 @@ class FeishuAdapter(ChannelAdapter):
             gw = getattr(living, '_gateway_inbound', None)
             if gw:
                 from xiaomei_brain.gateway.inbound import RawMessage
-                gw.accept(RawMessage(
+                result = gw.accept(RawMessage(
                     content=text, source="human", channel="feishu",
                     peer_id=person_id, peer_type="human",
                     session_id=session_id,
@@ -156,7 +160,14 @@ class FeishuAdapter(ChannelAdapter):
                         "external_subject": sender,
                         "external_conversation_id": conversation_id,
                     },
+                    reply_channel="feishu",
+                    reply_target=conversation_id,
                 ))
+                # External channels cannot inspect Gateway return values.
+                # Surface exceptional admission failures instead of silence.
+                reason = getattr(result, "reason", "")
+                if reason and not getattr(result, "silent", False):
+                    self.send(conversation_id, "这条消息暂时没有接收成功，请稍后重试。")
             else:
                 living.put_message(text, source="human", session_id=session_id)
             if hasattr(living, "_debug_log"):
@@ -164,6 +175,63 @@ class FeishuAdapter(ChannelAdapter):
             logger.info("[Feishu/Step4] 等待主循环处理 (session=%s)", session_id)
 
         self._channel.set_on_message(on_message)
+
+        def on_card_action(callback: dict) -> tuple[bool, str]:
+            value = callback.get("value") or {}
+            operator = str(callback.get("operator_open_id", ""))
+            conversation_id = str(callback.get("conversation_id", ""))
+            expected_conversation = str(value.get("conversation_id", ""))
+            if not operator or (
+                expected_conversation and conversation_id != expected_conversation
+            ):
+                return False, "这张卡片不属于当前会话。"
+
+            resolved = people.resolve_verified_identity(issuer, operator) if people else None
+            if resolved is None:
+                return False, "当前飞书身份尚未绑定。"
+            person, _binding = resolved
+            session_id = str(value.get("session_id", ""))
+            turn_id = str(value.get("turn_id", ""))
+            kind = str(value.get("kind", ""))
+
+            if kind == "interaction":
+                broker = getattr(living, "_interaction_broker", None)
+                response = str(value.get("response", "")).strip()
+                accepted = bool(
+                    broker
+                    and broker.respond(
+                        str(value.get("request_id", "")),
+                        response,
+                        session_id,
+                        turn_id,
+                        person.person_id,
+                    )
+                )
+                return (
+                    (True, f"已选择：{response}")
+                    if accepted else (False, "问题已结束或不属于当前会话。")
+                )
+
+            if kind == "action":
+                broker = getattr(living, "_action_broker", None)
+                decision = str(value.get("decision", ""))
+                accepted = bool(
+                    broker
+                    and broker.respond(
+                        str(value.get("action_id", "")),
+                        decision,
+                        session_id,
+                        turn_id,
+                        person.person_id,
+                    )
+                )
+                if not accepted:
+                    return False, "审批已结束或不属于当前会话。"
+                return True, "已允许此操作。" if decision == "allow" else "已拒绝此操作。"
+
+            return False, "无法识别这张卡片的操作。"
+
+        self._channel.set_on_card_action(on_card_action)
         self._channel.start()
         logger.info("[FeishuAdapter] 通道已启动")
 
@@ -183,3 +251,146 @@ class FeishuAdapter(ChannelAdapter):
         logger.info("[FeishuAdapter] Router.deliver → target=%s text=%s", target, text[:80])
         msg = OutboundMsg(text=text)
         self._channel.send(target, msg)
+
+    def send_event(
+        self,
+        target: str,
+        event: str,
+        payload: dict,
+        *,
+        session_id: str = "",
+        turn_id: str = "",
+        timestamp: int = 0,
+    ) -> None:
+        """Render structured interaction events as native Feishu cards."""
+        if event == "interaction.requested":
+            choices = [
+                str(item).strip()
+                for item in payload.get("choices", [])
+                if str(item).strip()
+            ]
+            if choices:
+                logger.info(
+                    "[Feishu/Card] sending Clarify card: target=%s "
+                    "request=%s choices=%d",
+                    target,
+                    payload.get("id", ""),
+                    len(choices[:4]),
+                )
+                self._channel.send_card(
+                    target,
+                    self._interaction_card(
+                        payload,
+                        choices[:4],
+                        target,
+                        session_id,
+                        turn_id,
+                    ),
+                )
+                return
+        elif event == "action.proposed":
+            self._channel.send_card(
+                target,
+                self._action_card(payload, target, session_id, turn_id),
+            )
+            return
+        super().send_event(
+            target,
+            event,
+            payload,
+            session_id=session_id,
+            turn_id=turn_id,
+            timestamp=timestamp,
+        )
+
+    @staticmethod
+    def _interaction_card(
+        payload: dict,
+        choices: list[str],
+        conversation_id: str,
+        session_id: str,
+        turn_id: str,
+    ) -> dict:
+        question = str(payload.get("question", "")).strip()
+        request_id = str(payload.get("id", ""))
+        actions = []
+        for index, choice in enumerate(choices):
+            actions.append({
+                "tag": "button",
+                "text": {"tag": "plain_text", "content": choice},
+                "type": "primary" if index == 0 else "default",
+                "value": {
+                    "kind": "interaction",
+                    "request_id": request_id,
+                    "response": choice,
+                    "conversation_id": conversation_id,
+                    "session_id": session_id,
+                    "turn_id": turn_id,
+                },
+            })
+        return {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "template": "blue",
+                "title": {"tag": "plain_text", "content": "想和你确认"},
+            },
+            "elements": [
+                {"tag": "div", "text": {"tag": "lark_md", "content": question}},
+                {"tag": "action", "actions": actions},
+            ],
+        }
+
+    @staticmethod
+    def _action_card(
+        payload: dict,
+        conversation_id: str,
+        session_id: str,
+        turn_id: str,
+    ) -> dict:
+        action_id = str(payload.get("id", ""))
+        summary = str(payload.get("summary", "")).strip()
+        reason = str(payload.get("reason", "")).strip()
+        risk = str(payload.get("risk_level", "")).strip()
+        detail = summary
+        if reason:
+            detail += f"\n\n**原因：** {reason}"
+        if risk:
+            detail += f"\n\n**风险级别：** {risk}"
+
+        def value(decision: str) -> dict:
+            return {
+                "kind": "action",
+                "action_id": action_id,
+                "decision": decision,
+                "conversation_id": conversation_id,
+                "session_id": session_id,
+                "turn_id": turn_id,
+            }
+
+        return {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "template": "orange",
+                "title": {"tag": "plain_text", "content": "需要你的确认"},
+            },
+            "elements": [
+                {"tag": "div", "text": {"tag": "lark_md", "content": detail}},
+                {
+                    "tag": "action",
+                    "actions": [
+                        {
+                            "tag": "button",
+                            "text": {"tag": "plain_text", "content": "允许"},
+                            "type": "primary",
+                            "value": value("allow"),
+                        },
+                        {
+                            "tag": "button",
+                            "text": {"tag": "plain_text", "content": "拒绝"},
+                            "type": "danger",
+                            "value": value("deny"),
+                        },
+                    ],
+                },
+            ],
+        }

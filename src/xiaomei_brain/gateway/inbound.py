@@ -30,6 +30,9 @@ class RawMessage:
     metadata: dict[str, Any] = field(default_factory=dict)
     urgent: bool = False
     session_id: str = ""          # 外部指定的 session_id，空则由 Gateway 分配
+    # A shared Person session is not itself a reply address.
+    reply_channel: str = ""
+    reply_target: str = ""
 
 
 @dataclass
@@ -41,7 +44,7 @@ class Accepted:
 @dataclass
 class Rejected:
     """消息被 Gateway 拒绝。"""
-    reason: str              # BUSY / THROTTLED / UNAUTHORIZED / HANDLED / EMPTY
+    reason: str              # THROTTLED / UNAUTHORIZED / HANDLED / EMPTY
     silent: bool = False     # True = 不通知发送方
 
 
@@ -165,26 +168,24 @@ class Gateway:
         user_display_name = self._resolve_identity(raw.peer_id)
         if not user_display_name:
             user_display_name = "这位用户"
-        session_id = raw.session_id or self._route_session(raw)
+        routed = self._route_message(raw)
+        session_id = raw.session_id or self._default_session(raw, routed)
 
-        # 4. Conversational control replies must bypass BUSY: the Agent remains
-        # _chatting while Clarify or Action is waiting for this exact response.
+        # 4. Resolve conversational control replies before ordinary enqueueing.
+        # Clarify and Action wait inside the current Turn; matching responses
+        # must wake that Turn instead of becoming a new queued message.
         if self._handle_conversation_control(raw, content, user_id, session_id):
             return Rejected(reason="HANDLED", silent=True)
 
-        # 5. Busy check
-        if getattr(self._living, '_chatting', False):
-            logger.info("[Gateway] 聊天进行中，拒绝新消息: %s", content[:30])
-            return Rejected(reason="BUSY", silent=False)
-
-        # 6. Rate-limit check
+        # 5. Rate-limit check. Human messages are always accepted into Living's
+        # FIFO queue, including while another Turn is being processed.
         if raw.source != "human" and not raw.urgent:
             sig = getattr(self._living, '_interoception_signals', None)
             if sig and getattr(sig, 'throttle', False):
                 logger.warning("[Gateway] 限流激活，丢弃非紧急消息: %.50s", content)
                 return Rejected(reason="THROTTLED", silent=True)
 
-        # 7. Command dispatch — all / commands handled here
+        # 6. Command dispatch — all / commands handled here
         if content.startswith("/"):
             handled = self._dispatch_command(content, user_id, session_id)
             if handled:
@@ -201,7 +202,17 @@ class Gateway:
         if message_id is False:
             return Rejected(reason="PERSISTENCE_FAILED", silent=False)
 
-        # 8. Enqueue to Living (passes display_name through)
+        # 7. Enqueue to Living (passes display_name through)
+        reply_route = self._reply_route(raw, routed)
+        is_local_terminal = (
+            session_id == "main" or session_id.startswith("cli-")
+        )
+        if (
+            reply_route is not None
+            and not is_local_terminal
+            and hasattr(self._router, "bind_turn")
+        ):
+            self._router.bind_turn(turn_id, reply_route)
         from xiaomei_brain.consciousness.living import LivingMessage
         message_kwargs = dict(
             content=content,
@@ -365,21 +376,39 @@ class Gateway:
             return self._identity_mgr.get_display_name(peer_id)
         return ""
 
-    def _route_session(self, raw: RawMessage) -> str:
-        """确定会话 ID。"""
-        # Agent comms → comms- prefix
-        if raw.source == "agent" and raw.peer_type == "agent":
-            return f"comms-{raw.peer_id}"
-        # Use Router if rules exist (returns default "main" if no match)
+    def _route_message(self, raw: RawMessage):
+        """Resolve the peer rule once for session and route fallback."""
+        route_message = getattr(self._router, "route", None)
+        if not callable(route_message):
+            return None
         from xiaomei_brain.gateway.router import InboundMsg
-        routed = self._router.route(InboundMsg(
+        return route_message(InboundMsg(
             content=raw.content,
             peer_type=raw.peer_type,
             peer_id=raw.peer_id,
             channel=raw.channel,
             images=raw.images,
         ))
-        return routed.session_id
+
+    @staticmethod
+    def _default_session(raw: RawMessage, routed: Any) -> str:
+        """Determine a session when the transport did not provide one."""
+        # Agent comms → comms- prefix
+        if raw.source == "agent" and raw.peer_type == "agent":
+            return f"comms-{raw.peer_id}"
+        return getattr(routed, "session_id", "main")
+
+    def _reply_route(self, raw: RawMessage, routed: Any):
+        if raw.reply_channel and raw.reply_target:
+            from xiaomei_brain.gateway.router import OutputRoute
+            return OutputRoute(raw.reply_channel, raw.reply_target)
+        route = getattr(routed, "output_route", None)
+        if route is not None:
+            return route
+        route_for_session = getattr(self._router, "route_for_session", None)
+        if raw.session_id and callable(route_for_session):
+            return route_for_session(raw.session_id)
+        return None
 
     # ── Command dispatch ──────────────────────────────────────
 

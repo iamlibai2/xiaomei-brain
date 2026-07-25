@@ -6,10 +6,15 @@ import asyncio
 import json
 import logging
 import threading
+import time
 from typing import Callable
 
 from lark_oapi.api.im.v1.model import P2ImMessageReceiveV1, P2ImMessageReactionCreatedV1, P2ImMessageReactionDeletedV1
 from lark_oapi.event.dispatcher_handler import EventDispatcherHandler
+from lark_oapi.event.callback.model.p2_card_action_trigger import (
+    P2CardActionTrigger,
+    P2CardActionTriggerResponse,
+)
 from lark_oapi.core.enum import LogLevel
 from lark_oapi.ws import Client
 from lark_oapi.ws.enum import FrameType as _FrameType
@@ -22,6 +27,9 @@ logger = logging.getLogger(__name__)
 
 class FeishuChannel:
     """飞书 WebSocket 客户端 — 基于 lark-oapi SDK。"""
+
+    _RECONNECT_TIMEOUT = 60.0
+    _SUPERVISOR_INTERVAL = 5.0
 
     def __init__(
         self,
@@ -39,12 +47,17 @@ class FeishuChannel:
         self.streaming = streaming
         self.streaming_header_title = streaming_header_title
         self._on_feishu_message: Callable[[dict], None] | None = None
+        self._on_feishu_card_action: Callable[[dict], tuple[bool, str]] | None = None
         self._ws_client: Client | None = None
         self._ws_thread: threading.Thread | None = None
+        self._supervisor_thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._state = "stopped"
         self._last_error = ""
         self._stopping = False
+        self._generation = 0
+        self._reconnecting_since = 0.0
+        self._restart_lock = threading.Lock()
 
     def platform_name(self) -> str:
         return "feishu"
@@ -52,13 +65,19 @@ class FeishuChannel:
     def set_on_message(self, callback: Callable[[dict], None]) -> None:
         self._on_feishu_message = callback
 
-    def _create_ws_client(self) -> Client:
+    def set_on_card_action(
+        self,
+        callback: Callable[[dict], tuple[bool, str]],
+    ) -> None:
+        self._on_feishu_card_action = callback
+
+    def _create_ws_client(self, generation: int) -> Client:
         handler = EventDispatcherHandler.builder(
             encrypt_key="",
             verification_token=self.verification_token,
             level=LogLevel.ERROR
         ).register_p2_im_message_receive_v1(
-            self._on_message
+            lambda data: self._on_message(data, generation)
         ).register_p2_im_message_reaction_created_v1(
             lambda _: None
         ).register_p2_im_message_reaction_deleted_v1(
@@ -67,6 +86,8 @@ class FeishuChannel:
             lambda _: None  # 已读回执，静默忽略
         ).register_p2_im_message_recalled_v1(
             lambda _: None  # 撤回消息，静默忽略
+        ).register_p2_card_action_trigger(
+            lambda data: self._on_card_action(data, generation)
         ).build()
 
         return Client(
@@ -76,7 +97,13 @@ class FeishuChannel:
             event_handler=handler
         )
 
-    def _on_message(self, data: P2ImMessageReceiveV1) -> None:
+    def _on_message(self, data: P2ImMessageReceiveV1, generation: int | None = None) -> None:
+        # A supervisor restart can briefly leave the SDK's old worker alive.
+        # Ignore events from that stale connection so one platform event is
+        # never accepted twice.
+        if generation is not None and generation != self._generation:
+            logger.warning("[Feishu/WS] ignored event from stale connection")
+            return
         try:
             event = data.event
             logger.info("[Feishu/WS] 收到事件: type=%s has_message=%s",
@@ -119,11 +146,66 @@ class FeishuChannel:
         except Exception as e:
             logger.error("[Feishu] _on_message error: %s", e, exc_info=True)
 
+    def _on_card_action(
+        self,
+        data: P2CardActionTrigger,
+        generation: int,
+    ) -> P2CardActionTriggerResponse:
+        """Translate a trusted Feishu card callback into channel-neutral data."""
+        if generation != self._generation:
+            return P2CardActionTriggerResponse({
+                "toast": {"type": "warning", "content": "连接已更新，请重新操作。"},
+            })
+        try:
+            event = data.event
+            action = event.action if event else None
+            operator = event.operator if event else None
+            context = event.context if event else None
+            value = dict(action.value or {}) if action else {}
+            callback = {
+                "operator_open_id": operator.open_id if operator else "",
+                "conversation_id": context.open_chat_id if context else "",
+                "message_id": context.open_message_id if context else "",
+                "value": value,
+            }
+            logger.info(
+                "[Feishu/Card] action kind=%s operator=%s chat=%s",
+                value.get("kind", ""),
+                callback["operator_open_id"],
+                callback["conversation_id"],
+            )
+            accepted, message = (
+                self._on_feishu_card_action(callback)
+                if self._on_feishu_card_action else (False, "当前操作不可用。")
+            )
+            return P2CardActionTriggerResponse({
+                "toast": {
+                    "type": "success" if accepted else "warning",
+                    "content": message,
+                },
+            })
+        except Exception:
+            logger.exception("[Feishu/Card] callback failed")
+            return P2CardActionTriggerResponse({
+                "toast": {"type": "error", "content": "操作失败，请稍后重试。"},
+            })
+
     def start(self) -> None:
         logger.info("[Feishu] Starting channel: app_id=%s account=%s", self.app_id, self.account_id)
         self._state = "starting"
         self._last_error = ""
         self._stopping = False
+        self._launch_ws_worker()
+        self._supervisor_thread = threading.Thread(
+            target=self._supervise,
+            daemon=True,
+            name="feishu-supervisor",
+        )
+        self._supervisor_thread.start()
+
+    def _launch_ws_worker(self) -> None:
+        self._generation += 1
+        generation = self._generation
 
         def run_ws():
             loop = asyncio.new_event_loop()
@@ -133,20 +215,36 @@ class FeishuChannel:
             self._loop = loop
             logger.info("[Feishu/WS] daemon thread started (loop=%s)", loop)
             try:
-                self._ws_client = self._create_ws_client()
+                client = self._create_ws_client(generation)
+                self._ws_client = client
 
-                original_connect = self._ws_client._connect
+                original_connect = client._connect
 
                 async def _tracked_connect():
                     result = await original_connect()
-                    self._state = "running"
-                    logger.info("[Feishu/WS] connected")
+                    if generation == self._generation:
+                        self._state = "running"
+                        self._last_error = ""
+                        self._reconnecting_since = 0.0
+                        logger.info("[Feishu/WS] connected")
                     return result
 
-                self._ws_client._connect = _tracked_connect
+                client._connect = _tracked_connect
+
+                original_reconnect = client._reconnect
+
+                async def _tracked_reconnect():
+                    if generation == self._generation:
+                        self._state = "reconnecting"
+                        self._last_error = "飞书长连接已断开，正在重连"
+                        self._reconnecting_since = time.monotonic()
+                        logger.warning("[Feishu/WS] disconnected; reconnecting")
+                    return await original_reconnect()
+
+                client._reconnect = _tracked_reconnect
 
                 # 注入诊断：patch _handle_message 捕获异常帧
-                _orig_handle_msg = self._ws_client._handle_message
+                _orig_handle_msg = client._handle_message
 
                 async def _patched_handle_msg(msg: bytes) -> None:
                     try:
@@ -154,28 +252,78 @@ class FeishuChannel:
                     except Exception:
                         logger.error("[Feishu/WS] _handle_message 异常: len=%d", len(msg), exc_info=True)
 
-                self._ws_client._handle_message = _patched_handle_msg
+                client._handle_message = _patched_handle_msg
 
                 logger.info("[Feishu/WS] ws_client created, calling start()...")
-                self._ws_client.start()
+                client.start()
                 logger.info("[Feishu/WS] ws_client.start() returned")
             except Exception as e:
-                if not self._stopping:
+                if not self._stopping and generation == self._generation:
                     self._state = "error"
                     self._last_error = str(e)
                     logger.error("[Feishu/WS] Error: %s", e, exc_info=True)
             finally:
                 logger.info("[Feishu/WS] daemon thread exiting, closing loop")
                 loop.close()
-                self._loop = None
-                if self._state != "error":
-                    self._state = "stopped"
+                if generation == self._generation:
+                    self._loop = None
+                    if self._state != "error":
+                        self._state = "stopped"
 
         self._ws_thread = threading.Thread(target=run_ws, daemon=True, name="feishu-ws")
         self._ws_thread.start()
 
+    def _supervise(self) -> None:
+        """Restart a dead or wedged SDK worker.
+
+        The SDK reconnect path performs endpoint discovery synchronously. A
+        broken network can therefore leave its event loop stuck indefinitely.
+        This application-level supervisor gives the channel a fresh connection
+        while invalidating callbacks from the old generation.
+        """
+        while not self._stopping:
+            time.sleep(self._SUPERVISOR_INTERVAL)
+            if self._stopping:
+                return
+            thread_dead = self._ws_thread is not None and not self._ws_thread.is_alive()
+            reconnect_stuck = (
+                self._state == "reconnecting"
+                and self._reconnecting_since > 0
+                and time.monotonic() - self._reconnecting_since >= self._RECONNECT_TIMEOUT
+            )
+            if thread_dead or reconnect_stuck or self._state == "error":
+                reason = (
+                    "reconnect timeout" if reconnect_stuck
+                    else "worker stopped" if thread_dead
+                    else self._last_error or "unknown error"
+                )
+                self._restart_ws_worker(reason)
+
+    def _restart_ws_worker(self, reason: str) -> None:
+        if not self._restart_lock.acquire(blocking=False):
+            return
+        try:
+            if self._stopping:
+                return
+            logger.warning("[Feishu/WS] restarting connection: %s", reason)
+            old_client = self._ws_client
+            old_loop = self._loop
+            if old_client is not None:
+                # Prevent a disconnected old client from beginning another
+                # reconnect cycle after the replacement is online.
+                old_client._auto_reconnect = False
+            if old_loop is not None and old_loop.is_running():
+                old_loop.call_soon_threadsafe(old_loop.stop)
+            self._state = "starting"
+            self._last_error = ""
+            self._reconnecting_since = 0.0
+            self._launch_ws_worker()
+        finally:
+            self._restart_lock.release()
+
     def stop(self) -> None:
         self._on_feishu_message = None
+        self._on_feishu_card_action = None
         self._stopping = True
         loop = self._loop
         if loop and loop.is_running():
@@ -189,6 +337,8 @@ class FeishuChannel:
             loop.call_soon_threadsafe(loop.stop)
         if self._ws_thread:
             self._ws_thread.join(timeout=5)
+        if self._supervisor_thread:
+            self._supervisor_thread.join(timeout=self._SUPERVISOR_INTERVAL + 1)
         self._state = "stopped"
 
     def test_credentials(self) -> bool:
@@ -235,45 +385,37 @@ class FeishuChannel:
 
     def send(self, to: str, msg: OutboundMsg) -> None:
         """发送消息到飞书。与 SDK WS 共享 token 缓存，避免互相踢。"""
-        import requests as _requests
+        if msg.text and msg.attachments:
+            card = {
+                "header": {"title": {"tag": "plain_text", "content": msg.text[:50]}},
+                "elements": [{
+                    "tag": "action",
+                    "actions": [{
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "查看详情"},
+                        "url": msg.attachments[0],
+                        "type": "primary"
+                    }]
+                }]
+            }
+            self.send_card(to, card)
+        elif msg.text:
+            self._send_payload(to, "text", {"text": msg.text})
 
-        # 设置 SDK 的 app_id/app_secret（首次发送时懒初始化）
-        if not hasattr(self, '_sdk_config_set'):
-            from lark_oapi.core.model.config import Config
-            self._sdk_config = Config()
-            self._sdk_config.app_id = self.app_id
-            self._sdk_config.app_secret = self.app_secret
-            self._sdk_config_set = True
+    def send_card(self, to: str, card: dict) -> None:
+        """Send an interactive card using Feishu's message API."""
+        self._send_payload(to, "interactive", card)
+
+    def _send_payload(self, to: str, msg_type: str, content: dict) -> None:
+        import requests as _requests
 
         try:
             receive_id_type = "open_id" if to.startswith("ou_") else "chat_id"
-
-            if msg.text and msg.attachments:
-                card_content = {
-                    "header": {"title": {"tag": "plain_text", "content": msg.text[:50]}},
-                    "elements": [{
-                        "tag": "action",
-                        "actions": [{
-                            "tag": "button",
-                            "text": {"tag": "plain_text", "content": "查看详情"},
-                            "url": msg.attachments[0],
-                            "type": "primary"
-                        }]
-                    }]
-                }
-                body = {
-                    "receive_id": to,
-                    "msg_type": "interactive",
-                    "content": json.dumps({"card": card_content}),
-                }
-            elif msg.text:
-                body = {
-                    "receive_id": to,
-                    "msg_type": "text",
-                    "content": json.dumps({"text": msg.text}),
-                }
-            else:
-                return
+            body = {
+                "receive_id": to,
+                "msg_type": msg_type,
+                "content": json.dumps(content, ensure_ascii=False),
+            }
 
             for attempt in range(3):
                 token = self._get_token()

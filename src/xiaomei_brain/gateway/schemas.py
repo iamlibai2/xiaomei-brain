@@ -67,12 +67,15 @@ class IdentityLegacySessionClaimParams(BaseModel):
     session_id: str = Field(..., min_length=1, max_length=256)
 
 
+ExternalChannel = Literal["feishu", "dingtalk"]
+
+
 class ChannelNameParams(BaseModel):
-    channel: Literal["feishu"] = "feishu"
+    channel: ExternalChannel = "feishu"
 
 
 class ChannelTestParams(BaseModel):
-    channel: Literal["feishu"] = "feishu"
+    channel: ExternalChannel = "feishu"
     app_id: str = Field(..., min_length=1, max_length=256)
     app_secret: str = Field(default="", max_length=512)
 
@@ -83,7 +86,7 @@ class ChannelConfigureParams(ChannelTestParams):
 
 
 class IdentityLinkBeginParams(BaseModel):
-    provider: Literal["feishu"] = "feishu"
+    provider: ExternalChannel = "feishu"
 
 
 class IdentityLinkRequestParams(BaseModel):
@@ -91,11 +94,11 @@ class IdentityLinkRequestParams(BaseModel):
 
 
 class IdentityLinkListParams(BaseModel):
-    provider: Literal["feishu"] = "feishu"
+    provider: ExternalChannel = "feishu"
 
 
 class IdentityLinkRevokeParams(BaseModel):
-    provider: Literal["feishu"] = "feishu"
+    provider: ExternalChannel = "feishu"
     binding_id: str = Field(..., min_length=1, max_length=128)
 
 

@@ -1,7 +1,7 @@
 """MessageGateway -- message entry preprocessing layer.
 
 After Gateway.accept() has already handled sanitization, empty-filtering,
-busy-guard, identity resolution, and data commands (/db /memory /dag), this
+identity resolution, queue admission, and data commands (/db /memory /dag), this
 layer handles:
 
 - Inter-agent communication routing
@@ -14,7 +14,7 @@ Finally delegates to ConversationDriver.handle_message().
 
 MessageGateway -- 消息入口预处理层。
 
-Gateway.accept() 已处理清洗、空消息过滤、busy 检查、身份解析、数据命令后，
+Gateway.accept() 已处理清洗、空消息过滤、身份解析、入队和数据命令后，
 此层处理：
 
 - Agent 间通讯路由
@@ -52,7 +52,7 @@ class MessageGateway:
         """Preprocess message: comms routing, session switch, intent commands,
         meta-skill matching. Then delegate to ConversationDriver.
 
-        Sanitization, empty check, busy check, and identity resolution are
+        Sanitization, empty check, queue admission, and identity resolution are
         now handled by Gateway.accept() before the message reaches this point.
 
         预处理消息：comms 路由、会话切换、意图命令、元技能匹配，

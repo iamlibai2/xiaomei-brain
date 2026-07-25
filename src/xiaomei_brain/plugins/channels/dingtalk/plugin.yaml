@@ -1,6 +1,6 @@
 name: dingtalk
 version: "1.0.0"
-description: 钉钉机器人对接 — 支持 HTTP 回调接收消息，sessionWebhook 回复
+description: 钉钉机器人对接 — Stream 长连接接收消息，sessionWebhook 回复
 kind: channel
 channel: dingtalk
 configSchema:
@@ -13,18 +13,15 @@ configSchema:
     clientSecret:
       type: string
       description: 钉钉应用 Client Secret（推荐）
+    accountId:
+      type: string
+      description: 当前 Agent 绑定的钉钉账号配置标识
+    displayName:
+      type: string
+      description: Desktop 中展示的机器人名称
     appKey:
       type: string
       description: 钉钉应用 AppKey（旧命名，兼容）
     appSecret:
       type: string
       description: 钉钉应用 AppSecret（旧命名，兼容）
-    groupAllowFrom:
-      type: array
-      description: 允许的群聊列表（* 表示全部）
-      items:
-        type: string
-    groupPolicy:
-      type: string
-      description: 群聊策略（open/allowlist/disabled）
-      enum: [open, allowlist, disabled]

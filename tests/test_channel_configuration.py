@@ -46,6 +46,23 @@ def test_same_feishu_app_cannot_be_bound_to_two_agents(tmp_path):
         second.configure_feishu("cli_shared", "two")
 
 
+def test_configure_dingtalk_uses_client_credentials_and_binding(tmp_path):
+    service = ChannelConfigurationService("xiaomei", tmp_path)
+
+    public = service.configure_dingtalk(
+        "ding-client",
+        "ding-secret",
+        display_name="小美钉钉机器人",
+    )
+
+    assert public["channel"] == "dingtalk"
+    assert public["app_id"] == "ding-client"
+    assert public["secret_configured"] is True
+    raw = service.raw_account("dingtalk")
+    assert raw["clientId"] == "ding-client"
+    assert raw["clientSecret"] == "ding-secret"
+
+
 def test_remove_channel_preserves_unrelated_bindings(tmp_path):
     service = ChannelConfigurationService("xiaomei", tmp_path)
     service.configure_feishu("cli_app", "secret")

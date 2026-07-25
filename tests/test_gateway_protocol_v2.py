@@ -173,6 +173,33 @@ def test_conversation_driver_message_events_share_session_and_turn():
     assert router.events[-1][1] == {"text": "你好", "status": "complete"}
 
 
+def test_internal_display_is_not_sent_to_plain_chat_channels():
+    class Router:
+        def __init__(self):
+            self.route = OutputRoute(type="feishu", target="chat-1")
+            self.deliveries = []
+
+        def route_for_turn(self, _turn_id, _session_id):
+            return self.route
+
+        def deliver(self, *args, **kwargs):
+            self.deliveries.append((args, kwargs))
+
+    router = Router()
+    parent = SimpleNamespace(_router=router)
+
+    ConversationDriver._deliver_internal_display(
+        parent, "shared", "turn-1", {"recall": {"count": 2}},
+    )
+    assert router.deliveries == []
+
+    router.route = OutputRoute(type="ws", target="shared")
+    ConversationDriver._deliver_internal_display(
+        parent, "shared", "turn-2", {"recall": {"count": 2}},
+    )
+    assert len(router.deliveries) == 1
+
+
 def test_conversation_driver_persists_terminal_message_status():
     class DB:
         def __init__(self):

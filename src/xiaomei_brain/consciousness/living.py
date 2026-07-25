@@ -286,10 +286,12 @@ class Living:
     ) -> LivingMessage:
         """Enqueue a message.
 
-        Sanitization, throttle, and busy checks are handled by
-        Gateway.accept() which calls this method after preprocessing.
+        Sanitization and throttle checks are handled by Gateway.accept(),
+        which calls this method after preprocessing. The queue intentionally
+        accepts messages while a Turn is active and processes them FIFO.
 
-        将消息放入队列。清洗、限流、busy 检查由 Gateway.accept() 处理。
+        将消息放入队列。清洗和限流由 Gateway.accept() 处理；当前 Turn
+        执行期间到达的消息也会入队，并按先进先出顺序处理。
         """
         msg = LivingMessage(
             content=content,
@@ -425,10 +427,10 @@ class Living:
 
     def cancel(self) -> None:
         # Request cancellation of current action.
-        # Also clear _chatting so Gateway accepts new messages immediately.
-        # 请求取消当前动作，同时清除 _chatting 允许立即接收新消息。
+        # _chatting remains true until the running Turn actually exits; queued
+        # messages are accepted independently of this presentation state.
+        # 请求取消当前动作；_chatting 在当前 Turn 真正退出前保持为 true。
         self._cancel_requested = True
-        self._chatting = False
 
     def abort_chat(self) -> None:
         """Abort current LLM generation.

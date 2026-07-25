@@ -157,6 +157,8 @@ class ChatMethods:
                 images=image_paths,
                 attachments=prepared_attachments,
                 metadata={"retry_of": parsed.retry_of_message_id} if parsed.retry_of_message_id else {},
+                reply_channel="ws",
+                reply_target=session_id,
             ))
             accepted = isinstance(accepted_result, Accepted)
             response = {"accepted": accepted, "session_id": session_id}

@@ -28,8 +28,14 @@ class FakeLiving:
 
 
 class FakeRouter:
+    def __init__(self):
+        self.turn_routes = {}
+
     def route(self, msg):
         return type("Routed", (), {"session_id": "main"})()
+
+    def bind_turn(self, turn_id, route):
+        self.turn_routes[turn_id] = route
 
 
 class TestGatewayAccept:
@@ -48,13 +54,42 @@ class TestGatewayAccept:
         assert result.reason == "EMPTY"
         assert result.silent is True
 
-    def test_reject_busy(self):
+    def test_queue_human_message_while_busy(self):
         living = FakeLiving()
         living._chatting = True
         g = Gateway(living, FakeRouter(), config=None)
         result = g.accept(RawMessage(content="Hello", source="human", channel="cli"))
-        assert isinstance(result, Rejected)
-        assert result.reason == "BUSY"
+        assert isinstance(result, Accepted)
+        assert living.messages[-1]["content"] == "Hello"
+
+    def test_busy_messages_keep_fifo_order_and_independent_reply_routes(self):
+        living = FakeLiving()
+        living._chatting = True
+        router = FakeRouter()
+        g = Gateway(living, router, config=None)
+
+        desktop = g.accept(RawMessage(
+            content="desktop",
+            source="human",
+            channel="ws",
+            session_id="ws-session",
+            reply_channel="ws",
+            reply_target="ws-session",
+        ))
+        feishu = g.accept(RawMessage(
+            content="feishu",
+            source="human",
+            channel="feishu",
+            session_id="feishu-session",
+            reply_channel="feishu",
+            reply_target="oc-chat",
+        ))
+
+        assert isinstance(desktop, Accepted)
+        assert isinstance(feishu, Accepted)
+        assert [item["content"] for item in living.messages[-2:]] == ["desktop", "feishu"]
+        assert router.turn_routes[desktop.living_message.turn_id].target == "ws-session"
+        assert router.turn_routes[feishu.living_message.turn_id].target == "oc-chat"
 
     def test_sanitize_applied(self):
         living = FakeLiving()
@@ -92,6 +127,26 @@ class TestGatewayAccept:
         result = g.accept(RawMessage(content="hi", source="human", channel="cli", peer_id="libai"))
         assert isinstance(result, Accepted)
         assert result.living_message.user_display_name == "李白"
+
+    def test_explicit_reply_route_is_bound_to_turn(self):
+        living = FakeLiving()
+        router = FakeRouter()
+        g = Gateway(living, router, config=None)
+
+        result = g.accept(RawMessage(
+            content="hello",
+            source="human",
+            channel="ws",
+            peer_id="person-1",
+            session_id="shared",
+            reply_channel="ws",
+            reply_target="shared",
+        ))
+
+        assert isinstance(result, Accepted)
+        route = router.turn_routes[result.living_message.turn_id]
+        assert route.type == "ws"
+        assert route.target == "shared"
 
     def test_data_command_routed(self):
         living = FakeLiving()

@@ -93,3 +93,39 @@ def test_gateway_projection_streams_only_to_websocket_routes():
     router.route = OutputRoute("ws", "s")
     hub.publish("message.delta", {"text": "part"}, session_id="s", turn_id="t")
     assert [item[0] for item in router.events] == ["message.complete", "message.delta"]
+
+
+def test_gateway_projection_uses_turn_origin_for_shared_session():
+    class Router:
+        def __init__(self):
+            self.routes = {
+                "turn-feishu": OutputRoute("feishu", "chat-1"),
+                "turn-desktop": OutputRoute("ws", "shared"),
+            }
+            self.events = []
+
+        def route_for_turn(self, turn_id, _session_id):
+            return self.routes.get(turn_id)
+
+        def deliver_event(self, name, payload, route, **metadata):
+            self.events.append((name, route, metadata))
+
+        def release_turn(self, turn_id):
+            self.routes.pop(turn_id, None)
+
+    router = Router()
+    hub = EventHub()
+    hub.subscribe(GatewayEventProjection(lambda: router))
+
+    hub.publish(
+        "message.complete", {"text": "A"},
+        session_id="shared", turn_id="turn-feishu",
+    )
+    hub.publish(
+        "message.complete", {"text": "B"},
+        session_id="shared", turn_id="turn-desktop",
+    )
+
+    assert router.events[0][1] == OutputRoute("feishu", "chat-1")
+    assert router.events[1][1] == OutputRoute("ws", "shared")
+    assert router.routes == {}

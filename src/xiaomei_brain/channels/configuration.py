@@ -33,9 +33,18 @@ class ChannelConfigurationService:
             "channel": channel,
             "enabled": bool(channel_data.get("enabled", False)) if isinstance(channel_data, dict) else False,
             "account_id": account_id,
-            "app_id": str(account.get("appId") or account.get("app_id") or ""),
+            "app_id": str(
+                account.get("appId")
+                or account.get("app_id")
+                or account.get("clientId")
+                or ""
+            ),
             "display_name": str(account.get("displayName") or ""),
-            "secret_configured": bool(account.get("appSecret") or account.get("app_secret")),
+            "secret_configured": bool(
+                account.get("appSecret")
+                or account.get("app_secret")
+                or account.get("clientSecret")
+            ),
         }
 
     def configure_feishu(
@@ -46,6 +55,39 @@ class ChannelConfigurationService:
         display_name: str = "",
         account_id: str = "default",
     ) -> dict[str, Any]:
+        return self._configure(
+            "feishu",
+            app_id,
+            app_secret,
+            display_name=display_name,
+            account_id=account_id,
+        )
+
+    def configure_dingtalk(
+        self,
+        app_id: str,
+        app_secret: str,
+        *,
+        display_name: str = "",
+        account_id: str = "default",
+    ) -> dict[str, Any]:
+        return self._configure(
+            "dingtalk",
+            app_id,
+            app_secret,
+            display_name=display_name,
+            account_id=account_id,
+        )
+
+    def _configure(
+        self,
+        channel_name: str,
+        app_id: str,
+        app_secret: str,
+        *,
+        display_name: str,
+        account_id: str,
+    ) -> dict[str, Any]:
         app_id = app_id.strip()
         app_secret = app_secret.strip()
         account_id = account_id.strip() or "default"
@@ -53,25 +95,27 @@ class ChannelConfigurationService:
             raise ValueError("appId 和 appSecret 不能为空")
         if any(char in account_id for char in "/\\"):
             raise ValueError("accountId 无效")
-        self._ensure_app_not_bound_elsewhere(app_id)
+        self._ensure_app_not_bound_elsewhere(channel_name, app_id)
 
         data = self._read_config()
         channels = data.setdefault("channels", {})
         if not isinstance(channels, dict):
             channels = {}
             data["channels"] = channels
-        channel = channels.setdefault("feishu", {})
+        channel = channels.setdefault(channel_name, {})
         if not isinstance(channel, dict):
             channel = {}
-            channels["feishu"] = channel
+            channels[channel_name] = channel
         channel["enabled"] = True
         accounts = channel.setdefault("accounts", {})
         if not isinstance(accounts, dict):
             accounts = {}
             channel["accounts"] = accounts
+        id_key = "clientId" if channel_name == "dingtalk" else "appId"
+        secret_key = "clientSecret" if channel_name == "dingtalk" else "appSecret"
         accounts[account_id] = {
-            "appId": app_id,
-            "appSecret": app_secret,
+            id_key: app_id,
+            secret_key: app_secret,
             "displayName": display_name.strip(),
             "accountId": account_id,
         }
@@ -85,16 +129,16 @@ class ChannelConfigurationService:
                 isinstance(item, dict)
                 and item.get("agentId") == self.agent_id
                 and isinstance(item.get("match"), dict)
-                and item["match"].get("channel") == "feishu"
+                and item["match"].get("channel") == channel_name
             )
         ]
         bindings.append({
             "agentId": self.agent_id,
-            "match": {"channel": "feishu", "accountId": account_id},
+            "match": {"channel": channel_name, "accountId": account_id},
         })
         data["bindings"] = bindings
         self._write_config(data)
-        return self.get("feishu")
+        return self.get(channel_name)
 
     def remove(self, channel_name: str) -> bool:
         data = self._read_config()
@@ -124,7 +168,7 @@ class ChannelConfigurationService:
         account = accounts.get(account_id, {}) if isinstance(accounts, dict) else {}
         return dict(account) if isinstance(account, dict) else {}
 
-    def _ensure_app_not_bound_elsewhere(self, app_id: str) -> None:
+    def _ensure_app_not_bound_elsewhere(self, channel_name: str, app_id: str) -> None:
         if not self.base_dir.is_dir():
             return
         for config_path in self.base_dir.glob("*/config.json"):
@@ -135,16 +179,18 @@ class ChannelConfigurationService:
             except (OSError, json.JSONDecodeError):
                 continue
             channels = data.get("channels", {})
-            channel = channels.get("feishu", {}) if isinstance(channels, dict) else {}
+            channel = channels.get(channel_name, {}) if isinstance(channels, dict) else {}
             accounts = channel.get("accounts", {}) if isinstance(channel, dict) else {}
             if not isinstance(accounts, dict):
                 continue
             for account in accounts.values():
                 if isinstance(account, dict) and (
-                    account.get("appId") or account.get("app_id")
+                    account.get("appId")
+                    or account.get("app_id")
+                    or account.get("clientId")
                 ) == app_id:
                     raise ValueError(
-                        f"该飞书应用已绑定到 Agent '{config_path.parent.name}'"
+                        f"该{channel_name}应用已绑定到 Agent '{config_path.parent.name}'"
                     )
 
     def _bound_account_id(self, data: dict[str, Any], channel: str) -> str:

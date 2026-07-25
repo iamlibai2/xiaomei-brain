@@ -58,16 +58,16 @@ class IdentityLinkService:
             )
             if existing is not None:
                 if existing.person_id != request.person_id:
-                    raise ValueError("该飞书身份已经绑定到其他人物")
+                    raise ValueError("该渠道身份已经绑定到其他人物")
                 if existing.revoked_at is not None:
                     if not self.people.store.restore_binding(
                         existing.binding_id,
                         request.person_id,
                     ):
-                        raise ValueError("该飞书身份无法恢复绑定")
+                        raise ValueError("该渠道身份无法恢复绑定")
                     binding = self.people.store.get_binding(existing.binding_id)
                     if binding is None:
-                        raise ValueError("该飞书身份恢复失败")
+                        raise ValueError("该渠道身份恢复失败")
                 else:
                     binding = existing
             else:
@@ -75,7 +75,7 @@ class IdentityLinkService:
                     request.person_id,
                     issuer,
                     subject,
-                    "feishu_account",
+                    f"{provider}_account",
                     verified_at=time.time(),
                 )
             if not self.people.store.complete_link_request(request.request_id, subject):

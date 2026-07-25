@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from xiaomei_brain.consciousness.action_broker import ActionBroker
 from xiaomei_brain.consciousness.interaction_broker import InteractionBroker
 from xiaomei_brain.gateway.channel_adapter import ChannelAdapter, ChannelCapabilities
-from xiaomei_brain.gateway.inbound import Gateway, RawMessage, Rejected
+from xiaomei_brain.gateway.inbound import Accepted, Gateway, RawMessage, Rejected
 from xiaomei_brain.gateway.router import OutputRoute
 
 
@@ -174,7 +174,7 @@ def test_action_command_requires_owning_channel_user_and_session():
     assert result["request"].status == "approved"
 
 
-def test_p2p_agent_cannot_answer_human_clarify_request():
+def test_p2p_agent_message_queues_without_answering_human_clarify_request():
     requested = threading.Event()
     broker = InteractionBroker(
         lambda name, _payload: requested.set() if name == "interaction.requested" else None,
@@ -198,8 +198,7 @@ def test_p2p_agent_cannot_answer_human_clarify_request():
         session_id="comms-agent-2",
     ))
 
-    assert isinstance(response, Rejected)
-    assert response.reason == "BUSY"
+    assert isinstance(response, Accepted)
+    assert thread.is_alive()
     broker.cancel_session("comms-agent-2")
     thread.join(1)
-

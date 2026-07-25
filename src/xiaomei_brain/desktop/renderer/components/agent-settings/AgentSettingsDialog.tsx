@@ -22,7 +22,22 @@ type IdentityLink = {
   last_verified_at?: number | null;
 };
 
+type ChannelProvider = "feishu" | "dingtalk";
+
+const CHANNEL_RUNTIME_LABELS: Record<string, string> = {
+  starting: "连接中",
+  running: "在线",
+  reconnecting: "重连中",
+  error: "异常",
+  stopped: "未启用",
+};
+
+function channelRuntimeLabel(state: string): string {
+  return CHANNEL_RUNTIME_LABELS[state] || state || "未知";
+}
+
 export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props) {
+  const [channel, setChannel] = useState<ChannelProvider>("feishu");
   const [appId, setAppId] = useState("");
   const [appSecret, setAppSecret] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -35,23 +50,34 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props
   const [linkCommand, setLinkCommand] = useState("");
   const [linkStatus, setLinkStatus] = useState("");
   const [identityLinks, setIdentityLinks] = useState<IdentityLink[]>([]);
+  const channelName = channel === "feishu" ? "飞书" : "钉钉";
+  const runtimeLabel = channelRuntimeLabel(runtimeState);
 
   const refreshIdentityLinks = useCallback(async () => {
     if (!agentId) return;
     const response = await window.gateway.listIdentityLinks({
       agentId,
-      provider: "feishu",
+      provider: channel,
     });
     if (response.error) return;
     const raw = response.result?.bindings;
     setIdentityLinks(Array.isArray(raw) ? raw as IdentityLink[] : []);
-  }, [agentId]);
+  }, [agentId, channel]);
 
   useEffect(() => {
     if (!open || !agentId) return;
     setError("");
     setNotice("");
-    void window.gateway.getChannelConfig({ agentId, channel: "feishu" }).then((response) => {
+    setAppId("");
+    setAppSecret("");
+    setDisplayName("");
+    setSecretConfigured(false);
+    setRuntimeState("stopped");
+    setLinkRequestId("");
+    setLinkCommand("");
+    setLinkStatus("");
+    setIdentityLinks([]);
+    void window.gateway.getChannelConfig({ agentId, channel }).then((response) => {
       if (response.error) {
         setError(response.error.message);
         return;
@@ -59,12 +85,13 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props
       const config = (response.result?.config || {}) as ChannelConfig;
       const runtime = (response.result?.runtime || {}) as Record<string, unknown>;
       setAppId(config.app_id || "");
-      setDisplayName(config.display_name || `${agentName}飞书机器人`);
+      const channelName = channel === "feishu" ? "飞书" : "钉钉";
+      setDisplayName(config.display_name || `${agentName}${channelName}机器人`);
       setSecretConfigured(Boolean(config.secret_configured));
       setRuntimeState(typeof runtime.state === "string" ? runtime.state : "stopped");
       setAppSecret("");
     });
-  }, [agentId, agentName, open]);
+  }, [agentId, agentName, channel, open]);
 
   useEffect(() => {
     if (open) void refreshIdentityLinks();
@@ -79,19 +106,19 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props
           const status = String(response.result?.status || "");
           setLinkStatus(status);
           if (status === "completed") {
-            setNotice("飞书身份已绑定到当前人物。");
+            setNotice(`${channel === "feishu" ? "飞书" : "钉钉"}身份已绑定到当前人物。`);
             void refreshIdentityLinks();
             window.clearInterval(timer);
           }
         });
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [agentId, linkRequestId, linkStatus, open, refreshIdentityLinks]);
+  }, [agentId, channel, linkRequestId, linkStatus, open, refreshIdentityLinks]);
 
   useEffect(() => {
     if (!open || !agentId || !secretConfigured) return;
     const refresh = () => {
-      void window.gateway.getChannelStatus({ agentId, channel: "feishu" })
+      void window.gateway.getChannelStatus({ agentId, channel })
         .then((response) => {
           if (!response.error) setRuntimeState(String(response.result?.state || "stopped"));
         });
@@ -99,7 +126,7 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props
     refresh();
     const timer = window.setInterval(refresh, 2000);
     return () => window.clearInterval(timer);
-  }, [agentId, open, secretConfigured]);
+  }, [agentId, channel, open, secretConfigured]);
 
   if (!open) return null;
 
@@ -109,7 +136,7 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props
     setNotice("");
     try {
       const response = await window.gateway.testChannel({
-        agentId, channel: "feishu", appId, appSecret,
+        agentId, channel, appId, appSecret,
       });
       if (response.error) setError(response.error.message);
       else setNotice("连接测试成功。");
@@ -125,7 +152,7 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props
     try {
       const response = await window.gateway.configureChannel({
         agentId,
-        channel: "feishu",
+        channel,
         appId,
         appSecret,
         displayName,
@@ -139,7 +166,7 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props
       setRuntimeState(String(runtime.state || "running"));
       setSecretConfigured(true);
       setAppSecret("");
-      setNotice("飞书渠道已保存并启用。");
+      setNotice(`${channelName}渠道已保存并启用。`);
     } finally {
       setBusy("");
     }
@@ -151,7 +178,7 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props
     setNotice("");
     try {
       const response = await window.gateway.beginIdentityLink({
-        agentId, provider: "feishu",
+        agentId, provider: channel,
       });
       if (response.error) {
         setError(response.error.message);
@@ -169,7 +196,7 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props
     setBusy("remove");
     setError("");
     try {
-      const response = await window.gateway.removeChannel({ agentId, channel: "feishu" });
+      const response = await window.gateway.removeChannel({ agentId, channel });
       if (response.error) {
         setError(response.error.message);
         return;
@@ -180,7 +207,7 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props
       setSecretConfigured(false);
       setLinkRequestId("");
       setLinkCommand("");
-      setNotice("飞书渠道已移除。");
+      setNotice(`${channelName}渠道已移除。`);
     } finally {
       setBusy("");
     }
@@ -192,14 +219,14 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props
     try {
       const response = await window.gateway.revokeIdentityLink({
         agentId,
-        provider: "feishu",
+        provider: channel,
         bindingId,
       });
       if (response.error) {
         setError(response.error.message);
         return;
       }
-      setNotice("飞书身份已解除绑定。");
+      setNotice(`${channelName}身份已解除绑定。`);
       setLinkRequestId("");
       setLinkCommand("");
       setLinkStatus("");
@@ -222,11 +249,28 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props
           </button>
         </header>
 
+        <div className="channel-tabs" role="tablist" aria-label="渠道">
+          {(["feishu", "dingtalk"] as ChannelProvider[]).map((item) => (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={channel === item}
+              className={channel === item ? "active" : ""}
+              key={item}
+              onClick={() => setChannel(item)}
+            >
+              {item === "feishu" ? "飞书" : "钉钉"}
+            </button>
+          ))}
+        </div>
+
         <div className="channel-heading">
-          <div className="channel-logo">飞</div>
+          <div className="channel-logo">{channel === "feishu" ? "飞" : "钉"}</div>
           <div>
-            <h3>飞书</h3>
-            <span className={`channel-runtime ${runtimeState}`}>{runtimeState}</span>
+            <h3>{channelName}</h3>
+            <span className={`channel-runtime ${runtimeState}`} title={runtimeState}>
+              {runtimeLabel}
+            </span>
           </div>
         </div>
 
@@ -235,11 +279,15 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props
           <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
         </label>
         <label>
-          App ID
-          <input value={appId} onChange={(event) => setAppId(event.target.value)} placeholder="cli_xxx" />
+          {channel === "feishu" ? "App ID" : "Client ID (AppKey)"}
+          <input
+            value={appId}
+            onChange={(event) => setAppId(event.target.value)}
+            placeholder={channel === "feishu" ? "cli_xxx" : "ding_xxx"}
+          />
         </label>
         <label>
-          App Secret
+          {channel === "feishu" ? "App Secret" : "Client Secret"}
           <input
             type="password"
             value={appSecret}
@@ -260,13 +308,13 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props
         {secretConfigured && (
           <div className="identity-link-panel">
             <h3>绑定当前人物</h3>
-            <p>生成绑定码后，在飞书中私聊机器人并发送下面的命令。</p>
+            <p>生成绑定码后，在{channelName}中私聊机器人并发送下面的命令。</p>
             {identityLinks.length > 0 && (
               <div className="identity-link-list">
                 {identityLinks.map((binding) => (
                   <div className="identity-link-item" key={binding.binding_id}>
                     <div>
-                      <strong>已绑定飞书身份</strong>
+                      <strong>已绑定{channelName}身份</strong>
                       <code>{binding.subject_hint}</code>
                     </div>
                     <button
@@ -291,7 +339,7 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props
                   <span>点击复制</span>
                 </button>
                 <div className={`link-status ${linkStatus}`}>
-                  {linkStatus === "completed" ? "绑定成功" : "等待飞书消息…"}
+                  {linkStatus === "completed" ? "绑定成功" : `等待${channelName}消息…`}
                 </div>
               </>
             ) : (
@@ -305,7 +353,7 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props
             )}
             {runtimeState !== "running" && (
               <div className="link-status">
-                飞书连接尚未建立，请等待状态变为 running 后再生成绑定码。
+                {channelName}连接尚未建立，当前状态：{runtimeLabel}。连接在线后可生成绑定码。
               </div>
             )}
           </div>
@@ -317,7 +365,7 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props
         <footer>
           {secretConfigured && (
             <button type="button" className="channel-remove" disabled={Boolean(busy)} onClick={() => void remove()}>
-              移除飞书渠道
+              移除{channelName}渠道
             </button>
           )}
           <Button variant="secondary" onClick={onClose}>完成</Button>

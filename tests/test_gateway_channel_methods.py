@@ -20,6 +20,10 @@ class FakeRuntime:
         self.applied = config
         return FakeAdapter()
 
+    def apply_dingtalk(self, config):
+        self.applied = config
+        return FakeAdapter()
+
     def status(self, _channel):
         return {"state": "running" if self.applied else "stopped", "error": ""}
 
@@ -95,3 +99,45 @@ def test_channel_rpc_does_not_return_configured_secret(tmp_path):
     config = response["result"]["config"]
     assert config["secret_configured"] is True
     assert "do-not-return" not in str(response)
+
+
+def test_channel_rpc_configures_dingtalk_and_links_person(tmp_path):
+    people = PeopleService(PeopleStore(tmp_path / "brain.db"))
+    person = people.create_person("测试人物")
+    living = SimpleNamespace(
+        _channel_configuration=ChannelConfigurationService("xiaomei", tmp_path),
+        _channel_runtime=FakeRuntime(),
+        _identity_link_service=IdentityLinkService(people),
+        _people_service=people,
+    )
+    methods = ChannelMethods(
+        living,
+        {"desktop": SimpleNamespace(person_id=person.person_id)},
+    )
+
+    configured = methods.handle_configure("desktop", "1", {
+        "channel": "dingtalk",
+        "app_id": "ding-client",
+        "app_secret": "ding-secret",
+        "display_name": "小美钉钉机器人",
+        "account_id": "default",
+    })
+    assert configured["result"]["configured"] is True
+    assert living._channel_runtime.applied["clientSecret"] == "ding-secret"
+
+    link = methods.handle_link_begin(
+        "desktop", "2", {"provider": "dingtalk"},
+    )
+    code = link["result"]["command"].split()[-1]
+    binding = living._identity_link_service.consume(
+        "dingtalk",
+        "dingtalk:app:ding-client",
+        "staff-1234567890",
+        code,
+    )
+    assert binding is not None
+    assert binding.credential_type == "dingtalk_account"
+    listed = methods.handle_link_list(
+        "desktop", "3", {"provider": "dingtalk"},
+    )
+    assert len(listed["result"]["bindings"]) == 1
