@@ -12,6 +12,7 @@ from typing import Any, Callable, Iterable
 
 from xiaomei_brain.agent.core import Agent
 from xiaomei_brain.tools.action_policy import assess_tool_action
+from xiaomei_brain.tools.base import Tool
 from xiaomei_brain.tools.registry import ToolRegistry
 
 from .execution_context import AssignmentExecutionContext, ExecutionControl
@@ -116,6 +117,7 @@ class IsolatedAssignmentRunner:
 
         workspace_root, work_dir, outputs_dir = self._workspace_dirs(context)
         isolated_tools = self._copy_safe_tools(context)
+        self._install_execution_plan_tools(isolated_tools, context, control)
         isolated_llm = clone_llm_for_assignment(self.agent_instance.llm)
         runtime = Agent(
             llm=isolated_llm,
@@ -166,6 +168,19 @@ class IsolatedAssignmentRunner:
             arguments: dict[str, Any],
         ) -> dict[str, Any] | None:
             nonlocal approval_consumed
+            # Execution Plan is deliberately local to AssignmentRun. It is
+            # not a Goal/PACE node and does not touch PurposeEngine state.
+            if (
+                tool_name in self.allowed_tools
+                and self._execution_plan(control.checkpoint_data) is None
+            ):
+                return {
+                    "approved": False,
+                    "result": (
+                        "Blocked: call set_assignment_execution_plan before "
+                        "starting Assignment work."
+                    ),
+                }
             assessment = assess_tool_action(tool_name, arguments)
             if assessment.decision == "deny":
                 return {
@@ -327,6 +342,7 @@ class IsolatedAssignmentRunner:
                     final_text,
                     artifact_db,
                 )
+                self._record_final_plan_state(context, control, final_text)
         finally:
             if artifact_db is not None:
                 artifact_db.close()
@@ -364,6 +380,182 @@ class IsolatedAssignmentRunner:
             summary,
             checkpoint=checkpoint,
             safe_to_resume=False,
+        )
+
+    def _install_execution_plan_tools(
+        self,
+        registry: ToolRegistry,
+        context: AssignmentExecutionContext,
+        control: ExecutionControl,
+    ) -> None:
+        """Install run-local planning tools without involving Goal/PACE."""
+        actor = AssignmentActor(ActorType.AGENT, context.agent_id)
+
+        def set_plan(steps: list[str]) -> str:
+            existing = self._execution_plan(control.checkpoint_data)
+            if existing is not None:
+                return json.dumps({
+                    "status": "existing",
+                    "steps": [item["title"] for item in existing["steps"]],
+                }, ensure_ascii=False)
+
+            normalized: list[str] = []
+            for value in steps:
+                title = str(value).strip()
+                if title and title not in normalized:
+                    normalized.append(title[:200])
+            if not 1 <= len(normalized) <= 8:
+                raise ValueError("委托执行计划必须包含 1 到 8 个步骤")
+
+            plan = {
+                "version": 1,
+                "steps": [
+                    {"title": title, "status": "pending", "summary": ""}
+                    for title in normalized
+                ],
+            }
+            checkpoint = control.checkpoint_data
+            checkpoint["execution_plan"] = plan
+            control.checkpoint(checkpoint)
+            self.service.update_progress(
+                context.assignment_id,
+                actor=actor,
+                summary=f"已建立 {len(normalized)} 个执行步骤",
+                completed_steps=0,
+                total_steps=len(normalized),
+            )
+            return json.dumps({
+                "status": "created",
+                "steps": normalized,
+            }, ensure_ascii=False)
+
+        def complete_step(summary: str) -> str:
+            summary = summary.strip()
+            if not summary:
+                raise ValueError("步骤完成摘要不能为空")
+            checkpoint = control.checkpoint_data
+            plan = self._execution_plan(checkpoint)
+            if plan is None:
+                raise ValueError("尚未建立委托执行计划")
+            steps = plan["steps"]
+            next_index = next(
+                (index for index, item in enumerate(steps) if item["status"] == "pending"),
+                None,
+            )
+            if next_index is None:
+                return json.dumps({
+                    "status": "already_completed",
+                    "completed_steps": len(steps),
+                    "total_steps": len(steps),
+                }, ensure_ascii=False)
+
+            steps[next_index] = {
+                **steps[next_index],
+                "status": "completed",
+                "summary": summary[:500],
+                "completed_at": time.time(),
+            }
+            checkpoint["execution_plan"] = {**plan, "steps": steps}
+            control.checkpoint(checkpoint)
+            completed = next_index + 1
+            self.service.update_progress(
+                context.assignment_id,
+                actor=actor,
+                summary=summary[:1000],
+                completed_steps=completed,
+                total_steps=len(steps),
+            )
+            return json.dumps({
+                "status": "updated",
+                "completed_step": steps[next_index]["title"],
+                "completed_steps": completed,
+                "total_steps": len(steps),
+            }, ensure_ascii=False)
+
+        registry.register(Tool(
+            name="set_assignment_execution_plan",
+            description=(
+                "Before doing Assignment work, define 1-8 short ordered steps "
+                "whose completion can be verified from results."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "steps": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 1,
+                        "maxItems": 8,
+                    },
+                },
+                "required": ["steps"],
+            },
+            func=set_plan,
+            category="internal",
+        ))
+        registry.register(Tool(
+            name="complete_assignment_step",
+            description=(
+                "Mark the next Assignment Execution Plan step complete only "
+                "after verifying its factual result."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {"summary": {"type": "string"}},
+                "required": ["summary"],
+            },
+            func=complete_step,
+            category="internal",
+        ))
+
+    @staticmethod
+    def _execution_plan(checkpoint: dict[str, Any]) -> dict[str, Any] | None:
+        """Return a sanitized run-local plan, or None for old checkpoints."""
+        raw = checkpoint.get("execution_plan")
+        if not isinstance(raw, dict) or not isinstance(raw.get("steps"), list):
+            return None
+        steps: list[dict[str, Any]] = []
+        for item in raw["steps"][:8]:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or "").strip()
+            if not title:
+                continue
+            step = {
+                "title": title[:200],
+                "status": (
+                    "completed" if item.get("status") == "completed" else "pending"
+                ),
+                "summary": str(item.get("summary") or "")[:500],
+            }
+            completed_at = item.get("completed_at")
+            if isinstance(completed_at, (int, float)):
+                step["completed_at"] = completed_at
+            steps.append(step)
+        if not steps:
+            return None
+        return {"version": 1, "steps": steps}
+
+    def _record_final_plan_state(
+        self,
+        context: AssignmentExecutionContext,
+        control: ExecutionControl,
+        summary: str,
+    ) -> None:
+        """Close the checkpoint without inventing completion for pending steps."""
+        checkpoint = control.checkpoint_data
+        plan = self._execution_plan(checkpoint)
+        if plan is None:
+            return
+        checkpoint["execution_plan"] = plan
+        control.checkpoint(checkpoint, safe_to_resume=False)
+        completed = sum(item["status"] == "completed" for item in plan["steps"])
+        self.service.update_progress(
+            context.assignment_id,
+            actor=AssignmentActor(ActorType.AGENT, context.agent_id),
+            summary=summary.strip()[:1000] or "委托执行结束",
+            completed_steps=completed,
+            total_steps=len(plan["steps"]),
         )
 
     def _copy_safe_tools(
@@ -645,6 +837,10 @@ class IsolatedAssignmentRunner:
         system = ((identity.strip() + "\n\n") if identity.strip() else "") + (
             "你正在一个与实时聊天完全隔离的后台执行环境中完成已经接受的委托。\n"
             "只处理下面这项委托，不创建或修改其他委托、人物、会话或内部身份。\n"
+            "开始工作前调用 set_assignment_execution_plan，建立 1 到 8 个可验证步骤；"
+            "如果 checkpoint 已有 execution_plan，则沿用原计划，不得重建。"
+            "每验证完成一步立即调用 complete_assignment_step。"
+            "执行计划只记录事实，不记录思维过程；最终交付前应完成全部步骤。\n"
             "完成标准满足后直接给出简明交付摘要，并优先把长内容写成文件。\n"
             "如果缺少人物才能提供的信息，输出且只输出："
             "<WAIT_FOR_PERSON>{\"reason\":\"原因\",\"question\":\"具体问题\"," 

@@ -222,6 +222,57 @@ def test_assignment_get_exposes_only_public_pending_interaction(tmp_path):
     store.close()
 
 
+def test_assignment_get_exposes_only_public_execution_plan(tmp_path):
+    router, service, store, _scheduler = _router(tmp_path)
+    offered = _offer(service, "person-1")
+    store.create_run(AssignmentRun(
+        run_id="run-plan",
+        assignment_id=offered.id,
+        status="checkpointed",
+        trigger_type="test",
+        trigger_actor_id="xiaomei",
+        checkpoint={
+            "execution_plan": {
+                "version": 1,
+                "steps": [
+                    {
+                        "title": "核对输入",
+                        "status": "completed",
+                        "summary": "已核对附件",
+                        "completed_at": 2.0,
+                        "private_note": "must not escape",
+                    },
+                    {"title": "生成结果", "status": "pending", "summary": ""},
+                ],
+            },
+            "tool_trace": [{"result": "private working detail"}],
+        },
+        safe_to_resume=True,
+        started_at=1.0,
+        updated_at=2.0,
+    ))
+
+    response = router.dispatch("conn-1", "get-plan", "assignment.get", {
+        "assignment_id": offered.id,
+    })
+
+    assert response["result"]["execution_plan"] == {
+        "steps": [
+            {
+                "title": "核对输入",
+                "status": "completed",
+                "summary": "已核对附件",
+            },
+            {"title": "生成结果", "status": "pending", "summary": ""},
+        ],
+        "completed_steps": 1,
+        "total_steps": 2,
+    }
+    assert "private_note" not in str(response["result"]["execution_plan"])
+    assert "tool_trace" not in response["result"]
+    store.close()
+
+
 def test_assignment_artifact_rpc_checks_person_and_assignment_link(tmp_path, monkeypatch):
     monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
     router, service, store, _scheduler = _router(tmp_path)

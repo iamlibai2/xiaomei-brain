@@ -341,7 +341,17 @@
 .assignment-detail-block { margin-top: 22px; }
 .assignment-detail-block h3,
 .assignment-response-block h3 { margin: 0 0 8px; font-size: 12px; }
+.assignment-detail-block h3 { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .assignment-detail-block ul { margin: 0; padding-left: 20px; color: var(--ui-color-text-secondary); font-size: 12px; line-height: 1.8; }
+.assignment-plan-percent { color: var(--ui-brand-primary); font-size: 11px; font-weight: 600; }
+.assignment-plan { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.assignment-plan li { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 9px; color: var(--ui-color-text-secondary); }
+.assignment-plan-marker { display: grid; width: 22px; height: 22px; place-items: center; border: 1px solid var(--ui-color-border-secondary); border-radius: 50%; color: var(--ui-color-text-tertiary); font-size: 10px; }
+.assignment-plan li.completed .assignment-plan-marker { border-color: rgba(44, 164, 115, .38); background: rgba(44, 164, 115, .12); color: #2ca473; }
+.assignment-plan li.current .assignment-plan-marker { border-color: var(--ui-brand-primary); color: var(--ui-brand-primary); }
+.assignment-plan strong { display: block; padding-top: 3px; color: var(--ui-color-text-primary); font-size: 12px; font-weight: 550; }
+.assignment-plan li.completed strong { color: var(--ui-color-text-secondary); }
+.assignment-plan p { margin: 4px 0 0; color: var(--ui-color-text-tertiary); font-size: 11px; line-height: 1.5; }
 
 .assignment-response-block { margin-top: 20px; padding: 14px; border: 1px solid rgba(217, 145, 20, .3); border-radius: 10px; background: rgba(217, 145, 20, .06); }
 .assignment-response-block p { color: var(--ui-color-text-secondary); font-size: 12px; }

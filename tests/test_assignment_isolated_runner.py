@@ -62,6 +62,30 @@ def _response(content="", tool_calls=None):
     )
 
 
+def _tool_call(call_id, name, arguments):
+    return SimpleNamespace(
+        id=call_id,
+        name=name,
+        arguments=json.dumps(arguments, ensure_ascii=False),
+    )
+
+
+def _plan_response(*steps):
+    return _response(tool_calls=[_tool_call(
+        "call_plan",
+        "set_assignment_execution_plan",
+        {"steps": list(steps or ("完成并验证工作",))},
+    )])
+
+
+def _complete_step_response(summary="工作已经完成并验证"):
+    return _response(tool_calls=[_tool_call(
+        "call_complete_step",
+        "complete_assignment_step",
+        {"summary": summary},
+    )])
+
+
 def _context(tmp_path, responses, tools=None):
     store = AssignmentStore(tmp_path / "brain.db")
     service = AssignmentService(
@@ -210,7 +234,9 @@ def test_isolated_runner_executes_valid_shell_without_approval(tmp_path):
     store, service, agent, context, control, checkpoints = _context(
         tmp_path,
         [
+            _plan_response(),
             _response(tool_calls=[tool_call]),
+            _complete_step_response("命令已经成功执行"),
             _response("命令执行完成。"),
         ],
         tools=registry,
@@ -221,8 +247,9 @@ def test_isolated_runner_executes_valid_shell_without_approval(tmp_path):
     assert executed == ["echo change"]
     assert result.status == "completed"
     assert "pending_action" not in result.checkpoint
-    assert len(agent.llm.clones[0].calls) == 2
-    assert checkpoints[-1][1] is True
+    assert len(agent.llm.clones[0].calls) == 4
+    assert any(safe is True for _data, safe in checkpoints)
+    assert checkpoints[-1][1] is False
     store.close()
 
 
@@ -248,7 +275,9 @@ def test_isolated_runner_consumes_exact_sealed_approval_once(tmp_path):
     store, service, agent, context, _control, checkpoints = _context(
         tmp_path,
         [
+            _plan_response(),
             _response(tool_calls=[tool_call]),
+            _complete_step_response("批准的命令已经执行"),
             _response("批准的操作已执行，工作完成。"),
         ],
         tools=registry,
@@ -299,7 +328,9 @@ def test_isolated_runner_links_discovered_artifact_to_assignment(tmp_path, monke
     store, service, agent, context, control, _checkpoints = _context(
         tmp_path,
         [
+            _plan_response(),
             _response(tool_calls=[tool_call]),
+            _complete_step_response("报告文件已经生成"),
             _response("报告已经生成。"),
         ],
         tools=registry,
@@ -509,7 +540,12 @@ def test_only_outputs_are_promoted_as_assignment_deliverables(tmp_path, monkeypa
     ]
     store, service, agent, context, control, _checkpoints = _context(
         tmp_path,
-        [_response(tool_calls=calls), _response("已交付 outputs/result.md")],
+        [
+            _plan_response(),
+            _response(tool_calls=calls),
+            _complete_step_response("最终文件已经生成并检查"),
+            _response("已交付 outputs/result.md"),
+        ],
         tools=registry,
     )
     agent.conversation_db = SimpleNamespace(db_path=tmp_path / "brain.db")
@@ -528,4 +564,64 @@ def test_only_outputs_are_promoted_as_assignment_deliverables(tmp_path, monkeypa
     }
     assert helper_relations == {"process"}
     assert output_relations == {"output", "deliverable"}
+    store.close()
+
+
+def test_execution_plan_keeps_unreported_steps_pending_at_completion(tmp_path):
+    store, service, agent, context, control, _checkpoints = _context(
+        tmp_path,
+        [
+            _plan_response("收集资料", "形成报告"),
+            _complete_step_response("已收集并核对资料"),
+            _response("本次执行结束。"),
+        ],
+    )
+
+    result = IsolatedAssignmentRunner(agent, service)(context, control)
+
+    plan = result.checkpoint["execution_plan"]
+    assignment = store.get_assignment(context.assignment_id)
+    assert [item["status"] for item in plan["steps"]] == ["completed", "pending"]
+    assert plan["steps"][0]["summary"] == "已收集并核对资料"
+    assert plan["steps"][1]["summary"] == ""
+    assert assignment.completed_steps == 1
+    assert assignment.total_steps == 2
+    assert assignment.progress_summary == "本次执行结束。"
+    store.close()
+
+
+def test_execution_plan_reuses_checkpoint_after_resume(tmp_path):
+    store, service, agent, context, _control, checkpoints = _context(
+        tmp_path,
+        [
+            _complete_step_response("第二阶段已经验证"),
+            _response("恢复后的工作已完成。"),
+        ],
+    )
+    initial = {
+        "execution_plan": {
+            "version": 1,
+            "steps": [
+                {
+                    "title": "第一阶段",
+                    "status": "completed",
+                    "summary": "第一阶段已完成",
+                },
+                {"title": "第二阶段", "status": "pending", "summary": ""},
+            ],
+        },
+        "person_response": "继续",
+    }
+    control = ExecutionControl(
+        CancellationToken(),
+        lambda data, safe: checkpoints.append((data, safe)),
+        initial,
+    )
+
+    result = IsolatedAssignmentRunner(agent, service)(context, control)
+
+    steps = result.checkpoint["execution_plan"]["steps"]
+    assert [item["title"] for item in steps] == ["第一阶段", "第二阶段"]
+    assert steps[1]["summary"] == "第二阶段已经验证"
+    assert store.get_assignment(context.assignment_id).completed_steps == 2
     store.close()

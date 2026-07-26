@@ -88,6 +88,7 @@ class AssignmentMethods:
             "events": [self._public_event(item) for item in events],
             "resources": [self._public_resource(item) for item in resources],
             "pending": self._public_pending(runs),
+            "execution_plan": self._public_execution_plan(runs),
         })
 
     def handle_artifact_get(
@@ -306,6 +307,38 @@ class AssignmentMethods:
                     "summary": str(action.get("summary") or ""),
                     "reason": str(action.get("reason") or ""),
                     "risk_level": str(action.get("risk_level") or "medium"),
+                }
+        return None
+
+    @staticmethod
+    def _public_execution_plan(runs) -> dict[str, Any] | None:
+        """Expose factual step status, never the private execution checkpoint."""
+        for run in runs:
+            checkpoint = run.checkpoint or {}
+            raw = checkpoint.get("execution_plan")
+            if not isinstance(raw, dict) or not isinstance(raw.get("steps"), list):
+                continue
+            steps = []
+            for item in raw["steps"][:8]:
+                if not isinstance(item, dict):
+                    continue
+                title = str(item.get("title") or "").strip()
+                if not title:
+                    continue
+                steps.append({
+                    "title": title[:200],
+                    "status": (
+                        "completed" if item.get("status") == "completed" else "pending"
+                    ),
+                    "summary": str(item.get("summary") or "")[:500],
+                })
+            if steps:
+                return {
+                    "steps": steps,
+                    "completed_steps": sum(
+                        item["status"] == "completed" for item in steps
+                    ),
+                    "total_steps": len(steps),
                 }
         return None
 

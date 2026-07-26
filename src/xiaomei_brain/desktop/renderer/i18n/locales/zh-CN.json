@@ -236,6 +236,7 @@
       "empty": "还没有委托。可以直接在对话中把一项持续工作交给 Agent。",
       "close": "关闭",
       "progress": "当前进展",
+      "executionPlan": "执行步骤",
       "inProgress": "正在执行",
       "acceptance": "完成标准",
       "deliverables": "交付产物",

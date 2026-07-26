@@ -19,6 +19,19 @@ interface PendingAction {
 }
 
 type Pending = PendingInteraction | PendingAction | null;
+
+interface AssignmentExecutionStep {
+  title: string;
+  status: "pending" | "completed";
+  summary: string;
+}
+
+interface AssignmentExecutionPlan {
+  steps: AssignmentExecutionStep[];
+  completed_steps: number;
+  total_steps: number;
+}
+
 const EMPTY_ASSIGNMENTS: AssignmentSnapshot[] = [];
 
 export function AssignmentDrawer({
@@ -44,6 +57,7 @@ export function AssignmentDrawer({
   const [pending, setPending] = useState<Pending>(null);
   const [events, setEvents] = useState<Record<string, unknown>[]>([]);
   const [resources, setResources] = useState<Record<string, unknown>[]>([]);
+  const [executionPlan, setExecutionPlan] = useState<AssignmentExecutionPlan | null>(null);
   const [answer, setAnswer] = useState("");
   const [actionError, setActionError] = useState("");
   const [acting, setActing] = useState(false);
@@ -59,6 +73,7 @@ export function AssignmentDrawer({
       setPending(null);
       setEvents([]);
       setResources([]);
+      setExecutionPlan(null);
       return;
     }
     let cancelled = false;
@@ -80,6 +95,10 @@ export function AssignmentDrawer({
         setResources(Array.isArray(response.result?.resources)
           ? response.result!.resources as Record<string, unknown>[]
           : []);
+        const rawPlan = response.result?.execution_plan;
+        setExecutionPlan(rawPlan && typeof rawPlan === "object" && !Array.isArray(rawPlan)
+          ? rawPlan as unknown as AssignmentExecutionPlan
+          : null);
       })
       .catch((error) => { if (!cancelled) setActionError(String(error)); });
     return () => { cancelled = true; };
@@ -116,6 +135,9 @@ export function AssignmentDrawer({
           || Boolean(name && selected?.progressSummary.includes(name));
       });
   const supportingResources = resources.filter((resource) => resource.type !== "artifact");
+  const progressPercent = executionPlan?.total_steps
+    ? Math.round((executionPlan.completed_steps / executionPlan.total_steps) * 100)
+    : 0;
 
   const openArtifact = async (resource: Record<string, unknown>) => {
     if (!selected || openingArtifactId) return;
@@ -176,8 +198,38 @@ export function AssignmentDrawer({
                 </div>
                 {selected.progressSummary && (
                   <div className="assignment-detail-block">
-                    <h3>{t("assignments.progress")}</h3>
+                    <h3>
+                      {t("assignments.progress")}
+                      {executionPlan && (
+                        <span className="assignment-plan-percent">{progressPercent}%</span>
+                      )}
+                    </h3>
                     <p>{selected.progressSummary}</p>
+                  </div>
+                )}
+                {executionPlan && executionPlan.steps.length > 0 && (
+                  <div className="assignment-detail-block">
+                    <h3>{t("assignments.executionPlan")}</h3>
+                    <ol className="assignment-plan">
+                      {executionPlan.steps.map((step, index) => {
+                        const current = step.status === "pending"
+                          && index === executionPlan.completed_steps;
+                        return (
+                          <li
+                            className={`${step.status}${current ? " current" : ""}`}
+                            key={`${index}-${step.title}`}
+                          >
+                            <span className="assignment-plan-marker">
+                              {step.status === "completed" ? "✓" : index + 1}
+                            </span>
+                            <div>
+                              <strong>{step.title}</strong>
+                              {step.summary && <p>{step.summary}</p>}
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ol>
                   </div>
                 )}
                 {selected.acceptanceCriteria.length > 0 && (

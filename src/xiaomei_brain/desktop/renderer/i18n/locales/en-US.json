@@ -236,6 +236,7 @@
       "empty": "No assignments yet. Give the Agent an ongoing piece of work in conversation.",
       "close": "Close",
       "progress": "Progress",
+      "executionPlan": "Execution steps",
       "inProgress": "In progress",
       "acceptance": "Acceptance criteria",
       "deliverables": "Deliverables",
