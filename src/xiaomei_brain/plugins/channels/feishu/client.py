@@ -497,9 +497,51 @@ class FeishuChannel:
         elif msg.text:
             self._send_payload(to, "text", {"text": msg.text})
 
-    def send_card(self, to: str, card: dict) -> None:
-        """Send an interactive card using Feishu's message API."""
-        self._send_payload(to, "interactive", card)
+    def send_card(self, to: str, card: dict) -> str:
+        """Send an interactive card and return its Feishu message ID."""
+        return self._send_payload(to, "interactive", card)
+
+    def update_card(self, message_id: str, card: dict) -> bool:
+        """Replace a card previously sent by this Feishu application."""
+        import requests as _requests
+
+        if not message_id:
+            return False
+        try:
+            for attempt in range(3):
+                token = self._get_token()
+                if not token:
+                    return False
+                response = _requests.patch(
+                    f"https://open.feishu.cn/open-apis/im/v1/messages/{message_id}",
+                    json={"content": json.dumps(card, ensure_ascii=False)},
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json; charset=utf-8",
+                    },
+                    timeout=15,
+                )
+                payload = response.json()
+                code = payload.get("code", -1)
+                if response.status_code == 200 and code == 0:
+                    logger.info("[Feishu/Card] updated message %s", message_id)
+                    return True
+                if response.status_code == 401 or code in {
+                    99991663, 99991664, 99991665, 99991666,
+                }:
+                    self._invalidate_token_cache(self.app_id)
+                    continue
+                logger.error(
+                    "[Feishu/Card] update failed: message=%s HTTP=%s code=%s msg=%s",
+                    message_id,
+                    response.status_code,
+                    code,
+                    payload.get("msg", ""),
+                )
+                return False
+        except Exception:
+            logger.exception("[Feishu/Card] update failed: %s", message_id)
+        return False
 
     def send_file(self, to: str, file_name: str, data: bytes) -> bool:
         """Upload an Agent-owned artifact and send it as a Feishu file."""
@@ -561,7 +603,7 @@ class FeishuChannel:
             logger.exception("[Feishu/File] upload failed: %s", file_name)
         return ""
 
-    def _send_payload(self, to: str, msg_type: str, content: dict) -> None:
+    def _send_payload(self, to: str, msg_type: str, content: dict) -> str:
         import requests as _requests
 
         try:
@@ -575,7 +617,7 @@ class FeishuChannel:
             for attempt in range(3):
                 token = self._get_token()
                 if not token:
-                    return
+                    return ""
 
                 resp = _requests.post(
                     f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type={receive_id_type}",
@@ -591,9 +633,9 @@ class FeishuChannel:
                 msg_text = data.get("msg", "")
 
                 if code == 0:
-                    logger.info("[Feishu] -> OK (msg_id=%s)",
-                                data.get("data", {}).get("message_id", "?"))
-                    return
+                    message_id = str(data.get("data", {}).get("message_id", ""))
+                    logger.info("[Feishu] -> OK (msg_id=%s)", message_id or "?")
+                    return message_id
 
                 # 飞书 token 类错误码（过期/无效/被踢等）
                 if code in (99991663, 99991664, 99991665, 99991666):
@@ -609,9 +651,10 @@ class FeishuChannel:
 
                 logger.error("[Feishu] -> FAILED: HTTP=%s code=%s msg=%s",
                              resp.status_code, code, msg_text)
-                return
+                return ""
 
             logger.error("[Feishu] -> 重试后仍失败")
 
         except Exception as e:
             logger.error("[Feishu] send error: %s", e, exc_info=True)
+        return ""

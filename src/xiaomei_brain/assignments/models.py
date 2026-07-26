@@ -171,6 +171,19 @@ class AssignmentResource:
 
 
 @dataclass(frozen=True)
+class AssignmentChannelMessage:
+    """External status message that represents an Assignment in one chat."""
+
+    assignment_id: str
+    channel: str
+    account_id: str
+    conversation_id: str
+    external_message_id: str
+    last_revision: int
+    updated_at: float
+
+
+@dataclass(frozen=True)
 class AssignmentRun:
     run_id: str
     assignment_id: str

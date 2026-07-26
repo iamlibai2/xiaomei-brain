@@ -111,6 +111,7 @@ def test_feishu_adapter_consumes_link_then_routes_as_person(tmp_path):
             self.card_callback = None
             self.sent = []
             self.cards = []
+            self.updated_cards = []
             self.files = []
 
         def set_on_message(self, callback):
@@ -130,6 +131,11 @@ def test_feishu_adapter_consumes_link_then_routes_as_person(tmp_path):
 
         def send_card(self, target, card):
             self.cards.append((target, card))
+            return f"om_card_{len(self.cards)}"
+
+        def update_card(self, message_id, card):
+            self.updated_cards.append((message_id, card))
+            return True
 
         def send_file(self, target, name, data):
             self.files.append((target, name, data))
@@ -334,6 +340,27 @@ def test_feishu_adapter_consumes_link_then_routes_as_person(tmp_path):
     )
     assert len(channel.cards) == card_count
 
+    adapter.send_event(
+        "oc_private",
+        "assignment.changed",
+        {
+            "id": "assignment-1",
+            "title": "整理项目报告",
+            "status": "in_progress",
+            "revision": 5,
+            "progress_summary": "已完成资料整理",
+            "completed_steps": 1,
+            "total_steps": 3,
+        },
+        session_id=raw.session_id,
+    )
+    assert len(channel.cards) == card_count
+    assert channel.updated_cards[-1][0] == "om_card_3"
+    assert (
+        channel.updated_cards[-1][1]["header"]["title"]["content"]
+        == "委托执行中"
+    )
+
     from types import SimpleNamespace
     assignment_service.store.runs = [SimpleNamespace(
         safe_to_resume=True,
@@ -351,12 +378,14 @@ def test_feishu_adapter_consumes_link_then_routes_as_person(tmp_path):
             "id": "assignment-1",
             "title": "整理项目报告",
             "status": "waiting_person",
-            "revision": 5,
+            "revision": 6,
             "waiting_reason": "需要确认输出格式",
         },
         session_id=raw.session_id,
     )
-    waiting_card = channel.cards[-1][1]
+    assert len(channel.cards) == card_count
+    assert channel.updated_cards[-1][0] == "om_card_3"
+    waiting_card = channel.updated_cards[-1][1]
     assert waiting_card["header"]["title"]["content"] == "委托等待回复"
     resume_value = waiting_card["elements"][1]["actions"][1]["value"]
     accepted, toast = channel.card_callback({
@@ -375,7 +404,7 @@ def test_feishu_adapter_consumes_link_then_routes_as_person(tmp_path):
         {"id": "assignment-1", "progress_summary": "处理中"},
         session_id=raw.session_id,
     )
-    assert len(channel.cards) == card_count + 1
+    assert len(channel.cards) == card_count
 
 
 def test_feishu_assignment_deliverable_is_read_from_agent_storage(monkeypatch):

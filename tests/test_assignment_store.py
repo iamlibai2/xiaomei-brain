@@ -8,6 +8,7 @@ from xiaomei_brain.assignments.models import (
     ActorType,
     Assignment,
     AssignmentActor,
+    AssignmentChannelMessage,
     AssignmentResource,
     AssignmentRun,
     AssignmentStatus,
@@ -57,7 +58,7 @@ def test_assignment_store_upgrades_existing_brain_without_touching_data(tmp_path
     conn.close()
 
     store = AssignmentStore(path)
-    assert store._get_schema_version("assignment_storage") == 1
+    assert store._get_schema_version("assignment_storage") == 2
     assert store._get_conn().execute(
         "SELECT content FROM messages",
     ).fetchone()["content"] == "旧消息"
@@ -72,8 +73,65 @@ def test_assignment_store_upgrades_existing_brain_without_touching_data(tmp_path
         "assignment_events",
         "assignment_resources",
         "assignment_runs",
+        "assignment_channel_messages",
     }.issubset(tables)
     store.close()
+
+
+def test_assignment_channel_message_binding_survives_restart_and_rejects_stale_update(
+    tmp_path,
+):
+    path = tmp_path / "brain.db"
+    store = AssignmentStore(path)
+    agent = AssignmentActor(ActorType.AGENT, "xiaomei")
+    store.create_assignment(_assignment(), actor=agent)
+    current = AssignmentChannelMessage(
+        assignment_id="assignment_1",
+        channel="feishu",
+        account_id="default",
+        conversation_id="oc_private",
+        external_message_id="om_card_1",
+        last_revision=3,
+        updated_at=110.0,
+    )
+    assert store.upsert_channel_message(current) == current
+    store.close()
+
+    reopened = AssignmentStore(path)
+    assert reopened.get_channel_message(
+        "assignment_1", "feishu", "default", "oc_private",
+    ) == current
+    stale = AssignmentChannelMessage(
+        assignment_id="assignment_1",
+        channel="feishu",
+        account_id="default",
+        conversation_id="oc_private",
+        external_message_id="om_stale",
+        last_revision=2,
+        updated_at=120.0,
+    )
+    assert reopened.upsert_channel_message(stale) == current
+    reopened.close()
+
+
+def test_assignment_store_migrates_v1_database_without_losing_assignments(tmp_path):
+    path = tmp_path / "brain.db"
+    old = AssignmentStore(path)
+    old.create_assignment(
+        _assignment(),
+        actor=AssignmentActor(ActorType.AGENT, "xiaomei"),
+    )
+    old._get_conn().execute("DROP TABLE assignment_channel_messages")
+    old._set_schema_version("assignment_storage", 1)
+    old.close()
+
+    upgraded = AssignmentStore(path)
+    assert upgraded._get_schema_version("assignment_storage") == 2
+    assert upgraded.get_assignment("assignment_1") is not None
+    assert upgraded.get_channel_message(
+        "assignment_1", "feishu", "default", "oc_private",
+    ) is None
+    upgraded.close()
 
 
 def test_store_persists_snapshot_event_and_filters(tmp_path):

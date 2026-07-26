@@ -133,6 +133,31 @@ def test_feishu_client_uploads_and_sends_assignment_file(monkeypatch):
     assert sent == [("oc_group", "file", {"file_key": "file-key-1"})]
 
 
+def test_feishu_client_updates_existing_card_message(monkeypatch):
+    import requests
+
+    channel = FeishuChannel("cli_demo", "secret")
+    monkeypatch.setattr(channel, "_get_token", lambda: "tenant-token")
+    calls = []
+
+    def fake_patch(url, **kwargs):
+        calls.append((url, kwargs))
+        return SimpleNamespace(
+            status_code=200,
+            json=lambda: {"code": 0, "msg": "success"},
+        )
+
+    monkeypatch.setattr(requests, "patch", fake_patch)
+    card = {
+        "header": {"title": {"tag": "plain_text", "content": "委托已完成"}},
+        "elements": [],
+    }
+
+    assert channel.update_card("om_card_1", card) is True
+    assert calls[0][0].endswith("/open-apis/im/v1/messages/om_card_1")
+    assert json.loads(calls[0][1]["json"]["content"]) == card
+
+
 def test_feishu_adapter_stores_group_message_without_starting_a_turn():
     class FakeChannel:
         app_id = "cli_demo"

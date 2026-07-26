@@ -1,6 +1,6 @@
 """Incremental SQLite storage for Agent-local Assignments.
 
-The store owns only its four tables and its own schema version.  It shares the
+The store owns only its tables and its own schema version.  It shares the
 Agent's brain.db file without changing messages, goals, artifacts, or legacy
 user_id columns.
 """
@@ -20,6 +20,7 @@ from .models import (
     ActorType,
     Assignment,
     AssignmentActor,
+    AssignmentChannelMessage,
     AssignmentEvent,
     AssignmentResource,
     AssignmentRun,
@@ -27,7 +28,7 @@ from .models import (
 )
 
 SCHEMA_COMPONENT = "assignment_storage"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class AssignmentConflictError(RuntimeError):
@@ -187,6 +188,26 @@ class AssignmentStore(SQLiteStore):
                 ON assignment_runs(assignment_id, started_at DESC);
             CREATE INDEX IF NOT EXISTS idx_assignment_runs_status
                 ON assignment_runs(status, updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS assignment_channel_messages (
+                assignment_id TEXT NOT NULL,
+                channel TEXT NOT NULL,
+                account_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                external_message_id TEXT NOT NULL,
+                last_revision INTEGER NOT NULL DEFAULT 0,
+                updated_at REAL NOT NULL,
+                PRIMARY KEY (
+                    assignment_id, channel, account_id, conversation_id
+                ),
+                FOREIGN KEY (assignment_id) REFERENCES assignments(id)
+                    ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_assignment_channel_messages_external
+                ON assignment_channel_messages(
+                    channel, account_id, external_message_id
+                );
         """)
         conn.commit()
         self._set_schema_version(SCHEMA_COMPONENT, SCHEMA_VERSION)
@@ -483,6 +504,72 @@ class AssignmentStore(SQLiteStore):
             (assignment_id,),
         ).fetchall()
         return [self._resource_from_row(row) for row in rows]
+
+    def get_channel_message(
+        self,
+        assignment_id: str,
+        channel: str,
+        account_id: str,
+        conversation_id: str,
+    ) -> AssignmentChannelMessage | None:
+        """Return the platform message currently representing an Assignment."""
+        row = self._get_conn().execute(
+            """
+            SELECT * FROM assignment_channel_messages
+            WHERE assignment_id = ? AND channel = ? AND account_id = ?
+              AND conversation_id = ?
+            """,
+            (assignment_id, channel, account_id, conversation_id),
+        ).fetchone()
+        return self._channel_message_from_row(row) if row else None
+
+    def upsert_channel_message(
+        self,
+        message: AssignmentChannelMessage,
+    ) -> AssignmentChannelMessage:
+        """Persist a card binding without changing the Assignment revision.
+
+        Delivery state is infrastructure metadata, not a lifecycle mutation.
+        Older lifecycle notifications therefore cannot replace a newer binding.
+        """
+        if self.get_assignment(message.assignment_id) is None:
+            raise ValueError(f"委托不存在: {message.assignment_id}")
+        conn = self._get_conn()
+        conn.execute(
+            """
+            INSERT INTO assignment_channel_messages (
+                assignment_id, channel, account_id, conversation_id,
+                external_message_id, last_revision, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(
+                assignment_id, channel, account_id, conversation_id
+            ) DO UPDATE SET
+                external_message_id = excluded.external_message_id,
+                last_revision = excluded.last_revision,
+                updated_at = excluded.updated_at
+            WHERE excluded.last_revision >=
+                  assignment_channel_messages.last_revision
+            """,
+            (
+                message.assignment_id,
+                message.channel,
+                message.account_id,
+                message.conversation_id,
+                message.external_message_id,
+                message.last_revision,
+                message.updated_at,
+            ),
+        )
+        conn.commit()
+        stored = self.get_channel_message(
+            message.assignment_id,
+            message.channel,
+            message.account_id,
+            message.conversation_id,
+        )
+        if stored is None:
+            raise RuntimeError("委托渠道消息关联失败")
+        return stored
 
     def create_run(self, run: AssignmentRun) -> AssignmentRun:
         if self.get_assignment(run.assignment_id) is None:
@@ -811,6 +898,18 @@ class AssignmentStore(SQLiteStore):
             relation=str(row["relation"]),
             metadata=_json_dict(row["metadata_json"]),
             created_at=float(row["created_at"]),
+        )
+
+    @staticmethod
+    def _channel_message_from_row(row: sqlite3.Row) -> AssignmentChannelMessage:
+        return AssignmentChannelMessage(
+            assignment_id=str(row["assignment_id"]),
+            channel=str(row["channel"]),
+            account_id=str(row["account_id"]),
+            conversation_id=str(row["conversation_id"]),
+            external_message_id=str(row["external_message_id"]),
+            last_revision=int(row["last_revision"]),
+            updated_at=float(row["updated_at"]),
         )
 
     @staticmethod

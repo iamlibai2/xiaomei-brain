@@ -18,6 +18,7 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="lark_oapi")
 
 from xiaomei_brain.gateway.channel_adapter import ChannelAdapter, ChannelCapabilities
+from xiaomei_brain.assignments.models import AssignmentChannelMessage
 from .types import OutboundMsg
 from .client import FeishuChannel
 
@@ -54,8 +55,12 @@ class FeishuAdapter(ChannelAdapter):
     def __init__(self, channel: FeishuChannel) -> None:
         self._channel = channel
         self._living = None
-        self._assignment_notices: dict[str, tuple[str, str]] = {}
-        self._assignment_queued_notified: set[str] = set()
+        self._assignment_notices: dict[
+            tuple[str, str], tuple[object, ...]
+        ] = {}
+        self._assignment_card_bindings: dict[
+            tuple[str, str], AssignmentChannelMessage
+        ] = {}
         self._assignment_notice_lock = threading.Lock()
 
     @property
@@ -65,6 +70,7 @@ class FeishuAdapter(ChannelAdapter):
             clarify=True,
             action_approval=True,
             attachments=True,
+            message_update=True,
         )
 
     @property
@@ -409,8 +415,8 @@ class FeishuAdapter(ChannelAdapter):
             )
             return
         elif event.startswith("assignment."):
-            # Assignment progress can be very chatty.  Feishu only projects
-            # lifecycle boundaries; Desktop remains the detailed work view.
+            # Assignment progress updates one existing card, so lifecycle
+            # detail stays visible without adding messages to the chat.
             if event == "assignment.changed":
                 self._send_assignment_notice(target, payload, session_id)
             return
@@ -432,7 +438,9 @@ class FeishuAdapter(ChannelAdapter):
         assignment_id = str(payload.get("id", ""))
         status = str(payload.get("status", ""))
         if not assignment_id or status not in {
+            "accepted",
             "queued",
+            "in_progress",
             "waiting_person",
             "paused",
             "completed",
@@ -447,26 +455,57 @@ class FeishuAdapter(ChannelAdapter):
             or payload.get("progress_summary")
             or ""
         )
-        notice_key = (status, detail_key)
-        with self._assignment_notice_lock:
-            if status == "queued" and assignment_id in self._assignment_queued_notified:
-                return
-            if self._assignment_notices.get(assignment_id) == notice_key:
-                return
-            self._assignment_notices[assignment_id] = notice_key
-            if status == "queued":
-                self._assignment_queued_notified.add(assignment_id)
-
+        delivery_key = (assignment_id, target)
+        try:
+            revision = max(0, int(payload.get("revision", 0) or 0))
+        except (TypeError, ValueError):
+            revision = 0
         pending = self._assignment_pending(assignment_id)
-        self._channel.send_card(
-            target,
-            self._assignment_card(
-                payload,
-                pending,
-                target,
-                session_id,
-            ),
+        notice_key = (
+            status,
+            detail_key,
+            payload.get("completed_steps"),
+            payload.get("total_steps"),
+            repr(pending),
         )
+        card = self._assignment_card(payload, pending, target, session_id)
+
+        # A status card is one durable external representation of an
+        # Assignment. Serialize create/update decisions so concurrent worker
+        # notifications cannot create duplicate cards or apply stale states.
+        with self._assignment_notice_lock:
+            if self._assignment_notices.get(delivery_key) == notice_key:
+                return
+            binding = self._get_assignment_card_binding(assignment_id, target)
+            if binding is not None and revision <= binding.last_revision:
+                return
+
+            message_id = binding.external_message_id if binding else ""
+            updated = False
+            update_card = getattr(self._channel, "update_card", None)
+            if message_id and callable(update_card):
+                updated = bool(update_card(message_id, card))
+            if not updated:
+                message_id = str(self._channel.send_card(target, card) or "")
+            if not message_id:
+                logger.warning(
+                    "[Feishu/Assignment] status card delivery failed: %s",
+                    assignment_id,
+                )
+                return
+
+            self._save_assignment_card_binding(
+                AssignmentChannelMessage(
+                    assignment_id=assignment_id,
+                    channel="feishu",
+                    account_id=str(getattr(self._channel, "account_id", "default")),
+                    conversation_id=target,
+                    external_message_id=message_id,
+                    last_revision=revision,
+                    updated_at=time.time(),
+                ),
+            )
+            self._assignment_notices[delivery_key] = notice_key
         if status == "completed" and payload.get("deliverables"):
             # File uploads are network I/O and must not hold the Assignment
             # worker after its durable completion has already been committed.
@@ -476,6 +515,58 @@ class FeishuAdapter(ChannelAdapter):
                 name=f"feishu-deliver-{assignment_id[:8]}",
                 daemon=True,
             ).start()
+
+    def _get_assignment_card_binding(
+        self,
+        assignment_id: str,
+        target: str,
+    ) -> AssignmentChannelMessage | None:
+        key = (assignment_id, target)
+        cached = self._assignment_card_bindings.get(key)
+        if cached is not None:
+            return cached
+        living = self._living
+        service = getattr(living, "_assignment_service", None) if living else None
+        store = getattr(service, "store", None)
+        getter = getattr(store, "get_channel_message", None)
+        if callable(getter):
+            try:
+                stored = getter(
+                    assignment_id,
+                    "feishu",
+                    str(getattr(self._channel, "account_id", "default")),
+                    target,
+                )
+                if stored is not None:
+                    self._assignment_card_bindings[key] = stored
+                    return stored
+            except Exception:
+                logger.exception(
+                    "[Feishu/Assignment] failed to load card binding: %s",
+                    assignment_id,
+                )
+        return None
+
+    def _save_assignment_card_binding(
+        self,
+        binding: AssignmentChannelMessage,
+    ) -> None:
+        key = (binding.assignment_id, binding.conversation_id)
+        living = self._living
+        service = getattr(living, "_assignment_service", None) if living else None
+        store = getattr(service, "store", None)
+        upsert = getattr(store, "upsert_channel_message", None)
+        if callable(upsert):
+            try:
+                binding = upsert(binding)
+            except Exception:
+                # The in-memory binding still prevents duplicate cards in the
+                # current process; a later event can retry durable persistence.
+                logger.exception(
+                    "[Feishu/Assignment] failed to persist card binding: %s",
+                    binding.assignment_id,
+                )
+        self._assignment_card_bindings[key] = binding
 
     def _assignment_pending(self, assignment_id: str) -> dict:
         living = self._living
@@ -571,7 +662,9 @@ class FeishuAdapter(ChannelAdapter):
     ) -> dict:
         status = str(payload.get("status", ""))
         labels = {
+            "accepted": ("blue", "委托已接受"),
             "queued": ("blue", "已接受委托"),
+            "in_progress": ("blue", "委托执行中"),
             "waiting_person": ("orange", "委托等待回复"),
             "paused": ("orange", "委托已暂停"),
             "completed": ("green", "委托已完成"),
