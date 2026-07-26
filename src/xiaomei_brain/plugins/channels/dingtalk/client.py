@@ -16,20 +16,73 @@ import json
 import logging
 import threading
 import time
+import uuid
 from typing import Callable
 
 from dingtalk_stream import (
     AckMessage,
     CallbackMessage,
+    CallbackHandler,
     ChatbotHandler,
     ChatbotMessage,
     Credential,
     DingTalkStreamClient,
+    Card_Callback_Router_Topic,
     reply_specified_group_chat,
     reply_specified_single_chat,
 )
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_INTERACTIVE_CARD_TEMPLATE_ID = (
+    "382e4302-551d-4880-bf29-a30acfab2e71.schema"
+)
+
+
+class _CardHandler(CallbackHandler):
+    """Bridge DingTalk Stream card callbacks to the channel adapter."""
+
+    def __init__(self, on_action: Callable[[dict], tuple[bool, str]]):
+        super().__init__()
+        self._on_action = on_action
+
+    async def process(self, callback: CallbackMessage):
+        try:
+            data = (
+                callback.data
+                if isinstance(callback.data, dict)
+                else json.loads(callback.data)
+            )
+            content = data.get("content") or {}
+            if isinstance(content, str):
+                content = json.loads(content or "{}")
+            private_data = content.get("cardPrivateData") or {}
+            params = private_data.get("params") or {}
+            action_ids = private_data.get("actionIds") or []
+            accepted, message = self._on_action({
+                "out_track_id": str(data.get("outTrackId", "")),
+                "operator_user_id": str(data.get("userId", "")),
+                "space_id": str(data.get("spaceId", "")),
+                "space_type": str(data.get("spaceType", "")),
+                "action_ids": [str(item) for item in action_ids],
+                "params": params if isinstance(params, dict) else {},
+            })
+            logger.info(
+                "[DingTalk/Card] callback handled: card=%s user=%s "
+                "space=%s/%s actions=%s params=%s accepted=%s result=%s",
+                data.get("outTrackId", ""),
+                data.get("userId", ""),
+                data.get("spaceType", ""),
+                data.get("spaceId", ""),
+                action_ids,
+                params,
+                accepted,
+                message,
+            )
+            return AckMessage.STATUS_OK, message or "OK"
+        except Exception:
+            logger.exception("[DingTalk/Card] callback failed")
+            return AckMessage.STATUS_OK, "操作处理失败，请稍后重试。"
 
 
 class _OurHandler(ChatbotHandler):
@@ -199,11 +252,21 @@ class DingTalkClient:
     _SUPERVISOR_INTERVAL_SECONDS = 2.0
     _RECONNECT_TIMEOUT_SECONDS = 60.0
 
-    def __init__(self, client_id: str, client_secret: str):
+    def __init__(
+        self,
+        client_id: str,
+        client_secret: str,
+        *,
+        account_id: str = "default",
+        card_template_id: str = DEFAULT_INTERACTIVE_CARD_TEMPLATE_ID,
+    ):
         self.client_id = client_id
         self.client_secret = client_secret
+        self.account_id = account_id
+        self.card_template_id = card_template_id
 
         self._on_message: Callable[[dict], None] | None = None
+        self._on_card_action: Callable[[dict], tuple[bool, str]] | None = None
         self._handler: _OurHandler | None = None
         self._stream_client: DingTalkStreamClient | None = None
         self._thread: threading.Thread | None = None
@@ -227,6 +290,12 @@ class DingTalkClient:
 
     def set_on_message(self, callback: Callable[[dict], None]) -> None:
         self._on_message = callback
+
+    def set_on_card_action(
+        self,
+        callback: Callable[[dict], tuple[bool, str]],
+    ) -> None:
+        self._on_card_action = callback
 
     def test_credentials(self) -> bool:
         """Validate credentials without starting a Stream connection."""
@@ -406,6 +475,94 @@ class DingTalkClient:
             return self.send_to_group(target, text, msg_type)
         return self.send_to_user(target, text, msg_type)
 
+    @staticmethod
+    def new_card_id() -> str:
+        return f"xiaomei-{uuid.uuid4().hex}"
+
+    def send_card(
+        self,
+        target: str,
+        card_data: dict,
+        *,
+        is_group: bool,
+        out_track_id: str = "",
+    ) -> str:
+        """Create and deliver one advanced interactive card."""
+        import requests
+
+        token = self.get_access_token()
+        if not token:
+            logger.error("[DingTalk/Card] no access token")
+            return ""
+        out_track_id = out_track_id or self.new_card_id()
+        if is_group:
+            open_space_id = f"dtv1.card//IM_GROUP.{target}"
+            delivery = {
+                "imGroupOpenSpaceModel": {"supportForward": False},
+                "imGroupOpenDeliverModel": {"robotCode": self.client_id},
+            }
+        else:
+            open_space_id = f"dtv1.card//IM_ROBOT.{target}"
+            delivery = {
+                "imRobotOpenSpaceModel": {"supportForward": False},
+                "imRobotOpenDeliverModel": {
+                    "robotCode": self.client_id,
+                    "spaceType": "IM_ROBOT",
+                },
+            }
+        body = {
+            "cardTemplateId": self.card_template_id,
+            "outTrackId": out_track_id,
+            "cardData": {"cardParamMap": card_data},
+            "callbackType": "STREAM",
+            "openSpaceId": open_space_id,
+            "userIdType": 1,
+            **delivery,
+        }
+        try:
+            response = requests.post(
+                "https://api.dingtalk.com/v1.0/card/instances/createAndDeliver",
+                json=body,
+                headers={
+                    "x-acs-dingtalk-access-token": token,
+                    "Content-Type": "application/json",
+                },
+                timeout=15,
+            )
+            response.raise_for_status()
+            logger.info("[DingTalk/Card] delivered: %s", out_track_id)
+            return out_track_id
+        except Exception:
+            logger.exception("[DingTalk/Card] delivery failed: %s", out_track_id)
+            return ""
+
+    def update_card(self, out_track_id: str, card_data: dict) -> bool:
+        """Update all deliveries of an existing advanced interactive card."""
+        import requests
+
+        token = self.get_access_token()
+        if not token or not out_track_id:
+            return False
+        try:
+            response = requests.put(
+                "https://api.dingtalk.com/v1.0/card/instances",
+                json={
+                    "outTrackId": out_track_id,
+                    "cardData": {"cardParamMap": card_data},
+                },
+                headers={
+                    "x-acs-dingtalk-access-token": token,
+                    "Content-Type": "application/json",
+                },
+                timeout=15,
+            )
+            response.raise_for_status()
+            logger.info("[DingTalk/Card] updated: %s", out_track_id)
+            return True
+        except Exception:
+            logger.exception("[DingTalk/Card] update failed: %s", out_track_id)
+            return False
+
     def get_access_token(self) -> str | None:
         """获取 SDK 管理的 access token（公开接口）。"""
         if self._stream_client:
@@ -465,6 +622,11 @@ class DingTalkClient:
             logger=logger,
         )
         stream_client.register_callback_handler(ChatbotMessage.TOPIC, handler)
+        if self._on_card_action is not None:
+            stream_client.register_callback_handler(
+                Card_Callback_Router_Topic,
+                _CardHandler(self._on_card_action),
+            )
 
         # The SDK reconnect loop has no public stop switch.  Guarding
         # open_connection lets a closed generation leave that loop cleanly

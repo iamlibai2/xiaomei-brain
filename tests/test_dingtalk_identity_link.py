@@ -20,13 +20,20 @@ def test_dingtalk_adapter_consumes_link_then_routes_as_person(tmp_path):
 
     class FakeClient:
         client_id = "ding_demo"
+        account_id = "default"
 
         def __init__(self):
             self.callback = None
+            self.card_callback = None
             self.sent = []
+            self.cards = []
+            self.updated_cards = []
 
         def set_on_message(self, callback):
             self.callback = callback
+
+        def set_on_card_action(self, callback):
+            self.card_callback = callback
 
         def start(self):
             pass
@@ -40,6 +47,17 @@ def test_dingtalk_adapter_consumes_link_then_routes_as_person(tmp_path):
 
         def send(self, target, text, _msg_type, is_group=False):
             self.sent.append((target, text, is_group))
+            return True
+
+        def new_card_id(self):
+            return f"card-{len(self.cards) + 1}"
+
+        def send_card(self, target, data, *, is_group, out_track_id):
+            self.cards.append((target, data, is_group, out_track_id))
+            return out_track_id
+
+        def update_card(self, out_track_id, data):
+            self.updated_cards.append((out_track_id, data))
             return True
 
         def status(self):
@@ -64,13 +82,53 @@ def test_dingtalk_adapter_consumes_link_then_routes_as_person(tmp_path):
             self.observations.append(raw)
             return True
 
+    class FakeBroker:
+        def __init__(self):
+            self.calls = []
+
+        def respond(self, *args):
+            self.calls.append(args)
+            return True
+
+    class FakeAssignmentStore:
+        def __init__(self):
+            self.runs = []
+
+        def list_runs(self, _assignment_id):
+            return self.runs
+
+    class FakeAssignmentService:
+        def __init__(self):
+            self.store = FakeAssignmentStore()
+            self.calls = []
+
+        def request_resume(self, assignment_id, **kwargs):
+            self.calls.append((assignment_id, kwargs))
+            return object()
+
+    class FakeScheduler:
+        def __init__(self):
+            self.calls = []
+
+        def request_resume(self, assignment_id, **kwargs):
+            self.calls.append((assignment_id, kwargs))
+            return True
+
     client = FakeClient()
     gateway = FakeGateway()
+    interaction_broker = FakeBroker()
+    action_broker = FakeBroker()
+    assignment_service = FakeAssignmentService()
+    scheduler = FakeScheduler()
     living = type("Living", (), {
         "_router": FakeRouter(),
         "_people_service": people,
         "_identity_link_service": links,
         "_gateway_inbound": gateway,
+        "_interaction_broker": interaction_broker,
+        "_action_broker": action_broker,
+        "_assignment_service": assignment_service,
+        "_assignment_scheduler": scheduler,
     })()
     adapter = DingTalkAdapter(client)
     adapter.setup(living)
@@ -148,3 +206,79 @@ def test_dingtalk_adapter_consumes_link_then_routes_as_person(tmp_path):
     colleague_raw = gateway.messages[-1]
     assert colleague_raw.peer_id == colleague.person_id
     assert colleague_raw.session_id == raw.session_id
+
+    adapter.send_event(
+        "staff-1",
+        "interaction.requested",
+        {"id": "question-1", "question": "选择格式", "choices": ["PDF", "DOCX"]},
+        session_id=f"dingtalk-{person.person_id}",
+        turn_id="turn-1",
+    )
+    target, card_data, is_group, card_id = client.cards[-1]
+    assert (target, is_group) == ("staff-1", False)
+    assert card_data["msgTitle"] == "想和你确认"
+    buttons = __import__("json").loads(card_data["sys_full_json_obj"])["msgButtons"]
+    accepted, message = client.card_callback({
+        "out_track_id": card_id,
+        "operator_user_id": "staff-1",
+        "space_id": "opaque-private-space",
+        "space_type": "IM_ROBOT",
+        "action_ids": [buttons[1]["id"]],
+        "params": {},
+    })
+    assert accepted is True
+    assert message == "已选择：DOCX"
+    assert interaction_broker.calls[-1][1] == "DOCX"
+
+    from types import SimpleNamespace
+    assignment_service.store.runs = [SimpleNamespace(
+        safe_to_resume=True,
+        checkpoint={
+            "pending_interaction": {
+                "question": "请选择交付格式",
+                "choices": ["PDF", "PPTX"],
+            },
+        },
+    )]
+    adapter.send_event(
+        "staff-1",
+        "assignment.changed",
+        {
+            "id": "assignment-1",
+            "title": "整理报告",
+            "status": "queued",
+            "revision": 2,
+            "progress_summary": "等待执行",
+        },
+        session_id=f"dingtalk-{person.person_id}",
+    )
+    assignment_card_id = client.cards[-1][3]
+    adapter.send_event(
+        "staff-1",
+        "assignment.changed",
+        {
+            "id": "assignment-1",
+            "title": "整理报告",
+            "status": "waiting_person",
+            "revision": 3,
+            "waiting_reason": "需要确认格式",
+        },
+        session_id=f"dingtalk-{person.person_id}",
+    )
+    assert client.updated_cards[-1][0] == assignment_card_id
+    waiting_data = client.updated_cards[-1][1]
+    waiting_buttons = __import__("json").loads(
+        waiting_data["sys_full_json_obj"],
+    )["msgButtons"]
+    accepted, message = client.card_callback({
+        "out_track_id": assignment_card_id,
+        "operator_user_id": "staff-1",
+        "space_id": "opaque-private-space",
+        "space_type": "IM_ROBOT",
+        "action_ids": [waiting_buttons[0]["id"]],
+        "params": {},
+    })
+    assert accepted is True
+    assert message == "委托已继续执行。"
+    assert assignment_service.calls[-1][1]["response"] == "PDF"
+    assert scheduler.calls[-1][1]["response"] == "PDF"

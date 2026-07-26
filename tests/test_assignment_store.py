@@ -101,6 +101,9 @@ def test_assignment_channel_message_binding_survives_restart_and_rejects_stale_u
     assert reopened.get_channel_message(
         "assignment_1", "feishu", "default", "oc_private",
     ) == current
+    assert reopened.get_channel_message_by_external_id(
+        "feishu", "default", "om_card_1",
+    ) == current
     stale = AssignmentChannelMessage(
         assignment_id="assignment_1",
         channel="feishu",

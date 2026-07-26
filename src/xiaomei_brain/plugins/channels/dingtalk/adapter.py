@@ -10,10 +10,13 @@
 from __future__ import annotations
 
 import logging
+import json
 import re
 import threading
 import time
+import uuid
 
+from xiaomei_brain.assignments.models import AssignmentChannelMessage
 from xiaomei_brain.gateway.channel_adapter import ChannelAdapter, ChannelCapabilities
 from .client import DingTalkClient
 
@@ -50,7 +53,16 @@ def create_adapter(config: dict) -> "DingTalkAdapter":
     )
     if not client_id or not client_secret:
         raise ValueError("钉钉 Client ID 和 Client Secret 不能为空")
-    return DingTalkAdapter(DingTalkClient(client_id, client_secret))
+    account_id = config.get("accountId") or config.get("account_id") or "default"
+    card_template_id = (
+        config.get("cardTemplateId")
+        or config.get("card_template_id")
+        or ""
+    )
+    options = {"account_id": account_id}
+    if card_template_id:
+        options["card_template_id"] = card_template_id
+    return DingTalkAdapter(DingTalkClient(client_id, client_secret, **options))
 
 
 class DingTalkAdapter(ChannelAdapter):
@@ -66,13 +78,25 @@ class DingTalkAdapter(ChannelAdapter):
         # 缓存：session_id → {"session_webhook": ..., "sdk_message": ChatbotMessage}
         self._sessions: dict[str, dict] = {}
         self._sessions_lock = threading.Lock()
+        self._living = None
+        self._card_actions: dict[str, dict[str, dict]] = {}
+        self._card_actions_lock = threading.Lock()
+        self._assignment_notices: dict[
+            tuple[str, str], tuple[object, ...]
+        ] = {}
+        self._assignment_card_bindings: dict[
+            tuple[str, str], AssignmentChannelMessage
+        ] = {}
+        self._assignment_notice_lock = threading.Lock()
 
     @property
     def capabilities(self) -> ChannelCapabilities:
         return ChannelCapabilities(
+            structured_events=True,
             clarify=True,
             action_approval=True,
             attachments=True,
+            message_update=True,
         )
 
     @property
@@ -110,6 +134,574 @@ class DingTalkAdapter(ChannelAdapter):
         is_group = target.startswith("cid")
         self._client.send(target, text, msg_type, is_group=is_group)
 
+    def send_event(
+        self,
+        target: str,
+        event: str,
+        payload: dict,
+        *,
+        session_id: str = "",
+        turn_id: str = "",
+        timestamp: int = 0,
+    ) -> None:
+        """Render interaction protocol events as DingTalk cards."""
+        if event == "interaction.requested":
+            choices = [
+                str(item).strip()
+                for item in payload.get("choices", [])
+                if str(item).strip()
+            ][:4]
+            if choices:
+                actions = []
+                buttons = []
+                for index, choice in enumerate(choices):
+                    action_id = f"choice-{index}-{uuid.uuid4().hex[:8]}"
+                    buttons.append((action_id, choice, index == 0))
+                    actions.append((action_id, {
+                        "kind": "interaction",
+                        "request_id": str(payload.get("id", "")),
+                        "response": choice,
+                        "conversation_id": target,
+                        "session_id": session_id,
+                        "turn_id": turn_id,
+                    }))
+                card_id = self._send_interactive_card(
+                    target,
+                    "想和你确认",
+                    str(payload.get("question", "")),
+                    buttons,
+                    dict(actions),
+                )
+                if card_id:
+                    return
+        elif event == "action.proposed":
+            summary = str(payload.get("summary", ""))
+            reason = str(payload.get("reason", ""))
+            markdown = f"**{summary}**"
+            if reason:
+                markdown += f"\n\n原因：{reason}"
+            allow_id = f"allow-{uuid.uuid4().hex[:8]}"
+            deny_id = f"deny-{uuid.uuid4().hex[:8]}"
+            common = {
+                "kind": "action",
+                "action_id": str(payload.get("id", "")),
+                "conversation_id": target,
+                "session_id": session_id,
+                "turn_id": turn_id,
+            }
+            card_id = self._send_interactive_card(
+                target,
+                "需要你的确认",
+                markdown,
+                [(allow_id, "允许", True), (deny_id, "拒绝", False)],
+                {
+                    allow_id: {**common, "decision": "allow"},
+                    deny_id: {**common, "decision": "deny"},
+                },
+            )
+            if card_id:
+                return
+        elif event.startswith("assignment."):
+            if event == "assignment.changed":
+                self._send_assignment_notice(target, payload, session_id)
+            return
+        super().send_event(
+            target,
+            event,
+            payload,
+            session_id=session_id,
+            turn_id=turn_id,
+            timestamp=timestamp,
+        )
+
+    def _is_group_target(self, target: str) -> bool:
+        with self._sessions_lock:
+            session = self._sessions.get(target) or {}
+        if "is_group" in session:
+            return bool(session["is_group"])
+        return target.startswith("cid")
+
+    @staticmethod
+    def _card_data(
+        title: str,
+        markdown: str,
+        buttons: list[tuple[str, str, bool]],
+    ) -> dict:
+        order = ["msgTitle", "staticMsgContent"]
+        full: dict = {"order": order}
+        if buttons:
+            order.append("msgButtons")
+            full["msgButtons"] = [
+                {
+                    "text": label,
+                    "color": "blue" if primary else "gray",
+                    "id": action_id,
+                    "request": True,
+                }
+                for action_id, label, primary in buttons
+            ]
+        return {
+            "msgTitle": title,
+            "staticMsgContent": markdown,
+            "flowStatus": "3",
+            "sys_full_json_obj": json.dumps(full, ensure_ascii=False),
+        }
+
+    def _send_interactive_card(
+        self,
+        target: str,
+        title: str,
+        markdown: str,
+        buttons: list[tuple[str, str, bool]],
+        actions: dict[str, dict],
+        *,
+        out_track_id: str = "",
+    ) -> str:
+        out_track_id = out_track_id or self._client.new_card_id()
+        with self._card_actions_lock:
+            self._card_actions[out_track_id] = actions
+        delivered = self._client.send_card(
+            target,
+            self._card_data(title, markdown, buttons),
+            is_group=self._is_group_target(target),
+            out_track_id=out_track_id,
+        )
+        if not delivered:
+            with self._card_actions_lock:
+                self._card_actions.pop(out_track_id, None)
+        return delivered
+
+    def _handle_card_action(self, callback: dict) -> tuple[bool, str]:
+        out_track_id = str(callback.get("out_track_id", ""))
+        operator = str(callback.get("operator_user_id", ""))
+        action_ids = callback.get("action_ids") or []
+        params = callback.get("params") or {}
+        candidates = [str(item) for item in action_ids if str(item)]
+        for key in ("action", "actionId", "id", "buttonId"):
+            value = str(params.get(key, ""))
+            if value and value not in candidates:
+                candidates.append(value)
+        if not out_track_id or not operator or not candidates:
+            return False, "无法识别这次卡片操作。"
+
+        with self._card_actions_lock:
+            card_actions = self._card_actions.get(out_track_id) or {}
+            value = {}
+            action_id = ""
+            for candidate in candidates:
+                if candidate in card_actions:
+                    action_id = candidate
+                    value = dict(card_actions[candidate])
+                    break
+        if not value:
+            for candidate in candidates:
+                value = self._recover_assignment_action(out_track_id, candidate)
+                if value:
+                    action_id = candidate
+                    break
+        if not value:
+            return False, "这张卡片已经失效。"
+
+        expected_conversation = str(value.get("conversation_id", ""))
+        callback_space = str(callback.get("space_id", ""))
+        callback_space_type = str(callback.get("space_type", "")).upper()
+        if callback_space.startswith("dtv1.card//") and "." in callback_space:
+            callback_space = callback_space.rsplit(".", 1)[1]
+        # In private robot space DingTalk may return an internal space ID that
+        # differs from senderStaffId. The verified operator identity is the
+        # authority there. Group cards, however, must stay in their group.
+        if (
+            callback_space_type == "IM_GROUP"
+            and callback_space
+            and expected_conversation
+            and callback_space != expected_conversation
+        ):
+            return False, "这张卡片不属于当前会话。"
+
+        living = self._living
+        people = getattr(living, "_people_service", None) if living else None
+        issuer = f"dingtalk:app:{self._client.client_id}"
+        resolved = (
+            people.resolve_verified_identity(issuer, operator)
+            if people else None
+        )
+        if resolved is None:
+            return False, "当前钉钉身份尚未绑定。"
+        person, _binding = resolved
+        session_id = str(value.get("session_id", ""))
+        turn_id = str(value.get("turn_id", ""))
+        kind = str(value.get("kind", ""))
+
+        if kind == "interaction":
+            broker = getattr(living, "_interaction_broker", None)
+            response = str(value.get("response", "")).strip()
+            accepted = bool(
+                broker and broker.respond(
+                    str(value.get("request_id", "")),
+                    response,
+                    session_id,
+                    turn_id,
+                    person.person_id,
+                )
+            )
+            if accepted:
+                with self._card_actions_lock:
+                    self._card_actions.pop(out_track_id, None)
+            return (
+                (True, f"已选择：{response}")
+                if accepted else (False, "问题已结束或不属于当前会话。")
+            )
+
+        if kind == "action":
+            broker = getattr(living, "_action_broker", None)
+            decision = str(value.get("decision", ""))
+            accepted = bool(
+                broker and broker.respond(
+                    str(value.get("action_id", "")),
+                    decision,
+                    session_id,
+                    turn_id,
+                    person.person_id,
+                )
+            )
+            if accepted:
+                with self._card_actions_lock:
+                    self._card_actions.pop(out_track_id, None)
+            if not accepted:
+                return False, "审批已结束或不属于当前会话。"
+            return True, "已允许此操作。" if decision == "allow" else "已拒绝此操作。"
+
+        if kind == "assignment_resume":
+            from xiaomei_brain.assignments import (
+                ActorType,
+                AssignmentActor,
+                AssignmentConflictError,
+            )
+
+            service = getattr(living, "_assignment_service", None)
+            scheduler = getattr(living, "_assignment_scheduler", None)
+            if service is None or scheduler is None:
+                return False, "委托执行服务尚未就绪。"
+            assignment_id = str(value.get("assignment_id", ""))
+            response = str(value.get("response", "")).strip()
+            decision = str(value.get("decision", "")).strip()
+            actor = AssignmentActor(ActorType.PERSON, person.person_id)
+            try:
+                service.request_resume(
+                    assignment_id,
+                    actor=actor,
+                    response=response,
+                    decision=decision,
+                    idempotency_key=(
+                        f"dingtalk:{assignment_id}:{person.person_id}:"
+                        f"{value.get('revision', '')}:"
+                        f"{decision or response or 'continue'}"
+                    ),
+                )
+                queued = scheduler.request_resume(
+                    assignment_id,
+                    trigger_actor_id=person.person_id,
+                    response=response,
+                    decision=decision,
+                )
+            except (ValueError, PermissionError, AssignmentConflictError) as exc:
+                return False, str(exc)
+            return (
+                (True, "委托已继续执行。")
+                if queued else (False, "委托暂时无法继续。")
+            )
+
+        return False, "无法识别这张卡片的操作。"
+
+    def _send_assignment_notice(
+        self,
+        target: str,
+        payload: dict,
+        session_id: str,
+    ) -> None:
+        assignment_id = str(payload.get("id", ""))
+        status = str(payload.get("status", ""))
+        if not assignment_id or status not in {
+            "accepted",
+            "queued",
+            "in_progress",
+            "waiting_person",
+            "paused",
+            "completed",
+            "failed",
+            "cancelled",
+            "declined",
+        }:
+            return
+        try:
+            revision = max(0, int(payload.get("revision", 0) or 0))
+        except (TypeError, ValueError):
+            revision = 0
+        pending = self._assignment_pending(assignment_id)
+        title, markdown, buttons, actions = self._assignment_card_content(
+            payload,
+            pending,
+            target,
+            session_id,
+        )
+        notice_key = (
+            status,
+            markdown,
+            repr(pending),
+        )
+        delivery_key = (assignment_id, target)
+
+        with self._assignment_notice_lock:
+            if self._assignment_notices.get(delivery_key) == notice_key:
+                return
+            binding = self._get_assignment_card_binding(assignment_id, target)
+            if binding is not None and revision <= binding.last_revision:
+                return
+
+            card_data = self._card_data(title, markdown, buttons)
+            out_track_id = binding.external_message_id if binding else ""
+            if out_track_id:
+                with self._card_actions_lock:
+                    self._card_actions[out_track_id] = actions
+                updated = self._client.update_card(out_track_id, card_data)
+            else:
+                updated = False
+            if not updated:
+                out_track_id = self._send_interactive_card(
+                    target,
+                    title,
+                    markdown,
+                    buttons,
+                    actions,
+                )
+            if not out_track_id:
+                logger.warning(
+                    "[DingTalk/Assignment] status card delivery failed: %s",
+                    assignment_id,
+                )
+                self.send(target, f"{title}\n\n{markdown}")
+                return
+
+            self._save_assignment_card_binding(
+                AssignmentChannelMessage(
+                    assignment_id=assignment_id,
+                    channel="dingtalk",
+                    account_id=str(getattr(self._client, "account_id", "default")),
+                    conversation_id=target,
+                    external_message_id=out_track_id,
+                    last_revision=revision,
+                    updated_at=time.time(),
+                ),
+            )
+            self._assignment_notices[delivery_key] = notice_key
+
+    def _assignment_pending(self, assignment_id: str) -> dict:
+        living = self._living
+        service = getattr(living, "_assignment_service", None) if living else None
+        if service is None:
+            return {}
+        try:
+            for run in service.store.list_runs(assignment_id):
+                if not run.safe_to_resume or not run.checkpoint:
+                    continue
+                action = run.checkpoint.get("pending_action")
+                if isinstance(action, dict):
+                    return {
+                        "kind": "action",
+                        "summary": str(action.get("summary", "")),
+                        "reason": str(action.get("reason", "")),
+                    }
+                interaction = run.checkpoint.get("pending_interaction")
+                if isinstance(interaction, dict):
+                    raw_choices = interaction.get("choices")
+                    choices = raw_choices if isinstance(raw_choices, (list, tuple)) else []
+                    return {
+                        "kind": "interaction",
+                        "question": str(interaction.get("question", "")),
+                        "choices": [
+                            str(choice)
+                            for choice in choices[:4]
+                            if str(choice).strip()
+                        ],
+                    }
+                break
+        except Exception:
+            logger.exception(
+                "[DingTalk/Assignment] failed to inspect checkpoint: %s",
+                assignment_id,
+            )
+        return {}
+
+    @staticmethod
+    def _assignment_card_content(
+        payload: dict,
+        pending: dict,
+        conversation_id: str,
+        session_id: str,
+    ) -> tuple[str, str, list[tuple[str, str, bool]], dict[str, dict]]:
+        status = str(payload.get("status", ""))
+        headings = {
+            "accepted": "委托已接受",
+            "queued": "已接受委托",
+            "in_progress": "委托执行中",
+            "waiting_person": "委托等待回复",
+            "paused": "委托已暂停",
+            "completed": "委托已完成",
+            "failed": "委托执行失败",
+            "cancelled": "委托已取消",
+            "declined": "委托未接受",
+        }
+        heading = headings.get(status, "委托状态更新")
+        assignment_title = str(
+            payload.get("title") or payload.get("objective") or "未命名委托"
+        )
+        detail = str(
+            payload.get("waiting_reason")
+            or payload.get("terminal_reason")
+            or payload.get("progress_summary")
+            or ""
+        )
+        lines = [f"**{assignment_title}**"]
+        if detail:
+            lines.append(detail)
+        completed = payload.get("completed_steps")
+        total = payload.get("total_steps")
+        if completed is not None and total:
+            lines.append(f"进度：{completed}/{total}")
+        if status == "waiting_person" and pending.get("question"):
+            lines.append(str(pending["question"]))
+        elif status == "waiting_person" and pending.get("summary"):
+            lines.append(str(pending["summary"]))
+            if pending.get("reason"):
+                lines.append(str(pending["reason"]))
+        if (
+            status == "waiting_person"
+            and pending.get("kind") != "action"
+            and not pending.get("choices")
+        ):
+            lines.append("请直接回复当前会话，Agent 会从原进度继续。")
+
+        common = {
+            "kind": "assignment_resume",
+            "assignment_id": str(payload.get("id", "")),
+            "revision": payload.get("revision"),
+            "conversation_id": conversation_id,
+            "session_id": session_id,
+        }
+        buttons: list[tuple[str, str, bool]] = []
+        actions: dict[str, dict] = {}
+        if status == "waiting_person" and pending.get("kind") == "action":
+            buttons = [
+                ("assignment-approve", "允许", True),
+                ("assignment-deny", "拒绝", False),
+            ]
+            actions = {
+                "assignment-approve": {**common, "decision": "approve"},
+                "assignment-deny": {**common, "decision": "deny"},
+            }
+        elif status == "waiting_person" and pending.get("choices"):
+            for index, choice in enumerate(pending["choices"]):
+                action_id = f"assignment-choice-{index}"
+                buttons.append((action_id, choice, index == 0))
+                actions[action_id] = {**common, "response": choice}
+        elif status == "paused":
+            buttons = [("assignment-continue", "继续执行", True)]
+            actions = {"assignment-continue": common}
+        return heading, "\n\n".join(lines), buttons, actions
+
+    def _get_assignment_card_binding(
+        self,
+        assignment_id: str,
+        target: str,
+    ) -> AssignmentChannelMessage | None:
+        key = (assignment_id, target)
+        cached = self._assignment_card_bindings.get(key)
+        if cached is not None:
+            return cached
+        living = self._living
+        service = getattr(living, "_assignment_service", None) if living else None
+        store = getattr(service, "store", None)
+        getter = getattr(store, "get_channel_message", None)
+        if callable(getter):
+            try:
+                stored = getter(
+                    assignment_id,
+                    "dingtalk",
+                    str(getattr(self._client, "account_id", "default")),
+                    target,
+                )
+                if stored is not None:
+                    self._assignment_card_bindings[key] = stored
+                    return stored
+            except Exception:
+                logger.exception(
+                    "[DingTalk/Assignment] failed to load card binding: %s",
+                    assignment_id,
+                )
+        return None
+
+    def _save_assignment_card_binding(
+        self,
+        binding: AssignmentChannelMessage,
+    ) -> None:
+        living = self._living
+        service = getattr(living, "_assignment_service", None) if living else None
+        store = getattr(service, "store", None)
+        upsert = getattr(store, "upsert_channel_message", None)
+        if callable(upsert):
+            try:
+                binding = upsert(binding)
+            except Exception:
+                logger.exception(
+                    "[DingTalk/Assignment] failed to persist card binding: %s",
+                    binding.assignment_id,
+                )
+        self._assignment_card_bindings[
+            (binding.assignment_id, binding.conversation_id)
+        ] = binding
+
+    def _recover_assignment_action(
+        self,
+        out_track_id: str,
+        action_id: str,
+    ) -> dict:
+        """Recover buttons from durable Assignment state after Agent restart."""
+        living = self._living
+        service = getattr(living, "_assignment_service", None) if living else None
+        store = getattr(service, "store", None)
+        finder = getattr(store, "get_channel_message_by_external_id", None)
+        if not callable(finder):
+            return {}
+        try:
+            binding = finder(
+                "dingtalk",
+                str(getattr(self._client, "account_id", "default")),
+                out_track_id,
+            )
+            if binding is None:
+                return {}
+            assignment = store.get_assignment(binding.assignment_id)
+            if assignment is None:
+                return {}
+            pending = self._assignment_pending(binding.assignment_id)
+            _title, _markdown, _buttons, actions = self._assignment_card_content(
+                {
+                    "id": assignment.id,
+                    "status": assignment.status.value,
+                    "revision": assignment.revision,
+                },
+                pending,
+                binding.conversation_id,
+                assignment.origin_session_id,
+            )
+            return dict(actions.get(action_id) or {})
+        except Exception:
+            logger.exception(
+                "[DingTalk/Assignment] failed to recover card action: %s",
+                out_track_id,
+            )
+            return {}
+
     def setup(self, living=None) -> None:
         """启动通道，桥接 living 和钉钉消息。
 
@@ -117,6 +709,8 @@ class DingTalkAdapter(ChannelAdapter):
         """
         if not living or not self._client:
             return
+
+        self._living = living
 
         router = living._router
         people = getattr(living, "_people_service", None)
@@ -190,12 +784,16 @@ class DingTalkAdapter(ChannelAdapter):
                     return
 
             # 缓存 session 信息用于回复（key 用 output_target，与 send() 对齐）
-            if session_webhook:
-                with adapter._sessions_lock:
-                    adapter._sessions[output_target] = {
+            with adapter._sessions_lock:
+                adapter._sessions[output_target] = {
+                    "is_group": is_group,
+                    "conversation_id": conversation_id,
+                    "sender": sender,
+                    **({
                         "session_webhook": session_webhook,
                         "sdk_message": sdk_message,
-                    }
+                    } if session_webhook else {}),
+                }
 
             match = re.search(
                 r"(?:^|\n)\s*(?:绑定|bind)\s+(\d{6})\s*$",
@@ -280,6 +878,7 @@ class DingTalkAdapter(ChannelAdapter):
             if hasattr(living, "_debug_log"):
                 living._debug_log("dingtalk", f"{ts} <- {sender}: {text[:80]}")
 
+        self._client.set_on_card_action(self._handle_card_action)
         logger.info("[DingTalkAdapter] 注册 on_message 回调，启动 client...")
         self._client.set_on_message(on_message)
         self._client.start()

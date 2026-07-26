@@ -11,6 +11,7 @@ pytest.importorskip("dingtalk_stream")
 
 from xiaomei_brain.plugins.channels.dingtalk.client import (  # noqa: E402
     DingTalkClient,
+    _CardHandler,
     _OurHandler,
 )
 
@@ -71,6 +72,80 @@ def test_message_dedup_ttl(monkeypatch) -> None:
     assert client._is_duplicate("msg-1") is False
 
 
+def test_card_handler_normalizes_stream_callback() -> None:
+    received = []
+    handler = _CardHandler(
+        lambda payload: (received.append(payload) is None, "已处理"),
+    )
+    callback = SimpleNamespace(
+        data={
+            "outTrackId": "card-1",
+            "userId": "staff-1",
+            "spaceId": "group-1",
+            "spaceType": "IM_GROUP",
+            "content": __import__("json").dumps({
+                "cardPrivateData": {
+                    "actionIds": ["assignment-approve"],
+                    "params": {"action": "approve"},
+                },
+            }),
+        },
+        headers=SimpleNamespace(message_id="callback-1"),
+    )
+
+    code, message = asyncio.run(handler.process(callback))
+
+    assert code == 200
+    assert message == "已处理"
+    assert received == [{
+        "out_track_id": "card-1",
+        "operator_user_id": "staff-1",
+        "space_id": "group-1",
+        "space_type": "IM_GROUP",
+        "action_ids": ["assignment-approve"],
+        "params": {"action": "approve"},
+    }]
+
+
+def test_client_creates_and_updates_advanced_card(monkeypatch) -> None:
+    import requests
+
+    client = DingTalkClient("ding-demo", "secret")
+    monkeypatch.setattr(client, "get_access_token", lambda: "token")
+    calls = []
+
+    def response():
+        return SimpleNamespace(raise_for_status=lambda: None)
+
+    monkeypatch.setattr(
+        requests,
+        "post",
+        lambda url, **kwargs: calls.append(("POST", url, kwargs)) or response(),
+    )
+    monkeypatch.setattr(
+        requests,
+        "put",
+        lambda url, **kwargs: calls.append(("PUT", url, kwargs)) or response(),
+    )
+    card_data = {"msgTitle": "委托执行中", "staticMsgContent": "进度：1/3"}
+
+    card_id = client.send_card(
+        "cid-group",
+        card_data,
+        is_group=True,
+        out_track_id="card-1",
+    )
+    assert card_id == "card-1"
+    create_body = calls[0][2]["json"]
+    assert create_body["callbackType"] == "STREAM"
+    assert create_body["openSpaceId"] == "dtv1.card//IM_GROUP.cid-group"
+    assert create_body["cardData"]["cardParamMap"] == card_data
+
+    assert client.update_card("card-1", card_data) is True
+    assert calls[1][0] == "PUT"
+    assert calls[1][2]["json"]["outTrackId"] == "card-1"
+
+
 def test_websocket_health_compatibility() -> None:
     assert DingTalkClient._websocket_is_open(None) is False
     assert DingTalkClient._websocket_is_open(
@@ -99,9 +174,10 @@ def test_start_reports_real_connection_and_stop_ends_sdk_loop(monkeypatch) -> No
         def __init__(self, *_args, **_kwargs):
             self.websocket = None
             self.route_message = self._route_message
+            self.registered_topics = []
 
-        def register_callback_handler(self, *_args) -> None:
-            pass
+        def register_callback_handler(self, topic, _handler) -> None:
+            self.registered_topics.append(topic)
 
         def open_connection(self):
             return {"endpoint": "wss://example.invalid", "ticket": "ticket"}
@@ -131,6 +207,7 @@ def test_start_reports_real_connection_and_stop_ends_sdk_loop(monkeypatch) -> No
     client = DingTalkClient("client", "secret")
     client._SUPERVISOR_INTERVAL_SECONDS = 0.01
     client.set_on_message(lambda _message: None)
+    client.set_on_card_action(lambda _payload: (True, "OK"))
 
     client.start()
     deadline = time.time() + 1
@@ -139,6 +216,8 @@ def test_start_reports_real_connection_and_stop_ends_sdk_loop(monkeypatch) -> No
 
     assert client.status()["state"] == "running"
     assert client.status()["threadAlive"] is True
+    assert "/v1.0/im/bot/messages/get" in client._stream_client.registered_topics
+    assert "/v1.0/card/instances/callback" in client._stream_client.registered_topics
 
     client.stop()
     assert client.status()["state"] == "stopped"

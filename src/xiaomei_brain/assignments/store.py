@@ -523,6 +523,24 @@ class AssignmentStore(SQLiteStore):
         ).fetchone()
         return self._channel_message_from_row(row) if row else None
 
+    def get_channel_message_by_external_id(
+        self,
+        channel: str,
+        account_id: str,
+        external_message_id: str,
+    ) -> AssignmentChannelMessage | None:
+        """Resolve a platform callback to the Assignment it represents."""
+        row = self._get_conn().execute(
+            """
+            SELECT * FROM assignment_channel_messages
+            WHERE channel = ? AND account_id = ? AND external_message_id = ?
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (channel, account_id, external_message_id),
+        ).fetchone()
+        return self._channel_message_from_row(row) if row else None
+
     def upsert_channel_message(
         self,
         message: AssignmentChannelMessage,
