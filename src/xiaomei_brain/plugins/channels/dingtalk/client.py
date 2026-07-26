@@ -17,6 +17,7 @@ import logging
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Callable
 
 from dingtalk_stream import (
@@ -561,6 +562,66 @@ class DingTalkClient:
             return True
         except Exception:
             logger.exception("[DingTalk/Card] update failed: %s", out_track_id)
+            return False
+
+    def send_file(
+        self,
+        target: str,
+        file_name: str,
+        data: bytes,
+        *,
+        is_group: bool,
+    ) -> bool:
+        """Upload and send an Agent-owned artifact as a native file message."""
+        import requests
+        from .media import upload_media_bytes
+
+        token = self.get_access_token()
+        safe_name = Path(file_name).name
+        if not token or not safe_name or not data:
+            return False
+        media_id = upload_media_bytes(safe_name, data, token)
+        if not media_id:
+            return False
+        suffix = Path(safe_name).suffix.lower().lstrip(".") or "file"
+        body = {
+            "robotCode": self.client_id,
+            "msgKey": "sampleFile",
+            "msgParam": json.dumps({
+                "mediaId": f"@{media_id.lstrip('@')}",
+                "fileName": safe_name,
+                "fileType": suffix,
+            }, ensure_ascii=False),
+        }
+        if is_group:
+            url = "https://api.dingtalk.com/v1.0/robot/groupMessages/send"
+            body["openConversationId"] = target
+        else:
+            url = "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend"
+            body["userIds"] = [target]
+        try:
+            response = requests.post(
+                url,
+                json=body,
+                headers={
+                    "x-acs-dingtalk-access-token": token,
+                    "Content-Type": "application/json",
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            logger.info(
+                "[DingTalk/File] delivered: target=%s file=%s",
+                target,
+                safe_name,
+            )
+            return True
+        except Exception:
+            logger.exception(
+                "[DingTalk/File] delivery failed: target=%s file=%s",
+                target,
+                safe_name,
+            )
             return False
 
     def get_access_token(self) -> str | None:

@@ -226,6 +226,61 @@ def upload_media(
         return None
 
 
+def upload_media_bytes(
+    file_name: str,
+    data: bytes,
+    oapi_token: str | None,
+    *,
+    max_size: int = 20 * 1024 * 1024,
+) -> str | None:
+    """Upload Agent-owned bytes without exposing or copying a local path."""
+    import io
+    import requests as _requests
+
+    safe_name = Path(file_name).name
+    if not oapi_token or not safe_name or not data:
+        logger.error("[DingTalk/Media] 文件上传参数不完整: %s", safe_name)
+        return None
+    if len(data) > max_size:
+        logger.warning(
+            "[DingTalk/Media] 文件过大: %s (%.1fMB > %.0fMB)",
+            safe_name,
+            len(data) / (1024 * 1024),
+            max_size / (1024 * 1024),
+        )
+        return None
+    try:
+        response = _requests.post(
+            f"{DINGTALK_OAPI}/media/upload",
+            params={"access_token": oapi_token, "type": "file"},
+            files={
+                "media": (
+                    safe_name,
+                    io.BytesIO(data),
+                    "application/octet-stream",
+                ),
+            },
+            timeout=60,
+        )
+        payload = response.json()
+        media_id = str(payload.get("media_id", "")).lstrip("@")
+        if response.ok and media_id:
+            logger.info(
+                "[DingTalk/Media] Agent artifact uploaded: %s (%d bytes)",
+                safe_name,
+                len(data),
+            )
+            return media_id
+        logger.warning(
+            "[DingTalk/Media] artifact upload failed: HTTP=%s payload=%s",
+            response.status_code,
+            payload,
+        )
+    except Exception:
+        logger.exception("[DingTalk/Media] artifact upload failed: %s", safe_name)
+    return None
+
+
 # ── 后处理 ──────────────────────────────────────────────
 
 def process_local_images(

@@ -28,6 +28,7 @@ def test_dingtalk_adapter_consumes_link_then_routes_as_person(tmp_path):
             self.sent = []
             self.cards = []
             self.updated_cards = []
+            self.files = []
 
         def set_on_message(self, callback):
             self.callback = callback
@@ -58,6 +59,10 @@ def test_dingtalk_adapter_consumes_link_then_routes_as_person(tmp_path):
 
         def update_card(self, out_track_id, data):
             self.updated_cards.append((out_track_id, data))
+            return True
+
+        def send_file(self, target, name, data, *, is_group):
+            self.files.append((target, name, data, is_group))
             return True
 
         def status(self):
@@ -282,3 +287,53 @@ def test_dingtalk_adapter_consumes_link_then_routes_as_person(tmp_path):
     assert message == "委托已继续执行。"
     assert assignment_service.calls[-1][1]["response"] == "PDF"
     assert scheduler.calls[-1][1]["response"] == "PDF"
+
+
+def test_dingtalk_assignment_deliverable_is_read_from_agent_storage(monkeypatch):
+    pytest.importorskip("dingtalk_stream")
+    from types import SimpleNamespace
+    from xiaomei_brain.plugins.channels.dingtalk.adapter import DingTalkAdapter
+
+    class FakeClient:
+        client_id = "ding-demo"
+        account_id = "default"
+
+        def __init__(self):
+            self.files = []
+
+        def send_file(self, target, name, data, *, is_group):
+            self.files.append((target, name, data, is_group))
+            return True
+
+    class FakeConversationDB:
+        def get_artifact_metadata(self, session_id, artifact_id):
+            assert session_id == "assignment:assignment-1"
+            return {"id": artifact_id, "name": "报告.docx"}
+
+    monkeypatch.setattr(
+        "xiaomei_brain.gateway.artifacts.read_stored_artifact",
+        lambda agent_id, session_id, artifact: {
+            "id": artifact["id"],
+            "name": artifact["name"],
+            "data_base64": "ZG9jeC1kYXRh",
+        },
+    )
+    client = FakeClient()
+    adapter = DingTalkAdapter(client)
+    adapter._living = SimpleNamespace(
+        _agent_id="xiaomei",
+        agent=SimpleNamespace(conversation_db=FakeConversationDB()),
+    )
+
+    adapter._send_assignment_deliverables(
+        "staff-1",
+        "assignment-1",
+        [{"id": "a" * 32, "name": "报告.docx"}],
+    )
+    adapter._send_assignment_deliverables(
+        "staff-1",
+        "assignment-1",
+        [{"id": "a" * 32, "name": "报告.docx"}],
+    )
+
+    assert client.files == [("staff-1", "报告.docx", b"docx-data", False)]

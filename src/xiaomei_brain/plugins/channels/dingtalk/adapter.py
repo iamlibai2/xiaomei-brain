@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 import json
 import re
@@ -88,6 +89,9 @@ class DingTalkAdapter(ChannelAdapter):
             tuple[str, str], AssignmentChannelMessage
         ] = {}
         self._assignment_notice_lock = threading.Lock()
+        self._artifact_delivery_lock = threading.Lock()
+        self._artifact_deliveries_inflight: set[tuple[str, str, str]] = set()
+        self._artifact_deliveries_sent: set[tuple[str, str, str]] = set()
 
     @property
     def capabilities(self) -> ChannelCapabilities:
@@ -438,6 +442,13 @@ class DingTalkAdapter(ChannelAdapter):
         except (TypeError, ValueError):
             revision = 0
         pending = self._assignment_pending(assignment_id)
+        if status == "completed" and payload.get("deliverables"):
+            threading.Thread(
+                target=self._send_assignment_deliverables,
+                args=(target, assignment_id, list(payload["deliverables"])),
+                name=f"dingtalk-deliver-{assignment_id[:8]}",
+                daemon=True,
+            ).start()
         title, markdown, buttons, actions = self._assignment_card_content(
             payload,
             pending,
@@ -494,6 +505,78 @@ class DingTalkAdapter(ChannelAdapter):
                 ),
             )
             self._assignment_notices[delivery_key] = notice_key
+
+    def _send_assignment_deliverables(
+        self,
+        target: str,
+        assignment_id: str,
+        deliverables: list[dict],
+    ) -> None:
+        living = self._living
+        db = getattr(getattr(living, "agent", None), "conversation_db", None)
+        if living is None or db is None:
+            logger.warning(
+                "[DingTalk/Assignment] artifact storage unavailable: %s",
+                assignment_id,
+            )
+            return
+        from xiaomei_brain.gateway.artifacts import ArtifactError, read_stored_artifact
+
+        for descriptor in deliverables[:10]:
+            artifact_id = str(descriptor.get("id", ""))
+            if not artifact_id:
+                continue
+            delivery_key = (target, assignment_id, artifact_id)
+            with self._artifact_delivery_lock:
+                if (
+                    delivery_key in self._artifact_deliveries_inflight
+                    or delivery_key in self._artifact_deliveries_sent
+                ):
+                    continue
+                self._artifact_deliveries_inflight.add(delivery_key)
+
+            delivered = False
+            display_name = str(descriptor.get("name") or artifact_id)
+            try:
+                artifact = db.get_artifact_metadata(
+                    f"assignment:{assignment_id}",
+                    artifact_id,
+                )
+                if artifact is None:
+                    raise ArtifactError("委托产物不存在")
+                stored = read_stored_artifact(
+                    getattr(living, "_agent_id", "default"),
+                    f"assignment:{assignment_id}",
+                    artifact,
+                )
+                display_name = str(stored.get("name") or display_name)
+                data = base64.b64decode(stored["data_base64"], validate=True)
+                delivered = self._client.send_file(
+                    target,
+                    display_name,
+                    data,
+                    is_group=self._is_group_target(target),
+                )
+                if not delivered:
+                    logger.warning(
+                        "[DingTalk/Assignment] failed to deliver artifact: %s",
+                        artifact_id,
+                    )
+            except (ArtifactError, ValueError):
+                logger.exception(
+                    "[DingTalk/Assignment] invalid deliverable: %s",
+                    artifact_id,
+                )
+            finally:
+                with self._artifact_delivery_lock:
+                    self._artifact_deliveries_inflight.discard(delivery_key)
+                    if delivered:
+                        self._artifact_deliveries_sent.add(delivery_key)
+            if not delivered:
+                self.send(
+                    target,
+                    f"产物“{display_name}”未能通过钉钉发送，请在 Desktop 中查看。",
+                )
 
     def _assignment_pending(self, assignment_id: str) -> dict:
         living = self._living

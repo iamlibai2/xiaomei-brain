@@ -146,6 +146,70 @@ def test_client_creates_and_updates_advanced_card(monkeypatch) -> None:
     assert calls[1][2]["json"]["outTrackId"] == "card-1"
 
 
+def test_client_uploads_and_sends_native_file(monkeypatch) -> None:
+    import json
+    import requests
+
+    client = DingTalkClient("ding-demo", "secret")
+    monkeypatch.setattr(client, "get_access_token", lambda: "token")
+    monkeypatch.setattr(
+        "xiaomei_brain.plugins.channels.dingtalk.media.upload_media_bytes",
+        lambda name, data, token: "media-1",
+    )
+    calls = []
+    monkeypatch.setattr(
+        requests,
+        "post",
+        lambda url, **kwargs: calls.append((url, kwargs)) or SimpleNamespace(
+            raise_for_status=lambda: None,
+        ),
+    )
+
+    assert client.send_file(
+        "staff-1", "报告.docx", b"docx", is_group=False,
+    ) is True
+    url, request = calls[-1]
+    assert url.endswith("/robot/oToMessages/batchSend")
+    assert request["json"]["userIds"] == ["staff-1"]
+    assert request["json"]["msgKey"] == "sampleFile"
+    assert json.loads(request["json"]["msgParam"]) == {
+        "mediaId": "@media-1",
+        "fileName": "报告.docx",
+        "fileType": "docx",
+    }
+
+    assert client.send_file(
+        "cid-group", "报告.pdf", b"pdf", is_group=True,
+    ) is True
+    assert calls[-1][0].endswith("/robot/groupMessages/send")
+    assert calls[-1][1]["json"]["openConversationId"] == "cid-group"
+
+
+def test_upload_media_bytes_uses_agent_owned_content(monkeypatch) -> None:
+    import requests
+    from xiaomei_brain.plugins.channels.dingtalk.media import upload_media_bytes
+
+    calls = []
+    monkeypatch.setattr(
+        requests,
+        "post",
+        lambda url, **kwargs: calls.append((url, kwargs)) or SimpleNamespace(
+            ok=True,
+            status_code=200,
+            json=lambda: {"errcode": 0, "media_id": "@media-1"},
+        ),
+    )
+
+    assert upload_media_bytes("../报告.pdf", b"pdf-data", "token") == "media-1"
+    url, request = calls[0]
+    assert url.endswith("/media/upload")
+    assert request["params"]["type"] == "file"
+    name, stream, content_type = request["files"]["media"]
+    assert name == "报告.pdf"
+    assert stream.read() == b"pdf-data"
+    assert content_type == "application/octet-stream"
+
+
 def test_websocket_health_compatibility() -> None:
     assert DingTalkClient._websocket_is_open(None) is False
     assert DingTalkClient._websocket_is_open(
