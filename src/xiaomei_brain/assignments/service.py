@@ -199,6 +199,7 @@ class AssignmentService:
             }
             else "queued"
         )
+        reopening = event_type == "reopened"
         return self._transition(
             assignment_id,
             AssignmentStatus.QUEUED,
@@ -206,6 +207,15 @@ class AssignmentService:
             expected_revision=expected_revision,
             event_type=event_type,
             reason=reason.strip(),
+            extra_updates=(
+                {
+                    "progress_summary": reason.strip() or "委托已重新开始",
+                    "completed_steps": None,
+                    "total_steps": None,
+                }
+                if reopening
+                else None
+            ),
             current=current,
         )
 

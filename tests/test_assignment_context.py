@@ -7,6 +7,7 @@ from xiaomei_brain.assignments import (
     AssignmentActor,
     AssignmentService,
     AssignmentStore,
+    AssignmentStatus,
     render_assignment_context,
 )
 
@@ -84,4 +85,37 @@ def test_context_is_empty_without_verified_person(tmp_path):
     agent = SimpleNamespace(assignment_service=service, user_id="global")
 
     assert render_assignment_context(agent) == ""
+    store.close()
+
+
+def test_context_includes_recent_finished_work_for_revision(tmp_path):
+    store = AssignmentStore(tmp_path / "brain.db")
+    service = AssignmentService(
+        store,
+        person_exists=lambda person_id: person_id in {"person_1", "person_2"},
+    )
+    own = _offer(service, "person_1", "公司介绍 PPT", "assignment_1")
+    other = _offer(service, "person_2", "机密报告", "assignment_2")
+    agent_actor = AssignmentActor(ActorType.AGENT, "xiaomei")
+    for assignment in (own, other):
+        service.complete(
+            service.start(
+                service.queue(
+                    service.accept(assignment.id, actor=agent_actor).id,
+                    actor=agent_actor,
+                ).id,
+                actor=agent_actor,
+            ).id,
+            actor=agent_actor,
+            summary=f"已交付 {assignment.title}",
+        )
+    assert store.get_assignment(own.id).status == AssignmentStatus.COMPLETED
+    agent = SimpleNamespace(assignment_service=service, user_id="person_1")
+
+    rendered = render_assignment_context(agent)
+
+    assert "<recent_finished>" in rendered
+    assert "公司介绍 PPT" in rendered
+    assert "revise_assignment" in rendered
+    assert "机密报告" not in rendered
     store.close()

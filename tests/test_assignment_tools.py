@@ -104,7 +104,7 @@ def test_assignment_tool_schemas_expose_list_parameters(tmp_path):
     store.close()
 
 
-def test_accept_assignment_records_both_actors_goal_and_turn_resources(tmp_path):
+def test_accept_assignment_records_both_actors_and_turn_resources_without_goal(tmp_path):
     store = AssignmentStore(tmp_path / "brain.db")
     service = AssignmentService(
         store,
@@ -126,16 +126,15 @@ def test_accept_assignment_records_both_actors_goal_and_turn_resources(tmp_path)
     assert assignment.status == AssignmentStatus.QUEUED
     assert result["_xiaomei_control"]["type"] == "handoff"
     assert assignment.requester_person_id == "person_1"
-    assert assignment.root_goal_id == "goal_1"
-    assert purpose.goals[0].metadata["assignment_id"] == assignment.id
-    assert purpose.saved == 1
+    assert assignment.root_goal_id is None
+    assert purpose.goals == []
+    assert purpose.saved == 0
     assert agent.core.active_assignment_id == assignment.id
     assert [(event.event_type, event.actor_type) for event in store.list_events(
         assignment.id,
-    )][:3] == [
+    )][:2] == [
         ("offered", ActorType.PERSON),
         ("accepted", ActorType.AGENT),
-        ("goal_linked", ActorType.AGENT),
     ]
     resources = {
         (item.resource_type, item.resource_key, item.relation)
@@ -176,7 +175,7 @@ def test_repeated_accept_in_same_turn_is_idempotent(tmp_path):
 
     assert first["id"] == second["id"]
     assert len(store.list_assignments()) == 1
-    assert len(purpose.goals) == 1
+    assert purpose.goals == []
     assert len(agent.assignment_scheduler.submissions) == 1
     store.close()
 
@@ -200,7 +199,7 @@ def test_assignment_tools_reject_unidentified_conversation(tmp_path):
     store.close()
 
 
-def test_complete_cannot_fabricate_a_background_run(tmp_path):
+def test_live_conversation_cannot_mutate_runner_owned_progress_or_completion(tmp_path):
     store = AssignmentStore(tmp_path / "brain.db")
     service = AssignmentService(
         store,
@@ -213,15 +212,9 @@ def test_complete_cannot_fabricate_a_background_run(tmp_path):
         acceptance_criteria=["报告文件"],
     ))
 
-    try:
-        tools["complete_assignment"].execute(
-            assignment_id=accepted["id"],
-            summary="前台模型试图直接声称已经完成",
-        )
-    except ValueError as exc:
-        assert "正在后台执行" in str(exc)
-    else:
-        raise AssertionError("queued assignment was completed without a real run")
+    assert "update_assignment_progress" not in tools
+    assert "wait_assignment" not in tools
+    assert "complete_assignment" not in tools
     assert store.list_runs(accepted["id"]) == []
     assert store.get_assignment(accepted["id"]).status == AssignmentStatus.QUEUED
     store.close()
@@ -318,6 +311,80 @@ def test_accept_assignment_creates_a_real_background_run(tmp_path):
     finally:
         scheduler.stop()
         store.close()
+
+
+def test_revise_assignment_reopens_same_work_with_fresh_request(tmp_path):
+    store = AssignmentStore(tmp_path / "brain.db")
+    service = AssignmentService(
+        store,
+        person_exists=lambda person_id: person_id == "person_1",
+    )
+    scheduler = FakeScheduler()
+    agent = FakeAgentInstance(
+        service,
+        FakePurpose(),
+        scheduler=scheduler,
+    )
+    tools = _tools(agent)
+    accepted = json.loads(tools["accept_assignment"].execute(
+        title="公司介绍 PPT",
+        objective="制作公司介绍 PPT",
+        acceptance_criteria=["交付 PPTX"],
+    ))
+    actor = AssignmentActor(ActorType.AGENT, "xiaomei")
+    running = service.start(accepted["id"], actor=actor)
+    service.update_progress(
+        running.id,
+        actor=actor,
+        summary="旧版本已完成",
+        completed_steps=3,
+        total_steps=3,
+    )
+    service.complete(running.id, actor=actor, summary="已交付第一版")
+
+    scheduler.submissions.clear()
+    scheduler._submitted_ids.clear()
+    agent.core.session_id = "session_revision"
+    agent.core.turn_id = "turn_revision"
+    agent.core.current_attachments = [{
+        "id": "attachment_revision",
+        "name": "新Logo.png",
+        "mime_type": "image/png",
+        "size": 456,
+        "kind": "image",
+    }]
+    revised = json.loads(tools["revise_assignment"].execute(
+        assignment_id=accepted["id"],
+        revision_request="把封面换成新 Logo，并统一为蓝色主题",
+    ))
+
+    current = store.get_assignment(accepted["id"])
+    assert revised["id"] == accepted["id"]
+    assert "继续修改原来的委托" in revised["_xiaomei_control"]["message"]
+    assert current.status == AssignmentStatus.QUEUED
+    assert current.completed_steps is None
+    assert current.total_steps is None
+    assert current.progress_summary == "把封面换成新 Logo，并统一为蓝色主题"
+    assert store.list_events(current.id)[-4].event_type == "reopened"
+    resources = {
+        (item.resource_type, item.resource_key, item.relation)
+        for item in store.list_resources(current.id)
+    }
+    assert ("session", "session_revision", "revision_origin") in resources
+    assert ("turn", "turn_revision", "revision_request") in resources
+    assert ("attachment", "attachment_revision", "input") in resources
+    assert scheduler.submissions == [(
+        current.id,
+        {
+            "trigger_type": "revision",
+            "trigger_actor_id": "xiaomei",
+            "priority": 100,
+            "checkpoint": {
+                "revision_request": "把封面换成新 Logo，并统一为蓝色主题",
+            },
+        },
+    )]
+    store.close()
 
 
 def test_resume_waiting_action_requires_and_seals_explicit_decision(tmp_path):

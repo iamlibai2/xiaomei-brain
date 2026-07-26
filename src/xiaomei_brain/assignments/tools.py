@@ -33,10 +33,6 @@ def create_assignment_tools(agent: Any = None) -> list[Tool]:
             raise RuntimeError("委托服务尚未初始化")
         return service
 
-    def _purpose() -> Any:
-        purpose_ref = getattr(agent, "_purpose_ref", None)
-        return purpose_ref[0] if purpose_ref and purpose_ref[0] else None
-
     def _scheduler() -> Any:
         scheduler = getattr(agent, "assignment_scheduler", None)
         if scheduler is None:
@@ -55,12 +51,17 @@ def create_assignment_tools(agent: Any = None) -> list[Tool]:
             raise RuntimeError("Agent 身份不可用")
         return AssignmentActor(ActorType.AGENT, agent_id)
 
-    def _snapshot(value: Assignment, *, handoff: bool = False) -> str:
+    def _snapshot(
+        value: Assignment,
+        *,
+        handoff: bool = False,
+        handoff_message: str = "",
+    ) -> str:
         snapshot = _service().public_snapshot(value)
         if handoff:
             snapshot[TOOL_CONTROL_KEY] = {
                 "type": "handoff",
-                "message": (
+                "message": handoff_message.strip() or (
                     "我已接受这项委托，正在后台执行。你可以继续和我聊天，"
                     "我会持续更新进展。"
                 ),
@@ -123,33 +124,6 @@ def create_assignment_tools(agent: Any = None) -> list[Tool]:
         current = offered
         if current.status in {AssignmentStatus.OFFERED, AssignmentStatus.CLARIFYING}:
             current = service.accept(current.id, actor=agent_actor)
-
-        purpose = _purpose()
-        if purpose is not None and not current.root_goal_id:
-            from xiaomei_brain.purpose.goal import GoalType
-
-            goal = purpose.add_goal(
-                description=objective.strip(),
-                # Assignment owns external execution. The linked root Goal is
-                # strategic context and must not activate shared PACE in the
-                # live conversation thread.
-                goal_type=GoalType.STRATEGIC,
-                deadline=requested_due_at or None,
-            )
-            goal.metadata.update({
-                "assignment_id": current.id,
-                "assignment_title": title.strip(),
-                "acceptance_criteria": [
-                    item.strip() for item in acceptance_criteria if item.strip()
-                ],
-                "constraints": [item.strip() for item in constraints if item.strip()],
-            })
-            purpose.save()
-            current = service.link_root_goal(
-                current.id,
-                actor=agent_actor,
-                goal_id=goal.id,
-            )
 
         for resource_type, resource_key, relation in (
             ("session", session_id, "origin"),
@@ -269,61 +243,86 @@ def create_assignment_tools(agent: Any = None) -> list[Tool]:
         return _snapshot(current, handoff=True)
 
     @tool(
-        name="update_assignment_progress",
-        description="当委托取得有意义的新进展时记录简短、可验证的进展；不要记录思维碎片。",
-    )
-    def update_assignment_progress(
-        assignment_id: str,
-        summary: str,
-        completed_steps: int = -1,
-        total_steps: int = -1,
-    ) -> str:
-        current = _service().update_progress(
-            assignment_id,
-            actor=_agent_actor(),
-            summary=summary,
-            completed_steps=None if completed_steps < 0 else completed_steps,
-            total_steps=None if total_steps < 0 else total_steps,
-        )
-        _activate_for_current_turn(current.id)
-        return _snapshot(current)
-
-    @tool(
-        name="wait_assignment",
-        description="委托因缺少人物提供的信息、确认或材料而无法继续时调用，并明确说明等待什么。",
-    )
-    def wait_assignment(assignment_id: str, reason: str) -> str:
-        current = _service().require_assignment(assignment_id, actor=_agent_actor())
-        if current.status != AssignmentStatus.IN_PROGRESS:
-            raise ValueError("只有正在后台执行的委托才能进入等待状态")
-        current = _service().wait_for_person(
-            current.id,
-            actor=_agent_actor(),
-            reason=reason,
-        )
-        _activate_for_current_turn(current.id)
-        return _snapshot(current)
-
-    @tool(
-        name="complete_assignment",
+        name="revise_assignment",
         description=(
-            "只有完成标准已满足并且交付结果已经给出时才将委托标记完成；summary 必须说明交付了什么。"
+            "当人物要求修改一项已经完成或失败的既有委托时调用。先用 list_assignments(status='all') "
+            "核对准确 assignment_id；revision_request 必须完整记录本次修改要求。"
+            "继续原委托，不要为同一交付物重复创建新委托。"
         ),
     )
-    def complete_assignment(assignment_id: str, summary: str) -> str:
-        current = _service().require_assignment(assignment_id, actor=_agent_actor())
-        if current.status == AssignmentStatus.COMPLETED:
-            _activate_for_current_turn(current.id)
-            return _snapshot(current)
-        if current.status != AssignmentStatus.IN_PROGRESS:
-            raise ValueError("只有正在后台执行的委托才能标记完成")
-        current = _service().complete(
+    def revise_assignment(assignment_id: str, revision_request: str) -> str:
+        """Reopen an existing agreement and hand a fresh run to the Scheduler."""
+        request = revision_request.strip()
+        if not request:
+            raise ValueError("修改要求不能为空")
+        service = _service()
+        scheduler = _scheduler()
+        if scheduler is None:
+            raise RuntimeError("委托后台调度器尚未初始化，不能继续修改")
+
+        # Verify ownership with the current Person before the Agent changes
+        # lifecycle state. This prevents a guessed ID from crossing identity.
+        current = service.require_assignment(assignment_id, actor=_person_actor())
+        if current.status not in {
+            AssignmentStatus.COMPLETED,
+            AssignmentStatus.FAILED,
+        }:
+            raise ValueError("只有已经完成或失败的委托才能作为修订重新开始")
+        current = service.queue(
             current.id,
             actor=_agent_actor(),
-            summary=summary,
+            reason=request,
+        )
+
+        core = _core()
+        session_id = str(getattr(core, "session_id", "")).strip()
+        turn_id = str(getattr(core, "turn_id", "")).strip()
+        for resource_type, resource_key, relation in (
+            ("session", session_id, "revision_origin"),
+            ("turn", turn_id, "revision_request"),
+        ):
+            if resource_key:
+                service.link_resource(
+                    current.id,
+                    actor=_agent_actor(),
+                    resource_type=resource_type,
+                    resource_key=resource_key,
+                    relation=relation,
+                    metadata={"request": request} if resource_type == "turn" else None,
+                )
+        for attachment in getattr(core, "current_attachments", []) or []:
+            attachment_id = str(attachment.get("id", "")).strip()
+            if attachment_id:
+                service.link_resource(
+                    current.id,
+                    actor=_agent_actor(),
+                    resource_type="attachment",
+                    resource_key=attachment_id,
+                    relation="input",
+                    metadata={
+                        key: attachment[key]
+                        for key in ("name", "mime_type", "size", "kind")
+                        if key in attachment
+                    } | {"session_id": session_id},
+                )
+
+        scheduler.submit(
+            current.id,
+            trigger_type="revision",
+            trigger_actor_id=_agent_actor().actor_id,
+            priority=100,
+            checkpoint={"revision_request": request},
         )
         _activate_for_current_turn(current.id)
-        return _snapshot(current)
+        current = service.require_assignment(current.id, actor=_agent_actor())
+        return _snapshot(
+            current,
+            handoff=True,
+            handoff_message=(
+                "我会继续修改原来的委托，旧交付物和本次要求已经交给后台执行。"
+                "你可以继续和我聊天。"
+            ),
+        )
 
     @tool(
         name="list_assignments",
@@ -356,8 +355,6 @@ def create_assignment_tools(agent: Any = None) -> list[Tool]:
     return [
         accept_assignment,
         start_assignment,
-        update_assignment_progress,
-        wait_assignment,
-        complete_assignment,
+        revise_assignment,
         list_assignments,
     ]

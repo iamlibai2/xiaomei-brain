@@ -85,6 +85,8 @@ def test_agent_controls_lifecycle_and_can_reopen_completed_work(domain):
     assert reopened.status == AssignmentStatus.QUEUED
     assert reopened.completed_at is None
     assert reopened.terminal_reason == ""
+    assert reopened.completed_steps is None
+    assert reopened.total_steps is None
     assert [event.event_type for event in store.list_events(offered.id)] == [
         "offered",
         "accepted",

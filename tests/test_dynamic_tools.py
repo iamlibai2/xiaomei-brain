@@ -93,6 +93,25 @@ def test_core_tools_first():
     assert names[:len(core)] == core, f"Expected core tools first, got {names}"
 
 
+def test_assignment_continuation_tools_are_always_available():
+    """Short follow-ups still need access to existing Assignment work."""
+    reg = _registry_with_tools(
+        ("shell", "Run shell commands"),
+        ("list_assignments", "List earlier assignments"),
+        ("revise_assignment", "Revise a completed assignment"),
+        ("start_assignment", "Resume a paused assignment"),
+        ("unrelated", "An unrelated operation"),
+    )
+    loader = DynamicToolLoader(reg)
+    loader.build_index()
+
+    names = [tool.name for tool in loader.select_tools("再增加一些代码结构分析", top_k=1)]
+
+    assert "list_assignments" in names
+    assert "revise_assignment" in names
+    assert "start_assignment" in names
+
+
 # ── Dynamic tool selection ─────────────────────────────────────
 
 
@@ -257,6 +276,40 @@ def test_top_k_respected():
                          ("shell", "send_message", "read_file", "write_file", "edit_file",
                           "check_inbox", "memory_search", "memory_add", "memory_list", "dag")])
     assert dynamic_count <= 1, f"top_k=1 should yield at most 1 dynamic, got {dynamic_count}"
+
+
+def test_explicit_tool_name_is_not_truncated_by_full_embedding_results(monkeypatch):
+    reg = _registry_with_tools(
+        ("tool_a", "First semantic result"),
+        ("tool_b", "Second semantic result"),
+        ("forced_tool", "Explicitly requested operation"),
+    )
+    loader = DynamicToolLoader(reg)
+    loader.build_index()
+
+    class _Table:
+        @staticmethod
+        def count_rows():
+            return 3
+
+        @staticmethod
+        def search(_query):
+            return _Table()
+
+        @staticmethod
+        def limit(_count):
+            return _Table()
+
+        @staticmethod
+        def to_list():
+            return [{"id": "tool_a"}, {"id": "tool_b"}]
+
+    monkeypatch.setattr(loader, "_get_lance_table", lambda: _Table())
+    monkeypatch.setattr(loader._get_embedder(), "embed", lambda _query: [0.0])
+
+    selected = loader.select_tools("please run forced_tool", top_k=2)
+
+    assert [tool.name for tool in selected] == ["forced_tool", "tool_a"]
 
 
 # ── Fallback when _dynamic_loader is None ──────────────────────

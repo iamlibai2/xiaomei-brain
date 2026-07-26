@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import copy
 import json
 import os
@@ -85,7 +86,10 @@ class IsolatedAssignmentRunner:
         service: AssignmentService,
         *,
         allowed_tools: Iterable[str] = DEFAULT_BACKGROUND_TOOLS,
-        max_steps: int = 30,
+        # Source analysis and document work commonly need more than thirty
+        # read-only tool rounds.  The previous limit stopped a healthy run
+        # immediately before it could close its final plan steps.
+        max_steps: int = 60,
         realtime_busy: Callable[[], bool] | None = None,
     ) -> None:
         self.agent_instance = agent_instance
@@ -236,7 +240,10 @@ class IsolatedAssignmentRunner:
             }
 
         artifact_db = self._new_conversation_db()
-        prepared_resources = self._prepare_input_resources(context)
+        prepared_resources = self._prepare_input_resources(
+            context,
+            artifact_db=artifact_db,
+        )
 
         def on_artifact(
             tool_call_id: str,
@@ -257,7 +264,12 @@ class IsolatedAssignmentRunner:
                 arguments,
                 result,
                 workspace_root=workspace_root,
-                scan_roots=(work_dir, outputs_dir),
+                # The work directory can contain a cloned source repository.
+                # Scanning it recursively turned every source file into a
+                # process artifact after one shell call. Only final output
+                # files need fallback discovery; explicit file paths in tool
+                # arguments/results still discover individual work files.
+                scan_roots=(outputs_dir,),
             )
             for artifact in discovered:
                 relative_path = str(artifact.get("relative_path") or "")
@@ -336,6 +348,44 @@ class IsolatedAssignmentRunner:
             )
             control.raise_if_cancelled()
             if not pending_action and self._parse_wait(final_text) is None:
+                incomplete_plan = self._incomplete_plan_reason(
+                    control.checkpoint_data,
+                )
+                if incomplete_plan:
+                    checkpoint = {
+                        **control.checkpoint_data,
+                        "tool_trace": list(tool_trace),
+                        "artifacts": list(artifacts),
+                        "last_response": final_text[:4000],
+                    }
+                    control.checkpoint(checkpoint, safe_to_resume=True)
+                    return ExecutionResult(
+                        "paused",
+                        incomplete_plan,
+                        checkpoint=checkpoint,
+                        safe_to_resume=True,
+                    )
+                if (
+                    self._requires_file_deliverable(context)
+                    and not any(
+                        item.get("workspace_role") == "deliverable_candidate"
+                        for item in artifacts
+                    )
+                ):
+                    reason = "完成标准要求文件交付，但 outputs/ 中没有生成真实产物"
+                    checkpoint = {
+                        **control.checkpoint_data,
+                        "tool_trace": list(tool_trace),
+                        "artifacts": list(artifacts),
+                        "last_response": final_text[:4000],
+                    }
+                    control.checkpoint(checkpoint, safe_to_resume=True)
+                    return ExecutionResult(
+                        "paused",
+                        reason,
+                        checkpoint=checkpoint,
+                        safe_to_resume=True,
+                    )
                 deliverables = self._publish_deliverables(
                     context,
                     artifacts,
@@ -558,6 +608,36 @@ class IsolatedAssignmentRunner:
             total_steps=len(plan["steps"]),
         )
 
+    @classmethod
+    def _incomplete_plan_reason(cls, checkpoint: dict[str, Any]) -> str:
+        plan = cls._execution_plan(checkpoint)
+        if plan is None:
+            return ""
+        pending = [
+            item["title"] for item in plan["steps"]
+            if item["status"] != "completed"
+        ]
+        if not pending:
+            return ""
+        return (
+            f"执行计划尚有 {len(pending)} 步未完成，委托已暂停而不会虚假标记完成："
+            + "；".join(pending[:3])
+        )
+
+    @staticmethod
+    def _requires_file_deliverable(context: AssignmentExecutionContext) -> bool:
+        text = "\n".join((
+            context.title,
+            context.objective,
+            *context.acceptance_criteria,
+        ))
+        return bool(re.search(
+            r"(?:报告|文档|文件|附件|表格|幻灯片|pptx?|docx?|xlsx?|pdf|"
+            r"report|document|file|spreadsheet|presentation)",
+            text,
+            re.IGNORECASE,
+        ))
+
     def _copy_safe_tools(
         self,
         context: AssignmentExecutionContext | None = None,
@@ -696,8 +776,14 @@ class IsolatedAssignmentRunner:
     def _prepare_input_resources(
         self,
         context: AssignmentExecutionContext,
+        *,
+        artifact_db: Any | None = None,
     ) -> list[dict[str, Any]]:
-        """Materialize Person-provided attachments inside Agent workspace."""
+        """Materialize attachments and earlier deliverables for this run."""
+        from xiaomei_brain.gateway.artifacts import (
+            ArtifactError,
+            read_stored_artifact,
+        )
         from xiaomei_brain.gateway.attachments import restore_attachment_refs
 
         agent_root = Path.home() / ".xiaomei-brain" / context.agent_id
@@ -711,6 +797,40 @@ class IsolatedAssignmentRunner:
                 "relation": item.relation,
                 "metadata": metadata,
             }
+            if (
+                item.resource_type == "artifact"
+                and item.relation == "deliverable"
+                and artifact_db is not None
+            ):
+                try:
+                    stored = artifact_db.get_artifact_metadata(
+                        context.session_id,
+                        item.resource_key,
+                    )
+                    if stored is None:
+                        raise ArtifactError("委托产物记录不存在")
+                    value = read_stored_artifact(
+                        context.agent_id,
+                        context.session_id,
+                        stored,
+                    )
+                    safe_name = Path(
+                        str(value.get("name") or item.resource_key),
+                    ).name
+                    input_dir.mkdir(parents=True, exist_ok=True)
+                    target = input_dir / (
+                        f"previous_{item.resource_key[:8]}_{safe_name}"
+                    )
+                    target.write_bytes(base64.b64decode(value["data_base64"]))
+                    metadata.update({
+                        "workspace_path": str(target),
+                        "previous_deliverable": True,
+                    })
+                except Exception as exc:
+                    metadata["read_error"] = str(exc)
+                resource["metadata"] = metadata
+                prepared.append(resource)
+                continue
             if item.resource_type != "attachment" or item.relation != "input":
                 prepared.append(resource)
                 continue
@@ -841,6 +961,7 @@ class IsolatedAssignmentRunner:
             "如果 checkpoint 已有 execution_plan，则沿用原计划，不得重建。"
             "每验证完成一步立即调用 complete_assignment_step。"
             "执行计划只记录事实，不记录思维过程；最终交付前应完成全部步骤。\n"
+            "批量收集同类只读信息，避免为每个文件或字段分别调用一次工具。"
             "完成标准满足后直接给出简明交付摘要，并优先把长内容写成文件。\n"
             "如果缺少人物才能提供的信息，输出且只输出："
             "<WAIT_FOR_PERSON>{\"reason\":\"原因\",\"question\":\"具体问题\"," 

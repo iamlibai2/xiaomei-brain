@@ -38,6 +38,13 @@ _CORE_TOOL_NAMES = frozenset({
     "dag",
     "skills_list",
     "skill_view",
+    # A Person may refer to earlier work with a short phrase such as
+    # "continue that report".  Semantic tool retrieval cannot reliably infer
+    # the Assignment lifecycle from those words alone, so keep the two small
+    # lookup/revision tools available in every conversation turn.
+    "list_assignments",
+    "revise_assignment",
+    "start_assignment",
 })
 
 DEFAULT_TOP_K = 10
@@ -321,17 +328,22 @@ class DynamicToolLoader:
 
         # 规则兜底：query 中明确出现工具名 → 强制入选
         # 避免用户说 "generate_music" 时 embedding 没把它排在 top-K
+        forced: list[Tool] = []
         for name, tool in name_to_tool.items():
             if name in seen or name in _CORE_TOOL_NAMES:
                 continue
             # 支持原始名 (generate_music) 和 normalize 名 (generate music)
             normalized = name.replace("_", " ").replace("-", " ")
             if name in query or normalized in query:
-                selected.append(tool)
+                forced.append(tool)
                 seen.add(name)
 
-        # 兜底过多时截断（embedding 结果优先，兜底补到末尾）
-        if len(selected) > k:
+        # Explicitly named tools have priority over semantic results.  The old
+        # append-then-truncate order could silently discard the forced tool
+        # whenever embedding had already filled all K slots.
+        if forced:
+            selected = forced[:k] + selected[:max(0, k - len(forced))]
+        else:
             selected = selected[:k]
 
         logger.info(

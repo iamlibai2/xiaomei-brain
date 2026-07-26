@@ -140,6 +140,18 @@ def test_isolated_runner_clones_llm_and_completes_without_live_core(tmp_path, ca
     store.close()
 
 
+def test_isolated_runner_allows_long_document_runs_by_default(tmp_path):
+    store, service, agent, _context_value, _control, _checkpoints = _context(
+        tmp_path,
+        [_response("done")],
+    )
+
+    runner = IsolatedAssignmentRunner(agent, service)
+
+    assert runner.max_steps == 60
+    store.close()
+
+
 def test_isolated_runner_turns_clarification_marker_into_durable_wait(tmp_path):
     marker = (
         '<WAIT_FOR_PERSON>{"reason":"缺少范围","question":"研究哪个地区？",'
@@ -306,6 +318,10 @@ def test_isolated_runner_consumes_exact_sealed_approval_once(tmp_path):
 
 
 def test_isolated_runner_links_discovered_artifact_to_assignment(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "xiaomei_brain.assignments.isolated_runner.Path.home",
+        classmethod(lambda cls: tmp_path),
+    )
     registry = ToolRegistry()
     registry.register(Tool(
         name="write_file",
@@ -348,9 +364,10 @@ def test_isolated_runner_links_discovered_artifact_to_assignment(tmp_path, monke
         "turn_id": context.turn_id,
         "relative_path": f"workspace/assignments/{context.assignment_id}/outputs/report.md",
     }
+    discovery_calls = []
     monkeypatch.setattr(
         "xiaomei_brain.gateway.artifacts.discover_tool_artifacts",
-        lambda *args, **kwargs: [dict(artifact)],
+        lambda *args, **kwargs: discovery_calls.append(kwargs) or [dict(artifact)],
     )
 
     result = IsolatedAssignmentRunner(agent, service)(context, control)
@@ -362,6 +379,10 @@ def test_isolated_runner_links_discovered_artifact_to_assignment(tmp_path, monke
         and item.resource_key == artifact["id"]
         and item.relation == "output"
         for item in resources
+    )
+    assert discovery_calls[0]["scan_roots"] == (
+        tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace"
+        / "assignments" / context.assignment_id / "outputs",
     )
     store.close()
 
@@ -458,6 +479,84 @@ def test_isolated_runner_materializes_origin_attachment_for_background_work(
     assert Path(metadata["workspace_path"]).read_bytes() == b"pptx"
     assert metadata["text_content"] == "演示文稿正文"
     assert metadata["session_id"] == "session_origin"
+    store.close()
+
+
+def test_isolated_runner_materializes_previous_deliverable_for_revision(
+    tmp_path,
+    monkeypatch,
+):
+    from xiaomei_brain.gateway.artifacts import discover_tool_artifacts
+    from xiaomei_brain.memory.conversation_db import ConversationDB
+
+    monkeypatch.setattr(
+        "xiaomei_brain.assignments.isolated_runner.Path.home",
+        classmethod(lambda cls: tmp_path),
+    )
+    store = AssignmentStore(tmp_path / "brain.db")
+    service = AssignmentService(
+        store,
+        person_exists=lambda person_id: person_id == "person_1",
+    )
+    person = AssignmentActor(ActorType.PERSON, "person_1")
+    agent_actor = AssignmentActor(ActorType.AGENT, "xiaomei")
+    assignment = service.offer(
+        title="修改 PPT",
+        objective="根据反馈修改已经交付的 PPT",
+        actor=person,
+        requester_person_id="person_1",
+        scope_type="person",
+        scope_id="person_1",
+        origin_session_id="session_origin",
+    )
+    assignment = service.accept(assignment.id, actor=agent_actor)
+    assignment_root = (
+        tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace"
+        / "assignments" / assignment.id
+    )
+    old_output = assignment_root / "outputs" / "company.pptx"
+    old_output.parent.mkdir(parents=True)
+    old_output.write_bytes(b"first-presentation")
+    assignment_session = f"assignment:{assignment.id}"
+    artifact = discover_tool_artifacts(
+        "xiaomei",
+        assignment_session,
+        "assignment-run:old",
+        "write_file",
+        {"path": "outputs/company.pptx"},
+        f"Successfully wrote to {old_output}",
+        workspace_root=assignment_root,
+        scan_roots=(assignment_root / "outputs",),
+    )[0]
+    db = ConversationDB(tmp_path / "brain.db")
+    db.save_artifact(assignment_session, artifact, user_id="person_1")
+    service.link_resource(
+        assignment.id,
+        actor=agent_actor,
+        resource_type="artifact",
+        resource_key=artifact["id"],
+        relation="deliverable",
+        metadata=artifact,
+    )
+    context = AssignmentExecutionContext.capture(
+        store.get_assignment(assignment.id),
+        run_id="run_revision",
+        agent_id="xiaomei",
+        resources=store.list_resources(assignment.id),
+    )
+    runner = IsolatedAssignmentRunner(
+        FakeAgentInstance(FakeLLMTemplate([]), ToolRegistry()),
+        service,
+    )
+
+    resources = runner._prepare_input_resources(context, artifact_db=db)
+
+    previous = next(item for item in resources if item["type"] == "artifact")
+    assert "read_error" not in previous["metadata"], previous["metadata"].get("read_error")
+    materialized = Path(previous["metadata"]["workspace_path"])
+    assert materialized.read_bytes() == b"first-presentation"
+    assert previous["metadata"]["previous_deliverable"] is True
+    db.close()
     store.close()
 
 
@@ -567,7 +666,7 @@ def test_only_outputs_are_promoted_as_assignment_deliverables(tmp_path, monkeypa
     store.close()
 
 
-def test_execution_plan_keeps_unreported_steps_pending_at_completion(tmp_path):
+def test_execution_plan_with_unreported_steps_pauses_instead_of_completing(tmp_path):
     store, service, agent, context, control, _checkpoints = _context(
         tmp_path,
         [
@@ -586,7 +685,45 @@ def test_execution_plan_keeps_unreported_steps_pending_at_completion(tmp_path):
     assert plan["steps"][1]["summary"] == ""
     assert assignment.completed_steps == 1
     assert assignment.total_steps == 2
-    assert assignment.progress_summary == "本次执行结束。"
+    assert result.status == "paused"
+    assert result.safe_to_resume is True
+    assert "1 步未完成" in result.summary
+    assert assignment.progress_summary == "已收集并核对资料"
+    store.close()
+
+
+def test_required_report_without_output_file_pauses(tmp_path):
+    store, service, agent, context, _control, checkpoints = _context(
+        tmp_path,
+        [
+            _plan_response("形成报告"),
+            _complete_step_response("报告内容已分析"),
+            _response("报告已完成，但没有真正写入文件。"),
+        ],
+    )
+    assignment = store.get_assignment(context.assignment_id)
+    store.mutate_assignment(
+        assignment.id,
+        expected_revision=assignment.revision,
+        updates={"title": "代码分析报告"},
+        event_type="retitled",
+        actor=AssignmentActor(ActorType.AGENT, "xiaomei"),
+    )
+    context = AssignmentExecutionContext.capture(
+        store.get_assignment(assignment.id),
+        run_id=context.run_id,
+        agent_id="xiaomei",
+    )
+    control = ExecutionControl(
+        CancellationToken(),
+        lambda data, safe: checkpoints.append((data, safe)),
+    )
+
+    result = IsolatedAssignmentRunner(agent, service)(context, control)
+
+    assert result.status == "paused"
+    assert "outputs/" in result.summary
+    assert result.safe_to_resume is True
     store.close()
 
 
