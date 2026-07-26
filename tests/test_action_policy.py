@@ -9,15 +9,10 @@ def test_non_shell_tools_keep_existing_behavior():
     assert assess_tool_action("read_file", {"path": "notes.txt"}).decision == "allow"
 
 
-def test_conservative_shell_reads_are_automatic():
+def test_shell_commands_are_automatic_when_not_hard_blocked():
     assert assess_tool_action("shell", {"command": "git status --short"}).decision == "allow"
     assert assess_tool_action("shell", {"command": "python --version"}).decision == "allow"
-
-
-def test_shell_side_effects_require_approval():
-    assessment = assess_tool_action("shell", {"command": "mkdir approval-test"})
-    assert assessment.decision == "ask"
-    assert "mkdir approval-test" in assessment.summary
+    assert assess_tool_action("shell", {"command": "mkdir approval-test"}).decision == "allow"
 
 
 def test_existing_hard_blocks_never_become_approvable():
@@ -26,7 +21,7 @@ def test_existing_hard_blocks_never_become_approvable():
     assert assessment.risk_level == "high"
 
 
-def test_non_desktop_channels_fail_closed_instead_of_waiting_for_approval():
+def test_non_desktop_channels_execute_allowed_shell_without_approval():
     parent = SimpleNamespace(
         _router=SimpleNamespace(
             route_for_session=lambda _session_id: SimpleNamespace(type="http_p2p"),
@@ -38,11 +33,10 @@ def test_non_desktop_channels_fail_closed_instead_of_waiting_for_approval():
 
     result = callback("call-1", "shell", {"command": "echo side-effect"})
 
-    assert result["approved"] is False
-    assert "interactive human channel" in result["result"]
+    assert result is None
 
 
-def test_human_text_channel_can_use_shared_action_broker():
+def test_allowed_shell_does_not_create_action_broker_request():
     captured = {}
 
     class Broker:
@@ -64,6 +58,5 @@ def test_human_text_channel_can_use_shared_action_broker():
 
     result = callback("call-1", "shell", {"command": "mkdir approval-test"})
 
-    assert result == {"action_id": "action-1", "approved": True, "result": ""}
-    assert captured["session_id"] == "feishu-user-1"
-    assert captured["user_id"] == "user-1"
+    assert result is None
+    assert captured == {}

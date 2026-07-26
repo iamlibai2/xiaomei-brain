@@ -91,6 +91,71 @@ class FeishuAdapter(ChannelAdapter):
                 text[:200],
             )
 
+            if not text:
+                logger.info("[Feishu/Inbound] ignored empty message")
+                return
+
+            is_group = chat_type != "p2p"
+            resolved = (
+                people.resolve_verified_identity(issuer, sender)
+                if people else None
+            )
+            person_id = resolved[0].person_id if resolved is not None else ""
+
+            if is_group:
+                session_id = (
+                    f"feishu-group-{self._channel.app_id}-{conversation_id}"
+                )
+                if people:
+                    people.store.ensure_session(
+                        session_id,
+                        "conversation",
+                        f"{issuer}:chat:{conversation_id}",
+                        metadata={
+                            "channel": "feishu",
+                            "issuer": issuer,
+                            "conversation_id": conversation_id,
+                        },
+                    )
+
+                # Ordinary group chatter is perception, not a request. Store it
+                # separately so it cannot enter fresh_tail, dreams or personal
+                # memory, and never create a Turn or a reply.
+                if not msg_dict.get("bot_mentioned", False):
+                    gw = getattr(living, "_gateway_inbound", None)
+                    if gw and hasattr(gw, "observe_group_message"):
+                        from xiaomei_brain.gateway.inbound import RawMessage
+                        gw.observe_group_message(RawMessage(
+                            content=text,
+                            source="human",
+                            channel="feishu",
+                            peer_id=person_id,
+                            peer_type="human",
+                            session_id=session_id,
+                            metadata={
+                                "external_issuer": issuer,
+                                "external_subject": sender,
+                                "external_conversation_id": conversation_id,
+                                "external_message_id": msg_dict.get("message_id", ""),
+                                "external_timestamp": msg_dict.get("timestamp"),
+                                "sender_display_name": (
+                                    resolved[0].display_name
+                                    if resolved is not None
+                                    else (
+                                        msg_dict.get("sender_name")
+                                        if msg_dict.get("sender_name") not in {"", "user"}
+                                        else sender
+                                    )
+                                ),
+                                "message_type": msg_dict.get("msg_type", "text"),
+                            },
+                        ))
+                    logger.info(
+                        "[Feishu/Inbound] stored group observation: %s",
+                        conversation_id,
+                    )
+                    return
+
             # Feishu replies and mentions may add a prefix before the command.
             # Only accept a six-digit command on the final line so ordinary
             # conversation containing the word "绑定" cannot consume a code.
@@ -117,7 +182,6 @@ class FeishuAdapter(ChannelAdapter):
                 self.send(conversation_id, "身份绑定成功，现在我能认出你了。")
                 return
 
-            resolved = people.resolve_verified_identity(issuer, sender) if people else None
             if resolved is None:
                 self.send(
                     conversation_id,
@@ -126,8 +190,9 @@ class FeishuAdapter(ChannelAdapter):
                 return
             person, _binding = resolved
             person_id = person.person_id
-            session_id = f"feishu-{person_id}"
-            people.store.ensure_person_session(session_id, person_id)
+            if not is_group:
+                session_id = f"feishu-{person_id}"
+                people.store.ensure_person_session(session_id, person_id)
 
             # 注册 peer（确保 Router 能匹配到）
             has_route = (
@@ -159,6 +224,7 @@ class FeishuAdapter(ChannelAdapter):
                         "external_issuer": issuer,
                         "external_subject": sender,
                         "external_conversation_id": conversation_id,
+                        "external_message_id": msg_dict.get("message_id", ""),
                     },
                     reply_channel="feishu",
                     reply_target=conversation_id,

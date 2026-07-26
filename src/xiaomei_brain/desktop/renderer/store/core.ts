@@ -140,7 +140,7 @@ function historyMessages(
   activeActionIds: Set<string> = new Set(),
 ): DisplayMessage[] {
   const rows = Array.isArray(result?.messages) ? result.messages : [];
-  return rows.flatMap((value, index) => {
+  return rows.flatMap((value, index): DisplayMessage[] => {
     if (!value || typeof value !== "object") return [];
     const row = value as Record<string, unknown>;
     if (row.role === "interaction" && row.action && typeof row.action === "object") {
@@ -571,6 +571,72 @@ export interface ActionRequest {
   error: string;
 }
 
+export type AssignmentStatus =
+  | "offered" | "clarifying" | "accepted" | "queued" | "in_progress"
+  | "waiting_person" | "paused" | "completed" | "declined" | "cancelled" | "failed";
+
+export interface AssignmentSnapshot {
+  id: string;
+  title: string;
+  objective: string;
+  status: AssignmentStatus;
+  originSessionId: string;
+  acceptanceCriteria: string[];
+  requestedDueAt: number | null;
+  progressSummary: string;
+  completedSteps: number | null;
+  totalSteps: number | null;
+  waitingReason: string;
+  terminalReason: string;
+  revision: number;
+  createdAt: number;
+  updatedAt: number;
+  completedAt: number | null;
+}
+
+function assignmentSnapshot(value: unknown): AssignmentSnapshot | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const item = value as Record<string, unknown>;
+  if (typeof item.id !== "string" || typeof item.title !== "string" || typeof item.status !== "string") return null;
+  const statuses = new Set<string>([
+    "offered", "clarifying", "accepted", "queued", "in_progress", "waiting_person",
+    "paused", "completed", "declined", "cancelled", "failed",
+  ]);
+  if (!statuses.has(item.status)) return null;
+  return {
+    id: item.id,
+    title: item.title,
+    objective: typeof item.objective === "string" ? item.objective : "",
+    status: item.status as AssignmentStatus,
+    originSessionId: typeof item.origin_session_id === "string"
+      ? item.origin_session_id
+      : typeof item.session_id === "string" ? item.session_id : "",
+    acceptanceCriteria: Array.isArray(item.acceptance_criteria)
+      ? item.acceptance_criteria.filter((entry): entry is string => typeof entry === "string")
+      : [],
+    requestedDueAt: typeof item.requested_due_at === "number" ? item.requested_due_at : null,
+    progressSummary: typeof item.progress_summary === "string" ? item.progress_summary : "",
+    completedSteps: typeof item.completed_steps === "number" ? item.completed_steps : null,
+    totalSteps: typeof item.total_steps === "number" ? item.total_steps : null,
+    waitingReason: typeof item.waiting_reason === "string" ? item.waiting_reason : "",
+    terminalReason: typeof item.terminal_reason === "string" ? item.terminal_reason : "",
+    revision: typeof item.revision === "number" ? item.revision : 0,
+    createdAt: typeof item.created_at === "number" ? item.created_at : 0,
+    updatedAt: typeof item.updated_at === "number" ? item.updated_at : 0,
+    completedAt: typeof item.completed_at === "number" ? item.completed_at : null,
+  };
+}
+
+function upsertAssignment(state: CoreState, agentId: string, assignment: AssignmentSnapshot): boolean {
+  if (!state.assignmentsByAgent[agentId]) state.assignmentsByAgent[agentId] = [];
+  const existing = state.assignmentsByAgent[agentId].findIndex((item) => item.id === assignment.id);
+  if (existing >= 0 && state.assignmentsByAgent[agentId][existing].revision >= assignment.revision) return false;
+  if (existing >= 0) state.assignmentsByAgent[agentId][existing] = assignment;
+  else state.assignmentsByAgent[agentId].push(assignment);
+  state.assignmentsByAgent[agentId].sort((left, right) => right.updatedAt - left.updatedAt);
+  return true;
+}
+
 export type HomeMode = "working" | "coding" | "design";
 
 export interface ConnectionState {
@@ -603,6 +669,9 @@ export interface AgentLifecycleState {
 interface CoreState {
   connectionByAgent: Record<string, ConnectionState>;
   messagesByAgent: Record<string, DisplayMessage[]>;
+  assignmentsByAgent: Record<string, AssignmentSnapshot[]>;
+  assignmentLoadingByAgent: Record<string, boolean>;
+  assignmentErrorByAgent: Record<string, string>;
   sendingByAgent: Record<string, boolean>;
   draftByAgent: Record<string, string>;
   attachmentsByConversation: Record<string, ChatAttachment[]>;
@@ -647,6 +716,13 @@ interface CoreActions {
   loadOlderMessages: () => Promise<void>;
   searchSessions: (query: string) => Promise<void>;
   loadMoreSessions: () => Promise<void>;
+  refreshAssignments: (agentId?: string) => Promise<void>;
+  requestAssignmentCancel: (assignmentId: string, reason?: string) => Promise<string>;
+  requestAssignmentResume: (
+    assignmentId: string,
+    response?: string,
+    decision?: "approve" | "deny",
+  ) => Promise<string>;
   setMode: (mode: HomeMode) => void;
   setPage: (page: "connect" | "chat") => void;
   setTerminalOpen: (open: boolean) => void;
@@ -664,6 +740,9 @@ const persisted = loadPersisted();
 export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   connectionByAgent: {},
   messagesByAgent: {},
+  assignmentsByAgent: {},
+  assignmentLoadingByAgent: {},
+  assignmentErrorByAgent: {},
   sendingByAgent: {},
   draftByAgent: {},
   attachmentsByConversation: {},
@@ -1003,6 +1082,9 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     set(produce((s: CoreState) => {
       delete s.connectionByAgent[agentId];
       delete s.messagesByAgent[agentId];
+      delete s.assignmentsByAgent[agentId];
+      delete s.assignmentLoadingByAgent[agentId];
+      delete s.assignmentErrorByAgent[agentId];
       delete s.sendingByAgent[agentId];
       delete s.draftByAgent[agentId];
       delete s.sessionsByAgent[agentId];
@@ -1594,6 +1676,71 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     }
   },
 
+  refreshAssignments: async (requestedAgentId) => {
+    const agentId = requestedAgentId || get().activeAgentId;
+    if (!agentId || get().connectionByAgent[agentId]?.status !== "connected") return;
+    set(produce((s: CoreState) => {
+      s.assignmentLoadingByAgent[agentId] = true;
+      s.assignmentErrorByAgent[agentId] = "";
+    }));
+    try {
+      const response = await window.gateway.listAssignments({ agentId, status: "all", limit: 100 });
+      if (response.error) throw new Error(response.error.message);
+      const rows = Array.isArray(response.result?.assignments) ? response.result.assignments : [];
+      const assignments = rows
+        .map(assignmentSnapshot)
+        .filter((item): item is AssignmentSnapshot => item !== null)
+        .sort((left, right) => right.updatedAt - left.updatedAt);
+      set(produce((s: CoreState) => {
+        s.assignmentsByAgent[agentId] = assignments;
+        s.assignmentLoadingByAgent[agentId] = false;
+        s.assignmentErrorByAgent[agentId] = "";
+      }));
+    } catch (error) {
+      set(produce((s: CoreState) => {
+        s.assignmentLoadingByAgent[agentId] = false;
+        s.assignmentErrorByAgent[agentId] = String(error);
+      }));
+    }
+  },
+
+  requestAssignmentCancel: async (assignmentId, reason = "") => {
+    const agentId = get().activeAgentId;
+    const assignment = agentId
+      ? (get().assignmentsByAgent[agentId] || []).find((item) => item.id === assignmentId)
+      : undefined;
+    if (!agentId || !assignment) return "委托不存在";
+    const response = await window.gateway.requestAssignmentCancel({
+      agentId,
+      assignmentId,
+      reason,
+      expectedRevision: assignment.revision,
+    });
+    if (response.error) return response.error.message;
+    const updated = assignmentSnapshot(response.result?.assignment);
+    if (updated) set(produce((s: CoreState) => { upsertAssignment(s, agentId, updated); }));
+    return "";
+  },
+
+  requestAssignmentResume: async (assignmentId, responseText = "", decision) => {
+    const agentId = get().activeAgentId;
+    const assignment = agentId
+      ? (get().assignmentsByAgent[agentId] || []).find((item) => item.id === assignmentId)
+      : undefined;
+    if (!agentId || !assignment) return "委托不存在";
+    const response = await window.gateway.requestAssignmentResume({
+      agentId,
+      assignmentId,
+      response: responseText,
+      decision,
+      expectedRevision: assignment.revision,
+    });
+    if (response.error) return response.error.message;
+    const updated = assignmentSnapshot(response.result?.assignment);
+    if (updated) set(produce((s: CoreState) => { upsertAssignment(s, agentId, updated); }));
+    return "";
+  },
+
   setMode: (mode) => set(produce((s: CoreState) => { s.mode = mode; })),
   setPage: (page) => set(produce((s: CoreState) => { s.page = page; })),
   setTerminalOpen: (open) => set(produce((s: CoreState) => { s.terminalOpen = open; })),
@@ -1637,6 +1784,56 @@ export function initGatewayEvents() {
     const setState = useCoreStore.setState;
 
     if (!agentId) return;
+
+    if (event === "assignment.changed" || event === "assignment.progress") {
+      const assignment = assignmentSnapshot(d);
+      if (!assignment) return;
+      const deliverables = Array.isArray(d.deliverables)
+        ? d.deliverables.flatMap((value) => {
+            const artifact = displayArtifact(value);
+            return artifact ? [artifact] : [];
+          })
+        : [];
+      let changed = false;
+      setState(produce((s: CoreState) => {
+        changed = upsertAssignment(s, agentId, assignment);
+        if (
+          assignment.status === "completed"
+          && assignment.originSessionId
+          && s.activeSessionByAgent[agentId] === assignment.originSessionId
+        ) {
+          if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
+          for (const artifact of deliverables) {
+            if (s.messagesByAgent[agentId].some((message) => message.artifact?.id === artifact.id)) continue;
+            s.messagesByAgent[agentId].push({
+              id: `assignment-artifact-${assignment.id}-${artifact.id}`,
+              role: "agent",
+              content: "",
+              streaming: false,
+              artifact,
+            });
+          }
+        }
+        if (changed && agentId !== s.activeAgentId) {
+          s.unreadByAgent[agentId] = (s.unreadByAgent[agentId] || 0) + 1;
+        }
+      }));
+      if (changed && ["waiting_person", "completed", "failed"].includes(assignment.status)) {
+        const state = store();
+        const agent = state.agents.find((entry) => entry.id === agentId);
+        const agentName = state.connectionByAgent[agentId]?.agentName || agent?.name || "Agent";
+        const body = assignment.status === "waiting_person"
+          ? assignment.waitingReason || `${assignment.title} 正在等你回复`
+          : assignment.progressSummary || assignment.terminalReason || assignment.title;
+        void window.notifications.show({
+          title: `${agentName} · ${assignment.title}`,
+          body,
+          agentId,
+          sessionId: assignment.originSessionId,
+        }).catch(() => {});
+      }
+      return;
+    }
 
     const eventSessionId = typeof d.session_id === "string" && d.session_id
       ? d.session_id

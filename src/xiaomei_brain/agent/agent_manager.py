@@ -355,6 +355,12 @@ class AgentManager:
         for goal_tool in create_goal_tools(agent):
             tools.register(goal_tool)
 
+        # Assignment is the durable agreement with a Person. Goal/PACE stays
+        # the Agent's private planning layer underneath that agreement.
+        from xiaomei_brain.assignments import create_assignment_tools
+        for assignment_tool in create_assignment_tools(agent):
+            tools.register(assignment_tool)
+
         from xiaomei_brain.tools.builtin.being import create_being_tool
         tools.register(create_being_tool(agent))
 

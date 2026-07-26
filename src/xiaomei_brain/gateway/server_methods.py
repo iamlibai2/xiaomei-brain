@@ -11,6 +11,7 @@ from .method_registry import MethodRegistry
 from .methods import (
     AttachmentMethods,
     ArtifactMethods,
+    AssignmentMethods,
     ChatMethods,
     ChannelMethods,
     ConnectionMethods,
@@ -54,6 +55,7 @@ class MethodRouter:
             self._challenges,
         )
         self._artifact_methods = ArtifactMethods(living)
+        self._assignment_methods = AssignmentMethods(living, self._identity_contexts)
         self._channel_methods = ChannelMethods(living, self._identity_contexts)
 
         self._registry.register_many(
@@ -71,6 +73,7 @@ class MethodRouter:
             self._interaction_methods,
             self._identity_methods,
             self._artifact_methods,
+            self._assignment_methods,
             self._channel_methods,
         ):
             self._registry.register_many(provider.handlers)
@@ -115,6 +118,13 @@ class MethodRouter:
             "attachment.read": {"attachment.get"},
             "artifact.read": {"artifact.get"},
             "artifact.events": {"artifact.get"},
+            "assignment.read": {"assignment.list", "assignment.get"},
+            "assignment.artifacts": {"assignment.artifact.get"},
+            "assignment.control": {
+                "assignment.request_cancel",
+                "assignment.request_resume",
+            },
+            "assignment.events": {"assignment.get"},
             "message.retry": {"chat.retry"},
             "identity.list": {"identity.list"},
             "identity.challenge": {

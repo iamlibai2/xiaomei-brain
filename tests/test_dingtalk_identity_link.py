@@ -55,9 +55,14 @@ def test_dingtalk_adapter_consumes_link_then_routes_as_person(tmp_path):
     class FakeGateway:
         def __init__(self):
             self.messages = []
+            self.observations = []
 
         def accept(self, raw):
             self.messages.append(raw)
+
+        def observe_group_message(self, raw):
+            self.observations.append(raw)
+            return True
 
     client = FakeClient()
     gateway = FakeGateway()
@@ -90,18 +95,25 @@ def test_dingtalk_adapter_consumes_link_then_routes_as_person(tmp_path):
     assert session is not None
     assert session.scope_id == person.person_id
 
-    # Group chatter that doesn't mention the Agent must stay outside its
-    # conversation.  A mentioned message is routed into a Person-scoped group
-    # session.
+    # Group chatter that doesn't mention the Agent is observed without
+    # creating a Turn. A mentioned message enters the group's shared scene.
     before = len(gateway.messages)
     group = {
         **base,
         "conversation_id": "group-1",
         "is_group": True,
         "text": "群里的普通聊天",
+        "msg_id": "msg-observation-1",
+        "sender_name": "测试人物",
+        "msg_type": "text",
     }
     client.callback({**group, "bot_mentioned": False})
     assert len(gateway.messages) == before
+    assert len(gateway.observations) == 1
+    assert gateway.observations[-1].content == "群里的普通聊天"
+    client.callback({**group, "bot_mentioned": None})
+    assert len(gateway.messages) == before
+    assert len(gateway.observations) == 2
 
     client.callback({
         **group,
@@ -109,5 +121,30 @@ def test_dingtalk_adapter_consumes_link_then_routes_as_person(tmp_path):
         "text": "请帮我处理这件事",
     })
     raw = gateway.messages[-1]
-    assert raw.session_id == f"dingtalk-group-group-1-{person.person_id}"
+    assert raw.session_id == "dingtalk-group-ding_demo-group-1"
     assert raw.reply_target == "group-1"
+    group_session = people.store.get_session(raw.session_id)
+    assert group_session is not None
+    assert group_session.scope_type == "conversation"
+    assert group_session.scope_id == "dingtalk:app:ding_demo:chat:group-1"
+
+    colleague = people.create_person("另一位同事")
+    colleague_link = links.begin(
+        colleague.person_id,
+        "dingtalk",
+        "dingtalk:app:ding_demo",
+    )
+    client.callback({
+        **base,
+        "sender": "staff-2",
+        "text": f"绑定 {colleague_link.code}",
+    })
+    client.callback({
+        **group,
+        "sender": "staff-2",
+        "bot_mentioned": True,
+        "text": "我补充一下",
+    })
+    colleague_raw = gateway.messages[-1]
+    assert colleague_raw.peer_id == colleague.person_id
+    assert colleague_raw.session_id == raw.session_id

@@ -762,6 +762,99 @@ export function registerIpcHandlers(
     }
   );
 
+  // ─── assignments ────────────────────────────
+
+  ipcMain.handle("gateway:listAssignments", async (_event, args: {
+    agentId: string; status?: string; limit?: number;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("assignment.list", {
+      status: args.status || "all",
+      limit: args.limit || 100,
+    });
+  });
+
+  ipcMain.handle("gateway:getAssignment", async (_event, args: {
+    agentId: string; assignmentId: string; eventLimit?: number;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("assignment.get", {
+      assignment_id: args.assignmentId,
+      event_limit: args.eventLimit || 100,
+    });
+  });
+
+  ipcMain.handle("gateway:openAssignmentArtifact", async (_event, args: {
+    agentId: string; assignmentId: string; artifactId: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { ok: false, error: `Agent ${args.agentId} not connected` };
+    const response = await client.rpc("assignment.artifact.get", {
+      assignment_id: args.assignmentId,
+      artifact_id: args.artifactId,
+    });
+    if (response.error) return { ok: false, error: response.error.message };
+    const raw = response.result?.artifact;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return { ok: false, error: "Agent returned an invalid assignment artifact" };
+    }
+    const value = raw as Record<string, unknown>;
+    const dataBase64 = typeof value.data_base64 === "string" ? value.data_base64 : "";
+    const data = Buffer.from(dataBase64, "base64");
+    const size = typeof value.size === "number" ? value.size : -1;
+    if (value.id !== args.artifactId || !dataBase64 || size !== data.length || size > MAX_ARTIFACT_BYTES) {
+      return { ok: false, error: "Agent returned inconsistent assignment artifact data" };
+    }
+    try {
+      const safeName = path.basename(
+        typeof value.name === "string" ? value.name : args.artifactId,
+      ).replace(/[<>:"/\\|?*\x00-\x1f]/g, "_") || args.artifactId;
+      const cacheKey = createHash("sha256")
+        .update(`${args.agentId}\u0000${args.assignmentId}\u0000${args.artifactId}`)
+        .digest("hex")
+        .slice(0, 24);
+      const cacheDir = path.join(app.getPath("temp"), "xiaomei-brain", "assignments", cacheKey);
+      await fs.mkdir(cacheDir, { recursive: true });
+      const cachePath = path.join(cacheDir, safeName);
+      await fs.writeFile(cachePath, data);
+      const error = await shell.openPath(cachePath);
+      return error ? { ok: false, error } : { ok: true };
+    } catch (error) {
+      return { ok: false, error: String(error) };
+    }
+  });
+
+  ipcMain.handle("gateway:requestAssignmentCancel", async (_event, args: {
+    agentId: string; assignmentId: string; reason?: string; expectedRevision?: number;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("assignment.request_cancel", {
+      assignment_id: args.assignmentId,
+      reason: args.reason || "",
+      expected_revision: args.expectedRevision,
+    });
+  });
+
+  ipcMain.handle("gateway:requestAssignmentResume", async (_event, args: {
+    agentId: string;
+    assignmentId: string;
+    response?: string;
+    decision?: "approve" | "deny";
+    expectedRevision?: number;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("assignment.request_resume", {
+      assignment_id: args.assignmentId,
+      response: args.response || "",
+      decision: args.decision,
+      expected_revision: args.expectedRevision,
+    });
+  });
+
   ipcMain.handle(
     "notification:show",
     async (_event, args: { title: string; body: string; agentId: string; sessionId: string }) => {

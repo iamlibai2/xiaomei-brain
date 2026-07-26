@@ -135,20 +135,59 @@ class DingTalkAdapter(ChannelAdapter):
             media_paths = msg_dict.get("media_paths", [])
 
             output_target = conversation_id if is_group else sender
+            resolved = (
+                people.resolve_verified_identity(issuer, sender)
+                if people else None
+            )
+            person_id = resolved[0].person_id if resolved is not None else ""
 
-            # Match the natural DingTalk bot behavior used by WorkBuddy:
-            # direct messages are always accepted, while group chatter is
-            # ignored when DingTalk explicitly says the bot wasn't mentioned.
-            # An absent flag is allowed so SDK/platform variations don't make
-            # valid @ messages disappear silently.
-            if is_group and bot_mentioned is False:
-                logger.info(
-                    "[DingTalk] group message ignored (bot not mentioned): "
-                    "conversation=%s sender=%s",
-                    conversation_id,
-                    sender,
+            if is_group:
+                session_id = (
+                    f"dingtalk-group-{self._client.client_id}-{conversation_id}"
                 )
-                return
+                if people:
+                    people.store.ensure_session(
+                        session_id,
+                        "conversation",
+                        f"{issuer}:chat:{conversation_id}",
+                        metadata={
+                            "channel": "dingtalk",
+                            "issuer": issuer,
+                            "conversation_id": conversation_id,
+                        },
+                    )
+
+                # DingTalk deployments that deliver non-mention group events
+                # can use the same observation path. Ordinary robot setups may
+                # still only receive explicit mentions from the platform.
+                if bot_mentioned is not True:
+                    gw = getattr(living, "_gateway_inbound", None)
+                    if gw and hasattr(gw, "observe_group_message"):
+                        from xiaomei_brain.gateway.inbound import RawMessage
+                        gw.observe_group_message(RawMessage(
+                            content=text,
+                            source="human",
+                            channel="dingtalk",
+                            peer_id=person_id,
+                            peer_type="human",
+                            session_id=session_id,
+                            metadata={
+                                "external_issuer": issuer,
+                                "external_subject": sender,
+                                "external_conversation_id": conversation_id,
+                                "external_message_id": msg_dict.get("msg_id", ""),
+                                "sender_display_name": (
+                                    msg_dict.get("sender_name") or sender
+                                ),
+                                "message_type": msg_dict.get("msg_type", "text"),
+                            },
+                        ))
+                    logger.info(
+                        "[DingTalk] stored group observation: conversation=%s sender=%s",
+                        conversation_id,
+                        sender,
+                    )
+                    return
 
             # 缓存 session 信息用于回复（key 用 output_target，与 send() 对齐）
             if session_webhook:
@@ -186,10 +225,6 @@ class DingTalkAdapter(ChannelAdapter):
                 self.send(output_target, "身份绑定成功，现在我能认出你了。")
                 return
 
-            resolved = (
-                people.resolve_verified_identity(issuer, sender)
-                if people else None
-            )
             if resolved is None:
                 self.send(
                     output_target,
@@ -198,15 +233,9 @@ class DingTalkAdapter(ChannelAdapter):
                 return
             person, _binding = resolved
             person_id = person.person_id
-            # Group conversations are scoped per recognized Person for now.
-            # This prevents one colleague from reading another's context until
-            # a first-class multi-person conversation model exists.
-            session_id = (
-                f"dingtalk-group-{conversation_id}-{person_id}"
-                if is_group
-                else f"dingtalk-{person_id}"
-            )
-            people.store.ensure_person_session(session_id, person_id)
+            if not is_group:
+                session_id = f"dingtalk-{person_id}"
+                people.store.ensure_person_session(session_id, person_id)
 
             # 注册 Peer 映射
             has_route = (
@@ -238,6 +267,7 @@ class DingTalkAdapter(ChannelAdapter):
                         "external_issuer": issuer,
                         "external_subject": sender,
                         "external_conversation_id": conversation_id,
+                        "external_message_id": msg_dict.get("msg_id", ""),
                     },
                     reply_channel="dingtalk", reply_target=output_target,
                 ))

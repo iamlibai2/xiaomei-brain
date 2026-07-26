@@ -522,6 +522,54 @@ class ConsciousLiving(Living):
         )
 
         # 统一加载所有子系统（先加载数据，确保 drive/purpose/self_image 已就绪）
+        # Assignments share this Agent's brain.db while owning independent
+        # tables. All lifecycle writes pass through the domain service.
+        from xiaomei_brain.assignments import AssignmentService, AssignmentStore
+        self._assignment_service = AssignmentService(
+            AssignmentStore(db_path),
+            person_exists=lambda person_id: (
+                self._people_service.store.get_person(person_id) is not None
+            ),
+            publish=self._event_hub.publish,
+        )
+        self.agent.assignment_service = self._assignment_service
+        self.agent._get_agent().assignment_service = self._assignment_service
+        # A production background Runner must own an isolated runtime. We only
+        # construct the scheduler when one is explicitly injected; silently
+        # reusing the live conversation Agent Core would corrupt concurrent chat.
+        self._assignment_scheduler = None
+        self._assignment_worker_service = AssignmentService(
+            AssignmentStore(db_path),
+            person_exists=lambda person_id: (
+                self._people_service.store.get_person(person_id) is not None
+            ),
+            publish=self._event_hub.publish,
+        )
+        assignment_runner = getattr(self.agent, "assignment_runner", None)
+        from xiaomei_brain.assignments import (
+            AssignmentExecutor,
+            AssignmentScheduler,
+            IsolatedAssignmentRunner,
+        )
+        if not callable(assignment_runner):
+            assignment_runner = IsolatedAssignmentRunner(
+                self.agent,
+                self._assignment_worker_service,
+                realtime_busy=lambda: bool(self._chatting),
+            )
+        self._assignment_scheduler = AssignmentScheduler(
+            AssignmentExecutor(
+                self._assignment_worker_service,
+                agent_id=self._agent_id,
+                runner=assignment_runner,
+            ),
+        )
+        self.agent.assignment_runner = assignment_runner
+        self.agent.assignment_scheduler = self._assignment_scheduler
+        self.agent._get_agent().assignment_scheduler = self._assignment_scheduler
+        logger.info("[ConsciousLiving] Assignment service initialized")
+        boot_line("委托系统", "OK")
+
         self._setup_all()
 
         # 调试日志目录 + 提前建文件（方便 tail -f）
@@ -1595,6 +1643,9 @@ class ConsciousLiving(Living):
         如果意识系统未加载，跳过火焰更新（生命存在但无意识）。
         """
         self._last_active = time.time()
+        assignment_scheduler = getattr(self, "_assignment_scheduler", None)
+        if assignment_scheduler is not None:
+            assignment_scheduler.start(recover=True)
 
         # 启动时自动创建新会话
         new_sid = f"s_{int(time.time())}"
@@ -1602,7 +1653,8 @@ class ConsciousLiving(Living):
         self.session_id = new_sid
         # 通过 AttentionLayer 保存旧会话并开始新会话
         if hasattr(self, '_attention') and self._attention:
-            self._attention.new_session(new_sid)
+            self._attention.new_session(f"session:{new_sid}")
+        self.agent._get_agent().session_id = new_sid
 
         if self._load_consciousness:
             self.consciousness._last_intent_time = time.time()
@@ -1848,6 +1900,17 @@ class ConsciousLiving(Living):
 
     def _on_stop(self) -> None:
         """停止时保存状态并关闭通讯服务。"""
+        assignment_scheduler = getattr(self, "_assignment_scheduler", None)
+        if assignment_scheduler is not None:
+            assignment_scheduler.stop()
+        assignment_worker_service = getattr(
+            self,
+            "_assignment_worker_service",
+            None,
+        )
+        if assignment_worker_service is not None:
+            assignment_worker_service.store.close()
+
         # 保存当前会话
         attention = getattr(self, '_attention', None)
         if attention:

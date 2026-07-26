@@ -264,6 +264,65 @@ class ConversationDriver:
                 current_context = intent_context
                 agent = parent.agent._get_agent()
                 agent.internal_display = self.display
+                # Trusted turn-local resources for Assignment tools. These are
+                # populated by the conversation boundary, not model arguments.
+                requested_assignment_id = str(
+                    getattr(msg, "assignment_id", ""),
+                ).strip()
+                agent.active_assignment_id = ""
+                if requested_assignment_id:
+                    assignment_service = getattr(
+                        parent.agent,
+                        "assignment_service",
+                        None,
+                    )
+                    try:
+                        from xiaomei_brain.assignments import (
+                            ActorType,
+                            AssignmentActor,
+                        )
+                        assignment_service.require_assignment(
+                            requested_assignment_id,
+                            actor=AssignmentActor(
+                                ActorType.PERSON,
+                                str(msg.user_id),
+                            ),
+                        )
+                        agent.active_assignment_id = requested_assignment_id
+                    except (AttributeError, PermissionError, ValueError):
+                        logger.warning(
+                            "Ignoring inaccessible Assignment %s for Person %s",
+                            requested_assignment_id,
+                            msg.user_id,
+                        )
+                agent.current_source = getattr(msg, "source", "conversation")
+                agent.current_attachments = list(
+                    getattr(msg, "attachments", None) or [],
+                )
+
+                resumed_text = self._resume_pending_assignment_reply(
+                    parent,
+                    msg,
+                    requested_assignment_id,
+                )
+                if resumed_text:
+                    terminal_text = resumed_text
+                    db = getattr(parent.agent, "conversation_db", None)
+                    if db is not None:
+                        db.log(
+                            session_id=msg.session_id,
+                            role="assistant",
+                            content=resumed_text,
+                            user_id=msg.user_id,
+                        )
+                    if self._should_deliver(msg.session_id):
+                        self._deliver_chunk(
+                            parent,
+                            msg.session_id,
+                            msg.turn_id,
+                            resumed_text,
+                        )
+                    return
 
                 while True:
                     print("\033[90m" + "─" * self._term_width() + "\033[0m", flush=True)
@@ -518,6 +577,9 @@ class ConversationDriver:
                     agent_core.on_tool_approval = None
                     agent_core.on_action_complete = None
                     agent_core.turn_id = ""
+                    agent_core.active_assignment_id = ""
+                    agent_core.current_source = ""
+                    agent_core.current_attachments = []
                 except Exception:
                     logger.debug("Failed to cleanup tool callbacks", exc_info=True)
 
@@ -918,6 +980,41 @@ class ConversationDriver:
                         user_id=user_id,
                         tool_call_id=tool_call_id,
                     )
+                core_getter = getattr(parent.agent, "_get_agent", None)
+                core = core_getter() if callable(core_getter) else None
+                assignment_id = str(
+                    getattr(core, "active_assignment_id", ""),
+                ).strip()
+                assignment_service = getattr(
+                    parent.agent,
+                    "assignment_service",
+                    None,
+                )
+                if assignment_id and assignment_service is not None:
+                    try:
+                        from xiaomei_brain.assignments import (
+                            ActorType,
+                            AssignmentActor,
+                        )
+                        assignment_service.link_resource(
+                            assignment_id,
+                            actor=AssignmentActor(
+                                ActorType.AGENT,
+                                str(getattr(parent.agent, "id", "default")),
+                            ),
+                            resource_type="artifact",
+                            resource_key=str(artifact["id"]),
+                            relation="output",
+                            metadata=public_artifact_metadata(artifact),
+                        )
+                    except Exception:
+                        # Artifact persistence is authoritative. A failed
+                        # Assignment projection must not hide the output.
+                        logger.exception(
+                            "Failed to link artifact %s to Assignment %s",
+                            artifact.get("id"),
+                            assignment_id,
+                        )
                 ConversationDriver._publish_event(
                     parent,
                     "artifact.created",
@@ -927,6 +1024,80 @@ class ConversationDriver:
                 )
 
         return callback
+
+    @staticmethod
+    def _resume_pending_assignment_reply(
+        parent: Any,
+        msg: LivingMessage,
+        assignment_id: str,
+    ) -> str:
+        """Resume one durable clarification without entering live ReAct."""
+        assignment_id = assignment_id.strip()
+        if not assignment_id:
+            return ""
+        service = getattr(parent.agent, "assignment_service", None)
+        scheduler = getattr(parent, "_assignment_scheduler", None)
+        if service is None or scheduler is None:
+            raise RuntimeError("委托后台调度器尚未初始化，无法恢复委托")
+
+        from xiaomei_brain.assignments import (
+            ActorType,
+            AssignmentActor,
+            AssignmentStatus,
+        )
+
+        person_actor = AssignmentActor(ActorType.PERSON, str(msg.user_id))
+        agent_actor = AssignmentActor(
+            ActorType.AGENT,
+            str(getattr(parent.agent, "id", getattr(parent, "_agent_id", "default"))),
+        )
+        current = service.require_assignment(assignment_id, actor=person_actor)
+        if current.status != AssignmentStatus.WAITING_PERSON:
+            return ""
+        pending_interaction = None
+        for run in service.store.list_runs(current.id):
+            value = run.checkpoint.get("pending_interaction") if run.checkpoint else None
+            if run.safe_to_resume and isinstance(value, dict):
+                pending_interaction = value
+            break
+        if pending_interaction is None:
+            return ""
+
+        service.link_resource(
+            current.id,
+            actor=agent_actor,
+            resource_type="turn",
+            resource_key=str(msg.turn_id),
+            relation="clarification_response",
+        )
+        for attachment in getattr(msg, "attachments", None) or []:
+            attachment_id = str(attachment.get("id", "")).strip()
+            if not attachment_id:
+                continue
+            service.link_resource(
+                current.id,
+                actor=agent_actor,
+                resource_type="attachment",
+                resource_key=attachment_id,
+                relation="input",
+                metadata={
+                    key: attachment[key]
+                    for key in ("name", "mime_type", "size", "kind")
+                    if key in attachment
+                } | {"session_id": str(msg.session_id)},
+            )
+        service.request_resume(
+            current.id,
+            actor=person_actor,
+            response=msg.content,
+            idempotency_key=f"conversation:{msg.turn_id}:resume",
+        )
+        scheduler.request_resume(
+            current.id,
+            trigger_actor_id=person_actor.actor_id,
+            response=msg.content,
+        )
+        return "收到补充信息，这项委托已经回到后台继续执行。"
 
     @staticmethod
     def _make_tool_approval_callback(

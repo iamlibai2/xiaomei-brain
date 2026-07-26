@@ -92,6 +92,26 @@ export interface GatewayBridge {
   respondAction(args: { agentId: string; actionId: string; turnId: string; decision: "allow" | "deny" }): Promise<JsonRpcResponse>;
   getHistory(args: { sessionId?: string; limit?: number; beforeId?: number; agentId: string }): Promise<JsonRpcResponse>;
   listSessions(args: { limit?: number; offset?: number; query?: string; agentId: string }): Promise<JsonRpcResponse>;
+  listAssignments(args: { agentId: string; status?: string; limit?: number }): Promise<JsonRpcResponse>;
+  getAssignment(args: { agentId: string; assignmentId: string; eventLimit?: number }): Promise<JsonRpcResponse>;
+  openAssignmentArtifact(args: {
+    agentId: string;
+    assignmentId: string;
+    artifactId: string;
+  }): Promise<{ ok: boolean; error?: string }>;
+  requestAssignmentCancel(args: {
+    agentId: string;
+    assignmentId: string;
+    reason?: string;
+    expectedRevision?: number;
+  }): Promise<JsonRpcResponse>;
+  requestAssignmentResume(args: {
+    agentId: string;
+    assignmentId: string;
+    response?: string;
+    decision?: "approve" | "deny";
+    expectedRevision?: number;
+  }): Promise<JsonRpcResponse>;
   listIdentities(args: { agentId: string }): Promise<JsonRpcResponse>;
   listLegacySessions(args: { agentId: string }): Promise<JsonRpcResponse>;
   claimLegacySession(args: { agentId: string; sessionId: string }): Promise<JsonRpcResponse>;

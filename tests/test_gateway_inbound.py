@@ -7,6 +7,13 @@ import pytest
 from xiaomei_brain.gateway.inbound import Gateway, RawMessage, Accepted, Rejected
 from xiaomei_brain.consciousness.living import LivingMessage
 from xiaomei_brain.memory.conversation_db import ConversationDB
+from xiaomei_brain.assignments import (
+    ActorType,
+    AssignmentActor,
+    AssignmentRun,
+    AssignmentService,
+    AssignmentStore,
+)
 
 
 class FakeLiving:
@@ -220,6 +227,85 @@ class TestGatewayAccept:
         assert isinstance(result, Rejected)
         assert result.reason == "PERSISTENCE_FAILED"
         assert living.messages == []
+
+    def test_same_session_clarification_reply_is_bound_to_assignment(self, tmp_path):
+        store = AssignmentStore(tmp_path / "brain.db")
+        service = AssignmentService(
+            store,
+            person_exists=lambda person_id: person_id == "person-1",
+        )
+        person = AssignmentActor(ActorType.PERSON, "person-1")
+        agent_actor = AssignmentActor(ActorType.AGENT, "xiaomei")
+        offered = service.offer(
+            title="制作 PPT",
+            objective="制作投资人版本",
+            actor=person,
+            requester_person_id="person-1",
+            scope_type="person",
+            scope_id="person-1",
+            origin_session_id="session-1",
+        )
+        waiting = service.wait_for_person(
+            service.start(
+                service.queue(service.accept(offered.id, actor=agent_actor).id, actor=agent_actor).id,
+                actor=agent_actor,
+            ).id,
+            actor=agent_actor,
+            reason="需要受众",
+        )
+        store.create_run(AssignmentRun(
+            run_id="run_waiting",
+            assignment_id=waiting.id,
+            status="waiting_person",
+            trigger_type="accepted",
+            trigger_actor_id="xiaomei",
+            checkpoint={"pending_interaction": {"question": "受众是谁？"}},
+            safe_to_resume=True,
+            started_at=1.0,
+            updated_at=2.0,
+            ended_at=2.0,
+        ))
+
+        class AssignmentLiving(FakeLiving):
+            def __init__(self):
+                super().__init__()
+                self.agent = SimpleNamespace(
+                    assignment_service=service,
+                    conversation_db=None,
+                    exp_stream=None,
+                )
+
+            def put_message(self, content, user_id=None, session_id=None, source="",
+                            images=None, attachments=None, urgent=False,
+                            display_name=None, turn_id=None, message_id=None,
+                            context_key=None, assignment_id=""):
+                msg = LivingMessage(
+                    content=content,
+                    user_id=user_id,
+                    session_id=session_id,
+                    source=source,
+                    images=images or [],
+                    attachments=attachments or [],
+                    turn_id=turn_id,
+                    message_id=message_id,
+                    context_key=context_key or "",
+                    assignment_id=assignment_id,
+                )
+                self.messages.append(msg)
+                return msg
+
+        result = Gateway(AssignmentLiving(), FakeRouter()).accept(RawMessage(
+            content="给投资人看",
+            source="human",
+            channel="ws",
+            peer_id="person-1",
+            peer_type="human",
+            session_id="session-1",
+        ))
+
+        assert isinstance(result, Accepted)
+        assert result.living_message.assignment_id == waiting.id
+        store.close()
 
 
 class _FakeIdentityMgr:

@@ -466,8 +466,8 @@ class IdentityMethods:
         attention = getattr(living, "_attention", None)
         if attention:
             ws_sid = f"ws-{session_id}"
-            attention.save_session(ws_sid)
-            attention._current_session = ws_sid
+            context_key = f"session:{ws_sid}"
+            attention.adopt_current(context_key)
 
     @staticmethod
     def _context_result(context: IdentityContext) -> dict:

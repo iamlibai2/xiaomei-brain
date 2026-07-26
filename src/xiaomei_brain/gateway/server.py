@@ -20,6 +20,7 @@ from .protocol import (
 from .schemas import ReqFrame, format_error
 from .server_methods import MethodRouter
 from .auth import resolve_auth_mode
+from .router import OutputRoute
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,14 @@ async def ws_endpoint(ws: WebSocket) -> None:
                         channel="ws", session_id=session_id,
                         output_type="ws", output_target=session_id,
                     )
+                    person_id = str(
+                        res.get("result", {}).get("person", {}).get("person_id", ""),
+                    )
+                    if person_id and hasattr(_global_router, "note_active_route"):
+                        _global_router.note_active_route(
+                            person_id,
+                            OutputRoute("ws", session_id),
+                        )
                     _peer_registered = True
             else:
                 await send_frame(build_error(

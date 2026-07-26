@@ -1159,7 +1159,9 @@ def _render_recent_dialog(si) -> list[str]:
     for i, d in enumerate(dialogs, 1):
         role = d.get('role', '')
         content = d.get('content', '')
-        lines.append(f"- 对话{i}[{role}]：{content}")
+        speaker = d.get("user_id", "") if role == "user" else ""
+        speaker_label = f"/{speaker}" if speaker and speaker != "global" else ""
+        lines.append(f"- 对话{i}[{role}{speaker_label}]：{content}")
     lines.append("</最近对话>")
     return lines
 

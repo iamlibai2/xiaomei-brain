@@ -344,9 +344,8 @@ def _run_agent(
                 print(f"  \033[90m[ OK ] Embedding 模型就绪\033[0m", flush=True)
             living.load_fresh_tail()
             if hasattr(living, '_attention') and living._attention:
-                cli_sid = f"cli-{agent_id}"
-                living._attention.save_session(cli_sid)
-                living._attention._current_session = cli_sid
+                context_key = f"person:{_user_id}"
+                living._attention.adopt_current(context_key)
             if hasattr(living, '_router') and living._router:
                 living._router.register_peer(
                     peer_type="human", peer_id=_user_id, channel="cli",

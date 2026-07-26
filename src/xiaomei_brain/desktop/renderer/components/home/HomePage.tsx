@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
-import { useCoreStore, DisplayMessage, HomeMode } from "../../store";
+import { useCoreStore, AssignmentSnapshot, DisplayMessage, HomeMode } from "../../store";
 import { Button, Icon } from "../ui";
 import { HomeHeader } from "./HomeHeader";
 import { SceneTabs } from "./SceneTabs";
@@ -11,8 +11,11 @@ import { ChatInput } from "./ChatInput";
 import { ContextBar } from "./ContextBar";
 import { ChatTopbar } from "./ChatTopbar";
 import { AgentSettingsDialog } from "../agent-settings/AgentSettingsDialog";
+import { AssignmentCard } from "./AssignmentCard";
+import { AssignmentDrawer } from "./AssignmentDrawer";
 
 const EMPTY_MSGS: DisplayMessage[] = [];
+const EMPTY_ASSIGNMENTS: AssignmentSnapshot[] = [];
 
 export function HomePage() {
   const { t } = useTranslation();
@@ -43,14 +46,29 @@ export function HomePage() {
     return agentId && sessionId ? s.historyPaginationByAgent[agentId]?.[sessionId] : undefined;
   });
   const loadOlderMessages = useCoreStore((s) => s.loadOlderMessages);
+  const assignments = useCoreStore((s) => s.assignmentsByAgent[s.activeAgentId || ""] || EMPTY_ASSIGNMENTS);
+  const connectionStatus = useCoreStore((s) => s.connectionByAgent[s.activeAgentId || ""]?.status);
+  const refreshAssignments = useCoreStore((s) => s.refreshAssignments);
 
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  const [selectedAssignmentId, setSelectedAssignmentId] = useState<string | null>(null);
   const [agentSettingsOpen, setAgentSettingsOpen] = useState(false);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
   const previousFirstMessageId = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (activeAgentId && connectionStatus === "connected") {
+      void refreshAssignments(activeAgentId);
+    }
+  }, [activeAgentId, connectionStatus, refreshAssignments]);
+
+  useEffect(() => {
+    setRightPanelOpen(false);
+    setSelectedAssignmentId(null);
+  }, [activeAgentId]);
 
   useEffect(() => {
     const firstMessageId = messages[0]?.id || null;
@@ -88,6 +106,16 @@ export function HomePage() {
   const showAgentStart = !hasMessages && activeAgent?.source === "local" && activeAgentOnline === false;
   const agentStarting = activeAgentLifecycle?.status === "starting" || activeAgentLifecycle?.status === "restarting";
   const agentNeedsRestart = Boolean(activeAgentInfo?.pid);
+  const visibleAssignments = assignments
+    .filter((assignment) => (
+      assignment.originSessionId === activeSessionId
+      && !["declined", "cancelled"].includes(assignment.status)
+    ))
+    .slice(0, 2);
+  const openAssignment = (assignmentId: string) => {
+    setSelectedAssignmentId(assignmentId);
+    setRightPanelOpen(true);
+  };
 
   const taskName = (() => {
     if (activeSessionId && activeAgentId) {
@@ -157,6 +185,13 @@ export function HomePage() {
             <HomeHeader mode={mode} />
             <SceneTabs selected={mode} onSelect={(m) => setMode(m as HomeMode)} />
             <GrowthBuddy />
+            {visibleAssignments.length > 0 && (
+              <div className="assignment-home-cards">
+                {visibleAssignments.map((assignment) => (
+                  <AssignmentCard key={assignment.id} assignment={assignment} onOpen={openAssignment} />
+                ))}
+              </div>
+            )}
           </>
         )}
         {hasMessages && (
@@ -168,6 +203,13 @@ export function HomePage() {
               rightPanelOpen={rightPanelOpen}
               onOpenAgentSettings={() => setAgentSettingsOpen(true)}
             />
+            {visibleAssignments.length > 0 && (
+              <div className="assignment-conversation-strip">
+                {visibleAssignments.map((assignment) => (
+                  <AssignmentCard key={assignment.id} assignment={assignment} onOpen={openAssignment} />
+                ))}
+              </div>
+            )}
             <div className="message-list" ref={messageListRef}>
               <div ref={topRef} className="history-page-status">
                 {historyPage?.loading && t("home.loadingOlder")}
@@ -200,6 +242,12 @@ export function HomePage() {
         agentId={activeAgentId || ""}
         agentName={agentName || t("home.defaultAgentName")}
         onClose={() => setAgentSettingsOpen(false)}
+      />
+      <AssignmentDrawer
+        open={rightPanelOpen}
+        selectedId={selectedAssignmentId}
+        onSelect={setSelectedAssignmentId}
+        onClose={() => setRightPanelOpen(false)}
       />
     </div>
   );

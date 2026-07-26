@@ -39,12 +39,13 @@ def create_session_tool(agent: Any = None) -> Tool:
 
         attention = getattr(_living, '_attention', None)
         if attention:
-            attention.switch_to(session_id)
+            attention.switch_to(f"session:{session_id}")
         else:
             inner = ag._get_agent()
-            inner.session_id = session_id
+            inner.context_key = f"session:{session_id}"
             inner.messages = []
 
+        ag._get_agent().session_id = session_id
         _living.session_id = session_id
 
         recent = db.get_recent(10, session_id=session_id)
@@ -146,11 +147,12 @@ def create_session_tool(agent: Any = None) -> Tool:
             new_sid = f"s_{int(time.time())}"
             attention = getattr(_living, '_attention', None)
             if attention:
-                attention.new_session(new_sid)
+                attention.new_session(f"session:{new_sid}")
             else:
                 inner = ag._get_agent()
-                inner.session_id = new_sid
+                inner.context_key = f"session:{new_sid}"
                 inner.messages = []
+            ag._get_agent().session_id = new_sid
             _living.session_id = new_sid
             return f"新会话已创建: {new_sid}\n这是一个全新的会话，历史对话已保留在之前的会话中。"
 

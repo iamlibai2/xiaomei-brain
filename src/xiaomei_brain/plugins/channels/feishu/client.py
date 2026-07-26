@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import threading
 import time
 from typing import Callable
@@ -30,6 +31,9 @@ class FeishuChannel:
 
     _RECONNECT_TIMEOUT = 60.0
     _SUPERVISOR_INTERVAL = 5.0
+    _DEDUP_TTL = 5 * 60.0
+    _DEDUP_MAX_SIZE = 2000
+    _MESSAGE_MAX_AGE = 30 * 60.0
 
     def __init__(
         self,
@@ -58,6 +62,9 @@ class FeishuChannel:
         self._generation = 0
         self._reconnecting_since = 0.0
         self._restart_lock = threading.Lock()
+        self._bot_open_id = ""
+        self._seen_messages: dict[str, float] = {}
+        self._seen_messages_lock = threading.Lock()
 
     def platform_name(self) -> str:
         return "feishu"
@@ -112,6 +119,13 @@ class FeishuChannel:
                 return
 
             message = event.message
+            message_id = message.message_id or ""
+            if self._is_stale_message(message.create_time):
+                logger.info("[Feishu/WS] ignored stale message: %s", message_id)
+                return
+            if self._is_duplicate_message(message_id):
+                logger.info("[Feishu/WS] ignored duplicate message: %s", message_id)
+                return
 
             content = message.content or "{}"
             try:
@@ -121,6 +135,19 @@ class FeishuChannel:
 
             text = content_obj.get("text", "")
             chat_type = message.chat_type or "p2p"
+            mentions = message.mentions or []
+            bot_mentions = [
+                mention for mention in mentions
+                if self._bot_open_id
+                and getattr(getattr(mention, "id", None), "open_id", None)
+                == self._bot_open_id
+            ]
+            bot_mentioned = chat_type == "p2p" or bool(bot_mentions)
+            for mention in bot_mentions:
+                key = getattr(mention, "key", "") or ""
+                if key:
+                    text = re.sub(rf"{re.escape(key)}\s*", "", text)
+            text = text.strip()
 
             sender_open_id = event.sender.sender_id.open_id if event.sender and event.sender.sender_id else ""
             sender_name = getattr(event.sender, 'sender_name', None) or getattr(event.sender, 'sender_type', '') or ""
@@ -132,8 +159,9 @@ class FeishuChannel:
                 "conversation_id": message.chat_id or "",
                 "text": text,
                 "timestamp": float(message.create_time) if message.create_time else 0,
-                "message_id": message.message_id,
+                "message_id": message_id,
                 "chat_type": chat_type,
+                "bot_mentioned": bot_mentioned,
                 "msg_type": message.message_type,
                 "account_id": self.account_id,
             }
@@ -145,6 +173,39 @@ class FeishuChannel:
 
         except Exception as e:
             logger.error("[Feishu] _on_message error: %s", e, exc_info=True)
+
+    @classmethod
+    def _is_stale_message(cls, create_time: str | int | None) -> bool:
+        """Ignore delayed backlog events after a reconnect or process restart."""
+        if not create_time:
+            return False
+        try:
+            timestamp = float(create_time)
+        except (TypeError, ValueError):
+            return False
+        if timestamp > 10_000_000_000:
+            timestamp /= 1000
+        return time.time() - timestamp > cls._MESSAGE_MAX_AGE
+
+    def _is_duplicate_message(self, message_id: str) -> bool:
+        """Return whether a platform event was already accepted recently."""
+        if not message_id:
+            return False
+        now = time.monotonic()
+        with self._seen_messages_lock:
+            expired_before = now - self._DEDUP_TTL
+            expired = [
+                key for key, seen_at in self._seen_messages.items()
+                if seen_at < expired_before
+            ]
+            for key in expired:
+                self._seen_messages.pop(key, None)
+            if message_id in self._seen_messages:
+                return True
+            while len(self._seen_messages) >= self._DEDUP_MAX_SIZE:
+                self._seen_messages.pop(next(iter(self._seen_messages)))
+            self._seen_messages[message_id] = now
+            return False
 
     def _on_card_action(
         self,
@@ -195,6 +256,11 @@ class FeishuChannel:
         self._state = "starting"
         self._last_error = ""
         self._stopping = False
+        self._bot_open_id = self._get_bot_open_id() or ""
+        if not self._bot_open_id:
+            logger.warning(
+                "[Feishu] bot identity unavailable; group messages will be ignored"
+            )
         self._launch_ws_worker()
         self._supervisor_thread = threading.Thread(
             target=self._supervise,
@@ -339,6 +405,8 @@ class FeishuChannel:
             self._ws_thread.join(timeout=5)
         if self._supervisor_thread:
             self._supervisor_thread.join(timeout=self._SUPERVISOR_INTERVAL + 1)
+        with self._seen_messages_lock:
+            self._seen_messages.clear()
         self._state = "stopped"
 
     def test_credentials(self) -> bool:
@@ -372,6 +440,33 @@ class FeishuChannel:
             return TokenManager.get_self_tenant_token(config)
         except Exception as e:
             logger.error("[Feishu/Auth] 获取 token 异常: %s", e)
+            return None
+
+    def _get_bot_open_id(self) -> str | None:
+        """Resolve this application's bot identity for exact group @ matching."""
+        import requests
+
+        token = self._get_token()
+        if not token:
+            return None
+        try:
+            response = requests.get(
+                "https://open.feishu.cn/open-apis/bot/v3/info",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=15,
+            )
+            payload = response.json()
+            if response.status_code != 200 or payload.get("code", 0) != 0:
+                logger.warning(
+                    "[Feishu/Auth] failed to load bot identity: status=%s code=%s",
+                    response.status_code,
+                    payload.get("code"),
+                )
+                return None
+            bot = payload.get("bot") or (payload.get("data") or {}).get("bot") or {}
+            return bot.get("open_id") or None
+        except Exception:
+            logger.warning("[Feishu/Auth] failed to load bot identity", exc_info=True)
             return None
 
     @staticmethod

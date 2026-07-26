@@ -8,6 +8,9 @@ from typing import Any
 from .base import Tool
 
 
+TOOL_CONTROL_KEY = "_xiaomei_control"
+
+
 def normalize_tool_result(result: Any) -> str:
     """Convert a tool result into the text representation consumed by an LLM.
 
@@ -22,6 +25,26 @@ def normalize_tool_result(result: Any) -> str:
         return json.dumps(result, ensure_ascii=False, default=str)
     except (TypeError, ValueError):
         return str(result)
+
+
+def split_tool_control(result: Any) -> tuple[str, dict[str, Any]]:
+    """Remove an internal ReAct control envelope from a tool result.
+
+    Some tools transfer execution ownership, for example from a live
+    conversation to an isolated Assignment runner. Agent Core consumes this
+    reserved envelope; it must not be persisted or sent back to the LLM.
+    """
+    text = normalize_tool_result(result)
+    try:
+        payload = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return text, {}
+    if not isinstance(payload, dict):
+        return text, {}
+    control = payload.pop(TOOL_CONTROL_KEY, None)
+    if not isinstance(control, dict):
+        return text, {}
+    return normalize_tool_result(payload), control
 
 
 class ToolRegistry:

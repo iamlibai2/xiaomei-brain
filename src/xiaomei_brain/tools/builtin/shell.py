@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import locale
 import re
 import subprocess
 
@@ -72,9 +73,32 @@ def _check_command(command: str) -> str | None:
     return None
 
 
+def _decode_output(data: bytes | str | None) -> str:
+    """Decode subprocess output without trusting Windows' default code page."""
+    if data is None:
+        return ""
+    if isinstance(data, str):
+        return data
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return data.decode("utf-16", errors="replace")
+
+    encodings = ("utf-8", locale.getpreferredencoding(False))
+    for encoding in dict.fromkeys(encodings):
+        try:
+            return data.decode(encoding)
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return data.decode("utf-8", errors="replace")
+
+
 @tool(name="shell", description="Run a shell command and return its output")
 def run_shell(command: str) -> str:
     """Run a shell command and return stdout/stderr."""
+    return run_shell_command(command)
+
+
+def run_shell_command(command: str, *, cwd: str | None = None) -> str:
+    """Run a command with robust decoding and an optional isolated cwd."""
     block_msg = _check_command(command)
     if block_msg:
         return block_msg
@@ -84,12 +108,13 @@ def run_shell(command: str) -> str:
             command,
             shell=True,
             capture_output=True,
-            text=True,
+            cwd=cwd,
             timeout=30,
         )
-        output = result.stdout
-        if result.stderr:
-            output += f"\nSTDERR:\n{result.stderr}"
+        output = _decode_output(result.stdout)
+        stderr = _decode_output(result.stderr)
+        if stderr:
+            output += f"\nSTDERR:\n{stderr}"
         if result.returncode != 0:
             output += f"\nExit code: {result.returncode}"
         return output or "(no output)"

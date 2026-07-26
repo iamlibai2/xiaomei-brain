@@ -26,15 +26,23 @@ def discover_tool_artifacts(
     tool_name: str,
     arguments: dict[str, Any],
     result: str,
+    *,
+    workspace_root: Path | None = None,
+    scan_roots: tuple[Path, ...] = (),
 ) -> list[dict[str, Any]]:
     """Find real output files mentioned by a successful tool call.
 
     Every candidate must resolve below an Agent-owned output directory. Paths
     outside that boundary are ignored even when a tool result mentions them.
     """
+    # Read-only tools describe files they consumed. Treating those paths as
+    # newly-created output leaks inputs into the Agent's deliverable list.
+    if tool_name in {"read_file", "web_get", "web_search"}:
+        return []
     if _tool_failed(result):
         return []
     agent_root = _agent_root(agent_id)
+    relative_base = workspace_root or (agent_root / "workspace")
     candidates: list[Path] = []
 
     for key, value in arguments.items():
@@ -44,7 +52,7 @@ def discover_tool_artifacts(
         if normalized in {"path", "file", "filename", "file_path", "output", "output_path"}:
             candidate = Path(value).expanduser()
             if not candidate.is_absolute():
-                candidate = agent_root / "workspace" / candidate
+                candidate = relative_base / candidate
             candidates.append(candidate)
 
     for value in _structured_strings(result):
@@ -55,6 +63,11 @@ def discover_tool_artifacts(
         for match in pattern.finditer(result):
             raw = match.group(0).strip().rstrip("。。，,;；])}")
             candidates.append(Path(raw))
+    for root in scan_roots:
+        try:
+            candidates.extend(path for path in root.rglob("*") if path.is_file())
+        except OSError:
+            continue
 
     artifacts: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -73,7 +86,7 @@ def discover_tool_artifacts(
         size = resolved.stat().st_size
         if size <= 0 or size > MAX_ARTIFACT_BYTES:
             continue
-        mime_type = mimetypes.guess_type(resolved.name)[0] or "application/octet-stream"
+        mime_type = _guess_mime_type(resolved)
         artifact_id = hashlib.sha256(
             f"{session_id}\0{turn_id}\0{relative_path}".encode("utf-8"),
         ).hexdigest()[:32]
@@ -97,7 +110,10 @@ def discover_tool_artifacts(
 
 
 def public_artifact_metadata(artifact: dict[str, Any]) -> dict[str, Any]:
-    keys = ("id", "name", "mime_type", "size", "kind", "description", "tool_call_id", "turn_id")
+    keys = (
+        "id", "name", "mime_type", "size", "kind", "description",
+        "tool_call_id", "turn_id", "workspace_role",
+    )
     return {key: artifact[key] for key in keys if key in artifact}
 
 
@@ -125,6 +141,33 @@ def read_stored_artifact(
         **public_artifact_metadata(artifact),
         "data_base64": base64.b64encode(data).decode("ascii"),
     }
+
+
+def project_stored_artifact(
+    agent_id: str,
+    source_session_id: str,
+    target_session_id: str,
+    artifact: dict[str, Any],
+) -> None:
+    """Copy one immutable artifact snapshot into another Agent session."""
+    artifact_id = str(artifact.get("id", ""))
+    suffix = str(artifact.get("storage_suffix", ""))
+    if not re.fullmatch(r"[a-f0-9]{32}", artifact_id):
+        raise ArtifactError("产物标识无效")
+    source = _artifact_storage_path(
+        agent_id, source_session_id, artifact_id, suffix,
+    )
+    target = _artifact_storage_path(
+        agent_id, target_session_id, artifact_id, suffix,
+    )
+    try:
+        data = source.read_bytes()
+    except FileNotFoundError as exc:
+        raise ArtifactError("产物文件不存在或已被移除") from exc
+    if not data or len(data) != int(artifact.get("size", -1)):
+        raise ArtifactError("产物快照与会话记录不一致")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
 
 
 def _agent_root(agent_id: str) -> Path:
@@ -185,3 +228,15 @@ def _artifact_kind(mime_type: str, suffix: str) -> str:
     if suffix in {".docx", ".pptx", ".pdf", ".xlsx", ".xls"}:
         return "document"
     return "file"
+
+
+def _guess_mime_type(path: Path) -> str:
+    office_types = {
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }
+    return office_types.get(
+        path.suffix.lower(),
+        mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+    )

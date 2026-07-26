@@ -6,6 +6,7 @@ from unittest.mock import Mock
 from xiaomei_brain.agent.core import Agent
 from xiaomei_brain.llm.types import NormalizedResponse, ToolCall
 from xiaomei_brain.tools.registry import ToolRegistry
+from xiaomei_brain.tools.registry import TOOL_CONTROL_KEY
 
 
 def _chat(agent: Agent, user_input: str) -> str:
@@ -107,3 +108,43 @@ def test_structured_tool_error_marks_action_failed(mock_llm, registry):
 
     assert result == '{"error": "眼睛不可用"}'
     agent.on_action_complete.assert_called_once_with("action-1", result, True)
+
+
+def test_tool_handoff_stops_live_react_loop(mock_llm, registry):
+    """A background handoff must not let the live model continue working."""
+    from xiaomei_brain.tools import tool
+
+    @tool(name="delegate", description="Transfer work to a background runner")
+    def delegate() -> dict:
+        return {
+            "id": "assignment_1",
+            "status": "queued",
+            TOOL_CONTROL_KEY: {
+                "type": "handoff",
+                "message": "已转入后台执行。",
+            },
+        }
+
+    registry.register(delegate)
+    agent = Agent(llm=mock_llm, tools=registry, max_steps=5)
+    tool_call = ToolCall(id="call-1", name="delegate", arguments="{}")
+    mock_llm.chat_stream.return_value = iter(())
+    mock_llm._last_stream_response = NormalizedResponse(
+        content="",
+        tool_calls=[tool_call],
+        finish_reason="tool_calls",
+    )
+    mock_llm._reasoning_end_yielded = False
+
+    response = _chat(agent, "请接下这个持续任务")
+
+    assert response == "已转入后台执行。"
+    assert mock_llm.chat_stream.call_count == 1
+    tool_messages = [item for item in agent.messages if item["role"] == "tool"]
+    assert tool_messages == [{
+        "role": "tool",
+        "tool_call_id": "call-1",
+        "content": '{"id": "assignment_1", "status": "queued"}',
+        "id": None,
+    }]
+    assert agent.messages[-1]["content"] == "已转入后台执行。"

@@ -400,8 +400,8 @@ class CliTuiApp:
         living.load_fresh_tail()
         sid = 'cli-%s' % self.agent_id
         if hasattr(living, '_attention') and living._attention:
-            living._attention.save_session(sid)
-            living._attention._current_session = sid
+            context_key = f"person:{user_id}"
+            living._attention.adopt_current(context_key)
         if hasattr(living, '_router') and living._router:
             living._router.register_peer(
                 peer_type="human", peer_id=user_id, channel="cli",

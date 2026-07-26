@@ -16,7 +16,11 @@ from xiaomei_brain.memory.dag import DAGSummaryGraph
 from xiaomei_brain.memory.longterm import LongTermMemory
 from xiaomei_brain.memory.extractor import MemoryExtractor
 from xiaomei_brain.prompts import MEMORY_DECISION_PROMPT
-from xiaomei_brain.tools.registry import ToolRegistry, normalize_tool_result
+from xiaomei_brain.tools.registry import (
+    ToolRegistry,
+    normalize_tool_result,
+    split_tool_control,
+)
 from xiaomei_brain.agent.message_utils import (
     strip_orphaned_tool_messages,
     strip_orphaned_assistant_tool_calls, clean_messages,
@@ -83,8 +87,14 @@ class Agent:
         self.longterm_memory: LongTermMemory | None = None
         self.memory_extractor: MemoryExtractor | None = None
 
-        self._messages: dict[str, list[dict[str, Any]]] = {}  # user_id → messages
+        # Short-term dialogue follows an explicit runtime context boundary.
+        # A private default context can follow a Person across channels, while
+        # Desktop sessions and group conversations remain distinct scenes.
+        self._messages: dict[str, list[dict[str, Any]]] = {}  # context_key → messages
         self.user_id: str = "global"
+        self.context_key: str = "session:main"
+        self.memory_scope_id: str = "global"
+        self.shared_conversation: bool = False
         self._dynamic_loader: Any = None      # DynamicToolLoader, set by agent_manager
         self.user_display_name: str = "这位用户"  # 当前用户的显示名，identity 绑定后设置
         self.session_id: str = "main"
@@ -116,12 +126,12 @@ class Agent:
 
     @property
     def messages(self) -> list[dict[str, Any]]:
-        """当前 user_id 的消息列表（按 user_id 分桶，同一用户跨 session 共享）。"""
-        return self._messages.setdefault(self.user_id, [])
+        """Messages in the current conversational scene."""
+        return self._messages.setdefault(self.context_key, [])
 
     @messages.setter
     def messages(self, value: list[dict[str, Any]]) -> None:
-        self._messages[self.user_id] = value
+        self._messages[self.context_key] = value
 
     def _auto_compact(self, session_id: str, max_tokens: int, messages: list[dict] | None = None) -> None:
         """Auto-compact: 消息积累到阈值时自动压缩为 DAG 叶子摘要。
@@ -169,7 +179,7 @@ class Agent:
                     session_id,
                     [m["id"] for m in msgs_to_compact],
                     msgs_to_compact,
-                    user_id=self.user_id,
+                    user_id=self.memory_scope_id,
                 )
                 if node:
                     summary_tokens = estimate_tokens(node.content)
@@ -300,6 +310,7 @@ class Agent:
                 break
 
             if response.tool_calls:
+                handoff_message = ""
                 tool_calls_data = [
                     {
                         "id": tc.id,
@@ -364,6 +375,11 @@ class Agent:
                             logger.error("[Agent] self.tools is None, cannot execute %s", tc.name)
                         else:
                             result = self._execute_tool_call(tc.id, tc.name, args_dict)
+
+                    # Some tools transfer execution ownership to an isolated
+                    # runtime. Strip the internal envelope before normal tool
+                    # bookkeeping, then stop this live ReAct loop below.
+                    result, tool_control = split_tool_control(result)
 
                     # 记录失败次数，成功则清除
                     if _tool_result_failed(result):
@@ -437,6 +453,43 @@ class Agent:
                     # 累积上下文供下步动态工具召回
                     _accumulated_context += f"\n{tc.name}: {str(result)[:500]}"
 
+                    if tool_control.get("type") == "handoff":
+                        handoff_message = str(tool_control.get("message", "")).strip()
+                        break
+
+                if handoff_message:
+                    assistant_msg_id = None
+                    if self.conversation_db:
+                        assistant_msg_id = self.conversation_db.log(
+                            session_id=self.session_id,
+                            role="assistant",
+                            content=handoff_message,
+                            user_id=self.user_id,
+                        )
+                    self.messages.append({
+                        "role": "assistant",
+                        "content": handoff_message,
+                        "id": assistant_msg_id,
+                    })
+                    if self.exp_stream:
+                        try:
+                            self.exp_stream.log(
+                                type="assistant_msg",
+                                content=handoff_message,
+                                session_id=self.session_id,
+                                related_id=(
+                                    str(assistant_msg_id) if assistant_msg_id else ""
+                                ),
+                                user_id=self.user_id,
+                            )
+                        except Exception as exc:
+                            logger.debug(
+                                "[ExpStream] handoff acknowledgement failed: %s",
+                                exc,
+                            )
+                    yield handoff_message
+                    return
+
             else:
                 content = response.content or ""
                 if content:
@@ -447,7 +500,10 @@ class Agent:
                         memory_block, clean_content = self.memory_extractor.extract_memory_block(content)
                         logger.info("[Memory] extracted block='%s' clean_len=%d", memory_block[:50] if memory_block else "", len(clean_content) if clean_content else 0)
                         if memory_block:
-                            self.memory_extractor.execute_block(memory_block, user_id=self.user_id)
+                            self.memory_extractor.execute_block(
+                                memory_block,
+                                user_id=self.memory_scope_id,
+                            )
                             if self.internal_display:
                                 self.internal_display.record_memory(memory_block)
 
@@ -466,7 +522,7 @@ class Agent:
                                 user_input_summary=think_data.get("user_input_summary", ""),
                                 raw_stream=think_data.get("raw_stream", ""),
                                 feeling_tags=think_data.get("feeling_tags", []),
-                                user_id=self.user_id,
+                                user_id=self.memory_scope_id,
                                 session_id=self.session_id,
                             )
                             logger.info(
@@ -565,6 +621,7 @@ class Agent:
         label: str = "",
         silent: bool = False,
         summarize: bool = False,
+        quiet: bool = False,
     ) -> str:
         """纯内部推理 ReAct — 非流式，不写 DB、不加 MEMORY_PROMPT、不提取记忆。
 
@@ -576,6 +633,7 @@ class Agent:
                         不传则 fallback 到 self.exp_stream。
             label: 输出标签（intent/alarm/pleasure/work/comms），控制终端颜色。
             silent: True 时不打印最终结果（调用方自己处理展示）。
+            quiet: True 时同时隐藏思考和工具过程，供后台隔离运行使用。
         """
         if exp_stream is None:
             exp_stream = getattr(self, "exp_stream", None)
@@ -614,7 +672,8 @@ class Agent:
             all_messages = strip_orphaned_tool_messages(all_messages)
             all_messages = clean_messages(all_messages)
 
-            print("💭 思考中...", flush=True)
+            if not quiet:
+                print("💭 思考中...", flush=True)
 
             response = self.llm.chat(messages=all_messages, tools=openai_tools)
 
@@ -624,7 +683,7 @@ class Agent:
                 return ""
 
             # 展示思考过程（ANSI 灰色，不进入后续消息）
-            if response.reasoning:
+            if response.reasoning and not quiet:
                 print(f"\033[2m{response.reasoning}\033[0m", flush=True)
 
             if response.tool_calls:
@@ -652,8 +711,11 @@ class Agent:
                     except json.JSONDecodeError:
                         args_dict = {}
                     _idx += 1
-                    print(get_hint(tc.name), flush=True)
-                    print_tool_call(_idx, tc.name, args_dict)
+                    if not quiet:
+                        print(get_hint(tc.name), flush=True)
+                        print_tool_call(_idx, tc.name, args_dict)
+                    if self.on_tool_start:
+                        self.on_tool_start(_idx, tc.id, tc.name, args_dict)
 
                     call_key = (tc.name, json.dumps(args_dict, sort_keys=True))
                     fail_count = _tool_failure_counts.get(call_key, 0)
@@ -677,12 +739,33 @@ class Agent:
                         _tool_failure_counts.pop(call_key, None)
 
                     args_dict = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
-                    if tc.name == "edit_file":
-                        print_edit_diff(_idx, tc.name, args_dict, result)
-                    elif tc.name == "write_file":
-                        print_write_result(_idx, tc.name, args_dict, result)
-                    else:
-                        print_tool_result(_idx, result)
+                    if not quiet:
+                        if tc.name == "edit_file":
+                            print_edit_diff(_idx, tc.name, args_dict, result)
+                        elif tc.name == "write_file":
+                            print_write_result(_idx, tc.name, args_dict, result)
+                        else:
+                            print_tool_result(_idx, result)
+                    if self.on_tool_complete:
+                        self.on_tool_complete(
+                            _idx,
+                            tc.id,
+                            tc.name,
+                            args_dict,
+                            str(result),
+                        )
+                    if self.on_artifact:
+                        try:
+                            self.on_artifact(
+                                tc.id,
+                                tc.name,
+                                args_dict,
+                                str(result),
+                            )
+                        except Exception:
+                            logger.exception(
+                                "Failed to publish internal ReAct artifacts",
+                            )
 
                     loop_messages.append({
                         "role": "tool",
@@ -703,6 +786,12 @@ class Agent:
                             )
                         except Exception as e:
                             logger.debug("[ExpStream] react_nodb tool_exec failed: %s", e)
+
+                    # Background runtimes use cancel_check as a cooperative
+                    # boundary for cancellation, realtime priority and durable
+                    # Action handoff. Stop before another tool or LLM step.
+                    if cancel_check and cancel_check():
+                        return ""
             else:
                 final_text = response.content or response.reasoning or ""
                 if not final_text:

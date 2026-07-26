@@ -170,6 +170,36 @@ class ActionRespondParams(BaseModel):
     decision: Literal["allow", "deny"]
 
 
+# ── Assignment ───────────────────────────────────────────────────────────
+
+class AssignmentListParams(BaseModel):
+    status: str = Field(default="active", min_length=1, max_length=32)
+    limit: int = Field(default=100, ge=1, le=200)
+
+
+class AssignmentGetParams(BaseModel):
+    assignment_id: str = Field(..., min_length=1, max_length=128)
+    event_limit: int = Field(default=100, ge=1, le=500)
+
+
+class AssignmentArtifactGetParams(BaseModel):
+    assignment_id: str = Field(..., min_length=1, max_length=128)
+    artifact_id: str = Field(..., min_length=32, max_length=32, pattern=r"^[a-f0-9]+$")
+
+
+class AssignmentCancelParams(BaseModel):
+    assignment_id: str = Field(..., min_length=1, max_length=128)
+    reason: str = Field(default="", max_length=2000)
+    expected_revision: int | None = Field(default=None, ge=1)
+
+
+class AssignmentResumeParams(BaseModel):
+    assignment_id: str = Field(..., min_length=1, max_length=128)
+    response: str = Field(default="", max_length=8000)
+    decision: Literal["approve", "deny"] | None = None
+    expected_revision: int | None = Field(default=None, ge=1)
+
+
 # ── Wire frames ──────────────────────────────
 
 class ReqFrame(BaseModel):

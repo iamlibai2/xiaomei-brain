@@ -27,13 +27,18 @@ class GatewayEventProjection:
         "action.proposed",
         "action.completed",
         "artifact.created",
+        "assignment.changed",
+        "assignment.progress",
     })
 
     def __init__(self, router_getter: RouterGetter) -> None:
         self._router_getter = router_getter
 
     def __call__(self, event: DomainEvent) -> None:
-        if event.name not in self.PUBLIC_EVENTS or not event.session_id:
+        is_assignment_event = event.name.startswith("assignment.")
+        if event.name not in self.PUBLIC_EVENTS or (
+            not event.session_id and not is_assignment_event
+        ):
             if event.name in {
                 "interaction.requested",
                 "action.proposed",
@@ -44,16 +49,27 @@ class GatewayEventProjection:
                     event.turn_id,
                 )
             return
-        if self._is_local_terminal_session(event.session_id):
+        if (
+            not is_assignment_event
+            and event.session_id
+            and self._is_local_terminal_session(event.session_id)
+        ):
             self._release_terminal_turn(None, event)
             return
 
         router = self._router_getter()
         route = None
         if router:
-            if hasattr(router, "route_for_turn"):
+            target_person_id = str(event.payload.get("_target_person_id", ""))
+            if (
+                is_assignment_event
+                and target_person_id
+                and hasattr(router, "route_for_user")
+            ):
+                route = router.route_for_user(target_person_id)
+            if route is None and hasattr(router, "route_for_turn"):
                 route = router.route_for_turn(event.turn_id, event.session_id)
-            else:
+            elif route is None:
                 route = router.route_for_session(event.session_id)
         if route is None:
             if event.name in {
@@ -116,9 +132,16 @@ class GatewayEventProjection:
         if event.timestamp > 0:
             metadata["timestamp"] = event.timestamp
         try:
+            public_payload = dict(event.payload)
+            if is_assignment_event:
+                public_payload = {
+                    key: value
+                    for key, value in public_payload.items()
+                    if not key.startswith("_") and key != "session_id"
+                }
             delivered = router.deliver_event(
                 event.name,
-                event.payload,
+                public_payload,
                 route,
                 **metadata,
             )

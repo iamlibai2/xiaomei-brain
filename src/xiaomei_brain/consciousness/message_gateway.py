@@ -41,6 +41,30 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def configure_agent_conversation_scope(
+    agent_core,
+    living,
+    session_id: str,
+    person_id: str,
+    context_key: str = "",
+) -> str:
+    """Separate speaker identity from the current scene's memory boundary."""
+    target_context = context_key
+    if not target_context:
+        people = getattr(living, "_people_service", None)
+        session = people.store.get_session(session_id) if people else None
+        if session is not None and session.scope_type == "conversation":
+            target_context = f"conversation:{session.scope_id}"
+        else:
+            target_context = f"session:{session_id}"
+    agent_core.memory_scope_id = person_id
+    agent_core.shared_conversation = False
+    if target_context.startswith("conversation:"):
+        agent_core.memory_scope_id = target_context
+        agent_core.shared_conversation = True
+    return target_context
+
+
 class MessageGateway:
     """Message entry: comms routing, intent commands, meta-skill matching,
     then delegate to ConversationDriver.
@@ -74,12 +98,22 @@ class MessageGateway:
         agent_core = living.agent._get_agent()
         agent_core.user_id = msg.user_id
         agent_core.user_display_name = getattr(msg, 'user_display_name', '这位用户')
+        context_key = configure_agent_conversation_scope(
+            agent_core,
+            living,
+            msg.session_id,
+            msg.user_id,
+            msg.context_key,
+        )
 
-        # 3. Session switch.
-        # 3. 会话切换。
+        # 3. Context switch. session_id remains the persistence and routing key.
+        # 3. 上下文切换。session_id 继续作为持久化与路由标识。
         living.session_id = msg.session_id
         if hasattr(living, '_attention') and living._attention:
-            living._attention.switch_to(msg.session_id)
+            living._attention.switch_to(context_key)
+        else:
+            agent_core.context_key = context_key
+        agent_core.session_id = msg.session_id
 
         # 4. Reset cancel flag.
         # 4. 重置取消标志。

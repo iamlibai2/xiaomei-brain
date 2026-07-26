@@ -199,6 +199,21 @@ def test_feishu_adapter_consumes_link_then_routes_as_person(tmp_path):
     assert session is not None
     assert session.scope_id == person.person_id
 
+    channel.callback({
+        "sender": "ou_sender",
+        "conversation_id": "oc_group",
+        "text": "请整理群里的讨论",
+        "chat_type": "group",
+        "bot_mentioned": True,
+    })
+    group_raw = gateway.messages[-1]
+    assert group_raw.session_id == "feishu-group-cli_demo-oc_group"
+    assert group_raw.reply_target == "oc_group"
+    group_session = people.store.get_session(group_raw.session_id)
+    assert group_session is not None
+    assert group_session.scope_type == "conversation"
+    assert group_session.scope_id == "feishu:app:cli_demo:chat:oc_group"
+
     adapter.send_event(
         "oc_private",
         "interaction.requested",

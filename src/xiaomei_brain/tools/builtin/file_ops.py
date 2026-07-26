@@ -163,7 +163,8 @@ def _resolve_path(path: str) -> tuple[str, str]:
 @tool(name="read_file",
       description="Read the contents of a file. "
       "Use a RELATIVE path for files in the workspace directory. "
-      "Example: read_file('hello.py') reads ~/.xiaomei-brain/global/workspace/hello.py")
+      "Example: read_file('hello.py') reads hello.py from the current Agent workspace. "
+      "Do not guess an absolute ~/.xiaomei-brain path.")
 def read_file(path: str) -> str:
     """Read a file and return its contents. Relative paths resolved to workspace dir.
 
@@ -183,8 +184,9 @@ def read_file(path: str) -> str:
 
 
 @tool(name="write_file", description="Write content to a file. "
-      "Always use a RELATIVE path — files are auto-saved to the examples directory. "
-      "Example: write_file('hello_world.py', '...') saves to examples/hello_world.py")
+      "Always use a RELATIVE path — files are saved to the current Agent workspace. "
+      "Example: write_file('hello_world.py', '...') saves workspace/hello_world.py. "
+      "Do not guess an absolute ~/.xiaomei-brain path.")
 def write_file(path: str, content: str) -> str:
     """Write content to a file. Relative paths are saved to the default output directory.
 

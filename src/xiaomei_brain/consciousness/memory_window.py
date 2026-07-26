@@ -37,6 +37,9 @@ def refresh_memory_window(
     user_input: str | None = None,
     dag_max_tokens: int = 2000,
     exp_stream: Any = None,
+    allow_cross_user_dialog: bool = True,
+    recent_dialog_session_id: str | None = None,
+    recent_dialog_user_id: str | None = None,
 ) -> None:
     """刷新 SelfImage.memory — 从存储层拉取记忆，统一通过 contribute_memory_window() 推入。
 
@@ -217,9 +220,23 @@ def refresh_memory_window(
     # ── 7. 最近对话 ────────────────────────────────────
     if conversation_db:
         try:
-            recent = conversation_db.get_recent(20, user_id=user_id)
+            if recent_dialog_user_id is not None:
+                recent_session_filter = recent_dialog_session_id
+                recent_user_filter = recent_dialog_user_id
+            elif recent_dialog_session_id is not None:
+                recent_session_filter = recent_dialog_session_id
+                recent_user_filter = None
+            else:
+                recent_session_filter = session_id if session_id else None
+                recent_user_filter = None if session_id else user_id
+            recent = conversation_db.get_recent(
+                20,
+                session_id=recent_session_filter,
+                user_id=recent_user_filter,
+            )
             recent_dialog = [
                 {"role": r.get("role", ""), "content": r.get("content", ""),
+                 "user_id": r.get("user_id", ""),
                  "created_at": r.get("created_at", 0)}
                 for r in recent
             ]
@@ -228,7 +245,7 @@ def refresh_memory_window(
 
     # ── 7b. 其他用户的最近对话 ─────────────────────────
     cross_user_dialog: list[dict] = []
-    if conversation_db:
+    if conversation_db and allow_cross_user_dialog:
         try:
             conn = conversation_db._get_conn()
             all_others = conn.execute(

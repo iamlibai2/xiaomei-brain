@@ -5,6 +5,7 @@ Gateway = 感官/运动神经：接收信号 → 过滤噪声 → 送达意识�
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
@@ -170,12 +171,41 @@ class Gateway:
             user_display_name = "这位用户"
         routed = self._route_message(raw)
         session_id = raw.session_id or self._default_session(raw, routed)
+        context_key = self._context_key(raw, session_id, user_id)
 
         # 4. Resolve conversational control replies before ordinary enqueueing.
         # Clarify and Action wait inside the current Turn; matching responses
         # must wake that Turn instead of becoming a new queued message.
         if self._handle_conversation_control(raw, content, user_id, session_id):
             return Rejected(reason="HANDLED", silent=True)
+
+        # A durable Assignment clarification behaves like a delayed reply to
+        # this conversation. Match only one pending_interaction in the same
+        # Person/session; pending Actions always require explicit approve/deny.
+        assignment_id = ""
+        if raw.source == "human":
+            service = getattr(
+                getattr(self._living, "agent", None),
+                "assignment_service",
+                None,
+            )
+            if service is not None:
+                try:
+                    from xiaomei_brain.assignments import ActorType, AssignmentActor
+
+                    pending = service.pending_interaction_for_session(
+                        actor=AssignmentActor(ActorType.PERSON, user_id),
+                        session_id=session_id,
+                    )
+                    if pending is not None:
+                        assignment_id = pending.id
+                except (PermissionError, ValueError):
+                    logger.warning(
+                        "Failed to match Assignment reply for %s in %s",
+                        user_id,
+                        session_id,
+                        exc_info=True,
+                    )
 
         # 5. Rate-limit check. Human messages are always accepted into Living's
         # FIFO queue, including while another Turn is being processed.
@@ -204,6 +234,12 @@ class Gateway:
 
         # 7. Enqueue to Living (passes display_name through)
         reply_route = self._reply_route(raw, routed)
+        if (
+            reply_route is not None
+            and raw.peer_type == "human"
+            and hasattr(self._router, "note_active_route")
+        ):
+            self._router.note_active_route(user_id, reply_route)
         is_local_terminal = (
             session_id == "main" or session_id.startswith("cli-")
         )
@@ -225,11 +261,24 @@ class Gateway:
         )
         if isinstance(message_id, int):
             message_kwargs["message_id"] = message_id
+        try:
+            import inspect
+            put_parameters = inspect.signature(self._living.put_message).parameters
+            if "context_key" in put_parameters:
+                message_kwargs["context_key"] = context_key
+            if assignment_id and "assignment_id" in put_parameters:
+                message_kwargs["assignment_id"] = assignment_id
+        except (TypeError, ValueError):
+            pass
         # Preserve compatibility with lightweight channel adapters that
         # implement the older put_message signature when there is no attachment.
         if raw.attachments:
             message_kwargs["attachments"] = raw.attachments
         msg = self._living.put_message(**message_kwargs)
+        if msg is not None:
+            msg.context_key = context_key
+            if assignment_id:
+                msg.assignment_id = assignment_id
         # Lightweight test doubles and third-party Living implementations may
         # still return None. Preserve the accepted-message contract for them.
         if msg is None:
@@ -242,9 +291,59 @@ class Gateway:
                 attachments=raw.attachments,
                 turn_id=turn_id,
                 message_id=message_id if isinstance(message_id, int) else None,
+                context_key=context_key,
+                assignment_id=assignment_id,
             )
             msg.user_display_name = user_display_name
         return Accepted(living_message=msg)
+
+    def observe_group_message(self, raw: RawMessage) -> bool:
+        """Persist group chatter without creating a Turn or waking the Agent."""
+        content = self._sanitize(raw.content)
+        if content is None or not content.strip() or not raw.session_id:
+            return False
+
+        agent = getattr(self._living, "agent", None)
+        db = getattr(agent, "conversation_db", None)
+        if db is None or not hasattr(db, "log_group_message"):
+            return False
+
+        metadata = dict(raw.metadata)
+        external_message_id = str(metadata.pop("external_message_id", "") or "")
+        issuer = str(metadata.get("external_issuer", "") or "")
+        external_subject = str(metadata.get("external_subject", "") or "")
+        display_name = str(metadata.pop("sender_display_name", "") or "")
+        message_type = str(metadata.pop("message_type", "text") or "text")
+        timestamp = metadata.pop("external_timestamp", None)
+        try:
+            created_at = float(timestamp) if timestamp is not None else time.time()
+            if created_at > 10_000_000_000:
+                created_at /= 1000
+        except (TypeError, ValueError):
+            created_at = time.time()
+
+        try:
+            db.log_group_message(
+                session_id=raw.session_id,
+                channel=raw.channel,
+                issuer=issuer,
+                external_message_id=external_message_id,
+                external_subject=external_subject,
+                person_id=raw.peer_id or None,
+                display_name=display_name,
+                content=content,
+                message_type=message_type,
+                metadata=metadata,
+                created_at=created_at,
+            )
+            return True
+        except Exception:
+            logger.exception(
+                "[Gateway] failed to persist group observation: channel=%s session=%s",
+                raw.channel,
+                raw.session_id,
+            )
+            return False
 
     def _handle_conversation_control(
         self,
@@ -398,6 +497,31 @@ class Gateway:
             return f"comms-{raw.peer_id}"
         return getattr(routed, "session_id", "main")
 
+    def _context_key(
+        self,
+        raw: RawMessage,
+        session_id: str,
+        person_id: str,
+    ) -> str:
+        """Resolve the runtime dialogue boundary independently of routing."""
+        explicit = raw.metadata.get("context_key")
+        if isinstance(explicit, str) and explicit.strip():
+            return explicit.strip()
+
+        people = getattr(self._living, "_people_service", None)
+        session = people.store.get_session(session_id) if people else None
+        if session is not None and session.scope_type == "conversation":
+            return f"conversation:{session.scope_id}"
+
+        # Desktop/WebSocket exposes explicit user-created sessions, so those
+        # remain independent. Default private channels follow the Person across
+        # CLI, Feishu and DingTalk.
+        if raw.channel == "ws":
+            return f"session:{session_id}"
+        if raw.peer_type == "human" and person_id:
+            return f"person:{person_id}"
+        return f"session:{session_id}"
+
     def _reply_route(self, raw: RawMessage, routed: Any):
         if raw.reply_channel and raw.reply_target:
             from xiaomei_brain.gateway.router import OutputRoute
@@ -457,7 +581,10 @@ class Gateway:
                 if result.session_id:
                     living.session_id = result.session_id
                     if hasattr(living, '_attention') and living._attention:
-                        living._attention.switch_to(result.session_id)
+                        living._attention.switch_to(
+                            f"session:{result.session_id}"
+                        )
+                    living.agent._get_agent().session_id = result.session_id
                 living._command_done.set()
                 return True
 

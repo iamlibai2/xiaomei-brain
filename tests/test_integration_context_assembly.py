@@ -132,6 +132,52 @@ def test_build_context_records_user_message():
     assert "你好" in agent.messages[0]["content"]
 
 
+@patch("xiaomei_brain.consciousness.context_pipeline.inject_consciousness")
+@patch("xiaomei_brain.consciousness.memory_window.refresh_memory_window")
+def test_shared_conversation_labels_speaker_and_excludes_personal_memory(
+    mock_refresh,
+    mock_inject,
+):
+    agent = _make_mock_agent()
+    agent.shared_conversation = True
+    agent.memory_scope_id = "conversation:feishu:app:demo:chat:group-1"
+    agent.user_id = "person-1"
+    agent.user_display_name = "张三"
+    mock_inject.return_value = "system"
+
+    build_context(agent, "请整理需求", self_image=MagicMock())
+
+    assert agent.messages[-1]["content"] == "[张三] 请整理需求"
+    assert mock_refresh.call_args.kwargs["user_id"] == agent.memory_scope_id
+    assert mock_refresh.call_args.kwargs["allow_cross_user_dialog"] is False
+    assert (
+        mock_refresh.call_args.kwargs["recent_dialog_session_id"]
+        == agent.session_id
+    )
+    assert mock_refresh.call_args.kwargs["recent_dialog_user_id"] is None
+
+
+@patch("xiaomei_brain.consciousness.context_pipeline.inject_consciousness")
+@patch("xiaomei_brain.consciousness.memory_window.refresh_memory_window")
+def test_person_context_loads_recent_dialog_across_channels(
+    mock_refresh,
+    mock_inject,
+):
+    agent = _make_mock_agent(user_id="person-1", session_id="feishu-person-1")
+    agent.context_key = "person:person-1"
+    agent.memory_scope_id = "person-1"
+    agent.shared_conversation = False
+    mock_inject.return_value = "system"
+
+    build_context(agent, "继续刚才的话题", self_image=MagicMock())
+
+    assert mock_refresh.call_args.kwargs["recent_dialog_session_id"] is None
+    assert (
+        mock_refresh.call_args.kwargs["recent_dialog_user_id"]
+        == "person-1"
+    )
+
+
 def test_build_context_conversation_db_logging():
     """Message logged to ConversationDB when available."""
     with tempfile.TemporaryDirectory() as tmpdir:

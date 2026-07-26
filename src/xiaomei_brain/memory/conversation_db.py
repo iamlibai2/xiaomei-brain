@@ -197,6 +197,36 @@ class ConversationDB(SQLiteStore):
                 len(migrated_ids),
             )
 
+        if current < 3:
+            # Group observations are deliberately isolated from messages.
+            # The latter feeds fresh_tail, DAG compaction, dreams and personal
+            # memory extraction, while ordinary group chatter must not.
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS group_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    channel TEXT NOT NULL,
+                    issuer TEXT NOT NULL DEFAULT '',
+                    external_message_id TEXT NOT NULL,
+                    external_subject TEXT NOT NULL DEFAULT '',
+                    person_id TEXT DEFAULT NULL,
+                    display_name TEXT NOT NULL DEFAULT '',
+                    content TEXT NOT NULL,
+                    message_type TEXT NOT NULL DEFAULT 'text',
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at REAL NOT NULL,
+                    UNIQUE(issuer, external_message_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_group_messages_session
+                    ON group_messages(session_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_group_messages_person
+                    ON group_messages(person_id, created_at);
+            """)
+            self._set_schema_version("conversation_db", 3)
+            conn.commit()
+            logger.info("[ConversationDB] migrated to v3: added group_messages")
+
     def store_tool(
         self,
         tool_name: str,
@@ -280,6 +310,89 @@ class ConversationDB(SQLiteStore):
                     continue
                 raise
         raise last_error  # type: ignore[misc]
+
+    def log_group_message(
+        self,
+        *,
+        session_id: str,
+        channel: str,
+        issuer: str,
+        external_message_id: str,
+        external_subject: str,
+        content: str,
+        person_id: str | None = None,
+        display_name: str = "",
+        message_type: str = "text",
+        metadata: dict[str, Any] | None = None,
+        created_at: float | None = None,
+    ) -> int | None:
+        """Store group chatter observed without creating a conversational Turn.
+
+        Returns the inserted row id, or ``None`` when the platform message was
+        already stored.  The platform message id is required so reconnect
+        re-deliveries remain idempotent.
+        """
+        if not external_message_id:
+            raise ValueError("external_message_id is required")
+        if not isinstance(content, str):
+            content = str(content)
+        content = content.encode(
+            "utf-8", "surrogatepass",
+        ).decode("utf-8", "replace")
+        timestamp = float(created_at) if created_at is not None else time.time()
+        try:
+            cur = self._get_conn().execute(
+                """INSERT INTO group_messages
+                   (session_id, channel, issuer, external_message_id,
+                    external_subject, person_id, display_name, content,
+                    message_type, metadata, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(issuer, external_message_id) DO NOTHING""",
+                (
+                    session_id,
+                    channel,
+                    issuer,
+                    external_message_id,
+                    external_subject,
+                    person_id or None,
+                    display_name,
+                    content,
+                    message_type or "text",
+                    json.dumps(metadata or {}, ensure_ascii=False),
+                    timestamp,
+                ),
+            )
+            self._get_conn().commit()
+            return int(cur.lastrowid) if cur.rowcount > 0 else None
+        except sqlite3.OperationalError:
+            self._get_conn().rollback()
+            raise
+
+    def get_recent_group_messages(
+        self,
+        session_id: str,
+        *,
+        limit: int = 50,
+        since: float | None = None,
+        before: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return recent observations for one group in chronological order."""
+        clauses = ["session_id = ?"]
+        params: list[Any] = [session_id]
+        if since is not None:
+            clauses.append("created_at >= ?")
+            params.append(float(since))
+        if before is not None:
+            clauses.append("created_at <= ?")
+            params.append(float(before))
+        params.append(max(1, min(int(limit), 200)))
+        rows = self._get_conn().execute(
+            f"""SELECT * FROM group_messages
+                WHERE {' AND '.join(clauses)}
+                ORDER BY created_at DESC LIMIT ?""",
+            params,
+        ).fetchall()
+        return [dict(row) for row in reversed(rows)]
 
     def update_message_metadata(
         self,

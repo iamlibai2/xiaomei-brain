@@ -1,9 +1,9 @@
-"""AttentionLayer: 注意层——Layer 1 会话管理。
+"""AttentionLayer: 注意层——Layer 1 短期上下文管理。
 
 单线程、可切换会话。一次只处理一个对话对象。
 负责：
-- 会话保存/恢复（_session_messages dict）
-- switch_to() 会话切换
+- 上下文保存/恢复（_context_messages dict）
+- switch_to() 上下文切换
 - 为未来的多 peer 路由提供基础
 
 设计原则：
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# 每个会话最多保留的消息数
+# 每个上下文最多保留的消息数
 MAX_SESSION_MESSAGES = 500
 
 
@@ -36,8 +36,8 @@ class AttentionLayer:
 
     def __init__(self, agent_core: Any) -> None:
         self._agent = agent_core
-        self._session_messages: dict[str, list[dict[str, Any]]] = {}
-        self._current_session: str = "main"
+        self._context_messages: dict[str, list[dict[str, Any]]] = {}
+        self._current_context: str = "session:main"
         self._lock: threading.RLock = threading.RLock()
 
         # 给外部读锁用
@@ -47,75 +47,96 @@ class AttentionLayer:
 
     @property
     def current_session(self) -> str:
-        return self._current_session
+        """Compatibility alias; returns the active context key."""
+        return self._current_context
+
+    @property
+    def current_context(self) -> str:
+        return self._current_context
 
     @property
     def session_ids(self) -> list[str]:
-        return sorted(self._session_messages.keys())
+        """Compatibility alias for known in-memory context keys."""
+        return sorted(self._context_messages.keys())
 
     # ── Core Operations ────────────────────────────────────
 
-    def save_session(self, session_id: str | None = None) -> None:
-        """保存当前会话的 agent.messages 到 _session_messages。"""
-        sid = session_id or self._current_session
-        if not sid:
+    def save_session(self, context_key: str | None = None) -> None:
+        """保存当前上下文的 agent.messages。"""
+        key = context_key or self._current_context
+        if not key:
             return
         with self._lock:
             msgs = self._agent.messages
             if msgs:
-                self._session_messages[sid] = list(msgs[-MAX_SESSION_MESSAGES:])
+                self._context_messages[key] = list(msgs[-MAX_SESSION_MESSAGES:])
                 logger.debug(
-                    "[Attention] 保存会话 %s: %d 条消息（截断前 %d 条）",
-                    sid, min(len(msgs), MAX_SESSION_MESSAGES), len(msgs),
+                    "[Attention] 保存上下文 %s: %d 条消息（截断前 %d 条）",
+                    key, min(len(msgs), MAX_SESSION_MESSAGES), len(msgs),
                 )
 
-    def restore_session(self, session_id: str) -> None:
-        """恢复目标会话的 agent.messages。"""
+    def restore_session(self, context_key: str) -> None:
+        """恢复目标上下文的 agent.messages。"""
         with self._lock:
-            saved = self._session_messages.get(session_id, [])
+            saved = self._context_messages.get(context_key, [])
+            self._agent.context_key = context_key
             self._agent.messages = list(saved)  # 复制，避免引用共享
-            self._agent.session_id = session_id
-            self._current_session = session_id
+            self._current_context = context_key
             logger.info(
-                "[Attention] 恢复会话 %s: %d 条消息",
-                session_id, len(saved),
+                "[Attention] 恢复上下文 %s: %d 条消息",
+                context_key, len(saved),
             )
 
-    def switch_to(self, session_id: str) -> None:
-        """切换会话：保存当前 → 恢复目标。
+    def switch_to(self, context_key: str) -> None:
+        """切换上下文：保存当前 → 恢复目标。
 
-        如果目标就是当前会话，不做任何操作。
+        如果目标就是当前上下文，不做任何操作。
         """
-        if session_id == self._current_session:
+        if context_key == self._current_context:
             return
 
         self.save_session()
-        self.restore_session(session_id)
+        self.restore_session(context_key)
 
-    def new_session(self, session_id: str) -> None:
-        """创建新会话：保存当前，清空 messages，开始新会话。"""
+    def new_session(self, context_key: str) -> None:
+        """创建新上下文：保存当前，清空 messages。"""
         self.save_session()
         with self._lock:
+            self._agent.context_key = context_key
             self._agent.messages = []
-            self._agent.session_id = session_id
-            self._current_session = session_id
-        logger.info("[Attention] 新建会话: %s", session_id)
+            self._current_context = context_key
+        logger.info("[Attention] 新建上下文: %s", context_key)
+
+    def adopt_current(self, context_key: str) -> None:
+        """Move the currently loaded message tail under a resolved context key."""
+        with self._lock:
+            loaded = list(self._agent.messages[-MAX_SESSION_MESSAGES:])
+            self._agent.context_key = context_key
+            self._agent.messages = loaded
+            if loaded:
+                self._context_messages[context_key] = list(loaded)
+            self._current_context = context_key
+        logger.info(
+            "[Attention] 采用上下文 %s: %d 条消息",
+            context_key,
+            len(loaded),
+        )
 
     # ── Query ──────────────────────────────────────────────
 
-    def get_message_count(self, session_id: str | None = None) -> int:
-        """获取会话的消息数（已保存的消息数）。"""
-        sid = session_id or self._current_session
-        if sid == self._current_session:
+    def get_message_count(self, context_key: str | None = None) -> int:
+        """获取上下文的消息数（已保存的消息数）。"""
+        key = context_key or self._current_context
+        if key == self._current_context:
             return len(self._agent.messages)
-        return len(self._session_messages.get(sid, []))
+        return len(self._context_messages.get(key, []))
 
     def get_recent_messages(
-        self, session_id: str, limit: int = 10
+        self, context_key: str, limit: int = 10
     ) -> list[dict[str, Any]]:
-        """获取指定会话的最近 N 条消息。"""
-        if session_id == self._current_session:
+        """获取指定上下文的最近 N 条消息。"""
+        if context_key == self._current_context:
             msgs = self._agent.messages
         else:
-            msgs = self._session_messages.get(session_id, [])
+            msgs = self._context_messages.get(context_key, [])
         return msgs[-limit:] if msgs else []

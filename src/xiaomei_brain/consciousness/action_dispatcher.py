@@ -404,7 +404,14 @@ class ActionExecutor:
         try:
             memory_block, clean_content = agent_core.memory_extractor.extract_memory_block(result)
             if memory_block:
-                agent_core.memory_extractor.execute_block(memory_block, user_id=agent_core.user_id)
+                agent_core.memory_extractor.execute_block(
+                    memory_block,
+                    user_id=getattr(
+                        agent_core,
+                        "memory_scope_id",
+                        agent_core.user_id,
+                    ),
+                )
                 logger.info("[ActionExecutor] WORK 记忆已提取")
                 return clean_content
         except Exception as e:

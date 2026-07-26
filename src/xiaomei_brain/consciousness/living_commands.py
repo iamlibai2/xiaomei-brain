@@ -688,11 +688,12 @@ def cmd_switch(living: ConsciousLiving, args: str = "") -> None:
     # 通过 AttentionLayer 切换会话
     attention = getattr(living, '_attention', None)
     if attention:
-        attention.switch_to(sid)
+        attention.switch_to(f"session:{sid}")
     else:
         agent = living.agent._get_agent()
-        agent.session_id = sid
+        agent.context_key = f"session:{sid}"
         agent.messages = []
+    living.agent._get_agent().session_id = sid
     living.session_id = sid
 
     count = db.count(session_id=sid)

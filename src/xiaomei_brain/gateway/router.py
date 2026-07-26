@@ -212,6 +212,18 @@ class Router:
         with self._lock:
             return self._last_active.get(user_id)
 
+    def note_active_route(self, user_id: str, route: OutputRoute) -> None:
+        """Remember an explicit reply route for later Person-scoped events.
+
+        WebSocket routes are bound by authenticated session rather than by a
+        client-supplied peer ID, so they do not always pass through a PeerRule.
+        This explicit observation keeps proactive projections transport-neutral.
+        """
+        if not user_id:
+            return
+        with self._lock:
+            self._last_active[user_id] = route
+
     def bind_turn(self, turn_id: str, route: OutputRoute) -> None:
         """Remember the exact return channel for one accepted inbound Turn."""
         if not turn_id:

@@ -6,7 +6,9 @@ from xiaomei_brain.consciousness.conversation_driver import ConversationDriver
 from xiaomei_brain.gateway import artifacts as artifact_module
 from xiaomei_brain.gateway.artifacts import (
     discover_tool_artifacts,
+    project_stored_artifact,
     public_artifact_metadata,
+    read_stored_artifact,
 )
 from xiaomei_brain.gateway.server_methods import MethodRouter
 from xiaomei_brain.memory.conversation_db import ConversationDB
@@ -45,6 +47,50 @@ def test_artifact_discovery_ignores_files_outside_agent_outputs(tmp_path, monkey
     )
 
     assert artifacts == []
+
+
+def test_read_file_is_not_reported_as_created_artifact(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
+    existing = tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace" / "input.pptx"
+    existing.parent.mkdir(parents=True)
+    existing.write_bytes(b"existing input")
+
+    artifacts = discover_tool_artifacts(
+        "xiaomei",
+        "session-1",
+        "turn-1",
+        "read_file",
+        {"path": "input.pptx"},
+        "existing input",
+    )
+
+    assert artifacts == []
+
+
+def test_artifact_can_be_projected_into_origin_conversation(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
+    output = tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace" / "result.pptx"
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"presentation")
+    artifact = discover_tool_artifacts(
+        "xiaomei",
+        "assignment:1",
+        "assignment-run:1",
+        "write_file",
+        {"path": "result.pptx"},
+        f"Successfully wrote to {output}",
+    )[0]
+
+    project_stored_artifact(
+        "xiaomei",
+        "assignment:1",
+        "session-origin",
+        artifact,
+    )
+
+    projected = read_stored_artifact("xiaomei", "session-origin", artifact)
+    assert base64.b64decode(projected["data_base64"]) == b"presentation"
+    assert projected["mime_type"].endswith("presentationml.presentation")
 
 
 def test_artifact_rpc_reads_only_exact_session_asset(tmp_path, monkeypatch):
