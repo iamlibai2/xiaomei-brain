@@ -501,6 +501,66 @@ class FeishuChannel:
         """Send an interactive card using Feishu's message API."""
         self._send_payload(to, "interactive", card)
 
+    def send_file(self, to: str, file_name: str, data: bytes) -> bool:
+        """Upload an Agent-owned artifact and send it as a Feishu file."""
+        file_key = self._upload_file(file_name, data)
+        if not file_key:
+            return False
+        self._send_payload(to, "file", {"file_key": file_key})
+        return True
+
+    def _upload_file(self, file_name: str, data: bytes) -> str:
+        """Upload one file using Feishu's multipart file API."""
+        import requests as _requests
+
+        if not file_name or not data:
+            logger.error("[Feishu/File] refusing empty file: %s", file_name)
+            return ""
+        suffix = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
+        file_type = {
+            "opus": "opus",
+            "mp4": "mp4",
+            "pdf": "pdf",
+            "doc": "doc",
+            "docx": "doc",
+            "xls": "xls",
+            "xlsx": "xls",
+            "ppt": "ppt",
+            "pptx": "ppt",
+        }.get(suffix, "stream")
+
+        try:
+            for attempt in range(3):
+                token = self._get_token()
+                if not token:
+                    return ""
+                response = _requests.post(
+                    "https://open.feishu.cn/open-apis/im/v1/files",
+                    data={"file_type": file_type, "file_name": file_name},
+                    files={"file": (file_name, data)},
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=30,
+                )
+                payload = response.json()
+                code = payload.get("code", -1)
+                if response.status_code == 200 and code == 0:
+                    return str((payload.get("data") or {}).get("file_key", ""))
+                if response.status_code == 401 or code in {
+                    99991663, 99991664, 99991665, 99991666,
+                }:
+                    self._invalidate_token_cache(self.app_id)
+                    continue
+                logger.error(
+                    "[Feishu/File] upload failed: HTTP=%s code=%s msg=%s",
+                    response.status_code,
+                    code,
+                    payload.get("msg", ""),
+                )
+                return ""
+        except Exception:
+            logger.exception("[Feishu/File] upload failed: %s", file_name)
+        return ""
+
     def _send_payload(self, to: str, msg_type: str, content: dict) -> None:
         import requests as _requests
 

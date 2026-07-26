@@ -36,6 +36,7 @@ class WSAdapter(ChannelAdapter):
         return ChannelCapabilities(
             streaming=True,
             structured_events=True,
+            tool_events=True,
             clarify=True,
             action_approval=True,
             attachments=True,

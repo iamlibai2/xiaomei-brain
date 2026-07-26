@@ -25,6 +25,9 @@ class ChannelCapabilities:
 
     streaming: bool = False
     structured_events: bool = False
+    # Tool arguments/results are developer-facing execution details. Chat
+    # channels must opt in or they could expose raw tool payloads to users.
+    tool_events: bool = False
     clarify: bool = False
     action_approval: bool = False
     synchronous_action_approval: bool = False

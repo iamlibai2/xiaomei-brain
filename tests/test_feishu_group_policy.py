@@ -95,6 +95,44 @@ def test_feishu_client_deduplicates_and_discards_stale_messages():
     assert [message["message_id"] for message in received] == ["om_same"]
 
 
+def test_feishu_client_uploads_and_sends_assignment_file(monkeypatch):
+    import requests
+
+    channel = FeishuChannel("cli_demo", "secret")
+    monkeypatch.setattr(channel, "_get_token", lambda: "tenant-token")
+    upload_calls = []
+
+    def fake_post(url, **kwargs):
+        upload_calls.append((url, kwargs))
+        return SimpleNamespace(
+            status_code=200,
+            json=lambda: {
+                "code": 0,
+                "data": {"file_key": "file-key-1"},
+            },
+        )
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    sent = []
+    monkeypatch.setattr(
+        channel,
+        "_send_payload",
+        lambda target, msg_type, content: sent.append((target, msg_type, content)),
+    )
+
+    assert channel.send_file("oc_group", "报告.pptx", b"ppt-data") is True
+    assert upload_calls[0][0].endswith("/open-apis/im/v1/files")
+    assert upload_calls[0][1]["data"] == {
+        "file_type": "ppt",
+        "file_name": "报告.pptx",
+    }
+    assert upload_calls[0][1]["files"]["file"] == (
+        "报告.pptx",
+        b"ppt-data",
+    )
+    assert sent == [("oc_group", "file", {"file_key": "file-key-1"})]
+
+
 def test_feishu_adapter_stores_group_message_without_starting_a_turn():
     class FakeChannel:
         app_id = "cli_demo"

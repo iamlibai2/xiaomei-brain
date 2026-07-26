@@ -6,9 +6,11 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 import os
 import re
+import threading
 import time
 import warnings
 
@@ -51,6 +53,10 @@ class FeishuAdapter(ChannelAdapter):
 
     def __init__(self, channel: FeishuChannel) -> None:
         self._channel = channel
+        self._living = None
+        self._assignment_notices: dict[str, tuple[str, str]] = {}
+        self._assignment_queued_notified: set[str] = set()
+        self._assignment_notice_lock = threading.Lock()
 
     @property
     def capabilities(self) -> ChannelCapabilities:
@@ -73,6 +79,8 @@ class FeishuAdapter(ChannelAdapter):
         """
         if not living or not self._channel:
             return
+
+        self._living = living
 
         router = living._router
         people = getattr(living, "_people_service", None)
@@ -295,6 +303,46 @@ class FeishuAdapter(ChannelAdapter):
                     return False, "审批已结束或不属于当前会话。"
                 return True, "已允许此操作。" if decision == "allow" else "已拒绝此操作。"
 
+            if kind == "assignment_resume":
+                from xiaomei_brain.assignments import (
+                    ActorType,
+                    AssignmentActor,
+                    AssignmentConflictError,
+                )
+
+                service = getattr(living, "_assignment_service", None)
+                scheduler = getattr(living, "_assignment_scheduler", None)
+                if service is None or scheduler is None:
+                    return False, "委托执行服务尚未就绪。"
+                assignment_id = str(value.get("assignment_id", ""))
+                response = str(value.get("response", "")).strip()
+                decision = str(value.get("decision", "")).strip()
+                actor = AssignmentActor(ActorType.PERSON, person.person_id)
+                try:
+                    service.request_resume(
+                        assignment_id,
+                        actor=actor,
+                        response=response,
+                        decision=decision,
+                        idempotency_key=(
+                            f"feishu:{assignment_id}:{person.person_id}:"
+                            f"{value.get('revision', '')}:"
+                            f"{decision or response or 'continue'}"
+                        ),
+                    )
+                    queued = scheduler.request_resume(
+                        assignment_id,
+                        trigger_actor_id=person.person_id,
+                        response=response,
+                        decision=decision,
+                    )
+                except (ValueError, PermissionError, AssignmentConflictError) as exc:
+                    return False, str(exc)
+                return (
+                    (True, "委托已继续执行。")
+                    if queued else (False, "委托暂时无法继续。")
+                )
+
             return False, "无法识别这张卡片的操作。"
 
         self._channel.set_on_card_action(on_card_action)
@@ -360,6 +408,12 @@ class FeishuAdapter(ChannelAdapter):
                 self._action_card(payload, target, session_id, turn_id),
             )
             return
+        elif event.startswith("assignment."):
+            # Assignment progress can be very chatty.  Feishu only projects
+            # lifecycle boundaries; Desktop remains the detailed work view.
+            if event == "assignment.changed":
+                self._send_assignment_notice(target, payload, session_id)
+            return
         super().send_event(
             target,
             event,
@@ -368,6 +422,250 @@ class FeishuAdapter(ChannelAdapter):
             turn_id=turn_id,
             timestamp=timestamp,
         )
+
+    def _send_assignment_notice(
+        self,
+        target: str,
+        payload: dict,
+        session_id: str,
+    ) -> None:
+        assignment_id = str(payload.get("id", ""))
+        status = str(payload.get("status", ""))
+        if not assignment_id or status not in {
+            "queued",
+            "waiting_person",
+            "paused",
+            "completed",
+            "failed",
+            "cancelled",
+            "declined",
+        }:
+            return
+        detail_key = str(
+            payload.get("waiting_reason")
+            or payload.get("terminal_reason")
+            or payload.get("progress_summary")
+            or ""
+        )
+        notice_key = (status, detail_key)
+        with self._assignment_notice_lock:
+            if status == "queued" and assignment_id in self._assignment_queued_notified:
+                return
+            if self._assignment_notices.get(assignment_id) == notice_key:
+                return
+            self._assignment_notices[assignment_id] = notice_key
+            if status == "queued":
+                self._assignment_queued_notified.add(assignment_id)
+
+        pending = self._assignment_pending(assignment_id)
+        self._channel.send_card(
+            target,
+            self._assignment_card(
+                payload,
+                pending,
+                target,
+                session_id,
+            ),
+        )
+        if status == "completed" and payload.get("deliverables"):
+            # File uploads are network I/O and must not hold the Assignment
+            # worker after its durable completion has already been committed.
+            threading.Thread(
+                target=self._send_assignment_deliverables,
+                args=(target, assignment_id, list(payload["deliverables"])),
+                name=f"feishu-deliver-{assignment_id[:8]}",
+                daemon=True,
+            ).start()
+
+    def _assignment_pending(self, assignment_id: str) -> dict:
+        living = self._living
+        service = getattr(living, "_assignment_service", None) if living else None
+        if service is None:
+            return {}
+        try:
+            for run in service.store.list_runs(assignment_id):
+                if not run.safe_to_resume or not run.checkpoint:
+                    continue
+                action = run.checkpoint.get("pending_action")
+                if isinstance(action, dict):
+                    return {
+                        "kind": "action",
+                        "summary": str(action.get("summary", "")),
+                        "reason": str(action.get("reason", "")),
+                    }
+                interaction = run.checkpoint.get("pending_interaction")
+                if isinstance(interaction, dict):
+                    raw_choices = interaction.get("choices")
+                    choices = raw_choices if isinstance(raw_choices, (list, tuple)) else []
+                    return {
+                        "kind": "interaction",
+                        "question": str(interaction.get("question", "")),
+                        "choices": [
+                            str(choice)
+                            for choice in choices[:4]
+                            if str(choice).strip()
+                        ],
+                    }
+                break
+        except Exception:
+            logger.exception(
+                "[Feishu/Assignment] failed to inspect checkpoint: %s",
+                assignment_id,
+            )
+        return {}
+
+    def _send_assignment_deliverables(
+        self,
+        target: str,
+        assignment_id: str,
+        deliverables: list[dict],
+    ) -> None:
+        living = self._living
+        db = getattr(getattr(living, "agent", None), "conversation_db", None)
+        if living is None or db is None:
+            logger.warning(
+                "[Feishu/Assignment] artifact storage unavailable: %s",
+                assignment_id,
+            )
+            return
+        from xiaomei_brain.gateway.artifacts import ArtifactError, read_stored_artifact
+
+        for descriptor in deliverables[:10]:
+            artifact_id = str(descriptor.get("id", ""))
+            if not artifact_id:
+                continue
+            try:
+                artifact = db.get_artifact_metadata(
+                    f"assignment:{assignment_id}",
+                    artifact_id,
+                )
+                if artifact is None:
+                    raise ArtifactError("委托产物不存在")
+                stored = read_stored_artifact(
+                    getattr(living, "_agent_id", "default"),
+                    f"assignment:{assignment_id}",
+                    artifact,
+                )
+                data = base64.b64decode(stored["data_base64"], validate=True)
+                if not self._channel.send_file(
+                    target,
+                    str(stored.get("name") or artifact_id),
+                    data,
+                ):
+                    logger.warning(
+                        "[Feishu/Assignment] failed to deliver artifact: %s",
+                        artifact_id,
+                    )
+            except (ArtifactError, ValueError):
+                logger.exception(
+                    "[Feishu/Assignment] invalid deliverable: %s",
+                    artifact_id,
+                )
+
+    @staticmethod
+    def _assignment_card(
+        payload: dict,
+        pending: dict,
+        conversation_id: str,
+        session_id: str,
+    ) -> dict:
+        status = str(payload.get("status", ""))
+        labels = {
+            "queued": ("blue", "已接受委托"),
+            "waiting_person": ("orange", "委托等待回复"),
+            "paused": ("orange", "委托已暂停"),
+            "completed": ("green", "委托已完成"),
+            "failed": ("red", "委托执行失败"),
+            "cancelled": ("grey", "委托已取消"),
+            "declined": ("grey", "委托未接受"),
+        }
+        template, heading = labels.get(status, ("blue", "委托状态更新"))
+        title = str(payload.get("title") or payload.get("objective") or "未命名委托")
+        detail = str(
+            payload.get("waiting_reason")
+            or payload.get("terminal_reason")
+            or payload.get("progress_summary")
+            or ""
+        )
+        completed = payload.get("completed_steps")
+        total = payload.get("total_steps")
+        lines = [f"**{title}**"]
+        if detail:
+            lines.append(detail)
+        if completed is not None and total:
+            lines.append(f"进度：{completed}/{total}")
+        if status == "waiting_person" and pending.get("question"):
+            lines.append(str(pending["question"]))
+        elif status == "waiting_person" and pending.get("summary"):
+            lines.append(str(pending["summary"]))
+            if pending.get("reason"):
+                lines.append(str(pending["reason"]))
+        if (
+            status == "waiting_person"
+            and pending.get("kind") != "action"
+            and not pending.get("choices")
+        ):
+            lines.append("请直接回复这条会话，Agent 会从原进度继续。")
+
+        elements: list[dict] = [
+            {"tag": "div", "text": {"tag": "lark_md", "content": "\n\n".join(lines)}}
+        ]
+
+        def resume_value(*, response: str = "", decision: str = "") -> dict:
+            return {
+                "kind": "assignment_resume",
+                "assignment_id": str(payload.get("id", "")),
+                "revision": payload.get("revision"),
+                "response": response,
+                "decision": decision,
+                "conversation_id": conversation_id,
+                "session_id": session_id,
+            }
+
+        actions = []
+        if status == "waiting_person" and pending.get("kind") == "action":
+            actions = [
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "允许"},
+                    "type": "primary",
+                    "value": resume_value(decision="approve"),
+                },
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "拒绝"},
+                    "type": "danger",
+                    "value": resume_value(decision="deny"),
+                },
+            ]
+        elif status == "waiting_person" and pending.get("choices"):
+            actions = [
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": choice},
+                    "type": "primary" if index == 0 else "default",
+                    "value": resume_value(response=choice),
+                }
+                for index, choice in enumerate(pending["choices"])
+            ]
+        elif status == "paused":
+            actions = [{
+                "tag": "button",
+                "text": {"tag": "plain_text", "content": "继续执行"},
+                "type": "primary",
+                "value": resume_value(),
+            }]
+        if actions:
+            elements.append({"tag": "action", "actions": actions})
+
+        return {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "template": template,
+                "title": {"tag": "plain_text", "content": heading},
+            },
+            "elements": elements,
+        }
 
     @staticmethod
     def _interaction_card(

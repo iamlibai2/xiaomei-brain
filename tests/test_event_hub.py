@@ -1,5 +1,6 @@
 from xiaomei_brain.consciousness.event_hub import EventHub
 from xiaomei_brain.consciousness.turn_registry import ActiveTurnRegistry
+from xiaomei_brain.gateway.channel_adapter import ChannelCapabilities
 from xiaomei_brain.gateway.event_projection import GatewayEventProjection
 from xiaomei_brain.gateway.router import OutputRoute
 
@@ -79,6 +80,14 @@ def test_gateway_projection_streams_only_to_websocket_routes():
         def route_for_session(self, _session_id):
             return self.route
 
+        def get_adapter(self, _channel):
+            return type("Adapter", (), {
+                "capabilities": ChannelCapabilities(
+                    streaming=self.route.type == "ws",
+                    tool_events=self.route.type == "ws",
+                ),
+            })()
+
         def deliver_event(self, name, payload, route, **metadata):
             self.events.append((name, payload, route, metadata))
 
@@ -87,12 +96,28 @@ def test_gateway_projection_streams_only_to_websocket_routes():
     hub.subscribe(GatewayEventProjection(lambda: router))
 
     hub.publish("message.delta", {"text": "part"}, session_id="s", turn_id="t")
+    hub.publish(
+        "tool.complete",
+        {"summary": '{"id": "assignment-1", "status": "queued"}'},
+        session_id="s",
+        turn_id="t",
+    )
     hub.publish("message.complete", {"text": "done"}, session_id="s", turn_id="t")
     assert [item[0] for item in router.events] == ["message.complete"]
 
     router.route = OutputRoute("ws", "s")
     hub.publish("message.delta", {"text": "part"}, session_id="s", turn_id="t")
-    assert [item[0] for item in router.events] == ["message.complete", "message.delta"]
+    hub.publish(
+        "tool.complete",
+        {"summary": "developer detail"},
+        session_id="s",
+        turn_id="t",
+    )
+    assert [item[0] for item in router.events] == [
+        "message.complete",
+        "message.delta",
+        "tool.complete",
+    ]
 
 
 def test_gateway_projection_uses_turn_origin_for_shared_session():

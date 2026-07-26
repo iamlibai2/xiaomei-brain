@@ -187,6 +187,43 @@ def test_assignment_event_prefers_person_route_and_strips_routing_fields():
     assert router.delivered[0][3]["session_id"] == "main"
 
 
+def test_assignment_event_stays_on_its_origin_channel_when_available():
+    class _Router:
+        def __init__(self):
+            self.delivered = []
+
+        def route_for_session(self, session_id):
+            assert session_id == "feishu-person-1"
+            return OutputRoute("feishu", "oc_origin")
+
+        def route_for_user(self, _person_id):
+            raise AssertionError("origin route should win")
+
+        def route_for_turn(self, _turn_id, _session_id):
+            raise AssertionError("origin route should win")
+
+        def get_adapter(self, _channel):
+            return None
+
+        def deliver_event(self, name, payload, route, **metadata):
+            self.delivered.append((name, payload, route, metadata))
+            return True
+
+    router = _Router()
+    GatewayEventProjection(lambda: router)(DomainEvent(
+        name="assignment.changed",
+        payload={
+            "id": "assignment-1",
+            "status": "completed",
+            "session_id": "feishu-person-1",
+            "_target_person_id": "person-1",
+        },
+        session_id="feishu-person-1",
+    ))
+
+    assert router.delivered[0][2] == OutputRoute("feishu", "oc_origin")
+
+
 def test_assignment_get_exposes_only_public_pending_interaction(tmp_path):
     router, service, store, _scheduler = _router(tmp_path)
     offered = _offer(service, "person-1")

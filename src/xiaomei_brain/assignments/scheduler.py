@@ -90,13 +90,42 @@ class AssignmentScheduler:
         priority: int = 100,
         checkpoint: dict[str, Any] | None = None,
     ) -> bool:
+        return self._enqueue(
+            assignment_id,
+            trigger_type=trigger_type,
+            trigger_actor_id=trigger_actor_id,
+            priority=priority,
+            checkpoint=checkpoint,
+            allow_active_boundary=False,
+        )
+
+    def _enqueue(
+        self,
+        assignment_id: str,
+        *,
+        trigger_type: str,
+        trigger_actor_id: str,
+        priority: int,
+        checkpoint: dict[str, Any] | None,
+        allow_active_boundary: bool,
+    ) -> bool:
+        """Queue work, optionally behind the same run's terminal boundary.
+
+        A waiting state is committed just before the worker clears its active
+        marker. A Person may answer in that tiny window; the resumed run is
+        safe to queue behind the current one because this scheduler has only
+        one worker and cannot execute them concurrently.
+        """
         assignment_id = assignment_id.strip()
         if not assignment_id:
             raise ValueError("assignment_id 不能为空")
         with self._condition:
             if (
                 assignment_id in self._queued_ids
-                or assignment_id == self._active_assignment_id
+                or (
+                    assignment_id == self._active_assignment_id
+                    and not allow_active_boundary
+                )
             ):
                 return False
             self._sequence += 1
@@ -188,12 +217,13 @@ class AssignmentScheduler:
             checkpoint.pop("pending_interaction", None)
 
         current = self.service.queue(current.id, actor=actor)
-        return self.submit(
+        return self._enqueue(
             current.id,
             trigger_type="person_resume",
             trigger_actor_id=trigger_actor_id,
             priority=priority,
             checkpoint=checkpoint,
+            allow_active_boundary=True,
         )
 
     def recover_interrupted(self) -> int:
@@ -279,5 +309,4 @@ class AssignmentScheduler:
                 with self._condition:
                     self._active_assignment_id = ""
                     self._active_token = None
-                    if not self._running and not self._queue:
-                        self._condition.notify_all()
+                    self._condition.notify_all()

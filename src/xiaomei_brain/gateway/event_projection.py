@@ -61,8 +61,19 @@ class GatewayEventProjection:
         route = None
         if router:
             target_person_id = str(event.payload.get("_target_person_id", ""))
+            # An Assignment belongs to the conversation that created it.  Keep
+            # important lifecycle notices on that channel when its route still
+            # exists; only fall back to the Person's latest active channel when
+            # the origin is unavailable (for example a CLI-created Assignment).
             if (
                 is_assignment_event
+                and event.session_id
+                and hasattr(router, "route_for_session")
+            ):
+                route = router.route_for_session(event.session_id)
+            if (
+                route is None
+                and is_assignment_event
                 and target_person_id
                 and hasattr(router, "route_for_user")
             ):
@@ -106,6 +117,19 @@ class GatewayEventProjection:
             else route.type == "ws"
         )
         if event.name == "message.delta" and not supports_streaming:
+            return
+        supports_tool_events = (
+            bool(getattr(capabilities, "tool_events", False))
+            if capabilities is not None
+            else route.type == "ws"
+        )
+        if event.name.startswith("tool.") and not supports_tool_events:
+            logger.debug(
+                "Suppressing tool event for chat channel: event=%s route=%s/%s",
+                event.name,
+                route.type,
+                route.target,
+            )
             return
         if (
             event.name.startswith("interaction.")

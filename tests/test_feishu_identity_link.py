@@ -111,6 +111,7 @@ def test_feishu_adapter_consumes_link_then_routes_as_person(tmp_path):
             self.card_callback = None
             self.sent = []
             self.cards = []
+            self.files = []
 
         def set_on_message(self, callback):
             self.callback = callback
@@ -129,6 +130,10 @@ def test_feishu_adapter_consumes_link_then_routes_as_person(tmp_path):
 
         def send_card(self, target, card):
             self.cards.append((target, card))
+
+        def send_file(self, target, name, data):
+            self.files.append((target, name, data))
+            return True
 
         def status(self):
             return {"state": "running", "error": ""}
@@ -163,10 +168,36 @@ def test_feishu_adapter_consumes_link_then_routes_as_person(tmp_path):
             self.calls.append(args)
             return True
 
+    class FakeAssignmentStore:
+        def __init__(self):
+            self.runs = []
+
+        def list_runs(self, _assignment_id):
+            return self.runs
+
+    class FakeAssignmentService:
+        def __init__(self):
+            self.store = FakeAssignmentStore()
+            self.calls = []
+
+        def request_resume(self, assignment_id, **kwargs):
+            self.calls.append((assignment_id, kwargs))
+            return object()
+
+    class FakeAssignmentScheduler:
+        def __init__(self):
+            self.calls = []
+
+        def request_resume(self, assignment_id, **kwargs):
+            self.calls.append((assignment_id, kwargs))
+            return True
+
     channel = FakeChannel()
     gateway = FakeGateway()
     interaction_broker = FakeInteractionBroker()
     action_broker = FakeActionBroker()
+    assignment_service = FakeAssignmentService()
+    assignment_scheduler = FakeAssignmentScheduler()
     living = type("Living", (), {
         "_router": FakeRouter(),
         "_people_service": people,
@@ -174,6 +205,8 @@ def test_feishu_adapter_consumes_link_then_routes_as_person(tmp_path):
         "_gateway_inbound": gateway,
         "_interaction_broker": interaction_broker,
         "_action_broker": action_broker,
+        "_assignment_service": assignment_service,
+        "_assignment_scheduler": assignment_scheduler,
     })()
     adapter = FeishuAdapter(channel)
     adapter.setup(living)
@@ -272,3 +305,123 @@ def test_feishu_adapter_consumes_link_then_routes_as_person(tmp_path):
         "turn-1",
         person.person_id,
     )
+
+    adapter.send_event(
+        "oc_private",
+        "assignment.changed",
+        {
+            "id": "assignment-1",
+            "title": "整理项目报告",
+            "status": "queued",
+            "revision": 3,
+            "progress_summary": "已进入后台队列",
+        },
+        session_id=raw.session_id,
+    )
+    assert channel.cards[-1][1]["header"]["title"]["content"] == "已接受委托"
+    card_count = len(channel.cards)
+    adapter.send_event(
+        "oc_private",
+        "assignment.changed",
+        {
+            "id": "assignment-1",
+            "title": "整理项目报告",
+            "status": "queued",
+            "revision": 4,
+            "progress_summary": "已进入后台队列",
+        },
+        session_id=raw.session_id,
+    )
+    assert len(channel.cards) == card_count
+
+    from types import SimpleNamespace
+    assignment_service.store.runs = [SimpleNamespace(
+        safe_to_resume=True,
+        checkpoint={
+            "pending_interaction": {
+                "question": "请选择格式",
+                "choices": ["DOCX", "PDF"],
+            },
+        },
+    )]
+    adapter.send_event(
+        "oc_private",
+        "assignment.changed",
+        {
+            "id": "assignment-1",
+            "title": "整理项目报告",
+            "status": "waiting_person",
+            "revision": 5,
+            "waiting_reason": "需要确认输出格式",
+        },
+        session_id=raw.session_id,
+    )
+    waiting_card = channel.cards[-1][1]
+    assert waiting_card["header"]["title"]["content"] == "委托等待回复"
+    resume_value = waiting_card["elements"][1]["actions"][1]["value"]
+    accepted, toast = channel.card_callback({
+        "operator_open_id": "ou_sender",
+        "conversation_id": "oc_private",
+        "value": resume_value,
+    })
+    assert accepted is True
+    assert toast == "委托已继续执行。"
+    assert assignment_service.calls[-1][1]["response"] == "PDF"
+    assert assignment_scheduler.calls[-1][1]["response"] == "PDF"
+
+    adapter.send_event(
+        "oc_private",
+        "assignment.progress",
+        {"id": "assignment-1", "progress_summary": "处理中"},
+        session_id=raw.session_id,
+    )
+    assert len(channel.cards) == card_count + 1
+
+
+def test_feishu_assignment_deliverable_is_read_from_agent_storage(monkeypatch):
+    pytest.importorskip("lark_oapi")
+    from types import SimpleNamespace
+    from xiaomei_brain.plugins.channels.feishu.adapter import FeishuAdapter
+
+    class FakeChannel:
+        def __init__(self):
+            self.files = []
+
+        def send_file(self, target, name, data):
+            self.files.append((target, name, data))
+            return True
+
+    class FakeConversationDB:
+        def get_artifact_metadata(self, session_id, artifact_id):
+            assert session_id == "assignment:assignment-1"
+            assert artifact_id == "a" * 32
+            return {"id": artifact_id, "name": "报告.docx"}
+
+    def fake_read(agent_id, session_id, artifact):
+        assert agent_id == "xiaomei"
+        assert session_id == "assignment:assignment-1"
+        assert artifact["name"] == "报告.docx"
+        return {
+            "id": artifact["id"],
+            "name": artifact["name"],
+            "data_base64": "ZG9jeC1kYXRh",
+        }
+
+    monkeypatch.setattr(
+        "xiaomei_brain.gateway.artifacts.read_stored_artifact",
+        fake_read,
+    )
+    channel = FakeChannel()
+    adapter = FeishuAdapter(channel)
+    adapter._living = SimpleNamespace(
+        _agent_id="xiaomei",
+        agent=SimpleNamespace(conversation_db=FakeConversationDB()),
+    )
+
+    adapter._send_assignment_deliverables(
+        "oc_private",
+        "assignment-1",
+        [{"id": "a" * 32, "name": "报告.docx"}],
+    )
+
+    assert channel.files == [("oc_private", "报告.docx", b"docx-data")]
