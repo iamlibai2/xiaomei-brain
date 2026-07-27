@@ -442,13 +442,6 @@ class DingTalkAdapter(ChannelAdapter):
         except (TypeError, ValueError):
             revision = 0
         pending = self._assignment_pending(assignment_id)
-        if status == "completed" and payload.get("deliverables"):
-            threading.Thread(
-                target=self._send_assignment_deliverables,
-                args=(target, assignment_id, list(payload["deliverables"])),
-                name=f"dingtalk-deliver-{assignment_id[:8]}",
-                daemon=True,
-            ).start()
         title, markdown, buttons, actions = self._assignment_card_content(
             payload,
             pending,
@@ -505,6 +498,17 @@ class DingTalkAdapter(ChannelAdapter):
                 ),
             )
             self._assignment_notices[delivery_key] = notice_key
+
+        if status == "completed" and payload.get("deliverables"):
+            # The persisted card revision is also the delivery gate. Starting
+            # the upload only after that gate prevents a replayed completion
+            # event from sending the same files again after Agent restart.
+            threading.Thread(
+                target=self._send_assignment_deliverables,
+                args=(target, assignment_id, list(payload["deliverables"])),
+                name=f"dingtalk-deliver-{assignment_id[:8]}",
+                daemon=True,
+            ).start()
 
     def _send_assignment_deliverables(
         self,

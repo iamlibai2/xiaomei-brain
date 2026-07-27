@@ -337,3 +337,73 @@ def test_dingtalk_assignment_deliverable_is_read_from_agent_storage(monkeypatch)
     )
 
     assert client.files == [("staff-1", "报告.docx", b"docx-data", False)]
+
+
+def test_dingtalk_replayed_completion_does_not_redeliver_artifacts(monkeypatch):
+    pytest.importorskip("dingtalk_stream")
+    from types import SimpleNamespace
+
+    from xiaomei_brain.assignments import AssignmentChannelMessage
+    from xiaomei_brain.plugins.channels.dingtalk.adapter import DingTalkAdapter
+
+    class FakeClient:
+        client_id = "ding-demo"
+        account_id = "default"
+
+    class FakeStore:
+        def list_runs(self, _assignment_id):
+            return []
+
+        def get_channel_message(
+            self,
+            assignment_id,
+            channel,
+            account_id,
+            conversation_id,
+        ):
+            return AssignmentChannelMessage(
+                assignment_id=assignment_id,
+                channel=channel,
+                account_id=account_id,
+                conversation_id=conversation_id,
+                external_message_id="card-existing",
+                last_revision=8,
+                updated_at=1.0,
+            )
+
+    started = []
+
+    class ImmediateThread:
+        def __init__(self, *, target, args, **_kwargs):
+            self._target = target
+            self._args = args
+
+        def start(self):
+            started.append(self._args)
+            self._target(*self._args)
+
+    monkeypatch.setattr(
+        "xiaomei_brain.plugins.channels.dingtalk.adapter.threading.Thread",
+        ImmediateThread,
+    )
+    adapter = DingTalkAdapter(FakeClient())
+    adapter._living = SimpleNamespace(
+        _assignment_service=SimpleNamespace(store=FakeStore()),
+    )
+    delivered = []
+    adapter._send_assignment_deliverables = lambda *args: delivered.append(args)
+
+    adapter._send_assignment_notice(
+        "staff-1",
+        {
+            "id": "assignment-1",
+            "title": "整理报告",
+            "status": "completed",
+            "revision": 8,
+            "deliverables": [{"id": "a" * 32, "name": "报告.docx"}],
+        },
+        "dingtalk-person-1",
+    )
+
+    assert started == []
+    assert delivered == []
