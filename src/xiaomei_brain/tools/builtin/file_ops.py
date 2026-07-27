@@ -58,14 +58,19 @@ def _build_sensitive_paths() -> tuple[str, ...]:
 _SENSITIVE_PATH_PREFIXES = _build_sensitive_paths()
 
 
-def _get_output_dir() -> str:
-    """获取输出根目录：agent workspace 优先，否则全局 fallback。"""
+def get_workspace_dir() -> str:
+    """返回当前 Agent 的运行时工作目录，而不是进程启动目录。"""
     if _output_base:
         return os.path.join(_output_base, "workspace")
     return os.environ.get(
         "XIAOMEI_OUTPUT_DIR",
         os.path.expanduser("~/.xiaomei-brain/global/workspace"),
     )
+
+
+def _get_output_dir() -> str:
+    """兼容文件工具内部原有名称。"""
+    return get_workspace_dir()
 
 
 def set_output_base(base_dir: str) -> None:

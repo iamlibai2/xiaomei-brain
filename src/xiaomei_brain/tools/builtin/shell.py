@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import locale
+import os
 import re
 import subprocess
 
@@ -104,6 +105,14 @@ def run_shell_command(command: str, *, cwd: str | None = None) -> str:
         return block_msg
 
     try:
+        if cwd is None:
+            # Conversation, PACE and other autonomous flows must never inherit
+            # the process cwd: in development that directory is the source
+            # checkout. Assignment runners pass their stricter cwd explicitly.
+            from .file_ops import get_workspace_dir
+
+            cwd = get_workspace_dir()
+            os.makedirs(cwd, exist_ok=True)
         result = subprocess.run(
             command,
             shell=True,
