@@ -32,6 +32,18 @@ interface AssignmentExecutionPlan {
   total_steps: number;
 }
 
+interface AssignmentAcceptanceCheck {
+  criterion_index: number;
+  criterion: string;
+  satisfied: boolean;
+  evidence: string;
+}
+
+interface AssignmentAcceptanceVerification {
+  criteria: AssignmentAcceptanceCheck[];
+  checked_at?: number;
+}
+
 const EMPTY_ASSIGNMENTS: AssignmentSnapshot[] = [];
 
 export function AssignmentDrawer({
@@ -58,6 +70,7 @@ export function AssignmentDrawer({
   const [events, setEvents] = useState<Record<string, unknown>[]>([]);
   const [resources, setResources] = useState<Record<string, unknown>[]>([]);
   const [executionPlan, setExecutionPlan] = useState<AssignmentExecutionPlan | null>(null);
+  const [acceptanceVerification, setAcceptanceVerification] = useState<AssignmentAcceptanceVerification | null>(null);
   const [answer, setAnswer] = useState("");
   const [actionError, setActionError] = useState("");
   const [acting, setActing] = useState(false);
@@ -74,6 +87,7 @@ export function AssignmentDrawer({
       setEvents([]);
       setResources([]);
       setExecutionPlan(null);
+      setAcceptanceVerification(null);
       return;
     }
     let cancelled = false;
@@ -98,6 +112,10 @@ export function AssignmentDrawer({
         const rawPlan = response.result?.execution_plan;
         setExecutionPlan(rawPlan && typeof rawPlan === "object" && !Array.isArray(rawPlan)
           ? rawPlan as unknown as AssignmentExecutionPlan
+          : null);
+        const rawVerification = response.result?.acceptance_verification;
+        setAcceptanceVerification(rawVerification && typeof rawVerification === "object" && !Array.isArray(rawVerification)
+          ? rawVerification as unknown as AssignmentAcceptanceVerification
           : null);
       })
       .catch((error) => { if (!cancelled) setActionError(String(error)); });
@@ -235,7 +253,24 @@ export function AssignmentDrawer({
                 {selected.acceptanceCriteria.length > 0 && (
                   <div className="assignment-detail-block">
                     <h3>{t("assignments.acceptance")}</h3>
-                    <ul>{selected.acceptanceCriteria.map((item) => <li key={item}>{item}</li>)}</ul>
+                    <ul className="assignment-acceptance-list">
+                      {selected.acceptanceCriteria.map((criterion, index) => {
+                        const check = acceptanceVerification?.criteria.find(
+                          (item) => item.criterion_index === index + 1 && item.criterion === criterion,
+                        );
+                        return (
+                          <li className={check ? (check.satisfied ? "satisfied" : "unmet") : "pending"} key={criterion}>
+                            <span className="assignment-acceptance-marker">
+                              {check ? (check.satisfied ? "✓" : "!") : index + 1}
+                            </span>
+                            <div>
+                              <strong>{criterion}</strong>
+                              {check?.evidence && <p>{check.evidence}</p>}
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
                   </div>
                 )}
                 {selected.status === "waiting_person" && (

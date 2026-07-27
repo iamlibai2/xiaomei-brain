@@ -352,6 +352,13 @@
 .assignment-plan strong { display: block; padding-top: 3px; color: var(--ui-color-text-primary); font-size: 12px; font-weight: 550; }
 .assignment-plan li.completed strong { color: var(--ui-color-text-secondary); }
 .assignment-plan p { margin: 4px 0 0; color: var(--ui-color-text-tertiary); font-size: 11px; line-height: 1.5; }
+.assignment-acceptance-list { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0 !important; list-style: none; }
+.assignment-acceptance-list li { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 9px; line-height: 1.5; }
+.assignment-acceptance-marker { display: grid; width: 22px; height: 22px; place-items: center; border: 1px solid var(--ui-color-border-secondary); border-radius: 50%; color: var(--ui-color-text-tertiary); font-size: 10px; }
+.assignment-acceptance-list li.satisfied .assignment-acceptance-marker { border-color: rgba(44, 164, 115, .38); background: rgba(44, 164, 115, .12); color: #2ca473; }
+.assignment-acceptance-list li.unmet .assignment-acceptance-marker { border-color: rgba(211, 80, 80, .38); background: rgba(211, 80, 80, .1); color: #d35050; }
+.assignment-acceptance-list strong { display: block; padding-top: 3px; color: var(--ui-color-text-primary); font-size: 12px; font-weight: 550; }
+.assignment-acceptance-list p { margin: 4px 0 0; color: var(--ui-color-text-tertiary); font-size: 11px; line-height: 1.5; }
 
 .assignment-response-block { margin-top: 20px; padding: 14px; border: 1px solid rgba(217, 145, 20, .3); border-radius: 10px; background: rgba(217, 145, 20, .06); }
 .assignment-response-block p { color: var(--ui-color-text-secondary); font-size: 12px; }

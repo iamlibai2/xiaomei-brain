@@ -310,6 +310,62 @@ def test_assignment_get_exposes_only_public_execution_plan(tmp_path):
     store.close()
 
 
+def test_assignment_get_exposes_only_latest_public_acceptance_evidence(tmp_path):
+    router, service, store, _scheduler = _router(tmp_path)
+    offered = service.offer(
+        title="竞品报告",
+        objective="完成竞品分析",
+        actor=AssignmentActor(ActorType.PERSON, "person-1"),
+        requester_person_id="person-1",
+        scope_type="person",
+        scope_id="person-1",
+        acceptance_criteria=["报告包含三家产品的逐项对比"],
+    )
+    criterion = offered.acceptance_criteria[0]
+    store.create_run(AssignmentRun(
+        run_id="run-verification",
+        assignment_id=offered.id,
+        status="completed",
+        trigger_type="test",
+        trigger_actor_id="xiaomei",
+        checkpoint={
+            "acceptance_verification": {
+                "version": 1,
+                "checked_at": 3.0,
+                "criteria": [{
+                    "criterion_index": 1,
+                    "criterion": criterion,
+                    "satisfied": True,
+                    "evidence": "报告包含三家产品的逐项对比表",
+                    "private_note": "must not escape",
+                }],
+            },
+            "tool_trace": [{"result": "private working detail"}],
+        },
+        safe_to_resume=False,
+        started_at=2.0,
+        updated_at=3.0,
+        ended_at=3.0,
+    ))
+
+    response = router.dispatch("conn-1", "get-verification", "assignment.get", {
+        "assignment_id": offered.id,
+    })
+
+    assert response["result"]["acceptance_verification"] == {
+        "criteria": [{
+            "criterion_index": 1,
+            "criterion": criterion,
+            "satisfied": True,
+            "evidence": "报告包含三家产品的逐项对比表",
+        }],
+        "checked_at": 3.0,
+    }
+    assert "private_note" not in str(response["result"])
+    assert "tool_trace" not in response["result"]
+    store.close()
+
+
 def test_assignment_artifact_rpc_checks_person_and_assignment_link(tmp_path, monkeypatch):
     monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
     router, service, store, _scheduler = _router(tmp_path)

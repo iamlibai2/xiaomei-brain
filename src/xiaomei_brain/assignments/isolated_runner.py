@@ -386,6 +386,24 @@ class IsolatedAssignmentRunner:
                         checkpoint=checkpoint,
                         safe_to_resume=True,
                     )
+                acceptance_reason = self._acceptance_verification_reason(
+                    context,
+                    control.checkpoint_data,
+                )
+                if acceptance_reason:
+                    checkpoint = {
+                        **control.checkpoint_data,
+                        "tool_trace": list(tool_trace),
+                        "artifacts": list(artifacts),
+                        "last_response": final_text[:4000],
+                    }
+                    control.checkpoint(checkpoint, safe_to_resume=True)
+                    return ExecutionResult(
+                        "paused",
+                        acceptance_reason,
+                        checkpoint=checkpoint,
+                        safe_to_resume=True,
+                    )
                 deliverables = self._publish_deliverables(
                     context,
                     artifacts,
@@ -522,6 +540,61 @@ class IsolatedAssignmentRunner:
                 "total_steps": len(steps),
             }, ensure_ascii=False)
 
+        def verify_acceptance(checks: list[dict[str, Any]]) -> str:
+            incomplete_plan = self._incomplete_plan_reason(control.checkpoint_data)
+            if incomplete_plan:
+                raise ValueError("执行计划尚未全部完成，不能进行最终验收")
+
+            criteria = list(context.acceptance_criteria)
+            normalized: dict[int, dict[str, Any]] = {}
+            for raw in checks:
+                if not isinstance(raw, dict):
+                    raise ValueError("验收结果格式无效")
+                try:
+                    index = int(raw.get("criterion_index", 0))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("验收标准序号无效") from exc
+                if not 1 <= index <= len(criteria) or index in normalized:
+                    raise ValueError(f"验收标准序号无效或重复: {index}")
+                evidence = str(raw.get("evidence") or "").strip()
+                if not evidence:
+                    raise ValueError(f"第 {index} 条验收标准缺少事实证据")
+                normalized[index] = {
+                    "criterion_index": index,
+                    "criterion": criteria[index - 1],
+                    "satisfied": raw.get("satisfied") is True,
+                    "evidence": evidence[:1000],
+                }
+
+            missing = [
+                index for index in range(1, len(criteria) + 1)
+                if index not in normalized
+            ]
+            if missing:
+                raise ValueError(
+                    "尚未核对全部验收标准: "
+                    + "、".join(str(index) for index in missing)
+                )
+
+            verification = {
+                "version": 1,
+                "checked_at": time.time(),
+                "criteria": [normalized[index] for index in sorted(normalized)],
+            }
+            checkpoint = control.checkpoint_data
+            checkpoint["acceptance_verification"] = verification
+            control.checkpoint(checkpoint, safe_to_resume=True)
+            unmet = [
+                item["criterion"] for item in verification["criteria"]
+                if not item["satisfied"]
+            ]
+            return json.dumps({
+                "status": "verified" if not unmet else "incomplete",
+                "satisfied": len(criteria) - len(unmet),
+                "total": len(criteria),
+                "unmet": unmet,
+            }, ensure_ascii=False)
+
         registry.register(Tool(
             name="set_assignment_execution_plan",
             description=(
@@ -555,6 +628,38 @@ class IsolatedAssignmentRunner:
                 "required": ["summary"],
             },
             func=complete_step,
+            category="internal",
+        ))
+        registry.register(Tool(
+            name="verify_assignment_acceptance",
+            description=(
+                "After every execution-plan step is complete, verify every "
+                "Assignment acceptance criterion against concrete results. "
+                "Include one check per criterion using its 1-based index."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "checks": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "criterion_index": {"type": "integer", "minimum": 1},
+                                "satisfied": {"type": "boolean"},
+                                "evidence": {"type": "string"},
+                            },
+                            "required": [
+                                "criterion_index",
+                                "satisfied",
+                                "evidence",
+                            ],
+                        },
+                    },
+                },
+                "required": ["checks"],
+            },
+            func=verify_acceptance,
             category="internal",
         ))
 
@@ -622,6 +727,44 @@ class IsolatedAssignmentRunner:
         return (
             f"执行计划尚有 {len(pending)} 步未完成，委托已暂停而不会虚假标记完成："
             + "；".join(pending[:3])
+        )
+
+    @staticmethod
+    def _acceptance_verification_reason(
+        context: AssignmentExecutionContext,
+        checkpoint: dict[str, Any],
+    ) -> str:
+        criteria = list(context.acceptance_criteria)
+        if not criteria:
+            return ""
+        verification = checkpoint.get("acceptance_verification")
+        checks = (
+            verification.get("criteria")
+            if isinstance(verification, dict)
+            else None
+        )
+        if not isinstance(checks, list) or len(checks) != len(criteria):
+            return "尚未逐项核对委托完成标准，委托已暂停而不会虚假标记完成"
+        by_index = {
+            item.get("criterion_index"): item
+            for item in checks
+            if isinstance(item, dict)
+        }
+        unmet: list[str] = []
+        for index, criterion in enumerate(criteria, start=1):
+            item = by_index.get(index)
+            if (
+                not isinstance(item, dict)
+                or item.get("criterion") != criterion
+                or item.get("satisfied") is not True
+                or not str(item.get("evidence") or "").strip()
+            ):
+                unmet.append(criterion)
+        if not unmet:
+            return ""
+        return (
+            f"仍有 {len(unmet)} 条完成标准未得到事实验证，委托已暂停："
+            + "；".join(unmet[:3])
         )
 
     @staticmethod
@@ -960,7 +1103,10 @@ class IsolatedAssignmentRunner:
             "开始工作前调用 set_assignment_execution_plan，建立 1 到 8 个可验证步骤；"
             "如果 checkpoint 已有 execution_plan，则沿用原计划，不得重建。"
             "每验证完成一步立即调用 complete_assignment_step。"
-            "执行计划只记录事实，不记录思维过程；最终交付前应完成全部步骤。\n"
+            "执行计划只记录事实，不记录思维过程；最终交付前应完成全部步骤。"
+            "全部步骤完成后，必须调用 verify_assignment_acceptance，"
+            "逐项核对 acceptance_criteria 并提供已经观察到的事实证据；"
+            "不能用计划、承诺或主观判断代替证据。\n"
             "批量收集同类只读信息，避免为每个文件或字段分别调用一次工具。"
             "完成标准满足后直接给出简明交付摘要，并优先把长内容写成文件。\n"
             "如果缺少人物才能提供的信息，输出且只输出："

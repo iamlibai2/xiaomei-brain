@@ -89,6 +89,10 @@ class AssignmentMethods:
             "resources": [self._public_resource(item) for item in resources],
             "pending": self._public_pending(runs),
             "execution_plan": self._public_execution_plan(runs),
+            "acceptance_verification": self._public_acceptance_verification(
+                runs,
+                assignment.acceptance_criteria,
+            ),
         })
 
     def handle_artifact_get(
@@ -341,6 +345,43 @@ class AssignmentMethods:
                     "total_steps": len(steps),
                 }
         return None
+
+    @staticmethod
+    def _public_acceptance_verification(
+        runs,
+        acceptance_criteria,
+    ) -> dict[str, Any] | None:
+        """Expose factual criterion checks from only the latest execution run."""
+        if not runs:
+            return None
+        raw = (runs[0].checkpoint or {}).get("acceptance_verification")
+        checks = raw.get("criteria") if isinstance(raw, dict) else None
+        criteria = list(acceptance_criteria)
+        if not isinstance(checks, list) or len(checks) != len(criteria):
+            return None
+        public = []
+        by_index = {
+            item.get("criterion_index"): item
+            for item in checks
+            if isinstance(item, dict)
+        }
+        for index, criterion in enumerate(criteria, start=1):
+            item = by_index.get(index)
+            if not isinstance(item, dict) or item.get("criterion") != criterion:
+                return None
+            evidence = str(item.get("evidence") or "").strip()
+            if not evidence:
+                return None
+            public.append({
+                "criterion_index": index,
+                "criterion": criterion,
+                "satisfied": item.get("satisfied") is True,
+                "evidence": evidence[:1000],
+            })
+        return {
+            "criteria": public,
+            "checked_at": raw.get("checked_at"),
+        }
 
     @staticmethod
     def _parse(model, params: dict, req_id: str):

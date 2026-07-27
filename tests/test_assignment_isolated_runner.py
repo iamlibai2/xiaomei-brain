@@ -86,6 +86,20 @@ def _complete_step_response(summary="工作已经完成并验证"):
     )])
 
 
+def _verify_response(*, satisfied=True, evidence="已经核对最终结果"):
+    return _response(tool_calls=[_tool_call(
+        "call_verify_acceptance",
+        "verify_assignment_acceptance",
+        {
+            "checks": [{
+                "criterion_index": 1,
+                "satisfied": satisfied,
+                "evidence": evidence,
+            }],
+        },
+    )])
+
+
 def _context(tmp_path, responses, tools=None):
     store = AssignmentStore(tmp_path / "brain.db")
     service = AssignmentService(
@@ -124,7 +138,12 @@ def _context(tmp_path, responses, tools=None):
 def test_isolated_runner_clones_llm_and_completes_without_live_core(tmp_path, capsys):
     store, service, agent, context, control, _checkpoints = _context(
         tmp_path,
-        [_response("研究已完成，结论已形成。")],
+        [
+            _plan_response(),
+            _complete_step_response("结论已经形成"),
+            _verify_response(evidence="最终回复包含明确研究结论"),
+            _response("研究已完成，结论已形成。"),
+        ],
     )
     runner = IsolatedAssignmentRunner(agent, service)
 
@@ -249,6 +268,7 @@ def test_isolated_runner_executes_valid_shell_without_approval(tmp_path):
             _plan_response(),
             _response(tool_calls=[tool_call]),
             _complete_step_response("命令已经成功执行"),
+            _verify_response(evidence="命令返回 executed"),
             _response("命令执行完成。"),
         ],
         tools=registry,
@@ -259,7 +279,7 @@ def test_isolated_runner_executes_valid_shell_without_approval(tmp_path):
     assert executed == ["echo change"]
     assert result.status == "completed"
     assert "pending_action" not in result.checkpoint
-    assert len(agent.llm.clones[0].calls) == 4
+    assert len(agent.llm.clones[0].calls) == 5
     assert any(safe is True for _data, safe in checkpoints)
     assert checkpoints[-1][1] is False
     store.close()
@@ -290,6 +310,7 @@ def test_isolated_runner_consumes_exact_sealed_approval_once(tmp_path):
             _plan_response(),
             _response(tool_calls=[tool_call]),
             _complete_step_response("批准的命令已经执行"),
+            _verify_response(evidence="批准的命令返回 ok"),
             _response("批准的操作已执行，工作完成。"),
         ],
         tools=registry,
@@ -347,6 +368,7 @@ def test_isolated_runner_links_discovered_artifact_to_assignment(tmp_path, monke
             _plan_response(),
             _response(tool_calls=[tool_call]),
             _complete_step_response("报告文件已经生成"),
+            _verify_response(evidence="report.md 已生成并记录为产物"),
             _response("报告已经生成。"),
         ],
         tools=registry,
@@ -390,7 +412,12 @@ def test_isolated_runner_links_discovered_artifact_to_assignment(tmp_path, monke
 def test_isolated_runner_yields_to_realtime_conversation(tmp_path):
     store, service, agent, context, control, _checkpoints = _context(
         tmp_path,
-        [_response("后台完成")],
+        [
+            _plan_response(),
+            _complete_step_response(),
+            _verify_response(),
+            _response("后台完成"),
+        ],
     )
     busy = threading.Event()
     busy.set()
@@ -411,7 +438,7 @@ def test_isolated_runner_yields_to_realtime_conversation(tmp_path):
     thread.join(1.0)
 
     assert result_holder[0].status == "completed"
-    assert len(agent.llm.clones[0].calls) == 1
+    assert len(agent.llm.clones[0].calls) == 4
     store.close()
 
 
@@ -643,6 +670,7 @@ def test_only_outputs_are_promoted_as_assignment_deliverables(tmp_path, monkeypa
             _plan_response(),
             _response(tool_calls=calls),
             _complete_step_response("最终文件已经生成并检查"),
+            _verify_response(evidence="result.md 已生成并检查"),
             _response("已交付 outputs/result.md"),
         ],
         tools=registry,
@@ -689,6 +717,54 @@ def test_execution_plan_with_unreported_steps_pauses_instead_of_completing(tmp_p
     assert result.safe_to_resume is True
     assert "1 步未完成" in result.summary
     assert assignment.progress_summary == "已收集并核对资料"
+    store.close()
+
+
+def test_missing_acceptance_verification_pauses_instead_of_completing(tmp_path):
+    store, service, agent, context, control, _checkpoints = _context(
+        tmp_path,
+        [
+            _plan_response("形成明确结论"),
+            _complete_step_response("已经形成结论"),
+            _response("工作已经完成。"),
+        ],
+    )
+
+    result = IsolatedAssignmentRunner(agent, service)(context, control)
+
+    assert result.status == "paused"
+    assert result.safe_to_resume is True
+    assert "尚未逐项核对" in result.summary
+    assert "acceptance_verification" not in result.checkpoint
+    store.close()
+
+
+def test_unmet_acceptance_criterion_is_durable_and_blocks_completion(tmp_path):
+    store, service, agent, context, control, _checkpoints = _context(
+        tmp_path,
+        [
+            _plan_response("形成明确结论"),
+            _complete_step_response("完成了初步分析"),
+            _verify_response(
+                satisfied=False,
+                evidence="目前只有数据摘要，还没有明确结论",
+            ),
+            _response("本轮工作结束。"),
+        ],
+    )
+
+    result = IsolatedAssignmentRunner(agent, service)(context, control)
+
+    assert result.status == "paused"
+    assert result.safe_to_resume is True
+    assert "给出明确结论" in result.summary
+    checks = result.checkpoint["acceptance_verification"]["criteria"]
+    assert checks == [{
+        "criterion_index": 1,
+        "criterion": "给出明确结论",
+        "satisfied": False,
+        "evidence": "目前只有数据摘要，还没有明确结论",
+    }]
     store.close()
 
 
