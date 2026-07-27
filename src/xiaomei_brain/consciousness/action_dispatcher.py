@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -35,8 +36,14 @@ class ActionExecutor:
 
     def __init__(self, dispatcher: ActionDispatcher):
         self.dispatcher = dispatcher
+        self._runtime_local = threading.local()
 
-    def execute(self, item: ActionItem) -> bool:
+    def execute(
+        self,
+        item: ActionItem,
+        runtime=None,
+        cancel_check: Callable[[], bool] | None = None,
+    ) -> bool:
         """执行单个 ActionItem。
 
         Returns:
@@ -56,7 +63,30 @@ class ActionExecutor:
         if not handler:
             logger.warning("[ActionExecutor] 未知动作类型: %s", item.action_type)
             return False
-        return handler(item)
+        self._runtime_local.runtime = runtime
+        self._runtime_local.cancel_check = cancel_check
+        try:
+            return handler(item)
+        finally:
+            self._runtime_local.runtime = None
+            self._runtime_local.cancel_check = None
+
+    def _agent_core(self):
+        runtime = getattr(self._runtime_local, "runtime", None)
+        if runtime is not None:
+            return runtime
+        cl = self.dispatcher._conscious_living
+        return cl.agent._get_agent() if cl and cl.agent else None
+
+    def _cancel_check(self) -> Callable[[], bool] | None:
+        return getattr(self._runtime_local, "cancel_check", None)
+
+    def _llm(self):
+        runtime = getattr(self._runtime_local, "runtime", None)
+        if runtime is not None:
+            return runtime.llm
+        cl = self.dispatcher._conscious_living
+        return getattr(cl.agent, "llm", None) if cl and cl.agent else None
 
     def _do_proactive(self, item: ActionItem) -> bool:
         """发送主动消息"""
@@ -80,7 +110,7 @@ class ActionExecutor:
         # 经验流
         cl = self.dispatcher._conscious_living
         if cl and cl.agent:
-            agent_core = cl.agent._get_agent()
+            agent_core = self._agent_core()
             es = getattr(agent_core, "exp_stream", None)
             if es:
                 try:
@@ -120,7 +150,7 @@ class ActionExecutor:
             logger.warning("[ActionExecutor] _do_alarm: 未连接 ConsciousLiving")
             return False
 
-        agent_core = cl.agent._get_agent()
+        agent_core = self._agent_core()
         consciousness = cl.consciousness
         es = getattr(agent_core, "exp_stream", None)
 
@@ -146,7 +176,7 @@ class ActionExecutor:
         try:
             # 纯内部 ReAct（不写 DB、不加 MEMORY_PROMPT、不提取记忆）
             # react_nodb() 已将完整过程打印到控制台，不再推送给用户渠道
-            result = agent_core.react_nodb(messages=messages, max_steps=50, label="alarm",
+            result = agent_core.react_nodb(messages=messages, cancel_check=self._cancel_check(), max_steps=50, label="alarm",
                                            exp_stream=es, summarize=True)
 
             # 消费已执行的 ALARM intent（避免 cooldown 过后重复触发）
@@ -177,7 +207,7 @@ class ActionExecutor:
 
             # ── Experience Stream: 记录内部行动 ──
             if result:
-                es = getattr(cl.agent._get_agent(), "exp_stream", None) if cl.agent else None
+                es = getattr(agent_core, "exp_stream", None)
                 if es:
                     try:
                         es.log(
@@ -202,7 +232,7 @@ class ActionExecutor:
             logger.warning("[ActionExecutor] _do_work: 未连接 ConsciousLiving")
             return False
 
-        agent_core = cl.agent._get_agent()
+        agent_core = self._agent_core()
         consciousness = cl.consciousness
         es = getattr(agent_core, "exp_stream", None)
 
@@ -272,7 +302,7 @@ class ActionExecutor:
             # 纯内部 ReAct（不污染对话历史，和 _do_alarm / L2 一致）
             # WORK 场景需要足够步数：写代码、调试等每次工具调用算一步
             _work_start = time.time()
-            result = agent_core.react_nodb(messages=messages, max_steps=50, label="work",
+            result = agent_core.react_nodb(messages=messages, cancel_check=self._cancel_check(), max_steps=50, label="work",
                                            exp_stream=es, summarize=True)
 
             # 手动内存提取：提取 MEMORY 块，拿到干净文本用于输出
@@ -314,7 +344,7 @@ class ActionExecutor:
             # ── Experience Stream: 记录内部行动 ──
             cl = self.dispatcher._conscious_living
             if cl and cl.agent:
-                agent_core = cl.agent._get_agent()
+                agent_core = self._agent_core()
                 es = getattr(agent_core, "exp_stream", None)
                 if es and clean_result:
                     try:
@@ -469,7 +499,7 @@ class ActionExecutor:
         # ── 经验流 ──
         cl = self.dispatcher._conscious_living
         if success and cl and cl.agent:
-            es = getattr(cl.agent._get_agent(), "exp_stream", None)
+            es = getattr(self._agent_core(), "exp_stream", None)
             if es:
                 try:
                     es.log(
@@ -555,12 +585,15 @@ class ActionExecutor:
             {"role": "user", "content": trigger_msg},
         ]
 
-        agent_core = cl.agent._get_agent()
+        agent_core = self._agent_core()
         saved_session = agent_core.session_id
         agent_core.session_id = f"comms-{target}"
         try:
             chunks: list[str] = []
-            for chunk in agent_core.stream(messages=assembled):
+            for chunk in agent_core.stream(
+                messages=assembled,
+                cancel_check=self._cancel_check(),
+            ):
                 chunks.append(chunk)
             text = "".join(chunks)
             # 去掉 reasoning_content（\033[2m ... \033[0m）和残留 ANSI
@@ -581,7 +614,7 @@ class ActionExecutor:
             logger.info("[ActionExecutor] 主动发送给 %s (%d 字)", target, len(text))
 
             # ── 经验流 ──
-            es = getattr(cl.agent._get_agent(), "exp_stream", None) if cl.agent else None
+            es = getattr(agent_core, "exp_stream", None)
             if es:
                 try:
                     es.log(
@@ -624,7 +657,7 @@ class ActionExecutor:
             logger.warning("[ActionExecutor] _do_pleasure_release: 未连接 ConsciousLiving")
             return False
 
-        agent_core = cl.agent._get_agent()
+        agent_core = self._agent_core()
         consciousness = cl.consciousness
 
         system_prompt = build_simple_context(consciousness, mode="daily")
@@ -681,12 +714,12 @@ class ActionExecutor:
             hit_count_before = getattr(cl.drive, '_pleasure_hit_count', 0)
             craving_before = cl.drive.craving
 
-            result = agent_core.react_nodb(messages=messages, max_steps=3, label="pleasure")
+            result = agent_core.react_nodb(messages=messages, cancel_check=self._cancel_check(), max_steps=3, label="pleasure")
             if result:
                 logger.info("[ActionExecutor] PLEASURE 完成 (%d 字)", len(result))
 
             # ── 经验流 ──
-            es = getattr(cl.agent._get_agent(), "exp_stream", None) if cl.agent else None
+            es = getattr(agent_core, "exp_stream", None)
             if es:
                 try:
                     es.log(
@@ -750,7 +783,7 @@ class ActionExecutor:
         llm = None
         cl = self.dispatcher._conscious_living
         if cl and hasattr(cl, "agent"):
-            llm = getattr(cl.agent, "llm", None)
+            llm = self._llm()
 
         if llm:
             try:
@@ -826,7 +859,7 @@ class ActionExecutor:
         llm = None
         cl = self.dispatcher._conscious_living
         if cl and hasattr(cl, "agent"):
-            llm = getattr(cl.agent, "llm", None)
+            llm = self._llm()
 
         if llm:
             try:
@@ -874,7 +907,7 @@ class ActionExecutor:
         llm = None
         cl = self.dispatcher._conscious_living
         if cl and hasattr(cl, "agent"):
-            llm = getattr(cl.agent, "llm", None)
+            llm = self._llm()
 
         if llm:
             try:
@@ -927,7 +960,7 @@ class ActionExecutor:
         llm = None
         cl = self.dispatcher._conscious_living
         if cl and hasattr(cl, "agent"):
-            llm = getattr(cl.agent, "llm", None)
+            llm = self._llm()
 
         if llm:
             try:
@@ -951,7 +984,10 @@ class ActionExecutor:
         """主动学习 → 委托给 LearningEngine"""
         engine = getattr(self, "_learn_engine", None)
         if engine:
-            ok = engine.learn()
+            ok = engine.learn(
+                runtime=self._agent_core(),
+                cancel_check=self._cancel_check(),
+            )
             if ok:
                 topic = getattr(engine, "_last_topic", "") or "未知主题"
                 words = getattr(engine, "_last_word_count", 0) or 0
@@ -974,7 +1010,11 @@ class ActionExecutor:
             logger.warning("[ActionExecutor] 元技能: 缺少 skill_domain")
             return False
 
-        return engine.pull_meta_skill(skill_domain)
+        return engine.pull_meta_skill(
+            skill_domain,
+            runtime=self._agent_core(),
+            cancel_check=self._cancel_check(),
+        )
 
     # ── TOOL: pleasure_lever ──────────────────────────────────
 
@@ -1061,11 +1101,29 @@ class ActionExecutor:
         logger.info("[ActionExecutor] 自动执行 PACE: goal=%s sub=%s",
                     goal_obj.description[:40], active_sub.description[:40])
 
-        # 统一走 PACE → CognitiveLoop（与 /intask 相同路径）
+        # 统一走 PACE → CognitiveLoop（与 /intask 相同领域逻辑），但使用
+        # 本次自主行为的隔离 Core，不能回到实时对话 Core。
         gm = living.conversation_driver.goal_manager
-        if gm._pace_runner is None:
-            gm._init_pace_runner()
-        gm._run_pace(msg, intent_context)
+        from ..agent.runtime import IsolatedAgentProvider
+        from ..metacognition import PACERunner
+        isolated_provider = IsolatedAgentProvider(living.agent, self._agent_core())
+        pace_runner = PACERunner(
+            agent_provider=isolated_provider,
+            purpose=gm._purpose,
+            drive=gm._drive,
+            config=gm._config,
+            inner_voice=gm._inner_voice,
+            experience_memory=gm._experience_memory,
+            project_mental_model=gm._project_mental_model,
+            goal_run_storage=gm._goal_run_storage,
+        )
+        gm._run_pace(
+            msg,
+            intent_context,
+            pace_runner=pace_runner,
+            cancel_check=self._cancel_check(),
+            mark_realtime_busy=False,
+        )
 
         if living.drive:
             living.drive.on_desire_satisfied("achievement", 0.1)
@@ -1115,6 +1173,9 @@ class ActionDispatcher:
 
         # 记录本轮已执行的动作（供 display 使用）
         self._last_executed: list[ActionItem] = []
+
+        # 长耗时自主行为由单独线程串行执行，Living 主线程只负责提交。
+        self._autonomous_executor = None
 
     # ── Public API ─────────────────────────────────────────
 
@@ -1223,7 +1284,10 @@ class ActionDispatcher:
         self._last_executed = []
         for item in self._queue:
             try:
-                success = self._executor.execute(item)
+                if self._autonomous_executor is not None:
+                    success = self._autonomous_executor.submit(item)
+                else:
+                    success = self._executor.execute(item)
                 if success:
                     self._record_fired(item.cooldown_key)
                     self._last_executed.append(item)
@@ -1312,3 +1376,19 @@ class ActionDispatcher:
     def inject_learn_engine(self, engine) -> None:
         """注入 LearningEngine（替代本地学习方法的委托对象）"""
         self._executor._learn_engine = engine
+
+    def enable_autonomous_execution(self, agent_instance) -> None:
+        """让自主动作离开 Living 的实时消息调度线程。"""
+        from .autonomous_executor import AutonomousBehaviorExecutor
+        if self._autonomous_executor is not None:
+            return
+        self._autonomous_executor = AutonomousBehaviorExecutor(
+            agent_instance,
+            self._executor.execute,
+        )
+        self._autonomous_executor.start()
+
+    def stop_autonomous_execution(self) -> None:
+        executor = self._autonomous_executor
+        if executor is not None:
+            executor.stop()

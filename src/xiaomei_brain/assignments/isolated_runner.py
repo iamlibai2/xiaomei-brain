@@ -11,7 +11,11 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from xiaomei_brain.agent.core import Agent
+from xiaomei_brain.agent.runtime import (
+    AgentRuntimeContext,
+    AgentRuntimeFactory,
+    clone_llm_for_isolated_run,
+)
 from xiaomei_brain.tools.action_policy import assess_tool_action
 from xiaomei_brain.tools.base import Tool
 from xiaomei_brain.tools.registry import ToolRegistry
@@ -50,31 +54,7 @@ def _thaw(value: Any) -> Any:
     return copy.deepcopy(value)
 
 
-def clone_llm_for_assignment(llm: Any) -> Any:
-    """Create a client with independent response/retry mutable state."""
-    custom_clone = getattr(llm, "clone_for_isolated_run", None)
-    if callable(custom_clone):
-        return custom_clone()
-
-    from xiaomei_brain.agent.context_guard import ContextGuard
-    from xiaomei_brain.llm.client import LLMClient
-
-    guard_tokens = llm.max_tokens if isinstance(llm, ContextGuard) else None
-    base = llm._llm if isinstance(llm, ContextGuard) else llm
-    registry = getattr(base, "_registry", None)
-    if registry is None:
-        raise RuntimeError("LLM provider registry 不可用，无法创建隔离客户端")
-    cloned = LLMClient(
-        provider=base.provider,
-        model=base.model,
-        registry=registry,
-        api_key=base.api_key,
-        max_retries=int(getattr(base, "_max_retries", LLMClient.DEFAULT_MAX_RETRIES)),
-        timeout=int(getattr(base, "_timeout", LLMClient.DEFAULT_TIMEOUT)),
-        fallback_configs=copy.deepcopy(getattr(base, "_fallback_configs", [])),
-        interoception=None,
-    )
-    return ContextGuard(cloned, max_tokens=guard_tokens) if guard_tokens else cloned
+clone_llm_for_assignment = clone_llm_for_isolated_run
 
 
 class IsolatedAssignmentRunner:
@@ -122,18 +102,16 @@ class IsolatedAssignmentRunner:
         workspace_root, work_dir, outputs_dir = self._workspace_dirs(context)
         isolated_tools = self._copy_safe_tools(context)
         self._install_execution_plan_tools(isolated_tools, context, control)
-        isolated_llm = clone_llm_for_assignment(self.agent_instance.llm)
-        runtime = Agent(
-            llm=isolated_llm,
+        runtime = AgentRuntimeFactory(self.agent_instance).create(
+            AgentRuntimeContext(
+                user_id=context.requester_person_id or "system",
+                memory_scope_id=context.requester_person_id or "global",
+                session_id=context.session_id,
+                turn_id=context.turn_id,
+                max_steps=self.max_steps,
+            ),
             tools=isolated_tools,
-            system_prompt="",
-            max_steps=self.max_steps,
         )
-        runtime.user_id = context.requester_person_id or "system"
-        runtime.memory_scope_id = context.requester_person_id or "global"
-        runtime.session_id = context.session_id
-        runtime.context_key = context.session_id
-        runtime.turn_id = context.turn_id
         runtime.active_assignment_id = context.assignment_id
 
         tool_trace: list[dict[str, Any]] = list(

@@ -47,7 +47,7 @@ class LearningEngine:
 
     # ── 主入口 ────────────────────────────────────────────
 
-    def learn(self) -> bool:
+    def learn(self, *, runtime=None, cancel_check=None) -> bool:
         """执行一次完整的学习循环：选题 → ReAct → 保存。
 
         Returns:
@@ -58,7 +58,7 @@ class LearningEngine:
             logger.debug("[LearningEngine] 无学习主题")
             return False
 
-        knowledge = self._react_learn(topic)
+        knowledge = self._react_learn(topic, runtime=runtime, cancel_check=cancel_check)
         if not knowledge:
             logger.error("[LearningEngine] 学习失败: %s", topic)
             return False
@@ -82,7 +82,7 @@ class LearningEngine:
 
         # 经验流：学到了什么
         try:
-            agent_core = self._cl.agent._get_agent()
+            agent_core = runtime or self._cl.agent._get_agent()
             es = getattr(agent_core, "exp_stream", None)
             if es:
                 es.log(
@@ -96,9 +96,13 @@ class LearningEngine:
         logger.info("[LearningEngine] 学习完成: %s (%d 字)", topic, len(knowledge))
         return True
 
-    def pull_meta_skill(self, skill_domain: str) -> bool:
+    def pull_meta_skill(self, skill_domain: str, *, runtime=None, cancel_check=None) -> bool:
         """拉取元技能。"""
-        return self._meta_skill.pull(skill_domain)
+        return self._meta_skill.pull(
+            skill_domain,
+            runtime=runtime,
+            cancel_check=cancel_check,
+        )
 
     # ── 主题选择 ──────────────────────────────────────────
 
@@ -193,13 +197,13 @@ class LearningEngine:
 
     # ── ReAct 学习 ────────────────────────────────────────
 
-    def _react_learn(self, topic: str) -> str | None:
+    def _react_learn(self, topic: str, *, runtime=None, cancel_check=None) -> str | None:
         """ReAct 自主学习：websearch → 读网页 → 关联记忆 → 综合输出"""
         agent = self._cl.agent if hasattr(self._cl, "agent") else None
         if not agent:
             return None
 
-        agent_core = agent._get_agent()
+        agent_core = runtime or agent._get_agent()
         es = getattr(agent_core, "exp_stream", None)
         consciousness = self._cl.consciousness
         if not consciousness:
@@ -223,7 +227,7 @@ class LearningEngine:
         logger.info("[LearningEngine] ReAct 学习开始: %s", topic)
 
         try:
-            result = agent_core.react_nodb(messages=messages, max_steps=15, label="work",
+            result = agent_core.react_nodb(messages=messages, cancel_check=cancel_check, max_steps=15, label="work",
                                            exp_stream=es, summarize=True)
             return result.strip() if result else None
         except Exception as e:

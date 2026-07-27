@@ -29,7 +29,7 @@ class MetaSkillPuller:
         self._consciousness = None  # 由引擎注入
         self._send_proactive = None # 由引擎注入: (msg) -> None
 
-    def pull(self, skill_domain: str) -> bool:
+    def pull(self, skill_domain: str, *, runtime=None, cancel_check=None) -> bool:
         """搜索 Hub → 拉取 SKILL.md → 存入 LTM。
 
         Returns:
@@ -51,7 +51,7 @@ class MetaSkillPuller:
                     self._send_proactive(f"我已经会 {skill_domain} 相关的技能了。")
                 return True
 
-        agent_core = self._agent._get_agent()
+        agent_core = runtime or self._agent._get_agent()
         es = getattr(agent_core, "exp_stream", None)
         system_prompt = build_simple_context(self._consciousness, mode="daily")
         prompt = META_SKILL_PROMPT.format(skill_domain=skill_domain)
@@ -63,7 +63,7 @@ class MetaSkillPuller:
         logger.info("[MetaSkillPuller] 拉取技能: %s", skill_domain)
 
         try:
-            result = agent_core.react_nodb(messages=messages, max_steps=15, label="work",
+            result = agent_core.react_nodb(messages=messages, cancel_check=cancel_check, max_steps=15, label="work",
                                            exp_stream=es, summarize=True)
         except Exception as e:
             logger.warning("[MetaSkillPuller] ReAct 失败: %s", e)

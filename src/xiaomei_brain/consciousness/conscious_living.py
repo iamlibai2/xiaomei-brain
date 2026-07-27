@@ -721,6 +721,7 @@ class ConsciousLiving(Living):
         boot_line("行为规则", "OK", f"{len(RULES)} 条规则")
         self._dispatcher.inject_conscious_living(self)
         self._dispatcher.inject_learn_engine(self._learn_engine)
+        self._dispatcher.enable_autonomous_execution(self.agent)
 
         # 设置延迟绑定工具的依赖引用（工具已在 init_agent() 注册）
         self.agent._drive = self.drive
@@ -1900,6 +1901,9 @@ class ConsciousLiving(Living):
 
     def _on_stop(self) -> None:
         """停止时保存状态并关闭通讯服务。"""
+        dispatcher = getattr(self, "_dispatcher", None)
+        if dispatcher is not None:
+            dispatcher.stop_autonomous_execution()
         assignment_scheduler = getattr(self, "_assignment_scheduler", None)
         if assignment_scheduler is not None:
             assignment_scheduler.stop()

@@ -777,8 +777,19 @@ class GoalManager:
             goal_run_storage=self._goal_run_storage)
         logger.info("[GoalManager] PACERunner 已创建")
 
-    def _run_pace(self, msg: LivingMessage, intent_context: str = "") -> str:
+    def _run_pace(
+        self,
+        msg: LivingMessage,
+        intent_context: str = "",
+        *,
+        pace_runner=None,
+        cancel_check=None,
+        mark_realtime_busy: bool = True,
+    ) -> str:
         parent = self._parent
+        runner = pace_runner or self._pace_runner
+        if runner is None:
+            raise RuntimeError("PACE runner 尚未初始化")
 
         def _on_confirm(checkpoint, question, options):
             confirm_info = {
@@ -795,12 +806,13 @@ class GoalManager:
                     print(f"  {i+1}. {opt}", flush=True)
                 print(f"  0. 取消任务", flush=True)
 
-        parent._chatting = True
+        if mark_realtime_busy:
+            parent._chatting = True
         exit_reason = "completed"
         try:
             callbacks = {
                 "print_prompt": parent._print_prompt,
-                "cancel_check": lambda: parent._cancel_requested,
+                "cancel_check": cancel_check or (lambda: parent._cancel_requested),
                 "on_user_interaction": (
                     lambda inp, out: parent.consciousness.on_user_interaction(inp, out)
                     if getattr(parent, '_load_consciousness', False) and parent.consciousness
@@ -810,9 +822,10 @@ class GoalManager:
                 "on_confirm": _on_confirm,
                 "_store_checkpoint": lambda ckpt: setattr(self, '_pace_checkpoint', ckpt),
             }
-            exit_reason = self._pace_runner.run(msg, intent_context, callbacks)
+            exit_reason = runner.run(msg, intent_context, callbacks)
         finally:
-            parent._chatting = False
+            if mark_realtime_busy:
+                parent._chatting = False
 
         if exit_reason == "waiting_user":
             self._pace_waiting = True
@@ -832,6 +845,7 @@ class GoalManager:
             logger.info("[GoalManager] PACE 退出: %s, goal=%s", exit_reason, goal_desc)
         elif exit_reason == "completed":
             self._clear_current_goal()
+        return exit_reason
 
     def _resume_pace(self, checkpoint, answer_context: str, original_msg=None) -> None:
         if self._pace_runner is None:
