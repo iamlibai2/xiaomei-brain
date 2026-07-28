@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from xiaomei_brain.consciousness.conversation_driver import ConversationDriver
 from xiaomei_brain.consciousness.conscious_living import ConsciousLiving
-from xiaomei_brain.consciousness.living import LivingMessage
+from xiaomei_brain.consciousness.living import LivingMessage, LivingState
 from xiaomei_brain.gateway.inbound import Accepted
 from xiaomei_brain.gateway.connection import ConnectionManager
 from xiaomei_brain.gateway.protocol import build_event
@@ -225,6 +225,25 @@ def test_conversation_driver_persists_terminal_message_status():
     })]
 
 
+def test_conversation_driver_marks_message_processing_when_turn_starts():
+    class DB:
+        def __init__(self):
+            self.calls = []
+
+        def update_message_metadata(self, message_id, updates):
+            self.calls.append((message_id, updates))
+
+    db = DB()
+    parent = SimpleNamespace(agent=SimpleNamespace(conversation_db=db))
+    msg = LivingMessage(content="hello", message_id=42, turn_id="turn-1")
+
+    ConversationDriver._update_message_status(parent, msg, "processing")
+
+    assert db.calls[0][0] == 42
+    assert db.calls[0][1]["status"] == "processing"
+    assert isinstance(db.calls[0][1]["processing_at"], float)
+
+
 def test_interaction_event_is_structured_and_shares_message_turn():
     class EventRouter:
         def __init__(self):
@@ -324,6 +343,45 @@ def test_chat_send_returns_the_same_turn_id_that_enters_living():
 
     assert response["result"]["accepted"] is True
     assert response["result"]["turn_id"] == accepted_message.turn_id
+    assert response["result"]["status"] == "queued"
+    assert response["result"]["deferred"] is False
+
+
+def test_chat_send_reports_that_dreaming_agent_deferred_the_queued_turn():
+    accepted_message = LivingMessage(
+        content="醒来后告诉我",
+        user_id="user-1",
+        session_id="session-1",
+        source="human",
+    )
+
+    class Inbound:
+        def accept(self, _raw):
+            return Accepted(accepted_message)
+
+    living = SimpleNamespace(
+        _gateway_inbound=Inbound(),
+        state=LivingState.DREAMING,
+    )
+    router = MethodRouter(living=living)
+    router._auth_sessions.add("connection-1")
+
+    response = router.dispatch(
+        "connection-1",
+        "request-dreaming",
+        "chat.send",
+        {
+            "content": "醒来后告诉我",
+            "client_request_id": "client-request-dreaming",
+            "session_id": "session-1",
+            "user_id": "user-1",
+        },
+    )
+
+    assert response["result"]["accepted"] is True
+    assert response["result"]["status"] == "queued"
+    assert response["result"]["deferred"] is True
+    assert response["result"]["deferred_reason"] == "dreaming"
 
 
 def test_bound_connection_cannot_send_as_another_session_or_user():

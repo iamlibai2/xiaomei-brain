@@ -95,6 +95,36 @@
   background: rgba(116, 88, 168, .1);
 }
 
+.dreaming-message-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(116, 88, 168, .2);
+  border-radius: var(--ui-radius-md);
+  background: rgba(116, 88, 168, .08);
+  color: #7458a8;
+}
+
+.dreaming-message-notice > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dreaming-message-notice strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.dreaming-message-notice span {
+  color: var(--ui-color-text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 /* ─── Agent activity sidebar ─────────────────────────────────────── */
 .agent-right-sidebar {
   width: 380px;
@@ -1289,6 +1319,10 @@
   font-size: 11px;
   line-height: 16px;
   color: var(--ui-color-text-tertiary);
+}
+
+.message-delivery-status.queued {
+  color: #7458a8;
 }
 
 .message-delivery-status.failed {

@@ -24,6 +24,7 @@ export type IconName =
   | "robot"
   | "folder"
   | "sparkles"
+  | "moon"
   | "clock"
   | "info"
   | "external-link"
@@ -201,6 +202,9 @@ const ICON_PATHS: Record<IconName, React.ReactNode> = {
       <polyline points="6 8 10 12 6 16" />
       <line x1="12" y1="16" x2="18" y2="16" />
     </>
+  ),
+  moon: (
+    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" />
   ),
   play: <polygon points="5 3 19 12 5 21 5 3" />,
   power: (

@@ -259,6 +259,7 @@ class ConversationDriver:
             terminal_text = ""
             terminal_error: dict[str, str] | None = None
             turn_memory_references: list[dict[str, Any]] = []
+            self._update_message_status(parent, msg, "processing")
             self._deliver_message_start(parent, msg.session_id, msg.turn_id)
             try:
                 current_msg = msg
@@ -1301,6 +1302,9 @@ class ConversationDriver:
             "interrupted": "interrupted",
         }.get(status, status)
         updates: dict[str, Any] = {"status": stored_status}
+        if stored_status == "processing":
+            import time
+            updates["processing_at"] = time.time()
         if error:
             updates["error"] = {
                 "code": str(error.get("code", ""))[:100],

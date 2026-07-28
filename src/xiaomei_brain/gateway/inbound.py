@@ -416,7 +416,11 @@ class Gateway:
 
         metadata: dict[str, Any] = {
             "turn_id": turn_id,
-            "status": "processing",
+            # Gateway acceptance only means the input is durable and waiting
+            # in Living's FIFO queue.  ConversationDriver changes this to
+            # ``processing`` when the Turn actually starts.
+            "status": "queued",
+            "queued_at": time.time(),
         }
         retry_of = raw.metadata.get("retry_of")
         if isinstance(retry_of, int) and retry_of > 0:

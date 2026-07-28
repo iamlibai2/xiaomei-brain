@@ -163,8 +163,13 @@ class ChatMethods:
             accepted = isinstance(accepted_result, Accepted)
             response = {"accepted": accepted, "session_id": session_id}
             if accepted:
+                living_state = getattr(getattr(living, "state", None), "value", "")
                 response["turn_id"] = accepted_result.living_message.turn_id
                 response["message_id"] = accepted_result.living_message.message_id
+                response["status"] = "queued"
+                response["deferred"] = living_state == "dreaming"
+                if response["deferred"]:
+                    response["deferred_reason"] = "dreaming"
                 self._remember_receipt(
                     receipt_key, content, user_id, attachments_fingerprint, response,
                 )
@@ -185,7 +190,11 @@ class ChatMethods:
             "session_id": session_id,
             "turn_id": message.turn_id,
             "message_id": getattr(message, "message_id", None),
+            "status": "queued",
+            "deferred": getattr(getattr(living, "state", None), "value", "") == "dreaming",
         }
+        if response["deferred"]:
+            response["deferred_reason"] = "dreaming"
         self._remember_receipt(
             receipt_key, content, user_id, attachments_fingerprint, response,
         )

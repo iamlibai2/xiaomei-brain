@@ -288,7 +288,7 @@ function historyMessages(
     if (!role || typeof row.content !== "string") return [];
     if (role === "agent" && !row.content.trim()) return [];
     const rawDeliveryStatus = typeof row.status === "string" ? row.status : "";
-    const deliveryStatus = ["processing", "completed", "failed", "interrupted"].includes(rawDeliveryStatus)
+    const deliveryStatus = ["queued", "processing", "completed", "failed", "interrupted"].includes(rawDeliveryStatus)
       ? rawDeliveryStatus as DisplayMessage["deliveryStatus"]
       : undefined;
     const deliveryError = row.error && typeof row.error === "object" && !Array.isArray(row.error)
@@ -572,7 +572,7 @@ export interface DisplayMessage {
   attachments?: DisplayAttachment[];
   memoryReferences?: MemoryReference[];
   turnId?: string;
-  deliveryStatus?: "processing" | "completed" | "failed" | "interrupted";
+  deliveryStatus?: "queued" | "processing" | "completed" | "failed" | "interrupted";
   deliveryError?: string;
   sourceMessageId?: number;
   retryOf?: number;
@@ -1389,7 +1389,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
       s.messagesByAgent[agentId].push({
         id: `user-${clientRequestId}`, role: "user", content: text, streaming: false,
-        deliveryStatus: "processing",
+        deliveryStatus: "queued",
         attachments: attachments.map((attachment) => ({
           id: attachment.id,
           name: attachment.name,
@@ -1418,6 +1418,9 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
           }
           if (userMessage && typeof res.result?.message_id === "number") {
             userMessage.sourceMessageId = res.result.message_id;
+          }
+          if (userMessage && res.result?.status === "queued") {
+            userMessage.deliveryStatus = "queued";
           }
         }));
         return;
@@ -2370,9 +2373,12 @@ export function initGatewayEvents() {
         const userMessage = [...(s.messagesByAgent[agentId] || [])]
           .reverse()
           .find((message) => message.role === "user"
-            && message.deliveryStatus === "processing"
+            && ["queued", "processing"].includes(message.deliveryStatus || "")
             && (!message.turnId || message.turnId === eventTurnId));
-        if (userMessage && eventTurnId) userMessage.turnId = eventTurnId;
+        if (userMessage) {
+          if (eventTurnId) userMessage.turnId = eventTurnId;
+          userMessage.deliveryStatus = "processing";
+        }
       }));
       return;
     }

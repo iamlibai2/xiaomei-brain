@@ -22,14 +22,23 @@ export function ChatTopbar({
   activitySummary,
 }: ChatTopbarProps) {
   const { t } = useTranslation();
+  const isDreaming = agentState?.living === "dreaming";
+  const stateText = isDreaming
+    ? "梦境中"
+    : agentState?.focusSummary
+      || activitySummary
+      || (agentState ? livingStateName(agentState.living) : "");
+  const stateClass = isDreaming
+    ? "dreaming"
+    : activitySummary ? "working" : agentState?.living || "";
 
   return (
     <div className="chat-topbar">
       <div className="chat-topbar-left">
         <span className="chat-topbar-title">{taskName}</span>
         {(agentState || activitySummary) && (
-          <span className={`chat-topbar-agent-state ${activitySummary ? "working" : agentState?.living || ""}`}>
-            {agentState?.focusSummary || activitySummary || (agentState ? livingStateName(agentState.living) : "")}
+          <span className={`chat-topbar-agent-state ${stateClass}`}>
+            {stateText}
           </span>
         )}
       </div>
@@ -68,6 +77,6 @@ function livingStateName(state: AgentStateSnapshot["living"]): string {
     idle: "空闲",
     working: "工作中",
     sleeping: "睡眠中",
-    dreaming: "做梦中",
+    dreaming: "梦境中",
   }[state];
 }

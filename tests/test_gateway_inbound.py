@@ -206,10 +206,9 @@ class TestGatewayAccept:
         row = db.query(session_id="session-1")[0]
         metadata = json.loads(row["metadata"])
         assert row["content"] == "durable"
-        assert metadata == {
-            "turn_id": result.living_message.turn_id,
-            "status": "processing",
-        }
+        assert metadata["turn_id"] == result.living_message.turn_id
+        assert metadata["status"] == "queued"
+        assert isinstance(metadata["queued_at"], float)
         db.close()
 
     def test_persistence_failure_rejects_without_enqueue(self):

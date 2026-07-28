@@ -212,6 +212,15 @@ export function HomePage() {
             )}
           </div>
         )}
+        {!showAgentStart && agentState?.living === "dreaming" && (
+          <div className="dreaming-message-notice" role="status">
+            <Icon name="moon" size={16} />
+            <div>
+              <strong>{agentName}正在梦境中</strong>
+              <span>收到的消息会安全排队，并在醒来后按顺序处理。</span>
+            </div>
+          </div>
+        )}
         {!hasMessages && !showAgentStart && (
           <>
             <HomeHeader mode={mode} />
@@ -421,6 +430,7 @@ function MessageRow({
             )}
           {message.deliveryStatus && message.deliveryStatus !== "completed" && (
             <div className={`message-delivery-status ${message.deliveryStatus}`}>
+              {message.deliveryStatus === "queued" && "已排队"}
               {message.deliveryStatus === "processing" && "处理中"}
               {message.deliveryStatus === "failed" && `处理失败${message.deliveryError ? `：${message.deliveryError}` : ""}`}
               {message.deliveryStatus === "interrupted" && "已中断"}

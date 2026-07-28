@@ -10,6 +10,7 @@ Job types:
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -201,6 +202,15 @@ class ExtractJob:
         ).timestamp()
 
         messages = self.extractor.db.query(since=today_start, limit=EXTRACT_MAX_MESSAGES)
+        # Gateway persists human input before enqueueing it.  A message that
+        # arrives while this dream is running is therefore visible in the
+        # conversation database, but it is not part of the Agent's lived
+        # conversation yet.  Keep queued/in-flight human input out of dream
+        # consolidation until its Turn has completed.
+        messages = [
+            message for message in messages
+            if not self._is_unprocessed_human_message(message)
+        ]
         if len(messages) < 3:
             return DreamResult(job="extract", saved=0, details=f"<3 messages, skip")
 
@@ -287,6 +297,19 @@ class ExtractJob:
         )
 
     # ── Helpers ────────────────────────────────────────────────
+
+    @staticmethod
+    def _is_unprocessed_human_message(message: dict) -> bool:
+        if message.get("role") != "user":
+            return False
+        try:
+            metadata = json.loads(message.get("metadata") or "{}")
+        except (TypeError, json.JSONDecodeError):
+            return False
+        return (
+            isinstance(metadata, dict)
+            and metadata.get("status") in {"queued", "processing"}
+        )
 
     def _build_context(self, cumulative: list[str]) -> str:
         """构建"已有记忆"上下文文本。"""
