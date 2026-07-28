@@ -31,6 +31,14 @@ export interface RuntimeDescriptor {
   source: "environment" | "config" | "virtualenv" | "bundled" | "path";
 }
 
+export interface RuntimeCommandDescriptor {
+  command: string;
+  args: string[];
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  source: RuntimeDescriptor["source"];
+}
+
 export interface AgentLifecycleResult {
   ok: boolean;
   action: AgentLifecycleAction;
@@ -359,6 +367,17 @@ export class RuntimeManager {
       PYTHONDONTWRITEBYTECODE: "1",
       PYTHONUTF8: "1",
       ...(pythonPath ? { PYTHONPATH: pythonPath } : {}),
+    };
+  }
+
+  async buildCommand(args: string[]): Promise<RuntimeCommandDescriptor> {
+    const runtime = await this.resolve();
+    return {
+      command: runtime.executable,
+      args: [...runtime.prefixArgs, ...args],
+      cwd: os.homedir(),
+      env: this.commandEnvironment(),
+      source: runtime.source,
     };
   }
 

@@ -1,11 +1,13 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { AboutDialog } from "./AboutDialog";
+import { useCoreStore } from "../store";
 
 interface MenuItem {
   label: string;
   action?: () => void;
   separator?: boolean;
+  disabled?: boolean;
 }
 
 export function MenuBar() {
@@ -14,6 +16,10 @@ export function MenuBar() {
   const [maximized, setMaximized] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const activeAgent = useCoreStore((state) => (
+    state.agents.find((agent) => agent.id === state.activeAgentId)
+  ));
+  const openAgentLogs = useCoreStore((state) => state.openAgentLogs);
 
   const menus: Record<string, MenuItem[]> = useMemo(() => ({
     [t("menu.edit")]: [
@@ -26,6 +32,14 @@ export function MenuBar() {
       { label: t("menu.selectAll"), action: () => document.execCommand("selectAll") },
     ],
     [t("menu.window")]: [
+      {
+        label: t("menu.viewAgentLogs"),
+        action: activeAgent?.localAgentId
+          ? () => openAgentLogs(activeAgent.localAgentId!)
+          : undefined,
+        disabled: !activeAgent || activeAgent.source !== "local" || !activeAgent.localAgentId,
+      },
+      { separator: true, label: "" },
       { label: t("menu.reload"), action: () => location.reload() },
       { label: t("menu.devtools"), action: () => {} },
       { separator: true, label: "" },
@@ -37,7 +51,7 @@ export function MenuBar() {
         action: () => setAboutOpen(true),
       },
     ],
-  }), [t]);
+  }), [activeAgent, openAgentLogs, t]);
 
   useEffect(() => {
     if (!window.win) return;
@@ -80,6 +94,7 @@ export function MenuBar() {
                       <button
                         key={i}
                         className="menubar-dropdown-item"
+                        disabled={item.disabled}
                         onClick={() => {
                           item.action?.();
                           setOpenMenu(null);

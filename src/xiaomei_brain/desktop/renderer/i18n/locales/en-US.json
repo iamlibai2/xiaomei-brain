@@ -154,6 +154,7 @@
       "close": "Close"
     },
     "menu": {
+      "viewAgentLogs": "View Current Agent Logs",
       "edit": "Edit(E)",
       "undo": "Undo",
       "redo": "Redo",
@@ -250,6 +251,7 @@
     },
     "terminal": {
       "title": "Terminal",
+      "agentLogTitle": "{{name}} · Live Runtime Log",
       "close": "Close Terminal",
       "exitMessage": "Process exited with code: {{code}}"
     }

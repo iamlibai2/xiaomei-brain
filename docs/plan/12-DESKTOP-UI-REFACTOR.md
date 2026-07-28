@@ -420,6 +420,20 @@ styles/
 - 收敛 Markdown、Thinking 和代码块样式；
 - 提高元数据字号和对比度。
 
+实施记录（2026-07-29，第一轮）：
+
+- 普通消息减少过大的垂直留白；
+- Agent 头像改为与整体界面一致的柔和方形样式；
+- Clarify、Action、Artifact 和 Assignment 统一为克制的平面卡片边界；
+- 移除 Clarify 卡片阴影和 Action 卡片渐变；
+- 工具调用改为紧凑状态行；
+- Thinking 详情移除强调竖线，改用轻量内容容器；
+- 补充卡片按钮的键盘焦点状态；
+- 未改变交互协议、状态流转或卡片业务行为；
+- Desktop Main 与 Renderer 完整构建通过。
+
+连续消息分组和 Markdown/代码块细节留待实际界面验证后继续，避免一次改动过多。
+
 ### 阶段 F：Design System 收束
 
 - 提取通用组件；

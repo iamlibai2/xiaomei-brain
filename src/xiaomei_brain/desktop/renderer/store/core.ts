@@ -301,6 +301,7 @@ function historyMessages(
       role,
       content: row.content,
       streaming: false,
+      createdAt: typeof row.created_at === "number" ? row.created_at * 1000 : undefined,
       attachments: displayAttachments(row.attachments),
       memoryReferences: role === "agent" ? memoryReferences(row.memory_references) : undefined,
       turnId: typeof row.turn_id === "string" ? row.turn_id : undefined,
@@ -564,6 +565,7 @@ export interface DisplayMessage {
   role: "user" | "agent";
   content: string;
   streaming: boolean;
+  createdAt?: number;
   interaction?: InteractionRequest;
   tool?: ToolActivity;
   action?: ActionRequest;
@@ -1016,6 +1018,7 @@ interface CoreState {
   agents: AgentEntry[];
   page: "connect" | "chat";
   terminalOpen: boolean;
+  terminalAgentId: string | null;
   activeNav: string;
   unreadByAgent: Record<string, number>;
   sessionsByAgent: Record<string, SessionEntry[]>;
@@ -1065,6 +1068,7 @@ interface CoreActions {
   ) => Promise<string>;
   setPage: (page: "connect" | "chat") => void;
   setTerminalOpen: (open: boolean) => void;
+  openAgentLogs: (agentId: string) => void;
   setActiveNav: (nav: string) => void;
   clearUnread: (agentId: string) => void;
   refreshLocalAgents: () => Promise<void>;
@@ -1099,6 +1103,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   agents: persisted.agents ?? [],
   page: (persisted.agents && persisted.agents.length > 0) ? "chat" : "connect",
   terminalOpen: false,
+  terminalAgentId: null,
   activeNav: "assistant",
   unreadByAgent: {},
   sessionsByAgent: {},
@@ -1484,6 +1489,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
       s.messagesByAgent[agentId].push({
         id: `user-${clientRequestId}`, role: "user", content: text, streaming: false,
+        createdAt: Date.now(),
         deliveryStatus: "queued",
         attachments: attachments.map((attachment) => ({
           id: attachment.id,
@@ -1661,6 +1667,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         role: "user",
         content: source.content,
         streaming: false,
+        createdAt: Date.now(),
         attachments: source.attachments,
         deliveryStatus: "processing",
         retryOf: messageId,
@@ -2277,7 +2284,14 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   },
 
   setPage: (page) => set(produce((s: CoreState) => { s.page = page; })),
-  setTerminalOpen: (open) => set(produce((s: CoreState) => { s.terminalOpen = open; })),
+  setTerminalOpen: (open) => set(produce((s: CoreState) => {
+    s.terminalOpen = open;
+    s.terminalAgentId = null;
+  })),
+  openAgentLogs: (agentId) => set(produce((s: CoreState) => {
+    s.terminalAgentId = agentId;
+    s.terminalOpen = true;
+  })),
   setActiveNav: (nav) => set(produce((s: CoreState) => { s.activeNav = nav; })),
   clearUnread: (agentId) => set(produce((s: CoreState) => { s.unreadByAgent[agentId] = 0; })),
 }));

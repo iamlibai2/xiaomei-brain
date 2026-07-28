@@ -438,7 +438,7 @@ body[data-platform="mac"] .sidebar-topbar {
 }
 
 .session-item-name {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--ui-color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -450,7 +450,7 @@ body[data-platform="mac"] .sidebar-topbar {
 
 .session-item-meta {
   color: var(--ui-color-text-disabled);
-  font-size: 10px;
+  font-size: 11px;
   white-space: nowrap;
 }
 

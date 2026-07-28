@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import ReactMarkdown from "react-markdown";
 import {
   useCoreStore,
   AssignmentSnapshot,
@@ -13,6 +12,8 @@ import { ChatTopbar } from "./ChatTopbar";
 import { AgentSettingsDialog } from "../agent-settings/AgentSettingsDialog";
 import { AssignmentCard } from "./AssignmentCard";
 import { ActivitySidebar } from "../right-sidebar/ActivitySidebar";
+import { TerminalPanel } from "../terminal/TerminalPanel";
+import { MarkdownMessage } from "./MarkdownMessage";
 
 const EMPTY_MSGS: DisplayMessage[] = [];
 const EMPTY_ASSIGNMENTS: AssignmentSnapshot[] = [];
@@ -34,6 +35,8 @@ export function HomePage() {
   const activeAgentOnline = useCoreStore((s) => s.localAvailabilityByAgent[s.activeAgentId || ""]);
   const activeAgentInfo = useCoreStore((s) => s.localInfoByAgent[s.activeAgentId || ""]);
   const activeAgentLifecycle = useCoreStore((s) => s.lifecycleByAgent[s.activeAgentId || ""]);
+  const terminalOpen = useCoreStore((s) => s.terminalOpen);
+  const terminalAgentId = useCoreStore((s) => s.terminalAgentId);
   const controlLocalAgent = useCoreStore((s) => s.controlLocalAgent);
   const sendMessage = useCoreStore((s) => s.sendMessage);
   const abortMessage = useCoreStore((s) => s.abortMessage);
@@ -57,17 +60,22 @@ export function HomePage() {
     s.activitiesByAgent[s.activeAgentId || ""] || []
   ).find((item) => ["queued", "running", "paused"].includes(item.status)));
 
-  const [activityPanelOpen, setActivityPanelOpen] = useState(true);
+  const [activityPanelOpen, setActivityPanelOpen] = useState(false);
   const [rightSidebarSection, setRightSidebarSection] = useState<RightSidebarSection>("activity");
   const [focusedArtifactKey, setFocusedArtifactKey] = useState("");
   const [focusedMemories, setFocusedMemories] = useState<MemoryReference[]>([]);
   const [selectedAssignmentId, setSelectedAssignmentId] = useState<string | null>(null);
   const [agentSettingsOpen, setAgentSettingsOpen] = useState(false);
+  const [historyTraversalStarted, setHistoryTraversalStarted] = useState<Set<string>>(() => new Set());
+  const [followingLatest, setFollowingLatest] = useState(true);
+  const [unreadWhileAway, setUnreadWhileAway] = useState(false);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
   const previousFirstMessageId = useRef<string | null>(null);
+  const followLatestRef = useRef(true);
+  const scrollFrameRef = useRef<number>();
 
   useEffect(() => {
     if (activeAgentId && connectionStatus === "connected") {
@@ -88,10 +96,35 @@ export function HomePage() {
   ]);
 
   useEffect(() => {
-    setActivityPanelOpen(true);
+    setActivityPanelOpen(false);
     setSelectedAssignmentId(null);
     setFocusedMemories([]);
   }, [activeAgentId]);
+
+  const scrollToLatest = useCallback(() => {
+    const list = messageListRef.current;
+    followLatestRef.current = true;
+    setFollowingLatest(true);
+    setUnreadWhileAway(false);
+    if (list) list.scrollTop = list.scrollHeight;
+  }, []);
+
+  const scheduleScrollToLatest = useCallback(() => {
+    window.cancelAnimationFrame(scrollFrameRef.current || 0);
+    scrollFrameRef.current = window.requestAnimationFrame(() => {
+      if (followLatestRef.current) scrollToLatest();
+    });
+  }, [scrollToLatest]);
+
+  useEffect(() => () => window.cancelAnimationFrame(scrollFrameRef.current || 0), []);
+
+  useEffect(() => {
+    followLatestRef.current = true;
+    setFollowingLatest(true);
+    setUnreadWhileAway(false);
+    previousFirstMessageId.current = null;
+    scheduleScrollToLatest();
+  }, [activeAgentId, activeSessionId, scheduleScrollToLatest]);
 
   useEffect(() => {
     const firstMessageId = messages[0]?.id || null;
@@ -101,18 +134,45 @@ export function HomePage() {
       && firstMessageId !== previousFirst
       && messages.some((message) => message.id === previousFirst),
     );
-    if (!historyWasPrepended) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (!historyWasPrepended) {
+      if (followLatestRef.current) {
+        scheduleScrollToLatest();
+      } else {
+        setUnreadWhileAway(true);
+      }
+    }
     previousFirstMessageId.current = firstMessageId;
-  }, [messages]);
+  }, [messages, scheduleScrollToLatest]);
+
+  const handleMessageListScroll = useCallback(() => {
+    const list = messageListRef.current;
+    if (!list) return;
+    const distanceToBottom = list.scrollHeight - list.clientHeight - list.scrollTop;
+    const nearBottom = distanceToBottom <= 72;
+    followLatestRef.current = nearBottom;
+    setFollowingLatest(nearBottom);
+    if (nearBottom) setUnreadWhileAway(false);
+  }, []);
 
   const loadOlderPreservingPosition = useCallback(async () => {
+    const historyKey = activeAgentId && activeSessionId
+      ? `${activeAgentId}:${activeSessionId}`
+      : "";
+    if (historyKey && historyPage?.hasMore) {
+      setHistoryTraversalStarted((current) => {
+        if (current.has(historyKey)) return current;
+        const next = new Set(current);
+        next.add(historyKey);
+        return next;
+      });
+    }
     const list = messageListRef.current;
     const previousHeight = list?.scrollHeight || 0;
     await loadOlderMessages();
     requestAnimationFrame(() => {
       if (list) list.scrollTop += list.scrollHeight - previousHeight;
     });
-  }, [loadOlderMessages]);
+  }, [activeAgentId, activeSessionId, historyPage?.hasMore, loadOlderMessages]);
 
   useEffect(() => {
     const sentinel = topRef.current;
@@ -126,6 +186,17 @@ export function HomePage() {
   }, [activeAgentId, activeSessionId, historyPage?.hasMore, historyPage?.loading, historyPage?.error, loadOlderPreservingPosition]);
 
   const hasMessages = messages.length > 0;
+  const activeHistoryKey = activeAgentId && activeSessionId
+    ? `${activeAgentId}:${activeSessionId}`
+    : "";
+  const showOldestReached = Boolean(
+    activeHistoryKey
+    && historyTraversalStarted.has(activeHistoryKey)
+    && historyPage
+    && !historyPage.hasMore
+    && !historyPage.loading
+    && !historyPage.error,
+  );
   const isDreaming = agentState?.living === "dreaming";
   const showAgentStart = !hasMessages && activeAgent?.source === "local" && activeAgentOnline === false;
   const agentStarting = activeAgentLifecycle?.status === "starting" || activeAgentLifecycle?.status === "restarting";
@@ -153,18 +224,18 @@ export function HomePage() {
   return (
     <div className="main-content">
       <div className="main-content-primary">
+      {activeAgentId && !showAgentStart && (
+        <ChatTopbar
+          taskName={taskName}
+          onSearch={() => {}}
+          onToggleRightPanel={() => setActivityPanelOpen((open) => !open)}
+          rightPanelOpen={activityPanelOpen}
+          onOpenAgentSettings={() => setAgentSettingsOpen(true)}
+          agentState={agentState}
+          activitySummary={currentActivity?.progressSummary || currentActivity?.title || ""}
+        />
+      )}
       <div className={`wb-home-page ${hasMessages ? "is-conversation" : "is-empty"}`}>
-        {!hasMessages && activeAgentId && (
-          <div className="agent-settings-empty-trigger">
-            <Button
-              variant="ghost"
-              size="icon-md"
-              icon="settings"
-              onClick={() => setAgentSettingsOpen(true)}
-              title={t("home.agentSettings", "Agent 设置")}
-            />
-          </div>
-        )}
         {showAgentStart && activeAgent && activeAgentId && (
           <div className="agent-start-state">
             <div className="agent-start-avatar">{activeAgent.name.charAt(0)}</div>
@@ -221,15 +292,6 @@ export function HomePage() {
         )}
         {hasMessages && (
           <>
-            <ChatTopbar
-              taskName={taskName}
-              onSearch={() => {}}
-              onToggleRightPanel={() => setActivityPanelOpen(!activityPanelOpen)}
-              rightPanelOpen={activityPanelOpen}
-              onOpenAgentSettings={() => setAgentSettingsOpen(true)}
-              agentState={agentState}
-              activitySummary={currentActivity?.progressSummary || currentActivity?.title || ""}
-            />
             {isDreaming && <DreamingNotice agentName={agentName} />}
             {visibleAssignments.length > 0 && (
               <div className="assignment-conversation-strip">
@@ -238,7 +300,7 @@ export function HomePage() {
                 ))}
               </div>
             )}
-            <div className="message-list" ref={messageListRef}>
+            <div className="message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
               <div className="message-list-inner">
                 <div ref={topRef} className="history-page-status">
                   {historyPage?.loading && t("home.loadingOlder")}
@@ -247,9 +309,7 @@ export function HomePage() {
                       {t("home.retryOlder")}
                     </button>
                   )}
-                  {historyPage && !historyPage.hasMore && !historyPage.loading && !historyPage.error
-                    ? t("home.oldestReached")
-                    : null}
+                  {showOldestReached ? t("home.oldestReached") : null}
                 </div>
                 {messages.map((m) => (
                   <MessageRow
@@ -271,6 +331,17 @@ export function HomePage() {
                 <div ref={bottomRef} />
               </div>
             </div>
+            {!followingLatest && (
+              <button
+                type="button"
+                className={`scroll-to-latest ${unreadWhileAway ? "has-unread" : ""}`}
+                onClick={scrollToLatest}
+                title="回到底部"
+              >
+                <Icon name="chevron-down" size={16} />
+                {unreadWhileAway && <span>有新消息</span>}
+              </button>
+            )}
           </>
         )}
         {!showAgentStart && (
@@ -279,6 +350,7 @@ export function HomePage() {
           </div>
         )}
       </div>
+      {terminalOpen && <TerminalPanel key={terminalAgentId || "shell"} />}
       </div>
       <ActivitySidebar
         open={activityPanelOpen}
@@ -374,6 +446,8 @@ function MessageRow({
   const { t } = useTranslation();
   const isUser = message.role === "user";
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
+  const [messageCopied, setMessageCopied] = useState(false);
+  const messageCopyTimerRef = useRef<number>();
   const activeAgentId = useCoreStore((s) => s.activeAgentId || "");
   const activeSessionId = useCoreStore((s) => {
     const agentId = s.activeAgentId || "";
@@ -384,6 +458,15 @@ function MessageRow({
     const agentId = s.activeAgentId || "";
     return s.sendingByAgent[agentId] || false;
   });
+
+  useEffect(() => () => window.clearTimeout(messageCopyTimerRef.current), []);
+
+  const copyWholeMessage = async (text: string) => {
+    await navigator.clipboard.writeText(text);
+    setMessageCopied(true);
+    window.clearTimeout(messageCopyTimerRef.current);
+    messageCopyTimerRef.current = window.setTimeout(() => setMessageCopied(false), 1600);
+  };
 
   if (message.action) {
     return <ActionApprovalCard message={message} agentName={agentName} />;
@@ -412,39 +495,56 @@ function MessageRow({
   if (isUser) {
     return (
       <div className="user-message-row">
-        <div className="user-message-bubble">
-          {message.attachments && message.attachments.length > 0 && (
-            <div className="message-attachments">
-              {message.attachments.map((attachment) => (
-                <MessageAttachment
-                  attachment={attachment}
-                  agentId={activeAgentId}
-                  sessionId={activeSessionId}
-                  key={attachment.id}
-                />
-              ))}
-            </div>
-          )}
-          {message.content && <div>{message.content}</div>}
-          {(message.deliveryStatus === "failed" || message.deliveryStatus === "interrupted") &&
-            message.sourceMessageId && (
-              <button
-                type="button"
-                className="message-retry"
-                disabled={agentSending}
-                onClick={() => void retryMessage(message.sourceMessageId!)}
-              >
-                重试
-              </button>
+        <div className="user-message-stack">
+          <div className="user-message-bubble">
+            {message.attachments && message.attachments.length > 0 && (
+              <div className="message-attachments">
+                {message.attachments.map((attachment) => (
+                  <MessageAttachment
+                    attachment={attachment}
+                    agentId={activeAgentId}
+                    sessionId={activeSessionId}
+                    key={attachment.id}
+                  />
+                ))}
+              </div>
             )}
-          {message.deliveryStatus && message.deliveryStatus !== "completed" && (
-            <div className={`message-delivery-status ${message.deliveryStatus}`}>
-              {message.deliveryStatus === "queued" && "已排队"}
-              {message.deliveryStatus === "processing" && "处理中"}
-              {message.deliveryStatus === "failed" && `处理失败${message.deliveryError ? `：${message.deliveryError}` : ""}`}
-              {message.deliveryStatus === "interrupted" && "已中断"}
-            </div>
-          )}
+            {message.content && <div>{message.content}</div>}
+            {(message.deliveryStatus === "failed" || message.deliveryStatus === "interrupted") &&
+              message.sourceMessageId && (
+                <button
+                  type="button"
+                  className="message-retry"
+                  disabled={agentSending}
+                  onClick={() => void retryMessage(message.sourceMessageId!)}
+                >
+                  重试
+                </button>
+              )}
+            {message.deliveryStatus && message.deliveryStatus !== "completed" && (
+              <div className={`message-delivery-status ${message.deliveryStatus}`}>
+                {message.deliveryStatus === "queued" && "已排队"}
+                {message.deliveryStatus === "processing" && "处理中"}
+                {message.deliveryStatus === "failed" && `处理失败${message.deliveryError ? `：${message.deliveryError}` : ""}`}
+                {message.deliveryStatus === "interrupted" && "已中断"}
+              </div>
+            )}
+          </div>
+          <div className="user-message-meta">
+            {message.createdAt && (
+              <time dateTime={new Date(message.createdAt).toISOString()}>
+                {formatMessageTime(message.createdAt)}
+              </time>
+            )}
+            <button
+              type="button"
+              title="复制整条消息"
+              onClick={() => void copyWholeMessage(message.content)}
+            >
+              <Icon name="copy" size={13} />
+              <span>{messageCopied ? "已复制" : "复制"}</span>
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -452,10 +552,20 @@ function MessageRow({
 
   const { thinking, content } = parseThinkingContent(message.content, message.streaming);
   const hasThinking = thinking.length > 0;
+  const displayedContent = hasThinking ? content : message.content;
   const thinkingComplete = !message.streaming || /\x1b\[0m/.test(message.content) || /\[0m/.test(message.content);
 
   return (
     <div className="assistant-message-row">
+      <button
+        type="button"
+        className="message-copy-action"
+        title="复制整条回答"
+        onClick={() => void copyWholeMessage(displayedContent)}
+      >
+        <Icon name="copy" size={14} />
+        <span>{messageCopied ? "已复制" : "复制"}</span>
+      </button>
       <div className="assistant-avatar">
         <div className="assistant-avatar-face">
           {agentName.charAt(0)}
@@ -481,39 +591,10 @@ function MessageRow({
         </div>
       )}
       <div className="assistant-text-content">
-        <ReactMarkdown
-          className="message-md"
-          components={{
-            pre({ children }) {
-              return <div className="md-pre-wrapper"><div className="md-pre-container">{children}</div></div>;
-            },
-            code({ className, children, ...props }) {
-              const match = /language-(\w+)/.exec(className || "");
-              const codeStr = String(children).replace(/\n$/, "");
-              const isInline = !match && !String(children).includes("\n");
-              if (isInline) {
-                return <code className={className} {...props}>{children}</code>;
-              }
-              return (
-                <>
-                  <div className="md-pre-header">
-                    <span className="md-pre-lang">{match ? match[1] : "code"}</span>
-                    <button
-                      className="md-pre-copy"
-                      onClick={() => navigator.clipboard.writeText(codeStr)}
-                    >
-                      <Icon name="copy" size={14} />
-                      {t("home.copy")}
-                    </button>
-                  </div>
-                  <pre><code className={className} {...props}>{children}</code></pre>
-                </>
-              );
-            },
-          }}
-        >
-          {hasThinking ? content : message.content}
-        </ReactMarkdown>
+        <MarkdownMessage
+          content={displayedContent}
+          streaming={message.streaming}
+        />
         {message.memoryReferences && message.memoryReferences.length > 0 && (
           <button
             type="button"
@@ -527,6 +608,14 @@ function MessageRow({
       </div>
     </div>
   );
+}
+
+function formatMessageTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 }
 
 function MessageAttachment({
@@ -783,10 +872,9 @@ function ToolActivityRow({ message }: { message: DisplayMessage }) {
     <div className={`tool-activity tool-${tool.status}`}>
       <span className="tool-activity-indicator" aria-hidden="true" />
       <div className="tool-activity-body">
-        <div className="tool-activity-title">{title}</div>
-        {hasDetails && !running && (
+        {hasDetails && !running ? (
           <details className="tool-activity-details">
-            <summary>{t("home.toolDetails")}</summary>
+            <summary className="tool-activity-title">{title}</summary>
             {hasArguments && (
               <div className="tool-activity-section">
                 <span>{t("home.toolArguments")}</span>
@@ -800,6 +888,8 @@ function ToolActivityRow({ message }: { message: DisplayMessage }) {
               </div>
             )}
           </details>
+        ) : (
+          <div className="tool-activity-title">{title}</div>
         )}
       </div>
     </div>

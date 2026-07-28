@@ -94,4 +94,18 @@ export function registerDesktopDiagnosticsIpc(): void {
   ipcMain.handle("desktop:readLog", async () => ({ content: readLogTail() }));
   ipcMain.handle("desktop:openLogDirectory", async () => openDirectory(logDirectory()));
   ipcMain.handle("desktop:openConfigDirectory", async () => openDirectory(app.getPath("userData")));
+  ipcMain.handle("desktop:openExternal", async (_event, url: unknown) => {
+    if (typeof url !== "string") return { ok: false, error: "无效链接" };
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return { ok: false, error: "无效链接" };
+    }
+    if (!["http:", "https:", "mailto:"].includes(parsed.protocol)) {
+      return { ok: false, error: "不支持的链接协议" };
+    }
+    await shell.openExternal(parsed.toString());
+    return { ok: true };
+  });
 }

@@ -72,9 +72,9 @@ const ICON_PATHS: Record<IconName, React.ReactNode> = {
   "sidebar-panel-right": (
     <>
       <rect x="1" y="2" width="16" height="14" rx="2" />
-      <line x1="4" y1="2" x2="4" y2="16" />
-      <line x1="7" y1="7" x2="10" y2="9" />
-      <line x1="7" y1="11" x2="10" y2="9" />
+      <line x1="14" y1="2" x2="14" y2="16" />
+      <line x1="8" y1="7" x2="11" y2="9" />
+      <line x1="8" y1="11" x2="11" y2="9" />
     </>
   ),
   bell: (

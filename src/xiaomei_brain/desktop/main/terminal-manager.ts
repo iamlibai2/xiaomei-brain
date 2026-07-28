@@ -1,6 +1,11 @@
 import { IPty } from "node-pty";
 
-let pty: IPty | null = null;
+export interface TerminalLaunch {
+  command: string;
+  args: string[];
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+}
 
 // ── Shell resolution ──
 
@@ -21,6 +26,33 @@ function resolveShell(): { command: string; args: string[] } {
   return { command: shell, args: ["-il"] };
 }
 
+function powershellArgument(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function wrapWindowsLaunch(
+  shell: { command: string; args: string[] },
+  launch: TerminalLaunch,
+): { command: string; args: string[] } {
+  const executable = powershellArgument(launch.command);
+  const commandArgs = launch.args.map(powershellArgument).join(" ");
+  const commandLine = `& ${executable}${commandArgs ? ` ${commandArgs}` : ""}`;
+  const shellName = shell.command.toLowerCase();
+  if (shellName.includes("powershell") || shellName.includes("pwsh")) {
+    return {
+      command: shell.command,
+      args: [...shell.args, "-NoExit", "-Command", commandLine],
+    };
+  }
+
+  // PowerShell is present on supported Windows versions, but keep a cmd
+  // fallback for stripped-down environments.
+  const cmdLine = [launch.command, ...launch.args]
+    .map((value) => `"${value.replace(/"/g, '""')}"`)
+    .join(" ");
+  return { command: shell.command, args: ["/D", "/K", cmdLine] };
+}
+
 // ── TerminalManager ──
 
 export class TerminalManager {
@@ -31,21 +63,28 @@ export class TerminalManager {
     cols: number,
     rows: number,
     onData: (data: string) => void,
-    onExit: (code: number) => void
+    onExit: (code: number) => void,
+    launch?: TerminalLaunch,
   ): { id: string; shell: string; cwd: string } {
     this.kill();
 
     const shell = resolveShell();
-    const cwd = process.env.HOME || process.env.USERPROFILE || "/";
+    const wrapped = launch && process.platform === "win32"
+      ? wrapWindowsLaunch(shell, launch)
+      : null;
+    const command = wrapped?.command || launch?.command || shell.command;
+    const args = wrapped?.args || launch?.args || shell.args;
+    const cwd = launch?.cwd || process.env.HOME || process.env.USERPROFILE || "/";
 
     const nodePty = require("node-pty");
-    const p = nodePty.spawn(shell.command, shell.args, {
+    const p = nodePty.spawn(command, args, {
       name: "xterm-256color",
       cols,
       rows,
       cwd,
       env: {
         ...process.env,
+        ...launch?.env,
         TERM: "xterm-256color",
         COLORTERM: "truecolor",
         TERM_PROGRAM: "xiaomei-brain",
@@ -55,9 +94,15 @@ export class TerminalManager {
     this.id = `term-${Date.now()}`;
     this.pty = p;
     p.onData(onData);
-    p.onExit(({ exitCode }: { exitCode: number }) => onExit(exitCode));
+    p.onExit(({ exitCode }: { exitCode: number }) => {
+      if (this.pty === p) {
+        this.pty = null;
+        this.id = null;
+      }
+      onExit(exitCode);
+    });
 
-    return { id: this.id, shell: shell.command, cwd };
+    return { id: this.id, shell: command, cwd };
   }
 
   write(data: string): void {

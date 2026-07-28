@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, shell, type MenuItemConstructorOptions } from "electron";
 import { existsSync } from "fs";
 import path from "path";
 import { GatewayClient } from "./gateway-client";
@@ -92,6 +92,28 @@ function createWindow(): void {
 
   mainWindow.on("ready-to-show", () => {
     mainWindow?.show();
+  });
+
+  mainWindow.webContents.on("context-menu", (_event, params) => {
+    const template: MenuItemConstructorOptions[] = [];
+    if (params.isEditable) {
+      template.push(
+        { label: "撤销", role: "undo", enabled: params.editFlags.canUndo },
+        { label: "重做", role: "redo", enabled: params.editFlags.canRedo },
+        { type: "separator" },
+        { label: "剪切", role: "cut", enabled: params.editFlags.canCut },
+        { label: "复制", role: "copy", enabled: params.editFlags.canCopy },
+        { label: "粘贴", role: "paste", enabled: params.editFlags.canPaste },
+        { type: "separator" },
+        { label: "全选", role: "selectAll", enabled: params.editFlags.canSelectAll },
+      );
+    } else {
+      template.push(
+        { label: "复制", role: "copy", enabled: Boolean(params.selectionText) },
+        { label: "全选", role: "selectAll" },
+      );
+    }
+    Menu.buildFromTemplate(template).popup({ window: mainWindow || undefined });
   });
 
   if (process.env.NODE_ENV === "development") {

@@ -221,6 +221,7 @@ export interface DesktopBridge {
   readLog(): Promise<{ content: string }>;
   openLogDirectory(): Promise<DirectoryOpenResult>;
   openConfigDirectory(): Promise<DirectoryOpenResult>;
+  openExternal(url: string): Promise<DirectoryOpenResult>;
 }
 
 export interface WinBridge {
@@ -232,7 +233,12 @@ export interface WinBridge {
 }
 
 export interface TerminalBridge {
-  spawn(args: { cols: number; rows: number }): Promise<{ id: string; shell: string; cwd: string }>;
+  spawn(args: {
+    cols: number;
+    rows: number;
+    mode?: "shell" | "agent-logs";
+    agentId?: string;
+  }): Promise<{ id?: string; shell?: string; cwd?: string; error?: string }>;
   write(data: string): Promise<void>;
   resize(args: { cols: number; rows: number }): Promise<void>;
   dispose(): Promise<void>;

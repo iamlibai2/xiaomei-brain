@@ -198,7 +198,9 @@ export function ActivitySidebar({
           }} title="刷新">
             <Icon name="refresh" size={15} />
           </button>
-          <button type="button" onClick={onClose} title="关闭">×</button>
+          <button type="button" onClick={onClose} title="关闭右栏" aria-label="关闭右栏">
+            <Icon name="sidebar-panel-right" size={15} />
+          </button>
         </div>
       </header>
       <nav className="right-sidebar-sections" aria-label="Agent 详情栏目">

@@ -80,4 +80,3 @@
 .channel-error { color: #b42318; background: rgba(240, 68, 56, .1); }
 .agent-settings-dialog footer { justify-content: flex-end; gap: 10px; margin-top: 22px; }
 .channel-remove { margin-right: auto; border: 0; color: #d04444; background: transparent; cursor: pointer; }
-.agent-settings-empty-trigger { position: absolute; top: 16px; right: 18px; z-index: 2; }

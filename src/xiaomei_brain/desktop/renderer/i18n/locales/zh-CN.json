@@ -154,6 +154,7 @@
       "close": "关闭"
     },
     "menu": {
+      "viewAgentLogs": "查看当前 Agent 日志",
       "edit": "编辑(E)",
       "undo": "撤销",
       "redo": "重做",
@@ -250,6 +251,7 @@
     },
     "terminal": {
       "title": "终端",
+      "agentLogTitle": "{{name}} · 实时运行日志",
       "close": "关闭终端",
       "exitMessage": "进程退出，退出码: {{code}}"
     }

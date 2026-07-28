@@ -21,9 +21,9 @@ export function ConversationList() {
   const switchSession = useCoreStore((s) => s.switchSession);
   const sessionsByAgent = useCoreStore((s) => s.sessionsByAgent);
   const sessionListByAgent = useCoreStore((s) => s.sessionListByAgent);
-  const activeMessages = useCoreStore((s) => {
+  const activeMessageCount = useCoreStore((s) => {
     const agentId = s.activeAgentId;
-    return agentId ? s.messagesByAgent[agentId] || [] : [];
+    return agentId ? (s.messagesByAgent[agentId]?.length || 0) : 0;
   });
   const searchSessions = useCoreStore((s) => s.searchSessions);
   const loadMoreSessions = useCoreStore((s) => s.loadMoreSessions);
@@ -56,7 +56,7 @@ export function ConversationList() {
   const sessionBusy = activeAgentId
     ? Boolean(sendingByAgent[activeAgentId] || connectionByAgent[activeAgentId]?.status === "connecting")
     : false;
-  const canCreateSession = activeMessages.length > 0 && !sessionBusy;
+  const canCreateSession = activeMessageCount > 0 && !sessionBusy;
 
   useEffect(() => {
     if (activeAgentId && sessionListState?.query) void searchSessions("");

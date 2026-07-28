@@ -57,13 +57,17 @@ export function ChatTopbar({
           onClick={onSearch}
           title={t("home.searchInConversation")}
         />
-        <Button
-          variant="ghost"
-          size="icon-md"
-          icon={rightPanelOpen ? "sidebar-panel-right" : "sidebar-panel-right"}
-          onClick={onToggleRightPanel}
-          title={t("home.toggleRightPanel")}
-        />
+        {!rightPanelOpen && (
+          <Button
+            variant="ghost"
+            size="icon-md"
+            icon="sidebar-panel-right"
+            className="right-panel-toggle"
+            onClick={onToggleRightPanel}
+            aria-pressed={false}
+            title={t("home.toggleRightPanel")}
+          />
+        )}
       </div>
     </div>
   );

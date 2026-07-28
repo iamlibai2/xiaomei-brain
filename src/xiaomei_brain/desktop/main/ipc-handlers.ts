@@ -1047,9 +1047,31 @@ export function registerIpcHandlers(
 
   ipcMain.handle(
     "terminal:spawn",
-    async (_event, args: { cols: number; rows: number }) => {
+    async (_event, args: {
+      cols: number;
+      rows: number;
+      mode?: "shell" | "agent-logs";
+      agentId?: string;
+    }) => {
       const win = getWindow();
       if (!win) return { error: "No window" };
+      let launch;
+      if (args.mode === "agent-logs") {
+        if (!args.agentId || !/^[A-Za-z0-9_-]+$/.test(args.agentId)) {
+          return { error: "Invalid local Agent ID" };
+        }
+        try {
+          launch = await runtimeManager.buildCommand([
+            "logs",
+            args.agentId,
+            "--follow",
+            "--lines",
+            "100",
+          ]);
+        } catch (error) {
+          return { error: String(error instanceof Error ? error.message : error) };
+        }
+      }
 
       const result = terminalMgr.spawn(
         args.cols || 80,
@@ -1059,7 +1081,8 @@ export function registerIpcHandlers(
         },
         (code: number) => {
           win.webContents.send("terminal:exit", code);
-        }
+        },
+        launch,
       );
       return result;
     }

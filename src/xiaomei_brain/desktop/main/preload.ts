@@ -79,6 +79,7 @@ const CHANNEL_MAP = {
     readLog:                { invoke: "desktop:readLog" },
     openLogDirectory:       { invoke: "desktop:openLogDirectory" },
     openConfigDirectory:    { invoke: "desktop:openConfigDirectory" },
+    openExternal:           { invoke: "desktop:openExternal" },
   },
   win: {
     minimize:          { send: "window:minimize" },

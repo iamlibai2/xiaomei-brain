@@ -20,7 +20,11 @@ def cmd_logs(args: list[str]) -> None:
         print(f"\033[31m[错误] 日志文件不存在: {log_path}\033[0m")
         sys.exit(1)
 
-    with open(log_path, "r", encoding="utf-8") as f:
+    # Older logs may contain output written with the Windows console encoding,
+    # or end with a partial UTF-8 sequence while the Agent is still writing.
+    # A diagnostics view must remain available even when one historic byte
+    # sequence is malformed.
+    with open(log_path, "r", encoding="utf-8", errors="replace") as f:
         lines = f.readlines()
         for line in lines[-parsed.lines:]:
             print(line, end="")
@@ -34,7 +38,7 @@ def cmd_logs(args: list[str]) -> None:
 
 def _follow(path: str, interval: float = 0.5) -> None:
     """纯 Python 实现 tail -f，跨平台。"""
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
         f.seek(0, os.SEEK_END)
         while True:
             line = f.readline()
