@@ -85,6 +85,8 @@ export interface GatewayBridge {
   getAttachment(args: { agentId: string; sessionId: string; attachmentId: string }): Promise<JsonRpcResponse>;
   openAttachment(args: { agentId: string; sessionId: string; attachmentId: string }): Promise<{ ok: boolean; error?: string }>;
   getArtifact(args: { agentId: string; sessionId: string; artifactId: string }): Promise<JsonRpcResponse>;
+  listArtifacts(args: { agentId: string; limit?: number; offset?: number }): Promise<JsonRpcResponse>;
+  listMemories(args: { agentId: string; limit?: number; offset?: number }): Promise<JsonRpcResponse>;
   openArtifact(args: { agentId: string; sessionId: string; artifactId: string }): Promise<{ ok: boolean; error?: string }>;
   abortMessage(args: { agentId: string }): Promise<JsonRpcResponse>;
   retryMessage(args: { agentId: string; sessionId: string; messageId: number; clientRequestId: string }): Promise<JsonRpcResponse>;
@@ -94,6 +96,15 @@ export interface GatewayBridge {
   listSessions(args: { limit?: number; offset?: number; query?: string; agentId: string }): Promise<JsonRpcResponse>;
   listAssignments(args: { agentId: string; status?: string; limit?: number }): Promise<JsonRpcResponse>;
   getAssignment(args: { agentId: string; assignmentId: string; eventLimit?: number }): Promise<JsonRpcResponse>;
+  listActivities(args: {
+    agentId: string;
+    status?: string;
+    category?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<JsonRpcResponse>;
+  getActivity(args: { agentId: string; activityId: string }): Promise<JsonRpcResponse>;
+  getAgentState(args: { agentId: string }): Promise<JsonRpcResponse>;
   openAssignmentArtifact(args: {
     agentId: string;
     assignmentId: string;

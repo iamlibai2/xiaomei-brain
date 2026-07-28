@@ -139,6 +139,12 @@ class ConsciousLiving(Living):
             user_id=user_id,
             tick_interval=tick_interval or self._config.living.tick_interval,
         )
+        self._state_projection_lock = threading.RLock()
+        self._living_state_since = time.time()
+        self._state_focus = ""
+        self._state_focus_summary = ""
+        self._state_focus_since = 0.0
+        self._last_intent_summary: dict[str, Any] | None = None
 
         from .action_broker import ActionBroker
         from .event_hub import EventHub
@@ -458,6 +464,32 @@ class ConsciousLiving(Living):
         logger.info("[ConsciousLiving] 经验流已创建并注入")
         boot_line("经验流", "OK", f"{exp_count} 条" if exp_count else "空")
 
+        # AgentActivity is the observable lifecycle of concrete background
+        # runs. It owns only its new table; Assignment, Goal/PACE, and Dream
+        # remain authoritative for their own state and checkpoints.
+        from xiaomei_brain.activity import ActivityService, ActivityStore
+        self._activity_service = ActivityService(
+            ActivityStore(db_path),
+            experience_stream=exp_stream,
+            publish=self._event_hub.publish,
+        )
+        self.agent.activity_service = self._activity_service
+        agent_core.activity_service = self._activity_service
+        interrupted_activities = self._activity_service.recover_interrupted()
+        logger.info(
+            "[ConsciousLiving] Activity service initialized (%d interrupted)",
+            len(interrupted_activities),
+        )
+        boot_line(
+            "Agent Activity",
+            "OK",
+            (
+                f"{len(interrupted_activities)} interrupted"
+                if interrupted_activities
+                else "ready"
+            ),
+        )
+
         # ── 底色（Essence）—— 由 ConsciousLiving.__init__() 创建 ──
         essence = getattr(self.agent, '_essence', None)
         if essence is not None:
@@ -562,6 +594,7 @@ class ConsciousLiving(Living):
                 self._assignment_worker_service,
                 agent_id=self._agent_id,
                 runner=assignment_runner,
+                activity_service=self._activity_service,
             ),
         )
         self.agent.assignment_runner = assignment_runner
@@ -682,6 +715,8 @@ class ConsciousLiving(Living):
             consciousness=self.consciousness,
             check_interval=self._config.consciousness.l2_check_interval,
             debug_file=os.path.join(self._debug_dir, "layer2.log"),
+            state_observer=self._observe_layer2_state,
+            internal_report_observer=self._record_internal_processing,
         )
         logger.info("[ConsciousLiving] Layer2 已创建")
         boot_line("Layer2 默认模式网络", "OK")
@@ -1217,6 +1252,10 @@ class ConsciousLiving(Living):
 
     def _on_transition(self, old: LivingState, new_state: LivingState) -> None:
         """状态转换后同步更新意识系统的 agent_state，并写入经验流。"""
+        with self._state_projection_lock:
+            if old != new_state:
+                self._living_state_since = time.time()
+        self._publish_agent_state()
         if self._load_consciousness:
             si = self.consciousness.get_self_image()
             si.contribute_perception(agent_state=new_state.value)
@@ -1238,6 +1277,81 @@ class ConsciousLiving(Living):
                 )
             except Exception as e:
                 logger.warning("[ConsciousLiving] 经验流写生命周期失败: %s", e)
+
+    def get_state_snapshot(self) -> dict[str, Any]:
+        """Return the current public state; no internal reasoning is exposed."""
+        with self._state_projection_lock:
+            return {
+                "living": self.state.value,
+                "living_since": self._living_state_since,
+                "focus": self._state_focus,
+                "focus_summary": self._state_focus_summary,
+                "focus_since": self._state_focus_since,
+                "last_intent": (
+                    dict(self._last_intent_summary)
+                    if self._last_intent_summary is not None
+                    else None
+                ),
+            }
+
+    def _observe_layer2_state(
+        self,
+        focus: str,
+        summary: str,
+        intent: Any | None = None,
+    ) -> None:
+        """Project Layer2 decisions as explainable state, not thought traces."""
+        now = time.time()
+        with self._state_projection_lock:
+            self._state_focus = focus
+            self._state_focus_summary = summary
+            self._state_focus_since = now if focus else 0.0
+            if intent is not None:
+                intent_type = getattr(intent, "type", "")
+                intent_type = getattr(intent_type, "value", intent_type)
+                content = str(getattr(intent, "content", "") or "").strip()
+                actionable = bool(
+                    intent.is_actionable()
+                    if hasattr(intent, "is_actionable")
+                    else intent_type and str(intent_type).lower() != "wait"
+                )
+                self._last_intent_summary = {
+                    "type": str(intent_type),
+                    "summary": content,
+                    "actionable": actionable,
+                    "decided_at": now,
+                }
+        self._publish_agent_state()
+
+    def _publish_agent_state(self) -> None:
+        event_hub = getattr(self, "_event_hub", None)
+        if event_hub is not None:
+            event_hub.publish(
+                "agent.state.changed",
+                {"state": self.get_state_snapshot(), "_agent_global": True},
+            )
+
+    def _record_internal_processing(
+        self,
+        payload: dict[str, Any],
+        *,
+        session_id: str = "",
+        turn_id: str = "",
+        person_id: str = "",
+    ) -> str:
+        """Store the same safe summary rendered by the CLI as one Activity."""
+        try:
+            from .internal_processing import record_internal_processing_activity
+            return record_internal_processing_activity(
+                self,
+                payload,
+                session_id=session_id,
+                turn_id=turn_id,
+                person_id=person_id,
+            )
+        except Exception:
+            logger.exception("[ConsciousLiving] Failed to record internal processing")
+            return ""
 
     # ── Hook: 心跳 ───────────────────────────────────────────────
 
@@ -1467,6 +1581,35 @@ class ConsciousLiving(Living):
 
         self._print_section("进入梦境", "深度整理记忆 · 强化连接 · 模式发现 · 反省", icon="🌌")
 
+        dream_activity_id = ""
+        activity_service = getattr(self, "_activity_service", None)
+        if activity_service is not None:
+            try:
+                from xiaomei_brain.activity import ActivityStep
+                activity = activity_service.create(
+                    category="sleep",
+                    kind="dream",
+                    title="梦境整理",
+                    source_type="living_state",
+                    source_id="dreaming",
+                    scope_type="agent",
+                    scope_id="global",
+                    progress_summary="准备整理记忆与内在经验",
+                    steps=(
+                        ActivityStep("memory", "整理和强化记忆", "running"),
+                        ActivityStep("relations", "整理关系与经验"),
+                        ActivityStep("patterns", "发现模式并反省"),
+                    ),
+                )
+                activity = activity_service.start(
+                    activity.id,
+                    runtime_session_id="dreaming",
+                    summary="正在整理记忆与内在经验",
+                )
+                dream_activity_id = activity.id
+            except Exception:
+                logger.exception("[ConsciousLiving] Failed to start Dream Activity")
+
         # 运行 DreamEngine（串行执行：情绪整理→记忆强化→梦境燃烧→反省）
         try:
             report = self._dream_engine.run()
@@ -1477,8 +1620,42 @@ class ConsciousLiving(Living):
                 report.summary[:50] if report.summary else "",
             )
             self._print_dream_results(report)
+            if dream_activity_id and activity_service is not None:
+                from xiaomei_brain.activity import ActivityStep
+                summary = (
+                    report.summary.strip()[:240]
+                    if report.summary
+                    else (
+                        f"梦境整理完成：提取 {report.memories_extracted} 条记忆，"
+                        f"强化 {report.memories_reinforced} 条记忆"
+                    )
+                )
+                activity_service.report_progress(
+                    dream_activity_id,
+                    summary=summary,
+                    current_step="",
+                    completed_steps=3,
+                    total_steps=3,
+                    steps=(
+                        ActivityStep("memory", "整理和强化记忆", "completed"),
+                        ActivityStep("relations", "整理关系与经验", "completed"),
+                        ActivityStep("patterns", "发现模式并反省", "completed"),
+                    ),
+                )
+                activity_service.complete(dream_activity_id, summary=summary)
         except Exception as e:
             logger.error("[ConsciousLiving] DreamEngine 运行失败: %s", e)
+            if dream_activity_id and activity_service is not None:
+                try:
+                    activity_service.fail(
+                        dream_activity_id,
+                        message=str(e) or e.__class__.__name__,
+                        code="DREAM_FAILED",
+                    )
+                except Exception:
+                    logger.exception(
+                        "[ConsciousLiving] Failed to close Dream Activity",
+                    )
 
         self._transition(LivingState.SLEEPING)
 
@@ -1914,6 +2091,9 @@ class ConsciousLiving(Living):
         )
         if assignment_worker_service is not None:
             assignment_worker_service.store.close()
+        activity_service = getattr(self, "_activity_service", None)
+        if activity_service is not None:
+            activity_service.store.close()
 
         # 保存当前会话
         attention = getattr(self, '_attention', None)

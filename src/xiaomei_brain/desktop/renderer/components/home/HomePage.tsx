@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
-import { useCoreStore, AssignmentSnapshot, DisplayMessage, HomeMode } from "../../store";
+import {
+  useCoreStore,
+  AssignmentSnapshot,
+  DisplayMessage,
+  HomeMode,
+  MemoryReference,
+} from "../../store";
 import { Button, Icon } from "../ui";
 import { HomeHeader } from "./HomeHeader";
 import { SceneTabs } from "./SceneTabs";
@@ -12,10 +18,11 @@ import { ContextBar } from "./ContextBar";
 import { ChatTopbar } from "./ChatTopbar";
 import { AgentSettingsDialog } from "../agent-settings/AgentSettingsDialog";
 import { AssignmentCard } from "./AssignmentCard";
-import { AssignmentDrawer } from "./AssignmentDrawer";
+import { ActivitySidebar } from "../right-sidebar/ActivitySidebar";
 
 const EMPTY_MSGS: DisplayMessage[] = [];
 const EMPTY_ASSIGNMENTS: AssignmentSnapshot[] = [];
+type RightSidebarSection = "activity" | "assignment" | "artifact" | "memory" | "context";
 
 export function HomePage() {
   const { t } = useTranslation();
@@ -49,8 +56,19 @@ export function HomePage() {
   const assignments = useCoreStore((s) => s.assignmentsByAgent[s.activeAgentId || ""] || EMPTY_ASSIGNMENTS);
   const connectionStatus = useCoreStore((s) => s.connectionByAgent[s.activeAgentId || ""]?.status);
   const refreshAssignments = useCoreStore((s) => s.refreshAssignments);
+  const refreshActivities = useCoreStore((s) => s.refreshActivities);
+  const refreshArtifacts = useCoreStore((s) => s.refreshArtifacts);
+  const refreshPersonMemories = useCoreStore((s) => s.refreshPersonMemories);
+  const refreshAgentState = useCoreStore((s) => s.refreshAgentState);
+  const agentState = useCoreStore((s) => s.agentStateByAgent[s.activeAgentId || ""]);
+  const currentActivity = useCoreStore((s) => (
+    s.activitiesByAgent[s.activeAgentId || ""] || []
+  ).find((item) => ["queued", "running", "paused"].includes(item.status)));
 
-  const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  const [activityPanelOpen, setActivityPanelOpen] = useState(true);
+  const [rightSidebarSection, setRightSidebarSection] = useState<RightSidebarSection>("activity");
+  const [focusedArtifactKey, setFocusedArtifactKey] = useState("");
+  const [focusedMemories, setFocusedMemories] = useState<MemoryReference[]>([]);
   const [selectedAssignmentId, setSelectedAssignmentId] = useState<string | null>(null);
   const [agentSettingsOpen, setAgentSettingsOpen] = useState(false);
 
@@ -62,12 +80,25 @@ export function HomePage() {
   useEffect(() => {
     if (activeAgentId && connectionStatus === "connected") {
       void refreshAssignments(activeAgentId);
+      void refreshActivities(activeAgentId);
+      void refreshArtifacts(activeAgentId);
+      void refreshPersonMemories(activeAgentId);
+      void refreshAgentState(activeAgentId);
     }
-  }, [activeAgentId, connectionStatus, refreshAssignments]);
+  }, [
+    activeAgentId,
+    connectionStatus,
+    refreshActivities,
+    refreshAgentState,
+    refreshArtifacts,
+    refreshPersonMemories,
+    refreshAssignments,
+  ]);
 
   useEffect(() => {
-    setRightPanelOpen(false);
+    setActivityPanelOpen(true);
     setSelectedAssignmentId(null);
+    setFocusedMemories([]);
   }, [activeAgentId]);
 
   useEffect(() => {
@@ -114,7 +145,7 @@ export function HomePage() {
     .slice(0, 2);
   const openAssignment = (assignmentId: string) => {
     setSelectedAssignmentId(assignmentId);
-    setRightPanelOpen(true);
+    setActivityPanelOpen(true);
   };
 
   const taskName = (() => {
@@ -128,6 +159,7 @@ export function HomePage() {
 
   return (
     <div className="main-content">
+      <div className="main-content-primary">
       {!hasMessages && !showAgentStart && (
         <div className="activity-banner">
           <button className="activity-banner-button">
@@ -199,9 +231,11 @@ export function HomePage() {
             <ChatTopbar
               taskName={taskName}
               onSearch={() => {}}
-              onToggleRightPanel={() => setRightPanelOpen(!rightPanelOpen)}
-              rightPanelOpen={rightPanelOpen}
+              onToggleRightPanel={() => setActivityPanelOpen(!activityPanelOpen)}
+              rightPanelOpen={activityPanelOpen}
               onOpenAgentSettings={() => setAgentSettingsOpen(true)}
+              agentState={agentState}
+              activitySummary={currentActivity?.progressSummary || currentActivity?.title || ""}
             />
             {visibleAssignments.length > 0 && (
               <div className="assignment-conversation-strip">
@@ -223,7 +257,21 @@ export function HomePage() {
                   : null}
               </div>
               {messages.map((m) => (
-                <MessageRow key={m.id} message={m} agentName={agentName || t("home.defaultAgentName")} />
+                <MessageRow
+                  key={m.id}
+                  message={m}
+                  agentName={agentName || t("home.defaultAgentName")}
+                  onShowArtifact={(artifactId, sessionId) => {
+                    setFocusedArtifactKey(`${sessionId}:${artifactId}`);
+                    setRightSidebarSection("artifact");
+                    setActivityPanelOpen(true);
+                  }}
+                  onShowMemories={(references) => {
+                    setFocusedMemories(references);
+                    setRightSidebarSection("context");
+                    setActivityPanelOpen(true);
+                  }}
+                />
               ))}
               <div ref={bottomRef} />
             </div>
@@ -237,17 +285,22 @@ export function HomePage() {
           </div>
         )}
       </div>
+      </div>
+      <ActivitySidebar
+        open={activityPanelOpen}
+        onClose={() => setActivityPanelOpen(false)}
+        selectedAssignmentId={selectedAssignmentId}
+        onSelectAssignment={setSelectedAssignmentId}
+        section={rightSidebarSection}
+        onSectionChange={setRightSidebarSection}
+        focusedArtifactKey={focusedArtifactKey}
+        focusedMemories={focusedMemories}
+      />
       <AgentSettingsDialog
         open={agentSettingsOpen}
         agentId={activeAgentId || ""}
         agentName={agentName || t("home.defaultAgentName")}
         onClose={() => setAgentSettingsOpen(false)}
-      />
-      <AssignmentDrawer
-        open={rightPanelOpen}
-        selectedId={selectedAssignmentId}
-        onSelect={setSelectedAssignmentId}
-        onClose={() => setRightPanelOpen(false)}
       />
     </div>
   );
@@ -289,7 +342,17 @@ function parseThinkingContent(raw: string, streaming: boolean): { thinking: stri
   };
 }
 
-function MessageRow({ message, agentName }: { message: DisplayMessage; agentName: string }) {
+function MessageRow({
+  message,
+  agentName,
+  onShowArtifact,
+  onShowMemories,
+}: {
+  message: DisplayMessage;
+  agentName: string;
+  onShowArtifact: (artifactId: string, sessionId: string) => void;
+  onShowMemories: (references: MemoryReference[]) => void;
+}) {
   const { t } = useTranslation();
   const isUser = message.role === "user";
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
@@ -319,6 +382,7 @@ function MessageRow({ message, agentName }: { message: DisplayMessage; agentName
         agentName={agentName}
         agentId={activeAgentId}
         sessionId={activeSessionId}
+        onShowArtifact={onShowArtifact}
       />
     );
   }
@@ -431,6 +495,16 @@ function MessageRow({ message, agentName }: { message: DisplayMessage; agentName
         >
           {hasThinking ? content : message.content}
         </ReactMarkdown>
+        {message.memoryReferences && message.memoryReferences.length > 0 && (
+          <button
+            type="button"
+            className="message-memory-reference"
+            onClick={() => onShowMemories(message.memoryReferences || [])}
+          >
+            <Icon name="sparkles" size={13} />
+            查看本次召回的 {message.memoryReferences.length} 条记忆
+          </button>
+        )}
       </div>
     </div>
   );
@@ -516,11 +590,13 @@ function ArtifactCard({
   agentName,
   agentId,
   sessionId,
+  onShowArtifact,
 }: {
   message: DisplayMessage;
   agentName: string;
   agentId: string;
   sessionId: string;
+  onShowArtifact: (artifactId: string, sessionId: string) => void;
 }) {
   const artifact = message.artifact!;
   const [previewUrl, setPreviewUrl] = useState("");
@@ -575,28 +651,37 @@ function ArtifactCard({
         <div className="assistant-avatar-face">{agentName.charAt(0)}</div>
         <span className="assistant-avatar-name">{agentName}</span>
       </div>
-      <button
-        type="button"
-        className={`artifact-card artifact-${artifact.kind}`}
-        onClick={() => void open()}
-        disabled={opening}
-        title={error || `打开 ${artifact.name}`}
-      >
-        {previewUrl ? (
-          <img className="artifact-preview" src={previewUrl} alt={artifact.name} />
-        ) : (
-          <span className={`artifact-icon ${error ? "error" : ""}`}>
-            <Icon name={artifact.kind === "image" ? "sparkles" : "file-text"} size={20} />
+      <div className="artifact-card-group">
+        <button
+          type="button"
+          className={`artifact-card artifact-${artifact.kind}`}
+          onClick={() => void open()}
+          disabled={opening}
+          title={error || `打开 ${artifact.name}`}
+        >
+          {previewUrl ? (
+            <img className="artifact-preview" src={previewUrl} alt={artifact.name} />
+          ) : (
+            <span className={`artifact-icon ${error ? "error" : ""}`}>
+              <Icon name={artifact.kind === "image" ? "sparkles" : "file-text"} size={20} />
+            </span>
+          )}
+          <span className="artifact-info">
+            <span className="artifact-label">Agent 产物</span>
+            <span className="artifact-name">{artifact.name}</span>
+            <span className="artifact-meta">{size}{opening ? " · 正在打开" : ""}</span>
+            {error && <span className="artifact-error">{error}</span>}
           </span>
-        )}
-        <span className="artifact-info">
-          <span className="artifact-label">Agent 产物</span>
-          <span className="artifact-name">{artifact.name}</span>
-          <span className="artifact-meta">{size}{opening ? " · 正在打开" : ""}</span>
-          {error && <span className="artifact-error">{error}</span>}
-        </span>
-        <Icon name="external-link" size={16} className="artifact-open-icon" />
-      </button>
+          <Icon name="external-link" size={16} className="artifact-open-icon" />
+        </button>
+        <button
+          type="button"
+          className="artifact-show-sidebar"
+          onClick={() => onShowArtifact(artifact.id, sessionId)}
+        >
+          在产物栏查看
+        </button>
+      </div>
     </div>
   );
 }

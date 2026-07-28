@@ -725,6 +725,28 @@ export function registerIpcHandlers(
     return { result: { artifact: result.artifact } };
   });
 
+  ipcMain.handle("gateway:listArtifacts", async (_event, args: {
+    agentId: string; limit?: number; offset?: number;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("artifact.list", {
+      limit: args.limit || 100,
+      offset: args.offset || 0,
+    });
+  });
+
+  ipcMain.handle("gateway:listMemories", async (_event, args: {
+    agentId: string; limit?: number; offset?: number;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("memory.list", {
+      limit: args.limit || 30,
+      offset: args.offset || 0,
+    });
+  });
+
   ipcMain.handle("gateway:openArtifact", async (_event, args: {
     agentId: string; sessionId: string; artifactId: string;
   }) => {
@@ -784,6 +806,35 @@ export function registerIpcHandlers(
       assignment_id: args.assignmentId,
       event_limit: args.eventLimit || 100,
     });
+  });
+
+  ipcMain.handle("gateway:listActivities", async (_event, args: {
+    agentId: string; status?: string; category?: string; limit?: number; offset?: number;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("activity.list", {
+      status: args.status || "all",
+      category: args.category || "all",
+      limit: args.limit || 100,
+      offset: args.offset || 0,
+    });
+  });
+
+  ipcMain.handle("gateway:getActivity", async (_event, args: {
+    agentId: string; activityId: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("activity.get", { activity_id: args.activityId });
+  });
+
+  ipcMain.handle("gateway:getAgentState", async (_event, args: {
+    agentId: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("agent.state.get", {});
   });
 
   ipcMain.handle("gateway:openAssignmentArtifact", async (_event, args: {

@@ -3,6 +3,12 @@ from __future__ import annotations
 import threading
 import time
 
+from xiaomei_brain.activity import (
+    ActivityService,
+    ActivityStatus,
+    ActivityStore,
+    PauseReason,
+)
 from xiaomei_brain.assignments import (
     ActorType,
     AssignmentActor,
@@ -87,6 +93,144 @@ def test_scheduler_runs_only_one_assignment_at_a_time(tmp_path):
     ]
     assert len(store.list_runs(first.id)) == 1
     assert len(store.list_runs(second.id)) == 1
+    store.close()
+
+
+def test_assignment_run_projects_checkpoint_and_completion_to_activity(tmp_path):
+    db_path = tmp_path / "brain.db"
+    store = AssignmentStore(db_path)
+    activity_store = ActivityStore(db_path)
+    activity_service = ActivityService(activity_store)
+    service = AssignmentService(
+        store,
+        person_exists=lambda person_id: person_id == "person_1",
+    )
+    assignment = service.offer(
+        title="Inspect system load",
+        objective="Collect metrics and write a report",
+        actor=AssignmentActor(ActorType.PERSON, "person_1"),
+        requester_person_id="person_1",
+        scope_type="person",
+        scope_id="person_1",
+        origin_channel="desktop",
+        origin_session_id="desktop-person_1",
+        origin_turn_id="turn_1",
+        acceptance_criteria=("Collect metrics", "Write report"),
+    )
+    assignment = service.accept(
+        assignment.id,
+        actor=AssignmentActor(ActorType.AGENT, "xiaomei"),
+    )
+
+    def runner(_context, control):
+        control.checkpoint({
+            "execution_plan": {
+                "steps": [
+                    {
+                        "title": "Collect metrics",
+                        "status": "completed",
+                        "summary": "CPU and memory collected",
+                    },
+                    {"title": "Write report", "status": "pending"},
+                ],
+            },
+        })
+        return ExecutionResult(
+            "completed",
+            "System load report completed",
+            checkpoint={
+                "execution_plan": {
+                    "steps": [
+                        {
+                            "title": "Collect metrics",
+                            "status": "completed",
+                            "summary": "CPU and memory collected",
+                        },
+                        {
+                            "title": "Write report",
+                            "status": "completed",
+                            "summary": "Report written",
+                        },
+                    ],
+                },
+            },
+        )
+
+    executor = AssignmentExecutor(
+        service,
+        agent_id="xiaomei",
+        runner=runner,
+        activity_service=activity_service,
+    )
+    run = executor.execute(
+        assignment.id,
+        trigger_type="accepted",
+        trigger_actor_id="xiaomei",
+    )
+
+    activities = activity_store.list(
+        source_type="assignment",
+        source_id=assignment.id,
+    )
+    assert len(activities) == 1
+    activity = activities[0]
+    assert activity.status is ActivityStatus.COMPLETED
+    assert activity.kind == "assignment_run"
+    assert activity.person_id == "person_1"
+    assert activity.origin_session_id == "desktop-person_1"
+    assert activity.runtime_session_id == f"assignment:{assignment.id}"
+    assert activity.checkpoint_ref == run.run_id
+    assert activity.completed_steps == 2
+    assert activity.total_steps == 2
+    assert [step.status for step in activity.steps] == [
+        "completed",
+        "completed",
+    ]
+    assert activity.result_summary == "System load report completed"
+    activity_store.close()
+    store.close()
+
+
+def test_assignment_waiting_for_person_pauses_activity(tmp_path):
+    db_path = tmp_path / "brain.db"
+    store = AssignmentStore(db_path)
+    activity_store = ActivityStore(db_path)
+    activity_service = ActivityService(activity_store)
+    service = AssignmentService(
+        store,
+        person_exists=lambda person_id: person_id == "person_1",
+    )
+    assignment = _offer(service, "person_1", "waiting")
+
+    executor = AssignmentExecutor(
+        service,
+        agent_id="xiaomei",
+        runner=lambda _context, _control: ExecutionResult(
+            "waiting_person",
+            "Please choose an output format",
+            checkpoint={
+                "pending_interaction": {
+                    "question": "Use Markdown or Word?",
+                },
+            },
+            safe_to_resume=True,
+        ),
+        activity_service=activity_service,
+    )
+    executor.execute(
+        assignment.id,
+        trigger_type="accepted",
+        trigger_actor_id="xiaomei",
+    )
+
+    activity = activity_store.list(
+        source_type="assignment",
+        source_id=assignment.id,
+    )[0]
+    assert activity.status is ActivityStatus.PAUSED
+    assert activity.pause_reason == PauseReason.WAITING_INPUT.value
+    assert activity.progress_summary == "Please choose an output format"
+    activity_store.close()
     store.close()
 
 

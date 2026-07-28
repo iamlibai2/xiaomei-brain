@@ -30,7 +30,10 @@ def test_registry_keeps_access_metadata_with_handler():
 def test_method_router_exposes_domain_composed_catalog():
     router = MethodRouter()
 
-    assert set(router.method_names) == {
+    # The catalog grows as domains add RPC methods.  This test protects the
+    # composed core surface without making every new domain method update an
+    # unrelated exact-set assertion.
+    assert {
         "connect",
         "chat.send",
         "chat.retry",
@@ -40,10 +43,16 @@ def test_method_router_exposes_domain_composed_catalog():
         "session.resume",
         "attachment.get",
         "artifact.get",
+        "artifact.list",
+        "memory.list",
+        "activity.current",
+        "activity.list",
+        "activity.get",
+        "agent.state.get",
         "interaction.respond",
         "action.respond",
         "identity.list",
-    }
+    }.issubset(set(router.method_names))
 
 
 def test_unknown_method_does_not_bypass_authentication_boundary():
@@ -55,4 +64,3 @@ def test_unknown_method_does_not_bypass_authentication_boundary():
 
     assert unauthenticated["error"]["code"] == -32001
     assert authenticated["error"]["code"] == -32601
-

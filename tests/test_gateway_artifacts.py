@@ -12,6 +12,19 @@ from xiaomei_brain.gateway.artifacts import (
 )
 from xiaomei_brain.gateway.server_methods import MethodRouter
 from xiaomei_brain.memory.conversation_db import ConversationDB
+from xiaomei_brain.people import IdentityContext
+
+
+def _identity(person_id: str, conn_id: str) -> IdentityContext:
+    return IdentityContext(
+        person_id=person_id,
+        issuer="test",
+        subject=person_id,
+        authentication_method="test",
+        assurance="verified",
+        authenticated_at=1.0,
+        connection_id=conn_id,
+    )
 
 
 def test_write_file_becomes_agent_owned_artifact(tmp_path, monkeypatch):
@@ -110,6 +123,10 @@ def test_artifact_rpc_reads_only_exact_session_asset(tmp_path, monkeypatch):
         agent=SimpleNamespace(conversation_db=db),
     ))
     router._auth_sessions.add("connection-1")
+    router._identity_contexts["connection-1"] = _identity(
+        "person-1",
+        "connection-1",
+    )
 
     response = router.dispatch("connection-1", "rpc-1", "artifact.get", {
         "session_id": "session-1", "artifact_id": artifact["id"],
@@ -121,6 +138,47 @@ def test_artifact_rpc_reads_only_exact_session_asset(tmp_path, monkeypatch):
     assert base64.b64decode(response["result"]["artifact"]["data_base64"]) == b"result data"
     assert "relative_path" not in response["result"]["artifact"]
     assert denied["error"]["code"] == -32602
+    db.close()
+
+
+def test_artifact_rpc_lists_only_person_and_global_assets(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
+    output = tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace"
+    output.mkdir(parents=True)
+    db = ConversationDB(tmp_path / "brain.db")
+    for name, person_id, session_id in (
+        ("mine.txt", "person-1", "session-mine"),
+        ("shared.txt", "global", "session-shared"),
+        ("private.txt", "person-2", "session-private"),
+    ):
+        path = output / name
+        path.write_text(name, encoding="utf-8")
+        artifact = discover_tool_artifacts(
+            "xiaomei",
+            session_id,
+            f"turn-{name}",
+            "write_file",
+            {"path": name},
+            f"Successfully wrote to {path}",
+        )[0]
+        db.save_artifact(session_id, artifact, user_id=person_id)
+
+    router = MethodRouter(living=SimpleNamespace(
+        _agent_id="xiaomei",
+        agent=SimpleNamespace(conversation_db=db),
+    ))
+    router._auth_sessions.add("connection-1")
+    router._identity_contexts["connection-1"] = _identity(
+        "person-1",
+        "connection-1",
+    )
+
+    response = router.dispatch("connection-1", "rpc-1", "artifact.list", {})
+    artifacts = response["result"]["artifacts"]
+
+    assert {item["name"] for item in artifacts} == {"mine.txt", "shared.txt"}
+    assert all("user_id" not in item for item in artifacts)
+    assert all("relative_path" not in item for item in artifacts)
     db.close()
 
 

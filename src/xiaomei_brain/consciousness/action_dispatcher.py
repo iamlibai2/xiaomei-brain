@@ -43,6 +43,7 @@ class ActionExecutor:
         item: ActionItem,
         runtime=None,
         cancel_check: Callable[[], bool] | None = None,
+        activity_context=None,
     ) -> bool:
         """执行单个 ActionItem。
 
@@ -65,11 +66,13 @@ class ActionExecutor:
             return False
         self._runtime_local.runtime = runtime
         self._runtime_local.cancel_check = cancel_check
+        self._runtime_local.activity_context = activity_context
         try:
             return handler(item)
         finally:
             self._runtime_local.runtime = None
             self._runtime_local.cancel_check = None
+            self._runtime_local.activity_context = None
 
     def _agent_core(self):
         runtime = getattr(self._runtime_local, "runtime", None)
@@ -80,6 +83,24 @@ class ActionExecutor:
 
     def _cancel_check(self) -> Callable[[], bool] | None:
         return getattr(self._runtime_local, "cancel_check", None)
+
+    def _report_activity(
+        self,
+        summary: str,
+        *,
+        current_step: str | None = None,
+    ) -> None:
+        """Report a stable stage without coupling handlers to ActivityStore."""
+        context = getattr(self._runtime_local, "activity_context", None)
+        if context is None:
+            return
+        try:
+            context.report_progress(
+                summary=summary,
+                current_step=current_step,
+            )
+        except Exception:
+            logger.exception("[ActionExecutor] Failed to report Activity progress")
 
     def _llm(self):
         runtime = getattr(self._runtime_local, "runtime", None)
@@ -172,6 +193,10 @@ class ActionExecutor:
         ]
 
         logger.info("[ActionExecutor] 闹钟触发 ReAct: %s", item.content[:80])
+        self._report_activity(
+            item.content or item.reason or "正在执行闹钟",
+            current_step="execute_alarm",
+        )
 
         try:
             # 纯内部 ReAct（不写 DB、不加 MEMORY_PROMPT、不提取记忆）
@@ -297,6 +322,10 @@ class ActionExecutor:
         ]
 
         logger.info("[ActionExecutor] WORK 触发 react_nodb，任务数: %d", len(goal_memories))
+        self._report_activity(
+            "正在选择并推进可以独立完成的工作",
+            current_step="autonomous_work",
+        )
 
         try:
             # 纯内部 ReAct（不污染对话历史，和 _do_alarm / L2 一致）
@@ -984,6 +1013,10 @@ class ActionExecutor:
         """主动学习 → 委托给 LearningEngine"""
         engine = getattr(self, "_learn_engine", None)
         if engine:
+            self._report_activity(
+                "正在选择主题并进行自主学习",
+                current_step="learning",
+            )
             ok = engine.learn(
                 runtime=self._agent_core(),
                 cancel_check=self._cancel_check(),
@@ -1100,6 +1133,10 @@ class ActionExecutor:
         intent_context = living.conversation_driver.goal_manager.build_intent_context_for_goal(active_sub)
         logger.info("[ActionExecutor] 自动执行 PACE: goal=%s sub=%s",
                     goal_obj.description[:40], active_sub.description[:40])
+        self._report_activity(
+            f"正在推进目标：{active_sub.description[:80]}",
+            current_step="goal_pace",
+        )
 
         # 统一走 PACE → CognitiveLoop（与 /intask 相同领域逻辑），但使用
         # 本次自主行为的隔离 Core，不能回到实时对话 Core。
@@ -1385,6 +1422,15 @@ class ActionDispatcher:
         self._autonomous_executor = AutonomousBehaviorExecutor(
             agent_instance,
             self._executor.execute,
+            activity_service=getattr(
+                self._conscious_living,
+                "_activity_service",
+                None,
+            ),
+            realtime_busy=lambda: bool(
+                self._conscious_living
+                and self._conscious_living._chatting
+            ),
         )
         self._autonomous_executor.start()
 

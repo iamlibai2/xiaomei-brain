@@ -11,12 +11,13 @@ def test_living_state_values():
     assert LivingState.WAKING.value == "waking"
     assert LivingState.AWAKE.value == "awake"
     assert LivingState.IDLE.value == "idle"
+    assert LivingState.WORKING.value == "working"
     assert LivingState.SLEEPING.value == "sleeping"
     assert LivingState.DREAMING.value == "dreaming"
 
 
 def test_living_state_count():
-    assert len(LivingState) == 6
+    assert len(LivingState) == 7
 
 
 # ── LivingMessage dataclass ───────────────────────────────────────────

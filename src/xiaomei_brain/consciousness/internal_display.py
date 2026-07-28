@@ -100,6 +100,7 @@ class InternalDisplay:
     _procedure_count: int = 0
     _narrative_count: int = 0
     _action_items: list[str] = field(default_factory=list)
+    _processing_results: list[dict] = field(default_factory=list)
 
     # ── Record ────────────────────────────────────────────
 
@@ -202,6 +203,24 @@ class InternalDisplay:
         """记录自主行为动作。"""
         self._action_items.append(f"{icon} {action_type.upper()}: {reason}")
 
+    def record_processing_result(
+        self,
+        key: str,
+        label: str,
+        count: int = 1,
+        unit: str = "次",
+        detail: str = "",
+    ) -> None:
+        """Record a safe, generic internal result shared by CLI and Activity."""
+        if key and label and count > 0:
+            self._processing_results.append({
+                "key": key,
+                "label": label,
+                "count": count,
+                "unit": unit,
+                "detail": detail[:200],
+            })
+
     # ── Has Data ──────────────────────────────────────────
 
     def has_data(self) -> bool:
@@ -223,6 +242,7 @@ class InternalDisplay:
             or self._emergence_stored
             or self._narr_extracted
             or self._doubt_count
+            or self._processing_results
             or self._action_items
         )
 
@@ -337,6 +357,12 @@ class InternalDisplay:
         if self._doubt_count:
             lines.append(f"🔮 自我不确定: {self._doubt_count} 条")
 
+        for item in self._processing_results:
+            detail = f"（{item['detail']}）" if item["detail"] else ""
+            lines.append(
+                f"🧩 {item['label']}: {item['count']}{item['unit']}{detail}"
+            )
+
         return lines
 
     # ── WS/TUI 结构化输出 ─────────────────────────────────
@@ -404,6 +430,8 @@ class InternalDisplay:
             data["narr_extracted"] = self._narr_extracted
         if self._doubt_count:
             data["doubt_count"] = self._doubt_count
+        if self._processing_results:
+            data["processing_results"] = list(self._processing_results)
 
         return {"type": "internal_display", "data": data}
 
@@ -430,6 +458,7 @@ class InternalDisplay:
         self._recall_tags.clear()
         self._procedure_count = 0
         self._narrative_count = 0
+        self._processing_results.clear()
         self._emergence_stored = 0
         self._narr_extracted = 0
         self._doubt_count = 0

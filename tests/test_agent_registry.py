@@ -41,6 +41,17 @@ class AgentRegistryCreationTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "Agent ID"):
                         registry.create_agent(agent_id)
 
+    def test_list_ignores_missing_identity_when_scanning_legacy_agent(self):
+        with tempfile.TemporaryDirectory() as rootdir:
+            agent_dir = Path(rootdir) / "legacy-agent"
+            agent_dir.mkdir()
+            (agent_dir / "brain.yaml").write_text("name: legacy\n", encoding="utf-8")
+
+            agents = AgentRegistry(rootdir).list_all()
+
+            self.assertEqual([agent.id for agent in agents], ["legacy-agent"])
+            self.assertEqual(agents[0].name, "legacy-agent")
+
 
 if __name__ == "__main__":
     unittest.main()

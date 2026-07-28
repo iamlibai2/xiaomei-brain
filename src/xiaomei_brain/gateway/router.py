@@ -334,6 +334,37 @@ class Router:
                 sent += 1
         return sent
 
+    def broadcast_event(
+        self,
+        event: str,
+        payload: dict,
+        *,
+        output_types: set[str] | None = None,
+        timestamp: int = 0,
+    ) -> int:
+        """Deliver one Agent-global event once to each matching route."""
+        with self._lock:
+            seen: set[tuple[str, str]] = set()
+            routes: list[OutputRoute] = []
+            for rule in self._rules:
+                route = rule.output_route
+                key = (route.type, route.target)
+                if (
+                    key not in seen
+                    and (output_types is None or route.type in output_types)
+                ):
+                    seen.add(key)
+                    routes.append(route)
+        return sum(
+            self.deliver_event(
+                event,
+                payload,
+                route,
+                timestamp=timestamp,
+            )
+            for route in routes
+        )
+
     # ── Internal ────────────────────────────────────────────
 
     @staticmethod

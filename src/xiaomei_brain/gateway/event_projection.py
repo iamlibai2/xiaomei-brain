@@ -29,6 +29,15 @@ class GatewayEventProjection:
         "artifact.created",
         "assignment.changed",
         "assignment.progress",
+        "activity.queued",
+        "activity.started",
+        "activity.progress",
+        "activity.paused",
+        "activity.resumed",
+        "activity.completed",
+        "activity.failed",
+        "activity.cancelled",
+        "agent.state.changed",
     })
 
     def __init__(self, router_getter: RouterGetter) -> None:
@@ -36,8 +45,13 @@ class GatewayEventProjection:
 
     def __call__(self, event: DomainEvent) -> None:
         is_assignment_event = event.name.startswith("assignment.")
+        is_activity_event = event.name.startswith("activity.")
+        is_agent_state_event = event.name.startswith("agent.state.")
         if event.name not in self.PUBLIC_EVENTS or (
-            not event.session_id and not is_assignment_event
+            not event.session_id
+            and not is_assignment_event
+            and not is_activity_event
+            and not is_agent_state_event
         ):
             if event.name in {
                 "interaction.requested",
@@ -58,6 +72,24 @@ class GatewayEventProjection:
             return
 
         router = self._router_getter()
+        if (
+            (is_activity_event or is_agent_state_event)
+            and event.payload.get("_agent_global")
+            and router is not None
+            and hasattr(router, "broadcast_event")
+        ):
+            public_payload = {
+                key: value
+                for key, value in event.payload.items()
+                if not key.startswith("_") and key != "session_id"
+            }
+            router.broadcast_event(
+                event.name,
+                public_payload,
+                output_types={"ws"},
+                timestamp=event.timestamp,
+            )
+            return
         route = None
         if router:
             target_person_id = str(event.payload.get("_target_person_id", ""))
@@ -66,14 +98,14 @@ class GatewayEventProjection:
             # exists; only fall back to the Person's latest active channel when
             # the origin is unavailable (for example a CLI-created Assignment).
             if (
-                is_assignment_event
+                (is_assignment_event or is_activity_event)
                 and event.session_id
                 and hasattr(router, "route_for_session")
             ):
                 route = router.route_for_session(event.session_id)
             if (
                 route is None
-                and is_assignment_event
+                and (is_assignment_event or is_activity_event)
                 and target_person_id
                 and hasattr(router, "route_for_user")
             ):
@@ -157,7 +189,7 @@ class GatewayEventProjection:
             metadata["timestamp"] = event.timestamp
         try:
             public_payload = dict(event.payload)
-            if is_assignment_event:
+            if is_assignment_event or is_activity_event or is_agent_state_event:
                 public_payload = {
                     key: value
                     for key, value in public_payload.items()

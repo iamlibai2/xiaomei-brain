@@ -6,5 +6,8 @@ export type {
   ConnectionState,
   DisplayMessage,
   HomeMode,
+  MemoryReference,
+  PersonMemoryListState,
+  PersonMemorySnapshot,
 } from "./core";
 export type { AgentEntry } from "../types";

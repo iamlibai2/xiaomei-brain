@@ -18,7 +18,7 @@ import logging
 import threading
 import time
 from collections import deque
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from .core import Consciousness
@@ -38,6 +38,8 @@ class Layer2DefaultNetwork:
         consciousness: Consciousness,
         check_interval: float = 10.0,
         debug_file: str = "",        # 调试日志文件路径
+        state_observer: Callable[[str, str, Any | None], None] | None = None,
+        internal_report_observer: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self._c = consciousness
         self._check_interval = check_interval
@@ -45,6 +47,8 @@ class Layer2DefaultNetwork:
         self._thread: threading.Thread | None = None
         self._lock: threading.RLock = threading.RLock()
         self._debug_file = debug_file
+        self._state_observer = state_observer
+        self._internal_report_observer = internal_report_observer
         self._generation = 0          # 代际计数器：start() 递增，旧线程检测到变化后自动退出
 
         # TUI 日志缓冲区
@@ -117,7 +121,43 @@ class Layer2DefaultNetwork:
             c._last_emergence_narr = 0
             c._last_emergence_doubt = 0
         if display.has_data():
+            if self._internal_report_observer is not None:
+                try:
+                    self._internal_report_observer(display.to_dict())
+                except Exception:
+                    logger.exception("[Layer2] Failed to publish internal processing report")
             display.display()
+
+    def _observe_state(
+        self,
+        focus: str,
+        summary: str,
+        intent: Any | None = None,
+    ) -> None:
+        """Publish a public summary without exposing Layer2 chain-of-thought."""
+        if self._state_observer is None:
+            return
+        try:
+            self._state_observer(focus, summary, intent)
+        except Exception:
+            logger.exception("[Layer2] Failed to publish Agent state")
+
+    def _display_processing_result(
+        self,
+        key: str,
+        label: str,
+        detail: str = "",
+    ) -> None:
+        """Use the same structured report for CLI and Activity projection."""
+        from xiaomei_brain.consciousness.internal_display import InternalDisplay
+        display = InternalDisplay()
+        display.record_processing_result(key, label, detail=detail)
+        if self._internal_report_observer is not None:
+            try:
+                self._internal_report_observer(display.to_dict())
+            except Exception:
+                logger.exception("[Layer2] Failed to publish internal processing report")
+        display.display()
 
     def _run(self, generation: int) -> None:
         """主循环：每 check_interval 秒检查一次 L2/L3/DREAM。"""
@@ -135,6 +175,8 @@ class Layer2DefaultNetwork:
                         self._log(f"{ts} L2 触发 [异常 bypass] agent_state={agent_state} ctx={anomaly_type}")
                         logger.info("[Layer2] L2 触发（L1 异常=%s，agent_state=%s）", anomaly_type, agent_state)
                         self._c._last_intent_time = time.time()
+                        intent = None
+                        self._observe_state("deciding_intent", "正在根据异常信号判断下一步")
                         try:
                             intent = self._c.tick_L2_intent(anomaly_type)
                             self._display_internal(intent=intent)
@@ -142,6 +184,8 @@ class Layer2DefaultNetwork:
                         except Exception as e:
                             self._log(f"{ts} L2 tick_L2_intent({anomaly_type}) ERROR: {e}")
                             logger.warning("[Layer2] tick_L2_intent(%s) 出错: %s", anomaly_type, e)
+                        finally:
+                            self._observe_state("", "", intent)
 
                     # L2 意图决策（"我该做什么"——欲望驱动 + 时间兜底）
                     skip_l3 = False
@@ -150,6 +194,8 @@ class Layer2DefaultNetwork:
                         self._log(f"{ts} L2 意图决策触发 agent_state={agent_state} ctx={ctx}")
                         logger.info("[Layer2] L2 意图决策（agent_state=%s, ctx=%s）", agent_state, ctx)
                         self._c._last_intent_time = time.time()
+                        intent = None
+                        self._observe_state("deciding_intent", "正在判断下一步做什么")
                         try:
                             intent = self._c.tick_L2_intent(ctx)
                             self._display_internal(intent=intent)
@@ -163,12 +209,15 @@ class Layer2DefaultNetwork:
                         except Exception as e:
                             self._log(f"{ts} L2 tick_L2_intent({ctx}) ERROR: {e}")
                             logger.warning("[Layer2] tick_L2_intent(%s) 出错: %s", ctx, e)
+                        finally:
+                            self._observe_state("", "", intent)
 
                     # L2 意识涌现（"我此刻怎样"——内在节律 + 素材驱动）
                     if self._c._should_emerge(agent_state):
                         self._log(f"{ts} L2 意识涌现触发 agent_state={agent_state}")
                         logger.info("[Layer2] L2 意识涌现（agent_state=%s）", agent_state)
                         self._c._last_emerge_time = time.time()
+                        self._observe_state("inner_reflection", "正在整理内在感受")
                         try:
                             self._c.tick_L2_emergence(agent_state)
                             self._display_internal()
@@ -176,6 +225,8 @@ class Layer2DefaultNetwork:
                         except Exception as e:
                             self._log(f"{ts} L2 tick_L2_emergence ERROR: {e}")
                             logger.warning("[Layer2] tick_L2_emergence 出错: %s", e)
+                        finally:
+                            self._observe_state("", "")
                     else:
                         self._log(f"{ts} L2 跳过 [条件不满足] state={agent_state}")
 
@@ -183,6 +234,7 @@ class Layer2DefaultNetwork:
                     if self._c._should_social_cognition(agent_state):
                         self._log(f"{ts} social_cognition 触发 agent_state={agent_state}")
                         logger.info("[Layer2] social_cognition 触发（agent_state=%s）", agent_state)
+                        self._observe_state("social_reflection", "正在整理最近的社会感知")
                         try:
                             sc_result = self._c.tick_social_cognition(agent_state)
                             self._display_internal(sc_result=sc_result)
@@ -190,6 +242,8 @@ class Layer2DefaultNetwork:
                         except Exception as e:
                             self._log(f"{ts} social_cognition ERROR: {e}")
                             logger.warning("[Layer2] social_cognition 出错: %s", e)
+                        finally:
+                            self._observe_state("", "")
 
                     # L3: 沉思（sleep guard 在 _should_l3() 内，同轮 L2=SLEEP 也跳过）
                     l3_triggered = False
@@ -198,24 +252,45 @@ class Layer2DefaultNetwork:
                         self._log(f"{ts} L3 触发 [沉思] agent_state={agent_state} → tick_L3")
                         logger.info("[Layer2] L3 触发（沉思，agent_state=%s）", agent_state)
                         self._c._last_l3_time = time.time()
+                        self._observe_state("deep_reflection", "正在进行深度反思")
                         try:
-                            self._c.tick_L3()
+                            report = self._c.tick_L3()
+                            self._display_processing_result(
+                                "l3_reflection",
+                                "深度反思",
+                                str(getattr(report, "summary", "") or "")[:200],
+                            )
                             self._log(f"{ts} L3 tick_L3 完成")
                         except Exception as e:
                             self._log(f"{ts} L3 tick_L3 ERROR: {e}")
                             logger.warning("[Layer2] tick_L3 出错: %s", e)
+                        finally:
+                            self._observe_state("", "")
 
                     # L4: 深度联想（与 L3 同轮互斥，L3 优先，L4 成本更高）
                     if not skip_l3 and not l3_triggered and self._c._should_l4(agent_state):
                         self._log(f"{ts} L4 触发 [深度联想] agent_state={agent_state} → tick_L4")
                         logger.info("[Layer2] L4 触发（深度联想，agent_state=%s）", agent_state)
                         self._c._last_l4_time = time.time()
+                        self._observe_state("deep_association", "正在进行深度联想")
                         try:
-                            self._c.tick_L4()
+                            report = self._c.tick_L4()
+                            if not bool(getattr(report, "skipped", False)):
+                                detail = (
+                                    getattr(report, "pattern_insight", "")
+                                    or getattr(report, "behavior_hint", "")
+                                )
+                                self._display_processing_result(
+                                    "l4_association",
+                                    "深度联想",
+                                    str(detail or "")[:200],
+                                )
                             self._log(f"{ts} L4 tick_L4 完成")
                         except Exception as e:
                             self._log(f"{ts} L4 tick_L4 ERROR: {e}")
                             logger.warning("[Layer2] tick_L4 出错: %s", e)
+                        finally:
+                            self._observe_state("", "")
 
                     # DREAM: 入梦信号（仅 SLEEPING，每次睡眠只触发一次）
                     if agent_state == "sleeping":

@@ -167,6 +167,9 @@ def build_context(
 
     images = images or []
     attachments = attachments or []
+    # A failed or lightweight assembly must never inherit references from the
+    # previous Person or turn.
+    agent.current_memory_references = []
     model_input = append_text_attachments(user_input, attachments)
     if image_analysis:
         model_input += f"\n\n<image_analysis>\n{image_analysis}\n</image_analysis>"
@@ -310,6 +313,13 @@ def build_context(
                 getattr(agent, "user_id", "global")
                 if person_context else None
             ),
+        )
+        # Persist the exact safe projection supplied to this answer. Desktop
+        # can then explain the recall without running a second, different
+        # retrieval after the turn has completed.
+        from xiaomei_brain.memory.observability import build_memory_references
+        agent.current_memory_references = build_memory_references(
+            getattr(self_image.memory, "recalled_memories", []) or [],
         )
         user_id = getattr(agent, 'user_id', '')
         self_image.current_user_name = getattr(agent, 'user_display_name', '')

@@ -99,6 +99,7 @@ class Agent:
         self.user_display_name: str = "这位用户"  # 当前用户的显示名，identity 绑定后设置
         self.session_id: str = "main"
         self.turn_id: str = ""
+        self.current_memory_references: list[dict[str, Any]] = []
         self.tool_call_buffer: ToolCallBuffer = ToolCallBuffer()  # 实例级，每个 Agent 独立
 
         # ── Intent context (from ConsciousLiving) ──────────────────────
@@ -460,11 +461,19 @@ class Agent:
                 if handoff_message:
                     assistant_msg_id = None
                     if self.conversation_db:
+                        metadata: dict[str, Any] = {}
+                        if self.turn_id:
+                            metadata["turn_id"] = self.turn_id
+                        if self.current_memory_references:
+                            metadata["memory_references"] = list(
+                                self.current_memory_references,
+                            )
                         assistant_msg_id = self.conversation_db.log(
                             session_id=self.session_id,
                             role="assistant",
                             content=handoff_message,
                             user_id=self.user_id,
+                            metadata=metadata or None,
                         )
                     self.messages.append({
                         "role": "assistant",
@@ -545,6 +554,12 @@ class Agent:
                         meta = {}
                         if response.reasoning:
                             meta["reasoning_content"] = response.reasoning
+                        if self.turn_id:
+                            meta["turn_id"] = self.turn_id
+                        if self.current_memory_references:
+                            meta["memory_references"] = list(
+                                self.current_memory_references,
+                            )
                         assistant_msg_id = self.conversation_db.log(
                             session_id=self.session_id,
                             role="assistant",

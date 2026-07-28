@@ -46,13 +46,11 @@ interface AssignmentAcceptanceVerification {
 
 const EMPTY_ASSIGNMENTS: AssignmentSnapshot[] = [];
 
-export function AssignmentDrawer({
-  open,
+export function AssignmentPanel({
   selectedId,
   onSelect,
   onClose,
 }: {
-  open: boolean;
   selectedId: string | null;
   onSelect: (assignmentId: string) => void;
   onClose: () => void;
@@ -77,12 +75,12 @@ export function AssignmentDrawer({
   const [openingArtifactId, setOpeningArtifactId] = useState("");
 
   useEffect(() => {
-    if (!open || !agentId) return;
+    if (!agentId) return;
     void refreshAssignments(agentId);
-  }, [agentId, open, refreshAssignments]);
+  }, [agentId, refreshAssignments]);
 
   useEffect(() => {
-    if (!open || !agentId || !selected?.id) {
+    if (!agentId || !selected?.id) {
       setPending(null);
       setEvents([]);
       setResources([]);
@@ -120,9 +118,7 @@ export function AssignmentDrawer({
       })
       .catch((error) => { if (!cancelled) setActionError(String(error)); });
     return () => { cancelled = true; };
-  }, [agentId, open, selected?.id, selected?.revision]);
-
-  if (!open) return null;
+  }, [agentId, selected?.id, selected?.revision]);
 
   const act = async (operation: () => Promise<string>) => {
     if (acting) return;
@@ -176,10 +172,7 @@ export function AssignmentDrawer({
   };
 
   return (
-    <div className="assignment-drawer-backdrop" onMouseDown={(event) => {
-      if (event.target === event.currentTarget) onClose();
-    }}>
-      <aside className="assignment-drawer" aria-label={t("assignments.workspace")}>
+      <aside className="assignment-drawer embedded" aria-label={t("assignments.workspace")}>
         <header>
           <div>
             <span>{t("assignments.workspace")}</span>
@@ -371,6 +364,5 @@ export function AssignmentDrawer({
           </section>
         </div>
       </aside>
-    </div>
   );
 }

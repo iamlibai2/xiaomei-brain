@@ -4,6 +4,12 @@ import threading
 import time
 from types import SimpleNamespace
 
+from xiaomei_brain.activity import (
+    ActivityService,
+    ActivityStatus,
+    ActivityStore,
+    PauseReason,
+)
 from xiaomei_brain.agent.runtime import (
     AgentRuntimeContext,
     AgentRuntimeFactory,
@@ -73,7 +79,7 @@ def test_autonomous_executor_is_non_blocking_and_serial() -> None:
     runtimes = []
     lock = threading.Lock()
 
-    def execute(_item, runtime, cancel_check):
+    def execute(_item, runtime, cancel_check, _activity_context):
         nonlocal active, max_active
         with lock:
             active += 1
@@ -106,6 +112,75 @@ def test_autonomous_executor_is_non_blocking_and_serial() -> None:
     assert len(runtimes) == 2
     assert runtimes[0] is not runtimes[1]
     assert all(runtime is not instance._agent for runtime in runtimes)
+
+
+def test_autonomous_executor_projects_lifecycle_and_realtime_pause(tmp_path) -> None:
+    instance = FakeAgentInstance()
+    store = ActivityStore(tmp_path / "brain.db")
+    service = ActivityService(store)
+    realtime_busy = threading.Event()
+    entered = threading.Event()
+    finished = threading.Event()
+
+    def execute(_item, _runtime, cancel_check, activity_context):
+        assert activity_context is not None
+        entered.set()
+        assert cancel_check() is False
+        activity_context.report_progress(
+            summary="Collected source material",
+            current_step="summarize",
+        )
+        finished.set()
+        return True
+
+    realtime_busy.set()
+    executor = AutonomousBehaviorExecutor(
+        instance,
+        execute,
+        activity_service=service,
+        realtime_busy=realtime_busy.is_set,
+    )
+    item = SimpleNamespace(
+        action_type=SimpleNamespace(value="tool"),
+        content="learn_topic",
+        reason="Learn Activity lifecycle design",
+        source="drive",
+        cooldown_key="learn:activity",
+        metadata={"user_id": "person_1"},
+    )
+    assert executor.submit(item)
+    assert entered.wait(1.0)
+
+    deadline = time.time() + 1.0
+    paused = None
+    while time.time() < deadline:
+        rows = store.list()
+        paused = rows[0] if rows else None
+        if paused is not None and paused.status is ActivityStatus.PAUSED:
+            break
+        time.sleep(0.01)
+
+    assert paused is not None
+    assert paused.pause_reason == PauseReason.REALTIME_MESSAGE.value
+    assert paused.kind == "autonomous_learning"
+    assert paused.scope_id == "person_1"
+
+    realtime_busy.clear()
+    assert finished.wait(1.0)
+    deadline = time.time() + 1.0
+    completed = None
+    while time.time() < deadline:
+        completed = store.list()[0]
+        if completed.status is ActivityStatus.COMPLETED:
+            break
+        time.sleep(0.01)
+    executor.stop()
+
+    assert completed is not None
+    assert completed.status is ActivityStatus.COMPLETED
+    assert completed.current_step == "summarize"
+    assert completed.runtime_session_id.startswith("autonomous:tool:")
+    store.close()
 
 
 def test_isolated_provider_returns_runtime_and_delegates_identity() -> None:

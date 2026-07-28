@@ -147,6 +147,16 @@ class ArtifactGetParams(BaseModel):
     artifact_id: str = Field(..., min_length=32, max_length=32, pattern=r"^[a-f0-9]+$")
 
 
+class ArtifactListParams(BaseModel):
+    limit: int = Field(default=100, ge=1, le=200)
+    offset: int = Field(default=0, ge=0)
+
+
+class MemoryListParams(BaseModel):
+    limit: int = Field(default=30, ge=1, le=100)
+    offset: int = Field(default=0, ge=0)
+
+
 class ChatSessionsParams(BaseModel):
     limit: int = Field(default=30, ge=1, le=200)
     offset: int = Field(default=0, ge=0)
@@ -198,6 +208,19 @@ class AssignmentResumeParams(BaseModel):
     response: str = Field(default="", max_length=8000)
     decision: Literal["approve", "deny"] | None = None
     expected_revision: int | None = Field(default=None, ge=1)
+
+
+# ── Activity ──────────────────────────────────────────────────────────────
+
+class ActivityListParams(BaseModel):
+    status: str = Field(default="active", min_length=1, max_length=32)
+    category: str = Field(default="all", min_length=1, max_length=32)
+    limit: int = Field(default=100, ge=1, le=200)
+    offset: int = Field(default=0, ge=0)
+
+
+class ActivityGetParams(BaseModel):
+    activity_id: str = Field(..., min_length=1, max_length=128)
 
 
 # ── Wire frames ──────────────────────────────

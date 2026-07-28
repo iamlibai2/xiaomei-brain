@@ -325,6 +325,42 @@ def test_build_context_with_self_image_calls_inject(mock_refresh, mock_inject):
     assert result[0]["content"] == "mocked system prompt"
 
 
+@patch("xiaomei_brain.consciousness.context_pipeline.inject_consciousness")
+@patch("xiaomei_brain.consciousness.memory_window.refresh_memory_window")
+def test_build_context_captures_exact_recalled_memory_projection(
+    mock_refresh,
+    mock_inject,
+):
+    mock_inject.return_value = "system"
+    agent = _make_mock_agent()
+    mock_si = MagicMock()
+    mock_si.memory.dag_summaries = []
+
+    def populate_memory_window(self_image, **_kwargs):
+        self_image.memory.recalled_memories = [{
+            "id": 9,
+            "content": "李白希望优先完善独立 Agent",
+            "source": "immediate",
+            "type": "common",
+            "tags": ["产品方向"],
+            "created_at": 123.0,
+            "score": 0.99,
+        }]
+
+    mock_refresh.side_effect = populate_memory_window
+
+    build_context(agent, "接下来做什么", self_image=mock_si)
+
+    assert agent.current_memory_references == [{
+        "id": "9",
+        "summary": "李白希望优先完善独立 Agent",
+        "source": "immediate",
+        "memory_type": "common",
+        "tags": ["产品方向"],
+        "created_at": 123.0,
+    }]
+
+
 # ── build_context token trimming ──────────────────────────────────────
 
 def test_build_context_token_trimming():

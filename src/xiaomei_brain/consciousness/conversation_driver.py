@@ -258,6 +258,7 @@ class ConversationDriver:
             terminal_status = "complete"
             terminal_text = ""
             terminal_error: dict[str, str] | None = None
+            turn_memory_references: list[dict[str, Any]] = []
             self._deliver_message_start(parent, msg.session_id, msg.turn_id)
             try:
                 current_msg = msg
@@ -384,6 +385,9 @@ class ConversationDriver:
                         inner_voice_mode=self._inner_voice.get_last_mode() if self._inner_voice else "",
                         user_message_id=getattr(current_msg, "message_id", None),
                     )
+                    turn_memory_references = list(
+                        getattr(agent, "current_memory_references", []) or [],
+                    )
 
                     chunks = []
                     on_chunk = getattr(parent, "on_chat_chunk", None)
@@ -476,6 +480,15 @@ class ConversationDriver:
                             c.self_image._last_recall_summary = None
 
                     self.display.display()
+                    if self.display.has_data():
+                        recorder = getattr(parent, "_record_internal_processing", None)
+                        if callable(recorder):
+                            recorder(
+                                self.display.to_dict(),
+                                session_id=current_msg.session_id,
+                                turn_id=current_msg.turn_id,
+                                person_id=current_msg.user_id,
+                            )
                     if self.display.has_data() and self._should_deliver(current_msg.session_id):
                         self._deliver_internal_display(
                             parent,
@@ -512,6 +525,9 @@ class ConversationDriver:
                             elapsed=elapsed,
                             tools=tool_names,
                             display_content=display_content,
+                            person_id=current_msg.user_id,
+                            session_id=current_msg.session_id,
+                            turn_id=current_msg.turn_id,
                         )
 
                         return
@@ -565,6 +581,7 @@ class ConversationDriver:
                     terminal_text,
                     status=terminal_status,
                     error=terminal_error,
+                    memory_references=turn_memory_references,
                 )
                 parent._chatting = False
                 parent._clarify_listening.clear()
@@ -580,6 +597,7 @@ class ConversationDriver:
                     agent_core.active_assignment_id = ""
                     agent_core.current_source = ""
                     agent_core.current_attachments = []
+                    agent_core.current_memory_references = []
                 except Exception:
                     logger.debug("Failed to cleanup tool callbacks", exc_info=True)
 
@@ -1246,12 +1264,15 @@ class ConversationDriver:
         *,
         status: str = "complete",
         error: dict[str, str] | None = None,
+        memory_references: list[dict[str, Any]] | None = None,
     ) -> None:
         import re
         content = re.sub(r'\x1b\[[0-9;]*m', '', content)
         payload: dict[str, Any] = {"text": content, "status": status}
         if error:
             payload["error"] = error
+        if memory_references:
+            payload["memory_references"] = memory_references
         ConversationDriver._publish_event(
             parent,
             "message.complete",

@@ -322,6 +322,31 @@ class ChatMethods:
                         for key in ("turn_id", "status", "error", "retry_of"):
                             if key in user_metadata:
                                 message[key] = user_metadata[key]
+                elif row.get("role") == "assistant":
+                    try:
+                        assistant_metadata = json.loads(
+                            row.get("metadata") or "{}",
+                        )
+                    except (TypeError, json.JSONDecodeError):
+                        assistant_metadata = {}
+                    if isinstance(assistant_metadata, dict):
+                        if isinstance(
+                            assistant_metadata.get("memory_references"),
+                            list,
+                        ):
+                            message["memory_references"] = [
+                                reference
+                                for reference in assistant_metadata[
+                                    "memory_references"
+                                ][:8]
+                                if isinstance(reference, dict)
+                                and isinstance(reference.get("summary"), str)
+                            ]
+                        if isinstance(
+                            assistant_metadata.get("turn_id"),
+                            str,
+                        ):
+                            message["turn_id"] = assistant_metadata["turn_id"]
                 if row.get("role") == "interaction":
                     try:
                         interaction = json.loads(row.get("metadata") or "{}")

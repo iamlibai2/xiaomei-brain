@@ -134,6 +134,43 @@ class GatewaySessionsTest(unittest.TestCase):
         self.assertEqual(result["messages"][0]["status"], "failed")
         self.assertEqual(result["messages"][0]["error"]["message"], "offline")
 
+    def test_chat_history_restores_assistant_memory_references(self):
+        references = [{
+            "id": "42",
+            "summary": "李白希望优先完善独立 Agent",
+            "source": "immediate",
+            "memory_type": "common",
+            "tags": ["产品方向"],
+            "created_at": 123.0,
+        }]
+        self.db.log(
+            "memory-session",
+            "assistant",
+            "我们继续完善独立 Agent。",
+            metadata={
+                "turn_id": "turn-memory",
+                "memory_references": references,
+            },
+        )
+        living = SimpleNamespace(
+            agent=SimpleNamespace(conversation_db=self.db),
+        )
+        router = MethodRouter(living=living)
+        router._auth_sessions.add("desktop-connection")
+
+        result = router.dispatch(
+            "desktop-connection",
+            "history-memory",
+            "chat.history",
+            {"session_id": "memory-session", "limit": 20},
+        )["result"]
+
+        self.assertEqual(result["messages"][0]["turn_id"], "turn-memory")
+        self.assertEqual(
+            result["messages"][0]["memory_references"],
+            references,
+        )
+
     def test_chat_history_restores_interaction_timeline_record(self):
         self.db.log("card-session", "user", "help me choose")
         self.db.save_interaction({

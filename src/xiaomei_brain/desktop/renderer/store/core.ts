@@ -94,6 +94,32 @@ function displayArtifact(value: unknown): DisplayArtifact | undefined {
   };
 }
 
+export interface ArtifactSnapshot extends DisplayArtifact {
+  sessionId: string;
+  createdAt: number;
+}
+
+function artifactSnapshot(value: unknown): ArtifactSnapshot | null {
+  const artifact = displayArtifact(value);
+  if (!artifact || !value || typeof value !== "object" || Array.isArray(value)) return null;
+  const item = value as Record<string, unknown>;
+  return {
+    ...artifact,
+    sessionId: typeof item.session_id === "string" ? item.session_id : "",
+    createdAt: typeof item.created_at === "number" ? item.created_at : 0,
+  };
+}
+
+function upsertArtifact(state: CoreState, agentId: string, artifact: ArtifactSnapshot): void {
+  if (!state.artifactsByAgent[agentId]) state.artifactsByAgent[agentId] = [];
+  const index = state.artifactsByAgent[agentId].findIndex((item) => (
+    item.id === artifact.id && item.sessionId === artifact.sessionId
+  ));
+  if (index >= 0) state.artifactsByAgent[agentId][index] = artifact;
+  else state.artifactsByAgent[agentId].push(artifact);
+  state.artifactsByAgent[agentId].sort((left, right) => right.createdAt - left.createdAt);
+}
+
 function clearAgentStreams(agentId: string): void {
   const prefix = `${agentId}\u0000`;
   for (const key of Object.keys(_streamingByTurn)) {
@@ -130,6 +156,42 @@ function actionRequest(
     decision: typeof payload.decision === "string" ? payload.decision : "",
     result: typeof payload.result === "string" ? payload.result : "",
     error: typeof payload.error === "string" ? payload.error : "",
+  };
+}
+
+function memoryReferences(value: unknown): MemoryReference[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((raw): MemoryReference[] => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+    const item = raw as Record<string, unknown>;
+    if (typeof item.summary !== "string" || !item.summary.trim()) return [];
+    return [{
+      id: typeof item.id === "string" ? item.id : String(item.id || ""),
+      summary: item.summary,
+      source: typeof item.source === "string" ? item.source : "",
+      memoryType: typeof item.memory_type === "string" ? item.memory_type : "",
+      tags: Array.isArray(item.tags)
+        ? item.tags.filter((tag): tag is string => typeof tag === "string").slice(0, 5)
+        : [],
+      createdAt: typeof item.created_at === "number" ? item.created_at : 0,
+    }];
+  }).slice(0, 8);
+}
+
+function personMemorySnapshot(value: unknown): PersonMemorySnapshot | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const item = value as Record<string, unknown>;
+  if (typeof item.id !== "string" || typeof item.summary !== "string" || !item.summary.trim()) return null;
+  return {
+    id: item.id,
+    summary: item.summary,
+    source: typeof item.source === "string" ? item.source : "",
+    memoryType: typeof item.memory_type === "string" ? item.memory_type : "",
+    tags: Array.isArray(item.tags)
+      ? item.tags.filter((tag): tag is string => typeof tag === "string").slice(0, 8)
+      : [],
+    createdAt: typeof item.created_at === "number" ? item.created_at : 0,
+    lastAccessed: typeof item.last_accessed === "number" ? item.last_accessed : 0,
   };
 }
 
@@ -240,6 +302,7 @@ function historyMessages(
       content: row.content,
       streaming: false,
       attachments: displayAttachments(row.attachments),
+      memoryReferences: role === "agent" ? memoryReferences(row.memory_references) : undefined,
       turnId: typeof row.turn_id === "string" ? row.turn_id : undefined,
       deliveryStatus: role === "user" ? deliveryStatus : undefined,
       deliveryError: role === "user" ? deliveryError : undefined,
@@ -507,11 +570,25 @@ export interface DisplayMessage {
   action?: ActionRequest;
   artifact?: DisplayArtifact;
   attachments?: DisplayAttachment[];
+  memoryReferences?: MemoryReference[];
   turnId?: string;
   deliveryStatus?: "processing" | "completed" | "failed" | "interrupted";
   deliveryError?: string;
   sourceMessageId?: number;
   retryOf?: number;
+}
+
+export interface MemoryReference {
+  id: string;
+  summary: string;
+  source: string;
+  memoryType: string;
+  tags: string[];
+  createdAt: number;
+}
+
+export interface PersonMemorySnapshot extends MemoryReference {
+  lastAccessed: number;
 }
 
 export interface DisplayAttachment {
@@ -594,6 +671,150 @@ export interface AssignmentSnapshot {
   completedAt: number | null;
 }
 
+export type ActivityStatus = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled";
+export type ActivityCategory = "work" | "cognition" | "sleep" | "communication";
+
+export interface ActivityStepSnapshot {
+  id: string;
+  title: string;
+  status: "pending" | "running" | "completed" | "skipped" | "failed";
+  summary: string;
+}
+
+export interface ActivitySnapshot {
+  id: string;
+  category: ActivityCategory;
+  kind: string;
+  title: string;
+  status: ActivityStatus;
+  sourceType: string;
+  sourceId: string;
+  personId: string | null;
+  originSessionId: string;
+  originTurnId: string;
+  progressSummary: string;
+  currentStep: string;
+  completedSteps: number | null;
+  totalSteps: number | null;
+  steps: ActivityStepSnapshot[];
+  pauseReason: string;
+  resultSummary: string;
+  errorMessage: string;
+  revision: number;
+  createdAt: number;
+  updatedAt: number;
+  completedAt: number | null;
+}
+
+export type AgentLivingState =
+  | "dormant"
+  | "waking"
+  | "awake"
+  | "idle"
+  | "working"
+  | "sleeping"
+  | "dreaming";
+
+export interface AgentIntentSnapshot {
+  type: string;
+  summary: string;
+  actionable: boolean;
+  decidedAt: number;
+}
+
+export interface AgentStateSnapshot {
+  living: AgentLivingState;
+  livingSince: number;
+  focus: string;
+  focusSummary: string;
+  focusSince: number;
+  lastIntent: AgentIntentSnapshot | null;
+}
+
+function agentStateSnapshot(value: unknown): AgentStateSnapshot | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const item = value as Record<string, unknown>;
+  const states = new Set([
+    "dormant", "waking", "awake", "idle", "working", "sleeping", "dreaming",
+  ]);
+  if (!states.has(String(item.living))) return null;
+  const rawIntent = item.last_intent;
+  const intent = rawIntent && typeof rawIntent === "object" && !Array.isArray(rawIntent)
+    ? rawIntent as Record<string, unknown>
+    : null;
+  return {
+    living: item.living as AgentLivingState,
+    livingSince: typeof item.living_since === "number" ? item.living_since : 0,
+    focus: typeof item.focus === "string" ? item.focus : "",
+    focusSummary: typeof item.focus_summary === "string" ? item.focus_summary : "",
+    focusSince: typeof item.focus_since === "number" ? item.focus_since : 0,
+    lastIntent: intent ? {
+      type: typeof intent.type === "string" ? intent.type : "",
+      summary: typeof intent.summary === "string" ? intent.summary : "",
+      actionable: Boolean(intent.actionable),
+      decidedAt: typeof intent.decided_at === "number" ? intent.decided_at : 0,
+    } : null,
+  };
+}
+
+function activitySnapshot(value: unknown): ActivitySnapshot | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const item = value as Record<string, unknown>;
+  const categories = new Set(["work", "cognition", "sleep", "communication"]);
+  const statuses = new Set(["queued", "running", "paused", "completed", "failed", "cancelled"]);
+  if (
+    typeof item.id !== "string"
+    || typeof item.title !== "string"
+    || !categories.has(String(item.category))
+    || !statuses.has(String(item.status))
+  ) return null;
+  const steps = Array.isArray(item.steps) ? item.steps.flatMap((raw): ActivityStepSnapshot[] => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+    const step = raw as Record<string, unknown>;
+    if (typeof step.id !== "string" || typeof step.title !== "string") return [];
+    return [{
+      id: step.id,
+      title: step.title,
+      status: String(step.status || "pending") as ActivityStepSnapshot["status"],
+      summary: typeof step.summary === "string" ? step.summary : "",
+    }];
+  }) : [];
+  return {
+    id: item.id,
+    category: item.category as ActivityCategory,
+    kind: typeof item.kind === "string" ? item.kind : "activity",
+    title: item.title,
+    status: item.status as ActivityStatus,
+    sourceType: typeof item.source_type === "string" ? item.source_type : "",
+    sourceId: typeof item.source_id === "string" ? item.source_id : "",
+    personId: typeof item.person_id === "string" ? item.person_id : null,
+    originSessionId: typeof item.origin_session_id === "string" ? item.origin_session_id : "",
+    originTurnId: typeof item.origin_turn_id === "string" ? item.origin_turn_id : "",
+    progressSummary: typeof item.progress_summary === "string" ? item.progress_summary : "",
+    currentStep: typeof item.current_step === "string" ? item.current_step : "",
+    completedSteps: typeof item.completed_steps === "number" ? item.completed_steps : null,
+    totalSteps: typeof item.total_steps === "number" ? item.total_steps : null,
+    steps,
+    pauseReason: typeof item.pause_reason === "string" ? item.pause_reason : "",
+    resultSummary: typeof item.result_summary === "string" ? item.result_summary : "",
+    errorMessage: typeof item.error_message === "string" ? item.error_message : "",
+    revision: typeof item.revision === "number" ? item.revision : 0,
+    createdAt: typeof item.created_at === "number" ? item.created_at : 0,
+    updatedAt: typeof item.updated_at === "number" ? item.updated_at : 0,
+    completedAt: typeof item.completed_at === "number" ? item.completed_at : null,
+  };
+}
+
+function upsertActivity(state: CoreState, agentId: string, activity: ActivitySnapshot): boolean {
+  if (!state.activitiesByAgent[agentId]) state.activitiesByAgent[agentId] = [];
+  const existing = state.activitiesByAgent[agentId].findIndex((item) => item.id === activity.id);
+  if (existing >= 0 && state.activitiesByAgent[agentId][existing].revision >= activity.revision) return false;
+  if (existing >= 0) state.activitiesByAgent[agentId][existing] = activity;
+  else state.activitiesByAgent[agentId].push(activity);
+  state.activitiesByAgent[agentId].sort((left, right) => right.updatedAt - left.updatedAt);
+  return true;
+}
+
 function assignmentSnapshot(value: unknown): AssignmentSnapshot | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const item = value as Record<string, unknown>;
@@ -666,12 +887,29 @@ export interface AgentLifecycleState {
   error: string;
 }
 
+export interface PersonMemoryListState {
+  loading: boolean;
+  loadingMore: boolean;
+  hasMore: boolean;
+  nextOffset: number | null;
+  error: string;
+}
+
 interface CoreState {
   connectionByAgent: Record<string, ConnectionState>;
   messagesByAgent: Record<string, DisplayMessage[]>;
   assignmentsByAgent: Record<string, AssignmentSnapshot[]>;
   assignmentLoadingByAgent: Record<string, boolean>;
   assignmentErrorByAgent: Record<string, string>;
+  activitiesByAgent: Record<string, ActivitySnapshot[]>;
+  activityLoadingByAgent: Record<string, boolean>;
+  activityErrorByAgent: Record<string, string>;
+  artifactsByAgent: Record<string, ArtifactSnapshot[]>;
+  artifactLoadingByAgent: Record<string, boolean>;
+  artifactErrorByAgent: Record<string, string>;
+  personMemoriesByAgent: Record<string, PersonMemorySnapshot[]>;
+  personMemoryListByAgent: Record<string, PersonMemoryListState>;
+  agentStateByAgent: Record<string, AgentStateSnapshot>;
   sendingByAgent: Record<string, boolean>;
   draftByAgent: Record<string, string>;
   attachmentsByConversation: Record<string, ChatAttachment[]>;
@@ -717,6 +955,11 @@ interface CoreActions {
   searchSessions: (query: string) => Promise<void>;
   loadMoreSessions: () => Promise<void>;
   refreshAssignments: (agentId?: string) => Promise<void>;
+  refreshActivities: (agentId?: string) => Promise<void>;
+  refreshArtifacts: (agentId?: string) => Promise<void>;
+  refreshPersonMemories: (agentId?: string) => Promise<void>;
+  loadMorePersonMemories: (agentId?: string) => Promise<void>;
+  refreshAgentState: (agentId?: string) => Promise<void>;
   requestAssignmentCancel: (assignmentId: string, reason?: string) => Promise<string>;
   requestAssignmentResume: (
     assignmentId: string,
@@ -743,6 +986,15 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   assignmentsByAgent: {},
   assignmentLoadingByAgent: {},
   assignmentErrorByAgent: {},
+  activitiesByAgent: {},
+  activityLoadingByAgent: {},
+  activityErrorByAgent: {},
+  artifactsByAgent: {},
+  artifactLoadingByAgent: {},
+  artifactErrorByAgent: {},
+  personMemoriesByAgent: {},
+  personMemoryListByAgent: {},
+  agentStateByAgent: {},
   sendingByAgent: {},
   draftByAgent: {},
   attachmentsByConversation: {},
@@ -1085,6 +1337,15 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       delete s.assignmentsByAgent[agentId];
       delete s.assignmentLoadingByAgent[agentId];
       delete s.assignmentErrorByAgent[agentId];
+      delete s.activitiesByAgent[agentId];
+      delete s.activityLoadingByAgent[agentId];
+      delete s.activityErrorByAgent[agentId];
+      delete s.agentStateByAgent[agentId];
+      delete s.artifactsByAgent[agentId];
+      delete s.artifactLoadingByAgent[agentId];
+      delete s.artifactErrorByAgent[agentId];
+      delete s.personMemoriesByAgent[agentId];
+      delete s.personMemoryListByAgent[agentId];
       delete s.sendingByAgent[agentId];
       delete s.draftByAgent[agentId];
       delete s.sessionsByAgent[agentId];
@@ -1704,6 +1965,179 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     }
   },
 
+  refreshActivities: async (requestedAgentId) => {
+    const agentId = requestedAgentId || get().activeAgentId;
+    if (!agentId || get().connectionByAgent[agentId]?.status !== "connected") return;
+    set(produce((s: CoreState) => {
+      s.activityLoadingByAgent[agentId] = true;
+      s.activityErrorByAgent[agentId] = "";
+    }));
+    try {
+      const response = await window.gateway.listActivities({
+        agentId,
+        status: "all",
+        category: "all",
+        limit: 100,
+      });
+      if (response.error) throw new Error(response.error.message);
+      const rows = Array.isArray(response.result?.activities) ? response.result.activities : [];
+      const activities = rows
+        .map(activitySnapshot)
+        .filter((item): item is ActivitySnapshot => item !== null)
+        .sort((left, right) => right.updatedAt - left.updatedAt);
+      set(produce((s: CoreState) => {
+        s.activitiesByAgent[agentId] = activities;
+        s.activityLoadingByAgent[agentId] = false;
+        s.activityErrorByAgent[agentId] = "";
+      }));
+    } catch (error) {
+      set(produce((s: CoreState) => {
+        s.activityLoadingByAgent[agentId] = false;
+        s.activityErrorByAgent[agentId] = String(error);
+      }));
+    }
+  },
+
+  refreshArtifacts: async (requestedAgentId) => {
+    const agentId = requestedAgentId || get().activeAgentId;
+    if (!agentId || get().connectionByAgent[agentId]?.status !== "connected") return;
+    set(produce((s: CoreState) => {
+      s.artifactLoadingByAgent[agentId] = true;
+      s.artifactErrorByAgent[agentId] = "";
+    }));
+    try {
+      const response = await window.gateway.listArtifacts({ agentId, limit: 100, offset: 0 });
+      if (response.error) throw new Error(response.error.message);
+      const rows = Array.isArray(response.result?.artifacts) ? response.result.artifacts : [];
+      const artifacts = rows
+        .map(artifactSnapshot)
+        .filter((item): item is ArtifactSnapshot => item !== null);
+      set(produce((s: CoreState) => {
+        s.artifactsByAgent[agentId] = artifacts;
+        s.artifactLoadingByAgent[agentId] = false;
+        s.artifactErrorByAgent[agentId] = "";
+      }));
+    } catch (error) {
+      set(produce((s: CoreState) => {
+        s.artifactLoadingByAgent[agentId] = false;
+        s.artifactErrorByAgent[agentId] = String(error);
+      }));
+    }
+  },
+
+  refreshPersonMemories: async (requestedAgentId) => {
+    const agentId = requestedAgentId || get().activeAgentId;
+    if (!agentId || get().connectionByAgent[agentId]?.status !== "connected") return;
+    set(produce((s: CoreState) => {
+      const previous = s.personMemoryListByAgent[agentId];
+      s.personMemoryListByAgent[agentId] = {
+        loading: true,
+        loadingMore: false,
+        hasMore: previous?.hasMore ?? false,
+        nextOffset: previous?.nextOffset ?? null,
+        error: "",
+      };
+    }));
+    try {
+      const response = await window.gateway.listMemories({ agentId, limit: 30, offset: 0 });
+      if (response.error) throw new Error(response.error.message);
+      const rows = Array.isArray(response.result?.memories) ? response.result.memories : [];
+      const memories = rows
+        .map(personMemorySnapshot)
+        .filter((item): item is PersonMemorySnapshot => item !== null);
+      set(produce((s: CoreState) => {
+        s.personMemoriesByAgent[agentId] = memories;
+        s.personMemoryListByAgent[agentId] = {
+          loading: false,
+          loadingMore: false,
+          hasMore: response.result?.has_more === true,
+          nextOffset: typeof response.result?.next_offset === "number"
+            ? response.result.next_offset
+            : null,
+          error: "",
+        };
+      }));
+    } catch (error) {
+      set(produce((s: CoreState) => {
+        const previous = s.personMemoryListByAgent[agentId];
+        s.personMemoryListByAgent[agentId] = {
+          loading: false,
+          loadingMore: false,
+          hasMore: previous?.hasMore ?? false,
+          nextOffset: previous?.nextOffset ?? null,
+          error: String(error),
+        };
+      }));
+    }
+  },
+
+  loadMorePersonMemories: async (requestedAgentId) => {
+    const agentId = requestedAgentId || get().activeAgentId;
+    const page = agentId ? get().personMemoryListByAgent[agentId] : undefined;
+    if (
+      !agentId
+      || get().connectionByAgent[agentId]?.status !== "connected"
+      || !page?.hasMore
+      || page.loading
+      || page.loadingMore
+      || page.nextOffset === null
+    ) return;
+    set(produce((s: CoreState) => {
+      s.personMemoryListByAgent[agentId].loadingMore = true;
+      s.personMemoryListByAgent[agentId].error = "";
+    }));
+    try {
+      const response = await window.gateway.listMemories({
+        agentId,
+        limit: 30,
+        offset: page.nextOffset,
+      });
+      if (response.error) throw new Error(response.error.message);
+      const rows = Array.isArray(response.result?.memories) ? response.result.memories : [];
+      const incoming = rows
+        .map(personMemorySnapshot)
+        .filter((item): item is PersonMemorySnapshot => item !== null);
+      set(produce((s: CoreState) => {
+        const existing = s.personMemoriesByAgent[agentId] || [];
+        const known = new Set(existing.map((item) => item.id));
+        s.personMemoriesByAgent[agentId] = [
+          ...existing,
+          ...incoming.filter((item) => !known.has(item.id)),
+        ];
+        s.personMemoryListByAgent[agentId] = {
+          loading: false,
+          loadingMore: false,
+          hasMore: response.result?.has_more === true,
+          nextOffset: typeof response.result?.next_offset === "number"
+            ? response.result.next_offset
+            : null,
+          error: "",
+        };
+      }));
+    } catch (error) {
+      set(produce((s: CoreState) => {
+        s.personMemoryListByAgent[agentId].loadingMore = false;
+        s.personMemoryListByAgent[agentId].error = String(error);
+      }));
+    }
+  },
+
+  refreshAgentState: async (requestedAgentId) => {
+    const agentId = requestedAgentId || get().activeAgentId;
+    if (!agentId || get().connectionByAgent[agentId]?.status !== "connected") return;
+    try {
+      const response = await window.gateway.getAgentState({ agentId });
+      if (response.error) throw new Error(response.error.message);
+      const state = agentStateSnapshot(response.result?.state);
+      if (!state) return;
+      set(produce((s: CoreState) => {
+        s.agentStateByAgent[agentId] = state;
+      }));
+    } catch {
+      // State is supplementary; an older Agent must not break conversation.
+    }
+  },
+
   requestAssignmentCancel: async (assignmentId, reason = "") => {
     const agentId = get().activeAgentId;
     const assignment = agentId
@@ -1784,6 +2218,24 @@ export function initGatewayEvents() {
     const setState = useCoreStore.setState;
 
     if (!agentId) return;
+
+    if (event.startsWith("activity.")) {
+      const activity = activitySnapshot(d.activity);
+      if (!activity) return;
+      setState(produce((s: CoreState) => {
+        upsertActivity(s, agentId, activity);
+      }));
+      return;
+    }
+
+    if (event === "agent.state.changed") {
+      const state = agentStateSnapshot(d.state);
+      if (!state) return;
+      setState(produce((s: CoreState) => {
+        s.agentStateByAgent[agentId] = state;
+      }));
+      return;
+    }
 
     if (event === "assignment.changed" || event === "assignment.progress") {
       const assignment = assignmentSnapshot(d);
@@ -1891,6 +2343,10 @@ export function initGatewayEvents() {
         s.sendingByAgent[agentId] = resume?.state === "running" || resume?.state === "waiting_user";
       }));
       restoreStreamFromResume(agentId, sessionId, resume);
+      void useCoreStore.getState().refreshActivities(agentId);
+      void useCoreStore.getState().refreshArtifacts(agentId);
+      void useCoreStore.getState().refreshPersonMemories(agentId);
+      void useCoreStore.getState().refreshAgentState(agentId);
       return;
     }
 
@@ -2135,7 +2591,13 @@ export function initGatewayEvents() {
     if (event === "artifact.created") {
       const artifact = displayArtifact(d);
       if (!artifact) return;
+      const snapshot = artifactSnapshot({
+        ...d,
+        session_id: eventSessionId,
+        created_at: typeof raw.timestamp === "number" ? raw.timestamp / 1000 : Date.now() / 1000,
+      });
       setState(produce((s: CoreState) => {
+        if (snapshot) upsertArtifact(s, agentId, snapshot);
         if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
         const existing = s.messagesByAgent[agentId]
           .find((message) => message.artifact?.id === artifact.id);
@@ -2179,6 +2641,7 @@ export function initGatewayEvents() {
       }
     } else if (event === "message.complete") {
       const status = typeof d.status === "string" ? d.status : "complete";
+      const recalledMemories = memoryReferences(d.memory_references);
       const error = d.error && typeof d.error === "object"
         ? d.error as Record<string, unknown>
         : null;
@@ -2208,6 +2671,7 @@ export function initGatewayEvents() {
           if (idx !== -1) {
             s.messagesByAgent[agentId][idx].content = finalText;
             s.messagesByAgent[agentId][idx].streaming = false;
+            s.messagesByAgent[agentId][idx].memoryReferences = recalledMemories;
             touchSession(s, agentId, eventSessionId, 1);
           }
         }));
@@ -2218,11 +2682,20 @@ export function initGatewayEvents() {
         const msgs = store().messagesByAgent[agentId];
         const lastMsg = msgs && msgs.length > 0 ? msgs[msgs.length - 1] : null;
         const isDuplicate = lastMsg && lastMsg.role === "agent" && lastMsg.content === terminalText;
-        if (!isDuplicate) {
+        if (isDuplicate) {
+          setState(produce((s: CoreState) => {
+            const current = s.messagesByAgent[agentId]?.[s.messagesByAgent[agentId].length - 1];
+            if (current) current.memoryReferences = recalledMemories;
+          }));
+        } else {
           completedText = terminalText;
           setState(produce((s: CoreState) => {
             s.messagesByAgent[agentId].push({
-              id: "msg-" + Date.now(), role: "agent", content: terminalText, streaming: false,
+              id: "msg-" + Date.now(),
+              role: "agent",
+              content: terminalText,
+              streaming: false,
+              memoryReferences: recalledMemories,
             });
             touchSession(s, agentId, eventSessionId, 1);
           }));

@@ -57,6 +57,14 @@ class LongTermMemory(SQLiteStore):
     """Vector-semantic long-term memory — SQLite metadata + LanceDB vector index."""
 
     VALID_SOURCES = {"immediate", "periodic", "dream", "manual", "insight", "internal", "learned", "hub", "experience", "every_turn", "merged", "task_completion"}
+    PERSON_VISIBLE_SOURCES = {
+        "immediate",
+        "periodic",
+        "manual",
+        "every_turn",
+        "merged",
+        "task_completion",
+    }
 
     def __init__(
         self,
@@ -2303,6 +2311,52 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
         else:
             row = conn.execute("SELECT COUNT(*) FROM memories").fetchone()
         return row[0] if row else 0
+
+    def list_person_memories(
+        self,
+        person_id: str,
+        *,
+        limit: int = 30,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List ordinary long-term memories belonging to exactly one Person.
+
+        This observation path deliberately excludes global knowledge and
+        private/internal sources such as dreams and internal narratives. It
+        does not count as a recall and therefore does not mutate access stats.
+        """
+        person_id = str(person_id or "").strip()
+        if not person_id:
+            return []
+        normalized_limit = max(1, min(int(limit), 201))
+        normalized_offset = max(0, int(offset))
+        sources = sorted(self.PERSON_VISIBLE_SOURCES)
+        placeholders = ",".join("?" * len(sources))
+        rows = self._get_conn().execute(
+            f"""SELECT id, content, source, created_at, last_accessed, type
+                FROM memories
+                WHERE user_id = ?
+                  AND status = ?
+                  AND type = 'common'
+                  AND source IN ({placeholders})
+                ORDER BY MAX(created_at, last_accessed) DESC, id DESC
+                LIMIT ? OFFSET ?""",
+            (
+                person_id,
+                STATUS_ACTIVE,
+                *sources,
+                normalized_limit,
+                normalized_offset,
+            ),
+        ).fetchall()
+        tag_map = self._get_tags_batch([int(row["id"]) for row in rows])
+        return [
+            {
+                **dict(row),
+                "tags": tag_map.get(int(row["id"]), []),
+            }
+            for row in rows
+        ]
 
     def _get_tags(self, memory_id: int) -> list[str]:
         conn = self._get_conn()

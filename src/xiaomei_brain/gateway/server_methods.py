@@ -9,6 +9,8 @@ from xiaomei_brain.people.challenge import ChallengeManager
 
 from .method_registry import MethodRegistry
 from .methods import (
+    ActivityMethods,
+    AgentStateMethods,
     AttachmentMethods,
     ArtifactMethods,
     AssignmentMethods,
@@ -17,6 +19,7 @@ from .methods import (
     ConnectionMethods,
     IdentityMethods,
     InteractionMethods,
+    MemoryMethods,
     SessionMethods,
 )
 from .protocol import ErrorCode, build_error
@@ -47,6 +50,7 @@ class MethodRouter:
         self._session_methods = SessionMethods(living, self._chat_methods.handle_history)
         self._attachment_methods = AttachmentMethods(living)
         self._interaction_methods = InteractionMethods(living)
+        self._memory_methods = MemoryMethods(living, self._identity_contexts)
         self._identity_methods = IdentityMethods(
             living,
             self._connected_sessions,
@@ -54,8 +58,10 @@ class MethodRouter:
             self._identity_contexts,
             self._challenges,
         )
-        self._artifact_methods = ArtifactMethods(living)
+        self._artifact_methods = ArtifactMethods(living, self._identity_contexts)
         self._assignment_methods = AssignmentMethods(living, self._identity_contexts)
+        self._activity_methods = ActivityMethods(living, self._identity_contexts)
+        self._agent_state_methods = AgentStateMethods(living)
         self._channel_methods = ChannelMethods(living, self._identity_contexts)
 
         self._registry.register_many(
@@ -71,9 +77,12 @@ class MethodRouter:
             self._session_methods,
             self._attachment_methods,
             self._interaction_methods,
+            self._memory_methods,
             self._identity_methods,
             self._artifact_methods,
             self._assignment_methods,
+            self._activity_methods,
+            self._agent_state_methods,
             self._channel_methods,
         ):
             self._registry.register_many(provider.handlers)
@@ -116,7 +125,7 @@ class MethodRouter:
             "session.list": {"chat.sessions"},
             "message.attachments": {"chat.send", "attachment.get"},
             "attachment.read": {"attachment.get"},
-            "artifact.read": {"artifact.get"},
+            "artifact.read": {"artifact.get", "artifact.list"},
             "artifact.events": {"artifact.get"},
             "assignment.read": {"assignment.list", "assignment.get"},
             "assignment.artifacts": {"assignment.artifact.get"},
@@ -125,6 +134,14 @@ class MethodRouter:
                 "assignment.request_resume",
             },
             "assignment.events": {"assignment.get"},
+            "activity.read": {
+                "activity.current",
+                "activity.list",
+                "activity.get",
+            },
+            "activity.events": {"activity.get"},
+            "memory.read": {"memory.list"},
+            "agent.state": {"agent.state.get"},
             "message.retry": {"chat.retry"},
             "identity.list": {"identity.list"},
             "identity.challenge": {

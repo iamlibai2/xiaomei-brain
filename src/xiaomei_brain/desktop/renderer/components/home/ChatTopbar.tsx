@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { Button } from "../ui";
+import type { AgentStateSnapshot } from "../../store";
 
 interface ChatTopbarProps {
   taskName: string;
@@ -7,15 +8,30 @@ interface ChatTopbarProps {
   onToggleRightPanel?: () => void;
   rightPanelOpen?: boolean;
   onOpenAgentSettings?: () => void;
+  agentState?: AgentStateSnapshot;
+  activitySummary?: string;
 }
 
-export function ChatTopbar({ taskName, onSearch, onToggleRightPanel, rightPanelOpen, onOpenAgentSettings }: ChatTopbarProps) {
+export function ChatTopbar({
+  taskName,
+  onSearch,
+  onToggleRightPanel,
+  rightPanelOpen,
+  onOpenAgentSettings,
+  agentState,
+  activitySummary,
+}: ChatTopbarProps) {
   const { t } = useTranslation();
 
   return (
     <div className="chat-topbar">
       <div className="chat-topbar-left">
         <span className="chat-topbar-title">{taskName}</span>
+        {(agentState || activitySummary) && (
+          <span className={`chat-topbar-agent-state ${activitySummary ? "working" : agentState?.living || ""}`}>
+            {agentState?.focusSummary || activitySummary || (agentState ? livingStateName(agentState.living) : "")}
+          </span>
+        )}
       </div>
       <div className="chat-topbar-right">
         <Button
@@ -42,4 +58,16 @@ export function ChatTopbar({ taskName, onSearch, onToggleRightPanel, rightPanelO
       </div>
     </div>
   );
+}
+
+function livingStateName(state: AgentStateSnapshot["living"]): string {
+  return {
+    dormant: "休眠",
+    waking: "正在苏醒",
+    awake: "清醒",
+    idle: "空闲",
+    working: "工作中",
+    sleeping: "睡眠中",
+    dreaming: "做梦中",
+  }[state];
 }
