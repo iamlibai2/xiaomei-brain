@@ -722,6 +722,45 @@ export interface AgentIntentSnapshot {
   decidedAt: number;
 }
 
+export interface AgentStateMetric {
+  key: string;
+  label: string;
+  value: number;
+  description: string;
+}
+
+export interface AgentInternalStateSnapshot {
+  energy: number;
+  energyDescription: string;
+  moodSummary: string;
+  emotions: AgentStateMetric[];
+  somatic: string;
+  desires: AgentStateMetric[];
+  hormones: AgentStateMetric[];
+  contradictions: string[];
+  impulse: string;
+  behaviorTendencies: string[];
+  rawContext: string;
+  observedAt: number;
+}
+
+export interface AgentRelationshipSnapshot {
+  personId: string;
+  displayName: string;
+  relationType: string;
+  status: string;
+  depth: number;
+  trust: number;
+  closeness: number;
+  interactionCount: number;
+  description: string;
+  depthDescription: string;
+  trustDescription: string;
+  closenessDescription: string;
+  lastInteractionAt: number;
+  rawContext: string;
+}
+
 export interface AgentStateSnapshot {
   living: AgentLivingState;
   livingSince: number;
@@ -729,6 +768,23 @@ export interface AgentStateSnapshot {
   focusSummary: string;
   focusSince: number;
   lastIntent: AgentIntentSnapshot | null;
+  internal: AgentInternalStateSnapshot | null;
+  relationship?: AgentRelationshipSnapshot | null;
+}
+
+function stateMetrics(value: unknown): AgentStateMetric[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((raw): AgentStateMetric[] => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+    const item = raw as Record<string, unknown>;
+    if (typeof item.key !== "string" || typeof item.label !== "string") return [];
+    return [{
+      key: item.key,
+      label: item.label,
+      value: Math.max(0, Math.min(1, typeof item.value === "number" ? item.value : 0)),
+      description: typeof item.description === "string" ? item.description : "",
+    }];
+  });
 }
 
 function agentStateSnapshot(value: unknown): AgentStateSnapshot | null {
@@ -742,6 +798,15 @@ function agentStateSnapshot(value: unknown): AgentStateSnapshot | null {
   const intent = rawIntent && typeof rawIntent === "object" && !Array.isArray(rawIntent)
     ? rawIntent as Record<string, unknown>
     : null;
+  const rawInternal = item.internal;
+  const internal = rawInternal && typeof rawInternal === "object" && !Array.isArray(rawInternal)
+    ? rawInternal as Record<string, unknown>
+    : null;
+  const hasRelationship = Object.prototype.hasOwnProperty.call(item, "relationship");
+  const rawRelationship = item.relationship;
+  const relationship = rawRelationship && typeof rawRelationship === "object" && !Array.isArray(rawRelationship)
+    ? rawRelationship as Record<string, unknown>
+    : null;
   return {
     living: item.living as AgentLivingState,
     livingSince: typeof item.living_since === "number" ? item.living_since : 0,
@@ -754,6 +819,42 @@ function agentStateSnapshot(value: unknown): AgentStateSnapshot | null {
       actionable: Boolean(intent.actionable),
       decidedAt: typeof intent.decided_at === "number" ? intent.decided_at : 0,
     } : null,
+    internal: internal ? {
+      energy: Math.max(0, Math.min(1, typeof internal.energy === "number" ? internal.energy : 0)),
+      energyDescription: typeof internal.energy_description === "string" ? internal.energy_description : "",
+      moodSummary: typeof internal.mood_summary === "string" ? internal.mood_summary : "",
+      emotions: stateMetrics(internal.emotions),
+      somatic: typeof internal.somatic === "string" ? internal.somatic : "",
+      desires: stateMetrics(internal.desires),
+      hormones: stateMetrics(internal.hormones),
+      contradictions: Array.isArray(internal.contradictions)
+        ? internal.contradictions.filter((entry): entry is string => typeof entry === "string")
+        : [],
+      impulse: typeof internal.impulse === "string" ? internal.impulse : "",
+      behaviorTendencies: Array.isArray(internal.behavior_tendencies)
+        ? internal.behavior_tendencies.filter((entry): entry is string => typeof entry === "string")
+        : [],
+      rawContext: typeof internal.raw_context === "string" ? internal.raw_context : "",
+      observedAt: typeof internal.observed_at === "number" ? internal.observed_at : 0,
+    } : null,
+    relationship: hasRelationship
+      ? relationship ? {
+        personId: typeof relationship.person_id === "string" ? relationship.person_id : "",
+        displayName: typeof relationship.display_name === "string" ? relationship.display_name : "",
+        relationType: typeof relationship.relation_type === "string" ? relationship.relation_type : "普通用户",
+        status: typeof relationship.status === "string" ? relationship.status : "",
+        depth: Math.max(0, Math.min(1, typeof relationship.depth === "number" ? relationship.depth : 0)),
+        trust: Math.max(0, Math.min(1, typeof relationship.trust === "number" ? relationship.trust : 0)),
+        closeness: Math.max(0, Math.min(1, typeof relationship.closeness === "number" ? relationship.closeness : 0)),
+        interactionCount: typeof relationship.interaction_count === "number" ? relationship.interaction_count : 0,
+        description: typeof relationship.description === "string" ? relationship.description : "",
+        depthDescription: typeof relationship.depth_description === "string" ? relationship.depth_description : "",
+        trustDescription: typeof relationship.trust_description === "string" ? relationship.trust_description : "",
+        closenessDescription: typeof relationship.closeness_description === "string" ? relationship.closeness_description : "",
+        lastInteractionAt: typeof relationship.last_interaction_at === "number" ? relationship.last_interaction_at : 0,
+        rawContext: typeof relationship.raw_context === "string" ? relationship.raw_context : "",
+      } : null
+      : undefined,
   };
 }
 
@@ -2235,6 +2336,9 @@ export function initGatewayEvents() {
       const state = agentStateSnapshot(d.state);
       if (!state) return;
       setState(produce((s: CoreState) => {
+        if (state.relationship === undefined) {
+          state.relationship = s.agentStateByAgent[agentId]?.relationship;
+        }
         s.agentStateByAgent[agentId] = state;
       }));
       return;

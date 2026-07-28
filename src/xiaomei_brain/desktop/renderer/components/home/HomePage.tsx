@@ -22,7 +22,7 @@ import { ActivitySidebar } from "../right-sidebar/ActivitySidebar";
 
 const EMPTY_MSGS: DisplayMessage[] = [];
 const EMPTY_ASSIGNMENTS: AssignmentSnapshot[] = [];
-type RightSidebarSection = "activity" | "assignment" | "artifact" | "memory" | "context";
+type RightSidebarSection = "activity" | "state" | "assignment" | "artifact" | "memory" | "context";
 
 export function HomePage() {
   const { t } = useTranslation();

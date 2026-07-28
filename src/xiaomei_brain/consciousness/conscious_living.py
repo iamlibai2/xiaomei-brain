@@ -1281,7 +1281,7 @@ class ConsciousLiving(Living):
     def get_state_snapshot(self) -> dict[str, Any]:
         """Return the current public state; no internal reasoning is exposed."""
         with self._state_projection_lock:
-            return {
+            snapshot = {
                 "living": self.state.value,
                 "living_since": self._living_state_since,
                 "focus": self._state_focus,
@@ -1293,6 +1293,60 @@ class ConsciousLiving(Living):
                     else None
                 ),
             }
+        snapshot["internal"] = self._get_internal_state_projection()
+        return snapshot
+
+    def _get_internal_state_projection(self) -> dict[str, Any] | None:
+        """Project embodied state without exposing hidden model reasoning."""
+        if not getattr(self, "_load_consciousness", False):
+            return None
+        consciousness = getattr(self, "consciousness", None)
+        if consciousness is None:
+            return None
+        try:
+            from .state_observability import project_body_state
+            return project_body_state(consciousness.get_self_image())
+        except Exception:
+            logger.exception("[ConsciousLiving] Failed to project internal state")
+            return None
+
+    def get_relationship_projection(self, person_id: str) -> dict[str, Any] | None:
+        """Return relationship state scoped to one authenticated Person."""
+        person_id = str(person_id or "").strip()
+        if not person_id:
+            return None
+        try:
+            people = getattr(self, "_people_service", None)
+            person = people.store.get_person(person_id) if people is not None else None
+            display_name = person.display_name if person is not None else person_id
+            metadata = person.metadata if person is not None else {}
+            relation_type = str(
+                metadata.get("relation_type")
+                or metadata.get("relation")
+                or ""
+            ).strip()
+            if not relation_type:
+                identity_manager = getattr(self, "_identity_mgr", None)
+                relation_type = (
+                    identity_manager.get_relation(person_id)
+                    if identity_manager is not None
+                    else "普通用户"
+                )
+            engine = getattr(self, "_relationship_engine", None)
+            values = engine.snapshot_for(person_id) if engine is not None else None
+            from .state_observability import project_relationship_state
+            return project_relationship_state(
+                person_id=person_id,
+                display_name=display_name,
+                relation_type=relation_type,
+                values=values,
+            )
+        except Exception:
+            logger.exception(
+                "[ConsciousLiving] Failed to project relationship for %s",
+                person_id,
+            )
+            return None
 
     def _observe_layer2_state(
         self,

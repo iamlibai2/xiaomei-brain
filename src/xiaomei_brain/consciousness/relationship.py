@@ -243,3 +243,24 @@ class RelationshipEngine:
             f"亲密度{self.closeness:.0%}，"
             f"互动{self.interaction_count}次"
         )
+
+    def snapshot_for(self, user_id: str) -> dict[str, Any]:
+        """Read one Person's relationship without changing the active Person."""
+        if user_id == self._user_id and self._loaded:
+            return {
+                "user_id": user_id,
+                "depth": self.depth,
+                "trust": self.trust,
+                "closeness": self.closeness,
+                "interaction_count": self.interaction_count,
+                "last_interaction_time": self.last_interaction_time,
+            }
+        stored = self._storage.load(user_id)
+        return stored or {
+            "user_id": user_id,
+            "depth": 0.0,
+            "trust": 0.1,
+            "closeness": 0.0,
+            "interaction_count": 0,
+            "last_interaction_time": 0.0,
+        }

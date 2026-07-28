@@ -4,6 +4,7 @@ import type {
   ActivityCategory,
   ActivitySnapshot,
   ArtifactSnapshot,
+  AgentStateMetric,
   AssignmentSnapshot,
   MemoryReference,
   PersonMemoryListState,
@@ -66,8 +67,8 @@ export function ActivitySidebar({
   onClose: () => void;
   selectedAssignmentId: string | null;
   onSelectAssignment: (assignmentId: string | null) => void;
-  section: "activity" | "assignment" | "artifact" | "memory" | "context";
-  onSectionChange: (section: "activity" | "assignment" | "artifact" | "memory" | "context") => void;
+  section: "activity" | "state" | "assignment" | "artifact" | "memory" | "context";
+  onSectionChange: (section: "activity" | "state" | "assignment" | "artifact" | "memory" | "context") => void;
   focusedArtifactKey: string;
   focusedMemories: MemoryReference[];
 }) {
@@ -90,6 +91,7 @@ export function ActivitySidebar({
   ));
   const refreshMemories = useCoreStore((state) => state.refreshPersonMemories);
   const loadMoreMemories = useCoreStore((state) => state.loadMorePersonMemories);
+  const refreshAgentState = useCoreStore((state) => state.refreshAgentState);
   const activeSessionId = useCoreStore((state) => state.activeSessionByAgent[state.activeAgentId || ""] || "");
   const agentName = useCoreStore((state) => (
     state.connectionByAgent[state.activeAgentId || ""]?.agentName
@@ -107,8 +109,25 @@ export function ActivitySidebar({
       void refreshAssignments(agentId);
       void refreshArtifacts(agentId);
       void refreshMemories(agentId);
+      void refreshAgentState(agentId);
     }
-  }, [agentId, open, refresh, refreshArtifacts, refreshAssignments, refreshMemories]);
+  }, [
+    agentId,
+    open,
+    refresh,
+    refreshAgentState,
+    refreshArtifacts,
+    refreshAssignments,
+    refreshMemories,
+  ]);
+
+  useEffect(() => {
+    if (!open || section !== "state" || !agentId) return;
+    const timer = window.setInterval(() => {
+      void refreshAgentState(agentId);
+    }, 10_000);
+    return () => window.clearInterval(timer);
+  }, [agentId, open, refreshAgentState, section]);
 
   useEffect(() => {
     setSelectedId("");
@@ -147,7 +166,10 @@ export function ActivitySidebar({
           </span>
         </div>
         <div className="agent-right-sidebar-actions">
-          <button type="button" onClick={() => void refresh(agentId)} title="刷新">
+          <button type="button" onClick={() => {
+            void refresh(agentId);
+            void refreshAgentState(agentId);
+          }} title="刷新">
             <Icon name="refresh" size={15} />
           </button>
           <button type="button" onClick={onClose} title="关闭">×</button>
@@ -156,6 +178,9 @@ export function ActivitySidebar({
       <div className="right-sidebar-sections">
         <button className={section === "activity" ? "active" : ""} onClick={() => onSectionChange("activity")}>
           动态
+        </button>
+        <button className={section === "state" ? "active" : ""} onClick={() => onSectionChange("state")}>
+          状态
         </button>
         <button className={section === "assignment" ? "active" : ""} onClick={() => onSectionChange("assignment")}>
           委托
@@ -218,7 +243,14 @@ export function ActivitySidebar({
           <ActivityDetail activity={selected} />
         )}
       </div>
-      </> : section === "assignment" ? (
+      </> : section === "state" ? (
+        <StatusPanel
+          agentName={agentName}
+          connectionStatus={connectionStatus}
+          agentState={agentState}
+          onRefresh={() => void refreshAgentState(agentId)}
+        />
+      ) : section === "assignment" ? (
         <AssignmentPanel
           selectedId={selectedAssignmentId}
           onSelect={onSelectAssignment}
@@ -238,10 +270,11 @@ export function ActivitySidebar({
         <MemoryPanel
           memories={memories}
           page={memoryList}
+          focusedMemories={focusedMemories}
           onRefresh={() => void refreshMemories(agentId)}
           onLoadMore={() => void loadMoreMemories(agentId)}
         />
-      ) : (
+      ) : section === "context" ? (
         <ContextPanel
           agentName={agentName}
           connectionStatus={connectionStatus}
@@ -251,7 +284,7 @@ export function ActivitySidebar({
           agentState={agentState}
           focusedMemories={focusedMemories}
         />
-      )}
+      ) : null}
     </aside>
   );
 }
@@ -259,16 +292,44 @@ export function ActivitySidebar({
 function MemoryPanel({
   memories,
   page,
+  focusedMemories,
   onRefresh,
   onLoadMore,
 }: {
   memories: PersonMemorySnapshot[];
   page: PersonMemoryListState;
+  focusedMemories: MemoryReference[];
   onRefresh: () => void;
   onLoadMore: () => void;
 }) {
   return (
     <section className="person-memory-panel">
+      {focusedMemories.length > 0 && (
+        <div className="focused-memory-section">
+          <div className="person-memory-heading">
+            <div>
+              <strong>本次回答召回的记忆</strong>
+              <p>这些记忆在回答前被召回并提供给 Agent，不代表逐条直接引用。</p>
+            </div>
+          </div>
+          <div className="memory-reference-list">
+            {focusedMemories.map((memory, index) => (
+              <article key={`${memory.id || "memory"}-${index}`}>
+                <strong>{memory.summary}</strong>
+                <span>
+                  {memory.source ? memorySourceName(memory.source) : "长期记忆"}
+                  {memory.createdAt > 0
+                    ? ` · ${new Date(memory.createdAt * 1000).toLocaleString()}`
+                    : ""}
+                </span>
+                {memory.tags.length > 0 && (
+                  <small>{memory.tags.map((tag) => `#${tag}`).join(" ")}</small>
+                )}
+              </article>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="person-memory-heading">
         <div>
           <strong>与当前人物相关的长期记忆</strong>
@@ -521,7 +582,7 @@ function ContextPanel({
           {agentState ? ` · ${livingStateNames[agentState.living]}` : ""}
         </span>
         {agentState?.focusSummary && <span>{agentState.focusSummary}</span>}
-        {agentState?.livingSince > 0 && (
+        {agentState && agentState.livingSince > 0 && (
           <span>当前状态持续 {formatDuration(Date.now() / 1000 - agentState.livingSince)}</span>
         )}
       </ContextBlock>
@@ -558,6 +619,214 @@ function ContextPanel({
   );
 }
 
+function ContextBlock({ title, children }: { title: string; children: ReactNode }) {
+  return <div className="context-block"><h3>{title}</h3><div>{children}</div></div>;
+}
+
+function StatusPanel({
+  agentName,
+  connectionStatus,
+  agentState,
+  onRefresh,
+}: {
+  agentName: string;
+  connectionStatus: string;
+  agentState: import("../../store").AgentStateSnapshot | undefined;
+  onRefresh: () => void;
+}) {
+  const internal = agentState?.internal;
+  const relationship = agentState?.relationship;
+
+  return (
+    <section className="agent-status-panel">
+      <div className="agent-status-panel-heading">
+        <div>
+          <strong>{agentName}的状态</strong>
+          <span>Agent 当前正在经历的生命、关系与身体状态</span>
+        </div>
+        <button type="button" onClick={onRefresh}>刷新</button>
+      </div>
+
+      <StateCard title="当前状态" accent={agentState?.living || "idle"}>
+        <div className="agent-current-state">
+          <span className={`agent-current-state-dot ${agentState?.living || "idle"}`} />
+          <div>
+            <strong>
+              {connectionStatus === "connected"
+                ? agentState ? livingStateNames[agentState.living] : "在线"
+                : "未连接"}
+            </strong>
+            {agentState?.focusSummary && <p>{agentState.focusSummary}</p>}
+            {agentState?.livingSince ? (
+              <small>已持续 {formatDuration(Date.now() / 1000 - agentState.livingSince)}</small>
+            ) : null}
+          </div>
+        </div>
+      </StateCard>
+
+      <StateCard title={relationship ? `与${relationship.displayName}的关系` : "当前关系"}>
+        {relationship ? (
+          <>
+            <div className="relationship-summary">
+              <strong>{relationship.relationType} · {relationship.status}</strong>
+              <span>{relationship.description}</span>
+            </div>
+            <StateMetricList metrics={[
+              {
+                key: "depth",
+                label: "熟悉深度",
+                value: relationship.depth,
+                description: relationship.depthDescription,
+              },
+              {
+                key: "trust",
+                label: "信任",
+                value: relationship.trust,
+                description: relationship.trustDescription,
+              },
+              {
+                key: "closeness",
+                label: "亲密",
+                value: relationship.closeness,
+                description: relationship.closenessDescription,
+              },
+            ]} compact />
+            <small className="relationship-interactions">
+              已互动 {relationship.interactionCount} 次
+              {relationship.lastInteractionAt
+                ? ` · 最近 ${new Date(relationship.lastInteractionAt * 1000).toLocaleString()}`
+                : ""}
+            </small>
+          </>
+        ) : (
+          <p className="state-empty-copy">当前连接还没有可展示的人物关系。</p>
+        )}
+      </StateCard>
+
+      {internal ? (
+        <>
+          <StateCard title="当前心情">
+            <div className="mood-summary">
+              <strong>{internal.moodSummary || "平静"}</strong>
+              <span>能量 {formatPercent(internal.energy)} · {internal.energyDescription}</span>
+            </div>
+            {internal.emotions.length > 0 ? (
+              <div className="emotion-state-list">
+                {internal.emotions.map((emotion) => (
+                  <span key={emotion.key}>
+                    {emotion.label}<strong>{formatPercent(emotion.value)}</strong>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="state-empty-copy">没有明显的活跃情绪。</p>
+            )}
+          </StateCard>
+
+          <StateCard title="身体感受">
+            <p className="state-natural-language">{internal.somatic}</p>
+          </StateCard>
+
+          <StateCard title="欲望">
+            <StateMetricList metrics={internal.desires} />
+          </StateCard>
+
+          <StateCard title="激素">
+            <StateMetricList metrics={internal.hormones} />
+          </StateCard>
+
+          <StateCard title="状态矛盾">
+            {internal.contradictions.length > 0 ? (
+              <div className="state-tension-list">
+                {internal.contradictions.map((item) => <p key={item}>{item}</p>)}
+              </div>
+            ) : (
+              <p className="state-empty-copy">当前没有检测到明显的内在矛盾。</p>
+            )}
+          </StateCard>
+
+          <StateCard title="行为倾向">
+            {internal.impulse && <p className="state-natural-language">{internal.impulse}</p>}
+            {internal.behaviorTendencies.length > 0 && (
+              <ul className="behavior-tendency-list">
+                {internal.behaviorTendencies.map((item) => <li key={item}>{item}</li>)}
+              </ul>
+            )}
+            {!internal.impulse && internal.behaviorTendencies.length === 0 && (
+              <p className="state-empty-copy">当前状态没有形成明显的行为倾向。</p>
+            )}
+          </StateCard>
+
+          <details className="raw-state-details">
+            <summary>原始状态</summary>
+            {relationship?.rawContext && (
+              <>
+                <h4>关系上下文</h4>
+                <pre>{relationship.rawContext}</pre>
+              </>
+            )}
+            <h4>身体状态上下文</h4>
+            <pre>{internal.rawContext}</pre>
+          </details>
+
+          {internal.observedAt > 0 && (
+            <time className="agent-state-observed-at">
+              最近更新：{new Date(internal.observedAt * 1000).toLocaleString()}
+            </time>
+          )}
+        </>
+      ) : (
+        <div className="activity-empty-state">
+          <strong>身体状态尚不可用</strong>
+          <p>Agent 未启用意识系统，或状态仍在初始化。</p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function StateMetricList({
+  metrics,
+  compact = false,
+}: {
+  metrics: AgentStateMetric[];
+  compact?: boolean;
+}) {
+  return (
+    <div className={`state-metric-list ${compact ? "compact" : ""}`}>
+      {metrics.map((metric) => (
+        <div className="state-metric" key={metric.key}>
+          <div>
+            <strong>{metric.label}</strong>
+            <span>{formatPercent(metric.value)}</span>
+          </div>
+          <div className="state-metric-track">
+            <span style={{ width: `${Math.round(metric.value * 100)}%` }} />
+          </div>
+          <p>{metric.description}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function StateCard({
+  title,
+  accent = "",
+  children,
+}: {
+  title: string;
+  accent?: string;
+  children: ReactNode;
+}) {
+  return (
+    <article className={`agent-state-card ${accent}`}>
+      <h3>{title}</h3>
+      {children}
+    </article>
+  );
+}
+
 function memorySourceName(value: string): string {
   const names: Record<string, string> = {
     immediate: "对话中形成",
@@ -570,10 +839,6 @@ function memorySourceName(value: string): string {
     task_completion: "任务完成后形成",
   };
   return names[value] || value;
-}
-
-function ContextBlock({ title, children }: { title: string; children: ReactNode }) {
-  return <div className="context-block"><h3>{title}</h3><div>{children}</div></div>;
 }
 
 function ActivityDetail({ activity }: { activity: ActivitySnapshot }) {
@@ -641,8 +906,12 @@ const livingStateNames = {
   idle: "空闲",
   working: "工作中",
   sleeping: "睡眠中",
-  dreaming: "做梦中",
+  dreaming: "梦境中",
 } as const;
+
+function formatPercent(value: number): string {
+  return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
+}
 
 function intentTypeName(value: string): string {
   const names: Record<string, string> = {

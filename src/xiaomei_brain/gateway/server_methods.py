@@ -61,7 +61,10 @@ class MethodRouter:
         self._artifact_methods = ArtifactMethods(living, self._identity_contexts)
         self._assignment_methods = AssignmentMethods(living, self._identity_contexts)
         self._activity_methods = ActivityMethods(living, self._identity_contexts)
-        self._agent_state_methods = AgentStateMethods(living)
+        self._agent_state_methods = AgentStateMethods(
+            living,
+            self._identity_contexts,
+        )
         self._channel_methods = ChannelMethods(living, self._identity_contexts)
 
         self._registry.register_many(

@@ -37,6 +37,30 @@ def test_agent_state_rpc_returns_current_snapshot():
         "focus_summary": "",
         "focus_since": 0.0,
         "last_intent": None,
+        "internal": None,
+        "relationship": None,
+    }
+
+
+def test_agent_state_rpc_adds_only_authenticated_person_relationship():
+    living = _living_with_state()
+    observed = []
+    living.get_relationship_projection = lambda person_id: (
+        observed.append(person_id)
+        or {"person_id": person_id, "display_name": "博士"}
+    )
+    router = MethodRouter(living=living)
+    router._auth_sessions.add("conn-1")
+    router._identity_contexts["conn-1"] = SimpleNamespace(
+        person_id="person-doctor",
+    )
+
+    response = router.dispatch("conn-1", "rpc-1", "agent.state.get", {})
+
+    assert observed == ["person-doctor"]
+    assert response["result"]["state"]["relationship"] == {
+        "person_id": "person-doctor",
+        "display_name": "博士",
     }
 
 

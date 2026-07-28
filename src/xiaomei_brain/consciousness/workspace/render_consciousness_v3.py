@@ -648,7 +648,9 @@ def _render_body(si) -> list[str]:
         lines.append(f"催产素增益降至{_oxy_gain:.0%}，社交温暖几乎感受不到了。")
 
     # ── 触觉感知（特殊渲染：自然语言肢体动作）──
-    _sensory: dict = getattr(bo, 'sensory', None) or {}
+    # Rendering and observability are read-only. Work on a shallow copy so
+    # extracting the special touch slot never removes it from SelfBody.
+    _sensory: dict = dict(getattr(bo, 'sensory', None) or {})
     _touch_data = _sensory.pop("触觉", None)
     if _touch_data and _touch_data.get("active"):
         # 新鲜度检查：超过 15 秒的触觉数据视为过期
