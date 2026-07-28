@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useCoreStore, AgentEntry } from "../../store";
 import { Icon, Button } from "../ui";
@@ -21,6 +21,10 @@ export function ConversationList() {
   const switchSession = useCoreStore((s) => s.switchSession);
   const sessionsByAgent = useCoreStore((s) => s.sessionsByAgent);
   const sessionListByAgent = useCoreStore((s) => s.sessionListByAgent);
+  const activeMessages = useCoreStore((s) => {
+    const agentId = s.activeAgentId;
+    return agentId ? s.messagesByAgent[agentId] || [] : [];
+  });
   const searchSessions = useCoreStore((s) => s.searchSessions);
   const loadMoreSessions = useCoreStore((s) => s.loadMoreSessions);
   const activeSessionId = useCoreStore((s) => s.activeSessionByAgent[s.activeAgentId || ""] || null);
@@ -37,8 +41,6 @@ export function ConversationList() {
   const [identityName, setIdentityName] = useState("");
   const displayName = identityName || t("sidebar.defaultUserName");
 
-  const [sessionQuery, setSessionQuery] = useState("");
-
   useEffect(() => {
     void window.identity.status().then((status) => {
       setIdentityName(status.displayName || "");
@@ -54,21 +56,11 @@ export function ConversationList() {
   const sessionBusy = activeAgentId
     ? Boolean(sendingByAgent[activeAgentId] || connectionByAgent[activeAgentId]?.status === "connecting")
     : false;
+  const canCreateSession = activeMessages.length > 0 && !sessionBusy;
 
   useEffect(() => {
-    setSessionQuery(sessionListState?.query || "");
-  }, [activeAgentId]);
-
-  useEffect(() => {
-    if (!activeAgentId || sessionQuery.trim() === (sessionListState?.query || "")) return;
-    const timer = window.setTimeout(() => { void searchSessions(sessionQuery); }, 250);
-    return () => window.clearTimeout(timer);
-  }, [activeAgentId, sessionQuery, sessionListState?.query, searchSessions]);
-
-  const groupedSessions = useMemo(
-    () => groupSessions(activeSessions, activeSessionId),
-    [activeSessions, activeSessionId],
-  );
+    if (activeAgentId && sessionListState?.query) void searchSessions("");
+  }, [activeAgentId, searchSessions, sessionListState?.query]);
 
   return (
     <div className={`conversation-list ${collapsed ? "collapsed" : ""}`}>
@@ -100,6 +92,11 @@ export function ConversationList() {
                   title={`${a.name} (${a.host}:${a.port}) — ${conn?.status || "disconnected"}`}
                 >
                   {a.name.charAt(0)}
+                  {(unreadByAgent[a.id] || 0) > 0 && (
+                    <span className="sidebar-collapsed-unread">
+                      {(unreadByAgent[a.id] || 0) > 9 ? "9+" : unreadByAgent[a.id]}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -129,31 +126,33 @@ export function ConversationList() {
           </div>
 
           {/* Agent list */}
-          {agents.length === 0 ? (
-            <div className="agent-item" style={{ color: "var(--ui-color-text-disabled)", cursor: "default" }}>
-              <span>{t("sidebar.noAgents")}</span>
-            </div>
-          ) : (
-            agents.map((a) => (
-              <AgentItem
-                key={a.id}
-                agent={a}
-                isActive={a.id === activeAgentId}
-                connection={connectionByAgent[a.id]}
-                isWorking={sendingByAgent[a.id] || false}
-                unreadCount={unreadByAgent[a.id] || 0}
-                localOnline={a.source === "local" ? localAvailabilityByAgent[a.id] : undefined}
-                localInfo={localInfoByAgent[a.id]}
-                lifecycle={lifecycleByAgent[a.id]}
-                onSelect={() => switchAgent(a.id)}
-                onLifecycle={(action) => { void controlLocalAgent(a.id, action); }}
-              />
-            ))
-          )}
+          <div className="agent-list">
+            {agents.length === 0 ? (
+              <div className="agent-list-empty">
+                <span>{t("sidebar.noAgents")}</span>
+              </div>
+            ) : (
+              agents.map((a) => (
+                <AgentItem
+                  key={a.id}
+                  agent={a}
+                  isActive={a.id === activeAgentId}
+                  connection={connectionByAgent[a.id]}
+                  isWorking={sendingByAgent[a.id] || false}
+                  unreadCount={unreadByAgent[a.id] || 0}
+                  localOnline={a.source === "local" ? localAvailabilityByAgent[a.id] : undefined}
+                  localInfo={localInfoByAgent[a.id]}
+                  lifecycle={lifecycleByAgent[a.id]}
+                  onSelect={() => switchAgent(a.id)}
+                  onLifecycle={(action) => { void controlLocalAgent(a.id, action); }}
+                />
+              ))
+            )}
+          </div>
 
           {/* Sessions list for active agent */}
           {activeAgentId && (
-            <div className="session-section" style={{ flex: 1, minHeight: 0, overflow: "hidden auto", display: "flex", flexDirection: "column" }}>
+            <div className="session-section">
               <div className="session-section-header">
                 <span className="session-section-title">
                   {t("sidebar.sessions")} ({activeSessions.length})
@@ -161,43 +160,29 @@ export function ConversationList() {
                 <button
                   className="session-new-btn"
                   onClick={handleNewSession}
-                  disabled={sessionBusy}
+                  disabled={!canCreateSession}
                   title={t("sidebar.newSession")}
                 >
                   <Icon name="plus" size={14} />
                 </button>
               </div>
-              <div className="session-search">
-                <Icon name="search" size={13} />
-                <input
-                  value={sessionQuery}
-                  onChange={(event) => setSessionQuery(event.target.value)}
-                  placeholder={t("sidebar.searchSessions")}
-                  aria-label={t("sidebar.searchSessions")}
-                />
-              </div>
               <div className="session-list">
                 {sessionListState?.loading ? (
                   <div className="session-list-status">{t("sidebar.loadingSessions")}</div>
-                ) : groupedSessions.length === 0 ? (
+                ) : activeSessions.length === 0 ? (
                   <div className="session-list-status">{t("sidebar.noSessionsFound")}</div>
-                ) : groupedSessions.map((group) => (
-                  <div className="session-group" key={group.key}>
-                    <div className="session-group-label">{t(`sidebar.${group.key}`)}</div>
-                    {group.sessions.map((session) => (
-                      <SessionItem
-                        key={session.id}
-                        session={session}
-                        isActive={session.id === activeSessionId}
-                        isCurrent={session.id === activeSessionId}
-                        disabled={sessionBusy}
-                        onClick={() => { void switchSession(session.id); }}
-                      />
-                    ))}
-                  </div>
+                ) : activeSessions.map((session) => (
+                  <SessionItem
+                    key={session.id}
+                    session={session}
+                    isActive={session.id === activeSessionId}
+                    isCurrent={session.id === activeSessionId}
+                    disabled={sessionBusy}
+                    onClick={() => { void switchSession(session.id); }}
+                  />
                 ))}
                 {sessionListState?.error && (
-                  <button className="session-load-more error" onClick={() => { void searchSessions(sessionQuery); }}>
+                  <button className="session-load-more error" onClick={() => { void searchSessions(""); }}>
                     {t("sidebar.retrySessions")}
                   </button>
                 )}
@@ -281,6 +266,16 @@ function AgentItem({
     <div
       className={`agent-item ${isActive ? "active" : ""}`}
       onClick={onSelect}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      aria-current={isActive ? "true" : undefined}
     >
       <div className="agent-avatar">{agent.name.charAt(0)}</div>
       <div className="agent-info">
@@ -367,10 +362,18 @@ function SessionItem({
     <div
       className={`session-item ${isActive ? "active" : ""} ${isCurrent ? "current" : ""} ${disabled ? "disabled" : ""}`}
       onClick={disabled ? undefined : onClick}
-      style={{ cursor: isCurrent || disabled ? "default" : "pointer" }}
+      onKeyDown={(event) => {
+        if (disabled || isCurrent) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick();
+        }
+      }}
+      role="button"
+      tabIndex={disabled || isCurrent ? -1 : 0}
+      aria-current={isCurrent ? "page" : undefined}
     >
       <span className="session-item-name">
-        {isCurrent && <span className="session-item-dot" />}
         {session.name}
       </span>
       <span className="session-item-meta">{formatSessionMeta(session)}</span>
@@ -378,33 +381,14 @@ function SessionItem({
   );
 }
 
-function groupSessions(sessions: import("../../types").SessionEntry[], activeSessionId: string | null) {
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const yesterday = today - 24 * 60 * 60 * 1000;
-  const groups = [
-    { key: "currentSession", sessions: sessions.filter((session) => session.id === activeSessionId) },
-    { key: "today", sessions: [] as import("../../types").SessionEntry[] },
-    { key: "yesterday", sessions: [] as import("../../types").SessionEntry[] },
-    { key: "earlier", sessions: [] as import("../../types").SessionEntry[] },
-  ];
-  for (const session of sessions) {
-    if (session.id === activeSessionId) continue;
-    const timestamp = session.updatedAt || session.createdAt;
-    if (timestamp >= today) groups[1].sessions.push(session);
-    else if (timestamp >= yesterday) groups[2].sessions.push(session);
-    else groups[3].sessions.push(session);
-  }
-  return groups.filter((group) => group.sessions.length > 0);
-}
-
 function formatSessionMeta(session: import("../../types").SessionEntry): string {
   const timestamp = session.updatedAt || session.createdAt;
   const date = new Date(timestamp);
-  const now = new Date();
-  const sameDay = date.toDateString() === now.toDateString();
-  const time = sameDay
-    ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    : date.toLocaleDateString([], { month: "numeric", day: "numeric" });
-  return session.messageCount === undefined ? time : `${time} · ${session.messageCount}`;
+  const formattedDate = date.toLocaleDateString([], {
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return session.messageCount === undefined
+    ? formattedDate
+    : `${formattedDate} · ${session.messageCount}`;
 }

@@ -12,7 +12,6 @@ export type {
   ArtifactSnapshot,
   ConnectionState,
   DisplayMessage,
-  HomeMode,
   MemoryReference,
   PersonMemoryListState,
   PersonMemorySnapshot,

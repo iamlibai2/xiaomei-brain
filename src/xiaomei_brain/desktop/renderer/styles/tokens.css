@@ -276,14 +276,11 @@
   --ui-bg-pill-active-hover: rgba(0, 0, 0, 0.82);
   --ui-bg-pill-hover: #fafafa;
   --ui-task-starter-trigger-bg-hover: #ebebeb;
-  --ui-quick-action-item-bg-hover: #ebebeb;
-  --ui-quick-action-item-border-hover: #e5e5e5;
   --ui-border-drag-indicator: var(--ui-palette-brand-8);
 
   /* ── Home page specific ── */
   --ui-home-bg-primary: #f2f2f2;
   --ui-home-bg-secondary: #fafafa;
-  --ui-quick-action-sub-item-bg: #ebebeb;
 }
 
 /* ============================================================
@@ -628,14 +625,11 @@
     --ui-bg-pill-active-hover: rgba(255, 255, 255, 0.22);
     --ui-bg-pill-hover: var(--ui-color-bg-primary-hover);
     --ui-task-starter-trigger-bg-hover: var(--ui-color-bg-primary-hover);
-    --ui-quick-action-item-bg-hover: var(--ui-color-bg-primary-active);
-    --ui-quick-action-item-border-hover: var(--ui-color-border-tertiary);
     --ui-border-drag-indicator: var(--ui-color-text-brand-default);
 
     /* ── Home — Dark ── */
     --ui-home-bg-primary: #1f1f1f;
     --ui-home-bg-secondary: #141414;
-    --ui-quick-action-sub-item-bg: rgba(255, 255, 255, 0.14);
 
     /* ── Chat — Dark ── */
     --ui-user-bubble-bg: #242424;

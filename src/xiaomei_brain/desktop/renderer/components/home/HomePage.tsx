@@ -5,16 +5,10 @@ import {
   useCoreStore,
   AssignmentSnapshot,
   DisplayMessage,
-  HomeMode,
   MemoryReference,
 } from "../../store";
 import { Button, Icon } from "../ui";
-import { HomeHeader } from "./HomeHeader";
-import { SceneTabs } from "./SceneTabs";
-import { GrowthBuddy } from "./GrowthBuddy";
-import { QuickActions } from "./QuickActions";
 import { ChatInput } from "./ChatInput";
-import { ContextBar } from "./ContextBar";
 import { ChatTopbar } from "./ChatTopbar";
 import { AgentSettingsDialog } from "../agent-settings/AgentSettingsDialog";
 import { AssignmentCard } from "./AssignmentCard";
@@ -29,7 +23,6 @@ export function HomePage() {
   const activeAgentId = useCoreStore((s) => s.activeAgentId);
   const messages = useCoreStore((s) => s.messagesByAgent[s.activeAgentId || ""] || EMPTY_MSGS);
   const sending = useCoreStore((s) => s.sendingByAgent[s.activeAgentId || ""] || false);
-  const mode = useCoreStore((s) => s.mode);
   const agentName = useCoreStore((s) => {
     const agentId = s.activeAgentId;
     if (!agentId) return t("home.defaultAgentName");
@@ -44,7 +37,6 @@ export function HomePage() {
   const controlLocalAgent = useCoreStore((s) => s.controlLocalAgent);
   const sendMessage = useCoreStore((s) => s.sendMessage);
   const abortMessage = useCoreStore((s) => s.abortMessage);
-  const setMode = useCoreStore((s) => s.setMode);
   const activeSessionId = useCoreStore((s) => s.activeSessionByAgent[s.activeAgentId || ""] || null);
   const sessionsByAgent = useCoreStore((s) => s.sessionsByAgent);
   const historyPage = useCoreStore((s) => {
@@ -134,6 +126,7 @@ export function HomePage() {
   }, [activeAgentId, activeSessionId, historyPage?.hasMore, historyPage?.loading, historyPage?.error, loadOlderPreservingPosition]);
 
   const hasMessages = messages.length > 0;
+  const isDreaming = agentState?.living === "dreaming";
   const showAgentStart = !hasMessages && activeAgent?.source === "local" && activeAgentOnline === false;
   const agentStarting = activeAgentLifecycle?.status === "starting" || activeAgentLifecycle?.status === "restarting";
   const agentNeedsRestart = Boolean(activeAgentInfo?.pid);
@@ -160,14 +153,7 @@ export function HomePage() {
   return (
     <div className="main-content">
       <div className="main-content-primary">
-      {!hasMessages && !showAgentStart && (
-        <div className="activity-banner">
-          <button className="activity-banner-button">
-            {t("home.earnPoints")}
-          </button>
-        </div>
-      )}
-      <div className="wb-home-page">
+      <div className={`wb-home-page ${hasMessages ? "is-conversation" : "is-empty"}`}>
         {!hasMessages && activeAgentId && (
           <div className="agent-settings-empty-trigger">
             <Button
@@ -212,20 +198,17 @@ export function HomePage() {
             )}
           </div>
         )}
-        {!showAgentStart && agentState?.living === "dreaming" && (
-          <div className="dreaming-message-notice" role="status">
-            <Icon name="moon" size={16} />
-            <div>
-              <strong>{agentName}正在梦境中</strong>
-              <span>收到的消息会安全排队，并在醒来后按顺序处理。</span>
-            </div>
-          </div>
-        )}
         {!hasMessages && !showAgentStart && (
           <>
-            <HomeHeader mode={mode} />
-            <SceneTabs selected={mode} onSelect={(m) => setMode(m as HomeMode)} />
-            <GrowthBuddy />
+            <div className="agent-empty-profile">
+              <div className="agent-empty-avatar">{agentName.charAt(0)}</div>
+              <h1>{agentName}</h1>
+              <p>{activeAgent?.description || t("home.agentResponsibilityFallback")}</p>
+              <span className={`agent-empty-presence ${agentState?.living || "idle"}`}>
+                <i />
+                {agentState?.focusSummary || (agentState ? livingStateName(agentState.living) : t("home.agentReady"))}
+              </span>
+            </div>
             {visibleAssignments.length > 0 && (
               <div className="assignment-home-cards">
                 {visibleAssignments.map((assignment) => (
@@ -233,6 +216,7 @@ export function HomePage() {
                 ))}
               </div>
             )}
+            {isDreaming && <DreamingNotice agentName={agentName} />}
           </>
         )}
         {hasMessages && (
@@ -246,6 +230,7 @@ export function HomePage() {
               agentState={agentState}
               activitySummary={currentActivity?.progressSummary || currentActivity?.title || ""}
             />
+            {isDreaming && <DreamingNotice agentName={agentName} />}
             {visibleAssignments.length > 0 && (
               <div className="assignment-conversation-strip">
                 {visibleAssignments.map((assignment) => (
@@ -254,43 +239,43 @@ export function HomePage() {
               </div>
             )}
             <div className="message-list" ref={messageListRef}>
-              <div ref={topRef} className="history-page-status">
-                {historyPage?.loading && t("home.loadingOlder")}
-                {historyPage?.error && (
-                  <button type="button" onClick={() => { void loadOlderPreservingPosition(); }}>
-                    {t("home.retryOlder")}
-                  </button>
-                )}
-                {historyPage && !historyPage.hasMore && !historyPage.loading && !historyPage.error
-                  ? t("home.oldestReached")
-                  : null}
+              <div className="message-list-inner">
+                <div ref={topRef} className="history-page-status">
+                  {historyPage?.loading && t("home.loadingOlder")}
+                  {historyPage?.error && (
+                    <button type="button" onClick={() => { void loadOlderPreservingPosition(); }}>
+                      {t("home.retryOlder")}
+                    </button>
+                  )}
+                  {historyPage && !historyPage.hasMore && !historyPage.loading && !historyPage.error
+                    ? t("home.oldestReached")
+                    : null}
+                </div>
+                {messages.map((m) => (
+                  <MessageRow
+                    key={m.id}
+                    message={m}
+                    agentName={agentName || t("home.defaultAgentName")}
+                    onShowArtifact={(artifactId, sessionId) => {
+                      setFocusedArtifactKey(`${sessionId}:${artifactId}`);
+                      setRightSidebarSection("artifact");
+                      setActivityPanelOpen(true);
+                    }}
+                    onShowMemories={(references) => {
+                      setFocusedMemories(references);
+                      setRightSidebarSection("context");
+                      setActivityPanelOpen(true);
+                    }}
+                  />
+                ))}
+                <div ref={bottomRef} />
               </div>
-              {messages.map((m) => (
-                <MessageRow
-                  key={m.id}
-                  message={m}
-                  agentName={agentName || t("home.defaultAgentName")}
-                  onShowArtifact={(artifactId, sessionId) => {
-                    setFocusedArtifactKey(`${sessionId}:${artifactId}`);
-                    setRightSidebarSection("artifact");
-                    setActivityPanelOpen(true);
-                  }}
-                  onShowMemories={(references) => {
-                    setFocusedMemories(references);
-                    setRightSidebarSection("context");
-                    setActivityPanelOpen(true);
-                  }}
-                />
-              ))}
-              <div ref={bottomRef} />
             </div>
           </>
         )}
         {!showAgentStart && (
           <div className="wb-home-composer">
-            {!hasMessages && <QuickActions onAction={() => {}} />}
             <ChatInput onSend={sendMessage} sending={sending} onAbort={abortMessage} />
-            {!hasMessages && <ContextBar />}
           </div>
         )}
       </div>
@@ -313,6 +298,30 @@ export function HomePage() {
       />
     </div>
   );
+}
+
+function DreamingNotice({ agentName }: { agentName: string }) {
+  return (
+    <div className="dreaming-message-notice" role="status">
+      <Icon name="moon" size={16} />
+      <div>
+        <strong>{agentName}正在梦境中</strong>
+        <span>收到的消息会安全排队，并在醒来后按顺序处理。</span>
+      </div>
+    </div>
+  );
+}
+
+function livingStateName(state: import("../../store").AgentStateSnapshot["living"]): string {
+  return {
+    dormant: "休眠",
+    waking: "正在苏醒",
+    awake: "清醒",
+    idle: "已准备好",
+    working: "工作中",
+    sleeping: "睡眠中",
+    dreaming: "梦境中",
+  }[state];
 }
 
 // ── 解析 ANSI 转义码，分离思考内容和正文 ──

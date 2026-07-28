@@ -480,7 +480,7 @@ function sessionEntries(result: Record<string, unknown> | undefined): SessionEnt
   });
 }
 
-function pinActiveSession(
+function includeActiveSession(
   sessions: SessionEntry[],
   activeSessionId: string,
   activeMessages: DisplayMessage[],
@@ -488,17 +488,19 @@ function pinActiveSession(
   if (!activeSessionId) return sessions;
   const result = [...sessions];
   const existingIndex = result.findIndex((session) => session.id === activeSessionId);
-  const active = existingIndex >= 0
-    ? result.splice(existingIndex, 1)[0]
-    : {
-        id: activeSessionId,
-        name: defaultSessionName(activeMessages),
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        messageCount: activeMessages.length,
-      };
-  result.unshift(active);
-  return result;
+  if (existingIndex < 0) {
+    const now = Date.now();
+    result.push({
+      id: activeSessionId,
+      name: defaultSessionName(activeMessages),
+      createdAt: now,
+      updatedAt: now,
+      messageCount: activeMessages.length,
+    });
+  }
+  return result.sort(
+    (left, right) => (right.updatedAt || right.createdAt) - (left.updatedAt || left.createdAt),
+  );
 }
 
 function touchSession(
@@ -528,10 +530,7 @@ function touchSession(
   }
   session.updatedAt = now;
   session.messageCount = Math.max(0, (session.messageCount || 0) + messageDelta);
-  const activeSessionId = state.activeSessionByAgent[agentId];
   state.sessionsByAgent[agentId].sort((left, right) => {
-    if (left.id === activeSessionId) return -1;
-    if (right.id === activeSessionId) return 1;
     return (right.updatedAt || right.createdAt) - (left.updatedAt || left.createdAt);
   });
 }
@@ -544,7 +543,7 @@ async function fetchAgentSessions(
 ): Promise<{ sessions: SessionEntry[]; listState: SessionListState }> {
   const response = await window.gateway.listSessions({ agentId, limit: 30, offset: 0, query: "" });
   const fetched = response.error ? [...fallback] : sessionEntries(response.result);
-  const sessions = pinActiveSession(fetched, activeSessionId, activeMessages);
+  const sessions = includeActiveSession(fetched, activeSessionId, activeMessages);
   return {
     sessions,
     listState: {
@@ -959,8 +958,6 @@ function upsertAssignment(state: CoreState, agentId: string, assignment: Assignm
   return true;
 }
 
-export type HomeMode = "working" | "coding" | "design";
-
 export interface ConnectionState {
   status: "disconnected" | "connecting" | "connected" | "error";
   agentName: string;
@@ -1017,7 +1014,6 @@ interface CoreState {
   attachmentErrorByConversation: Record<string, string>;
   activeAgentId: string | null;
   agents: AgentEntry[];
-  mode: HomeMode;
   page: "connect" | "chat";
   terminalOpen: boolean;
   activeNav: string;
@@ -1067,7 +1063,6 @@ interface CoreActions {
     response?: string,
     decision?: "approve" | "deny",
   ) => Promise<string>;
-  setMode: (mode: HomeMode) => void;
   setPage: (page: "connect" | "chat") => void;
   setTerminalOpen: (open: boolean) => void;
   setActiveNav: (nav: string) => void;
@@ -1102,7 +1097,6 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   attachmentErrorByConversation: {},
   activeAgentId: persisted.activeAgentId ?? null,
   agents: persisted.agents ?? [],
-  mode: "working" as HomeMode,
   page: (persisted.agents && persisted.agents.length > 0) ? "chat" : "connect",
   terminalOpen: false,
   activeNav: "assistant",
@@ -1786,6 +1780,9 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     if (!agentId) return;
     if (get().sendingByAgent[agentId]) return;
     if (get().connectionByAgent[agentId]?.status === "connecting") return;
+    // An empty active session is already the place for a new conversation.
+    // Do not ask the Gateway to create another empty session beside it.
+    if (!name && (get().messagesByAgent[agentId]?.length || 0) === 0) return;
     const agent = get().agents.find((entry) => entry.id === agentId);
     if (!agent) return;
 
@@ -1927,7 +1924,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       });
       if (response.error) throw new Error(response.error.message);
       const activeSessionId = get().activeSessionByAgent[agentId] || "";
-      const sessions = pinActiveSession(
+      const sessions = includeActiveSession(
         sessionEntries(response.result),
         activeSessionId,
         get().messagesByAgent[agentId] || [],
@@ -2279,7 +2276,6 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     return "";
   },
 
-  setMode: (mode) => set(produce((s: CoreState) => { s.mode = mode; })),
   setPage: (page) => set(produce((s: CoreState) => { s.page = page; })),
   setTerminalOpen: (open) => set(produce((s: CoreState) => { s.terminalOpen = open; })),
   setActiveNav: (nav) => set(produce((s: CoreState) => { s.activeNav = nav; })),

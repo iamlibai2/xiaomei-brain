@@ -137,6 +137,15 @@ export function ActivitySidebar({
     if (selectedAssignmentId) onSectionChange("assignment");
   }, [onSectionChange, selectedAssignmentId]);
 
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose, open]);
+
   const visible = useMemo(
     () => activities.filter((item) => view === "current"
       ? ACTIVE.has(item.status)
@@ -150,20 +159,37 @@ export function ActivitySidebar({
 
   if (!open) return null;
 
+  const activeAssignmentCount = assignments.filter(
+    (item) => ACTIVE.has(activityStatusForAssignment(item.status)),
+  ).length;
+
   return (
-    <aside className="agent-right-sidebar" aria-label="Agent 活动">
+    <>
+    <button
+      type="button"
+      className="agent-right-sidebar-backdrop"
+      aria-label="关闭 Agent 详情"
+      onClick={onClose}
+    />
+    <aside className="agent-right-sidebar" aria-label="Agent 详情">
       <header className="agent-right-sidebar-header">
-        <div>
-          <strong>{agentName}</strong>
-          <span>
-            {connectionStatus === "connected" ? "在线" : "未连接"}
-            {agentState ? ` · ${livingStateNames[agentState.living]}` : ""}
-            {agentState?.focusSummary
-              ? ` · ${agentState.focusSummary}`
-              : primaryActivity
-                ? ` · ${primaryActivity.progressSummary || primaryActivity.title}`
-                : ""}
-          </span>
+        <div className="agent-right-sidebar-identity">
+          <div className="agent-right-sidebar-avatar">{agentName.charAt(0)}</div>
+          <div className="agent-right-sidebar-copy">
+            <strong>{agentName}</strong>
+            <span>
+              <i className={connectionStatus === "connected" ? "online" : "offline"} />
+              {connectionStatus === "connected" ? "在线" : "未连接"}
+              {agentState ? ` · ${livingStateNames[agentState.living]}` : ""}
+            </span>
+            {(agentState?.focusSummary || primaryActivity) && (
+              <small>
+                {agentState?.focusSummary
+                  || primaryActivity?.progressSummary
+                  || primaryActivity?.title}
+              </small>
+            )}
+          </div>
         </div>
         <div className="agent-right-sidebar-actions">
           <button type="button" onClick={() => {
@@ -175,31 +201,35 @@ export function ActivitySidebar({
           <button type="button" onClick={onClose} title="关闭">×</button>
         </div>
       </header>
-      <div className="right-sidebar-sections">
-        <button className={section === "activity" ? "active" : ""} onClick={() => onSectionChange("activity")}>
-          动态
+      <nav className="right-sidebar-sections" aria-label="Agent 详情栏目">
+        <button type="button" className={section === "activity" ? "active" : ""} aria-current={section === "activity" ? "page" : undefined} onClick={() => onSectionChange("activity")}>
+          <Icon name="clock" size={15} />
+          <span className="right-sidebar-section-label">动态</span>
         </button>
-        <button className={section === "state" ? "active" : ""} onClick={() => onSectionChange("state")}>
-          状态
+        <button type="button" className={section === "state" ? "active" : ""} aria-current={section === "state" ? "page" : undefined} onClick={() => onSectionChange("state")}>
+          <Icon name="sparkles" size={15} />
+          <span className="right-sidebar-section-label">状态</span>
         </button>
-        <button className={section === "assignment" ? "active" : ""} onClick={() => onSectionChange("assignment")}>
-          委托
-          {assignments.some((item) => ACTIVE.has(activityStatusForAssignment(item.status))) && (
-            <span>{assignments.filter((item) => ACTIVE.has(activityStatusForAssignment(item.status))).length}</span>
-          )}
+        <button type="button" className={section === "assignment" ? "active" : ""} aria-current={section === "assignment" ? "page" : undefined} onClick={() => onSectionChange("assignment")}>
+          <Icon name="robot" size={15} />
+          <span className="right-sidebar-section-label">委托</span>
+          {activeAssignmentCount > 0 && <span className="right-sidebar-section-count">{activeAssignmentCount}</span>}
         </button>
-        <button className={section === "artifact" ? "active" : ""} onClick={() => onSectionChange("artifact")}>
-          产物
-          {artifacts.length > 0 && <span>{artifacts.length}</span>}
+        <button type="button" className={section === "artifact" ? "active" : ""} aria-current={section === "artifact" ? "page" : undefined} onClick={() => onSectionChange("artifact")}>
+          <Icon name="folder" size={15} />
+          <span className="right-sidebar-section-label">产物</span>
+          {artifacts.length > 0 && <span className="right-sidebar-section-count">{artifacts.length}</span>}
         </button>
-        <button className={section === "memory" ? "active" : ""} onClick={() => onSectionChange("memory")}>
-          记忆
-          {memories.length > 0 && <span>{memories.length}{memoryList.hasMore ? "+" : ""}</span>}
+        <button type="button" className={section === "memory" ? "active" : ""} aria-current={section === "memory" ? "page" : undefined} onClick={() => onSectionChange("memory")}>
+          <Icon name="info" size={15} />
+          <span className="right-sidebar-section-label">记忆</span>
+          {memories.length > 0 && <span className="right-sidebar-section-count">{memories.length}{memoryList.hasMore ? "+" : ""}</span>}
         </button>
-        <button className={section === "context" ? "active" : ""} onClick={() => onSectionChange("context")}>
-          上下文
+        <button type="button" className={section === "context" ? "active" : ""} aria-current={section === "context" ? "page" : undefined} onClick={() => onSectionChange("context")}>
+          <Icon name="file-text" size={15} />
+          <span className="right-sidebar-section-label">上下文</span>
         </button>
-      </div>
+      </nav>
       {section === "activity" ? <>
         <div className="activity-view-tabs">
         <button className={view === "current" ? "active" : ""} onClick={() => setView("current")}>
@@ -286,6 +316,7 @@ export function ActivitySidebar({
         />
       ) : null}
     </aside>
+    </>
   );
 }
 

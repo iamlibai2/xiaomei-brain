@@ -4,9 +4,10 @@
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  width: 260px;
+  width: 272px;
   height: 100%;
   overflow: hidden;
+  border-right: 1px solid var(--ui-border-subtle);
   transition: width 0.25s ease-out;
 }
 
@@ -360,28 +361,28 @@ body[data-platform="mac"] .sidebar-topbar {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  margin-top: 8px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--ui-border-subtle);
 }
 
 .session-section-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px 0 12px;
-  height: 28px;
+  padding: 0 14px 0 16px;
+  height: 30px;
 }
 
 .session-section-title {
   font-size: 12px;
-  font-weight: 500;
-  color: var(--ui-color-text-disabled);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  font-weight: 600;
+  color: var(--ui-todo-menu-text-heading);
 }
 
 .session-new-btn {
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -400,56 +401,24 @@ body[data-platform="mac"] .sidebar-topbar {
 
 .session-list {
   flex: 1;
+  padding-top: 6px;
   overflow-y: auto;
   overflow-x: hidden;
 }
 
-.session-search {
-  height: 30px;
-  margin: 2px 12px 6px;
-  padding: 0 9px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--ui-border-subtle);
-  border-radius: var(--ui-radius-sm);
-  color: var(--ui-color-text-disabled);
-  background: var(--ui-input-bg, transparent);
-}
-
-.session-search:focus-within {
-  border-color: var(--ui-brand-primary);
-  color: var(--ui-color-text-secondary);
-}
-
-.session-search input {
-  width: 100%;
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--ui-color-text-primary);
-  font: inherit;
-  font-size: 12px;
-}
-
-.session-group-label {
-  padding: 7px 16px 3px;
-  color: var(--ui-color-text-disabled);
-  font-size: 11px;
-}
-
 .session-item {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px 6px 24px;
-  margin: 0 12px;
-  min-height: 34px;
-  border-radius: var(--ui-radius-sm);
+  padding: 7px 10px 7px 14px;
+  margin: 1px 10px;
+  min-height: 36px;
+  border-radius: var(--ui-radius-md);
   cursor: pointer;
-  transition: background-color 0.15s ease;
+  outline: none;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
 .session-item:hover {
@@ -458,6 +427,14 @@ body[data-platform="mac"] .sidebar-topbar {
 
 .session-item.active {
   background: var(--ui-brand-primary-light, rgba(99, 102, 241, 0.1));
+}
+
+.session-item.current {
+  cursor: default;
+}
+
+.session-item:focus-visible {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--ui-brand-primary) 45%, transparent);
 }
 
 .session-item-name {
@@ -507,14 +484,6 @@ body[data-platform="mac"] .sidebar-topbar {
 
 .session-load-more.error {
   color: var(--ui-color-danger, #d14343);
-}
-
-.session-item-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--ui-brand-primary);
-  flex-shrink: 0;
 }
 
 .space-item {
@@ -644,9 +613,9 @@ body[data-platform="mac"] .sidebar-topbar {
 .agent-list-header {
   display: flex;
   align-items: center;
-  padding: 6px 0 6px 16px;
-  margin: 8px 12px 4px;
-  height: 36px;
+  padding: 0 14px 0 16px;
+  margin-top: 8px;
+  height: 32px;
   gap: 8px;
 }
 
@@ -676,30 +645,55 @@ body[data-platform="mac"] .sidebar-topbar {
   color: var(--ui-color-text-primary);
 }
 
+.agent-list {
+  max-height: min(34%, 264px);
+  min-height: 0;
+  padding: 2px 0 4px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.agent-list-empty {
+  margin: 2px 12px;
+  padding: 14px 10px;
+  border: 1px dashed var(--ui-border-subtle);
+  border-radius: var(--ui-radius-md);
+  color: var(--ui-color-text-disabled);
+  font-size: 12px;
+  text-align: center;
+}
+
 /* ─── Agent Item ─── */
 .agent-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 12px;
-  margin: 1px 12px;
-  height: 44px;
-  border-radius: var(--ui-radius-lg);
+  padding: 7px 10px;
+  margin: 1px 10px;
+  min-height: 48px;
+  border: 1px solid transparent;
+  border-radius: 10px;
   cursor: pointer;
-  transition: background-color 0.15s ease;
   position: relative;
+  outline: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 .agent-item:hover {
   background: var(--ui-todo-menu-bg-hover);
 }
 .agent-item.active {
-  background: var(--ui-bg-active);
+  border-color: color-mix(in srgb, var(--ui-brand-primary) 16%, transparent);
+  background: color-mix(in srgb, var(--ui-brand-primary) 8%, var(--ui-sidebar-bg));
+}
+
+.agent-item:focus-visible {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--ui-brand-primary) 45%, transparent);
 }
 
 .agent-avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
   background: var(--ui-palette-gray-4);
   color: var(--ui-color-text-secondary);
   display: flex;
@@ -710,8 +704,8 @@ body[data-platform="mac"] .sidebar-topbar {
   flex-shrink: 0;
 }
 .agent-item.active .agent-avatar {
-  background: var(--ui-brand-primary);
-  color: var(--ui-palette-white-100);
+  background: color-mix(in srgb, var(--ui-brand-primary) 14%, var(--ui-bg-primary));
+  color: var(--ui-brand-primary);
 }
 
 .agent-info {
@@ -724,7 +718,7 @@ body[data-platform="mac"] .sidebar-topbar {
 
 .agent-name {
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--ui-color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -738,7 +732,7 @@ body[data-platform="mac"] .sidebar-topbar {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  line-height: 14px;
+  line-height: 15px;
 }
 
 .agent-status-dot {
@@ -767,7 +761,7 @@ body[data-platform="mac"] .sidebar-topbar {
 }
 
 .agent-unread-badge {
-  background: var(--ui-status-warning);
+  background: var(--ui-brand-primary);
   color: #fff;
   font-size: 10px;
   font-weight: 600;
@@ -934,4 +928,29 @@ body[data-platform="mac"] .sidebar-topbar {
   border-radius: 50%;
   background: var(--ui-status-warning);
   animation: agent-pulse 1s ease-in-out infinite;
+}
+
+.sidebar-collapsed-unread {
+  position: absolute;
+  top: -3px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--ui-sidebar-bg);
+  border-radius: 8px;
+  background: var(--ui-brand-primary);
+  color: #fff;
+  font-size: 8px;
+  line-height: 1;
+}
+
+.agent-list-header-add:focus-visible,
+.session-new-btn:focus-visible,
+.sidebar-collapsed-agent-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--ui-brand-primary) 50%, transparent);
+  outline-offset: 1px;
 }
