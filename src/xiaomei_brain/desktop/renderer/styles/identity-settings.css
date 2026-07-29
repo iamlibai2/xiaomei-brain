@@ -165,6 +165,22 @@
   gap: 16px;
 }
 
+.identity-heading-actions,
+.identity-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.identity-heading-actions {
+  flex: 0 0 auto;
+}
+
+.identity-heading-actions .ui-button {
+  gap: 5px;
+}
+
 .identity-account-section {
   margin-top: 0;
   padding-top: 0;
@@ -237,6 +253,8 @@
 
 .identity-account-actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 4px;
 }
 
@@ -258,12 +276,32 @@
   color: #c43232;
 }
 
+.identity-account-actions button.icon-only {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
 .identity-inline-form {
   margin-top: 12px;
   border: 1px solid var(--ui-border-default);
   border-radius: 10px;
   padding: 14px;
   background: var(--ui-bg-primary);
+}
+
+.identity-inline-form h4 {
+  margin: 0 0 12px;
+  font-size: 14px;
+}
+
+.identity-inline-form > p {
+  margin: 0 0 10px;
+  color: var(--ui-color-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .identity-inline-form.danger {
@@ -281,6 +319,107 @@
   align-items: center;
   gap: 8px;
   margin-top: 12px;
+}
+
+.identity-password-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.identity-password-fields input {
+  min-width: 0;
+  height: 34px;
+  box-sizing: border-box;
+  border: 1px solid var(--ui-border-default);
+  border-radius: 8px;
+  padding: 0 10px;
+  color: var(--ui-color-text-primary);
+  background: var(--ui-bg-primary);
+  outline: none;
+}
+
+.identity-form-actions {
+  margin-top: 12px;
+}
+
+.identity-account-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1450;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(18 21 27 / 48%);
+  backdrop-filter: blur(3px);
+}
+
+.identity-account-modal {
+  width: min(440px, calc(100vw - 48px));
+  box-sizing: border-box;
+  border: 1px solid var(--ui-border-default);
+  border-radius: 14px;
+  padding: 20px;
+  color: var(--ui-color-text-primary);
+  background: var(--ui-bg-primary);
+  box-shadow: 0 24px 70px rgb(0 0 0 / 28%);
+}
+
+.identity-account-modal.is-danger {
+  border-color: rgb(196 50 50 / 34%);
+}
+
+.identity-account-modal.is-danger > header h3 {
+  color: #b42318;
+}
+
+.identity-account-modal > header,
+.identity-account-modal > footer {
+  display: flex;
+  align-items: center;
+}
+
+.identity-account-modal > header {
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.identity-account-modal > header h3 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.identity-account-modal > header p {
+  margin: 5px 0 0;
+  color: var(--ui-color-text-secondary);
+  font-size: 11px;
+}
+
+.identity-account-modal > header > button {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  color: var(--ui-color-text-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.identity-account-modal > header > button:hover {
+  background: var(--ui-bg-secondary);
+}
+
+.identity-account-modal .connect-field {
+  margin-top: 12px;
+}
+
+.identity-account-modal > footer {
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
 }
 
 .identity-inline-action input,
@@ -308,7 +447,12 @@
   }
 
   .identity-account-actions,
-  .identity-inline-action {
+  .identity-inline-action,
+  .identity-heading-actions {
     flex-wrap: wrap;
+  }
+
+  .identity-password-fields {
+    grid-template-columns: 1fr;
   }
 }

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useCoreStore } from "../../store";
-import { AgentSettingsDialog } from "../agent-settings/AgentSettingsDialog";
 import { IdentitySettingsDialog } from "../IdentitySettingsDialog";
 import { Icon, type IconName } from "../ui";
+import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
 import { ModelSettingsPanel } from "./ModelSettingsPanel";
 import { SystemSettingsPanel } from "./SystemSettingsPanel";
 import { SETTINGS_EVENT, type SettingsSection } from "./events";
@@ -126,12 +126,10 @@ export function SettingsCenter() {
             )}
             {section === "channels" && (
               activeAgentId ? (
-                <AgentSettingsDialog
-                  embedded
-                  open
+                <ChannelSettingsPanel
                   agentId={activeAgentId}
                   agentName={activeAgent?.name || "Agent"}
-                  onClose={() => setOpen(false)}
+                  connected={connected}
                 />
               ) : <div className="settings-empty">请先选择一个 Agent。</div>
             )}

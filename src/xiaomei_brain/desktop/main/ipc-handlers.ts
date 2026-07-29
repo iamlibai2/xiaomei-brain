@@ -103,33 +103,40 @@ export function registerIpcHandlers(
   ipcMain.handle("identity:changePassword", async (_event, args: {
     currentPassword: string;
     newPassword: string;
+    subject?: string;
   }) => {
     try {
       return {
         ok: true,
-        status: identityVault.changePassword(args.currentPassword, args.newPassword),
+        status: identityVault.changePassword(
+          args.currentPassword,
+          args.newPassword,
+          args.subject,
+        ),
       };
     } catch (error) {
       return { ok: false, error: String(error instanceof Error ? error.message : error) };
     }
   });
-  ipcMain.handle("identity:exportBackup", async () => {
+  ipcMain.handle("identity:exportBackup", async (_event, args?: { subject?: string }) => {
     try {
-      const identity = identityVault.identity();
+      const subject = args?.subject || identityVault.status().activeSubject || "";
+      const account = identityVault.status().accounts.find((item) => item.subject === subject);
+      if (!account) throw new Error("找不到指定的本机账户");
       const win = getWindow();
       const result = win
         ? await dialog.showSaveDialog(win, {
             title: "导出加密身份备份",
-            defaultPath: `${identity.displayName}-xiaomei-identity.json`,
+            defaultPath: `${account.displayName}-xiaomei-identity.json`,
             filters: [{ name: "xiaomei-brain 身份备份", extensions: ["json"] }],
           })
         : await dialog.showSaveDialog({
             title: "导出加密身份备份",
-            defaultPath: `${identity.displayName}-xiaomei-identity.json`,
+            defaultPath: `${account.displayName}-xiaomei-identity.json`,
             filters: [{ name: "xiaomei-brain 身份备份", extensions: ["json"] }],
           });
       if (result.canceled || !result.filePath) return { ok: false, canceled: true };
-      identityVault.exportBackup(result.filePath);
+      identityVault.exportBackup(result.filePath, subject);
       return { ok: true };
     } catch (error) {
       return { ok: false, error: String(error instanceof Error ? error.message : error) };

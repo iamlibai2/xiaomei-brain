@@ -6,7 +6,8 @@ interface Props {
   agentId: string;
   agentName: string;
   onClose: () => void;
-  embedded?: boolean;
+  initialChannel?: ChannelProvider;
+  onChanged?: () => void;
 }
 
 type ChannelConfig = {
@@ -23,7 +24,7 @@ type IdentityLink = {
   last_verified_at?: number | null;
 };
 
-type ChannelProvider = "feishu" | "dingtalk";
+export type ChannelProvider = "feishu" | "dingtalk";
 
 const CHANNEL_RUNTIME_LABELS: Record<string, string> = {
   starting: "连接中",
@@ -37,8 +38,15 @@ function channelRuntimeLabel(state: string): string {
   return CHANNEL_RUNTIME_LABELS[state] || state || "未知";
 }
 
-export function AgentSettingsDialog({ open, agentId, agentName, onClose, embedded = false }: Props) {
-  const [channel, setChannel] = useState<ChannelProvider>("feishu");
+export function AgentSettingsDialog({
+  open,
+  agentId,
+  agentName,
+  onClose,
+  initialChannel = "feishu",
+  onChanged,
+}: Props) {
+  const [channel, setChannel] = useState<ChannelProvider>(initialChannel);
   const [appId, setAppId] = useState("");
   const [appSecret, setAppSecret] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -53,6 +61,10 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose, embedde
   const [identityLinks, setIdentityLinks] = useState<IdentityLink[]>([]);
   const channelName = channel === "feishu" ? "飞书" : "钉钉";
   const runtimeLabel = channelRuntimeLabel(runtimeState);
+
+  useEffect(() => {
+    if (open) setChannel(initialChannel);
+  }, [initialChannel, open]);
 
   const refreshIdentityLinks = useCallback(async () => {
     if (!agentId) return;
@@ -168,6 +180,7 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose, embedde
       setSecretConfigured(true);
       setAppSecret("");
       setNotice(`${channelName}渠道已保存并启用。`);
+      onChanged?.();
     } finally {
       setBusy("");
     }
@@ -209,6 +222,7 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose, embedde
       setLinkRequestId("");
       setLinkCommand("");
       setNotice(`${channelName}渠道已移除。`);
+      onChanged?.();
     } finally {
       setBusy("");
     }
@@ -232,6 +246,7 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose, embedde
       setLinkCommand("");
       setLinkStatus("");
       await refreshIdentityLinks();
+      onChanged?.();
     } finally {
       setBusy("");
     }
@@ -239,36 +254,19 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose, embedde
 
   return (
     <div
-      className={embedded ? "agent-settings-embedded" : "agent-settings-backdrop"}
-      onMouseDown={embedded ? undefined : onClose}
+      className="agent-settings-backdrop"
+      onMouseDown={onClose}
     >
-      <section className={`agent-settings-dialog ${embedded ? "is-embedded" : ""}`} onMouseDown={(event) => event.stopPropagation()}>
+      <section className="agent-settings-dialog" onMouseDown={(event) => event.stopPropagation()}>
         <header>
           <div>
-            <h2>{agentName}</h2>
-            <p>Agent 设置 · 渠道</p>
+            <h2>{channelName}</h2>
+            <p>{agentName} · 渠道设置</p>
           </div>
-          {!embedded && (
-            <button type="button" className="agent-settings-close" onClick={onClose}>
-              <Icon name="x" />
-            </button>
-          )}
+          <button type="button" className="agent-settings-close" onClick={onClose}>
+            <Icon name="x" />
+          </button>
         </header>
-
-        <div className="channel-tabs" role="tablist" aria-label="渠道">
-          {(["feishu", "dingtalk"] as ChannelProvider[]).map((item) => (
-            <button
-              type="button"
-              role="tab"
-              aria-selected={channel === item}
-              className={channel === item ? "active" : ""}
-              key={item}
-              onClick={() => setChannel(item)}
-            >
-              {item === "feishu" ? "飞书" : "钉钉"}
-            </button>
-          ))}
-        </div>
 
         <div className="channel-heading">
           <div className="channel-logo">{channel === "feishu" ? "飞" : "钉"}</div>

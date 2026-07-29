@@ -252,8 +252,12 @@ export interface IdentityBridge {
   select(args: { subject: string }): Promise<IdentityOperationResult>;
   remove(args: { subject: string; password: string }): Promise<IdentityOperationResult>;
   lock(): Promise<IdentityStatus>;
-  changePassword(args: { currentPassword: string; newPassword: string }): Promise<IdentityOperationResult>;
-  exportBackup(): Promise<IdentityOperationResult>;
+  changePassword(args: {
+    currentPassword: string;
+    newPassword: string;
+    subject?: string;
+  }): Promise<IdentityOperationResult>;
+  exportBackup(args?: { subject?: string }): Promise<IdentityOperationResult>;
   importBackup(args: { password: string }): Promise<IdentityOperationResult>;
 }
 

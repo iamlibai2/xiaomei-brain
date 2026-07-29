@@ -563,6 +563,72 @@
   background: rgb(204 127 35 / 13%);
 }
 
+.channel-library-list {
+  overflow: hidden;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: 10px;
+  background: var(--ui-bg-primary);
+}
+
+.channel-library-row {
+  min-height: 82px;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 14px;
+}
+
+.channel-library-row + .channel-library-row {
+  border-top: 1px solid var(--ui-border-default);
+}
+
+.channel-library-logo {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 11px;
+  color: white;
+  background: #3370ff;
+  font-weight: 700;
+}
+
+.channel-library-logo.dingtalk {
+  background: #1488ee;
+}
+
+.channel-library-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.channel-library-copy > strong {
+  font-size: 14px;
+}
+
+.channel-library-copy > p {
+  overflow: hidden;
+  margin: 4px 0 7px;
+  color: var(--ui-color-text-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-library-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--ui-color-text-tertiary);
+  font-size: 10px;
+}
+
+.channel-library-row .ui-button {
+  flex: 0 0 auto;
+  gap: 4px;
+}
+
 .model-library-delete {
   width: 28px;
   height: 28px;

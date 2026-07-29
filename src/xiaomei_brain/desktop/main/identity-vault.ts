@@ -163,9 +163,13 @@ export class IdentityVault {
     return this.status();
   }
 
-  changePassword(currentPassword: string, newPassword: string): IdentityVaultStatus {
+  changePassword(
+    currentPassword: string,
+    newPassword: string,
+    subject = "",
+  ): IdentityVaultStatus {
     this.validatePassword(newPassword);
-    const file = this.requireActiveFile();
+    const file = this.requireAccount(subject || this.requireActiveFile().subject);
     const privateKeyDer = this.decryptPrivateKey(file, currentPassword);
     const privateKey = createPrivateKey({ key: privateKeyDer, format: "der", type: "pkcs8" });
     this.assertKeyMatches(file, privateKey);
@@ -174,8 +178,10 @@ export class IdentityVault {
       ...this.encryptPrivateKey(privateKeyDer, newPassword),
     };
     this.writeVault(updated, true);
-    this.privateKey = privateKey;
-    this.unlockedIdentity = this.publicIdentity(updated);
+    if (this.unlockedIdentity?.subject === updated.subject) {
+      this.privateKey = privateKey;
+      this.unlockedIdentity = this.publicIdentity(updated);
+    }
     return this.status();
   }
 

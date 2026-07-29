@@ -26,12 +26,15 @@ test("IdentityVault manages multiple encrypted Desktop accounts", () => {
     assert.equal(selected.unlocked, false);
     assert.equal(selected.activeSubject, aliceSubject);
     assert.equal(vault.unlock("alice-password", aliceSubject).displayName, "Alice");
+    vault.changePassword("bob-password", "bob-password-new", bobSubject);
+    assert.equal(vault.status().activeSubject, aliceSubject);
+    assert.equal(vault.status().unlocked, true);
 
     const exported = path.join(root, "alice-backup.json");
-    vault.exportBackup(exported);
+    vault.exportBackup(exported, aliceSubject);
     assert.equal(fs.existsSync(exported), true);
 
-    const afterRemoval = vault.remove(bobSubject, "bob-password");
+    const afterRemoval = vault.remove(bobSubject, "bob-password-new");
     assert.equal(afterRemoval.accounts.length, 1);
     assert.equal(afterRemoval.accounts[0].displayName, "Alice");
     assert.equal(afterRemoval.activeSubject, aliceSubject);
