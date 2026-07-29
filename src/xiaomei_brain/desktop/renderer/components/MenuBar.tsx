@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { AboutDialog } from "./AboutDialog";
 import { useCoreStore } from "../store";
+import { openSettingsCenter } from "./settings/events";
 
 interface MenuItem {
   label: string;
@@ -14,7 +14,6 @@ export function MenuBar() {
   const { t } = useTranslation();
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [maximized, setMaximized] = useState(false);
-  const [aboutOpen, setAboutOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const activeAgent = useCoreStore((state) => (
     state.agents.find((agent) => agent.id === state.activeAgentId)
@@ -33,6 +32,11 @@ export function MenuBar() {
     ],
     [t("menu.window")]: [
       {
+        label: t("sidebar.settings"),
+        action: () => openSettingsCenter("overview"),
+      },
+      { separator: true, label: "" },
+      {
         label: t("menu.viewAgentLogs"),
         action: activeAgent?.localAgentId
           ? () => openAgentLogs(activeAgent.localAgentId!)
@@ -44,11 +48,12 @@ export function MenuBar() {
       { label: t("menu.devtools"), action: () => {} },
       { separator: true, label: "" },
       { label: t("menu.close"), action: () => window.win.close() },
+      { label: t("menu.quit"), action: () => window.win.quit() },
     ],
     [t("menu.help")]: [
       {
         label: t("menu.about"),
-        action: () => setAboutOpen(true),
+        action: () => openSettingsCenter("system"),
       },
     ],
   }), [activeAgent, openAgentLogs, t]);
@@ -138,7 +143,6 @@ export function MenuBar() {
           </div>
         )}
       </div>
-      {aboutOpen && <AboutDialog onClose={() => setAboutOpen(false)} />}
     </>
   );
 }

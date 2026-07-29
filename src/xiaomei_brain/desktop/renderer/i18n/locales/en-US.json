@@ -221,6 +221,7 @@
       "loading": "Loading assignments...",
       "empty": "No assignments yet. Give the Agent an ongoing piece of work in conversation.",
       "close": "Close",
+      "quit": "Quit Desktop",
       "progress": "Progress",
       "executionPlan": "Execution steps",
       "inProgress": "In progress",

@@ -102,6 +102,51 @@ class IdentityLinkRevokeParams(BaseModel):
     binding_id: str = Field(..., min_length=1, max_length=128)
 
 
+# ── Model configuration ─────────────────────
+
+class ModelCatalogParams(BaseModel):
+    provider_id: str = Field(default="", max_length=64)
+
+
+class ModelDefinitionParams(BaseModel):
+    id: str = Field(..., min_length=1, max_length=200)
+    name: str = Field(default="", max_length=200)
+    context_window: int = Field(default=0, ge=0, le=10_000_000)
+    max_tokens: int = Field(default=8192, ge=1, le=10_000_000)
+    reasoning: bool = False
+    input_modes: list[str] = Field(default_factory=lambda: ["text"], max_length=8)
+    supports_vision: bool = False
+    supports_tools: bool = False
+
+
+class ModelProviderTestParams(BaseModel):
+    provider_id: str = Field(..., min_length=1, max_length=64)
+    base_url: str = Field(..., min_length=1, max_length=2000)
+    api_key: str = Field(default="", max_length=4000)
+    api_mode: str = Field(default="openai-completions", max_length=64)
+    model_id: str = Field(..., min_length=1, max_length=200)
+
+
+class ModelProviderConfigureParams(BaseModel):
+    provider_id: str = Field(..., min_length=1, max_length=64)
+    base_url: str = Field(..., min_length=1, max_length=2000)
+    api_key: str = Field(default="", max_length=4000)
+    api_mode: str = Field(default="openai-completions", max_length=64)
+    models: list[ModelDefinitionParams] = Field(..., min_length=1, max_length=200)
+    base_hash: str = Field(default="", max_length=64)
+
+
+class ModelProviderRemoveParams(BaseModel):
+    provider_id: str = Field(..., min_length=1, max_length=64)
+    base_hash: str = Field(default="", max_length=64)
+
+
+class ModelSelectionSetParams(BaseModel):
+    primary: str = Field(..., min_length=3, max_length=300)
+    vision: str = Field(default="", max_length=300)
+    base_hash: str = Field(default="", max_length=64)
+
+
 # ── Chat ─────────────────────────────────────
 
 class ChatAttachment(BaseModel):

@@ -1039,6 +1039,7 @@ interface CoreActions {
   addAgent: (host: string, port: number, token: string) => void;
   removeAgent: (agentId: string) => void;
   disconnectAgent: (agentId: string) => Promise<void>;
+  resetIdentityState: () => void;
   sendMessage: (text: string) => void;
   pickAttachments: () => Promise<void>;
   addAttachments: (attachments: ChatAttachment[]) => void;
@@ -1562,6 +1563,39 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         s.sendingByAgent[agentId] = false;
       }));
     });
+  },
+
+  // Person-scoped data must never survive a Desktop account switch. Agent
+  // discovery and lifecycle state are host-scoped and intentionally remain.
+  resetIdentityState: () => {
+    for (const agentId of Object.keys(get().connectionByAgent)) {
+      clearAgentStreams(agentId);
+    }
+    set(produce((s: CoreState) => {
+      s.connectionByAgent = {};
+      s.messagesByAgent = {};
+      s.assignmentsByAgent = {};
+      s.assignmentLoadingByAgent = {};
+      s.assignmentErrorByAgent = {};
+      s.activitiesByAgent = {};
+      s.activityLoadingByAgent = {};
+      s.activityErrorByAgent = {};
+      s.artifactsByAgent = {};
+      s.artifactLoadingByAgent = {};
+      s.artifactErrorByAgent = {};
+      s.personMemoriesByAgent = {};
+      s.personMemoryListByAgent = {};
+      s.agentStateByAgent = {};
+      s.sendingByAgent = {};
+      s.draftByAgent = {};
+      s.attachmentsByConversation = {};
+      s.attachmentErrorByConversation = {};
+      s.unreadByAgent = {};
+      s.sessionsByAgent = {};
+      s.sessionListByAgent = {};
+      s.activeSessionByAgent = {};
+      s.historyPaginationByAgent = {};
+    }));
   },
 
   pickAttachments: async () => {

@@ -5,6 +5,11 @@ import { GatewayClient } from "./gateway-client";
 import { ConfigStore } from "./config-store";
 import { registerIpcHandlers } from "./ipc-handlers";
 import { initializeDesktopDiagnostics, registerDesktopDiagnosticsIpc } from "./desktop-diagnostics";
+import {
+  applyStoredDesktopSettings,
+  readDesktopSettings,
+  registerDesktopSettingsIpc,
+} from "./desktop-settings";
 
 const isMac = process.platform === "darwin";
 const isWindows = process.platform === "win32";
@@ -15,6 +20,7 @@ if (isWindows) {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let isQuitting = false;
 const gateway = new GatewayClient();
 const config = new ConfigStore();
 
@@ -94,6 +100,13 @@ function createWindow(): void {
     mainWindow?.show();
   });
 
+  mainWindow.on("close", (event) => {
+    if (!isQuitting && readDesktopSettings(config).closeBehavior === "minimize") {
+      event.preventDefault();
+      mainWindow?.minimize();
+    }
+  });
+
   mainWindow.webContents.on("context-menu", (_event, params) => {
     const template: MenuItemConstructorOptions[] = [];
     if (params.isEditable) {
@@ -133,6 +146,7 @@ function createWindow(): void {
     }
   });
   ipcMain.on("window:close", () => mainWindow?.close());
+  ipcMain.on("window:quit", () => app.quit());
   ipcMain.handle("window:isMaximized", () => mainWindow?.isMaximized() ?? false);
 
   mainWindow.on("maximize", () => {
@@ -149,11 +163,17 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   initializeDesktopDiagnostics();
+  applyStoredDesktopSettings(config);
   registerWindowsShortcutIdentity();
   createWindow();
   registerDesktopDiagnosticsIpc();
+  registerDesktopSettingsIpc(config);
   registerIpcHandlers(gateway, config, () => mainWindow);
 
+});
+
+app.on("before-quit", () => {
+  isQuitting = true;
 });
 
 app.on("window-all-closed", () => {

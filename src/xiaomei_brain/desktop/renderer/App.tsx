@@ -6,6 +6,7 @@ import { MainShell } from "./components/MainShell";
 import { DesktopInfoProvider } from "./desktop-info";
 import { IdentityPage } from "./components/IdentityPage";
 import type { IdentityStatus } from "./types";
+import i18n from "./i18n";
 
 export function App() {
   const page = useCoreStore((s) => s.page);
@@ -21,6 +22,9 @@ export function App() {
   useEffect(() => {
     initGatewayEvents();
     void window.identity.status().then(setIdentityStatus);
+    void window.desktop.getSettings().then((settings) => {
+      void i18n.changeLanguage(settings.language);
+    });
   }, []);
 
   useEffect(() => {
@@ -29,11 +33,16 @@ export function App() {
   }, [identityStatus?.unlocked]);
 
   useEffect(() => {
-    const handleLocked = (event: Event) => {
+    const handleIdentityChange = (event: Event) => {
+      didAutoConnect.current = false;
       setIdentityStatus((event as CustomEvent<IdentityStatus>).detail);
     };
-    window.addEventListener("xiaomei:identity-locked", handleLocked);
-    return () => window.removeEventListener("xiaomei:identity-locked", handleLocked);
+    window.addEventListener("xiaomei:identity-locked", handleIdentityChange);
+    window.addEventListener("xiaomei:identity-status-changed", handleIdentityChange);
+    return () => {
+      window.removeEventListener("xiaomei:identity-locked", handleIdentityChange);
+      window.removeEventListener("xiaomei:identity-status-changed", handleIdentityChange);
+    };
   }, []);
 
   // Auto-connect saved agents on first render when agents are loaded

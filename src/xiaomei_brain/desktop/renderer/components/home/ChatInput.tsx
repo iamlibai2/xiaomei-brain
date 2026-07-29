@@ -1,8 +1,8 @@
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useCoreStore } from "../../store";
-import { Icon } from "../ui";
-import type { ChatAttachment } from "../../types";
+import { Icon, SelectMenu } from "../ui";
+import type { ChatAttachment, ModelConfigSnapshot } from "../../types";
 
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 8 * 1024 * 1024;
@@ -32,6 +32,10 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
   const { t } = useTranslation();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [dragging, setDragging] = useState(false);
+  const [modelSnapshot, setModelSnapshot] = useState<ModelConfigSnapshot | null>(null);
+  const [modelBusy, setModelBusy] = useState(false);
+  const [modelError, setModelError] = useState("");
+  const activeAgentId = useCoreStore((s) => s.activeAgentId);
   const input = useCoreStore((s) => s.draftByAgent[s.activeAgentId || ""] || "");
   const setInput = useCoreStore((s) => s.setDraft);
   const pendingAttachments = useCoreStore((s) => {
@@ -54,6 +58,66 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
     if (!agentId) return false;
     return s.connectionByAgent[agentId]?.status === "connected";
   });
+
+  const loadModels = useCallback(async () => {
+    if (!activeAgentId || !connected) {
+      setModelSnapshot(null);
+      return;
+    }
+    try {
+      const response = await window.gateway.getModelConfig({ agentId: activeAgentId });
+      if (response.error) throw new Error(response.error.message);
+      setModelSnapshot(response.result as unknown as ModelConfigSnapshot);
+      setModelError("");
+    } catch (error) {
+      setModelError(String(error instanceof Error ? error.message : error));
+    }
+  }, [activeAgentId, connected]);
+
+  useEffect(() => {
+    void loadModels();
+  }, [loadModels]);
+
+  useEffect(() => {
+    const handleModelChange = (event: Event) => {
+      const detail = (event as CustomEvent<{ agentId?: string }>).detail;
+      if (!detail?.agentId || detail.agentId === activeAgentId) void loadModels();
+    };
+    window.addEventListener("xiaomei:model-selection-changed", handleModelChange);
+    return () => window.removeEventListener("xiaomei:model-selection-changed", handleModelChange);
+  }, [activeAgentId, loadModels]);
+
+  const modelOptions = useMemo(() => (
+    modelSnapshot?.providers.flatMap((provider) => provider.models.map((model) => ({
+      value: `${provider.id}/${model.id}`,
+      label: model.name || model.id,
+      description: provider.id,
+    }))) || []
+  ), [modelSnapshot]);
+
+  const selectModel = async (primary: string) => {
+    if (!activeAgentId || !modelSnapshot || !primary) return;
+    setModelBusy(true);
+    setModelError("");
+    try {
+      const response = await window.gateway.setModelSelection({
+        agentId: activeAgentId,
+        primary,
+        vision: modelSnapshot.selection.vision || "",
+        baseHash: modelSnapshot.hashes.agent,
+      });
+      if (response.error) throw new Error(response.error.message);
+      await loadModels();
+      window.dispatchEvent(new CustomEvent(
+        "xiaomei:model-selection-changed",
+        { detail: { agentId: activeAgentId } },
+      ));
+    } catch (error) {
+      setModelError(String(error instanceof Error ? error.message : error));
+    } finally {
+      setModelBusy(false);
+    }
+  };
 
   const handleSend = () => {
     const text = input.trim();
@@ -136,6 +200,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
         </div>
       )}
       {attachmentError && <div className="attachment-error">{attachmentError}</div>}
+      {modelError && <div className="chat-model-error">{modelError}</div>}
       <textarea
         ref={textareaRef}
         className="chat-input-textarea"
@@ -159,9 +224,18 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
           </button>
         </div>
         <div className="chat-input-toolbar-right">
-          <button className="chat-input-dropdown" title={t("home.mode")}>
-            {t("home.modeAuto")}
-          </button>
+          <SelectMenu
+            className="chat-model-select"
+            placement="up"
+            value={modelSnapshot?.selection.primary || ""}
+            options={modelOptions}
+            placeholder={modelBusy ? "切换中…" : "选择模型"}
+            searchable={modelOptions.length > 6}
+            searchPlaceholder="搜索模型"
+            emptyText="没有可用模型"
+            disabled={!connected || sending || modelBusy || modelOptions.length === 0}
+            onChange={(value) => void selectModel(value)}
+          />
           <button className="chat-input-btn" title={t("home.voiceInput")}>
             <Icon name="microphone" size={18} />
           </button>

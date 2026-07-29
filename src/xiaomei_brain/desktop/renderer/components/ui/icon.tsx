@@ -30,7 +30,8 @@ export type IconName =
   | "external-link"
   | "terminal"
   | "play"
-  | "power";
+  | "power"
+  | "trash";
 
 interface IconProps {
   name: IconName;
@@ -211,6 +212,14 @@ const ICON_PATHS: Record<IconName, React.ReactNode> = {
     <>
       <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
       <line x1="12" y1="2" x2="12" y2="12" />
+    </>
+  ),
+  trash: (
+    <>
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14H6L5 6m3 0V4h8v2" />
+      <line x1="10" y1="10" x2="10" y2="16" />
+      <line x1="14" y1="10" x2="14" y2="16" />
     </>
   ),
 };

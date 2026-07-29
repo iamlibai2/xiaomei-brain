@@ -75,6 +75,34 @@ export interface SessionEntry {
   messageCount?: number;
 }
 
+export interface ModelDefinition {
+  id: string;
+  name: string;
+  context_window: number;
+  max_tokens: number;
+  reasoning: boolean;
+  supports_tools: boolean;
+  input_modes: string[];
+  supports_vision: boolean;
+}
+
+export interface ModelProviderConfig {
+  id: string;
+  base_url: string;
+  api_mode: string;
+  secret_configured: boolean;
+  secret_hint: string;
+  models: ModelDefinition[];
+}
+
+export interface ModelConfigSnapshot {
+  agent_id: string;
+  selection: { primary: string; vision: string };
+  active: { primary: string; vision: string };
+  providers: ModelProviderConfig[];
+  hashes: { global: string; agent: string };
+}
+
 // ── Bridge API ──
 
 export interface GatewayBridge {
@@ -147,6 +175,36 @@ export interface GatewayBridge {
     provider: "feishu" | "dingtalk";
     bindingId: string;
   }): Promise<JsonRpcResponse>;
+  getModelConfig(args: { agentId: string }): Promise<JsonRpcResponse>;
+  getModelCatalog(args: { agentId: string; providerId?: string }): Promise<JsonRpcResponse>;
+  testModelProvider(args: {
+    agentId: string;
+    providerId: string;
+    baseUrl: string;
+    apiKey: string;
+    apiMode: string;
+    modelId: string;
+  }): Promise<JsonRpcResponse>;
+  configureModelProvider(args: {
+    agentId: string;
+    providerId: string;
+    baseUrl: string;
+    apiKey: string;
+    apiMode: string;
+    models: ModelDefinition[];
+    baseHash?: string;
+  }): Promise<JsonRpcResponse>;
+  removeModelProvider(args: {
+    agentId: string;
+    providerId: string;
+    baseHash?: string;
+  }): Promise<JsonRpcResponse>;
+  setModelSelection(args: {
+    agentId: string;
+    primary: string;
+    vision?: string;
+    baseHash?: string;
+  }): Promise<JsonRpcResponse>;
   getConfig(key: string): Promise<string | null>;
 
   /**
@@ -161,12 +219,22 @@ export interface GatewayBridge {
   }) => void): () => void;
 }
 
+export interface IdentityAccountSummary {
+  displayName: string;
+  issuer: string;
+  subject: string;
+  active: boolean;
+  unlocked: boolean;
+}
+
 export interface IdentityStatus {
   exists: boolean;
   unlocked: boolean;
   displayName?: string;
   issuer?: string;
   subject?: string;
+  activeSubject?: string;
+  accounts: IdentityAccountSummary[];
   error?: string;
 }
 
@@ -180,7 +248,9 @@ export interface IdentityOperationResult {
 export interface IdentityBridge {
   status(): Promise<IdentityStatus>;
   create(args: { displayName: string; password: string }): Promise<IdentityOperationResult>;
-  unlock(args: { password: string }): Promise<IdentityOperationResult>;
+  unlock(args: { password: string; subject?: string }): Promise<IdentityOperationResult>;
+  select(args: { subject: string }): Promise<IdentityOperationResult>;
+  remove(args: { subject: string; password: string }): Promise<IdentityOperationResult>;
   lock(): Promise<IdentityStatus>;
   changePassword(args: { currentPassword: string; newPassword: string }): Promise<IdentityOperationResult>;
   exportBackup(): Promise<IdentityOperationResult>;
@@ -216,8 +286,38 @@ export interface DirectoryOpenResult {
   error?: string;
 }
 
+export interface DesktopSettings {
+  openAtLogin: boolean;
+  openAtLoginAvailable: boolean;
+  closeBehavior: "exit" | "minimize";
+  notificationsEnabled: boolean;
+  language: "zh-CN" | "en-US";
+  openRightSidebarByDefault: boolean;
+  automaticUpdates: {
+    state: "disabled";
+    message: string;
+  };
+}
+
+export interface DesktopSettingsResult {
+  ok: boolean;
+  settings?: DesktopSettings;
+  error?: string;
+}
+
 export interface DesktopBridge {
   getInfo(): Promise<DesktopInfo>;
+  getSettings(): Promise<DesktopSettings>;
+  updateSettings(
+    patch: Partial<Pick<
+      DesktopSettings,
+      | "openAtLogin"
+      | "closeBehavior"
+      | "notificationsEnabled"
+      | "language"
+      | "openRightSidebarByDefault"
+    >>,
+  ): Promise<DesktopSettingsResult>;
   readLog(): Promise<{ content: string }>;
   openLogDirectory(): Promise<DirectoryOpenResult>;
   openConfigDirectory(): Promise<DirectoryOpenResult>;
@@ -228,6 +328,7 @@ export interface WinBridge {
   minimize(): void;
   maximize(): void;
   close(): void;
+  quit(): void;
   isMaximized(): Promise<boolean>;
   onMaximizeChange(callback: (maximized: boolean) => void): void;
 }

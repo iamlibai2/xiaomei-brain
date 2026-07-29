@@ -20,6 +20,7 @@ from .methods import (
     IdentityMethods,
     InteractionMethods,
     MemoryMethods,
+    ModelMethods,
     SessionMethods,
 )
 from .protocol import ErrorCode, build_error
@@ -51,6 +52,7 @@ class MethodRouter:
         self._attachment_methods = AttachmentMethods(living)
         self._interaction_methods = InteractionMethods(living)
         self._memory_methods = MemoryMethods(living, self._identity_contexts)
+        self._model_methods = ModelMethods(living)
         self._identity_methods = IdentityMethods(
             living,
             self._connected_sessions,
@@ -81,6 +83,7 @@ class MethodRouter:
             self._attachment_methods,
             self._interaction_methods,
             self._memory_methods,
+            self._model_methods,
             self._identity_methods,
             self._artifact_methods,
             self._assignment_methods,
@@ -145,6 +148,14 @@ class MethodRouter:
             "activity.events": {"activity.get"},
             "memory.read": {"memory.list"},
             "agent.state": {"agent.state.get"},
+            "model.configuration": {
+                "model.config.get",
+                "model.catalog",
+                "model.provider.test",
+                "model.provider.configure",
+                "model.provider.remove",
+                "model.selection.set",
+            },
             "message.retry": {"chat.retry"},
             "identity.list": {"identity.list"},
             "identity.challenge": {

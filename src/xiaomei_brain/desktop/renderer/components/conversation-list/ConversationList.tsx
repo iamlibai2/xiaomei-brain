@@ -5,13 +5,12 @@ import { Icon, Button } from "../ui";
 import { SidebarTopbar } from "./SidebarTopbar";
 import { SidebarFooter } from "./SidebarFooter";
 import { AddAgentDialog } from "./AddAgentDialog";
-import { IdentitySettingsDialog } from "../IdentitySettingsDialog";
+import { openSettingsCenter } from "../settings/events";
 
 export function ConversationList() {
   const { t } = useTranslation();
   const [collapsed, setCollapsed] = useState(false);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
-  const [identitySettingsOpen, setIdentitySettingsOpen] = useState(false);
 
   const agents = useCoreStore((s) => s.agents);
   const activeAgentId = useCoreStore((s) => s.activeAgentId);
@@ -42,9 +41,14 @@ export function ConversationList() {
   const displayName = identityName || t("sidebar.defaultUserName");
 
   useEffect(() => {
-    void window.identity.status().then((status) => {
-      setIdentityName(status.displayName || "");
-    });
+    const refreshIdentityName = () => {
+      void window.identity.status().then((status) => {
+        setIdentityName(status.displayName || "");
+      });
+    };
+    refreshIdentityName();
+    window.addEventListener("xiaomei:identity-status-changed", refreshIdentityName);
+    return () => window.removeEventListener("xiaomei:identity-status-changed", refreshIdentityName);
   }, []);
 
   function handleNewSession() {
@@ -199,7 +203,7 @@ export function ConversationList() {
             </div>
           )}
 
-          <SidebarFooter userName={displayName} onSettings={() => setIdentitySettingsOpen(true)} />
+          <SidebarFooter userName={displayName} onSettings={() => openSettingsCenter("accounts")} />
         </>
       )}
 
@@ -212,9 +216,6 @@ export function ConversationList() {
         </div>
       )}
       {addDialogOpen && <AddAgentDialog onClose={() => setAddDialogOpen(false)} />}
-      {identitySettingsOpen && (
-        <IdentitySettingsDialog onClose={() => setIdentitySettingsOpen(false)} />
-      )}
     </div>
   );
 }

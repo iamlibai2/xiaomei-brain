@@ -9,7 +9,7 @@ import {
 import { Button, Icon } from "../ui";
 import { ChatInput } from "./ChatInput";
 import { ChatTopbar } from "./ChatTopbar";
-import { AgentSettingsDialog } from "../agent-settings/AgentSettingsDialog";
+import { openSettingsCenter } from "../settings/events";
 import { AssignmentCard } from "./AssignmentCard";
 import { ActivitySidebar } from "../right-sidebar/ActivitySidebar";
 import { TerminalPanel } from "../terminal/TerminalPanel";
@@ -65,7 +65,6 @@ export function HomePage() {
   const [focusedArtifactKey, setFocusedArtifactKey] = useState("");
   const [focusedMemories, setFocusedMemories] = useState<MemoryReference[]>([]);
   const [selectedAssignmentId, setSelectedAssignmentId] = useState<string | null>(null);
-  const [agentSettingsOpen, setAgentSettingsOpen] = useState(false);
   const [historyTraversalStarted, setHistoryTraversalStarted] = useState<Set<string>>(() => new Set());
   const [followingLatest, setFollowingLatest] = useState(true);
   const [unreadWhileAway, setUnreadWhileAway] = useState(false);
@@ -76,6 +75,22 @@ export function HomePage() {
   const previousFirstMessageId = useRef<string | null>(null);
   const followLatestRef = useRef(true);
   const scrollFrameRef = useRef<number>();
+
+  useEffect(() => {
+    let active = true;
+    void window.desktop.getSettings().then((settings) => {
+      if (active) setActivityPanelOpen(settings.openRightSidebarByDefault);
+    });
+    const handleSettings = (event: Event) => {
+      const settings = (event as CustomEvent<import("../../types").DesktopSettings>).detail;
+      setActivityPanelOpen(settings.openRightSidebarByDefault);
+    };
+    window.addEventListener("xiaomei:desktop-settings-changed", handleSettings);
+    return () => {
+      active = false;
+      window.removeEventListener("xiaomei:desktop-settings-changed", handleSettings);
+    };
+  }, []);
 
   useEffect(() => {
     if (activeAgentId && connectionStatus === "connected") {
@@ -230,7 +245,7 @@ export function HomePage() {
           onSearch={() => {}}
           onToggleRightPanel={() => setActivityPanelOpen((open) => !open)}
           rightPanelOpen={activityPanelOpen}
-          onOpenAgentSettings={() => setAgentSettingsOpen(true)}
+          onOpenAgentSettings={() => openSettingsCenter("overview")}
           agentState={agentState}
           activitySummary={currentActivity?.progressSummary || currentActivity?.title || ""}
         />
@@ -361,12 +376,6 @@ export function HomePage() {
         onSectionChange={setRightSidebarSection}
         focusedArtifactKey={focusedArtifactKey}
         focusedMemories={focusedMemories}
-      />
-      <AgentSettingsDialog
-        open={agentSettingsOpen}
-        agentId={activeAgentId || ""}
-        agentName={agentName || t("home.defaultAgentName")}
-        onClose={() => setAgentSettingsOpen(false)}
       />
     </div>
   );

@@ -11,6 +11,7 @@ from .connection import ConnectionMethods
 from .identity import IdentityMethods
 from .interactions import InteractionMethods
 from .memories import MemoryMethods
+from .models import ModelMethods
 from .sessions import SessionMethods
 
 __all__ = [
@@ -25,5 +26,6 @@ __all__ = [
     "IdentityMethods",
     "InteractionMethods",
     "MemoryMethods",
+    "ModelMethods",
     "SessionMethods",
 ]

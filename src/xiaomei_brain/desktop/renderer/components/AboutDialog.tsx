@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useDesktopInfo } from "../desktop-info";
 import { Button } from "./ui";
 
-export function AboutDialog({ onClose }: { onClose: () => void }) {
+export function AboutDialog({ onClose, embedded = false }: { onClose: () => void; embedded?: boolean }) {
   const { t } = useTranslation();
   const info = useDesktopInfo();
   const [showLog, setShowLog] = useState(false);
@@ -13,11 +13,11 @@ export function AboutDialog({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape" && !embedded) onClose();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  }, [embedded, onClose]);
 
   async function loadLog() {
     setLogLoading(true);
@@ -42,9 +42,13 @@ export function AboutDialog({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="about-overlay" role="presentation" onMouseDown={onClose}>
+    <div
+      className={embedded ? "about-embedded" : "about-overlay"}
+      role="presentation"
+      onMouseDown={embedded ? undefined : onClose}
+    >
       <section
-        className={`about-dialog ${showLog ? "with-log" : ""}`}
+        className={`about-dialog ${showLog ? "with-log" : ""} ${embedded ? "is-embedded" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="about-title"
@@ -52,8 +56,8 @@ export function AboutDialog({ onClose }: { onClose: () => void }) {
       >
         <header className="about-header">
           <div>
-            <h2 id="about-title">xiaomei-brain Desktop</h2>
-            <p>{t("about.subtitle")}</p>
+            <h2 id="about-title">{embedded ? "系统设置" : "xiaomei-brain Desktop"}</h2>
+            <p>{embedded ? "查看 Desktop 运行环境、目录与诊断日志。" : t("about.subtitle")}</p>
           </div>
           <button className="about-close" onClick={onClose} aria-label={t("about.close")}>×</button>
         </header>

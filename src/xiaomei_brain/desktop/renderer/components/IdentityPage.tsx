@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { IdentityStatus } from "../types";
+import { useCoreStore } from "../store";
 import { Button } from "./ui";
 
 interface IdentityPageProps {
@@ -10,27 +11,45 @@ interface IdentityPageProps {
 
 export function IdentityPage({ status, onReady }: IdentityPageProps) {
   const { t } = useTranslation();
+  const resetIdentityState = useCoreStore((state) => state.resetIdentityState);
+  const [creating, setCreating] = useState(!status.exists);
+  const [selectedSubject, setSelectedSubject] = useState(
+    status.activeSubject || status.subject || status.accounts[0]?.subject || "",
+  );
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(status.error || "");
 
+  useEffect(() => {
+    setCreating(!status.exists);
+    setSelectedSubject(
+      status.activeSubject || status.subject || status.accounts[0]?.subject || "",
+    );
+  }, [status.activeSubject, status.exists, status.subject, status.accounts]);
+
+  const selectedAccount = useMemo(
+    () => status.accounts.find((account) => account.subject === selectedSubject),
+    [selectedSubject, status.accounts],
+  );
+
   const submit = async () => {
-    if (!status.exists && password !== confirmation) {
+    if (creating && password !== confirmation) {
       setError(t("identity.passwordMismatch"));
       return;
     }
     setLoading(true);
     setError("");
-    const result = status.exists
-      ? await window.identity.unlock({ password })
-      : await window.identity.create({ displayName, password });
+    const result = creating
+      ? await window.identity.create({ displayName, password })
+      : await window.identity.unlock({ password, subject: selectedSubject });
     setLoading(false);
     if (!result.ok || !result.status) {
       setError(result.error || t("identity.failed"));
       return;
     }
+    if (creating || selectedSubject !== status.activeSubject) resetIdentityState();
     onReady(result.status);
   };
 
@@ -48,6 +67,7 @@ export function IdentityPage({ status, onReady }: IdentityPageProps) {
       setError(result.error || t("identity.failed"));
       return;
     }
+    resetIdentityState();
     onReady(result.status);
   };
 
@@ -58,14 +78,36 @@ export function IdentityPage({ status, onReady }: IdentityPageProps) {
   return (
     <div className="connect-page">
       <div className="connect-card identity-card">
-        <h1>{status.exists ? t("identity.welcomeBack") : t("identity.createTitle")}</h1>
+        <h1>{creating ? t("identity.createTitle") : t("identity.welcomeBack")}</h1>
         <p className="connect-subtitle">
-          {status.exists
-            ? t("identity.unlockDescription", { name: status.displayName || "" })
-            : t("identity.createDescription")}
+          {creating
+            ? t("identity.createDescription")
+            : t("identity.unlockDescription", {
+                name: selectedAccount?.displayName || status.displayName || "",
+              })}
         </p>
 
-        {!status.exists && (
+        {!creating && status.accounts.length > 1 && (
+          <div className="connect-field">
+            <label>账户</label>
+            <select
+              value={selectedSubject}
+              onChange={(event) => {
+                setSelectedSubject(event.target.value);
+                setPassword("");
+                setError("");
+              }}
+            >
+              {status.accounts.map((account) => (
+                <option key={account.subject} value={account.subject}>
+                  {account.displayName}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {creating && (
           <div className="connect-field">
             <label>{t("identity.displayName")}</label>
             <input
@@ -81,7 +123,7 @@ export function IdentityPage({ status, onReady }: IdentityPageProps) {
         <div className="connect-field">
           <label>{t("identity.password")}</label>
           <input
-            autoFocus={status.exists}
+            autoFocus={!creating}
             type="password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
@@ -90,7 +132,7 @@ export function IdentityPage({ status, onReady }: IdentityPageProps) {
           />
         </div>
 
-        {!status.exists && (
+        {creating && (
           <div className="connect-field">
             <label>{t("identity.confirmPassword")}</label>
             <input
@@ -109,13 +151,29 @@ export function IdentityPage({ status, onReady }: IdentityPageProps) {
           size="lg"
           className="connect-btn"
           onClick={() => void submit()}
-          disabled={loading}
+          disabled={loading || (!creating && !selectedSubject)}
         >
           {loading
             ? t("identity.processing")
-            : status.exists ? t("identity.unlock") : t("identity.create")}
+            : creating ? t("identity.create") : t("identity.unlock")}
         </Button>
-        {!status.exists && (
+
+        <div className="identity-login-actions">
+          {status.exists && (
+            <Button
+              variant="ghost"
+              size="lg"
+              onClick={() => {
+                setCreating((current) => !current);
+                setPassword("");
+                setConfirmation("");
+                setError("");
+              }}
+              disabled={loading}
+            >
+              {creating ? "返回账户登录" : "添加本机账户"}
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="lg"
@@ -125,7 +183,7 @@ export function IdentityPage({ status, onReady }: IdentityPageProps) {
           >
             {t("identity.importBackup")}
           </Button>
-        )}
+        </div>
       </div>
     </div>
   );

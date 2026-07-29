@@ -6,23 +6,14 @@ import { Button } from "./ui";
 
 interface IdentitySettingsDialogProps {
   onClose: () => void;
+  embedded?: boolean;
 }
 
-interface LegacySession {
-  session_id: string;
-  first_user_message: string;
-  message_count: number;
-  updated_at: number;
-  legacy_user_ids: string[];
-}
-
-export function IdentitySettingsDialog({ onClose }: IdentitySettingsDialogProps) {
+export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySettingsDialogProps) {
   const { t } = useTranslation();
   const agents = useCoreStore((state) => state.agents);
   const disconnectAgent = useCoreStore((state) => state.disconnectAgent);
-  const activeAgentId = useCoreStore((state) => state.activeAgentId);
-  const connectionByAgent = useCoreStore((state) => state.connectionByAgent);
-  const searchSessions = useCoreStore((state) => state.searchSessions);
+  const resetIdentityState = useCoreStore((state) => state.resetIdentityState);
   const [status, setStatus] = useState<IdentityStatus | null>(null);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -30,54 +21,128 @@ export function IdentitySettingsDialog({ onClose }: IdentitySettingsDialogProps)
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [legacySessions, setLegacySessions] = useState<LegacySession[]>([]);
-  const [claimingSessionId, setClaimingSessionId] = useState("");
-  const activeAgent = agents.find((agent) => agent.id === activeAgentId);
-  const isLocalAgent = Boolean(
-    activeAgent
-    && (
-      activeAgent.source === "local"
-      || ["localhost", "127.0.0.1", "::1"].includes(activeAgent.host.toLowerCase())
-    ),
-  );
-  const canManageLegacy = Boolean(
-    activeAgent
-    && isLocalAgent
-    && connectionByAgent[activeAgent.id]?.status === "connected",
-  );
-  const [legacyLoading, setLegacyLoading] = useState(false);
-  const [legacyError, setLegacyError] = useState("");
-
+  const [addingAccount, setAddingAccount] = useState(false);
+  const [newAccountName, setNewAccountName] = useState("");
+  const [newAccountPassword, setNewAccountPassword] = useState("");
+  const [newAccountConfirmation, setNewAccountConfirmation] = useState("");
+  const [removingSubject, setRemovingSubject] = useState("");
+  const [removePassword, setRemovePassword] = useState("");
+  const [importPassword, setImportPassword] = useState("");
   useEffect(() => {
     void window.identity.status().then(setStatus);
   }, []);
 
-  useEffect(() => {
-    if (!activeAgentId || !canManageLegacy) {
-      setLegacySessions([]);
-      setLegacyError("");
+  const publishStatus = (nextStatus: IdentityStatus, locked = false) => {
+    setStatus(nextStatus);
+    window.dispatchEvent(new CustomEvent(
+      locked ? "xiaomei:identity-locked" : "xiaomei:identity-status-changed",
+      { detail: nextStatus },
+    ));
+  };
+
+  const disconnectAll = async () => {
+    await Promise.all(agents.map((agent) => disconnectAgent(agent.id)));
+    resetIdentityState();
+  };
+
+  const createAccount = async () => {
+    if (!newAccountName.trim()) {
+      setError("请输入账户名称。");
       return;
     }
-    let cancelled = false;
-    setLegacyLoading(true);
-    setLegacyError("");
-    void window.gateway.listLegacySessions({ agentId: activeAgentId }).then((response) => {
-      if (cancelled) return;
-      if (response.error) {
-        setLegacyError(response.error.message);
-        return;
-      }
-      const values = response.result?.sessions;
-      setLegacySessions(Array.isArray(values) ? values as LegacySession[] : []);
-    }).catch((loadError) => {
-      if (!cancelled) setLegacyError(String(loadError));
-    }).finally(() => {
-      if (!cancelled) setLegacyLoading(false);
+    if (newAccountPassword !== newAccountConfirmation) {
+      setError(t("identity.passwordMismatch"));
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setMessage("");
+    const result = await window.identity.create({
+      displayName: newAccountName,
+      password: newAccountPassword,
     });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeAgentId, canManageLegacy]);
+    if (!result.ok || !result.status) {
+      setBusy(false);
+      setError(result.error || t("identity.failed"));
+      return;
+    }
+    await disconnectAll();
+    setBusy(false);
+    publishStatus(result.status);
+    setAddingAccount(false);
+    setNewAccountName("");
+    setNewAccountPassword("");
+    setNewAccountConfirmation("");
+    setMessage(`账户“${result.status.displayName || newAccountName}”已创建并切换。`);
+  };
+
+  const selectAccount = async (subject: string) => {
+    setBusy(true);
+    setError("");
+    const result = await window.identity.select({ subject });
+    if (!result.ok || !result.status) {
+      setBusy(false);
+      setError(result.error || t("identity.failed"));
+      return;
+    }
+    await disconnectAll();
+    setBusy(false);
+    publishStatus(result.status, true);
+    onClose();
+  };
+
+  const removeAccount = async () => {
+    if (!removingSubject || !removePassword) return;
+    const account = status?.accounts.find((item) => item.subject === removingSubject);
+    const confirmed = window.confirm(
+      `只从这台电脑删除“${account?.displayName || "该账户"}”的身份密钥？Agent 中的人物、会话和关系不会被删除。`,
+    );
+    if (!confirmed) return;
+    setBusy(true);
+    setError("");
+    const wasActive = removingSubject === status?.activeSubject;
+    const result = await window.identity.remove({
+      subject: removingSubject,
+      password: removePassword,
+    });
+    if (!result.ok || !result.status) {
+      setBusy(false);
+      setError(result.error || t("identity.failed"));
+      return;
+    }
+    if (wasActive) await disconnectAll();
+    setBusy(false);
+    setRemovingSubject("");
+    setRemovePassword("");
+    publishStatus(result.status, wasActive);
+    if (wasActive) onClose();
+    else setMessage("本机账户已删除，Agent 中的数据没有改变。");
+  };
+
+  const importAccount = async () => {
+    if (!importPassword) {
+      setError(t("identity.importPasswordRequired"));
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setMessage("");
+    const result = await window.identity.importBackup({ password: importPassword });
+    if (result.canceled) {
+      setBusy(false);
+      return;
+    }
+    if (!result.ok || !result.status) {
+      setBusy(false);
+      setError(result.error || t("identity.failed"));
+      return;
+    }
+    await disconnectAll();
+    setBusy(false);
+    setImportPassword("");
+    publishStatus(result.status);
+    setMessage(`账户“${result.status.displayName || ""}”已导入并切换。`);
+  };
 
   const changePassword = async () => {
     if (newPassword !== confirmation) {
@@ -93,6 +158,7 @@ export function IdentitySettingsDialog({ onClose }: IdentitySettingsDialogProps)
       setError(result.error || t("identity.failed"));
       return;
     }
+    if (result.status) setStatus(result.status);
     setCurrentPassword("");
     setNewPassword("");
     setConfirmation("");
@@ -115,128 +181,150 @@ export function IdentitySettingsDialog({ onClose }: IdentitySettingsDialogProps)
 
   const lockIdentity = async () => {
     setBusy(true);
-    await Promise.all(agents.map((agent) => disconnectAgent(agent.id)));
+    await disconnectAll();
     const nextStatus = await window.identity.lock();
-    window.dispatchEvent(new CustomEvent("xiaomei:identity-locked", { detail: nextStatus }));
+    publishStatus(nextStatus, true);
     onClose();
   };
 
-  const claimLegacySession = async (session: LegacySession) => {
-    if (!activeAgentId) return;
-    const confirmed = window.confirm(t("identity.claimLegacyConfirm", {
-      count: session.message_count,
-    }));
-    if (!confirmed) return;
-    setClaimingSessionId(session.session_id);
-    setError("");
-    const response = await window.gateway.claimLegacySession({
-      agentId: activeAgentId,
-      sessionId: session.session_id,
-    });
-    setClaimingSessionId("");
-    if (response.error) {
-      setError(response.error.message);
-      return;
-    }
-    setLegacySessions((current) => current.filter(
-      (item) => item.session_id !== session.session_id,
-    ));
-    await searchSessions("");
-    setMessage(t("identity.legacyClaimed"));
-  };
-
   return (
-    <div className="identity-settings-overlay" role="presentation" onMouseDown={onClose}>
+    <div
+      className={embedded ? "identity-settings-embedded" : "identity-settings-overlay"}
+      role="presentation"
+      onMouseDown={embedded ? undefined : onClose}
+    >
       <section
-        className="identity-settings-dialog"
+        className={`identity-settings-dialog ${embedded ? "is-embedded" : ""}`}
         role="dialog"
-        aria-modal="true"
+        aria-modal={!embedded}
         aria-labelledby="identity-settings-title"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header className="identity-settings-header">
           <div>
-            <h2 id="identity-settings-title">{t("identity.settingsTitle")}</h2>
-            <p>{t("identity.settingsDescription")}</p>
+            <h2 id="identity-settings-title">账户管理</h2>
+            <p>管理这台电脑用于向各个 Agent 证明身份的本地账户。</p>
           </div>
           <button onClick={onClose} aria-label={t("about.close")}>×</button>
         </header>
 
-        {status && (
-          <div className="identity-summary">
-            <div className="identity-avatar">{(status.displayName || "?").charAt(0)}</div>
+        <div className="identity-settings-section identity-account-section">
+          <div className="identity-section-heading">
             <div>
-              <strong>{status.displayName}</strong>
-              <code title={status.subject}>{status.subject?.slice(0, 16)}…</code>
+              <h3>本机账户</h3>
+              <p>不同账户拥有不同密钥；切换账户后，各 Agent 会识别为不同的人。</p>
             </div>
+            <Button variant="secondary" onClick={() => setAddingAccount((current) => !current)} disabled={busy}>
+              {addingAccount ? "取消" : "添加账户"}
+            </Button>
           </div>
-        )}
 
-        <div className="identity-settings-section">
-          <h3>{t("identity.backupTitle")}</h3>
-          <p>{t("identity.backupDescription")}</p>
-          <Button variant="secondary" onClick={() => void exportBackup()} disabled={busy}>
-            {t("identity.exportBackup")}
-          </Button>
+          <div className="identity-account-list">
+            {status?.accounts.map((account) => (
+              <div className={`identity-account-item ${account.active ? "active" : ""}`} key={account.subject}>
+                <div className="identity-avatar">{account.displayName.charAt(0)}</div>
+                <div className="identity-account-copy">
+                  <div>
+                    <strong>{account.displayName}</strong>
+                    {account.active && <span>当前账户</span>}
+                  </div>
+                  <code title={account.subject}>{account.subject.slice(0, 16)}…</code>
+                </div>
+                <div className="identity-account-actions">
+                  {!account.active && (
+                    <button type="button" disabled={busy} onClick={() => void selectAccount(account.subject)}>
+                      切换
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="danger"
+                    disabled={busy}
+                    onClick={() => {
+                      setRemovingSubject(account.subject);
+                      setRemovePassword("");
+                    }}
+                  >
+                    删除
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {addingAccount && (
+            <div className="identity-inline-form">
+              <div className="connect-field">
+                <label>账户名称</label>
+                <input value={newAccountName} onChange={(event) => setNewAccountName(event.target.value)} />
+              </div>
+              <div className="identity-password-row">
+                <div className="connect-field">
+                  <label>本机密码</label>
+                  <input type="password" value={newAccountPassword} onChange={(event) => setNewAccountPassword(event.target.value)} />
+                </div>
+                <div className="connect-field">
+                  <label>确认密码</label>
+                  <input type="password" value={newAccountConfirmation} onChange={(event) => setNewAccountConfirmation(event.target.value)} />
+                </div>
+              </div>
+              <Button variant="primary" disabled={busy || !newAccountName || !newAccountPassword} onClick={() => void createAccount()}>
+                创建并切换
+              </Button>
+            </div>
+          )}
+
+          {removingSubject && (
+            <div className="identity-inline-form danger">
+              <p>请输入这个账户的本机密码以确认删除。这里只删除本机密钥，不删除任何 Agent 数据。</p>
+              <div className="identity-inline-action">
+                <input
+                  type="password"
+                  autoFocus
+                  value={removePassword}
+                  onChange={(event) => setRemovePassword(event.target.value)}
+                  placeholder="账户密码"
+                />
+                <Button variant="secondary" onClick={() => setRemovingSubject("")}>取消</Button>
+                <Button variant="primary" disabled={busy || !removePassword} onClick={() => void removeAccount()}>确认删除</Button>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="identity-settings-section">
-          <h3>{t("identity.legacyTitle")}</h3>
-          <p>{t("identity.legacyDescription")}</p>
-          {!activeAgent ? (
-            <p className="identity-empty">{t("identity.legacySelectAgent")}</p>
-          ) : !isLocalAgent ? (
-            <p className="identity-empty">{t("identity.legacyLocalOnly")}</p>
-          ) : !canManageLegacy ? (
-            <p className="identity-empty">{t("identity.legacyConnectAgent", { name: activeAgent.name })}</p>
-          ) : legacyLoading ? (
-            <p className="identity-empty">{t("identity.legacyLoading")}</p>
-          ) : legacyError ? (
-            <p className="connect-error">{legacyError}</p>
-          ) : legacySessions.length === 0 ? (
-              <p className="identity-empty">{t("identity.noLegacySessions")}</p>
-          ) : (
-            <div className="identity-legacy-list">
-              {legacySessions.map((session) => (
-                <div className="identity-legacy-item" key={session.session_id}>
-                  <div>
-                    <strong>{session.first_user_message || session.session_id}</strong>
-                    <span>
-                      {t("identity.legacyMeta", {
-                        count: session.message_count,
-                        ids: session.legacy_user_ids.join(", "),
-                      })}
-                    </span>
-                  </div>
-                  <Button
-                    variant="secondary"
-                    disabled={busy || claimingSessionId === session.session_id}
-                    onClick={() => void claimLegacySession(session)}
-                  >
-                    {claimingSessionId === session.session_id
-                      ? t("identity.processing")
-                      : t("identity.claimLegacy")}
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
+          <h3>当前账户的备份与密码</h3>
+          <p>备份文件仍由账户密码加密，可以在其他 Desktop 中导入。</p>
+          <div className="identity-backup-actions">
+            <Button variant="secondary" onClick={() => void exportBackup()} disabled={busy}>
+              {t("identity.exportBackup")}
+            </Button>
+            <input
+              type="password"
+              value={importPassword}
+              onChange={(event) => setImportPassword(event.target.value)}
+              placeholder="备份文件密码"
+            />
+            <Button variant="secondary" onClick={() => void importAccount()} disabled={busy || !importPassword}>
+              导入其他账户
+            </Button>
+          </div>
         </div>
 
         <div className="identity-settings-section">
           <h3>{t("identity.changePasswordTitle")}</h3>
           <div className="connect-field">
             <label>{t("identity.currentPassword")}</label>
-            <input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
+            <input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
           </div>
           <div className="identity-password-row">
             <div className="connect-field">
               <label>{t("identity.newPassword")}</label>
-              <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+              <input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
             </div>
             <div className="connect-field">
               <label>{t("identity.confirmPassword")}</label>
-              <input type="password" value={confirmation} onChange={(e) => setConfirmation(e.target.value)} />
+              <input type="password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} />
             </div>
           </div>
           <Button

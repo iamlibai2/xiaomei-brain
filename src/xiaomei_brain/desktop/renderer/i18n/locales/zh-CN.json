@@ -221,6 +221,7 @@
       "loading": "正在加载委托...",
       "empty": "还没有委托。可以直接在对话中把一项持续工作交给 Agent。",
       "close": "关闭",
+      "quit": "退出 Desktop",
       "progress": "当前进展",
       "executionPlan": "执行步骤",
       "inProgress": "正在执行",

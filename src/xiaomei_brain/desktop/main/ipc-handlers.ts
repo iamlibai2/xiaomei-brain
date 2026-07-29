@@ -59,6 +59,8 @@ export function registerIpcHandlers(
       return {
         exists: true,
         unlocked: false,
+        activeSubject: "",
+        accounts: [],
         error: String(error instanceof Error ? error.message : error),
       };
     }
@@ -73,9 +75,26 @@ export function registerIpcHandlers(
       }
     },
   );
-  ipcMain.handle("identity:unlock", async (_event, args: { password: string }) => {
+  ipcMain.handle("identity:unlock", async (_event, args: { password: string; subject?: string }) => {
     try {
-      return { ok: true, status: identityVault.unlock(args.password) };
+      return { ok: true, status: identityVault.unlock(args.password, args.subject) };
+    } catch (error) {
+      return { ok: false, error: String(error instanceof Error ? error.message : error) };
+    }
+  });
+  ipcMain.handle("identity:select", async (_event, args: { subject: string }) => {
+    try {
+      return { ok: true, status: identityVault.select(args.subject) };
+    } catch (error) {
+      return { ok: false, error: String(error instanceof Error ? error.message : error) };
+    }
+  });
+  ipcMain.handle("identity:remove", async (_event, args: {
+    subject: string;
+    password: string;
+  }) => {
+    try {
+      return { ok: true, status: identityVault.remove(args.subject, args.password) };
     } catch (error) {
       return { ok: false, error: String(error instanceof Error ? error.message : error) };
     }
@@ -331,10 +350,16 @@ export function registerIpcHandlers(
     ) => {
       try {
         const desktopIdentity = identityVault.identity();
-        const bindingConfigKey = `identity_agent_${createHash("sha256")
+        const legacyBindingConfigKey = `identity_agent_${createHash("sha256")
           .update(args.agentId)
           .digest("hex")}`;
-        const identityWasSeenByAgent = config.get(bindingConfigKey) === desktopIdentity.subject;
+        const bindingConfigKey = `identity_account_agent_${createHash("sha256")
+          .update(`${args.agentId}\u0000${desktopIdentity.subject}`)
+          .digest("hex")}`;
+        const identityWasSeenByAgent = (
+          config.get(bindingConfigKey) === "1"
+          || config.get(legacyBindingConfigKey) === desktopIdentity.subject
+        );
         // Disconnect existing connection for this agent
         const existing = connections.get(args.agentId);
         if (existing) existing.disconnect();
@@ -488,7 +513,7 @@ export function registerIpcHandlers(
         const person = identityResult.person as Record<string, unknown> | undefined;
         const personId = String(person?.person_id || "");
         if (!personId) throw new Error("Agent 未返回有效的人物身份");
-        config.set(bindingConfigKey, desktopIdentity.subject);
+        config.set(bindingConfigKey, "1");
         authenticated = true;
         connectionSessions.set(args.agentId, sessionId);
 
@@ -909,6 +934,9 @@ export function registerIpcHandlers(
   ipcMain.handle(
     "notification:show",
     async (_event, args: { title: string; body: string; agentId: string; sessionId: string }) => {
+      if (config.get("desktop.notificationsEnabled") === "false") {
+        return { shown: false };
+      }
       const win = getWindow();
       if (!win || win.isDestroyed() || win.isFocused() || !Notification.isSupported()) {
         return { shown: false };
@@ -1038,6 +1066,65 @@ export function registerIpcHandlers(
   }));
 
   // ─── Config (local JSON) ────────────────────
+
+  // Model resources live on the Agent host. Desktop only forwards RPC
+  // requests and never reads or edits the Agent's JSON files directly.
+  ipcMain.handle("gateway:getModelConfig", async (_event, args: {
+    agentId: string;
+  }) => channelRpc(args, "model.config.get", {}));
+
+  ipcMain.handle("gateway:getModelCatalog", async (_event, args: {
+    agentId: string; providerId?: string;
+  }) => channelRpc(args, "model.catalog", {
+    provider_id: args.providerId || "",
+  }));
+
+  ipcMain.handle("gateway:testModelProvider", async (_event, args: {
+    agentId: string;
+    providerId: string;
+    baseUrl: string;
+    apiKey: string;
+    apiMode: string;
+    modelId: string;
+  }) => channelRpc(args, "model.provider.test", {
+    provider_id: args.providerId,
+    base_url: args.baseUrl,
+    api_key: args.apiKey,
+    api_mode: args.apiMode,
+    model_id: args.modelId,
+  }));
+
+  ipcMain.handle("gateway:configureModelProvider", async (_event, args: {
+    agentId: string;
+    providerId: string;
+    baseUrl: string;
+    apiKey: string;
+    apiMode: string;
+    models: Array<Record<string, unknown>>;
+    baseHash?: string;
+  }) => channelRpc(args, "model.provider.configure", {
+    provider_id: args.providerId,
+    base_url: args.baseUrl,
+    api_key: args.apiKey,
+    api_mode: args.apiMode,
+    models: args.models,
+    base_hash: args.baseHash || "",
+  }));
+
+  ipcMain.handle("gateway:removeModelProvider", async (_event, args: {
+    agentId: string; providerId: string; baseHash?: string;
+  }) => channelRpc(args, "model.provider.remove", {
+    provider_id: args.providerId,
+    base_hash: args.baseHash || "",
+  }));
+
+  ipcMain.handle("gateway:setModelSelection", async (_event, args: {
+    agentId: string; primary: string; vision?: string; baseHash?: string;
+  }) => channelRpc(args, "model.selection.set", {
+    primary: args.primary,
+    vision: args.vision || "",
+    base_hash: args.baseHash || "",
+  }));
 
   ipcMain.handle("store:getConfig", async (_event, key: string) => {
     return config.get(key);

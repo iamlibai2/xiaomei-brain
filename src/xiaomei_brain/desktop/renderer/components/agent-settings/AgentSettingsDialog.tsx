@@ -6,6 +6,7 @@ interface Props {
   agentId: string;
   agentName: string;
   onClose: () => void;
+  embedded?: boolean;
 }
 
 type ChannelConfig = {
@@ -36,7 +37,7 @@ function channelRuntimeLabel(state: string): string {
   return CHANNEL_RUNTIME_LABELS[state] || state || "未知";
 }
 
-export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props) {
+export function AgentSettingsDialog({ open, agentId, agentName, onClose, embedded = false }: Props) {
   const [channel, setChannel] = useState<ChannelProvider>("feishu");
   const [appId, setAppId] = useState("");
   const [appSecret, setAppSecret] = useState("");
@@ -237,16 +238,21 @@ export function AgentSettingsDialog({ open, agentId, agentName, onClose }: Props
   };
 
   return (
-    <div className="agent-settings-backdrop" onMouseDown={onClose}>
-      <section className="agent-settings-dialog" onMouseDown={(event) => event.stopPropagation()}>
+    <div
+      className={embedded ? "agent-settings-embedded" : "agent-settings-backdrop"}
+      onMouseDown={embedded ? undefined : onClose}
+    >
+      <section className={`agent-settings-dialog ${embedded ? "is-embedded" : ""}`} onMouseDown={(event) => event.stopPropagation()}>
         <header>
           <div>
             <h2>{agentName}</h2>
             <p>Agent 设置 · 渠道</p>
           </div>
-          <button type="button" className="agent-settings-close" onClick={onClose}>
-            <Icon name="x" />
-          </button>
+          {!embedded && (
+            <button type="button" className="agent-settings-close" onClick={onClose}>
+              <Icon name="x" />
+            </button>
+          )}
         </header>
 
         <div className="channel-tabs" role="tablist" aria-label="渠道">

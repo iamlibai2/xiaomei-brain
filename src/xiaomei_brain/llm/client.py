@@ -137,12 +137,13 @@ class LLMClient:
     def supports_vision(self) -> bool:
         """Whether the selected model accepts image input.
 
-        Explicit per-model configuration wins.  Older configurations may not
-        contain capability fields, so fall back to the models.dev catalog and
-        finally the provider-wide declaration. Unknown is treated as false.
+        Positive per-model configuration wins. The models.dev catalog may
+        upgrade stale negative metadata for known models (for example a model
+        that gained native vision after it was first configured). Unknown
+        models still fall back to their explicit/provider declarations.
         """
-        if self._model_def.supports_vision is not None:
-            return self._model_def.supports_vision
+        if self._model_def.supports_vision is True:
+            return True
         if "image" in self._model_def.input_modes:
             return True
         try:
@@ -155,6 +156,8 @@ class LLMClient:
                 return "image" in catalog_model.input_modalities
         except Exception:
             logger.debug("Unable to resolve vision capability for %s/%s", self.provider, self.model, exc_info=True)
+        if self._model_def.supports_vision is not None:
+            return self._model_def.supports_vision
         return bool(self._profile.supports_vision)
 
     # ── Public API ──────────────────────────────────────────
