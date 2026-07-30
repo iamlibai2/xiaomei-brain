@@ -657,6 +657,32 @@ class ConsciousLiving(Living):
         identity_mgr_ref[0] = self._identity_mgr
         living_ref[0] = self
 
+        # Embodiments describe every body instance this Agent can currently
+        # act through. Channel adapters remain responsible for transport.
+        from ..body.embodiment import EmbodimentManager
+        self._embodiment_manager = EmbodimentManager(self._router)
+        self._embodiment_manager.register_local(self.body)
+        remote_body_count = 0
+        for channel_name in self._registry.list_channels():
+            channel_adapter = self._registry.get_channel(channel_name)
+            if (
+                channel_adapter is not None
+                and self._embodiment_manager.register_channel(
+                    channel_name,
+                    channel_adapter,
+                ) is not None
+            ):
+                remote_body_count += 1
+        logger.info(
+            "[ConsciousLiving] EmbodimentManager 已创建（本地 1，远端 %d）",
+            remote_body_count,
+        )
+        boot_line(
+            "Embodiment 身体实例",
+            "OK",
+            f"1 本地 / {remote_body_count} 远端",
+        )
+
         # 将 IdentityManager 的共享生物特征注入感官层
         if self._identity_mgr.face_id.known_names:
             if self.body.eyes:
@@ -2263,6 +2289,10 @@ class ConsciousLiving(Living):
 
         # 关闭所有通道适配器
         self._gateway_inbound.close_channels()
+
+        embodiment_manager = getattr(self, "_embodiment_manager", None)
+        if embodiment_manager is not None:
+            embodiment_manager.clear()
 
         # 关闭身体感官
         body = getattr(self, 'body', None)

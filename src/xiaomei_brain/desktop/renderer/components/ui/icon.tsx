@@ -10,6 +10,7 @@ export type IconName =
   | "settings"
   | "paperclip"
   | "microphone"
+  | "camera"
   | "arrow-up"
   | "chevron-down"
   | "chevron-left"
@@ -205,6 +206,12 @@ const ICON_PATHS: Record<IconName, React.ReactNode> = {
       <rect x="2" y="3" width="20" height="18" rx="2" />
       <polyline points="6 8 10 12 6 16" />
       <line x1="12" y1="16" x2="18" y2="16" />
+    </>
+  ),
+  camera: (
+    <>
+      <path d="M14.5 4 16 7h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h3l1.5-3z" />
+      <circle cx="12" cy="13" r="4" />
     </>
   ),
   image: (

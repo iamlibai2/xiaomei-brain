@@ -176,6 +176,13 @@ export interface GatewayBridge {
   connect(args: { host: string; port: number; token: string; agentId: string; sessionId?: string }): Promise<JsonRpcResponse>;
   disconnect(args: { agentId: string }): Promise<void>;
   sendMessage(args: { content: string; agentId: string; clientRequestId: string; attachments: ChatAttachment[] }): Promise<JsonRpcResponse>;
+  sendVoice(args: {
+    agentId: string;
+    dataBase64: string;
+    mimeType: string;
+    size: number;
+    clientRequestId: string;
+  }): Promise<JsonRpcResponse>;
   pickAttachments(): Promise<AttachmentPickResult>;
   getAttachment(args: { agentId: string; sessionId: string; attachmentId: string }): Promise<JsonRpcResponse>;
   openAttachment(args: { agentId: string; sessionId: string; attachmentId: string }): Promise<{ ok: boolean; error?: string }>;

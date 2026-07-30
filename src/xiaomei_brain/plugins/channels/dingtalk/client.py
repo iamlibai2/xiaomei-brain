@@ -151,12 +151,10 @@ class _OurHandler(ChatbotHandler):
             elif msg.message_type == "audio":
                 dc = _extract_download_code(data)
                 if dc:
-                    path = self._try_download(dc)
-                    if path:
-                        media_paths.append(path)
-                        text = f"[语音: {path}]"
-                    else:
-                        text = "[语音]"
+                    # Audio download and STT are intentionally deferred to the
+                    # adapter's background remote-hearing worker. Holding this
+                    # SDK callback would delay ACKs and Stream heartbeats.
+                    text = "[语音]"
                 else:
                     text = "[语音]"
             elif msg.message_type == "video":
@@ -214,6 +212,16 @@ class _OurHandler(ChatbotHandler):
                 "msg_id": msg.message_id or "",
                 "sdk_message": msg,
                 "media_paths": media_paths,
+                "download_code": (
+                    _extract_download_code(data)
+                    if msg.message_type == "audio"
+                    else ""
+                ),
+                "duration": (
+                    _extract_audio_duration(data)
+                    if msg.message_type == "audio"
+                    else 0
+                ),
             })
 
             ts = __import__("time").strftime("%H:%M:%S")
@@ -238,6 +246,16 @@ def _extract_download_code(data: dict) -> str | None:
     if isinstance(content, dict):
         return content.get("downloadCode")
     return None
+
+
+def _extract_audio_duration(data: dict) -> int:
+    content = data.get("content", {})
+    if not isinstance(content, dict):
+        return 0
+    try:
+        return max(0, int(content.get("duration", 0) or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 class DingTalkClient:
@@ -622,6 +640,86 @@ class DingTalkClient:
                 target,
                 safe_name,
             )
+            return False
+
+    def download_message_media(
+        self,
+        download_code: str,
+        *,
+        max_size: int = 5 * 1024 * 1024,
+    ) -> tuple[bytes, str] | None:
+        """Download received media without exposing a temporary local path."""
+        from .media import download_media_bytes
+
+        token = self.get_access_token()
+        if not token:
+            return None
+        return download_media_bytes(
+            download_code,
+            self.client_id,
+            token,
+            max_size=max_size,
+        )
+
+    def send_audio(
+        self,
+        target: str,
+        file_name: str,
+        data: bytes,
+        duration_ms: int,
+        *,
+        is_group: bool,
+    ) -> bool:
+        """Upload OGG/AMR and send a native DingTalk robot audio message."""
+        import requests
+        from .media import upload_media_bytes
+
+        token = self.get_access_token()
+        if not token or not target or not data or duration_ms <= 0:
+            return False
+        media_id = upload_media_bytes(
+            file_name,
+            data,
+            token,
+            max_size=2 * 1024 * 1024,
+            media_type="voice",
+            content_type="audio/ogg",
+        )
+        if not media_id:
+            return False
+        body = {
+            "robotCode": self.client_id,
+            "msgKey": "sampleAudio",
+            "msgParam": json.dumps({
+                "mediaId": f"@{media_id.lstrip('@')}",
+                "duration": str(int(duration_ms)),
+            }, ensure_ascii=False),
+        }
+        if is_group:
+            url = "https://api.dingtalk.com/v1.0/robot/groupMessages/send"
+            body["openConversationId"] = target
+        else:
+            url = "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend"
+            body["userIds"] = [target]
+        try:
+            response = requests.post(
+                url,
+                json=body,
+                headers={
+                    "x-acs-dingtalk-access-token": token,
+                    "Content-Type": "application/json",
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            logger.info(
+                "[DingTalk/Audio] delivered: target=%s duration=%dms",
+                target,
+                duration_ms,
+            )
+            return True
+        except Exception:
+            logger.exception("[DingTalk/Audio] delivery failed: %s", target)
             return False
 
     def get_access_token(self) -> str | None:

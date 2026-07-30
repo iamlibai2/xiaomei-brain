@@ -70,6 +70,26 @@ class ChannelAdapter(ABC):
         """Send a speech expression when this channel exposes a remote body."""
         return False
 
+    @property
+    def embodiment_id(self) -> str:
+        """Stable runtime identity when this Channel exposes body organs."""
+        channel_type = str(getattr(self, "channel_type", "channel"))
+        return f"{channel_type}:default"
+
+    @property
+    def embodiment_label(self) -> str:
+        return str(getattr(self, "channel_type", "远端身体"))
+
+    @property
+    def allow_proactive_embodiment_use(self) -> bool:
+        """Conservative default: a reply route is not proactive permission."""
+        return False
+
+    @property
+    def exposes_embodiment(self) -> bool:
+        """Whether this transport represents a body instance of the Agent."""
+        return False
+
     def _event_fallback_text(self, event: str, payload: dict) -> str:
         if event == "interaction.requested":
             if not self.capabilities.clarify:

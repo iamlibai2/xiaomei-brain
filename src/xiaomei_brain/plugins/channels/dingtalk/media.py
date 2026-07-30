@@ -66,12 +66,40 @@ def download_media(
     Returns:
         本地文件路径，失败返回 None
     """
-    import requests as _requests
-
     if not media_dir:
         media_dir = os.path.join(tempfile.gettempdir(), "dingtalk-media", "inbound")
     _ensure_directory(media_dir)
 
+    downloaded = download_media_bytes(
+        download_code,
+        robot_code,
+        access_token,
+    )
+    if downloaded is None:
+        return None
+    content, ext = downloaded
+    filename = f"{int(time.time() * 1000)}_{_random_suffix()}{ext}"
+    filepath = os.path.join(media_dir, filename)
+
+    with open(filepath, "wb") as f:
+        f.write(content)
+
+    logger.info("[DingTalk/Media] 下载完成: %s (%d bytes)", filepath, len(content))
+    return filepath
+
+
+def download_media_bytes(
+    download_code: str,
+    robot_code: str,
+    access_token: str,
+    *,
+    max_size: int = 5 * 1024 * 1024,
+) -> tuple[bytes, str] | None:
+    """Resolve a downloadCode and return bounded bytes plus inferred suffix."""
+    import requests as _requests
+
+    if not download_code or not robot_code or not access_token:
+        return None
     headers = {
         "x-acs-dingtalk-access-token": access_token,
         "Content-Type": "application/json",
@@ -99,9 +127,24 @@ def download_media(
         resp = _requests.get(
             download_url,
             headers={"Content-Type": None},  # OSS 签名验证要求不带 Content-Type
+            stream=True,
             timeout=30,
         )
-        content = resp.content
+        resp.raise_for_status()
+        parts: list[bytes] = []
+        size = 0
+        for chunk in resp.iter_content(64 * 1024):
+            if not chunk:
+                continue
+            size += len(chunk)
+            if size > max_size:
+                logger.warning("[DingTalk/Media] 下载文件超过 %.1f MB", max_size / 1024 / 1024)
+                return None
+            parts.append(chunk)
+        content = b"".join(parts)
+        if not content:
+            logger.warning("[DingTalk/Media] 下载文件为空")
+            return None
     except Exception as e:
         logger.error("[DingTalk/Media] 下载文件异常: %s", e)
         return None
@@ -109,15 +152,7 @@ def download_media(
     # 推断扩展名
     content_type = resp.headers.get("content-type", "")
     ext = _guess_extension(content_type, content)
-
-    filename = f"{int(time.time() * 1000)}_{_random_suffix()}{ext}"
-    filepath = os.path.join(media_dir, filename)
-
-    with open(filepath, "wb") as f:
-        f.write(content)
-
-    logger.info("[DingTalk/Media] 下载完成: %s (%d bytes)", filepath, len(content))
-    return filepath
+    return content, ext
 
 
 def _guess_extension(content_type: str, content: bytes) -> str:
@@ -150,6 +185,12 @@ def _guess_extension(content_type: str, content: bytes) -> str:
         return ".webp"
     if content[:4] == b"GIF8":
         return ".gif"
+    if content[:4] == b"OggS":
+        return ".ogg"
+    if content[:5] == b"#!AMR":
+        return ".amr"
+    if content[:3] == b"ID3" or content[:2] in {b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"}:
+        return ".mp3"
     return ".bin"
 
 
@@ -232,6 +273,8 @@ def upload_media_bytes(
     oapi_token: str | None,
     *,
     max_size: int = 20 * 1024 * 1024,
+    media_type: str = "file",
+    content_type: str = "application/octet-stream",
 ) -> str | None:
     """Upload Agent-owned bytes without exposing or copying a local path."""
     import io
@@ -252,12 +295,12 @@ def upload_media_bytes(
     try:
         response = _requests.post(
             f"{DINGTALK_OAPI}/media/upload",
-            params={"access_token": oapi_token, "type": "file"},
+            params={"access_token": oapi_token, "type": media_type},
             files={
                 "media": (
                     safe_name,
                     io.BytesIO(data),
-                    "application/octet-stream",
+                    content_type,
                 ),
             },
             timeout=60,

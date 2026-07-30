@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, shell, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, session, shell, type MenuItemConstructorOptions } from "electron";
 import { existsSync } from "fs";
 import path from "path";
 import { GatewayClient } from "./gateway-client";
@@ -14,6 +14,7 @@ import {
 const isMac = process.platform === "darwin";
 const isWindows = process.platform === "win32";
 const windowsAppId = "com.xiaomei.brain.desktop";
+app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 
 if (isWindows) {
   app.setAppUserModelId(windowsAppId);
@@ -162,6 +163,14 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  session.defaultSession.setPermissionRequestHandler(
+    (webContents, permission, callback) => {
+      const source = webContents.getURL();
+      const trustedRenderer = source.startsWith("file://")
+        || source.startsWith("http://localhost:5173");
+      callback(trustedRenderer && permission === "media");
+    },
+  );
   initializeDesktopDiagnostics();
   applyStoredDesktopSettings(config);
   registerWindowsShortcutIdentity();

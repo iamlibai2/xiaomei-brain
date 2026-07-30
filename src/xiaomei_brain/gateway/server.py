@@ -157,7 +157,14 @@ def create_app(
 
     if router:
         from .ws_adapter import WSAdapter
-        router.register_adapter("ws", WSAdapter(cm))
+        ws_adapter = WSAdapter(cm)
+        router.register_adapter("ws", ws_adapter)
+        embodiment_manager = getattr(living, "_embodiment_manager", None)
+        if (
+            embodiment_manager is not None
+            and embodiment_manager.get("desktop:dynamic") is None
+        ):
+            embodiment_manager.register_channel("ws", ws_adapter)
 
     auth_mode = resolve_auth_mode(config)
     logger.info("[Gateway] 对话门已创建 (auth=%s)", auth_mode)

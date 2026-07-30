@@ -17,6 +17,7 @@ from .methods import (
     ChatMethods,
     ChannelMethods,
     ConnectionMethods,
+    EmbodimentMethods,
     IdentityMethods,
     InteractionMethods,
     MediaServiceMethods,
@@ -50,6 +51,7 @@ class MethodRouter:
             capability_provider=self._capabilities,
         )
         self._chat_methods = ChatMethods(living)
+        self._embodiment_methods = EmbodimentMethods(living)
         self._session_methods = SessionMethods(living, self._chat_methods.handle_history)
         self._attachment_methods = AttachmentMethods(living)
         self._interaction_methods = InteractionMethods(living)
@@ -83,6 +85,7 @@ class MethodRouter:
         )
         for provider in (
             self._chat_methods,
+            self._embodiment_methods,
             self._session_methods,
             self._attachment_methods,
             self._interaction_methods,
@@ -136,6 +139,11 @@ class MethodRouter:
             "session.resume": {"session.resume"},
             "session.list": {"chat.sessions"},
             "message.attachments": {"chat.send", "attachment.get"},
+            "embodiment.desktop": {
+                "embodiment.register",
+                "embodiment.unregister",
+                "embodiment.audio.input",
+            },
             "attachment.read": {"attachment.get"},
             "artifact.read": {"artifact.get", "artifact.list"},
             "artifact.events": {"artifact.get"},

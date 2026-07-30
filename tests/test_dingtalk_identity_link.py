@@ -5,6 +5,132 @@ import pytest
 from xiaomei_brain.people import IdentityLinkService, PeopleService, PeopleStore
 
 
+def test_dingtalk_audio_is_transcribed_persisted_and_admitted(
+    monkeypatch,
+    tmp_path,
+):
+    pytest.importorskip("dingtalk_stream")
+    from types import SimpleNamespace
+
+    from xiaomei_brain.plugins.channels.dingtalk.adapter import DingTalkAdapter
+
+    people = PeopleService(PeopleStore(tmp_path / "brain.db"))
+    person = people.create_person("测试人物")
+    people.store.create_binding(
+        person.person_id,
+        "dingtalk:app:ding_demo",
+        "staff-1",
+        "dingtalk_account",
+        verified_at=1.0,
+    )
+
+    class FakeClient:
+        client_id = "ding_demo"
+        account_id = "default"
+
+        def __init__(self):
+            self.sent = []
+
+        def download_message_media(self, code):
+            assert code == "download-audio-1"
+            return b"OggS-audio", ".ogg"
+
+        def send(self, target, text, _msg_type, is_group=False):
+            self.sent.append((target, text, is_group))
+            return True
+
+    class FakeRouter:
+        def __init__(self):
+            self.routes = []
+
+        def has_route(self, *_args):
+            return False
+
+        def register_peer(self, **kwargs):
+            self.routes.append(kwargs)
+
+    class FakeGateway:
+        def __init__(self):
+            self.messages = []
+
+        def accept(self, raw):
+            self.messages.append(raw)
+            return SimpleNamespace(reason="", silent=False)
+
+    prepared_calls = []
+
+    def prepare(agent_id, session_id, attachments):
+        prepared_calls.append((agent_id, session_id, attachments))
+        return (
+            [{
+                "id": attachments[0]["id"],
+                "name": attachments[0]["name"],
+                "mime_type": attachments[0]["mime_type"],
+                "size": attachments[0]["size"],
+                "kind": "audio",
+                "local_path": "stored/audio.ogg",
+            }],
+            [],
+            [],
+        )
+
+    monkeypatch.setattr(
+        "xiaomei_brain.body.perception.remote_audio."
+        "RemoteAudioPerception.perceive",
+        lambda _self, data: {
+            "text": "请介绍一下今天的安排",
+            "emotion": "calm",
+            "events": ["speech"],
+        } if data == b"OggS-audio" else {},
+    )
+    monkeypatch.setattr(
+        "xiaomei_brain.gateway.attachments.prepare_attachments",
+        prepare,
+    )
+
+    client = FakeClient()
+    router = FakeRouter()
+    gateway = FakeGateway()
+    living = SimpleNamespace(
+        _agent_id="test",
+        _gateway_inbound=gateway,
+    )
+    adapter = DingTalkAdapter(client)
+    adapter._handle_audio_message(
+        {
+            "sender": "staff-1",
+            "conversation_id": "single-1",
+            "is_group": False,
+            "download_code": "download-audio-1",
+            "duration": 1350,
+            "msg_id": "msg-audio-1",
+        },
+        living,
+        router,
+        people,
+        "dingtalk:app:ding_demo",
+    )
+
+    assert len(gateway.messages) == 1
+    raw = gateway.messages[0]
+    assert raw.content == "请介绍一下今天的安排"
+    assert raw.peer_id == person.person_id
+    assert raw.session_id == f"dingtalk-{person.person_id}"
+    assert raw.reply_channel == "dingtalk"
+    assert raw.reply_target == "staff-1"
+    assert raw.attachments[0]["kind"] == "audio"
+    assert raw.metadata["message_type"] == "audio"
+    assert raw.metadata["audio_duration_ms"] == 1350
+    assert raw.metadata["speech_emotion"] == "calm"
+    assert raw.metadata["speech_events"] == ["speech"]
+    assert prepared_calls[0][0:2] == (
+        "test",
+        f"dingtalk-{person.person_id}",
+    )
+    assert router.routes[0]["output_type"] == "dingtalk"
+    assert client.sent == []
+
+
 def test_dingtalk_adapter_consumes_link_then_routes_as_person(tmp_path):
     pytest.importorskip("dingtalk_stream")
     from xiaomei_brain.plugins.channels.dingtalk.adapter import DingTalkAdapter

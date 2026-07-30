@@ -26,6 +26,9 @@ class ConnectionManager:
         # 旧对话存储仍使用 user_id 列；这里保存的值只能由服务器认证出的
         # person_id 写入，绝不能来自 connect/chat.send 请求参数。
         self.conn_to_user: dict[str, str] = {}
+        # Desktop device capabilities are connection-scoped runtime state.
+        # They disappear with the socket and never become identity credentials.
+        self.conn_to_embodiment: dict[str, dict] = {}
 
     async def send(self, conn_id: str, msg: dict) -> None:
         """Send JSON message to a specific connection."""
@@ -50,6 +53,7 @@ class ConnectionManager:
         self.conn_to_pending_session.pop(conn_id, None)
         session_id = self.conn_to_session.pop(conn_id, None)
         self.conn_to_user.pop(conn_id, None)
+        self.conn_to_embodiment.pop(conn_id, None)
         if session_id and self.session_to_conn.get(session_id) == conn_id:
             del self.session_to_conn[session_id]
 
@@ -61,6 +65,7 @@ class ConnectionManager:
         if previous_conn and previous_conn != conn_id:
             self.conn_to_session.pop(previous_conn, None)
             self.conn_to_user.pop(previous_conn, None)
+            self.conn_to_embodiment.pop(previous_conn, None)
         self.session_to_conn[session_id] = conn_id
         self.conn_to_session[conn_id] = session_id
         self.conn_to_user[conn_id] = user_id
@@ -102,6 +107,23 @@ class ConnectionManager:
     def get_person_id(self, conn_id: str) -> str | None:
         """返回连接认证出的 Person；未认证时返回 None。"""
         return self.conn_to_user.get(conn_id) or None
+
+    def register_embodiment(self, conn_id: str, value: dict) -> None:
+        self.conn_to_embodiment[conn_id] = dict(value)
+
+    def get_embodiment_for_conn(self, conn_id: str) -> dict | None:
+        value = self.conn_to_embodiment.get(conn_id)
+        return dict(value) if value is not None else None
+
+    def get_embodiment_for_session(self, session_id: str) -> dict | None:
+        conn_id = self.get_conn_id(session_id)
+        return self.get_embodiment_for_conn(conn_id) if conn_id else None
+
+    def list_embodiments(self) -> list[dict]:
+        return [dict(value) for value in self.conn_to_embodiment.values()]
+
+    def unregister_embodiment(self, conn_id: str) -> None:
+        self.conn_to_embodiment.pop(conn_id, None)
 
     def is_local_connection(self, conn_id: str) -> bool:
         """local_trusted 首次登记只接受真实 WebSocket 的回环地址。"""

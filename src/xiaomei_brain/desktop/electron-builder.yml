@@ -27,6 +27,9 @@ msi:
 mac:
   target: dmg
   icon: assets/icon.icns
+  extendInfo:
+    NSMicrophoneUsageDescription: "小美仅在你主动点击语音输入时使用麦克风。"
+    NSCameraUsageDescription: "小美仅在你主动点击拍照时使用摄像头。"
 linux:
   target: AppImage
   icon: assets/icon.png

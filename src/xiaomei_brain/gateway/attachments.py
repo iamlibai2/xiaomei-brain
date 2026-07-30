@@ -26,11 +26,13 @@ IMAGE_MIMES = {
     "image/bmp": ".bmp",
 }
 AUDIO_MIMES = {
+    "audio/webm": ".webm",
     "audio/opus": ".opus",
     "audio/ogg": ".ogg",
     "audio/mpeg": ".mp3",
     "audio/wav": ".wav",
     "audio/x-wav": ".wav",
+    "audio/amr": ".amr",
 }
 TEXT_EXTENSIONS = {
     ".txt", ".md", ".markdown", ".json", ".jsonl", ".yaml", ".yml",

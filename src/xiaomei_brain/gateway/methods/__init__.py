@@ -8,6 +8,7 @@ from .assignments import AssignmentMethods
 from .chat import ChatMethods
 from .channels import ChannelMethods
 from .connection import ConnectionMethods
+from .embodiments import EmbodimentMethods
 from .identity import IdentityMethods
 from .interactions import InteractionMethods
 from .media import MediaServiceMethods
@@ -25,6 +26,7 @@ __all__ = [
     "ChatMethods",
     "ChannelMethods",
     "ConnectionMethods",
+    "EmbodimentMethods",
     "IdentityMethods",
     "InteractionMethods",
     "MediaServiceMethods",

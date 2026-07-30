@@ -1071,52 +1071,41 @@ class ConversationDriver:
         turn_id: str,
         parent: Any,
     ):
-        """Route speech to the remote body bound to this Turn, or local throat."""
+        """Ask this Agent's EmbodimentManager to select and use a body."""
         def callback(audio) -> str:
-            router = getattr(parent, "_router", None)
-            route = (
-                router.route_for_turn(turn_id, session_id)
-                if router is not None and hasattr(router, "route_for_turn")
-                else None
+            from xiaomei_brain.body.embodiment import OrganCapability
+
+            manager = getattr(parent, "_embodiment_manager", None)
+            if manager is None:
+                raise RuntimeError("EmbodimentManager 尚未初始化")
+            resolution = manager.resolve_for_turn(
+                turn_id,
+                session_id,
+                OrganCapability.SPEECH,
             )
-            body_name = (
-                route.type
-                if route is not None
-                and getattr(
-                    router.get_adapter(route.type), "capabilities", None,
-                )
-                and router.get_adapter(route.type).capabilities.audio_output
-                else "local"
-            )
+            if resolution is None:
+                raise RuntimeError("当前会话没有可用的说话身体")
+            embodiment = resolution.embodiment
             ConversationDriver._publish_event(
                 parent,
                 "agent.speech.started",
-                {"body": body_name, "status": "speaking", "_agent_global": True},
+                {
+                    "body": embodiment.body_id,
+                    "embodiment_id": embodiment.body_id,
+                    "location": embodiment.kind.value,
+                    "status": "speaking",
+                    "_agent_global": True,
+                },
                 session_id=session_id,
                 turn_id=turn_id,
             )
             status = "completed"
             try:
-                if body_name != "local":
-                    if not router.deliver_audio(audio, route):
-                        raise RuntimeError(f"{body_name} 语音发送失败")
-                    return f"已通过{body_name}发送语音。"
-
-                # A rich client currently observes state only; until it gains
-                # an audio sink, the Agent's local physical throat remains the
-                # output body for WS/Desktop conversations.
-                from xiaomei_brain.plugins.body._refs import body_ref
-                body = body_ref[0]
-                throat = getattr(body, "throat", None) if body is not None else None
-                if throat is None:
-                    raise RuntimeError("本地语音系统未初始化")
-                throat.play_stream(
-                    audio.chunks,
-                    codec=audio.codec,
-                    sample_rate=audio.sample_rate,
-                    channels=audio.channels,
-                )
-                return "已通过本地身体朗读。"
+                if not manager.speak(resolution, audio):
+                    raise RuntimeError(
+                        f"身体 {embodiment.body_id} 当前无法说话",
+                    )
+                return f"已通过{embodiment.label}表达语音。"
             except Exception:
                 status = "failed"
                 raise
@@ -1124,7 +1113,13 @@ class ConversationDriver:
                 ConversationDriver._publish_event(
                     parent,
                     "agent.speech.completed",
-                    {"body": body_name, "status": status, "_agent_global": True},
+                    {
+                        "body": embodiment.body_id,
+                        "embodiment_id": embodiment.body_id,
+                        "location": embodiment.kind.value,
+                        "status": status,
+                        "_agent_global": True,
+                    },
                     session_id=session_id,
                     turn_id=turn_id,
                 )

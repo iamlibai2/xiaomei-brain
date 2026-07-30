@@ -36,7 +36,12 @@ interface ChatInputProps {
 export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
   const { t } = useTranslation();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const microphoneStreamRef = useRef<MediaStream | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [mediaBusy, setMediaBusy] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState("");
   const [modelSnapshot, setModelSnapshot] = useState<ModelConfigSnapshot | null>(null);
   const [modelBusy, setModelBusy] = useState(false);
   const [modelError, setModelError] = useState("");
@@ -82,6 +87,27 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
   useEffect(() => {
     void loadModels();
   }, [loadModels]);
+
+  useEffect(() => () => {
+    if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+    microphoneStreamRef.current?.getTracks().forEach((track) => track.stop());
+  }, []);
+
+  useEffect(() => window.gateway.onEvent((raw) => {
+    if (
+      raw.agentId !== activeAgentId
+      || raw.event !== "embodiment.audio.input.completed"
+    ) return;
+    const payload = raw.data as Record<string, unknown>;
+    if (payload.status === "failed") {
+      setAttachmentError(
+        typeof payload.error === "string"
+          ? payload.error
+          : t("home.voiceRecognitionFailed"),
+      );
+    }
+    setVoiceStatus("");
+  }), [activeAgentId, setAttachmentError, t]);
 
   useEffect(() => {
     const handleModelChange = (event: Event) => {
@@ -159,6 +185,128 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
     }
   };
 
+  const toggleVoiceRecording = async () => {
+    if (recording) {
+      recorderRef.current?.stop();
+      return;
+    }
+    if (!activeAgentId || !connected || sending || mediaBusy) return;
+    setAttachmentError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      const preferred = [
+        "audio/webm;codecs=opus",
+        "audio/ogg;codecs=opus",
+      ].find((type) => MediaRecorder.isTypeSupported(type));
+      const recorder = new MediaRecorder(
+        stream,
+        preferred ? { mimeType: preferred } : undefined,
+      );
+      const chunks: BlobPart[] = [];
+      microphoneStreamRef.current = stream;
+      recorderRef.current = recorder;
+      recorder.addEventListener("dataavailable", (event) => {
+        if (event.data.size > 0) chunks.push(event.data);
+      });
+      recorder.addEventListener("stop", () => {
+        setRecording(false);
+        stream.getTracks().forEach((track) => track.stop());
+        microphoneStreamRef.current = null;
+        recorderRef.current = null;
+        const blob = new Blob(chunks, {
+          type: recorder.mimeType || "audio/webm",
+        });
+        if (!blob.size) {
+          setAttachmentError(t("home.voiceEmpty"));
+          return;
+        }
+        if (blob.size > MAX_ATTACHMENT_BYTES) {
+          setAttachmentError(t("home.voiceTooLarge"));
+          return;
+        }
+        setVoiceStatus(t("home.voiceProcessing"));
+        setMediaBusy(true);
+        void blobToBase64(blob)
+          .then((dataBase64) => window.gateway.sendVoice({
+            agentId: activeAgentId,
+            dataBase64,
+            mimeType: (blob.type || "audio/webm").split(";", 1)[0],
+            size: blob.size,
+            clientRequestId: crypto.randomUUID(),
+          }))
+          .then((response) => {
+            if (response.error) throw new Error(response.error.message);
+          })
+          .catch((error) => {
+            setVoiceStatus("");
+            setAttachmentError(
+              error instanceof Error ? error.message : String(error),
+            );
+          })
+          .finally(() => setMediaBusy(false));
+      }, { once: true });
+      recorder.start(250);
+      setRecording(true);
+      setVoiceStatus(t("home.voiceRecording"));
+    } catch (error) {
+      setVoiceStatus("");
+      setAttachmentError(
+        error instanceof Error ? error.message : t("home.mediaPermissionDenied"),
+      );
+    }
+  };
+
+  const captureCamera = async () => {
+    if (!connected || sending || mediaBusy || attachments.length >= 4) return;
+    setAttachmentError("");
+    setMediaBusy(true);
+    let stream: MediaStream | null = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+      });
+      const video = document.createElement("video");
+      video.srcObject = stream;
+      video.muted = true;
+      video.playsInline = true;
+      await video.play();
+      if (!video.videoWidth || !video.videoHeight) {
+        throw new Error(t("home.cameraUnavailable"));
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error(t("home.cameraUnavailable"));
+      context.drawImage(video, 0, 0);
+      const blob = await canvasToBlob(canvas, "image/jpeg", 0.9);
+      if (blob.size > MAX_ATTACHMENT_BYTES) {
+        throw new Error(t("home.cameraImageTooLarge"));
+      }
+      addAttachments([{
+        id: crypto.randomUUID(),
+        name: `camera-${new Date().toISOString().replace(/[:.]/g, "-")}.jpg`,
+        mimeType: "image/jpeg",
+        size: blob.size,
+        kind: "image",
+        dataBase64: await blobToBase64(blob),
+      }]);
+    } catch (error) {
+      setAttachmentError(
+        error instanceof Error ? error.message : t("home.mediaPermissionDenied"),
+      );
+    } finally {
+      stream?.getTracks().forEach((track) => track.stop());
+      setMediaBusy(false);
+    }
+  };
+
   return (
     <div
       className={`chat-input-container ${dragging ? "drag-active" : ""}`}
@@ -201,6 +349,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
         </div>
       )}
       {attachmentError && <div className="attachment-error">{attachmentError}</div>}
+      {voiceStatus && <div className="embodiment-media-status">{voiceStatus}</div>}
       {modelError && <div className="chat-model-error">{modelError}</div>}
       <textarea
         ref={textareaRef}
@@ -231,8 +380,23 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
             disabled={!connected || sending || modelBusy}
             onApply={selectModel}
           />
-          <button className="chat-input-btn" title={t("home.voiceInput")}>
+          <button
+            type="button"
+            className={`chat-input-btn ${recording ? "is-recording" : ""}`}
+            title={recording ? t("home.stopVoiceInput") : t("home.voiceInput")}
+            onClick={() => { void toggleVoiceRecording(); }}
+            disabled={!recording && (!connected || sending || mediaBusy)}
+          >
             <Icon name="microphone" size={18} />
+          </button>
+          <button
+            type="button"
+            className="chat-input-btn"
+            title={t("home.cameraCapture")}
+            onClick={() => { void captureCamera(); }}
+            disabled={!connected || sending || mediaBusy || attachments.length >= 4}
+          >
+            <Icon name="camera" size={18} />
           </button>
           {sending ? (
             <button className="chat-input-abort" onClick={onAbort}>
@@ -292,5 +456,33 @@ function readFileBase64(file: File): Promise<string> {
       else resolve(result.slice(separator + 1));
     };
     reader.readAsDataURL(file);
+  });
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("无法读取媒体数据"));
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      const separator = result.indexOf(",");
+      if (separator < 0) reject(new Error("无法读取媒体数据"));
+      else resolve(result.slice(separator + 1));
+    };
+    reader.readAsDataURL(blob);
+  });
+}
+
+function canvasToBlob(
+  canvas: HTMLCanvasElement,
+  type: string,
+  quality: number,
+): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => blob ? resolve(blob) : reject(new Error("摄像头画面编码失败")),
+      type,
+      quality,
+    );
   });
 }

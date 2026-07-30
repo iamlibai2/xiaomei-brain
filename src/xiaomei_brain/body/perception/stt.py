@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import os
 import io
+import threading
 import warnings
 import wave
 import numpy as np
@@ -50,6 +51,10 @@ class STT:
 
     _model: Any = None
     _loaded: bool = False
+    # Several bodies may request the first transcription concurrently.
+    # Loading must be single-flight because model initialization temporarily
+    # changes process-wide logging streams and consumes substantial memory.
+    _load_lock = threading.Lock()
 
     def __init__(self, model: str = _MODEL_NAME, device: str = "cpu") -> None:
         self._model_name = model
@@ -60,6 +65,14 @@ class STT:
     def _ensure_model(self) -> None:
         if STT._loaded:
             return
+        with STT._load_lock:
+            # Another caller may have completed initialization while this
+            # caller was waiting for the single-flight lock.
+            if STT._loaded:
+                return
+            self._load_model()
+
+    def _load_model(self) -> None:
         import sys
         import logging as _logging
         from funasr import AutoModel

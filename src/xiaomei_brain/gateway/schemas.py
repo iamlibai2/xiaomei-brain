@@ -41,6 +41,36 @@ class ConnectParams(BaseModel):
     session_id: str = ""  # 重连时带上之前的 session_id 可恢复会话
 
 
+# ── Embodiment ───────────────────────────────
+
+class EmbodimentRegisterParams(BaseModel):
+    device_id: str = Field(
+        ...,
+        min_length=8,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9_.-]+$",
+    )
+    label: str = Field(default="Desktop", min_length=1, max_length=100)
+    capabilities: list[
+        Literal["hearing", "speech", "vision"]
+    ] = Field(default_factory=list, max_length=8)
+    allow_proactive_use: bool = False
+
+
+class EmbodimentAudioInputParams(BaseModel):
+    data_base64: str = Field(..., min_length=1)
+    mime_type: Literal[
+        "audio/webm",
+        "audio/ogg",
+        "audio/opus",
+        "audio/mpeg",
+        "audio/wav",
+        "audio/amr",
+    ]
+    size: int = Field(..., ge=1, le=5 * 1024 * 1024)
+    client_request_id: str = Field(..., min_length=1, max_length=128)
+
+
 # ── Person identity ──────────────────────────
 
 class IdentityRegisterBeginParams(BaseModel):

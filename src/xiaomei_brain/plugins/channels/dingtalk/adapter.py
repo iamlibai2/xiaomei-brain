@@ -101,11 +101,25 @@ class DingTalkAdapter(ChannelAdapter):
             action_approval=True,
             attachments=True,
             message_update=True,
+            audio_input=True,
+            audio_output=True,
         )
 
     @property
     def channel_type(self) -> str:
         return "dingtalk"
+
+    @property
+    def embodiment_id(self) -> str:
+        return f"dingtalk:{self._client.client_id}"
+
+    @property
+    def embodiment_label(self) -> str:
+        return "钉钉机器人"
+
+    @property
+    def exposes_embodiment(self) -> bool:
+        return True
 
     def send(self, target: str, text: str, msg_type: str = "text") -> None:
         """向钉钉用户/群发送消息。Core 通过 Router.deliver() 调用此方法。
@@ -137,6 +151,22 @@ class DingTalkAdapter(ChannelAdapter):
         # 降级：主动发送
         is_group = target.startswith("cid")
         self._client.send(target, text, msg_type, is_group=is_group)
+
+    def send_audio(self, target: str, audio) -> bool:
+        """Expose a DingTalk robot as a remote speech body."""
+        from xiaomei_brain.media_services.audio import encode_speech_as_opus
+
+        encoded = encode_speech_as_opus(audio)
+        with self._sessions_lock:
+            session = dict(self._sessions.get(target) or {})
+        is_group = bool(session.get("is_group", target.startswith("cid")))
+        return self._client.send_audio(
+            target,
+            f"xiaomei-{int(time.time() * 1000)}.ogg",
+            encoded.data,
+            encoded.duration_ms,
+            is_group=is_group,
+        )
 
     def send_event(
         self,
@@ -789,6 +819,169 @@ class DingTalkAdapter(ChannelAdapter):
             )
             return {}
 
+    def _handle_audio_message(
+        self,
+        msg_dict: dict,
+        living,
+        router,
+        people,
+        issuer: str,
+    ) -> None:
+        """Use the DingTalk Embodiment's remote ear without blocking Stream."""
+        sender = str(msg_dict.get("sender", ""))
+        conversation_id = str(msg_dict.get("conversation_id", ""))
+        is_group = bool(msg_dict.get("is_group", False))
+        output_target = conversation_id if is_group else sender
+        try:
+            with self._sessions_lock:
+                self._sessions[output_target] = {
+                    "is_group": is_group,
+                    "conversation_id": conversation_id,
+                    "sender": sender,
+                    **({
+                        "session_webhook": msg_dict.get("session_webhook", ""),
+                        "sdk_message": msg_dict.get("sdk_message"),
+                    } if msg_dict.get("session_webhook") else {}),
+                }
+
+            resolved = (
+                people.resolve_verified_identity(issuer, sender)
+                if people else None
+            )
+            person_id = resolved[0].person_id if resolved is not None else ""
+            if is_group:
+                session_id = (
+                    f"dingtalk-group-{self._client.client_id}-{conversation_id}"
+                )
+                if people:
+                    people.store.ensure_session(
+                        session_id,
+                        "conversation",
+                        f"{issuer}:chat:{conversation_id}",
+                        metadata={
+                            "channel": "dingtalk",
+                            "issuer": issuer,
+                            "conversation_id": conversation_id,
+                        },
+                    )
+                if msg_dict.get("bot_mentioned") is not True:
+                    gateway = getattr(living, "_gateway_inbound", None)
+                    if gateway and hasattr(gateway, "observe_group_message"):
+                        from xiaomei_brain.gateway.inbound import RawMessage
+                        gateway.observe_group_message(RawMessage(
+                            content="[语音]",
+                            source="human",
+                            channel="dingtalk",
+                            peer_id=person_id,
+                            peer_type="human",
+                            session_id=session_id,
+                            metadata={
+                                "external_issuer": issuer,
+                                "external_subject": sender,
+                                "external_conversation_id": conversation_id,
+                                "external_message_id": msg_dict.get("msg_id", ""),
+                                "sender_display_name": (
+                                    msg_dict.get("sender_name") or sender
+                                ),
+                                "message_type": "audio",
+                            },
+                        ))
+                    return
+
+            if resolved is None:
+                self.send(
+                    output_target,
+                    "我收到了一段语音，但还不能确认你是谁。请先在 Desktop 中完成身份绑定。",
+                )
+                return
+            person, _binding = resolved
+            if not is_group:
+                session_id = f"dingtalk-{person.person_id}"
+                people.store.ensure_person_session(session_id, person.person_id)
+
+            if not router.has_route(session_id, "dingtalk", output_target):
+                router.register_peer(
+                    peer_type="human",
+                    peer_id=person.person_id,
+                    channel="dingtalk",
+                    session_id=session_id,
+                    output_type="dingtalk",
+                    output_target=output_target,
+                    priority=10,
+                )
+
+            downloaded = self._client.download_message_media(
+                str(msg_dict.get("download_code", "")),
+            )
+            if downloaded is None:
+                raise RuntimeError("钉钉语音下载失败")
+            audio_data, suffix = downloaded
+
+            from xiaomei_brain.body.perception.remote_audio import (
+                RemoteAudioPerception,
+            )
+            perception = RemoteAudioPerception().perceive(audio_data)
+            text = str(perception.get("text", "")).strip()
+            if not text:
+                self.send(output_target, "我听到了语音，但没能辨认出其中的内容。")
+                return
+
+            mime_type = {
+                ".ogg": "audio/ogg",
+                ".amr": "audio/amr",
+                ".mp3": "audio/mpeg",
+                ".wav": "audio/wav",
+            }.get(suffix.lower(), "audio/ogg")
+            saved_suffix = suffix if suffix != ".bin" else ".ogg"
+            from xiaomei_brain.gateway.attachments import prepare_attachments
+            attachment_id = f"audio_{uuid.uuid4().hex}"
+            attachments, _images, _paths = prepare_attachments(
+                getattr(living, "_agent_id", "default"),
+                session_id,
+                [{
+                    "id": attachment_id,
+                    "name": f"{attachment_id}{saved_suffix}",
+                    "mime_type": mime_type,
+                    "size": len(audio_data),
+                    "data_base64": base64.b64encode(audio_data).decode("ascii"),
+                }],
+            )
+
+            gateway = getattr(living, "_gateway_inbound", None)
+            if gateway is None:
+                raise RuntimeError("Gateway 尚未初始化")
+            from xiaomei_brain.gateway.inbound import RawMessage
+            admission = gateway.accept(RawMessage(
+                content=text,
+                source="human",
+                channel="dingtalk",
+                peer_id=person.person_id,
+                peer_type="human",
+                session_id=session_id,
+                attachments=attachments,
+                metadata={
+                    "external_issuer": issuer,
+                    "external_subject": sender,
+                    "external_conversation_id": conversation_id,
+                    "external_message_id": msg_dict.get("msg_id", ""),
+                    "message_type": "audio",
+                    "audio_duration_ms": int(msg_dict.get("duration", 0) or 0),
+                    "speech_emotion": str(perception.get("emotion", "")),
+                    "speech_events": list(perception.get("events", []) or []),
+                },
+                reply_channel="dingtalk",
+                reply_target=output_target,
+            ))
+            reason = getattr(admission, "reason", "")
+            if reason and not getattr(admission, "silent", False):
+                self.send(output_target, "这段语音暂时没有接收成功，请稍后重试。")
+        except Exception:
+            logger.exception("[DingTalk/Audio] remote hearing failed")
+            try:
+                self.send(output_target, "这段语音暂时无法处理，请稍后重试。")
+            except Exception:
+                logger.debug("Failed to report DingTalk audio error", exc_info=True)
+
     def setup(self, living=None) -> None:
         """启动通道，桥接 living 和钉钉消息。
 
@@ -814,6 +1007,15 @@ class DingTalkAdapter(ChannelAdapter):
             session_webhook = msg_dict.get("session_webhook", "")
             sdk_message = msg_dict.get("sdk_message")
             media_paths = msg_dict.get("media_paths", [])
+
+            if msg_dict.get("msg_type") == "audio":
+                threading.Thread(
+                    target=self._handle_audio_message,
+                    args=(msg_dict, living, router, people, issuer),
+                    name="dingtalk-remote-hearing",
+                    daemon=True,
+                ).start()
+                return
 
             output_target = conversation_id if is_group else sender
             resolved = (

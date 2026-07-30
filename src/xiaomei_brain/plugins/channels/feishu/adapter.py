@@ -80,6 +80,18 @@ class FeishuAdapter(ChannelAdapter):
     def channel_type(self) -> str:
         return "feishu"
 
+    @property
+    def embodiment_id(self) -> str:
+        return f"feishu:{self._channel.account_id}"
+
+    @property
+    def embodiment_label(self) -> str:
+        return "飞书机器人"
+
+    @property
+    def exposes_embodiment(self) -> bool:
+        return True
+
     def setup(self, living=None) -> None:
         """设置回调并启动飞书通道。
 

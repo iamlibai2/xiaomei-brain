@@ -57,6 +57,39 @@ def test_handler_deduplicates_before_forwarding() -> None:
     assert received[0]["bot_mentioned"] is True
 
 
+def test_handler_defers_audio_download_to_adapter_worker() -> None:
+    received: list[dict] = []
+    handler = _OurHandler(
+        received.append,
+        lambda: "token",
+        "robot-code",
+    )
+    handler._try_download = lambda _code: pytest.fail(
+        "audio must not be downloaded in the SDK callback"
+    )
+    data = {
+        "msgId": "audio-1",
+        "msgtype": "audio",
+        "content": {
+            "downloadCode": "download-audio-1",
+            "duration": 1350,
+        },
+        "senderStaffId": "staff-1",
+        "conversationId": "single-1",
+        "conversationType": "1",
+        "robotCode": "robot-code",
+    }
+
+    asyncio.run(handler.process(_callback(data)))
+
+    assert len(received) == 1
+    assert received[0]["msg_type"] == "audio"
+    assert received[0]["text"] == "[语音]"
+    assert received[0]["download_code"] == "download-audio-1"
+    assert received[0]["duration"] == 1350
+    assert received[0]["media_paths"] == []
+
+
 def test_message_dedup_ttl(monkeypatch) -> None:
     client = DingTalkClient("client", "secret")
     now = [100.0]
@@ -185,6 +218,68 @@ def test_client_uploads_and_sends_native_file(monkeypatch) -> None:
     assert calls[-1][1]["json"]["openConversationId"] == "cid-group"
 
 
+def test_client_uploads_and_sends_native_audio(monkeypatch) -> None:
+    import json
+    import requests
+
+    client = DingTalkClient("ding-demo", "secret")
+    monkeypatch.setattr(client, "get_access_token", lambda: "token")
+    uploads = []
+
+    def upload(name, data, token, **kwargs):
+        uploads.append((name, data, token, kwargs))
+        return "voice-1"
+
+    monkeypatch.setattr(
+        "xiaomei_brain.plugins.channels.dingtalk.media.upload_media_bytes",
+        upload,
+    )
+    calls = []
+    monkeypatch.setattr(
+        requests,
+        "post",
+        lambda url, **kwargs: calls.append((url, kwargs)) or SimpleNamespace(
+            raise_for_status=lambda: None,
+        ),
+    )
+
+    assert client.send_audio(
+        "staff-1",
+        "voice.ogg",
+        b"OggS-audio",
+        1680,
+        is_group=False,
+    ) is True
+    assert uploads == [(
+        "voice.ogg",
+        b"OggS-audio",
+        "token",
+        {
+            "max_size": 2 * 1024 * 1024,
+            "media_type": "voice",
+            "content_type": "audio/ogg",
+        },
+    )]
+    url, request = calls[-1]
+    assert url.endswith("/robot/oToMessages/batchSend")
+    assert request["json"]["userIds"] == ["staff-1"]
+    assert request["json"]["msgKey"] == "sampleAudio"
+    assert json.loads(request["json"]["msgParam"]) == {
+        "mediaId": "@voice-1",
+        "duration": "1680",
+    }
+
+    assert client.send_audio(
+        "cid-group",
+        "voice.ogg",
+        b"OggS-audio",
+        1680,
+        is_group=True,
+    ) is True
+    assert calls[-1][0].endswith("/robot/groupMessages/send")
+    assert calls[-1][1]["json"]["openConversationId"] == "cid-group"
+
+
 def test_upload_media_bytes_uses_agent_owned_content(monkeypatch) -> None:
     import requests
     from xiaomei_brain.plugins.channels.dingtalk.media import upload_media_bytes
@@ -208,6 +303,39 @@ def test_upload_media_bytes_uses_agent_owned_content(monkeypatch) -> None:
     assert name == "报告.pdf"
     assert stream.read() == b"pdf-data"
     assert content_type == "application/octet-stream"
+
+
+def test_download_media_bytes_streams_and_detects_audio(monkeypatch) -> None:
+    import requests
+    from xiaomei_brain.plugins.channels.dingtalk.media import (
+        download_media_bytes,
+    )
+
+    monkeypatch.setattr(
+        requests,
+        "post",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            json=lambda: {"downloadUrl": "https://download.invalid/audio"},
+        ),
+    )
+    response = SimpleNamespace(
+        headers={"content-type": "application/octet-stream"},
+        raise_for_status=lambda: None,
+        iter_content=lambda _size: iter([b"OggS", b"-audio"]),
+    )
+    monkeypatch.setattr(requests, "get", lambda *_args, **_kwargs: response)
+
+    assert download_media_bytes(
+        "download-1",
+        "robot-1",
+        "token",
+    ) == (b"OggS-audio", ".ogg")
+    assert download_media_bytes(
+        "download-1",
+        "robot-1",
+        "token",
+        max_size=4,
+    ) is None
 
 
 def test_websocket_health_compatibility() -> None:

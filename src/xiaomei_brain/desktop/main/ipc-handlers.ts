@@ -1,6 +1,7 @@
 import { ipcMain, BrowserWindow, Notification, app, dialog, shell } from "electron";
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { promises as fs } from "fs";
+import os from "os";
 import path from "path";
 import { GatewayClient } from "./gateway-client";
 import { ConfigStore } from "./config-store";
@@ -48,6 +49,20 @@ export function registerIpcHandlers(
   const terminalMgr = new TerminalManager();
   const runtimeManager = new RuntimeManager(config);
   const identityVault = new IdentityVault();
+  let desktopDeviceId = config.get("desktop_device_id") || "";
+  if (!desktopDeviceId) {
+    desktopDeviceId = randomUUID();
+    config.set("desktop_device_id", desktopDeviceId);
+  }
+  const registerDesktopEmbodiment = async (client: GatewayClient) => client.rpc(
+    "embodiment.register",
+    {
+      device_id: desktopDeviceId,
+      label: `${os.hostname()} Desktop`,
+      capabilities: ["hearing", "speech", "vision"],
+      allow_proactive_use: false,
+    },
+  );
   void runtimeManager.warmup().catch((error) => {
     console.error("[runtime] background initialization failed", error);
   });
@@ -473,6 +488,8 @@ export function registerIpcHandlers(
             const result = res.result || {};
             sessionId = (result["session_id"] as string) || sessionId;
             await authenticateIdentity(client);
+            const embodiment = await registerDesktopEmbodiment(client);
+            if (embodiment.error) throw new Error(embodiment.error.message);
             connectionSessions.set(args.agentId, sessionId);
             const resume = await client.rpc("session.resume", {
               session_id: sessionId,
@@ -523,6 +540,8 @@ export function registerIpcHandlers(
         config.set(bindingConfigKey, "1");
         authenticated = true;
         connectionSessions.set(args.agentId, sessionId);
+        const embodiment = await registerDesktopEmbodiment(client);
+        if (embodiment.error) throw new Error(embodiment.error.message);
 
         const resume = await client.rpc("session.resume", {
           session_id: sessionId,
@@ -670,6 +689,28 @@ export function registerIpcHandlers(
       });
     }
   );
+
+  ipcMain.handle("gateway:sendVoice", async (_event, args: {
+    agentId: string;
+    dataBase64: string;
+    mimeType: string;
+    size: number;
+    clientRequestId: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) {
+      return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    }
+    if (!args.dataBase64 || args.size <= 0 || args.size > MAX_ATTACHMENT_BYTES) {
+      return { error: { code: -32602, message: "语音数据无效或超过 5 MB" } };
+    }
+    return client.rpc("embodiment.audio.input", {
+      data_base64: args.dataBase64,
+      mime_type: args.mimeType,
+      size: args.size,
+      client_request_id: args.clientRequestId,
+    });
+  });
 
   ipcMain.handle("gateway:pickAttachments", async () => {
     const win = getWindow();

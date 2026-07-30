@@ -160,6 +160,7 @@ class TTSProvider:
 
         chunk_count = 0
         total_bytes = 0
+        received_incremental_audio = False
         for line in response.iter_lines():
             if not line:
                 continue
@@ -183,8 +184,26 @@ class TTSProvider:
             try:
                 data = json.loads(data_str)
                 self._check_base_resp(data)
-                audio_hex = data.get("data", {}).get("audio", "")
+                response_data = data.get("data", {})
+                audio_hex = response_data.get("audio", "")
+                status = response_data.get("status")
                 if audio_hex:
+                    # MiniMax status=1 frames contain incremental audio.  The
+                    # status=2 completion frame may repeat the full audio, so
+                    # emitting both makes every destination play it twice.
+                    # Some compatible endpoints only return a status=2 frame;
+                    # retain that as a fallback when no incremental audio was
+                    # received.
+                    if status == 2 and received_incremental_audio:
+                        logger.debug(
+                            "[TTS] ignored completion audio after incremental "
+                            "stream: hex_len=%d",
+                            len(audio_hex),
+                        )
+                        continue
+                    if status == 1:
+                        received_incremental_audio = True
+
                     chunk = bytes.fromhex(audio_hex)
                     chunk_count += 1
                     total_bytes += len(chunk)

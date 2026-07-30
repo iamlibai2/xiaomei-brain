@@ -564,7 +564,6 @@ function ContextPanel({
   activities,
   artifacts,
   agentState,
-  speaking,
   focusedMemories,
 }: {
   agentName: string;
@@ -573,7 +572,6 @@ function ContextPanel({
   activities: ActivitySnapshot[];
   artifacts: ArtifactSnapshot[];
   agentState: import("../../store").AgentStateSnapshot | undefined;
-  speaking: boolean;
   focusedMemories: MemoryReference[];
 }) {
   const active = activities.filter((item) => ACTIVE.has(item.status));
@@ -664,11 +662,13 @@ function StatusPanel({
   agentName,
   connectionStatus,
   agentState,
+  speaking,
   onRefresh,
 }: {
   agentName: string;
   connectionStatus: string;
   agentState: import("../../store").AgentStateSnapshot | undefined;
+  speaking: boolean;
   onRefresh: () => void;
 }) {
   const internal = agentState?.internal;

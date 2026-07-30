@@ -3095,6 +3095,11 @@
   font-size: 11px;
 }
 
+.embodiment-media-status {
+  color: var(--ui-color-text-secondary);
+  font-size: 11px;
+}
+
 .chat-input-textarea {
   width: 100%;
   background: transparent;
@@ -3147,6 +3152,21 @@
 .chat-input-btn:hover {
   background: var(--ui-bg-hover);
   color: var(--ui-color-text-primary);
+}
+
+.chat-input-btn:disabled {
+  cursor: default;
+  opacity: .45;
+}
+
+.chat-input-btn.is-recording {
+  background: color-mix(in srgb, var(--ui-color-danger, #d14343) 12%, transparent);
+  color: var(--ui-color-danger, #d14343);
+  animation: voice-recording-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes voice-recording-pulse {
+  50% { opacity: .62; }
 }
 
 .chat-input-dropdown {
