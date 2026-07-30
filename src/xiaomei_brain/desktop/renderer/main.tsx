@@ -14,6 +14,7 @@ import "./styles/agent-dialog.css";
 import "./styles/identity-settings.css";
 import "./styles/agent-settings.css";
 import "./styles/settings-center.css";
+import "./styles/unified-search.css";
 
 // ─── 平台标记 ───
 document.body.setAttribute("data-electron-desktop", "true");

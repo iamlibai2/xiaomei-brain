@@ -103,6 +103,23 @@ async def ws_endpoint(ws: WebSocket) -> None:
                     session_id = res["result"]["session_id"]
                     cm.set_pending_session(conn_id, session_id)
 
+                # Keep the socket and Person identity while moving its reply
+                # route to the newly selected conversation.
+                if req.method == "session.switch" and "result" in res and _global_router:
+                    session_id = str(res["result"]["session_id"])
+                    _global_router.remove_peer(conn_id)
+                    _global_router.register_peer(
+                        peer_type="human", peer_id=conn_id,
+                        channel="ws", session_id=session_id,
+                        output_type="ws", output_target=session_id,
+                    )
+                    person_id = cm.get_person_id(conn_id) or ""
+                    if person_id and hasattr(_global_router, "note_active_route"):
+                        _global_router.note_active_route(
+                            person_id,
+                            OutputRoute("ws", session_id),
+                        )
+
                 # 人物签名成功后，连接才获得会话和输出路由。
                 if (
                     req.method in {

@@ -1,6 +1,7 @@
 import { ConversationList } from "./conversation-list/ConversationList";
 import { HomePage } from "./home/HomePage";
 import { SettingsCenter } from "./settings/SettingsCenter";
+import { UnifiedSearchDialog } from "./search/UnifiedSearchDialog";
 
 export function MainShell() {
   return (
@@ -8,6 +9,7 @@ export function MainShell() {
       <ConversationList />
       <HomePage />
       <SettingsCenter />
+      <UnifiedSearchDialog />
     </div>
   );
 }

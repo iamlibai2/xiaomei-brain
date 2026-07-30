@@ -448,10 +448,43 @@ body[data-platform="mac"] .sidebar-topbar {
   gap: 6px;
 }
 
+.session-item.unread .session-item-name {
+  font-weight: 600;
+}
+
 .session-item-meta {
   color: var(--ui-color-text-disabled);
   font-size: 11px;
   white-space: nowrap;
+}
+
+.session-item-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  min-width: 0;
+}
+
+.session-working-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--color-success, #22a06b);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success, #22a06b) 14%, transparent);
+}
+
+.session-unread-badge {
+  min-width: 10px;
+  padding: 0;
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--ui-accent-unread) 72%, var(--ui-color-text-secondary));
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 .session-list-status {
@@ -761,18 +794,16 @@ body[data-platform="mac"] .sidebar-topbar {
 }
 
 .agent-unread-badge {
-  background: var(--ui-brand-primary);
-  color: #fff;
-  font-size: 10px;
+  color: color-mix(in srgb, var(--ui-accent-unread) 72%, var(--ui-color-text-secondary));
+  font-size: 11px;
   font-weight: 600;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: 8px;
+  min-width: 10px;
+  padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   margin-right: 4px;
+  font-variant-numeric: tabular-nums;
 }
 
 .agent-lifecycle-actions {
@@ -905,10 +936,21 @@ body[data-platform="mac"] .sidebar-topbar {
   position: relative;
 }
 
-.session-new-btn:disabled,
-.session-item.disabled {
+.session-new-btn:disabled {
   opacity: 0.45;
   pointer-events: none;
+}
+
+.session-item.disabled {
+  cursor: not-allowed;
+}
+
+.session-item.disabled:hover {
+  background: transparent;
+}
+
+.session-item.disabled.active:hover {
+  background: var(--ui-brand-primary-light, rgba(99, 102, 241, 0.1));
 }
 .sidebar-collapsed-agent-btn:hover {
   background: var(--ui-button-ghost-bg-hover);
@@ -940,12 +982,14 @@ body[data-platform="mac"] .sidebar-topbar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 2px solid var(--ui-sidebar-bg);
+  border: 1px solid color-mix(in srgb, var(--ui-accent-unread) 16%, var(--ui-sidebar-bg));
   border-radius: 8px;
-  background: var(--ui-brand-primary);
-  color: #fff;
-  font-size: 8px;
+  background: color-mix(in srgb, var(--ui-accent-unread) 10%, var(--ui-sidebar-bg));
+  color: color-mix(in srgb, var(--ui-accent-unread) 76%, var(--ui-color-text-secondary));
+  font-size: 9px;
+  font-weight: 600;
   line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .agent-list-header-add:focus-visible,

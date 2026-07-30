@@ -300,6 +300,16 @@ class SessionResumeParams(BaseModel):
     history_limit: int = Field(default=50, ge=1, le=200)
 
 
+class SessionSwitchParams(BaseModel):
+    session_id: str = Field(..., min_length=1)
+    history_limit: int = Field(default=50, ge=1, le=200)
+
+
+class SearchQueryParams(BaseModel):
+    query: str = Field(..., min_length=1, max_length=200)
+    limit: int = Field(default=8, ge=1, le=20)
+
+
 class InteractionRespondParams(BaseModel):
     request_id: str = Field(..., min_length=1)
     turn_id: str = Field(..., min_length=1)

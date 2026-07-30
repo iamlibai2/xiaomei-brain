@@ -55,7 +55,11 @@ export function HomePage() {
   const { t } = useTranslation();
   const activeAgentId = useCoreStore((s) => s.activeAgentId);
   const messages = useCoreStore((s) => s.messagesByAgent[s.activeAgentId || ""] || EMPTY_MSGS);
-  const sending = useCoreStore((s) => s.sendingByAgent[s.activeAgentId || ""] || false);
+  const sending = useCoreStore((s) => {
+    const agentId = s.activeAgentId || "";
+    const sessionId = agentId ? s.activeSessionByAgent[agentId] : null;
+    return s.sendingByConversation[`${agentId}\u0000${sessionId || "new"}`] || false;
+  });
   const agentName = useCoreStore((s) => {
     const agentId = s.activeAgentId;
     if (!agentId) return t("home.defaultAgentName");
@@ -101,6 +105,7 @@ export function HomePage() {
   const [historyTraversalStarted, setHistoryTraversalStarted] = useState<Set<string>>(() => new Set());
   const [followingLatest, setFollowingLatest] = useState(true);
   const [unreadWhileAway, setUnreadWhileAway] = useState(false);
+  const [focusedSearchMessageId, setFocusedSearchMessageId] = useState("");
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
@@ -124,6 +129,52 @@ export function HomePage() {
       window.removeEventListener("xiaomei:desktop-settings-changed", handleSettings);
     };
   }, []);
+
+  useEffect(() => {
+    const openArtifact = (event: Event) => {
+      const detail = (event as CustomEvent<{ sessionId?: string; artifactId?: string }>).detail;
+      if (!detail?.sessionId || !detail.artifactId) return;
+      setFocusedArtifactKey(`${detail.sessionId}:${detail.artifactId}`);
+      setRightSidebarSection("artifact");
+      setActivityPanelOpen(true);
+    };
+    const openAssignmentFromSearch = (event: Event) => {
+      const detail = (event as CustomEvent<{ assignmentId?: string }>).detail;
+      if (!detail?.assignmentId) return;
+      setSelectedAssignmentId(detail.assignmentId);
+      setRightSidebarSection("assignment");
+      setActivityPanelOpen(true);
+    };
+    const focusMessageFromSearch = (event: Event) => {
+      const detail = (event as CustomEvent<{ messageKey?: string }>).detail;
+      if (!detail?.messageKey) return;
+      followLatestRef.current = false;
+      setFollowingLatest(false);
+      setFocusedSearchMessageId(detail.messageKey);
+    };
+    window.addEventListener("xiaomei:open-search-artifact", openArtifact);
+    window.addEventListener("xiaomei:open-search-assignment", openAssignmentFromSearch);
+    window.addEventListener("xiaomei:focus-search-message", focusMessageFromSearch);
+    return () => {
+      window.removeEventListener("xiaomei:open-search-artifact", openArtifact);
+      window.removeEventListener("xiaomei:open-search-assignment", openAssignmentFromSearch);
+      window.removeEventListener("xiaomei:focus-search-message", focusMessageFromSearch);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!focusedSearchMessageId) return;
+    const frame = window.requestAnimationFrame(() => {
+      const element = document.getElementById(`conversation-message-${focusedSearchMessageId}`);
+      if (!element) return;
+      element.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    const timer = window.setTimeout(() => setFocusedSearchMessageId(""), 2400);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [focusedSearchMessageId, messages]);
 
   useEffect(() => {
     if (activeAgentId && connectionStatus === "connected") {
@@ -275,7 +326,6 @@ export function HomePage() {
       {activeAgentId && !showAgentStart && (
         <ChatTopbar
           taskName={taskName}
-          onSearch={() => {}}
           onToggleRightPanel={() => setActivityPanelOpen((open) => !open)}
           rightPanelOpen={activityPanelOpen}
           onOpenAgentSettings={() => openSettingsCenter("overview")}
@@ -382,6 +432,7 @@ export function HomePage() {
                         message={m}
                         agentName={agentName || t("home.defaultAgentName")}
                         showAgentHeader={showAgentHeader}
+                        highlighted={focusedSearchMessageId === m.id}
                         onShowArtifact={(artifactId, sessionId) => {
                           setFocusedArtifactKey(`${sessionId}:${artifactId}`);
                           setRightSidebarSection("artifact");
@@ -498,12 +549,14 @@ function MessageRow({
   message,
   agentName,
   showAgentHeader,
+  highlighted,
   onShowArtifact,
   onShowMemories,
 }: {
   message: DisplayMessage;
   agentName: string;
   showAgentHeader: boolean;
+  highlighted: boolean;
   onShowArtifact: (artifactId: string, sessionId: string) => void;
   onShowMemories: (references: MemoryReference[]) => void;
 }) {
@@ -520,7 +573,8 @@ function MessageRow({
   const retryMessage = useCoreStore((s) => s.retryMessage);
   const agentSending = useCoreStore((s) => {
     const agentId = s.activeAgentId || "";
-    return s.sendingByAgent[agentId] || false;
+    const sessionId = agentId ? s.activeSessionByAgent[agentId] : null;
+    return s.sendingByConversation[`${agentId}\u0000${sessionId || "new"}`] || false;
   });
 
   useEffect(() => () => window.clearTimeout(messageCopyTimerRef.current), []);
@@ -593,7 +647,10 @@ function MessageRow({
 
   if (isUser) {
     return (
-      <div className="user-message-row">
+      <div
+        id={`conversation-message-${message.id}`}
+        className={`user-message-row ${highlighted ? "search-message-highlight" : ""}`}
+      >
         <div className="user-message-stack">
           <div className="user-message-bubble">
             {message.attachments && message.attachments.length > 0 && (
@@ -660,7 +717,10 @@ function MessageRow({
   const thinkingComplete = !message.streaming || /\x1b\[0m/.test(message.content) || /\[0m/.test(message.content);
 
   return (
-    <div className={`assistant-message-row ${showAgentHeader ? "" : "agent-turn-continuation"}`}>
+    <div
+      id={`conversation-message-${message.id}`}
+      className={`assistant-message-row ${showAgentHeader ? "" : "agent-turn-continuation"} ${highlighted ? "search-message-highlight" : ""}`}
+    >
       <button
         type="button"
         className="message-copy-action"
@@ -735,6 +795,7 @@ function MessageAttachment({
 }) {
   const [previewUrl, setPreviewUrl] = useState(attachment.previewUrl || "");
   const [error, setError] = useState("");
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   useEffect(() => {
     setPreviewUrl(attachment.previewUrl || "");
@@ -780,6 +841,34 @@ function MessageAttachment({
     setError(result.ok ? "" : result.error || "无法打开附件");
   };
 
+  if (attachment.kind === "image") {
+    return (
+      <>
+        <button
+          type="button"
+          className={`message-inline-image ${error ? "error" : ""}`}
+          onClick={() => previewUrl ? setPreviewOpen(true) : void open()}
+          title={error || attachment.name}
+        >
+          {previewUrl ? (
+            <img src={previewUrl} alt={attachment.name} />
+          ) : (
+            <span className="message-inline-image-loading">{error ? "!" : "IMG"}</span>
+          )}
+          <span>{attachment.name}</span>
+        </button>
+        {previewOpen && previewUrl && (
+          <ImageLightbox
+            src={previewUrl}
+            name={attachment.name}
+            onClose={() => setPreviewOpen(false)}
+            onOpenOriginal={() => void open()}
+          />
+        )}
+      </>
+    );
+  }
+
   return (
     <button
       type="button"
@@ -824,11 +913,12 @@ function ArtifactCard({
   const [previewUrl, setPreviewUrl] = useState("");
   const [error, setError] = useState("");
   const [opening, setOpening] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   useEffect(() => {
     setPreviewUrl("");
     setError("");
-    if (artifact.kind !== "image" || artifact.size > 5 * 1024 * 1024 || !agentId || !sessionId) return;
+    if (artifact.kind !== "image" || artifact.size > 20 * 1024 * 1024 || !agentId || !sessionId) return;
     let cancelled = false;
     void window.gateway.getArtifact({ agentId, sessionId, artifactId: artifact.id })
       .then((response) => {
@@ -866,6 +956,51 @@ function ArtifactCard({
     : artifact.size < 1024 * 1024
       ? `${(artifact.size / 1024).toFixed(1)} KB`
       : `${(artifact.size / 1024 / 1024).toFixed(1)} MB`;
+
+  if (artifact.kind === "image") {
+    return (
+      <div className={`assistant-message-row artifact-image-message-row ${showAgentHeader ? "" : "agent-turn-continuation"}`}>
+        {showAgentHeader && (
+          <div className="assistant-avatar">
+            <div className="assistant-avatar-face">{agentName.charAt(0)}</div>
+            <span className="assistant-avatar-name">{agentName}</span>
+          </div>
+        )}
+        <div className="artifact-inline-image-group">
+          <button
+            type="button"
+            className={`artifact-inline-image ${error ? "error" : ""}`}
+            onClick={() => previewUrl ? setPreviewOpen(true) : void open()}
+            disabled={opening}
+            title={error || artifact.name}
+          >
+            {previewUrl ? (
+              <img src={previewUrl} alt={artifact.name} />
+            ) : (
+              <span className="artifact-inline-image-loading">
+                <Icon name="sparkles" size={22} />
+                {error || "正在加载图片…"}
+              </span>
+            )}
+          </button>
+          <div className="artifact-inline-image-meta">
+            <span title={artifact.name}>{artifact.name}</span>
+            <button type="button" onClick={() => onShowArtifact(artifact.id, sessionId)}>
+              在产物栏查看
+            </button>
+          </div>
+        </div>
+        {previewOpen && previewUrl && (
+          <ImageLightbox
+            src={previewUrl}
+            name={artifact.name}
+            onClose={() => setPreviewOpen(false)}
+            onOpenOriginal={() => void open()}
+          />
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className={`assistant-message-row artifact-message-row ${showAgentHeader ? "" : "agent-turn-continuation"}`}>
@@ -906,6 +1041,42 @@ function ArtifactCard({
           在产物栏查看
         </button>
       </div>
+    </div>
+  );
+}
+
+function ImageLightbox({
+  src,
+  name,
+  onClose,
+  onOpenOriginal,
+}: {
+  src: string;
+  name: string;
+  onClose: () => void;
+  onOpenOriginal: () => void;
+}) {
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="message-image-lightbox" role="dialog" aria-modal="true" aria-label={name} onClick={onClose}>
+      <div className="message-image-lightbox-toolbar" onClick={(event) => event.stopPropagation()}>
+        <span title={name}>{name}</span>
+        <button type="button" onClick={onOpenOriginal}>
+          <Icon name="external-link" size={15} />
+          打开原文件
+        </button>
+        <button type="button" className="message-image-lightbox-close" onClick={onClose} aria-label="关闭">
+          ×
+        </button>
+      </div>
+      <img src={src} alt={name} onClick={(event) => event.stopPropagation()} />
     </div>
   );
 }

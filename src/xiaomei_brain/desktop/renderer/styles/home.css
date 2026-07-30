@@ -1860,6 +1860,16 @@
   position: relative;
 }
 
+.search-message-highlight {
+  animation: search-message-highlight 2.4s ease-out;
+  border-radius: 12px;
+}
+
+@keyframes search-message-highlight {
+  0%, 35% { background: color-mix(in srgb, var(--ui-palette-brand-8) 14%, transparent); }
+  100% { background: transparent; }
+}
+
 .assistant-message-row.agent-turn-continuation {
   padding-top: 4px;
 }
@@ -2050,9 +2060,60 @@
 }
 
 .message-attachments {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 6px;
+}
+
+.message-inline-image {
+  position: relative;
+  display: block;
+  max-width: min(360px, 62vw);
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.08);
+  color: white;
+  cursor: zoom-in;
+}
+
+.message-inline-image img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  max-height: 360px;
+  object-fit: contain;
+}
+
+.message-inline-image > span:last-child {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: 18px 8px 6px;
+  overflow: hidden;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.58));
+  font-size: 11px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity var(--ui-motion-duration-sm) var(--ui-motion-easing-standard);
+}
+
+.message-inline-image:hover > span:last-child {
+  opacity: 1;
+}
+
+.message-inline-image-loading {
+  display: grid;
+  width: 148px;
+  height: 110px;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 11px;
 }
 
 .message-attachment {
@@ -2106,6 +2167,158 @@
 /* ─── Tool activity ─── */
 .artifact-message-row {
   align-items: flex-start;
+}
+
+.artifact-image-message-row {
+  align-items: flex-start;
+}
+
+.artifact-inline-image-group {
+  display: flex;
+  width: min(520px, calc(100% - 56px));
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+.artifact-inline-image {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--ui-color-border-secondary);
+  border-radius: 12px;
+  background: var(--ui-bg-secondary);
+  color: var(--ui-color-text-tertiary);
+  cursor: zoom-in;
+}
+
+.artifact-inline-image:hover:not(:disabled) {
+  border-color: var(--ui-color-border-tertiary);
+}
+
+.artifact-inline-image img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  max-height: 520px;
+  object-fit: contain;
+}
+
+.artifact-inline-image-loading {
+  display: flex;
+  width: min(420px, 62vw);
+  height: 220px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px;
+  font-size: 12px;
+}
+
+.artifact-inline-image.error {
+  cursor: pointer;
+}
+
+.artifact-inline-image-meta {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--ui-color-text-tertiary);
+  font-size: 11px;
+}
+
+.artifact-inline-image-meta > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-inline-image-meta button {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.artifact-inline-image-meta button:hover {
+  color: var(--ui-brand-primary);
+}
+
+.message-image-lightbox {
+  position: fixed;
+  z-index: 3000;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 64px 28px 28px;
+  background: rgba(9, 11, 15, 0.86);
+  backdrop-filter: blur(10px);
+}
+
+.message-image-lightbox > img {
+  display: block;
+  max-width: 94vw;
+  max-height: calc(100vh - 96px);
+  border-radius: 6px;
+  object-fit: contain;
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.45);
+}
+
+.message-image-lightbox-toolbar {
+  position: absolute;
+  top: 14px;
+  right: 18px;
+  left: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.message-image-lightbox-toolbar > span {
+  min-width: 0;
+  margin-right: auto;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-image-lightbox-toolbar button {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.08);
+  color: white;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.message-image-lightbox-toolbar button:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.message-image-lightbox-toolbar .message-image-lightbox-close {
+  width: 32px;
+  justify-content: center;
+  padding: 0;
+  font-size: 22px;
+  font-weight: 300;
 }
 
 .artifact-card-group {

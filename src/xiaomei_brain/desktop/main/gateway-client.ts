@@ -23,6 +23,7 @@ interface PendingRequest {
 interface GatewayEventMetadata {
   sequence?: number;
   timestamp?: number;
+  sessionId?: string;
 }
 
 export class GatewayClient extends EventEmitter {
@@ -33,7 +34,7 @@ export class GatewayClient extends EventEmitter {
   private reconnectDelay = 1000;
   private _connected = false;
   private _closed = false;
-  private lastEventSequence: number | null = null;
+  private lastEventSequenceBySession = new Map<string, number>();
 
   get connected(): boolean {
     return this._connected;
@@ -48,7 +49,7 @@ export class GatewayClient extends EventEmitter {
       this.ws.on("open", () => {
         this._connected = true;
         // Reconnect recovery establishes a fresh baseline with session.resume.
-        this.lastEventSequence = null;
+        this.lastEventSequenceBySession.clear();
         this.reconnectDelay = 1000;
         this.startPing();
         this.emit("connected");
@@ -137,6 +138,9 @@ export class GatewayClient extends EventEmitter {
     if (data["method"] === "event") {
       const params = (data["params"] || {}) as Record<string, unknown>;
       const eventName = params["type"] as string;
+      const sessionId = typeof params["session_id"] === "string"
+        ? params["session_id"] as string
+        : "legacy";
       const sequence = typeof params["sequence"] === "number" && Number.isInteger(params["sequence"])
         ? params["sequence"] as number
         : undefined;
@@ -144,17 +148,19 @@ export class GatewayClient extends EventEmitter {
         ? params["timestamp"] as number
         : undefined;
       if (sequence !== undefined && sequence > 0) {
-        if (this.lastEventSequence !== null && sequence <= this.lastEventSequence) {
+        const previousSequence = this.lastEventSequenceBySession.get(sessionId);
+        if (previousSequence !== undefined && sequence <= previousSequence) {
           // A transport retry must not duplicate cards or streamed text.
           return;
         }
-        if (this.lastEventSequence !== null && sequence !== this.lastEventSequence + 1) {
+        if (previousSequence !== undefined && sequence !== previousSequence + 1) {
           this.emit("eventGap", {
-            expected: this.lastEventSequence + 1,
+            expected: previousSequence + 1,
             received: sequence,
+            sessionId,
           });
         }
-        this.lastEventSequence = sequence;
+        this.lastEventSequenceBySession.set(sessionId, sequence);
       }
       const rawPayload = params["payload"] ?? {};
       const payload = rawPayload && typeof rawPayload === "object" && !Array.isArray(rawPayload)
@@ -164,7 +170,7 @@ export class GatewayClient extends EventEmitter {
             ...(typeof params["turn_id"] === "string" ? { turn_id: params["turn_id"] } : {}),
           }
         : rawPayload;
-      const metadata: GatewayEventMetadata = { sequence, timestamp };
+      const metadata: GatewayEventMetadata = { sequence, timestamp, sessionId };
       this.emit("event", eventName, payload, metadata);
       return;
     }

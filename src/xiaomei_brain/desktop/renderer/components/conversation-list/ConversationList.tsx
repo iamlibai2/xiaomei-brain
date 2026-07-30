@@ -6,6 +6,7 @@ import { SidebarTopbar } from "./SidebarTopbar";
 import { SidebarFooter } from "./SidebarFooter";
 import { AddAgentDialog } from "./AddAgentDialog";
 import { openSettingsCenter } from "../settings/events";
+import { openUnifiedSearch } from "../search/events";
 
 export function ConversationList() {
   const { t } = useTranslation();
@@ -30,7 +31,9 @@ export function ConversationList() {
   const terminalOpen = useCoreStore((s) => s.terminalOpen);
   const setTerminalOpen = useCoreStore((s) => s.setTerminalOpen);
   const unreadByAgent = useCoreStore((s) => s.unreadByAgent);
+  const unreadByConversation = useCoreStore((s) => s.unreadByConversation);
   const sendingByAgent = useCoreStore((s) => s.sendingByAgent);
+  const sendingByConversation = useCoreStore((s) => s.sendingByConversation);
   const localAvailabilityByAgent = useCoreStore((s) => s.localAvailabilityByAgent);
   const refreshLocalAgents = useCoreStore((s) => s.refreshLocalAgents);
   const localInfoByAgent = useCoreStore((s) => s.localInfoByAgent);
@@ -58,9 +61,11 @@ export function ConversationList() {
   const activeSessions = activeAgentId ? (sessionsByAgent[activeAgentId] || []) : [];
   const sessionListState = activeAgentId ? sessionListByAgent[activeAgentId] : undefined;
   const sessionBusy = activeAgentId
-    ? Boolean(sendingByAgent[activeAgentId] || connectionByAgent[activeAgentId]?.status === "connecting")
+    ? Boolean(connectionByAgent[activeAgentId]?.status === "connecting")
     : false;
-  const canCreateSession = activeMessageCount > 0 && !sessionBusy;
+  const canCreateSession = activeMessageCount > 0
+    && !sessionBusy
+    && !Boolean(activeAgentId && sendingByAgent[activeAgentId]);
 
   useEffect(() => {
     if (activeAgentId && sessionListState?.query) void searchSessions("");
@@ -71,7 +76,7 @@ export function ConversationList() {
       <SidebarTopbar
         collapsed={collapsed}
         onToggleCollapse={() => setCollapsed(!collapsed)}
-        onSearch={() => {}}
+        onSearch={openUnifiedSearch}
         onRefresh={() => { void refreshLocalAgents(); }}
         onTerminalToggle={() => setTerminalOpen(!terminalOpen)}
       />
@@ -182,6 +187,8 @@ export function ConversationList() {
                     isActive={session.id === activeSessionId}
                     isCurrent={session.id === activeSessionId}
                     disabled={sessionBusy}
+                    isWorking={Boolean(sendingByConversation[`${activeAgentId}\u0000${session.id}`])}
+                    unreadCount={unreadByConversation[`${activeAgentId}\u0000${session.id}`] || 0}
                     onClick={() => { void switchSession(session.id); }}
                   />
                 ))}
@@ -265,7 +272,7 @@ function AgentItem({
 
   return (
     <div
-      className={`agent-item ${isActive ? "active" : ""}`}
+      className={`agent-item ${isActive ? "active" : ""} ${unreadCount > 0 ? "unread" : ""}`}
       onClick={onSelect}
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget) return;
@@ -351,18 +358,23 @@ function SessionItem({
   isActive,
   isCurrent,
   disabled = false,
+  isWorking = false,
+  unreadCount = 0,
   onClick,
 }: {
   session: import("../../types").SessionEntry;
   isActive: boolean;
   isCurrent: boolean;
   disabled?: boolean;
+  isWorking?: boolean;
+  unreadCount?: number;
   onClick: () => void;
 }) {
   return (
     <div
-      className={`session-item ${isActive ? "active" : ""} ${isCurrent ? "current" : ""} ${disabled ? "disabled" : ""}`}
+      className={`session-item ${isActive ? "active" : ""} ${isCurrent ? "current" : ""} ${disabled ? "disabled" : ""} ${unreadCount > 0 ? "unread" : ""}`}
       onClick={disabled ? undefined : onClick}
+      title={disabled ? "Agent 正在回复，完成后可切换会话" : session.name}
       onKeyDown={(event) => {
         if (disabled || isCurrent) return;
         if (event.key === "Enter" || event.key === " ") {
@@ -377,7 +389,13 @@ function SessionItem({
       <span className="session-item-name">
         {session.name}
       </span>
-      <span className="session-item-meta">{formatSessionMeta(session)}</span>
+      <span className="session-item-status">
+        <span className="session-item-meta">{formatSessionMeta(session)}</span>
+        {isWorking && <span className="session-working-dot" title="工作中" />}
+        {unreadCount > 0 && (
+          <span className="session-unread-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>
+        )}
+      </span>
     </div>
   );
 }

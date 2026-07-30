@@ -4,7 +4,6 @@ import type { AgentStateSnapshot } from "../../store";
 
 interface ChatTopbarProps {
   taskName: string;
-  onSearch?: () => void;
   onToggleRightPanel?: () => void;
   rightPanelOpen?: boolean;
   onOpenAgentSettings?: () => void;
@@ -15,7 +14,6 @@ interface ChatTopbarProps {
 
 export function ChatTopbar({
   taskName,
-  onSearch,
   onToggleRightPanel,
   rightPanelOpen,
   onOpenAgentSettings,
@@ -55,13 +53,6 @@ export function ChatTopbar({
           icon="settings"
           onClick={onOpenAgentSettings}
           title={t("home.agentSettings", "Agent 设置")}
-        />
-        <Button
-          variant="ghost"
-          size="icon-md"
-          icon="search"
-          onClick={onSearch}
-          title={t("home.searchInConversation")}
         />
         {!rightPanelOpen && (
           <Button

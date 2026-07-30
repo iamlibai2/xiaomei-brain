@@ -18,6 +18,10 @@ class ConnectionManager:
         self.conn_to_remote_host: dict[str, str] = {}
         # session_id -> conn_id
         self.session_to_conn: dict[str, str] = {}
+        # A Desktop connection may keep receiving events for conversations it
+        # has already opened while another conversation is active.
+        self.session_subscribers: dict[str, set[str]] = {}
+        self.conn_to_subscriptions: dict[str, set[str]] = {}
         # connect 只记录客户端希望恢复的会话；人物认证前不授予会话权力，
         # 也不能据此挤掉当前正在使用该会话的连接。
         self.conn_to_pending_session: dict[str, str] = {}
@@ -56,6 +60,13 @@ class ConnectionManager:
         self.conn_to_embodiment.pop(conn_id, None)
         if session_id and self.session_to_conn.get(session_id) == conn_id:
             del self.session_to_conn[session_id]
+        for subscribed_session in self.conn_to_subscriptions.pop(conn_id, set()):
+            subscribers = self.session_subscribers.get(subscribed_session)
+            if subscribers is None:
+                continue
+            subscribers.discard(conn_id)
+            if not subscribers:
+                self.session_subscribers.pop(subscribed_session, None)
 
     def set_session(self, session_id: str, conn_id: str, user_id: str = "") -> None:
         previous_session = self.conn_to_session.get(conn_id)
@@ -63,12 +74,17 @@ class ConnectionManager:
             del self.session_to_conn[previous_session]
         previous_conn = self.session_to_conn.get(session_id)
         if previous_conn and previous_conn != conn_id:
+            self.clear_subscriptions(previous_conn)
             self.conn_to_session.pop(previous_conn, None)
             self.conn_to_user.pop(previous_conn, None)
             self.conn_to_embodiment.pop(previous_conn, None)
         self.session_to_conn[session_id] = conn_id
         self.conn_to_session[conn_id] = session_id
         self.conn_to_user[conn_id] = user_id
+        self.subscribe_session(session_id, conn_id)
+        embodiment = self.conn_to_embodiment.get(conn_id)
+        if embodiment is not None:
+            embodiment["session_id"] = session_id
 
     def set_pending_session(self, conn_id: str, session_id: str) -> None:
         self.conn_to_pending_session[conn_id] = session_id
@@ -87,6 +103,38 @@ class ConnectionManager:
 
     def get_conn_id(self, session_id: str) -> str | None:
         return self.session_to_conn.get(session_id)
+
+    def get_conn_ids(self, session_id: str) -> tuple[str, ...]:
+        subscribers = set(self.session_subscribers.get(session_id, set()))
+        active = self.session_to_conn.get(session_id)
+        if active:
+            subscribers.add(active)
+        return tuple(subscribers)
+
+    def subscribe_session(self, session_id: str, conn_id: str) -> None:
+        if not session_id or not conn_id:
+            return
+        self.session_subscribers.setdefault(session_id, set()).add(conn_id)
+        self.conn_to_subscriptions.setdefault(conn_id, set()).add(session_id)
+
+    def unsubscribe_session(self, session_id: str, conn_id: str) -> None:
+        subscribers = self.session_subscribers.get(session_id)
+        if subscribers is not None:
+            subscribers.discard(conn_id)
+            if not subscribers:
+                self.session_subscribers.pop(session_id, None)
+        subscriptions = self.conn_to_subscriptions.get(conn_id)
+        if subscriptions is not None:
+            subscriptions.discard(session_id)
+            if not subscriptions:
+                self.conn_to_subscriptions.pop(conn_id, None)
+
+    def clear_subscriptions(self, conn_id: str) -> None:
+        for session_id in tuple(self.conn_to_subscriptions.get(conn_id, set())):
+            self.unsubscribe_session(session_id, conn_id)
+
+    def is_subscribed(self, conn_id: str, session_id: str) -> bool:
+        return session_id in self.conn_to_subscriptions.get(conn_id, set())
 
     def get_session_id(self, conn_id: str) -> str | None:
         return self.conn_to_session.get(conn_id)
@@ -117,7 +165,10 @@ class ConnectionManager:
 
     def get_embodiment_for_session(self, session_id: str) -> dict | None:
         conn_id = self.get_conn_id(session_id)
-        return self.get_embodiment_for_conn(conn_id) if conn_id else None
+        value = self.get_embodiment_for_conn(conn_id) if conn_id else None
+        if value is None or value.get("session_id") != session_id:
+            return None
+        return value
 
     def list_embodiments(self) -> list[dict]:
         return [dict(value) for value in self.conn_to_embodiment.values()]

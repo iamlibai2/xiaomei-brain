@@ -576,6 +576,30 @@ class ConversationDB(SQLiteStore):
         ).fetchall()
         return [self._artifact_from_row(row) for row in rows]
 
+    def search_artifacts_for_person(
+        self,
+        person_id: str,
+        keyword: str,
+        *,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Search artifact names/descriptions visible to one verified Person."""
+        normalized = keyword.strip()
+        if not normalized:
+            return []
+        rows = self._get_conn().execute(
+            """SELECT * FROM artifacts
+               WHERE user_id IN (?, 'global')
+                 AND (
+                   INSTR(LOWER(name), LOWER(?)) > 0
+                   OR INSTR(LOWER(description), LOWER(?)) > 0
+                 )
+               ORDER BY created_at DESC, id DESC
+               LIMIT ?""",
+            (person_id, normalized, normalized, max(1, min(int(limit), 50))),
+        ).fetchall()
+        return [self._artifact_from_row(row) for row in rows]
+
     def _upsert_artifact_row(
         self,
         conn: sqlite3.Connection,
@@ -773,6 +797,64 @@ class ConversationDB(SQLiteStore):
                 ).fetchall()
 
         return [dict(r) for r in rows]
+
+    def search_messages_for_person(
+        self,
+        keyword: str,
+        person_id: str,
+        *,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Search visible conversation messages without crossing Person scope."""
+        normalized = keyword.strip()
+        if not normalized:
+            return []
+        safe_limit = max(1, min(int(limit), 50))
+        conn = self._get_conn()
+        has_cjk = any("\u4e00" <= char <= "\u9fff" for char in normalized)
+        if has_cjk:
+            rows = conn.execute(
+                """SELECT m.* FROM messages AS m
+                   INNER JOIN conversation_sessions AS scoped
+                     ON scoped.session_id = m.session_id
+                    AND scoped.scope_type = 'person'
+                    AND scoped.scope_id = ?
+                   WHERE m.role IN ('user', 'assistant')
+                     AND m.content LIKE ?
+                   ORDER BY m.created_at DESC, m.id DESC
+                   LIMIT ?""",
+                (person_id, f"%{normalized}%", safe_limit),
+            ).fetchall()
+        else:
+            safe_keyword = normalized.replace('"', '""')
+            try:
+                rows = conn.execute(
+                    """SELECT m.* FROM messages AS m
+                       JOIN messages_fts AS fts ON m.id = fts.rowid
+                       INNER JOIN conversation_sessions AS scoped
+                         ON scoped.session_id = m.session_id
+                        AND scoped.scope_type = 'person'
+                        AND scoped.scope_id = ?
+                       WHERE messages_fts MATCH ?
+                         AND m.role IN ('user', 'assistant')
+                       ORDER BY rank
+                       LIMIT ?""",
+                    (person_id, f'"{safe_keyword}"', safe_limit),
+                ).fetchall()
+            except Exception:
+                rows = conn.execute(
+                    """SELECT m.* FROM messages AS m
+                       INNER JOIN conversation_sessions AS scoped
+                         ON scoped.session_id = m.session_id
+                        AND scoped.scope_type = 'person'
+                        AND scoped.scope_id = ?
+                       WHERE m.role IN ('user', 'assistant')
+                         AND m.content LIKE ?
+                       ORDER BY m.created_at DESC, m.id DESC
+                       LIMIT ?""",
+                    (person_id, f"%{normalized}%", safe_limit),
+                ).fetchall()
+        return [dict(row) for row in rows]
 
     def clear_context(self, session_id: str) -> None:
         """Mark a session as cleared — get_recent will only return messages after this point."""

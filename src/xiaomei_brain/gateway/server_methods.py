@@ -23,6 +23,7 @@ from .methods import (
     MediaServiceMethods,
     MemoryMethods,
     ModelMethods,
+    SearchMethods,
     SessionMethods,
     ToolServiceMethods,
 )
@@ -73,6 +74,7 @@ class MethodRouter:
             living,
             self._identity_contexts,
         )
+        self._search_methods = SearchMethods(living, self._identity_contexts)
         self._channel_methods = ChannelMethods(living, self._identity_contexts)
 
         self._registry.register_many(
@@ -98,6 +100,7 @@ class MethodRouter:
             self._assignment_methods,
             self._activity_methods,
             self._agent_state_methods,
+            self._search_methods,
             self._channel_methods,
         ):
             self._registry.register_many(provider.handlers)
@@ -137,7 +140,11 @@ class MethodRouter:
             "interaction.question": {"interaction.respond"},
             "action.approval": {"action.respond"},
             "session.resume": {"session.resume"},
+            "session.subscribe": {"session.subscribe"},
+            "session.unsubscribe": {"session.unsubscribe"},
+            "session.switch": {"session.switch"},
             "session.list": {"chat.sessions"},
+            "search.unified": {"search.query"},
             "message.attachments": {"chat.send", "attachment.get"},
             "embodiment.desktop": {
                 "embodiment.register",

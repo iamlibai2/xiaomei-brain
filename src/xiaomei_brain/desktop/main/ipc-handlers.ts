@@ -14,6 +14,10 @@ import { IdentityVault } from "./identity-vault";
 const connections = new Map<string, GatewayClient>();
 const connectionSessions = new Map<string, string>();
 const connectionReady = new Map<string, boolean>();
+const connectionSessionSwitchers = new Map<
+  string,
+  (sessionId: string) => Promise<Record<string, unknown>>
+>();
 const activeNotifications = new Set<Notification>();
 const attachmentCache = new Map<string, {
   id: string; name: string; mimeType: string; size: number; kind: string; dataBase64: string;
@@ -388,6 +392,7 @@ export function registerIpcHandlers(
         connections.delete(args.agentId);
         connectionSessions.delete(args.agentId);
         connectionReady.delete(args.agentId);
+        connectionSessionSwitchers.delete(args.agentId);
 
         const client = new GatewayClient();
         // A newly introduced Desktop identity must not silently claim an old
@@ -396,7 +401,8 @@ export function registerIpcHandlers(
         let sessionId = identityWasSeenByAgent ? (args.sessionId || "") : "";
         let authenticated = false;
         let reauthenticating = false;
-        let recoveringEventGap = false;
+        const recoveringEventGaps = new Set<string>();
+        const subscribedSessions = new Set<string>();
 
         const sendGatewayEvent = (event: string, data: unknown = {}) => {
           const win = getWindow();
@@ -405,20 +411,51 @@ export function registerIpcHandlers(
           }
         };
 
+        const rememberSubscribedSession = async (nextSessionId: string) => {
+          if (!nextSessionId) return;
+          subscribedSessions.delete(nextSessionId);
+          subscribedSessions.add(nextSessionId);
+          let protectedAttempts = 0;
+          while (subscribedSessions.size > 30 && protectedAttempts < subscribedSessions.size) {
+            const oldest = subscribedSessions.values().next().value as string | undefined;
+            if (!oldest) break;
+            if (oldest === sessionId || oldest === nextSessionId) {
+              subscribedSessions.delete(oldest);
+              subscribedSessions.add(oldest);
+              protectedAttempts += 1;
+              continue;
+            }
+            const released = await client.rpc("session.unsubscribe", { session_id: oldest });
+            if (released.error) {
+              // Running/waiting conversations are deliberately protected by
+              // the Agent. Move one to the back and retry it on a later switch.
+              subscribedSessions.delete(oldest);
+              subscribedSessions.add(oldest);
+              protectedAttempts += 1;
+              continue;
+            }
+            subscribedSessions.delete(oldest);
+            protectedAttempts = 0;
+          }
+        };
+
         // Forward events with agentId tag
         client.on("event", (
           eventName: string,
           data: unknown,
-          metadata: { sequence?: number; timestamp?: number } = {},
+          metadata: { sequence?: number; timestamp?: number; sessionId?: string } = {},
         ) => {
           // session.resume below replaces the incomplete local stream with an
           // authoritative snapshot, so frames arriving during recovery are
           // intentionally not projected into the renderer.
-          if (recoveringEventGap) return;
+          const deliveredSessionId = data && typeof data === "object" && !Array.isArray(data)
+            ? String((data as Record<string, unknown>).session_id || metadata.sessionId || sessionId)
+            : String(metadata.sessionId || sessionId);
+          if (recoveringEventGaps.has(deliveredSessionId)) return;
           const eventData = data && typeof data === "object" && !Array.isArray(data)
             ? {
                 ...(data as Record<string, unknown>),
-                session_id: (data as Record<string, unknown>).session_id || sessionId,
+                session_id: (data as Record<string, unknown>).session_id || deliveredSessionId,
               }
             : data;
           const win = getWindow();
@@ -431,35 +468,50 @@ export function registerIpcHandlers(
             });
           }
         });
-        client.on("eventGap", (gap: { expected: number; received: number }) => {
-          if (!authenticated || recoveringEventGap || !sessionId) return;
-          recoveringEventGap = true;
-          connectionReady.set(args.agentId, false);
+        client.on("eventGap", (gap: { expected: number; received: number; sessionId?: string }) => {
+          const gapSessionId = gap.sessionId || sessionId;
+          if (!authenticated || !gapSessionId || recoveringEventGaps.has(gapSessionId)) return;
+          recoveringEventGaps.add(gapSessionId);
+          if (gapSessionId === sessionId) connectionReady.set(args.agentId, false);
           console.warn(
-            `[gateway] event gap for ${args.agentId}: expected ${gap.expected}, received ${gap.received}`,
+            `[gateway] event gap for ${args.agentId}/${gapSessionId}: expected ${gap.expected}, received ${gap.received}`,
           );
           let recovered = false;
           void client.rpc("session.resume", {
-            session_id: sessionId,
+            session_id: gapSessionId,
             history_limit: 50,
           }).then((resume) => {
             if (resume.error) {
-              sendGatewayEvent("reconnect.error", { message: resume.error.message });
+              if (gapSessionId === sessionId) {
+                sendGatewayEvent("reconnect.error", { message: resume.error.message });
+              } else {
+                console.warn(
+                  `[gateway] background resync failed for ${args.agentId}/${gapSessionId}: ${resume.error.message}`,
+                );
+              }
               return;
             }
             sendGatewayEvent("stream.resynced", {
-              session_id: sessionId,
+              session_id: gapSessionId,
               resume: resume.result || {},
               expected_sequence: gap.expected,
               received_sequence: gap.received,
             });
             recovered = true;
           }).catch((error) => {
-            sendGatewayEvent("reconnect.error", { message: String(error) });
+            if (gapSessionId === sessionId) {
+              sendGatewayEvent("reconnect.error", { message: String(error) });
+            } else {
+              console.warn(
+                `[gateway] background resync failed for ${args.agentId}/${gapSessionId}: ${error}`,
+              );
+            }
           }).finally(() => {
-            recoveringEventGap = false;
-            connectionReady.set(args.agentId, recovered);
-            if (!recovered) client.reconnect();
+            recoveringEventGaps.delete(gapSessionId);
+            if (gapSessionId === sessionId) {
+              connectionReady.set(args.agentId, recovered);
+              if (!recovered) client.reconnect();
+            }
           });
         });
         client.on("reconnecting", () => {
@@ -488,6 +540,23 @@ export function registerIpcHandlers(
             const result = res.result || {};
             sessionId = (result["session_id"] as string) || sessionId;
             await authenticateIdentity(client);
+            await rememberSubscribedSession(sessionId);
+            for (const subscribedSessionId of subscribedSessions) {
+              if (subscribedSessionId === sessionId) continue;
+              const subscription = await client.rpc("session.subscribe", {
+                session_id: subscribedSessionId,
+              });
+              if (subscription.error) throw new Error(subscription.error.message);
+              const backgroundResume = await client.rpc("session.resume", {
+                session_id: subscribedSessionId,
+                history_limit: 50,
+              });
+              if (backgroundResume.error) throw new Error(backgroundResume.error.message);
+              sendGatewayEvent("stream.resynced", {
+                session_id: subscribedSessionId,
+                resume: backgroundResume.result || {},
+              });
+            }
             const embodiment = await registerDesktopEmbodiment(client);
             if (embodiment.error) throw new Error(embodiment.error.message);
             connectionSessions.set(args.agentId, sessionId);
@@ -540,6 +609,7 @@ export function registerIpcHandlers(
         config.set(bindingConfigKey, "1");
         authenticated = true;
         connectionSessions.set(args.agentId, sessionId);
+        await rememberSubscribedSession(sessionId);
         const embodiment = await registerDesktopEmbodiment(client);
         if (embodiment.error) throw new Error(embodiment.error.message);
 
@@ -555,6 +625,23 @@ export function registerIpcHandlers(
           return resume;
         }
         connectionReady.set(args.agentId, true);
+        connectionSessionSwitchers.set(args.agentId, async (nextSessionId) => {
+          const resume = await client.rpc("session.switch", {
+            session_id: nextSessionId,
+            history_limit: 50,
+          });
+          if (resume.error) return resume as unknown as Record<string, unknown>;
+          sessionId = nextSessionId;
+          await rememberSubscribedSession(sessionId);
+          connectionSessions.set(args.agentId, sessionId);
+          return {
+            result: {
+              session_id: sessionId,
+              agent_name: agentName,
+              resume: resume.result || {},
+            },
+          };
+        });
 
         // Persist last connection params
         config.set("last_host", args.host);
@@ -573,9 +660,28 @@ export function registerIpcHandlers(
         connections.delete(args.agentId);
         connectionSessions.delete(args.agentId);
         connectionReady.delete(args.agentId);
+        connectionSessionSwitchers.delete(args.agentId);
         return { error: { code: -32099, message: `Connection failed: ${e}` } };
       }
     }
+  );
+
+  // Switching conversations is an in-connection operation. Reopening the
+  // WebSocket here would make the whole Agent appear to reconnect and would
+  // briefly tear down its event stream.
+  ipcMain.handle(
+    "gateway:switchSession",
+    async (_event, args: { agentId: string; sessionId: string }) => {
+      const switchSession = connectionSessionSwitchers.get(args.agentId);
+      if (!switchSession) {
+        return { error: { code: -32099, message: "Agent is not connected" } };
+      }
+      try {
+        return await switchSession(args.sessionId);
+      } catch (error) {
+        return { error: { code: -32099, message: `Session switch failed: ${error}` } };
+      }
+    },
   );
 
   // ─── disconnect ─────────────────────────────
@@ -588,6 +694,7 @@ export function registerIpcHandlers(
     }
     connectionSessions.delete(args.agentId);
     connectionReady.delete(args.agentId);
+    connectionSessionSwitchers.delete(args.agentId);
   });
 
   // ─── chat.send ──────────────────────────────
@@ -856,6 +963,17 @@ export function registerIpcHandlers(
       });
     }
   );
+
+  ipcMain.handle("gateway:unifiedSearch", async (_event, args: {
+    agentId: string; query: string; limit?: number;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("search.query", {
+      query: args.query,
+      limit: args.limit || 8,
+    });
+  });
 
   // ─── assignments ────────────────────────────
 

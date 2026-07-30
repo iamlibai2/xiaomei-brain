@@ -80,8 +80,8 @@ def test_ws_event_sequence_is_contiguous_per_delivered_session(monkeypatch):
         def __init__(self):
             self.frames = []
 
-        def get_conn_id(self, session_id):
-            return f"conn-{session_id}"
+        def get_conn_ids(self, session_id):
+            return (f"conn-{session_id}",)
 
         async def send(self, _conn_id, frame):
             self.frames.append(frame)
@@ -121,6 +121,23 @@ def test_replaced_websocket_loses_its_session_authority():
     assert connections.resolve_user("old-conn", "user-1") is None
     assert connections.resolve_session("new-conn", "session-1") == "session-1"
     assert connections.resolve_session("new-conn", "session-2") is None
+    assert connections.get_conn_ids("session-1") == ("new-conn",)
+
+
+def test_switching_session_keeps_previous_session_subscription():
+    connections = ConnectionManager()
+    connections.connections["desktop"] = object()
+    connections.set_session("session-1", "desktop", "person-1")
+    connections.set_session("session-2", "desktop", "person-1")
+
+    assert connections.get_session_id("desktop") == "session-2"
+    assert connections.is_subscribed("desktop", "session-1")
+    assert connections.get_conn_ids("session-1") == ("desktop",)
+    assert connections.get_conn_ids("session-2") == ("desktop",)
+
+    connections.unregister("desktop")
+    assert connections.get_conn_ids("session-1") == ()
+    assert connections.get_conn_ids("session-2") == ()
 
 
 def test_pending_connection_cannot_replace_active_session_before_identity():
@@ -626,6 +643,97 @@ def test_session_resume_returns_history_and_inflight_snapshot():
     assert response["result"]["state"] == "waiting_user"
     assert response["result"]["inflight"]["turn_id"] == "turn-1"
     assert response["result"]["messages"][0]["content"] == "继续吗"
+
+
+def test_session_switch_moves_authenticated_connection_to_owned_session():
+    class ConversationDB:
+        def get_history_page(self, *, session_id, **_kwargs):
+            return ([{
+                "id": 2,
+                "role": "assistant",
+                "content": f"history:{session_id}",
+                "created_at": 2,
+                "user_id": "person-1",
+            }], False)
+
+    sessions = {
+        "session-1": SimpleNamespace(
+            session_id="session-1", scope_type="person", scope_id="person-1",
+        ),
+        "session-2": SimpleNamespace(
+            session_id="session-2", scope_type="person", scope_id="person-1",
+        ),
+        "session-3": SimpleNamespace(
+            session_id="session-3", scope_type="person", scope_id="person-1",
+        ),
+        "other-session": SimpleNamespace(
+            session_id="other-session", scope_type="person", scope_id="person-2",
+        ),
+    }
+    living = SimpleNamespace(
+        agent=SimpleNamespace(conversation_db=ConversationDB()),
+        _people_service=SimpleNamespace(
+            store=SimpleNamespace(get_session=lambda session_id: sessions.get(session_id)),
+        ),
+        _turn_registry=SimpleNamespace(snapshot=lambda _session_id: None),
+    )
+    router = MethodRouter(living=living)
+    conn_id = "switch-connection"
+    router._auth_sessions.add(conn_id)
+    from xiaomei_brain.gateway.connection import cm
+    cm.set_session("session-1", conn_id, "person-1")
+    try:
+        response = router.dispatch(
+            conn_id,
+            "request-switch",
+            "session.switch",
+            {"session_id": "session-2", "history_limit": 50},
+        )
+        rejected = router.dispatch(
+            conn_id,
+            "request-switch-other",
+            "session.switch",
+            {"session_id": "other-session", "history_limit": 50},
+        )
+        background_resume = router.dispatch(
+            conn_id,
+            "request-resume-previous",
+            "session.resume",
+            {"session_id": "session-1", "history_limit": 50},
+        )
+        subscribed = router.dispatch(
+            conn_id,
+            "request-subscribe",
+            "session.subscribe",
+            {"session_id": "session-3"},
+        )
+        unsubscribed = router.dispatch(
+            conn_id,
+            "request-unsubscribe",
+            "session.unsubscribe",
+            {"session_id": "session-3"},
+        )
+        active_unsubscribe = router.dispatch(
+            conn_id,
+            "request-unsubscribe-active",
+            "session.unsubscribe",
+            {"session_id": "session-2"},
+        )
+        bound_session = cm.get_session_id(conn_id)
+        previous_session_subscribed = cm.is_subscribed(conn_id, "session-1")
+    finally:
+        cm.unregister(conn_id)
+
+    assert "error" not in response
+    assert response["result"]["session_id"] == "session-2"
+    assert response["result"]["messages"][0]["content"] == "history:session-2"
+    assert rejected["error"]["code"] == -32602
+    assert bound_session == "session-2"
+    assert previous_session_subscribed is True
+    assert background_resume["result"]["messages"][0]["content"] == "history:session-1"
+    assert subscribed["result"] == {"session_id": "session-3", "subscribed": True}
+    assert unsubscribed["result"] == {"session_id": "session-3", "subscribed": False}
+    assert active_unsubscribe["error"]["code"] == -32602
 
 
 def test_action_response_uses_authenticated_connection_session_and_turn():

@@ -142,8 +142,8 @@ class WSAdapter(ChannelAdapter):
         msg_type: "text" 完整消息 → event:"message.complete"
                   "text_chunk" 流式块 → event:"message.delta"
         """
-        conn_id = self._conn_manager.get_conn_id(target)
-        if conn_id is None:
+        conn_ids = self._conn_manager.get_conn_ids(target)
+        if not conn_ids:
             logger.warning("[WSAdapter] 丢弃消息，无连接: session=%s msg=%.100s", target, text)
             return
 
@@ -185,8 +185,8 @@ class WSAdapter(ChannelAdapter):
         timestamp: int = 0,
     ) -> None:
         """向 WebSocket 原样发送结构化 Gateway 事件。"""
-        conn_id = self._conn_manager.get_conn_id(target)
-        if conn_id is None:
+        conn_ids = self._conn_manager.get_conn_ids(target)
+        if not conn_ids:
             logger.warning("[WSAdapter] 丢弃事件，无连接: session=%s event=%s", target, event)
             return
 
@@ -209,7 +209,8 @@ class WSAdapter(ChannelAdapter):
                 sequence=sequence,
                 timestamp=timestamp or int(time.time() * 1000),
             )
-            asyncio.run_coroutine_threadsafe(
-                self._conn_manager.send(conn_id, frame),
-                loop,
-            )
+            for conn_id in conn_ids:
+                asyncio.run_coroutine_threadsafe(
+                    self._conn_manager.send(conn_id, frame),
+                    loop,
+                )

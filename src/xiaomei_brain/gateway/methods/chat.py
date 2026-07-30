@@ -206,6 +206,8 @@ class ChatMethods:
         except Exception as exc:
             return build_error(req_id, ErrorCode.INVALID_REQUEST, f"参数无效: {format_error(exc)}")
         session_id = cm.resolve_session(conn_id, parsed.session_id)
+        if session_id is None and cm.is_subscribed(conn_id, parsed.session_id):
+            session_id = parsed.session_id
         if session_id is None:
             return build_error(req_id, ErrorCode.INVALID_PARAMS, "不能访问当前连接之外的会话")
         living = self._living
@@ -261,6 +263,8 @@ class ChatMethods:
         except Exception as exc:
             return build_error(req_id, ErrorCode.INVALID_REQUEST, f"参数无效: {format_error(exc)}")
         session_id = cm.resolve_session(conn_id, parsed.session_id)
+        if session_id is None and cm.is_subscribed(conn_id, parsed.session_id):
+            session_id = parsed.session_id
         if session_id is None:
             return build_error(req_id, ErrorCode.INVALID_PARAMS, "不能访问当前连接之外的会话")
         living = self._living

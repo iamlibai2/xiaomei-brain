@@ -57,6 +57,76 @@ function attachmentDraftKey(agentId: string, sessionId: string | null | undefine
   return `${agentId}\u0000${sessionId || "new"}`;
 }
 
+function conversationStateKey(agentId: string, sessionId: string | null | undefined): string {
+  return `${agentId}\u0000${sessionId || "new"}`;
+}
+
+function messagesForSession(
+  state: CoreState,
+  agentId: string,
+  sessionId: string,
+): DisplayMessage[] {
+  touchConversationState(state, agentId, sessionId);
+  if (state.activeSessionByAgent[agentId] === sessionId) {
+    if (!state.messagesByAgent[agentId]) state.messagesByAgent[agentId] = [];
+    return state.messagesByAgent[agentId];
+  }
+  const key = conversationStateKey(agentId, sessionId);
+  if (!state.messagesByConversation[key]) state.messagesByConversation[key] = [];
+  return state.messagesByConversation[key];
+}
+
+function readMessagesForSession(
+  state: CoreState,
+  agentId: string,
+  sessionId: string,
+): DisplayMessage[] {
+  return state.activeSessionByAgent[agentId] === sessionId
+    ? state.messagesByAgent[agentId] || []
+    : state.messagesByConversation[conversationStateKey(agentId, sessionId)] || [];
+}
+
+function setSessionSending(
+  state: CoreState,
+  agentId: string,
+  sessionId: string,
+  sending: boolean,
+): void {
+  touchConversationState(state, agentId, sessionId);
+  state.sendingByConversation[conversationStateKey(agentId, sessionId)] = sending;
+  const prefix = `${agentId}\u0000`;
+  state.sendingByAgent[agentId] = Object.entries(state.sendingByConversation)
+    .some(([key, value]) => key.startsWith(prefix) && value);
+}
+
+function touchConversationState(state: CoreState, agentId: string, sessionId: string): void {
+  const key = conversationStateKey(agentId, sessionId);
+  state.recentConversationKeys = state.recentConversationKeys.filter((value) => value !== key);
+  state.recentConversationKeys.push(key);
+  let protectedAttempts = 0;
+  while (state.recentConversationKeys.length > 30
+    && protectedAttempts < state.recentConversationKeys.length) {
+    const oldest = state.recentConversationKeys[0];
+    const separator = oldest.indexOf("\u0000");
+    const oldestAgentId = separator >= 0 ? oldest.slice(0, separator) : "";
+    const oldestSessionId = separator >= 0 ? oldest.slice(separator + 1) : "";
+    const isActive = state.activeSessionByAgent[oldestAgentId] === oldestSessionId;
+    if (isActive || state.sendingByConversation[oldest]) {
+      state.recentConversationKeys.push(state.recentConversationKeys.shift()!);
+      protectedAttempts += 1;
+      continue;
+    }
+    state.recentConversationKeys.shift();
+    delete state.messagesByConversation[oldest];
+    delete state.draftByConversation[oldest];
+    delete state.unreadByConversation[oldest];
+    delete state.attachmentsByConversation[oldest];
+    delete state.attachmentErrorByConversation[oldest];
+    delete state.sendingByConversation[oldest];
+    protectedAttempts = 0;
+  }
+}
+
 function displayAttachments(values: unknown): DisplayAttachment[] {
   if (!Array.isArray(values)) return [];
   return values.flatMap((value): DisplayAttachment[] => {
@@ -128,6 +198,13 @@ function upsertArtifact(state: CoreState, agentId: string, artifact: ArtifactSna
 
 function clearAgentStreams(agentId: string): void {
   const prefix = `${agentId}\u0000`;
+  for (const key of Object.keys(_streamingByTurn)) {
+    if (key.startsWith(prefix)) delete _streamingByTurn[key];
+  }
+}
+
+function clearSessionStreams(agentId: string, sessionId: string): void {
+  const prefix = `${agentId}\u0000${sessionId || "legacy"}\u0000`;
   for (const key of Object.keys(_streamingByTurn)) {
     if (key.startsWith(prefix)) delete _streamingByTurn[key];
   }
@@ -1050,6 +1127,7 @@ export interface PersonMemoryListState {
 interface CoreState {
   connectionByAgent: Record<string, ConnectionState>;
   messagesByAgent: Record<string, DisplayMessage[]>;
+  messagesByConversation: Record<string, DisplayMessage[]>;
   assignmentsByAgent: Record<string, AssignmentSnapshot[]>;
   assignmentLoadingByAgent: Record<string, boolean>;
   assignmentErrorByAgent: Record<string, string>;
@@ -1064,7 +1142,9 @@ interface CoreState {
   agentStateByAgent: Record<string, AgentStateSnapshot>;
   speakingByAgent: Record<string, { body: string; startedAt: number }>;
   sendingByAgent: Record<string, boolean>;
+  sendingByConversation: Record<string, boolean>;
   draftByAgent: Record<string, string>;
+  draftByConversation: Record<string, string>;
   attachmentsByConversation: Record<string, ChatAttachment[]>;
   attachmentErrorByConversation: Record<string, string>;
   activeAgentId: string | null;
@@ -1074,6 +1154,8 @@ interface CoreState {
   terminalAgentId: string | null;
   activeNav: string;
   unreadByAgent: Record<string, number>;
+  unreadByConversation: Record<string, number>;
+  recentConversationKeys: string[];
   sessionsByAgent: Record<string, SessionEntry[]>;
   sessionListByAgent: Record<string, SessionListState>;
   activeSessionByAgent: Record<string, string | null>;
@@ -1105,6 +1187,7 @@ interface CoreActions {
   setDraft: (text: string) => void;
   newSession: (name?: string) => Promise<void>;
   switchSession: (sessionId: string) => Promise<void>;
+  openSearchMessage: (sessionId: string, messageId: number) => Promise<void>;
   loadOlderMessages: () => Promise<void>;
   searchSessions: (query: string) => Promise<void>;
   loadMoreSessions: () => Promise<void>;
@@ -1141,6 +1224,7 @@ const persisted = loadPersisted();
 export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   connectionByAgent: {},
   messagesByAgent: {},
+  messagesByConversation: {},
   assignmentsByAgent: {},
   assignmentLoadingByAgent: {},
   assignmentErrorByAgent: {},
@@ -1155,7 +1239,9 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   agentStateByAgent: {},
   speakingByAgent: {},
   sendingByAgent: {},
+  sendingByConversation: {},
   draftByAgent: {},
+  draftByConversation: {},
   attachmentsByConversation: {},
   attachmentErrorByConversation: {},
   activeAgentId: persisted.activeAgentId ?? null,
@@ -1165,6 +1251,8 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   terminalAgentId: null,
   activeNav: "assistant",
   unreadByAgent: {},
+  unreadByConversation: {},
+  recentConversationKeys: [],
   sessionsByAgent: {},
   sessionListByAgent: {},
   activeSessionByAgent: persisted.activeSessionByAgent ?? {},
@@ -1363,6 +1451,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         s.activeAgentId = agentId;
         s.connectionByAgent[agentId] = { status: "connected", agentName, error: "" };
         s.messagesByAgent[agentId] = messages;
+        if (sessionId) s.messagesByConversation[conversationStateKey(agentId, sessionId)] = messages;
         s.sessionsByAgent[agentId] = sessionResult.sessions;
         s.sessionListByAgent[agentId] = sessionResult.listState;
         if (sessionId) {
@@ -1370,7 +1459,14 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
           if (!s.historyPaginationByAgent[agentId]) s.historyPaginationByAgent[agentId] = {};
           s.historyPaginationByAgent[agentId][sessionId] = pagination;
         }
-        s.sendingByAgent[agentId] = resume?.state === "running" || resume?.state === "waiting_user";
+        if (sessionId) {
+          setSessionSending(
+            s,
+            agentId,
+            sessionId,
+            resume?.state === "running" || resume?.state === "waiting_user",
+          );
+        }
       }));
       restoreStreamFromResume(agentId, sessionId, resume);
 
@@ -1442,6 +1538,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         const savedAgent = s.agents.find(a => a.id === agentId);
         if (savedAgent && savedAgent.source !== "local") savedAgent.name = agentName;
         s.messagesByAgent[agentId] = messages;
+        if (sessionId) s.messagesByConversation[conversationStateKey(agentId, sessionId)] = messages;
         s.sessionsByAgent[agentId] = sessionResult.sessions;
         s.sessionListByAgent[agentId] = sessionResult.listState;
         if (sessionId) {
@@ -1449,7 +1546,14 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
           if (!s.historyPaginationByAgent[agentId]) s.historyPaginationByAgent[agentId] = {};
           s.historyPaginationByAgent[agentId][sessionId] = pagination;
         }
-        s.sendingByAgent[agentId] = resume?.state === "running" || resume?.state === "waiting_user";
+        if (sessionId) {
+          setSessionSending(
+            s,
+            agentId,
+            sessionId,
+            resume?.state === "running" || resume?.state === "waiting_user",
+          );
+        }
       }));
       restoreStreamFromResume(agentId, sessionId, resume);
     } catch (err) {
@@ -1496,6 +1600,9 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     set(produce((s: CoreState) => {
       delete s.connectionByAgent[agentId];
       delete s.messagesByAgent[agentId];
+      for (const key of Object.keys(s.messagesByConversation)) {
+        if (key.startsWith(`${agentId}\u0000`)) delete s.messagesByConversation[key];
+      }
       delete s.assignmentsByAgent[agentId];
       delete s.assignmentLoadingByAgent[agentId];
       delete s.assignmentErrorByAgent[agentId];
@@ -1510,7 +1617,18 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       delete s.personMemoriesByAgent[agentId];
       delete s.personMemoryListByAgent[agentId];
       delete s.sendingByAgent[agentId];
+      for (const key of Object.keys(s.sendingByConversation)) {
+        if (key.startsWith(`${agentId}\u0000`)) delete s.sendingByConversation[key];
+      }
       delete s.draftByAgent[agentId];
+      for (const key of Object.keys(s.draftByConversation)) {
+        if (key.startsWith(`${agentId}\u0000`)) delete s.draftByConversation[key];
+      }
+      for (const key of Object.keys(s.unreadByConversation)) {
+        if (key.startsWith(`${agentId}\u0000`)) delete s.unreadByConversation[key];
+      }
+      s.recentConversationKeys = s.recentConversationKeys
+        .filter((key) => !key.startsWith(`${agentId}\u0000`));
       delete s.sessionsByAgent[agentId];
       delete s.sessionListByAgent[agentId];
       delete s.activeSessionByAgent[agentId];
@@ -1543,7 +1661,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   sendMessage: (text) => {
     const agentId = get().activeAgentId;
     if (!agentId) return;
-    const sessionId = get().activeSessionByAgent[agentId];
+    const sessionId = get().activeSessionByAgent[agentId] || "";
     const draftKey = attachmentDraftKey(agentId, sessionId);
     const attachments = get().attachmentsByConversation[draftKey] || [];
     if (!text.trim() && attachments.length === 0) return;
@@ -1567,8 +1685,9 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         })),
       });
       touchSession(s, agentId, s.activeSessionByAgent[agentId] || "", 1, text);
-      s.sendingByAgent[agentId] = true;
+      setSessionSending(s, agentId, sessionId, true);
       s.draftByAgent[agentId] = "";
+      s.draftByConversation[conversationStateKey(agentId, sessionId)] = "";
       delete s.attachmentsByConversation[draftKey];
       delete s.attachmentErrorByConversation[draftKey];
     }));
@@ -1576,7 +1695,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     void window.gateway.sendMessage({ content: text, agentId, clientRequestId, attachments }).then((res) => {
       if (!res.error && res.result?.accepted !== false) {
         set(produce((s: CoreState) => {
-          const userMessage = (s.messagesByAgent[agentId] || [])
+          const userMessage = messagesForSession(s, agentId, sessionId)
             .find((message) => message.id === `user-${clientRequestId}`);
           if (userMessage && typeof res.result?.turn_id === "string") {
             userMessage.turnId = res.result.turn_id;
@@ -1593,37 +1712,37 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
 
       const message = res.error?.message || "Message was not accepted";
       set(produce((s: CoreState) => {
-        const userMessage = (s.messagesByAgent[agentId] || [])
+        const sessionMessages = messagesForSession(s, agentId, sessionId);
+        const userMessage = sessionMessages
           .find((entry) => entry.id === `user-${clientRequestId}`);
         if (userMessage) {
           userMessage.deliveryStatus = "failed";
           userMessage.deliveryError = message;
         }
-        if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
-        s.messagesByAgent[agentId].push({
+        sessionMessages.push({
           id: `send-error-${Date.now()}`,
           role: "agent",
           content: `Error: ${message}`,
           streaming: false,
         });
-        s.sendingByAgent[agentId] = false;
+        setSessionSending(s, agentId, sessionId, false);
       }));
     }).catch((error) => {
       set(produce((s: CoreState) => {
-        const userMessage = (s.messagesByAgent[agentId] || [])
+        const sessionMessages = messagesForSession(s, agentId, sessionId);
+        const userMessage = sessionMessages
           .find((entry) => entry.id === `user-${clientRequestId}`);
         if (userMessage) {
           userMessage.deliveryStatus = "failed";
           userMessage.deliveryError = String(error);
         }
-        if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
-        s.messagesByAgent[agentId].push({
+        sessionMessages.push({
           id: `send-error-${Date.now()}`,
           role: "agent",
           content: `Error: ${error}`,
           streaming: false,
         });
-        s.sendingByAgent[agentId] = false;
+        setSessionSending(s, agentId, sessionId, false);
       }));
     });
   },
@@ -1637,6 +1756,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     set(produce((s: CoreState) => {
       s.connectionByAgent = {};
       s.messagesByAgent = {};
+      s.messagesByConversation = {};
       s.assignmentsByAgent = {};
       s.assignmentLoadingByAgent = {};
       s.assignmentErrorByAgent = {};
@@ -1651,10 +1771,14 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       s.agentStateByAgent = {};
       s.speakingByAgent = {};
       s.sendingByAgent = {};
+      s.sendingByConversation = {};
       s.draftByAgent = {};
+      s.draftByConversation = {};
       s.attachmentsByConversation = {};
       s.attachmentErrorByConversation = {};
       s.unreadByAgent = {};
+      s.unreadByConversation = {};
+      s.recentConversationKeys = [];
       s.sessionsByAgent = {};
       s.sessionListByAgent = {};
       s.activeSessionByAgent = {};
@@ -1731,6 +1855,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   abortMessage: async () => {
     const agentId = get().activeAgentId;
     if (!agentId) return;
+    const sessionId = get().activeSessionByAgent[agentId] || "";
 
     const res = await window.gateway.abortMessage({ agentId });
     if (res.error) {
@@ -1746,14 +1871,15 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       return;
     }
 
-    clearAgentStreams(agentId);
-    set(produce((s: CoreState) => { s.sendingByAgent[agentId] = false; }));
+    clearSessionStreams(agentId, sessionId);
+    set(produce((s: CoreState) => { setSessionSending(s, agentId, sessionId, false); }));
   },
 
   retryMessage: async (messageId) => {
     const agentId = get().activeAgentId;
     const sessionId = agentId ? get().activeSessionByAgent[agentId] || "" : "";
-    if (!agentId || !sessionId || get().sendingByAgent[agentId]) return;
+    if (!agentId || !sessionId
+      || get().sendingByConversation[conversationStateKey(agentId, sessionId)]) return;
     const source = (get().messagesByAgent[agentId] || [])
       .find((message) => message.sourceMessageId === messageId);
     if (!source || !["failed", "interrupted"].includes(source.deliveryStatus || "")) return;
@@ -1770,7 +1896,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         deliveryStatus: "processing",
         retryOf: messageId,
       });
-      s.sendingByAgent[agentId] = true;
+      setSessionSending(s, agentId, sessionId, true);
       touchSession(s, agentId, sessionId, 1, source.content);
     }));
     try {
@@ -1785,7 +1911,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
           const original = s.messagesByAgent[agentId]
             .find((message) => message.sourceMessageId === messageId);
           if (original) original.deliveryError = error;
-          s.sendingByAgent[agentId] = false;
+          setSessionSending(s, agentId, sessionId, false);
         }));
         return;
       }
@@ -1803,7 +1929,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         const original = s.messagesByAgent[agentId]
           .find((message) => message.sourceMessageId === messageId);
         if (original) original.deliveryError = String(error);
-        s.sendingByAgent[agentId] = false;
+        setSessionSending(s, agentId, sessionId, false);
       }));
     }
   },
@@ -1875,7 +2001,12 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   setDraft: (text) => {
     const agentId = get().activeAgentId;
     if (!agentId) return;
-    set(produce((s: CoreState) => { s.draftByAgent[agentId] = text; }));
+    const sessionId = get().activeSessionByAgent[agentId];
+    set(produce((s: CoreState) => {
+      touchConversationState(s, agentId, sessionId || "new");
+      s.draftByAgent[agentId] = text;
+      s.draftByConversation[conversationStateKey(agentId, sessionId)] = text;
+    }));
   },
 
   // ── Session management ──
@@ -1921,6 +2052,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         s.connectionByAgent[agentId] = { status: "connected", agentName, error: "" };
         if (sessionId) {
           s.activeSessionByAgent[agentId] = sessionId;
+          touchConversationState(s, agentId, sessionId);
           if (!s.historyPaginationByAgent[agentId]) s.historyPaginationByAgent[agentId] = {};
           s.historyPaginationByAgent[agentId][sessionId] = {
             hasMore: false, beforeId: null, loading: false, error: "",
@@ -1948,31 +2080,18 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   switchSession: async (sessionId) => {
     const agentId = get().activeAgentId;
     if (!agentId) return;
-    if (get().sendingByAgent[agentId]) return;
     if (get().connectionByAgent[agentId]?.status === "connecting") return;
-    if (get().activeSessionByAgent[agentId] === sessionId) return;
+    const previousSessionId = get().activeSessionByAgent[agentId] || "";
+    if (previousSessionId === sessionId) return;
     const agent = get().agents.find((entry) => entry.id === agentId);
     if (!agent) return;
 
-    set(produce((s: CoreState) => {
-      s.connectionByAgent[agentId] = {
-        status: "connecting",
-        agentName: s.connectionByAgent[agentId]?.agentName || agent.name,
-        error: "",
-      };
-    }));
-
     try {
-      const res = await window.gateway.connect({
-        host: agent.host,
-        port: agent.port,
-        token: agent.token,
-        agentId,
-        sessionId,
-      });
+      const res = await window.gateway.switchSession({ agentId, sessionId });
       if (res.error) {
         set(produce((s: CoreState) => {
-          s.connectionByAgent[agentId] = { status: "error", agentName: agent.name, error: res.error!.message };
+          const connection = s.connectionByAgent[agentId];
+          if (connection) connection.error = res.error!.message;
         }));
         return;
       }
@@ -1984,21 +2103,41 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       const messages = resumeMessages(resume, sessionId);
       const pagination = historyPagination(resume);
       set(produce((s: CoreState) => {
-        s.messagesByAgent[agentId] = messages;
+        if (previousSessionId) {
+          s.messagesByConversation[conversationStateKey(agentId, previousSessionId)] =
+            s.messagesByAgent[agentId] || [];
+        }
+        const targetKey = conversationStateKey(agentId, sessionId);
+        touchConversationState(s, agentId, sessionId);
+        // An already opened background conversation has received every live
+        // event while this RPC was in flight. Prefer that projection so a
+        // late delta cannot be overwritten by the slightly older resume frame.
+        const targetMessages = s.messagesByConversation[targetKey]?.length
+          ? s.messagesByConversation[targetKey]
+          : messages;
+        s.messagesByAgent[agentId] = targetMessages;
+        s.messagesByConversation[targetKey] = targetMessages;
         s.activeSessionByAgent[agentId] = sessionId;
+        s.unreadByConversation[conversationStateKey(agentId, sessionId)] = 0;
         if (!s.historyPaginationByAgent[agentId]) s.historyPaginationByAgent[agentId] = {};
         s.historyPaginationByAgent[agentId][sessionId] = pagination;
-        s.connectionByAgent[agentId] = {
-          status: "connected",
-          agentName: (result.agent_name as string) || agent.name,
-          error: "",
-        };
-        s.sendingByAgent[agentId] = resume?.state === "running" || resume?.state === "waiting_user";
+        const connection = s.connectionByAgent[agentId];
+        if (connection) {
+          connection.agentName = (result.agent_name as string) || agent.name;
+          connection.error = "";
+        }
+        setSessionSending(
+          s,
+          agentId,
+          sessionId,
+          resume?.state === "running" || resume?.state === "waiting_user",
+        );
       }));
       restoreStreamFromResume(agentId, sessionId, resume);
     } catch (error) {
       set(produce((s: CoreState) => {
-        s.connectionByAgent[agentId] = { status: "error", agentName: agent.name, error: String(error) };
+        const connection = s.connectionByAgent[agentId];
+        if (connection) connection.error = String(error);
       }));
     }
   },
@@ -2092,6 +2231,56 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
           current.loadingMore = false;
           current.error = String(error);
         }
+      }));
+    }
+  },
+
+  openSearchMessage: async (sessionId, messageId) => {
+    const agentId = get().activeAgentId;
+    if (!agentId || !sessionId || messageId < 1) return;
+
+    await get().switchSession(sessionId);
+    if (get().activeAgentId !== agentId || get().activeSessionByAgent[agentId] !== sessionId) return;
+
+    const targetId = `history-${sessionId}-${messageId}`;
+    const conversationKey = conversationStateKey(agentId, sessionId);
+    let found = (get().messagesByAgent[agentId] || []).some((message) => message.id === targetId);
+
+    // Search can hit a message older than the resumed 50-message window. Load
+    // complete history pages until the target becomes part of the visible,
+    // continuous conversation timeline.
+    while (!found) {
+      const page = get().historyPaginationByAgent[agentId]?.[sessionId];
+      if (!page?.hasMore || !page.beforeId) break;
+
+      const response = await window.gateway.getHistory({
+        agentId,
+        sessionId,
+        limit: 200,
+        beforeId: page.beforeId,
+      });
+      if (response.error) break;
+
+      const olderMessages = historyMessages(response.result, sessionId);
+      const nextPage = historyPagination(response.result);
+      set(produce((state: CoreState) => {
+        if (state.activeAgentId !== agentId || state.activeSessionByAgent[agentId] !== sessionId) return;
+        const currentMessages = state.messagesByAgent[agentId] || [];
+        const currentIds = new Set(currentMessages.map((message) => message.id));
+        const uniqueOlder = olderMessages.filter((message) => !currentIds.has(message.id));
+        const merged = [...uniqueOlder, ...currentMessages];
+        state.messagesByAgent[agentId] = merged;
+        state.messagesByConversation[conversationKey] = merged;
+        if (!state.historyPaginationByAgent[agentId]) state.historyPaginationByAgent[agentId] = {};
+        state.historyPaginationByAgent[agentId][sessionId] = nextPage;
+      }));
+      found = (get().messagesByAgent[agentId] || []).some((message) => message.id === targetId);
+      if (olderMessages.length === 0) break;
+    }
+
+    if (found) {
+      window.dispatchEvent(new CustomEvent("xiaomei:focus-search-message", {
+        detail: { messageKey: targetId },
       }));
     }
   },
@@ -2481,15 +2670,11 @@ export function initGatewayEvents() {
       let changed = false;
       setState(produce((s: CoreState) => {
         changed = upsertAssignment(s, agentId, assignment);
-        if (
-          assignment.status === "completed"
-          && assignment.originSessionId
-          && s.activeSessionByAgent[agentId] === assignment.originSessionId
-        ) {
-          if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
+        if (assignment.status === "completed" && assignment.originSessionId) {
+          const sessionMessages = messagesForSession(s, agentId, assignment.originSessionId);
           for (const artifact of deliverables) {
-            if (s.messagesByAgent[agentId].some((message) => message.artifact?.id === artifact.id)) continue;
-            s.messagesByAgent[agentId].push({
+            if (sessionMessages.some((message) => message.artifact?.id === artifact.id)) continue;
+            sessionMessages.push({
               id: `assignment-artifact-${assignment.id}-${artifact.id}`,
               role: "agent",
               content: "",
@@ -2523,6 +2708,8 @@ export function initGatewayEvents() {
       ? d.session_id
       : store().activeSessionByAgent[agentId] || "";
     const eventTurnId = typeof d.turn_id === "string" ? d.turn_id : "";
+    const eventMessages = (state: CoreState) => messagesForSession(state, agentId, eventSessionId);
+    const readEventMessages = (state: CoreState) => readMessagesForSession(state, agentId, eventSessionId);
     const activeStreamKey = streamingKey(agentId, eventSessionId, eventTurnId);
     if (!_streamingByTurn[activeStreamKey]) {
       _streamingByTurn[activeStreamKey] = { ref: "", id: null };
@@ -2547,17 +2734,20 @@ export function initGatewayEvents() {
         ? d.resume as Record<string, unknown>
         : undefined;
       const messages = resumeMessages(resume, sessionId);
-      clearAgentStreams(agentId);
+      if (event === "reconnected") clearAgentStreams(agentId);
       setState(produce((s: CoreState) => {
-        const previous = s.connectionByAgent[agentId];
-        s.connectionByAgent[agentId] = {
-          status: "connected",
-          agentName: (d.agent_name as string) || previous?.agentName || "",
-          error: "",
-        };
+        if (event === "reconnected" || s.activeSessionByAgent[agentId] === sessionId) {
+          const previous = s.connectionByAgent[agentId];
+          s.connectionByAgent[agentId] = {
+            status: "connected",
+            agentName: (d.agent_name as string) || previous?.agentName || "",
+            error: "",
+          };
+        }
         if (sessionId) {
-          s.activeSessionByAgent[agentId] = sessionId;
-          s.messagesByAgent[agentId] = messages;
+          if (event === "reconnected") s.activeSessionByAgent[agentId] = sessionId;
+          if (s.activeSessionByAgent[agentId] === sessionId) s.messagesByAgent[agentId] = messages;
+          s.messagesByConversation[conversationStateKey(agentId, sessionId)] = messages;
           if (!s.historyPaginationByAgent[agentId]) s.historyPaginationByAgent[agentId] = {};
           s.historyPaginationByAgent[agentId][sessionId] = historyPagination(resume);
           if (!s.sessionsByAgent[agentId]) s.sessionsByAgent[agentId] = [];
@@ -2572,7 +2762,14 @@ export function initGatewayEvents() {
             });
           }
         }
-        s.sendingByAgent[agentId] = resume?.state === "running" || resume?.state === "waiting_user";
+        if (sessionId) {
+          setSessionSending(
+            s,
+            agentId,
+            sessionId,
+            resume?.state === "running" || resume?.state === "waiting_user",
+          );
+        }
       }));
       restoreStreamFromResume(agentId, sessionId, resume);
       void useCoreStore.getState().refreshActivities(agentId);
@@ -2598,8 +2795,8 @@ export function initGatewayEvents() {
       stream.ref = "";
       stream.id = null;
       setState(produce((s: CoreState) => {
-        s.sendingByAgent[agentId] = true;
-        const userMessage = [...(s.messagesByAgent[agentId] || [])]
+        setSessionSending(s, agentId, eventSessionId, true);
+        const userMessage = [...eventMessages(s)]
           .reverse()
           .find((message) => message.role === "user"
             && ["queued", "processing"].includes(message.deliveryStatus || "")
@@ -2619,17 +2816,17 @@ export function initGatewayEvents() {
       const activeStreamId = stream.id;
       let inserted = false;
       setState(produce((s: CoreState) => {
-        if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
-        if (s.messagesByAgent[agentId].some((message) => message.action?.id === actionId)) return;
+        const sessionMessages = eventMessages(s);
+        if (sessionMessages.some((message) => message.action?.id === actionId)) return;
         if (activeStreamId) {
-          const activeMessage = s.messagesByAgent[agentId]
+          const activeMessage = sessionMessages
             .find((message) => message.id === activeStreamId);
           if (activeMessage) {
             activeMessage.content = stream.ref;
             activeMessage.streaming = false;
           }
         }
-        s.messagesByAgent[agentId].push({
+        sessionMessages.push({
           id: actionId,
           role: "agent",
           content: "",
@@ -2637,6 +2834,13 @@ export function initGatewayEvents() {
           turnId: eventTurnId || undefined,
           action: actionRequest(d, eventSessionId, eventTurnId, "pending"),
         });
+        if (s.activeSessionByAgent[agentId] !== eventSessionId) {
+          const key = conversationStateKey(agentId, eventSessionId);
+          s.unreadByConversation[key] = (s.unreadByConversation[key] || 0) + 1;
+        }
+        if (s.activeAgentId !== agentId) {
+          s.unreadByAgent[agentId] = (s.unreadByAgent[agentId] || 0) + 1;
+        }
         inserted = true;
       }));
       if (inserted && activeStreamId && stream.id === activeStreamId) {
@@ -2654,8 +2858,8 @@ export function initGatewayEvents() {
         ? rawStatus as ActionRequest["status"]
         : "failed";
       setState(produce((s: CoreState) => {
-        if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
-        let message = s.messagesByAgent[agentId]
+        const sessionMessages = eventMessages(s);
+        let message = sessionMessages
           .find((entry) => entry.action?.id === actionId);
         if (!message) {
           message = {
@@ -2666,7 +2870,7 @@ export function initGatewayEvents() {
             turnId: eventTurnId || undefined,
             action: actionRequest(d, eventSessionId, eventTurnId, status),
           };
-          s.messagesByAgent[agentId].push(message);
+          sessionMessages.push(message);
         } else if (message.action) {
           message.action = actionRequest(d, eventSessionId, eventTurnId, status);
         }
@@ -2685,21 +2889,21 @@ export function initGatewayEvents() {
       const activeStreamId = stream.id;
       let inserted = false;
       setState(produce((s: CoreState) => {
-        if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
-        if (s.messagesByAgent[agentId].some((message) => message.interaction?.id === requestId)) return;
+        const sessionMessages = eventMessages(s);
+        if (sessionMessages.some((message) => message.interaction?.id === requestId)) return;
 
         // A tool call can happen in the middle of one ReAct stream. Close
         // any text emitted before the question so content produced after
         // the answer starts a new message below the interaction card.
         if (activeStreamId) {
-          const activeMessage = s.messagesByAgent[agentId]
+          const activeMessage = sessionMessages
             .find((message) => message.id === activeStreamId);
           if (activeMessage) {
             activeMessage.content = stream.ref;
             activeMessage.streaming = false;
           }
         }
-        s.messagesByAgent[agentId].push({
+        sessionMessages.push({
           id: requestId,
           role: "agent",
           content: "",
@@ -2715,6 +2919,13 @@ export function initGatewayEvents() {
             response: "",
           },
         });
+        if (s.activeSessionByAgent[agentId] !== eventSessionId) {
+          const key = conversationStateKey(agentId, eventSessionId);
+          s.unreadByConversation[key] = (s.unreadByConversation[key] || 0) + 1;
+        }
+        if (s.activeAgentId !== agentId) {
+          s.unreadByAgent[agentId] = (s.unreadByAgent[agentId] || 0) + 1;
+        }
         inserted = true;
       }));
       if (inserted && activeStreamId && stream.id === activeStreamId) {
@@ -2731,7 +2942,7 @@ export function initGatewayEvents() {
       const response = typeof payload.response === "string" ? payload.response : "";
       if (!requestId) return;
       setState(produce((s: CoreState) => {
-        const message = (s.messagesByAgent[agentId] || [])
+        const message = eventMessages(s)
           .find((entry) => entry.interaction?.id === requestId);
         if (!message?.interaction) return;
         if (["answered", "cancelled", "expired"].includes(status)) {
@@ -2753,17 +2964,17 @@ export function initGatewayEvents() {
       const activeStreamId = stream.id;
       let inserted = false;
       setState(produce((s: CoreState) => {
-        if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
-        if (s.messagesByAgent[agentId].some((message) => message.tool?.id === toolCallId)) return;
+        const sessionMessages = eventMessages(s);
+        if (sessionMessages.some((message) => message.tool?.id === toolCallId)) return;
         if (activeStreamId) {
-          const activeMessage = s.messagesByAgent[agentId]
+          const activeMessage = sessionMessages
             .find((message) => message.id === activeStreamId);
           if (activeMessage) {
             activeMessage.content = stream.ref;
             activeMessage.streaming = false;
           }
         }
-        s.messagesByAgent[agentId].push({
+        sessionMessages.push({
           id: `tool-${toolCallId}`,
           role: "agent",
           content: "",
@@ -2798,8 +3009,8 @@ export function initGatewayEvents() {
         ? String((d.error as Record<string, unknown>).message || "")
         : "";
       setState(produce((s: CoreState) => {
-        if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
-        let message = s.messagesByAgent[agentId]
+        const sessionMessages = eventMessages(s);
+        let message = sessionMessages
           .find((entry) => entry.tool?.id === toolCallId);
         if (!message) {
           message = {
@@ -2818,7 +3029,7 @@ export function initGatewayEvents() {
               error: "",
             },
           };
-          s.messagesByAgent[agentId].push(message);
+          sessionMessages.push(message);
         }
         if (!message.tool) return;
         const completedAt = typeof d.completed_at === "number" ? d.completed_at : Date.now();
@@ -2858,14 +3069,14 @@ export function initGatewayEvents() {
       });
       setState(produce((s: CoreState) => {
         if (snapshot) upsertArtifact(s, agentId, snapshot);
-        if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
-        const existing = s.messagesByAgent[agentId]
+        const sessionMessages = eventMessages(s);
+        const existing = sessionMessages
           .find((message) => message.artifact?.id === artifact.id);
         if (existing) {
           existing.artifact = artifact;
           return;
         }
-        s.messagesByAgent[agentId].push({
+        sessionMessages.push({
           id: `artifact-${artifact.id}`,
           role: "agent",
           content: "",
@@ -2881,10 +3092,6 @@ export function initGatewayEvents() {
     // the visible assistant message stream.
     if (event === "internal.display" || event === "pong") return;
 
-    if (!store().messagesByAgent[agentId]) {
-      setState(produce((s: CoreState) => { s.messagesByAgent[agentId] = []; }));
-    }
-
     if (event === "message.delta") {
       stream.ref += text;
       if (!stream.id) {
@@ -2896,15 +3103,16 @@ export function initGatewayEvents() {
         if (!stream.ref.trim()) return;
         stream.id = "streaming-" + Date.now();
         setState(produce((s: CoreState) => {
-          s.messagesByAgent[agentId].push({
+          eventMessages(s).push({
             id: stream.id!, role: "agent", content: stream.ref, streaming: true,
             turnId: eventTurnId || undefined,
           });
         }));
       } else {
         setState(produce((s: CoreState) => {
-          const idx = s.messagesByAgent[agentId].findIndex(m => m.id === stream.id);
-          if (idx !== -1) s.messagesByAgent[agentId][idx].content = stream.ref;
+          const sessionMessages = eventMessages(s);
+          const idx = sessionMessages.findIndex(m => m.id === stream.id);
+          if (idx !== -1) sessionMessages[idx].content = stream.ref;
         }));
       }
     } else if (event === "message.complete") {
@@ -2918,7 +3126,7 @@ export function initGatewayEvents() {
         : "");
       let retryMessageId: number | undefined;
       setState(produce((s: CoreState) => {
-        const userMessage = [...(s.messagesByAgent[agentId] || [])]
+        const userMessage = [...eventMessages(s)]
           .reverse()
           .find((message) => message.role === "user" && message.turnId === eventTurnId);
         if (!userMessage) return;
@@ -2936,16 +3144,17 @@ export function initGatewayEvents() {
       let completedText = "";
       if (stream.id) {
         const finalText = stream.ref || terminalText;
-        const streamingMessageExists = store().messagesByAgent[agentId]
+        const streamingMessageExists = readEventMessages(store())
           .some((message) => message.id === stream.id);
         if (streamingMessageExists) completedText = finalText;
         setState(produce((s: CoreState) => {
-          const idx = s.messagesByAgent[agentId].findIndex(m => m.id === stream.id);
+          const sessionMessages = eventMessages(s);
+          const idx = sessionMessages.findIndex(m => m.id === stream.id);
           if (idx !== -1) {
-            s.messagesByAgent[agentId][idx].content = finalText;
-            s.messagesByAgent[agentId][idx].streaming = false;
-            s.messagesByAgent[agentId][idx].memoryReferences = recalledMemories;
-            s.messagesByAgent[agentId][idx].serviceError =
+            sessionMessages[idx].content = finalText;
+            sessionMessages[idx].streaming = false;
+            sessionMessages[idx].memoryReferences = recalledMemories;
+            sessionMessages[idx].serviceError =
               status === "error" && String(error?.code || "").startsWith("MODEL_")
                 ? {
                     code: String(error?.code || "MODEL_UNAVAILABLE"),
@@ -2960,18 +3169,19 @@ export function initGatewayEvents() {
         stream.ref = "";
       } else if (terminalText.trim()) {
         // Skip a duplicate final message if the local stream already finalized it.
-        const msgs = store().messagesByAgent[agentId];
+        const msgs = readEventMessages(store());
         const lastMsg = msgs && msgs.length > 0 ? msgs[msgs.length - 1] : null;
         const isDuplicate = lastMsg && lastMsg.role === "agent" && lastMsg.content === terminalText;
         if (isDuplicate) {
           setState(produce((s: CoreState) => {
-            const current = s.messagesByAgent[agentId]?.[s.messagesByAgent[agentId].length - 1];
+            const sessionMessages = eventMessages(s);
+            const current = sessionMessages[sessionMessages.length - 1];
             if (current) current.memoryReferences = recalledMemories;
           }));
         } else {
           completedText = terminalText;
           setState(produce((s: CoreState) => {
-            s.messagesByAgent[agentId].push({
+            eventMessages(s).push({
               id: "msg-" + Date.now(),
               role: "agent",
               content: terminalText,
@@ -2991,12 +3201,17 @@ export function initGatewayEvents() {
         }
       }
       delete _streamingByTurn[activeStreamKey];
-      setState(produce((s: CoreState) => { s.sendingByAgent[agentId] = false; }));
-      if (completedText && agentId !== store().activeAgentId) {
-        // Increment unread for background agent
-        const current = store().unreadByAgent[agentId] || 0;
-        setState(produce((s: CoreState) => { s.unreadByAgent[agentId] = current + 1; }));
-      }
+      setState(produce((s: CoreState) => {
+        setSessionSending(s, agentId, eventSessionId, false);
+        const isBackgroundSession = s.activeSessionByAgent[agentId] !== eventSessionId;
+        if (completedText && isBackgroundSession) {
+          const key = conversationStateKey(agentId, eventSessionId);
+          s.unreadByConversation[key] = (s.unreadByConversation[key] || 0) + 1;
+        }
+        if (completedText && agentId !== s.activeAgentId) {
+          s.unreadByAgent[agentId] = (s.unreadByAgent[agentId] || 0) + 1;
+        }
+      }));
       if (completedText) {
         const state = store();
         const agent = state.agents.find((entry) => entry.id === agentId);
@@ -3012,13 +3227,13 @@ export function initGatewayEvents() {
     } else if (event === "error") {
       const err = (d.text || "Unknown error") as string;
       setState(produce((s: CoreState) => {
-        s.messagesByAgent[agentId].push({
+        eventMessages(s).push({
           id: "err-" + Date.now(), role: "agent", content: `Error: ${err}`, streaming: false,
         });
+        setSessionSending(s, agentId, eventSessionId, false);
       }));
       stream.id = null;
       stream.ref = "";
-      setState(produce((s: CoreState) => { s.sendingByAgent[agentId] = false; }));
     }
   });
 }

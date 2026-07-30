@@ -17,6 +17,7 @@ interface EventChannel {
 const CHANNEL_MAP = {
   gateway: {
     connect:         { invoke: "gateway:connect" },
+    switchSession:   { invoke: "gateway:switchSession" },
     disconnect:      { invoke: "gateway:disconnect" },
     sendMessage:     { invoke: "gateway:sendMessage" },
     sendVoice:       { invoke: "gateway:sendVoice" },
@@ -33,6 +34,7 @@ const CHANNEL_MAP = {
     respondAction:      { invoke: "gateway:respondAction" },
     getHistory:      { invoke: "gateway:getHistory" },
     listSessions:    { invoke: "gateway:listSessions" },
+    unifiedSearch:   { invoke: "gateway:unifiedSearch" },
     listAssignments: { invoke: "gateway:listAssignments" },
     getAssignment: { invoke: "gateway:getAssignment" },
     listActivities: { invoke: "gateway:listActivities" },

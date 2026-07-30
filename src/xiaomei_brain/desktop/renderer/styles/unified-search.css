@@ -1,0 +1,203 @@
+.unified-search-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: max(72px, 10vh) 24px 24px;
+  background: rgba(20, 24, 31, 0.24);
+  backdrop-filter: blur(2px);
+}
+
+.unified-search-dialog {
+  width: min(680px, calc(100vw - 48px));
+  max-height: min(720px, calc(100vh - 120px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--ui-border-default);
+  border-radius: 14px;
+  background: var(--ui-bg-primary);
+  box-shadow: 0 22px 70px rgba(20, 26, 35, 0.22), 0 2px 12px rgba(20, 26, 35, 0.1);
+}
+
+.unified-search-input-row {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--ui-border-default);
+  color: var(--ui-color-text-tertiary);
+}
+
+.unified-search-input-row input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ui-color-text-primary);
+  font: inherit;
+  font-size: 16px;
+}
+
+.unified-search-input-row input::placeholder {
+  color: var(--ui-color-text-disabled);
+}
+
+.unified-search-input-row button {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ui-color-text-tertiary);
+  cursor: pointer;
+}
+
+.unified-search-input-row button:hover {
+  background: var(--ui-todo-menu-bg-hover);
+}
+
+.unified-search-loading {
+  color: var(--ui-color-text-tertiary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.unified-search-results {
+  min-height: 250px;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.unified-search-section + .unified-search-section {
+  margin-top: 8px;
+}
+
+.unified-search-section-title {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  color: var(--ui-color-text-tertiary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.unified-search-section-title small {
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.unified-search-result {
+  width: 100%;
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.unified-search-result:hover,
+.unified-search-result:focus-visible {
+  background: var(--ui-todo-menu-bg-hover);
+  outline: none;
+}
+
+.unified-search-result-icon {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ui-brand-primary) 9%, transparent);
+  color: var(--ui-brand-primary);
+}
+
+.unified-search-result-content {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.unified-search-result-content strong,
+.unified-search-result-content > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unified-search-result-content strong {
+  color: var(--ui-color-text-primary);
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.unified-search-result-content > span {
+  color: var(--ui-color-text-secondary);
+  font-size: 12px;
+}
+
+.unified-search-result-meta {
+  color: var(--ui-color-text-disabled);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.unified-search-notice {
+  min-height: 235px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: var(--ui-color-text-tertiary);
+  font-size: 13px;
+}
+
+.unified-search-notice small {
+  color: var(--ui-color-text-disabled);
+}
+
+.unified-search-notice.error {
+  color: var(--ui-color-text-error-default);
+}
+
+.unified-search-footer {
+  min-height: 35px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  padding: 0 14px;
+  border-top: 1px solid var(--ui-border-default);
+  color: var(--ui-color-text-disabled);
+  font-size: 10px;
+}
+
+@media (max-width: 720px) {
+  .unified-search-backdrop {
+    padding: 48px 12px 12px;
+  }
+
+  .unified-search-dialog {
+    width: 100%;
+    max-height: calc(100vh - 60px);
+  }
+}

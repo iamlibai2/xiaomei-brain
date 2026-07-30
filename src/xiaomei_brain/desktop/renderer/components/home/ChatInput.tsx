@@ -46,7 +46,11 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
   const [modelBusy, setModelBusy] = useState(false);
   const [modelError, setModelError] = useState("");
   const activeAgentId = useCoreStore((s) => s.activeAgentId);
-  const input = useCoreStore((s) => s.draftByAgent[s.activeAgentId || ""] || "");
+  const input = useCoreStore((s) => {
+    const agentId = s.activeAgentId || "";
+    const sessionId = agentId ? s.activeSessionByAgent[agentId] : null;
+    return s.draftByConversation[`${agentId}\u0000${sessionId || "new"}`] || "";
+  });
   const setInput = useCoreStore((s) => s.setDraft);
   const pendingAttachments = useCoreStore((s) => {
     const agentId = s.activeAgentId || "";
