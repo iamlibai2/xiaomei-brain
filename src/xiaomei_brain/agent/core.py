@@ -119,6 +119,7 @@ class Agent:
         self.on_tool_start: Callable[[int, str, str, dict], None] | None = None
         self.on_tool_complete: Callable[[int, str, str, dict, str], None] | None = None
         self.on_artifact: Callable[[str, str, dict, str], None] | None = None
+        self.on_speech: Callable[[Any], str] | None = None
         self.on_tool_approval: Callable[[str, str, dict], dict | None] | None = None
         self.on_action_complete: Callable[[str, str, bool], None] | None = None
 
@@ -609,12 +610,21 @@ class Agent:
             result = str(approval.get("result") or "Blocked: action was not approved")
         else:
             try:
+                from xiaomei_brain.tools.execution_context import bind_tool_execution
+
                 # ToolRegistry normally returns text.  Keep this normalization
                 # here as a defensive boundary for alternate registries used by
                 # integrations and tests.
-                result = normalize_tool_result(
-                    self.tools.execute(tool_name, **arguments)
-                )
+                with bind_tool_execution(
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    artifact_callback=self.on_artifact,
+                    speech_callback=self.on_speech,
+                ):
+                    result = normalize_tool_result(
+                        self.tools.execute(tool_name, **arguments)
+                    )
             except Exception as exc:
                 result = f"Error executing tool '{tool_name}': {exc}"
                 logger.error("Tool error: %s", exc)

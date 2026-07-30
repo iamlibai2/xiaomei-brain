@@ -1,9 +1,10 @@
-"""Image generation tool using MiniMax API."""
+"""Agent tools exposed by the MiniMax image plugin."""
 
 from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 
 from xiaomei_brain.tools.base import tool
 
@@ -20,8 +21,8 @@ _output_base: str | None = None
 def _get_output_dir() -> str:
     """获取图片输出根目录：agent workspace 优先，否则全局 fallback。"""
     if _output_base:
-        return os.path.join(_output_base, "images")
-    return os.path.expanduser("~/.xiaomei-brain/global/images")
+        return str(Path(_output_base) / "images")
+    return str(Path.home() / ".xiaomei-brain" / "global" / "images")
 
 
 def set_output_base(base_dir: str) -> None:
@@ -37,8 +38,8 @@ def set_image_provider(provider) -> None:
 
 
 @tool(
-    name="generate_image",
-    description="根据文字描述生成图片。模型可选 image-01（写实）或 image-01-live（插画风，支持漫画/元气/中世纪/水彩风格）。宽高比: 1:1, 16:9, 4:3, 3:2, 2:3, 3:4, 9:16, 21:9。生成可能需要几秒到十几秒。",
+    name="generate_image_minimax",
+    description="使用 MiniMax 图片模型根据文字描述生成图片。支持的模型与参数由图片插件声明。生成可能需要几秒到十几秒。",
 )
 def image_generate(
     prompt: str,
@@ -53,7 +54,7 @@ def image_generate(
 
     Args:
         prompt: Image description in Chinese or English (max 1500 chars).
-        model: Model - "image-01" (photorealistic) or "image-01-live" (illustration).
+        model: MiniMax image model ID.
         aspect_ratio: Aspect ratio: 1:1, 16:9, 4:3, 3:2, 2:3, 3:4, 9:16, 21:9.
         n: Number of images (1-9).
         prompt_optimizer: Whether to optimize prompt.
@@ -63,7 +64,7 @@ def image_generate(
     global _image_provider
 
     if _image_provider is None:
-        return "图片生成未启用或未配置。请在 config.json 中启用 image。"
+        return "MiniMax 图片生成未启用或未配置。请在 Desktop 的 Agent 设置中配置图片生成服务。"
 
     if not prompt or not prompt.strip():
         return "图片描述不能为空。"
@@ -107,7 +108,11 @@ def image_generate(
 )
 def image_list_options() -> str:
     """List available image options."""
-    from xiaomei_brain.tools.provider.image import get_available_models, get_available_aspect_ratios, get_available_styles
+    from .provider import (
+        get_available_aspect_ratios,
+        get_available_models,
+        get_available_styles,
+    )
 
     models = get_available_models()
     ratios = get_available_aspect_ratios()

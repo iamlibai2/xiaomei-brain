@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -57,8 +58,7 @@ class PluginContext:
     @property
     def agent_dir(self) -> str:
         """Per-agent 工作目录：~/.xiaomei-brain/{agent_id}/"""
-        import os
-        return os.path.expanduser(f"~/.xiaomei-brain/{self.agent_id}")
+        return str(Path.home() / ".xiaomei-brain" / self.agent_id)
 
     # ── Channel ──────────────────────────────────────────────────
 

@@ -79,12 +79,27 @@ def _extract_plugins_config(agent_id: str = "") -> dict:
     deny: list[str] = []
 
     try:
+        # Ensure the legacy global MiniMax block is copied into this Agent
+        # before plugin configuration is assembled.
+        if agent_id:
+            from ..media_services import MediaServiceConfigurationService
+            from ..tool_services import ToolServiceConfigurationService
+
+            MediaServiceConfigurationService(agent_id)
+            ToolServiceConfigurationService(agent_id)
         raw = _read_merged_config(agent_id)
 
         # ── plugins.allow / plugins.deny ──────────
         plugins_cfg = raw.get("plugins", {}) if raw else {}
         allow = list(plugins_cfg.get("allow", []))
         deny = list(plugins_cfg.get("deny", []))
+        configured_entries = plugins_cfg.get("entries", {})
+        if isinstance(configured_entries, dict):
+            entries.update({
+                name: dict(config)
+                for name, config in configured_entries.items()
+                if isinstance(name, str) and isinstance(config, dict)
+            })
 
         # ── 频道 → 插件映射（通用，不需要逐频道硬编码）──
         _map_channel_configs(raw, entries, agent_id)
@@ -145,10 +160,30 @@ def _read_merged_config(agent_id: str = "") -> dict | None:
     else:
         merged = {}
 
-    # Agent 的 channels / bindings / plugins 覆盖全局
-    for key in ("channels", "bindings", "plugins"):
+    # Agent 的 channels / bindings 覆盖全局；插件条目按名称合并，
+    # 使全局插件和每个 Agent 自己的插件配置可以同时存在。
+    for key in ("channels", "bindings"):
         if key in agent_data:
             merged[key] = agent_data[key]
+    if "plugins" in agent_data:
+        global_plugins = merged.get("plugins", {})
+        agent_plugins = agent_data.get("plugins", {})
+        if isinstance(global_plugins, dict) and isinstance(agent_plugins, dict):
+            plugins = dict(global_plugins)
+            plugins.update({
+                key: value
+                for key, value in agent_plugins.items()
+                if key != "entries"
+            })
+            global_entries = global_plugins.get("entries", {})
+            agent_entries = agent_plugins.get("entries", {})
+            entries = dict(global_entries) if isinstance(global_entries, dict) else {}
+            if isinstance(agent_entries, dict):
+                entries.update(agent_entries)
+            plugins["entries"] = entries
+            merged["plugins"] = plugins
+        else:
+            merged["plugins"] = agent_plugins
 
     return merged
 

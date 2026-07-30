@@ -100,6 +100,7 @@ export function ActivitySidebar({
   ));
   const connectionStatus = useCoreStore((state) => state.connectionByAgent[state.activeAgentId || ""]?.status || "disconnected");
   const agentState = useCoreStore((state) => state.agentStateByAgent[state.activeAgentId || ""]);
+  const speaking = useCoreStore((state) => Boolean(state.speakingByAgent[state.activeAgentId || ""]));
   const [view, setView] = useState<"current" | "history">("current");
   const [selectedId, setSelectedId] = useState("");
 
@@ -280,6 +281,7 @@ export function ActivitySidebar({
           agentName={agentName}
           connectionStatus={connectionStatus}
           agentState={agentState}
+          speaking={speaking}
           onRefresh={() => void refreshAgentState(agentId)}
         />
       ) : section === "assignment" ? (
@@ -562,6 +564,7 @@ function ContextPanel({
   activities,
   artifacts,
   agentState,
+  speaking,
   focusedMemories,
 }: {
   agentName: string;
@@ -570,6 +573,7 @@ function ContextPanel({
   activities: ActivitySnapshot[];
   artifacts: ArtifactSnapshot[];
   agentState: import("../../store").AgentStateSnapshot | undefined;
+  speaking: boolean;
   focusedMemories: MemoryReference[];
 }) {
   const active = activities.filter((item) => ACTIVE.has(item.status));
@@ -680,13 +684,17 @@ function StatusPanel({
         <button type="button" onClick={onRefresh}>刷新</button>
       </div>
 
-      <StateCard title="当前状态" accent={agentState?.living || "idle"}>
+      <StateCard title="当前状态" accent={speaking ? "speaking" : agentState?.living || "idle"}>
         <div className="agent-current-state">
-          <span className={`agent-current-state-dot ${agentState?.living || "idle"}`} />
+          <span className={`agent-current-state-dot ${speaking ? "speaking" : agentState?.living || "idle"}`} />
           <div>
             <strong>
               {connectionStatus === "connected"
-                ? agentState ? livingStateNames[agentState.living] : "在线"
+                ? speaking
+                  ? "正在说话"
+                  : agentState
+                    ? livingStateNames[agentState.living]
+                    : "在线"
                 : "未连接"}
             </strong>
             {agentState?.focusSummary && <p>{agentState.focusSummary}</p>}

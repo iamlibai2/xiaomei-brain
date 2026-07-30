@@ -3,3 +3,47 @@ version: "1.0.0"
 description: "音乐生成工具 — generate_music（MiniMax Music API）"
 kind: bundle
 entry: adapter:register
+mediaProvider:
+  id: music_minimax
+  capability: music
+  vendor: minimax
+  displayName: MiniMax 音乐生成
+  fields:
+    - key: api_key
+      label: API Key
+      type: secret
+      required: true
+    - key: base_url
+      label: Base URL
+      type: text
+      default: https://api.minimaxi.com
+      advanced: true
+    - key: model
+      label: 默认模型
+      type: select
+      default: music-2.6
+      required: true
+      options: [music-2.6]
+    - key: format
+      label: 输出格式
+      type: select
+      default: mp3
+      options: [mp3, wav, pcm]
+    - key: sample_rate
+      label: 采样率
+      type: select
+      default: "44100"
+      options: ["16000", "24000", "32000", "44100"]
+      advanced: true
+    - key: bitrate
+      label: 码率
+      type: select
+      default: "256000"
+      options: ["64000", "128000", "256000"]
+      advanced: true
+  test:
+    path: /v1/music_generation
+    body:
+      model: $model
+      prompt: ""
+      lyrics: ""

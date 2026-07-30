@@ -39,6 +39,10 @@ def clone_llm_for_isolated_run(llm: Any) -> Any:
         fallback_configs=copy.deepcopy(getattr(base, "_fallback_configs", [])),
         interoception=None,
     )
+    cloned.set_thinking(
+        enabled=getattr(base, "thinking_enabled", None),
+        effort=str(getattr(base, "thinking_effort", "default")),
+    )
     return ContextGuard(cloned, max_tokens=guard_tokens) if guard_tokens else cloned
 
 

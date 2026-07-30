@@ -126,6 +126,15 @@ class MessageGateway:
         if self._try_meta_skill(msg, living):
             return
 
+        # The Agent and its channels stay online when the selected model is
+        # unavailable. Reject through the normal message lifecycle before
+        # building memory/context or making another provider request.
+        model_error_getter = getattr(living, "current_model_service_error", None)
+        model_error = model_error_getter() if callable(model_error_getter) else None
+        if model_error:
+            living.conversation_driver.reject_message(msg, model_error)
+            return
+
         # 6. Drive activation.
         # 6. Drive 激活。
         if living.drive:

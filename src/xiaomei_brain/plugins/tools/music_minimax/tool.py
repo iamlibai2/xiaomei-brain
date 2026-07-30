@@ -1,13 +1,15 @@
-"""Music generation tool using MiniMax API."""
+"""Agent tool exposed by the MiniMax music plugin."""
 
 from __future__ import annotations
 
 import logging
 import os
 import threading
+from pathlib import Path
 from typing import Callable
 
 from xiaomei_brain.tools.base import tool
+from xiaomei_brain.tools.execution_context import current_tool_execution
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +34,8 @@ def set_generation_callback(cb: Callable[[str, bool, str], None]) -> None:
 def _get_output_dir() -> str:
     """获取音乐输出根目录：agent workspace 优先，否则全局 fallback。"""
     if _output_base:
-        return os.path.join(_output_base, "music")
-    return os.path.expanduser("~/.xiaomei-brain/global/music")
+        return str(Path(_output_base) / "music")
+    return str(Path.home() / ".xiaomei-brain" / "global" / "music")
 
 
 def set_output_base(base_dir: str) -> None:
@@ -79,6 +81,12 @@ def music_generate(
         os.makedirs(output_dir, exist_ok=True)
         filename = os.path.join(output_dir, os.path.basename(filename))
 
+    # ContextVar values do not automatically become useful after the Agent
+    # clears the live turn callbacks.  Capture the immutable execution context
+    # now and hand it explicitly to the background closure.
+    execution_context = current_tool_execution()
+    completion_callback = _on_generation_complete
+
     def _generate():
         try:
             _music_provider.generate_to_file(
@@ -88,18 +96,33 @@ def music_generate(
             )
             size = os.path.getsize(filename)
             logger.info("Music generated: %s (%d KB)", filename, size // 1024)
-            if _on_generation_complete:
-                _on_generation_complete(filename, True,
-                                        f"音乐生成完成: {os.path.basename(filename)} ({size // 1024} KB)")
+            completion_message = (
+                f"音乐生成完成: {os.path.basename(filename)} ({size // 1024} KB)\n"
+                f"- 文件: {filename}"
+            )
+            if execution_context is not None:
+                try:
+                    execution_context.publish_artifacts(completion_message)
+                except Exception:
+                    logger.exception("Failed to publish generated music artifact")
+            if completion_callback:
+                completion_callback(filename, True, completion_message)
         except Exception as e:
             logger.error("Music generation error: %s", e)
-            if _on_generation_complete:
-                _on_generation_complete(filename, False, f"音乐生成失败: {e}")
+            if completion_callback:
+                completion_callback(filename, False, f"音乐生成失败: {e}")
 
     t = threading.Thread(target=_generate, daemon=True)
     t.start()
 
-    return f"音乐正在后台生成，预计需要较长时间。完成后保存为: {filename}。生成期间可以继续正常对话。"
+    # Do not expose the final absolute path before generation completes.  If a
+    # file with the same name exists from an earlier run, the normal synchronous
+    # artifact scan could otherwise publish that stale file.
+    return (
+        "音乐正在后台生成，预计需要较长时间。"
+        f"完成后会交付文件 {os.path.basename(filename)}。"
+        "生成期间可以继续正常对话。"
+    )
 
 
 @tool(

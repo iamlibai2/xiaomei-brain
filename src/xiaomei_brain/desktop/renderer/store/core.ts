@@ -66,7 +66,13 @@ function displayAttachments(values: unknown): DisplayAttachment[] {
     const mimeType = typeof item.mime_type === "string"
       ? item.mime_type
       : typeof item.mimeType === "string" ? item.mimeType : "application/octet-stream";
-    const kind = item.kind === "image" ? "image" : item.kind === "document" ? "document" : "text";
+    const kind = item.kind === "image"
+      ? "image"
+      : item.kind === "document"
+        ? "document"
+        : item.kind === "audio"
+          ? "audio"
+          : "text";
     return [{
       id: item.id,
       name: item.name,
@@ -294,7 +300,10 @@ function historyMessages(
     const deliveryError = row.error && typeof row.error === "object" && !Array.isArray(row.error)
       ? String((row.error as Record<string, unknown>).message || "")
       : "";
-    return [{
+    const deliveryErrorCode = row.error && typeof row.error === "object" && !Array.isArray(row.error)
+      ? String((row.error as Record<string, unknown>).code || "")
+      : "";
+    const displayMessage = {
       id: typeof row.id === "number"
         ? `history-${sessionId}-${row.id}`
         : `history-${sessionId}-${String(row.created_at || index)}-${index}`,
@@ -306,10 +315,34 @@ function historyMessages(
       memoryReferences: role === "agent" ? memoryReferences(row.memory_references) : undefined,
       turnId: typeof row.turn_id === "string" ? row.turn_id : undefined,
       deliveryStatus: role === "user" ? deliveryStatus : undefined,
+      deliveryErrorCode: role === "user" ? deliveryErrorCode : undefined,
       deliveryError: role === "user" ? deliveryError : undefined,
       sourceMessageId: role === "user" && typeof row.id === "number" ? row.id : undefined,
       retryOf: role === "user" && typeof row.retry_of === "number" ? row.retry_of : undefined,
-    } satisfies DisplayMessage];
+    } satisfies DisplayMessage;
+    if (
+      role === "user"
+      && deliveryStatus === "failed"
+      && deliveryErrorCode.startsWith("MODEL_")
+    ) {
+      return [
+        displayMessage,
+        {
+          id: `history-service-error-${sessionId}-${String(row.id || index)}`,
+          role: "agent",
+          content: deliveryError,
+          streaming: false,
+          createdAt: typeof row.created_at === "number" ? row.created_at * 1000 : undefined,
+          turnId: typeof row.turn_id === "string" ? row.turn_id : undefined,
+          serviceError: {
+            code: deliveryErrorCode,
+            message: deliveryError || "当前模型服务暂时不可用。请稍后重试或切换模型。",
+            retryMessageId: typeof row.id === "number" ? row.id : undefined,
+          },
+        } satisfies DisplayMessage,
+      ];
+    }
+    return [displayMessage];
   });
 }
 
@@ -574,7 +607,13 @@ export interface DisplayMessage {
   memoryReferences?: MemoryReference[];
   turnId?: string;
   deliveryStatus?: "queued" | "processing" | "completed" | "failed" | "interrupted";
+  deliveryErrorCode?: string;
   deliveryError?: string;
+  serviceError?: {
+    code: string;
+    message: string;
+    retryMessageId?: number;
+  };
   sourceMessageId?: number;
   retryOf?: number;
 }
@@ -597,7 +636,7 @@ export interface DisplayAttachment {
   name: string;
   mimeType: string;
   size: number;
-  kind: "image" | "text" | "document";
+  kind: "image" | "audio" | "text" | "document";
   previewUrl?: string;
 }
 
@@ -1010,6 +1049,7 @@ interface CoreState {
   personMemoriesByAgent: Record<string, PersonMemorySnapshot[]>;
   personMemoryListByAgent: Record<string, PersonMemoryListState>;
   agentStateByAgent: Record<string, AgentStateSnapshot>;
+  speakingByAgent: Record<string, { body: string; startedAt: number }>;
   sendingByAgent: Record<string, boolean>;
   draftByAgent: Record<string, string>;
   attachmentsByConversation: Record<string, ChatAttachment[]>;
@@ -1036,7 +1076,7 @@ interface CoreActions {
   connect: (host: string, port: number, token: string) => Promise<boolean>;
   connectToAgent: (agentId: string) => Promise<void>;
   switchAgent: (agentId: string) => Promise<void>;
-  addAgent: (host: string, port: number, token: string) => void;
+  addAgent: (host: string, port: number, token: string) => string;
   removeAgent: (agentId: string) => void;
   disconnectAgent: (agentId: string) => Promise<void>;
   resetIdentityState: () => void;
@@ -1073,7 +1113,11 @@ interface CoreActions {
   setActiveNav: (nav: string) => void;
   clearUnread: (agentId: string) => void;
   refreshLocalAgents: () => Promise<void>;
-  createLocalAgent: (name: string, description: string) => Promise<AgentCreationResult>;
+  createLocalAgent: (
+    name: string,
+    description: string,
+    options?: { activate?: boolean },
+  ) => Promise<AgentCreationResult>;
   controlLocalAgent: (agentId: string, action: AgentLifecycleAction) => Promise<void>;
 }
 
@@ -1096,6 +1140,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   personMemoriesByAgent: {},
   personMemoryListByAgent: {},
   agentStateByAgent: {},
+  speakingByAgent: {},
   sendingByAgent: {},
   draftByAgent: {},
   attachmentsByConversation: {},
@@ -1179,18 +1224,20 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     }
   },
 
-  createLocalAgent: async (name, description) => {
+  createLocalAgent: async (name, description, options) => {
     const result = await window.localAgents.create({ name, description });
     if (!result.ok || !result.agentId) return result;
 
     await get().refreshLocalAgents();
-    set(produce((s: CoreState) => {
-      const created = s.agents.find((agent) => agent.localAgentId === result.agentId);
-      if (created) {
-        s.activeAgentId = created.id;
-        s.page = "chat";
-      }
-    }));
+    if (options?.activate !== false) {
+      set(produce((s: CoreState) => {
+        const created = s.agents.find((agent) => agent.localAgentId === result.agentId);
+        if (created) {
+          s.activeAgentId = created.id;
+          s.page = "chat";
+        }
+      }));
+    }
     return result;
   },
 
@@ -1417,7 +1464,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
 
   addAgent: (host, port, token) => {
     const agentId = `${host}:${port}`;
-    if (get().agents.find(a => a.id === agentId)) return;
+    if (get().agents.find(a => a.id === agentId)) return agentId;
 
     set(produce((s: CoreState) => {
       s.agents.push({ id: agentId, name: agentId, host, port, token, source: "manual" });
@@ -1425,6 +1472,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     }));
 
     get().connectToAgent(agentId);
+    return agentId;
   },
 
   // ── Remove agent ──
@@ -1442,6 +1490,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       delete s.activityLoadingByAgent[agentId];
       delete s.activityErrorByAgent[agentId];
       delete s.agentStateByAgent[agentId];
+      delete s.speakingByAgent[agentId];
       delete s.artifactsByAgent[agentId];
       delete s.artifactLoadingByAgent[agentId];
       delete s.artifactErrorByAgent[agentId];
@@ -1472,6 +1521,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     set(produce((s: CoreState) => {
       const c = s.connectionByAgent[agentId];
       if (c) c.status = "disconnected";
+      delete s.speakingByAgent[agentId];
     }));
   },
 
@@ -1586,6 +1636,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       s.personMemoriesByAgent = {};
       s.personMemoryListByAgent = {};
       s.agentStateByAgent = {};
+      s.speakingByAgent = {};
       s.sendingByAgent = {};
       s.draftByAgent = {};
       s.attachmentsByConversation = {};
@@ -2388,6 +2439,23 @@ export function initGatewayEvents() {
       return;
     }
 
+    if (event === "agent.speech.started") {
+      setState(produce((s: CoreState) => {
+        s.speakingByAgent[agentId] = {
+          body: String(d.body || "local"),
+          startedAt: typeof raw.timestamp === "number" ? raw.timestamp : Date.now(),
+        };
+      }));
+      return;
+    }
+
+    if (event === "agent.speech.completed") {
+      setState(produce((s: CoreState) => {
+        delete s.speakingByAgent[agentId];
+      }));
+      return;
+    }
+
     if (event === "assignment.changed" || event === "assignment.progress") {
       const assignment = assignmentSnapshot(d);
       if (!assignment) return;
@@ -2800,16 +2868,21 @@ export function initGatewayEvents() {
         ? d.error as Record<string, unknown>
         : null;
       const terminalText = text || (status === "error"
-        ? `Error: ${String(error?.message || "Unknown error")}`
+        ? String(error?.message || "模型服务暂时不可用")
         : "");
+      let retryMessageId: number | undefined;
       setState(produce((s: CoreState) => {
         const userMessage = [...(s.messagesByAgent[agentId] || [])]
           .reverse()
           .find((message) => message.role === "user" && message.turnId === eventTurnId);
         if (!userMessage) return;
+        retryMessageId = userMessage.sourceMessageId;
         userMessage.deliveryStatus = status === "error"
           ? "failed"
           : status === "interrupted" ? "interrupted" : "completed";
+        userMessage.deliveryErrorCode = status === "error"
+          ? String(error?.code || "")
+          : "";
         userMessage.deliveryError = status === "error"
           ? String(error?.message || "Unknown error")
           : "";
@@ -2826,6 +2899,14 @@ export function initGatewayEvents() {
             s.messagesByAgent[agentId][idx].content = finalText;
             s.messagesByAgent[agentId][idx].streaming = false;
             s.messagesByAgent[agentId][idx].memoryReferences = recalledMemories;
+            s.messagesByAgent[agentId][idx].serviceError =
+              status === "error" && String(error?.code || "").startsWith("MODEL_")
+                ? {
+                    code: String(error?.code || "MODEL_UNAVAILABLE"),
+                    message: String(error?.message || finalText),
+                    retryMessageId,
+                  }
+                : undefined;
             touchSession(s, agentId, eventSessionId, 1);
           }
         }));
@@ -2850,6 +2931,13 @@ export function initGatewayEvents() {
               content: terminalText,
               streaming: false,
               memoryReferences: recalledMemories,
+              serviceError: status === "error" && String(error?.code || "").startsWith("MODEL_")
+                ? {
+                    code: String(error?.code || "MODEL_UNAVAILABLE"),
+                    message: String(error?.message || terminalText),
+                    retryMessageId,
+                  }
+                : undefined,
             });
             touchSession(s, agentId, eventSessionId, 1);
           }));

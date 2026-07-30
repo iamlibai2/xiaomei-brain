@@ -14,7 +14,10 @@ from urllib.parse import urlparse
 from xiaomei_brain.base.config_provider import ConfigProvider
 from xiaomei_brain.llm.client import FatalLLMError, LLMClient, LLMError
 from xiaomei_brain.llm.model_catalog import PROVIDER_META, get_provider_models
-from xiaomei_brain.llm.types import ProviderProfile
+from xiaomei_brain.llm.types import (
+    ProviderProfile,
+    resolve_thinking_capabilities,
+)
 
 
 class ModelConfigurationError(ValueError):
@@ -56,7 +59,7 @@ class ModelConfigurationService:
         providers = global_data.get("models", {}).get("providers", {})
         if not isinstance(providers, dict):
             providers = {}
-        return {
+        result = {
             "agent_id": self.agent_id,
             "selection": self._selection(global_data, agent_data),
             "active": self._active_selection(),
@@ -70,6 +73,14 @@ class ModelConfigurationService:
                 "agent": self.agent_config.hash,
             },
         }
+        health_snapshot = getattr(
+            self.living,
+            "model_service_health_snapshot",
+            None,
+        )
+        if callable(health_snapshot):
+            result["service_health"] = health_snapshot()
+        return result
 
     def catalog(self, provider_id: str = "") -> dict[str, Any]:
         if provider_id:
@@ -156,6 +167,7 @@ class ModelConfigurationService:
         primary: str,
         *,
         vision: str = "",
+        thinking: dict[str, Any] | None = None,
         base_hash: str = "",
     ) -> dict[str, Any]:
         primary_provider, primary_model = self._split_selection(primary)
@@ -163,6 +175,12 @@ class ModelConfigurationService:
             self._split_selection(vision)
         providers = self._provider_configs()
         self._require_configured_model(providers, primary_provider, primary_model)
+        normalized_thinking = self._normalize_thinking_selection(
+            providers,
+            primary_provider,
+            primary_model,
+            thinking,
+        )
         if vision:
             vision_provider, vision_model = self._split_selection(vision)
             self._require_configured_model(providers, vision_provider, vision_model)
@@ -173,12 +191,26 @@ class ModelConfigurationService:
 
         with self._lock:
             self.agent_config.patch(
-                {"model": {"primary": primary, "vision": vision or None}},
+                {
+                    "model": {
+                        "primary": primary,
+                        "vision": vision or None,
+                        "thinking": normalized_thinking or None,
+                    },
+                },
                 base_hash=base_hash,
             )
-            applied = self._apply_selection(primary, vision)
+            applied = self._apply_selection(
+                primary,
+                vision,
+                normalized_thinking,
+            )
             return {
-                "selection": {"primary": primary, "vision": vision},
+                "selection": {
+                    "primary": primary,
+                    "vision": vision,
+                    "thinking": normalized_thinking,
+                },
                 "active": self._active_selection(),
                 "applied": applied,
                 "restart_required": self.living is None,
@@ -250,6 +282,8 @@ class ModelConfigurationService:
         status_code = int(getattr(exc, "status_code", 0) or 0)
         raw = str(exc).strip()
         lowered = raw.lower()
+        if status_code == 402:
+            return "连接失败：模型账户余额不足"
         if status_code in {401, 403}:
             return "连接失败：API Key 无效或没有访问权限"
         if status_code == 404:
@@ -275,11 +309,11 @@ class ModelConfigurationService:
         providers = self.global_config.get("models.providers") or {}
         return providers if isinstance(providers, dict) else {}
 
-    def _selection(self, global_data: dict, agent_data: dict) -> dict[str, str]:
+    def _selection(self, global_data: dict, agent_data: dict) -> dict[str, Any]:
         defaults = global_data.get("agents", {}).get("defaults", {}).get("model", {})
         model = agent_data.get("model", {})
         if isinstance(model, str):
-            return {"primary": model, "vision": ""}
+            return {"primary": model, "vision": "", "thinking": {}}
         if not isinstance(model, dict):
             model = {}
         if not isinstance(defaults, dict):
@@ -287,9 +321,14 @@ class ModelConfigurationService:
         return {
             "primary": str(model.get("primary") or defaults.get("primary") or ""),
             "vision": str(model.get("vision") or defaults.get("vision") or ""),
+            "thinking": (
+                dict(model.get("thinking", {}))
+                if isinstance(model.get("thinking"), dict)
+                else {}
+            ),
         }
 
-    def _active_selection(self) -> dict[str, str]:
+    def _active_selection(self) -> dict[str, Any]:
         agent = getattr(self.living, "agent", None)
         llm = getattr(agent, "llm", None)
         primary = ""
@@ -298,9 +337,18 @@ class ModelConfigurationService:
         return {
             "primary": primary,
             "vision": str(getattr(agent, "vision_model", "") or ""),
+            "thinking": {
+                "enabled": bool(getattr(llm, "thinking_enabled", False)),
+                "effort": str(getattr(llm, "thinking_effort", "default")),
+            } if llm is not None else {},
         }
 
-    def _apply_selection(self, primary: str, vision: str) -> bool:
+    def _apply_selection(
+        self,
+        primary: str,
+        vision: str,
+        thinking: dict[str, Any] | None = None,
+    ) -> bool:
         if self.living is None:
             return False
         agent = getattr(self.living, "agent", None)
@@ -317,6 +365,12 @@ class ModelConfigurationService:
             base_url=provider_config.get("baseUrl", ""),
             api_key=provider_config.get("apiKey", ""),
         )
+        set_thinking = getattr(llm, "set_thinking", None)
+        if callable(set_thinking):
+            set_thinking(
+                enabled=(thinking or {}).get("enabled"),
+                effort=str((thinking or {}).get("effort", "default")),
+            )
         agent.provider = provider_id
         agent.model = model_id
 
@@ -334,6 +388,13 @@ class ModelConfigurationService:
         else:
             agent.vision_llm = None
             agent.vision_model = ""
+        configuration_changed = getattr(
+            self.living,
+            "on_model_configuration_changed",
+            None,
+        )
+        if callable(configuration_changed):
+            configuration_changed()
         return True
 
     def _refresh_active_provider(self, provider_id: str) -> dict[str, Any]:
@@ -343,15 +404,23 @@ class ModelConfigurationService:
             self.global_config.config,
             self.agent_config.config,
         )
+        selected_models = (
+            selection.get("primary", ""),
+            selection.get("vision", ""),
+        )
         if not any(
             value.startswith(f"{provider_id}/")
-            for value in selection.values()
-            if value
+            for value in selected_models
+            if isinstance(value, str) and value
         ):
             return {"applied": True, "restart_required": False}
         if getattr(self.living, "_chatting", False):
             return {"applied": False, "restart_required": True}
-        self._apply_selection(selection["primary"], selection["vision"])
+        self._apply_selection(
+            selection["primary"],
+            selection["vision"],
+            selection.get("thinking", {}),
+        )
         return {"applied": True, "restart_required": False}
 
     def _register_provider(self, llm: Any, provider_id: str, config: dict) -> None:
@@ -380,19 +449,29 @@ class ModelConfigurationService:
         }
         if include_models:
             result["models"] = [
-                {
-                    "id": model.id,
-                    "name": model.name,
-                    "context_window": model.context_window,
-                    "max_tokens": model.max_output or 8192,
-                    "reasoning": model.reasoning,
-                    "supports_tools": model.tool_call,
-                    "input_modes": list(model.input_modalities) or ["text"],
-                    "supports_vision": "image" in model.input_modalities,
-                }
+                self._catalog_model(provider_id, model)
                 for model in get_provider_models(provider_id)
             ]
         return result
+
+    @staticmethod
+    def _catalog_model(provider_id: str, model: Any) -> dict[str, Any]:
+        thinking = resolve_thinking_capabilities(
+            provider_id,
+            model.id,
+            reasoning=model.reasoning,
+        )
+        return {
+            "id": model.id,
+            "name": model.name,
+            "context_window": model.context_window,
+            "max_tokens": model.max_output or 8192,
+            "reasoning": model.reasoning,
+            "supports_tools": model.tool_call,
+            "input_modes": list(model.input_modalities) or ["text"],
+            "supports_vision": "image" in model.input_modalities,
+            **thinking,
+        }
 
     def _public_provider(self, provider_id: str, config: dict) -> dict[str, Any]:
         secret = str(config.get("apiKey", ""))
@@ -421,6 +500,7 @@ class ModelConfigurationService:
             "context_window": int(model.get("contextWindow") or 0),
             "max_tokens": int(model.get("maxTokens") or 0),
             "reasoning": bool(model.get("reasoning", False)),
+            **self._model_thinking_capabilities(provider_id, model),
             "supports_tools": bool(model.get("supportsTools", False)),
             "input_modes": normalized_modes,
             "supports_vision": supports_vision,
@@ -439,6 +519,35 @@ class ModelConfigurationService:
             "contextWindow": max(0, int(model.get("context_window", model.get("contextWindow", 0)) or 0)),
             "maxTokens": max(1, int(model.get("max_tokens", model.get("maxTokens", 8192)) or 8192)),
             "reasoning": bool(model.get("reasoning", False)),
+            "thinkingToggle": bool(
+                model.get("thinking_toggle", model.get("thinkingToggle", False))
+            ),
+            "thinkingEfforts": [
+                str(effort)
+                for effort in model.get(
+                    "thinking_efforts",
+                    model.get("thinkingEfforts", []),
+                )
+                if str(effort) in {"default", "low", "medium", "high", "max"}
+            ],
+            "thinkingDefaultEnabled": bool(
+                model.get(
+                    "thinking_default_enabled",
+                    model.get("thinkingDefaultEnabled", True),
+                )
+            ),
+            "thinkingDefaultEffort": str(
+                model.get(
+                    "thinking_default_effort",
+                    model.get("thinkingDefaultEffort", "default"),
+                )
+            ),
+            "requiresReasoningContentForTools": bool(
+                model.get(
+                    "requires_reasoning_content_for_tools",
+                    model.get("requiresReasoningContentForTools", False),
+                )
+            ),
             "inputModes": [str(mode) for mode in input_modes],
             "supportsVision": bool(
                 model.get("supports_vision", model.get("supportsVision", False))
@@ -446,6 +555,89 @@ class ModelConfigurationService:
             ),
             "supportsTools": bool(model.get("supports_tools", model.get("supportsTools", False))),
         }
+
+    @staticmethod
+    def _model_thinking_capabilities(
+        provider_id: str,
+        model: dict[str, Any],
+    ) -> dict[str, Any]:
+        defaults = resolve_thinking_capabilities(
+            provider_id,
+            str(model.get("id", "")),
+            reasoning=bool(model.get("reasoning", False)),
+        )
+        efforts = model.get("thinkingEfforts", defaults["thinking_efforts"])
+        return {
+            "thinking_toggle": bool(
+                model.get("thinkingToggle", defaults["thinking_toggle"])
+            ),
+            "thinking_efforts": [
+                str(effort)
+                for effort in efforts
+                if str(effort) in {"default", "low", "medium", "high", "max"}
+            ] if isinstance(efforts, list) else [],
+            "thinking_default_enabled": bool(
+                model.get(
+                    "thinkingDefaultEnabled",
+                    defaults["thinking_default_enabled"],
+                )
+            ),
+            "thinking_default_effort": str(
+                model.get(
+                    "thinkingDefaultEffort",
+                    defaults["thinking_default_effort"],
+                )
+            ),
+            "requires_reasoning_content_for_tools": bool(
+                model.get(
+                    "requiresReasoningContentForTools",
+                    defaults["requires_reasoning_content_for_tools"],
+                )
+            ),
+        }
+
+    def _normalize_thinking_selection(
+        self,
+        providers: dict[str, dict[str, Any]],
+        provider_id: str,
+        model_id: str,
+        thinking: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        provider = providers.get(provider_id, {})
+        model = next(
+            (
+                item for item in provider.get("models", [])
+                if isinstance(item, dict) and str(item.get("id", "")) == model_id
+            ),
+            {},
+        )
+        capabilities = self._model_thinking_capabilities(provider_id, model)
+        supports_controls = bool(
+            capabilities["thinking_toggle"]
+            or capabilities["thinking_efforts"]
+        )
+        if not supports_controls:
+            return {}
+
+        options = thinking if isinstance(thinking, dict) else {}
+        enabled = options.get(
+            "enabled",
+            capabilities["thinking_default_enabled"],
+        )
+        if not isinstance(enabled, bool):
+            raise ModelConfigurationError("思考模式开关必须是布尔值")
+        effort = str(options.get(
+            "effort",
+            capabilities["thinking_default_effort"],
+        ))
+        allowed = capabilities["thinking_efforts"]
+        if allowed and effort not in allowed:
+            raise ModelConfigurationError(
+                f"当前模型不支持思考强度: {effort}"
+            )
+        if not allowed:
+            effort = "default"
+        return {"enabled": enabled, "effort": effort}
 
     def _require_configured_model(
         self,

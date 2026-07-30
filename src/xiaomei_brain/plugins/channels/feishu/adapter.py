@@ -13,6 +13,7 @@ import re
 import threading
 import time
 import warnings
+import uuid
 
 # 飞书 SDK (lark_oapi) 内部使用了已弃用的 pkg_resources API
 warnings.filterwarnings("ignore", category=UserWarning, module="lark_oapi")
@@ -71,6 +72,8 @@ class FeishuAdapter(ChannelAdapter):
             action_approval=True,
             attachments=True,
             message_update=True,
+            audio_input=True,
+            audio_output=True,
         )
 
     @property
@@ -104,6 +107,17 @@ class FeishuAdapter(ChannelAdapter):
                 chat_type,
                 text[:200],
             )
+
+            if msg_dict.get("msg_type") == "audio":
+                # SDK callbacks share the WebSocket receive path. Downloading,
+                # decoding and STT must never hold up its heartbeat.
+                threading.Thread(
+                    target=self._handle_audio_message,
+                    args=(msg_dict, living, router, people, issuer),
+                    name="feishu-remote-hearing",
+                    daemon=True,
+                ).start()
+                return
 
             if not text:
                 logger.info("[Feishu/Inbound] ignored empty message")
@@ -371,6 +385,118 @@ class FeishuAdapter(ChannelAdapter):
         logger.info("[FeishuAdapter] Router.deliver → target=%s text=%s", target, text[:80])
         msg = OutboundMsg(text=text)
         self._channel.send(target, msg)
+
+    def send_audio(self, target: str, audio) -> bool:
+        """Expose the Feishu chat as a remote speech body."""
+        from xiaomei_brain.media_services.audio import encode_speech_as_opus
+
+        encoded = encode_speech_as_opus(audio)
+        return self._channel.send_audio(
+            target,
+            f"xiaomei-{int(time.time() * 1000)}.opus",
+            encoded.data,
+            encoded.duration_ms,
+        )
+
+    def _handle_audio_message(
+        self,
+        msg_dict: dict,
+        living,
+        router,
+        people,
+        issuer: str,
+    ) -> None:
+        """Use Feishu as a remote ear, then enter through the normal Gateway."""
+        conversation_id = str(msg_dict.get("conversation_id", ""))
+        sender = str(msg_dict.get("sender", ""))
+        try:
+            if msg_dict.get("chat_type", "p2p") != "p2p":
+                logger.info("[Feishu/Audio] group voice is ignored without a mention")
+                return
+            resolved = (
+                people.resolve_verified_identity(issuer, sender)
+                if people else None
+            )
+            if resolved is None:
+                self.send(
+                    conversation_id,
+                    "我收到了一段语音，但还不能确认你是谁。请先在 Desktop 中完成身份绑定。",
+                )
+                return
+            person, _binding = resolved
+            session_id = f"feishu-{person.person_id}"
+            people.store.ensure_person_session(session_id, person.person_id)
+            if not router.has_route(session_id, "feishu", conversation_id):
+                router.register_peer(
+                    peer_type="human",
+                    peer_id=person.person_id,
+                    channel="feishu",
+                    session_id=session_id,
+                    output_type="feishu",
+                    output_target=conversation_id,
+                    priority=10,
+                )
+
+            audio_data = self._channel.download_message_resource(
+                str(msg_dict.get("message_id", "")),
+                str(msg_dict.get("file_key", "")),
+            )
+            from xiaomei_brain.body.perception.remote_audio import (
+                RemoteAudioPerception,
+            )
+            result = RemoteAudioPerception().perceive(audio_data)
+            text = str(result.get("text", "")).strip()
+            if not text:
+                self.send(conversation_id, "我听到了语音，但没能辨认出其中的内容。")
+                return
+
+            from xiaomei_brain.gateway.attachments import prepare_attachments
+            attachment_id = f"audio_{uuid.uuid4().hex}"
+            attachments, _images, _paths = prepare_attachments(
+                getattr(living, "_agent_id", "default"),
+                session_id,
+                [{
+                    "id": attachment_id,
+                    "name": f"{attachment_id}.opus",
+                    "mime_type": "audio/opus",
+                    "size": len(audio_data),
+                    "data_base64": base64.b64encode(audio_data).decode("ascii"),
+                }],
+            )
+            gateway = getattr(living, "_gateway_inbound", None)
+            if gateway is None:
+                raise RuntimeError("Gateway 尚未初始化")
+            from xiaomei_brain.gateway.inbound import RawMessage
+            admission = gateway.accept(RawMessage(
+                content=text,
+                source="human",
+                channel="feishu",
+                peer_id=person.person_id,
+                peer_type="human",
+                session_id=session_id,
+                attachments=attachments,
+                metadata={
+                    "external_issuer": issuer,
+                    "external_subject": sender,
+                    "external_conversation_id": conversation_id,
+                    "external_message_id": msg_dict.get("message_id", ""),
+                    "message_type": "audio",
+                    "audio_duration_ms": int(msg_dict.get("duration", 0) or 0),
+                    "speech_emotion": str(result.get("emotion", "")),
+                    "speech_events": list(result.get("events", []) or []),
+                },
+                reply_channel="feishu",
+                reply_target=conversation_id,
+            ))
+            reason = getattr(admission, "reason", "")
+            if reason and not getattr(admission, "silent", False):
+                self.send(conversation_id, "这段语音暂时没有接收成功，请稍后重试。")
+        except Exception:
+            logger.exception("[Feishu/Audio] remote hearing failed")
+            try:
+                self.send(conversation_id, "这段语音暂时无法处理，请稍后重试。")
+            except Exception:
+                logger.debug("Failed to report Feishu audio error", exc_info=True)
 
     def send_event(
         self,

@@ -7,6 +7,74 @@ from enum import Enum
 from typing import Any
 
 
+THINKING_EFFORTS = ("default", "low", "medium", "high", "max")
+
+
+def resolve_thinking_capabilities(
+    provider_id: str,
+    model_id: str,
+    *,
+    reasoning: bool = False,
+) -> dict[str, Any]:
+    """Return built-in thinking capabilities for a known model.
+
+    The values are declarative compatibility data. Adding another model that
+    uses an existing wire format should only require catalog data, not another
+    Provider subclass.
+    """
+    provider = provider_id.lower()
+    model = model_id.lower()
+    if provider == "deepseek" and model in {"deepseek-v4-flash", "deepseek-v4-pro"}:
+        return {
+            "thinking_toggle": True,
+            "thinking_efforts": list(THINKING_EFFORTS),
+            "thinking_default_enabled": True,
+            "thinking_default_effort": "default",
+            "requires_reasoning_content_for_tools": True,
+        }
+    if provider == "zhipu" and model == "glm-5.2":
+        return {
+            "thinking_toggle": True,
+            "thinking_efforts": list(THINKING_EFFORTS),
+            "thinking_default_enabled": True,
+            "thinking_default_effort": "default",
+            "requires_reasoning_content_for_tools": True,
+        }
+    if provider == "zhipu" and model in {
+        "glm-5.1", "glm-5", "glm-5-turbo", "glm-5v-turbo",
+        "glm-4.7", "glm-4.6", "glm-4.5",
+    }:
+        return {
+            "thinking_toggle": True,
+            "thinking_efforts": [],
+            "thinking_default_enabled": True,
+            "thinking_default_effort": "default",
+            "requires_reasoning_content_for_tools": True,
+        }
+    return {
+        "thinking_toggle": False,
+        "thinking_efforts": [],
+        "thinking_default_enabled": bool(reasoning),
+        "thinking_default_effort": "default",
+        "requires_reasoning_content_for_tools": False,
+    }
+
+
+def resolve_provider_thinking_mapping(provider_id: str) -> tuple[str, dict[str, str]]:
+    """Return the request format and canonical-effort mapping for a provider."""
+    if provider_id.lower() in {"deepseek", "zhipu"}:
+        return (
+            "openai-thinking",
+            {
+                "low": "high",
+                "medium": "high",
+                "high": "high",
+                "max": "max",
+            },
+        )
+    return "", {}
+
+
 class ModelApi(str, Enum):
     """API 接口类型 — 决定使用哪个 Transport。"""
     CHAT_COMPLETIONS = "chat-completions"
@@ -30,6 +98,11 @@ class ModelDefinition:
     reasoning: bool = False
     input_modes: list[str] = field(default_factory=lambda: ["text"])
     cost: dict = field(default_factory=dict)
+    thinking_toggle: bool = False
+    thinking_efforts: list[str] = field(default_factory=list)
+    thinking_default_enabled: bool = True
+    thinking_default_effort: str = "default"
+    requires_reasoning_content_for_tools: bool = False
 
     # Per-model 能力覆盖（None = 沿用 transport 默认值）
     supports_vision: bool | None = None
@@ -85,6 +158,8 @@ class ProviderProfile:
     supports_vision: bool = False
     default_max_tokens: int | None = None
     default_aux_model: str = ""
+    thinking_format: str = ""
+    thinking_effort_map: dict[str, str] = field(default_factory=dict)
 
     # ── 模型目录 ──
     models: list[ModelDefinition] = field(default_factory=list)
@@ -94,14 +169,103 @@ class ProviderProfile:
     def get_headers(self, api_key: str) -> dict[str, str]:
         return {"Authorization": f"Bearer {api_key}"}
 
-    def prepare_messages(self, messages: list[dict], model: ModelDefinition) -> list[dict]:
-        return messages
+    @staticmethod
+    def _thinking_enabled(model: ModelDefinition, context: dict[str, Any]) -> bool:
+        options = context.get("thinking")
+        if isinstance(options, dict) and isinstance(options.get("enabled"), bool):
+            return options["enabled"]
+        return model.thinking_default_enabled
 
-    def build_extra_body(self, model: ModelDefinition, *, stream: bool, **context) -> dict:
+    def prepare_messages(
+        self,
+        messages: list[dict],
+        model: ModelDefinition,
+        **context,
+    ) -> list[dict]:
+        if (
+            not model.requires_reasoning_content_for_tools
+            or not self._thinking_enabled(model, context)
+        ):
+            return messages
+
+        # Old rows may contain tool calls created before reasoning_content was
+        # persisted. Never fabricate it: omit the invalid tool exchange so the
+        # provider does not reject the whole request.
+        invalid_tool_call_ids: set[str] = set()
+        prepared: list[dict] = []
+        for message in messages:
+            if message.get("role") == "assistant" and message.get("tool_calls"):
+                if not message.get("reasoning_content"):
+                    invalid_tool_call_ids.update(
+                        str(call.get("id", ""))
+                        for call in message["tool_calls"]
+                        if call.get("id")
+                    )
+                    continue
+            if (
+                message.get("role") == "tool"
+                and message.get("tool_call_id") in invalid_tool_call_ids
+            ):
+                continue
+            prepared.append(message)
+        return prepared
+
+    def prepare_message_extras(
+        self,
+        message: dict,
+        model: ModelDefinition,
+        **context,
+    ) -> dict:
+        """Return provider-specific fields for one outbound message.
+
+        The generic Chat Completions transport deliberately knows nothing
+        about provider-specific message extensions such as DeepSeek's
+        ``reasoning_content`` round-trip requirement.
+        """
+        if (
+            model.requires_reasoning_content_for_tools
+            and self._thinking_enabled(model, context)
+            and message.get("role") == "assistant"
+            and message.get("tool_calls")
+            and message.get("reasoning_content")
+        ):
+            return {"reasoning_content": message["reasoning_content"]}
         return {}
 
-    def build_api_kwargs_extras(self, model: ModelDefinition, **context) -> dict[str, Any]:
-        return {}
+    def build_request_extras(
+        self,
+        model: ModelDefinition,
+        *,
+        stream: bool,
+        **context,
+    ) -> dict[str, Any]:
+        """Map normalized thinking options to provider request fields."""
+        if not self.thinking_format or not (
+            model.thinking_toggle or model.thinking_efforts
+        ):
+            return {}
+
+        enabled = self._thinking_enabled(model, context)
+        if self.thinking_format != "openai-thinking":
+            return {}
+
+        result: dict[str, Any] = {}
+        if model.thinking_toggle:
+            result["thinking"] = {
+                "type": "enabled" if enabled else "disabled",
+            }
+        if not enabled or not model.thinking_efforts:
+            return result
+
+        options = context.get("thinking")
+        effort = (
+            str(options.get("effort", "default"))
+            if isinstance(options, dict)
+            else model.thinking_default_effort
+        )
+        if effort != "default":
+            result["reasoning_effort"] = self.thinking_effort_map.get(effort, effort)
+        return result
 
     def get_max_tokens(self, model: ModelDefinition) -> int | None:
         return model.max_tokens
@@ -126,6 +290,11 @@ class ProviderProfile:
         """
         models = []
         for m in config.get("models", []):
+            capabilities = resolve_thinking_capabilities(
+                provider_id,
+                str(m.get("id", "")),
+                reasoning=bool(m.get("reasoning", False)),
+            )
             models.append(ModelDefinition(
                 id=m.get("id", ""),
                 name=m.get("name", m.get("id", "")),
@@ -134,6 +303,26 @@ class ProviderProfile:
                 reasoning=m.get("reasoning", False),
                 input_modes=m.get("inputModes", ["text"]),
                 cost=m.get("cost", {}),
+                thinking_toggle=m.get(
+                    "thinkingToggle",
+                    capabilities["thinking_toggle"],
+                ),
+                thinking_efforts=list(m.get(
+                    "thinkingEfforts",
+                    capabilities["thinking_efforts"],
+                )),
+                thinking_default_enabled=m.get(
+                    "thinkingDefaultEnabled",
+                    capabilities["thinking_default_enabled"],
+                ),
+                thinking_default_effort=m.get(
+                    "thinkingDefaultEffort",
+                    capabilities["thinking_default_effort"],
+                ),
+                requires_reasoning_content_for_tools=m.get(
+                    "requiresReasoningContentForTools",
+                    capabilities["requires_reasoning_content_for_tools"],
+                ),
                 supports_vision=m.get("supportsVision"),
                 supports_tools=m.get("supportsTools"),
                 supports_developer_role=m.get("supportsDeveloperRole"),
@@ -142,6 +331,9 @@ class ProviderProfile:
                 max_tokens_field=m.get("maxTokensField"),
             ))
 
+        default_thinking_format, default_effort_map = (
+            resolve_provider_thinking_mapping(provider_id)
+        )
         return cls(
             provider_id=provider_id,
             name=config.get("name", provider_id),
@@ -157,6 +349,14 @@ class ProviderProfile:
             supports_vision=config.get("supportsVision", False),
             default_max_tokens=config.get("defaultMaxTokens"),
             default_aux_model=config.get("defaultAuxModel", ""),
+            thinking_format=config.get(
+                "thinkingFormat",
+                default_thinking_format,
+            ),
+            thinking_effort_map=dict(config.get(
+                "thinkingEffortMap",
+                default_effort_map,
+            )),
             models=models,
         )
 
@@ -188,6 +388,10 @@ class ProviderProfile:
             existing.env_vars = tuple(config["envVars"])
         if config.get("supportsVision") is not None:
             existing.supports_vision = config["supportsVision"]
+        if config.get("thinkingFormat"):
+            existing.thinking_format = config["thinkingFormat"]
+        if config.get("thinkingEffortMap"):
+            existing.thinking_effort_map = dict(config["thinkingEffortMap"])
 
         # models 合并：config.json 中同 id 覆盖，新 model 追加
         config_models = config.get("models", [])
@@ -195,6 +399,11 @@ class ProviderProfile:
             existing_map = {m.id: m for m in existing.models}
             for m_cfg in config_models:
                 mid = m_cfg.get("id", "")
+                capabilities = resolve_thinking_capabilities(
+                    provider_id,
+                    str(mid),
+                    reasoning=bool(m_cfg.get("reasoning", False)),
+                )
                 md = ModelDefinition(
                     id=mid,
                     name=m_cfg.get("name", mid),
@@ -203,6 +412,26 @@ class ProviderProfile:
                     reasoning=m_cfg.get("reasoning", False),
                     input_modes=m_cfg.get("inputModes", ["text"]),
                     cost=m_cfg.get("cost", {}),
+                    thinking_toggle=m_cfg.get(
+                        "thinkingToggle",
+                        capabilities["thinking_toggle"],
+                    ),
+                    thinking_efforts=list(m_cfg.get(
+                        "thinkingEfforts",
+                        capabilities["thinking_efforts"],
+                    )),
+                    thinking_default_enabled=m_cfg.get(
+                        "thinkingDefaultEnabled",
+                        capabilities["thinking_default_enabled"],
+                    ),
+                    thinking_default_effort=m_cfg.get(
+                        "thinkingDefaultEffort",
+                        capabilities["thinking_default_effort"],
+                    ),
+                    requires_reasoning_content_for_tools=m_cfg.get(
+                        "requiresReasoningContentForTools",
+                        capabilities["requires_reasoning_content_for_tools"],
+                    ),
                     supports_vision=m_cfg.get("supportsVision"),
                     supports_tools=m_cfg.get("supportsTools"),
                     supports_developer_role=m_cfg.get("supportsDeveloperRole"),

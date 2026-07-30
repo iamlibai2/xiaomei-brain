@@ -91,9 +91,14 @@ export function SelectMenu({
                 aria-selected={option.value === value}
                 className={option.value === value ? "selected" : ""}
                 key={option.value}
-                onClick={() => {
-                  onChange(option.value);
+                onClick={(event) => {
+                  // SelectMenu is sometimes placed inside a form label. Stop
+                  // the label's default activation from clicking the trigger
+                  // again immediately after this menu closes.
+                  event.preventDefault();
+                  event.stopPropagation();
                   setOpen(false);
+                  onChange(option.value);
                 }}
               >
                 <span>{option.label}</span>

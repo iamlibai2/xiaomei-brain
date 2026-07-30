@@ -1126,11 +1126,95 @@ export function registerIpcHandlers(
   }));
 
   ipcMain.handle("gateway:setModelSelection", async (_event, args: {
-    agentId: string; primary: string; vision?: string; baseHash?: string;
+    agentId: string;
+    primary: string;
+    vision?: string;
+    thinking?: {
+      enabled: boolean;
+      effort: "default" | "low" | "medium" | "high" | "max";
+    };
+    baseHash?: string;
   }) => channelRpc(args, "model.selection.set", {
     primary: args.primary,
     vision: args.vision || "",
+    thinking: args.thinking,
     base_hash: args.baseHash || "",
+  }));
+
+  ipcMain.handle("gateway:listMediaServices", async (_event, args: {
+    agentId: string; capability?: "image" | "tts" | "music";
+  }) => channelRpc(args, "media.service.list", {
+    capability: args.capability || "",
+  }));
+
+  ipcMain.handle("gateway:getMediaService", async (_event, args: {
+    agentId: string; serviceId: string;
+  }) => channelRpc(args, "media.service.get", {
+    service_id: args.serviceId,
+  }));
+
+  ipcMain.handle("gateway:testMediaService", async (_event, args: {
+    agentId: string;
+    serviceId: string;
+    config: Record<string, unknown>;
+  }) => channelRpc(args, "media.service.test", {
+    service_id: args.serviceId,
+    config: args.config,
+  }));
+
+  ipcMain.handle("gateway:configureMediaService", async (_event, args: {
+    agentId: string;
+    serviceId: string;
+    config: Record<string, unknown>;
+    enabled?: boolean;
+  }) => channelRpc(args, "media.service.configure", {
+    service_id: args.serviceId,
+    config: args.config,
+    enabled: args.enabled !== false,
+  }));
+
+  ipcMain.handle("gateway:removeMediaService", async (_event, args: {
+    agentId: string; serviceId: string;
+  }) => channelRpc(args, "media.service.remove", {
+    service_id: args.serviceId,
+  }));
+
+  ipcMain.handle("gateway:listToolServices", async (_event, args: {
+    agentId: string; capability?: "web_search";
+  }) => channelRpc(args, "tool.service.list", {
+    capability: args.capability || "",
+  }));
+
+  ipcMain.handle("gateway:getToolService", async (_event, args: {
+    agentId: string; serviceId: string;
+  }) => channelRpc(args, "tool.service.get", {
+    service_id: args.serviceId,
+  }));
+
+  ipcMain.handle("gateway:testToolService", async (_event, args: {
+    agentId: string;
+    serviceId: string;
+    config: Record<string, unknown>;
+  }) => channelRpc(args, "tool.service.test", {
+    service_id: args.serviceId,
+    config: args.config,
+  }));
+
+  ipcMain.handle("gateway:configureToolService", async (_event, args: {
+    agentId: string;
+    serviceId: string;
+    config: Record<string, unknown>;
+    enabled?: boolean;
+  }) => channelRpc(args, "tool.service.configure", {
+    service_id: args.serviceId,
+    config: args.config,
+    enabled: args.enabled !== false,
+  }));
+
+  ipcMain.handle("gateway:removeToolService", async (_event, args: {
+    agentId: string; serviceId: string;
+  }) => channelRpc(args, "tool.service.remove", {
+    service_id: args.serviceId,
   }));
 
   ipcMain.handle("store:getConfig", async (_event, key: string) => {

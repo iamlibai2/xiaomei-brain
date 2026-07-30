@@ -1,0 +1,257 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import type {
+  ModelConfigSnapshot,
+  ModelDefinition,
+  ModelThinkingSelection,
+  ThinkingEffort,
+} from "../../types";
+import { Icon } from "../ui";
+
+const EFFORT_LABELS: Record<ThinkingEffort, string> = {
+  default: "默认",
+  low: "低",
+  medium: "中",
+  high: "高",
+  max: "最大",
+};
+
+interface ModelOption {
+  value: string;
+  label: string;
+  provider: string;
+  model: ModelDefinition;
+}
+
+export function ModelQuickMenu({
+  snapshot,
+  busy,
+  disabled,
+  onApply,
+}: {
+  snapshot: ModelConfigSnapshot | null;
+  busy: boolean;
+  disabled: boolean;
+  onApply: (
+    primary: string,
+    thinking?: ModelThinkingSelection,
+  ) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const options = useMemo<ModelOption[]>(() => (
+    snapshot?.providers.flatMap((provider) => provider.models.map((model) => ({
+      value: `${provider.id}/${model.id}`,
+      label: model.name || model.id,
+      provider: provider.id,
+      model,
+    }))) || []
+  ), [snapshot]);
+  const primary = snapshot?.selection.primary || "";
+  const selected = options.find((option) => option.value === primary);
+
+  useEffect(() => {
+    const handleOutside = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, []);
+
+  async function selectModel(option: ModelOption) {
+    const hasThinking = Boolean(
+      option.model.thinking_toggle || option.model.thinking_efforts.length,
+    );
+    const nextThinking = hasThinking ? {
+      enabled: option.model.thinking_default_enabled,
+      effort: normalizeEffort(
+        option.model.thinking_default_effort,
+        option.model.thinking_efforts,
+      ),
+    } : undefined;
+    setOpen(false);
+    await onApply(option.value, nextThinking);
+  }
+
+  async function toggleThinking(option: ModelOption, enabled: boolean) {
+    if (busy) return;
+    const optionThinking = resolveOptionThinking(snapshot, option, primary);
+    await onApply(option.value, {
+      enabled,
+      effort: optionThinking.effort,
+    });
+  }
+
+  async function selectEffort(option: ModelOption, effort: ThinkingEffort) {
+    if (busy) return;
+    const optionThinking = resolveOptionThinking(snapshot, option, primary);
+    if (option.value === primary && effort === optionThinking.effort) return;
+    await onApply(option.value, {
+      enabled: true,
+      effort,
+    });
+  }
+
+  return (
+    <div
+      className={`chat-model-menu ${open ? "is-open" : ""}`}
+      ref={rootRef}
+    >
+      <button
+        type="button"
+        className="chat-model-menu-trigger"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        disabled={disabled || options.length === 0}
+        title="当前 Agent 的模型与思考设置"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="chat-model-menu-trigger-copy">
+          <strong>{busy ? "切换中…" : selected?.label || "选择模型"}</strong>
+        </span>
+        <Icon name="chevron-down" size={14} />
+      </button>
+
+      {open && (
+        <div className="chat-model-menu-popover" role="menu">
+          <div className="chat-model-menu-options">
+            {options.map((option) => {
+              const optionSupportsThinking = Boolean(
+                option.model.thinking_toggle
+                || option.model.thinking_efforts.length,
+              );
+              const optionThinking = resolveOptionThinking(snapshot, option, primary);
+              const optionEfforts = option.model.thinking_efforts;
+              const optionThinkingSummary = optionThinking.enabled
+                ? optionEfforts.length
+                  ? EFFORT_LABELS[optionThinking.effort]
+                  : "已开启"
+                : "未开启";
+              return (
+                <div
+                  key={option.value}
+                  className={`chat-model-option-shell ${optionSupportsThinking ? "has-details" : ""}`}
+                >
+                  <button
+                    type="button"
+                    className={option.value === primary ? "selected" : ""}
+                    disabled={busy}
+                    onClick={() => void selectModel(option)}
+                  >
+                    <span className="chat-model-option-name">{option.label}</span>
+                    <span className="chat-model-option-end">
+                      {option.value === primary && (
+                        <span className="chat-model-current-mark" aria-label="当前模型">✓</span>
+                      )}
+                      {optionSupportsThinking && <Icon name="chevron-left" size={14} />}
+                    </span>
+                  </button>
+
+                  {optionSupportsThinking && (
+                    <div className="chat-model-detail-panel">
+                      <div className="chat-model-detail-header">
+                        <strong>{option.label}</strong>
+                        <small>{option.provider}</small>
+                      </div>
+                      <div className="chat-model-detail-divider" />
+                      <div className="chat-model-thinking-shell">
+                        <button type="button" className="chat-model-detail-action">
+                          <span>思考强度</span>
+                          <span>
+                            {optionThinkingSummary}
+                            <Icon name="chevron-left" size={14} />
+                          </span>
+                        </button>
+
+                        <div className="chat-model-effort-panel">
+                          {option.model.thinking_toggle && (
+                            <>
+                              <div className="chat-model-thinking-toggle">
+                                <span>思考模式</span>
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={optionThinking.enabled}
+                                  className={`desktop-switch ${optionThinking.enabled ? "is-on" : ""}`}
+                                  disabled={busy}
+                                  onClick={() => void toggleThinking(option, !optionThinking.enabled)}
+                                >
+                                  <span />
+                                </button>
+                              </div>
+                              {optionEfforts.length > 0 && <div className="chat-model-detail-divider" />}
+                            </>
+                          )}
+                          {optionEfforts.length > 0 && (
+                            <div className="chat-model-effort-list">
+                              <small>思考强度</small>
+                              {optionEfforts.map((effort) => (
+                                <button
+                                  type="button"
+                                  key={effort}
+                                  disabled={busy}
+                                  className={optionThinking.enabled && optionThinking.effort === effort
+                                    ? "selected"
+                                    : ""}
+                                  onClick={() => void selectEffort(option, effort)}
+                                >
+                                  <span>{EFFORT_LABELS[effort]}</span>
+                                  {optionThinking.enabled && optionThinking.effort === effort && (
+                                    <span aria-hidden="true">✓</span>
+                                  )}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function resolveOptionThinking(
+  snapshot: ModelConfigSnapshot | null,
+  option: ModelOption,
+  primary: string,
+): ModelThinkingSelection {
+  if (option.value === primary) return resolveThinking(snapshot, option.model);
+  return {
+    enabled: option.model.thinking_default_enabled,
+    effort: normalizeEffort(
+      option.model.thinking_default_effort,
+      option.model.thinking_efforts,
+    ),
+  };
+}
+
+function resolveThinking(
+  snapshot: ModelConfigSnapshot | null,
+  model?: ModelDefinition,
+): ModelThinkingSelection {
+  const efforts = model?.thinking_efforts || [];
+  const configured = snapshot?.selection.thinking;
+  return {
+    enabled: typeof configured?.enabled === "boolean"
+      ? configured.enabled
+      : model?.thinking_default_enabled ?? true,
+    effort: normalizeEffort(
+      configured?.effort || model?.thinking_default_effort || "default",
+      efforts,
+    ),
+  };
+}
+
+function normalizeEffort(
+  effort: ThinkingEffort,
+  efforts: ThinkingEffort[],
+): ThinkingEffort {
+  if (!efforts.length) return "default";
+  return efforts.includes(effort) ? effort : efforts[0];
+}

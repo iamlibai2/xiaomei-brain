@@ -15,6 +15,8 @@ from typing import Any, TYPE_CHECKING
 from .internal_display import InternalDisplay
 from .living import LivingMessage
 from .round_scheduler import RoundScheduler
+from ..llm.client import FatalLLMError
+from ..llm.public_error import model_service_error
 from ..purpose import (
     task_executor,
     IntentResult, IntentType as PurposeIntentType,
@@ -349,6 +351,9 @@ class ConversationDriver:
                         agent.on_artifact = self._make_artifact_callback(
                             current_msg.session_id, current_msg.turn_id, current_msg.user_id, parent,
                         )
+                        agent.on_speech = self._make_speech_callback(
+                            current_msg.session_id, current_msg.turn_id, parent,
+                        )
                         agent.on_tool_approval = self._make_tool_approval_callback(
                             current_msg.session_id, current_msg.turn_id, current_msg.user_id, parent,
                         )
@@ -357,6 +362,7 @@ class ConversationDriver:
                         agent.on_tool_start = None
                         agent.on_tool_complete = None
                         agent.on_artifact = None
+                        agent.on_speech = None
                         agent.on_tool_approval = self._make_tool_approval_callback(
                             current_msg.session_id, current_msg.turn_id, current_msg.user_id, parent,
                         )
@@ -542,6 +548,18 @@ class ConversationDriver:
                     siblings = gm._purpose.get_sub_goals(next_goal.parent_id)
                     gm.print_sub_goal_progress(next_goal, siblings)
 
+            except FatalLLMError as e:
+                terminal_status = "error"
+                terminal_error = model_service_error(e.status_code)
+                terminal_text = terminal_error["message"]
+                logger.warning(
+                    "[ConversationDriver] fatal LLM service error: status=%s code=%s",
+                    e.status_code,
+                    terminal_error["code"],
+                )
+                observer = getattr(parent, "_on_model_service_failure", None)
+                if callable(observer):
+                    observer(e, source="conversation")
             except Exception as e:
                 import traceback
                 from xiaomei_brain.llm.client import LLMError
@@ -551,10 +569,12 @@ class ConversationDriver:
                     or isinstance(e, _requests.ConnectionError)
                 )
                 terminal_status = "error"
-                terminal_error = {
-                    "code": "LLM_UNAVAILABLE" if is_retryable else "INTERNAL_ERROR",
-                    "message": str(e),
-                }
+                terminal_error = (
+                    model_service_error(getattr(e, "status_code", 0))
+                    if is_retryable
+                    else {"code": "INTERNAL_ERROR", "message": str(e)}
+                )
+                terminal_text = terminal_error["message"] if is_retryable else ""
                 if is_retryable:
                     print(f"\n\033[33m[网络不通] LLM 接口无法连接，请检查网络后重新发送消息\033[0m", flush=True)
                     logger.warning("[ConversationDriver] Chat 网络异常: %s", e)
@@ -592,6 +612,7 @@ class ConversationDriver:
                     agent_core.on_tool_start = None
                     agent_core.on_tool_complete = None
                     agent_core.on_artifact = None
+                    agent_core.on_speech = None
                     agent_core.on_tool_approval = None
                     agent_core.on_action_complete = None
                     agent_core.turn_id = ""
@@ -1045,6 +1066,72 @@ class ConversationDriver:
         return callback
 
     @staticmethod
+    def _make_speech_callback(
+        session_id: str,
+        turn_id: str,
+        parent: Any,
+    ):
+        """Route speech to the remote body bound to this Turn, or local throat."""
+        def callback(audio) -> str:
+            router = getattr(parent, "_router", None)
+            route = (
+                router.route_for_turn(turn_id, session_id)
+                if router is not None and hasattr(router, "route_for_turn")
+                else None
+            )
+            body_name = (
+                route.type
+                if route is not None
+                and getattr(
+                    router.get_adapter(route.type), "capabilities", None,
+                )
+                and router.get_adapter(route.type).capabilities.audio_output
+                else "local"
+            )
+            ConversationDriver._publish_event(
+                parent,
+                "agent.speech.started",
+                {"body": body_name, "status": "speaking", "_agent_global": True},
+                session_id=session_id,
+                turn_id=turn_id,
+            )
+            status = "completed"
+            try:
+                if body_name != "local":
+                    if not router.deliver_audio(audio, route):
+                        raise RuntimeError(f"{body_name} 语音发送失败")
+                    return f"已通过{body_name}发送语音。"
+
+                # A rich client currently observes state only; until it gains
+                # an audio sink, the Agent's local physical throat remains the
+                # output body for WS/Desktop conversations.
+                from xiaomei_brain.plugins.body._refs import body_ref
+                body = body_ref[0]
+                throat = getattr(body, "throat", None) if body is not None else None
+                if throat is None:
+                    raise RuntimeError("本地语音系统未初始化")
+                throat.play_stream(
+                    audio.chunks,
+                    codec=audio.codec,
+                    sample_rate=audio.sample_rate,
+                    channels=audio.channels,
+                )
+                return "已通过本地身体朗读。"
+            except Exception:
+                status = "failed"
+                raise
+            finally:
+                ConversationDriver._publish_event(
+                    parent,
+                    "agent.speech.completed",
+                    {"body": body_name, "status": status, "_agent_global": True},
+                    session_id=session_id,
+                    turn_id=turn_id,
+                )
+
+        return callback
+
+    @staticmethod
     def _resume_pending_assignment_reply(
         parent: Any,
         msg: LivingMessage,
@@ -1318,3 +1405,19 @@ class ConversationDriver:
                 message_id,
                 stored_status,
             )
+
+    def reject_message(
+        self,
+        msg: LivingMessage,
+        error: dict[str, str],
+    ) -> None:
+        """Reject an accepted message through the normal terminal event path."""
+        self._update_message_status(self._parent, msg, "error", error)
+        self._deliver_response(
+            self._parent,
+            msg.session_id,
+            msg.turn_id,
+            error.get("message", ""),
+            status="error",
+            error=error,
+        )

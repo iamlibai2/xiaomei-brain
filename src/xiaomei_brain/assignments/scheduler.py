@@ -34,10 +34,12 @@ class AssignmentScheduler:
         executor: AssignmentExecutor,
         *,
         clock: Callable[[], float] = time.time,
+        model_available: Callable[[], bool] | None = None,
     ) -> None:
         self.executor = executor
         self.service = executor.service
         self._clock = clock
+        self._model_available = model_available
         self._condition = threading.Condition()
         self._queue: list[_ScheduledItem] = []
         self._queued_ids: set[str] = set()
@@ -283,7 +285,13 @@ class AssignmentScheduler:
     def _worker_loop(self) -> None:
         while True:
             with self._condition:
-                while self._running and not self._queue:
+                while self._running and (
+                    not self._queue
+                    or (
+                        self._model_available is not None
+                        and not self._model_available()
+                    )
+                ):
                     self._condition.wait(timeout=1.0)
                 if not self._running and not self._queue:
                     return

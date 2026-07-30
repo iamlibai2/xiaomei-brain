@@ -1,8 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useCoreStore } from "../../store";
-import { Icon, SelectMenu } from "../ui";
-import type { ChatAttachment, ModelConfigSnapshot } from "../../types";
+import { Icon } from "../ui";
+import type {
+  ChatAttachment,
+  ModelConfigSnapshot,
+  ModelThinkingSelection,
+} from "../../types";
+import { ModelQuickMenu } from "./ModelQuickMenu";
 
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 8 * 1024 * 1024;
@@ -87,15 +92,10 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
     return () => window.removeEventListener("xiaomei:model-selection-changed", handleModelChange);
   }, [activeAgentId, loadModels]);
 
-  const modelOptions = useMemo(() => (
-    modelSnapshot?.providers.flatMap((provider) => provider.models.map((model) => ({
-      value: `${provider.id}/${model.id}`,
-      label: model.name || model.id,
-      description: provider.id,
-    }))) || []
-  ), [modelSnapshot]);
-
-  const selectModel = async (primary: string) => {
+  const selectModel = async (
+    primary: string,
+    thinking?: ModelThinkingSelection,
+  ) => {
     if (!activeAgentId || !modelSnapshot || !primary) return;
     setModelBusy(true);
     setModelError("");
@@ -104,6 +104,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
         agentId: activeAgentId,
         primary,
         vision: modelSnapshot.selection.vision || "",
+        thinking,
         baseHash: modelSnapshot.hashes.agent,
       });
       if (response.error) throw new Error(response.error.message);
@@ -224,17 +225,11 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
           </button>
         </div>
         <div className="chat-input-toolbar-right">
-          <SelectMenu
-            className="chat-model-select"
-            placement="up"
-            value={modelSnapshot?.selection.primary || ""}
-            options={modelOptions}
-            placeholder={modelBusy ? "切换中…" : "选择模型"}
-            searchable={modelOptions.length > 6}
-            searchPlaceholder="搜索模型"
-            emptyText="没有可用模型"
-            disabled={!connected || sending || modelBusy || modelOptions.length === 0}
-            onChange={(value) => void selectModel(value)}
+          <ModelQuickMenu
+            snapshot={modelSnapshot}
+            busy={modelBusy}
+            disabled={!connected || sending || modelBusy}
+            onApply={selectModel}
           />
           <button className="chat-input-btn" title={t("home.voiceInput")}>
             <Icon name="microphone" size={18} />

@@ -213,6 +213,21 @@ def _structured_strings(result: str) -> list[str]:
 
     if parsed is not None:
         visit(parsed)
+
+    # Some tools return a short human-readable summary instead of JSON, for
+    # example:
+    #
+    #   Generated 1 image:
+    #     - C:\Users\name/.xiaomei-brain/agent\images\image.jpeg
+    #
+    # Keep those paths discoverable as artifacts.  Do not split on whitespace:
+    # Agent-owned output paths may legitimately contain spaces.  Containment is
+    # still enforced later by resolving every candidate below the Agent root.
+    for raw_line in result.splitlines():
+        candidate = raw_line.strip()
+        candidate = re.sub(r"^(?:[-*•]\s+|\d+[.)]\s+)", "", candidate)
+        if re.match(r"^[A-Za-z]:[\\/]", candidate) or candidate.startswith("/"):
+            values.append(candidate.strip().strip("'\""))
     return values
 
 

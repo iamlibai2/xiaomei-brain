@@ -69,12 +69,14 @@ class AssignmentExecutor:
         agent_id: str,
         runner: AssignmentRunner,
         activity_service: ActivityService | None = None,
+        model_failure_observer: Callable[[BaseException], None] | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.service = service
         self.agent_id = agent_id
         self.runner = runner
         self.activity_service = activity_service
+        self._model_failure_observer = model_failure_observer
         self._clock = clock
         self._actor = AssignmentActor(ActorType.AGENT, agent_id)
 
@@ -172,6 +174,8 @@ class AssignmentExecutor:
             # FatalLLMError deliberately inherits BaseException so it can stop
             # the main Living loop. A background worker must instead close its
             # durable run without terminating realtime conversation service.
+            if self._model_failure_observer is not None:
+                self._model_failure_observer(exc)
             if exc.status_code == 402:
                 self.service.pause(
                     assignment.id,

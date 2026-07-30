@@ -4,11 +4,21 @@ import { useTranslation } from "react-i18next";
 import { useCoreStore } from "../../store";
 import { Button, Icon } from "../ui";
 
-export function AddAgentDialog({ onClose }: { onClose: () => void }) {
+export function AddAgentDialog({
+  onClose,
+  activateCreated = true,
+  initialMode = "local",
+  allowModeSwitch = true,
+}: {
+  onClose: () => void;
+  activateCreated?: boolean;
+  initialMode?: "local" | "remote";
+  allowModeSwitch?: boolean;
+}) {
   const { t } = useTranslation();
   const createLocalAgent = useCoreStore((state) => state.createLocalAgent);
   const addAgent = useCoreStore((state) => state.addAgent);
-  const [mode, setMode] = useState<"local" | "remote">("local");
+  const [mode, setMode] = useState<"local" | "remote">(initialMode);
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
   const [host, setHost] = useState("localhost");
@@ -31,7 +41,7 @@ export function AddAgentDialog({ onClose }: { onClose: () => void }) {
     setSubmitting(true);
     setError("");
     try {
-      const result = await createLocalAgent(name, role);
+      const result = await createLocalAgent(name, role, { activate: activateCreated });
       if (!result.ok) {
         setError(result.message);
         return;
@@ -56,7 +66,14 @@ export function AddAgentDialog({ onClose }: { onClose: () => void }) {
   }
 
   return createPortal(
-    <div className="agent-dialog-overlay" role="presentation" onMouseDown={() => { if (!submitting) onClose(); }}>
+    <div
+      className="agent-dialog-overlay"
+      role="presentation"
+      onMouseDown={(event) => {
+        event.stopPropagation();
+        if (!submitting) onClose();
+      }}
+    >
       <section
         className="agent-dialog"
         role="dialog"
@@ -98,9 +115,11 @@ export function AddAgentDialog({ onClose }: { onClose: () => void }) {
                 rows={4}
               />
             </label>
-            <button className="agent-dialog-secondary-entry" type="button" onClick={() => { setMode("remote"); setError(""); }}>
-              {t("agentDialog.connectRemote")} <span>›</span>
-            </button>
+            {allowModeSwitch && (
+              <button className="agent-dialog-secondary-entry" type="button" onClick={() => { setMode("remote"); setError(""); }}>
+                {t("agentDialog.connectRemote")} <span>›</span>
+              </button>
+            )}
             {error && <div className="agent-dialog-error">{error}</div>}
             <footer className="agent-dialog-actions">
               <Button type="button" variant="ghost" size="md" onClick={onClose} disabled={submitting}>
@@ -113,9 +132,11 @@ export function AddAgentDialog({ onClose }: { onClose: () => void }) {
           </form>
         ) : (
           <form className="agent-dialog-form" onSubmit={submitRemote}>
-            <button className="agent-dialog-back" type="button" onClick={() => { setMode("local"); setError(""); }}>
-              ‹ {t("agentDialog.backToCreate")}
-            </button>
+            {allowModeSwitch && (
+              <button className="agent-dialog-back" type="button" onClick={() => { setMode("local"); setError(""); }}>
+                ‹ {t("agentDialog.backToCreate")}
+              </button>
+            )}
             <label>
               <span>{t("agentDialog.hostLabel")}</span>
               <input value={host} onChange={(event) => setHost(event.target.value)} autoFocus />

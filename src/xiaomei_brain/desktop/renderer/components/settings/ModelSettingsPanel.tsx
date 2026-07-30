@@ -3,6 +3,7 @@ import type {
   ModelConfigSnapshot,
   ModelDefinition,
   ModelProviderConfig,
+  ThinkingEffort,
 } from "../../types";
 import { Button, Icon, SelectMenu } from "../ui";
 
@@ -23,6 +24,11 @@ const EMPTY_MODEL: ModelDefinition = {
   context_window: 0,
   max_tokens: 8192,
   reasoning: false,
+  thinking_toggle: false,
+  thinking_efforts: [],
+  thinking_default_enabled: true,
+  thinking_default_effort: "default",
+  requires_reasoning_content_for_tools: false,
   supports_tools: true,
   input_modes: ["text"],
   supports_vision: false,
@@ -33,6 +39,8 @@ export function ModelSettingsPanel({ agentId, connected }: Props) {
   const [catalog, setCatalog] = useState<CatalogProvider[]>([]);
   const [primary, setPrimary] = useState("");
   const [vision, setVision] = useState("");
+  const [thinkingEnabled, setThinkingEnabled] = useState(true);
+  const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort>("default");
   const [editorOpen, setEditorOpen] = useState(false);
   const [providerId, setProviderId] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
@@ -63,6 +71,22 @@ export function ModelSettingsPanel({ agentId, connected }: Props) {
       setSnapshot(next);
       setPrimary(next.selection.primary || "");
       setVision(next.selection.vision || "");
+      const [selectedProviderId, selectedModelId] = (
+        next.selection.primary || ""
+      ).split("/", 2);
+      const selectedModel = next.providers
+        .find((provider) => provider.id === selectedProviderId)
+        ?.models.find((model) => model.id === selectedModelId);
+      setThinkingEnabled(
+        typeof next.selection.thinking?.enabled === "boolean"
+          ? next.selection.thinking.enabled
+          : selectedModel?.thinking_default_enabled ?? true,
+      );
+      setThinkingEffort(
+        next.selection.thinking?.effort
+        || selectedModel?.thinking_default_effort
+        || "default",
+      );
       const values = catalogResponse.result?.providers;
       setCatalog(Array.isArray(values) ? values as unknown as CatalogProvider[] : []);
     } catch (loadError) {
@@ -81,6 +105,7 @@ export function ModelSettingsPanel({ agentId, connected }: Props) {
       value: `${provider.id}/${model.id}`,
       label: `${model.name || model.id} · ${provider.id}`,
       vision: model.supports_vision || model.input_modes.includes("image"),
+      model,
     }))) || []
   ), [snapshot]);
   const primaryOptions = useMemo(() => configuredModels.map((model) => ({
@@ -104,6 +129,34 @@ export function ModelSettingsPanel({ agentId, connected }: Props) {
       ...supported,
     ];
   }, [configuredModels, vision]);
+  const selectedPrimaryModel = useMemo(
+    () => configuredModels.find((model) => model.value === primary)?.model,
+    [configuredModels, primary],
+  );
+  const supportsThinkingControls = Boolean(
+    selectedPrimaryModel?.thinking_toggle
+    || selectedPrimaryModel?.thinking_efforts.length,
+  );
+  const thinkingEffortOptions = useMemo(() => {
+    const labels: Record<ThinkingEffort, string> = {
+      default: "默认",
+      low: "低",
+      medium: "中",
+      high: "高",
+      max: "最大",
+    };
+    return (selectedPrimaryModel?.thinking_efforts || []).map((effort) => ({
+      value: effort,
+      label: labels[effort],
+    }));
+  }, [selectedPrimaryModel]);
+
+  function selectPrimary(value: string) {
+    setPrimary(value);
+    const model = configuredModels.find((item) => item.value === value)?.model;
+    setThinkingEnabled(model?.thinking_default_enabled ?? true);
+    setThinkingEffort(model?.thinking_default_effort || "default");
+  }
 
   const editingExistingProvider = Boolean(
     snapshot?.providers.some((provider) => provider.id === providerId),
@@ -234,6 +287,10 @@ export function ModelSettingsPanel({ agentId, connected }: Props) {
         agentId,
         primary,
         vision,
+        thinking: supportsThinkingControls ? {
+          enabled: thinkingEnabled,
+          effort: thinkingEffort,
+        } : undefined,
         baseHash: snapshot?.hashes.agent,
       });
       if (response.error) throw new Error(response.error.message);
@@ -350,7 +407,7 @@ export function ModelSettingsPanel({ agentId, connected }: Props) {
               searchable={primaryOptions.length > 6}
               searchPlaceholder="搜索主模型"
               emptyText="没有已配置的模型"
-              onChange={setPrimary}
+              onChange={selectPrimary}
             />
           </label>
           <label>
@@ -366,20 +423,62 @@ export function ModelSettingsPanel({ agentId, connected }: Props) {
             />
           </label>
         </div>
+        {supportsThinkingControls && selectedPrimaryModel && (
+          <div className="model-thinking-settings">
+            <div className="model-thinking-copy">
+              <strong>思考模式</strong>
+              <span>{selectedPrimaryModel.name || selectedPrimaryModel.id}</span>
+            </div>
+            {selectedPrimaryModel.thinking_toggle && (
+              <button
+                type="button"
+                className={`desktop-switch ${thinkingEnabled ? "is-on" : ""}`}
+                role="switch"
+                aria-label="思考模式"
+                aria-checked={thinkingEnabled}
+                onClick={() => setThinkingEnabled((current) => !current)}
+              >
+                <span />
+              </button>
+            )}
+            {thinkingEffortOptions.length > 0 && (
+              <div className={`model-thinking-effort ${!thinkingEnabled ? "disabled" : ""}`}>
+                <span>思考强度</span>
+                <SelectMenu
+                  value={thinkingEffort}
+                  options={thinkingEffortOptions}
+                  placeholder="默认"
+                  disabled={!thinkingEnabled}
+                  onChange={(value) => setThinkingEffort(value as ThinkingEffort)}
+                />
+              </div>
+            )}
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={!primary || Boolean(busy)}
+              onClick={() => void saveSelection()}
+            >
+              {busy === "selection" ? "保存中…" : "保存"}
+            </Button>
+          </div>
+        )}
         {configuredModels.every((model) => !model.vision) && (
           <p className="model-selection-hint">
             当前没有标记为支持图片的模型。添加模型时请选择支持图片的型号，或在手动添加时开启“支持图片”。
           </p>
         )}
-        <div className="settings-actions">
-          <Button
-            variant="primary"
-            disabled={!primary || Boolean(busy)}
-            onClick={() => void saveSelection()}
-          >
-            {busy === "selection" ? "切换中…" : "保存选择"}
-          </Button>
-        </div>
+        {!supportsThinkingControls && (
+          <div className="settings-actions">
+            <Button
+              variant="primary"
+              disabled={!primary || Boolean(busy)}
+              onClick={() => void saveSelection()}
+            >
+              {busy === "selection" ? "切换中…" : "保存选择"}
+            </Button>
+          </div>
+        )}
       </section>
 
       <section className="settings-card model-library-card">
@@ -427,6 +526,7 @@ export function ModelSettingsPanel({ agentId, connected }: Props) {
                         )}
                         {(model.supports_vision || model.input_modes.includes("image")) && <span>图片</span>}
                         {model.supports_tools && <span>工具</span>}
+                        {(model.thinking_toggle || model.thinking_efforts.length > 0) && <span>思考</span>}
                       </div>
                       <button
                         type="button"

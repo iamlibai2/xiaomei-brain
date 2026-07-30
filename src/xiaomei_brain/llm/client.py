@@ -98,6 +98,7 @@ class LLMClient:
         self._fallback_configs = fallback_configs or []
         self._fallback_index = -1
         self._interoception = interoception
+        self._thinking_options: dict[str, Any] = {}
 
         # Token callback
         self._token_callback: Any = None
@@ -160,6 +161,22 @@ class LLMClient:
             return self._model_def.supports_vision
         return bool(self._profile.supports_vision)
 
+    @property
+    def thinking_enabled(self) -> bool:
+        value = self._thinking_options.get("enabled")
+        if isinstance(value, bool):
+            return value
+        return self._model_def.thinking_default_enabled
+
+    @property
+    def thinking_effort(self) -> str:
+        return str(
+            self._thinking_options.get(
+                "effort",
+                self._model_def.thinking_default_effort,
+            )
+        )
+
     # ── Public API ──────────────────────────────────────────
 
     def set_model(self, model: str, base_url: str | None = None, api_key: str | None = None) -> None:
@@ -173,6 +190,16 @@ class LLMClient:
         if api_key:
             self._api_key = api_key
 
+    def set_thinking(self, enabled: bool | None = None, effort: str = "default") -> None:
+        """Set normalized runtime thinking options for subsequent calls."""
+        options: dict[str, Any] = {}
+        if isinstance(enabled, bool):
+            options["enabled"] = enabled
+        options["effort"] = effort if effort in {
+            "default", "low", "medium", "high", "max",
+        } else "default"
+        self._thinking_options = options
+
     def chat(
         self,
         messages: list[dict[str, Any]],
@@ -180,11 +207,21 @@ class LLMClient:
         log_level: int | None = None,
     ) -> NormalizedResponse:
         """非流式对话。"""
-        api_messages = self._transport.convert_messages(messages, self._model_def, self._profile)
+        api_messages = self._transport.convert_messages(
+            messages,
+            self._model_def,
+            self._profile,
+            thinking=self._thinking_options,
+        )
         api_tools = self._transport.convert_tools(tools or [], self._model_def, self._profile) if tools else None
 
         payload = self._transport.build_kwargs(
-            api_messages, api_tools, self._model_def, self._profile, stream=False,
+            api_messages,
+            api_tools,
+            self._model_def,
+            self._profile,
+            stream=False,
+            thinking=self._thinking_options,
         )
 
         headers = self._transport.get_headers(self._api_key)
@@ -209,11 +246,21 @@ class LLMClient:
         """流式对话 — 逐个 yield chunk。生成器结束后 _last_stream_response 可用。"""
         from xiaomei_brain.llm.transport.chat_completions import ChatCompletionsTransport
 
-        api_messages = self._transport.convert_messages(messages, self._model_def, self._profile)
+        api_messages = self._transport.convert_messages(
+            messages,
+            self._model_def,
+            self._profile,
+            thinking=self._thinking_options,
+        )
         api_tools = self._transport.convert_tools(tools or [], self._model_def, self._profile) if tools else None
 
         payload = self._transport.build_kwargs(
-            api_messages, api_tools, self._model_def, self._profile, stream=True,
+            api_messages,
+            api_tools,
+            self._model_def,
+            self._profile,
+            stream=True,
+            thinking=self._thinking_options,
         )
 
         headers = self._transport.get_headers(self._api_key)

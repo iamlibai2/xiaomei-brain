@@ -327,14 +327,13 @@ class Living:
         """Main loop -- blocking.
 
         DORMANT -> WAKING -> AWAKE -> (state loops) -> DORMANT -> ...
-        FatalLLMError 402 (insufficient balance) triggers DORMANT with periodic
-        recovery. FatalLLMError 401/403 terminates the program.
+        Specialized implementations may keep communication online and handle
+        model failures through _handle_fatal_llm_error().
 
         主循环，阻塞运行。
 
         DORMANT -> WAKING -> AWAKE -> (状态循环) -> DORMANT -> ...
-        FatalLLMError 402（欠费）触发 DORMANT 并定期恢复。
-        FatalLLMError 401/403 终止程序。
+        子类可通过 _handle_fatal_llm_error() 保持通信在线并单独管理模型故障。
         """
         from ..cli.boot import boot_section, boot_line, boot_sep
 
@@ -352,7 +351,11 @@ class Living:
 
             # 启动展示完成后再做运行时初始化（_on_wake 会触发 dispatcher tick，
             # 其中规则通知等输出不应插入 boot 行之间）
-            self._on_wake()
+            try:
+                self._on_wake()
+            except FatalLLMError as error:
+                if not self._handle_fatal_llm_error(error):
+                    raise
 
             while self._running:
                 try:
@@ -373,6 +376,8 @@ class Living:
                         logger.warning("[Living] Unexpected state: %s", self.state)
                         time.sleep(1)
                 except FatalLLMError as e:
+                    if self._handle_fatal_llm_error(e):
+                        continue
                     if e.status_code == 402:
                         # Insufficient balance -> suspend, periodic recovery.
                         # 欠费 -> 暂停，定期探活。
@@ -394,6 +399,10 @@ class Living:
             # Clean up when thread exits (normal stop or exception).
             # 线程退出时清理（正常停止或异常）。
             self._on_stop()
+
+    def _handle_fatal_llm_error(self, error: FatalLLMError) -> bool:
+        """Allow specialized Living implementations to keep services online."""
+        return False
 
     def stop(self) -> None:
         # Stop the main loop — just signal, no I/O.

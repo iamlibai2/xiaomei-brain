@@ -640,7 +640,7 @@ def run_cli_tui(agent_id: str = "xiaomei") -> None:
 
         # 音乐回调
         try:
-            from xiaomei_brain.plugins.tools.music_minimax.music import set_generation_callback
+            from xiaomei_brain.plugins.tools.music_minimax.tool import set_generation_callback
             def _on_music_done(filename: str, success: bool, message: str):
                 living.put_message(message, source="system")
             set_generation_callback(_on_music_done)

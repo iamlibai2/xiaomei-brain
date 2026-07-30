@@ -3,3 +3,29 @@ version: "1.0.0"
 description: "百度搜索 Provider — web_search 工具的内置保底后端"
 kind: bundle
 entry: adapter:register
+toolProvider:
+  id: web_search_baidu
+  displayName: 百度搜索
+  capability: web_search
+  vendor: baidu
+  fields:
+    - key: api_key
+      label: API Key
+      type: secret
+      required: true
+    - key: base_url
+      label: 服务地址
+      type: text
+      default: https://qianfan.baidubce.com/v2/ai_search
+      advanced: true
+  test:
+    method: POST
+    path: /web_search
+    body:
+      messages:
+        - content: 小美
+          role: user
+      search_source: baidu_search_v2
+      resource_type_filter:
+        - type: web
+          top_k: 1

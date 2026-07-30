@@ -1,5 +1,34 @@
 name: image_seedream
 version: "1.0.0"
-description: "图片生成工具 — generate_image_seedream（豆包 Seedream，火山引擎）"
+description: "图片生成工具 — 豆包 Seedream（火山引擎）"
 kind: bundle
 entry: adapter:register
+mediaProvider:
+  id: image_seedream
+  capability: image
+  vendor: seedream
+  displayName: 豆包 Seedream
+  models: [doubao-seedream-5-0-260128]
+  fields:
+    - key: api_key
+      label: API Key
+      type: secret
+      required: true
+    - key: base_url
+      label: Base URL
+      type: text
+      default: https://ark.cn-beijing.volces.com/api/v3
+      advanced: true
+    - key: model
+      label: 模型
+      type: text
+      default: doubao-seedream-5-0-260128
+      required: true
+    - key: watermark
+      label: 添加平台水印
+      type: boolean
+      default: false
+  test:
+    path: /images/generations
+    body:
+      model: $model

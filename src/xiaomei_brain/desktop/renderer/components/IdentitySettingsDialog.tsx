@@ -201,41 +201,42 @@ export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySe
             <h2 id="identity-settings-title">账户管理</h2>
             <p>管理这台电脑用于向各个 Agent 证明身份的本地账户。</p>
           </div>
-          {!embedded && <button onClick={onClose} aria-label={t("about.close")}>×</button>}
+          <div className="identity-settings-header-actions">
+            <Button
+              variant="secondary"
+              size="sm"
+              icon="file-text"
+              disabled={Boolean(busy)}
+              onClick={() => {
+                setImportingAccount(true);
+                setAddingAccount(false);
+                closeAction();
+              }}
+            >
+              导入备份
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              icon="plus"
+              disabled={Boolean(busy)}
+              onClick={() => {
+                setAddingAccount(true);
+                setImportingAccount(false);
+                closeAction();
+              }}
+            >
+              添加账户
+            </Button>
+            {!embedded && (
+              <button className="identity-settings-close" onClick={onClose} aria-label={t("about.close")}>
+                <Icon name="x" size={18} />
+              </button>
+            )}
+          </div>
         </header>
 
         <div className="identity-settings-section identity-account-section">
-          <div className="identity-section-heading">
-            <div>
-              <h3>本机账户</h3>
-              <p>切换账户后，各 Agent 会将 Desktop 识别为不同的人。</p>
-            </div>
-            <div className="identity-heading-actions">
-              <Button
-                variant="secondary"
-                disabled={Boolean(busy)}
-                onClick={() => {
-                  setImportingAccount(true);
-                  setAddingAccount(false);
-                  closeAction();
-                }}
-              >
-                导入备份
-              </Button>
-              <Button
-                variant="primary"
-                disabled={Boolean(busy)}
-                onClick={() => {
-                  setAddingAccount(true);
-                  setImportingAccount(false);
-                  closeAction();
-                }}
-              >
-                <Icon name="plus" size={14} /> 添加账户
-              </Button>
-            </div>
-          </div>
-
           <div className="identity-account-list">
             {status?.accounts.map((account) => (
               <div className={`identity-account-item ${account.active ? "active" : ""}`} key={account.subject}>
@@ -249,30 +250,47 @@ export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySe
                 </div>
                 <div className="identity-account-actions">
                   {!account.active && (
-                    <button type="button" disabled={Boolean(busy)} onClick={() => openAction("switch", account.subject)}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon="external-link"
+                      className="settings-list-action primary"
+                      disabled={Boolean(busy)}
+                      onClick={() => openAction("switch", account.subject)}
+                    >
                       切换到此账户
-                    </button>
+                    </Button>
                   )}
-                  <button type="button" disabled={Boolean(busy)} onClick={() => openAction("password", account.subject)}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon="shield"
+                    className="settings-list-action"
+                    disabled={Boolean(busy)}
+                    onClick={() => openAction("password", account.subject)}
+                  >
                     修改密码
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon="file-text"
+                    className="settings-list-action"
                     disabled={Boolean(busy)}
                     onClick={() => void exportBackup(account.subject)}
                   >
                     {busy === `export:${account.subject}` ? "导出中…" : "导出备份"}
-                  </button>
-                  <button
-                    type="button"
-                    className="danger icon-only"
-                    aria-label={`删除账户 ${account.displayName}`}
-                    title="删除账户"
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon="trash"
+                    className="settings-list-action danger"
                     disabled={Boolean(busy)}
                     onClick={() => openAction("delete", account.subject)}
                   >
-                    <Icon name="trash" size={14} />
-                  </button>
+                    删除
+                  </Button>
                 </div>
               </div>
             ))}

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -114,6 +114,15 @@ class ModelDefinitionParams(BaseModel):
     context_window: int = Field(default=0, ge=0, le=10_000_000)
     max_tokens: int = Field(default=8192, ge=1, le=10_000_000)
     reasoning: bool = False
+    thinking_toggle: bool = False
+    thinking_efforts: list[
+        Literal["default", "low", "medium", "high", "max"]
+    ] = Field(default_factory=list, max_length=5)
+    thinking_default_enabled: bool = True
+    thinking_default_effort: Literal[
+        "default", "low", "medium", "high", "max"
+    ] = "default"
+    requires_reasoning_content_for_tools: bool = False
     input_modes: list[str] = Field(default_factory=lambda: ["text"], max_length=8)
     supports_vision: bool = False
     supports_tools: bool = False
@@ -141,10 +150,58 @@ class ModelProviderRemoveParams(BaseModel):
     base_hash: str = Field(default="", max_length=64)
 
 
+class ModelThinkingSelectionParams(BaseModel):
+    enabled: bool
+    effort: Literal["default", "low", "medium", "high", "max"] = "default"
+
+
 class ModelSelectionSetParams(BaseModel):
     primary: str = Field(..., min_length=3, max_length=300)
     vision: str = Field(default="", max_length=300)
+    thinking: ModelThinkingSelectionParams | None = None
     base_hash: str = Field(default="", max_length=64)
+
+
+class MediaServiceListParams(BaseModel):
+    capability: Literal["", "image", "tts", "music"] = ""
+
+
+class MediaServiceParams(BaseModel):
+    service_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z0-9][a-z0-9_-]*$",
+    )
+
+
+class MediaServiceTestParams(MediaServiceParams):
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class MediaServiceConfigureParams(MediaServiceTestParams):
+    enabled: bool = True
+
+
+class ToolServiceListParams(BaseModel):
+    capability: Literal["", "web_search"] = ""
+
+
+class ToolServiceParams(BaseModel):
+    service_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z0-9][a-z0-9_-]*$",
+    )
+
+
+class ToolServiceTestParams(ToolServiceParams):
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolServiceConfigureParams(ToolServiceTestParams):
+    enabled: bool = True
 
 
 # ── Chat ─────────────────────────────────────

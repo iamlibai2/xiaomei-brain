@@ -22,6 +22,7 @@
 
 .identity-settings-header {
   display: flex;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 20px;
@@ -33,20 +34,40 @@
   color: var(--ui-color-text-primary);
 }
 
+.identity-settings-header h2 {
+  font-size: 19px;
+}
+
 .identity-settings-header p,
 .identity-settings-section p {
   margin: 6px 0 0;
   color: var(--ui-color-text-secondary);
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.55;
 }
 
-.identity-settings-header button {
+.identity-settings-close {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
   border: 0;
+  border-radius: 7px;
   background: transparent;
   color: var(--ui-color-text-secondary);
-  font-size: 24px;
   cursor: pointer;
+}
+
+.identity-settings-close:hover {
+  background: var(--ui-bg-primary);
+}
+
+.identity-settings-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .identity-summary {
@@ -189,29 +210,34 @@
 
 .identity-account-list {
   display: grid;
-  gap: 8px;
-  margin-top: 14px;
+  gap: 10px;
 }
 
 .identity-account-item {
-  display: flex;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 11px;
+  gap: 13px;
   border: 1px solid var(--ui-border-default);
-  border-radius: 10px;
-  padding: 10px 11px;
-  background: var(--ui-bg-primary);
+  border-radius: 12px;
+  padding: 14px;
+  background: var(--ui-bg-secondary);
 }
 
 .identity-account-item.active {
-  border-color: color-mix(in srgb, var(--ui-brand-primary) 42%, var(--ui-border-default));
+  border-color: color-mix(in srgb, var(--ui-brand-primary) 32%, var(--ui-border-default));
+}
+
+.identity-account-item:hover {
+  border-color: color-mix(in srgb, var(--ui-border-default) 55%, var(--ui-brand-primary));
 }
 
 .identity-account-item .identity-avatar {
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   flex: 0 0 auto;
-  font-size: 13px;
+  font-size: 16px;
 }
 
 .identity-account-copy {
@@ -246,42 +272,20 @@
 }
 
 .identity-account-copy code {
-  margin-top: 4px;
+  overflow: hidden;
+  margin-top: 7px;
   color: var(--ui-color-text-tertiary);
   font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .identity-account-actions {
+  max-width: 360px;
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 4px;
-}
-
-.identity-account-actions button {
-  border: 0;
-  border-radius: 6px;
-  padding: 5px 7px;
-  color: var(--ui-color-text-secondary);
-  background: transparent;
-  cursor: pointer;
-  font-size: 11px;
-}
-
-.identity-account-actions button:hover {
-  background: var(--ui-bg-secondary);
-}
-
-.identity-account-actions button.danger {
-  color: #c43232;
-}
-
-.identity-account-actions button.icon-only {
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  padding: 0;
+  gap: 5px;
 }
 
 .identity-inline-form {
@@ -450,6 +454,16 @@
   .identity-inline-action,
   .identity-heading-actions {
     flex-wrap: wrap;
+  }
+
+  .identity-account-item {
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+
+  .identity-account-actions {
+    max-width: none;
+    grid-column: 2;
+    justify-content: flex-start;
   }
 
   .identity-password-fields {

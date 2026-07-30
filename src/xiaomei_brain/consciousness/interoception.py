@@ -366,14 +366,6 @@ class Interoception:
                 signals.sos_reason = reason
                 signals.sos_message = f"我的心跳停了——{names_str} 线程已退出。"
 
-        # LLM 级联失败
-        if signals.llm_consecutive_failures >= SOS_LLM_CASCADE_THRESHOLD:
-            reason = "llm_cascade"
-            if self._can_send_sos(reason, now):
-                signals.sos = True
-                signals.sos_reason = reason
-                signals.sos_message = "我完全动不了了——LLM 调用连续失败。"
-
         # 30 分钟追加提醒
         for reason, sent_time in list(self._sos_last_sent.items()):
             if reason not in self._sos_reminder_sent or not self._sos_reminder_sent[reason]:
@@ -401,8 +393,6 @@ class Interoception:
         """检查异常是否已恢复。"""
         if reason.startswith("thread_died"):
             return all(signals.thread_health.values())
-        if reason == "llm_cascade":
-            return signals.llm_consecutive_failures < SOS_LLM_CASCADE_THRESHOLD
         return False
 
     def mark_recovered(self, reason: str) -> None:

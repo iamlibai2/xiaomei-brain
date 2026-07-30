@@ -31,7 +31,8 @@ class Transport(ABC):
 
     @abstractmethod
     def convert_messages(self, messages: list[dict],
-                         model: ModelDefinition, profile: ProviderProfile) -> list[dict]:
+                         model: ModelDefinition, profile: ProviderProfile,
+                         **context) -> list[dict]:
         """将内部消息格式转换为本协议的请求格式。"""
         ...
 

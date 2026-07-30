@@ -41,7 +41,8 @@ class AnthropicMessagesTransport(Transport):
     # ── Abstract method implementations ──
 
     def convert_messages(self, messages: list[dict],
-                         model: ModelDefinition, profile: ProviderProfile) -> list[dict]:
+                         model: ModelDefinition, profile: ProviderProfile,
+                         **context) -> list[dict]:
         """内部消息 → Anthropic Messages 格式。
 
         关键转换：
@@ -95,7 +96,7 @@ class AnthropicMessagesTransport(Transport):
 
             result.append(api_msg)
 
-        return profile.prepare_messages(result, model)
+        return profile.prepare_messages(result, model, **context)
 
     def convert_tools(self, tools: list[dict],
                       model: ModelDefinition, profile: ProviderProfile) -> list[dict]:
@@ -151,8 +152,8 @@ class AnthropicMessagesTransport(Transport):
         if tools:
             payload["tools"] = tools
 
-        # Profile hooks
-        extra = profile.build_extra_body(model, stream=stream, **context)
+        # Provider-specific request extensions.
+        extra = profile.build_request_extras(model, stream=stream, **context)
         if extra:
             payload.update(extra)
 

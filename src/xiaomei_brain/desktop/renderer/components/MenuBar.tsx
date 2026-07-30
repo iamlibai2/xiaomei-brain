@@ -33,7 +33,7 @@ export function MenuBar() {
     [t("menu.window")]: [
       {
         label: t("sidebar.settings"),
-        action: () => openSettingsCenter("overview"),
+        action: () => openSettingsCenter("agents"),
       },
       { separator: true, label: "" },
       {

@@ -282,6 +282,22 @@ class Router:
             logger.debug("[Router] 无适配器: %s", route.type)
             return False
 
+    def deliver_audio(self, audio, route: OutputRoute) -> bool:
+        """Deliver one speech expression through a capable remote channel."""
+        adapter = self._adapters.get(route.type)
+        if not adapter or not getattr(adapter.capabilities, "audio_output", False):
+            return False
+        try:
+            return bool(adapter.send_audio(route.target, audio))
+        except Exception as exc:
+            logger.warning(
+                "[Router] 语音分发失败 (%s/%s): %s",
+                route.type,
+                route.target,
+                exc,
+            )
+            return False
+
     def deliver_event(
         self,
         event: str,

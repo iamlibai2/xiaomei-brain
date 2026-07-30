@@ -166,6 +166,21 @@ class AgentManager:
             registry=registry,
             api_key=api_key,
         )
+        model_config = (
+            merged_config.get("model", {})
+            if isinstance(merged_config, dict)
+            else {}
+        )
+        thinking_config = (
+            model_config.get("thinking", {})
+            if isinstance(model_config, dict)
+            else {}
+        )
+        if isinstance(thinking_config, dict):
+            llm.set_thinking(
+                enabled=thinking_config.get("enabled"),
+                effort=str(thinking_config.get("effort", "default")),
+            )
 
         # 保存 PluginRegistry 到 agent 实例
         agent._registry = registry
@@ -178,9 +193,6 @@ class AgentManager:
             send_message_tool, check_inbox_tool, set_send_message_context,
             websearch_tools, webget_tools,
         )
-        from xiaomei_brain.plugins.tools.tts_minimax import tts as tts_tools
-        from xiaomei_brain.plugins.tools.music_minimax import music as music_tools
-        from xiaomei_brain.plugins.tools.image_minimax import image as image_tools
         tools.register(shell_tool)
         tools.register(read_file_tool)
         tools.register(write_file_tool)
@@ -193,63 +205,9 @@ class AgentManager:
         tools.register(send_message_tool)
         tools.register(check_inbox_tool)
 
-        # ── Provider 基础类（TTS / Music / Image / WebSearch / WebGet 共用）───
-        from xiaomei_brain.tools.provider import (
-            TTSProvider, VoiceConfig, AudioConfig,
-            MusicProvider, MusicAudioConfig,
-            ImageProvider, ImageConfig,
-            WebGetProvider,
-        )
-        from xiaomei_brain.plugins.tools.web_search_baidu.baidu import BaiduSearchProvider
-
-        if global_config.tts_enabled:
-            tts_api_key = global_config.tts_api_key or api_key
-            if tts_api_key:
-                voice_config = VoiceConfig(
-                    voice_id=global_config.tts_voice_id,
-                    speed=global_config.tts_speed,
-                    vol=global_config.tts_vol,
-                    pitch=global_config.tts_pitch,
-                    emotion=global_config.tts_emotion,
-                )
-                audio_config = AudioConfig(
-                    format=global_config.tts_format,
-                    sample_rate=global_config.tts_sample_rate,
-                    bitrate=global_config.tts_bitrate,
-                )
-                tts_provider = TTSProvider(
-                    api_key=tts_api_key,
-                    base_url=global_config.tts_base_url,
-                    voice_config=voice_config,
-                    audio_config=audio_config,
-                )
-                tts_tools.set_tts_player(None, tts_provider)
-
-        if global_config.music_enabled:
-            music_api_key = global_config.music_api_key or global_config.tts_api_key or api_key
-            if music_api_key:
-                music_provider = MusicProvider(
-                    api_key=music_api_key,
-                    base_url=global_config.music_base_url,
-                    audio_config=MusicAudioConfig(
-                        format=global_config.music_format,
-                        sample_rate=global_config.music_sample_rate,
-                        bitrate=global_config.music_bitrate,
-                    ),
-                )
-                music_tools.set_music_provider(music_provider)
-
-        if global_config.image_enabled:
-            image_api_key = global_config.image_api_key or global_config.tts_api_key or api_key
-            if not global_config.image_api_key:
-                logger.info("[Image] image.api_key 未配置，fallback 到 TTS/model key")
-            if image_api_key:
-                image_provider = ImageProvider(
-                    api_key=image_api_key,
-                    base_url=global_config.image_base_url,
-                    config=ImageConfig(),
-                )
-                image_tools.set_image_provider(image_provider)
+        # Generic URL fetching remains a core tool. Vendor-specific media and
+        # search clients are initialized by their own plugins.
+        from xiaomei_brain.tools.provider import WebGetProvider
 
         # ── Vision 视觉理解（perception 层） ──────────────────────────────
         if agent.vision_model and "/" in agent.vision_model:
@@ -282,11 +240,7 @@ class AgentManager:
         # ── Web Search Provider ─────────────────────────────────────────
         websearch_tools.set_registry(registry)
 
-        if global_config.web_search_enabled and global_config.baidu_api_key:
-            web_search_provider = BaiduSearchProvider(api_key=global_config.baidu_api_key)
-            registry.register_web_search_provider(web_search_provider)
-
-        if global_config.web_search_enabled and registry.get_web_search_providers():
+        if registry.get_web_search_providers():
             tools.register(websearch_tools.web_search_tool)
 
         if global_config.web_get_enabled:

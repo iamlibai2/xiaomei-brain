@@ -1,4 +1,4 @@
-"""TTS (Text-to-Speech) tool using MiniMax API.
+"""Agent tools exposed by the MiniMax TTS plugin.
 
 speak: 流式生成 PCM → throat.play_stream() → 平台原生流式播放
 speak_to_file: 生成 mp3 文件
@@ -10,8 +10,11 @@ import logging
 import os
 import queue
 import threading
+from pathlib import Path
 
 from xiaomei_brain.tools.base import tool
+from xiaomei_brain.media_services.audio import SpeechAudio
+from xiaomei_brain.tools.execution_context import current_tool_execution
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +28,8 @@ _output_base: str | None = None
 def _get_output_dir() -> str:
     """获取 TTS 输出根目录：agent workspace 优先，否则全局 fallback。"""
     if _output_base:
-        return os.path.join(_output_base, "tts")
-    return os.path.expanduser("~/.xiaomei-brain/global/tts")
+        return str(Path(_output_base) / "tts")
+    return str(Path.home() / ".xiaomei-brain" / "global" / "tts")
 
 
 def set_output_base(base_dir: str) -> None:
@@ -155,14 +158,21 @@ def tts_speak(
     if emotion is not None and emotion not in _valid_emotions:
         return f"无效的 emotion='{emotion}'。可选值: {', '.join(sorted(_valid_emotions))}（fluent/whisper 仅 speech-2.6 系列支持）"
 
-    throat = _get_throat()
-    if throat is None:
-        return "语音系统未初始化。请确保 body 插件已加载。"
-
     try:
         gen = _speak_streaming_to_gen(text, voice_id=voice_id, speed=speed,
                                        emotion=emotion, pitch=pitch)
         sr = _tts_provider.audio_config.sample_rate if _tts_provider else 32000
+        context = current_tool_execution()
+        if context is not None and context.speech_callback is not None:
+            result = context.publish_speech(SpeechAudio(
+                chunks=gen,
+                codec="pcm_s16",
+                sample_rate=sr,
+            ))
+            return result or "语音已发送。"
+        throat = _get_throat()
+        if throat is None:
+            return "语音系统未初始化。请确保 body 插件已加载。"
         throat.play_stream(gen, codec="pcm_s16", sample_rate=sr)
         return f"已朗读: {text[:50]}{'...' if len(text) > 50 else ''}"
     except Exception as e:

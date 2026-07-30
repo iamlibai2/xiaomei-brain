@@ -1,5 +1,4 @@
-"""豆包 Seedream 图片生成（火山引擎方舟平台）。
-"""
+"""豆包 Seedream 图片生成 API 客户端（火山引擎方舟平台）。"""
 
 from __future__ import annotations
 
@@ -13,32 +12,8 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# Global image provider instance (set by adapter)
-_image_provider = None
-
-# 输出目录
-_output_base: str | None = None
-
-DEFAULT_MODEL = "doubao-seedream-5-0-260128"
-DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 VALID_SIZES = ["2k", "4k"]
 MAX_IMAGES = 4
-
-
-def _get_output_dir() -> str:
-    if _output_base:
-        return os.path.join(_output_base, "images")
-    return os.path.expanduser("~/.xiaomei-brain/global/images")
-
-
-def set_output_base(base_dir: str) -> None:
-    global _output_base
-    _output_base = base_dir
-
-
-def set_image_provider(provider) -> None:
-    global _image_provider
-    _image_provider = provider
 
 
 class SeedreamProvider:
@@ -50,8 +25,8 @@ class SeedreamProvider:
     def __init__(
         self,
         api_key: str,
-        base_url: str = DEFAULT_BASE_URL,
-        model: str = DEFAULT_MODEL,
+        base_url: str,
+        model: str,
         watermark: bool = False,
     ) -> None:
         self.api_key = api_key
@@ -149,61 +124,3 @@ class SeedreamProvider:
         return paths
 
 
-# ── Tool 函数 ────────────────────────────────────────────────────
-
-from xiaomei_brain.tools.base import tool
-
-
-@tool(
-    name="generate_image_seedream",
-    description="使用豆包 Seedream 模型生成图片。擅长写实风格、高清大图（2K/4K）。生成可能需要几秒到十几秒。",
-)
-def image_generate_seedream(
-    prompt: str,
-    size: str = "2k",
-    n: int = 1,
-) -> str:
-    """使用豆包 Seedream 生成图片。
-
-    Args:
-        prompt: 图片描述（中文或英文）。
-        size: 图片尺寸 — "2k"（默认）或 "4k"。
-        n: 生成数量 1-4。
-    """
-    global _image_provider
-
-    if _image_provider is None:
-        return "豆包 Seedream 图片生成未配置。请设置 VOLCENGINE_API_KEY 环境变量。"
-
-    if not prompt or not prompt.strip():
-        return "图片描述不能为空。"
-
-    n = max(1, min(n, MAX_IMAGES))
-    if size not in VALID_SIZES:
-        size = VALID_SIZES[0]
-
-    output_dir = _get_output_dir()
-    os.makedirs(output_dir, exist_ok=True)
-
-    try:
-        paths = _image_provider.generate_to_files(
-            prompt=prompt,
-            output_dir=output_dir,
-            size=size,
-            n=n,
-        )
-
-        if not paths:
-            return "图片生成失败，未返回任何图片。"
-
-        result = f"Seedream 生成了 {len(paths)} 张图片:\n"
-        for p in paths:
-            result += f"  - {p}\n"
-        return result.strip()
-
-    except Exception as e:
-        logger.error("Seedream image generation error: %s", e)
-        return f"Seedream 图片生成失败: {e}"
-
-
-image_generate_seedream_tool = image_generate_seedream

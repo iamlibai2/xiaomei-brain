@@ -1,5 +1,24 @@
 name: image_minimax
 version: "1.0.0"
-description: "图片生成工具 — generate_image（MiniMax Image API）"
+description: "图片生成工具 — MiniMax Image API"
 kind: bundle
 entry: adapter:register
+mediaProvider:
+  id: image_minimax
+  capability: image
+  vendor: minimax
+  displayName: MiniMax 图片生成
+  models: [image-01, image-01-live]
+  fields:
+    - key: api_key
+      label: API Key
+      type: secret
+      required: true
+    - key: base_url
+      label: Base URL
+      type: text
+      default: https://api.minimaxi.com
+      advanced: true
+  test:
+    path: /v1/image_generation
+    body: {}

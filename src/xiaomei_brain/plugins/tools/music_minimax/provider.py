@@ -1,4 +1,4 @@
-"""Music generation using MiniMax API."""
+"""MiniMax music generation API client."""
 
 from __future__ import annotations
 
@@ -34,17 +34,19 @@ class MusicProvider:
         self,
         api_key: str,
         base_url: str = "https://api.minimaxi.com",
+        model: str = DEFAULT_MODEL,
         audio_config: MusicAudioConfig | None = None,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
+        self.model = model
         self._audio_config = audio_config or MusicAudioConfig()
 
     def generate(
         self,
         prompt: str,
         lyrics: str | None = None,
-        model: str = DEFAULT_MODEL,
+        model: str | None = None,
     ) -> bytes:
         """Generate music synchronously (blocking, may take time).
 
@@ -56,7 +58,7 @@ class MusicProvider:
         Returns:
             Audio data as bytes.
         """
-        payload = self._build_payload(prompt, lyrics, model, stream=False)
+        payload = self._build_payload(prompt, lyrics, model or self.model, stream=False)
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -88,7 +90,7 @@ class MusicProvider:
         prompt: str,
         output_path: str,
         lyrics: str | None = None,
-        model: str = DEFAULT_MODEL,
+        model: str | None = None,
     ) -> None:
         """Generate music and save to file.
 
@@ -107,7 +109,7 @@ class MusicProvider:
         self,
         prompt: str,
         lyrics: str | None = None,
-        model: str = DEFAULT_MODEL,
+        model: str | None = None,
     ) -> Generator[bytes, None, None]:
         """Generate music with streaming chunks (async API, yields progress).
 
@@ -124,7 +126,7 @@ class MusicProvider:
             Audio data chunks as they arrive.
         """
         # Build task creation request
-        payload = self._build_payload(prompt, lyrics, model, stream=True)
+        payload = self._build_payload(prompt, lyrics, model or self.model, stream=True)
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",

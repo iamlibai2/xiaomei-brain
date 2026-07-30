@@ -391,10 +391,12 @@ def test_background_fatal_llm_error_closes_run_without_escaping_worker(tmp_path)
     def runner(context, control):
         raise FatalLLMError("余额不足", status_code=402)
 
+    failures = []
     scheduler = AssignmentScheduler(AssignmentExecutor(
         service,
         agent_id="xiaomei",
         runner=runner,
+        model_failure_observer=lambda error: failures.append(error.status_code),
     ))
     scheduler.start(recover=False)
     scheduler.submit(
@@ -410,4 +412,5 @@ def test_background_fatal_llm_error_closes_run_without_escaping_worker(tmp_path)
     run = store.list_runs(assignment.id)[0]
     assert run.status == "paused"
     assert "余额不足" in run.error
+    assert failures == [402]
     store.close()

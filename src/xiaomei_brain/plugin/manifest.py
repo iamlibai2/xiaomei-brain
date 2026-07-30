@@ -31,6 +31,8 @@ class PluginManifest:
     provides_hooks: list[str] = field(default_factory=list)
     entry: str = "adapter:register"    # 入口函数路径（模块路径省略前缀部分）
     config_schema: dict | None = None   # JSON Schema for plugin config（可选）
+    media_provider: dict | None = None  # 图片、语音、音乐服务的声明式配置元数据
+    tool_provider: dict | None = None   # 搜索等外部工具服务的声明式配置元数据
 
     # 插件所在目录（不来自 yaml，由 loader 填充）
     dir_path: str = ""
@@ -72,6 +74,14 @@ class PluginManifest:
         if config_schema is not None and not isinstance(config_schema, dict):
             logger.warning("[Plugin] %s configSchema 不是 dict，忽略", path)
             config_schema = None
+        media_provider = data.get("mediaProvider")
+        if media_provider is not None and not isinstance(media_provider, dict):
+            logger.warning("[Plugin] %s mediaProvider 不是 dict，忽略", path)
+            media_provider = None
+        tool_provider = data.get("toolProvider")
+        if tool_provider is not None and not isinstance(tool_provider, dict):
+            logger.warning("[Plugin] %s toolProvider 不是 dict，忽略", path)
+            tool_provider = None
 
         return cls(
             name=name,
@@ -84,6 +94,8 @@ class PluginManifest:
             provides_hooks=data.get("provides_hooks", []) or [],
             entry=data.get("entry", "adapter:register"),
             config_schema=config_schema,
+            media_provider=media_provider,
+            tool_provider=tool_provider,
             dir_path=str(path.parent),
         )
 

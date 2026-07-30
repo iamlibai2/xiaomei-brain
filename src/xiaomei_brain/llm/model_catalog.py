@@ -75,6 +75,22 @@ class ModelInfo:
     cost_output: float = 0.0
 
 
+BUILTIN_MODEL_FALLBACKS: dict[str, tuple[ModelInfo, ...]] = {
+    "zhipu": (
+        ModelInfo(
+            id="glm-5.2",
+            name="GLM-5.2",
+            provider_id="zhipu",
+            context_window=1_000_000,
+            max_output=131_072,
+            reasoning=True,
+            tool_call=True,
+            input_modalities=("text",),
+        ),
+    ),
+}
+
+
 # ── 缓存管理 ──
 
 _cache: dict[str, Any] | None = None
@@ -173,14 +189,11 @@ def get_provider_models(provider_id: str) -> list[ModelInfo]:
     """获取某 provider 的模型列表（从 models.dev）。"""
     mdev_id = PROVIDER_TO_MODELS_DEV.get(provider_id)
     if not mdev_id:
-        return []
+        return list(BUILTIN_MODEL_FALLBACKS.get(provider_id, ()))
 
     data = _fetch()
     prov = data.get(mdev_id)
-    if not prov:
-        return []
-
-    models = prov.get("models", {})
+    models = prov.get("models", {}) if isinstance(prov, dict) else {}
     result = []
     for mid, m in models.items():
         limit = m.get("limit", {})
@@ -197,6 +210,12 @@ def get_provider_models(provider_id: str) -> list[ModelInfo]:
             cost_input=cost.get("input", 0.0),
             cost_output=cost.get("output", 0.0),
         ))
+    known_ids = {model.id for model in result}
+    result.extend(
+        model
+        for model in BUILTIN_MODEL_FALLBACKS.get(provider_id, ())
+        if model.id not in known_ids
+    )
     return result
 
 

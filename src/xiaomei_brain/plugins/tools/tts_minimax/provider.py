@@ -1,4 +1,4 @@
-"""Text-to-Speech provider using MiniMax API."""
+"""MiniMax text-to-speech API client."""
 
 from __future__ import annotations
 
@@ -58,11 +58,13 @@ class TTSProvider:
         self,
         api_key: str,
         base_url: str = "https://api.minimaxi.com",
+        model: str = DEFAULT_MODEL,
         voice_config: VoiceConfig | None = None,
         audio_config: AudioConfig | None = None,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url
+        self.model = model
         self.voice_config = voice_config or VoiceConfig()
         self.audio_config = audio_config or AudioConfig()
 
@@ -239,7 +241,7 @@ class TTSProvider:
             logger.warning("Invalid emotion=%r, falling back to default", emotion)
             emotion = None
         return {
-            "model": DEFAULT_MODEL,
+            "model": self.model,
             "text": text[:10000],  # Max 10000 chars
             "stream": stream,
             "voice_setting": {

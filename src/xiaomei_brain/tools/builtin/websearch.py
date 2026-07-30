@@ -58,7 +58,7 @@ def web_search(
     provider = _resolve_provider()
 
     if provider is None:
-        return "搜索未启用或未配置。请在 config.json 中配置 baidu_api_key。"
+        return "搜索未启用或未配置。请在 Desktop 的 Agent 设置 → 联网搜索中配置搜索服务。"
 
     if not query or not query.strip():
         return "搜索关键词不能为空。"

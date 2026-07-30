@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from xiaomei_brain.consciousness.conversation_driver import ConversationDriver
 from xiaomei_brain.gateway import artifacts as artifact_module
 from xiaomei_brain.gateway.artifacts import (
+    _structured_strings,
     discover_tool_artifacts,
     project_stored_artifact,
     public_artifact_metadata,
@@ -25,6 +26,14 @@ def _identity(person_id: str, conn_id: str) -> IdentityContext:
         authenticated_at=1.0,
         connection_id=conn_id,
     )
+
+
+def test_human_readable_tool_result_exposes_mixed_separator_path():
+    path = r"C:\Users\name/.xiaomei-brain/test\images\generated image.jpeg"
+
+    values = _structured_strings(f"Generated 1 image:\n  - {path}")
+
+    assert path in values
 
 
 def test_write_file_becomes_agent_owned_artifact(tmp_path, monkeypatch):

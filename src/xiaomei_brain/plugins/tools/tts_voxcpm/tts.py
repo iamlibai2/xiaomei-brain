@@ -10,6 +10,8 @@ import logging
 import os
 
 from xiaomei_brain.tools.base import tool
+from xiaomei_brain.media_services.audio import SpeechAudio
+from xiaomei_brain.tools.execution_context import current_tool_execution
 
 logger = logging.getLogger(__name__)
 
@@ -43,16 +45,24 @@ def voxcpm_speak(text: str) -> str:
     if not text or not text.strip():
         return "文本为空，无需朗读。"
 
-    throat = _get_throat()
-    if throat is None:
-        return "语音系统未初始化。请确保 body 插件已加载。"
-
     try:
         sr = _provider.sample_rate
         logger.warning("[vox_speak] 流式播放开始, sr=%d", sr)
+        stream = _provider.generate_streaming(text)
+        context = current_tool_execution()
+        if context is not None and context.speech_callback is not None:
+            result = context.publish_speech(SpeechAudio(
+                chunks=stream,
+                codec="pcm_f32",
+                sample_rate=sr,
+            ))
+            return result or "语音已发送。"
+        throat = _get_throat()
+        if throat is None:
+            return "语音系统未初始化。请确保 body 插件已加载。"
         # play_stream 内部用 producer 线程驱动生成器 + 预填充 + 非阻塞回调，
         # 确保 WASAPI 音频回调永不阻塞。
-        throat.play_stream(_provider.generate_streaming(text), codec="pcm_f32", sample_rate=sr)
+        throat.play_stream(stream, codec="pcm_f32", sample_rate=sr)
         return f"已朗读: {text[:50]}{'...' if len(text) > 50 else ''}"
     except Exception as e:
         logger.error("VoxCPM speak error: %s", e)

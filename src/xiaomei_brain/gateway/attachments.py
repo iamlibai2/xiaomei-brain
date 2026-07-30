@@ -25,6 +25,13 @@ IMAGE_MIMES = {
     "image/webp": ".webp",
     "image/bmp": ".bmp",
 }
+AUDIO_MIMES = {
+    "audio/opus": ".opus",
+    "audio/ogg": ".ogg",
+    "audio/mpeg": ".mp3",
+    "audio/wav": ".wav",
+    "audio/x-wav": ".wav",
+}
 TEXT_EXTENSIONS = {
     ".txt", ".md", ".markdown", ".json", ".jsonl", ".yaml", ".yml",
     ".toml", ".csv", ".tsv", ".xml", ".html", ".htm", ".css",
@@ -95,6 +102,10 @@ def prepare_attachments(
                 kind = "image"
                 suffix = IMAGE_MIMES[mime_type]
                 text_content = None
+            elif mime_type in AUDIO_MIMES:
+                kind = "audio"
+                suffix = AUDIO_MIMES[mime_type]
+                text_content = None
             elif suffix in OFFICE_TYPES and mime_type in {OFFICE_TYPES[suffix], "application/octet-stream"}:
                 kind = "document"
                 text_content = extract_office_text(data, suffix, name)
@@ -123,7 +134,7 @@ def prepare_attachments(
             prepared_item = {**public, "local_path": str(local_path)}
             if text_content is not None:
                 prepared_item["text_content"] = text_content
-            else:
+            elif kind == "image":
                 image_paths.append(str(local_path))
             prepared.append(prepared_item)
     except Exception:
@@ -164,6 +175,8 @@ def read_stored_attachment(
 
     if kind == "image" and mime_type in IMAGE_MIMES:
         suffix = IMAGE_MIMES[mime_type]
+    elif kind == "audio" and mime_type in AUDIO_MIMES:
+        suffix = AUDIO_MIMES[mime_type]
     elif kind == "document" and Path(name).suffix.lower() in OFFICE_TYPES:
         suffix = Path(name).suffix.lower()
     elif kind == "text" and (
@@ -213,7 +226,12 @@ def restore_attachment_refs(
         name = str(stored["name"])
         mime_type = str(stored["mime_type"])
         kind = str(stored["kind"])
-        suffix = IMAGE_MIMES[mime_type] if kind == "image" else Path(name).suffix.lower()
+        if kind == "image":
+            suffix = IMAGE_MIMES[mime_type]
+        elif kind == "audio":
+            suffix = AUDIO_MIMES[mime_type]
+        else:
+            suffix = Path(name).suffix.lower()
         local_path = _stored_attachment_path(
             agent_id, session_id, attachment_id, suffix,
         )
@@ -223,6 +241,8 @@ def restore_attachment_refs(
         }
         if kind == "image":
             image_paths.append(str(local_path))
+        elif kind == "audio":
+            pass
         elif kind == "document":
             item["text_content"] = extract_office_text(data, suffix, name)
         else:

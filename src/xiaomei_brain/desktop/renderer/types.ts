@@ -81,9 +81,21 @@ export interface ModelDefinition {
   context_window: number;
   max_tokens: number;
   reasoning: boolean;
+  thinking_toggle: boolean;
+  thinking_efforts: ThinkingEffort[];
+  thinking_default_enabled: boolean;
+  thinking_default_effort: ThinkingEffort;
+  requires_reasoning_content_for_tools: boolean;
   supports_tools: boolean;
   input_modes: string[];
   supports_vision: boolean;
+}
+
+export type ThinkingEffort = "default" | "low" | "medium" | "high" | "max";
+
+export interface ModelThinkingSelection {
+  enabled: boolean;
+  effort: ThinkingEffort;
 }
 
 export interface ModelProviderConfig {
@@ -97,10 +109,65 @@ export interface ModelProviderConfig {
 
 export interface ModelConfigSnapshot {
   agent_id: string;
-  selection: { primary: string; vision: string };
-  active: { primary: string; vision: string };
+  selection: {
+    primary: string;
+    vision: string;
+    thinking: Partial<ModelThinkingSelection>;
+  };
+  active: {
+    primary: string;
+    vision: string;
+    thinking: Partial<ModelThinkingSelection>;
+  };
   providers: ModelProviderConfig[];
   hashes: { global: string; agent: string };
+}
+
+export type MediaCapability = "image" | "tts" | "music";
+
+export interface MediaServiceField {
+  key: string;
+  label: string;
+  type: "secret" | "text" | "number" | "boolean" | "select";
+  required: boolean;
+  advanced: boolean;
+  default?: string | number | boolean;
+  options?: string[];
+  minimum?: number;
+  maximum?: number;
+  step?: number;
+}
+
+export interface MediaServiceConfig {
+  id: string;
+  name: string;
+  plugin: string;
+  capability: MediaCapability;
+  vendor: string;
+  configured: boolean;
+  enabled: boolean;
+  secret_configured: boolean;
+  secret_hint: string;
+  restart_required: boolean;
+  fields: MediaServiceField[];
+  values: Record<string, string | number | boolean | null>;
+}
+
+export type ToolServiceCapability = "web_search";
+
+export interface ToolServiceConfig {
+  id: string;
+  name: string;
+  plugin: string;
+  capability: ToolServiceCapability;
+  vendor: string;
+  configured: boolean;
+  enabled: boolean;
+  secret_configured: boolean;
+  secret_hint: string;
+  restart_required: boolean;
+  fields: MediaServiceField[];
+  values: Record<string, string | number | boolean | null>;
 }
 
 // ── Bridge API ──
@@ -203,7 +270,54 @@ export interface GatewayBridge {
     agentId: string;
     primary: string;
     vision?: string;
+    thinking?: ModelThinkingSelection;
     baseHash?: string;
+  }): Promise<JsonRpcResponse>;
+  listMediaServices(args: {
+    agentId: string;
+    capability?: MediaCapability;
+  }): Promise<JsonRpcResponse>;
+  getMediaService(args: {
+    agentId: string;
+    serviceId: string;
+  }): Promise<JsonRpcResponse>;
+  testMediaService(args: {
+    agentId: string;
+    serviceId: string;
+    config: Record<string, unknown>;
+  }): Promise<JsonRpcResponse>;
+  configureMediaService(args: {
+    agentId: string;
+    serviceId: string;
+    config: Record<string, unknown>;
+    enabled?: boolean;
+  }): Promise<JsonRpcResponse>;
+  removeMediaService(args: {
+    agentId: string;
+    serviceId: string;
+  }): Promise<JsonRpcResponse>;
+  listToolServices(args: {
+    agentId: string;
+    capability?: ToolServiceCapability;
+  }): Promise<JsonRpcResponse>;
+  getToolService(args: {
+    agentId: string;
+    serviceId: string;
+  }): Promise<JsonRpcResponse>;
+  testToolService(args: {
+    agentId: string;
+    serviceId: string;
+    config: Record<string, unknown>;
+  }): Promise<JsonRpcResponse>;
+  configureToolService(args: {
+    agentId: string;
+    serviceId: string;
+    config: Record<string, unknown>;
+    enabled?: boolean;
+  }): Promise<JsonRpcResponse>;
+  removeToolService(args: {
+    agentId: string;
+    serviceId: string;
   }): Promise<JsonRpcResponse>;
   getConfig(key: string): Promise<string | null>;
 

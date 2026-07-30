@@ -56,6 +56,7 @@ export function HomePage() {
   const refreshPersonMemories = useCoreStore((s) => s.refreshPersonMemories);
   const refreshAgentState = useCoreStore((s) => s.refreshAgentState);
   const agentState = useCoreStore((s) => s.agentStateByAgent[s.activeAgentId || ""]);
+  const speaking = useCoreStore((s) => Boolean(s.speakingByAgent[s.activeAgentId || ""]));
   const currentActivity = useCoreStore((s) => (
     s.activitiesByAgent[s.activeAgentId || ""] || []
   ).find((item) => ["queued", "running", "paused"].includes(item.status)));
@@ -247,6 +248,7 @@ export function HomePage() {
           rightPanelOpen={activityPanelOpen}
           onOpenAgentSettings={() => openSettingsCenter("overview")}
           agentState={agentState}
+          speaking={speaking}
           activitySummary={currentActivity?.progressSummary || currentActivity?.title || ""}
         />
       )}
@@ -501,6 +503,40 @@ function MessageRow({
     return <ToolActivityRow message={message} />;
   }
 
+  if (message.serviceError) {
+    const canRetry = Boolean(message.serviceError.retryMessageId) && !agentSending;
+    return (
+      <div className="model-service-error" role="status">
+        <div className="model-service-error-icon">
+          <Icon name="info" size={17} />
+        </div>
+        <div className="model-service-error-body">
+          <strong>暂时无法回应</strong>
+          <p>{message.serviceError.message}</p>
+          <div className="model-service-error-actions">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => openSettingsCenter("models", activeAgentId)}
+            >
+              切换模型
+            </Button>
+            {message.serviceError.retryMessageId && (
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={!canRetry}
+                onClick={() => void retryMessage(message.serviceError!.retryMessageId!)}
+              >
+                重试
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (isUser) {
     return (
       <div className="user-message-row">
@@ -520,6 +556,7 @@ function MessageRow({
             )}
             {message.content && <div>{message.content}</div>}
             {(message.deliveryStatus === "failed" || message.deliveryStatus === "interrupted") &&
+              !message.deliveryErrorCode?.startsWith("MODEL_") &&
               message.sourceMessageId && (
                 <button
                   type="button"
@@ -534,7 +571,11 @@ function MessageRow({
               <div className={`message-delivery-status ${message.deliveryStatus}`}>
                 {message.deliveryStatus === "queued" && "已排队"}
                 {message.deliveryStatus === "processing" && "处理中"}
-                {message.deliveryStatus === "failed" && `处理失败${message.deliveryError ? `：${message.deliveryError}` : ""}`}
+                {message.deliveryStatus === "failed" && (
+                  message.deliveryErrorCode?.startsWith("MODEL_")
+                    ? "模型服务不可用"
+                    : `处理失败${message.deliveryError ? `：${message.deliveryError}` : ""}`
+                )}
                 {message.deliveryStatus === "interrupted" && "已中断"}
               </div>
             )}
@@ -694,7 +735,13 @@ function MessageAttachment({
         <img src={previewUrl} alt={attachment.name} />
       ) : (
         <span className={`message-attachment-icon ${error ? "error" : ""}`}>
-          {error ? "!" : attachment.kind === "image" ? "IMG" : "FILE"}
+          {error
+            ? "!"
+            : attachment.kind === "image"
+              ? "IMG"
+              : attachment.kind === "audio"
+                ? "VOICE"
+                : "FILE"}
         </span>
       )}
       <span className="message-attachment-name">{attachment.name}</span>

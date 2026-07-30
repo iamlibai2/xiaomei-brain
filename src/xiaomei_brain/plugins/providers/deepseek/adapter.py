@@ -1,32 +1,38 @@
-"""DeepSeek provider — 需要 override thinking hook。"""
+"""DeepSeek provider defaults expressed through generic thinking capabilities."""
 
-from xiaomei_brain.llm.types import ProviderProfile, ModelDefinition
-
-
-class DeepSeekProfile(ProviderProfile):
-    """DeepSeek provider — 子类化以提供 V4 thinking hooks。"""
-
-    def build_extra_body(self, model, *, stream: bool, **context) -> dict:
-        if model.reasoning:
-            return {"thinking": {"type": "enabled"}}
-        return {}
-
-    def build_api_kwargs_extras(self, model, **context) -> dict:
-        if model.reasoning:
-            return {"reasoning_effort": "medium"}
-        return {}
+from xiaomei_brain.llm.types import (
+    ModelDefinition,
+    ProviderProfile,
+    resolve_provider_thinking_mapping,
+    resolve_thinking_capabilities,
+)
 
 
 def register(ctx):
-    ctx.register_provider(DeepSeekProfile(
+    thinking_format, effort_map = resolve_provider_thinking_mapping("deepseek")
+    flash_thinking = resolve_thinking_capabilities(
+        "deepseek",
+        "deepseek-v4-flash",
+        reasoning=True,
+    )
+    pro_thinking = resolve_thinking_capabilities(
+        "deepseek",
+        "deepseek-v4-pro",
+        reasoning=True,
+    )
+    ctx.register_provider(ProviderProfile(
         provider_id="deepseek",
         name="DeepSeek",
         base_url="https://api.deepseek.com/v1",
         env_vars=("DEEPSEEK_API_KEY",),
+        thinking_format=thinking_format,
+        thinking_effort_map=effort_map,
         models=[
             ModelDefinition(id="deepseek-v4-flash", name="DeepSeek V4 Flash",
-                            context_window=128000, max_tokens=8192, reasoning=True),
+                            context_window=128000, max_tokens=8192, reasoning=True,
+                            **flash_thinking),
             ModelDefinition(id="deepseek-v4-pro", name="DeepSeek V4 Pro",
-                            context_window=128000, max_tokens=8192, reasoning=True),
+                            context_window=128000, max_tokens=8192, reasoning=True,
+                            **pro_thinking),
         ],
     ))

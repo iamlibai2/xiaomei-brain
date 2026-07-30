@@ -61,6 +61,8 @@ class CapabilityTracker:
         "play_music": "music",
         "image": "image",
         "generate_image": "image",
+        "generate_image_minimax": "image",
+        "generate_image_seedream": "image",
         "dag_search": "memory",
         "memory_search": "memory",
         "longterm_search": "memory",

@@ -12,6 +12,7 @@ export type IconName =
   | "microphone"
   | "arrow-up"
   | "chevron-down"
+  | "chevron-left"
   | "chevron-right"
   | "x"
   | "copy"
@@ -23,6 +24,7 @@ export type IconName =
   | "shield"
   | "robot"
   | "folder"
+  | "image"
   | "sparkles"
   | "moon"
   | "clock"
@@ -107,6 +109,7 @@ const ICON_PATHS: Record<IconName, React.ReactNode> = {
     </>
   ),
   "chevron-down": <polyline points="6 9 12 15 18 9" />,
+  "chevron-left": <polyline points="15 18 9 12 15 6" />,
   "chevron-right": <polyline points="9 18 15 12 9 6" />,
   x: (
     <>
@@ -202,6 +205,13 @@ const ICON_PATHS: Record<IconName, React.ReactNode> = {
       <rect x="2" y="3" width="20" height="18" rx="2" />
       <polyline points="6 8 10 12 6 16" />
       <line x1="12" y1="16" x2="18" y2="16" />
+    </>
+  ),
+  image: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <circle cx="8.5" cy="9" r="1.5" />
+      <path d="m3 16 4.5-4.5 3.5 3.5 2.5-2.5L21 20" />
     </>
   ),
   moon: (

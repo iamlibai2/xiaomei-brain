@@ -1,4 +1,4 @@
-"""Image generation using MiniMax API."""
+"""MiniMax image generation API client."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ class ImageProvider:
     def __init__(
         self,
         api_key: str,
-        base_url: str = "https://api.minimaxi.com",
+        base_url: str,
         config: ImageConfig | None = None,
     ) -> None:
         self.api_key = api_key
@@ -237,7 +237,9 @@ def get_available_aspect_ratios() -> list[str]:
 
 def get_available_models() -> list[str]:
     """Return list of available image models."""
-    return ["image-01", "image-01-live"]
+    from xiaomei_brain.media_services import get_media_service_spec
+
+    return list(get_media_service_spec("image_minimax").models)
 
 
 def get_available_styles() -> list[str]:

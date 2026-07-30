@@ -10,6 +10,7 @@ from xiaomei_brain.gateway.protocol import build_event
 from xiaomei_brain.gateway.router import OutputRoute, Router
 from xiaomei_brain.gateway.server_methods import MethodRouter
 from xiaomei_brain.gateway.ws_adapter import WSAdapter
+from xiaomei_brain.llm.public_error import model_service_error
 
 
 def test_v2_event_uses_one_canonical_envelope():
@@ -223,6 +224,56 @@ def test_conversation_driver_persists_terminal_message_status():
         "status": "failed",
         "error": {"code": "LLM_UNAVAILABLE", "message": "offline"},
     })]
+
+
+def test_model_service_error_only_labels_explicit_payment_required_as_balance():
+    assert model_service_error(402) == {
+        "code": "MODEL_BALANCE_INSUFFICIENT",
+        "message": "当前模型账户余额不足。请充值或切换模型后重试。",
+    }
+    assert model_service_error(503)["code"] == "MODEL_UNAVAILABLE"
+    assert "余额" not in model_service_error(503)["message"]
+
+
+def test_conversation_driver_rejects_message_through_terminal_event_path():
+    class DB:
+        def __init__(self):
+            self.calls = []
+
+        def update_message_metadata(self, message_id, updates):
+            self.calls.append((message_id, updates))
+
+    class EventHub:
+        def __init__(self):
+            self.events = []
+
+        def publish(self, name, payload, **metadata):
+            self.events.append((name, payload, metadata))
+
+    db = DB()
+    hub = EventHub()
+    parent = SimpleNamespace(
+        agent=SimpleNamespace(conversation_db=db),
+        _event_hub=hub,
+    )
+    driver = ConversationDriver.__new__(ConversationDriver)
+    driver._parent = parent
+    msg = LivingMessage(
+        content="hello",
+        message_id=42,
+        session_id="session-1",
+        turn_id="turn-1",
+    )
+    error = model_service_error(402)
+
+    driver.reject_message(msg, error)
+
+    assert db.calls == [(42, {"status": "failed", "error": error})]
+    assert hub.events == [(
+        "message.complete",
+        {"text": error["message"], "status": "error", "error": error},
+        {"session_id": "session-1", "turn_id": "turn-1"},
+    )]
 
 
 def test_conversation_driver_marks_message_processing_when_turn_starts():

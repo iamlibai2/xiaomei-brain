@@ -10,9 +10,11 @@ from .channels import ChannelMethods
 from .connection import ConnectionMethods
 from .identity import IdentityMethods
 from .interactions import InteractionMethods
+from .media import MediaServiceMethods
 from .memories import MemoryMethods
 from .models import ModelMethods
 from .sessions import SessionMethods
+from .tools import ToolServiceMethods
 
 __all__ = [
     "ActivityMethods",
@@ -25,7 +27,9 @@ __all__ = [
     "ConnectionMethods",
     "IdentityMethods",
     "InteractionMethods",
+    "MediaServiceMethods",
     "MemoryMethods",
     "ModelMethods",
     "SessionMethods",
+    "ToolServiceMethods",
 ]

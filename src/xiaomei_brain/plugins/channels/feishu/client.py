@@ -165,6 +165,12 @@ class FeishuChannel:
                 "msg_type": message.message_type,
                 "account_id": self.account_id,
             }
+            if message.message_type == "audio":
+                msg_dict["file_key"] = str(content_obj.get("file_key", ""))
+                try:
+                    msg_dict["duration"] = int(content_obj.get("duration", 0) or 0)
+                except (TypeError, ValueError):
+                    msg_dict["duration"] = 0
 
             logger.info("[Feishu] <- %s: %s", sender_open_id, text[:80] if text else "(empty)")
 
@@ -550,6 +556,73 @@ class FeishuChannel:
             return False
         self._send_payload(to, "file", {"file_key": file_key})
         return True
+
+    def send_audio(
+        self,
+        to: str,
+        file_name: str,
+        data: bytes,
+        duration_ms: int,
+    ) -> bool:
+        """Upload and send one native Feishu voice message."""
+        file_key = self._upload_file(file_name, data)
+        if not file_key:
+            return False
+        return bool(self._send_payload(
+            to,
+            "audio",
+            {"file_key": file_key, "duration": max(1, int(duration_ms))},
+        ))
+
+    def download_message_resource(
+        self,
+        message_id: str,
+        file_key: str,
+        *,
+        max_bytes: int = 5 * 1024 * 1024,
+    ) -> bytes:
+        """Download an audio/file resource owned by one received message."""
+        import requests as _requests
+        from urllib.parse import quote
+
+        if not message_id or not file_key:
+            raise ValueError("飞书语音资源标识为空")
+        url = (
+            "https://open.feishu.cn/open-apis/im/v1/messages/"
+            f"{quote(message_id, safe='')}/resources/{quote(file_key, safe='')}"
+        )
+        for _attempt in range(3):
+            token = self._get_token()
+            if not token:
+                raise RuntimeError("无法获取飞书访问令牌")
+            response = _requests.get(
+                url,
+                params={"type": "file"},
+                headers={"Authorization": f"Bearer {token}"},
+                stream=True,
+                timeout=30,
+            )
+            if response.status_code == 401:
+                self._invalidate_token_cache(self.app_id)
+                continue
+            if response.status_code != 200:
+                raise RuntimeError(
+                    f"下载飞书语音失败：HTTP {response.status_code}"
+                )
+            parts: list[bytes] = []
+            size = 0
+            for chunk in response.iter_content(64 * 1024):
+                if not chunk:
+                    continue
+                size += len(chunk)
+                if size > max_bytes:
+                    raise ValueError("飞书语音超过 5 MB")
+                parts.append(chunk)
+            data = b"".join(parts)
+            if not data:
+                raise ValueError("飞书语音内容为空")
+            return data
+        raise RuntimeError("下载飞书语音失败：身份令牌已失效")
 
     def _upload_file(self, file_name: str, data: bytes) -> str:
         """Upload one file using Feishu's multipart file API."""

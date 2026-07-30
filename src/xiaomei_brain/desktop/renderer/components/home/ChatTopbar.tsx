@@ -9,6 +9,7 @@ interface ChatTopbarProps {
   rightPanelOpen?: boolean;
   onOpenAgentSettings?: () => void;
   agentState?: AgentStateSnapshot;
+  speaking?: boolean;
   activitySummary?: string;
 }
 
@@ -19,24 +20,29 @@ export function ChatTopbar({
   rightPanelOpen,
   onOpenAgentSettings,
   agentState,
+  speaking,
   activitySummary,
 }: ChatTopbarProps) {
   const { t } = useTranslation();
   const isDreaming = agentState?.living === "dreaming";
   const stateText = isDreaming
     ? "梦境中"
+    : speaking
+      ? "正在说话"
     : agentState?.focusSummary
       || activitySummary
       || (agentState ? livingStateName(agentState.living) : "");
   const stateClass = isDreaming
     ? "dreaming"
+    : speaking
+      ? "speaking"
     : activitySummary ? "working" : agentState?.living || "";
 
   return (
     <div className="chat-topbar">
       <div className="chat-topbar-left">
         <span className="chat-topbar-title">{taskName}</span>
-        {(agentState || activitySummary) && (
+        {(agentState || activitySummary || speaking) && (
           <span className={`chat-topbar-agent-state ${stateClass}`}>
             {stateText}
           </span>

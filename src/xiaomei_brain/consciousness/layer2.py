@@ -40,6 +40,8 @@ class Layer2DefaultNetwork:
         debug_file: str = "",        # 调试日志文件路径
         state_observer: Callable[[str, str, Any | None], None] | None = None,
         internal_report_observer: Callable[[dict[str, Any]], None] | None = None,
+        model_available: Callable[[], bool] | None = None,
+        model_failure_observer: Callable[[BaseException], None] | None = None,
     ) -> None:
         self._c = consciousness
         self._check_interval = check_interval
@@ -49,6 +51,8 @@ class Layer2DefaultNetwork:
         self._debug_file = debug_file
         self._state_observer = state_observer
         self._internal_report_observer = internal_report_observer
+        self._model_available = model_available
+        self._model_failure_observer = model_failure_observer
         self._generation = 0          # 代际计数器：start() 递增，旧线程检测到变化后自动退出
 
         # TUI 日志缓冲区
@@ -163,6 +167,9 @@ class Layer2DefaultNetwork:
         """主循环：每 check_interval 秒检查一次 L2/L3/DREAM。"""
         logger.info("[Layer2] 进入主循环 gen=%d", generation)
         while self._running and self._generation == generation:
+            if self._model_available is not None and not self._model_available():
+                time.sleep(self._check_interval)
+                continue
             with self._lock:
                 try:
                     agent_state = self._get_agent_state()
@@ -323,17 +330,13 @@ class Layer2DefaultNetwork:
                     from xiaomei_brain.llm.client import FatalLLMError
                     if isinstance(e, FatalLLMError):
                         self._log(f"{ts} Layer2 FATAL LLM: {e}")
-                        logger.error("[Layer2] 致命 LLM 错误，停止 DMN 线程: %s", e)
-                        # 通知主循环（interoception signal）
-                        intero = getattr(self._c, '_interoception_signals', None)
-                        if intero is not None:
-                            intero.stress_level = "critical"
-                            intero.sos = True
-                            intero.sos_message = f"[Layer2] LLM 致命错误: {e}"
+                        logger.warning("[Layer2] 模型服务不可用，暂停 DMN: %s", e)
+                        if self._model_failure_observer is not None:
+                            self._model_failure_observer(e)
                     else:
                         self._log(f"{ts} Layer2 FATAL: {type(e).__name__}: {e}")
                         logger.error("[Layer2] 致命错误，停止 DMN 线程: %s", e)
-                    self._running = False
+                        self._running = False
 
             time.sleep(self._check_interval)
 

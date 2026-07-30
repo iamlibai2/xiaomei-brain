@@ -425,6 +425,19 @@ class Gateway:
         retry_of = raw.metadata.get("retry_of")
         if isinstance(retry_of, int) and retry_of > 0:
             metadata["retry_of"] = retry_of
+        if raw.metadata.get("message_type") == "audio":
+            metadata["message_type"] = "audio"
+            metadata["audio_duration_ms"] = int(
+                raw.metadata.get("audio_duration_ms", 0) or 0
+            )
+            emotion = str(raw.metadata.get("speech_emotion", "")).strip()
+            if emotion:
+                metadata["speech_emotion"] = emotion
+            events = raw.metadata.get("speech_events")
+            if isinstance(events, list):
+                metadata["speech_events"] = [
+                    str(item) for item in events[:10] if str(item).strip()
+                ]
         public_attachments = public_attachment_metadata(raw.attachments)
         if public_attachments:
             metadata["attachments"] = public_attachments

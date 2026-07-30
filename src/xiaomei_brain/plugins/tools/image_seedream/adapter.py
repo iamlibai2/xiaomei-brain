@@ -1,22 +1,27 @@
 """Image Seedream 插件 — 注册 generate_image_seedream 工具。"""
 
-import os
-
-
 def register(ctx):
-    from .image import SeedreamProvider, set_image_provider, image_generate_seedream_tool
+    from xiaomei_brain.media_services import get_media_service_spec
 
-    # 读取 API Key：插件配置 > 环境变量
-    api_key = ctx.config.get("api_key", "")
-    if not api_key:
-        api_key = os.getenv("VOLCENGINE_API_KEY", "") or os.getenv("ARK_API_KEY", "")
+    from .provider import SeedreamProvider
+    from .tool import (
+        image_generate_seedream_tool,
+        set_image_provider,
+        set_output_base,
+    )
+
+    if not ctx.config.get("enabled", False):
+        ctx.logger.info("豆包 Seedream 图片生成未启用，跳过注册")
+        return
+    api_key = str(ctx.config.get("api_key", "")).strip()
 
     if not api_key:
         ctx.logger.info("豆包 Seedream API key 未配置，跳过注册")
         return
 
-    base_url = ctx.config.get("base_url", "https://ark.cn-beijing.volces.com/api/v3")
-    model = ctx.config.get("model", "doubao-seedream-5-0-260128")
+    spec = get_media_service_spec("image_seedream")
+    base_url = ctx.config.get("base_url") or spec.field("base_url").default
+    model = ctx.config.get("model") or spec.field("model").default
     watermark = ctx.config.get("watermark", False)
 
     provider = SeedreamProvider(
@@ -27,7 +32,6 @@ def register(ctx):
     )
     set_image_provider(provider)
 
-    from .image import set_output_base
     set_output_base(ctx.agent_dir)
 
     image_generate_seedream_tool.source = "plugin:image_seedream"

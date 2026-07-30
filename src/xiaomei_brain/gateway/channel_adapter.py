@@ -33,6 +33,8 @@ class ChannelCapabilities:
     synchronous_action_approval: bool = False
     attachments: bool = False
     message_update: bool = False
+    audio_input: bool = False
+    audio_output: bool = False
 
 
 class ChannelAdapter(ABC):
@@ -63,6 +65,10 @@ class ChannelAdapter(ABC):
         text = self._event_fallback_text(event, payload)
         if text:
             self.send(target, text)
+
+    def send_audio(self, target: str, audio: Any) -> bool:
+        """Send a speech expression when this channel exposes a remote body."""
+        return False
 
     def _event_fallback_text(self, event: str, payload: dict) -> str:
         if event == "interaction.requested":

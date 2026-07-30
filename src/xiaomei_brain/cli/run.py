@@ -1053,7 +1053,7 @@ def cmd_run(args: list[str]) -> None:
 
     # 音乐生成完成通知 → 推入 living 消息队列
     try:
-        from xiaomei_brain.plugins.tools.music_minimax.music import set_generation_callback
+        from xiaomei_brain.plugins.tools.music_minimax.tool import set_generation_callback
         def _on_music_done(filename: str, success: bool, message: str):
             living.put_message(message, source="system")
         set_generation_callback(_on_music_done)

@@ -3,3 +3,82 @@ version: "1.0.0"
 description: "文本转语音工具 — speak_to_file（MiniMax TTS API）"
 kind: bundle
 entry: adapter:register
+mediaProvider:
+  id: tts_minimax
+  capability: tts
+  vendor: minimax
+  displayName: MiniMax 语音合成
+  fields:
+    - key: api_key
+      label: API Key
+      type: secret
+      required: true
+    - key: base_url
+      label: Base URL
+      type: text
+      default: https://api.minimaxi.com
+      advanced: true
+    - key: model
+      label: 默认模型
+      type: select
+      default: speech-2.8-hd
+      required: true
+      options: [speech-2.8-hd, speech-2.8-turbo, speech-2.6-hd, speech-2.6-turbo]
+    - key: voice_id
+      label: 默认音色
+      type: text
+      default: female-tianmei
+      required: true
+    - key: speed
+      label: 语速
+      type: number
+      default: 1.0
+      minimum: 0.5
+      maximum: 2.0
+      step: 0.1
+    - key: vol
+      label: 音量
+      type: number
+      default: 1.0
+      minimum: 0.1
+      maximum: 10.0
+      step: 0.1
+      advanced: true
+    - key: pitch
+      label: 音调
+      type: number
+      default: 0
+      minimum: -12
+      maximum: 12
+      step: 1
+      advanced: true
+    - key: emotion
+      label: 默认情绪
+      type: select
+      default: happy
+      options: [happy, sad, angry, fearful, disgusted, surprised, calm, fluent, whisper]
+      advanced: true
+    - key: format
+      label: 文件格式
+      type: select
+      default: mp3
+      options: [mp3, wav, flac, pcm]
+      advanced: true
+    - key: sample_rate
+      label: 采样率
+      type: select
+      default: "32000"
+      options: ["16000", "24000", "32000", "44100"]
+      advanced: true
+    - key: bitrate
+      label: 码率
+      type: select
+      default: "128000"
+      options: ["64000", "128000", "256000"]
+      advanced: true
+  test:
+    path: /v1/t2a_v2
+    body:
+      model: $model
+      text: ""
+      stream: false

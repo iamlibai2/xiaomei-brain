@@ -19,9 +19,11 @@ from .methods import (
     ConnectionMethods,
     IdentityMethods,
     InteractionMethods,
+    MediaServiceMethods,
     MemoryMethods,
     ModelMethods,
     SessionMethods,
+    ToolServiceMethods,
 )
 from .protocol import ErrorCode, build_error
 
@@ -53,6 +55,8 @@ class MethodRouter:
         self._interaction_methods = InteractionMethods(living)
         self._memory_methods = MemoryMethods(living, self._identity_contexts)
         self._model_methods = ModelMethods(living)
+        self._media_service_methods = MediaServiceMethods(living)
+        self._tool_service_methods = ToolServiceMethods(living)
         self._identity_methods = IdentityMethods(
             living,
             self._connected_sessions,
@@ -84,6 +88,8 @@ class MethodRouter:
             self._interaction_methods,
             self._memory_methods,
             self._model_methods,
+            self._media_service_methods,
+            self._tool_service_methods,
             self._identity_methods,
             self._artifact_methods,
             self._assignment_methods,
@@ -157,6 +163,20 @@ class MethodRouter:
                 "model.selection.set",
             },
             "message.retry": {"chat.retry"},
+            "media.service.configuration": {
+                "media.service.list",
+                "media.service.get",
+                "media.service.configure",
+                "media.service.test",
+                "media.service.remove",
+            },
+            "tool.service.configuration": {
+                "tool.service.list",
+                "tool.service.get",
+                "tool.service.configure",
+                "tool.service.test",
+                "tool.service.remove",
+            },
             "identity.list": {"identity.list"},
             "identity.challenge": {
                 "identity.register.begin",

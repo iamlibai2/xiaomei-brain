@@ -145,6 +145,8 @@ class ConsciousLiving(Living):
         self._state_focus_summary = ""
         self._state_focus_since = 0.0
         self._last_intent_summary: dict[str, Any] | None = None
+        from ..llm.service_health import ModelServiceHealth
+        self._model_service_health = ModelServiceHealth()
 
         from .action_broker import ActionBroker
         from .event_hub import EventHub
@@ -595,7 +597,12 @@ class ConsciousLiving(Living):
                 agent_id=self._agent_id,
                 runner=assignment_runner,
                 activity_service=self._activity_service,
+                model_failure_observer=lambda error: self._on_model_service_failure(
+                    error,
+                    source="assignment",
+                ),
             ),
+            model_available=lambda: self._model_service_health.available,
         )
         self.agent.assignment_runner = assignment_runner
         self.agent.assignment_scheduler = self._assignment_scheduler
@@ -717,6 +724,11 @@ class ConsciousLiving(Living):
             debug_file=os.path.join(self._debug_dir, "layer2.log"),
             state_observer=self._observe_layer2_state,
             internal_report_observer=self._record_internal_processing,
+            model_available=lambda: self._model_service_health.available,
+            model_failure_observer=lambda error: self._on_model_service_failure(
+                error,
+                source="layer2",
+            ),
         )
         logger.info("[ConsciousLiving] Layer2 已创建")
         boot_line("Layer2 默认模式网络", "OK")
@@ -786,6 +798,7 @@ class ConsciousLiving(Living):
         # 注册周期任务
         self.register_periodic("heartbeat", self._config.living.tick_interval, self._heartbeat)
         self.register_periodic("death_check", 60.0, self._check_death)  # 每分钟检查生存状态
+        self.register_periodic("model_service_probe", 5.0, self._probe_model_service)
 
         # 启动 Layer 0 自主层线程 + DMN 默认模式网络线程
         if self._load_consciousness:
@@ -1434,6 +1447,19 @@ class ConsciousLiving(Living):
             elif self.drive and sig.stress_level == "none":
                 self.drive.on_system_healthy()
 
+            # Repeated provider failures affect model capability, not the
+            # Agent's life state. Open the model circuit instead of emitting
+            # an interoception SOS that would incorrectly enter DORMANT.
+            from .interoception import SOS_LLM_CASCADE_THRESHOLD
+            if (
+                sig.llm_consecutive_failures >= SOS_LLM_CASCADE_THRESHOLD
+                and self._model_service_health.available
+            ):
+                self._on_model_service_failure(
+                    RuntimeError("LLM calls repeatedly failed"),
+                    source="interoception",
+                )
+
         # ── SOS 广播（不清除标志位，由 _loop_idle 消费后进入 DORMANT）──
         intero = getattr(self, 'interoception', None)
         if intero and intero.sos and intero.sos_message:
@@ -1468,11 +1494,15 @@ class ConsciousLiving(Living):
             self._heartbeat_result = HEARTBEAT_NORMAL
             self._tick_periodic(self.state)
 
-            # 0. 检查 LLM 存活（L2 线程挂了或欠费 → 进入 DORMANT）
+            # 0. 真正的生命系统故障才进入 DORMANT。模型服务故障由
+            # ModelServiceHealth 单独管理，不属于生命休眠。
             if getattr(self.interoception, 'sos', False):
-                sos_msg = getattr(self.interoception, 'sos_message', 'LLM 致命错误') or 'LLM 致命错误'
+                sos_msg = (
+                    getattr(self.interoception, 'sos_message', '生命系统异常')
+                    or '生命系统异常'
+                )
                 logger.warning("[ConsciousLiving/IDLE] interoception SOS → DORMANT: %s", sos_msg)
-                self._print_section("进入休眠", f"LLM 不可用：{sos_msg}", icon="⏸️")
+                self._print_section("进入休眠", sos_msg, icon="⏸️")
                 self._suspended_reason = sos_msg
                 # 写入经验流，让 agent 醒来后知道自己为什么休眠
                 self._log_sos_event("sos", "精力突然耗尽，意识一片空白，陷入沉寂")
@@ -1492,6 +1522,11 @@ class ConsciousLiving(Living):
                 self._handle_message(msg)
                 self._last_active = time.time()
                 return
+
+            # Model-dependent autonomous work stays paused while communication,
+            # lifecycle heartbeat, settings and message admission remain alive.
+            if not self._model_service_health.available:
+                continue
 
             # 2. 检查收件箱兜底（实时回调已处理大多数消息）
             self._check_inbox()
@@ -1623,7 +1658,10 @@ class ConsciousLiving(Living):
             ]
 
     def _should_skip_dreaming(self) -> bool:
-        return not self._load_consciousness
+        return (
+            not self._load_consciousness
+            or not self._model_service_health.available
+        )
 
     def _loop_dreaming(self) -> None:
         """DREAMING 状态循环：运行 DreamEngine。"""
@@ -1697,6 +1735,20 @@ class ConsciousLiving(Living):
                     ),
                 )
                 activity_service.complete(dream_activity_id, summary=summary)
+        except FatalLLMError as error:
+            self._on_model_service_failure(error, source="dream")
+            logger.warning("[ConsciousLiving] 模型不可用，梦境整理暂停")
+            if dream_activity_id and activity_service is not None:
+                try:
+                    activity_service.fail(
+                        dream_activity_id,
+                        message="模型服务暂时不可用，梦境整理将在恢复后重新进行",
+                        code="MODEL_UNAVAILABLE",
+                    )
+                except Exception:
+                    logger.exception(
+                        "[ConsciousLiving] Failed to close Dream Activity",
+                    )
         except Exception as e:
             logger.error("[ConsciousLiving] DreamEngine 运行失败: %s", e)
             if dream_activity_id and activity_service is not None:
@@ -1745,6 +1797,115 @@ class ConsciousLiving(Living):
 
     # ── Message handling ─────────────────────────────────────────
 
+    def current_model_service_error(self) -> dict[str, str] | None:
+        """Return the current public model error without provider details."""
+        return self._model_service_health.error()
+
+    def model_service_health_snapshot(self) -> dict[str, Any]:
+        return self._model_service_health.snapshot()
+
+    def _on_model_service_failure(
+        self,
+        error: BaseException,
+        *,
+        source: str,
+    ) -> None:
+        status_code = int(getattr(error, "status_code", 0) or 0)
+        public_error = self._model_service_health.report_failure(status_code)
+        logger.warning(
+            "[ModelService] unavailable: source=%s status=%s code=%s",
+            source,
+            status_code,
+            public_error["code"],
+        )
+
+    def _handle_fatal_llm_error(self, error: FatalLLMError) -> bool:
+        """Keep the Agent process and communication surfaces alive."""
+        self._on_model_service_failure(error, source="living")
+        return True
+
+    def _probe_model_service(self, _state: LivingState) -> None:
+        """Probe an unavailable model using bounded exponential backoff."""
+        if not self._model_service_health.begin_probe():
+            return
+        try:
+            self.agent.llm.chat(
+                messages=[{"role": "user", "content": "Reply with OK."}],
+                tools=None,
+                log_level=logging.DEBUG,
+            )
+        except FatalLLMError as error:
+            self._model_service_health.finish_probe_failure(error.status_code)
+            logger.debug(
+                "[ModelService] probe failed: status=%s",
+                error.status_code,
+            )
+        except Exception:
+            # A temporary network failure must not replace a known billing or
+            # authentication reason with a less specific public message.
+            self._model_service_health.finish_probe_failure()
+            logger.debug(
+                "[ModelService] probe failed with transport error",
+                exc_info=True,
+            )
+        else:
+            if self._model_service_health.mark_available():
+                self._reset_model_failure_signals()
+                logger.info("[ModelService] recovered; model-dependent work resumed")
+                self._log_sos_event(
+                    "recovery",
+                    "模型服务恢复，思考与自主行为重新可用",
+                )
+                self._resume_model_paused_assignments()
+
+    def on_model_configuration_changed(self) -> None:
+        """A newly selected model starts with a fresh health circuit."""
+        if self._model_service_health.mark_available():
+            self._reset_model_failure_signals()
+            logger.info("[ModelService] model configuration changed; outage cleared")
+            self._resume_model_paused_assignments()
+
+    def _reset_model_failure_signals(self) -> None:
+        signals = getattr(
+            getattr(self, "consciousness", None),
+            "_interoception_signals",
+            None,
+        )
+        if signals is not None:
+            signals.llm_consecutive_failures = 0
+            signals.backoff_seconds = 0.0
+            signals.provider_switch = False
+
+    def _resume_model_paused_assignments(self) -> None:
+        scheduler = getattr(self, "_assignment_scheduler", None)
+        service = getattr(self, "_assignment_worker_service", None)
+        if scheduler is None or service is None:
+            return
+        try:
+            from xiaomei_brain.assignments import (
+                ActorType,
+                AssignmentActor,
+                AssignmentStatus,
+            )
+            actor = AssignmentActor(ActorType.AGENT, self._agent_id)
+            for assignment in service.list_for_actor(
+                actor,
+                statuses=[AssignmentStatus.PAUSED],
+                limit=100,
+            ):
+                if assignment.waiting_reason != "LLM 余额不足，委托已暂停":
+                    continue
+                scheduler.request_resume(
+                    assignment.id,
+                    trigger_actor_id=self._agent_id,
+                )
+                logger.info(
+                    "[ModelService] resumed paused assignment: %s",
+                    assignment.id,
+                )
+        except Exception:
+            logger.exception("[ModelService] failed to resume paused assignments")
+
     def _handle_message(self, msg: LivingMessage) -> None:
         """处理消息：委托给 MessageGateway 做预处理（命令检测、身份解析、会话切换），
         然后 ConversationDriver 做对话路由。"""
@@ -1762,25 +1923,12 @@ class ConsciousLiving(Living):
 
     # ── Death & Revival ────────────────────────────────────────
 
-    _RECOVER_CHECK_INTERVAL = 300  # 5 分钟探活一次
-
     def _loop_dormant(self) -> None:
-        """DORMANT 状态：死亡休眠，收到消息 → 复活。
-
-        LLM 致命错误（402）导致的暂停：先探活，未恢复则拒收消息。
-        其他原因导致的暂停：直接复活处理。
-        """
+        """DORMANT 状态只表达生命休眠，不承载模型服务故障。"""
         msg = self._wait_message(timeout=self.tick_interval)
         if msg is _STOP_SENTINEL:
             return
         if msg is not None:
-            # LLM 致命错误导致暂停 → 先探活再处理消息
-            if self._suspended_reason and "LLM" in self._suspended_reason:
-                if not self._probe_llm_health():
-                    logger.warning("[ConsciousLiving/DORMANT] LLM 未恢复，忽略消息: %.50s", msg.content)
-                    self._print_section("消息被搁置", f"LLM 未恢复，忽略: {msg.content[:40]}", icon="📪")
-                    self.send_sos_to_channels(f"LLM 余额不足，暂时无法处理消息: {msg.content[:80]}")
-                    return
             logger.info("[ConsciousLiving/DORMANT] 收到消息，复活")
             self._print_section("从休眠中醒来", "收到消息，恢复活动", icon="💫")
             if self.drive:
@@ -1792,62 +1940,8 @@ class ConsciousLiving(Living):
             self._last_active = time.time()
             return
 
-        # 暂停恢复检查
-        if self._suspended_reason:
-            self._try_recover()
-
     def _try_recover(self) -> None:
-        """尝试从 LLM 欠费暂停中恢复（周期性轻量 API 探活）。"""
-        now = time.time()
-        last = getattr(self, '_last_recover_check', None)
-        if last is None:
-            self._last_recover_check = now  # 首次挂起，初始化计时
-            return
-        if now - last >= self._RECOVER_CHECK_INTERVAL:
-            self._last_recover_check = now
-            if self._probe_llm_health():
-                self._print_section("恢复运行", "LLM 余额已恢复，L2 线程已重启", icon="🔄")
-                agent_name = getattr(self.agent, 'name', None) or self._agent_id
-                self.send_sos_to_channels(f"{agent_name} 已恢复运行")
-                self._suspended_reason = ""
-                self._on_wake_up()
-                self._transition(LivingState.AWAKE)
-
-    def _probe_llm_health(self) -> bool:
-        """发送轻量 LLM 请求检查余额是否恢复。
-
-        Returns:
-            True 表示 LLM 已恢复，False 表示仍然不可用。
-        恢复时自动重启 L2 线程并清除 interoception SOS 标记。
-        """
-        try:
-            llm = self.agent.llm
-            llm.chat(messages=[{"role": "user", "content": "hi"}], tools=None, log_level=logging.DEBUG)
-            # 成功了 = 余额恢复
-            logger.info("[ConsciousLiving] LLM 探活成功，余额已恢复")
-            self._log_sos_event("recovery", "精力重新恢复，我又能思考了")
-            # 重启 L2 DMN 线程（Python 线程不能 restart，创建新 Thread 对象）
-            if hasattr(self, '_layer2') and self._layer2:
-                self._layer2.start()
-                # 更新内感受的线程引用（新 Thread 对象）
-                self.interoception.set_threads({
-                    "layer0": self._layer0._thread,
-                    "layer2": self._layer2._thread,
-                })
-            # 清除 SOS 标记
-            self.interoception.sos = False
-            self.interoception.sos_message = ""
-            self.interoception.stress_level = "normal"
-            return True
-        except FatalLLMError as e:
-            if e.status_code == 402:
-                logger.debug("[ConsciousLiving] LLM 探活: 仍欠费 (%.0f分钟后重试)",
-                             self._RECOVER_CHECK_INTERVAL / 60)
-            else:
-                raise
-        except Exception:
-            logger.debug("[ConsciousLiving] LLM 探活: 网络异常，继续等待")
-        return False
+        """DORMANT recovery is driven by life events, not model probing."""
 
     # ── Hooks ────────────────────────────────────────────────────
 

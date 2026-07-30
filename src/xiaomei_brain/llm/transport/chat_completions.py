@@ -76,7 +76,8 @@ class ChatCompletionsTransport(Transport):
     # ── convert_messages ─────────────────────────────────────
 
     def convert_messages(self, messages: list[dict],
-                         model: ModelDefinition, profile: ProviderProfile) -> list[dict]:
+                         model: ModelDefinition, profile: ProviderProfile,
+                         **context) -> list[dict]:
         """内部消息 → OpenAI API 格式。调用 profile.prepare_messages() hook。"""
         result = []
         for msg in messages:
@@ -85,8 +86,18 @@ class ChatCompletionsTransport(Transport):
                 api_msg["content"] = msg["content"]
             if msg.get("tool_calls"):
                 api_msg["tool_calls"] = msg["tool_calls"]
-            # reasoning_content: GLM/DeepSeek 原生支持
-            if msg.get("reasoning_content") and ("glm" in model.id.lower() or "deepseek" in model.id.lower()):
+
+            # Provider-specific message extensions. DeepSeek uses this hook
+            # to return the full reasoning_content for tool-call turns.
+            api_msg.update(profile.prepare_message_extras(msg, model, **context))
+
+            # Legacy compatibility for older GLM definitions that predate
+            # declarative thinking capabilities.
+            if (
+                msg.get("reasoning_content")
+                and "glm" in model.id.lower()
+                and not model.requires_reasoning_content_for_tools
+            ):
                 api_msg["reasoning_content"] = msg["reasoning_content"]
             if msg.get("tool_call_id"):
                 api_msg["tool_call_id"] = msg["tool_call_id"]
@@ -94,14 +105,8 @@ class ChatCompletionsTransport(Transport):
                 api_msg["name"] = msg["name"]
             result.append(api_msg)
 
-        # DeepSeek thinking mode: 所有 assistant 消息必须有 reasoning_content
-        if "deepseek" in model.id.lower():
-            for m in result:
-                if m.get("role") == "assistant" and "reasoning_content" not in m:
-                    m["reasoning_content"] = " "
-
         # hook
-        return profile.prepare_messages(result, model)
+        return profile.prepare_messages(result, model, **context)
 
     # ── convert_tools ─────────────────────────────────────────
 
@@ -131,16 +136,10 @@ class ChatCompletionsTransport(Transport):
         if max_tok:
             payload[max_tok_field] = max_tok
 
-        # Profile hooks
-        extra = profile.build_extra_body(model, stream=stream, **context)
+        # Provider maps normalized runtime options to its request fields.
+        extra = profile.build_request_extras(model, stream=stream, **context)
         if extra:
             payload.update(extra)
-
-        extras = profile.build_api_kwargs_extras(model, **context)
-        if extras:
-            for k, v in extras.items():
-                if k not in payload:
-                    payload[k] = v
 
         return payload
 

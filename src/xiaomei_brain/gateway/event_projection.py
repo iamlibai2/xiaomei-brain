@@ -38,6 +38,8 @@ class GatewayEventProjection:
         "activity.failed",
         "activity.cancelled",
         "agent.state.changed",
+        "agent.speech.started",
+        "agent.speech.completed",
     })
 
     def __init__(self, router_getter: RouterGetter) -> None:
@@ -47,11 +49,13 @@ class GatewayEventProjection:
         is_assignment_event = event.name.startswith("assignment.")
         is_activity_event = event.name.startswith("activity.")
         is_agent_state_event = event.name.startswith("agent.state.")
+        is_agent_speech_event = event.name.startswith("agent.speech.")
         if event.name not in self.PUBLIC_EVENTS or (
             not event.session_id
             and not is_assignment_event
             and not is_activity_event
             and not is_agent_state_event
+            and not is_agent_speech_event
         ):
             if event.name in {
                 "interaction.requested",
@@ -73,7 +77,7 @@ class GatewayEventProjection:
 
         router = self._router_getter()
         if (
-            (is_activity_event or is_agent_state_event)
+            (is_activity_event or is_agent_state_event or is_agent_speech_event)
             and event.payload.get("_agent_global")
             and router is not None
             and hasattr(router, "broadcast_event")
@@ -189,7 +193,12 @@ class GatewayEventProjection:
             metadata["timestamp"] = event.timestamp
         try:
             public_payload = dict(event.payload)
-            if is_assignment_event or is_activity_event or is_agent_state_event:
+            if (
+                is_assignment_event
+                or is_activity_event
+                or is_agent_state_event
+                or is_agent_speech_event
+            ):
                 public_payload = {
                     key: value
                     for key, value in public_payload.items()
