@@ -376,7 +376,7 @@ class GoalManager:
         if self.driver and self.driver._task_mode:
             if self._pace_runner is None:
                 self._init_pace_runner()
-            self._run_pace(msg, intent_context)
+            self.driver._run_pace_with_delivery(msg, intent_context)
             return
         if self.driver:
             self.driver._run_react(msg, intent_context)
@@ -434,7 +434,10 @@ class GoalManager:
             resume_msg = LivingMessage(
                 content=f"[系统] 恢复执行: {goal.description[:80]}",
                 user_id=msg.user_id, session_id=msg.session_id, source="system")
-            self._run_pace(resume_msg, intent_context)
+            if self.driver:
+                self.driver._run_pace_with_delivery(resume_msg, intent_context)
+            else:
+                self._run_pace(resume_msg, intent_context)
             return
 
         fake_intent = IntentResult(
@@ -785,6 +788,7 @@ class GoalManager:
         pace_runner=None,
         cancel_check=None,
         mark_realtime_busy: bool = True,
+        on_output=None,
     ) -> str:
         parent = self._parent
         runner = pace_runner or self._pace_runner
@@ -820,6 +824,7 @@ class GoalManager:
                 "assemble_context": getattr(parent, "assemble_context", True),
                 "get_consciousness_state": parent._get_consciousness_state,
                 "on_confirm": _on_confirm,
+                "on_output": on_output,
                 "_store_checkpoint": lambda ckpt: setattr(self, '_pace_checkpoint', ckpt),
             }
             exit_reason = runner.run(msg, intent_context, callbacks)
@@ -868,7 +873,10 @@ class GoalManager:
             intent_context = self.build_intent_context_for_goal(current_goal, siblings)
         logger.info("[GoalManager] 恢复 PACE 执行: goal=%s step=%d",
                     current_goal.id if current_goal else "?", checkpoint.step_index)
-        self._run_pace(resume_msg, intent_context)
+        if self.driver:
+            self.driver._run_pace_with_delivery(resume_msg, intent_context)
+        else:
+            self._run_pace(resume_msg, intent_context)
 
     # ── Progress / Auto-advance ───────────────────────────────
 

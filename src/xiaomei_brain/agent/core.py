@@ -336,6 +336,8 @@ class Agent:
                 # 存 assistant(tool_calls) 到 DB，tool_calls + reasoning_content 存入 metadata
                 if self.conversation_db:
                     meta = {"tool_calls": tool_calls_data}
+                    if self.turn_id:
+                        meta["turn_id"] = self.turn_id
                     if response.reasoning:
                         meta["reasoning_content"] = response.reasoning
                     tool_msg_id = self.conversation_db.log(
@@ -357,6 +359,7 @@ class Agent:
                     idx = self.tool_call_buffer.add(tc.name, args_dict, "")  # placeholder
                     _print(get_hint(tc.name))
                     _ptc(idx, tc.name, args_dict)
+                    tool_started_at = time.perf_counter()
                     if self.on_tool_start:
                         self.on_tool_start(idx, tc.id, tc.name, args_dict)
                     logger.debug("Tool call: %s(%s)", tc.name, args_dict)
@@ -382,6 +385,10 @@ class Agent:
                     # runtime. Strip the internal envelope before normal tool
                     # bookkeeping, then stop this live ReAct loop below.
                     result, tool_control = split_tool_control(result)
+                    tool_duration_ms = max(
+                        0,
+                        int((time.perf_counter() - tool_started_at) * 1000),
+                    )
 
                     # 记录失败次数，成功则清除
                     if _tool_result_failed(result):
@@ -408,6 +415,11 @@ class Agent:
                     # 存 tool result 到 DB，保存 DB id 到消息（DAG 压缩需要）
                     tool_msg_id = None
                     if self.conversation_db:
+                        tool_metadata: dict[str, Any] = {
+                            "duration_ms": tool_duration_ms,
+                        }
+                        if self.turn_id:
+                            tool_metadata["turn_id"] = self.turn_id
                         tool_msg_id = self.conversation_db.log(
                             session_id=self.session_id,
                             role="tool",
@@ -415,6 +427,7 @@ class Agent:
                             user_id=self.user_id,
                             tool_name=tc.name,
                             tool_call_id=tc.id,
+                            metadata=tool_metadata,
                         )
                         # Procedure memory: record tool invocation (no LLM call)
                         self.conversation_db.store_tool(

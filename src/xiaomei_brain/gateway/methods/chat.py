@@ -371,6 +371,23 @@ class ChatMethods:
                 elif row.get("role") == "tool":
                     message["tool_call_id"] = row.get("tool_call_id", "")
                     message["tool_name"] = row.get("tool_name", "")
+                    try:
+                        tool_metadata = json.loads(row.get("metadata") or "{}")
+                    except (TypeError, json.JSONDecodeError):
+                        tool_metadata = {}
+                    if isinstance(tool_metadata, dict) and isinstance(
+                        tool_metadata.get("turn_id"),
+                        str,
+                    ):
+                        message["turn_id"] = tool_metadata["turn_id"]
+                    if isinstance(tool_metadata, dict) and isinstance(
+                        tool_metadata.get("duration_ms"),
+                        (int, float),
+                    ):
+                        message["duration_ms"] = max(
+                            0,
+                            int(tool_metadata["duration_ms"]),
+                        )
                 elif row.get("role") == "artifact":
                     artifact = dict(row.get("artifact") or {})
                     if not artifact.get("id"):

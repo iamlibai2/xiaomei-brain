@@ -266,6 +266,7 @@ function historyMessages(
         content: "",
         streaming: false,
         artifact,
+        turnId: artifact.turnId || undefined,
       } satisfies DisplayMessage];
     }
     if (row.role === "tool") {
@@ -279,6 +280,7 @@ function historyMessages(
         role: "agent",
         content: "",
         streaming: false,
+        turnId: typeof row.turn_id === "string" ? row.turn_id : undefined,
         tool: {
           id: toolCallId,
           name,
@@ -287,6 +289,7 @@ function historyMessages(
           summary: summary.slice(0, 800),
           truncated: summary.length > 800,
           error: failed ? summary.slice(0, 800) : "",
+          durationMs: typeof row.duration_ms === "number" ? Math.max(0, row.duration_ms) : undefined,
         },
       } satisfies DisplayMessage];
     }
@@ -380,6 +383,7 @@ function resumeMessages(result: Record<string, unknown> | undefined, sessionId: 
         role: "agent",
         content: item.text,
         streaming: false,
+        turnId,
       }];
     }
     if (item.type === "tool") {
@@ -392,6 +396,7 @@ function resumeMessages(result: Record<string, unknown> | undefined, sessionId: 
         role: "agent",
         content: "",
         streaming: false,
+        turnId,
         tool: {
           id,
           name,
@@ -402,6 +407,9 @@ function resumeMessages(result: Record<string, unknown> | undefined, sessionId: 
           summary: typeof item.summary === "string" ? item.summary : "",
           truncated: item.truncated === true,
           error: typeof item.error === "string" ? item.error : "",
+          startedAt: typeof item.started_at === "number" ? item.started_at : undefined,
+          completedAt: typeof item.completed_at === "number" ? item.completed_at : undefined,
+          durationMs: typeof item.duration_ms === "number" ? Math.max(0, item.duration_ms) : undefined,
         },
       }];
     }
@@ -418,6 +426,7 @@ function resumeMessages(result: Record<string, unknown> | undefined, sessionId: 
         role: "agent",
         content: "",
         streaming: false,
+        turnId,
         interaction: {
           id,
           question,
@@ -444,6 +453,7 @@ function resumeMessages(result: Record<string, unknown> | undefined, sessionId: 
         role: "agent",
         content: "",
         streaming: false,
+        turnId,
         action: actionRequest(item, sessionId, turnId, status),
       }];
     }
@@ -659,6 +669,9 @@ export interface ToolActivity {
   summary: string;
   truncated: boolean;
   error: string;
+  startedAt?: number;
+  completedAt?: number;
+  durationMs?: number;
 }
 
 export interface InteractionRequest {
@@ -2621,6 +2634,7 @@ export function initGatewayEvents() {
           role: "agent",
           content: "",
           streaming: false,
+          turnId: eventTurnId || undefined,
           action: actionRequest(d, eventSessionId, eventTurnId, "pending"),
         });
         inserted = true;
@@ -2649,6 +2663,7 @@ export function initGatewayEvents() {
             role: "agent",
             content: "",
             streaming: false,
+            turnId: eventTurnId || undefined,
             action: actionRequest(d, eventSessionId, eventTurnId, status),
           };
           s.messagesByAgent[agentId].push(message);
@@ -2689,6 +2704,7 @@ export function initGatewayEvents() {
           role: "agent",
           content: "",
           streaming: false,
+          turnId: eventTurnId || undefined,
           interaction: {
             id: requestId,
             question,
@@ -2752,6 +2768,7 @@ export function initGatewayEvents() {
           role: "agent",
           content: "",
           streaming: false,
+          turnId: eventTurnId || undefined,
           tool: {
             id: toolCallId,
             name,
@@ -2760,6 +2777,7 @@ export function initGatewayEvents() {
             summary: "",
             truncated: false,
             error: "",
+            startedAt: typeof d.started_at === "number" ? d.started_at : Date.now(),
           },
         });
         inserted = true;
@@ -2789,6 +2807,7 @@ export function initGatewayEvents() {
             role: "agent",
             content: "",
             streaming: false,
+            turnId: eventTurnId || undefined,
             tool: {
               id: toolCallId,
               name,
@@ -2802,10 +2821,15 @@ export function initGatewayEvents() {
           s.messagesByAgent[agentId].push(message);
         }
         if (!message.tool) return;
+        const completedAt = typeof d.completed_at === "number" ? d.completed_at : Date.now();
         message.tool.status = error ? "error" : "complete";
         message.tool.summary = summary;
         message.tool.truncated = d.truncated === true;
         message.tool.error = error;
+        message.tool.completedAt = completedAt;
+        if (typeof message.tool.startedAt === "number") {
+          message.tool.durationMs = Math.max(0, completedAt - message.tool.startedAt);
+        }
       }));
       return;
     }
@@ -2846,6 +2870,7 @@ export function initGatewayEvents() {
           role: "agent",
           content: "",
           streaming: false,
+          turnId: eventTurnId || artifact.turnId || undefined,
           artifact,
         });
       }));
@@ -2863,10 +2888,17 @@ export function initGatewayEvents() {
     if (event === "message.delta") {
       stream.ref += text;
       if (!stream.id) {
+        // ReAct providers often emit whitespace between consecutive tool calls.
+        // Keep it in the stream buffer so a later text chunk preserves its
+        // formatting, but do not create an empty message row. History loading
+        // already filters these rows, so this also keeps live and restored
+        // spacing consistent.
+        if (!stream.ref.trim()) return;
         stream.id = "streaming-" + Date.now();
         setState(produce((s: CoreState) => {
           s.messagesByAgent[agentId].push({
             id: stream.id!, role: "agent", content: stream.ref, streaming: true,
+            turnId: eventTurnId || undefined,
           });
         }));
       } else {
@@ -2926,7 +2958,7 @@ export function initGatewayEvents() {
         }));
         stream.id = null;
         stream.ref = "";
-      } else if (terminalText) {
+      } else if (terminalText.trim()) {
         // Skip a duplicate final message if the local stream already finalized it.
         const msgs = store().messagesByAgent[agentId];
         const lastMsg = msgs && msgs.length > 0 ? msgs[msgs.length - 1] : null;
@@ -2944,6 +2976,7 @@ export function initGatewayEvents() {
               role: "agent",
               content: terminalText,
               streaming: false,
+              turnId: eventTurnId || undefined,
               memoryReferences: recalledMemories,
               serviceError: status === "error" && String(error?.code || "").startsWith("MODEL_")
                 ? {

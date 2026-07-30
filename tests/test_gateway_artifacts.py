@@ -307,6 +307,32 @@ def test_chat_history_exposes_artifact_card_without_internal_path(tmp_path, monk
     db.close()
 
 
+def test_chat_history_preserves_tool_turn_id(tmp_path):
+    db = ConversationDB(tmp_path / "brain.db")
+    db.log(
+        "session-1",
+        "tool",
+        "command completed",
+        tool_name="shell",
+        tool_call_id="tool-1",
+        metadata={"turn_id": "turn-1", "duration_ms": 1250},
+    )
+    router = MethodRouter(living=SimpleNamespace(
+        _agent_id="xiaomei", agent=SimpleNamespace(conversation_db=db),
+    ))
+    router._auth_sessions.add("connection-1")
+
+    response = router.dispatch("connection-1", "rpc-1", "chat.history", {
+        "session_id": "session-1",
+    })
+
+    tool_message = response["result"]["messages"][0]
+    assert tool_message["role"] == "tool"
+    assert tool_message["turn_id"] == "turn-1"
+    assert tool_message["duration_ms"] == 1250
+    db.close()
+
+
 def test_chat_history_hides_unpresented_process_artifacts(tmp_path, monkeypatch):
     monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
     workspace = tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace"

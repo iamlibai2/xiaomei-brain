@@ -96,6 +96,8 @@
       "toolRunning": "Using {{name}}",
       "toolComplete": "Used {{name}}",
       "toolError": "{{name}} failed",
+      "toolProcess": "Tool execution",
+      "toolCount": "{{count}} steps",
       "toolDetails": "View details",
       "toolArguments": "Arguments",
       "toolResult": "Result",

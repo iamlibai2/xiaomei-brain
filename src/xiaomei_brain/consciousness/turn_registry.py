@@ -72,6 +72,7 @@ class ActiveTurnRegistry:
                         "summary": "",
                         "truncated": False,
                         "error": "",
+                        "started_at": payload.get("started_at"),
                     })
                 return
             if existing is None:
@@ -83,11 +84,21 @@ class ActiveTurnRegistry:
                 }
                 items.append(existing)
             error = payload.get("error")
+            started_at = existing.get("started_at")
+            completed_at = payload.get("completed_at")
+            duration_ms = None
+            if isinstance(started_at, (int, float)) and isinstance(
+                completed_at,
+                (int, float),
+            ):
+                duration_ms = max(0, int(completed_at - started_at))
             existing.update({
                 "status": "error" if error else "complete",
                 "summary": str(payload.get("summary", "")),
                 "truncated": bool(payload.get("truncated", False)),
                 "error": str(error.get("message", "")) if isinstance(error, dict) else "",
+                "completed_at": completed_at,
+                "duration_ms": duration_ms,
             })
 
     def interaction_event(self, event: str, payload: dict[str, Any]) -> None:

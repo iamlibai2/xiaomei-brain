@@ -96,6 +96,8 @@
       "toolRunning": "正在使用 {{name}}",
       "toolComplete": "已使用 {{name}}",
       "toolError": "{{name}} 执行失败",
+      "toolProcess": "工具执行过程",
+      "toolCount": "{{count}} 项",
       "toolDetails": "查看详情",
       "toolArguments": "参数",
       "toolResult": "结果",

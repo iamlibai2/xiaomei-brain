@@ -132,7 +132,7 @@ class ConversationDriver:
                     nudge = f"[元认知上下文] 用户回复了：{msg.content[:500]}\n请在当前子目标基础上，考虑用户的反馈继续执行。"
                     gm._init_pace_runner()
                     gm._pace_runner._resume_nudge = nudge
-                    gm._run_pace(msg, intent_context)
+                    self._run_pace_with_delivery(msg, intent_context)
                 else:
                     logger.info("[ConversationDriver] 自动恢复 ReAct（用户提供上下文）")
                     nudge_context = f"[元认知上下文] 用户回复了：{msg.content[:500]}\n请在当前子目标基础上，考虑用户的反馈继续执行。"
@@ -241,9 +241,101 @@ class ConversationDriver:
         if self._task_mode:
             if gm._pace_runner is None:
                 gm._init_pace_runner()
-            gm._run_pace(msg, intent_context)
+            self._run_pace_with_delivery(msg, intent_context)
             return
         self._run_react(msg, intent_context)
+
+    def _run_pace_with_delivery(
+        self,
+        msg: LivingMessage,
+        intent_context: str = "",
+    ) -> str:
+        """Run realtime PACE through the same public conversation boundary as ReAct."""
+        parent = self._parent
+        gm = self._goal_manager
+        if not self._should_deliver(msg.session_id):
+            return gm._run_pace(msg, intent_context)
+
+        outputs: list[str] = []
+        terminal_status = "complete"
+        terminal_error: dict[str, str] | None = None
+        agent_core = parent.agent._get_agent()
+
+        def on_output(content: str) -> None:
+            visible = str(content).strip()
+            if not visible:
+                return
+            chunk = visible if not outputs else f"\n\n{visible}"
+            outputs.append(visible)
+            self._deliver_chunk(parent, msg.session_id, msg.turn_id, chunk)
+
+        self._update_message_status(parent, msg, "processing")
+        self._deliver_message_start(parent, msg.session_id, msg.turn_id)
+        parent._clarify_listening.set()
+        try:
+            agent_core.user_id = msg.user_id
+            agent_core.session_id = msg.session_id
+            agent_core.turn_id = msg.turn_id
+            agent_core.current_source = getattr(msg, "source", "conversation")
+            agent_core.current_attachments = list(
+                getattr(msg, "attachments", None) or [],
+            )
+            agent_core.on_tool_start = self._make_tool_event_callback(
+                "tool.start", msg.session_id, msg.turn_id, parent,
+            )
+            agent_core.on_tool_complete = self._make_tool_event_callback(
+                "tool.complete", msg.session_id, msg.turn_id, parent,
+            )
+            agent_core.on_artifact = self._make_artifact_callback(
+                msg.session_id, msg.turn_id, msg.user_id, parent,
+            )
+            agent_core.on_speech = self._make_speech_callback(
+                msg.session_id, msg.turn_id, parent,
+            )
+            agent_core.on_tool_approval = self._make_tool_approval_callback(
+                msg.session_id, msg.turn_id, msg.user_id, parent,
+            )
+            agent_core.on_action_complete = self._make_action_complete_callback(parent)
+            exit_reason = gm._run_pace(
+                msg,
+                intent_context,
+                on_output=on_output,
+            )
+            if exit_reason == "error":
+                terminal_status = "error"
+                terminal_error = {
+                    "code": "PACE_EXECUTION_FAILED",
+                    "message": "Goal 执行过程中出现错误，已经暂停。",
+                }
+            return exit_reason
+        except Exception as exc:
+            terminal_status = "error"
+            terminal_error = {
+                "code": "PACE_EXECUTION_FAILED",
+                "message": str(exc),
+            }
+            logger.exception("[ConversationDriver] PACE delivery failed")
+            return "error"
+        finally:
+            terminal_text = "\n\n".join(outputs)
+            if terminal_error and not terminal_text:
+                terminal_text = terminal_error["message"]
+            self._update_message_status(parent, msg, terminal_status, terminal_error)
+            self._deliver_response(
+                parent,
+                msg.session_id,
+                msg.turn_id,
+                terminal_text,
+                status=terminal_status,
+                error=terminal_error,
+            )
+            parent._clarify_listening.clear()
+            agent_core.on_tool_start = None
+            agent_core.on_tool_complete = None
+            agent_core.on_artifact = None
+            agent_core.on_speech = None
+            agent_core.on_tool_approval = None
+            agent_core.on_action_complete = None
 
     # ── ReAct ─────────────────────────────────────────────────
 

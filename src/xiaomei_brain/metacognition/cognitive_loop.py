@@ -248,6 +248,9 @@ class CognitiveLoop:
 
                 display_content = remove_progress_tag(content)
                 p._print_output(display_content, elapsed, tc_count)
+                on_output = callbacks.get("on_output")
+                if display_content and callable(on_output):
+                    on_output(display_content)
 
                 # InnerVoice 副作用处理（block / insert）
                 if assessment.iv_block:

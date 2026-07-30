@@ -174,6 +174,80 @@ def test_conversation_driver_message_events_share_session_and_turn():
     assert router.events[-1][1] == {"text": "你好", "status": "complete"}
 
 
+def test_realtime_pace_uses_the_public_conversation_event_path():
+    class EventHub:
+        def __init__(self):
+            self.events = []
+
+        def publish(self, name, payload, **metadata):
+            self.events.append((name, payload, metadata))
+
+    class Signal:
+        def __init__(self):
+            self.active = False
+
+        def set(self):
+            self.active = True
+
+        def clear(self):
+            self.active = False
+
+    core = SimpleNamespace()
+    agent = SimpleNamespace(
+        conversation_db=None,
+        _get_agent=lambda: core,
+    )
+    event_hub = EventHub()
+    parent = SimpleNamespace(
+        agent=agent,
+        _event_hub=event_hub,
+        _clarify_listening=Signal(),
+    )
+
+    def run_pace(_msg, _context, *, on_output):
+        assert callable(core.on_tool_start)
+        assert callable(core.on_tool_complete)
+        on_output("第一步结果")
+        on_output("第二步结果")
+        return "waiting_user"
+
+    driver = ConversationDriver.__new__(ConversationDriver)
+    driver._parent = parent
+    driver._goal_manager = SimpleNamespace(_run_pace=run_pace)
+    msg = LivingMessage(
+        content="继续",
+        user_id="person-1",
+        session_id="dingtalk-person-1",
+        turn_id="turn-pace",
+    )
+
+    result = driver._run_pace_with_delivery(msg, "goal context")
+
+    assert result == "waiting_user"
+    assert [event[0] for event in event_hub.events] == [
+        "message.start",
+        "message.delta",
+        "message.delta",
+        "message.complete",
+    ]
+    assert event_hub.events[1][1]["text"] == "第一步结果"
+    assert event_hub.events[2][1]["text"] == "\n\n第二步结果"
+    assert event_hub.events[-1][1] == {
+        "text": "第一步结果\n\n第二步结果",
+        "status": "complete",
+    }
+    assert all(
+        event[2] == {
+            "session_id": "dingtalk-person-1",
+            "turn_id": "turn-pace",
+        }
+        for event in event_hub.events
+    )
+    assert parent._clarify_listening.active is False
+    assert core.on_tool_start is None
+    assert core.on_tool_complete is None
+
+
 def test_internal_display_is_not_sent_to_plain_chat_channels():
     class Router:
         def __init__(self):

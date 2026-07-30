@@ -19,6 +19,38 @@ const EMPTY_MSGS: DisplayMessage[] = [];
 const EMPTY_ASSIGNMENTS: AssignmentSnapshot[] = [];
 type RightSidebarSection = "activity" | "state" | "assignment" | "artifact" | "memory" | "context";
 
+function displayMessageTurnId(message: DisplayMessage): string {
+  return message.turnId
+    || message.interaction?.turnId
+    || message.action?.turnId
+    || message.artifact?.turnId
+    || "";
+}
+
+function messageHasAgentHeader(message: DisplayMessage): boolean {
+  return message.role === "agent" && !message.tool && !message.serviceError;
+}
+
+type ConversationRenderItem =
+  | { type: "message"; message: DisplayMessage }
+  | { type: "tools"; messages: DisplayMessage[]; turnId: string };
+
+function groupConversationMessages(messages: DisplayMessage[]): ConversationRenderItem[] {
+  const items: ConversationRenderItem[] = [];
+  for (const message of messages) {
+    const turnId = displayMessageTurnId(message);
+    const previous = items[items.length - 1];
+    if (message.tool && turnId && previous?.type === "tools" && previous.turnId === turnId) {
+      previous.messages.push(message);
+    } else if (message.tool) {
+      items.push({ type: "tools", messages: [message], turnId });
+    } else {
+      items.push({ type: "message", message });
+    }
+  }
+  return items;
+}
+
 export function HomePage() {
   const { t } = useTranslation();
   const activeAgentId = useCoreStore((s) => s.activeAgentId);
@@ -328,23 +360,42 @@ export function HomePage() {
                   )}
                   {showOldestReached ? t("home.oldestReached") : null}
                 </div>
-                {messages.map((m) => (
-                  <MessageRow
-                    key={m.id}
-                    message={m}
-                    agentName={agentName || t("home.defaultAgentName")}
-                    onShowArtifact={(artifactId, sessionId) => {
-                      setFocusedArtifactKey(`${sessionId}:${artifactId}`);
-                      setRightSidebarSection("artifact");
-                      setActivityPanelOpen(true);
-                    }}
-                    onShowMemories={(references) => {
-                      setFocusedMemories(references);
-                      setRightSidebarSection("context");
-                      setActivityPanelOpen(true);
-                    }}
-                  />
-                ))}
+                {(() => {
+                  const headedTurns = new Set<string>();
+                  return groupConversationMessages(messages).map((item) => {
+                    if (item.type === "tools") {
+                      return (
+                        <ToolActivityGroup
+                          key={`tools-${item.messages[0].id}`}
+                          messages={item.messages}
+                        />
+                      );
+                    }
+                    const m = item.message;
+                    const turnId = displayMessageTurnId(m);
+                    const canShowHeader = messageHasAgentHeader(m);
+                    const showAgentHeader = !canShowHeader || !turnId || !headedTurns.has(turnId);
+                    if (canShowHeader && turnId) headedTurns.add(turnId);
+                    return (
+                      <MessageRow
+                        key={m.id}
+                        message={m}
+                        agentName={agentName || t("home.defaultAgentName")}
+                        showAgentHeader={showAgentHeader}
+                        onShowArtifact={(artifactId, sessionId) => {
+                          setFocusedArtifactKey(`${sessionId}:${artifactId}`);
+                          setRightSidebarSection("artifact");
+                          setActivityPanelOpen(true);
+                        }}
+                        onShowMemories={(references) => {
+                          setFocusedMemories(references);
+                          setRightSidebarSection("context");
+                          setActivityPanelOpen(true);
+                        }}
+                      />
+                    );
+                  });
+                })()}
                 <div ref={bottomRef} />
               </div>
             </div>
@@ -446,11 +497,13 @@ function parseThinkingContent(raw: string, streaming: boolean): { thinking: stri
 function MessageRow({
   message,
   agentName,
+  showAgentHeader,
   onShowArtifact,
   onShowMemories,
 }: {
   message: DisplayMessage;
   agentName: string;
+  showAgentHeader: boolean;
   onShowArtifact: (artifactId: string, sessionId: string) => void;
   onShowMemories: (references: MemoryReference[]) => void;
 }) {
@@ -480,11 +533,11 @@ function MessageRow({
   };
 
   if (message.action) {
-    return <ActionApprovalCard message={message} agentName={agentName} />;
+    return <ActionApprovalCard message={message} agentName={agentName} showAgentHeader={showAgentHeader} />;
   }
 
   if (message.interaction) {
-    return <InteractionCard message={message} agentName={agentName} />;
+    return <InteractionCard message={message} agentName={agentName} showAgentHeader={showAgentHeader} />;
   }
 
   if (message.artifact) {
@@ -492,6 +545,7 @@ function MessageRow({
       <ArtifactCard
         message={message}
         agentName={agentName}
+        showAgentHeader={showAgentHeader}
         agentId={activeAgentId}
         sessionId={activeSessionId}
         onShowArtifact={onShowArtifact}
@@ -606,7 +660,7 @@ function MessageRow({
   const thinkingComplete = !message.streaming || /\x1b\[0m/.test(message.content) || /\[0m/.test(message.content);
 
   return (
-    <div className="assistant-message-row">
+    <div className={`assistant-message-row ${showAgentHeader ? "" : "agent-turn-continuation"}`}>
       <button
         type="button"
         className="message-copy-action"
@@ -616,12 +670,14 @@ function MessageRow({
         <Icon name="copy" size={14} />
         <span>{messageCopied ? "已复制" : "复制"}</span>
       </button>
-      <div className="assistant-avatar">
-        <div className="assistant-avatar-face">
-          {agentName.charAt(0)}
+      {showAgentHeader && (
+        <div className="assistant-avatar">
+          <div className="assistant-avatar-face">
+            {agentName.charAt(0)}
+          </div>
+          <span className="assistant-avatar-name">{agentName}</span>
         </div>
-        <span className="assistant-avatar-name">{agentName}</span>
-      </div>
+      )}
       {hasThinking && (
         <div className={`thinking-block ${!thinkingExpanded ? "thinking-collapsed" : ""} ${thinkingComplete ? "thinking-complete" : ""}`}>
           <div
@@ -752,12 +808,14 @@ function MessageAttachment({
 function ArtifactCard({
   message,
   agentName,
+  showAgentHeader,
   agentId,
   sessionId,
   onShowArtifact,
 }: {
   message: DisplayMessage;
   agentName: string;
+  showAgentHeader: boolean;
   agentId: string;
   sessionId: string;
   onShowArtifact: (artifactId: string, sessionId: string) => void;
@@ -810,11 +868,13 @@ function ArtifactCard({
       : `${(artifact.size / 1024 / 1024).toFixed(1)} MB`;
 
   return (
-    <div className="assistant-message-row artifact-message-row">
-      <div className="assistant-avatar">
-        <div className="assistant-avatar-face">{agentName.charAt(0)}</div>
-        <span className="assistant-avatar-name">{agentName}</span>
-      </div>
+    <div className={`assistant-message-row artifact-message-row ${showAgentHeader ? "" : "agent-turn-continuation"}`}>
+      {showAgentHeader && (
+        <div className="assistant-avatar">
+          <div className="assistant-avatar-face">{agentName.charAt(0)}</div>
+          <span className="assistant-avatar-name">{agentName}</span>
+        </div>
+      )}
       <div className="artifact-card-group">
         <button
           type="button"
@@ -850,7 +910,11 @@ function ArtifactCard({
   );
 }
 
-function ActionApprovalCard({ message, agentName }: { message: DisplayMessage; agentName: string }) {
+function ActionApprovalCard({ message, agentName, showAgentHeader }: {
+  message: DisplayMessage;
+  agentName: string;
+  showAgentHeader: boolean;
+}) {
   const { t } = useTranslation();
   const action = message.action!;
   const respondToAction = useCoreStore((s) => s.respondToAction);
@@ -863,11 +927,13 @@ function ActionApprovalCard({ message, agentName }: { message: DisplayMessage; a
   };
 
   return (
-    <div className="assistant-message-row interaction-message-row">
-      <div className="assistant-avatar">
-        <div className="assistant-avatar-face">{agentName.charAt(0)}</div>
-        <span className="assistant-avatar-name">{agentName}</span>
-      </div>
+    <div className={`assistant-message-row interaction-message-row ${showAgentHeader ? "" : "agent-turn-continuation"}`}>
+      {showAgentHeader && (
+        <div className="assistant-avatar">
+          <div className="assistant-avatar-face">{agentName.charAt(0)}</div>
+          <span className="assistant-avatar-name">{agentName}</span>
+        </div>
+      )}
       <div className={`interaction-card action-card action-${action.status}`}>
         <div className="interaction-card-label action-card-label">
           {t("home.actionLabel")}
@@ -923,6 +989,7 @@ function ToolActivityRow({ message }: { message: DisplayMessage }) {
       : t("home.toolComplete", { name: tool.name });
   const hasArguments = Object.keys(tool.arguments).length > 0;
   const hasDetails = hasArguments || Boolean(tool.summary) || Boolean(tool.error);
+  const duration = formatToolDuration(tool.durationMs);
 
   return (
     <div className={`tool-activity tool-${tool.status}`}>
@@ -930,7 +997,10 @@ function ToolActivityRow({ message }: { message: DisplayMessage }) {
       <div className="tool-activity-body">
         {hasDetails && !running ? (
           <details className="tool-activity-details">
-            <summary className="tool-activity-title">{title}</summary>
+            <summary className="tool-activity-title">
+              <span>{title}</span>
+              {duration && <span className="tool-activity-duration">{duration}</span>}
+            </summary>
             {hasArguments && (
               <div className="tool-activity-section">
                 <span>{t("home.toolArguments")}</span>
@@ -945,14 +1015,51 @@ function ToolActivityRow({ message }: { message: DisplayMessage }) {
             )}
           </details>
         ) : (
-          <div className="tool-activity-title">{title}</div>
+          <div className="tool-activity-title">
+            <span>{title}</span>
+            {duration && <span className="tool-activity-duration">{duration}</span>}
+          </div>
         )}
       </div>
     </div>
   );
 }
 
-function InteractionCard({ message, agentName }: { message: DisplayMessage; agentName: string }) {
+function ToolActivityGroup({ messages }: { messages: DisplayMessage[] }) {
+  const { t } = useTranslation();
+  const running = messages.some((message) => message.tool?.status === "running");
+  const failed = messages.some((message) => message.tool?.status === "error");
+  return (
+    <div className={`tool-process ${running ? "tool-process-running" : ""} ${failed ? "tool-process-error" : ""}`}>
+      <div className="tool-process-header">
+        <Icon name="terminal" size={14} />
+        <span>{t("home.toolProcess")}</span>
+        <span className="tool-process-count">{t("home.toolCount", { count: messages.length })}</span>
+      </div>
+      <div className="tool-process-list">
+        {messages.map((message) => <ToolActivityRow key={message.id} message={message} />)}
+      </div>
+    </div>
+  );
+}
+
+function formatToolDuration(durationMs: number | undefined): string {
+  if (typeof durationMs !== "number" || !Number.isFinite(durationMs)) return "";
+  if (durationMs < 1000) return `${Math.max(1, Math.round(durationMs))} ms`;
+  if (durationMs < 60_000) {
+    const seconds = durationMs / 1000;
+    return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)} s`;
+  }
+  const minutes = Math.floor(durationMs / 60_000);
+  const seconds = Math.round((durationMs % 60_000) / 1000);
+  return `${minutes} min ${seconds} s`;
+}
+
+function InteractionCard({ message, agentName, showAgentHeader }: {
+  message: DisplayMessage;
+  agentName: string;
+  showAgentHeader: boolean;
+}) {
   const { t } = useTranslation();
   const interaction = message.interaction!;
   const respondToInteraction = useCoreStore((s) => s.respondToInteraction);
@@ -966,11 +1073,13 @@ function InteractionCard({ message, agentName }: { message: DisplayMessage; agen
   };
 
   return (
-    <div className="assistant-message-row interaction-message-row">
-      <div className="assistant-avatar">
-        <div className="assistant-avatar-face">{agentName.charAt(0)}</div>
-        <span className="assistant-avatar-name">{agentName}</span>
-      </div>
+    <div className={`assistant-message-row interaction-message-row ${showAgentHeader ? "" : "agent-turn-continuation"}`}>
+      {showAgentHeader && (
+        <div className="assistant-avatar">
+          <div className="assistant-avatar-face">{agentName.charAt(0)}</div>
+          <span className="assistant-avatar-name">{agentName}</span>
+        </div>
+      )}
       <div className={`interaction-card interaction-${interaction.status}`}>
         <div className="interaction-card-label">{t("home.interactionLabel")}</div>
         <div className="interaction-card-question">{interaction.question}</div>
