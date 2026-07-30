@@ -18,6 +18,8 @@ const IMAGE_TYPES: Record<string, string> = {
 const OFFICE_TYPES: Record<string, string> = {
   ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ".pdf": "application/pdf",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 };
 const TEXT_EXTENSIONS = new Set([
   ".txt", ".md", ".markdown", ".json", ".jsonl", ".yaml", ".yml", ".toml",

@@ -33,6 +33,7 @@ DEFAULT_BACKGROUND_TOOLS = frozenset({
     "edit_file",
     "web_search",
     "web_get",
+    "read_document",
 })
 
 _WAIT_PATTERN = re.compile(
@@ -222,6 +223,23 @@ class IsolatedAssignmentRunner:
             context,
             artifact_db=artifact_db,
         )
+        runtime.current_attachments = [
+            {
+                "id": str(resource.get("key") or ""),
+                "name": str(resource.get("metadata", {}).get("name") or resource.get("key") or ""),
+                "mime_type": str(resource.get("metadata", {}).get("mime_type") or ""),
+                "size": int(resource.get("metadata", {}).get("size") or 0),
+                "kind": "document",
+                "local_path": str(resource.get("metadata", {}).get("workspace_path") or ""),
+            }
+            for resource in prepared_resources
+            if resource.get("metadata", {}).get("workspace_path")
+            and (
+                resource.get("metadata", {}).get("kind") == "document"
+                or Path(str(resource.get("metadata", {}).get("name") or "")).suffix.lower()
+                in {".docx", ".pptx", ".pdf", ".xlsx"}
+            )
+        ]
 
         def on_artifact(
             tool_call_id: str,
@@ -976,7 +994,6 @@ class IsolatedAssignmentRunner:
                 target.write_bytes(source.read_bytes())
                 metadata.update({
                     "workspace_path": str(target),
-                    "text_content": str(attachment.get("text_content") or "")[:80_000],
                     "session_id": source_session,
                 })
             except Exception as exc:

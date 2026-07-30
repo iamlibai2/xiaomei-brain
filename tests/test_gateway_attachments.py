@@ -70,7 +70,7 @@ def office_archive(files: dict[str, str]) -> bytes:
     return output.getvalue()
 
 
-def test_docx_extracts_paragraphs_and_tables(tmp_path, monkeypatch):
+def test_docx_is_saved_as_document_without_eager_context_extraction(tmp_path, monkeypatch):
     monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: tmp_path))
     data = office_archive({
         "word/document.xml": """
@@ -95,11 +95,13 @@ def test_docx_extracts_paragraphs_and_tables(tmp_path, monkeypatch):
 
     assert images == [] and saved[0].suffix == ".docx"
     assert prepared[0]["kind"] == "document"
-    assert "项目说明" in prepared[0]["text_content"]
-    assert "姓名\t小美" in prepared[0]["text_content"]
+    assert "text_content" not in prepared[0]
+    model_input = append_text_attachments("总结", prepared)
+    assert 'attached_document id="attachment-1"' in model_input
+    assert "read_document" in model_input
 
 
-def test_pptx_extracts_slides_and_notes(tmp_path, monkeypatch):
+def test_pptx_is_saved_as_document_without_eager_context_extraction(tmp_path, monkeypatch):
     monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: tmp_path))
     drawing_ns = "http://schemas.openxmlformats.org/drawingml/2006/main"
     data = office_archive({
@@ -114,11 +116,24 @@ def test_pptx_extracts_slides_and_notes(tmp_path, monkeypatch):
     )
 
     prepared, _, _ = prepare_attachments("xiaomei", "session-1", [item])
-    text = prepared[0]["text_content"]
+    assert prepared[0]["kind"] == "document"
+    assert "text_content" not in prepared[0]
 
-    assert "[幻灯片 1]" in text and "产品定位" in text
-    assert "[备注]" in text and "演讲备注" in text
-    assert "[幻灯片 2]" in text and "系统架构" in text
+
+@pytest.mark.parametrize("name,mime_type", [
+    ("report.pdf", "application/pdf"),
+    ("data.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+])
+def test_pdf_and_xlsx_are_accepted_as_documents(tmp_path, monkeypatch, name, mime_type):
+    monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: tmp_path))
+    prepared, images, saved = prepare_attachments(
+        "xiaomei", "session-1", [payload(name, mime_type, b"document-bytes")],
+    )
+
+    assert images == []
+    assert saved[0].suffix == Path(name).suffix
+    assert prepared[0]["kind"] == "document"
+    assert "text_content" not in prepared[0]
 
 
 def test_context_logs_public_metadata_but_sends_file_content_to_model():

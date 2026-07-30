@@ -336,6 +336,7 @@ class ConversationDriver:
             agent_core.on_speech = None
             agent_core.on_tool_approval = None
             agent_core.on_action_complete = None
+            agent_core.current_attachments = []
 
     # ── ReAct ─────────────────────────────────────────────────
 

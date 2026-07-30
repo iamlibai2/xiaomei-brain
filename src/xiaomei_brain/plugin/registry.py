@@ -197,6 +197,7 @@ class PluginRegistry:
         self._plugins: dict[str, LoadedPlugin] = {}
         self._web_search_providers: list[Any] = []
         self._pending_senses: list[tuple[Any, Any]] = []
+        self._document_extractors: list[Any] = []
 
     # ── Channel ─────────────────────────────────────────────────
 
@@ -252,6 +253,38 @@ class PluginRegistry:
     def get_agent_tools(self) -> list[Any]:
         """获取所有插件注册的 Agent 工具。"""
         return list(self._agent_tools)
+
+    # ── Document extractors ─────────────────────────────────────────
+
+    def register_document_extractor(self, extractor: Any) -> None:
+        """Register one stateless document-format extractor."""
+        extractor_id = str(getattr(extractor, "extractor_id", "")).strip()
+        if not extractor_id:
+            raise ValueError("Document extractor must define extractor_id")
+        self._document_extractors = [
+            current
+            for current in self._document_extractors
+            if getattr(current, "extractor_id", "") != extractor_id
+        ]
+        self._document_extractors.append(extractor)
+
+    def get_document_extractors(self) -> list[Any]:
+        return list(self._document_extractors)
+
+    def resolve_document_extractor(
+        self,
+        *,
+        name: str,
+        mime_type: str = "",
+    ) -> Any | None:
+        suffix = Path(name).suffix.lower()
+        normalized_mime = mime_type.lower().split(";", 1)[0].strip()
+        for extractor in self._document_extractors:
+            suffixes = {str(value).lower() for value in getattr(extractor, "suffixes", ())}
+            mime_types = {str(value).lower() for value in getattr(extractor, "mime_types", ())}
+            if suffix in suffixes and (not normalized_mime or normalized_mime in mime_types or normalized_mime == "application/octet-stream"):
+                return extractor
+        return None
 
     # ── Web Search Provider ────────────────────────────────────
 

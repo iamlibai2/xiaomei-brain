@@ -6,17 +6,12 @@ import base64
 import binascii
 import hashlib
 import html
-import io
 import re
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
-from zipfile import BadZipFile, ZipFile
 
 MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 MAX_TOTAL_BYTES = 8 * 1024 * 1024
-MAX_OFFICE_XML_BYTES = 20 * 1024 * 1024
-MAX_EXTRACTED_TEXT_CHARS = 120_000
 
 IMAGE_MIMES = {
     "image/jpeg": ".jpg",
@@ -42,13 +37,12 @@ TEXT_EXTENSIONS = {
     ".rb", ".php", ".swift", ".sql", ".sh", ".bash", ".zsh",
     ".ps1", ".bat", ".cmd", ".ini", ".cfg", ".conf", ".log",
 }
-OFFICE_TYPES = {
+DOCUMENT_TYPES = {
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".pdf": "application/pdf",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 }
-
-_WORD_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-_DRAWING_NS = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 
 
 class AttachmentError(ValueError):
@@ -108,9 +102,9 @@ def prepare_attachments(
                 kind = "audio"
                 suffix = AUDIO_MIMES[mime_type]
                 text_content = None
-            elif suffix in OFFICE_TYPES and mime_type in {OFFICE_TYPES[suffix], "application/octet-stream"}:
+            elif suffix in DOCUMENT_TYPES and mime_type in {DOCUMENT_TYPES[suffix], "application/octet-stream"}:
                 kind = "document"
-                text_content = extract_office_text(data, suffix, name)
+                text_content = None
             elif mime_type.startswith("text/") or suffix in TEXT_EXTENSIONS:
                 kind = "text"
                 try:
@@ -179,7 +173,7 @@ def read_stored_attachment(
         suffix = IMAGE_MIMES[mime_type]
     elif kind == "audio" and mime_type in AUDIO_MIMES:
         suffix = AUDIO_MIMES[mime_type]
-    elif kind == "document" and Path(name).suffix.lower() in OFFICE_TYPES:
+    elif kind == "document" and Path(name).suffix.lower() in DOCUMENT_TYPES:
         suffix = Path(name).suffix.lower()
     elif kind == "text" and (
         mime_type.startswith("text/") or Path(name).suffix.lower() in TEXT_EXTENSIONS
@@ -245,9 +239,7 @@ def restore_attachment_refs(
             image_paths.append(str(local_path))
         elif kind == "audio":
             pass
-        elif kind == "document":
-            item["text_content"] = extract_office_text(data, suffix, name)
-        else:
+        elif kind == "text":
             try:
                 item["text_content"] = data.decode("utf-8-sig")
             except UnicodeDecodeError as exc:
@@ -272,101 +264,24 @@ def _stored_attachment_path(
 
 
 def append_text_attachments(content: str, attachments: list[dict[str, Any]]) -> str:
-    text_items = [item for item in attachments if item.get("kind") in {"text", "document"}]
-    if not text_items:
+    readable_items = [item for item in attachments if item.get("kind") in {"text", "document"}]
+    if not readable_items:
         return content
     sections = [content] if content else ["请阅读以下附件并根据其内容作答。"]
-    for item in text_items:
+    for item in readable_items:
         safe_name = html.escape(str(item["name"]), quote=True)
-        sections.append(
-            f'\n<attached_file name="{safe_name}">\n'
-            f'{item.get("text_content", "")}\n'
-            "</attached_file>"
-        )
+        if item.get("kind") == "document":
+            safe_id = html.escape(str(item.get("id", "")), quote=True)
+            safe_mime = html.escape(str(item.get("mime_type", "")), quote=True)
+            sections.append(
+                f'\n<attached_document id="{safe_id}" name="{safe_name}" mime_type="{safe_mime}">\n'
+                "Use the read_document tool with this attachment id to inspect its content.\n"
+                "</attached_document>"
+            )
+        else:
+            sections.append(
+                f'\n<attached_file name="{safe_name}">\n'
+                f'{item.get("text_content", "")}\n'
+                "</attached_file>"
+            )
     return "\n".join(sections)
-
-
-def extract_office_text(data: bytes, suffix: str, name: str) -> str:
-    try:
-        with ZipFile(io.BytesIO(data)) as archive:
-            if suffix == ".docx":
-                return _extract_docx(archive, name)
-            if suffix == ".pptx":
-                return _extract_pptx(archive, name)
-    except (BadZipFile, KeyError, ET.ParseError) as exc:
-        raise AttachmentError(f"无法解析 Office 附件 {name}") from exc
-    raise AttachmentError(f"暂不支持 Office 附件 {name}")
-
-
-def _read_xml(archive: ZipFile, member: str) -> ET.Element:
-    info = archive.getinfo(member)
-    if info.file_size > MAX_OFFICE_XML_BYTES:
-        raise AttachmentError(f"Office 文档内部 XML 过大：{member}")
-    return ET.fromstring(archive.read(info))
-
-
-def _truncate_extracted_text(text: str) -> str:
-    if len(text) <= MAX_EXTRACTED_TEXT_CHARS:
-        return text
-    return text[:MAX_EXTRACTED_TEXT_CHARS] + "\n\n[附件内容过长，已截断]"
-
-
-def _word_paragraph_text(element: ET.Element) -> str:
-    return "".join(node.text or "" for node in element.iter(f"{_WORD_NS}t")).strip()
-
-
-def _extract_docx(archive: ZipFile, name: str) -> str:
-    root = _read_xml(archive, "word/document.xml")
-    body = root.find(f"{_WORD_NS}body")
-    if body is None:
-        raise AttachmentError(f"DOCX 附件 {name} 没有正文")
-    blocks: list[str] = []
-    for child in body:
-        if child.tag == f"{_WORD_NS}p":
-            text = _word_paragraph_text(child)
-            if text:
-                blocks.append(text)
-        elif child.tag == f"{_WORD_NS}tbl":
-            rows: list[str] = []
-            for row in child.findall(f"{_WORD_NS}tr"):
-                cells = [_word_paragraph_text(cell) for cell in row.findall(f"{_WORD_NS}tc")]
-                if any(cells):
-                    rows.append("\t".join(cells))
-            if rows:
-                blocks.append("[表格]\n" + "\n".join(rows))
-    return _truncate_extracted_text("\n\n".join(blocks) or "[文档中没有可提取的文字]")
-
-
-def _numbered_member_key(member: str) -> tuple[int, str]:
-    match = re.search(r"(\d+)\.xml$", member)
-    return (int(match.group(1)) if match else 0, member)
-
-
-def _drawing_text(root: ET.Element) -> list[str]:
-    return [node.text.strip() for node in root.iter(f"{_DRAWING_NS}t") if node.text and node.text.strip()]
-
-
-def _extract_pptx(archive: ZipFile, name: str) -> str:
-    members = archive.namelist()
-    slides = sorted(
-        (member for member in members if re.fullmatch(r"ppt/slides/slide\d+\.xml", member)),
-        key=_numbered_member_key,
-    )
-    if not slides:
-        raise AttachmentError(f"PPTX 附件 {name} 没有幻灯片")
-    note_members = {
-        _numbered_member_key(member)[0]: member
-        for member in members
-        if re.fullmatch(r"ppt/notesSlides/notesSlide\d+\.xml", member)
-    }
-    sections: list[str] = []
-    for index, member in enumerate(slides, start=1):
-        lines = _drawing_text(_read_xml(archive, member))
-        section = [f"[幻灯片 {index}]", *lines]
-        note_member = note_members.get(_numbered_member_key(member)[0])
-        if note_member:
-            notes = _drawing_text(_read_xml(archive, note_member))
-            if notes:
-                section.extend(["[备注]", *notes])
-        sections.append("\n".join(section))
-    return _truncate_extracted_text("\n\n".join(sections))

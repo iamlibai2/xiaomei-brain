@@ -100,6 +100,9 @@ class Agent:
         self.session_id: str = "main"
         self.turn_id: str = ""
         self.current_memory_references: list[dict[str, Any]] = []
+        # Turn-owned assets available to tools. A tool never receives an
+        # arbitrary filesystem path from the model for attachment access.
+        self.current_attachments: list[dict[str, Any]] = []
         self.tool_call_buffer: ToolCallBuffer = ToolCallBuffer()  # 实例级，每个 Agent 独立
 
         # ── Intent context (from ConsciousLiving) ──────────────────────
@@ -634,6 +637,8 @@ class Agent:
                     arguments=arguments,
                     artifact_callback=self.on_artifact,
                     speech_callback=self.on_speech,
+                    session_id=self.session_id,
+                    attachments=tuple(self.current_attachments),
                 ):
                     result = normalize_tool_result(
                         self.tools.execute(tool_name, **arguments)

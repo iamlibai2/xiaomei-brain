@@ -488,7 +488,6 @@ def test_isolated_runner_materializes_origin_attachment_for_background_work(
         lambda agent_id, session_id, attachments: ([{
             **attachments[0],
             "local_path": str(source),
-            "text_content": "演示文稿正文",
         }], []),
     )
     context = AssignmentExecutionContext.capture(
@@ -504,7 +503,7 @@ def test_isolated_runner_materializes_origin_attachment_for_background_work(
 
     metadata = resources[0]["metadata"]
     assert Path(metadata["workspace_path"]).read_bytes() == b"pptx"
-    assert metadata["text_content"] == "演示文稿正文"
+    assert "text_content" not in metadata
     assert metadata["session_id"] == "session_origin"
     store.close()
 

@@ -122,6 +122,14 @@ class PluginContext:
         self._registry.register_agent_tool(tool)
         self.logger.info("Agent 工具已注册: %s (source=%s)", tool.name, getattr(tool, 'source', 'unknown'))
 
+    def register_document_extractor(self, extractor: Any) -> None:
+        """Register a document parser without exposing a format-specific tool."""
+        self._registry.register_document_extractor(extractor)
+        self.logger.info(
+            "Document extractor registered: %s",
+            getattr(extractor, "extractor_id", "unknown"),
+        )
+
     # ── Web Search Provider ────────────────────────────────────
 
     def register_web_search_provider(self, provider: Any) -> None:

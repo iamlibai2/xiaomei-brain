@@ -43,6 +43,8 @@ const TEXT_EXTENSIONS = new Set([
 const OFFICE_MIMES: Record<string, string> = {
   ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ".pdf": "application/pdf",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 };
 
 export function registerIpcHandlers(
@@ -825,11 +827,11 @@ export function registerIpcHandlers(
       ? await dialog.showOpenDialog(win, {
           properties: ["openFile", "multiSelections"],
           filters: [
-            { name: "Images and text files", extensions: [
+            { name: "Supported files", extensions: [
               "jpg", "jpeg", "png", "gif", "webp", "bmp", "txt", "md", "json", "yaml", "yml",
               "toml", "csv", "tsv", "xml", "html", "css", "js", "jsx", "ts", "tsx", "py", "java",
               "c", "h", "cpp", "cs", "go", "rs", "rb", "php", "swift", "sql", "sh", "ps1", "log",
-              "docx", "pptx",
+              "docx", "pptx", "pdf", "xlsx",
             ] },
           ],
         })

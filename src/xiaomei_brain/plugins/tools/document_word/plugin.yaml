@@ -1,0 +1,5 @@
+name: document_word
+version: "1.0.0"
+description: "Word 文档理解（DOCX）"
+kind: bundle
+entry: adapter:register
