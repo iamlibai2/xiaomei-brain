@@ -465,6 +465,72 @@ def test_dingtalk_assignment_deliverable_is_read_from_agent_storage(monkeypatch)
     assert client.files == [("staff-1", "报告.docx", b"docx-data", False)]
 
 
+def test_dingtalk_conversation_artifact_is_sent_once(monkeypatch):
+    pytest.importorskip("dingtalk_stream")
+    import threading
+    from types import SimpleNamespace
+
+    from xiaomei_brain.plugins.channels.dingtalk.adapter import DingTalkAdapter
+
+    class FakeClient:
+        account_id = "default"
+
+        def __init__(self):
+            self.files = []
+            self.sent = threading.Event()
+
+        def send_file(self, target, name, data, *, is_group):
+            self.files.append((target, name, data, is_group))
+            self.sent.set()
+            return True
+
+    class FakeConversationDB:
+        def get_artifact_metadata(self, session_id, artifact_id):
+            assert session_id == "dingtalk-person-1"
+            assert artifact_id == "b" * 32
+            return {"id": artifact_id, "name": "普通对话报告.docx"}
+
+    monkeypatch.setattr(
+        "xiaomei_brain.gateway.artifacts.read_stored_artifact",
+        lambda agent_id, session_id, artifact: {
+            "id": artifact["id"],
+            "name": artifact["name"],
+            "data_base64": "ZG9jeC1kYXRh",
+        },
+    )
+    client = FakeClient()
+    adapter = DingTalkAdapter(client)
+    adapter._living = SimpleNamespace(
+        _agent_id="xiaomei",
+        agent=SimpleNamespace(conversation_db=FakeConversationDB()),
+    )
+    descriptor = {"id": "b" * 32, "name": "普通对话报告.docx"}
+
+    adapter.send_event(
+        "staff-1",
+        "artifact.created",
+        descriptor,
+        session_id="dingtalk-person-1",
+    )
+    assert client.files == []
+    adapter.send_event(
+        "staff-1",
+        "artifact.presented",
+        descriptor,
+        session_id="dingtalk-person-1",
+    )
+    assert client.sent.wait(1)
+    adapter._send_conversation_artifact(
+        "staff-1",
+        "dingtalk-person-1",
+        descriptor,
+    )
+
+    assert client.files == [
+        ("staff-1", "普通对话报告.docx", b"docx-data", False),
+    ]
+
+
 def test_dingtalk_replayed_completion_does_not_redeliver_artifacts(monkeypatch):
     pytest.importorskip("dingtalk_stream")
     from types import SimpleNamespace

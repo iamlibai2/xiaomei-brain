@@ -454,3 +454,69 @@ def test_feishu_assignment_deliverable_is_read_from_agent_storage(monkeypatch):
     )
 
     assert channel.files == [("oc_private", "报告.docx", b"docx-data")]
+
+
+def test_feishu_conversation_artifact_is_sent_once(monkeypatch):
+    pytest.importorskip("lark_oapi")
+    import threading
+    from types import SimpleNamespace
+
+    from xiaomei_brain.plugins.channels.feishu.adapter import FeishuAdapter
+
+    class FakeChannel:
+        account_id = "default"
+
+        def __init__(self):
+            self.files = []
+            self.sent = threading.Event()
+
+        def send_file(self, target, name, data):
+            self.files.append((target, name, data))
+            self.sent.set()
+            return True
+
+    class FakeConversationDB:
+        def get_artifact_metadata(self, session_id, artifact_id):
+            assert session_id == "feishu-person-1"
+            assert artifact_id == "b" * 32
+            return {"id": artifact_id, "name": "普通对话报告.docx"}
+
+    monkeypatch.setattr(
+        "xiaomei_brain.gateway.artifacts.read_stored_artifact",
+        lambda agent_id, session_id, artifact: {
+            "id": artifact["id"],
+            "name": artifact["name"],
+            "data_base64": "ZG9jeC1kYXRh",
+        },
+    )
+    channel = FakeChannel()
+    adapter = FeishuAdapter(channel)
+    adapter._living = SimpleNamespace(
+        _agent_id="xiaomei",
+        agent=SimpleNamespace(conversation_db=FakeConversationDB()),
+    )
+    descriptor = {"id": "b" * 32, "name": "普通对话报告.docx"}
+
+    adapter.send_event(
+        "oc_private",
+        "artifact.created",
+        descriptor,
+        session_id="feishu-person-1",
+    )
+    assert channel.files == []
+    adapter.send_event(
+        "oc_private",
+        "artifact.presented",
+        descriptor,
+        session_id="feishu-person-1",
+    )
+    assert channel.sent.wait(1)
+    adapter._send_conversation_artifact(
+        "oc_private",
+        "feishu-person-1",
+        descriptor,
+    )
+
+    assert channel.files == [
+        ("oc_private", "普通对话报告.docx", b"docx-data"),
+    ]

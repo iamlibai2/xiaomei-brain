@@ -63,6 +63,9 @@ class FeishuAdapter(ChannelAdapter):
             tuple[str, str], AssignmentChannelMessage
         ] = {}
         self._assignment_notice_lock = threading.Lock()
+        self._artifact_delivery_lock = threading.Lock()
+        self._artifact_deliveries_inflight: set[tuple[str, str, str]] = set()
+        self._artifact_deliveries_sent: set[tuple[str, str, str]] = set()
 
     @property
     def capabilities(self) -> ChannelCapabilities:
@@ -552,6 +555,16 @@ class FeishuAdapter(ChannelAdapter):
                 self._action_card(payload, target, session_id, turn_id),
             )
             return
+        elif event == "artifact.presented":
+            artifact_id = str(payload.get("id", ""))
+            if session_id and artifact_id:
+                threading.Thread(
+                    target=self._send_conversation_artifact,
+                    args=(target, session_id, dict(payload)),
+                    name=f"feishu-artifact-{artifact_id[:8]}",
+                    daemon=True,
+                ).start()
+            return
         elif event.startswith("assignment."):
             # Assignment progress updates one existing card, so lifecycle
             # detail stays visible without adding messages to the chat.
@@ -566,6 +579,68 @@ class FeishuAdapter(ChannelAdapter):
             turn_id=turn_id,
             timestamp=timestamp,
         )
+
+    def _send_conversation_artifact(
+        self,
+        target: str,
+        session_id: str,
+        descriptor: dict,
+    ) -> None:
+        """Send one persisted conversation artifact back to its Feishu chat."""
+        artifact_id = str(descriptor.get("id", ""))
+        if not artifact_id:
+            return
+        delivery_key = (target, session_id, artifact_id)
+        with self._artifact_delivery_lock:
+            if (
+                delivery_key in self._artifact_deliveries_inflight
+                or delivery_key in self._artifact_deliveries_sent
+            ):
+                return
+            self._artifact_deliveries_inflight.add(delivery_key)
+
+        delivered = False
+        display_name = str(descriptor.get("name") or artifact_id)
+        try:
+            living = self._living
+            db = getattr(getattr(living, "agent", None), "conversation_db", None)
+            if living is None or db is None:
+                raise RuntimeError("Agent artifact storage is unavailable")
+
+            from xiaomei_brain.gateway.artifacts import read_stored_artifact
+
+            artifact = db.get_artifact_metadata(session_id, artifact_id)
+            if artifact is None:
+                raise RuntimeError("Conversation artifact does not exist")
+            stored = read_stored_artifact(
+                getattr(living, "_agent_id", "default"),
+                session_id,
+                artifact,
+            )
+            display_name = str(stored.get("name") or display_name)
+            data = base64.b64decode(stored["data_base64"], validate=True)
+            delivered = self._channel.send_file(target, display_name, data)
+            if not delivered:
+                logger.warning(
+                    "[Feishu/Artifact] failed to deliver conversation artifact: %s",
+                    artifact_id,
+                )
+        except Exception:
+            logger.exception(
+                "[Feishu/Artifact] conversation artifact delivery failed: %s",
+                artifact_id,
+            )
+        finally:
+            with self._artifact_delivery_lock:
+                self._artifact_deliveries_inflight.discard(delivery_key)
+                if delivered:
+                    self._artifact_deliveries_sent.add(delivery_key)
+
+        if not delivered:
+            self.send(
+                target,
+                f"产物“{display_name}”未能通过飞书发送，请在 Desktop 中查看。",
+            )
 
     def _send_assignment_notice(
         self,

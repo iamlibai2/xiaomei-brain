@@ -1042,6 +1042,7 @@ class IsolatedAssignmentRunner:
                     projected = dict(stored)
                     projected["turn_id"] = context.origin_turn_id
                     projected["description"] = "Assignment deliverable"
+                    projected["presented"] = True
                     artifact_db.save_artifact(
                         context.origin_session_id,
                         projected,

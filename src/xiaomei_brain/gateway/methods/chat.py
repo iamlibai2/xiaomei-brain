@@ -294,6 +294,7 @@ class ChatMethods:
                     if rows and parsed.before_id is not None
                     else None
                 ),
+                presented_only=True,
             ) if callable(list_artifacts) and (rows or parsed.before_id is None) else []
             timeline_rows = [*rows, *(
                 {

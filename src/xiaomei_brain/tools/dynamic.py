@@ -30,6 +30,7 @@ _CORE_TOOL_NAMES = frozenset({
     "read_file",
     "write_file",
     "edit_file",
+    "present_artifacts",
     "send_message",
     "check_inbox",
     "memory_search",

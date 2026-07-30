@@ -1,4 +1,5 @@
 import base64
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -232,6 +233,53 @@ def test_artifact_event_is_persisted_and_contains_no_local_path(tmp_path, monkey
     db.close()
 
 
+def test_present_artifacts_publishes_created_then_presented(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
+    output = tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace" / "answer.md"
+    output.parent.mkdir(parents=True)
+    output.write_text("answer", encoding="utf-8")
+    db = ConversationDB(tmp_path / "brain.db")
+
+    class Router:
+        def __init__(self):
+            self.events = []
+
+        def route_for_session(self, _session_id):
+            return SimpleNamespace(type="ws")
+
+        def deliver_event(self, event, payload, route, **context):
+            self.events.append((event, payload, route, context))
+
+    gateway_router = Router()
+    parent = SimpleNamespace(
+        _agent_id="xiaomei",
+        agent=SimpleNamespace(conversation_db=db),
+        _router=gateway_router,
+    )
+    callback = ConversationDriver._make_artifact_callback(
+        "session-1", "turn-1", "user-1", parent,
+    )
+
+    result = json.dumps({"path": [str(output)], "message": "这是最终报告"})
+    callback(
+        "tool-1",
+        "present_artifacts",
+        {"paths": [str(output)], "message": "这是最终报告"},
+        result,
+    )
+
+    assert [item[0] for item in gateway_router.events] == [
+        "artifact.created",
+        "artifact.presented",
+    ]
+    assert gateway_router.events[1][1]["message"] == "这是最终报告"
+    assert "relative_path" not in gateway_router.events[1][1]
+    stored = db.list_artifacts("session-1")[0]
+    assert stored["name"] == "answer.md"
+    assert stored["presented"] is True
+    db.close()
+
+
 def test_chat_history_exposes_artifact_card_without_internal_path(tmp_path, monkeypatch):
     monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
     output = tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace" / "history.txt"
@@ -241,6 +289,7 @@ def test_chat_history_exposes_artifact_card_without_internal_path(tmp_path, monk
         "xiaomei", "session-1", "turn-1", "write_file",
         {"path": "history.txt"}, f"Successfully wrote to {output}",
     )[0]
+    artifact["presented"] = True
     db = ConversationDB(tmp_path / "brain.db")
     db.save_artifact("session-1", artifact, tool_call_id="tool-1")
     router = MethodRouter(living=SimpleNamespace(
@@ -258,6 +307,49 @@ def test_chat_history_exposes_artifact_card_without_internal_path(tmp_path, monk
     db.close()
 
 
+def test_chat_history_hides_unpresented_process_artifacts(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
+    workspace = tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace"
+    workspace.mkdir(parents=True)
+    helper = workspace / "generate_report.py"
+    report = workspace / "report.docx"
+    helper.write_text("print('helper')", encoding="utf-8")
+    report.write_bytes(b"final-report")
+    db = ConversationDB(tmp_path / "brain.db")
+
+    process_artifact = discover_tool_artifacts(
+        "xiaomei", "session-1", "turn-1", "write_file",
+        {"path": "generate_report.py"}, f"Successfully wrote to {helper}",
+    )[0]
+    final_artifact = discover_tool_artifacts(
+        "xiaomei", "session-1", "turn-1", "present_artifacts",
+        {}, json.dumps({"path": [str(report)]}),
+    )[0]
+    final_artifact["presented"] = True
+    db.save_artifact("session-1", process_artifact, tool_call_id="tool-1")
+    db.save_artifact("session-1", final_artifact, tool_call_id="tool-2")
+
+    router = MethodRouter(living=SimpleNamespace(
+        _agent_id="xiaomei", agent=SimpleNamespace(conversation_db=db),
+    ))
+    router._auth_sessions.add("connection-1")
+    response = router.dispatch("connection-1", "rpc-1", "chat.history", {
+        "session_id": "session-1",
+    })
+
+    cards = [
+        item["artifact"]["name"]
+        for item in response["result"]["messages"]
+        if item["role"] == "artifact"
+    ]
+    assert cards == ["report.docx"]
+    assert {item["name"] for item in db.list_artifacts("session-1")} == {
+        "generate_report.py",
+        "report.docx",
+    }
+    db.close()
+
+
 def test_legacy_artifact_message_is_moved_to_artifacts_table(tmp_path, monkeypatch):
     monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
     output = tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace" / "legacy.txt"
@@ -267,6 +359,7 @@ def test_legacy_artifact_message_is_moved_to_artifacts_table(tmp_path, monkeypat
         "xiaomei", "session-1", "turn-1", "write_file",
         {"path": "legacy.txt"}, f"Successfully wrote to {output}",
     )[0]
+    artifact["presented"] = True
     db_path = tmp_path / "brain.db"
     db = ConversationDB(db_path)
     db.log(
@@ -298,6 +391,7 @@ def test_artifact_between_message_pages_is_returned_with_older_page(tmp_path, mo
         "xiaomei", "session-1", "turn-1", "write_file",
         {"path": "paged.txt"}, f"Successfully wrote to {output}",
     )[0]
+    artifact["presented"] = True
     db.save_artifact("session-1", artifact, tool_call_id="tool-1")
     assistant_id = db.log("session-1", "assistant", "done")
     router = MethodRouter(living=SimpleNamespace(

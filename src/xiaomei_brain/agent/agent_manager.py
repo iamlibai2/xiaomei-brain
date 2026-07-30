@@ -190,6 +190,7 @@ class AgentManager:
 
         from xiaomei_brain.tools.builtin import (
             shell_tool, read_file_tool, write_file_tool, edit_file_tool,
+            present_artifacts_tool,
             send_message_tool, check_inbox_tool, set_send_message_context,
             websearch_tools, webget_tools,
         )
@@ -197,6 +198,7 @@ class AgentManager:
         tools.register(read_file_tool)
         tools.register(write_file_tool)
         tools.register(edit_file_tool)
+        tools.register(present_artifacts_tool)
 
         # Agent 间通讯 — send_message + check_inbox 工具
         from xiaomei_brain.plugins.channels.p2p.directory import AgentDirectory

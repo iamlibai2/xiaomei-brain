@@ -27,6 +27,7 @@ class GatewayEventProjection:
         "action.proposed",
         "action.completed",
         "artifact.created",
+        "artifact.presented",
         "assignment.changed",
         "assignment.progress",
         "activity.queued",

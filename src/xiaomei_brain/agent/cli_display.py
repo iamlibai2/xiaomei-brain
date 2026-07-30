@@ -39,6 +39,7 @@ def print_react_result(text: str, label: str = "") -> None:
 
 _HINTS: dict[str, str] = {
     "write_file": "📝 编撰文档中...",
+    "present_artifacts": "📎 正在交付文件...",
     "edit_file": "🔧 修改代码中...",
     "shell": "⚡ 运行命令中...",
     "web_search": "🔍 搜索资料中...",

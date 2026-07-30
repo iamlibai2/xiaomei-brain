@@ -109,6 +109,7 @@ class ConversationDB(SQLiteStore):
                 description TEXT NOT NULL DEFAULT '',
                 source_relative_path TEXT NOT NULL DEFAULT '',
                 storage_suffix TEXT NOT NULL DEFAULT '',
+                presented_at REAL NOT NULL DEFAULT 0,
                 created_at REAL NOT NULL,
                 UNIQUE(session_id, artifact_id)
             );
@@ -226,6 +227,29 @@ class ConversationDB(SQLiteStore):
             self._set_schema_version("conversation_db", 3)
             conn.commit()
             logger.info("[ConversationDB] migrated to v3: added group_messages")
+
+        if current < 4:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(artifacts)")}
+            if "presented_at" not in columns:
+                conn.execute(
+                    "ALTER TABLE artifacts "
+                    "ADD COLUMN presented_at REAL NOT NULL DEFAULT 0",
+                )
+            # Files explicitly delivered before this migration already carry
+            # the stable tool description. Preserve their conversation cards
+            # while keeping helper scripts as library-only artifacts.
+            conn.execute(
+                "UPDATE artifacts SET presented_at = created_at "
+                "WHERE presented_at = 0 "
+                "AND description IN ("
+                "'Created by present_artifacts', 'Assignment deliverable'"
+                ")",
+            )
+            self._set_schema_version("conversation_db", 4)
+            conn.commit()
+            logger.info(
+                "[ConversationDB] migrated to v4: tracked artifact presentation",
+            )
 
     def store_tool(
         self,
@@ -508,6 +532,7 @@ class ConversationDB(SQLiteStore):
         *,
         since: float | None = None,
         until: float | None = None,
+        presented_only: bool = False,
     ) -> list[dict[str, Any]]:
         """List artifacts for merging into a Desktop history page."""
         clauses: list[str] = []
@@ -521,6 +546,8 @@ class ConversationDB(SQLiteStore):
         if until is not None:
             clauses.append("created_at <= ?")
             params.append(until)
+        if presented_only:
+            clauses.append("presented_at > 0")
         where = " AND ".join(clauses) if clauses else "1=1"
         rows = self._get_conn().execute(
             f"SELECT * FROM artifacts WHERE {where} ORDER BY created_at ASC, id ASC",
@@ -563,8 +590,8 @@ class ConversationDB(SQLiteStore):
             """INSERT INTO artifacts (
                    artifact_id, user_id, session_id, turn_id, tool_call_id,
                    name, mime_type, size, kind, description,
-                   source_relative_path, storage_suffix, created_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   source_relative_path, storage_suffix, presented_at, created_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(session_id, artifact_id) DO UPDATE SET
                    user_id = excluded.user_id,
                    turn_id = excluded.turn_id,
@@ -575,7 +602,11 @@ class ConversationDB(SQLiteStore):
                    kind = excluded.kind,
                    description = excluded.description,
                    source_relative_path = excluded.source_relative_path,
-                   storage_suffix = excluded.storage_suffix""",
+                   storage_suffix = excluded.storage_suffix,
+                   presented_at = CASE
+                       WHEN excluded.presented_at > 0 THEN excluded.presented_at
+                       ELSE artifacts.presented_at
+                   END""",
             (
                 str(artifact.get("id", "")),
                 user_id or "global",
@@ -589,6 +620,7 @@ class ConversationDB(SQLiteStore):
                 str(artifact.get("description", "")),
                 str(artifact.get("relative_path", "")),
                 str(artifact.get("storage_suffix", "")),
+                created_at if artifact.get("presented") else 0,
                 created_at,
             ),
         )
@@ -608,6 +640,8 @@ class ConversationDB(SQLiteStore):
             "description": row["description"],
             "relative_path": row["source_relative_path"],
             "storage_suffix": row["storage_suffix"],
+            "presented": float(row["presented_at"] or 0) > 0,
+            "presented_at": float(row["presented_at"] or 0),
             "created_at": row["created_at"],
         }
 

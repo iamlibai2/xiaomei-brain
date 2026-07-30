@@ -2820,6 +2820,20 @@ export function initGatewayEvents() {
       });
       setState(produce((s: CoreState) => {
         if (snapshot) upsertArtifact(s, agentId, snapshot);
+      }));
+      return;
+    }
+
+    if (event === "artifact.presented") {
+      const artifact = displayArtifact(d);
+      if (!artifact) return;
+      const snapshot = artifactSnapshot({
+        ...d,
+        session_id: eventSessionId,
+        created_at: typeof raw.timestamp === "number" ? raw.timestamp / 1000 : Date.now() / 1000,
+      });
+      setState(produce((s: CoreState) => {
+        if (snapshot) upsertArtifact(s, agentId, snapshot);
         if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
         const existing = s.messagesByAgent[agentId]
           .find((message) => message.artifact?.id === artifact.id);

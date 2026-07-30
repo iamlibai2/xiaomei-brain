@@ -1011,8 +1011,12 @@ class ConversationDriver:
             if not artifacts:
                 return
             db = getattr(getattr(parent, "agent", None), "conversation_db", None)
+            presentation_message = ""
+            if tool_name == "present_artifacts":
+                presentation_message = str(arguments.get("message", "")).strip()
             for artifact in artifacts:
                 artifact["tool_call_id"] = tool_call_id
+                artifact["presented"] = tool_name == "present_artifacts"
                 if db is not None:
                     db.save_artifact(
                         session_id,
@@ -1062,6 +1066,24 @@ class ConversationDriver:
                     session_id=session_id,
                     turn_id=turn_id,
                 )
+                if tool_name == "present_artifacts":
+                    presented_payload = public_artifact_metadata(artifact)
+                    if presentation_message:
+                        presented_payload["message"] = presentation_message
+                    ConversationDriver._publish_event(
+                        parent,
+                        "artifact.presented",
+                        presented_payload,
+                        session_id=session_id,
+                        turn_id=turn_id,
+                    )
+                    logger.info(
+                        "Presented artifact to conversation: session=%s "
+                        "artifact=%s name=%s",
+                        session_id,
+                        artifact.get("id", ""),
+                        artifact.get("name", ""),
+                    )
 
         return callback
 

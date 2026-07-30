@@ -92,6 +92,13 @@ class DingTalkAdapter(ChannelAdapter):
         self._artifact_delivery_lock = threading.Lock()
         self._artifact_deliveries_inflight: set[tuple[str, str, str]] = set()
         self._artifact_deliveries_sent: set[tuple[str, str, str]] = set()
+        self._conversation_artifact_delivery_lock = threading.Lock()
+        self._conversation_artifact_deliveries_inflight: set[
+            tuple[str, str, str]
+        ] = set()
+        self._conversation_artifact_deliveries_sent: set[
+            tuple[str, str, str]
+        ] = set()
 
     @property
     def capabilities(self) -> ChannelCapabilities:
@@ -235,6 +242,16 @@ class DingTalkAdapter(ChannelAdapter):
             )
             if card_id:
                 return
+        elif event == "artifact.presented":
+            artifact_id = str(payload.get("id", ""))
+            if session_id and artifact_id:
+                threading.Thread(
+                    target=self._send_conversation_artifact,
+                    args=(target, session_id, dict(payload)),
+                    name=f"dingtalk-artifact-{artifact_id[:8]}",
+                    daemon=True,
+                ).start()
+            return
         elif event.startswith("assignment."):
             if event == "assignment.changed":
                 self._send_assignment_notice(target, payload, session_id)
@@ -247,6 +264,73 @@ class DingTalkAdapter(ChannelAdapter):
             turn_id=turn_id,
             timestamp=timestamp,
         )
+
+    def _send_conversation_artifact(
+        self,
+        target: str,
+        session_id: str,
+        descriptor: dict,
+    ) -> None:
+        """Send one persisted conversation artifact back to its DingTalk chat."""
+        artifact_id = str(descriptor.get("id", ""))
+        if not artifact_id:
+            return
+        delivery_key = (target, session_id, artifact_id)
+        with self._conversation_artifact_delivery_lock:
+            if (
+                delivery_key in self._conversation_artifact_deliveries_inflight
+                or delivery_key in self._conversation_artifact_deliveries_sent
+            ):
+                return
+            self._conversation_artifact_deliveries_inflight.add(delivery_key)
+
+        delivered = False
+        display_name = str(descriptor.get("name") or artifact_id)
+        try:
+            living = self._living
+            db = getattr(getattr(living, "agent", None), "conversation_db", None)
+            if living is None or db is None:
+                raise RuntimeError("Agent artifact storage is unavailable")
+
+            from xiaomei_brain.gateway.artifacts import read_stored_artifact
+
+            artifact = db.get_artifact_metadata(session_id, artifact_id)
+            if artifact is None:
+                raise RuntimeError("Conversation artifact does not exist")
+            stored = read_stored_artifact(
+                getattr(living, "_agent_id", "default"),
+                session_id,
+                artifact,
+            )
+            display_name = str(stored.get("name") or display_name)
+            data = base64.b64decode(stored["data_base64"], validate=True)
+            delivered = self._client.send_file(
+                target,
+                display_name,
+                data,
+                is_group=self._is_group_target(target),
+            )
+            if not delivered:
+                logger.warning(
+                    "[DingTalk/Artifact] failed to deliver conversation artifact: %s",
+                    artifact_id,
+                )
+        except Exception:
+            logger.exception(
+                "[DingTalk/Artifact] conversation artifact delivery failed: %s",
+                artifact_id,
+            )
+        finally:
+            with self._conversation_artifact_delivery_lock:
+                self._conversation_artifact_deliveries_inflight.discard(delivery_key)
+                if delivered:
+                    self._conversation_artifact_deliveries_sent.add(delivery_key)
+
+        if not delivered:
+            self.send(
+                target,
+                f"产物“{display_name}”未能通过钉钉发送，请在 Desktop 中查看。",
+            )
 
     def _is_group_target(self, target: str) -> bool:
         with self._sessions_lock:
