@@ -1,5 +1,5 @@
 name: document_spreadsheet
 version: "1.0.0"
-description: "电子表格理解（XLSX）"
+description: "电子表格创建、修改与理解（XLSX）"
 kind: bundle
 entry: adapter:register

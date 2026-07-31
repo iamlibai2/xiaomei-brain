@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 from typing import Any, Callable, Generator
@@ -21,6 +22,7 @@ from xiaomei_brain.tools.registry import (
     normalize_tool_result,
     split_tool_control,
 )
+from xiaomei_brain.tools.dynamic import build_tool_selection_context
 from xiaomei_brain.agent.message_utils import (
     strip_orphaned_tool_messages,
     strip_orphaned_assistant_tool_calls, clean_messages,
@@ -260,12 +262,19 @@ class Agent:
         _ped = print_edit_diff
         _pwr = print_write_result
         _tool_failure_counts: dict[tuple, int] = {}  # (name, args_json) -> 失败次数
+        _pending_document_outputs: dict[str, str] = {}
+        _presented_outputs: set[str] = set()
 
         # 记录此时的 messages 长度，后续只拼接 ReAct 循环中新增的消息
         _pre_count = len(self.messages)
 
         # 动态工具加载：累积上下文供每步 embed 召回
-        _accumulated_context = messages[-1]["content"] if messages else ""
+        _accumulated_context = build_tool_selection_context(
+            messages,
+            self.current_attachments,
+        )
+        if self._dynamic_loader:
+            self._dynamic_loader.begin_run(self.session_id)
 
         for step in range(self.max_steps):
             if cancel_check and cancel_check():
@@ -390,6 +399,12 @@ class Agent:
                     # runtime. Strip the internal envelope before normal tool
                     # bookkeeping, then stop this live ReAct loop below.
                     result, tool_control = split_tool_control(result)
+                    self._track_document_delivery(
+                        tc.name,
+                        result,
+                        _pending_document_outputs,
+                        _presented_outputs,
+                    )
                     tool_duration_ms = max(
                         0,
                         int((time.perf_counter() - tool_started_at) * 1000),
@@ -521,6 +536,10 @@ class Agent:
             else:
                 content = response.content or ""
                 if content:
+                    self._auto_present_document_outputs(
+                        _pending_document_outputs,
+                        _presented_outputs,
+                    )
                     # Extract MEMORY block from response and execute
                     memory_block, clean_content = "", content
                     has_extractor = hasattr(self, "memory_extractor") and self.memory_extractor
@@ -608,10 +627,112 @@ class Agent:
                     return
                 else:
                     logger.warning("LLM returned empty content with no tool calls")
+                    self._auto_present_document_outputs(
+                        _pending_document_outputs,
+                        _presented_outputs,
+                    )
                     yield ""
                     return
 
+        self._auto_present_document_outputs(
+            _pending_document_outputs,
+            _presented_outputs,
+        )
         yield "Agent reached maximum steps without producing a final answer."
+
+    @staticmethod
+    def _normalized_delivery_path(path: str) -> str:
+        """Normalize an output path for turn-local delivery deduplication."""
+        return os.path.normcase(os.path.abspath(os.path.expanduser(str(path))))
+
+    @classmethod
+    def _track_document_delivery(
+        cls,
+        tool_name: str,
+        result: str,
+        pending: dict[str, str],
+        presented: set[str],
+    ) -> None:
+        """Track document outputs and explicit presentation results."""
+        try:
+            payload = json.loads(str(result))
+        except (TypeError, json.JSONDecodeError):
+            return
+        if not isinstance(payload, dict):
+            return
+
+        if tool_name == "write_document" and payload.get("success") is True:
+            output_path = str(payload.get("output_path", "")).strip()
+            if output_path:
+                pending[cls._normalized_delivery_path(output_path)] = output_path
+            return
+
+        if tool_name != "present_artifacts":
+            return
+        paths = payload.get("path", [])
+        if isinstance(paths, str):
+            paths = [paths]
+        if not isinstance(paths, list):
+            return
+        for path in paths:
+            if str(path).strip():
+                presented.add(cls._normalized_delivery_path(str(path)))
+
+    def _auto_present_document_outputs(
+        self,
+        pending: dict[str, str],
+        presented: set[str],
+    ) -> None:
+        """Guarantee delivery when the model omits the explicit final action."""
+        paths = [
+            original
+            for normalized, original in pending.items()
+            if normalized not in presented
+        ]
+        if not paths or self.on_artifact is None or self.tools is None:
+            return
+        if self.tools.get("present_artifacts") is None:
+            logger.warning(
+                "[Artifact] document outputs exist but present_artifacts is unavailable",
+            )
+            return
+
+        tool_call_id = f"auto-present-{self.turn_id or int(time.time() * 1000)}"
+        arguments = {
+            "paths": paths,
+            "message": "本轮生成的文档已自动交付。",
+        }
+        result = self._execute_tool_call(
+            tool_call_id,
+            "present_artifacts",
+            arguments,
+        )
+        if _tool_result_failed(result):
+            logger.warning(
+                "[Artifact] automatic document presentation failed: %s",
+                str(result)[:500],
+            )
+            return
+        try:
+            self.on_artifact(
+                tool_call_id,
+                "present_artifacts",
+                arguments,
+                str(result),
+            )
+        except Exception:
+            logger.exception("Failed to publish automatic document presentation")
+            return
+        self._track_document_delivery(
+            "present_artifacts",
+            str(result),
+            pending,
+            presented,
+        )
+        logger.warning(
+            "[Artifact] model omitted present_artifacts; automatically delivered: %s",
+            ", ".join(paths),
+        )
 
     def _execute_tool_call(self, tool_call_id: str, tool_name: str, arguments: dict) -> str:
         """Apply the Agent approval boundary, then execute the sealed tool call."""
@@ -701,7 +822,12 @@ class Agent:
         _idx = 0
 
         # 动态工具加载：累积上下文供每步 embed 召回
-        _accumulated_context = messages[-1]["content"] if messages else ""
+        _accumulated_context = build_tool_selection_context(
+            messages,
+            self.current_attachments,
+        )
+        if self._dynamic_loader:
+            self._dynamic_loader.begin_run(self.session_id)
 
         for step in range(max_steps):
             if cancel_check and cancel_check():

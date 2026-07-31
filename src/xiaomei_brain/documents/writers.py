@@ -16,4 +16,5 @@ class DocumentWriter(Protocol):
         output_path: Path,
         *,
         source_path: Path | None = None,
+        asset_paths: dict[str, Path] | None = None,
     ) -> dict[str, Any]: ...

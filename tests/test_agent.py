@@ -1,5 +1,7 @@
 """Tests for the Agent class."""
 
+import json
+
 import pytest
 from unittest.mock import Mock
 
@@ -108,6 +110,79 @@ def test_structured_tool_error_marks_action_failed(mock_llm, registry):
 
     assert result == '{"error": "眼睛不可用"}'
     agent.on_action_complete.assert_called_once_with("action-1", result, True)
+
+
+def test_document_output_is_auto_presented_when_model_omits_delivery(
+    mock_llm,
+    registry,
+    tmp_path,
+):
+    """A successful stable document write has a turn-end delivery guarantee."""
+    from xiaomei_brain.tools import tool
+
+    output_path = str(tmp_path / "quote.xlsx")
+    calls = []
+
+    @tool(name="present_artifacts", description="Present final files")
+    def present_artifacts(paths: list[str], message: str = "") -> dict:
+        calls.append((paths, message))
+        return {
+            "type": "present_artifacts_result",
+            "path": paths,
+            "delivered": True,
+        }
+
+    registry.register(present_artifacts)
+    agent = Agent(llm=mock_llm, tools=registry)
+    agent.turn_id = "turn-1"
+    agent.on_artifact = Mock()
+    pending = {}
+    presented = set()
+    agent._track_document_delivery(
+        "write_document",
+        json.dumps({
+            "success": True,
+            "format": "spreadsheet",
+            "output_path": output_path,
+        }),
+        pending,
+        presented,
+    )
+
+    agent._auto_present_document_outputs(pending, presented)
+
+    assert calls == [([output_path], "本轮生成的文档已自动交付。")]
+    assert agent._normalized_delivery_path(output_path) in presented
+    agent.on_artifact.assert_called_once()
+    assert agent.on_artifact.call_args.args[1] == "present_artifacts"
+
+
+def test_explicit_document_presentation_prevents_auto_duplicate(
+    mock_llm,
+    registry,
+    tmp_path,
+):
+    output_path = str(tmp_path / "quote.xlsx")
+    agent = Agent(llm=mock_llm, tools=registry)
+    agent.on_artifact = Mock()
+    pending = {}
+    presented = set()
+    agent._track_document_delivery(
+        "write_document",
+        json.dumps({"success": True, "output_path": output_path}),
+        pending,
+        presented,
+    )
+    agent._track_document_delivery(
+        "present_artifacts",
+        json.dumps({"path": [output_path], "delivered": True}),
+        pending,
+        presented,
+    )
+
+    agent._auto_present_document_outputs(pending, presented)
+
+    agent.on_artifact.assert_not_called()
 
 
 def test_tool_handoff_stops_live_react_loop(mock_llm, registry):

@@ -126,6 +126,21 @@ def create_skill_tools(agent: "AgentInstance") -> list[Tool]:
             lines.append(f"依赖工具: {', '.join(bindings)}")
 
         # 使用统计
+        if bindings:
+            dynamic_loader = getattr(agent, "_dynamic_loader", None)
+            activate = getattr(dynamic_loader, "activate_required_tools", None)
+            if callable(activate):
+                activation = activate(bindings)
+                missing = (
+                    activation[1]
+                    if isinstance(activation, tuple) and len(activation) == 2
+                    else []
+                )
+                if missing:
+                    lines.append(
+                        "Unavailable required tools: " + ", ".join(missing)
+                    )
+
         if skill.get("usage_count", 0) > 0:
             lines.append(f"使用次数: {skill['usage_count']}")
 

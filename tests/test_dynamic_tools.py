@@ -6,6 +6,7 @@ from xiaomei_brain.tools.base import Tool
 from xiaomei_brain.tools.registry import ToolRegistry
 from xiaomei_brain.tools.dynamic import (
     DynamicToolLoader,
+    build_tool_selection_context,
     set_active_loader,
     notify_tools_changed,
     DEFAULT_TOP_K,
@@ -27,6 +28,70 @@ def _registry_with_tools(*names_and_descs) -> ToolRegistry:
     for name, desc in names_and_descs:
         reg.register(_make_tool(name, desc))
     return reg
+
+
+def test_tool_selection_context_keeps_recent_user_intent_and_attachments():
+    messages = [
+        {"role": "user", "content": "做一个有图片的 Word 文件"},
+        {"role": "assistant", "content": "错误判断：我没有 write_document"},
+        {"role": "user", "content": "图片需要居中并添加图注"},
+        {"role": "assistant", "content": "请把图片发给我"},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "那你用这个图片"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,SHOULD_NOT_APPEAR"},
+                },
+            ],
+        },
+    ]
+    attachments = [{
+        "name": "screen.png",
+        "mime_type": "image/png",
+        "kind": "image",
+    }]
+
+    context = build_tool_selection_context(messages, attachments)
+
+    assert "那你用这个图片" in context
+    assert "做一个有图片的 Word 文件" in context
+    assert "图片需要居中并添加图注" in context
+    assert "screen.png" in context
+    assert "image/png" in context
+    assert "错误判断" not in context
+    assert "SHOULD_NOT_APPEAR" not in context
+
+
+def test_tool_selection_context_uses_only_latest_three_user_messages():
+    messages = [
+        {"role": "user", "content": "旧话题：播放音乐"},
+        {"role": "user", "content": "制作季度报告"},
+        {"role": "user", "content": "输出 Word 文档"},
+        {"role": "user", "content": "继续"},
+    ]
+
+    context = build_tool_selection_context(messages)
+
+    assert "旧话题" not in context
+    assert "制作季度报告" in context
+    assert "输出 Word 文档" in context
+    assert "继续" in context
+
+
+def test_tool_selection_context_is_bounded():
+    messages = [
+        {"role": "user", "content": "A" * 1000},
+        {"role": "user", "content": "B" * 1000},
+        {"role": "user", "content": "C" * 1000},
+    ]
+
+    context = build_tool_selection_context(messages, max_chars=400)
+
+    assert len(context) <= 400
+    assert "Current user request" in context
+    assert "C" * 100 in context
 
 
 # ── Basic loading ──────────────────────────────────────────────
@@ -110,6 +175,51 @@ def test_assignment_continuation_tools_are_always_available():
     assert "list_assignments" in names
     assert "revise_assignment" in names
     assert "start_assignment" in names
+
+
+def test_skill_required_tools_are_scoped_to_conversation(monkeypatch):
+    """A Skill remains active on follow-ups without leaking to other sessions."""
+    reg = _registry_with_tools(
+        ("shell", "Run shell commands"),
+        ("write_document", "Create or edit a document"),
+        ("unrelated", "An unrelated operation"),
+    )
+    loader = DynamicToolLoader(reg, top_k=1)
+
+    class _EmptySearch:
+        def limit(self, _count):
+            return self
+
+        def to_list(self):
+            return []
+
+    class _Table:
+        def count_rows(self):
+            return 1
+
+        def search(self, _vector):
+            return _EmptySearch()
+
+    monkeypatch.setattr(loader, "_get_lance_table", lambda: _Table())
+    monkeypatch.setattr(loader._shared, "embed", lambda _query: [0.0])
+
+    loader.begin_run("session-a")
+    activated, missing = loader.activate_required_tools(
+        ["write_document", "not_registered"]
+    )
+    names = [tool.name for tool in loader.select_tools("make a report")]
+
+    assert activated == ["write_document"]
+    assert missing == ["not_registered"]
+    assert "write_document" in names
+
+    loader.begin_run("session-b")
+    names = [tool.name for tool in loader.select_tools("make a report")]
+    assert "write_document" not in names
+
+    loader.begin_run("session-a")
+    names = [tool.name for tool in loader.select_tools("make a report")]
+    assert "write_document" in names
 
 
 # ── Dynamic tool selection ─────────────────────────────────────

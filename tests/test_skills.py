@@ -629,6 +629,19 @@ class TestSkillTools:
         assert "Playwright" in result
         assert "navigate" in result
 
+    def test_skill_view_activates_declared_tools(self, populated_storage):
+        from xiaomei_brain.skills.tools import create_skill_tools
+        agent = self._make_agent(populated_storage)
+        agent._dynamic_loader = MagicMock()
+        tools = create_skill_tools(agent)
+        skill_view_fn = next(t.func for t in tools if t.name == "skill_view")
+
+        skill_view_fn(name="browser-automation")
+
+        agent._dynamic_loader.activate_required_tools.assert_called_once_with(
+            ["navigate_page", "take_screenshot"]
+        )
+
     def test_skill_view_records_usage(self, populated_storage):
         from xiaomei_brain.skills.tools import create_skill_tools
         agent = self._make_agent(populated_storage)

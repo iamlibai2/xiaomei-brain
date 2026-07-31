@@ -51,9 +51,92 @@ _CORE_TOOL_NAMES = frozenset({
 DEFAULT_TOP_K = 10
 STEP_GROWTH = 3       # 每步增加动态工具名额
 MAX_DYNAMIC = 50       # 动态工具上限
+TOOL_CONTEXT_USER_MESSAGES = 3
+TOOL_CONTEXT_MAX_CHARS = 2400
 
 # 全局活跃的 loader，供 MCP/Plugin 热重载后通知重建索引
 _active_loader: DynamicToolLoader | None = None
+
+
+def _message_text_for_tool_selection(content: Any) -> str:
+    """Extract searchable text without copying image data into the query."""
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return ""
+
+    parts: list[str] = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        item_type = str(item.get("type", ""))
+        if item_type == "text":
+            text = str(item.get("text", "")).strip()
+            if text:
+                parts.append(text)
+        elif item_type in {"image", "image_url", "input_image"}:
+            parts.append("[image attachment]")
+        elif item_type:
+            parts.append(f"[{item_type} attachment]")
+    return "\n".join(parts)
+
+
+def build_tool_selection_context(
+    messages: list[dict[str, Any]],
+    attachments: list[dict[str, Any]] | None = None,
+    *,
+    max_user_messages: int = TOOL_CONTEXT_USER_MESSAGES,
+    max_chars: int = TOOL_CONTEXT_MAX_CHARS,
+) -> str:
+    """Build a bounded, user-led query for semantic tool retrieval.
+
+    The current request remains primary. Only recent user messages are used as
+    conversational context; ordinary assistant replies are deliberately
+    excluded so a mistaken capability claim cannot reinforce itself.
+    """
+    user_texts = [
+        text
+        for message in messages
+        if message.get("role") == "user"
+        if (text := _message_text_for_tool_selection(message.get("content")))
+    ][-max(1, max_user_messages):]
+
+    current = user_texts[-1] if user_texts else ""
+    recent = user_texts[:-1]
+
+    attachment_lines: list[str] = []
+    for attachment in attachments or []:
+        if not isinstance(attachment, dict):
+            continue
+        name = str(attachment.get("name", "")).strip()
+        mime_type = str(attachment.get("mime_type", "")).strip()
+        kind = str(attachment.get("kind", "")).strip()
+        details = ", ".join(value for value in (kind, mime_type, name) if value)
+        if details:
+            attachment_lines.append(f"- {details}")
+
+    protected_parts: list[str] = []
+    if current:
+        protected_parts.append(f"Current user request:\n{current}")
+    if attachment_lines:
+        protected_parts.append(
+            "Current attachments:\n" + "\n".join(attachment_lines)
+        )
+    protected = "\n\n".join(protected_parts)
+
+    if len(protected) >= max_chars:
+        return protected[:max_chars]
+    if not recent:
+        return protected
+
+    recent_text = "\n".join(f"- {text}" for text in reversed(recent))
+    heading = "\n\nRecent user context:\n"
+    remaining = max_chars - len(protected) - len(heading)
+    if remaining <= 0:
+        return protected
+    # Preserve the beginnings of the most recent messages: they usually hold
+    # the task verb and object omitted by short follow-ups such as "use this".
+    return f"{protected}{heading}{recent_text[:remaining]}".strip()
 
 
 def set_active_loader(loader: DynamicToolLoader) -> None:
@@ -86,6 +169,11 @@ class DynamicToolLoader:
         self._top_k = top_k
         self._lance_db_path = Path(lance_db_path) if lance_db_path else None
         self._built = False
+        # Tools explicitly required by Skills are scoped by conversation. This
+        # lets a follow-up turn reuse a loaded Skill without leaking its tools
+        # into another Desktop/channel session.
+        self._required_tools_by_scope: dict[str, set[str]] = {}
+        self._active_required_tools: set[str] = set()
 
         # 共享全局 embedding 单例
         from xiaomei_brain.base.shared_embedder import SharedEmbedder
@@ -270,6 +358,40 @@ class DynamicToolLoader:
         self._built = False
         self.build_index()
 
+    def begin_run(self, scope_id: str = "main") -> None:
+        """Select the conversation-scoped Skill bindings for a ReAct run."""
+        normalized_scope = str(scope_id or "main")
+        self._active_required_tools = self._required_tools_by_scope.setdefault(
+            normalized_scope,
+            set(),
+        )
+
+    def activate_required_tools(self, names: list[str]) -> tuple[list[str], list[str]]:
+        """Pin declared Skill dependencies for the remainder of this run."""
+        registered = {tool.name for tool in self._registry.list_tools()}
+        activated: list[str] = []
+        missing: list[str] = []
+        for name in names:
+            normalized = str(name).strip()
+            if not normalized:
+                continue
+            if normalized in registered:
+                self._active_required_tools.add(normalized)
+                activated.append(normalized)
+            else:
+                missing.append(normalized)
+        if activated:
+            logger.info(
+                "DynamicToolLoader: activated Skill dependencies: %s",
+                ", ".join(activated),
+            )
+        if missing:
+            logger.warning(
+                "DynamicToolLoader: Skill dependencies are not registered: %s",
+                ", ".join(missing),
+            )
+        return activated, missing
+
     # ── 搜索 ──────────────────────────────────────────────
 
     def select_tools(self, query: str, top_k: int | None = None, step: int = 0) -> list[Tool]:
@@ -296,31 +418,43 @@ class DynamicToolLoader:
 
         # 分离核心工具
         core_tools = [t for t in all_tools if t.name in _CORE_TOOL_NAMES]
+        required_tools = [
+            t for t in all_tools
+            if t.name in self._active_required_tools
+            and t.name not in _CORE_TOOL_NAMES
+        ]
+        always_included = _CORE_TOOL_NAMES | self._active_required_tools
 
         # LanceDB 搜索
         table = self._get_lance_table()
         if table is None or table.count_rows() == 0:
-            return core_tools + [t for t in all_tools if t.name not in _CORE_TOOL_NAMES]
+            return core_tools + required_tools + [
+                t for t in all_tools if t.name not in always_included
+            ]
 
         try:
             embedder = self._get_embedder()
             query_vec = embedder.embed(query)
         except Exception:
             logger.debug("DynamicToolLoader: embed query failed, fallback to all tools")
-            return core_tools + [t for t in all_tools if t.name not in _CORE_TOOL_NAMES]
+            return core_tools + required_tools + [
+                t for t in all_tools if t.name not in always_included
+            ]
 
         try:
             results = table.search(query_vec).limit(k).to_list()
         except Exception:
             logger.debug("DynamicToolLoader: LanceDB search failed, fallback to all tools")
-            return core_tools + [t for t in all_tools if t.name not in _CORE_TOOL_NAMES]
+            return core_tools + required_tools + [
+                t for t in all_tools if t.name not in always_included
+            ]
 
         # 映射回 Tool 对象（排除已包含的核心工具）
         selected = []
         seen = set()
         for r in results:
             name = r["id"]
-            if name in seen or name in _CORE_TOOL_NAMES:
+            if name in seen or name in always_included:
                 continue
             tool = name_to_tool.get(name)
             if tool:
@@ -331,7 +465,7 @@ class DynamicToolLoader:
         # 避免用户说 "generate_music" 时 embedding 没把它排在 top-K
         forced: list[Tool] = []
         for name, tool in name_to_tool.items():
-            if name in seen or name in _CORE_TOOL_NAMES:
+            if name in seen or name in always_included:
                 continue
             # 支持原始名 (generate_music) 和 normalize 名 (generate music)
             normalized = name.replace("_", " ").replace("-", " ")
@@ -349,9 +483,13 @@ class DynamicToolLoader:
 
         logger.info(
             "DynamicToolLoader: step growth → %d core + %d dynamic = %d tools (top_k=%d, step=%d)",
-            len(core_tools), len(selected), len(core_tools) + len(selected), k, step,
+            len(core_tools) + len(required_tools),
+            len(selected),
+            len(core_tools) + len(required_tools) + len(selected),
+            k,
+            step,
         )
-        return core_tools + selected
+        return core_tools + required_tools + selected
 
     def select_openai_tools(self, query: str, top_k: int | None = None, step: int = 0) -> list[dict[str, Any]]:
         """和 select_tools 一样，但返回 OpenAI function calling 格式。"""

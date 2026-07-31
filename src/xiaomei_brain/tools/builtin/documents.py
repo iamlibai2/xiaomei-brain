@@ -146,6 +146,13 @@ def create_write_document_tool(plugin_registry: Any) -> Tool:
             if not source_path.is_file():
                 return {"error": "Source attachment file is unavailable"}
 
+        asset_paths: dict[str, Path] = {}
+        for attachment in context.attachments:
+            attachment_id = str(attachment.get("id") or "")
+            local_path = Path(str(attachment.get("local_path") or ""))
+            if attachment_id and local_path.is_file():
+                asset_paths[attachment_id] = local_path
+
         temporary_path = output_root / (
             f".{output_path.stem}.{uuid4().hex}.tmp{output_path.suffix}"
         )
@@ -154,6 +161,7 @@ def create_write_document_tool(plugin_registry: Any) -> Tool:
                 specification,
                 temporary_path,
                 source_path=source_path,
+                asset_paths=asset_paths,
             )
             temporary_path.replace(output_path)
         except Exception as exc:

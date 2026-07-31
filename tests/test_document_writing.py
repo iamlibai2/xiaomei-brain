@@ -1,7 +1,9 @@
+import base64
 import json
 from pathlib import Path
 
 from docx import Document
+from docx.enum.section import WD_ORIENT
 
 from xiaomei_brain.plugin.context import PluginContext
 from xiaomei_brain.plugin.loader import PluginLoader
@@ -43,7 +45,11 @@ def test_document_tools_and_writer_are_discovered_through_plugins():
         registry,
         config={
             "plugins": {
-                "allow": ["document_io", "document_word"],
+                "allow": [
+                    "document_io",
+                    "document_spreadsheet",
+                    "document_word",
+                ],
             },
         },
         agent_id="test",
@@ -55,11 +61,12 @@ def test_document_tools_and_writer_are_discovered_through_plugins():
         item.manifest.name
         for item in loaded
         if item.status == "loaded"
-    } == {"document_io", "document_word"}
+    } == {"document_io", "document_spreadsheet", "document_word"}
     assert {
         tool.name for tool in registry.get_agent_tools()
     } == {"read_document", "write_document"}
     assert registry.get_document_writer("word") is not None
+    assert registry.get_document_writer("spreadsheet") is not None
 
 
 def test_write_document_creates_and_validates_word_file(tmp_path):
@@ -153,6 +160,204 @@ def test_write_document_revises_copy_without_overwriting_attachment(tmp_path):
     revised = Document(outputs / "revised.docx")
     text = "\n".join(paragraph.text for paragraph in revised.paragraphs)
     assert "New wording" in text and "Added note" in text
+
+
+def test_word_template_replaces_cross_run_placeholders_across_document_parts(tmp_path):
+    registry = _word_registry()
+    tool = create_write_document_tool(registry)
+    workspace = tmp_path / "workspace"
+    outputs = workspace / "outputs"
+    workspace.mkdir()
+    source = tmp_path / "template.docx"
+
+    template = Document()
+    paragraph = template.add_paragraph()
+    paragraph.add_run("客户：")
+    paragraph.add_run("{{customer").bold = True
+    paragraph.add_run("_name}}").italic = True
+    paragraph.add_run("（重点客户）").underline = True
+    table = template.add_table(rows=1, cols=1)
+    table.cell(0, 0).text = "项目：{{project_name}}"
+    header = template.sections[0].header.paragraphs[0]
+    header.text = "报告：{{project_name}}"
+    footer = template.sections[0].footer.paragraphs[0]
+    footer.text = "联系人：{{customer_name}}"
+    template.save(source)
+
+    spec = workspace / "template-values.json"
+    spec.write_text(json.dumps({
+        "operations": [{
+            "type": "replace_placeholders",
+            "values": {
+                "customer_name": "星海科技",
+                "project_name": "智能办公平台",
+            },
+        }],
+    }, ensure_ascii=False), encoding="utf-8")
+    attachment = {
+        "id": "template-1",
+        "name": "template.docx",
+        "kind": "document",
+        "local_path": str(source),
+    }
+
+    with bind_tool_execution(
+        tool_call_id="call-template",
+        tool_name="write_document",
+        arguments={},
+        artifact_callback=None,
+        attachments=(attachment,),
+        workspace_root=str(workspace),
+        output_root=str(outputs),
+    ):
+        result = tool.execute(
+            format="word",
+            specification_path="template-values.json",
+            output_name="filled.docx",
+            source_attachment_id="template-1",
+        )
+
+    assert result["success"] is True
+    assert result["validation"]["replacements"] == 4
+    filled = Document(outputs / "filled.docx")
+    body = filled.paragraphs[0]
+    assert body.text == "客户：星海科技（重点客户）"
+    assert body.runs[1].bold is True
+    assert body.runs[3].underline is True
+    assert filled.tables[0].cell(0, 0).text == "项目：智能办公平台"
+    assert filled.sections[0].header.paragraphs[0].text == "报告：智能办公平台"
+    assert filled.sections[0].footer.paragraphs[0].text == "联系人：星海科技"
+
+
+def test_word_template_inserts_blocks_at_body_marker(tmp_path):
+    registry = _word_registry()
+    tool = create_write_document_tool(registry)
+    workspace = tmp_path / "workspace"
+    outputs = workspace / "outputs"
+    workspace.mkdir()
+    source = tmp_path / "template.docx"
+
+    template = Document()
+    template.add_paragraph("前言")
+    template.add_paragraph("{{DETAILS}}")
+    template.add_paragraph("结语")
+    template.save(source)
+    spec = workspace / "insert.json"
+    spec.write_text(json.dumps({
+        "operations": [{
+            "type": "insert_blocks_after",
+            "marker": "{{DETAILS}}",
+            "remove_marker": True,
+            "blocks": [
+                {"type": "heading", "level": 1, "text": "项目详情"},
+                {"type": "paragraph", "text": "这是插入的正文。"},
+                {"type": "list", "items": ["第一项", "第二项"]},
+            ],
+        }],
+    }, ensure_ascii=False), encoding="utf-8")
+    attachment = {
+        "id": "template-2",
+        "name": "template.docx",
+        "kind": "document",
+        "local_path": str(source),
+    }
+
+    with bind_tool_execution(
+        tool_call_id="call-insert",
+        tool_name="write_document",
+        arguments={},
+        artifact_callback=None,
+        attachments=(attachment,),
+        workspace_root=str(workspace),
+        output_root=str(outputs),
+    ):
+        result = tool.execute(
+            format="word",
+            specification_path="insert.json",
+            output_name="inserted.docx",
+            source_attachment_id="template-2",
+        )
+
+    assert result["success"] is True
+    assert result["validation"]["insertions"] == 4
+    inserted = Document(outputs / "inserted.docx")
+    assert [paragraph.text for paragraph in inserted.paragraphs] == [
+        "前言",
+        "项目详情",
+        "这是插入的正文。",
+        "第一项",
+        "第二项",
+        "结语",
+    ]
+
+
+def test_word_creation_uses_owned_image_and_page_layout(tmp_path):
+    registry = _word_registry()
+    tool = create_write_document_tool(registry)
+    workspace = tmp_path / "workspace"
+    outputs = workspace / "outputs"
+    workspace.mkdir()
+    image = tmp_path / "logo.png"
+    image.write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC"
+        "AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    ))
+    spec = workspace / "styled.json"
+    spec.write_text(json.dumps({
+        "default_style": {"font": "Microsoft YaHei", "size_pt": 11},
+        "page": {
+            "size": "A4",
+            "orientation": "landscape",
+            "margins_cm": {"top": 2, "right": 1.5, "bottom": 2, "left": 1.5},
+        },
+        "header": {"text": "小美企业报告"},
+        "footer": {"text": "第 ", "page_number": True},
+        "blocks": [
+            {"type": "paragraph", "text": "报告正文"},
+            {
+                "type": "image",
+                "attachment_id": "logo-1",
+                "width_cm": 2,
+                "caption": "企业标识",
+            },
+        ],
+    }, ensure_ascii=False), encoding="utf-8")
+    attachment = {
+        "id": "logo-1",
+        "name": "logo.png",
+        "kind": "image",
+        "local_path": str(image),
+    }
+
+    with bind_tool_execution(
+        tool_call_id="call-layout",
+        tool_name="write_document",
+        arguments={},
+        artifact_callback=None,
+        attachments=(attachment,),
+        workspace_root=str(workspace),
+        output_root=str(outputs),
+    ):
+        result = tool.execute(
+            format="word",
+            specification_path="styled.json",
+            output_name="styled.docx",
+        )
+
+    assert result["success"] is True
+    styled = Document(outputs / "styled.docx")
+    section = styled.sections[0]
+    assert section.orientation == WD_ORIENT.LANDSCAPE
+    assert round(section.top_margin.cm, 1) == 2.0
+    assert round(section.left_margin.cm, 1) == 1.5
+    assert styled.styles["Normal"].font.name == "Microsoft YaHei"
+    assert round(styled.styles["Normal"].font.size.pt, 1) == 11.0
+    assert section.header.paragraphs[0].text == "小美企业报告"
+    assert section.footer.paragraphs[0].text == "第 "
+    footer_xml = section.footer.paragraphs[0]._p.xml
+    assert "PAGE" in footer_xml
+    assert len(styled.inline_shapes) == 1
+    assert "企业标识" in [paragraph.text for paragraph in styled.paragraphs]
 
 
 def test_write_document_rejects_paths_and_unowned_sources(tmp_path):
