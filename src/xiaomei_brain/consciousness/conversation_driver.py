@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import queue
 import threading
 import time
 from typing import Any, TYPE_CHECKING
@@ -422,6 +423,23 @@ class ConversationDriver:
                     return
 
                 while True:
+                    # 多步 steer 感知：两次 stream() 之间到达的 steer
+                    # 覆盖自动推进的子目标消息（用户中断优先）。
+                    steer_text = agent._drain_steer()
+                    if steer_text:
+                        logger.info(
+                            "[ConversationDriver] 检测到 steer，覆盖子目标消息: %s",
+                            steer_text[:50],
+                        )
+                        current_msg = LivingMessage(
+                            content=steer_text,
+                            user_id=msg.user_id,
+                            session_id=msg.session_id,
+                            source="human",
+                            turn_id=msg.turn_id,
+                        )
+                        current_context = intent_context
+
                     print("\033[90m" + "─" * self._term_width() + "\033[0m", flush=True)
                     print(f"  \033[38;5;203m{parent.agent.name or parent._agent_id}\033[0m: ", end="", flush=True)
                     cs = parent._get_consciousness_state()
@@ -715,6 +733,28 @@ class ConversationDriver:
                     agent_core.current_memory_references = []
                 except Exception:
                     logger.debug("Failed to cleanup tool callbacks", exc_info=True)
+
+                # 残留 steer 重新入队为下一轮对话，防止跨轮/跨用户泄漏。
+                # _chatting 已置 False，put_message 会正常入队而非再次 steer。
+                try:
+                    agent_core = parent.agent._get_agent()
+                    leftover_steers: list[str] = []
+                    while True:
+                        try:
+                            leftover_steers.append(agent_core._steer_queue.get_nowait())
+                        except queue.Empty:
+                            break
+                    for text in leftover_steers:
+                        logger.info(
+                            "[ConversationDriver] 残留 steer 转下一轮: %s", text[:50]
+                        )
+                        parent.put_message(
+                            content=text,
+                            user_id=msg.user_id,
+                            session_id=msg.session_id,
+                        )
+                except Exception:
+                    logger.debug("Failed to requeue leftover steer", exc_info=True)
 
         run()
 
