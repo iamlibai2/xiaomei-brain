@@ -26,6 +26,17 @@ logger = logging.getLogger(__name__)
 
 # 核心工具：无论 query 是什么都始终保留
 _CORE_TOOL_NAMES = frozenset({
+    "powershell",
+    "bash",
+    "process",
+    "read",
+    "write",
+    "edit",
+    "glob",
+    "grep",
+    # Historical tool names can still occur in persisted skills/tests. They
+    # remain selectable if explicitly registered, but AgentManager no longer
+    # registers them for new runtimes.
     "shell",
     "read_file",
     "write_file",

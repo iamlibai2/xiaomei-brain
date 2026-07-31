@@ -176,7 +176,7 @@ export interface GatewayBridge {
   connect(args: { host: string; port: number; token: string; agentId: string; sessionId?: string }): Promise<JsonRpcResponse>;
   switchSession(args: { agentId: string; sessionId: string }): Promise<JsonRpcResponse>;
   disconnect(args: { agentId: string }): Promise<void>;
-  sendMessage(args: { content: string; agentId: string; clientRequestId: string; attachments: ChatAttachment[] }): Promise<JsonRpcResponse>;
+  sendMessage(args: { content: string; agentId: string; sessionId: string; clientRequestId: string; attachments: ChatAttachment[] }): Promise<JsonRpcResponse>;
   sendVoice(args: {
     agentId: string;
     dataBase64: string;

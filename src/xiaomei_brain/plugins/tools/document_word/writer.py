@@ -355,11 +355,17 @@ class WordWriter:
                 from docx.enum.text import WD_ALIGN_PARAGRAPH
                 from docx.shared import Cm
 
-                attachment_id = str(block.get("attachment_id") or "")
-                image_path = (asset_paths or {}).get(attachment_id)
+                attachment_id = str(block.get("attachment_id") or "").strip()
+                workspace_path = str(block.get("workspace_path") or "").strip()
+                if bool(attachment_id) == bool(workspace_path):
+                    raise ValueError(
+                        "image 必须且只能提供 attachment_id 或 workspace_path 之一"
+                    )
+                asset_key = attachment_id or f"workspace:{workspace_path}"
+                image_path = (asset_paths or {}).get(asset_key)
                 if image_path is None or not image_path.is_file():
                     raise ValueError(
-                        f"当前执行现场没有图片附件: {attachment_id}"
+                        f"当前执行现场没有可用图片: {attachment_id or workspace_path}"
                     )
                 paragraph = document.add_paragraph()
                 alignment = str(block.get("align") or "center").lower()

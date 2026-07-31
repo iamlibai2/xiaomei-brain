@@ -706,6 +706,7 @@ export function registerIpcHandlers(
     async (_event, args: {
       content: string;
       agentId: string;
+      sessionId: string;
       clientRequestId: string;
       attachments?: Array<{ id: string; name: string; mimeType: string; size: number; dataBase64?: string }>;
     }) => {
@@ -714,7 +715,7 @@ export function registerIpcHandlers(
       const params = {
         content: args.content,
         client_request_id: args.clientRequestId,
-        session_id: connectionSessions.get(args.agentId) || "",
+        session_id: args.sessionId || connectionSessions.get(args.agentId) || "",
         attachments: (args.attachments || []).map((attachment) => ({
           id: attachment.id,
           name: attachment.name,

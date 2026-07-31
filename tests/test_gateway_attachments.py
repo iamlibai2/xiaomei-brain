@@ -55,6 +55,21 @@ def test_text_attachment_is_saved_and_added_to_model_context(tmp_path, monkeypat
     assert "你好" in model_input
 
 
+def test_image_attachment_id_is_added_to_model_context(tmp_path, monkeypatch):
+    monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: tmp_path))
+    prepared, images, _ = prepare_attachments(
+        "xiaomei",
+        "session-1",
+        [payload("cover.png", "image/png", b"image-bytes", "image-42")],
+    )
+
+    model_input = append_text_attachments("把这张图放进 Word", prepared)
+
+    assert len(images) == 1
+    assert '<attached_image id="image-42" name="cover.png" mime_type="image/png">' in model_input
+    assert "attachment_id" in model_input
+
+
 def test_unsupported_binary_attachment_is_rejected_without_file(tmp_path, monkeypatch):
     monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: tmp_path))
     with pytest.raises(AttachmentError, match="暂不支持"):

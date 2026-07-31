@@ -219,7 +219,7 @@ def test_isolated_runner_honors_initial_clarification_without_llm(tmp_path):
 def test_isolated_runner_copies_only_explicit_background_tools(tmp_path):
     registry = ToolRegistry()
     registry.register(Tool(
-        name="read_file",
+        name="read",
         description="safe",
         parameters={"type": "object", "properties": {}},
         func=lambda: "ok",
@@ -239,17 +239,18 @@ def test_isolated_runner_copies_only_explicit_background_tools(tmp_path):
 
     copied = runner._copy_safe_tools()
 
-    assert copied.get("read_file") is not None
+    assert copied.get("read") is not None
     assert copied.get("clarify") is None
     store.close()
 
 
 def test_isolated_runner_executes_valid_shell_without_approval(tmp_path):
     executed = []
+    command_name = "powershell" if os.name == "nt" else "bash"
     registry = ToolRegistry()
     registry.register(Tool(
-        name="shell",
-        description="shell",
+        name=command_name,
+        description=command_name,
         parameters={
             "type": "object",
             "properties": {"command": {"type": "string"}},
@@ -259,7 +260,7 @@ def test_isolated_runner_executes_valid_shell_without_approval(tmp_path):
     ))
     tool_call = SimpleNamespace(
         id="call_1",
-        name="shell",
+        name=command_name,
         arguments=json.dumps({"command": "echo change"}),
     )
     store, service, agent, context, control, checkpoints = _context(
@@ -287,10 +288,11 @@ def test_isolated_runner_executes_valid_shell_without_approval(tmp_path):
 
 def test_isolated_runner_consumes_exact_sealed_approval_once(tmp_path):
     executed = []
+    command_name = "powershell" if os.name == "nt" else "bash"
     registry = ToolRegistry()
     registry.register(Tool(
-        name="shell",
-        description="shell",
+        name=command_name,
+        description=command_name,
         parameters={
             "type": "object",
             "properties": {"command": {"type": "string"}},
@@ -301,7 +303,7 @@ def test_isolated_runner_consumes_exact_sealed_approval_once(tmp_path):
     arguments = {"command": "echo change"}
     tool_call = SimpleNamespace(
         id="call_2",
-        name="shell",
+        name=command_name,
         arguments=json.dumps(arguments),
     )
     store, service, agent, context, _control, checkpoints = _context(
@@ -318,7 +320,7 @@ def test_isolated_runner_consumes_exact_sealed_approval_once(tmp_path):
     initial = {
         "approved_action": {
             "kind": "action",
-            "tool_name": "shell",
+            "tool_name": command_name,
             "arguments": arguments,
         },
         "person_response": "批准",
@@ -334,7 +336,7 @@ def test_isolated_runner_consumes_exact_sealed_approval_once(tmp_path):
     assert executed == ["echo change"]
     assert result.status == "completed"
     assert "approved_action" not in result.checkpoint
-    assert result.checkpoint["approved_action_consumed"]["tool_name"] == "shell"
+    assert result.checkpoint["approved_action_consumed"]["tool_name"] == command_name
     store.close()
 
 
@@ -587,8 +589,9 @@ def test_isolated_runner_materializes_previous_deliverable_for_revision(
 
 
 def test_two_assignment_workspaces_isolate_same_named_outputs(tmp_path, monkeypatch):
-    from xiaomei_brain.tools.builtin.file_ops import write_file_tool
-    from xiaomei_brain.tools.builtin.shell import shell_tool
+    from xiaomei_brain.tools.builtin.command import command_tool
+    from xiaomei_brain.tools.builtin.file_ops import write_tool
+    from xiaomei_brain.tools.execution_context import bind_tool_execution
 
     monkeypatch.setattr(
         "xiaomei_brain.assignments.isolated_runner.Path.home",
@@ -622,44 +625,63 @@ def test_two_assignment_workspaces_isolate_same_named_outputs(tmp_path, monkeypa
         FakeAgentInstance(FakeLLMTemplate([]), ToolRegistry()),
         service,
     )
-    bound_writers = [runner._bind_workspace_tool(write_file_tool, context) for context in contexts]
+    def write_for(context, content):
+        root, work, outputs = runner._workspace_dirs(context)
+        with bind_tool_execution(
+            tool_call_id="test-write",
+            tool_name="write",
+            arguments={},
+            artifact_callback=None,
+            workspace_root=str(root),
+            working_directory=str(work),
+            output_root=str(outputs),
+        ):
+            return write_tool.execute(path="outputs/result.txt", content=content)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(
-            lambda item: item[0].execute(path="outputs/result.txt", content=item[1]),
-            zip(bound_writers, ("content-a", "content-b")),
-        ))
+        results = list(pool.map(write_for, contexts, ("content-a", "content-b")))
 
-    assert all(result.startswith("Successfully wrote") for result in results)
+    assert all("error" not in result for result in results)
     roots = [runner._workspace_dirs(context)[0] for context in contexts]
     assert (roots[0] / "outputs" / "result.txt").read_text(encoding="utf-8") == "content-a"
     assert (roots[1] / "outputs" / "result.txt").read_text(encoding="utf-8") == "content-b"
     assert roots[0] != roots[1]
 
-    bound_shell = runner._bind_workspace_tool(shell_tool, contexts[0])
-    cwd_output = bound_shell.execute(command="cd" if os.name == "nt" else "pwd").strip()
-    assert Path(cwd_output).resolve() == (roots[0] / "work").resolve()
+    root, work, outputs = runner._workspace_dirs(contexts[0])
+    with bind_tool_execution(
+        tool_call_id="test-command",
+        tool_name=command_tool.name,
+        arguments={},
+        artifact_callback=None,
+        workspace_root=str(root),
+        working_directory=str(work),
+        output_root=str(outputs),
+    ):
+        command_result = command_tool.execute(
+            command="[IO.Directory]::GetCurrentDirectory()" if os.name == "nt" else "pwd",
+        )
+    assert Path(command_result["output"].strip()).resolve() == work.resolve()
     store.close()
 
 
 def test_only_outputs_are_promoted_as_assignment_deliverables(tmp_path, monkeypatch):
-    from xiaomei_brain.tools.builtin.file_ops import write_file_tool
+    from xiaomei_brain.tools.builtin.file_ops import write_tool
 
     monkeypatch.setattr(
         "xiaomei_brain.assignments.isolated_runner.Path.home",
         classmethod(lambda cls: tmp_path),
     )
     registry = ToolRegistry()
-    registry.register(write_file_tool)
+    registry.register(write_tool)
     calls = [
         SimpleNamespace(
             id="call_helper",
-            name="write_file",
+            name="write",
             arguments=json.dumps({"path": "helper.py", "content": "print('work')"}),
         ),
         SimpleNamespace(
             id="call_output",
-            name="write_file",
+            name="write",
             arguments=json.dumps({"path": "outputs/result.md", "content": "final"}),
         ),
     ]

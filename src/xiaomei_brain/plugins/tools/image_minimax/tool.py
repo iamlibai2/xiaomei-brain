@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 from xiaomei_brain.tools.base import tool
+from xiaomei_brain.tools.execution_context import current_tool_execution
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +21,26 @@ _output_base: str | None = None
 
 def _get_output_dir() -> str:
     """获取图片输出根目录：agent workspace 优先，否则全局 fallback。"""
+    context = current_tool_execution()
+    if context is not None:
+        execution_root = context.output_root or context.workspace_root
+        if execution_root:
+            return str((Path(execution_root) / "images").resolve())
     if _output_base:
         return str(Path(_output_base) / "images")
     return str(Path.home() / ".xiaomei-brain" / "global" / "images")
+
+
+def _workspace_reference(path: str) -> str:
+    context = current_tool_execution()
+    if context is None or not context.workspace_root:
+        return ""
+    try:
+        return Path(path).resolve().relative_to(
+            Path(context.workspace_root).resolve(),
+        ).as_posix()
+    except ValueError:
+        return ""
 
 
 def set_output_base(base_dir: str) -> None:
@@ -94,7 +112,10 @@ def image_generate(
 
         result = f"生成了 {len(paths)} 张图片:\n"
         for p in paths:
-            result += f"  - {p}\n"
+            result += f"  - output_path: {p}\n"
+            workspace_path = _workspace_reference(p)
+            if workspace_path:
+                result += f"    workspace_path: {workspace_path}\n"
         return result.strip()
 
     except Exception as e:

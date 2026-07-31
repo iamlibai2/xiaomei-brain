@@ -38,7 +38,7 @@ _LIFECYCLE_LABELS: dict[str, tuple[str, str, float]] = {
 }
 
 # ── 产出关键词 ──────────────────────────────────────────────
-_OUTPUT_KEYWORDS = ["write_file", "创建", "产出", "生成", "保存", "写入"]
+_OUTPUT_KEYWORDS = ["write", "write_file", "创建", "产出", "生成", "保存", "写入"]
 _COMPLETION_KEYWORDS = ["完成", "解决", "通过", "成功", "达成"]
 _STUCK_KEYWORDS = ["卡住", "失败", "放弃", "阻塞", "困难", "无法"]
 _LEARNING_KEYWORDS = ["学到", "理解", "掌握", "发现", "认识到", "学会了"]

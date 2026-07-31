@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from xiaomei_brain.agent.message_utils import build_multimodal_content
@@ -12,6 +13,38 @@ logger = logging.getLogger(__name__)
 
 class VisionRoutingError(RuntimeError):
     """Raised when an image message has no usable vision path."""
+
+
+_IMAGE_ANALYSIS_PATTERN = re.compile(
+    r"分析|识别|描述|解释|看图|读图|理解图片|提取文字|ocr|图片里|图中|根据图片内容",
+    re.IGNORECASE,
+)
+_IMAGE_ASSET_PATTERN = re.compile(
+    r"插入|嵌入|放入|放到|添加到|作为(?:封面|插图|配图)|原样|"
+    r"用(?:这个|这张|该)图片|使用(?:这个|这张|该)图片",
+    re.IGNORECASE,
+)
+_DOCUMENT_TARGET_PATTERN = re.compile(
+    r"word|docx|ppt|pptx|幻灯片|文档|报告|文件",
+    re.IGNORECASE,
+)
+
+
+def _is_asset_only_image_request(user_input: str) -> bool:
+    """Detect requests that only move an image into a deliverable.
+
+    In that case the model needs the durable attachment id, not an expensive
+    semantic analysis of the image pixels.
+    """
+    text = (user_input or "").strip()
+    if not text or _IMAGE_ANALYSIS_PATTERN.search(text):
+        return False
+    if not _IMAGE_ASSET_PATTERN.search(text):
+        return False
+    return bool(
+        _DOCUMENT_TARGET_PATTERN.search(text)
+        or re.search(r"用(?:这个|这张|该)图片|使用(?:这个|这张|该)图片", text)
+    )
 
 
 def route_chat_images(
@@ -27,6 +60,9 @@ def route_chat_images(
     """
     images = image_paths or []
     if not images:
+        return [], ""
+    if _is_asset_only_image_request(user_input):
+        logger.info("[VisionRoute] image is used as an asset; skip semantic analysis")
         return [], ""
 
     primary_llm = getattr(agent_instance, "llm", None)

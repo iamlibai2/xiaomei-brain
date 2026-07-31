@@ -48,6 +48,7 @@ function savePersisted(state: CoreState) {
 // ── Module-level streaming state, isolated by Agent + session + turn ──
 interface StreamingState { ref: string; id: string | null }
 const _streamingByTurn: Record<string, StreamingState> = {};
+const _sessionSwitchRequestByAgent: Record<string, number> = {};
 
 function streamingKey(agentId: string, sessionId: string, turnId: string): string {
   return `${agentId}\u0000${sessionId || "legacy"}\u0000${turnId || "legacy"}`;
@@ -1692,7 +1693,13 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       delete s.attachmentErrorByConversation[draftKey];
     }));
 
-    void window.gateway.sendMessage({ content: text, agentId, clientRequestId, attachments }).then((res) => {
+    void window.gateway.sendMessage({
+      content: text,
+      agentId,
+      sessionId,
+      clientRequestId,
+      attachments,
+    }).then((res) => {
       if (!res.error && res.result?.accepted !== false) {
         set(produce((s: CoreState) => {
           const userMessage = messagesForSession(s, agentId, sessionId)
@@ -2085,9 +2092,24 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     if (previousSessionId === sessionId) return;
     const agent = get().agents.find((entry) => entry.id === agentId);
     if (!agent) return;
+    const switchRequest = (_sessionSwitchRequestByAgent[agentId] || 0) + 1;
+    _sessionSwitchRequestByAgent[agentId] = switchRequest;
+
+    // Seal the visible conversation before awaiting IPC. Saving it after the
+    // await can copy whichever conversation became active in the meantime
+    // into the previous session's cache.
+    if (previousSessionId) {
+      set(produce((s: CoreState) => {
+        if (s.activeSessionByAgent[agentId] !== previousSessionId) return;
+        s.messagesByConversation[conversationStateKey(agentId, previousSessionId)] = [
+          ...(s.messagesByAgent[agentId] || []),
+        ];
+      }));
+    }
 
     try {
       const res = await window.gateway.switchSession({ agentId, sessionId });
+      if (_sessionSwitchRequestByAgent[agentId] !== switchRequest) return;
       if (res.error) {
         set(produce((s: CoreState) => {
           const connection = s.connectionByAgent[agentId];
@@ -2097,26 +2119,21 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       }
 
       const result = (res.result || {}) as Record<string, unknown>;
+      if (typeof result.session_id === "string" && result.session_id !== sessionId) {
+        throw new Error(`Session switch returned ${result.session_id}, expected ${sessionId}`);
+      }
       const resume = result.resume && typeof result.resume === "object"
         ? result.resume as Record<string, unknown>
         : undefined;
       const messages = resumeMessages(resume, sessionId);
       const pagination = historyPagination(resume);
       set(produce((s: CoreState) => {
-        if (previousSessionId) {
-          s.messagesByConversation[conversationStateKey(agentId, previousSessionId)] =
-            s.messagesByAgent[agentId] || [];
-        }
         const targetKey = conversationStateKey(agentId, sessionId);
         touchConversationState(s, agentId, sessionId);
-        // An already opened background conversation has received every live
-        // event while this RPC was in flight. Prefer that projection so a
-        // late delta cannot be overwritten by the slightly older resume frame.
-        const targetMessages = s.messagesByConversation[targetKey]?.length
-          ? s.messagesByConversation[targetKey]
-          : messages;
-        s.messagesByAgent[agentId] = targetMessages;
-        s.messagesByConversation[targetKey] = targetMessages;
+        // The Gateway snapshot is authoritative. Reusing any non-empty local
+        // cache here made one accidental cross-session alias permanent.
+        s.messagesByAgent[agentId] = messages;
+        s.messagesByConversation[targetKey] = messages;
         s.activeSessionByAgent[agentId] = sessionId;
         s.unreadByConversation[conversationStateKey(agentId, sessionId)] = 0;
         if (!s.historyPaginationByAgent[agentId]) s.historyPaginationByAgent[agentId] = {};
@@ -2135,6 +2152,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       }));
       restoreStreamFromResume(agentId, sessionId, resume);
     } catch (error) {
+      if (_sessionSwitchRequestByAgent[agentId] !== switchRequest) return;
       set(produce((s: CoreState) => {
         const connection = s.connectionByAgent[agentId];
         if (connection) connection.error = String(error);

@@ -37,7 +37,7 @@ def discover_tool_artifacts(
     """
     # Read-only tools describe files they consumed. Treating those paths as
     # newly-created output leaks inputs into the Agent's deliverable list.
-    if tool_name in {"read_file", "web_get", "web_search"}:
+    if tool_name in {"read", "glob", "grep", "read_file", "web_get", "web_search"}:
         return []
     if _tool_failed(result):
         return []

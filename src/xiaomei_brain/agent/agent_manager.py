@@ -189,15 +189,19 @@ class AgentManager:
         tools = ToolRegistry()
 
         from xiaomei_brain.tools.builtin import (
-            shell_tool, read_file_tool, write_file_tool, edit_file_tool,
+            command_tool, read_tool, write_tool, edit_tool, glob_tool, grep_tool,
+            process_tool,
             present_artifacts_tool,
             send_message_tool, check_inbox_tool, set_send_message_context,
             websearch_tools, webget_tools,
         )
-        tools.register(shell_tool)
-        tools.register(read_file_tool)
-        tools.register(write_file_tool)
-        tools.register(edit_file_tool)
+        tools.register(command_tool)
+        tools.register(read_tool)
+        tools.register(write_tool)
+        tools.register(edit_tool)
+        tools.register(glob_tool)
+        tools.register(grep_tool)
+        tools.register(process_tool)
         tools.register(present_artifacts_tool)
         # Agent 间通讯 — send_message + check_inbox 工具
         from xiaomei_brain.plugins.channels.p2p.directory import AgentDirectory

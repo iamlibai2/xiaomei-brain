@@ -44,6 +44,11 @@ class CapabilityTracker:
 
     # 工具名 → domain 映射
     TOOL_DOMAIN_MAP: dict[str, str] = {
+        "write": "file_ops",
+        "read": "file_ops",
+        "edit": "file_ops",
+        "glob": "file_ops",
+        "grep": "file_ops",
         "write_file": "file_ops",
         "read_file": "file_ops",
         "list_files": "file_ops",
@@ -52,6 +57,9 @@ class CapabilityTracker:
         "webget": "web_search",
         "web_search": "web_search",
         "web_get": "web_search",
+        "powershell": "shell_exec",
+        "bash": "shell_exec",
+        "process": "shell_exec",
         "shell": "shell_exec",
         "run_command": "shell_exec",
         "exec": "shell_exec",

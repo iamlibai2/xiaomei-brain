@@ -270,7 +270,7 @@ class PACERunner:
             # 能力校准：检查是否涉及 weakness 域
             profile = self._capability_tracker.get_profile()
             domain_keywords = {
-                "shell_exec": ["shell", "bash", "脚本", "命令行", "终端", "执行"],
+                "shell_exec": ["powershell", "bash", "process", "脚本", "命令行", "终端", "执行"],
                 "file_ops": [],
                 "web_search": [],
             }

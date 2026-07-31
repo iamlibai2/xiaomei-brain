@@ -3,7 +3,7 @@ name: word-documents
 description: 创建、修改和验收 Word DOCX 文档
 version: 1.0.0
 tags: [word, docx, document, report]
-requires_tools: [read_document, write_file, write_document, present_artifacts]
+requires_tools: [read_document, write, write_document, present_artifacts]
 ---
 
 # Word 文档工作流
@@ -12,7 +12,7 @@ requires_tools: [read_document, write_file, write_document, present_artifacts]
 
 ## 创建
 
-先用 `write_file` 在当前 workspace 写一个 JSON specification，再调用 `write_document`：
+先用 `write` 在当前 workspace 写一个 JSON specification，再调用 `write_document`：
 
 ```json
 {
@@ -38,6 +38,12 @@ requires_tools: [read_document, write_file, write_document, present_artifacts]
       "width_cm": 12,
       "align": "center",
       "caption": "图片说明"
+    },
+    {
+      "type": "image",
+      "workspace_path": "work/generated-cover.png",
+      "width_cm": 12,
+      "align": "center"
     },
     {"type": "quote", "text": "引用"},
     {"type": "page_break"}
@@ -106,9 +112,14 @@ write_document(
 `insert_blocks_after` 当前只在 Word 正文中定位标记，适合在企业模板的指定
 位置插入章节、段落、列表和表格。
 
-图片必须引用当前消息中真实存在的图片 `attachment_id`，不要向 specification
-写入任意本机文件路径。图片可用于新建文档，也可通过 `append_blocks` 或
-`insert_blocks_after` 插入模板。
+图片使用以下两种受控来源之一：当前消息中真实存在的图片 `attachment_id`，
+或当前执行 workspace 内已经生成的图片 `workspace_path`。`workspace_path` 必须
+是相对路径（如 `work/chart.png`），禁止绝对路径和 `..`。不要同时填写两个字段。
+图片可用于新建文档，也可通过 `append_blocks` 或 `insert_blocks_after` 插入模板。
+
+只要 `write_document` 可用，就必须使用它生成或修改 Word；不要绕过它改用
+`python-docx` 或临时脚本。若调用失败，应说明具体错误，不要声称工具不存在，
+也不要静默换用另一套文档生成方式。
 
 ## 完成标准
 

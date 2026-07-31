@@ -15,27 +15,24 @@ class ActionAssessment:
 
 
 def assess_tool_action(tool_name: str, arguments: dict[str, Any]) -> ActionAssessment:
-    """Classify a tool call as allow, ask, or deny.
+    """Allow ordinary local commands and deny only catastrophic effects.
 
-    Shell is an execution primitive for an autonomous local Agent. Blanket
-    approval would interrupt ordinary document generation, dependency checks
-    and file conversion, so valid commands run directly. Explicitly dangerous
-    commands remain hard-denied by the shell tool's existing safety boundary.
-
-    The ``ask`` decision remains part of the protocol for future capabilities
-    with a concrete, narrowly defined approval policy.
+    PowerShell and Bash are execution primitives for an autonomous local Agent.
+    Requiring approval for every command would prevent normal work.  Future
+    tools with a narrow, meaningful approval boundary can still return ``ask``.
     """
-    if tool_name != "shell":
+    if tool_name not in {"powershell", "bash"}:
         return ActionAssessment("allow")
-
     command = str(arguments.get("command", "")).strip()
     if not command:
-        return ActionAssessment("deny", reason="Shell 命令不能为空", risk_level="low")
+        return ActionAssessment(
+            "deny",
+            reason="Command cannot be empty",
+            risk_level="low",
+        )
+    from .builtin.command import check_command
 
-    from .builtin.shell import _check_command
-
-    blocked = _check_command(command)
+    blocked = check_command(command)
     if blocked:
         return ActionAssessment("deny", reason=blocked, risk_level="high")
-
     return ActionAssessment("allow")

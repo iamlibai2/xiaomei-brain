@@ -1,284 +1,532 @@
-"""File operation tools."""
+"""Safe cross-platform file and search tools."""
 
 from __future__ import annotations
 
-import json
+import difflib
+import glob as glob_module
 import logging
 import os
+import re
+import stat
 import sys
+import tempfile
+from pathlib import Path
+from typing import Any, Iterator
 
-from ..base import Tool, tool
+from ..base import Tool
+from ..execution_context import current_tool_execution
 
 logger = logging.getLogger(__name__)
 
-# 默认输出目录（LLM 写文件时如果给相对路径，自动拼接到此目录）
-# 可通过 set_output_base() 按 agent 隔离
+MAX_READ_LINES = 2000
+MAX_READ_CHARS = 100_000
+MAX_FILE_BYTES = 2 * 1024 * 1024
+MAX_SEARCH_FILES = 10_000
 _output_base: str | None = None
 
 
-def _build_sensitive_paths() -> tuple[str, ...]:
-    """构建敏感路径列表。按平台区分，realpath 比较覆盖符号链接绕过。
-
-    包含 SSH/凭证/系统目录，工具永远不能读写。
-    """
-    common = [
-        os.path.expanduser("~/.ssh"),
-        os.path.expanduser("~/.gnupg"),
-        os.path.expanduser("~/.aws"),
-        os.path.expanduser("~/.config/gcloud"),
-        os.path.expanduser("~/.azure"),
-        os.path.expanduser("~/.kube"),
-        os.path.expanduser("~/.docker"),
-        os.path.expanduser("~/.bash_history"),
-        os.path.expanduser("~/.zsh_history"),
+def _protected_roots() -> tuple[Path, ...]:
+    values = [
+        "~/.ssh",
+        "~/.gnupg",
+        "~/.aws",
+        "~/.config/gcloud",
+        "~/.azure",
+        "~/.kube",
+        "~/.docker",
+        "~/.bash_history",
+        "~/.zsh_history",
     ]
     if sys.platform == "win32":
-        system_root = os.environ.get("SystemRoot", r"C:\Windows")
-        common.extend([
-            system_root,
-            os.path.join(system_root, "System32"),
-            os.path.join(system_root, "SysWOW64"),
+        values.extend([
+            os.environ.get("SystemRoot", r"C:\Windows"),
             os.environ.get("ProgramFiles", r"C:\Program Files"),
             os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
             os.environ.get("ProgramData", r"C:\ProgramData"),
         ])
     else:
-        common.extend([
-            "/etc",
-            "/proc",
-            "/sys",
-            "/var/log",
-            "/boot",
-            "/root/.ssh",
-        ])
-    return tuple(os.path.realpath(p) for p in common)
-
-
-# 硬拒的敏感路径前缀（realpath 比较，覆盖符号链接绕过）。
-_SENSITIVE_PATH_PREFIXES = _build_sensitive_paths()
-
-
-def get_workspace_dir() -> str:
-    """返回当前 Agent 的运行时工作目录，而不是进程启动目录。"""
-    if _output_base:
-        return os.path.join(_output_base, "workspace")
-    return os.environ.get(
-        "XIAOMEI_OUTPUT_DIR",
-        os.path.expanduser("~/.xiaomei-brain/global/workspace"),
+        values.extend(["/etc", "/proc", "/sys", "/boot", "/root/.ssh"])
+    return tuple(
+        Path(value).expanduser().resolve()
+        for value in values
+        if value
     )
 
 
-def _get_output_dir() -> str:
-    """兼容文件工具内部原有名称。"""
-    return get_workspace_dir()
+_PROTECTED_ROOTS = _protected_roots()
 
 
 def set_output_base(base_dir: str) -> None:
-    """设置 per-agent 输出根目录。由 agent_manager.init_agent() 调用。"""
+    """Set the fallback Agent data directory for calls outside Agent Core."""
     global _output_base
     _output_base = base_dir
 
 
-def _get_allowed_roots() -> list[str]:
-    """绝对路径允许的根目录列表。
-
-    默认仅允许 agent workspace；可通过 `XIAOMEI_ALLOWED_PATHS`（用系统路径分隔符）追加。
-    Linux 用冒号，Windows 用分号。
-    """
-    roots: list[str] = []
-    workspace = _get_output_dir()
-    if workspace:
-        roots.append(os.path.realpath(workspace))
-    extra = os.environ.get("XIAOMEI_ALLOWED_PATHS", "")
-    for p in extra.split(os.pathsep):
-        p = p.strip()
-        if p:
-            try:
-                roots.append(os.path.realpath(p))
-            except Exception:
-                continue
-    return roots
+def get_workspace_dir() -> str:
+    context = current_tool_execution()
+    if context and context.workspace_root:
+        return str(Path(context.workspace_root).expanduser().resolve())
+    if _output_base:
+        return str((Path(_output_base) / "workspace").resolve())
+    configured = os.environ.get(
+        "XIAOMEI_OUTPUT_DIR",
+        os.path.expanduser("~/.xiaomei-brain/global/workspace"),
+    )
+    return str(Path(configured).resolve())
 
 
-def _is_sensitive(real_path: str) -> str | None:
-    """检查 real_path 是否落在敏感前缀下，返回拒绝原因；否则返回 None。"""
-    for prefix in _SENSITIVE_PATH_PREFIXES:
-        if real_path == prefix or real_path.startswith(prefix + os.sep):
-            return prefix
-    return None
+def get_working_directory() -> str:
+    context = current_tool_execution()
+    if context and context.working_directory:
+        return str(Path(context.working_directory).expanduser().resolve())
+    return get_workspace_dir()
 
 
-def _resolve_path(path: str) -> tuple[str, str]:
-    """将用户给的路径解析为 realpath，并校验可访问性。
+def _allowed_roots() -> list[Path]:
+    roots = [Path(get_workspace_dir()).resolve()]
+    context = current_tool_execution()
+    if context and context.output_root:
+        roots.append(Path(context.output_root).expanduser().resolve())
+    for item in os.environ.get("XIAOMEI_ALLOWED_PATHS", "").split(os.pathsep):
+        if item.strip():
+            roots.append(Path(item.strip()).expanduser().resolve())
+    return list(dict.fromkeys(roots))
 
-    Returns:
-        (real_full_path, error_message)。成功时 error_message 为空字符串。
 
-    规则：
-    - 先用 expanduser 展开 `~` / `~user`，避免 `~/.ssh/id_rsa` 被当相对路径绕过
-    - 相对路径 → 拼接到 output_dir，然后 realpath。
-    - 绝对路径 → 必须 realpath 后落在 `_get_allowed_roots()` 某个根下。
-    - 任何路径 → realpath 后不能在 `_SENSITIVE_PATH_PREFIXES` 敏感前缀内。
-    - 解析过程中任何 `..` / 符号链接都会被 realpath 展开后再检查。
-    """
-    if not path:
-        return "", f"Error: empty path"
-
-    # 必须先 expanduser：否则 `~/.ssh/id_rsa` 会落到 workspace 内
-    expanded = os.path.expanduser(path)
-
-    if os.path.isabs(expanded):
-        full_path = expanded
-    else:
-        full_path = os.path.join(_get_output_dir(), expanded)
-
+def _is_within(path: Path, root: Path) -> bool:
     try:
-        real_path = os.path.realpath(full_path)
-    except Exception as e:
-        return "", f"Error: cannot resolve path '{path}': {e}"
-
-    # 敏感路径硬拒：realpath 在前，`..` / 符号链接绕过都会被展开
-    sensitive = _is_sensitive(real_path)
-    if sensitive:
-        return "", (
-            f"Error: access denied. '{path}' resolves to '{real_path}', "
-            f"which is under a sensitive location ({sensitive}). "
-            f"For security, file tools cannot access SSH keys, cloud credentials, "
-            f"shell history, or system files. Use a different method."
+        Path(os.path.normcase(str(path))).relative_to(
+            Path(os.path.normcase(str(root))),
         )
-
-    if os.path.isabs(path):
-        allowed_roots = _get_allowed_roots()
-        is_allowed = any(
-            real_path == r or real_path.startswith(r + os.sep)
-            for r in allowed_roots
-        )
-        if not is_allowed:
-            allowed_display = ", ".join(allowed_roots) if allowed_roots else "(none)"
-            return "", (
-                f"Error: access denied. Absolute path '{path}' resolves to "
-                f"'{real_path}', which is outside the allowed directories: "
-                f"{allowed_display}. Use a RELATIVE path (resolved to the workspace) "
-                f"or add the parent directory to XIAOMEI_ALLOWED_PATHS."
-            )
-
-    return real_path, ""
+        return True
+    except ValueError:
+        return False
 
 
-@tool(name="read_file",
-      description="Read the contents of a file. "
-      "Use a RELATIVE path for files in the workspace directory. "
-      "Example: read_file('hello.py') reads hello.py from the current Agent workspace. "
-      "Do not guess an absolute ~/.xiaomei-brain path.")
-def read_file(path: str) -> str:
-    """Read a file and return its contents. Relative paths resolved to workspace dir.
-
-    Security: absolute paths must be under the agent workspace (or XIAOMEI_ALLOWED_PATHS).
-    Sensitive paths (SSH keys, cloud credentials, /etc, etc.) are always rejected.
-    """
-    real_path, error = _resolve_path(path)
-    if error:
-        return error
-    try:
-        with open(real_path, "r", encoding="utf-8") as f:
-            return f.read()
-    except FileNotFoundError:
-        return f"Error: file not found: {path}"
-    except Exception as e:
-        return f"Error: {e}"
-
-
-@tool(name="write_file", description="Write content to a file. "
-      "Always use a RELATIVE path — files are saved to the current Agent workspace. "
-      "Example: write_file('hello_world.py', '...') saves workspace/hello_world.py. "
-      "Do not guess an absolute ~/.xiaomei-brain path.")
-def write_file(path: str, content: str) -> str:
-    """Write content to a file. Relative paths are saved to the default output directory.
-
-    Args:
-        path: File path (relative paths are saved to examples/, absolute paths used as-is)
-        content: File content
-
-    Security: same access controls as read_file.
-    """
-    real_path, error = _resolve_path(path)
-    if error:
-        return error
-    try:
-        parent = os.path.dirname(real_path)
-        if parent and not os.path.isdir(parent):
-            os.makedirs(parent, exist_ok=True)
-        with open(real_path, "w", encoding="utf-8") as f:
-            f.write(content)
-        return f"Successfully wrote to {real_path}"
-    except Exception as e:
-        return f"Error: {e}"
-
-
-@tool(name="edit_file",
-      description="Edit an existing file by replacing old_string with new_string. "
-      "Use this when modifying code — not for creating new files. "
-      "The old_string must match the file content exactly (including whitespace).")
-def edit_file(path: str, old_string: str, new_string: str) -> str:
-    """Edit a file by replacing old_string with new_string.
-
-    Performs a line-by-line diff and returns structured result
-    so the caller can display a Claude-style diff.
-
-    Args:
-        path: File path (relative paths resolved to workspace dir)
-        old_string: Exact text to find and replace (must match file content)
-        new_string: Replacement text
-
-    Returns:
-        JSON with file_path, old_lines, new_lines, and diff output, or error message.
-    """
-    real_path, error = _resolve_path(path)
-    if error:
-        return json.dumps({"error": error})
-
-    try:
-        with open(real_path, "r", encoding="utf-8") as f:
-            original = f.read()
-
-        if old_string not in original:
-            return json.dumps({
-                "error": "old_string not found in file",
-                "file": real_path,
-            })
-
-        new_content = original.replace(old_string, new_string, 1)
-        with open(real_path, "w", encoding="utf-8") as f:
-            f.write(new_content)
-
-        idx = original.find(old_string)
-        if idx < 0:
-            added_l, removed_l = [], []
-            removed_content, added_content = [], []
-            base = 0
+def _resolve(path: str, *, exists: bool = False) -> tuple[Path | None, str]:
+    if not isinstance(path, str) or not path.strip():
+        return None, "Error: path cannot be empty"
+    candidate = Path(path).expanduser()
+    if not candidate.is_absolute():
+        context = current_tool_execution()
+        first = candidate.parts[0].lower() if candidate.parts else ""
+        if (
+            context
+            and context.workspace_root
+            and first in {"inputs", "work", "outputs"}
+        ):
+            candidate = Path(context.workspace_root) / candidate
         else:
-            base = original[:idx].count("\n") + 1
-            # 不以 \n 结尾 → 最后一行算入；否则 \n 已是分隔符，下一行才开始
-            removed_l = list(range(base, base + old_string.count("\n") + (0 if old_string.endswith("\n") else 1)))
-            added_l = list(range(base, base + new_string.count("\n") + (0 if new_string.endswith("\n") else 1))) if new_string else []
-            removed_content = old_string.split("\n")
-            added_content = new_string.split("\n") if new_string else []
-
-        return json.dumps({
-            "file_path": real_path,
-            "added_lines": added_l,
-            "removed_lines": removed_l,
-            "added_count": len(added_l),
-            "removed_count": len(removed_l),
-            "removed_content": removed_content,
-            "added_content": added_content,
-            "base_line": base,
-        }, ensure_ascii=False)
-
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+            candidate = Path(get_working_directory()) / candidate
+    try:
+        resolved = candidate.resolve(strict=False)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return None, f"Error: cannot resolve path: {exc}"
+    if any(_is_within(resolved, root) for root in _PROTECTED_ROOTS):
+        return None, "Error: access denied. The path is in a protected location."
+    if not any(_is_within(resolved, root) for root in _allowed_roots()):
+        return None, (
+            "Error: access denied. The path is outside this Agent's workspace "
+            "and configured allowed directories."
+        )
+    if exists and not resolved.exists():
+        return None, f"Error: path not found: {path}"
+    return resolved, ""
 
 
-read_file_tool: Tool = read_file
-write_file_tool: Tool = write_file
-edit_file_tool: Tool = edit_file
+def _display(path: Path) -> str:
+    try:
+        return path.resolve().relative_to(
+            Path(get_working_directory()).resolve(),
+        ).as_posix()
+    except ValueError:
+        return str(path.resolve())
+
+
+def _binary(data: bytes) -> bool:
+    if not data:
+        return False
+    if b"\x00" in data:
+        return True
+    sample = data[:4096]
+    controls = sum(byte < 9 or 13 < byte < 32 for byte in sample)
+    return controls / len(sample) > 0.1
+
+
+def read(path: str, offset: int = 1, limit: int = 500) -> dict[str, Any]:
+    resolved, error = _resolve(path, exists=True)
+    if error:
+        return {"error": error}
+    assert resolved is not None
+    if not resolved.is_file():
+        return {"error": f"Error: not a file: {path}"}
+    try:
+        raw = resolved.read_bytes()
+    except OSError as exc:
+        return {"error": f"Error: {exc}"}
+    if _binary(raw):
+        return {"error": f"Error: binary file cannot be read as text: {path}"}
+    lines = raw.decode("utf-8-sig", errors="replace").splitlines()
+    offset = max(1, int(offset or 1))
+    limit = min(MAX_READ_LINES, max(1, int(limit or 500)))
+    selected = lines[offset - 1:offset - 1 + limit]
+    content = "\n".join(
+        f"{number:>6}|{line}"
+        for number, line in enumerate(selected, start=offset)
+    )
+    if len(content) > MAX_READ_CHARS:
+        return {"error": "Error: selected range is too large; use a smaller limit"}
+    end = offset + len(selected) - 1
+    return {
+        "path": _display(resolved),
+        "content": content,
+        "total_lines": len(lines),
+        "file_size": len(raw),
+        "offset": offset,
+        "truncated": end < len(lines),
+        "next_offset": end + 1 if end < len(lines) else None,
+    }
+
+
+def _text_format(path: Path) -> tuple[bool, str]:
+    try:
+        sample = path.read_bytes()[:65536]
+    except OSError:
+        return False, "\n"
+    bom = sample.startswith(b"\xef\xbb\xbf")
+    crlf = sample.count(b"\r\n")
+    lf = sample.count(b"\n") - crlf
+    return bom, "\r\n" if crlf > lf else "\n"
+
+
+def _atomic_write(path: Path, content: str) -> tuple[int, bool]:
+    existed = path.exists()
+    bom, newline = _text_format(path) if existed else (False, "\n")
+    normalized = content.replace("\r\n", "\n").replace("\r", "\n")
+    if newline == "\r\n":
+        normalized = normalized.replace("\n", "\r\n")
+    data = normalized.encode("utf-8")
+    if bom:
+        data = b"\xef\xbb\xbf" + data
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mode: int | None = None
+    if existed:
+        try:
+            mode = stat.S_IMODE(path.stat().st_mode)
+        except OSError:
+            pass
+    temp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix=".xiaomei-",
+            suffix=".tmp",
+            dir=str(path.parent),
+            delete=False,
+        ) as handle:
+            temp_path = handle.name
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if mode is not None:
+            os.chmod(temp_path, mode)
+        os.replace(temp_path, path)
+        return len(data), not existed
+    finally:
+        if temp_path:
+            try:
+                Path(temp_path).unlink(missing_ok=True)
+            except OSError:
+                logger.debug("Failed to remove temp file", exc_info=True)
+
+
+def write(path: str, content: str) -> dict[str, Any]:
+    if not isinstance(content, str):
+        return {"error": "Error: content must be text"}
+    resolved, error = _resolve(path)
+    if error:
+        return {"error": error}
+    assert resolved is not None
+    try:
+        size, created = _atomic_write(resolved, content)
+    except OSError as exc:
+        return {"error": f"Error: {exc}"}
+    return {
+        "path": str(resolved),
+        "relative_path": _display(resolved),
+        "bytes_written": size,
+        "created": created,
+    }
+
+
+def edit(
+    path: str,
+    old_string: str,
+    new_string: str,
+    replace_all: bool = False,
+) -> dict[str, Any]:
+    resolved, error = _resolve(path, exists=True)
+    if error:
+        return {"error": error}
+    assert resolved is not None
+    try:
+        raw = resolved.read_bytes()
+    except OSError as exc:
+        return {"error": f"Error: {exc}"}
+    if _binary(raw):
+        return {"error": f"Error: binary file cannot be edited: {path}"}
+    original = raw.decode("utf-8-sig", errors="replace")
+    count = original.count(old_string)
+    if count == 0:
+        return {"error": "Error: old_string was not found"}
+    if count > 1 and not replace_all:
+        return {
+            "error": (
+                f"Error: old_string occurs {count} times; add surrounding "
+                "context or set replace_all=true"
+            ),
+        }
+    updated = original.replace(old_string, new_string, -1 if replace_all else 1)
+    # Build a display diff independently from the source file's final newline.
+    # ``keepends=True`` can concatenate ``-old`` and ``+new`` when the edited
+    # file has no trailing newline, which makes CLI/Desktop output misleading.
+    diff_lines = list(difflib.unified_diff(
+        original.splitlines(),
+        updated.splitlines(),
+        fromfile=_display(resolved),
+        tofile=_display(resolved),
+        lineterm="",
+    ))
+    diff = "\n".join(diff_lines)
+    if diff:
+        diff += "\n"
+    try:
+        size, _created = _atomic_write(resolved, updated)
+    except OSError as exc:
+        return {"error": f"Error: {exc}"}
+    return {
+        "path": str(resolved),
+        "relative_path": _display(resolved),
+        "replacements": count if replace_all else 1,
+        "bytes_written": size,
+        "diff": diff,
+    }
+
+
+def _pattern_error(pattern: str) -> str:
+    if not isinstance(pattern, str) or not pattern.strip():
+        return "Error: pattern cannot be empty"
+    parts = Path(pattern).parts
+    if Path(pattern).is_absolute() or ".." in parts:
+        return "Error: pattern must be relative and cannot contain '..'"
+    return ""
+
+
+def glob(pattern: str, path: str = ".", limit: int = 200) -> dict[str, Any]:
+    error = _pattern_error(pattern)
+    if error:
+        return {"error": error}
+    root, error = _resolve(path, exists=True)
+    if error:
+        return {"error": error}
+    assert root is not None
+    if not root.is_dir():
+        return {"error": f"Error: not a directory: {path}"}
+    limit = min(1000, max(1, int(limit or 200)))
+    found: list[Path] = []
+    try:
+        iterator = glob_module.iglob(
+            str(root / pattern),
+            recursive=True,
+            include_hidden=True,
+        )
+        for value in iterator:
+            item = Path(value)
+            if item.is_file():
+                found.append(item)
+                if len(found) > limit:
+                    break
+    except (OSError, ValueError) as exc:
+        return {"error": f"Error: {exc}"}
+    found.sort(key=lambda item: item.stat().st_mtime, reverse=True)
+    return {
+        "files": [_display(item) for item in found[:limit]],
+        "count": min(len(found), limit),
+        "truncated": len(found) > limit,
+    }
+
+
+def _grep_candidates(path: str, file_glob: str) -> tuple[Iterator[Path], str]:
+    root, error = _resolve(path, exists=True)
+    if error:
+        return iter(()), error
+    assert root is not None
+    if root.is_file():
+        return iter((root,)), ""
+    error = _pattern_error(file_glob)
+    if error:
+        return iter(()), error
+    if "/" not in file_glob and "\\" not in file_glob:
+        file_glob = f"**/{file_glob}"
+    iterator = (
+        Path(value)
+        for value in glob_module.iglob(
+            str(root / file_glob),
+            recursive=True,
+            include_hidden=True,
+        )
+        if Path(value).is_file()
+    )
+    return iterator, ""
+
+
+def grep(
+    pattern: str,
+    path: str = ".",
+    glob: str = "**/*",
+    output_mode: str = "content",
+    context: int = 0,
+    case_insensitive: bool = False,
+    limit: int = 100,
+) -> dict[str, Any]:
+    if output_mode not in {"content", "files_with_matches", "count"}:
+        return {"error": "Error: invalid output_mode"}
+    try:
+        expression = re.compile(pattern, re.IGNORECASE if case_insensitive else 0)
+    except re.error as exc:
+        return {"error": f"Error: invalid regular expression: {exc}"}
+    candidates, error = _grep_candidates(path, glob)
+    if error:
+        return {"error": error}
+    context = min(20, max(0, int(context or 0)))
+    limit = min(2000, max(1, int(limit or 100)))
+    matches: list[dict[str, Any]] = []
+    counts: dict[str, int] = {}
+    files_seen = 0
+    for candidate in candidates:
+        files_seen += 1
+        if files_seen > MAX_SEARCH_FILES:
+            break
+        try:
+            if candidate.stat().st_size > MAX_FILE_BYTES:
+                continue
+            raw = candidate.read_bytes()
+        except OSError:
+            continue
+        if _binary(raw):
+            continue
+        lines = raw.decode("utf-8-sig", errors="replace").splitlines()
+        display = _display(candidate)
+        for index, line in enumerate(lines):
+            if not expression.search(line):
+                continue
+            counts[display] = counts.get(display, 0) + 1
+            if output_mode == "content" and len(matches) < limit:
+                start, end = max(0, index - context), min(len(lines), index + context + 1)
+                matches.append({
+                    "path": display,
+                    "line": index + 1,
+                    "content": line,
+                    "before": lines[start:index],
+                    "after": lines[index + 1:end],
+                })
+        if output_mode == "content" and len(matches) >= limit:
+            break
+        if output_mode == "files_with_matches" and len(counts) >= limit:
+            break
+    result: dict[str, Any] = {
+        "total_matches": sum(counts.values()),
+        "matched_files": len(counts),
+    }
+    if output_mode == "content":
+        result["matches"] = matches
+        result["truncated"] = result["total_matches"] > len(matches)
+    elif output_mode == "files_with_matches":
+        result["files"] = list(counts)[:limit]
+        result["truncated"] = len(counts) > limit
+    else:
+        result["counts"] = dict(list(counts.items())[:limit])
+        result["truncated"] = len(counts) > limit
+    return result
+
+
+def _tool(
+    name: str,
+    description: str,
+    properties: dict[str, Any],
+    required: list[str],
+    func: Any,
+) -> Tool:
+    return Tool(
+        name=name,
+        description=description,
+        parameters={
+            "type": "object",
+            "properties": properties,
+            "required": required,
+        },
+        func=func,
+        category="fs",
+    )
+
+
+read_tool = _tool(
+    "read",
+    "Read a text file with line numbers and pagination.",
+    {
+        "path": {"type": "string"},
+        "offset": {"type": "integer", "minimum": 1, "default": 1},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 2000, "default": 500},
+    },
+    ["path"],
+    read,
+)
+write_tool = _tool(
+    "write",
+    "Create or completely replace a UTF-8 text file atomically.",
+    {"path": {"type": "string"}, "content": {"type": "string"}},
+    ["path", "content"],
+    write,
+)
+edit_tool = _tool(
+    "edit",
+    "Edit a text file by exact replacement and return a unified diff.",
+    {
+        "path": {"type": "string"},
+        "old_string": {"type": "string"},
+        "new_string": {"type": "string"},
+        "replace_all": {"type": "boolean", "default": False},
+    },
+    ["path", "old_string", "new_string"],
+    edit,
+)
+glob_tool = _tool(
+    "glob",
+    "Find files using a glob path pattern.",
+    {
+        "pattern": {"type": "string"},
+        "path": {"type": "string", "default": "."},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 200},
+    },
+    ["pattern"],
+    glob,
+)
+grep_tool = _tool(
+    "grep",
+    "Search text contents with a regular expression.",
+    {
+        "pattern": {"type": "string"},
+        "path": {"type": "string", "default": "."},
+        "glob": {"type": "string", "default": "**/*"},
+        "output_mode": {
+            "type": "string",
+            "enum": ["content", "files_with_matches", "count"],
+            "default": "content",
+        },
+        "context": {"type": "integer", "minimum": 0, "maximum": 20, "default": 0},
+        "case_insensitive": {"type": "boolean", "default": False},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 2000, "default": 100},
+    },
+    ["pattern"],
+    grep,
+)

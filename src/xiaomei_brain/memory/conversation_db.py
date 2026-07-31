@@ -945,7 +945,7 @@ class ConversationDB(SQLiteStore):
     def get_today_code_stats(self) -> dict[str, int]:
         """Count lines added/removed by file tools today.
 
-        Reads tool_history for write_file and edit_file calls since
+        Reads tool_history for current and historical file-write tools since
         midnight local time. Returns {"added": N, "removed": M}.
         """
         import json
@@ -958,14 +958,15 @@ class ConversationDB(SQLiteStore):
 
         rows = conn.execute(
             """SELECT tool_name, args, result FROM tool_history
-               WHERE created_at >= ? AND tool_name IN ('write_file', 'edit_file')""",
+               WHERE created_at >= ?
+                 AND tool_name IN ('write', 'edit', 'write_file', 'edit_file')""",
             (today_start,),
         ).fetchall()
 
         added = 0
         removed = 0
         for r in rows:
-            if r["tool_name"] == "write_file":
+            if r["tool_name"] in {"write", "write_file"}:
                 try:
                     args = json.loads(r["args"] or "{}")
                     content = args.get("content", "")
@@ -974,7 +975,7 @@ class ConversationDB(SQLiteStore):
                         added += content.count("\n") + 1
                 except (json.JSONDecodeError, TypeError):
                     pass
-            elif r["tool_name"] == "edit_file":
+            elif r["tool_name"] in {"edit", "edit_file"}:
                 try:
                     result = json.loads(r["result"] or "{}")
                     added += result.get("added_count", 0)

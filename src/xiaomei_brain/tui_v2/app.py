@@ -52,6 +52,14 @@ S_TOOL = "tool"
 S_ERROR = "error"
 
 _TOOL_HINTS = {
+    "write": "📝 编写文件中",
+    "edit": "🔧 修改文件中",
+    "powershell": "⚡ 运行 PowerShell 中",
+    "bash": "⚡ 运行 Bash 中",
+    "process": "⚙️ 管理后台进程中",
+    "read": "📖 阅读文件中",
+    "glob": "🔎 查找文件中",
+    "grep": "🔎 搜索内容中",
     "write_file": "📝 编撰文档中",
     "edit_file": "🔧 修改代码中",
     "shell": "⚡ 运行命令中",

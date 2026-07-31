@@ -27,10 +27,14 @@ from .service import AssignmentService
 
 
 DEFAULT_BACKGROUND_TOOLS = frozenset({
-    "shell",
-    "read_file",
-    "write_file",
-    "edit_file",
+    "powershell",
+    "bash",
+    "process",
+    "read",
+    "write",
+    "edit",
+    "glob",
+    "grep",
     "web_search",
     "web_get",
     "read_document",
@@ -116,6 +120,7 @@ class IsolatedAssignmentRunner:
         )
         runtime.active_assignment_id = context.assignment_id
         runtime.tool_workspace_root = str(workspace_root)
+        runtime.tool_working_directory = str(work_dir)
         runtime.tool_output_root = str(outputs_dir)
 
         tool_trace: list[dict[str, Any]] = list(
@@ -790,108 +795,8 @@ class IsolatedAssignmentRunner:
             return registry
         for tool in source.list_tools():
             if tool.name in self.allowed_tools:
-                registry.register(
-                    self._bind_workspace_tool(tool, context)
-                    if context is not None
-                    and tool.name in {"shell", "read_file", "write_file", "edit_file"}
-                    and str(getattr(tool.func, "__module__", "")).startswith(
-                        "xiaomei_brain.tools.builtin",
-                    )
-                    else tool
-                )
+                registry.register(tool)
         return registry
-
-    def _bind_workspace_tool(
-        self,
-        source: Any,
-        context: AssignmentExecutionContext,
-    ) -> Any:
-        root, work_dir, _outputs_dir = self._workspace_dirs(context)
-
-        def read_file(path: str) -> str:
-            resolved, error = self._resolve_workspace_path(root, path)
-            if error:
-                return error
-            try:
-                return resolved.read_text(encoding="utf-8")
-            except FileNotFoundError:
-                return f"Error: file not found: {path}"
-            except UnicodeDecodeError:
-                return f"Error: binary file cannot be read as UTF-8 text: {path}"
-            except OSError as exc:
-                return f"Error: {exc}"
-
-        def write_file(path: str, content: str) -> str:
-            resolved, error = self._resolve_workspace_path(root, path)
-            if error:
-                return error
-            try:
-                resolved.parent.mkdir(parents=True, exist_ok=True)
-                resolved.write_text(content, encoding="utf-8")
-                return f"Successfully wrote to {resolved}"
-            except OSError as exc:
-                return f"Error: {exc}"
-
-        def edit_file(path: str, old_string: str, new_string: str) -> str:
-            resolved, error = self._resolve_workspace_path(root, path)
-            if error:
-                return json.dumps({"error": error}, ensure_ascii=False)
-            try:
-                original = resolved.read_text(encoding="utf-8")
-                if old_string not in original:
-                    return json.dumps({"error": "old_string not found in file"})
-                resolved.write_text(
-                    original.replace(old_string, new_string, 1),
-                    encoding="utf-8",
-                )
-                return json.dumps({"file_path": str(resolved)}, ensure_ascii=False)
-            except (OSError, UnicodeDecodeError) as exc:
-                return json.dumps({"error": str(exc)}, ensure_ascii=False)
-
-        def shell(command: str) -> str:
-            from xiaomei_brain.tools.builtin.shell import run_shell_command
-            return run_shell_command(command, cwd=str(work_dir))
-
-        functions = {
-            "read_file": read_file,
-            "write_file": write_file,
-            "edit_file": edit_file,
-            "shell": shell,
-        }
-        location_hint = (
-            "Shell starts in work/. Use ../inputs/ for source attachments and "
-            "../outputs/ for final deliverables."
-            if source.name == "shell"
-            else "Bare relative paths resolve inside work/. Prefix inputs/ or outputs/ explicitly."
-        )
-        return type(source)(
-            name=source.name,
-            description=(
-                f"{source.description} Assignment workspace root: {root}. "
-                f"{location_hint}"
-            ),
-            parameters=copy.deepcopy(source.parameters),
-            func=functions[source.name],
-            source=source.source,
-            optional=source.optional,
-            emoji=source.emoji,
-            category=source.category,
-        )
-
-    @staticmethod
-    def _resolve_workspace_path(root: Path, value: str) -> tuple[Path, str]:
-        if not value.strip():
-            return root, "Error: empty path"
-        candidate = Path(value).expanduser()
-        if not candidate.is_absolute():
-            first = candidate.parts[0].lower() if candidate.parts else ""
-            candidate = root / candidate if first in {"inputs", "work", "outputs"} else root / "work" / candidate
-        try:
-            resolved = candidate.resolve()
-            resolved.relative_to(root.resolve())
-        except (OSError, ValueError):
-            return root, "Error: path is outside this Assignment workspace"
-        return resolved, ""
 
     @staticmethod
     def _workspace_dirs(

@@ -38,6 +38,14 @@ def print_react_result(text: str, label: str = "") -> None:
 # ── Dynamic status hints ──────────────────────────────────────
 
 _HINTS: dict[str, str] = {
+    "write": "Writing file...",
+    "edit": "Editing file...",
+    "powershell": "Running PowerShell...",
+    "bash": "Running Bash...",
+    "process": "Managing background process...",
+    "read": "Reading file...",
+    "glob": "Finding files...",
+    "grep": "Searching file contents...",
     "write_file": "📝 编撰文档中...",
     "present_artifacts": "📎 正在交付文件...",
     "edit_file": "🔧 修改代码中...",
@@ -108,6 +116,17 @@ def print_edit_diff(idx: int, name: str, arguments: dict, result: str) -> None:
         print_tool_result(idx, result)
         return
 
+    if "diff" in data:
+        file_path = data.get("relative_path") or data.get("path", "")
+        print(f"\033[36mUpdate({file_path})\033[0m")
+        for line in str(data.get("diff", "")).splitlines():
+            color = (
+                "\033[32m" if line.startswith("+")
+                else "\033[31m" if line.startswith("-")
+                else "\033[90m"
+            )
+            print(f"{color}{line}\033[0m")
+        return
     file_path = data.get("file_path", "")
     added_count = data.get("added_count", 0)
     removed_count = data.get("removed_count", 0)

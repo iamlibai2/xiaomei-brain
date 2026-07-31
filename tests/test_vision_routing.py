@@ -52,6 +52,47 @@ def test_vision_capable_primary_receives_original_images():
     assert analysis == ""
 
 
+@pytest.mark.parametrize("prompt_text", [
+    "把这张图片原样插入 Word 文档",
+    "用这个图片",
+])
+def test_asset_only_request_skips_image_analysis(prompt_text):
+    primary = SimpleNamespace(supports_vision=False, provider="test", model="text-primary")
+
+    class UnexpectedVisionLLM:
+        def chat(self, messages):
+            pytest.fail("asset-only requests must not invoke a vision model")
+
+    agent = SimpleNamespace(
+        llm=primary,
+        vision_llm=UnexpectedVisionLLM(),
+        vision_model="test/vision",
+    )
+
+    assert route_chat_images(agent, prompt_text, ["one.png"]) == ([], "")
+
+
+def test_document_request_that_needs_image_understanding_still_uses_vision(tmp_path):
+    image_path = tmp_path / "one.png"
+    image_path.write_bytes(b"image")
+
+    class VisionLLM:
+        def chat(self, messages):
+            return SimpleNamespace(content="图中是系统架构")
+
+    primary = SimpleNamespace(supports_vision=False, provider="test", model="text-primary")
+    agent = SimpleNamespace(llm=primary, vision_llm=VisionLLM(), vision_model="test/vision")
+
+    images, analysis = route_chat_images(
+        agent,
+        "先分析图片内容，再写进 Word 报告",
+        [str(image_path)],
+    )
+
+    assert images == []
+    assert analysis == "图中是系统架构"
+
+
 def test_text_primary_uses_configured_fallback_vision_model(tmp_path):
     image_path = tmp_path / "one.png"
     image_path.write_bytes(b"not-a-real-png-but-routing-only-needs-bytes")

@@ -3,7 +3,7 @@ name: spreadsheet-documents
 description: 创建、修改和验收 Excel XLSX 工作簿
 version: 1.0.0
 tags: [spreadsheet, excel, xlsx, data]
-requires_tools: [read_document, write_file, write_document, present_artifacts]
+requires_tools: [read_document, write, write_document, present_artifacts]
 ---
 
 # 电子表格工作流

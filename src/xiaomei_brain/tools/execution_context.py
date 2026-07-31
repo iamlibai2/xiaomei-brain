@@ -29,6 +29,7 @@ class ToolExecutionContext:
     session_id: str = ""
     attachments: tuple[dict[str, Any], ...] = ()
     workspace_root: str = ""
+    working_directory: str = ""
     output_root: str = ""
 
     def publish_artifacts(self, result: str) -> None:
@@ -70,6 +71,7 @@ def bind_tool_execution(
     session_id: str = "",
     attachments: tuple[dict[str, Any], ...] = (),
     workspace_root: str = "",
+    working_directory: str = "",
     output_root: str = "",
 ) -> Iterator[ToolExecutionContext]:
     """Expose one tool call's immutable context while its function starts."""
@@ -82,6 +84,7 @@ def bind_tool_execution(
         session_id=session_id,
         attachments=tuple(dict(item) for item in attachments),
         workspace_root=workspace_root,
+        working_directory=working_directory,
         output_root=output_root,
     )
     token = _current_context.set(context)

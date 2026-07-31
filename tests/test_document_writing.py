@@ -360,6 +360,74 @@ def test_word_creation_uses_owned_image_and_page_layout(tmp_path):
     assert "企业标识" in [paragraph.text for paragraph in styled.paragraphs]
 
 
+def test_word_creation_uses_controlled_workspace_image(tmp_path):
+    registry = _word_registry()
+    tool = create_write_document_tool(registry)
+    workspace = tmp_path / "workspace"
+    work = workspace / "work"
+    outputs = workspace / "outputs"
+    work.mkdir(parents=True)
+    image = work / "generated.png"
+    image.write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC"
+        "AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    ))
+    spec = work / "with-image.json"
+    spec.write_text(json.dumps({
+        "blocks": [{
+            "type": "image",
+            "workspace_path": "work/generated.png",
+            "width_cm": 2,
+        }],
+    }), encoding="utf-8")
+
+    with bind_tool_execution(
+        tool_call_id="call-workspace-image",
+        tool_name="write_document",
+        arguments={},
+        artifact_callback=None,
+        workspace_root=str(workspace),
+        working_directory=str(work),
+        output_root=str(outputs),
+    ):
+        result = tool.execute(
+            format="word",
+            specification_path="work/with-image.json",
+            output_name="workspace-image.docx",
+        )
+
+    assert result["success"] is True
+    assert len(Document(outputs / "workspace-image.docx").inline_shapes) == 1
+
+
+def test_write_document_rejects_workspace_image_traversal(tmp_path):
+    registry = _word_registry()
+    tool = create_write_document_tool(registry)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    spec = workspace / "unsafe.json"
+    spec.write_text(json.dumps({
+        "blocks": [{"type": "image", "workspace_path": "../outside.png"}],
+    }), encoding="utf-8")
+
+    with bind_tool_execution(
+        tool_call_id="call-unsafe-image",
+        tool_name="write_document",
+        arguments={},
+        artifact_callback=None,
+        workspace_root=str(workspace),
+        output_root=str(workspace / "outputs"),
+    ):
+        result = tool.execute(
+            format="word",
+            specification_path="unsafe.json",
+            output_name="unsafe.docx",
+        )
+
+    assert "relative workspace path" in result["error"]
+    assert not (workspace / "outputs" / "unsafe.docx").exists()
+
+
 def test_write_document_rejects_paths_and_unowned_sources(tmp_path):
     registry = _word_registry()
     tool = create_write_document_tool(registry)

@@ -106,6 +106,7 @@ class Agent:
         # arbitrary filesystem path from the model for attachment access.
         self.current_attachments: list[dict[str, Any]] = []
         self.tool_workspace_root: str = ""
+        self.tool_working_directory: str = ""
         self.tool_output_root: str = ""
         self.tool_call_buffer: ToolCallBuffer = ToolCallBuffer()  # 实例级，每个 Agent 独立
 
@@ -422,9 +423,9 @@ class Agent:
                         rec.result = str(result)
 
                     args_dict = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
-                    if tc.name == "edit_file":
+                    if tc.name in {"edit", "edit_file"}:
                         _ped(idx, tc.name, args_dict, result)
-                    elif tc.name == "write_file":
+                    elif tc.name in {"write", "write_file"}:
                         _pwr(idx, tc.name, args_dict, result)
                     else:
                         _ptr(idx, result)
@@ -763,6 +764,7 @@ class Agent:
                     session_id=self.session_id,
                     attachments=tuple(self.current_attachments),
                     workspace_root=self.tool_workspace_root,
+                    working_directory=self.tool_working_directory,
                     output_root=self.tool_output_root,
                 ):
                     result = normalize_tool_result(
@@ -913,9 +915,9 @@ class Agent:
 
                     args_dict = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
                     if not quiet:
-                        if tc.name == "edit_file":
+                        if tc.name in {"edit", "edit_file"}:
                             print_edit_diff(_idx, tc.name, args_dict, result)
-                        elif tc.name == "write_file":
+                        elif tc.name in {"write", "write_file"}:
                             print_write_result(_idx, tc.name, args_dict, result)
                         else:
                             print_tool_result(_idx, result)

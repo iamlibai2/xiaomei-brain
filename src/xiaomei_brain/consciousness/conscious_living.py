@@ -260,6 +260,11 @@ class ConsciousLiving(Living):
         agent_base_dir = os.path.expanduser(f"~/.xiaomei-brain/{self._agent_id}")
         from ..tools.builtin import file_ops
         file_ops.set_output_base(agent_base_dir)
+        live_agent = self.agent._get_agent()
+        workspace_dir = os.path.join(agent_base_dir, "workspace")
+        live_agent.tool_workspace_root = workspace_dir
+        live_agent.tool_working_directory = workspace_dir
+        live_agent.tool_output_root = workspace_dir
 
         boot_line("记忆提取器", "OK")
 

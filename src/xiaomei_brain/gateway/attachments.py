@@ -264,11 +264,14 @@ def _stored_attachment_path(
 
 
 def append_text_attachments(content: str, attachments: list[dict[str, Any]]) -> str:
-    readable_items = [item for item in attachments if item.get("kind") in {"text", "document"}]
-    if not readable_items:
+    context_items = [
+        item for item in attachments
+        if item.get("kind") in {"text", "document", "image"}
+    ]
+    if not context_items:
         return content
     sections = [content] if content else ["请阅读以下附件并根据其内容作答。"]
-    for item in readable_items:
+    for item in context_items:
         safe_name = html.escape(str(item["name"]), quote=True)
         if item.get("kind") == "document":
             safe_id = html.escape(str(item.get("id", "")), quote=True)
@@ -277,6 +280,14 @@ def append_text_attachments(content: str, attachments: list[dict[str, Any]]) -> 
                 f'\n<attached_document id="{safe_id}" name="{safe_name}" mime_type="{safe_mime}">\n'
                 "Use the read_document tool with this attachment id to inspect its content.\n"
                 "</attached_document>"
+            )
+        elif item.get("kind") == "image":
+            safe_id = html.escape(str(item.get("id", "")), quote=True)
+            safe_mime = html.escape(str(item.get("mime_type", "")), quote=True)
+            sections.append(
+                f'\n<attached_image id="{safe_id}" name="{safe_name}" mime_type="{safe_mime}">\n'
+                "This image id can be used as attachment_id in a document specification.\n"
+                "</attached_image>"
             )
         else:
             sections.append(

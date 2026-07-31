@@ -12,6 +12,48 @@ from xiaomei_brain.tools.base import Tool
 from xiaomei_brain.tools.execution_context import current_tool_execution
 
 
+_DOCUMENT_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+_MAX_DOCUMENT_ASSET_BYTES = 10 * 1024 * 1024
+
+
+def _workspace_asset_references(value: Any) -> set[str]:
+    """Collect explicit workspace_path values without scanning the workspace."""
+    found: set[str] = set()
+    if isinstance(value, dict):
+        raw_path = value.get("workspace_path")
+        if isinstance(raw_path, str) and raw_path.strip():
+            found.add(raw_path.strip())
+        for child in value.values():
+            found.update(_workspace_asset_references(child))
+    elif isinstance(value, list):
+        for child in value:
+            found.update(_workspace_asset_references(child))
+    return found
+
+
+def _resolve_workspace_asset(
+    raw_path: str,
+    workspace_root: Path,
+    working_directory: Path,
+) -> Path:
+    """Resolve one explicitly referenced image inside the execution workspace."""
+    candidate = Path(raw_path)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        raise ValueError(f"workspace_path must be a relative workspace path: {raw_path}")
+    first = candidate.parts[0].lower() if candidate.parts else ""
+    base = workspace_root if first in {"inputs", "work", "outputs"} else working_directory
+    try:
+        resolved = (base / candidate).resolve(strict=True)
+        resolved.relative_to(workspace_root)
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Workspace image is unavailable: {raw_path}") from exc
+    if not resolved.is_file() or resolved.suffix.lower() not in _DOCUMENT_IMAGE_SUFFIXES:
+        raise ValueError(f"workspace_path is not a supported image: {raw_path}")
+    if resolved.stat().st_size > _MAX_DOCUMENT_ASSET_BYTES:
+        raise ValueError(f"Workspace image exceeds 10 MB: {raw_path}")
+    return resolved
+
+
 def _available_output_path(output_root: Path, requested_name: str) -> Path:
     """Choose a new output path without replacing an earlier deliverable."""
     requested = output_root / requested_name
@@ -100,6 +142,7 @@ def create_write_document_tool(plugin_registry: Any) -> Tool:
         from xiaomei_brain.tools.builtin.file_ops import get_workspace_dir
 
         workspace_root = Path(context.workspace_root or get_workspace_dir()).resolve()
+        working_directory = Path(context.working_directory or workspace_root).resolve()
         output_root = Path(context.output_root or workspace_root).resolve()
         spec_path = Path(specification_path).expanduser()
         if not spec_path.is_absolute():
@@ -152,6 +195,15 @@ def create_write_document_tool(plugin_registry: Any) -> Tool:
             local_path = Path(str(attachment.get("local_path") or ""))
             if attachment_id and local_path.is_file():
                 asset_paths[attachment_id] = local_path
+        try:
+            for workspace_path in _workspace_asset_references(specification):
+                asset_paths[f"workspace:{workspace_path}"] = _resolve_workspace_asset(
+                    workspace_path,
+                    workspace_root,
+                    working_directory,
+                )
+        except ValueError as exc:
+            return {"error": str(exc), "format": format}
 
         temporary_path = output_root / (
             f".{output_path.stem}.{uuid4().hex}.tmp{output_path.suffix}"
@@ -181,7 +233,8 @@ def create_write_document_tool(plugin_registry: Any) -> Tool:
             "Create or revise a document through a registered format plugin. First write the "
             "format-specific JSON specification inside the current workspace, then pass its "
             "relative path. To revise an uploaded document, pass its current attachment id; "
-            "the original is never overwritten."
+            "the original is never overwritten. Specifications may reference current image "
+            "attachment ids or relative workspace image paths exposed by image tools."
         ),
         parameters={
             "type": "object",

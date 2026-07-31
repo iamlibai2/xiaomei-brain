@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 from xiaomei_brain.tools.base import tool
+from xiaomei_brain.tools.execution_context import current_tool_execution
 
 from .provider import MAX_IMAGES, VALID_SIZES, SeedreamProvider
 
@@ -17,9 +18,26 @@ _output_base: str | None = None
 
 
 def _get_output_dir() -> str:
+    context = current_tool_execution()
+    if context is not None:
+        execution_root = context.output_root or context.workspace_root
+        if execution_root:
+            return str((Path(execution_root) / "images").resolve())
     if _output_base:
         return str(Path(_output_base) / "images")
     return str(Path.home() / ".xiaomei-brain" / "global" / "images")
+
+
+def _workspace_reference(path: str) -> str:
+    context = current_tool_execution()
+    if context is None or not context.workspace_root:
+        return ""
+    try:
+        return Path(path).resolve().relative_to(
+            Path(context.workspace_root).resolve(),
+        ).as_posix()
+    except ValueError:
+        return ""
 
 
 def set_output_base(base_dir: str) -> None:
@@ -70,7 +88,10 @@ def image_generate_seedream(
             return "图片生成失败，未返回任何图片。"
         result = f"Seedream 生成了 {len(paths)} 张图片:\n"
         for path in paths:
-            result += f"  - {path}\n"
+            result += f"  - output_path: {path}\n"
+            workspace_path = _workspace_reference(path)
+            if workspace_path:
+                result += f"    workspace_path: {workspace_path}\n"
         return result.strip()
     except Exception as exc:
         logger.error("Seedream image generation error: %s", exc)

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import re
 import time
 from typing import Any
 
@@ -247,6 +248,27 @@ class MemoryExtractor:
         """直接用新内容覆盖。"""
         return new_content
 
+    @staticmethod
+    def _is_transient_runtime_memory(content: str) -> bool:
+        """Reject one-off execution failures before they become self-beliefs."""
+        text = (content or "").strip()
+        if not text or re.search(r"要求.{0,8}记住|明确.{0,8}记录|长期约束", text, re.IGNORECASE):
+            return False
+        technical_subject = re.search(
+            r"工具|命令|shell|powershell|bash|python-docx|write_document|read_document|"
+            r"api|接口|模型|服务|网络|数据库|sqlite|依赖|环境|配置|权限|余额|插件",
+            text,
+            re.IGNORECASE,
+        )
+        transient_failure = re.search(
+            r"暂时|当前|这次|本轮|无法|不能|不可用|不存在|未找到|未安装|未配置|"
+            r"失败|报错|异常|超时|欠费|余额不足|限流|429|连接中断|被禁止|拒绝|"
+            r"unavailable|not found|not installed|not configured|timeout|rate limit|error|failed",
+            text,
+            re.IGNORECASE,
+        )
+        return bool(technical_subject and transient_failure)
+
     def _execute_actions(
         self, llm_output: str, source: str = "manual",
         importance: float = 0.5, user_id: str = "global",
@@ -392,6 +414,9 @@ class MemoryExtractor:
 
             if not content or action_type == "NOOP":
                 continue
+            if action_type in {"ADD", "UPDATE", "MERGE"} and self._is_transient_runtime_memory(content):
+                logger.info("[Memory FILTER] skipped transient runtime state: %.80s", content)
+                continue
 
             if action_type == "ADD":
                 is_dup = False
@@ -535,6 +560,9 @@ class MemoryExtractor:
             content = content.strip()
 
             if not content or action == "NOOP":
+                continue
+            if action in {"ADD", "UPDATE", "MERGE"} and self._is_transient_runtime_memory(content):
+                logger.info("[Memory FILTER] skipped transient runtime state: %.80s", content)
                 continue
 
             imp = importance
