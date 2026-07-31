@@ -223,3 +223,162 @@ def test_tool_handoff_stops_live_react_loop(mock_llm, registry):
         "id": None,
     }]
     assert agent.messages[-1]["content"] == "已转入后台执行。"
+
+
+# ---------------------------------------------------------------------------
+# Steer: 中断注入
+# ---------------------------------------------------------------------------
+
+
+def _mk_step_llm(mock_llm, responses, capture):
+    """Serve a fixed sequence of NormalizedResponse, one per ReAct step.
+
+    ``capture`` receives the exact ``messages`` argument of every LLM call so
+    tests can assert what the model saw at each step.
+    """
+    def fake_chat_stream(messages, tools=None, **kwargs):
+        capture.append(list(messages))
+        resp = responses[len(capture) - 1]
+        mock_llm._last_stream_response = resp
+        if resp.tool_calls:
+            return iter(())
+        return (_ for _ in [resp.content])
+
+    mock_llm.chat_stream.side_effect = fake_chat_stream
+    mock_llm._reasoning_end_yielded = False
+
+
+def _mk_tool_step(tool_id, name, arguments) -> NormalizedResponse:
+    return NormalizedResponse(
+        content="",
+        tool_calls=[ToolCall(id=tool_id, name=name, arguments=arguments)],
+        finish_reason="tool_calls",
+    )
+
+
+def _mk_text_step(content: str) -> NormalizedResponse:
+    return NormalizedResponse(content=content, finish_reason="stop")
+
+
+def _user_contents(messages) -> list[str]:
+    return [m["content"] for m in messages if m["role"] == "user"]
+
+
+def test_steer_injected_at_tool_batch_boundary(mock_llm, registry):
+    """A steer() message is visible to the next LLM call, after the tool batch."""
+    from xiaomei_brain.tools import tool
+
+    agent = Agent(llm=mock_llm, tools=registry, max_steps=5)
+    calls: list[list[dict]] = []
+
+    @tool(name="echo", description="Echo the given text")
+    def echo(text: str) -> str:
+        agent.steer("interrupt now")
+        return text
+
+    registry.register(echo)
+    _mk_step_llm(
+        mock_llm,
+        [
+            _mk_tool_step("t1", "echo", '{"text": "hi"}'),
+            _mk_text_step("done"),
+        ],
+        calls,
+    )
+
+    response = _chat(agent, "start")
+
+    assert response == "done"
+    assert len(calls) == 2
+    # The steer message must appear before the second LLM call.
+    assert any("interrupt now" in c for c in _user_contents(calls[1]))
+
+
+def test_steer_multiple_messages_joined(mock_llm, registry):
+    """Multiple steer() calls are joined and injected together."""
+    from xiaomei_brain.tools import tool
+
+    agent = Agent(llm=mock_llm, tools=registry, max_steps=5)
+    calls: list[list[dict]] = []
+
+    @tool(name="echo", description="Echo the given text")
+    def echo(text: str) -> str:
+        agent.steer("first steer")
+        agent.steer("second steer")
+        return text
+
+    registry.register(echo)
+    _mk_step_llm(
+        mock_llm,
+        [
+            _mk_tool_step("t1", "echo", '{"text": "hi"}'),
+            _mk_text_step("done"),
+        ],
+        calls,
+    )
+
+    _chat(agent, "start")
+
+    steer_blocks = [c for c in _user_contents(calls[1]) if "steer" in c]
+    assert steer_blocks, "steer message missing from second LLM call"
+    assert "\n\n" in steer_blocks[0]
+    assert "first steer" in steer_blocks[0]
+    assert "second steer" in steer_blocks[0]
+
+
+def test_steer_empty_message_ignored(mock_llm, registry):
+    """Whitespace-only steer() calls are discarded."""
+    agent = Agent(llm=mock_llm, tools=registry)
+    agent.steer("   ")
+    agent.steer("")
+    assert agent._steer_queue.empty()
+
+
+def test_steer_queue_empty_after_stream(mock_llm, registry):
+    """Queued steer messages do not leak into a later stream() call."""
+    agent = Agent(llm=mock_llm, tools=registry)
+    agent.steer("pending while idle")
+
+    _setup_mock_llm(mock_llm, "Hello!")
+    response = _chat(agent, "Hi")
+
+    assert response == "Hello!"
+    assert agent._steer_queue.empty()
+
+
+def test_steer_cleared_after_handoff(mock_llm, registry):
+    """A handoff-exit must still drain any unprocessed steer messages."""
+    from xiaomei_brain.tools import tool
+
+    agent = Agent(llm=mock_llm, tools=registry, max_steps=5)
+    calls: list[list[dict]] = []
+
+    @tool(name="delegate", description="Transfer work to a background runner")
+    def delegate() -> dict:
+        agent.steer("late steer")
+        return {
+            "status": "queued",
+            TOOL_CONTROL_KEY: {
+                "type": "handoff",
+                "message": "已转入后台执行。",
+            },
+        }
+
+    registry.register(delegate)
+    _mk_step_llm(
+        mock_llm,
+        [
+            _mk_tool_step("t1", "delegate", "{}"),
+            _mk_text_step("should never be reached"),
+        ],
+        calls,
+    )
+
+    response = _chat(agent, "请接下这个持续任务")
+
+    # Handoff stops the loop on the first step; the steer message must be
+    # drained by the finally block, not delivered to a later stream() call.
+    assert response == "已转入后台执行。"
+    assert len(calls) == 1
+    assert agent._steer_queue.empty()
+    assert not any("late steer" in c for c in _user_contents(calls[0]))

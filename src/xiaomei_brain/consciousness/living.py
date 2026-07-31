@@ -315,6 +315,18 @@ class Living:
         )
         if display_name:
             msg.user_display_name = display_name
+
+        # 如果当前正在聊天，将消息作为 steer 注入活跃 ReAct 循环，
+        # 不进入队列等待下一轮。
+        if self._chatting:
+            try:
+                agent_core = self.agent._get_agent()
+                agent_core.steer(content)
+                logger.info("[Living] Steer: %s", content[:50])
+                return msg
+            except Exception:
+                logger.warning("[Living] Steer 失败，fallback 到正常入队", exc_info=True)
+
         self._queue.put_nowait(msg)
         return msg
 

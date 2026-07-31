@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import queue
 import threading
 import time
 from typing import Any, Callable, Generator
@@ -109,6 +110,7 @@ class Agent:
         self.tool_working_directory: str = ""
         self.tool_output_root: str = ""
         self.tool_call_buffer: ToolCallBuffer = ToolCallBuffer()  # 实例级，每个 Agent 独立
+        self._steer_queue: queue.Queue = queue.Queue()  # 线程安全，steer 消息暂存
 
         # ── Intent context (from ConsciousLiving) ──────────────────────
         self.intent_context: str = ""  # 意图上下文（注入 system prompt）
@@ -277,364 +279,379 @@ class Agent:
         if self._dynamic_loader:
             self._dynamic_loader.begin_run(self.session_id)
 
-        for step in range(self.max_steps):
-            if cancel_check and cancel_check():
-                logger.info("[Agent] ReAct 已取消 (step=%d)", step)
-                break
+        try:
+            for step in range(self.max_steps):
+                if cancel_check and cancel_check():
+                    logger.info("[Agent] ReAct 已取消 (step=%d)", step)
+                    break
 
-            # 每步根据累积上下文动态选择工具
-            if self._dynamic_loader:
-                openai_tools = self._dynamic_loader.select_openai_tools(_accumulated_context, step=step)
-            else:
-                openai_tools = self.tools.to_openai_tools() if self.tools and self.tools.list_tools() else None
+                # 注入排队中的 steer 消息（在当前工具批次之后、下一轮 LLM 调用之前）
+                steer_msg = self._drain_steer()
+                if steer_msg:
+                    self.messages.append({"role": "user", "content": steer_msg})
+                    logger.info("[Agent] Steer 注入 (step=%d): %s", step, steer_msg[:80])
 
-            all_messages = list(messages) + self.messages[_pre_count:]
+                # 每步根据累积上下文动态选择工具
+                if self._dynamic_loader:
+                    openai_tools = self._dynamic_loader.select_openai_tools(_accumulated_context, step=step)
+                else:
+                    openai_tools = self.tools.to_openai_tools() if self.tools and self.tools.list_tools() else None
 
-            # Remove orphaned tool messages (tool without preceding assistant tool_calls)
-            # and orphaned assistant(tool_calls) (tool responses missing after DAG compression)
-            all_messages = strip_orphaned_assistant_tool_calls(all_messages)
-            all_messages = strip_orphaned_tool_messages(all_messages)
+                all_messages = list(messages) + self.messages[_pre_count:]
 
-            # 缓存当前完整上下文（供 context 命令使用）
-            self._last_all_messages = all_messages
+                # Remove orphaned tool messages (tool without preceding assistant tool_calls)
+                # and orphaned assistant(tool_calls) (tool responses missing after DAG compression)
+                all_messages = strip_orphaned_assistant_tool_calls(all_messages)
+                all_messages = strip_orphaned_tool_messages(all_messages)
 
-            # Inject MEMORY_DECISION_PROMPT into system message (not user message)
-            mem_prompt = MEMORY_DECISION_PROMPT.format(user_name=self.user_display_name)
-            if all_messages and all_messages[0].get("role") == "system":
-                all_messages[0] = dict(all_messages[0])
-                all_messages[0]["content"] = all_messages[0]["content"] + "\n\n" + mem_prompt
-                logger.info("[Memory] injected MEMORY_DECISION_PROMPT into system message")
-            else:
-                logger.warning("[Memory] No system message found for MEMORY_DECISION_PROMPT")
+                # 缓存当前完整上下文（供 context 命令使用）
+                self._last_all_messages = all_messages
 
-            # Clean surrogate characters from all message content before sending to LLM
-            all_messages = clean_messages(all_messages)
+                # Inject MEMORY_DECISION_PROMPT into system message (not user message)
+                mem_prompt = MEMORY_DECISION_PROMPT.format(user_name=self.user_display_name)
+                if all_messages and all_messages[0].get("role") == "system":
+                    all_messages[0] = dict(all_messages[0])
+                    all_messages[0]["content"] = all_messages[0]["content"] + "\n\n" + mem_prompt
+                    logger.info("[Memory] injected MEMORY_DECISION_PROMPT into system message")
+                else:
+                    logger.warning("[Memory] No system message found for MEMORY_DECISION_PROMPT")
 
-            logger.debug("Step %d: calling LLM", step + 1)
-            _print("💭 思考中...")
+                # Clean surrogate characters from all message content before sending to LLM
+                all_messages = clean_messages(all_messages)
 
-            # 真流式：逐个 yield chunk，生成器结束后从 _last_stream_response 取结果
-            gen = self._call_llm(all_messages, openai_tools)
-            stream_chunks: list[str] = []
-            for chunk in gen:
-                stream_chunks.append(chunk)
-                yield chunk
-            response = self.llm._last_stream_response
+                logger.debug("Step %d: calling LLM", step + 1)
+                _print("💭 思考中...")
 
-            # 流式输出期间可能已被 Ctrl+C 取消
-            if cancel_check and cancel_check():
-                logger.info("[Agent] ReAct LLM stream 后检测到取消 (step=%d)", step)
-                break
+                # 真流式：逐个 yield chunk，生成器结束后从 _last_stream_response 取结果
+                gen = self._call_llm(all_messages, openai_tools)
+                stream_chunks: list[str] = []
+                for chunk in gen:
+                    stream_chunks.append(chunk)
+                    yield chunk
+                response = self.llm._last_stream_response
 
-            if response.tool_calls:
-                handoff_message = ""
-                tool_calls_data = [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.name,
-                            "arguments": tc.arguments,
-                        },
-                    }
-                    for tc in response.tool_calls
-                ]
-                msg: dict[str, Any] = {
-                    "role": "assistant",
-                    "content": response.content,
-                    "tool_calls": tool_calls_data,
-                }
-                if response.reasoning:
-                    msg["reasoning_content"] = response.reasoning
-                self.messages.append(msg)
+                # 流式输出期间可能已被 Ctrl+C 取消
+                if cancel_check and cancel_check():
+                    logger.info("[Agent] ReAct LLM stream 后检测到取消 (step=%d)", step)
+                    break
 
-                # 存 assistant(tool_calls) 到 DB，tool_calls + reasoning_content 存入 metadata
-                if self.conversation_db:
-                    meta = {"tool_calls": tool_calls_data}
-                    if self.turn_id:
-                        meta["turn_id"] = self.turn_id
-                    if response.reasoning:
-                        meta["reasoning_content"] = response.reasoning
-                    tool_msg_id = self.conversation_db.log(
-                        session_id=self.session_id,
-                        role="assistant",
-                        content=response.content or "",
-                        user_id=self.user_id,
-                        metadata=meta,
-                    )
-                    msg["id"] = tool_msg_id
-
-                for tc in response.tool_calls:
-                    # Parse JSON arguments string → dict
-                    try:
-                        args_dict = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
-                    except json.JSONDecodeError:
-                        args_dict = {}
-                    # Collapsed display + buffer storage
-                    idx = self.tool_call_buffer.add(tc.name, args_dict, "")  # placeholder
-                    _print(get_hint(tc.name))
-                    _ptc(idx, tc.name, args_dict)
-                    tool_started_at = time.perf_counter()
-                    if self.on_tool_start:
-                        self.on_tool_start(idx, tc.id, tc.name, args_dict)
-                    logger.debug("Tool call: %s(%s)", tc.name, args_dict)
-
-                    # 重试检测：同一工具+参数失败超过2次则拦截
-                    call_key = (tc.name, json.dumps(args_dict, sort_keys=True))
-                    fail_count = _tool_failure_counts.get(call_key, 0)
-                    if fail_count >= 3:
-                        result = (
-                            f"Blocked retry: {tc.name} with the same arguments has failed "
-                            f"{fail_count} times. Do NOT retry this. Try a different approach "
-                            f"or report the problem to the user."
-                        )
-                        logger.warning("[Agent] 拦截重复失败工具调用(%d次): %s", fail_count, tc.name)
-                    else:
-                        if self.tools is None:
-                            result = "Error: ToolRegistry not initialized. Please restart the agent."
-                            logger.error("[Agent] self.tools is None, cannot execute %s", tc.name)
-                        else:
-                            result = self._execute_tool_call(tc.id, tc.name, args_dict)
-
-                    # Some tools transfer execution ownership to an isolated
-                    # runtime. Strip the internal envelope before normal tool
-                    # bookkeeping, then stop this live ReAct loop below.
-                    result, tool_control = split_tool_control(result)
-                    self._track_document_delivery(
-                        tc.name,
-                        result,
-                        _pending_document_outputs,
-                        _presented_outputs,
-                    )
-                    tool_duration_ms = max(
-                        0,
-                        int((time.perf_counter() - tool_started_at) * 1000),
-                    )
-
-                    # 记录失败次数，成功则清除
-                    if _tool_result_failed(result):
-                        _tool_failure_counts[call_key] = fail_count + 1
-                    else:
-                        _tool_failure_counts.pop(call_key, None)
-
-                    # Update buffer with actual result
-                    rec = self.tool_call_buffer.get(idx)
-                    if rec:
-                        rec.result = str(result)
-
-                    args_dict = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
-                    if tc.name in {"edit", "edit_file"}:
-                        _ped(idx, tc.name, args_dict, result)
-                    elif tc.name in {"write", "write_file"}:
-                        _pwr(idx, tc.name, args_dict, result)
-                    else:
-                        _ptr(idx, result)
-                    if self.on_tool_complete:
-                        self.on_tool_complete(idx, tc.id, tc.name, args_dict, str(result))
-                    logger.debug("Tool result: %s", str(result)[:200])
-
-                    # 存 tool result 到 DB，保存 DB id 到消息（DAG 压缩需要）
-                    tool_msg_id = None
-                    if self.conversation_db:
-                        tool_metadata: dict[str, Any] = {
-                            "duration_ms": tool_duration_ms,
-                        }
-                        if self.turn_id:
-                            tool_metadata["turn_id"] = self.turn_id
-                        tool_msg_id = self.conversation_db.log(
-                            session_id=self.session_id,
-                            role="tool",
-                            content=str(result),
-                            user_id=self.user_id,
-                            tool_name=tc.name,
-                            tool_call_id=tc.id,
-                            metadata=tool_metadata,
-                        )
-                        # Procedure memory: record tool invocation (no LLM call)
-                        self.conversation_db.store_tool(
-                            tool_name=tc.name,
-                            args=tc.arguments,
-                            result=str(result)[:500],
-                            user_id=self.user_id,
-                            session_id=self.session_id,
-                        )
-                    if self.on_artifact:
-                        try:
-                            self.on_artifact(tc.id, tc.name, args_dict, str(result))
-                        except Exception:
-                            logger.exception("Failed to publish tool artifacts")
-
-                    # Co-write to experience stream
-                    if self.exp_stream:
-                        try:
-                            self.exp_stream.log(
-                                type="tool_exec",
-                                content=f"{tc.name}: {str(result)}",
-                                session_id=self.session_id,
-                                related_id=str(tool_msg_id) if tool_msg_id else "",
-                                metadata={"tool_name": tc.name},
-                                user_id=self.user_id,
-                            )
-                        except Exception as e:
-                            logger.debug("[ExpStream] co-write tool_exec failed: %s", e)
-                    self.messages.append(
+                if response.tool_calls:
+                    handoff_message = ""
+                    tool_calls_data = [
                         {
-                            "role": "tool",
-                            "tool_call_id": tc.id,
-                            "content": str(result),
-                            "id": tool_msg_id,
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.name,
+                                "arguments": tc.arguments,
+                            },
                         }
-                    )
-
-                    # 累积上下文供下步动态工具召回
-                    _accumulated_context += f"\n{tc.name}: {str(result)[:500]}"
-
-                    if tool_control.get("type") == "handoff":
-                        handoff_message = str(tool_control.get("message", "")).strip()
-                        break
-
-                if handoff_message:
-                    assistant_msg_id = None
-                    if self.conversation_db:
-                        metadata: dict[str, Any] = {}
-                        if self.turn_id:
-                            metadata["turn_id"] = self.turn_id
-                        if self.current_memory_references:
-                            metadata["memory_references"] = list(
-                                self.current_memory_references,
-                            )
-                        assistant_msg_id = self.conversation_db.log(
-                            session_id=self.session_id,
-                            role="assistant",
-                            content=handoff_message,
-                            user_id=self.user_id,
-                            metadata=metadata or None,
-                        )
-                    self.messages.append({
+                        for tc in response.tool_calls
+                    ]
+                    msg: dict[str, Any] = {
                         "role": "assistant",
-                        "content": handoff_message,
-                        "id": assistant_msg_id,
-                    })
-                    if self.exp_stream:
-                        try:
-                            self.exp_stream.log(
-                                type="assistant_msg",
-                                content=handoff_message,
-                                session_id=self.session_id,
-                                related_id=(
-                                    str(assistant_msg_id) if assistant_msg_id else ""
-                                ),
-                                user_id=self.user_id,
-                            )
-                        except Exception as exc:
-                            logger.debug(
-                                "[ExpStream] handoff acknowledgement failed: %s",
-                                exc,
-                            )
-                    yield handoff_message
-                    return
-
-            else:
-                content = response.content or ""
-                if content:
-                    self._auto_present_document_outputs(
-                        _pending_document_outputs,
-                        _presented_outputs,
-                    )
-                    # Extract MEMORY block from response and execute
-                    memory_block, clean_content = "", content
-                    has_extractor = hasattr(self, "memory_extractor") and self.memory_extractor
-                    if has_extractor:
-                        memory_block, clean_content = self.memory_extractor.extract_memory_block(content)
-                        logger.info("[Memory] extracted block='%s' clean_len=%d", memory_block[:50] if memory_block else "", len(clean_content) if clean_content else 0)
-                        if memory_block:
-                            self.memory_extractor.execute_block(
-                                memory_block,
-                                user_id=self.memory_scope_id,
-                            )
-                            if self.internal_display:
-                                self.internal_display.record_memory(memory_block)
-
-                        # Extract THINK block (见证层) from response — must use RAW content, not clean_content
-                        # (clean_content already stripped MEMORY block, which would also remove any ‖ that follows)
-                        think_data, clean_content = self.memory_extractor.extract_think_block(content)
-                        logger.info(
-                            "[Memory] extracted think block: %s, raw_stream len=%d, tags=%s",
-                            "found" if think_data else "none",
-                            len(think_data.get("raw_stream", "")) if think_data else 0,
-                            think_data.get("feeling_tags", []) if think_data else [],
-                        )
-                        if think_data and self.longterm_memory:
-                            self.longterm_memory.store_thought(
-                                timestamp=think_data.get("timestamp", ""),
-                                user_input_summary=think_data.get("user_input_summary", ""),
-                                raw_stream=think_data.get("raw_stream", ""),
-                                feeling_tags=think_data.get("feeling_tags", []),
-                                user_id=self.memory_scope_id,
-                                session_id=self.session_id,
-                            )
-                            logger.info(
-                                "[Memory] stored think #%s: %s",
-                                think_data.get("timestamp", ""),
-                                think_data.get("user_input_summary", "")[:50],
-                            )
-
-                    # Extract PROC block (procedure execution tracking)
-                    if hasattr(self, "procedure_memory") and self.procedure_memory and content:
-                        proc_id = self.procedure_memory.extract_procedure_block(content)
-                        if proc_id:
-                            self.procedure_memory.record_execution(proc_id, "success")
-                            logger.info("\033[91m[Procedure]\033[0m recorded execution: %s", proc_id)
-
-                    # Use clean content for display and logging
-                    display_content = clean_content or content
-                    assistant_msg_id = None
-                    if self.conversation_db:
-                        meta = {}
-                        if response.reasoning:
-                            meta["reasoning_content"] = response.reasoning
-                        if self.turn_id:
-                            meta["turn_id"] = self.turn_id
-                        if self.current_memory_references:
-                            meta["memory_references"] = list(
-                                self.current_memory_references,
-                            )
-                        assistant_msg_id = self.conversation_db.log(
-                            session_id=self.session_id,
-                            role="assistant",
-                            content=display_content,
-                            user_id=self.user_id,
-                            metadata=meta if meta else None,
-                        )
-                    msg: dict[str, Any] = {"role": "assistant", "content": display_content, "id": assistant_msg_id}
+                        "content": response.content,
+                        "tool_calls": tool_calls_data,
+                    }
                     if response.reasoning:
                         msg["reasoning_content"] = response.reasoning
                     self.messages.append(msg)
 
-                    # Co-write to experience stream
-                    if self.exp_stream:
+                    # 存 assistant(tool_calls) 到 DB，tool_calls + reasoning_content 存入 metadata
+                    if self.conversation_db:
+                        meta = {"tool_calls": tool_calls_data}
+                        if self.turn_id:
+                            meta["turn_id"] = self.turn_id
+                        if response.reasoning:
+                            meta["reasoning_content"] = response.reasoning
+                        tool_msg_id = self.conversation_db.log(
+                            session_id=self.session_id,
+                            role="assistant",
+                            content=response.content or "",
+                            user_id=self.user_id,
+                            metadata=meta,
+                        )
+                        msg["id"] = tool_msg_id
+
+                    for tc in response.tool_calls:
+                        # Parse JSON arguments string → dict
                         try:
-                            self.exp_stream.log(
-                                type="assistant_msg",
-                                content=display_content,
-                                session_id=self.session_id,
-                                related_id=str(assistant_msg_id) if assistant_msg_id else "",
-                                user_id=self.user_id,
+                            args_dict = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
+                        except json.JSONDecodeError:
+                            args_dict = {}
+                        # Collapsed display + buffer storage
+                        idx = self.tool_call_buffer.add(tc.name, args_dict, "")  # placeholder
+                        _print(get_hint(tc.name))
+                        _ptc(idx, tc.name, args_dict)
+                        tool_started_at = time.perf_counter()
+                        if self.on_tool_start:
+                            self.on_tool_start(idx, tc.id, tc.name, args_dict)
+                        logger.debug("Tool call: %s(%s)", tc.name, args_dict)
+
+                        # 重试检测：同一工具+参数失败超过2次则拦截
+                        call_key = (tc.name, json.dumps(args_dict, sort_keys=True))
+                        fail_count = _tool_failure_counts.get(call_key, 0)
+                        if fail_count >= 3:
+                            result = (
+                                f"Blocked retry: {tc.name} with the same arguments has failed "
+                                f"{fail_count} times. Do NOT retry this. Try a different approach "
+                                f"or report the problem to the user."
                             )
-                        except Exception as e:
-                            logger.debug("[ExpStream] co-write assistant_msg failed: %s", e)
+                            logger.warning("[Agent] 拦截重复失败工具调用(%d次): %s", fail_count, tc.name)
+                        else:
+                            if self.tools is None:
+                                result = "Error: ToolRegistry not initialized. Please restart the agent."
+                                logger.error("[Agent] self.tools is None, cannot execute %s", tc.name)
+                            else:
+                                result = self._execute_tool_call(tc.id, tc.name, args_dict)
 
-                    # 流式 chunk 已在上层实时 yield，直接返回
-                    return
+                        # Some tools transfer execution ownership to an isolated
+                        # runtime. Strip the internal envelope before normal tool
+                        # bookkeeping, then stop this live ReAct loop below.
+                        result, tool_control = split_tool_control(result)
+                        self._track_document_delivery(
+                            tc.name,
+                            result,
+                            _pending_document_outputs,
+                            _presented_outputs,
+                        )
+                        tool_duration_ms = max(
+                            0,
+                            int((time.perf_counter() - tool_started_at) * 1000),
+                        )
+
+                        # 记录失败次数，成功则清除
+                        if _tool_result_failed(result):
+                            _tool_failure_counts[call_key] = fail_count + 1
+                        else:
+                            _tool_failure_counts.pop(call_key, None)
+
+                        # Update buffer with actual result
+                        rec = self.tool_call_buffer.get(idx)
+                        if rec:
+                            rec.result = str(result)
+
+                        args_dict = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
+                        if tc.name in {"edit", "edit_file"}:
+                            _ped(idx, tc.name, args_dict, result)
+                        elif tc.name in {"write", "write_file"}:
+                            _pwr(idx, tc.name, args_dict, result)
+                        else:
+                            _ptr(idx, result)
+                        if self.on_tool_complete:
+                            self.on_tool_complete(idx, tc.id, tc.name, args_dict, str(result))
+                        logger.debug("Tool result: %s", str(result)[:200])
+
+                        # 存 tool result 到 DB，保存 DB id 到消息（DAG 压缩需要）
+                        tool_msg_id = None
+                        if self.conversation_db:
+                            tool_metadata: dict[str, Any] = {
+                                "duration_ms": tool_duration_ms,
+                            }
+                            if self.turn_id:
+                                tool_metadata["turn_id"] = self.turn_id
+                            tool_msg_id = self.conversation_db.log(
+                                session_id=self.session_id,
+                                role="tool",
+                                content=str(result),
+                                user_id=self.user_id,
+                                tool_name=tc.name,
+                                tool_call_id=tc.id,
+                                metadata=tool_metadata,
+                            )
+                            # Procedure memory: record tool invocation (no LLM call)
+                            self.conversation_db.store_tool(
+                                tool_name=tc.name,
+                                args=tc.arguments,
+                                result=str(result)[:500],
+                                user_id=self.user_id,
+                                session_id=self.session_id,
+                            )
+                        if self.on_artifact:
+                            try:
+                                self.on_artifact(tc.id, tc.name, args_dict, str(result))
+                            except Exception:
+                                logger.exception("Failed to publish tool artifacts")
+
+                        # Co-write to experience stream
+                        if self.exp_stream:
+                            try:
+                                self.exp_stream.log(
+                                    type="tool_exec",
+                                    content=f"{tc.name}: {str(result)}",
+                                    session_id=self.session_id,
+                                    related_id=str(tool_msg_id) if tool_msg_id else "",
+                                    metadata={"tool_name": tc.name},
+                                    user_id=self.user_id,
+                                )
+                            except Exception as e:
+                                logger.debug("[ExpStream] co-write tool_exec failed: %s", e)
+                        self.messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "content": str(result),
+                                "id": tool_msg_id,
+                            }
+                        )
+
+                        # 累积上下文供下步动态工具召回
+                        _accumulated_context += f"\n{tc.name}: {str(result)[:500]}"
+
+                        if tool_control.get("type") == "handoff":
+                            handoff_message = str(tool_control.get("message", "")).strip()
+                            break
+
+                    if handoff_message:
+                        assistant_msg_id = None
+                        if self.conversation_db:
+                            metadata: dict[str, Any] = {}
+                            if self.turn_id:
+                                metadata["turn_id"] = self.turn_id
+                            if self.current_memory_references:
+                                metadata["memory_references"] = list(
+                                    self.current_memory_references,
+                                )
+                            assistant_msg_id = self.conversation_db.log(
+                                session_id=self.session_id,
+                                role="assistant",
+                                content=handoff_message,
+                                user_id=self.user_id,
+                                metadata=metadata or None,
+                            )
+                        self.messages.append({
+                            "role": "assistant",
+                            "content": handoff_message,
+                            "id": assistant_msg_id,
+                        })
+                        if self.exp_stream:
+                            try:
+                                self.exp_stream.log(
+                                    type="assistant_msg",
+                                    content=handoff_message,
+                                    session_id=self.session_id,
+                                    related_id=(
+                                        str(assistant_msg_id) if assistant_msg_id else ""
+                                    ),
+                                    user_id=self.user_id,
+                                )
+                            except Exception as exc:
+                                logger.debug(
+                                    "[ExpStream] handoff acknowledgement failed: %s",
+                                    exc,
+                                )
+                        yield handoff_message
+                        return
+
                 else:
-                    logger.warning("LLM returned empty content with no tool calls")
-                    self._auto_present_document_outputs(
-                        _pending_document_outputs,
-                        _presented_outputs,
-                    )
-                    yield ""
-                    return
+                    content = response.content or ""
+                    if content:
+                        self._auto_present_document_outputs(
+                            _pending_document_outputs,
+                            _presented_outputs,
+                        )
+                        # Extract MEMORY block from response and execute
+                        memory_block, clean_content = "", content
+                        has_extractor = hasattr(self, "memory_extractor") and self.memory_extractor
+                        if has_extractor:
+                            memory_block, clean_content = self.memory_extractor.extract_memory_block(content)
+                            logger.info("[Memory] extracted block='%s' clean_len=%d", memory_block[:50] if memory_block else "", len(clean_content) if clean_content else 0)
+                            if memory_block:
+                                self.memory_extractor.execute_block(
+                                    memory_block,
+                                    user_id=self.memory_scope_id,
+                                )
+                                if self.internal_display:
+                                    self.internal_display.record_memory(memory_block)
 
+                            # Extract THINK block (见证层) from response — must use RAW content, not clean_content
+                            # (clean_content already stripped MEMORY block, which would also remove any ‖ that follows)
+                            think_data, clean_content = self.memory_extractor.extract_think_block(content)
+                            logger.info(
+                                "[Memory] extracted think block: %s, raw_stream len=%d, tags=%s",
+                                "found" if think_data else "none",
+                                len(think_data.get("raw_stream", "")) if think_data else 0,
+                                think_data.get("feeling_tags", []) if think_data else [],
+                            )
+                            if think_data and self.longterm_memory:
+                                self.longterm_memory.store_thought(
+                                    timestamp=think_data.get("timestamp", ""),
+                                    user_input_summary=think_data.get("user_input_summary", ""),
+                                    raw_stream=think_data.get("raw_stream", ""),
+                                    feeling_tags=think_data.get("feeling_tags", []),
+                                    user_id=self.memory_scope_id,
+                                    session_id=self.session_id,
+                                )
+                                logger.info(
+                                    "[Memory] stored think #%s: %s",
+                                    think_data.get("timestamp", ""),
+                                    think_data.get("user_input_summary", "")[:50],
+                                )
+
+                        # Extract PROC block (procedure execution tracking)
+                        if hasattr(self, "procedure_memory") and self.procedure_memory and content:
+                            proc_id = self.procedure_memory.extract_procedure_block(content)
+                            if proc_id:
+                                self.procedure_memory.record_execution(proc_id, "success")
+                                logger.info("\033[91m[Procedure]\033[0m recorded execution: %s", proc_id)
+
+                        # Use clean content for display and logging
+                        display_content = clean_content or content
+                        assistant_msg_id = None
+                        if self.conversation_db:
+                            meta = {}
+                            if response.reasoning:
+                                meta["reasoning_content"] = response.reasoning
+                            if self.turn_id:
+                                meta["turn_id"] = self.turn_id
+                            if self.current_memory_references:
+                                meta["memory_references"] = list(
+                                    self.current_memory_references,
+                                )
+                            assistant_msg_id = self.conversation_db.log(
+                                session_id=self.session_id,
+                                role="assistant",
+                                content=display_content,
+                                user_id=self.user_id,
+                                metadata=meta if meta else None,
+                            )
+                        msg: dict[str, Any] = {"role": "assistant", "content": display_content, "id": assistant_msg_id}
+                        if response.reasoning:
+                            msg["reasoning_content"] = response.reasoning
+                        self.messages.append(msg)
+
+                        # Co-write to experience stream
+                        if self.exp_stream:
+                            try:
+                                self.exp_stream.log(
+                                    type="assistant_msg",
+                                    content=display_content,
+                                    session_id=self.session_id,
+                                    related_id=str(assistant_msg_id) if assistant_msg_id else "",
+                                    user_id=self.user_id,
+                                )
+                            except Exception as e:
+                                logger.debug("[ExpStream] co-write assistant_msg failed: %s", e)
+
+                        # 流式 chunk 已在上层实时 yield，直接返回
+                        return
+                    else:
+                        logger.warning("LLM returned empty content with no tool calls")
+                        self._auto_present_document_outputs(
+                            _pending_document_outputs,
+                            _presented_outputs,
+                        )
+                        yield ""
+                        return
+
+        finally:
+            # Drain unprocessed steer messages so they do not leak
+            # into a later stream() call (e.g. after handoff/abort).
+            while True:
+                try:
+                    self._steer_queue.get_nowait()
+                except queue.Empty:
+                    break
         self._auto_present_document_outputs(
             _pending_document_outputs,
             _presented_outputs,
@@ -734,6 +751,33 @@ class Agent:
             "[Artifact] model omitted present_artifacts; automatically delivered: %s",
             ", ".join(paths),
         )
+
+    def steer(self, message: str) -> None:
+        """Inject a user-like message into the active ReAct loop.
+
+        The message appears as a new ``{"role": "user", ...}`` entry in
+        ``self.messages`` at the next tool-batch boundary, so the model sees
+        it in its next LLM call without restarting the conversation.
+
+        Thread-safe: may be called from any thread.
+        """
+        text = message.strip()
+        if not text:
+            return
+        self._steer_queue.put_nowait(text)
+
+    def _drain_steer(self) -> str | None:
+        """Drain all queued steer messages, returning the concatenated
+        result or None if the queue was empty."""
+        parts: list[str] = []
+        while True:
+            try:
+                parts.append(self._steer_queue.get_nowait())
+            except queue.Empty:
+                break
+        if not parts:
+            return None
+        return "\n\n".join(parts)
 
     def _execute_tool_call(self, tool_call_id: str, tool_name: str, arguments: dict) -> str:
         """Apply the Agent approval boundary, then execute the sealed tool call."""
