@@ -198,6 +198,8 @@ class PluginRegistry:
         self._web_search_providers: list[Any] = []
         self._pending_senses: list[tuple[Any, Any]] = []
         self._document_extractors: list[Any] = []
+        self._document_writers: dict[str, Any] = {}
+        self._skill_directories: list[str] = []
 
     # ── Channel ─────────────────────────────────────────────────
 
@@ -285,6 +287,28 @@ class PluginRegistry:
             if suffix in suffixes and (not normalized_mime or normalized_mime in mime_types or normalized_mime == "application/octet-stream"):
                 return extractor
         return None
+
+    def register_document_writer(self, writer: Any) -> None:
+        """Register one document writer by its stable format id."""
+        format_id = str(getattr(writer, "format_id", "")).strip().lower()
+        if not format_id:
+            raise ValueError("Document writer must define format_id")
+        self._document_writers[format_id] = writer
+
+    def get_document_writer(self, format_id: str) -> Any | None:
+        return self._document_writers.get(str(format_id).strip().lower())
+
+    def list_document_writers(self) -> list[str]:
+        return sorted(self._document_writers)
+
+    def register_skill_directory(self, path: str | Path) -> None:
+        """Expose plugin-bundled SKILL.md files to the Agent skill loader."""
+        value = str(Path(path).resolve())
+        if value not in self._skill_directories:
+            self._skill_directories.append(value)
+
+    def get_skill_directories(self) -> list[str]:
+        return list(self._skill_directories)
 
     # ── Web Search Provider ────────────────────────────────────
 

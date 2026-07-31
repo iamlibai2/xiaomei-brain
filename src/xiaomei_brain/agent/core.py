@@ -103,6 +103,8 @@ class Agent:
         # Turn-owned assets available to tools. A tool never receives an
         # arbitrary filesystem path from the model for attachment access.
         self.current_attachments: list[dict[str, Any]] = []
+        self.tool_workspace_root: str = ""
+        self.tool_output_root: str = ""
         self.tool_call_buffer: ToolCallBuffer = ToolCallBuffer()  # 实例级，每个 Agent 独立
 
         # ── Intent context (from ConsciousLiving) ──────────────────────
@@ -639,6 +641,8 @@ class Agent:
                     speech_callback=self.on_speech,
                     session_id=self.session_id,
                     attachments=tuple(self.current_attachments),
+                    workspace_root=self.tool_workspace_root,
+                    output_root=self.tool_output_root,
                 ):
                     result = normalize_tool_result(
                         self.tools.execute(tool_name, **arguments)

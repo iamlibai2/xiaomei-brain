@@ -60,6 +60,11 @@ class PluginContext:
         """Per-agent 工作目录：~/.xiaomei-brain/{agent_id}/"""
         return str(Path.home() / ".xiaomei-brain" / self.agent_id)
 
+    @property
+    def registry(self) -> PluginRegistry:
+        """Capability registry shared by plugins loaded for this Agent."""
+        return self._registry
+
     # ── Channel ──────────────────────────────────────────────────
 
     def register_channel(self, name: str, adapter: Any) -> None:
@@ -129,6 +134,18 @@ class PluginContext:
             "Document extractor registered: %s",
             getattr(extractor, "extractor_id", "unknown"),
         )
+
+    def register_document_writer(self, writer: Any) -> None:
+        """Register a format writer consumed by the unified write_document tool."""
+        self._registry.register_document_writer(writer)
+        self.logger.info(
+            "Document writer registered: %s",
+            getattr(writer, "format_id", "unknown"),
+        )
+
+    def register_skill_directory(self, path: str | Path) -> None:
+        """Make plugin-owned SKILL.md files discoverable by this Agent."""
+        self._registry.register_skill_directory(path)
 
     # ── Web Search Provider ────────────────────────────────────
 

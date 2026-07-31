@@ -34,6 +34,7 @@ DEFAULT_BACKGROUND_TOOLS = frozenset({
     "web_search",
     "web_get",
     "read_document",
+    "write_document",
 })
 
 _WAIT_PATTERN = re.compile(
@@ -114,6 +115,8 @@ class IsolatedAssignmentRunner:
             tools=isolated_tools,
         )
         runtime.active_assignment_id = context.assignment_id
+        runtime.tool_workspace_root = str(workspace_root)
+        runtime.tool_output_root = str(outputs_dir)
 
         tool_trace: list[dict[str, Any]] = list(
             control.checkpoint_data.get("tool_trace", []),

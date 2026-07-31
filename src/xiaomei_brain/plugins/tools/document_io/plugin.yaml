@@ -1,0 +1,5 @@
+name: document_io
+version: "1.0.0"
+description: "统一的 Agent 文档读取与写入入口"
+kind: bundle
+entry: adapter:register

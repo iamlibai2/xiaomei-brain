@@ -2,5 +2,11 @@
 
 from .models import DocumentExtraction, DocumentSection
 from .service import DocumentService
+from .writers import DocumentWriter
 
-__all__ = ["DocumentExtraction", "DocumentSection", "DocumentService"]
+__all__ = [
+    "DocumentExtraction",
+    "DocumentSection",
+    "DocumentService",
+    "DocumentWriter",
+]

@@ -28,6 +28,8 @@ class ToolExecutionContext:
     speech_callback: SpeechCallback | None = None
     session_id: str = ""
     attachments: tuple[dict[str, Any], ...] = ()
+    workspace_root: str = ""
+    output_root: str = ""
 
     def publish_artifacts(self, result: str) -> None:
         """Run the original turn's artifact projection, if one was installed."""
@@ -67,6 +69,8 @@ def bind_tool_execution(
     speech_callback: SpeechCallback | None = None,
     session_id: str = "",
     attachments: tuple[dict[str, Any], ...] = (),
+    workspace_root: str = "",
+    output_root: str = "",
 ) -> Iterator[ToolExecutionContext]:
     """Expose one tool call's immutable context while its function starts."""
     context = ToolExecutionContext(
@@ -77,6 +81,8 @@ def bind_tool_execution(
         speech_callback=speech_callback,
         session_id=session_id,
         attachments=tuple(dict(item) for item in attachments),
+        workspace_root=workspace_root,
+        output_root=output_root,
     )
     token = _current_context.set(context)
     try:
