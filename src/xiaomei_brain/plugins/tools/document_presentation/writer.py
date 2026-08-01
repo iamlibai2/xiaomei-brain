@@ -1,0 +1,701 @@
+"""Deterministic PPTX creation and common non-destructive revisions."""
+
+from __future__ import annotations
+
+import shutil
+from pathlib import Path
+from typing import Any, Iterable
+
+from .extractor import PresentationExtractor
+
+
+MAX_SLIDES = 200
+MAX_TEXT_LENGTH = 100_000
+
+
+DEFAULT_THEME = {
+    "background_color": "FFFFFF",
+    "title_color": "172033",
+    "text_color": "354052",
+    "accent_color": "4F6BED",
+    "font_family": "Microsoft YaHei",
+    "title_size_pt": 30,
+    "body_size_pt": 18,
+}
+
+
+class PresentationWriter:
+    format_id = "presentation"
+    suffix = ".pptx"
+    writer_version = "1.0.0"
+
+    def write(
+        self,
+        specification: dict[str, Any],
+        output_path: Path,
+        *,
+        source_path: Path | None = None,
+        asset_paths: dict[str, Path] | None = None,
+    ) -> dict[str, Any]:
+        try:
+            from pptx import Presentation
+        except ImportError as exc:
+            raise ValueError("演示文稿写入依赖 python-pptx 未安装") from exc
+
+        if source_path is not None:
+            if source_path.suffix.lower() != self.suffix:
+                raise ValueError("Presentation writer 只能修改 PPTX 附件")
+            shutil.copy2(source_path, output_path)
+            presentation = Presentation(str(output_path))
+            operations = specification.get("operations")
+            if not isinstance(operations, list) or not operations:
+                raise ValueError("修改演示文稿时 specification.operations 不能为空")
+            changed = self._apply_operations(
+                presentation,
+                operations,
+                asset_paths=asset_paths,
+            )
+        else:
+            slides = specification.get("slides")
+            if not isinstance(slides, list) or not slides:
+                raise ValueError("创建演示文稿时 specification.slides 必须是非空数组")
+            if len(slides) > MAX_SLIDES:
+                raise ValueError(f"演示文稿不能超过 {MAX_SLIDES} 页")
+            presentation = Presentation()
+            self._set_page_size(presentation, specification.get("page"))
+            self._set_properties(presentation, specification.get("properties"))
+            theme = self._theme(specification.get("theme"))
+            for slide_spec in slides:
+                self._append_slide(
+                    presentation,
+                    slide_spec,
+                    theme=theme,
+                    asset_paths=asset_paths,
+                )
+            changed = len(slides)
+
+        if not presentation.slides:
+            raise ValueError("演示文稿至少需要一页幻灯片")
+        if len(presentation.slides) > MAX_SLIDES:
+            raise ValueError(f"演示文稿不能超过 {MAX_SLIDES} 页")
+        presentation.save(str(output_path))
+
+        verified = Presentation(str(output_path))
+        text_count, picture_count, note_count, characters = self._summary(verified)
+        if text_count == 0 and picture_count == 0:
+            raise ValueError("生成的演示文稿没有文字或图片内容")
+        extraction = PresentationExtractor().extract(output_path)
+        preview = extraction.sections[0].content[:1200] if extraction.sections else ""
+        return {
+            "writer": self.format_id,
+            "writer_version": self.writer_version,
+            "validation": {
+                "valid": True,
+                "slide_count": len(verified.slides),
+                "text_shape_count": text_count,
+                "picture_count": picture_count,
+                "note_slide_count": note_count,
+                "character_count": characters,
+                "changed_items": changed,
+                "content_preview": preview,
+            },
+        }
+
+    @staticmethod
+    def _color(value: Any, field: str):
+        from pptx.dml.color import RGBColor
+
+        text = str(value or "").strip().lstrip("#").upper()
+        if len(text) != 6 or any(ch not in "0123456789ABCDEF" for ch in text):
+            raise ValueError(f"{field} 必须是 6 位十六进制颜色")
+        return RGBColor.from_string(text)
+
+    @classmethod
+    def _theme(cls, values: Any) -> dict[str, Any]:
+        if values is not None and not isinstance(values, dict):
+            raise ValueError("theme 必须是对象")
+        theme = {**DEFAULT_THEME, **(values or {})}
+        for key in ("background_color", "title_color", "text_color", "accent_color"):
+            cls._color(theme[key], f"theme.{key}")
+        for key, minimum, maximum in (
+            ("title_size_pt", 12, 72),
+            ("body_size_pt", 8, 48),
+        ):
+            size = float(theme[key])
+            if not minimum <= size <= maximum:
+                raise ValueError(f"theme.{key} 必须在 {minimum} 到 {maximum} 之间")
+            theme[key] = size
+        theme["font_family"] = str(theme["font_family"] or "").strip()
+        if not theme["font_family"]:
+            raise ValueError("theme.font_family 不能为空")
+        return theme
+
+    @staticmethod
+    def _set_page_size(presentation: Any, values: Any) -> None:
+        if values is not None and not isinstance(values, dict):
+            raise ValueError("page 必须是对象")
+        values = values or {}
+        size = str(values.get("size") or "wide").lower()
+        dimensions = {
+            "wide": (33.867, 19.05),
+            "standard": (25.4, 19.05),
+        }
+        if size not in dimensions:
+            raise ValueError("page.size 仅支持 wide 或 standard")
+        from pptx.util import Cm
+
+        width, height = dimensions[size]
+        presentation.slide_width = Cm(width)
+        presentation.slide_height = Cm(height)
+
+    @staticmethod
+    def _set_properties(presentation: Any, values: Any) -> None:
+        if not isinstance(values, dict):
+            return
+        properties = presentation.core_properties
+        aliases = {"creator": "author", "description": "comments"}
+        for key in ("title", "subject", "author", "keywords", "comments", "creator", "description"):
+            if key in values:
+                setattr(properties, aliases.get(key, key), str(values[key]))
+
+    @staticmethod
+    def _fill_background(slide: Any, color: Any) -> None:
+        fill = slide.background.fill
+        fill.solid()
+        fill.fore_color.rgb = color
+
+    @staticmethod
+    def _slide_dimensions_cm(presentation: Any) -> tuple[float, float]:
+        from pptx.util import Cm
+
+        return presentation.slide_width / Cm(1), presentation.slide_height / Cm(1)
+
+    @classmethod
+    def _append_slide(
+        cls,
+        presentation: Any,
+        slide_spec: Any,
+        *,
+        theme: dict[str, Any],
+        asset_paths: dict[str, Path] | None,
+    ) -> Any:
+        if not isinstance(slide_spec, dict):
+            raise ValueError("slides 中的每一项必须是对象")
+        kind = str(slide_spec.get("type") or "content").lower()
+        if kind not in {"title", "section", "content", "image", "blank"}:
+            raise ValueError(f"不支持的幻灯片类型: {kind}")
+        slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+        slide_theme = cls._theme({**theme, **(slide_spec.get("theme") or {})})
+        background = slide_spec.get("background_color", slide_theme["background_color"])
+        cls._fill_background(slide, cls._color(background, "slide.background_color"))
+        width, height = cls._slide_dimensions_cm(presentation)
+
+        title = str(slide_spec.get("title") or "")
+        subtitle = str(slide_spec.get("subtitle") or "")
+        if kind == "title":
+            if title:
+                cls._add_text_box(
+                    slide, title, 1.5, height * 0.27, width - 3, 3.0,
+                    name="XiaomeiTitle", size_pt=max(slide_theme["title_size_pt"], 36),
+                    color=slide_theme["title_color"], font=slide_theme["font_family"],
+                    bold=True, align="center", vertical="middle",
+                )
+            if subtitle:
+                cls._add_text_box(
+                    slide, subtitle, 3, height * 0.50, width - 6, 2.0,
+                    name="XiaomeiSubtitle", size_pt=slide_theme["body_size_pt"],
+                    color=slide_theme["text_color"], font=slide_theme["font_family"],
+                    align="center", vertical="middle",
+                )
+        elif kind == "section":
+            cls._add_accent(slide, width * 0.11, height * 0.34, 0.18, height * 0.30, slide_theme)
+            if title:
+                cls._add_text_box(
+                    slide, title, width * 0.15, height * 0.34, width * 0.72, 3.0,
+                    name="XiaomeiTitle", size_pt=slide_theme["title_size_pt"],
+                    color=slide_theme["title_color"], font=slide_theme["font_family"], bold=True,
+                )
+            if subtitle:
+                cls._add_text_box(
+                    slide, subtitle, width * 0.15, height * 0.54, width * 0.72, 2.0,
+                    name="XiaomeiSubtitle", size_pt=slide_theme["body_size_pt"],
+                    color=slide_theme["text_color"], font=slide_theme["font_family"],
+                )
+        else:
+            if title:
+                cls._add_text_box(
+                    slide, title, 1.4, 0.8, width - 2.8, 2.2,
+                    name="XiaomeiTitle", size_pt=slide_theme["title_size_pt"],
+                    color=slide_theme["title_color"], font=slide_theme["font_family"], bold=True,
+                )
+                cls._add_accent(slide, 1.4, 3.0, 2.2, 0.10, slide_theme)
+
+            bullets = slide_spec.get("bullets")
+            body = slide_spec.get("body")
+            image = slide_spec.get("image")
+            has_image = isinstance(image, dict)
+            if bullets is not None or body is not None:
+                body_width = width - 3.0 if not has_image else width * 0.53
+                cls._add_body(
+                    slide,
+                    body=body,
+                    bullets=bullets,
+                    left=1.5,
+                    top=3.6 if title else 1.5,
+                    width=body_width,
+                    height=height - (4.5 if title else 2.5),
+                    theme=slide_theme,
+                )
+            if has_image:
+                defaults = {
+                    "x_cm": width * 0.61 if (bullets is not None or body is not None) else 2.0,
+                    "y_cm": 3.6 if title else 1.5,
+                    "width_cm": width * 0.34 if (bullets is not None or body is not None) else width - 4.0,
+                    "height_cm": height - (4.8 if title else 3.0),
+                }
+                cls._add_image(slide, {**defaults, **image}, asset_paths)
+
+        elements = slide_spec.get("elements", [])
+        if not isinstance(elements, list):
+            raise ValueError("slide.elements 必须是数组")
+        for element in elements:
+            cls._add_element(slide, element, slide_theme, asset_paths)
+        cls._set_notes(slide, slide_spec.get("notes"))
+        return slide
+
+    @classmethod
+    def _add_text_box(
+        cls,
+        slide: Any,
+        text: str,
+        left: float,
+        top: float,
+        width: float,
+        height: float,
+        *,
+        name: str,
+        size_pt: float,
+        color: str,
+        font: str,
+        bold: bool = False,
+        align: str = "left",
+        vertical: str = "top",
+    ) -> Any:
+        from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+        from pptx.util import Cm, Pt
+
+        cls._validate_box(left, top, width, height)
+        shape = slide.shapes.add_textbox(Cm(left), Cm(top), Cm(width), Cm(height))
+        shape.name = name
+        frame = shape.text_frame
+        frame.clear()
+        frame.word_wrap = True
+        frame.vertical_anchor = {
+            "top": MSO_ANCHOR.TOP,
+            "middle": MSO_ANCHOR.MIDDLE,
+            "bottom": MSO_ANCHOR.BOTTOM,
+        }.get(vertical, MSO_ANCHOR.TOP)
+        paragraph = frame.paragraphs[0]
+        paragraph.alignment = {
+            "left": PP_ALIGN.LEFT,
+            "center": PP_ALIGN.CENTER,
+            "right": PP_ALIGN.RIGHT,
+        }.get(align, PP_ALIGN.LEFT)
+        run = paragraph.add_run()
+        run.text = cls._text(text)
+        run.font.name = font
+        run.font.size = Pt(size_pt)
+        run.font.bold = bold
+        run.font.color.rgb = cls._color(color, "text.color")
+        return shape
+
+    @classmethod
+    def _add_body(
+        cls,
+        slide: Any,
+        *,
+        body: Any,
+        bullets: Any,
+        left: float,
+        top: float,
+        width: float,
+        height: float,
+        theme: dict[str, Any],
+    ) -> None:
+        if bullets is not None and not isinstance(bullets, list):
+            raise ValueError("slide.bullets 必须是数组")
+        lines: list[tuple[str, int, bool]] = []
+        if body is not None:
+            lines.append((str(body), 0, False))
+        for item in bullets or []:
+            if isinstance(item, dict):
+                text = str(item.get("text") or "")
+                level = int(item.get("level", 0))
+            else:
+                text = str(item)
+                level = 0
+            if not 0 <= level <= 5:
+                raise ValueError("bullet.level 必须在 0 到 5 之间")
+            lines.append((text, level, True))
+        if not lines:
+            return
+        shape = cls._add_text_box(
+            slide, "", left, top, width, height,
+            name="XiaomeiBody", size_pt=theme["body_size_pt"],
+            color=theme["text_color"], font=theme["font_family"],
+        )
+        frame = shape.text_frame
+        frame.clear()
+        from pptx.util import Pt
+
+        for index, (text, level, bullet) in enumerate(lines):
+            paragraph = frame.paragraphs[0] if index == 0 else frame.add_paragraph()
+            paragraph.level = level
+            paragraph.space_after = Pt(8)
+            run = paragraph.add_run()
+            run.text = ("• " if bullet else "") + cls._text(text)
+            run.font.name = theme["font_family"]
+            run.font.size = Pt(theme["body_size_pt"] - min(level, 2))
+            run.font.color.rgb = cls._color(theme["text_color"], "theme.text_color")
+
+    @classmethod
+    def _add_accent(
+        cls,
+        slide: Any,
+        left: float,
+        top: float,
+        width: float,
+        height: float,
+        theme: dict[str, Any],
+    ) -> None:
+        from pptx.enum.shapes import MSO_SHAPE
+        from pptx.util import Cm
+
+        shape = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            Cm(left), Cm(top), Cm(width), Cm(height),
+        )
+        shape.fill.solid()
+        shape.fill.fore_color.rgb = cls._color(theme["accent_color"], "theme.accent_color")
+        shape.line.fill.background()
+
+    @classmethod
+    def _add_image(
+        cls,
+        slide: Any,
+        values: Any,
+        asset_paths: dict[str, Path] | None,
+    ) -> Any:
+        if not isinstance(values, dict):
+            raise ValueError("image 必须是对象")
+        attachment_id = str(values.get("attachment_id") or "").strip()
+        workspace_path = str(values.get("workspace_path") or "").strip()
+        if bool(attachment_id) == bool(workspace_path):
+            raise ValueError("image 必须且只能提供 attachment_id 或 workspace_path 之一")
+        key = attachment_id or f"workspace:{workspace_path}"
+        image_path = (asset_paths or {}).get(key)
+        if image_path is None or not image_path.is_file():
+            raise ValueError(f"当前执行现场没有可用图片: {attachment_id or workspace_path}")
+        left = float(values.get("x_cm", 1.5))
+        top = float(values.get("y_cm", 1.5))
+        width = float(values.get("width_cm", 12))
+        height_value = values.get("height_cm")
+        height = float(height_value) if height_value is not None else None
+        cls._validate_box(left, top, width, height or 1)
+        from pptx.util import Cm
+
+        kwargs = {"width": Cm(width)}
+        if height is not None:
+            kwargs["height"] = Cm(height)
+        return slide.shapes.add_picture(str(image_path), Cm(left), Cm(top), **kwargs)
+
+    @classmethod
+    def _add_element(
+        cls,
+        slide: Any,
+        element: Any,
+        theme: dict[str, Any],
+        asset_paths: dict[str, Path] | None,
+    ) -> None:
+        if not isinstance(element, dict):
+            raise ValueError("slide.elements 中的每一项必须是对象")
+        kind = str(element.get("type") or "text").lower()
+        if kind == "image":
+            cls._add_image(slide, element, asset_paths)
+            return
+        if kind != "text":
+            raise ValueError(f"不支持的 slide element: {kind}")
+        required = ("x_cm", "y_cm", "width_cm", "height_cm")
+        if any(key not in element for key in required):
+            raise ValueError("text element 必须提供 x_cm、y_cm、width_cm 和 height_cm")
+        cls._add_text_box(
+            slide,
+            str(element.get("text") or ""),
+            float(element["x_cm"]),
+            float(element["y_cm"]),
+            float(element["width_cm"]),
+            float(element["height_cm"]),
+            name=str(element.get("name") or "XiaomeiText"),
+            size_pt=float(element.get("size_pt", theme["body_size_pt"])),
+            color=str(element.get("color") or theme["text_color"]),
+            font=str(element.get("font") or theme["font_family"]),
+            bold=element.get("bold") is True,
+            align=str(element.get("align") or "left").lower(),
+            vertical=str(element.get("vertical") or "top").lower(),
+        )
+
+    @staticmethod
+    def _validate_box(left: float, top: float, width: float, height: float) -> None:
+        if left < 0 or top < 0 or width <= 0 or height <= 0:
+            raise ValueError("元素坐标必须非负，宽高必须大于 0")
+        if max(left, top, width, height) > 200:
+            raise ValueError("元素坐标或尺寸超过 200 厘米限制")
+
+    @staticmethod
+    def _text(value: Any) -> str:
+        text = str(value or "")
+        if len(text) > MAX_TEXT_LENGTH:
+            raise ValueError(f"单个文本内容不能超过 {MAX_TEXT_LENGTH} 个字符")
+        return text
+
+    @classmethod
+    def _set_notes(cls, slide: Any, value: Any) -> None:
+        if value is None:
+            return
+        notes = cls._text(value)
+        slide.notes_slide.notes_text_frame.text = notes
+
+    @staticmethod
+    def _shape_named(slide: Any, name: str) -> Any | None:
+        return next((shape for shape in slide.shapes if shape.name == name), None)
+
+    @classmethod
+    def _set_shape_text(cls, shape: Any, text: Any) -> None:
+        if shape is None or not getattr(shape, "has_text_frame", False):
+            raise ValueError("幻灯片中没有可更新的目标文本框")
+        shape.text_frame.text = cls._text(text)
+
+    @classmethod
+    def _replace_in_frame(cls, frame: Any, old: str, new: str, replace_all: bool) -> int:
+        replacements = 0
+        for paragraph in frame.paragraphs:
+            runs = list(paragraph.runs)
+            if not runs:
+                continue
+            content = "".join(run.text for run in runs)
+            available = content.count(old)
+            if not available:
+                continue
+            count = available if replace_all else 1
+            updated = content.replace(old, new, count)
+            runs[0].text = updated
+            for run in runs[1:]:
+                run.text = ""
+            replacements += count
+            if not replace_all:
+                return replacements
+        return replacements
+
+    @classmethod
+    def _replace_text(
+        cls,
+        presentation: Any,
+        old: str,
+        new: str,
+        *,
+        replace_all: bool,
+        required: bool = True,
+    ) -> int:
+        replacements = 0
+        for slide in presentation.slides:
+            for shape in slide.shapes:
+                if getattr(shape, "has_text_frame", False):
+                    count = cls._replace_in_frame(shape.text_frame, old, new, replace_all)
+                    replacements += count
+                    if count and not replace_all:
+                        return replacements
+            try:
+                if not slide.has_notes_slide:
+                    continue
+                count = cls._replace_in_frame(
+                    slide.notes_slide.notes_text_frame,
+                    old,
+                    new,
+                    replace_all,
+                )
+            except (AttributeError, ValueError):
+                count = 0
+            replacements += count
+            if count and not replace_all:
+                return replacements
+        if required and replacements == 0:
+            raise ValueError(f"演示文稿中没有找到文本: {old}")
+        return replacements
+
+    @classmethod
+    def _update_slide(
+        cls,
+        presentation: Any,
+        operation: dict[str, Any],
+        asset_paths: dict[str, Path] | None,
+    ) -> int:
+        index = cls._slide_index(presentation, operation.get("slide"))
+        slide = presentation.slides[index]
+        changed = 0
+        for key, shape_name in (
+            ("title", "XiaomeiTitle"),
+            ("subtitle", "XiaomeiSubtitle"),
+            ("body", "XiaomeiBody"),
+        ):
+            if key not in operation:
+                continue
+            shape = cls._shape_named(slide, shape_name)
+            if shape is None and key == "title":
+                shape = slide.shapes.title
+            cls._set_shape_text(shape, operation[key])
+            changed += 1
+        if "notes" in operation:
+            cls._set_notes(slide, operation["notes"])
+            changed += 1
+        if "background_color" in operation:
+            cls._fill_background(
+                slide,
+                cls._color(operation["background_color"], "background_color"),
+            )
+            changed += 1
+        elements = operation.get("elements", [])
+        if not isinstance(elements, list):
+            raise ValueError("update_slide.elements 必须是数组")
+        theme = cls._theme(operation.get("theme"))
+        for element in elements:
+            cls._add_element(slide, element, theme, asset_paths)
+            changed += 1
+        return changed
+
+    @staticmethod
+    def _slide_index(presentation: Any, value: Any) -> int:
+        try:
+            number = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"无效幻灯片页码: {value}") from exc
+        if not 1 <= number <= len(presentation.slides):
+            raise ValueError(f"幻灯片页码超出范围: {number}")
+        return number - 1
+
+    @staticmethod
+    def _delete_slide(presentation: Any, index: int) -> None:
+        slide_id = presentation.slides._sldIdLst[index]
+        presentation.part.drop_rel(slide_id.rId)
+        del presentation.slides._sldIdLst[index]
+
+    @staticmethod
+    def _move_slide(presentation: Any, source: int, target: int) -> None:
+        slide_ids = presentation.slides._sldIdLst
+        element = slide_ids[source]
+        slide_ids.remove(element)
+        slide_ids.insert(target, element)
+
+    @classmethod
+    def _apply_operations(
+        cls,
+        presentation: Any,
+        operations: Iterable[Any],
+        *,
+        asset_paths: dict[str, Path] | None,
+    ) -> int:
+        changed = 0
+        for operation in operations:
+            if not isinstance(operation, dict):
+                raise ValueError("Presentation operation 必须是对象")
+            kind = str(operation.get("type") or "")
+            if kind == "replace_text":
+                old = str(operation.get("old") or "")
+                if not old:
+                    raise ValueError("replace_text.old 不能为空")
+                changed += cls._replace_text(
+                    presentation,
+                    old,
+                    str(operation.get("new") or ""),
+                    replace_all=operation.get("all") is True,
+                )
+            elif kind == "replace_placeholders":
+                values = operation.get("values")
+                if not isinstance(values, dict) or not values:
+                    raise ValueError("replace_placeholders.values 必须是非空对象")
+                missing = []
+                for key, value in values.items():
+                    placeholder = str(key)
+                    if not (placeholder.startswith("{{") and placeholder.endswith("}}")):
+                        placeholder = "{{" + placeholder + "}}"
+                    count = cls._replace_text(
+                        presentation,
+                        placeholder,
+                        str(value),
+                        replace_all=True,
+                        required=False,
+                    )
+                    changed += count
+                    if count == 0:
+                        missing.append(placeholder)
+                if missing and operation.get("allow_missing") is not True:
+                    raise ValueError("演示文稿中没有找到占位符: " + ", ".join(missing))
+            elif kind == "append_slides":
+                slides = operation.get("slides")
+                if not isinstance(slides, list) or not slides:
+                    raise ValueError("append_slides.slides 必须是非空数组")
+                if len(presentation.slides) + len(slides) > MAX_SLIDES:
+                    raise ValueError(f"演示文稿不能超过 {MAX_SLIDES} 页")
+                theme = cls._theme(operation.get("theme"))
+                for slide_spec in slides:
+                    cls._append_slide(
+                        presentation,
+                        slide_spec,
+                        theme=theme,
+                        asset_paths=asset_paths,
+                    )
+                    changed += 1
+            elif kind == "update_slide":
+                changed += cls._update_slide(presentation, operation, asset_paths)
+            elif kind == "delete_slide":
+                index = cls._slide_index(presentation, operation.get("slide"))
+                if len(presentation.slides) == 1:
+                    raise ValueError("不能删除演示文稿的最后一页")
+                cls._delete_slide(presentation, index)
+                changed += 1
+            elif kind == "move_slide":
+                source = cls._slide_index(presentation, operation.get("slide"))
+                target = cls._slide_index(presentation, operation.get("to"))
+                cls._move_slide(presentation, source, target)
+                changed += 1
+            elif kind == "set_properties":
+                cls._set_properties(presentation, operation)
+                changed += 1
+            else:
+                raise ValueError(f"不支持的 Presentation operation: {kind}")
+        return changed
+
+    @staticmethod
+    def _summary(presentation: Any) -> tuple[int, int, int, int]:
+        from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+        text_count = 0
+        picture_count = 0
+        note_count = 0
+        characters = 0
+        for slide in presentation.slides:
+            for shape in slide.shapes:
+                if getattr(shape, "has_text_frame", False) and shape.text.strip():
+                    text_count += 1
+                    characters += len(shape.text)
+                if getattr(shape, "shape_type", None) == MSO_SHAPE_TYPE.PICTURE:
+                    picture_count += 1
+            try:
+                if not slide.has_notes_slide:
+                    continue
+                notes = slide.notes_slide.notes_text_frame.text.strip()
+            except (AttributeError, ValueError):
+                notes = ""
+            if notes:
+                note_count += 1
+                characters += len(notes)
+        return text_count, picture_count, note_count, characters

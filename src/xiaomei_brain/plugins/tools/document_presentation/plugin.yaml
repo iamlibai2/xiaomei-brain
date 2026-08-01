@@ -1,5 +1,5 @@
 name: document_presentation
 version: "1.0.0"
-description: "演示文稿理解（PPTX）"
+description: "演示文稿创建、修改与理解（PPTX）"
 kind: bundle
 entry: adapter:register

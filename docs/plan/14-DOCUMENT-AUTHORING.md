@@ -81,11 +81,21 @@ Spreadsheet插件复用同一个 `write_document` 和执行现场，不增加格
 Writer只保存公式，不在服务端计算公式缓存值；最终数值由Excel、LibreOffice等
 表格软件打开后重新计算。图表、数据验证、条件格式和数据透视表属于后续版本。
 
+## Presentation V1
+
+Presentation 插件复用同一 `write_document` 和执行现场，支持：
+
+- 创建 wide（16:9）或 standard（4:3）PPTX；
+- 统一页面背景、标题、正文、强调色、字体和字号；
+- title、section、content、image 和 blank 五种基础页面；
+- 分级要点、受控图片附件、workspace 图片、自定义文字框和演讲备注；
+- 替换文字与模板占位符、更新页面、追加、删除和移动页面；
+- 原附件不覆盖，保存后按真实页面关系顺序重新提取并验收文字、图片和备注。
+
 ## 后续顺序
 
-1. Presentation writer：主题、幻灯片、文本、图片、备注和常用修改。
-2. PDF writer：从结构化内容创建 PDF；不原地编辑 PDF。
-3. 可选视觉验收：存在 LibreOffice 等渲染后端时生成预览，不作为基础安装的硬依赖。
+1. PDF writer：从结构化内容创建 PDF；不原地编辑 PDF。
+2. 可选视觉验收：存在 LibreOffice 等渲染后端时生成预览，不作为基础安装的硬依赖。
 
 ## 与视频等能力的关系
 

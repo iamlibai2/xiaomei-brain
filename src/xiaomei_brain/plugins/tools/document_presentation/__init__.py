@@ -1,1 +1,1 @@
-"""Presentation extractor plugin."""
+"""Presentation reading and authoring plugin."""

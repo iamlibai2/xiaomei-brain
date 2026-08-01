@@ -47,6 +47,7 @@ def test_document_tools_and_writer_are_discovered_through_plugins():
             "plugins": {
                 "allow": [
                     "document_io",
+                    "document_presentation",
                     "document_spreadsheet",
                     "document_word",
                 ],
@@ -61,12 +62,18 @@ def test_document_tools_and_writer_are_discovered_through_plugins():
         item.manifest.name
         for item in loaded
         if item.status == "loaded"
-    } == {"document_io", "document_spreadsheet", "document_word"}
+    } == {
+        "document_io",
+        "document_presentation",
+        "document_spreadsheet",
+        "document_word",
+    }
     assert {
         tool.name for tool in registry.get_agent_tools()
     } == {"read_document", "write_document"}
     assert registry.get_document_writer("word") is not None
     assert registry.get_document_writer("spreadsheet") is not None
+    assert registry.get_document_writer("presentation") is not None
 
 
 def test_write_document_creates_and_validates_word_file(tmp_path):
