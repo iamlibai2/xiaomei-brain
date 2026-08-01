@@ -4,6 +4,7 @@ from pathlib import Path
 
 from docx import Document
 from docx.enum.section import WD_ORIENT
+from docx.shared import RGBColor
 
 from xiaomei_brain.plugin.context import PluginContext
 from xiaomei_brain.plugin.loader import PluginLoader
@@ -119,6 +120,104 @@ def test_write_document_creates_and_validates_word_file(tmp_path):
     document = Document(output)
     assert document.core_properties.author == "Xiaomei"
     assert "Quarterly Report" in "\n".join(p.text for p in document.paragraphs)
+
+
+def test_word_creation_applies_professional_theme_and_table_hierarchy(tmp_path):
+    registry = _word_registry()
+    tool = create_write_document_tool(registry)
+    workspace = tmp_path / "workspace"
+    outputs = workspace / "outputs"
+    workspace.mkdir()
+    spec = workspace / "themed.json"
+    spec.write_text(json.dumps({
+        "title": "企业试点报告",
+        "subtitle": "管理层决策材料",
+        "theme": {"preset": "technology"},
+        "blocks": [
+            {"type": "heading", "level": 1, "text": "执行摘要"},
+            {"type": "paragraph", "text": "本报告用于验证专业排版主题。"},
+            {"type": "quote", "text": "结论先行，证据随后。"},
+            {
+                "type": "table",
+                "headers": ["指标", "结果"],
+                "rows": [["效率", "提升20%"], ["风险", "可控"]],
+                "column_widths_cm": [5, 8],
+            },
+        ],
+    }, ensure_ascii=False), encoding="utf-8")
+
+    with bind_tool_execution(
+        tool_call_id="call-theme",
+        tool_name="write_document",
+        arguments={},
+        artifact_callback=None,
+        workspace_root=str(workspace),
+        output_root=str(outputs),
+    ):
+        result = tool.execute(
+            format="word",
+            specification_path="themed.json",
+            output_name="themed.docx",
+        )
+
+    assert result["success"] is True
+    assert result["validation"]["theme"] == "technology"
+    assert result["validation"]["render_validation"]["status"] == "disabled"
+    document = Document(outputs / "themed.docx")
+    assert round(document.sections[0].page_width.cm, 1) == 21.0
+    assert round(document.sections[0].page_height.cm, 1) == 29.7
+    assert document.styles["Title"].font.color.rgb == RGBColor(0x12, 0x3B, 0x5D)
+    assert document.styles["Heading 1"].paragraph_format.keep_with_next is True
+    title_fonts = document.styles["Title"]._element.rPr.rFonts
+    assert title_fonts.get(
+        "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}eastAsia"
+    ) == "Microsoft YaHei"
+    assert "eastAsiaTheme" not in title_fonts.xml
+    assert "w:pBdr" in document.styles["Heading 1"]._element.xml
+    assert "w:fill=\"123B5D\"" in document.tables[0].rows[0].cells[0]._tc.xml
+    assert document.tables[0].rows[0].cells[0].paragraphs[0].runs[0].bold is True
+
+
+def test_word_visual_validation_is_opt_in_and_reported(tmp_path, monkeypatch):
+    registry = _word_registry()
+    tool = create_write_document_tool(registry)
+    workspace = tmp_path / "workspace"
+    outputs = workspace / "outputs"
+    workspace.mkdir()
+    spec = workspace / "visual.json"
+    spec.write_text(json.dumps({
+        "visual_validation": True,
+        "blocks": [{"type": "paragraph", "text": "需要渲染检查"}],
+    }, ensure_ascii=False), encoding="utf-8")
+
+    monkeypatch.setattr(
+        "xiaomei_brain.plugins.tools.document_word.writer.render_office_document",
+        lambda path: {
+            "status": "passed",
+            "performed": True,
+            "backend": "microsoft-office-com",
+            "page_count": 1,
+            "blank_pages": [],
+        },
+    )
+
+    with bind_tool_execution(
+        tool_call_id="call-visual",
+        tool_name="write_document",
+        arguments={},
+        artifact_callback=None,
+        workspace_root=str(workspace),
+        output_root=str(outputs),
+    ):
+        result = tool.execute(
+            format="word",
+            specification_path="visual.json",
+            output_name="visual.docx",
+        )
+
+    rendered = result["validation"]["render_validation"]
+    assert rendered["status"] == "passed"
+    assert rendered["backend"] == "microsoft-office-com"
 
 
 def test_write_document_revises_copy_without_overwriting_attachment(tmp_path):

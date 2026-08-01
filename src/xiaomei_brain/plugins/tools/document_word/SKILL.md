@@ -1,7 +1,7 @@
 ---
 name: word-documents
 description: 创建、修改和验收 Word DOCX 文档
-version: 1.0.0
+version: 1.1.0
 tags: [word, docx, document, report]
 requires_tools: [read_document, write, write_document, present_artifacts]
 ---
@@ -19,7 +19,8 @@ requires_tools: [read_document, write, write_document, present_artifacts]
   "title": "报告标题",
   "subtitle": "可选副标题",
   "properties": {"author": "作者", "subject": "主题"},
-  "default_style": {"font": "Microsoft YaHei", "size_pt": 11},
+  "theme": {"preset": "business-blue"},
+  "visual_validation": true,
   "page": {
     "size": "A4",
     "orientation": "portrait",
@@ -31,7 +32,12 @@ requires_tools: [read_document, write, write_document, present_artifacts]
     {"type": "heading", "level": 1, "text": "章节"},
     {"type": "paragraph", "text": "正文"},
     {"type": "list", "ordered": false, "items": ["第一项", "第二项"]},
-    {"type": "table", "headers": ["项目", "结果"], "rows": [["A", "完成"]]},
+    {
+      "type": "table",
+      "headers": ["项目", "结果"],
+      "rows": [["A", "完成"]],
+      "column_widths_cm": [8, 6]
+    },
     {
       "type": "image",
       "attachment_id": "当前消息中的真实图片附件 ID",
@@ -50,6 +56,28 @@ requires_tools: [read_document, write, write_document, present_artifacts]
   ]
 }
 ```
+
+### 主题与排版
+
+创建新文档时必须根据用途选择一个统一主题，不要为每个区块随机指定颜色：
+
+- `business-blue`：企业报告、方案、报价和正式汇报，默认选择。
+- `modern-minimal`：技术文档、产品规范和说明书。
+- `warm-professional`：培训、人事和内部沟通材料。
+- `technology`：AI、软件、数据和技术解决方案。
+
+主题会统一标题层级、正文行距、段落间距、列表、引用、图注、页眉页脚及
+表格样式。只有用户明确提供品牌规范时，才在 `theme` 中覆盖字体和颜色。
+
+专业文档应遵循：
+
+- 使用内置标题层级，不要用加粗正文冒充标题。
+- 不要手工输入 `•`，列表必须使用 `list` block。
+- 每个一级章节只表达一个主题，避免连续堆叠短标题。
+- 表格应使用简洁表头、适当列宽和短句；复杂说明移到表格下方。
+- 图片应有明确用途和图注，不要仅为装饰插入无关图片。
+- 正式交付的新文档默认设置 `"visual_validation": true`。渲染后端不可用时
+  文档仍可交付，但需要如实说明未完成本机渲染检查。
 
 调用示例：
 
@@ -124,5 +152,8 @@ write_document(
 ## 完成标准
 
 - 查看 `write_document` 返回的 `validation.valid`、段落数、表格数及内容预览。
+- 查看 `validation.render_validation`：`passed` 表示已由 Microsoft Office COM
+  或 LibreOffice 成功渲染；`warning` 时检查空白页；`unavailable` 表示本机
+  没有可用渲染后端，不能谎称已完成视觉检查。
 - 不要把 JSON specification 当作最终产物。
 - 最终只用 `present_artifacts` 交付经过验收的 DOCX。

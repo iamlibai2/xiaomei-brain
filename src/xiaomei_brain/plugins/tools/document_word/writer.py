@@ -6,13 +6,20 @@ import shutil
 from pathlib import Path
 from typing import Any, Iterable
 
+from xiaomei_brain.documents import render_office_document
 from xiaomei_brain.plugins.tools.document_word.extractor import WordExtractor
+from xiaomei_brain.plugins.tools.document_word.theme import (
+    apply_word_theme,
+    resolve_word_theme,
+    style_header_footer,
+    style_word_table,
+)
 
 
 class WordWriter:
     format_id = "word"
     suffix = ".docx"
-    writer_version = "1.0.0"
+    writer_version = "1.1.0"
 
     def write(
         self,
@@ -27,11 +34,14 @@ class WordWriter:
         except ImportError as exc:
             raise ValueError("Word 写入依赖 python-docx 未安装") from exc
 
+        theme = resolve_word_theme(specification.get("theme"))
         if source_path is not None:
             if source_path.suffix.lower() != self.suffix:
                 raise ValueError("Word writer 只能修改 DOCX 附件")
             shutil.copy2(source_path, output_path)
             document = Document(str(output_path))
+            if "theme" in specification:
+                apply_word_theme(document, theme)
             self._set_page_layout(document, specification.get("page"))
             operations = specification.get("operations")
             if not isinstance(operations, list) or not operations:
@@ -87,6 +97,7 @@ class WordWriter:
                         document,
                         blocks,
                         asset_paths=asset_paths,
+                        theme=theme,
                     ))
                 elif kind == "insert_blocks_after":
                     marker = str(operation.get("marker") or "")
@@ -101,6 +112,7 @@ class WordWriter:
                         blocks,
                         remove_marker=operation.get("remove_marker") is True,
                         asset_paths=asset_paths,
+                        theme=theme,
                     )
                 elif kind == "set_page_layout":
                     self._set_page_layout(document, operation)
@@ -109,6 +121,7 @@ class WordWriter:
                         document,
                         operation.get("header"),
                         operation.get("footer"),
+                        theme=theme,
                     )
                 elif kind == "set_properties":
                     self._set_properties(document, operation)
@@ -118,12 +131,17 @@ class WordWriter:
         else:
             document = Document()
             self._set_properties(document, specification.get("properties", {}))
+            apply_word_theme(document, theme)
             self._set_default_style(document, specification.get("default_style"))
-            self._set_page_layout(document, specification.get("page"))
+            self._set_page_layout(
+                document,
+                specification.get("page") or {"size": "A4"},
+            )
             self._set_header_footer(
                 document,
                 specification.get("header"),
                 specification.get("footer"),
+                theme=theme,
             )
             title = str(specification.get("title") or "").strip()
             if title:
@@ -134,7 +152,12 @@ class WordWriter:
             blocks = specification.get("blocks")
             if not isinstance(blocks, list) or not blocks:
                 raise ValueError("创建 Word 文档时 specification.blocks 不能为空")
-            self._append_blocks(document, blocks, asset_paths=asset_paths)
+            self._append_blocks(
+                document,
+                blocks,
+                asset_paths=asset_paths,
+                theme=theme,
+            )
             document.save(str(output_path))
             replacements = 0
             insertions = 0
@@ -146,6 +169,15 @@ class WordWriter:
             raise ValueError("生成的 Word 文档为空")
         extraction = WordExtractor().extract(output_path)
         preview = extraction.sections[0].content[:1200] if extraction.sections else ""
+        render_validation = (
+            render_office_document(output_path)
+            if specification.get("visual_validation") is True
+            else {
+                "status": "disabled",
+                "performed": False,
+                "reason": "specification.visual_validation 未启用",
+            }
+        )
         return {
             "writer": self.format_id,
             "writer_version": self.writer_version,
@@ -156,6 +188,8 @@ class WordWriter:
                 "replacements": replacements,
                 "insertions": insertions,
                 "content_preview": preview,
+                "theme": theme["preset"],
+                "render_validation": render_validation,
             },
         }
 
@@ -179,7 +213,15 @@ class WordWriter:
         font_name = str(values.get("font") or "").strip()
         if font_name:
             style.font.name = font_name
-            style._element.get_or_add_rPr().rFonts.set(qn("w:eastAsia"), font_name)
+            fonts = style._element.get_or_add_rPr().rFonts
+            for attribute in ("ascii", "hAnsi", "eastAsia", "cs"):
+                fonts.set(qn(f"w:{attribute}"), font_name)
+            for attribute in (
+                "asciiTheme", "hAnsiTheme", "eastAsiaTheme", "cstheme"
+            ):
+                qualified = qn(f"w:{attribute}")
+                if qualified in fonts.attrib:
+                    del fonts.attrib[qualified]
         if values.get("size_pt") is not None:
             size = float(values["size_pt"])
             if not 6 <= size <= 72:
@@ -264,6 +306,8 @@ class WordWriter:
         document: Any,
         header_values: Any,
         footer_values: Any,
+        *,
+        theme: dict[str, Any],
     ) -> None:
         if header_values is not None and not isinstance(header_values, dict):
             raise ValueError("header 必须是对象")
@@ -274,6 +318,7 @@ class WordWriter:
                 paragraph = section.header.paragraphs[0]
                 paragraph.clear()
                 paragraph.add_run(str(header_values.get("text") or ""))
+                style_header_footer(paragraph, theme, footer=False)
             if isinstance(footer_values, dict):
                 paragraph = section.footer.paragraphs[0]
                 paragraph.clear()
@@ -282,6 +327,7 @@ class WordWriter:
                     paragraph.add_run(prefix)
                 if footer_values.get("page_number") is True:
                     cls._add_page_number(paragraph)
+                style_header_footer(paragraph, theme, footer=True)
 
     def _append_blocks(
         self,
@@ -289,6 +335,7 @@ class WordWriter:
         blocks: Iterable[Any],
         *,
         asset_paths: dict[str, Path] | None = None,
+        theme: dict[str, Any],
     ) -> list[Any]:
         elements: list[Any] = []
         for block in blocks:
@@ -331,7 +378,9 @@ class WordWriter:
                 if width <= 0:
                     raise ValueError("表格至少需要一列")
                 table = document.add_table(rows=1 if headers else 0, cols=width)
-                table.style = str(block.get("style") or "Table Grid")
+                explicit_style = str(block.get("style") or "").strip()
+                if explicit_style:
+                    table.style = explicit_style
                 if headers:
                     for index, value in enumerate(headers[:width]):
                         table.rows[0].cells[index].text = str(value)
@@ -341,6 +390,12 @@ class WordWriter:
                     cells = table.add_row().cells
                     for index, value in enumerate(row[:width]):
                         cells[index].text = str(value)
+                style_word_table(
+                    table,
+                    theme,
+                    has_header=bool(headers),
+                    column_widths_cm=block.get("column_widths_cm"),
+                )
                 elements.append(table._tbl)
             elif kind == "page_break":
                 paragraph = document.add_page_break()
@@ -442,6 +497,7 @@ class WordWriter:
         *,
         remove_marker: bool,
         asset_paths: dict[str, Path] | None = None,
+        theme: dict[str, Any],
     ) -> int:
         paragraph = next(
             (item for item in document.paragraphs if marker in item.text),
@@ -453,6 +509,7 @@ class WordWriter:
             document,
             blocks,
             asset_paths=asset_paths,
+            theme=theme,
         )
         anchor = paragraph._p
         for element in elements:

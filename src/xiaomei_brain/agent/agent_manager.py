@@ -19,6 +19,18 @@ from xiaomei_brain.plugin.bootstrap import boot_plugins
 logger = logging.getLogger(__name__)
 
 
+def _discover_user_skill_directories(home_dir: str | None = None) -> list[str]:
+    """Return existing user-level directories managed by Agent Skills tools.
+
+    Shared Skills belong to the operating-system user, not to the source tree.
+    Keeping this path independent from the process working directory also makes
+    CLI and Desktop launches discover the same Skills.
+    """
+    home = os.path.abspath(home_dir or os.path.expanduser("~"))
+    shared_dir = os.path.join(home, ".agents", "skills")
+    return [shared_dir] if os.path.isdir(shared_dir) else []
+
+
 class AgentManager:
     """Single agent lifecycle: build + initialize.
 
@@ -358,13 +370,11 @@ class AgentManager:
         skills_dir = os.path.join(self._agent_dir(agent.id), "skills")
         brain_db_path = os.path.join(self._agent_dir(agent.id), "memory", "brain.db")
 
-        # Package Skills have the lowest precedence. Existing host/plugin
-        # Skills override them, and Agent-local Skills are imported last.
-        protected_skill_dirs = []
-        for candidate in [".agents/skills", "../.agents/skills"]:
-            p = os.path.abspath(candidate)
-            if os.path.isdir(p):
-                protected_skill_dirs.append(p)
+        # Package Skills have the lowest precedence. User-shared/plugin Skills
+        # override them, and Agent-local Skills are imported last. Shared
+        # Skills deliberately live outside the source tree so discovery does
+        # not depend on the process working directory.
+        protected_skill_dirs = _discover_user_skill_directories()
         protected_skill_dirs.extend(registry.get_skill_directories())
         package_service.add_protected_skill_directories(protected_skill_dirs)
         extra_dirs = [*package_dirs["skills"], *protected_skill_dirs]
