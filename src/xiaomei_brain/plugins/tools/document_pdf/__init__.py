@@ -1,1 +1,1 @@
-"""PDF extractor plugin."""
+"""PDF reading and authoring plugin."""

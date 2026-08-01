@@ -1,5 +1,5 @@
 name: document_pdf
 version: "1.0.0"
-description: "PDF 文档理解"
+description: "PDF 文档创建与理解"
 kind: bundle
 entry: adapter:register
