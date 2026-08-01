@@ -43,6 +43,7 @@ const CHANNEL_MAP = {
     listCapabilities: { invoke: "gateway:listCapabilities" },
     getCapability: { invoke: "gateway:getCapability" },
     setCapabilityEnabled: { invoke: "gateway:setCapabilityEnabled" },
+    inspectCapabilityPackage: { invoke: "gateway:inspectCapabilityPackage" },
     openAssignmentArtifact: { invoke: "gateway:openAssignmentArtifact" },
     requestAssignmentCancel: { invoke: "gateway:requestAssignmentCancel" },
     requestAssignmentResume: { invoke: "gateway:requestAssignmentResume" },

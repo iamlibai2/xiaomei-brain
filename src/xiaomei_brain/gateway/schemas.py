@@ -56,6 +56,12 @@ class CapabilityChangeParams(CapabilityGetParams):
     pass
 
 
+class CapabilityPackageInspectParams(BaseModel):
+    file_name: str = Field(..., min_length=1, max_length=255)
+    data_base64: str = Field(..., min_length=1, max_length=12_000_000)
+    sha256: str = Field(default="", pattern=r"^(?:[a-fA-F0-9]{64})?$")
+
+
 # ── Embodiment ───────────────────────────────
 
 class EmbodimentRegisterParams(BaseModel):

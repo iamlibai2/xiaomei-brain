@@ -1,9 +1,43 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import io
+import json
 from types import SimpleNamespace
+import zipfile
+
+import yaml
 
 from xiaomei_brain.gateway.protocol import ErrorCode
 from xiaomei_brain.gateway.server_methods import MethodRouter
+
+
+
+def build_package() -> bytes:
+    manifest = {
+        "schema_version": 1,
+        "package": {"id": "sample-analysis", "name": "样板分析能力", "version": "1.0.0"},
+        "capabilities": [{"id": "sample_analysis", "name": "样板分析"}],
+        "contents": {"skills": ["skills/sample/SKILL.md"]},
+    }
+    files = {
+        "capability.yaml": yaml.safe_dump(manifest, allow_unicode=True).encode(),
+        "skills/sample/SKILL.md": b"# Sample\n",
+    }
+    checksums = {
+        path: hashlib.sha256(content).hexdigest()
+        for path, content in files.items()
+    }
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        for path, content in files.items():
+            archive.writestr(path, content)
+        archive.writestr("checksums.json", json.dumps({
+            "algorithm": "sha256",
+            "files": checksums,
+        }))
+    return output.getvalue()
 
 
 class _Agent:
@@ -94,3 +128,38 @@ def test_gateway_advertises_capability_read_support():
 
     assert "capability.read" in router._capabilities()
     assert "capability.activation" in router._capabilities()
+    assert "capability.package.inspect" in router._capabilities()
+
+
+def test_capability_package_inspect_returns_read_only_report():
+    data = build_package()
+    response = _router(_Agent()).dispatch(
+        "conn-1",
+        "rpc-package",
+        "capability.package.inspect",
+        {
+            "file_name": "sample-analysis.xmcap",
+            "data_base64": base64.b64encode(data).decode("ascii"),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        },
+    )
+
+    inspection = response["result"]["inspection"]
+    assert inspection["valid"] is True
+    assert inspection["manifest"]["package"]["name"] == "样板分析能力"
+
+
+def test_capability_package_inspect_rejects_transport_mismatch():
+    data = build_package()
+    response = _router(_Agent()).dispatch(
+        "conn-1",
+        "rpc-package",
+        "capability.package.inspect",
+        {
+            "file_name": "sample-analysis.xmcap",
+            "data_base64": base64.b64encode(data).decode("ascii"),
+            "sha256": "0" * 64,
+        },
+    )
+
+    assert response["error"]["code"] == ErrorCode.INVALID_PARAMS

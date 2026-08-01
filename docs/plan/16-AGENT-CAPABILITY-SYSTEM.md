@@ -283,64 +283,45 @@ Desktop 对普通用户只呈现简化状态：
 
 ## 6. 能力包规范
 
-建议使用一个面向分发的清单。名称可在实施阶段确定，本文以 `capability.yaml` 表示：
+能力包使用根目录 `capability.yaml` 描述面向人物的能力、权限、依赖和所含文件。D1 已确定以下最小格式：
 
 ```yaml
-schemaVersion: 1
+schema_version: 1
 package:
   id: xiaomei.office-documents
+  name: 办公文档
   version: 1.0.0
+  description: 阅读、创建和修改常见办公文档
   publisher: xiaomei-brain
+  license: Apache-2.0
 
 capabilities:
   - id: office_documents
     name: 办公文档
     summary: 阅读、创建和修改常见办公文档
-    category: office
-    outcomes:
-      - 阅读和提取 Word、Excel、PPT、PDF 内容
-      - 创建和修改正式办公文件
-      - 将结果作为可下载产物交付
-    examples:
-      - 制作一份项目汇报 PPT
-      - 根据这些数据生成报价 Excel
-
-components:
-  - id: plugin_document_io
-    kind: plugin
-    target: document_io
-    label: 文档基础能力
-    required: true
-  - id: plugin_word
-    kind: plugin
-    target: document_word
-    label: Word 文档支持
-  - id: skill_word
-    kind: skill
-    target: word-documents
-    label: Word 文档工作方法
-
-outcomes:
-  - id: word
-    name: Word 文档
-    description: 阅读、创建和修改 DOCX 文档
-    components:
-      - plugin_document_io
-      - plugin_word
-      - skill_word
 
 requirements:
-  platformFeatures:
-    - artifact_delivery
-    - isolated_runtime
-  programs: []
+  xiaomei_brain: ">=0.1.0"
+  python: ">=3.11"
+  python_packages: []
+  node_packages: []
+  executables: []
 
 permissions:
-  - filesystem.read_authorized
-  - filesystem.write_workspace
+  filesystem:
+    - workspace_read
+    - workspace_write
+
+contents:
+  skills:
+    - skills/word-documents/SKILL.md
+  plugins:
+    - plugins/document_word/plugin.yaml
 ```
 
-该清单描述“整项能力”，现有各组件的 `plugin.yaml` 继续描述“某个 Python 组件怎样加载”。二者暂时并存，职责不同。
+归档还必须包含 `checksums.json`，完整覆盖除自身以外的所有文件。详细约束见 `docs/reference/capability-package-format.md`。
+
+该清单描述“整项能力”，现有各组件的 `plugin.yaml` 继续描述“某个 Python 组件怎样加载”。二者暂时并存，职责不同。D1 只读取清单并检查归档，不加载这些组件。
 
 第一阶段通过一个内置能力清单聚合现有插件，不搬动现有目录。未来外部能力包可以把清单、Skill、Plugin、MCP 和资源放入同一包中。
 
@@ -727,3 +708,14 @@ capability.progress
 - `needs_setup` 显示尚未配置，`preparing` 明确提示需要重启 Agent，`ready/degraded` 才开放继续按钮；
 - 恢复成功发布 `capability.setup.updated`，同时更新活动 Turn、Desktop 实时卡片和持久化时间线；
 - 历史中的已恢复卡片显示“原任务已恢复”，不再提供重复执行按钮。
+
+阶段 D1 已完成只读能力包检查：
+
+- 确定 `.xmcap` ZIP 归档、`capability.yaml` 与 `checksums.json` 的最小格式；
+- 新增 `capability.package.inspect` RPC，由目标 Agent 校验归档，Desktop 不解析清单；
+- 检查路径穿越、符号链接、加密、重复路径、归档规模、异常压缩比、内容引用和 SHA-256；
+- Desktop 能力页支持选择本地能力包，并预览能力、权限、依赖、错误和警告；
+- 检查过程不解压到磁盘、不导入代码、不写 Agent 配置，也不安装任何依赖；
+- 8 MB 是 D1 单帧检查限制，D2 若支持大型能力包应增加分块上传，而不是扩大 WebSocket JSON 帧。
+
+D2 的安装目录、原子切换、Agent 独立启用和 Action 审批尚未实现。

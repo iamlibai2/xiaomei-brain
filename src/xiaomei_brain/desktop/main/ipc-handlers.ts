@@ -29,6 +29,7 @@ const MAX_CACHED_ATTACHMENTS = 32;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_ARTIFACT_BYTES = 20 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+const MAX_CAPABILITY_PACKAGE_BYTES = 8 * 1024 * 1024;
 const IMAGE_MIMES: Record<string, string> = {
   ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
   ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
@@ -1055,6 +1056,48 @@ export function registerIpcHandlers(
     return client.rpc(args.enabled ? "capability.enable" : "capability.disable", {
       capability_id: args.capabilityId,
     });
+  });
+
+  ipcMain.handle("gateway:inspectCapabilityPackage", async (_event, args: {
+    agentId: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    try {
+      const win = getWindow();
+      const selection = win
+        ? await dialog.showOpenDialog(win, {
+            title: "选择小美能力包",
+            properties: ["openFile"],
+            filters: [{ name: "小美能力包", extensions: ["xmcap"] }],
+          })
+        : await dialog.showOpenDialog({
+            title: "选择小美能力包",
+            properties: ["openFile"],
+            filters: [{ name: "小美能力包", extensions: ["xmcap"] }],
+          });
+      const filePath = selection.filePaths[0];
+      if (selection.canceled || !filePath) return { result: { canceled: true } };
+      const stat = await fs.stat(filePath);
+      if (!stat.isFile()) return { error: { code: -32602, message: "请选择一个能力包文件" } };
+      if (stat.size > MAX_CAPABILITY_PACKAGE_BYTES) {
+        return { error: { code: -32602, message: "能力包超过 8 MB 检查上限" } };
+      }
+      const data = await fs.readFile(filePath);
+      const sha256 = createHash("sha256").update(data).digest("hex");
+      return client.rpc("capability.package.inspect", {
+        file_name: path.basename(filePath),
+        data_base64: data.toString("base64"),
+        sha256,
+      });
+    } catch (error) {
+      return {
+        error: {
+          code: -32603,
+          message: String(error instanceof Error ? error.message : error),
+        },
+      };
+    }
   });
 
   ipcMain.handle("gateway:openAssignmentArtifact", async (_event, args: {

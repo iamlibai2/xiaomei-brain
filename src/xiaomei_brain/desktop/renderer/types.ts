@@ -217,6 +217,38 @@ export interface AgentCapability {
   source: string;
 }
 
+export interface CapabilityPackageInspection {
+  valid: boolean;
+  file_name: string;
+  archive_size: number;
+  sha256: string;
+  entry_count?: number;
+  uncompressed_size?: number;
+  errors: string[];
+  warnings: string[];
+  manifest?: {
+    schema_version: number;
+    package: {
+      id: string;
+      name: string;
+      version: string;
+      description: string;
+      publisher: string;
+      license: string;
+    };
+    capabilities: Array<{ id: string; name: string; summary: string }>;
+    permissions: Array<{ category: string; value: string }>;
+    requirements: {
+      xiaomei_brain: string;
+      python: string;
+      python_packages: string[];
+      node_packages: string[];
+      executables: string[];
+    };
+    contents: Record<string, string[]>;
+  };
+}
+
 // ── Bridge API ──
 
 export interface GatewayBridge {
@@ -263,6 +295,7 @@ export interface GatewayBridge {
     capabilityId: string;
     enabled: boolean;
   }): Promise<JsonRpcResponse>;
+  inspectCapabilityPackage(args: { agentId: string }): Promise<JsonRpcResponse>;
   openAssignmentArtifact(args: {
     agentId: string;
     assignmentId: string;

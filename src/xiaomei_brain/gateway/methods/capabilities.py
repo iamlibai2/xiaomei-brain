@@ -2,10 +2,20 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
 from typing import Any
 
+from xiaomei_brain.capability_packages import CapabilityPackageInspector
+
 from ..protocol import ErrorCode, build_error, build_response
-from ..schemas import CapabilityChangeParams, CapabilityGetParams, format_error
+from ..schemas import (
+    CapabilityChangeParams,
+    CapabilityGetParams,
+    CapabilityPackageInspectParams,
+    format_error,
+)
 
 
 class CapabilityMethods:
@@ -13,6 +23,7 @@ class CapabilityMethods:
 
     def __init__(self, living: Any) -> None:
         self._living = living
+        self._package_inspector = CapabilityPackageInspector()
 
     @property
     def handlers(self) -> dict[str, Any]:
@@ -21,6 +32,7 @@ class CapabilityMethods:
             "capability.get": self.handle_get,
             "capability.enable": self.handle_enable,
             "capability.disable": self.handle_disable,
+            "capability.package.inspect": self.handle_package_inspect,
         }
 
     def handle_list(self, _conn_id: str, req_id: str, _params: dict) -> dict:
@@ -55,6 +67,23 @@ class CapabilityMethods:
 
     def handle_disable(self, _conn_id: str, req_id: str, params: dict) -> dict:
         return self._change(req_id, params, enabled=False)
+
+    def handle_package_inspect(self, _conn_id: str, req_id: str, params: dict) -> dict:
+        """Inspect a package without extracting, installing, or executing it."""
+        try:
+            parsed = CapabilityPackageInspectParams.model_validate(params)
+        except Exception as exc:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, format_error(exc))
+        try:
+            data = base64.b64decode(parsed.data_base64, validate=True)
+        except (binascii.Error, ValueError):
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, "data_base64 不是有效 Base64")
+        if parsed.sha256:
+            calculated = hashlib.sha256(data).hexdigest()
+            if calculated.lower() != parsed.sha256.lower():
+                return build_error(req_id, ErrorCode.INVALID_PARAMS, "能力包传输校验失败")
+        inspection = self._package_inspector.inspect(data, file_name=parsed.file_name)
+        return build_response(req_id, result={"inspection": inspection})
 
     def _change(self, req_id: str, params: dict, *, enabled: bool) -> dict:
         try:

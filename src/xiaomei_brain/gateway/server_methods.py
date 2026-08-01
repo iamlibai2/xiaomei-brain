@@ -174,6 +174,7 @@ class MethodRouter:
             "agent.state": {"agent.state.get"},
             "capability.read": {"capability.list", "capability.get"},
             "capability.activation": {"capability.enable", "capability.disable"},
+            "capability.package.inspect": {"capability.package.inspect"},
             "model.configuration": {
                 "model.config.get",
                 "model.catalog",

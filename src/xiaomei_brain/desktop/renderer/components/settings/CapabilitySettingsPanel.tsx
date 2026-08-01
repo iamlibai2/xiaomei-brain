@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AgentCapability, CapabilityStatus } from "../../types";
+import type {
+  AgentCapability,
+  CapabilityPackageInspection,
+  CapabilityStatus,
+} from "../../types";
 import { Button, Icon, type IconName } from "../ui";
 import { notifyCapabilityStatusChanged } from "./events";
 
@@ -33,6 +37,9 @@ export function CapabilitySettingsPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [changingId, setChangingId] = useState("");
+  const [packageBusy, setPackageBusy] = useState(false);
+  const [packageError, setPackageError] = useState("");
+  const [packageInspection, setPackageInspection] = useState<CapabilityPackageInspection | null>(null);
   const [highlightedId, setHighlightedId] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -104,6 +111,25 @@ export function CapabilitySettingsPanel({
     }
   }, [agentId, load]);
 
+  const inspectPackage = useCallback(async () => {
+    setPackageBusy(true);
+    setPackageError("");
+    try {
+      const response = await window.gateway.inspectCapabilityPackage({ agentId });
+      if (response.error) throw new Error(response.error.message);
+      if (response.result?.canceled) return;
+      const inspection = response.result?.inspection;
+      if (!inspection || typeof inspection !== "object" || Array.isArray(inspection)) {
+        throw new Error("Agent 返回了无效的能力包检查结果");
+      }
+      setPackageInspection(inspection as unknown as CapabilityPackageInspection);
+    } catch (inspectError) {
+      setPackageError(inspectError instanceof Error ? inspectError.message : String(inspectError));
+    } finally {
+      setPackageBusy(false);
+    }
+  }, [agentId]);
+
   return (
     <div className="capability-settings-page">
       <div className="capability-page-heading">
@@ -111,10 +137,23 @@ export function CapabilitySettingsPanel({
           <h2>能力</h2>
           <p>查看这个 Agent 当前真正能够完成的工作，以及尚有条件限制的部分。</p>
         </div>
-        <Button variant="ghost" size="sm" icon="refresh" disabled={loading || !connected} onClick={() => void load()}>
-          {loading ? "刷新中" : "刷新"}
-        </Button>
+        <div className="capability-page-actions">
+          <Button
+            variant="secondary"
+            size="sm"
+            icon="folder"
+            disabled={packageBusy || !connected}
+            onClick={() => void inspectPackage()}
+          >
+            {packageBusy ? "检查中…" : "导入能力"}
+          </Button>
+          <Button variant="ghost" size="sm" icon="refresh" disabled={loading || !connected} onClick={() => void load()}>
+            {loading ? "刷新中" : "刷新"}
+          </Button>
+        </div>
       </div>
+
+      {packageError && <div className="settings-error capability-package-error">{packageError}</div>}
 
       {!connected && (
         <div className="settings-empty capability-empty">
@@ -148,8 +187,156 @@ export function CapabilitySettingsPanel({
           />
         ))}
       </div>
+
+      {packageInspection && (
+        <CapabilityPackageInspectionDialog
+          inspection={packageInspection}
+          onClose={() => setPackageInspection(null)}
+        />
+      )}
     </div>
   );
+}
+
+function CapabilityPackageInspectionDialog({
+  inspection,
+  onClose,
+}: {
+  inspection: CapabilityPackageInspection;
+  onClose: () => void;
+}) {
+  const manifest = inspection.manifest;
+  const identity = manifest?.package;
+  const requirements = manifest?.requirements;
+  const externalRequirements = [
+    ...(requirements?.python_packages || []).map((item) => `Python: ${item}`),
+    ...(requirements?.node_packages || []).map((item) => `Node: ${item}`),
+    ...(requirements?.executables || []).map((item) => `程序: ${item}`),
+  ];
+  return (
+    <div className="model-editor-backdrop" onMouseDown={onClose}>
+      <section
+        className="model-editor-dialog capability-package-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="capability-package-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="model-editor-header">
+          <div>
+            <h2 id="capability-package-title">
+              {identity?.name || inspection.file_name || "能力包检查"}
+            </h2>
+            <p>由当前 Agent 完成只读安全检查，未执行或安装包内内容。</p>
+          </div>
+          <button type="button" aria-label="关闭" onClick={onClose}>
+            <Icon name="x" size={18} />
+          </button>
+        </header>
+
+        <div className="model-editor-body capability-package-body">
+          <div className={`capability-package-verdict ${inspection.valid ? "valid" : "invalid"}`}>
+            <Icon name={inspection.valid ? "shield" : "info"} size={19} />
+            <div>
+              <strong>{inspection.valid ? "能力包格式与完整性检查通过" : "能力包未通过检查"}</strong>
+              <span>{inspection.valid ? "这只说明归档结构有效，不代表已经信任或安装。" : "不会安装或执行此文件。"}</span>
+            </div>
+          </div>
+
+          {identity && (
+            <section className="capability-package-section">
+              <h3>包信息</h3>
+              <dl className="capability-package-facts">
+                <div><dt>标识</dt><dd>{identity.id}</dd></div>
+                <div><dt>版本</dt><dd>{identity.version}</dd></div>
+                <div><dt>发布者</dt><dd>{identity.publisher || "未声明"}</dd></div>
+                <div><dt>文件</dt><dd>{inspection.file_name} · {formatBytes(inspection.archive_size)}</dd></div>
+              </dl>
+              {identity.description && <p>{identity.description}</p>}
+            </section>
+          )}
+
+          {manifest?.capabilities.length ? (
+            <section className="capability-package-section">
+              <h3>提供的能力</h3>
+              <div className="capability-package-items">
+                {manifest.capabilities.map((capability) => (
+                  <div key={capability.id}>
+                    <strong>{capability.name}</strong>
+                    <span>{capability.summary || capability.id}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {manifest && (
+            <section className="capability-package-section">
+              <h3>权限声明</h3>
+              {manifest.permissions.length ? (
+                <div className="capability-package-tags">
+                  {manifest.permissions.map((permission) => (
+                    <span key={`${permission.category}:${permission.value}`}>
+                      {permissionLabel(permission.category)} · {permission.value}
+                    </span>
+                  ))}
+                </div>
+              ) : <p>未声明额外权限。</p>}
+            </section>
+          )}
+
+          {requirements && (
+            <section className="capability-package-section">
+              <h3>运行要求</h3>
+              <p>
+                xiaomei-brain {requirements.xiaomei_brain || "未限制"}
+                {" · "}Python {requirements.python || "未限制"}
+              </p>
+              {externalRequirements.length > 0 && (
+                <div className="capability-package-tags warning">
+                  {externalRequirements.map((item) => <span key={item}>{item}</span>)}
+                </div>
+              )}
+            </section>
+          )}
+
+          {inspection.errors.length > 0 && (
+            <section className="capability-package-messages error">
+              <strong>检查错误</strong>
+              {inspection.errors.map((item) => <span key={item}>{item}</span>)}
+            </section>
+          )}
+          {inspection.warnings.length > 0 && (
+            <section className="capability-package-messages warning">
+              <strong>注意</strong>
+              {inspection.warnings.map((item) => <span key={item}>{item}</span>)}
+            </section>
+          )}
+          <div className="capability-package-hash">SHA-256 · {inspection.sha256}</div>
+        </div>
+
+        <footer className="model-editor-footer capability-package-footer">
+          <span>阶段 D1 仅提供检查预览，尚未安装到 Agent。</span>
+          <Button variant="primary" onClick={onClose}>完成</Button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function permissionLabel(category: string): string {
+  return ({
+    filesystem: "文件",
+    network: "网络",
+    process: "进程",
+    secrets: "凭证",
+  } as Record<string, string>)[category] || category;
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function CapabilityCard({
