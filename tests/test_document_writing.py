@@ -33,6 +33,63 @@ def test_word_plugin_owns_writer_and_skill_directory():
     assert (Path(skill_dirs[0]) / "SKILL.md").is_file()
 
 
+def test_word_theme_preview_is_copied_into_current_execution_output(tmp_path):
+    registry = _word_registry()
+    tool = next(
+        item
+        for item in registry.get_agent_tools()
+        if item.name == "preview_word_themes"
+    )
+    workspace = tmp_path / "workspace"
+    output_root = workspace / "work"
+    output_root.mkdir(parents=True)
+
+    with bind_tool_execution(
+        tool_call_id="call-preview",
+        tool_name=tool.name,
+        arguments={},
+        artifact_callback=None,
+        session_id="desktop-session-1",
+        workspace_root=str(workspace),
+        working_directory=str(output_root),
+        output_root=str(output_root),
+    ):
+        result = tool.execute()
+
+    assert result["success"] is True
+    assert result["themes"] == [
+        "business-blue",
+        "modern-minimal",
+        "warm-professional",
+        "technology",
+    ]
+    preview = Path(result["output_path"])
+    assert preview.name == "Word主题预览.png"
+    assert preview.resolve().is_relative_to(output_root.resolve())
+    assert preview.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_bundled_word_theme_previews_are_real_png_assets():
+    assets = (
+        Path(__file__).parents[1]
+        / "src"
+        / "xiaomei_brain"
+        / "plugins"
+        / "tools"
+        / "document_word"
+        / "assets"
+    )
+    expected = {
+        "business-blue.png",
+        "modern-minimal.png",
+        "warm-professional.png",
+        "technology.png",
+        "theme-showcase.png",
+    }
+    assert {path.name for path in assets.glob("*.png")} == expected
+    assert all((assets / name).stat().st_size > 10_000 for name in expected)
+
+
 def test_document_tools_and_writer_are_discovered_through_plugins():
     registry = PluginRegistry()
     tools_root = (
@@ -73,7 +130,7 @@ def test_document_tools_and_writer_are_discovered_through_plugins():
     }
     assert {
         tool.name for tool in registry.get_agent_tools()
-    } == {"read_document", "write_document"}
+    } == {"read_document", "write_document", "preview_word_themes"}
     assert registry.get_document_writer("word") is not None
     assert registry.get_document_writer("spreadsheet") is not None
     assert registry.get_document_writer("presentation") is not None

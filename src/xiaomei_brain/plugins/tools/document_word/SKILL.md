@@ -1,10 +1,27 @@
 ---
 name: word-documents
 description: 创建、修改和验收 Word DOCX 文档
-version: 1.1.0
+version: 1.2.0
 tags: [word, docx, document, report]
-requires_tools: [read_document, write, write_document, present_artifacts]
+requires_tools: [read_document, write, write_document, preview_word_themes, present_artifacts, clarify]
 ---
+
+## 主题选择交互
+
+不要为了任何 Word 请求都打断用户。按以下顺序决定主题：
+
+1. 用户已经指定主题、颜色或品牌规范时，直接采用，不再询问。
+2. 修改已有文档或模板时，默认保持原文档风格，不再询问。
+3. 简短、低风险文档可根据用途自动选择最合适的内置主题。
+4. 新建正式文档且视觉方向会明显影响结果、用户又没有说明偏好时：
+   - 调用 `preview_word_themes` 生成真实 Word 渲染的主题对比图；
+   - 立即调用 `present_artifacts` 展示返回的 `output_path`；
+   - 再调用 `clarify`，选项固定为“商务蓝、现代简约、暖色专业、科技风格”；
+   - 将选择分别映射为 `business-blue`、`modern-minimal`、
+     `warm-professional`、`technology`，写入 `theme.preset`。
+5. 用户表示“你决定”“都可以”时自行选择，不再询问。
+
+预览图片只用于选择主题，不作为最终文档产物再次交付。最终仍只交付验收后的 DOCX。
 
 # Word 文档工作流
 
