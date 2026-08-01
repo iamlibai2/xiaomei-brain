@@ -52,6 +52,11 @@ class ToolRegistry:
 
     def __init__(self) -> None:
         self._tools: dict[str, Tool] = {}
+        self._disabled_names: set[str] = set()
+
+    def set_disabled_names(self, names: set[str] | list[str]) -> None:
+        """Hide tools disabled by the Agent capability policy."""
+        self._disabled_names = {str(name).strip() for name in names if str(name).strip()}
 
     def register(self, tool: Tool) -> None:
         """Register a tool."""
@@ -65,7 +70,10 @@ class ToolRegistry:
 
     def list_tools(self) -> list[Tool]:
         """List all registered tools."""
-        return list(self._tools.values())
+        return [
+            tool for name, tool in self._tools.items()
+            if name not in self._disabled_names
+        ]
 
     def to_openai_tools(self) -> list[dict[str, Any]]:
         """Convert all tools to OpenAI function calling format."""
@@ -78,7 +86,8 @@ class ToolRegistry:
                     "parameters": t.parameters,
                 },
             }
-            for t in self._tools.values()
+            for name, t in self._tools.items()
+            if name not in self._disabled_names
         ]
 
     def filter_by_allowlist(self, allow: list[str]) -> None:
@@ -110,4 +119,6 @@ class ToolRegistry:
         tool = self._tools.get(tool_name)
         if tool is None:
             raise ValueError(f"Tool '{tool_name}' not found")
+        if tool_name in self._disabled_names:
+            raise ValueError(f"Tool '{tool_name}' is disabled")
         return normalize_tool_result(tool.execute(**kwargs))

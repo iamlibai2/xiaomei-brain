@@ -371,6 +371,33 @@ class AgentManager:
         for skill_tool in create_skill_tools(agent):
             tools.register(skill_tool)
 
+        # ── 用户能力体系 ──────────────────────────────────────────────
+        # Build the business-level registry before the dynamic Tool index so
+        # capability_status participates in normal semantic retrieval.
+        from xiaomei_brain.capabilities import (
+            CapabilityConfigurationService,
+            CapabilityRegistry,
+            create_capability_tools,
+        )
+        capability_configuration = CapabilityConfigurationService(
+            os.path.join(self._agent_dir(agent.id), "config.json")
+        )
+        from xiaomei_brain.tool_services import ToolServiceConfigurationService
+        tool_service_configuration = ToolServiceConfigurationService(
+            agent.id,
+            base_dir=self.registry.base_dir,
+        )
+        capability_registry = CapabilityRegistry(
+            plugin_registry=registry,
+            tool_registry=tools,
+            skill_loader=skill_loader,
+            configuration=capability_configuration,
+            tool_service_configuration=tool_service_configuration,
+        )
+        agent._capability_registry = capability_registry
+        for capability_tool in create_capability_tools(agent):
+            tools.register(capability_tool)
+
         # ── 动态工具加载 ───────────────────────────────────────────────
         dynamic_cfg = {}
         if merged_config:
@@ -386,6 +413,21 @@ class AgentManager:
             boot_line("向量索引", "OK", f"{total_tools} 个工具")
             agent._dynamic_loader = loader
             set_active_loader(loader)
+
+        capability_registry.bind_dynamic_tool_loader(
+            getattr(agent, "_dynamic_loader", None)
+        )
+        capability_views = capability_registry.list()
+        ready_count = sum(
+            view.status.value in {"ready", "degraded"}
+            for view in capability_views
+        )
+        boot_section("能力体系")
+        boot_line(
+            "可用能力",
+            "OK",
+            f"{ready_count}/{len(capability_views)} 项",
+        )
 
         from xiaomei_brain.agent.session import SessionManager
         session_manager = SessionManager(session_dir=self._sessions_dir(agent.id))

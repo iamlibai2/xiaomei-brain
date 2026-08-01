@@ -1,0 +1,35 @@
+id: web_search
+name: 联网搜索
+summary: 查询互联网上的实时信息、公开资料和网页来源
+category: research
+version: "1.0.0"
+source: xiaomei-brain
+
+examples:
+  - 搜索今天的行业新闻并整理来源
+  - 查询这个产品的最新公开资料
+  - 找到相关政策原文并给出链接
+
+components:
+  - id: plugin_web_search_baidu
+    kind: plugin
+    target: web_search_baidu
+    label: 联网搜索插件
+    required: true
+  - id: service_web_search_baidu
+    kind: tool_service
+    target: web_search_baidu
+    label: 联网搜索服务
+    required: true
+    setup_section: search
+  - id: tool_web_search
+    kind: tool
+    target: web_search
+    label: 网页搜索
+    required: true
+
+outcomes:
+  - id: web_search
+    name: 网页搜索
+    description: 搜索实时网页信息并返回可核对的来源
+    components: [plugin_web_search_baidu, service_web_search_baidu, tool_web_search]

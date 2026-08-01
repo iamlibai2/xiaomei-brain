@@ -259,6 +259,44 @@ function actionRequest(
   };
 }
 
+function capabilitySetupRequest(
+  value: unknown,
+  fallbackSessionId: string,
+): CapabilitySetupRequest | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const payload = value as Record<string, unknown>;
+  const rawAction = payload.action;
+  if (!rawAction || typeof rawAction !== "object" || Array.isArray(rawAction)) return null;
+  const action = rawAction as Record<string, unknown>;
+  const id = typeof payload.id === "string" ? payload.id : "";
+  const capabilityId = typeof payload.capability_id === "string" ? payload.capability_id : "";
+  const section = typeof action.section === "string" ? action.section : "";
+  if (!id || !capabilityId || !section || action.type !== "open_settings") return null;
+  return {
+    id,
+    capabilityId,
+    capabilityName: typeof payload.capability_name === "string"
+      ? payload.capability_name
+      : capabilityId,
+    status: typeof payload.capability_status === "string" ? payload.capability_status : "needs_setup",
+    summary: typeof payload.summary === "string" ? payload.summary : "完成配置后即可继续使用这项能力。",
+    sessionId: typeof payload.session_id === "string" ? payload.session_id : fallbackSessionId,
+    turnId: typeof payload.turn_id === "string" ? payload.turn_id : "",
+    sourceMessageId: typeof payload.source_message_id === "number"
+      ? payload.source_message_id
+      : undefined,
+    resumeStatus: ["pending", "resumed", "unavailable"].includes(String(payload.resume_status))
+      ? payload.resume_status as CapabilitySetupRequest["resumeStatus"]
+      : "unavailable",
+    action: {
+      type: "open_settings",
+      section,
+      target: typeof action.target === "string" ? action.target : "",
+      label: typeof action.label === "string" ? action.label : "前往配置",
+    },
+  };
+}
+
 function memoryReferences(value: unknown): MemoryReference[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((raw): MemoryReference[] => {
@@ -349,6 +387,19 @@ function historyMessages(
           status,
           response: typeof interaction.response === "string" ? interaction.response : "",
         },
+      } satisfies DisplayMessage];
+    }
+    if (row.role === "interaction" && row.capability_setup && typeof row.capability_setup === "object") {
+      const setup = capabilitySetupRequest(row.capability_setup, sessionId);
+      if (!setup) return [];
+      return [{
+        id: setup.id,
+        role: "agent",
+        content: "",
+        streaming: false,
+        createdAt: typeof row.created_at === "number" ? row.created_at * 1000 : undefined,
+        turnId: setup.turnId || undefined,
+        capabilitySetup: setup,
       } satisfies DisplayMessage];
     }
     if (row.role === "artifact") {
@@ -451,18 +502,21 @@ function resumeMessages(result: Record<string, unknown> | undefined, sessionId: 
   const activeInteractionIds = new Set<string>();
   const activeToolIds = new Set<string>();
   const activeActionIds = new Set<string>();
+  const activeCapabilitySetupIds = new Set<string>();
   for (const value of items) {
     if (!value || typeof value !== "object") continue;
     const item = value as Record<string, unknown>;
     if (item.type === "interaction" && typeof item.id === "string") activeInteractionIds.add(item.id);
     if (item.type === "tool" && typeof item.id === "string") activeToolIds.add(item.id);
     if (item.type === "action" && typeof item.id === "string") activeActionIds.add(item.id);
+    if (item.type === "capability_setup" && typeof item.id === "string") activeCapabilitySetupIds.add(item.id);
   }
 
   const history = historyMessages(result, sessionId, activeInteractionIds, activeActionIds).filter((message) => {
     if (message.interaction && activeInteractionIds.has(message.interaction.id)) return false;
     if (message.tool && activeToolIds.has(message.tool.id)) return false;
     if (message.action && activeActionIds.has(message.action.id)) return false;
+    if (message.capabilitySetup && activeCapabilitySetupIds.has(message.capabilitySetup.id)) return false;
     return true;
   });
   if (!inflight) return history;
@@ -532,6 +586,18 @@ function resumeMessages(result: Record<string, unknown> | undefined, sessionId: 
           status,
           response: typeof item.response === "string" ? item.response : "",
         },
+      }];
+    }
+    if (item.type === "capability_setup") {
+      const setup = capabilitySetupRequest(item, sessionId);
+      if (!setup) return [];
+      return [{
+        id: setup.id,
+        role: "agent",
+        content: "",
+        streaming: false,
+        turnId,
+        capabilitySetup: setup,
       }];
     }
     if (item.type === "action") {
@@ -704,6 +770,7 @@ export interface DisplayMessage {
   streaming: boolean;
   createdAt?: number;
   interaction?: InteractionRequest;
+  capabilitySetup?: CapabilitySetupRequest;
   tool?: ToolActivity;
   action?: ActionRequest;
   artifact?: DisplayArtifact;
@@ -777,6 +844,24 @@ export interface InteractionRequest {
   status: "pending" | "responding" | "answered" | "cancelled" | "expired" | "error";
   response: string;
   error?: string;
+}
+
+export interface CapabilitySetupRequest {
+  id: string;
+  capabilityId: string;
+  capabilityName: string;
+  status: string;
+  summary: string;
+  sessionId: string;
+  turnId: string;
+  sourceMessageId?: number;
+  resumeStatus: "pending" | "resumed" | "unavailable";
+  action: {
+    type: "open_settings";
+    section: string;
+    target: string;
+    label: string;
+  };
 }
 
 export interface ActionRequest {
@@ -1199,6 +1284,7 @@ interface CoreActions {
   removeAttachment: (attachmentId: string) => void;
   abortMessage: () => Promise<void>;
   retryMessage: (messageId: number) => Promise<void>;
+  resumeCapabilityRequest: (messageId: number) => Promise<string>;
   respondToInteraction: (requestId: string, response: string) => Promise<void>;
   respondToAction: (actionId: string, decision: "allow" | "deny") => Promise<void>;
   setDraft: (text: string) => void;
@@ -1954,6 +2040,64 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         if (original) original.deliveryError = String(error);
         setSessionSending(s, agentId, sessionId, false);
       }));
+    }
+  },
+
+  resumeCapabilityRequest: async (messageId) => {
+    const agentId = get().activeAgentId;
+    const sessionId = agentId ? get().activeSessionByAgent[agentId] || "" : "";
+    if (!agentId || !sessionId) return "当前会话不可用";
+    if (get().sendingByConversation[conversationStateKey(agentId, sessionId)]) {
+      return "当前会话仍在处理中";
+    }
+    const source = (get().messagesByAgent[agentId] || [])
+      .find((message) => message.sourceMessageId === messageId && message.role === "user");
+    if (!source) return "找不到被阻塞的原始请求";
+
+    const clientRequestId = crypto.randomUUID();
+    const optimisticId = `capability-resume-${clientRequestId}`;
+    set(produce((s: CoreState) => {
+      s.messagesByAgent[agentId].push({
+        id: optimisticId,
+        role: "user",
+        content: source.content,
+        streaming: false,
+        createdAt: Date.now(),
+        attachments: source.attachments,
+        deliveryStatus: "processing",
+        retryOf: messageId,
+      });
+      setSessionSending(s, agentId, sessionId, true);
+      touchSession(s, agentId, sessionId, 1, source.content);
+    }));
+    try {
+      const response = await window.gateway.retryMessage({
+        agentId, sessionId, messageId, clientRequestId,
+      });
+      if (response.error || response.result?.accepted === false) {
+        const error = response.error?.message || String(response.result?.reason || "恢复请求失败");
+        set(produce((s: CoreState) => {
+          s.messagesByAgent[agentId] = (s.messagesByAgent[agentId] || [])
+            .filter((message) => message.id !== optimisticId);
+          setSessionSending(s, agentId, sessionId, false);
+        }));
+        return error;
+      }
+      set(produce((s: CoreState) => {
+        const resumed = s.messagesByAgent[agentId]
+          .find((message) => message.id === optimisticId);
+        if (!resumed) return;
+        if (typeof response.result?.turn_id === "string") resumed.turnId = response.result.turn_id;
+        if (typeof response.result?.message_id === "number") resumed.sourceMessageId = response.result.message_id;
+      }));
+      return "";
+    } catch (error) {
+      set(produce((s: CoreState) => {
+        s.messagesByAgent[agentId] = (s.messagesByAgent[agentId] || [])
+          .filter((message) => message.id !== optimisticId);
+        setSessionSending(s, agentId, sessionId, false);
+      }));
+      return String(error instanceof Error ? error.message : error);
     }
   },
 
@@ -2864,6 +3008,61 @@ export function initGatewayEvents() {
         if (userMessage) {
           if (eventTurnId) userMessage.turnId = eventTurnId;
           userMessage.deliveryStatus = "processing";
+        }
+      }));
+      return;
+    }
+
+    if (event === "capability.setup.requested") {
+      const setup = capabilitySetupRequest(d, eventSessionId);
+      if (!setup) return;
+      flushStreamToStore();
+      const activeStreamId = stream.id;
+      let inserted = false;
+      setState(produce((s: CoreState) => {
+        const sessionMessages = eventMessages(s);
+        if (sessionMessages.some((message) => message.capabilitySetup?.id === setup.id)) return;
+        if (activeStreamId) {
+          const activeMessage = sessionMessages.find((message) => message.id === activeStreamId);
+          if (activeMessage) {
+            activeMessage.content = stream.ref;
+            activeMessage.streaming = false;
+          }
+        }
+        sessionMessages.push({
+          id: setup.id,
+          role: "agent",
+          content: "",
+          streaming: false,
+          createdAt: Date.now(),
+          turnId: eventTurnId || undefined,
+          capabilitySetup: setup,
+        });
+        if (s.activeSessionByAgent[agentId] !== eventSessionId) {
+          const key = conversationStateKey(agentId, eventSessionId);
+          s.unreadByConversation[key] = (s.unreadByConversation[key] || 0) + 1;
+        }
+        if (s.activeAgentId !== agentId) {
+          s.unreadByAgent[agentId] = (s.unreadByAgent[agentId] || 0) + 1;
+        }
+        inserted = true;
+      }));
+      if (inserted && activeStreamId && stream.id === activeStreamId) {
+        stream.id = null;
+        stream.ref = "";
+      }
+      return;
+    }
+
+    if (event === "capability.setup.updated") {
+      const requestId = typeof d.id === "string" ? d.id : "";
+      const resumeStatus = typeof d.resume_status === "string" ? d.resume_status : "";
+      if (!requestId || !["pending", "resumed", "unavailable"].includes(resumeStatus)) return;
+      setState(produce((s: CoreState) => {
+        const message = eventMessages(s)
+          .find((entry) => entry.capabilitySetup?.id === requestId);
+        if (message?.capabilitySetup) {
+          message.capabilitySetup.resumeStatus = resumeStatus as CapabilitySetupRequest["resumeStatus"];
         }
       }));
       return;

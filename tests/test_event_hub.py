@@ -71,6 +71,42 @@ def test_turn_registry_is_rebuilt_from_domain_events():
     assert registry.snapshot("s") is None
 
 
+def test_turn_registry_keeps_non_blocking_capability_setup_card():
+    hub = EventHub()
+    registry = ActiveTurnRegistry()
+    hub.subscribe(registry.handle_event)
+    hub.publish("message.start", {}, session_id="s", turn_id="t")
+    hub.publish(
+        "capability.setup.requested",
+        {
+            "id": "capability-setup-1",
+            "kind": "capability_setup",
+            "capability_id": "web_search",
+            "session_id": "s",
+            "turn_id": "t",
+            "action": {"type": "open_settings", "section": "search"},
+        },
+    )
+
+    snapshot = registry.snapshot("s")
+
+    assert snapshot is not None
+    assert snapshot["status"] == "running"
+    assert snapshot["items"][0]["type"] == "capability_setup"
+    assert snapshot["items"][0]["capability_id"] == "web_search"
+
+    hub.publish(
+        "capability.setup.updated",
+        {
+            "id": "capability-setup-1",
+            "session_id": "s",
+            "turn_id": "t",
+            "resume_status": "resumed",
+        },
+    )
+    assert registry.snapshot("s")["items"][0]["resume_status"] == "resumed"
+
+
 def test_gateway_projection_streams_only_to_websocket_routes():
     class Router:
         def __init__(self):
@@ -118,6 +154,42 @@ def test_gateway_projection_streams_only_to_websocket_routes():
         "message.delta",
         "tool.complete",
     ]
+
+
+def test_capability_setup_navigation_is_only_delivered_to_desktop():
+    class Router:
+        def __init__(self):
+            self.route = OutputRoute("feishu", "chat-1")
+            self.events = []
+
+        def route_for_turn(self, _turn_id, _session_id):
+            return self.route
+
+        def deliver_event(self, name, payload, route, **metadata):
+            self.events.append((name, payload, route, metadata))
+
+    router = Router()
+    hub = EventHub()
+    hub.subscribe(GatewayEventProjection(lambda: router))
+    payload = {
+        "id": "capability-setup-1",
+        "session_id": "s",
+        "turn_id": "t",
+        "capability_id": "web_search",
+        "action": {"type": "open_settings", "section": "search"},
+    }
+
+    hub.publish("capability.setup.requested", payload)
+    assert router.events == []
+
+    router.route = OutputRoute("ws", "s")
+    hub.publish("capability.setup.requested", payload)
+    assert router.events[0][0] == "capability.setup.requested"
+    hub.publish("capability.setup.updated", {
+        **payload,
+        "resume_status": "resumed",
+    })
+    assert router.events[1][0] == "capability.setup.updated"
 
 
 def test_gateway_projection_uses_turn_origin_for_shared_session():

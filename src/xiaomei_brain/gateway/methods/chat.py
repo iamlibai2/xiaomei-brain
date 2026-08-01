@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from collections import OrderedDict
 from typing import Any
 
@@ -94,6 +95,8 @@ class ChatMethods:
         if living is None:
             return build_error(req_id, ErrorCode.GATEWAY_NOT_READY, "Gateway 未就绪")
         db = getattr(getattr(living, "agent", None), "conversation_db", None)
+        capability_resume_id = ""
+        capability_request_id = ""
         if parsed.retry_of_message_id is not None:
             source = db.get_user_message(parsed.retry_of_message_id, session_id) if db else None
             if source is None or source.get("content", "").strip() != content:
@@ -102,9 +105,20 @@ class ChatMethods:
                 source_metadata = json.loads(source.get("metadata") or "{}")
             except (TypeError, json.JSONDecodeError):
                 source_metadata = {}
-            if not isinstance(source_metadata, dict) or source_metadata.get("status") not in {
-                "failed", "interrupted",
-            }:
+            capability_resume_id = self._resumable_capability_id(source_metadata)
+            blocked = source_metadata.get("capability_blocked") if isinstance(source_metadata, dict) else None
+            if isinstance(blocked, dict):
+                capability_request_id = str(blocked.get("request_id", ""))
+            if not isinstance(source_metadata, dict) or (
+                source_metadata.get("status") not in {"failed", "interrupted"}
+                and not capability_resume_id
+            ):
+                if self._blocked_capability_id(source_metadata):
+                    return build_error(
+                        req_id,
+                        ErrorCode.INVALID_PARAMS,
+                        "能力尚未就绪，请完成配置并按提示重启 Agent 后再继续任务",
+                    )
                 return build_error(req_id, ErrorCode.INVALID_PARAMS, "只有失败或已中断的消息可以重试")
             source_attachment_ids = [
                 item.get("id") for item in source_metadata.get("attachments", [])
@@ -156,7 +170,10 @@ class ChatMethods:
                 session_id=session_id,
                 images=image_paths,
                 attachments=prepared_attachments,
-                metadata={"retry_of": parsed.retry_of_message_id} if parsed.retry_of_message_id else {},
+                metadata={
+                    **({"retry_of": parsed.retry_of_message_id} if parsed.retry_of_message_id else {}),
+                    **({"resumed_capability_id": capability_resume_id} if capability_resume_id else {}),
+                },
                 reply_channel="ws",
                 reply_target=session_id,
             ))
@@ -173,6 +190,13 @@ class ChatMethods:
                 self._remember_receipt(
                     receipt_key, content, user_id, attachments_fingerprint, response,
                 )
+                if capability_resume_id and parsed.retry_of_message_id and db is not None:
+                    self._mark_capability_resumed(
+                        db, parsed.retry_of_message_id, capability_resume_id,
+                        accepted_result.living_message.message_id,
+                        capability_request_id,
+                        session_id,
+                    )
             else:
                 response["reason"] = getattr(accepted_result, "reason", "REJECTED")
                 cleanup_attachments(saved_paths)
@@ -198,6 +222,13 @@ class ChatMethods:
         self._remember_receipt(
             receipt_key, content, user_id, attachments_fingerprint, response,
         )
+        if capability_resume_id and parsed.retry_of_message_id and db is not None:
+            self._mark_capability_resumed(
+                db, parsed.retry_of_message_id, capability_resume_id,
+                getattr(message, "message_id", None),
+                capability_request_id,
+                session_id,
+            )
         return build_response(req_id, result=response)
 
     def handle_retry(self, conn_id: str, req_id: str, params: dict) -> dict:
@@ -222,7 +253,14 @@ class ChatMethods:
         except (TypeError, json.JSONDecodeError):
             metadata = {}
         status = metadata.get("status") if isinstance(metadata, dict) else None
-        if status not in {"failed", "interrupted"}:
+        capability_resume_id = self._resumable_capability_id(metadata)
+        if status not in {"failed", "interrupted"} and not capability_resume_id:
+            if self._blocked_capability_id(metadata):
+                return build_error(
+                    req_id,
+                    ErrorCode.INVALID_PARAMS,
+                    "能力尚未就绪，请完成配置并按提示重启 Agent 后再继续任务",
+                )
             return build_error(req_id, ErrorCode.INVALID_PARAMS, "只有失败或已中断的消息可以重试")
         attachment_refs = [
             item.get("id") for item in metadata.get("attachments", [])
@@ -235,6 +273,67 @@ class ChatMethods:
             "attachment_refs": attachment_refs,
             "retry_of_message_id": parsed.message_id,
         })
+
+    def _resumable_capability_id(self, metadata: Any) -> str:
+        capability_id = self._blocked_capability_id(metadata)
+        agent = getattr(self._living, "agent", None)
+        get_capability = getattr(agent, "get_capability", None)
+        capability = get_capability(capability_id) if callable(get_capability) and capability_id else None
+        if not isinstance(capability, dict) or capability.get("status") not in {"ready", "degraded"}:
+            return ""
+        return capability_id
+
+    @staticmethod
+    def _blocked_capability_id(metadata: Any) -> str:
+        if not isinstance(metadata, dict):
+            return ""
+        blocked = metadata.get("capability_blocked")
+        if not isinstance(blocked, dict) or blocked.get("active") is not True:
+            return ""
+        return str(blocked.get("capability_id", "")).strip()
+
+    def _mark_capability_resumed(
+        self,
+        db: Any,
+        source_message_id: int,
+        capability_id: str,
+        resumed_message_id: int | None,
+        request_id: str,
+        session_id: str,
+    ) -> None:
+        resumed_at = time.time()
+        db.update_message_metadata(source_message_id, {
+            "capability_blocked": {
+                "active": False,
+                "capability_id": capability_id,
+                "request_id": request_id,
+                "resumed_at": resumed_at,
+                "resumed_message_id": resumed_message_id,
+            },
+        })
+        if request_id:
+            event_hub = getattr(self._living, "_event_hub", None)
+            if event_hub is not None:
+                event_hub.publish(
+                    "capability.setup.updated",
+                    {
+                        "id": request_id,
+                        "session_id": session_id,
+                        "capability_id": capability_id,
+                        "resume_status": "resumed",
+                        "resumed_at": resumed_at,
+                        "resumed_message_id": resumed_message_id,
+                    },
+                    session_id=session_id,
+                )
+            else:
+                update_interaction = getattr(db, "update_interaction_metadata", None)
+                if callable(update_interaction):
+                    update_interaction(request_id, {
+                        "resume_status": "resumed",
+                        "resumed_at": resumed_at,
+                        "resumed_message_id": resumed_message_id,
+                    })
 
     def handle_abort(self, conn_id: str, req_id: str, params: dict) -> dict:
         try:
@@ -370,6 +469,8 @@ class ChatMethods:
                         continue
                     if interaction.get("kind") == "tool_approval":
                         message["action"] = interaction
+                    elif interaction.get("kind") == "capability_setup":
+                        message["capability_setup"] = interaction
                     else:
                         message["interaction"] = interaction
                 elif row.get("role") == "tool":

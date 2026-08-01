@@ -9,7 +9,11 @@ import {
 import { Button, Icon } from "../ui";
 import { ChatInput } from "./ChatInput";
 import { ChatTopbar } from "./ChatTopbar";
-import { openSettingsCenter } from "../settings/events";
+import {
+  CAPABILITY_STATUS_CHANGED_EVENT,
+  openSettingsCenter,
+  type SettingsSection,
+} from "../settings/events";
 import { AssignmentCard } from "./AssignmentCard";
 import { ActivitySidebar } from "../right-sidebar/ActivitySidebar";
 import { TerminalPanel } from "../terminal/TerminalPanel";
@@ -22,6 +26,7 @@ type RightSidebarSection = "activity" | "state" | "assignment" | "artifact" | "m
 function displayMessageTurnId(message: DisplayMessage): string {
   return message.turnId
     || message.interaction?.turnId
+    || message.capabilitySetup?.turnId
     || message.action?.turnId
     || message.artifact?.turnId
     || "";
@@ -595,6 +600,10 @@ function MessageRow({
 
   if (message.interaction) {
     return <InteractionCard message={message} agentName={agentName} showAgentHeader={showAgentHeader} />;
+  }
+
+  if (message.capabilitySetup) {
+    return <CapabilitySetupCard message={message} agentName={agentName} showAgentHeader={showAgentHeader} />;
   }
 
   if (message.artifact) {
@@ -1296,6 +1305,129 @@ function InteractionCard({ message, agentName, showAgentHeader }: {
         {interaction.status === "error" && interaction.error && (
           <div className="interaction-card-error">{interaction.error}</div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function CapabilitySetupCard({ message, agentName, showAgentHeader }: {
+  message: DisplayMessage;
+  agentName: string;
+  showAgentHeader: boolean;
+}) {
+  const setup = message.capabilitySetup!;
+  const activeAgentId = useCoreStore((state) => state.activeAgentId || "");
+  const connectionStatus = useCoreStore((state) => (
+    state.connectionByAgent[state.activeAgentId || ""]?.status || "disconnected"
+  ));
+  const resumeCapabilityRequest = useCoreStore((state) => state.resumeCapabilityRequest);
+  const [resumeBusy, setResumeBusy] = useState(false);
+  const [resumeError, setResumeError] = useState("");
+  const [runtimeStatus, setRuntimeStatus] = useState(setup.status);
+  const [statusLoading, setStatusLoading] = useState(false);
+  const supportedSections = new Set([
+    "overview", "capabilities", "models", "media", "search", "channels",
+  ]);
+  const refreshStatus = useCallback(async () => {
+    if (!activeAgentId || connectionStatus !== "connected") return;
+    setStatusLoading(true);
+    try {
+      const response = await window.gateway.getCapability({
+        agentId: activeAgentId,
+        capabilityId: setup.capabilityId,
+      });
+      const capability = response.result?.capability;
+      if (!response.error && capability && typeof capability === "object") {
+        const status = (capability as Record<string, unknown>).status;
+        if (typeof status === "string") setRuntimeStatus(status);
+      }
+    } finally {
+      setStatusLoading(false);
+    }
+  }, [activeAgentId, connectionStatus, setup.capabilityId]);
+
+  useEffect(() => {
+    void refreshStatus();
+  }, [refreshStatus]);
+
+  useEffect(() => {
+    const handleChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ agentId?: string; capabilityId?: string }>).detail;
+      if (detail?.agentId !== activeAgentId) return;
+      if (detail.capabilityId && detail.capabilityId !== setup.capabilityId) return;
+      void refreshStatus();
+    };
+    window.addEventListener(CAPABILITY_STATUS_CHANGED_EVENT, handleChanged);
+    return () => window.removeEventListener(CAPABILITY_STATUS_CHANGED_EVENT, handleChanged);
+  }, [activeAgentId, refreshStatus, setup.capabilityId]);
+
+  const ready = runtimeStatus === "ready" || runtimeStatus === "degraded";
+  const statusText = setup.resumeStatus === "resumed"
+    ? "原任务已恢复"
+    : statusLoading
+      ? "正在确认能力状态…"
+      : connectionStatus !== "connected"
+        ? "Agent 离线，连接后确认状态"
+        : runtimeStatus === "preparing"
+          ? "配置已保存，需要重启 Agent"
+          : runtimeStatus === "needs_setup"
+            ? "尚未完成配置"
+            : runtimeStatus === "disabled"
+              ? "能力当前已关闭"
+              : ready
+                ? "能力已就绪，可以继续任务"
+                : "能力暂不可用";
+
+  return (
+    <div className={`assistant-message-row interaction-message-row ${showAgentHeader ? "" : "agent-turn-continuation"}`}>
+      {showAgentHeader && (
+        <div className="assistant-avatar">
+          <div className="assistant-avatar-face">{agentName.charAt(0)}</div>
+          <span className="assistant-avatar-name">{agentName}</span>
+        </div>
+      )}
+      <div className="interaction-card capability-setup-card">
+        <div className="capability-setup-heading">
+          <span className="capability-setup-icon"><Icon name="settings" size={16} /></span>
+          <div>
+            <div className="interaction-card-label">需要完善能力配置</div>
+            <div className="capability-setup-name">{setup.capabilityName}</div>
+          </div>
+        </div>
+        <div className="interaction-card-question">{setup.summary}</div>
+        <div className={`capability-setup-runtime ${ready ? "ready" : ""} ${setup.resumeStatus === "resumed" ? "resumed" : ""}`}>
+          <span />{statusText}
+        </div>
+        <div className="capability-setup-actions">
+          <Button
+            size="sm"
+            onClick={() => {
+              const section = supportedSections.has(setup.action.section)
+                ? setup.action.section as SettingsSection
+                : "capabilities";
+              openSettingsCenter(section, activeAgentId, setup.action.target);
+            }}
+          >
+            {setup.action.label || "前往配置"}
+          </Button>
+          {setup.sourceMessageId && setup.resumeStatus !== "resumed" && (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={resumeBusy || statusLoading || !ready || connectionStatus !== "connected"}
+              onClick={async () => {
+                setResumeBusy(true);
+                setResumeError("");
+                const error = await resumeCapabilityRequest(setup.sourceMessageId!);
+                setResumeError(error);
+                setResumeBusy(false);
+              }}
+            >
+              {resumeBusy ? "正在恢复…" : "配置完成，继续任务"}
+            </Button>
+          )}
+        </div>
+        {resumeError && <div className="capability-setup-error">{resumeError}</div>}
       </div>
     </div>
   );

@@ -26,6 +26,8 @@ class GatewayEventProjection:
         "interaction.updated",
         "action.proposed",
         "action.completed",
+        "capability.setup.requested",
+        "capability.setup.updated",
         "artifact.created",
         "artifact.presented",
         "assignment.changed",
@@ -132,6 +134,12 @@ class GatewayEventProjection:
                     event.turn_id,
                 )
             self._release_terminal_turn(router, event)
+            return
+
+        # A setup request navigates a local Desktop settings surface. Chat
+        # channels still receive the Agent's textual explanation, but cannot
+        # execute this client-side action.
+        if event.name.startswith("capability.setup.") and route.type != "ws":
             return
 
         adapter = router.get_adapter(route.type) if hasattr(router, "get_adapter") else None

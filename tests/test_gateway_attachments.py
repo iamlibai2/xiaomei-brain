@@ -397,3 +397,93 @@ def test_chat_retry_rejects_completed_or_other_session_message(tmp_path):
     assert completed["error"]["code"] == -32602
     assert other_session["error"]["code"] == -32602
     db.close()
+
+
+def test_chat_retry_resumes_completed_message_after_capability_becomes_ready(tmp_path):
+    db = RealConversationDB(tmp_path / "brain.db")
+    message_id = db.log(
+        "session-1",
+        "user",
+        "search today's news",
+        metadata={
+            "status": "completed",
+            "capability_blocked": {
+                "active": True,
+                "capability_id": "web_search",
+                "request_id": "capability-setup-1",
+            },
+        },
+    )
+
+    class Inbound:
+        def __init__(self):
+            self.messages = []
+
+        def accept(self, raw):
+            self.messages.append(raw)
+            return Accepted(LivingMessage(content=raw.content, session_id=raw.session_id))
+
+    inbound = Inbound()
+    agent = SimpleNamespace(
+        conversation_db=db,
+        get_capability=lambda capability_id: {
+            "id": capability_id,
+            "status": "ready",
+        },
+    )
+    router = MethodRouter(living=SimpleNamespace(
+        _agent_id="xiaomei",
+        agent=agent,
+        _gateway_inbound=inbound,
+    ))
+    router._auth_sessions.add("connection-1")
+
+    response = router.dispatch("connection-1", "rpc-1", "chat.retry", {
+        "message_id": message_id,
+        "client_request_id": "capability-resume-1",
+        "session_id": "session-1",
+    })
+
+    assert response["result"]["accepted"] is True
+    assert inbound.messages[0].metadata == {
+        "retry_of": message_id,
+        "resumed_capability_id": "web_search",
+    }
+    stored = db.get_user_message(message_id, "session-1")
+    metadata = json.loads(stored["metadata"])
+    assert metadata["capability_blocked"]["active"] is False
+    assert metadata["capability_blocked"]["capability_id"] == "web_search"
+    db.close()
+
+
+def test_chat_retry_keeps_capability_blocked_until_runtime_is_ready(tmp_path):
+    db = RealConversationDB(tmp_path / "brain.db")
+    message_id = db.log(
+        "session-1",
+        "user",
+        "search today's news",
+        metadata={
+            "status": "completed",
+            "capability_blocked": {"active": True, "capability_id": "web_search"},
+        },
+    )
+    agent = SimpleNamespace(
+        conversation_db=db,
+        get_capability=lambda capability_id: {
+            "id": capability_id,
+            "status": "preparing",
+        },
+    )
+    router = MethodRouter(living=SimpleNamespace(_agent_id="xiaomei", agent=agent))
+    router._auth_sessions.add("connection-1")
+
+    response = router.dispatch("connection-1", "rpc-1", "chat.retry", {
+        "message_id": message_id,
+        "client_request_id": "capability-resume-1",
+        "session_id": "session-1",
+    })
+
+    assert response["error"]["code"] == -32602
+    metadata = json.loads(db.get_user_message(message_id, "session-1")["metadata"])
+    assert metadata["capability_blocked"]["active"] is True
+    db.close()

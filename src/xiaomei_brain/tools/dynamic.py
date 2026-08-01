@@ -185,6 +185,7 @@ class DynamicToolLoader:
         # into another Desktop/channel session.
         self._required_tools_by_scope: dict[str, set[str]] = {}
         self._active_required_tools: set[str] = set()
+        self._disabled_names: set[str] = set()
 
         # 共享全局 embedding 单例
         from xiaomei_brain.base.shared_embedder import SharedEmbedder
@@ -377,9 +378,19 @@ class DynamicToolLoader:
             set(),
         )
 
+    def set_disabled_names(self, names: set[str] | list[str]) -> None:
+        """Hide capability-owned tools from future selections immediately."""
+        self._disabled_names = {str(name).strip() for name in names if str(name).strip()}
+        for required in self._required_tools_by_scope.values():
+            required.difference_update(self._disabled_names)
+        self._active_required_tools.difference_update(self._disabled_names)
+
     def activate_required_tools(self, names: list[str]) -> tuple[list[str], list[str]]:
         """Pin declared Skill dependencies for the remainder of this run."""
-        registered = {tool.name for tool in self._registry.list_tools()}
+        registered = {
+            tool.name for tool in self._registry.list_tools()
+            if tool.name not in self._disabled_names
+        }
         activated: list[str] = []
         missing: list[str] = []
         for name in names:
@@ -421,7 +432,10 @@ class DynamicToolLoader:
         """
         base = top_k if top_k is not None else self._top_k
         k = min(base + step * STEP_GROWTH, MAX_DYNAMIC)
-        all_tools = self._registry.list_tools()
+        all_tools = [
+            tool for tool in self._registry.list_tools()
+            if tool.name not in self._disabled_names
+        ]
         if not all_tools:
             return []
 
@@ -453,7 +467,7 @@ class DynamicToolLoader:
             ]
 
         try:
-            results = table.search(query_vec).limit(k).to_list()
+            results = table.search(query_vec).limit(k + len(self._disabled_names)).to_list()
         except Exception:
             logger.debug("DynamicToolLoader: LanceDB search failed, fallback to all tools")
             return core_tools + required_tools + [

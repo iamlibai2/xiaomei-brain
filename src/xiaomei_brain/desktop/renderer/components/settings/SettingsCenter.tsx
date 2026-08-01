@@ -5,6 +5,7 @@ import { Button, Icon, type IconName } from "../ui";
 import { AgentManagementPanel } from "./AgentManagementPanel";
 import { AgentOverviewPanel } from "./AgentOverviewPanel";
 import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
+import { CapabilitySettingsPanel } from "./CapabilitySettingsPanel";
 import { ModelSettingsPanel } from "./ModelSettingsPanel";
 import { MediaServiceSettingsPanel } from "./MediaServiceSettingsPanel";
 import { SearchServiceSettingsPanel } from "./SearchServiceSettingsPanel";
@@ -29,13 +30,14 @@ const AGENT_NAVIGATION: Array<{
   icon: IconName;
 }> = [
   { id: "overview", label: "概览", description: "连接与基本信息", icon: "info" },
+  { id: "capabilities", label: "能力", description: "这个 Agent 能完成什么", icon: "file-text" },
   { id: "models", label: "模型", description: "主模型、视觉模型与服务商", icon: "sparkles" },
   { id: "media", label: "媒体服务", description: "图片、语音与音乐生成", icon: "image" },
   { id: "search", label: "联网搜索", description: "网页搜索服务与访问凭证", icon: "search" },
   { id: "channels", label: "渠道与绑定", description: "飞书、钉钉和人物绑定", icon: "bell" },
 ];
 
-const AGENT_SECTIONS = new Set<SettingsSection>(["overview", "models", "media", "search", "channels"]);
+const AGENT_SECTIONS = new Set<SettingsSection>(["overview", "capabilities", "models", "media", "search", "channels"]);
 
 export function SettingsCenter() {
   const agents = useCoreStore((state) => state.agents);
@@ -45,6 +47,7 @@ export function SettingsCenter() {
   const [open, setOpen] = useState(false);
   const [section, setSection] = useState<SettingsSection>("agents");
   const [settingsAgentId, setSettingsAgentId] = useState<string | null>(null);
+  const [settingsTarget, setSettingsTarget] = useState("");
 
   const settingsAgent = agents.find((agent) => agent.id === settingsAgentId);
   const connected = Boolean(
@@ -54,9 +57,10 @@ export function SettingsCenter() {
   useEffect(() => {
     const handleOpen = (event: Event) => {
       const detail = (
-        event as CustomEvent<{ section?: SettingsSection; agentId?: string }>
+        event as CustomEvent<{ section?: SettingsSection; agentId?: string; target?: string }>
       ).detail;
       const nextSection = detail?.section || "agents";
+      setSettingsTarget(detail?.target || "");
       if (AGENT_SECTIONS.has(nextSection)) {
         const targetAgentId = detail?.agentId || activeAgentId;
         if (targetAgentId) {
@@ -95,11 +99,18 @@ export function SettingsCenter() {
   function openAgentSettings(agentId: string) {
     setSettingsAgentId(agentId);
     setSection("overview");
+    setSettingsTarget("");
   }
 
   function openAgentList() {
     setSettingsAgentId(null);
     setSection("agents");
+    setSettingsTarget("");
+  }
+
+  function navigateAgentSection(nextSection: SettingsSection, target = "") {
+    setSection(nextSection);
+    setSettingsTarget(target);
   }
 
   return (
@@ -135,6 +146,7 @@ export function SettingsCenter() {
                   } else {
                     setSettingsAgentId(null);
                     setSection(item.id);
+                    setSettingsTarget("");
                   }
                 }}
               >
@@ -167,7 +179,7 @@ export function SettingsCenter() {
                     key={item.id}
                     type="button"
                     className={section === item.id ? "active" : ""}
-                    onClick={() => setSection(item.id)}
+                    onClick={() => navigateAgentSection(item.id)}
                   >
                     <Icon name={item.icon} size={17} />
                     <span>
@@ -213,11 +225,23 @@ export function SettingsCenter() {
                 localAgentId={settingsAgent.localAgentId}
                 connected={connected}
                 pid={localInfoByAgent[settingsAgent.id]?.pid}
-                onNavigate={setSection}
+                onNavigate={(next) => navigateAgentSection(next)}
               />
             )}
             {section === "models" && settingsAgent && (
               <ModelSettingsPanel agentId={settingsAgent.id} connected={connected} />
+            )}
+            {section === "capabilities" && settingsAgent && (
+              <CapabilitySettingsPanel
+                agentId={settingsAgent.id}
+                connected={connected}
+                target={section === "capabilities" ? settingsTarget : ""}
+                onTargetConsumed={() => setSettingsTarget("")}
+                onNavigate={(nextSection, target) => {
+                  const next = nextSection as SettingsSection;
+                  if (AGENT_SECTIONS.has(next)) navigateAgentSection(next, target);
+                }}
+              />
             )}
             {section === "media" && settingsAgent && (
               <MediaServiceSettingsPanel
@@ -229,6 +253,8 @@ export function SettingsCenter() {
               <SearchServiceSettingsPanel
                 agentId={settingsAgent.id}
                 connected={connected}
+                target={settingsTarget}
+                onTargetConsumed={() => setSettingsTarget("")}
               />
             )}
             {section === "channels" && settingsAgent && (

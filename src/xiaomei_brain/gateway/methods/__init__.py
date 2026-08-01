@@ -6,6 +6,7 @@ from .attachments import AttachmentMethods
 from .artifacts import ArtifactMethods
 from .assignments import AssignmentMethods
 from .chat import ChatMethods
+from .capabilities import CapabilityMethods
 from .channels import ChannelMethods
 from .connection import ConnectionMethods
 from .embodiments import EmbodimentMethods
@@ -25,6 +26,7 @@ __all__ = [
     "ArtifactMethods",
     "AssignmentMethods",
     "ChatMethods",
+    "CapabilityMethods",
     "ChannelMethods",
     "ConnectionMethods",
     "EmbodimentMethods",

@@ -1169,12 +1169,20 @@ class ConsciousLiving(Living):
             "interaction.updated",
             "action.proposed",
             "action.completed",
+            "capability.setup.requested",
+            "capability.setup.updated",
         }:
             return
         db = getattr(self.agent, "conversation_db", None)
         if db is not None:
             try:
-                db.save_interaction(event.payload)
+                if event.name == "capability.setup.updated":
+                    db.update_interaction_metadata(
+                        str(event.payload.get("id", "")),
+                        event.payload,
+                    )
+                else:
+                    db.save_interaction(event.payload)
             except Exception as exc:
                 logger.warning("[Interaction] 保存会话记录失败: %s", exc)
 

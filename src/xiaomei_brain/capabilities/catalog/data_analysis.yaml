@@ -1,0 +1,42 @@
+id: data_analysis
+name: 数据分析与可视化
+summary: 分析 CSV 和 Excel 数据，发现数据质量问题、形成统计汇总并生成基础图表
+category: data
+version: "1.0.0"
+source: xiaomei-brain
+
+examples:
+  - 分析这份销售数据并找出主要变化
+  - 按地区汇总销售额并生成柱状图
+  - 检查这份表格的缺失值和异常字段
+
+components:
+  - id: plugin_data_analysis
+    kind: plugin
+    target: data_analysis
+    label: 数据分析能力
+    required: true
+  - id: tool_analyze_data
+    kind: tool
+    target: analyze_data
+    label: 结构化数据分析
+    required: true
+  - id: skill_data_analysis
+    kind: skill
+    target: data-analysis
+    label: 数据分析工作方法
+    required: true
+
+outcomes:
+  - id: profile
+    name: 数据概览
+    description: 识别字段类型、缺失值、唯一值和数值分布
+    components: [plugin_data_analysis, tool_analyze_data, skill_data_analysis]
+  - id: grouped_summary
+    name: 分组统计
+    description: 按业务字段计算数量、合计和平均值
+    components: [plugin_data_analysis, tool_analyze_data, skill_data_analysis]
+  - id: charts
+    name: 基础图表
+    description: 根据分组汇总生成柱状图或折线图
+    components: [plugin_data_analysis, tool_analyze_data, skill_data_analysis]

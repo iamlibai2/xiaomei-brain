@@ -168,6 +168,30 @@ class ActiveTurnRegistry:
                 existing.update(data)
             turn["status"] = "waiting_user" if event == "action.proposed" else "running"
 
+    def capability_setup_event(self, payload: dict[str, Any]) -> None:
+        """Keep a non-blocking setup card in an active-turn resume snapshot."""
+        session_id = str(payload.get("session_id", ""))
+        turn_id = str(payload.get("turn_id", ""))
+        request_id = str(payload.get("id", ""))
+        if not request_id:
+            return
+        with self._lock:
+            turn = self._matching_turn(session_id, turn_id)
+            if turn is None:
+                return
+            items = turn["items"]
+            existing = next((
+                item for item in items
+                if item.get("type") == "capability_setup" and item.get("id") == request_id
+            ), None)
+            if existing is not None:
+                existing.update(copy.deepcopy(payload))
+                return
+            items.append({
+                "type": "capability_setup",
+                **copy.deepcopy(payload),
+            })
+
     def complete(self, session_id: str, turn_id: str) -> None:
         with self._lock:
             if self._matching_turn(session_id, turn_id) is not None:
@@ -190,6 +214,8 @@ class ActiveTurnRegistry:
             self.interaction_event(event.name, event.payload)
         elif event.name in {"action.proposed", "action.completed"}:
             self.action_event(event.name, event.payload)
+        elif event.name in {"capability.setup.requested", "capability.setup.updated"}:
+            self.capability_setup_event(event.payload)
         elif event.name == "message.complete":
             self.complete(event.session_id, event.turn_id)
 

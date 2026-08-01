@@ -333,6 +333,12 @@ def build_context(
         profile = _load_salience_profile(agent)
         # 技能索引由调用方（conversation_driver）预置到 self_image.memory.skill_index
         system_content = inject_consciousness(self_image, mode=mode, user_input=user_input, profile=profile)
+        capability_registry = getattr(agent, "_capability_registry", None)
+        capability_builder = getattr(capability_registry, "build_context", None)
+        if callable(capability_builder):
+            capability_context = capability_builder(user_input)
+            if isinstance(capability_context, str) and capability_context:
+                system_content += "\n\n" + capability_context
         group_observations = _render_group_observations(agent)
         if group_observations:
             system_content += "\n\n" + group_observations

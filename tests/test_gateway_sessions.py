@@ -216,6 +216,49 @@ class GatewaySessionsTest(unittest.TestCase):
             ["user", "assistant"],
         )
 
+    def test_chat_history_restores_capability_setup_card(self):
+        self.db.log("setup-session", "user", "搜索今天的行业新闻")
+        self.db.save_interaction({
+            "id": "capability-setup-1",
+            "kind": "capability_setup",
+            "capability_id": "web_search",
+            "capability_name": "联网搜索",
+            "capability_status": "needs_setup",
+            "summary": "联网搜索服务尚未配置。",
+            "session_id": "setup-session",
+            "turn_id": "turn-setup",
+            "user_id": self.person.person_id,
+            "action": {
+                "type": "open_settings",
+                "section": "search",
+                "target": "web_search_baidu",
+                "label": "配置联网搜索服务",
+            },
+        })
+        self.db.update_interaction_metadata("capability-setup-1", {
+            "resume_status": "resumed",
+            "resumed_message_id": 99,
+        })
+        living = SimpleNamespace(agent=SimpleNamespace(conversation_db=self.db))
+        router = MethodRouter(living=living)
+        router._auth_sessions.add("desktop-connection")
+
+        response = router.dispatch(
+            "desktop-connection",
+            "history-setup-card",
+            "chat.history",
+            {"session_id": "setup-session", "limit": 20},
+        )
+        self.assertNotIn("error", response, response)
+        result = response["result"]
+
+        self.assertEqual([item["role"] for item in result["messages"]], ["user", "interaction"])
+        setup = result["messages"][1]["capability_setup"]
+        self.assertEqual(setup["capability_id"], "web_search")
+        self.assertEqual(setup["action"]["section"], "search")
+        self.assertEqual(setup["resume_status"], "resumed")
+        self.assertEqual(setup["resumed_message_id"], 99)
+
     def test_chat_sessions_supports_search_and_offset_pagination(self):
         self.db.log("session-alpha", "user", "ordinary discussion")
         self.db.log("session-beta", "user", "needle in the title")

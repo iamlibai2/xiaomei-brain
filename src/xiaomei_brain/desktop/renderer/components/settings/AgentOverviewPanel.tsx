@@ -130,6 +130,14 @@ export function AgentOverviewPanel(props: Props) {
             <p>这里只汇总当前状态；具体修改进入对应设置页面。</p>
           </div>
         </div>
+        <button type="button" onClick={() => onNavigate("capabilities")}>
+          <span className="agent-overview-config-icon"><Icon name="file-text" size={17} /></span>
+          <span>
+            <strong>能力</strong>
+            <small>查看这个 Agent 当前真正能够完成的工作</small>
+          </span>
+          <Icon name="chevron-right" size={15} />
+        </button>
         <button type="button" onClick={() => onNavigate("models")}>
           <span className="agent-overview-config-icon"><Icon name="sparkles" size={17} /></span>
           <span>

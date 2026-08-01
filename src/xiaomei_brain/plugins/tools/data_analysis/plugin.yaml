@@ -1,0 +1,5 @@
+name: data_analysis
+version: "1.0.0"
+description: "CSV/XLSX 数据概览、分组汇总和基础图表"
+kind: bundle
+entry: adapter:register

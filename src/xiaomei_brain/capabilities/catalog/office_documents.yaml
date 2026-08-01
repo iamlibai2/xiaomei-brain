@@ -1,0 +1,115 @@
+id: office_documents
+name: 办公文档
+summary: 阅读、创建和修改常见办公文档，并将结果作为产物交付
+category: office
+version: "1.0.0"
+source: xiaomei-brain
+
+examples:
+  - 制作一份项目汇报 PPT
+  - 根据这些数据生成报价 Excel
+  - 修改这份 Word 报告并输出正式版本
+  - 阅读 PDF 并整理主要结论
+
+components:
+  - id: plugin_document_io
+    kind: plugin
+    target: document_io
+    label: 文档基础能力
+    required: true
+  - id: tool_read_document
+    kind: tool
+    target: read_document
+    label: 文档读取
+    required: true
+  - id: tool_write_document
+    kind: tool
+    target: write_document
+    label: 文档生成
+    required: true
+
+  - id: plugin_word
+    kind: plugin
+    target: document_word
+    label: Word 文档支持
+  - id: skill_word
+    kind: skill
+    target: word-documents
+    label: Word 文档工作方法
+  - id: writer_word
+    kind: document_writer
+    target: word
+    label: Word 生成
+  - id: extractor_word
+    kind: document_extractor
+    target: document_word
+    label: Word 读取
+
+  - id: plugin_spreadsheet
+    kind: plugin
+    target: document_spreadsheet
+    label: Excel 表格支持
+  - id: skill_spreadsheet
+    kind: skill
+    target: spreadsheet-documents
+    label: Excel 表格工作方法
+  - id: writer_spreadsheet
+    kind: document_writer
+    target: spreadsheet
+    label: Excel 生成
+  - id: extractor_spreadsheet
+    kind: document_extractor
+    target: document_spreadsheet
+    label: Excel 读取
+
+  - id: plugin_presentation
+    kind: plugin
+    target: document_presentation
+    label: PowerPoint 支持
+  - id: skill_presentation
+    kind: skill
+    target: presentation-documents
+    label: PowerPoint 工作方法
+  - id: writer_presentation
+    kind: document_writer
+    target: presentation
+    label: PowerPoint 生成
+  - id: extractor_presentation
+    kind: document_extractor
+    target: document_presentation
+    label: PowerPoint 读取
+
+  - id: plugin_pdf
+    kind: plugin
+    target: document_pdf
+    label: PDF 支持
+  - id: skill_pdf
+    kind: skill
+    target: pdf-documents
+    label: PDF 工作方法
+  - id: writer_pdf
+    kind: document_writer
+    target: pdf
+    label: PDF 生成
+  - id: extractor_pdf
+    kind: document_extractor
+    target: document_pdf
+    label: PDF 读取
+
+outcomes:
+  - id: word
+    name: Word 文档
+    description: 阅读、创建和修改 DOCX 文档
+    components: [plugin_document_io, tool_read_document, tool_write_document, plugin_word, skill_word, writer_word, extractor_word]
+  - id: spreadsheet
+    name: Excel 表格
+    description: 阅读、创建和修改 XLSX 工作簿
+    components: [plugin_document_io, tool_read_document, tool_write_document, plugin_spreadsheet, skill_spreadsheet, writer_spreadsheet, extractor_spreadsheet]
+  - id: presentation
+    name: PowerPoint 演示文稿
+    description: 阅读、创建和修改 PPTX 演示文稿
+    components: [plugin_document_io, tool_read_document, tool_write_document, plugin_presentation, skill_presentation, writer_presentation, extractor_presentation]
+  - id: pdf
+    name: PDF 文档
+    description: 阅读和生成 PDF 文档
+    components: [plugin_document_io, tool_read_document, tool_write_document, plugin_pdf, skill_pdf, writer_pdf, extractor_pdf]

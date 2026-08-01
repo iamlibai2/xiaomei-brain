@@ -170,6 +170,53 @@ export interface ToolServiceConfig {
   values: Record<string, string | number | boolean | null>;
 }
 
+export type CapabilityStatus =
+  | "not_acquired"
+  | "disabled"
+  | "preparing"
+  | "needs_setup"
+  | "ready"
+  | "degraded"
+  | "unavailable"
+  | "error";
+
+export interface CapabilityOutcome {
+  id: string;
+  name: string;
+  description: string;
+  available: boolean;
+  limitations: string[];
+}
+
+export interface AgentCapability {
+  id: string;
+  name: string;
+  summary: string;
+  category: string;
+  status: CapabilityStatus;
+  enabled: boolean;
+  outcomes: CapabilityOutcome[];
+  examples: string[];
+  issues: Array<{
+    code: string;
+    message: string;
+    action?: {
+      type: "open_settings";
+      section: string;
+      target: string;
+      label: string;
+    };
+  }>;
+  actions: Array<{
+    type: "open_settings";
+    section: string;
+    target: string;
+    label: string;
+  }>;
+  version: string;
+  source: string;
+}
+
 // ── Bridge API ──
 
 export interface GatewayBridge {
@@ -209,6 +256,13 @@ export interface GatewayBridge {
   }): Promise<JsonRpcResponse>;
   getActivity(args: { agentId: string; activityId: string }): Promise<JsonRpcResponse>;
   getAgentState(args: { agentId: string }): Promise<JsonRpcResponse>;
+  listCapabilities(args: { agentId: string }): Promise<JsonRpcResponse>;
+  getCapability(args: { agentId: string; capabilityId: string }): Promise<JsonRpcResponse>;
+  setCapabilityEnabled(args: {
+    agentId: string;
+    capabilityId: string;
+    enabled: boolean;
+  }): Promise<JsonRpcResponse>;
   openAssignmentArtifact(args: {
     agentId: string;
     assignmentId: string;

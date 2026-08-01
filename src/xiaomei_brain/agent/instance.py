@@ -56,6 +56,7 @@ class AgentInstance:
 
     # Persistent Agent (created once, reused)
     _agent: Any = field(default=None, init=False, repr=False)
+    _capability_registry: Any = field(default=None, init=False, repr=False)
 
     def get_system_prompt(self) -> str:
         """Dynamically read identity.md for system prompt."""
@@ -69,6 +70,31 @@ class AgentInstance:
         if self.identity_path:
             return os.path.dirname(self.identity_path)
         return ""
+
+    def list_capabilities(self, *, include_technical: bool = False) -> list[dict[str, Any]]:
+        """Return this Agent's computed, user-facing capability view."""
+        if self._capability_registry is None:
+            return []
+        return self._capability_registry.to_list(include_technical=include_technical)
+
+    def get_capability(
+        self,
+        capability_id: str,
+        *,
+        include_technical: bool = False,
+    ) -> dict[str, Any] | None:
+        """Return one computed capability without exposing internals by default."""
+        if self._capability_registry is None:
+            return None
+        view = self._capability_registry.get(capability_id)
+        return view.to_dict(include_technical=include_technical) if view else None
+
+    def set_capability_enabled(self, capability_id: str, enabled: bool) -> dict[str, Any] | None:
+        """Enable or disable one capability for this Agent immediately."""
+        if self._capability_registry is None:
+            return None
+        view = self._capability_registry.set_enabled(capability_id, enabled)
+        return view.to_dict() if view else None
 
     def _get_agent(self) -> Any:
         """Get or create persistent Agent instance."""
@@ -94,6 +120,7 @@ class AgentInstance:
             self._agent.memory_extractor = self.memory_extractor
             self._agent._procedure_memory = getattr(self, "_procedure_memory", None)
             self._agent._dynamic_loader = getattr(self, "_dynamic_loader", None)
+            self._agent._capability_registry = self._capability_registry
         return self._agent
 
     def chat(
@@ -147,6 +174,10 @@ class AgentInstance:
 
         # 构建预组装消息
         system_prompt = self.get_system_prompt()
+        if self._capability_registry is not None:
+            capability_context = self._capability_registry.build_context(user_input)
+            if capability_context:
+                system_prompt = system_prompt + "\n\n" + capability_context if system_prompt else capability_context
         # 技能索引（简化路径：无 ConsciousLiving 时在此拼接）
         skill_loader = getattr(agent, '_skill_loader', None)
         if skill_loader:

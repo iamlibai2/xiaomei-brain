@@ -4,13 +4,21 @@ import type {
   ToolServiceConfig,
 } from "../../types";
 import { Button, Icon, SelectMenu } from "../ui";
+import { notifyCapabilityStatusChanged } from "./events";
 
 interface Props {
   agentId: string;
   connected: boolean;
+  target?: string;
+  onTargetConsumed?: () => void;
 }
 
-export function SearchServiceSettingsPanel({ agentId, connected }: Props) {
+export function SearchServiceSettingsPanel({
+  agentId,
+  connected,
+  target = "",
+  onTargetConsumed,
+}: Props) {
   const [services, setServices] = useState<ToolServiceConfig[]>([]);
   const [editing, setEditing] = useState<ToolServiceConfig | null>(null);
   const [values, setValues] = useState<Record<string, unknown>>({});
@@ -60,6 +68,13 @@ export function SearchServiceSettingsPanel({ agentId, connected }: Props) {
     setError("");
   }
 
+  useEffect(() => {
+    if (!target || !services.length) return;
+    const service = services.find((item) => item.id === target);
+    if (service) openEditor(service);
+    onTargetConsumed?.();
+  }, [target, services, onTargetConsumed]);
+
   function validateRequired(): boolean {
     if (!editing) return false;
     const missing = editing.fields.find((field) => {
@@ -88,6 +103,7 @@ export function SearchServiceSettingsPanel({ agentId, connected }: Props) {
       if (response.error) throw new Error(response.error.message);
       setEditing(null);
       await load();
+      notifyCapabilityStatusChanged(agentId, "web_search");
       setNotice("搜索服务已保存。重启 Agent 后，联网搜索工具会使用此配置。");
     } catch (saveError) {
       setError(String(saveError instanceof Error ? saveError.message : saveError));
@@ -125,6 +141,7 @@ export function SearchServiceSettingsPanel({ agentId, connected }: Props) {
       if (response.error) throw new Error(response.error.message);
       setEditing(null);
       await load();
+      notifyCapabilityStatusChanged(agentId, "web_search");
       setNotice("搜索服务配置已移除，重启 Agent 后完全生效。");
     } catch (removeError) {
       setError(String(removeError instanceof Error ? removeError.message : removeError));

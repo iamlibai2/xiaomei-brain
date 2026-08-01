@@ -1031,6 +1031,32 @@ export function registerIpcHandlers(
     return client.rpc("agent.state.get", {});
   });
 
+  ipcMain.handle("gateway:listCapabilities", async (_event, args: {
+    agentId: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("capability.list", {});
+  });
+
+  ipcMain.handle("gateway:getCapability", async (_event, args: {
+    agentId: string; capabilityId: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("capability.get", { capability_id: args.capabilityId });
+  });
+
+  ipcMain.handle("gateway:setCapabilityEnabled", async (_event, args: {
+    agentId: string; capabilityId: string; enabled: boolean;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc(args.enabled ? "capability.enable" : "capability.disable", {
+      capability_id: args.capabilityId,
+    });
+  });
+
   ipcMain.handle("gateway:openAssignmentArtifact", async (_event, args: {
     agentId: string; assignmentId: string; artifactId: string;
   }) => {

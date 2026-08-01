@@ -73,6 +73,11 @@ class SkillLoader:
         self._db_path = Path(db_path)
         self._extra_dirs: list[Path] = [Path(d) for d in (extra_dirs or [])]
         self._storage: Any = None
+        self._disabled_names: set[str] = set()
+
+    def set_disabled_names(self, names: set[str] | list[str]) -> None:
+        """Hide capability-owned Skills without deleting their stored data."""
+        self._disabled_names = {str(name).strip() for name in names if str(name).strip()}
 
     def _get_storage(self):
         """懒加载 SkillStorage（向量索引与 LongTermMemory 共用 LanceDB）。"""
@@ -126,17 +131,23 @@ class SkillLoader:
             top_k: 返回数量
         """
         storage = self._get_storage()
-        return storage.list_skills(query=query, top_k=top_k)
+        results = storage.list_skills(
+            query=query,
+            top_k=max(top_k, top_k + len(self._disabled_names)),
+        )
+        return [item for item in results if item.get("name") not in self._disabled_names][:top_k]
 
     def view_skill(self, name: str) -> dict[str, Any] | None:
         """查看技能完整内容（Tier 1）。"""
+        if name in self._disabled_names:
+            return None
         storage = self._get_storage()
         return storage.view_skill(name)
 
     def list_names(self) -> list[str]:
         """返回所有已加载的技能名称。"""
         storage = self._get_storage()
-        return storage.list_names()
+        return [name for name in storage.list_names() if name not in self._disabled_names]
 
     # ── 写操作 ──────────────────────────────────────────────────
 
@@ -170,5 +181,29 @@ class SkillLoader:
 
         embed(query) → LanceDB 语义召回 → 格式化 <available_skills> 块。
         """
-        storage = self._get_storage()
-        return storage.build_skill_index_prompt(query=query, top_k=top_k)
+        skills = self.list_skills(query=query, top_k=top_k)
+        if not skills:
+            return ""
+        lines = [
+            "\n<技能>",
+            "在回复前先浏览以下技能。如果某个技能与当前任务相关或部分相关，"
+            "你必须用 skill_view(技能名) 加载该技能并严格按其指示执行。"
+            "宁可多加载一个不需要的技能，也不要漏掉关键步骤、陷阱或既定工作流程。"
+            "技能包含针对特定任务的深入知识——API 端点、工具专用命令和经过验证的"
+            "高效工作流程，优于通用方法。即使你觉得用基础工具就能处理，也先加载技能——"
+            "因为技能定义了该任务在此环境中的正确做法。"
+            "技能可能包含你的项目记忆、用户偏好或之前确定的约定，"
+            "忽略它们意味着丢失上下文。遇到困难或需要反复尝试的任务，"
+            "完成后请主动提出将其保存为技能。"
+            "如果确实没有相关技能，可以跳过。",
+            "<available_skills>",
+        ]
+        for skill in skills:
+            tags = f" [{', '.join(skill.get('tags', []))}]" if skill.get("tags") else ""
+            lines.append(f"  - {skill['name']}: {skill['description']}{tags}")
+        lines.extend([
+            "</available_skills>",
+            "使用 skill_view(name) 加载技能完整内容。",
+            "</技能>",
+        ])
+        return "\n".join(lines)

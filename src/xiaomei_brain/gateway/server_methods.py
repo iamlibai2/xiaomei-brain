@@ -14,6 +14,7 @@ from .methods import (
     AttachmentMethods,
     ArtifactMethods,
     AssignmentMethods,
+    CapabilityMethods,
     ChatMethods,
     ChannelMethods,
     ConnectionMethods,
@@ -52,6 +53,7 @@ class MethodRouter:
             capability_provider=self._capabilities,
         )
         self._chat_methods = ChatMethods(living)
+        self._capability_methods = CapabilityMethods(living)
         self._embodiment_methods = EmbodimentMethods(living)
         self._session_methods = SessionMethods(living, self._chat_methods.handle_history)
         self._attachment_methods = AttachmentMethods(living)
@@ -87,6 +89,7 @@ class MethodRouter:
         )
         for provider in (
             self._chat_methods,
+            self._capability_methods,
             self._embodiment_methods,
             self._session_methods,
             self._attachment_methods,
@@ -169,6 +172,8 @@ class MethodRouter:
             "activity.events": {"activity.get"},
             "memory.read": {"memory.list"},
             "agent.state": {"agent.state.get"},
+            "capability.read": {"capability.list", "capability.get"},
+            "capability.activation": {"capability.enable", "capability.disable"},
             "model.configuration": {
                 "model.config.get",
                 "model.catalog",

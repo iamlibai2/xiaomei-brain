@@ -306,12 +306,28 @@ capabilities:
       - 根据这些数据生成报价 Excel
 
 components:
-  plugins:
-    - document_io
-    - document_word
-    - document_spreadsheet
-    - document_presentation
-    - document_pdf
+  - id: plugin_document_io
+    kind: plugin
+    target: document_io
+    label: 文档基础能力
+    required: true
+  - id: plugin_word
+    kind: plugin
+    target: document_word
+    label: Word 文档支持
+  - id: skill_word
+    kind: skill
+    target: word-documents
+    label: Word 文档工作方法
+
+outcomes:
+  - id: word
+    name: Word 文档
+    description: 阅读、创建和修改 DOCX 文档
+    components:
+      - plugin_document_io
+      - plugin_word
+      - skill_word
 
 requirements:
   platformFeatures:
@@ -640,12 +656,74 @@ capability.progress
 
 ## 17. 下一步
 
-先实施阶段 A，并只选择“办公文档”验证设计：
+阶段 A、B 以及阶段 C 中针对“已安装但未配置能力”的闭环已经完成。下一步先验证并稳定两个真实场景：
 
-1. 确定能力清单的最终 Schema；
-2. 增加只读 `CapabilityRegistry`；
-3. 从当前 PluginRegistry、SkillLoader 和服务配置计算状态；
-4. 提供内部查询服务和最小测试；
-5. 验证能力聚合稳定后，再设计 Gateway RPC 和 Desktop 能力页面。
+1. 联网搜索未配置时，Agent 说明能力缺口并展示配置卡片；
+2. 卡片精确进入对应服务配置，保存后显示真实运行状态；
+3. 必要时重启 Agent，人物确认后恢复原始任务和附件；
+4. 能力被关闭时，Agent 不使用底层工具绕过，并能精确定位能力开关；
+5. 切换会话、重启 Desktop 后，配置卡片和已恢复状态保持一致。
 
-这一顺序可以证明能力层确实建立在现有基础之上，而不是先做一套只有界面的“插件市场”。
+能力包获取、安装、签名、依赖与回滚属于阶段 D。在安装模型和信任边界单独设计清楚前，不把临时下载逻辑塞进当前配置闭环。
+
+## 18. 当前实施进度
+
+截至 2026-08-02，已完成只读能力闭环、Agent 级启停，以及已安装能力的对话配置与任务恢复闭环：
+
+- `CapabilityDefinition`、`CapabilityStatus`、清单加载和运行时聚合；
+- “办公文档”样板能力，聚合 Word、Excel、PPT、PDF；
+- `capability.list/get` 只读 Gateway RPC；
+- Desktop Agent 设置中的通用能力页面；
+- “数据分析与可视化”作为第二项真实能力接入，证明新增普通能力无需修改 AgentManager、Gateway 和 Desktop 主链路；
+- CSV、TSV、XLSX 数据概览、缺失值与数值统计、分组汇总、SVG 柱状图和折线图；
+- 相关能力事实进入现有对话上下文，与 Skill/Tool 动态召回协同工作，不增加额外模型调用；
+- 能力状态始终由已加载 Plugin、Tool 和 Skill 计算，不根据清单单独宣称可用。
+- 每个 Agent 可独立启用或关闭能力，状态保存在该 Agent 的 `config.json`；
+- `capability.enable/disable` 通过 Gateway 修改 Agent 自身配置，Desktop 不直接操作文件；
+- 能力关闭后立即从对话的 Skill 索引和 Tool 选择中消失，不卸载进程内共享组件，也不要求重启 Agent；
+- Desktop 能力页使用统一开关展示和修改真实启用状态。
+- 能力清单可以声明已有服务配置依赖和对应设置入口，不在能力层复制 API Key；
+- “联网搜索”作为首个配置型样板能力：未配置时显示“需要完善”，从能力页直接进入现有联网搜索设置；
+- 服务配置已经保存、但运行时 Tool 尚未加载时显示“准备中”，明确提示需要完成既有重启流程。
+
+阶段 B 的 Agent 级启停、运行时生效和统一配置入口已经完成。能力包安装、版本锁定和能力市场尚未开始。
+
+阶段 C 已开始第一步：
+
+- 新增业务级 `capability_status` 内部工具，Agent 可以按任务查询当前真实能力、可完成结果、限制和设置位置；
+- 该工具进入现有动态 Tool 向量索引，不作为每轮无条件携带的核心工具；
+- 相关能力事实进入对话时，明确要求 Agent 不虚构、不假装完成，也不使用不等价的底层命令绕过关闭或未配置状态；
+- 对“需要完善”和“准备中”的能力，Agent 能说明现有 Desktop 设置入口。
+
+阶段 C 尚未实现通过对话提交密钥、执行安装或在 Agent 重启后自动恢复被阻塞的原任务。这些涉及敏感配置、客户端动作与持久化恢复，需要在下一小阶段单独收口。
+
+阶段 C 的第二小步已经完成：
+
+- 新增 `request_capability_setup` 业务工具，仅在具体任务被未配置、未启用或准备中的能力阻塞时使用；
+- 新增 `capability.setup.requested` 会话领域事件，和 Clarify、Action 语义分离：它不等待回答、不代表风险审批，也不直接修改配置；
+- Desktop 在当前会话展示“需要完善能力配置”卡片，按钮进入对应 Agent 的既有设置页面；
+- 配置卡片写入会话时间线，并进入活动 Turn 快照，切换会话、重启 Desktop 或执行中重连后仍可恢复；
+- 该导航事件只投影到 Desktop WebSocket，飞书和钉钉不接收无法执行的客户端导航动作；
+- API Key 继续由既有设置 RPC 保存，既不放入聊天消息，也不写入能力清单。
+
+这一小步只解决“发现缺口并自然进入配置”的闭环。配置完成后自动恢复原任务、能力包安装和下载权限仍留在后续阶段。
+
+阶段 C 的第三小步完成了原任务恢复，但采用“人物确认继续”而不是 Agent 重启后静默自动执行：
+
+- 配置卡片记录原始用户消息 ID，原请求正文和附件仍由 Agent 会话数据库持有，Desktop 不复制任务内容；
+- 原消息保持正常完成状态，另以 `capability_blocked` 元数据记录阻塞能力、配置请求和是否仍待恢复；
+- 卡片提供“配置完成，继续任务”，Gateway 在恢复前重新计算该 Agent 的能力状态；只有 `ready` 或 `degraded` 才能恢复；
+- 恢复复用原消息与 Agent 托管的原附件，创建新的 Turn，并记录 `retry_of` 与 `resumed_capability_id`；
+- 恢复成功后将原阻塞记录标为已恢复，防止重复执行；能力仍处于 `needs_setup`、`preparing` 或禁用状态时保持阻塞；
+- 不在 Agent 重启时自动执行旧任务。旧任务可能包含外部操作或已经失去时效，静默恢复会违背人物对当前执行时机的控制。
+
+因此当前闭环是：发现缺口 → 进入配置 → 必要时重启 Agent → 人物点击继续 → Gateway 核验能力 → 恢复原任务。未来若要支持自动恢复，应只对明确声明可自动恢复且无副作用的任务开放。
+
+配置卡片的运行状态也已收口：
+
+- 卡片通过现有 `capability.get` RPC 读取 Agent 当前计算出的状态，不根据 Desktop 本地配置猜测；
+- 保存或移除服务配置、启用或关闭能力后，设置页发出本地刷新通知；Agent 断线重连后也会重新查询；
+- 配置动作中的 `target` 已贯通 Desktop 设置导航：搜索类动作直接打开对应服务编辑器，能力类动作滚动并短暂高亮对应能力，不再只停留在设置大类首页；
+- `needs_setup` 显示尚未配置，`preparing` 明确提示需要重启 Agent，`ready/degraded` 才开放继续按钮；
+- 恢复成功发布 `capability.setup.updated`，同时更新活动 Turn、Desktop 实时卡片和持久化时间线；
+- 历史中的已恢复卡片显示“原任务已恢复”，不再提供重复执行按钮。

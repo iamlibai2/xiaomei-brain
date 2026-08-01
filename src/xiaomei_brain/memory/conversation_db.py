@@ -670,7 +670,7 @@ class ConversationDB(SQLiteStore):
         }
 
     def save_interaction(self, payload: dict[str, Any]) -> int | None:
-        """Insert or update one Desktop interaction timeline record.
+        """Insert or update one structured conversation timeline record.
 
         Interaction rows share the message sequence so history pagination keeps
         their exact position, but retrieval methods exclude them from the
@@ -681,7 +681,8 @@ class ConversationDB(SQLiteStore):
         if not request_id or not session_id:
             return None
 
-        question = str(payload.get("question", ""))
+        kind = str(payload.get("kind", "question"))
+        question = str(payload.get("question") or payload.get("summary") or "")
         user_id = str(payload.get("user_id", "global")) or "global"
         metadata = json.dumps(payload, ensure_ascii=False)
         conn = self._get_conn()
@@ -703,11 +704,12 @@ class ConversationDB(SQLiteStore):
             """INSERT INTO messages
                (user_id, session_id, role, content, token_count, tool_name,
                 tool_call_id, metadata, created_at)
-               VALUES (?, ?, 'interaction', ?, 0, 'clarify', ?, ?, ?)""",
+               VALUES (?, ?, 'interaction', ?, 0, ?, ?, ?, ?)""",
             (
                 user_id,
                 session_id,
                 question,
+                kind,
                 request_id,
                 metadata,
                 self._next_timeline_timestamp(),
@@ -715,6 +717,29 @@ class ConversationDB(SQLiteStore):
         )
         conn.commit()
         return cur.lastrowid
+
+    def update_interaction_metadata(
+        self,
+        request_id: str,
+        updates: dict[str, Any],
+    ) -> bool:
+        """Merge lifecycle fields into an existing structured timeline card."""
+        request_id = str(request_id or "").strip()
+        if not request_id:
+            return False
+        conn = self._get_conn()
+        patch = json.dumps(updates, ensure_ascii=False)
+        cur = conn.execute(
+            """UPDATE messages
+               SET metadata = json_patch(
+                   CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END,
+                   ?
+               )
+               WHERE role = 'interaction' AND tool_call_id = ?""",
+            (patch, request_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
 
     def query(
         self,

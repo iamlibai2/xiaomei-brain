@@ -41,6 +41,21 @@ class ConnectParams(BaseModel):
     session_id: str = ""  # 重连时带上之前的 session_id 可恢复会话
 
 
+# ── Agent capabilities ──────────────────────
+
+class CapabilityGetParams(BaseModel):
+    capability_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        pattern=r"^[a-z0-9][a-z0-9_-]*$",
+    )
+
+
+class CapabilityChangeParams(CapabilityGetParams):
+    pass
+
+
 # ── Embodiment ───────────────────────────────
 
 class EmbodimentRegisterParams(BaseModel):

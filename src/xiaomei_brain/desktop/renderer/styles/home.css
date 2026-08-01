@@ -3165,6 +3165,80 @@
   color: #d93025;
 }
 
+.capability-setup-card {
+  width: min(520px, calc(100% - 56px));
+  padding: 16px;
+  border-color: color-mix(in srgb, var(--ui-brand-primary) 28%, var(--ui-border-default));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--ui-brand-primary) 5%, var(--ui-bg-primary)), var(--ui-bg-primary));
+}
+
+.capability-setup-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.capability-setup-heading .interaction-card-label {
+  margin: 0 0 2px;
+}
+
+.capability-setup-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--ui-brand-primary) 10%, var(--ui-bg-primary));
+  color: var(--ui-brand-primary);
+}
+
+.capability-setup-name {
+  color: var(--ui-color-text-primary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.capability-setup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.capability-setup-runtime {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  color: var(--ui-color-text-secondary);
+  font-size: 12px;
+}
+
+.capability-setup-runtime > span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ui-color-text-tertiary);
+}
+
+.capability-setup-runtime.ready,
+.capability-setup-runtime.resumed {
+  color: #218739;
+}
+
+.capability-setup-runtime.ready > span,
+.capability-setup-runtime.resumed > span {
+  background: #34a853;
+}
+
+.capability-setup-error {
+  margin-top: 10px;
+  color: #d93025;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .action-card {
   width: min(520px, calc(100% - 56px));
   padding: 16px;
