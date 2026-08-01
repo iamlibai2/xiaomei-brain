@@ -47,6 +47,7 @@ const CHANNEL_MAP = {
     listCapabilityPackages: { invoke: "gateway:listCapabilityPackages" },
     installCapabilityPackage: { invoke: "gateway:installCapabilityPackage" },
     setCapabilityPackageActive: { invoke: "gateway:setCapabilityPackageActive" },
+    uninstallCapabilityPackage: { invoke: "gateway:uninstallCapabilityPackage" },
     openAssignmentArtifact: { invoke: "gateway:openAssignmentArtifact" },
     requestAssignmentCancel: { invoke: "gateway:requestAssignmentCancel" },
     requestAssignmentResume: { invoke: "gateway:requestAssignmentResume" },

@@ -322,6 +322,10 @@ export interface GatewayBridge {
     sha256: string;
     active: boolean;
   }): Promise<JsonRpcResponse>;
+  uninstallCapabilityPackage(args: {
+    agentId: string;
+    packageId: string;
+  }): Promise<JsonRpcResponse>;
   openAssignmentArtifact(args: {
     agentId: string;
     assignmentId: string;

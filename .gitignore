@@ -42,6 +42,7 @@ bak/
 *_pid.txt
 test_result.txt
 todos.json
+tmp/
 
 # Build artifacts
 dist/

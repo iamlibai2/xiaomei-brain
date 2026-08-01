@@ -19,6 +19,7 @@ from ..schemas import (
     CapabilityPackageActivateParams,
     CapabilityPackageDeactivateParams,
     CapabilityPackageInspectParams,
+    CapabilityPackageUninstallParams,
     format_error,
 )
 
@@ -42,6 +43,7 @@ class CapabilityMethods:
             "capability.package.install": self.handle_package_install,
             "capability.package.activate": self.handle_package_activate,
             "capability.package.deactivate": self.handle_package_deactivate,
+            "capability.package.uninstall": self.handle_package_uninstall,
         }
 
     def handle_list(self, _conn_id: str, req_id: str, _params: dict) -> dict:
@@ -145,6 +147,20 @@ class CapabilityMethods:
         try:
             package = service.deactivate(parsed.package_id)
             return build_response(req_id, result={"package": package, "restart_required": True})
+        except CapabilityPackageError as exc:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, str(exc))
+
+    def handle_package_uninstall(self, _conn_id: str, req_id: str, params: dict) -> dict:
+        try:
+            parsed = CapabilityPackageUninstallParams.model_validate(params)
+        except Exception as exc:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, format_error(exc))
+        service, error = self._package_service(req_id)
+        if error:
+            return error
+        try:
+            result = service.uninstall(parsed.package_id)
+            return build_response(req_id, result={**result, "restart_required": True})
         except CapabilityPackageError as exc:
             return build_error(req_id, ErrorCode.INVALID_PARAMS, str(exc))
 

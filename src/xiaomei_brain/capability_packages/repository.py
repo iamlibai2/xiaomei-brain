@@ -19,6 +19,7 @@ import yaml
 from xiaomei_brain.capabilities.loader import CapabilityManifestLoader
 
 from .inspector import CHECKSUMS_PATH, CapabilityPackageInspector
+from .models import PACKAGE_ID_PATTERN
 
 
 RUNTIME_CONTENT_KINDS = frozenset({
@@ -157,6 +158,7 @@ class CapabilityPackageService:
         version = str(identity["version"])
 
         with self._thread_lock, _RepositoryFileLock(self._repository_lock):
+            previous = self._latest_installed(package_id)
             target = self.installed_dir / package_id / version
             existing = self._read_record(target)
             if existing is not None:
@@ -164,7 +166,13 @@ class CapabilityPackageService:
                     raise CapabilityPackageError(
                         "同一能力包 ID 和版本已存在，但内容不同；请使用新的版本号"
                     )
-                return {"package": existing.to_dict(), "already_installed": True}
+                affected_agents = self._migrate_agent_locks(existing)
+                return {
+                    "package": existing.to_dict(),
+                    "already_installed": True,
+                    "operation": "upgraded" if previous and previous.version != version else "existing",
+                    "affected_agents": affected_agents,
+                }
 
             target.parent.mkdir(parents=True, exist_ok=True)
             staging = Path(tempfile.mkdtemp(prefix=f".{version}.", dir=target.parent))
@@ -188,7 +196,13 @@ class CapabilityPackageService:
             installed = self._read_record(target)
             if installed is None:
                 raise CapabilityPackageError("能力包安装记录写入失败")
-            return {"package": installed.to_dict(), "already_installed": False}
+            affected_agents = self._migrate_agent_locks(installed)
+            return {
+                "package": installed.to_dict(),
+                "already_installed": False,
+                "operation": "upgraded" if previous is not None else "installed",
+                "affected_agents": affected_agents,
+            }
 
     def activate(self, package_id: str, version: str, sha256: str = "") -> dict[str, Any]:
         with self._thread_lock, _RepositoryFileLock(self._repository_lock):
@@ -209,6 +223,9 @@ class CapabilityPackageService:
                 "enabled": True,
                 "activated_at": time.time(),
             }
+            hidden_skills = set(lock.get("hidden_skills") or [])
+            hidden_skills.difference_update(self._package_skill_names(installed))
+            lock["hidden_skills"] = sorted(hidden_skills)
             self._write_json(self.lock_path, lock)
             return installed.to_dict(
                 active=True,
@@ -232,12 +249,73 @@ class CapabilityPackageService:
                 loaded=(installed.package_id, installed.version, installed.sha256) in self._loaded_packages,
             )
 
+    def uninstall(self, package_id: str) -> dict[str, Any]:
+        """Remove one shared package and detach it from every local Agent."""
+        package_id = str(package_id).strip()
+        if not PACKAGE_ID_PATTERN.fullmatch(package_id):
+            raise CapabilityPackageError("能力包 ID 无效")
+
+        with self._thread_lock, _RepositoryFileLock(self._repository_lock):
+            installed_versions = self._installed_for_id(package_id)
+            if not installed_versions:
+                raise CapabilityPackageError("能力包尚未安装")
+
+            skill_names: set[str] = set()
+            cache_hashes: set[str] = set()
+            for installed in installed_versions:
+                skill_names.update(self._package_skill_names(installed))
+                cache_hashes.add(installed.sha256)
+
+            affected_agents: list[str] = []
+            agent_locks = list(self._iter_agent_locks())
+            for lock_path, lock in agent_locks:
+                packages = lock.setdefault("packages", {})
+                if package_id not in packages:
+                    continue
+                packages.pop(package_id, None)
+                hidden = set(lock.get("hidden_skills") or [])
+                hidden.update(skill_names)
+                lock["hidden_skills"] = sorted(hidden)
+                self._write_json(lock_path, lock)
+                affected_agents.append(lock_path.parent.name)
+
+            package_root = (self.installed_dir / package_id).resolve()
+            installed_root = self.installed_dir.resolve()
+            if package_root.parent != installed_root:
+                raise CapabilityPackageError("能力包安装路径无效")
+            shutil.rmtree(package_root)
+            for sha256 in cache_hashes:
+                try:
+                    (self.cache_dir / f"{sha256}.xmcap").unlink()
+                except FileNotFoundError:
+                    pass
+
+            return {
+                "package_id": package_id,
+                "affected_agents": sorted(set(affected_agents)),
+                "removed_versions": sorted(item.version for item in installed_versions),
+            }
+
     def list_packages(self) -> list[dict[str, Any]]:
         activation = self._read_activation_lock().get("packages", {})
         activation = activation if isinstance(activation, dict) else {}
         result: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()
+        visible: dict[str, InstalledPackage] = {}
         for installed in self._scan_installed():
+            entry = activation.get(installed.package_id)
+            if (
+                isinstance(entry, dict)
+                and entry.get("version") == installed.version
+                and entry.get("sha256") == installed.sha256
+            ):
+                visible[installed.package_id] = installed
+                continue
+            current = visible.get(installed.package_id)
+            if current is None or installed.installed_at > current.installed_at:
+                visible[installed.package_id] = installed
+
+        for installed in visible.values():
             entry = activation.get(installed.package_id)
             active = bool(
                 isinstance(entry, dict)
@@ -319,7 +397,8 @@ class CapabilityPackageService:
         Skills always keep precedence.
         """
         loaded_skills: set[str] = set()
-        inactive_skills: set[str] = set()
+        lock = self._read_activation_lock()
+        inactive_skills: set[str] = set(lock.get("hidden_skills") or [])
         for installed in self._scan_installed():
             names = self._package_skill_names(installed)
             identity = (installed.package_id, installed.version, installed.sha256)
@@ -333,6 +412,74 @@ class CapabilityPackageService:
         if not package_id or not version:
             return None
         return self._read_record(self.installed_dir / package_id / version)
+
+    def _installed_for_id(self, package_id: str) -> list[InstalledPackage]:
+        root = self.installed_dir / package_id
+        if not root.is_dir():
+            return []
+        return [
+            installed
+            for path in sorted(root.iterdir())
+            if path.is_dir() and (installed := self._read_record(path)) is not None
+        ]
+
+    def _latest_installed(self, package_id: str) -> InstalledPackage | None:
+        installed = self._installed_for_id(package_id)
+        return max(installed, key=lambda item: item.installed_at, default=None)
+
+    def _iter_agent_locks(self) -> Iterator[tuple[Path, dict[str, Any]]]:
+        for lock_path in sorted(self.base_dir.glob("*/capabilities.lock")):
+            if not lock_path.is_file():
+                continue
+            try:
+                raw = json.loads(lock_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                raise CapabilityPackageError(
+                    f"Agent {lock_path.parent.name} capabilities.lock 无法读取: {exc}"
+                ) from exc
+            if not isinstance(raw, dict) or raw.get("schema_version") != 1:
+                raise CapabilityPackageError(
+                    f"Agent {lock_path.parent.name} capabilities.lock 格式无效"
+                )
+            if not isinstance(raw.get("packages", {}), dict):
+                raise CapabilityPackageError(
+                    f"Agent {lock_path.parent.name} capabilities.lock packages 必须是对象"
+                )
+            raw.setdefault("packages", {})
+            if not isinstance(raw.get("hidden_skills", []), list):
+                raise CapabilityPackageError(
+                    f"Agent {lock_path.parent.name} capabilities.lock hidden_skills 必须是列表"
+                )
+            raw.setdefault("hidden_skills", [])
+            yield lock_path, raw
+
+    def _migrate_agent_locks(self, installed: InstalledPackage) -> list[str]:
+        candidates: list[tuple[Path, dict[str, Any], dict[str, Any]]] = []
+        for lock_path, lock in self._iter_agent_locks():
+            entry = lock.setdefault("packages", {}).get(installed.package_id)
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("version") == installed.version and entry.get("sha256") == installed.sha256:
+                continue
+            if entry.get("enabled") is True:
+                agent_service = CapabilityPackageService(
+                    base_dir=self.base_dir,
+                    agent_id=lock_path.parent.name,
+                )
+                agent_service.add_protected_skill_directories(
+                    list(self._protected_skill_directories)
+                )
+                agent_service._validate_activation_collisions(installed, lock)
+            candidates.append((lock_path, lock, entry))
+
+        affected: list[str] = []
+        for lock_path, lock, entry in candidates:
+            entry["version"] = installed.version
+            entry["sha256"] = installed.sha256
+            entry["updated_at"] = time.time()
+            self._write_json(lock_path, lock)
+            affected.append(lock_path.parent.name)
+        return sorted(set(affected))
 
     def verify(self, installed: InstalledPackage) -> tuple[bool, str]:
         try:
@@ -563,7 +710,7 @@ class CapabilityPackageService:
 
     def _read_activation_lock(self) -> dict[str, Any]:
         if not self.lock_path.is_file():
-            return {"schema_version": 1, "packages": {}}
+            return {"schema_version": 1, "packages": {}, "hidden_skills": []}
         try:
             raw = json.loads(self.lock_path.read_text(encoding="utf-8"))
         except Exception as exc:
@@ -573,6 +720,9 @@ class CapabilityPackageService:
         if not isinstance(raw.get("packages", {}), dict):
             raise CapabilityPackageError("Agent capabilities.lock packages 必须是对象")
         raw.setdefault("packages", {})
+        if not isinstance(raw.get("hidden_skills", []), list):
+            raise CapabilityPackageError("Agent capabilities.lock hidden_skills 必须是列表")
+        raw.setdefault("hidden_skills", [])
         return raw
 
     def _write_cache(self, data: bytes, sha256: str) -> None:

@@ -235,3 +235,24 @@ def test_capability_package_deactivate_requires_restart(tmp_path):
 
     assert response["result"]["package"]["active"] is False
     assert response["result"]["restart_required"] is True
+
+
+def test_capability_package_uninstall_requires_restart(tmp_path):
+    agent = _Agent()
+    service = CapabilityPackageService(base_dir=tmp_path, agent_id="test")
+    agent._capability_package_service = service
+    data = build_package()
+    installed = service.install(data, file_name="sample.xmcap")
+    service.activate("sample-analysis", "1.0.0", installed["package"]["sha256"])
+
+    response = _router(agent).dispatch(
+        "conn-1",
+        "uninstall",
+        "capability.package.uninstall",
+        {"package_id": "sample-analysis"},
+    )
+
+    assert response["result"]["package_id"] == "sample-analysis"
+    assert response["result"]["affected_agents"] == ["test"]
+    assert response["result"]["restart_required"] is True
+    assert service.list_packages() == []

@@ -180,6 +180,7 @@ class MethodRouter:
                 "capability.package.install",
                 "capability.package.activate",
                 "capability.package.deactivate",
+                "capability.package.uninstall",
             },
             "model.configuration": {
                 "model.config.get",

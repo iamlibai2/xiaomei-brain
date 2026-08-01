@@ -1737,7 +1737,7 @@
 
 .capability-package-row {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto auto;
+  grid-template-columns: 34px minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 10px;
   min-height: 58px;

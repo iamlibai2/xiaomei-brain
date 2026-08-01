@@ -152,14 +152,43 @@ export function CapabilitySettingsPanel({
         sha256: inspection.sha256,
       });
       if (response.error) throw new Error(response.error.message);
+      const operation = response.result?.operation;
+      const affectedAgents = Array.isArray(response.result?.affected_agents)
+        ? response.result.affected_agents.length
+        : 0;
       setPackageInspection(null);
       await load();
-      setPackageNotice("能力包已安装并为当前 Agent 启用。重启 Agent 后开始加载。");
+      setPackageNotice(operation === "upgraded"
+        ? `能力包已更新${affectedAgents ? `，已同步 ${affectedAgents} 个 Agent` : ""}。重启受影响的 Agent 后加载新版本。`
+        : "能力包已安装并为当前 Agent 启用。重启 Agent 后开始加载。");
     } catch (installError) {
       setPackageError(installError instanceof Error ? installError.message : String(installError));
       await load();
     } finally {
       setPackageBusy(false);
+    }
+  }, [agentId, load]);
+
+  const uninstallPackage = useCallback(async (item: InstalledCapabilityPackage) => {
+    if (!window.confirm(`确定从本机卸载“${item.name}”？\n\n所有本地 Agent 都将停止使用该能力包。`)) return;
+    setChangingPackageId(item.id);
+    setPackageError("");
+    setPackageNotice("");
+    try {
+      const response = await window.gateway.uninstallCapabilityPackage({
+        agentId,
+        packageId: item.id,
+      });
+      if (response.error) throw new Error(response.error.message);
+      const affected = Array.isArray(response.result?.affected_agents)
+        ? response.result.affected_agents.length
+        : 0;
+      await load();
+      setPackageNotice(`能力包已从本机卸载${affected ? `，已从 ${affected} 个 Agent 移除` : ""}。重启受影响的 Agent 后完全卸载。`);
+    } catch (uninstallError) {
+      setPackageError(uninstallError instanceof Error ? uninstallError.message : String(uninstallError));
+    } finally {
+      setChangingPackageId("");
     }
   }, [agentId, load]);
 
@@ -266,6 +295,15 @@ export function CapabilitySettingsPanel({
                 >
                   <span />
                 </button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  icon="trash"
+                  title={`卸载${item.name}`}
+                  aria-label={`卸载${item.name}`}
+                  disabled={changingPackageId === item.id}
+                  onClick={() => void uninstallPackage(item)}
+                />
               </article>
             ))}
           </div>
@@ -290,6 +328,13 @@ export function CapabilitySettingsPanel({
           inspection={packageInspection}
           installing={packageBusy}
           actionError={packageError}
+          updating={Boolean(
+            packageInspection.manifest?.package.id
+            && packages.some((item) => (
+              item.id === packageInspection.manifest?.package.id
+              && item.version !== packageInspection.manifest?.package.version
+            )),
+          )}
           onInstall={() => void installPackage(packageInspection)}
           onClose={() => setPackageInspection(null)}
         />
@@ -302,12 +347,14 @@ function CapabilityPackageInspectionDialog({
   inspection,
   installing,
   actionError,
+  updating,
   onInstall,
   onClose,
 }: {
   inspection: CapabilityPackageInspection;
   installing: boolean;
   actionError: string;
+  updating: boolean;
   onInstall: () => void;
   onClose: () => void;
 }) {
@@ -435,7 +482,7 @@ function CapabilityPackageInspectionDialog({
           <div>
             <Button variant="secondary" disabled={installing} onClick={onClose}>取消</Button>
             <Button variant="primary" disabled={!installable || installing} onClick={onInstall}>
-              {installing ? "安装中…" : "安装并启用"}
+              {installing ? (updating ? "更新中…" : "安装中…") : (updating ? "更新并启用" : "安装并启用")}
             </Button>
           </div>
         </footer>

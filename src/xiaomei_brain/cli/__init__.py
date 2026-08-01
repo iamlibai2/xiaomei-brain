@@ -20,6 +20,7 @@
     xiaomei-brain setup
     xiaomei-brain install                  # 预下载 Embedding 模型
     xiaomei-brain model                   # 交互式配置模型
+    xiaomei-brain capability <pack|inspect> ...
 """
 
 import sys
@@ -161,6 +162,10 @@ def _main_impl() -> None:
     elif cmd == "skill":
         from xiaomei_brain.cli.skill import cmd_skill
         cmd_skill(args)
+
+    elif cmd == "capability":
+        from xiaomei_brain.cli.capability import cmd_capability
+        cmd_capability(args)
 
     else:
         print(f"Unknown command: {cmd}")

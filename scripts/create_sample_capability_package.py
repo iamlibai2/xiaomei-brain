@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 from pathlib import Path
@@ -11,7 +12,11 @@ import zipfile
 import yaml
 
 
-def create_package(output_path: str | Path | None = None) -> Path:
+def create_package(
+    output_path: str | Path | None = None,
+    *,
+    version: str = "1.0.0",
+) -> Path:
     if output_path is None:
         output_dir = Path(tempfile.gettempdir()) / "xiaomei-brain-samples"
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -24,7 +29,7 @@ def create_package(output_path: str | Path | None = None) -> Path:
         "package": {
             "id": "xiaomei.text-statistics",
             "name": "文本统计",
-            "version": "1.0.0",
+            "version": version,
             "description": "用于验证能力包安装、Agent 隔离、Skill 与 Tool 加载。",
             "publisher": "xiaomei-brain development",
             "license": "Apache-2.0",
@@ -57,7 +62,7 @@ def create_package(output_path: str | Path | None = None) -> Path:
         "name": "文本统计",
         "summary": "统计文本的字符、非空字符、行和词语数量",
         "category": "data",
-        "version": "1.0.0",
+        "version": version,
         "source": "xiaomei.text-statistics",
         "examples": ["统计这段文字", "这段文本有多少行和多少个词"],
         "components": [
@@ -94,8 +99,8 @@ def create_package(output_path: str | Path | None = None) -> Path:
             ],
         }],
     }
-    plugin_manifest = """name: xmcap_text_statistics
-version: "1.0.0"
+    plugin_manifest = f"""name: xmcap_text_statistics
+version: "{version}"
 description: 能力包示例文本统计工具
 kind: tool
 entry: adapter:register
@@ -131,10 +136,10 @@ def package_text_statistics(text: str) -> str:
         "words": len(words),
     }, ensure_ascii=False)
 '''
-    skill = """---
+    skill = f"""---
 name: xmcap-text-statistics
 description: 使用能力包提供的工具形成可核对的文本统计结果
-version: 1.0.0
+version: {version}
 tags: [text, statistics]
 requires_tools: [package_text_statistics]
 ---
@@ -175,7 +180,11 @@ requires_tools: [package_text_statistics]
 
 
 def main() -> None:
-    print(create_package())
+    parser = argparse.ArgumentParser(description="生成可运行的文本统计测试能力包")
+    parser.add_argument("--version", default="1.0.0", help="能力包版本")
+    parser.add_argument("--output", help="输出 .xmcap 路径")
+    args = parser.parse_args()
+    print(create_package(args.output, version=args.version))
 
 
 if __name__ == "__main__":

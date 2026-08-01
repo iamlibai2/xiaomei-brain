@@ -1,4 +1,4 @@
-# 能力包格式与安装（D1/D2）
+# 能力包格式与本地生命周期（D1-D4）
 
 `.xmcap` 是 ZIP 格式的不可变能力归档。D1 负责只读检查和预览；D2 在检查通过后支持安装到宿主机共享仓库，并由每个 Agent 独立启用。
 
@@ -126,3 +126,34 @@ python scripts/create_sample_capability_package.py
 4. 输入“统计这段文本的字符、行和词语数量：Hello 小美”；
 5. 确认 Agent 调用了 `package_text_statistics`；
 6. 切换到另一个 Agent，确认其能力包列表显示未启用，且不会加载该工具。
+
+## D3 简化生命周期
+
+- Desktop 支持安装、启用、停用和卸载本地 `.xmcap`。
+- 导入同一能力包的不同版本视为更新；所有已引用该包的本地 Agent 同步指向新版本。
+- 产品界面只展示当前版本，不提供版本选择和回滚。需要恢复时，重新导入另一个 `.xmcap` 即可。
+- 卸载是宿主机级操作，会从所有本地 Agent 的 `capabilities.lock` 移除该包。
+- 更新、停用和卸载后需重启受影响的 Agent，以卸载已进入进程的代码。
+- 已导入 Agent 数据库的 Skill 会被隐藏，不会在卸载后重新可见。
+
+## D4 导出与检查
+
+能力源目录必须包含 `capability.yaml`，且 `contents` 要精确列出要进入归档的文件。导出器只收集这些文件，不会把 `.git`、`__pycache__`、日志、临时产物或未声明密钥打入包内。
+
+```powershell
+xiaomei-brain capability pack .\my-capability
+xiaomei-brain capability pack .\my-capability -o .\dist\my-capability.xmcap
+xiaomei-brain capability inspect .\dist\my-capability.xmcap
+```
+
+`pack` 会生成确定性 ZIP，自动生成 `checksums.json`，然后立即用同一检查器复验。相同源文件会得到相同 SHA-256。
+
+## 当前明确不做
+
+- 在线发布、能力市场、企业能力源和自动下载；
+- 发布者签名与信任链；
+- 自动安装 Python、Node、FFmpeg 或其他系统依赖；
+- 面向开发者的脚手架和复杂项目模板；
+- 用户可见的多版本管理和回滚。
+
+当前交付方式是：实施人员导出 `.xmcap`，在客户环境中通过 Desktop 本地安装。当前可安装包不能声明额外 Python、Node 或系统程序依赖；等真实能力验证出明确需求后，再设计“实施人员预装、安装器只验证”的依赖模式。

@@ -21,6 +21,8 @@ def build_installable_package(
     version: str = "1.0.0",
     tool_marker: str = "v1",
     external_dependency: bool = False,
+    capability_id: str = "sample_analysis",
+    skill_name: str = "sample-analysis",
 ) -> bytes:
     manifest = {
         "schema_version": 1,
@@ -32,7 +34,7 @@ def build_installable_package(
             "publisher": "xiaomei-brain",
         },
         "capabilities": [{
-            "id": "sample_analysis",
+            "id": capability_id,
             "name": "样板分析",
             "summary": "分析样板文本",
         }],
@@ -45,13 +47,13 @@ def build_installable_package(
             "executables": [],
         },
         "contents": {
-            "capabilities": ["capabilities/sample_analysis.yaml"],
-            "skills": ["skills/sample-analysis/SKILL.md"],
+            "capabilities": [f"capabilities/{capability_id}.yaml"],
+            "skills": [f"skills/{skill_name}/SKILL.md"],
             "resources": ["resources/marker.txt"],
         },
     }
     catalog = {
-        "id": "sample_analysis",
+        "id": capability_id,
         "name": "样板分析",
         "summary": "分析样板文本",
         "category": "data",
@@ -59,7 +61,7 @@ def build_installable_package(
         "components": [{
             "id": "skill_sample_analysis",
             "kind": "skill",
-            "target": "sample-analysis",
+            "target": skill_name,
             "label": "样板分析方法",
             "required": True,
         }],
@@ -72,8 +74,8 @@ def build_installable_package(
     }
     files = {
         "capability.yaml": yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False).encode(),
-        "capabilities/sample_analysis.yaml": yaml.safe_dump(catalog, allow_unicode=True, sort_keys=False).encode(),
-        "skills/sample-analysis/SKILL.md": b"---\nname: sample-analysis\ndescription: sample\n---\n# Sample\n",
+        f"capabilities/{capability_id}.yaml": yaml.safe_dump(catalog, allow_unicode=True, sort_keys=False).encode(),
+        f"skills/{skill_name}/SKILL.md": f"---\nname: {skill_name}\ndescription: sample\n---\n# Sample\n".encode(),
         "resources/marker.txt": tool_marker.encode(),
     }
     checksums = {path: hashlib.sha256(content).hexdigest() for path, content in files.items()}
@@ -200,3 +202,71 @@ def test_inactive_or_unloaded_package_skills_are_hidden(tmp_path: Path):
     service.deactivate("xiaomei.sample-analysis")
     service.runtime_directories()
     assert service.inactive_skill_names() == {"sample-analysis"}
+
+
+def test_upgrade_moves_every_agent_lock_to_the_new_package(tmp_path: Path):
+    xiaomei = CapabilityPackageService(base_dir=tmp_path, agent_id="xiaomei")
+    xiaoming = CapabilityPackageService(base_dir=tmp_path, agent_id="xiaoming")
+    first = xiaomei.install(
+        build_installable_package(version="1.0.0"), file_name="sample-v1.xmcap",
+    )
+    for service in (xiaomei, xiaoming):
+        service.activate("xiaomei.sample-analysis", "1.0.0", first["package"]["sha256"])
+
+    upgraded = xiaomei.install(
+        build_installable_package(version="1.1.0", tool_marker="v2"),
+        file_name="sample-v2.xmcap",
+    )
+
+    assert upgraded["operation"] == "upgraded"
+    assert upgraded["affected_agents"] == ["xiaomei", "xiaoming"]
+    for service in (xiaomei, xiaoming):
+        packages = service.list_packages()
+        assert len(packages) == 1
+        assert packages[0]["version"] == "1.1.0"
+        assert packages[0]["active"] is True
+        assert "1.1.0" in service.runtime_directories()["skills"][0]
+
+
+def test_upgrade_rejects_new_collisions_before_changing_agent_locks(tmp_path: Path):
+    service = CapabilityPackageService(base_dir=tmp_path, agent_id="test")
+    first = service.install(build_installable_package(), file_name="sample-v1.xmcap")
+    service.activate("xiaomei.sample-analysis", "1.0.0", first["package"]["sha256"])
+    other = service.install(
+        build_installable_package(
+            package_id="xiaomei.other",
+            capability_id="other_capability",
+            skill_name="other-skill",
+        ),
+        file_name="other.xmcap",
+    )
+    service.activate("xiaomei.other", "1.0.0", other["package"]["sha256"])
+
+    with pytest.raises(CapabilityPackageError, match="other-skill"):
+        service.install(
+            build_installable_package(version="1.1.0", skill_name="other-skill"),
+            file_name="sample-v2.xmcap",
+        )
+
+    lock = json.loads((tmp_path / "test" / "capabilities.lock").read_text(encoding="utf-8"))
+    assert lock["packages"]["xiaomei.sample-analysis"]["version"] == "1.0.0"
+
+
+def test_uninstall_detaches_all_agents_and_keeps_imported_skills_hidden(tmp_path: Path):
+    xiaomei = CapabilityPackageService(base_dir=tmp_path, agent_id="xiaomei")
+    xiaoming = CapabilityPackageService(base_dir=tmp_path, agent_id="xiaoming")
+    installed = xiaomei.install(build_installable_package(), file_name="sample.xmcap")
+    for service in (xiaomei, xiaoming):
+        service.activate(
+            "xiaomei.sample-analysis", "1.0.0", installed["package"]["sha256"],
+        )
+
+    result = xiaomei.uninstall("xiaomei.sample-analysis")
+
+    assert result["affected_agents"] == ["xiaomei", "xiaoming"]
+    assert result["removed_versions"] == ["1.0.0"]
+    assert xiaomei.list_packages() == []
+    assert xiaoming.list_packages() == []
+    assert xiaomei.inactive_skill_names() == {"sample-analysis"}
+    assert xiaoming.inactive_skill_names() == {"sample-analysis"}
+    assert not (tmp_path / "capability-packages" / "installed" / "xiaomei.sample-analysis").exists()

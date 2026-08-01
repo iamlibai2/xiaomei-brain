@@ -1156,7 +1156,17 @@ export function registerIpcHandlers(
         version: String(packageValue.version || ""),
         sha256: String(packageValue.sha256 || ""),
       });
-      if (!activated.error) inspectedCapabilityPackages.delete(args.agentId);
+      if (!activated.error) {
+        inspectedCapabilityPackages.delete(args.agentId);
+        return {
+          ...activated,
+          result: {
+            ...(activated.result || {}),
+            operation: installed.result?.operation,
+            affected_agents: installed.result?.affected_agents || [],
+          },
+        };
+      }
       return activated;
     } catch (error) {
       return {
@@ -1183,6 +1193,15 @@ export function registerIpcHandlers(
         ? { package_id: args.packageId, version: args.version, sha256: args.sha256 }
         : { package_id: args.packageId },
     );
+  });
+
+  ipcMain.handle("gateway:uninstallCapabilityPackage", async (_event, args: {
+    agentId: string;
+    packageId: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("capability.package.uninstall", { package_id: args.packageId });
   });
 
   ipcMain.handle("gateway:openAssignmentArtifact", async (_event, args: {

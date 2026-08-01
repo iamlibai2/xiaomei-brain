@@ -82,6 +82,10 @@ class CapabilityPackageDeactivateParams(BaseModel):
     )
 
 
+class CapabilityPackageUninstallParams(CapabilityPackageDeactivateParams):
+    pass
+
+
 # ── Embodiment ───────────────────────────────
 
 class EmbodimentRegisterParams(BaseModel):
