@@ -30,6 +30,10 @@
 - [CLI 命令参考](reference/01-CLI-COMMANDS.md) — 所有命令速查
 - [配置参考](reference/02-CONFIGURATION.md) — 完整配置项
 
+## 设计与计划
+
+- [Agent 能力体系](plan/16-AGENT-CAPABILITY-SYSTEM.md) — 以“能力”统一面向用户的扩展模型
+
 ## 贡献
 
 - [贡献指南](../CONTRIBUTING.md) — 如何参与开发
