@@ -1855,10 +1855,20 @@ class ConsciousLiving(Living):
         self._on_model_service_failure(error, source="living")
         return True
 
-    def _probe_model_service(self, _state: LivingState) -> None:
-        """Probe an unavailable model using bounded exponential backoff."""
-        if not self._model_service_health.begin_probe():
-            return
+    def _probe_model_service(
+        self,
+        _state: LivingState,
+        *,
+        force: bool = False,
+    ) -> bool:
+        """Probe an unavailable model and return its resulting availability.
+
+        Periodic probes respect the bounded exponential backoff. A message
+        explicitly sent by a person may force one immediate probe so a
+        recovered provider does not remain hidden behind an old outage state.
+        """
+        if not self._model_service_health.begin_probe(force=force):
+            return self._model_service_health.available
         try:
             self.agent.llm.chat(
                 messages=[{"role": "user", "content": "Reply with OK."}],
@@ -1888,6 +1898,11 @@ class ConsciousLiving(Living):
                     "模型服务恢复，思考与自主行为重新可用",
                 )
                 self._resume_model_paused_assignments()
+        return self._model_service_health.available
+
+    def retry_model_service_for_message(self) -> bool:
+        """Let an explicit human message check recovery without waiting."""
+        return self._probe_model_service(self.state, force=True)
 
     def on_model_configuration_changed(self) -> None:
         """A newly selected model starts with a fresh health circuit."""

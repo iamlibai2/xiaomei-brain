@@ -1,5 +1,7 @@
 import time
+from types import SimpleNamespace
 
+from xiaomei_brain.consciousness.conscious_living import ConsciousLiving
 from xiaomei_brain.consciousness.layer2 import Layer2DefaultNetwork
 from xiaomei_brain.llm.client import FatalLLMError
 from xiaomei_brain.llm.service_health import ModelServiceHealth
@@ -51,6 +53,24 @@ def test_model_configuration_change_can_reset_circuit_immediately():
 
     assert health.mark_available() is True
     assert health.snapshot()["failure_count"] == 0
+
+
+def test_explicit_message_can_probe_before_backoff_expires():
+    health = ModelServiceHealth()
+    health.report_failure(402)
+    living = ConsciousLiving.__new__(ConsciousLiving)
+    living._model_service_health = health
+    living.state = None
+    living.agent = SimpleNamespace(
+        llm=SimpleNamespace(chat=lambda **_kwargs: {"content": "OK"}),
+    )
+    living._reset_model_failure_signals = lambda: None
+    living._log_sos_event = lambda *_args, **_kwargs: None
+    living._resume_model_paused_assignments = lambda: None
+
+    assert living.retry_model_service_for_message() is True
+    assert health.available is True
+    assert health.error() is None
 
 
 def test_layer2_pauses_without_exiting_when_model_becomes_unavailable():

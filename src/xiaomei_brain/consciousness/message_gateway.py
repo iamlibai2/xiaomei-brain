@@ -132,6 +132,13 @@ class MessageGateway:
         model_error_getter = getattr(living, "current_model_service_error", None)
         model_error = model_error_getter() if callable(model_error_getter) else None
         if model_error:
+            retry_model = getattr(living, "retry_model_service_for_message", None)
+            if callable(retry_model) and retry_model():
+                model_error = None
+            else:
+                # The forced probe may have refreshed the public reason.
+                model_error = model_error_getter() if callable(model_error_getter) else model_error
+        if model_error:
             living.conversation_driver.reject_message(msg, model_error)
             return
 
