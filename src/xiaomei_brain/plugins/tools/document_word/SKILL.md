@@ -1,10 +1,33 @@
 ---
 name: word-documents
 description: 创建、修改和验收 Word DOCX 文档
-version: 1.2.0
+version: 1.3.0
 tags: [word, docx, document, report]
-requires_tools: [read_document, write, write_document, preview_word_themes, present_artifacts, clarify]
+requires_tools: [read_document, write, write_document, preview_word_themes, manage_document_template, present_artifacts, clarify]
 ---
+
+## 对话式企业模板库
+
+模板是 Agent 自己保存并复用的具体 DOCX，不是内置主题，也不需要用户进入管理页面。
+
+- 用户上传 DOCX 并明确说“记住、保存、登记为模板”时，调用
+  `manage_document_template(action="register")`。根据内容推断简短名称、说明和关键词；
+  只有名称或共享范围确实不明确时才使用 `clarify`。
+- 未说明共享范围时使用 `person`；只有用户明确说“公司、大家、所有人可用”时才使用
+  `global`。
+- 登记或查看返回 `preview_output_path` 时，立即用 `present_artifacts` 展示真实预览。
+- 用户询问有哪些模板时使用 `list`；需要查看结构和占位符时使用 `inspect`。
+- 替换模板必须使用当前消息里的新 DOCX `attachment_id` 调用 `update`。
+- 删除前必须先列出并确认唯一目标，再调用 `clarify` 明确确认；用户确认后才能调用
+  `remove`。
+- 用户要求“用某模板生成”时，先从 `list` 返回值取得 `template_id`，在
+  `write_document` 中传入它。JSON specification 使用 `replace_placeholders`、
+  `insert_blocks_after` 等 operations 填充模板。
+- 使用模板时保留模板自身字体、Logo、页眉页脚和样式，不再叠加内置主题，除非用户明确
+  要求重新设计。
+- 模板原件永远不能作为普通文件直接编辑；`write_document` 会复制模板并生成新文件。
+- 工具会拒绝残留 `{{...}}` 的最终文档。确实要交付未填完的草稿时，才在 specification
+  顶层显式设置 `"allow_unresolved_placeholders": true`，并向用户说明。
 
 ## 主题选择交互
 

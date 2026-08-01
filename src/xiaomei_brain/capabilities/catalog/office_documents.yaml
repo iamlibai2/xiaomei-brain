@@ -2,7 +2,7 @@ id: office_documents
 name: 办公文档
 summary: 阅读、创建和修改常见办公文档，并将结果作为产物交付
 category: office
-version: "1.0.0"
+version: "1.1.0"
 source: xiaomei-brain
 
 examples:
@@ -27,6 +27,10 @@ components:
     target: write_document
     label: 文档生成
     required: true
+  - id: tool_manage_document_template
+    kind: tool
+    target: manage_document_template
+    label: Word 企业模板
 
   - id: plugin_word
     kind: plugin
@@ -100,7 +104,7 @@ outcomes:
   - id: word
     name: Word 文档
     description: 阅读、创建和修改 DOCX 文档
-    components: [plugin_document_io, tool_read_document, tool_write_document, plugin_word, skill_word, writer_word, extractor_word]
+    components: [plugin_document_io, tool_read_document, tool_write_document, tool_manage_document_template, plugin_word, skill_word, writer_word, extractor_word]
   - id: spreadsheet
     name: Excel 表格
     description: 阅读、创建和修改 XLSX 工作簿

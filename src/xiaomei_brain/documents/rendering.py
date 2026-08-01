@@ -190,6 +190,90 @@ def _inspect_pdf(path: Path, backend: str) -> dict[str, Any]:
     }
 
 
+def _render_pdf_first_page(pdf_path: Path, output_path: Path) -> dict[str, Any]:
+    """Rasterize the first rendered page without depending on system PDF tools."""
+    try:
+        import fitz
+    except ImportError as exc:
+        raise RuntimeError("PyMuPDF 未安装，无法生成文档预览图") from exc
+
+    document = fitz.open(str(pdf_path))
+    try:
+        if document.page_count <= 0:
+            raise RuntimeError("渲染后的 PDF 没有页面")
+        page = document[0]
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        pixmap.save(str(output_path))
+        return {
+            "width": pixmap.width,
+            "height": pixmap.height,
+            "page_count": document.page_count,
+        }
+    finally:
+        document.close()
+
+
+def render_office_preview(
+    source_path: str | Path,
+    output_path: str | Path,
+    *,
+    timeout: float = 60.0,
+) -> dict[str, Any]:
+    """Render the first DOCX/PPTX page to a PNG, with graceful fallback."""
+    source = Path(source_path).resolve(strict=True)
+    output = Path(output_path).resolve()
+    if source.suffix.lower() not in {".docx", ".pptx"}:
+        return {
+            "status": "unsupported",
+            "performed": False,
+            "reason": f"不支持渲染 {source.suffix.lower()} 文件",
+        }
+
+    attempts: list[dict[str, str]] = []
+    with tempfile.TemporaryDirectory(prefix="xiaomei-preview-") as directory:
+        pdf_path = Path(directory) / f"{source.stem}.pdf"
+        png_path = Path(directory) / "preview.png"
+        backends: list[tuple[str, Any]] = []
+        if sys.platform == "win32":
+            backends.append(("microsoft-office-com", _run_windows_office_com))
+        backends.append(("libreoffice", _run_libreoffice))
+        for backend, renderer in backends:
+            try:
+                logger.info(
+                    "[DocumentPreview] start file=%s backend=%s",
+                    source.name,
+                    backend,
+                )
+                renderer(source, pdf_path, timeout)
+                dimensions = _render_pdf_first_page(pdf_path, png_path)
+                output.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(png_path, output)
+                logger.info(
+                    "[DocumentPreview] completed file=%s backend=%s size=%sx%s",
+                    source.name,
+                    backend,
+                    dimensions["width"],
+                    dimensions["height"],
+                )
+                return {
+                    "status": "passed",
+                    "performed": True,
+                    "backend": backend,
+                    **dimensions,
+                }
+            except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as exc:
+                attempts.append({"backend": backend, "error": str(exc)[-500:]})
+                pdf_path.unlink(missing_ok=True)
+                png_path.unlink(missing_ok=True)
+    return {
+        "status": "unavailable",
+        "performed": False,
+        "reason": "没有可用的 Office 文档预览后端",
+        "attempts": attempts,
+    }
+
+
 def render_office_document(
     source_path: str | Path,
     *,

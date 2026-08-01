@@ -1,5 +1,5 @@
 name: document_word
-version: "1.2.0"
+version: "1.3.0"
 description: "Word 文档理解（DOCX）"
 kind: bundle
 entry: adapter:register

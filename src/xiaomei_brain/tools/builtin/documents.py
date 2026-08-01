@@ -120,7 +120,10 @@ def create_read_document_tool(plugin_registry: Any, db_path_provider: Any) -> To
     )
 
 
-def create_write_document_tool(plugin_registry: Any) -> Tool:
+def create_write_document_tool(
+    plugin_registry: Any,
+    template_service: Any | None = None,
+) -> Tool:
     """Create the stable authoring tool; format details remain plugin-owned."""
 
     def write_document(
@@ -128,6 +131,7 @@ def create_write_document_tool(plugin_registry: Any) -> Tool:
         specification_path: str,
         output_name: str,
         source_attachment_id: str = "",
+        template_id: str = "",
     ) -> dict[str, Any]:
         context = current_tool_execution()
         if context is None:
@@ -175,6 +179,25 @@ def create_write_document_tool(plugin_registry: Any) -> Tool:
             return {"error": "Output path is outside the current output directory"}
 
         source_path = None
+        template_record = None
+        if source_attachment_id and template_id:
+            return {"error": "source_attachment_id 和 template_id 不能同时使用"}
+        if template_id:
+            if template_service is None:
+                return {"error": "当前运行环境没有启用文档模板库"}
+            try:
+                template_record, source_path = template_service.source_for_use(
+                    template_id,
+                    context.person_id,
+                )
+            except Exception as exc:
+                return {"error": str(exc), "template_id": template_id}
+            if template_record.format != str(format).strip().lower():
+                return {
+                    "error": (
+                        f"模板格式 {template_record.format} 与输出格式 {format} 不一致"
+                    ),
+                }
         if source_attachment_id:
             attachment = next(
                 (
@@ -215,17 +238,35 @@ def create_write_document_tool(plugin_registry: Any) -> Tool:
                 source_path=source_path,
                 asset_paths=asset_paths,
             )
+            if (
+                template_record is not None
+                and specification.get("allow_unresolved_placeholders") is not True
+            ):
+                unresolved = template_service.validate_generated(
+                    template_record,
+                    temporary_path,
+                )
+                if unresolved:
+                    raise ValueError(
+                        "模板仍有未填写字段: " + ", ".join(unresolved[:30])
+                    )
             temporary_path.replace(output_path)
         except Exception as exc:
             temporary_path.unlink(missing_ok=True)
             return {"error": str(exc), "format": format}
-        return {
+        response = {
             "success": True,
             "format": str(format).lower(),
             "output_path": str(output_path),
             "output_name": output_path.name,
             **result,
         }
+        if template_record is not None:
+            response["template"] = {
+                "template_id": template_record.template_id,
+                "name": template_record.name,
+            }
+        return response
 
     return Tool(
         name="write_document",
@@ -233,7 +274,8 @@ def create_write_document_tool(plugin_registry: Any) -> Tool:
             "Create or revise a document through a registered format plugin. First write the "
             "format-specific JSON specification inside the current workspace, then pass its "
             "relative path. To revise an uploaded document, pass its current attachment id; "
-            "the original is never overwritten. Specifications may reference current image "
+            "to create from an Agent-owned template, pass template_id instead. The original "
+            "attachment or template is never overwritten. Specifications may reference current image "
             "attachment ids or relative workspace image paths exposed by image tools."
         ),
         parameters={
@@ -243,6 +285,7 @@ def create_write_document_tool(plugin_registry: Any) -> Tool:
                 "specification_path": {"type": "string", "description": "JSON specification path inside the workspace"},
                 "output_name": {"type": "string", "description": "Plain final file name including extension"},
                 "source_attachment_id": {"type": "string", "description": "Optional current attachment id to revise"},
+                "template_id": {"type": "string", "description": "Optional reusable template id or exact visible template name"},
             },
             "required": ["format", "specification_path", "output_name"],
         },

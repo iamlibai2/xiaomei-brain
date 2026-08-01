@@ -8,6 +8,9 @@ from typing import Any, Iterable
 
 from xiaomei_brain.documents import render_office_document
 from xiaomei_brain.plugins.tools.document_word.extractor import WordExtractor
+from xiaomei_brain.plugins.tools.document_word.template_analyzer import (
+    WordTemplateAnalyzer,
+)
 from xiaomei_brain.plugins.tools.document_word.theme import (
     apply_word_theme,
     resolve_word_theme,
@@ -19,7 +22,10 @@ from xiaomei_brain.plugins.tools.document_word.theme import (
 class WordWriter:
     format_id = "word"
     suffix = ".docx"
-    writer_version = "1.1.0"
+    writer_version = "1.2.0"
+    # Template inspection is an optional capability of this format writer,
+    # not a separate plugin category.
+    template_analyzer = WordTemplateAnalyzer()
 
     def write(
         self,
@@ -34,13 +40,16 @@ class WordWriter:
         except ImportError as exc:
             raise ValueError("Word 写入依赖 python-docx 未安装") from exc
 
-        theme = resolve_word_theme(specification.get("theme"))
+        resolved_theme = resolve_word_theme(specification.get("theme"))
         if source_path is not None:
             if source_path.suffix.lower() != self.suffix:
                 raise ValueError("Word writer 只能修改 DOCX 附件")
             shutil.copy2(source_path, output_path)
             document = Document(str(output_path))
-            if "theme" in specification:
+            # Existing documents and enterprise templates own their visual
+            # language. Only an explicit theme request may restyle them.
+            theme = resolved_theme if "theme" in specification else None
+            if theme is not None:
                 apply_word_theme(document, theme)
             self._set_page_layout(document, specification.get("page"))
             operations = specification.get("operations")
@@ -129,6 +138,7 @@ class WordWriter:
                     raise ValueError(f"不支持的 Word operation: {kind}")
             document.save(str(output_path))
         else:
+            theme = resolved_theme
             document = Document()
             self._set_properties(document, specification.get("properties", {}))
             apply_word_theme(document, theme)
@@ -188,7 +198,7 @@ class WordWriter:
                 "replacements": replacements,
                 "insertions": insertions,
                 "content_preview": preview,
-                "theme": theme["preset"],
+                "theme": theme["preset"] if theme is not None else "preserved",
                 "render_validation": render_validation,
             },
         }
@@ -307,7 +317,7 @@ class WordWriter:
         header_values: Any,
         footer_values: Any,
         *,
-        theme: dict[str, Any],
+        theme: dict[str, Any] | None,
     ) -> None:
         if header_values is not None and not isinstance(header_values, dict):
             raise ValueError("header 必须是对象")
@@ -318,7 +328,8 @@ class WordWriter:
                 paragraph = section.header.paragraphs[0]
                 paragraph.clear()
                 paragraph.add_run(str(header_values.get("text") or ""))
-                style_header_footer(paragraph, theme, footer=False)
+                if theme is not None:
+                    style_header_footer(paragraph, theme, footer=False)
             if isinstance(footer_values, dict):
                 paragraph = section.footer.paragraphs[0]
                 paragraph.clear()
@@ -327,7 +338,8 @@ class WordWriter:
                     paragraph.add_run(prefix)
                 if footer_values.get("page_number") is True:
                     cls._add_page_number(paragraph)
-                style_header_footer(paragraph, theme, footer=True)
+                if theme is not None:
+                    style_header_footer(paragraph, theme, footer=True)
 
     def _append_blocks(
         self,
@@ -335,7 +347,7 @@ class WordWriter:
         blocks: Iterable[Any],
         *,
         asset_paths: dict[str, Path] | None = None,
-        theme: dict[str, Any],
+        theme: dict[str, Any] | None,
     ) -> list[Any]:
         elements: list[Any] = []
         for block in blocks:
@@ -390,12 +402,30 @@ class WordWriter:
                     cells = table.add_row().cells
                     for index, value in enumerate(row[:width]):
                         cells[index].text = str(value)
-                style_word_table(
-                    table,
-                    theme,
-                    has_header=bool(headers),
-                    column_widths_cm=block.get("column_widths_cm"),
-                )
+                if theme is not None:
+                    style_word_table(
+                        table,
+                        theme,
+                        has_header=bool(headers),
+                        column_widths_cm=block.get("column_widths_cm"),
+                    )
+                elif block.get("column_widths_cm") is not None:
+                    from docx.shared import Cm
+
+                    widths = block["column_widths_cm"]
+                    if not isinstance(widths, list) or len(widths) != width:
+                        raise ValueError(
+                            "table.column_widths_cm 必须与表格列数一致"
+                        )
+                    table.autofit = False
+                    for row in table.rows:
+                        for index, cell in enumerate(row.cells):
+                            value = float(widths[index])
+                            if not 0 < value <= 50:
+                                raise ValueError(
+                                    "table.column_widths_cm 每列必须大于 0 且不超过 50"
+                                )
+                            cell.width = Cm(value)
                 elements.append(table._tbl)
             elif kind == "page_break":
                 paragraph = document.add_page_break()
@@ -497,7 +527,7 @@ class WordWriter:
         *,
         remove_marker: bool,
         asset_paths: dict[str, Path] | None = None,
-        theme: dict[str, Any],
+        theme: dict[str, Any] | None,
     ) -> int:
         paragraph = next(
             (item for item in document.paragraphs if marker in item.text),

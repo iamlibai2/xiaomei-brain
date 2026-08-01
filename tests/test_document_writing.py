@@ -130,8 +130,15 @@ def test_document_tools_and_writer_are_discovered_through_plugins():
     }
     assert {
         tool.name for tool in registry.get_agent_tools()
-    } == {"read_document", "write_document", "preview_word_themes"}
-    assert registry.get_document_writer("word") is not None
+    } == {
+        "read_document",
+        "write_document",
+        "preview_word_themes",
+        "manage_document_template",
+    }
+    word_writer = registry.get_document_writer("word")
+    assert word_writer is not None
+    assert word_writer.template_analyzer is not None
     assert registry.get_document_writer("spreadsheet") is not None
     assert registry.get_document_writer("presentation") is not None
     assert registry.get_document_writer("pdf") is not None
