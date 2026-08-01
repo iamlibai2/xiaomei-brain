@@ -74,10 +74,20 @@ class SkillLoader:
         self._extra_dirs: list[Path] = [Path(d) for d in (extra_dirs or [])]
         self._storage: Any = None
         self._disabled_names: set[str] = set()
+        self._package_disabled_names: set[str] = set()
 
     def set_disabled_names(self, names: set[str] | list[str]) -> None:
         """Hide capability-owned Skills without deleting their stored data."""
         self._disabled_names = {str(name).strip() for name in names if str(name).strip()}
+
+    def set_package_disabled_names(self, names: set[str] | list[str]) -> None:
+        """Hide Skills left in storage by packages not loaded for this Agent."""
+        self._package_disabled_names = {
+            str(name).strip() for name in names if str(name).strip()
+        }
+
+    def _effective_disabled_names(self) -> set[str]:
+        return self._disabled_names | self._package_disabled_names
 
     def _get_storage(self):
         """懒加载 SkillStorage（向量索引与 LongTermMemory 共用 LanceDB）。"""
@@ -97,11 +107,8 @@ class SkillLoader:
         """
         storage = self._get_storage()
 
-        # 1. 先导入 agent 自己的技能（优先级最高）
-        n = storage.import_from_dir(self._skills_dir)
-        logger.info("SkillLoader: imported %d skills from %s", n, self._skills_dir)
-
-        # 2. 再导入额外目录（如 .agents/skills/）
+        # Import lower-priority shared/package Skills first. Later directories
+        # win name conflicts, and Agent-local Skills are imported last.
         for extra_dir in self._extra_dirs:
             if extra_dir.is_dir():
                 m = storage.import_from_dir(extra_dir)
@@ -109,6 +116,9 @@ class SkillLoader:
                     logger.info("SkillLoader: imported %d skills from %s", m, extra_dir)
             else:
                 logger.debug("SkillLoader: extra dir not found: %s", extra_dir)
+
+        n = storage.import_from_dir(self._skills_dir)
+        logger.info("SkillLoader: imported %d Agent-local skills from %s", n, self._skills_dir)
 
         return []  # Phase 2 no longer returns Skill objects from scan
 
@@ -131,15 +141,16 @@ class SkillLoader:
             top_k: 返回数量
         """
         storage = self._get_storage()
+        disabled_names = self._effective_disabled_names()
         results = storage.list_skills(
             query=query,
-            top_k=max(top_k, top_k + len(self._disabled_names)),
+            top_k=max(top_k, top_k + len(disabled_names)),
         )
-        return [item for item in results if item.get("name") not in self._disabled_names][:top_k]
+        return [item for item in results if item.get("name") not in disabled_names][:top_k]
 
     def view_skill(self, name: str) -> dict[str, Any] | None:
         """查看技能完整内容（Tier 1）。"""
-        if name in self._disabled_names:
+        if name in self._effective_disabled_names():
             return None
         storage = self._get_storage()
         return storage.view_skill(name)
@@ -147,7 +158,8 @@ class SkillLoader:
     def list_names(self) -> list[str]:
         """返回所有已加载的技能名称。"""
         storage = self._get_storage()
-        return [name for name in storage.list_names() if name not in self._disabled_names]
+        disabled_names = self._effective_disabled_names()
+        return [name for name in storage.list_names() if name not in disabled_names]
 
     # ── 写操作 ──────────────────────────────────────────────────
 

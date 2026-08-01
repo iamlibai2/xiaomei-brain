@@ -7,12 +7,17 @@ import binascii
 import hashlib
 from typing import Any
 
-from xiaomei_brain.capability_packages import CapabilityPackageInspector
+from xiaomei_brain.capability_packages import (
+    CapabilityPackageError,
+    CapabilityPackageInspector,
+)
 
 from ..protocol import ErrorCode, build_error, build_response
 from ..schemas import (
     CapabilityChangeParams,
     CapabilityGetParams,
+    CapabilityPackageActivateParams,
+    CapabilityPackageDeactivateParams,
     CapabilityPackageInspectParams,
     format_error,
 )
@@ -33,6 +38,10 @@ class CapabilityMethods:
             "capability.enable": self.handle_enable,
             "capability.disable": self.handle_disable,
             "capability.package.inspect": self.handle_package_inspect,
+            "capability.package.list": self.handle_package_list,
+            "capability.package.install": self.handle_package_install,
+            "capability.package.activate": self.handle_package_activate,
+            "capability.package.deactivate": self.handle_package_deactivate,
         }
 
     def handle_list(self, _conn_id: str, req_id: str, _params: dict) -> dict:
@@ -85,6 +94,73 @@ class CapabilityMethods:
         inspection = self._package_inspector.inspect(data, file_name=parsed.file_name)
         return build_response(req_id, result={"inspection": inspection})
 
+    def handle_package_list(self, _conn_id: str, req_id: str, _params: dict) -> dict:
+        service, error = self._package_service(req_id)
+        if error:
+            return error
+        try:
+            return build_response(req_id, result={"packages": service.list_packages()})
+        except CapabilityPackageError as exc:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, str(exc))
+
+    def handle_package_install(self, _conn_id: str, req_id: str, params: dict) -> dict:
+        parsed, data, error = self._parse_package_data(req_id, params)
+        if error:
+            return error
+        service, error = self._package_service(req_id)
+        if error:
+            return error
+        try:
+            result = service.install(
+                data,
+                file_name=parsed.file_name,
+                expected_sha256=parsed.sha256,
+            )
+            return build_response(req_id, result={**result, "restart_required": False})
+        except CapabilityPackageError as exc:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, str(exc))
+
+    def handle_package_activate(self, _conn_id: str, req_id: str, params: dict) -> dict:
+        try:
+            parsed = CapabilityPackageActivateParams.model_validate(params)
+        except Exception as exc:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, format_error(exc))
+        service, error = self._package_service(req_id)
+        if error:
+            return error
+        try:
+            package = service.activate(parsed.package_id, parsed.version, parsed.sha256)
+            return build_response(req_id, result={"package": package, "restart_required": True})
+        except CapabilityPackageError as exc:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, str(exc))
+
+    def handle_package_deactivate(self, _conn_id: str, req_id: str, params: dict) -> dict:
+        try:
+            parsed = CapabilityPackageDeactivateParams.model_validate(params)
+        except Exception as exc:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, format_error(exc))
+        service, error = self._package_service(req_id)
+        if error:
+            return error
+        try:
+            package = service.deactivate(parsed.package_id)
+            return build_response(req_id, result={"package": package, "restart_required": True})
+        except CapabilityPackageError as exc:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, str(exc))
+
+    def _parse_package_data(self, req_id: str, params: dict):
+        try:
+            parsed = CapabilityPackageInspectParams.model_validate(params)
+        except Exception as exc:
+            return None, None, build_error(req_id, ErrorCode.INVALID_PARAMS, format_error(exc))
+        try:
+            data = base64.b64decode(parsed.data_base64, validate=True)
+        except (binascii.Error, ValueError):
+            return None, None, build_error(req_id, ErrorCode.INVALID_PARAMS, "data_base64 不是有效 Base64")
+        if parsed.sha256 and hashlib.sha256(data).hexdigest().lower() != parsed.sha256.lower():
+            return None, None, build_error(req_id, ErrorCode.INVALID_PARAMS, "能力包传输校验失败")
+        return parsed, data, None
+
     def _change(self, req_id: str, params: dict, *, enabled: bool) -> dict:
         try:
             parsed = CapabilityChangeParams.model_validate(params)
@@ -112,3 +188,14 @@ class CapabilityMethods:
                 "Agent 能力尚未初始化",
             )
         return agent, None
+
+    def _package_service(self, req_id: str):
+        agent = getattr(self._living, "agent", None)
+        service = getattr(agent, "_capability_package_service", None)
+        if service is None:
+            return None, build_error(
+                req_id,
+                ErrorCode.GATEWAY_NOT_READY,
+                "Agent 能力包服务尚未初始化",
+            )
+        return service, None

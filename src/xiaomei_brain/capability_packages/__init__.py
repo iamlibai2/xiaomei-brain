@@ -1,5 +1,10 @@
-"""Read-only capability package inspection for the Stage D lifecycle."""
+"""Capability package inspection, installation, and per-Agent activation."""
 
 from .inspector import CapabilityPackageInspector
+from .repository import CapabilityPackageError, CapabilityPackageService
 
-__all__ = ["CapabilityPackageInspector"]
+__all__ = [
+    "CapabilityPackageError",
+    "CapabilityPackageInspector",
+    "CapabilityPackageService",
+]

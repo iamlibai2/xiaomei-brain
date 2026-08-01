@@ -132,8 +132,21 @@ class AgentManager:
         provider = agent.provider or global_config.provider
         model = agent.model or global_config.model
 
-        # 构建 PluginRegistry：先加载内置 provider 插件，再从 merged config 合并配置
-        registry = boot_plugins(agent_id=agent.id)
+        # Resolve immutable capability packages before Plugin/Skill discovery.
+        # Installation is shared by the host, while this lock is Agent-owned.
+        from xiaomei_brain.capability_packages import CapabilityPackageService
+        package_service = CapabilityPackageService(
+            base_dir=self.registry.base_dir,
+            agent_id=agent.id,
+        )
+        package_dirs = package_service.runtime_directories()
+        agent._capability_package_service = package_service
+
+        # 构建 PluginRegistry：内置插件 + 当前 Agent 激活的能力包插件。
+        registry = boot_plugins(
+            agent_id=agent.id,
+            extra_dirs=package_dirs["plugins"],
+        )
         merged_config = self.registry.load_merged_config(agent.id)
         if merged_config:
             load_config_providers(registry, merged_config)
@@ -345,13 +358,16 @@ class AgentManager:
         skills_dir = os.path.join(self._agent_dir(agent.id), "skills")
         brain_db_path = os.path.join(self._agent_dir(agent.id), "memory", "brain.db")
 
-        # 兼容 .agents/skills/ 生态（npx skills add 的标准安装路径）
-        extra_dirs = []
+        # Package Skills have the lowest precedence. Existing host/plugin
+        # Skills override them, and Agent-local Skills are imported last.
+        protected_skill_dirs = []
         for candidate in [".agents/skills", "../.agents/skills"]:
             p = os.path.abspath(candidate)
             if os.path.isdir(p):
-                extra_dirs.append(p)
-        extra_dirs.extend(registry.get_skill_directories())
+                protected_skill_dirs.append(p)
+        protected_skill_dirs.extend(registry.get_skill_directories())
+        package_service.add_protected_skill_directories(protected_skill_dirs)
+        extra_dirs = [*package_dirs["skills"], *protected_skill_dirs]
 
         boot_section("技能系统")
         skill_loader = SkillLoader(
@@ -359,6 +375,7 @@ class AgentManager:
             db_path=brain_db_path,
             extra_dirs=extra_dirs,
         )
+        skill_loader.set_package_disabled_names(package_service.inactive_skill_names())
         try:
             skill_loader.scan()
             skill_names = skill_loader.list_names()
@@ -376,6 +393,7 @@ class AgentManager:
         # capability_status participates in normal semantic retrieval.
         from xiaomei_brain.capabilities import (
             CapabilityConfigurationService,
+            CapabilityManifestLoader,
             CapabilityRegistry,
             create_capability_tools,
         )
@@ -387,12 +405,20 @@ class AgentManager:
             agent.id,
             base_dir=self.registry.base_dir,
         )
+        capability_directories = [
+            *CapabilityManifestLoader.default_directories(),
+            *(package_dirs["capabilities"]),
+        ]
+        capability_definitions = CapabilityManifestLoader(
+            capability_directories,
+        ).load()
         capability_registry = CapabilityRegistry(
             plugin_registry=registry,
             tool_registry=tools,
             skill_loader=skill_loader,
             configuration=capability_configuration,
             tool_service_configuration=tool_service_configuration,
+            definitions=capability_definitions,
         )
         agent._capability_registry = capability_registry
         for capability_tool in create_capability_tools(agent):
@@ -428,6 +454,8 @@ class AgentManager:
             "OK",
             f"{ready_count}/{len(capability_views)} 项",
         )
+        for package_id, issue in package_service.runtime_issues.items():
+            boot_line(f"能力包 {package_id}"[:20], "WARN", issue[:40])
 
         from xiaomei_brain.agent.session import SessionManager
         session_manager = SessionManager(session_dir=self._sessions_dir(agent.id))

@@ -25,6 +25,10 @@ const attachmentCache = new Map<string, {
 const artifactCache = new Map<string, {
   id: string; name: string; mimeType: string; size: number; kind: string; description: string; dataBase64: string;
 }>();
+const inspectedCapabilityPackages = new Map<string, {
+  filePath: string;
+  sha256: string;
+}>();
 const MAX_CACHED_ATTACHMENTS = 32;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_ARTIFACT_BYTES = 20 * 1024 * 1024;
@@ -1085,11 +1089,22 @@ export function registerIpcHandlers(
       }
       const data = await fs.readFile(filePath);
       const sha256 = createHash("sha256").update(data).digest("hex");
-      return client.rpc("capability.package.inspect", {
+      const response = await client.rpc("capability.package.inspect", {
         file_name: path.basename(filePath),
         data_base64: data.toString("base64"),
         sha256,
       });
+      const inspection = response.result?.inspection;
+      if (
+        !response.error
+        && inspection
+        && typeof inspection === "object"
+        && !Array.isArray(inspection)
+        && (inspection as Record<string, unknown>).valid === true
+      ) {
+        inspectedCapabilityPackages.set(args.agentId, { filePath, sha256 });
+      }
+      return response;
     } catch (error) {
       return {
         error: {
@@ -1098,6 +1113,76 @@ export function registerIpcHandlers(
         },
       };
     }
+  });
+
+  ipcMain.handle("gateway:listCapabilityPackages", async (_event, args: {
+    agentId: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("capability.package.list", {});
+  });
+
+  ipcMain.handle("gateway:installCapabilityPackage", async (_event, args: {
+    agentId: string;
+    sha256: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    const selected = inspectedCapabilityPackages.get(args.agentId);
+    if (!selected || selected.sha256 !== args.sha256) {
+      return { error: { code: -32602, message: "能力包预览已失效，请重新选择文件" } };
+    }
+    try {
+      const data = await fs.readFile(selected.filePath);
+      const sha256 = createHash("sha256").update(data).digest("hex");
+      if (sha256 !== selected.sha256 || data.length > MAX_CAPABILITY_PACKAGE_BYTES) {
+        inspectedCapabilityPackages.delete(args.agentId);
+        return { error: { code: -32602, message: "能力包内容已改变，请重新检查" } };
+      }
+      const installed = await client.rpc("capability.package.install", {
+        file_name: path.basename(selected.filePath),
+        data_base64: data.toString("base64"),
+        sha256,
+      });
+      if (installed.error) return installed;
+      const rawPackage = installed.result?.package;
+      if (!rawPackage || typeof rawPackage !== "object" || Array.isArray(rawPackage)) {
+        return { error: { code: -32603, message: "Agent 返回了无效的安装结果" } };
+      }
+      const packageValue = rawPackage as Record<string, unknown>;
+      const activated = await client.rpc("capability.package.activate", {
+        package_id: String(packageValue.id || ""),
+        version: String(packageValue.version || ""),
+        sha256: String(packageValue.sha256 || ""),
+      });
+      if (!activated.error) inspectedCapabilityPackages.delete(args.agentId);
+      return activated;
+    } catch (error) {
+      return {
+        error: {
+          code: -32603,
+          message: String(error instanceof Error ? error.message : error),
+        },
+      };
+    }
+  });
+
+  ipcMain.handle("gateway:setCapabilityPackageActive", async (_event, args: {
+    agentId: string;
+    packageId: string;
+    version: string;
+    sha256: string;
+    active: boolean;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc(
+      args.active ? "capability.package.activate" : "capability.package.deactivate",
+      args.active
+        ? { package_id: args.packageId, version: args.version, sha256: args.sha256 }
+        : { package_id: args.packageId },
+    );
   });
 
   ipcMain.handle("gateway:openAssignmentArtifact", async (_event, args: {

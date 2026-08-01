@@ -73,7 +73,7 @@ class CapabilityPackageInspector:
 
                 requirements = manifest.requirements
                 if requirements.python_packages or requirements.node_packages or requirements.executables:
-                    warnings.append("此能力包声明了外部依赖；D1 只检查，不会自动安装依赖")
+                    warnings.append("此能力包声明了外部依赖；当前安装器不会自动安装依赖")
                 result.update({
                     "valid": True,
                     "manifest": manifest.public_dict(),

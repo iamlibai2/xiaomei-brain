@@ -175,6 +175,12 @@ class MethodRouter:
             "capability.read": {"capability.list", "capability.get"},
             "capability.activation": {"capability.enable", "capability.disable"},
             "capability.package.inspect": {"capability.package.inspect"},
+            "capability.package.lifecycle": {
+                "capability.package.list",
+                "capability.package.install",
+                "capability.package.activate",
+                "capability.package.deactivate",
+            },
             "model.configuration": {
                 "model.config.get",
                 "model.catalog",

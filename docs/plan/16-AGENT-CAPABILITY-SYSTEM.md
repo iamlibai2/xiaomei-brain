@@ -718,4 +718,15 @@ capability.progress
 - 检查过程不解压到磁盘、不导入代码、不写 Agent 配置，也不安装任何依赖；
 - 8 MB 是 D1 单帧检查限制，D2 若支持大型能力包应增加分块上传，而不是扩大 WebSocket JSON 帧。
 
-D2 的安装目录、原子切换、Agent 独立启用和 Action 审批尚未实现。
+阶段 D2 已完成第一版可安装能力包闭环：
+
+- 宿主机共享不可变仓库与 SHA-256 归档缓存；
+- 解压暂存、完整性复验和原子安装；
+- 每个 Agent 独立的 `capabilities.lock`；
+- 安装、启用、停用、列表 Gateway RPC，以及 Desktop“安装并启用”入口；
+- Agent 启动时加载能力包的 Capability、Plugin 和 Skill；
+- 外部 Plugin 模块命名空间隔离与内置/Agent 自有组件冲突保护；
+- 停用或损坏能力包的持久化 Skill 可见性隔离；
+- 可运行的文本统计样板包，用于验证真实 Tool、Skill 和双 Agent 隔离。
+
+D2 有意不自动安装外部依赖，也不实现卸载、升级、回滚和签名信任。Desktop 用户主动点击安装不再重复弹 Action 审批；未来 Agent 通过对话自主提议安装时，仍须进入统一的 `action.proposed` 审批链路。大型能力包分块传输留到后续阶段。

@@ -11,6 +11,7 @@ import yaml
 
 from xiaomei_brain.gateway.protocol import ErrorCode
 from xiaomei_brain.gateway.server_methods import MethodRouter
+from xiaomei_brain.capability_packages import CapabilityPackageService
 
 
 
@@ -19,10 +20,31 @@ def build_package() -> bytes:
         "schema_version": 1,
         "package": {"id": "sample-analysis", "name": "样板分析能力", "version": "1.0.0"},
         "capabilities": [{"id": "sample_analysis", "name": "样板分析"}],
-        "contents": {"skills": ["skills/sample/SKILL.md"]},
+        "contents": {
+            "capabilities": ["capabilities/sample_analysis.yaml"],
+            "skills": ["skills/sample/SKILL.md"],
+        },
+    }
+    catalog = {
+        "id": "sample_analysis",
+        "name": "样板分析",
+        "summary": "分析样板数据",
+        "category": "data",
+        "components": [{
+            "id": "skill_sample",
+            "kind": "skill",
+            "target": "sample",
+            "required": True,
+        }],
+        "outcomes": [{
+            "id": "summary",
+            "name": "分析摘要",
+            "components": ["skill_sample"],
+        }],
     }
     files = {
         "capability.yaml": yaml.safe_dump(manifest, allow_unicode=True).encode(),
+        "capabilities/sample_analysis.yaml": yaml.safe_dump(catalog, allow_unicode=True).encode(),
         "skills/sample/SKILL.md": b"# Sample\n",
     }
     checksums = {
@@ -129,6 +151,7 @@ def test_gateway_advertises_capability_read_support():
     assert "capability.read" in router._capabilities()
     assert "capability.activation" in router._capabilities()
     assert "capability.package.inspect" in router._capabilities()
+    assert "capability.package.lifecycle" in router._capabilities()
 
 
 def test_capability_package_inspect_returns_read_only_report():
@@ -163,3 +186,52 @@ def test_capability_package_inspect_rejects_transport_mismatch():
     )
 
     assert response["error"]["code"] == ErrorCode.INVALID_PARAMS
+
+
+def test_capability_package_install_and_activate_are_separate(tmp_path):
+    agent = _Agent()
+    agent._capability_package_service = CapabilityPackageService(
+        base_dir=tmp_path,
+        agent_id="test",
+    )
+    router = _router(agent)
+    data = build_package()
+    encoded = base64.b64encode(data).decode("ascii")
+    sha256 = hashlib.sha256(data).hexdigest()
+
+    installed = router.dispatch("conn-1", "install", "capability.package.install", {
+        "file_name": "sample.xmcap",
+        "data_base64": encoded,
+        "sha256": sha256,
+    })
+    before = router.dispatch("conn-1", "list-1", "capability.package.list", {})
+    activated = router.dispatch("conn-1", "activate", "capability.package.activate", {
+        "package_id": "sample-analysis",
+        "version": "1.0.0",
+        "sha256": sha256,
+    })
+    after = router.dispatch("conn-1", "list-2", "capability.package.list", {})
+
+    assert installed["result"]["restart_required"] is False
+    assert before["result"]["packages"][0]["active"] is False
+    assert activated["result"]["restart_required"] is True
+    assert after["result"]["packages"][0]["active"] is True
+
+
+def test_capability_package_deactivate_requires_restart(tmp_path):
+    agent = _Agent()
+    service = CapabilityPackageService(base_dir=tmp_path, agent_id="test")
+    agent._capability_package_service = service
+    data = build_package()
+    installed = service.install(data, file_name="sample.xmcap")
+    service.activate("sample-analysis", "1.0.0", installed["package"]["sha256"])
+
+    response = _router(agent).dispatch(
+        "conn-1",
+        "deactivate",
+        "capability.package.deactivate",
+        {"package_id": "sample-analysis"},
+    )
+
+    assert response["result"]["package"]["active"] is False
+    assert response["result"]["restart_required"] is True

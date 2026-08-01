@@ -50,8 +50,13 @@ def boot_plugins(agent_id: str = "", extra_dirs: list[str] | None = None) -> Plu
 
     # 抑制 stderr handler 的 WARNING 输出，保持 boot 画面干净
     from ..cli.boot import boot_muted
+    plugin_dirs = None
+    if extra_dirs:
+        # External capability packages extend the built-in sources; they must
+        # never replace the Agent's normal Plugin set.
+        plugin_dirs = [*loader._default_dirs(), *extra_dirs]
     with boot_muted():
-        loaded = loader.boot(plugin_dirs=extra_dirs)
+        loaded = loader.boot(plugin_dirs=plugin_dirs)
     for plugin in loaded:
         if plugin.status == "error":
             logger.info("[Plugin] %s 未加载: %s", plugin.manifest.name, plugin.error)

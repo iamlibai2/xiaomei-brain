@@ -10,9 +10,13 @@ from __future__ import annotations
 
 import importlib
 import importlib.metadata
+import importlib.util
+import hashlib
 import logging
 import os
 import sys
+import threading
+import types
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +26,8 @@ from .registry import PluginRegistry, LoadedPlugin
 from ..cli.boot import boot_line
 
 logger = logging.getLogger(__name__)
+
+_EXTERNAL_IMPORT_LOCK = threading.RLock()
 
 
 # ── WARNING 捕获 ──────────────────────────────────────────
@@ -272,7 +278,9 @@ class PluginLoader:
             func_name = "register"
 
         # 构建完整的模块路径
-        if m.dir_path:
+        if m.dir_path and self._is_external_directory(m.dir_path):
+            module_path = self._external_module_name(m.dir_path, module_rel)
+        elif m.dir_path:
             # 从目录路径推导 Python 包路径
             # 例如: /path/to/xiaomei_brain/channels/cli → xiaomei_brain.channels.cli.adapter
             module_path = self._dir_to_module(m.dir_path, module_rel)
@@ -283,7 +291,10 @@ class PluginLoader:
 
         # import 模块
         try:
-            module = importlib.import_module(module_path)
+            if m.dir_path and self._is_external_directory(m.dir_path):
+                module = self._load_external_module(m.dir_path, module_rel, module_path)
+            else:
+                module = importlib.import_module(module_path)
         except ImportError as e:
             return LoadedPlugin(manifest=m, status="error", error=f"导入失败: {e}")
 
@@ -317,6 +328,83 @@ class PluginLoader:
         loaded = LoadedPlugin(manifest=m, status=status, error=warn_msg or None, summary=ctx.summary)
         self.registry.track_plugin(loaded)
         return loaded
+
+    @staticmethod
+    def _is_external_directory(dir_path: str) -> bool:
+        import xiaomei_brain
+
+        source_root = Path(xiaomei_brain.__file__).resolve().parent
+        try:
+            Path(dir_path).resolve().relative_to(source_root)
+            return False
+        except ValueError:
+            return True
+
+    @staticmethod
+    def _external_module_name(dir_path: str, module_rel: str) -> str:
+        digest = hashlib.sha256(str(Path(dir_path).resolve()).encode("utf-8")).hexdigest()[:16]
+        suffix = ".".join(PluginLoader._external_module_parts(module_rel))
+        return f"_xiaomei_capability_plugin_{digest}.{suffix}"
+
+    @staticmethod
+    def _external_module_parts(module_rel: str) -> list[str]:
+        parts = module_rel.split(".")
+        if not parts or any(not part.isidentifier() for part in parts):
+            raise ImportError(f"外部插件入口模块无效: {module_rel}")
+        return parts
+
+    @staticmethod
+    def _load_external_module(dir_path: str, module_rel: str, module_name: str):
+        """Load one explicitly activated plugin under an isolated namespace.
+
+        The synthetic package keeps relative imports such as ``from .tool``
+        working without placing a capability package on global ``sys.path``.
+        """
+        if module_name in sys.modules:
+            return sys.modules[module_name]
+        plugin_dir = Path(dir_path).resolve()
+        relative = Path(*PluginLoader._external_module_parts(module_rel))
+        module_file = plugin_dir / relative.with_suffix(".py")
+        package_init = plugin_dir / relative / "__init__.py"
+        if module_file.is_file():
+            source_path = module_file
+            submodule_locations = None
+        elif package_init.is_file():
+            source_path = package_init
+            submodule_locations = [str(package_init.parent)]
+        else:
+            raise ImportError(f"外部插件入口不存在: {module_rel}")
+
+        namespace = module_name.split(".", 1)[0]
+        if namespace not in sys.modules:
+            package = types.ModuleType(namespace)
+            package.__path__ = [str(plugin_dir)]
+            package.__package__ = namespace
+            sys.modules[namespace] = package
+        spec = importlib.util.spec_from_file_location(
+            module_name,
+            source_path,
+            submodule_search_locations=submodule_locations,
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError(f"无法创建外部插件模块: {module_rel}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        try:
+            # Capability packages are immutable. Python's normal source loader
+            # would otherwise create __pycache__ inside the installed package
+            # and make the next integrity check report an unexpected file.
+            with _EXTERNAL_IMPORT_LOCK:
+                previous = sys.dont_write_bytecode
+                sys.dont_write_bytecode = True
+                try:
+                    spec.loader.exec_module(module)
+                finally:
+                    sys.dont_write_bytecode = previous
+        except Exception:
+            sys.modules.pop(module_name, None)
+            raise
+        return module
 
     def _dir_to_module(self, dir_path: str, module_rel: str) -> str:
         """从文件系统路径推导 Python 包路径。

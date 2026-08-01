@@ -62,6 +62,26 @@ class CapabilityPackageInspectParams(BaseModel):
     sha256: str = Field(default="", pattern=r"^(?:[a-fA-F0-9]{64})?$")
 
 
+class CapabilityPackageActivateParams(BaseModel):
+    package_id: str = Field(
+        ...,
+        min_length=2,
+        max_length=96,
+        pattern=r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+    )
+    version: str = Field(..., min_length=5, max_length=64)
+    sha256: str = Field(default="", pattern=r"^(?:[a-fA-F0-9]{64})?$")
+
+
+class CapabilityPackageDeactivateParams(BaseModel):
+    package_id: str = Field(
+        ...,
+        min_length=2,
+        max_length=96,
+        pattern=r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+    )
+
+
 # ── Embodiment ───────────────────────────────
 
 class EmbodimentRegisterParams(BaseModel):

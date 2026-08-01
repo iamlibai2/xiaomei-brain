@@ -249,6 +249,23 @@ export interface CapabilityPackageInspection {
   };
 }
 
+export interface InstalledCapabilityPackage {
+  id: string;
+  name: string;
+  version: string;
+  sha256: string;
+  publisher: string;
+  description: string;
+  installed_at: number;
+  active: boolean;
+  runtime_valid: boolean;
+  issue: string;
+  loaded: boolean;
+  capabilities: Array<{ id: string; name: string; summary: string }>;
+  permissions: Array<{ category: string; value: string }>;
+  requirements: Record<string, unknown>;
+}
+
 // ── Bridge API ──
 
 export interface GatewayBridge {
@@ -296,6 +313,15 @@ export interface GatewayBridge {
     enabled: boolean;
   }): Promise<JsonRpcResponse>;
   inspectCapabilityPackage(args: { agentId: string }): Promise<JsonRpcResponse>;
+  listCapabilityPackages(args: { agentId: string }): Promise<JsonRpcResponse>;
+  installCapabilityPackage(args: { agentId: string; sha256: string }): Promise<JsonRpcResponse>;
+  setCapabilityPackageActive(args: {
+    agentId: string;
+    packageId: string;
+    version: string;
+    sha256: string;
+    active: boolean;
+  }): Promise<JsonRpcResponse>;
   openAssignmentArtifact(args: {
     agentId: string;
     assignmentId: string;

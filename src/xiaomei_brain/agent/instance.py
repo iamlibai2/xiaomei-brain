@@ -57,6 +57,7 @@ class AgentInstance:
     # Persistent Agent (created once, reused)
     _agent: Any = field(default=None, init=False, repr=False)
     _capability_registry: Any = field(default=None, init=False, repr=False)
+    _capability_package_service: Any = field(default=None, init=False, repr=False)
 
     def get_system_prompt(self) -> str:
         """Dynamically read identity.md for system prompt."""
