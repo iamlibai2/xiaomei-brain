@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   useCoreStore,
@@ -106,6 +106,7 @@ export function HomePage() {
   const [followingLatest, setFollowingLatest] = useState(true);
   const [unreadWhileAway, setUnreadWhileAway] = useState(false);
   const [focusedSearchMessageId, setFocusedSearchMessageId] = useState("");
+  const conversationItems = useMemo(() => groupConversationMessages(messages), [messages]);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
@@ -310,6 +311,16 @@ export function HomePage() {
     setSelectedAssignmentId(assignmentId);
     setActivityPanelOpen(true);
   };
+  const showArtifact = useCallback((artifactId: string, sessionId: string) => {
+    setFocusedArtifactKey(`${sessionId}:${artifactId}`);
+    setRightSidebarSection("artifact");
+    setActivityPanelOpen(true);
+  }, []);
+  const showMemories = useCallback((references: MemoryReference[]) => {
+    setFocusedMemories(references);
+    setRightSidebarSection("context");
+    setActivityPanelOpen(true);
+  }, []);
 
   const taskName = (() => {
     if (activeSessionId && activeAgentId) {
@@ -412,7 +423,7 @@ export function HomePage() {
                 </div>
                 {(() => {
                   const headedTurns = new Set<string>();
-                  return groupConversationMessages(messages).map((item) => {
+                  return conversationItems.map((item) => {
                     if (item.type === "tools") {
                       return (
                         <ToolActivityGroup
@@ -433,16 +444,8 @@ export function HomePage() {
                         agentName={agentName || t("home.defaultAgentName")}
                         showAgentHeader={showAgentHeader}
                         highlighted={focusedSearchMessageId === m.id}
-                        onShowArtifact={(artifactId, sessionId) => {
-                          setFocusedArtifactKey(`${sessionId}:${artifactId}`);
-                          setRightSidebarSection("artifact");
-                          setActivityPanelOpen(true);
-                        }}
-                        onShowMemories={(references) => {
-                          setFocusedMemories(references);
-                          setRightSidebarSection("context");
-                          setActivityPanelOpen(true);
-                        }}
+                        onShowArtifact={showArtifact}
+                        onShowMemories={showMemories}
                       />
                     );
                   });
@@ -882,11 +885,9 @@ function MessageAttachment({
         <span className={`message-attachment-icon ${error ? "error" : ""}`}>
           {error
             ? "!"
-            : attachment.kind === "image"
-              ? "IMG"
-              : attachment.kind === "audio"
-                ? "VOICE"
-                : "FILE"}
+            : attachment.kind === "audio"
+              ? "VOICE"
+              : "FILE"}
         </span>
       )}
       <span className="message-attachment-name">{attachment.name}</span>
@@ -1022,7 +1023,7 @@ function ArtifactCard({
             <img className="artifact-preview" src={previewUrl} alt={artifact.name} />
           ) : (
             <span className={`artifact-icon ${error ? "error" : ""}`}>
-              <Icon name={artifact.kind === "image" ? "sparkles" : "file-text"} size={20} />
+              <Icon name="file-text" size={20} />
             </span>
           )}
           <span className="artifact-info">

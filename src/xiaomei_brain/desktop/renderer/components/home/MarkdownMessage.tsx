@@ -2,6 +2,7 @@ import {
   Component,
   createContext,
   isValidElement,
+  memo,
   type ErrorInfo,
   type MouseEvent,
   type ReactNode,
@@ -303,7 +304,13 @@ function normalizeMathDelimiters(markdown: string): string {
     .join("");
 }
 
-export function MarkdownMessage({ content, streaming = false }: { content: string; streaming?: boolean }) {
+export const MarkdownMessage = memo(function MarkdownMessage({
+  content,
+  streaming = false,
+}: {
+  content: string;
+  streaming?: boolean;
+}) {
   const normalizedContent = normalizeMathDelimiters(content);
   return (
     <MarkdownStreamingContext.Provider value={streaming}>
@@ -323,4 +330,4 @@ export function MarkdownMessage({ content, streaming = false }: { content: strin
       </MarkdownErrorBoundary>
     </MarkdownStreamingContext.Provider>
   );
-}
+});

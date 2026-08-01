@@ -6,6 +6,7 @@ import type { AgentCreationResult, AgentEntry, AgentLifecycleAction, ChatAttachm
 
 const STORAGE_KEY = "xiaomei-brain-agents";
 const STORAGE_VERSION = 4;
+let lastPersistedSnapshot = "";
 
 interface PersistedState {
   version?: number;
@@ -36,19 +37,24 @@ function loadPersisted(): PersistedState {
 
 function savePersisted(state: CoreState) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    const snapshot = JSON.stringify({
       version: STORAGE_VERSION,
       agents: state.agents,
       activeAgentId: state.activeAgentId,
       activeSessionByAgent: state.activeSessionByAgent,
-    }));
+    });
+    if (snapshot === lastPersistedSnapshot) return;
+    lastPersistedSnapshot = snapshot;
+    localStorage.setItem(STORAGE_KEY, snapshot);
   } catch { /* quota exceeded */ }
 }
 
 // ── Module-level streaming state, isolated by Agent + session + turn ──
 interface StreamingState { ref: string; id: string | null }
 const _streamingByTurn: Record<string, StreamingState> = {};
+const _streamRenderTimers: Record<string, number> = {};
 const _sessionSwitchRequestByAgent: Record<string, number> = {};
+const STREAM_RENDER_INTERVAL_MS = 32;
 
 function streamingKey(agentId: string, sessionId: string, turnId: string): string {
   return `${agentId}\u0000${sessionId || "legacy"}\u0000${turnId || "legacy"}`;
@@ -202,12 +208,22 @@ function clearAgentStreams(agentId: string): void {
   for (const key of Object.keys(_streamingByTurn)) {
     if (key.startsWith(prefix)) delete _streamingByTurn[key];
   }
+  for (const key of Object.keys(_streamRenderTimers)) {
+    if (!key.startsWith(prefix)) continue;
+    window.clearTimeout(_streamRenderTimers[key]);
+    delete _streamRenderTimers[key];
+  }
 }
 
 function clearSessionStreams(agentId: string, sessionId: string): void {
   const prefix = `${agentId}\u0000${sessionId || "legacy"}\u0000`;
   for (const key of Object.keys(_streamingByTurn)) {
     if (key.startsWith(prefix)) delete _streamingByTurn[key];
+  }
+  for (const key of Object.keys(_streamRenderTimers)) {
+    if (!key.startsWith(prefix)) continue;
+    window.clearTimeout(_streamRenderTimers[key]);
+    delete _streamRenderTimers[key];
   }
 }
 
@@ -2733,6 +2749,31 @@ export function initGatewayEvents() {
       _streamingByTurn[activeStreamKey] = { ref: "", id: null };
     }
     const stream = _streamingByTurn[activeStreamKey];
+    const cancelPendingStreamRender = () => {
+      const timer = _streamRenderTimers[activeStreamKey];
+      if (timer === undefined) return;
+      window.clearTimeout(timer);
+      delete _streamRenderTimers[activeStreamKey];
+    };
+    const flushStreamToStore = () => {
+      cancelPendingStreamRender();
+      if (!stream.ref.trim()) return;
+      if (!stream.id) {
+        stream.id = `streaming-${eventTurnId || Date.now()}-${Date.now()}`;
+        setState(produce((s: CoreState) => {
+          eventMessages(s).push({
+            id: stream.id!, role: "agent", content: stream.ref, streaming: true,
+            turnId: eventTurnId || undefined,
+          });
+        }));
+        return;
+      }
+      setState(produce((s: CoreState) => {
+        const sessionMessages = eventMessages(s);
+        const message = sessionMessages.find((item) => item.id === stream.id);
+        if (message) message.content = stream.ref;
+      }));
+    };
 
     if (event === "reconnecting") {
       setState(produce((s: CoreState) => {
@@ -2810,6 +2851,7 @@ export function initGatewayEvents() {
     }
 
     if (event === "message.start") {
+      cancelPendingStreamRender();
       stream.ref = "";
       stream.id = null;
       setState(produce((s: CoreState) => {
@@ -2831,6 +2873,7 @@ export function initGatewayEvents() {
       const actionId = typeof d.id === "string" ? d.id : "";
       const summary = typeof d.summary === "string" ? d.summary : "";
       if (!actionId || !summary) return;
+      flushStreamToStore();
       const activeStreamId = stream.id;
       let inserted = false;
       setState(produce((s: CoreState) => {
@@ -2904,6 +2947,7 @@ export function initGatewayEvents() {
       const choices = Array.isArray(payload.choices)
         ? payload.choices.filter((choice): choice is string => typeof choice === "string")
         : [];
+      flushStreamToStore();
       const activeStreamId = stream.id;
       let inserted = false;
       setState(produce((s: CoreState) => {
@@ -2979,6 +3023,7 @@ export function initGatewayEvents() {
       const args = d.arguments && typeof d.arguments === "object" && !Array.isArray(d.arguments)
         ? d.arguments as Record<string, unknown>
         : {};
+      flushStreamToStore();
       const activeStreamId = stream.id;
       let inserted = false;
       setState(produce((s: CoreState) => {
@@ -3112,28 +3157,17 @@ export function initGatewayEvents() {
 
     if (event === "message.delta") {
       stream.ref += text;
-      if (!stream.id) {
-        // ReAct providers often emit whitespace between consecutive tool calls.
-        // Keep it in the stream buffer so a later text chunk preserves its
-        // formatting, but do not create an empty message row. History loading
-        // already filters these rows, so this also keeps live and restored
-        // spacing consistent.
-        if (!stream.ref.trim()) return;
-        stream.id = "streaming-" + Date.now();
-        setState(produce((s: CoreState) => {
-          eventMessages(s).push({
-            id: stream.id!, role: "agent", content: stream.ref, streaming: true,
-            turnId: eventTurnId || undefined,
-          });
-        }));
-      } else {
-        setState(produce((s: CoreState) => {
-          const sessionMessages = eventMessages(s);
-          const idx = sessionMessages.findIndex(m => m.id === stream.id);
-          if (idx !== -1) sessionMessages[idx].content = stream.ref;
-        }));
+      // Providers may emit hundreds of tiny chunks per second. Rendering and
+      // parsing Markdown for each chunk can monopolize the Renderer thread, so
+      // coalesce them into a bounded ~30 FPS UI stream.
+      if (_streamRenderTimers[activeStreamKey] === undefined) {
+        _streamRenderTimers[activeStreamKey] = window.setTimeout(
+          flushStreamToStore,
+          STREAM_RENDER_INTERVAL_MS,
+        );
       }
     } else if (event === "message.complete") {
+      flushStreamToStore();
       const status = typeof d.status === "string" ? d.status : "complete";
       const recalledMemories = memoryReferences(d.memory_references);
       const error = d.error && typeof d.error === "object"
@@ -3219,6 +3253,7 @@ export function initGatewayEvents() {
         }
       }
       delete _streamingByTurn[activeStreamKey];
+      cancelPendingStreamRender();
       setState(produce((s: CoreState) => {
         setSessionSending(s, agentId, eventSessionId, false);
         const isBackgroundSession = s.activeSessionByAgent[agentId] !== eventSessionId;
@@ -3243,6 +3278,7 @@ export function initGatewayEvents() {
         }).catch(() => {});
       }
     } else if (event === "error") {
+      cancelPendingStreamRender();
       const err = (d.text || "Unknown error") as string;
       setState(produce((s: CoreState) => {
         eventMessages(s).push({
