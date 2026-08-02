@@ -41,7 +41,10 @@ def test_word_plugin_extracts_paragraphs_and_tables(tmp_path):
 
     assert result.sections[0].key == "document"
     assert "Project brief" in result.sections[0].content
+    assert "[表格 1 | 1 行 × 2 列]" in result.sections[0].content
     assert "Name\tXiaomei" in result.sections[0].content
+    assert result.metadata["table_count"] == 1
+    assert result.metadata["tables"] == [{"index": 1, "rows": 1, "columns": 2}]
 
 
 def test_presentation_plugin_returns_one_section_per_slide(tmp_path):

@@ -17,16 +17,19 @@
     "start": "electron ."
   },
   "dependencies": {
+    "docx-preview": "^0.3.7",
     "extract-zip": "^2.0.1",
     "immer": "^11.1.11",
     "mermaid": "^11.16.0",
     "node-pty": "^1.0.0",
+    "pdfjs-dist": "^6.1.200",
     "rehype-highlight": "^7.0.2",
     "rehype-katex": "^7.0.1",
     "rehype-sanitize": "^6.0.0",
     "remark-breaks": "^4.0.0",
     "remark-math": "^6.0.0",
     "ws": "^8.18.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zustand": "^5.0.14"
   },
   "devDependencies": {

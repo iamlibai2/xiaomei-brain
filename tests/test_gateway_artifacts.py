@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from xiaomei_brain.consciousness.conversation_driver import ConversationDriver
+from xiaomei_brain.consciousness.living import LivingMessage
 from xiaomei_brain.gateway import artifacts as artifact_module
 from xiaomei_brain.gateway.artifacts import (
     _structured_strings,
@@ -12,7 +13,9 @@ from xiaomei_brain.gateway.artifacts import (
     public_artifact_metadata,
     read_stored_artifact,
 )
+from xiaomei_brain.gateway.connection import cm
 from xiaomei_brain.gateway.server_methods import MethodRouter
+from xiaomei_brain.gateway.inbound import Accepted
 from xiaomei_brain.memory.conversation_db import ConversationDB
 from xiaomei_brain.people import IdentityContext
 
@@ -148,6 +151,105 @@ def test_artifact_rpc_reads_only_exact_session_asset(tmp_path, monkeypatch):
     assert base64.b64decode(response["result"]["artifact"]["data_base64"]) == b"result data"
     assert "relative_path" not in response["result"]["artifact"]
     assert denied["error"]["code"] == -32602
+    db.close()
+
+
+def test_chat_send_references_person_owned_artifact_as_annotated_attachment(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
+    output = tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace" / "proposal.docx"
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"docx snapshot")
+    artifact = discover_tool_artifacts(
+        "xiaomei", "source-session", "turn-1", "write_file",
+        {"path": "proposal.docx"}, f"Successfully wrote to {output}",
+    )[0]
+    db = ConversationDB(tmp_path / "brain.db")
+    db.save_artifact("source-session", artifact, user_id="person-1")
+
+    class Inbound:
+        def __init__(self):
+            self.messages = []
+
+        def accept(self, raw):
+            self.messages.append(raw)
+            return Accepted(LivingMessage(
+                content=raw.content,
+                session_id=raw.session_id,
+                attachments=raw.attachments,
+                images=raw.images,
+            ))
+
+    inbound = Inbound()
+    router = MethodRouter(living=SimpleNamespace(
+        _agent_id="xiaomei",
+        agent=SimpleNamespace(conversation_db=db),
+        _gateway_inbound=inbound,
+    ))
+    router._auth_sessions.add("connection-1")
+    router._identity_contexts["connection-1"] = _identity("person-1", "connection-1")
+    cm.set_session("target-session", "connection-1", "person-1")
+
+    response = router.dispatch("connection-1", "rpc-1", "chat.send", {
+        "content": "把这段改得更正式",
+        "client_request_id": "request-1",
+        "session_id": "target-session",
+        "artifact_references": [{
+            "artifact_id": artifact["id"],
+            "session_id": "source-session",
+            "selection": {
+                "kind": "text",
+                "page": 2,
+                "selected_text": "原来的段落",
+                "context_before": "上一段",
+                "context_after": "下一段",
+            },
+        }],
+    })
+
+    assert response.get("result", {}).get("accepted") is True, response
+    attachment = inbound.messages[0].attachments[0]
+    assert attachment["name"] == "proposal.docx"
+    assert attachment["source_artifact"] == {
+        "artifact_id": artifact["id"],
+        "session_id": "source-session",
+    }
+    assert attachment["annotation"]["selected_text"] == "原来的段落"
+    assert Path(attachment["local_path"]).read_bytes() == b"docx snapshot"
+    cm.unregister("connection-1")
+    db.close()
+
+
+def test_chat_send_rejects_artifact_owned_by_another_person(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
+    output = tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace" / "private.docx"
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"private")
+    artifact = discover_tool_artifacts(
+        "xiaomei", "source-session", "turn-1", "write_file",
+        {"path": "private.docx"}, f"Successfully wrote to {output}",
+    )[0]
+    db = ConversationDB(tmp_path / "brain.db")
+    db.save_artifact("source-session", artifact, user_id="person-2")
+    router = MethodRouter(living=SimpleNamespace(
+        _agent_id="xiaomei",
+        agent=SimpleNamespace(conversation_db=db),
+    ))
+    router._auth_sessions.add("connection-1")
+    router._identity_contexts["connection-1"] = _identity("person-1", "connection-1")
+    cm.set_session("target-session", "connection-1", "person-1")
+
+    response = router.dispatch("connection-1", "rpc-1", "chat.send", {
+        "content": "修改它",
+        "client_request_id": "request-1",
+        "session_id": "target-session",
+        "artifact_references": [{
+            "artifact_id": artifact["id"],
+            "session_id": "source-session",
+        }],
+    })
+
+    assert response["error"]["code"] == -32602
+    cm.unregister("connection-1")
     db.close()
 
 

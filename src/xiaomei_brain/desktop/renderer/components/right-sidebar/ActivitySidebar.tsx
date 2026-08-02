@@ -13,6 +13,7 @@ import type {
 import { useCoreStore } from "../../store";
 import { Icon } from "../ui";
 import { AssignmentPanel } from "./AssignmentPanel";
+import { supportsArtifactPreview } from "../../artifacts/preview-capability";
 
 const EMPTY: ActivitySnapshot[] = [];
 const EMPTY_ASSIGNMENTS: AssignmentSnapshot[] = [];
@@ -62,6 +63,7 @@ export function ActivitySidebar({
   onSectionChange,
   focusedArtifactKey,
   focusedMemories,
+  onOpenArtifact,
 }: {
   open: boolean;
   onClose: () => void;
@@ -71,6 +73,7 @@ export function ActivitySidebar({
   onSectionChange: (section: "activity" | "state" | "assignment" | "artifact" | "memory" | "context") => void;
   focusedArtifactKey: string;
   focusedMemories: MemoryReference[];
+  onOpenArtifact: (artifactId: string, sessionId: string) => void;
 }) {
   const agentId = useCoreStore((state) => state.activeAgentId || "");
   const activities = useCoreStore((state) => state.activitiesByAgent[state.activeAgentId || ""] || EMPTY);
@@ -299,6 +302,7 @@ export function ActivitySidebar({
           onRefresh={() => void refreshArtifacts(agentId)}
           activeSessionId={activeSessionId}
           focusedArtifactKey={focusedArtifactKey}
+          onOpenArtifact={onOpenArtifact}
         />
       ) : section === "memory" ? (
         <MemoryPanel
@@ -423,6 +427,7 @@ function ArtifactPanel({
   onRefresh,
   activeSessionId,
   focusedArtifactKey,
+  onOpenArtifact,
 }: {
   agentId: string;
   artifacts: ArtifactSnapshot[];
@@ -431,63 +436,38 @@ function ArtifactPanel({
   onRefresh: () => void;
   activeSessionId: string;
   focusedArtifactKey: string;
+  onOpenArtifact: (artifactId: string, sessionId: string) => void;
 }) {
-  const [opening, setOpening] = useState("");
   const [scope, setScope] = useState<"current" | "all">("current");
-  const [selectedKey, setSelectedKey] = useState("");
-  const [previewUrl, setPreviewUrl] = useState("");
-  const [previewError, setPreviewError] = useState("");
+  const [openingKey, setOpeningKey] = useState("");
+  const [actionError, setActionError] = useState("");
   const visible = scope === "current"
     ? artifacts.filter((artifact) => artifact.sessionId === activeSessionId)
     : artifacts;
-  const selected = visible.find((artifact) => (
-    `${artifact.sessionId}:${artifact.id}` === selectedKey
-  )) || visible[0] || null;
 
   useEffect(() => {
     if (!focusedArtifactKey) return;
     setScope("all");
-    setSelectedKey(focusedArtifactKey);
   }, [focusedArtifactKey]);
 
-  useEffect(() => {
-    setPreviewUrl("");
-    setPreviewError("");
-    if (!selected || selected.kind !== "image" || selected.size > 5 * 1024 * 1024) return;
-    let cancelled = false;
-    void window.gateway.getArtifact({
-      agentId,
-      sessionId: selected.sessionId,
-      artifactId: selected.id,
-    }).then((response) => {
-      if (cancelled) return;
-      if (response.error) {
-        setPreviewError(response.error.message);
-        return;
-      }
-      const raw = response.result?.artifact;
-      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
-      const value = raw as Record<string, unknown>;
-      const data = typeof value.dataBase64 === "string" ? value.dataBase64 : "";
-      const mime = typeof value.mimeType === "string" ? value.mimeType : selected.mimeType;
-      if (data) setPreviewUrl(`data:${mime};base64,${data}`);
-    }).catch((reason) => {
-      if (!cancelled) setPreviewError(String(reason));
-    });
-    return () => { cancelled = true; };
-  }, [agentId, selected?.id, selected?.kind, selected?.mimeType, selected?.sessionId, selected?.size]);
-
-  const open = async (artifact: ArtifactSnapshot) => {
-    if (opening) return;
-    setOpening(`${artifact.sessionId}:${artifact.id}`);
+  const activateArtifact = async (artifact: ArtifactSnapshot) => {
+    if (supportsArtifactPreview(artifact)) {
+      onOpenArtifact(artifact.id, artifact.sessionId);
+      return;
+    }
+    const key = `${artifact.sessionId}:${artifact.id}`;
+    if (openingKey) return;
+    setOpeningKey(key);
+    setActionError("");
     try {
-      await window.gateway.openArtifact({
+      const result = await window.gateway.openArtifact({
         agentId,
         sessionId: artifact.sessionId,
         artifactId: artifact.id,
       });
+      if (!result.ok) setActionError(result.error || "无法打开产物");
     } finally {
-      setOpening("");
+      setOpeningKey("");
     }
   };
   return (
@@ -503,27 +483,9 @@ function ArtifactPanel({
         </div>
         <button type="button" onClick={onRefresh}>刷新</button>
       </div>
-      {selected && (
-        <div className="artifact-sidebar-preview">
-          {previewUrl ? (
-            <img src={previewUrl} alt={selected.name} />
-          ) : (
-            <span className={`artifact-kind-icon ${selected.kind}`}>
-              <Icon name={selected.kind === "image" ? "sparkles" : "file-text"} size={24} />
-            </span>
-          )}
-          <div>
-            <strong>{selected.name}</strong>
-            <small>{formatBytes(selected.size)} · {new Date(selected.createdAt * 1000).toLocaleString()}</small>
-            {previewError && <em>{previewError}</em>}
-          </div>
-          <button type="button" onClick={() => void open(selected)} disabled={Boolean(opening)}>
-            {opening ? "打开中…" : "打开"}
-          </button>
-        </div>
-      )}
       {loading && visible.length === 0 && <p className="activity-empty">正在加载…</p>}
       {error && <p className="activity-error">{error}</p>}
+      {actionError && <p className="activity-error">{actionError}</p>}
       {!loading && !error && visible.length === 0 && (
         <div className="activity-empty-state">
           <strong>{scope === "current" ? "当前会话还没有产物" : "还没有产物"}</strong>
@@ -533,12 +495,15 @@ function ArtifactPanel({
       <div className="artifact-sidebar-grid">
         {visible.map((artifact) => {
           const key = `${artifact.sessionId}:${artifact.id}`;
+          const previewable = supportsArtifactPreview(artifact);
           return (
             <button
               type="button"
               key={key}
-              className={selected && `${selected.sessionId}:${selected.id}` === key ? "selected" : ""}
-              onClick={() => setSelectedKey(key)}
+              className={focusedArtifactKey === key ? "selected" : ""}
+              onClick={() => { void activateArtifact(artifact); }}
+              disabled={Boolean(openingKey)}
+              title={`${previewable ? "预览" : "打开"} ${artifact.name}`}
             >
               <span className={`artifact-kind-icon ${artifact.kind}`}>
                 <Icon name={artifact.kind === "image" ? "sparkles" : "file-text"} size={17} />
@@ -548,7 +513,7 @@ function ArtifactPanel({
                 <small>{formatBytes(artifact.size)} · {new Date(artifact.createdAt * 1000).toLocaleString()}</small>
                 {artifact.description && <em>{artifact.description}</em>}
               </span>
-              <i>查看</i>
+              <i>{openingKey === key ? "打开中…" : previewable ? "预览" : "打开"}</i>
             </button>
           );
         })}

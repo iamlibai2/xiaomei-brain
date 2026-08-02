@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { produce } from "immer";
-import type { AgentCreationResult, AgentEntry, AgentLifecycleAction, ChatAttachment, LocalAgentInfo, SessionEntry } from "../types";
+import type { AgentCreationResult, AgentEntry, AgentLifecycleAction, ChatArtifactReference, ChatAttachment, LocalAgentInfo, SessionEntry } from "../types";
 
 // ── Persistence (manual, avoid zustand/persist rehydration during render) ──
 
@@ -150,12 +150,27 @@ function displayAttachments(values: unknown): DisplayAttachment[] {
         : item.kind === "audio"
           ? "audio"
           : "text";
+    const rawAnnotation = item.annotation;
+    const annotation = rawAnnotation && typeof rawAnnotation === "object" && !Array.isArray(rawAnnotation)
+      ? rawAnnotation as Record<string, unknown>
+      : null;
+    const selectedText = annotation
+      ? (typeof annotation.selected_text === "string"
+        ? annotation.selected_text
+        : typeof annotation.selectedText === "string" ? annotation.selectedText : "")
+      : "";
     return [{
       id: item.id,
       name: item.name,
       mimeType,
       size: typeof item.size === "number" ? item.size : 0,
       kind,
+      annotation: selectedText ? {
+        selectedText,
+        page: typeof annotation?.page === "number" ? annotation.page : undefined,
+        sheet: typeof annotation?.sheet === "string" ? annotation.sheet : undefined,
+        range: typeof annotation?.range === "string" ? annotation.range : undefined,
+      } : undefined,
     }];
   });
 }
@@ -809,6 +824,12 @@ export interface DisplayAttachment {
   size: number;
   kind: "image" | "audio" | "text" | "document";
   previewUrl?: string;
+  annotation?: {
+    selectedText: string;
+    page?: number;
+    sheet?: string;
+    range?: string;
+  };
 }
 
 export interface DisplayArtifact {
@@ -1277,7 +1298,7 @@ interface CoreActions {
   removeAgent: (agentId: string) => void;
   disconnectAgent: (agentId: string) => Promise<void>;
   resetIdentityState: () => void;
-  sendMessage: (text: string) => void;
+  sendMessage: (text: string, artifactReferences?: ChatArtifactReference[]) => void;
   pickAttachments: () => Promise<void>;
   addAttachments: (attachments: ChatAttachment[]) => void;
   setAttachmentError: (error: string) => void;
@@ -1761,13 +1782,15 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
 
   // ── Send message ──
 
-  sendMessage: (text) => {
+  sendMessage: (text, artifactReferences = []) => {
     const agentId = get().activeAgentId;
     if (!agentId) return;
     const sessionId = get().activeSessionByAgent[agentId] || "";
     const draftKey = attachmentDraftKey(agentId, sessionId);
-    const attachments = get().attachmentsByConversation[draftKey] || [];
-    if (!text.trim() && attachments.length === 0) return;
+    const attachments = artifactReferences.length > 0
+      ? []
+      : (get().attachmentsByConversation[draftKey] || []);
+    if (!text.trim() && attachments.length === 0 && artifactReferences.length === 0) return;
     const clientRequestId = crypto.randomUUID();
 
     set(produce((s: CoreState) => {
@@ -1776,7 +1799,8 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         id: `user-${clientRequestId}`, role: "user", content: text, streaming: false,
         createdAt: Date.now(),
         deliveryStatus: "queued",
-        attachments: attachments.map((attachment) => ({
+        attachments: [
+          ...attachments.map((attachment) => ({
           id: attachment.id,
           name: attachment.name,
           mimeType: attachment.mimeType,
@@ -1785,14 +1809,30 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
           previewUrl: attachment.kind === "image" && attachment.dataBase64
             ? `data:${attachment.mimeType};base64,${attachment.dataBase64}`
             : undefined,
-        })),
+          })),
+          ...artifactReferences.map((reference) => ({
+            id: reference.artifactId,
+            name: reference.name || "Word 文档",
+            mimeType: reference.mimeType || "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            size: reference.size || 0,
+            kind: "document" as const,
+            annotation: reference.selection ? {
+              selectedText: reference.selection.selectedText,
+              page: reference.selection.kind === "text" ? reference.selection.page : undefined,
+              sheet: reference.selection.kind === "spreadsheet" ? reference.selection.sheet : undefined,
+              range: reference.selection.kind === "spreadsheet" ? reference.selection.range : undefined,
+            } : undefined,
+          })),
+        ],
       });
       touchSession(s, agentId, s.activeSessionByAgent[agentId] || "", 1, text);
       setSessionSending(s, agentId, sessionId, true);
-      s.draftByAgent[agentId] = "";
-      s.draftByConversation[conversationStateKey(agentId, sessionId)] = "";
-      delete s.attachmentsByConversation[draftKey];
-      delete s.attachmentErrorByConversation[draftKey];
+      if (artifactReferences.length === 0) {
+        s.draftByAgent[agentId] = "";
+        s.draftByConversation[conversationStateKey(agentId, sessionId)] = "";
+        delete s.attachmentsByConversation[draftKey];
+        delete s.attachmentErrorByConversation[draftKey];
+      }
     }));
 
     void window.gateway.sendMessage({
@@ -1801,6 +1841,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       sessionId,
       clientRequestId,
       attachments,
+      artifactReferences,
     }).then((res) => {
       if (!res.error && res.result?.accepted !== false) {
         set(produce((s: CoreState) => {

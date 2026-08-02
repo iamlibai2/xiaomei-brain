@@ -7,6 +7,9 @@ directories:
 files:
   - dist/**/*
   - package.json
+  # PDF.js uses this optional native canvas package only in Node. The Desktop
+  # renderer ships its browser worker and must not add ~38 MB of unused binaries.
+  - "!node_modules/@napi-rs/canvas*/**/*"
 asarUnpack:
   - node_modules/node-pty/**/*
 extraResources:

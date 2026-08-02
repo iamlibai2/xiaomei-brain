@@ -417,6 +417,96 @@ def style_word_table(
                     )
 
 
+def style_table_cells(table: Any, values: dict[str, Any]) -> int:
+    """Apply a bounded visual patch to existing table cells."""
+    from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Pt, RGBColor
+
+    def selected_indexes(raw: Any, count: int, field: str) -> list[int]:
+        if raw in (None, "all"):
+            return list(range(count))
+        if not isinstance(raw, list) or not raw:
+            raise ValueError(f"style_table_cells.{field} 必须是非空的 1-based 整数数组或 all")
+        indexes: list[int] = []
+        for value in raw:
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1 or value > count:
+                raise ValueError(
+                    f"style_table_cells.{field} 超出范围；当前表格共有 {count} 个"
+                )
+            index = value - 1
+            if index not in indexes:
+                indexes.append(index)
+        return indexes
+
+    style_fields = {
+        "fill_color", "text_color", "bold", "font_size_pt",
+        "horizontal_alignment", "vertical_alignment",
+    }
+    if not any(field in values for field in style_fields):
+        raise ValueError("style_table_cells 至少需要一个样式字段")
+
+    fill_color = values.get("fill_color")
+    text_color = values.get("text_color")
+    for field, color in (("fill_color", fill_color), ("text_color", text_color)):
+        if color is not None and not _HEX_COLOR.fullmatch(str(color)):
+            raise ValueError(f"style_table_cells.{field} 必须是 6 位十六进制颜色")
+    bold = values.get("bold")
+    if bold is not None and not isinstance(bold, bool):
+        raise ValueError("style_table_cells.bold 必须是布尔值")
+    font_size = values.get("font_size_pt")
+    if font_size is not None:
+        font_size = float(font_size)
+        if font_size < 6 or font_size > 72:
+            raise ValueError("style_table_cells.font_size_pt 必须在 6 到 72 之间")
+
+    horizontal = values.get("horizontal_alignment")
+    horizontal_values = {
+        "left": WD_ALIGN_PARAGRAPH.LEFT,
+        "center": WD_ALIGN_PARAGRAPH.CENTER,
+        "right": WD_ALIGN_PARAGRAPH.RIGHT,
+    }
+    if horizontal is not None and horizontal not in horizontal_values:
+        raise ValueError("style_table_cells.horizontal_alignment 仅支持 left、center 或 right")
+    vertical = values.get("vertical_alignment")
+    vertical_values = {
+        "top": WD_CELL_VERTICAL_ALIGNMENT.TOP,
+        "center": WD_CELL_VERTICAL_ALIGNMENT.CENTER,
+        "bottom": WD_CELL_VERTICAL_ALIGNMENT.BOTTOM,
+    }
+    if vertical is not None and vertical not in vertical_values:
+        raise ValueError("style_table_cells.vertical_alignment 仅支持 top、center 或 bottom")
+
+    row_indexes = selected_indexes(values.get("rows"), len(table.rows), "rows")
+    column_indexes = selected_indexes(values.get("columns"), len(table.columns), "columns")
+    styled_cells = 0
+    seen_cells: set[int] = set()
+    for row_index in row_indexes:
+        row = table.rows[row_index]
+        for column_index in column_indexes:
+            cell = row.cells[column_index]
+            cell_key = id(cell._tc)
+            if cell_key in seen_cells:
+                continue
+            seen_cells.add(cell_key)
+            styled_cells += 1
+            if fill_color is not None:
+                _set_cell_shading(cell, str(fill_color).upper())
+            if vertical is not None:
+                cell.vertical_alignment = vertical_values[str(vertical)]
+            for paragraph in cell.paragraphs:
+                if horizontal is not None:
+                    paragraph.alignment = horizontal_values[str(horizontal)]
+                for run in paragraph.runs:
+                    if text_color is not None:
+                        run.font.color.rgb = RGBColor.from_string(str(text_color).upper())
+                    if bold is not None:
+                        run.font.bold = bold
+                    if font_size is not None:
+                        run.font.size = Pt(font_size)
+    return styled_cells
+
+
 def style_header_footer(paragraph: Any, theme: dict[str, Any], *, footer: bool) -> None:
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.shared import Pt, RGBColor

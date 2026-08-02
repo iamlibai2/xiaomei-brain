@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import {
   useCoreStore,
   AssignmentSnapshot,
+  ArtifactSnapshot,
   DisplayMessage,
   MemoryReference,
 } from "../../store";
@@ -18,9 +19,12 @@ import { AssignmentCard } from "./AssignmentCard";
 import { ActivitySidebar } from "../right-sidebar/ActivitySidebar";
 import { TerminalPanel } from "../terminal/TerminalPanel";
 import { MarkdownMessage } from "./MarkdownMessage";
+import { ArtifactWorkspace } from "../artifact-workspace/ArtifactWorkspace";
+import { supportsArtifactPreview } from "../../artifacts/preview-capability";
 
 const EMPTY_MSGS: DisplayMessage[] = [];
 const EMPTY_ASSIGNMENTS: AssignmentSnapshot[] = [];
+const EMPTY_ARTIFACTS: ArtifactSnapshot[] = [];
 type RightSidebarSection = "activity" | "state" | "assignment" | "artifact" | "memory" | "context";
 
 function displayMessageTurnId(message: DisplayMessage): string {
@@ -56,7 +60,13 @@ function groupConversationMessages(messages: DisplayMessage[]): ConversationRend
   return items;
 }
 
-export function HomePage() {
+export function HomePage({
+  leftSidebarCollapsed,
+  onLeftSidebarCollapsedChange,
+}: {
+  leftSidebarCollapsed: boolean;
+  onLeftSidebarCollapsedChange: (collapsed: boolean) => void;
+}) {
   const { t } = useTranslation();
   const activeAgentId = useCoreStore((s) => s.activeAgentId);
   const messages = useCoreStore((s) => s.messagesByAgent[s.activeAgentId || ""] || EMPTY_MSGS);
@@ -96,6 +106,7 @@ export function HomePage() {
   const refreshArtifacts = useCoreStore((s) => s.refreshArtifacts);
   const refreshPersonMemories = useCoreStore((s) => s.refreshPersonMemories);
   const refreshAgentState = useCoreStore((s) => s.refreshAgentState);
+  const activeArtifacts = useCoreStore((s) => s.artifactsByAgent[s.activeAgentId || ""] || EMPTY_ARTIFACTS);
   const agentState = useCoreStore((s) => s.agentStateByAgent[s.activeAgentId || ""]);
   const speaking = useCoreStore((s) => Boolean(s.speakingByAgent[s.activeAgentId || ""]));
   const currentActivity = useCoreStore((s) => (
@@ -111,6 +122,7 @@ export function HomePage() {
   const [followingLatest, setFollowingLatest] = useState(true);
   const [unreadWhileAway, setUnreadWhileAway] = useState(false);
   const [focusedSearchMessageId, setFocusedSearchMessageId] = useState("");
+  const autoCollapsedLeftSidebarRef = useRef(false);
   const conversationItems = useMemo(() => groupConversationMessages(messages), [messages]);
 
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -119,6 +131,42 @@ export function HomePage() {
   const previousFirstMessageId = useRef<string | null>(null);
   const followLatestRef = useRef(true);
   const scrollFrameRef = useRef<number>();
+
+  const openArtifactWorkspace = useCallback((artifactId: string, sessionId: string) => {
+    if (!leftSidebarCollapsed) {
+      autoCollapsedLeftSidebarRef.current = true;
+      onLeftSidebarCollapsedChange(true);
+    }
+    setFocusedArtifactKey(`${sessionId}:${artifactId}`);
+    setActivityPanelOpen(false);
+  }, [leftSidebarCollapsed, onLeftSidebarCollapsedChange]);
+
+  const closeArtifactWorkspace = useCallback(() => {
+    setFocusedArtifactKey("");
+    if (autoCollapsedLeftSidebarRef.current && leftSidebarCollapsed) {
+      onLeftSidebarCollapsedChange(false);
+    }
+    autoCollapsedLeftSidebarRef.current = false;
+  }, [leftSidebarCollapsed, onLeftSidebarCollapsedChange]);
+
+  const activateArtifact = useCallback((artifactId: string, sessionId: string) => {
+    const artifact = activeArtifacts.find((item) => item.id === artifactId && item.sessionId === sessionId);
+    if (!artifact || supportsArtifactPreview(artifact)) {
+      openArtifactWorkspace(artifactId, sessionId);
+      return;
+    }
+    void window.gateway.openArtifact({
+      agentId: activeAgentId || "",
+      sessionId,
+      artifactId,
+    });
+  }, [activeAgentId, activeArtifacts, openArtifactWorkspace]);
+
+  useEffect(() => {
+    if (focusedArtifactKey && !leftSidebarCollapsed) {
+      autoCollapsedLeftSidebarRef.current = false;
+    }
+  }, [focusedArtifactKey, leftSidebarCollapsed]);
 
   useEffect(() => {
     let active = true;
@@ -140,9 +188,7 @@ export function HomePage() {
     const openArtifact = (event: Event) => {
       const detail = (event as CustomEvent<{ sessionId?: string; artifactId?: string }>).detail;
       if (!detail?.sessionId || !detail.artifactId) return;
-      setFocusedArtifactKey(`${detail.sessionId}:${detail.artifactId}`);
-      setRightSidebarSection("artifact");
-      setActivityPanelOpen(true);
+      activateArtifact(detail.artifactId, detail.sessionId);
     };
     const openAssignmentFromSearch = (event: Event) => {
       const detail = (event as CustomEvent<{ assignmentId?: string }>).detail;
@@ -166,7 +212,7 @@ export function HomePage() {
       window.removeEventListener("xiaomei:open-search-assignment", openAssignmentFromSearch);
       window.removeEventListener("xiaomei:focus-search-message", focusMessageFromSearch);
     };
-  }, []);
+  }, [activateArtifact]);
 
   useEffect(() => {
     if (!focusedSearchMessageId) return;
@@ -201,9 +247,14 @@ export function HomePage() {
   ]);
 
   useEffect(() => {
+    if (autoCollapsedLeftSidebarRef.current && leftSidebarCollapsed) {
+      onLeftSidebarCollapsedChange(false);
+    }
     setActivityPanelOpen(false);
     setSelectedAssignmentId(null);
     setFocusedMemories([]);
+    setFocusedArtifactKey("");
+    autoCollapsedLeftSidebarRef.current = false;
   }, [activeAgentId]);
 
   const scrollToLatest = useCallback(() => {
@@ -317,10 +368,8 @@ export function HomePage() {
     setActivityPanelOpen(true);
   };
   const showArtifact = useCallback((artifactId: string, sessionId: string) => {
-    setFocusedArtifactKey(`${sessionId}:${artifactId}`);
-    setRightSidebarSection("artifact");
-    setActivityPanelOpen(true);
-  }, []);
+    openArtifactWorkspace(artifactId, sessionId);
+  }, [openArtifactWorkspace]);
   const showMemories = useCallback((references: MemoryReference[]) => {
     setFocusedMemories(references);
     setRightSidebarSection("context");
@@ -337,13 +386,20 @@ export function HomePage() {
   })();
 
   return (
-    <div className="main-content">
+    <div className={`main-content ${focusedArtifactKey ? "has-artifact-workspace" : ""}`}>
       <div className="main-content-primary">
       {activeAgentId && !showAgentStart && (
         <ChatTopbar
           taskName={taskName}
-          onToggleRightPanel={() => setActivityPanelOpen((open) => !open)}
-          rightPanelOpen={activityPanelOpen}
+          onToggleRightPanel={() => {
+            if (focusedArtifactKey) {
+              closeArtifactWorkspace();
+              setActivityPanelOpen(true);
+            } else {
+              setActivityPanelOpen((open) => !open);
+            }
+          }}
+          rightPanelOpen={activityPanelOpen || Boolean(focusedArtifactKey)}
           onOpenAgentSettings={() => openSettingsCenter("overview")}
           agentState={agentState}
           speaking={speaking}
@@ -480,7 +536,7 @@ export function HomePage() {
       {terminalOpen && <TerminalPanel key={terminalAgentId || "shell"} />}
       </div>
       <ActivitySidebar
-        open={activityPanelOpen}
+        open={activityPanelOpen && !focusedArtifactKey}
         onClose={() => setActivityPanelOpen(false)}
         selectedAssignmentId={selectedAssignmentId}
         onSelectAssignment={setSelectedAssignmentId}
@@ -488,7 +544,15 @@ export function HomePage() {
         onSectionChange={setRightSidebarSection}
         focusedArtifactKey={focusedArtifactKey}
         focusedMemories={focusedMemories}
+        onOpenArtifact={openArtifactWorkspace}
       />
+      {focusedArtifactKey && activeAgentId && (
+        <ArtifactWorkspace
+          agentId={activeAgentId}
+          artifactKey={focusedArtifactKey}
+          onClose={closeArtifactWorkspace}
+        />
+      )}
     </div>
   );
 }
@@ -881,7 +945,7 @@ function MessageAttachment({
     );
   }
 
-  return (
+  const fileButton = (
     <button
       type="button"
       className={`message-attachment ${attachment.kind}`}
@@ -901,6 +965,18 @@ function MessageAttachment({
       )}
       <span className="message-attachment-name">{attachment.name}</span>
     </button>
+  );
+  if (!attachment.annotation) return fileButton;
+  return (
+    <div className="message-attachment-reference">
+      {fileButton}
+      <blockquote title={attachment.annotation.selectedText}>
+        {attachment.annotation.sheet && attachment.annotation.range
+          ? `${attachment.annotation.sheet}!${attachment.annotation.range} · `
+          : attachment.annotation.page ? `第 ${attachment.annotation.page} 页 · ` : ""}
+        {attachment.annotation.selectedText}
+      </blockquote>
+    </div>
   );
 }
 
@@ -923,7 +999,7 @@ function ArtifactCard({
   const [previewUrl, setPreviewUrl] = useState("");
   const [error, setError] = useState("");
   const [opening, setOpening] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
+  const previewSupported = supportsArtifactPreview(artifact);
 
   useEffect(() => {
     setPreviewUrl("");
@@ -980,9 +1056,9 @@ function ArtifactCard({
           <button
             type="button"
             className={`artifact-inline-image ${error ? "error" : ""}`}
-            onClick={() => previewUrl ? setPreviewOpen(true) : void open()}
+            onClick={() => onShowArtifact(artifact.id, sessionId)}
             disabled={opening}
-            title={error || artifact.name}
+            title={error || `预览 ${artifact.name}`}
           >
             {previewUrl ? (
               <img src={previewUrl} alt={artifact.name} />
@@ -996,18 +1072,10 @@ function ArtifactCard({
           <div className="artifact-inline-image-meta">
             <span title={artifact.name}>{artifact.name}</span>
             <button type="button" onClick={() => onShowArtifact(artifact.id, sessionId)}>
-              在产物栏查看
+              预览
             </button>
           </div>
         </div>
-        {previewOpen && previewUrl && (
-          <ImageLightbox
-            src={previewUrl}
-            name={artifact.name}
-            onClose={() => setPreviewOpen(false)}
-            onOpenOriginal={() => void open()}
-          />
-        )}
       </div>
     );
   }
@@ -1024,9 +1092,9 @@ function ArtifactCard({
         <button
           type="button"
           className={`artifact-card artifact-${artifact.kind}`}
-          onClick={() => void open()}
+          onClick={() => previewSupported ? onShowArtifact(artifact.id, sessionId) : void open()}
           disabled={opening}
-          title={error || `打开 ${artifact.name}`}
+          title={error || `${previewSupported ? "预览" : "打开"} ${artifact.name}`}
         >
           {previewUrl ? (
             <img className="artifact-preview" src={previewUrl} alt={artifact.name} />
@@ -1038,17 +1106,12 @@ function ArtifactCard({
           <span className="artifact-info">
             <span className="artifact-label">Agent 产物</span>
             <span className="artifact-name">{artifact.name}</span>
-            <span className="artifact-meta">{size}{opening ? " · 正在打开" : ""}</span>
+            <span className="artifact-meta">
+              {size} · {opening ? "正在打开" : previewSupported ? "预览" : "打开"}
+            </span>
             {error && <span className="artifact-error">{error}</span>}
           </span>
-          <Icon name="external-link" size={16} className="artifact-open-icon" />
-        </button>
-        <button
-          type="button"
-          className="artifact-show-sidebar"
-          onClick={() => onShowArtifact(artifact.id, sessionId)}
-        >
-          在产物栏查看
+          <Icon name={previewSupported ? "eye" : "external-link"} size={16} className="artifact-open-icon" />
         </button>
       </div>
     </div>

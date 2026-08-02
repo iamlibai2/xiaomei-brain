@@ -224,6 +224,213 @@
   background: var(--ui-bg-secondary);
 }
 
+/* ─── Artifact workspace ─────────────────────────────────────────── */
+.artifact-workspace {
+  position: relative;
+  display: flex;
+  min-width: 440px;
+  max-width: min(1080px, 72vw);
+  flex: 0 0 auto;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--ui-border-default);
+  background: var(--ui-bg-secondary);
+}
+
+.artifact-workspace.maximized {
+  position: absolute;
+  z-index: 24;
+  inset: 0;
+  width: 100%;
+  max-width: none;
+  border-left: 0;
+}
+
+.artifact-workspace-resizer {
+  position: absolute;
+  z-index: 8;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: col-resize;
+}
+
+.artifact-workspace-resizer::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  background: transparent;
+  content: "";
+  transition: background-color .15s ease;
+}
+
+.artifact-workspace-resizer:hover::after,
+body.is-resizing-artifact-workspace .artifact-workspace-resizer::after {
+  background: color-mix(in srgb, var(--ui-brand-primary) 65%, transparent);
+}
+
+body.is-resizing-artifact-workspace {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.artifact-workspace-header {
+  display: flex;
+  box-sizing: border-box;
+  height: 56px;
+  min-height: 56px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 7px 10px 7px 14px;
+  border-bottom: 1px solid var(--ui-border-default);
+  background: var(--ui-bg-primary);
+}
+
+.artifact-workspace-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+}
+
+.artifact-workspace-title > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.artifact-workspace-title strong,
+.artifact-workspace-title small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-workspace-title strong {
+  color: var(--ui-color-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.artifact-workspace-title small {
+  color: var(--ui-color-text-tertiary);
+  font-size: 10px;
+}
+
+.artifact-workspace-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.artifact-workspace-actions button {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ui-color-text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.artifact-workspace-actions button:hover:not(:disabled) {
+  background: var(--ui-bg-tertiary);
+  color: var(--ui-color-text-primary);
+}
+
+.artifact-workspace-actions button:disabled {
+  opacity: .45;
+  cursor: default;
+}
+
+.artifact-workspace-body {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.artifact-workspace-error {
+  flex-shrink: 0;
+  margin: 10px 12px 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--ui-color-danger, #b53b3b) 24%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ui-color-danger, #b53b3b) 7%, var(--ui-bg-primary));
+  color: var(--ui-color-danger, #b53b3b);
+  font-size: 11px;
+}
+
+.artifact-workspace-empty,
+.artifact-workspace-image {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+}
+
+.artifact-workspace-empty {
+  flex-direction: column;
+  gap: 7px;
+  color: var(--ui-color-text-tertiary);
+  font-size: 12px;
+}
+
+.artifact-workspace-empty strong {
+  color: var(--ui-color-text-primary);
+  font-size: 13px;
+}
+
+.artifact-workspace-image {
+  padding: 18px;
+  overflow: auto;
+  background: #e8e9ec;
+}
+
+.artifact-workspace-image img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  box-shadow: 0 2px 16px rgba(25, 32, 44, .14);
+}
+
+.artifact-workspace-body > .docx-preview-shell,
+.artifact-workspace-body > .pdf-preview-shell,
+.artifact-workspace-body > .spreadsheet-preview-shell {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.artifact-workspace-body .docx-preview-viewport,
+.artifact-workspace-body .pdf-preview-viewport,
+.artifact-workspace-body .spreadsheet-preview-viewport {
+  height: auto;
+  min-height: 0;
+  flex: 1;
+}
+
 .agent-right-sidebar-backdrop {
   display: none;
 }
@@ -895,6 +1102,444 @@
   cursor: pointer;
 }
 
+.docx-preview-shell {
+  position: relative;
+  margin-bottom: 12px;
+  border: 1px solid var(--ui-border-default);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #e8e9ec;
+}
+
+.docx-preview-styles {
+  display: none;
+}
+
+.docx-preview-help {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--ui-border-default);
+  background: var(--ui-bg-primary);
+}
+
+.docx-preview-help strong {
+  flex-shrink: 0;
+  color: var(--ui-color-text-primary);
+  font-size: 12px;
+}
+
+.docx-preview-help span {
+  color: var(--ui-color-text-tertiary);
+  font-size: 10px;
+}
+
+.docx-preview-viewport {
+  position: relative;
+  height: min(62vh, 720px);
+  min-height: 360px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.docx-preview-state {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(248, 249, 251, .9);
+  color: #606775;
+  font-size: 12px;
+}
+
+.docx-preview-state.error {
+  padding: 24px;
+  color: var(--ui-color-danger, #b53b3b);
+  text-align: center;
+}
+
+.docx-preview-surface {
+  min-width: 100%;
+  color: #1d1f23;
+  user-select: text;
+}
+
+.docx-preview-surface .docx-wrapper {
+  padding: 18px !important;
+  background: #e8e9ec !important;
+}
+
+.docx-preview-surface section.docx {
+  margin: 0 auto 16px !important;
+  box-shadow: 0 2px 12px rgba(25, 32, 44, .14) !important;
+  zoom: .78;
+}
+
+.docx-preview-surface ::selection {
+  background: rgba(47, 111, 237, .24);
+}
+
+.artifact-annotation-composer {
+  position: fixed;
+  z-index: 40;
+  box-sizing: border-box;
+  width: min(360px, calc(100vw - 24px));
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--ui-brand-primary) 28%, var(--ui-border-default));
+  border-radius: 10px;
+  background: var(--ui-bg-primary);
+  box-shadow: 0 10px 30px rgba(16, 24, 40, .16);
+}
+
+.artifact-annotation-composer blockquote {
+  max-height: 54px;
+  margin: 0 0 8px;
+  padding: 0 8px;
+  overflow: hidden;
+  border-left: 2px solid var(--ui-brand-primary);
+  color: var(--ui-color-text-secondary);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.artifact-annotation-composer textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 9px;
+  resize: vertical;
+  border: 1px solid var(--ui-border-default);
+  border-radius: 7px;
+  outline: none;
+  background: var(--ui-bg-secondary);
+  color: var(--ui-color-text-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.artifact-annotation-composer textarea:focus {
+  border-color: color-mix(in srgb, var(--ui-brand-primary) 55%, var(--ui-border-default));
+}
+
+.artifact-annotation-composer > div {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.artifact-annotation-composer small {
+  margin-right: auto;
+  color: var(--ui-color-text-tertiary);
+  font-size: 10px;
+}
+
+.artifact-annotation-composer button {
+  padding: 5px 9px;
+  border: 1px solid var(--ui-border-default);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ui-color-text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.artifact-annotation-composer button.primary {
+  border-color: var(--ui-brand-primary);
+  background: var(--ui-brand-primary);
+  color: white;
+}
+
+.artifact-annotation-composer button:disabled {
+  opacity: .45;
+  cursor: default;
+}
+
+.pdf-preview-shell,
+.spreadsheet-preview-shell {
+  position: relative;
+  margin-bottom: 12px;
+  overflow: hidden;
+  border: 1px solid var(--ui-border-default);
+  border-radius: 10px;
+  background: var(--ui-bg-primary);
+}
+
+.artifact-preview-toolbar {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--ui-border-default);
+  background: var(--ui-bg-primary);
+}
+
+.artifact-preview-toolbar > div:first-child {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.artifact-preview-toolbar strong {
+  flex-shrink: 0;
+  color: var(--ui-color-text-primary);
+  font-size: 12px;
+}
+
+.artifact-preview-toolbar span {
+  overflow: hidden;
+  color: var(--ui-color-text-tertiary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-preview-state {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  display: grid;
+  min-height: 180px;
+  place-items: center;
+  padding: 20px;
+  background: rgba(248, 249, 251, .92);
+  color: #606775;
+  font-size: 12px;
+  text-align: center;
+}
+
+.artifact-preview-state.error {
+  color: var(--ui-color-danger, #b53b3b);
+}
+
+.artifact-preview-state.inline {
+  position: relative;
+  min-height: 180px;
+  margin-bottom: 12px;
+  border: 1px solid var(--ui-border-default);
+  border-radius: 10px;
+}
+
+.artifact-preview-limit {
+  padding: 9px 12px;
+  border-top: 1px solid var(--ui-border-default);
+  background: var(--ui-bg-primary);
+  color: var(--ui-color-text-tertiary);
+  font-size: 10px;
+  text-align: center;
+}
+
+.pdf-preview-zoom {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 3px;
+}
+
+.pdf-preview-zoom button,
+.spreadsheet-comment-button {
+  border: 1px solid var(--ui-border-default);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ui-color-text-secondary);
+  cursor: pointer;
+}
+
+.pdf-preview-zoom button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  font-size: 14px;
+}
+
+.pdf-preview-zoom span {
+  width: 38px;
+  color: var(--ui-color-text-secondary);
+  text-align: center;
+}
+
+.pdf-preview-viewport {
+  position: relative;
+  height: min(66vh, 760px);
+  min-height: 380px;
+  padding: 18px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: #e8e9ec;
+}
+
+.pdf-preview-page {
+  position: relative;
+  width: 612px;
+  min-height: 792px;
+  margin: 0 auto 18px;
+  overflow: hidden;
+  background: white;
+  box-shadow: 0 2px 12px rgba(25, 32, 44, .16);
+}
+
+.pdf-preview-page canvas {
+  display: block;
+}
+
+.pdf-preview-page .textLayer {
+  z-index: 1;
+}
+
+.pdf-preview-page-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #8a909b;
+  font-size: 12px;
+}
+
+.pdf-preview-page-error {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: white;
+  color: #b53b3b;
+  font-size: 11px;
+  text-align: center;
+}
+
+.pdf-preview-page-number {
+  position: absolute;
+  z-index: 2;
+  right: 7px;
+  bottom: 5px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgba(15, 23, 42, .55);
+  color: white;
+  font-size: 9px;
+  pointer-events: none;
+}
+
+.spreadsheet-comment-button {
+  flex-shrink: 0;
+  padding: 5px 8px;
+  color: var(--ui-brand-primary);
+  font-size: 10px;
+}
+
+.spreadsheet-sheet-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 5px 7px 0;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--ui-border-default);
+  background: var(--ui-bg-secondary);
+}
+
+.spreadsheet-sheet-tabs button {
+  flex-shrink: 0;
+  max-width: 150px;
+  padding: 5px 9px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: var(--ui-color-text-tertiary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.spreadsheet-sheet-tabs button.active {
+  border-color: var(--ui-border-default);
+  background: var(--ui-bg-primary);
+  color: var(--ui-color-text-primary);
+}
+
+.spreadsheet-preview-viewport {
+  position: relative;
+  height: min(62vh, 700px);
+  min-height: 340px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: white;
+}
+
+.spreadsheet-preview-table {
+  border-spacing: 0;
+  border-collapse: separate;
+  color: #252a32;
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 11px;
+  table-layout: fixed;
+  user-select: none;
+}
+
+.spreadsheet-preview-table th,
+.spreadsheet-preview-table td {
+  box-sizing: border-box;
+  height: 25px;
+  padding: 4px 7px;
+  overflow: hidden;
+  border-right: 1px solid #dde1e7;
+  border-bottom: 1px solid #dde1e7;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spreadsheet-preview-table thead th {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  min-width: 96px;
+  background: #f3f5f7;
+  color: #687181;
+  font-weight: 500;
+  text-align: center;
+}
+
+.spreadsheet-preview-table tbody th,
+.spreadsheet-preview-table .spreadsheet-corner {
+  position: sticky;
+  z-index: 1;
+  left: 0;
+  width: 42px;
+  min-width: 42px;
+  background: #f3f5f7;
+  color: #687181;
+  font-weight: 500;
+  text-align: center;
+}
+
+.spreadsheet-preview-table .spreadsheet-corner {
+  z-index: 3;
+  top: 0;
+}
+
+.spreadsheet-preview-table td {
+  min-width: 96px;
+  max-width: 220px;
+  cursor: cell;
+}
+
+.spreadsheet-preview-table td:hover {
+  background: #f5f8ff;
+}
+
+.spreadsheet-preview-table td.selected {
+  background: rgba(47, 111, 237, .14);
+  box-shadow: inset 0 0 0 1px rgba(47, 111, 237, .4);
+}
+
 .artifact-sidebar-grid {
   display: grid;
   gap: 7px;
@@ -1354,6 +1999,26 @@
     min-width: 0;
     max-width: none;
     box-shadow: -12px 0 30px rgba(0, 0, 0, .12);
+  }
+
+  .artifact-workspace {
+    position: absolute;
+    z-index: 22;
+    inset: 0;
+    width: 100% !important;
+    min-width: 0;
+    max-width: none;
+    border-left: 0;
+  }
+
+  .artifact-workspace-resizer {
+    display: none;
+  }
+}
+
+@media (max-width: 620px) {
+  .artifact-workspace-actions button span {
+    display: none;
   }
 }
 
@@ -2160,6 +2825,24 @@
 .message-attachment-name {
   min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-attachment-reference {
+  max-width: min(420px, 100%);
+}
+
+.message-attachment-reference blockquote {
+  max-width: 100%;
+  margin: 5px 0 0;
+  padding: 5px 8px;
+  overflow: hidden;
+  border-left: 2px solid rgba(255, 255, 255, .55);
+  color: inherit;
+  font-size: 11px;
+  line-height: 1.45;
+  opacity: .8;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

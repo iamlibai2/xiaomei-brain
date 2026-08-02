@@ -31,6 +31,8 @@ export type IconName =
   | "clock"
   | "info"
   | "external-link"
+  | "eye"
+  | "maximize"
   | "terminal"
   | "play"
   | "power"
@@ -79,6 +81,24 @@ const ICON_PATHS: Record<IconName, React.ReactNode> = {
       <line x1="14" y1="2" x2="14" y2="16" />
       <line x1="8" y1="7" x2="11" y2="9" />
       <line x1="8" y1="11" x2="11" y2="9" />
+    </>
+  ),
+  maximize: (
+    <>
+      <path d="M8 3H3v5" />
+      <path d="m3 3 6 6" />
+      <path d="M16 3h5v5" />
+      <path d="m21 3-6 6" />
+      <path d="M8 21H3v-5" />
+      <path d="m3 21 6-6" />
+      <path d="M16 21h5v-5" />
+      <path d="m21 21-6-6" />
+    </>
+  ),
+  eye: (
+    <>
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
+      <circle cx="12" cy="12" r="3" />
     </>
   ),
   bell: (

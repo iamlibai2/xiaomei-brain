@@ -19,7 +19,7 @@ from xiaomei_brain.gateway.attachments import (
     restore_attachment_refs,
 )
 from xiaomei_brain.gateway.inbound import Accepted
-from xiaomei_brain.gateway.schemas import ChatAttachment
+from xiaomei_brain.gateway.schemas import ChatAttachment, ChatSendParams
 from xiaomei_brain.gateway.server_methods import MethodRouter
 from xiaomei_brain.memory.conversation_db import ConversationDB as RealConversationDB
 
@@ -114,6 +114,92 @@ def test_docx_is_saved_as_document_without_eager_context_extraction(tmp_path, mo
     model_input = append_text_attachments("总结", prepared)
     assert 'attached_document id="attachment-1"' in model_input
     assert "read_document" in model_input
+
+
+def test_document_annotation_is_public_and_added_to_model_context(tmp_path, monkeypatch):
+    monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: tmp_path))
+    data = office_archive({"word/document.xml": "<document/>"})
+    prepared, _, _ = prepare_attachments(
+        "xiaomei",
+        "session-1",
+        [payload(
+            "proposal.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            data,
+        )],
+    )
+    prepared[0]["source_artifact"] = {
+        "artifact_id": "a" * 32,
+        "session_id": "source-session",
+    }
+    prepared[0]["annotation"] = {
+        "kind": "text",
+        "page": 3,
+        "selected_text": "需要重写的段落",
+        "context_before": "上一段",
+        "context_after": "下一段",
+    }
+
+    metadata = public_attachment_metadata(prepared)[0]
+    model_input = append_text_attachments("改得更正式", prepared)
+
+    assert metadata["source_artifact"]["artifact_id"] == "a" * 32
+    assert metadata["annotation"]["selected_text"] == "需要重写的段落"
+    assert '<document_annotation kind="text" page="3">' in model_input
+    assert "<selected_text>需要重写的段落</selected_text>" in model_input
+    assert "preserve unrelated content and formatting" in model_input
+
+
+def test_spreadsheet_annotation_identifies_exact_sheet_and_range(tmp_path, monkeypatch):
+    monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: tmp_path))
+    prepared, _, _ = prepare_attachments(
+        "xiaomei",
+        "session-1",
+        [payload(
+            "sales.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            b"workbook",
+        )],
+    )
+    prepared[0]["annotation"] = {
+        "kind": "spreadsheet",
+        "sheet": "华东销售",
+        "range": "B2:C4",
+        "selected_text": "地区\t销售额\n上海\t120\n杭州\t80",
+    }
+
+    model_input = append_text_attachments("把金额改为含税价", prepared)
+
+    assert (
+        '<document_annotation kind="spreadsheet" sheet="华东销售" range="B2:C4">'
+        in model_input
+    )
+    assert "<selected_cells>地区\t销售额\n上海\t120\n杭州\t80</selected_cells>" in model_input
+    assert "preserve formulas and formatting outside the range" in model_input
+
+
+def test_chat_schema_accepts_spreadsheet_artifact_selection():
+    parsed = ChatSendParams.model_validate({
+        "content": "修改选中区域",
+        "client_request_id": "request-1",
+        "session_id": "session-1",
+        "artifact_references": [{
+            "artifact_id": "a" * 32,
+            "session_id": "source-session",
+            "selection": {
+                "kind": "spreadsheet",
+                "sheet": "Sheet1",
+                "range": "A2:B5",
+                "selected_text": "产品\t金额\nA\t10",
+            },
+        }],
+    })
+
+    selection = parsed.artifact_references[0].selection
+    assert selection is not None
+    assert selection.kind == "spreadsheet"
+    assert selection.sheet == "Sheet1"
+    assert selection.range == "A2:B5"
 
 
 def test_pptx_is_saved_as_document_without_eager_context_extraction(tmp_path, monkeypatch):

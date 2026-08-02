@@ -4,6 +4,8 @@ from pathlib import Path
 
 from docx import Document
 from docx.enum.section import WD_ORIENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
 from docx.shared import RGBColor
 
 from xiaomei_brain.plugin.context import PluginContext
@@ -335,6 +337,119 @@ def test_write_document_revises_copy_without_overwriting_attachment(tmp_path):
     assert "New wording" in text and "Added note" in text
 
 
+def test_write_document_styles_only_selected_existing_table_cells(tmp_path):
+    registry = _word_registry()
+    tool = create_write_document_tool(registry)
+    workspace = tmp_path / "workspace"
+    outputs = workspace / "outputs"
+    workspace.mkdir()
+    source = tmp_path / "source.docx"
+    original = Document()
+    target = original.add_table(rows=2, cols=2)
+    target.cell(0, 0).text = "Region"
+    target.cell(0, 1).text = "Revenue"
+    target.cell(1, 0).text = "East"
+    target.cell(1, 1).text = "100"
+    untouched = original.add_table(rows=1, cols=1)
+    untouched.cell(0, 0).text = "Keep me"
+    original.save(source)
+    original_bytes = source.read_bytes()
+    spec = workspace / "table-style.json"
+    spec.write_text(json.dumps({
+        "operations": [{
+            "type": "style_table_cells",
+            "table_index": 1,
+            "rows": [1],
+            "columns": "all",
+            "fill_color": "D9E2F3",
+            "text_color": "1F2937",
+            "bold": True,
+            "horizontal_alignment": "center",
+            "vertical_alignment": "center",
+        }],
+    }), encoding="utf-8")
+    attachment = {
+        "id": "source-table",
+        "name": "source.docx",
+        "kind": "document",
+        "local_path": str(source),
+    }
+
+    with bind_tool_execution(
+        tool_call_id="call-table-style",
+        tool_name="write_document",
+        arguments={},
+        artifact_callback=None,
+        attachments=(attachment,),
+        workspace_root=str(workspace),
+        output_root=str(outputs),
+    ):
+        result = tool.execute(
+            format="word",
+            specification_path="table-style.json",
+            output_name="styled.docx",
+            source_attachment_id="source-table",
+        )
+
+    assert result["success"] is True
+    assert result["validation"]["styled_cells"] == 2
+    assert source.read_bytes() == original_bytes
+    revised = Document(outputs / "styled.docx")
+    for cell in revised.tables[0].rows[0].cells:
+        shading = cell._tc.get_or_add_tcPr().find(qn("w:shd"))
+        assert shading is not None and shading.get(qn("w:fill")) == "D9E2F3"
+        run = cell.paragraphs[0].runs[0]
+        assert run.bold is True
+        assert run.font.color.rgb == RGBColor(0x1F, 0x29, 0x37)
+        assert cell.paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert revised.tables[0].cell(1, 0)._tc.get_or_add_tcPr().find(qn("w:shd")) is None
+    assert revised.tables[1].cell(0, 0)._tc.get_or_add_tcPr().find(qn("w:shd")) is None
+
+
+def test_write_document_rejects_out_of_range_table_style_target(tmp_path):
+    registry = _word_registry()
+    tool = create_write_document_tool(registry)
+    workspace = tmp_path / "workspace"
+    outputs = workspace / "outputs"
+    workspace.mkdir()
+    source = tmp_path / "source.docx"
+    document = Document()
+    document.add_table(rows=1, cols=1).cell(0, 0).text = "Only table"
+    document.save(source)
+    (workspace / "invalid-table-style.json").write_text(json.dumps({
+        "operations": [{
+            "type": "style_table_cells",
+            "table_index": 2,
+            "rows": [1],
+            "fill_color": "D9E2F3",
+        }],
+    }), encoding="utf-8")
+
+    with bind_tool_execution(
+        tool_call_id="call-invalid-table-style",
+        tool_name="write_document",
+        arguments={},
+        artifact_callback=None,
+        attachments=({
+            "id": "source-table",
+            "name": "source.docx",
+            "kind": "document",
+            "local_path": str(source),
+        },),
+        workspace_root=str(workspace),
+        output_root=str(outputs),
+    ):
+        result = tool.execute(
+            format="word",
+            specification_path="invalid-table-style.json",
+            output_name="styled.docx",
+            source_attachment_id="source-table",
+        )
+
+    assert "当前文档共有 1 张表格" in result["error"]
+    assert not (outputs / "styled.docx").exists()
+
+
 def test_word_template_replaces_cross_run_placeholders_across_document_parts(tmp_path):
     registry = _word_registry()
     tool = create_write_document_tool(registry)
@@ -530,7 +645,7 @@ def test_word_creation_uses_owned_image_and_page_layout(tmp_path):
     footer_xml = section.footer.paragraphs[0]._p.xml
     assert "PAGE" in footer_xml
     assert len(styled.inline_shapes) == 1
-    assert "企业标识" in [paragraph.text for paragraph in styled.paragraphs]
+    assert any("企业标识" in paragraph.text for paragraph in styled.paragraphs)
 
 
 def test_word_creation_uses_controlled_workspace_image(tmp_path):
@@ -571,6 +686,166 @@ def test_word_creation_uses_controlled_workspace_image(tmp_path):
 
     assert result["success"] is True
     assert len(Document(outputs / "workspace-image.docx").inline_shapes) == 1
+
+
+def test_word_long_document_supports_toc_numbering_sections_and_captions(
+    tmp_path,
+    monkeypatch,
+):
+    from docx.oxml.ns import qn
+
+    monkeypatch.setattr(
+        "xiaomei_brain.plugins.tools.document_word.writer.refresh_word_fields",
+        lambda path: {
+            "status": "updated",
+            "performed": True,
+            "backend": "test-word",
+        },
+    )
+
+    registry = _word_registry()
+    tool = create_write_document_tool(registry)
+    workspace = tmp_path / "workspace"
+    outputs = workspace / "outputs"
+    workspace.mkdir()
+    image = tmp_path / "chart.png"
+    image.write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC"
+        "AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    ))
+    spec = workspace / "long-report.json"
+    spec.write_text(json.dumps({
+        "heading_numbering": True,
+        "sections": [
+            {
+                "page": {"size": "A4", "orientation": "portrait"},
+                "footer": {"text": ""},
+                "blocks": [
+                    {
+                        "type": "heading",
+                        "level": 1,
+                        "text": "年度经营报告",
+                        "numbered": False,
+                    },
+                    {"type": "paragraph", "text": "星海科技"},
+                ],
+            },
+            {
+                "page": {"size": "A4", "orientation": "portrait"},
+                "footer": {"text": "第 ", "page_number": True},
+                "page_number": {"start": 1, "format": "lower_roman"},
+                "blocks": [
+                    {"type": "table_of_contents", "title": "目录", "levels": [1, 3]},
+                ],
+            },
+            {
+                "page": {"size": "A4", "orientation": "portrait"},
+                "header": {"text": "年度经营报告"},
+                "footer": {"text": "第 ", "page_number": True},
+                "page_number": {"start": 1, "format": "decimal"},
+                "blocks": [
+                    {"type": "heading", "level": 1, "text": "经营概况"},
+                    {"type": "heading", "level": 2, "text": "关键指标"},
+                    {
+                        "type": "image",
+                        "attachment_id": "chart-1",
+                        "width_cm": 4,
+                        "caption": "销售趋势",
+                    },
+                ],
+            },
+            {
+                "page": {
+                    "size": "A4",
+                    "orientation": "landscape",
+                    "margins_cm": {"left": 1.5, "right": 1.5},
+                },
+                "header": {"text": "年度经营报告"},
+                "footer": {"text": "第 ", "page_number": True},
+                "blocks": [{
+                    "type": "table",
+                    "caption": "区域经营明细",
+                    "headers": ["区域", "收入", "成本", "利润"],
+                    "rows": [["华东", "100", "60", "40"]],
+                }],
+            },
+            {
+                "page": {"size": "A4", "orientation": "portrait"},
+                "header": {"text": "年度经营报告"},
+                "footer": {"text": "第 ", "page_number": True},
+                "blocks": [
+                    {"type": "heading", "level": 1, "text": "结论"},
+                    {"type": "paragraph", "text": "经营保持稳定。"},
+                ],
+            },
+        ],
+    }, ensure_ascii=False), encoding="utf-8")
+    attachment = {
+        "id": "chart-1",
+        "name": "chart.png",
+        "kind": "image",
+        "local_path": str(image),
+    }
+
+    with bind_tool_execution(
+        tool_call_id="call-long-report",
+        tool_name="write_document",
+        arguments={},
+        artifact_callback=None,
+        attachments=(attachment,),
+        workspace_root=str(workspace),
+        output_root=str(outputs),
+    ):
+        result = tool.execute(
+            format="word",
+            specification_path="long-report.json",
+            output_name="long-report.docx",
+        )
+
+    assert result["success"] is True
+    assert result["validation"]["sections"] == 5
+    assert result["validation"]["field_refresh"] == {
+        "status": "updated",
+        "performed": True,
+        "backend": "test-word",
+    }
+    document = Document(outputs / "long-report.docx")
+    assert [section.orientation for section in document.sections] == [
+        WD_ORIENT.PORTRAIT,
+        WD_ORIENT.PORTRAIT,
+        WD_ORIENT.PORTRAIT,
+        WD_ORIENT.LANDSCAPE,
+        WD_ORIENT.PORTRAIT,
+    ]
+    document_xml = document._element.xml
+    assert "TOC" in document_xml
+    assert "SEQ XiaomeiFigure" in document_xml
+    assert "SEQ XiaomeiTable" in document_xml
+    assert "目录将在打开文档时更新" in document_xml
+    assert "图 1  销售趋势" in [p.text for p in document.paragraphs]
+    assert "表 1  区域经营明细" in [p.text for p in document.paragraphs]
+    numbered_headings = [
+        paragraph for paragraph in document.paragraphs
+        if paragraph.style.name.startswith("Heading")
+        and paragraph._p.pPr is not None
+        and paragraph._p.pPr.find(qn("w:numPr")) is not None
+    ]
+    assert len(numbered_headings) == 3
+    cover_heading = next(
+        paragraph for paragraph in document.paragraphs
+        if paragraph.text == "年度经营报告"
+    )
+    assert cover_heading._p.pPr.find(qn("w:numPr")) is None
+    toc_page_number = document.sections[1]._sectPr.find(qn("w:pgNumType"))
+    assert toc_page_number is not None
+    assert toc_page_number.get(qn("w:start")) == "1"
+    assert toc_page_number.get(qn("w:fmt")) == "lowerRoman"
+    body_page_number = document.sections[2]._sectPr.find(qn("w:pgNumType"))
+    assert body_page_number is not None
+    assert body_page_number.get(qn("w:start")) == "1"
+    assert body_page_number.get(qn("w:fmt")) == "decimal"
+    assert document.sections[3]._sectPr.find(qn("w:pgNumType")) is None
+    assert document.sections[4]._sectPr.find(qn("w:pgNumType")) is None
 
 
 def test_write_document_rejects_workspace_image_traversal(tmp_path):

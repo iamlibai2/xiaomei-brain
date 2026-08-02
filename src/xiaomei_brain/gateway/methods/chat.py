@@ -11,11 +11,13 @@ from typing import Any
 
 from ..attachments import (
     AttachmentError,
+    MAX_REFERENCED_ARTIFACT_BYTES,
     attachment_fingerprint,
     cleanup_attachments,
     prepare_attachments,
     restore_attachment_refs,
 )
+from ..artifacts import ArtifactError, read_stored_artifact
 from ..connection import cm
 from ..protocol import ErrorCode, build_error, build_response
 from ..schemas import (
@@ -53,12 +55,28 @@ class ChatMethods:
             return build_error(req_id, ErrorCode.INVALID_REQUEST, f"参数无效: {format_error(exc)}")
 
         content = parsed.content.strip()
-        if not content and not parsed.attachments and not parsed.attachment_refs:
+        if (
+            not content
+            and not parsed.attachments
+            and not parsed.attachment_refs
+            and not parsed.artifact_references
+        ):
             return build_error(req_id, ErrorCode.INVALID_PARAMS, "消息内容和附件不能同时为空")
-        if len(parsed.attachments) + len(parsed.attachment_refs) > 4:
+        if (
+            len(parsed.attachments)
+            + len(parsed.attachment_refs)
+            + len(parsed.artifact_references)
+            > 4
+        ):
             return build_error(req_id, ErrorCode.INVALID_PARAMS, "一次最多发送 4 个附件")
         if len(parsed.attachment_refs) != len(set(parsed.attachment_refs)):
             return build_error(req_id, ErrorCode.INVALID_PARAMS, "附件引用不能重复")
+        artifact_keys = [
+            (item.session_id, item.artifact_id)
+            for item in parsed.artifact_references
+        ]
+        if len(artifact_keys) != len(set(artifact_keys)):
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, "产物引用不能重复")
         session_id = cm.resolve_session(conn_id, parsed.session_id, f"ws-{conn_id[:8]}")
         if session_id is None:
             return build_error(req_id, ErrorCode.INVALID_PARAMS, "不能访问当前连接之外的会话")
@@ -71,6 +89,12 @@ class ChatMethods:
         attachments_fingerprint = (
             attachment_fingerprint(parsed.attachments)
             + ":" + ",".join(parsed.attachment_refs)
+            + ":artifacts=" + json.dumps(
+                [item.model_dump(mode="json") for item in parsed.artifact_references],
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
             + f":retry={parsed.retry_of_message_id or ''}"
         )
         receipt_key = (session_id, parsed.client_request_id)
@@ -141,14 +165,74 @@ class ChatMethods:
             restored, restored_images = restore_attachment_refs(
                 getattr(living, "_agent_id", "default"), session_id, referenced,
             )
-            combined = [*prepared_attachments, *restored]
+            artifact_attachments: list[dict[str, Any]] = []
+            artifact_images: list[str] = []
+            for reference in parsed.artifact_references:
+                if db is None:
+                    raise AttachmentError("Agent 会话数据库尚未就绪")
+                artifact = db.get_artifact_metadata(
+                    reference.session_id,
+                    reference.artifact_id,
+                )
+                if artifact is None or str(artifact.get("user_id") or "") not in {
+                    user_id,
+                    "global",
+                }:
+                    raise AttachmentError("引用产物不存在或当前人物不可访问")
+                try:
+                    stored = read_stored_artifact(
+                        getattr(living, "_agent_id", "default"),
+                        reference.session_id,
+                        artifact,
+                    )
+                except ArtifactError as exc:
+                    raise AttachmentError(str(exc)) from exc
+                prepared_artifacts, prepared_images, artifact_paths = prepare_attachments(
+                    getattr(living, "_agent_id", "default"),
+                    session_id,
+                    [{
+                        "id": reference.artifact_id,
+                        "name": stored["name"],
+                        "mime_type": stored["mime_type"],
+                        "size": stored["size"],
+                        "data_base64": stored["data_base64"],
+                    }],
+                    max_item_bytes=MAX_REFERENCED_ARTIFACT_BYTES,
+                    max_total_bytes=MAX_REFERENCED_ARTIFACT_BYTES,
+                )
+                saved_paths.extend(artifact_paths)
+                annotation = (
+                    reference.selection.model_dump(mode="json")
+                    if reference.selection is not None
+                    else None
+                )
+                for item in prepared_artifacts:
+                    item["source_artifact"] = {
+                        "artifact_id": reference.artifact_id,
+                        "session_id": reference.session_id,
+                    }
+                    if annotation is not None:
+                        item["annotation"] = annotation
+                artifact_attachments.extend(prepared_artifacts)
+                artifact_images.extend(prepared_images)
+
+            combined = [*prepared_attachments, *restored, *artifact_attachments]
             combined_ids = [str(item.get("id", "")) for item in combined]
             if len(combined_ids) != len(set(combined_ids)):
                 raise AttachmentError("附件标识不能重复")
-            if sum(int(item.get("size", 0)) for item in combined) > 8 * 1024 * 1024:
-                raise AttachmentError("单条消息的附件合计不能超过 8 MB")
+            combined_limit = (
+                MAX_REFERENCED_ARTIFACT_BYTES
+                if parsed.artifact_references
+                else 8 * 1024 * 1024
+            )
+            if sum(int(item.get("size", 0)) for item in combined) > combined_limit:
+                raise AttachmentError(
+                    f"单条消息的附件合计不能超过 {combined_limit // (1024 * 1024)} MB"
+                )
             prepared_attachments.extend(restored)
+            prepared_attachments.extend(artifact_attachments)
             image_paths.extend(restored_images)
+            image_paths.extend(artifact_images)
         except AttachmentError as exc:
             cleanup_attachments(saved_paths)
             return build_error(req_id, ErrorCode.INVALID_PARAMS, str(exc))

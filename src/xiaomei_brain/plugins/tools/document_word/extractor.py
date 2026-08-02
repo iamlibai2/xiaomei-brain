@@ -34,23 +34,37 @@ class WordExtractor:
         if body is None:
             raise ValueError(f"Word 文档没有正文: {path.name}")
         blocks: list[str] = []
+        tables: list[dict[str, int]] = []
         for child in body:
             if child.tag == f"{_WORD_NS}p":
                 value = _text(child)
                 if value:
                     blocks.append(value)
             elif child.tag == f"{_WORD_NS}tbl":
+                table_index = len(tables) + 1
                 rows = []
-                for row in child.findall(f"{_WORD_NS}tr"):
+                row_elements = child.findall(f"{_WORD_NS}tr")
+                column_count = 0
+                for row in row_elements:
                     cells = [_text(cell) for cell in row.findall(f"{_WORD_NS}tc")]
+                    column_count = max(column_count, len(cells))
                     if any(cells):
                         rows.append("\t".join(cells))
-                if rows:
-                    blocks.append("[表格]\n" + "\n".join(rows))
+                tables.append({
+                    "index": table_index,
+                    "rows": len(row_elements),
+                    "columns": column_count,
+                })
+                heading = f"[表格 {table_index} | {len(row_elements)} 行 × {column_count} 列]"
+                blocks.append(heading + ("\n" + "\n".join(rows) if rows else ""))
         content = bounded_text("\n\n".join(blocks) or "[文档中没有可提取的文字]")
         return DocumentExtraction(
             extractor_id=self.extractor_id,
             extractor_version=self.extractor_version,
             sections=(DocumentSection("document", "正文", content),),
-            metadata={"format": "docx"},
+            metadata={
+                "format": "docx",
+                "table_count": len(tables),
+                "tables": tables,
+            },
         )

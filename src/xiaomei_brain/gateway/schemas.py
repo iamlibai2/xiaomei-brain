@@ -289,12 +289,37 @@ class ChatAttachment(BaseModel):
     data_base64: str = Field(..., min_length=1)
 
 
+class ArtifactTextSelection(BaseModel):
+    kind: Literal["text"] = "text"
+    page: int | None = Field(default=None, ge=1, le=100_000)
+    selected_text: str = Field(..., min_length=1, max_length=20_000)
+    context_before: str = Field(default="", max_length=2_000)
+    context_after: str = Field(default="", max_length=2_000)
+
+
+class ArtifactSpreadsheetSelection(BaseModel):
+    kind: Literal["spreadsheet"] = "spreadsheet"
+    sheet: str = Field(..., min_length=1, max_length=128)
+    range: str = Field(..., min_length=1, max_length=64)
+    selected_text: str = Field(..., min_length=1, max_length=20_000)
+
+
+class ChatArtifactReference(BaseModel):
+    artifact_id: str = Field(..., min_length=32, max_length=32, pattern=r"^[a-f0-9]+$")
+    session_id: str = Field(..., min_length=1, max_length=256)
+    selection: ArtifactTextSelection | ArtifactSpreadsheetSelection | None = None
+
+
 class ChatSendParams(BaseModel):
     content: str = Field(default="", max_length=200_000)
     client_request_id: str = Field(..., min_length=1, max_length=128)
     session_id: str = ""
     attachments: list[ChatAttachment] = Field(default_factory=list, max_length=4)
     attachment_refs: list[str] = Field(default_factory=list, max_length=4)
+    artifact_references: list[ChatArtifactReference] = Field(
+        default_factory=list,
+        max_length=4,
+    )
     retry_of_message_id: int | None = Field(default=None, ge=1)
 
 

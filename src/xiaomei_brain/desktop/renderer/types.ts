@@ -29,6 +29,34 @@ export interface ChatAttachment {
   dataBase64?: string;
 }
 
+export interface ArtifactTextSelection {
+  kind: "text";
+  page?: number;
+  selectedText: string;
+  contextBefore?: string;
+  contextAfter?: string;
+}
+
+export interface ArtifactSpreadsheetSelection {
+  kind: "spreadsheet";
+  sheet: string;
+  range: string;
+  selectedText: string;
+}
+
+export type ArtifactSelection = ArtifactTextSelection | ArtifactSpreadsheetSelection;
+
+export interface ChatArtifactReference {
+  artifactId: string;
+  sessionId: string;
+  selection?: ArtifactSelection;
+  // Renderer-only presentation fields; Electron sends only Agent-owned IDs
+  // and the structured selection to Gateway.
+  name?: string;
+  mimeType?: string;
+  size?: number;
+}
+
 export interface AttachmentPickResult {
   attachments: ChatAttachment[];
   error?: string;
@@ -272,7 +300,14 @@ export interface GatewayBridge {
   connect(args: { host: string; port: number; token: string; agentId: string; sessionId?: string }): Promise<JsonRpcResponse>;
   switchSession(args: { agentId: string; sessionId: string }): Promise<JsonRpcResponse>;
   disconnect(args: { agentId: string }): Promise<void>;
-  sendMessage(args: { content: string; agentId: string; sessionId: string; clientRequestId: string; attachments: ChatAttachment[] }): Promise<JsonRpcResponse>;
+  sendMessage(args: {
+    content: string;
+    agentId: string;
+    sessionId: string;
+    clientRequestId: string;
+    attachments: ChatAttachment[];
+    artifactReferences?: ChatArtifactReference[];
+  }): Promise<JsonRpcResponse>;
   sendVoice(args: {
     agentId: string;
     dataBase64: string;

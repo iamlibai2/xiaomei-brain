@@ -1,7 +1,7 @@
 ---
 name: word-documents
 description: 创建、修改和验收 Word DOCX 文档
-version: 1.3.0
+version: 1.5.0
 tags: [word, docx, document, report]
 requires_tools: [read_document, write, write_document, preview_word_themes, manage_document_template, present_artifacts, clarify]
 ---
@@ -119,6 +119,69 @@ requires_tools: [read_document, write, write_document, preview_word_themes, mana
 - 正式交付的新文档默认设置 `"visual_validation": true`。渲染后端不可用时
   文档仍可交付，但需要如实说明未完成本机渲染检查。
 
+### 长文档结构
+
+正式报告、标书、制度或说明书需要以下能力时，不要手工输入目录、章节号、页码或
+图表编号：
+
+- 顶层设置 `"heading_numbering": true`，标题会使用 Word 原生多级编号，形成
+  `1 / 1.1 / 1.1.1` 层级。
+- 使用 `table_of_contents` block 插入 Word 原生目录域。目录会在 Word 打开文档时
+  更新；不要把目录内容写成普通文本。
+- 封面、目录、正文和横向表格页版式不同时，用顶层 `sections` 替代 `blocks`。
+- 每个 section 可独立设置纸张方向、页眉页脚和页码起始值；横向表格结束后创建新的
+  portrait section，不能让后续正文继续横向。
+- 图片和表格的 `caption` 会生成 Word 原生的“图 N”“表 N”题注，不要在正文中
+  手工编号。
+
+```json
+{
+  "heading_numbering": true,
+  "sections": [
+    {
+      "page": {"size": "A4", "orientation": "portrait"},
+      "footer": {"text": ""},
+      "blocks": [
+        {"type": "heading", "level": 1, "text": "项目报告", "numbered": false},
+        {"type": "paragraph", "text": "公司名称与日期"}
+      ]
+    },
+    {
+      "page_number": {"start": 1, "format": "lower_roman"},
+      "footer": {"text": "第 ", "page_number": true},
+      "blocks": [
+        {"type": "table_of_contents", "title": "目录", "levels": [1, 3]}
+      ]
+    },
+    {
+      "page_number": {"start": 1, "format": "decimal"},
+      "header": {"text": "项目报告"},
+      "footer": {"text": "第 ", "page_number": true},
+      "blocks": [
+        {"type": "heading", "level": 1, "text": "项目概况"},
+        {"type": "heading", "level": 2, "text": "关键指标"},
+        {"type": "image", "workspace_path": "work/chart.png", "caption": "销售趋势"}
+      ]
+    },
+    {
+      "page": {"size": "A4", "orientation": "landscape"},
+      "header": {"text": "项目报告"},
+      "footer": {"text": "第 ", "page_number": true},
+      "blocks": [
+        {"type": "table", "caption": "区域经营明细", "headers": ["区域", "收入"], "rows": [["华东", "100"]]}
+      ]
+    },
+    {
+      "page": {"size": "A4", "orientation": "portrait"},
+      "blocks": [{"type": "heading", "level": 1, "text": "结论"}]
+    }
+  ]
+}
+```
+
+`section.start` 可选 `new_page`（默认）、`continuous`、`even_page` 或 `odd_page`；
+页码格式可选 `decimal`、`lower_roman` 或 `upper_roman`。
+
 调用示例：
 
 ```text
@@ -164,6 +227,17 @@ write_document(
       "header": {"text": "新页眉"},
       "footer": {"text": "第 ", "page_number": true}
     },
+    {
+      "type": "style_table_cells",
+      "table_index": 1,
+      "rows": [1],
+      "columns": "all",
+      "fill_color": "D9E2F3",
+      "text_color": "1F2937",
+      "bold": true,
+      "horizontal_alignment": "center",
+      "vertical_alignment": "center"
+    },
     {"type": "append_blocks", "blocks": [{"type": "heading", "level": 1, "text": "补充"}]},
     {"type": "set_properties", "author": "作者"}
   ]
@@ -171,6 +245,12 @@ write_document(
 ```
 
 调用时传入当前消息中真实存在的 `source_attachment_id`。
+
+`read_document` 会用 `[表格 1 | 8 行 × 12 列]` 标记表格。`style_table_cells`
+中的 `table_index`、`rows` 和 `columns` 均为从 1 开始的编号；行列可以传
+整数数组或 `"all"`。可修改 `fill_color`、`text_color`、`bold`、
+`font_size_pt`、`horizontal_alignment` 和 `vertical_alignment`。只修改指定
+单元格，不能用脚本或直接替换 DOCX XML 中的颜色值。
 
 模板占位符可以位于正文、表格、页眉或页脚中。名称既可写成
 `customer_name`，也可写成完整的 `{{customer_name}}`。默认情况下，

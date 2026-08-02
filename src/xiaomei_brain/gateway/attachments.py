@@ -12,6 +12,7 @@ from typing import Any
 
 MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 MAX_TOTAL_BYTES = 8 * 1024 * 1024
+MAX_REFERENCED_ARTIFACT_BYTES = 20 * 1024 * 1024
 
 IMAGE_MIMES = {
     "image/jpeg": ".jpg",
@@ -63,6 +64,9 @@ def prepare_attachments(
     agent_id: str,
     session_id: str,
     attachments: list[Any],
+    *,
+    max_item_bytes: int = MAX_ATTACHMENT_BYTES,
+    max_total_bytes: int = MAX_TOTAL_BYTES,
 ) -> tuple[list[dict[str, Any]], list[str], list[Path]]:
     """Decode, validate and persist attachments in the receiving Agent's home."""
     prepared: list[dict[str, Any]] = []
@@ -87,11 +91,15 @@ def prepare_attachments(
 
             if len(data) != declared_size:
                 raise AttachmentError(f"附件 {name} 的大小与声明不一致")
-            if len(data) > MAX_ATTACHMENT_BYTES:
-                raise AttachmentError(f"附件 {name} 超过 5 MB")
+            if len(data) > max_item_bytes:
+                raise AttachmentError(
+                    f"附件 {name} 超过 {max_item_bytes // (1024 * 1024)} MB"
+                )
             total += len(data)
-            if total > MAX_TOTAL_BYTES:
-                raise AttachmentError("单条消息的附件合计不能超过 8 MB")
+            if total > max_total_bytes:
+                raise AttachmentError(
+                    f"单条消息的附件合计不能超过 {max_total_bytes // (1024 * 1024)} MB"
+                )
 
             suffix = Path(name).suffix.lower()
             if mime_type in IMAGE_MIMES:
@@ -149,7 +157,15 @@ def cleanup_attachments(paths: list[Path]) -> None:
 
 
 def public_attachment_metadata(attachments: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    keys = ("id", "name", "mime_type", "size", "kind")
+    keys = (
+        "id",
+        "name",
+        "mime_type",
+        "size",
+        "kind",
+        "source_artifact",
+        "annotation",
+    )
     return [{key: item[key] for key in keys if key in item} for item in attachments]
 
 
@@ -166,7 +182,12 @@ def read_stored_attachment(
     declared_size = int(attachment.get("size", 0))
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", attachment_id):
         raise AttachmentError("附件标识无效")
-    if not name or declared_size <= 0 or declared_size > MAX_ATTACHMENT_BYTES:
+    max_bytes = (
+        MAX_REFERENCED_ARTIFACT_BYTES
+        if isinstance(attachment.get("source_artifact"), dict)
+        else MAX_ATTACHMENT_BYTES
+    )
+    if not name or declared_size <= 0 or declared_size > max_bytes:
         raise AttachmentError("附件元数据无效")
 
     if kind == "image" and mime_type in IMAGE_MIMES:
@@ -187,7 +208,7 @@ def read_stored_attachment(
         data = attachment_path.read_bytes()
     except FileNotFoundError as exc:
         raise AttachmentError("附件文件不存在或已被移除") from exc
-    if len(data) != declared_size or len(data) > MAX_ATTACHMENT_BYTES:
+    if len(data) != declared_size or len(data) > max_bytes:
         raise AttachmentError("附件文件与会话记录不一致")
 
     return {
@@ -208,6 +229,11 @@ def restore_attachment_refs(
     image_paths: list[str] = []
     total = 0
     seen: set[str] = set()
+    max_total_bytes = (
+        MAX_REFERENCED_ARTIFACT_BYTES
+        if any(isinstance(item.get("source_artifact"), dict) for item in attachments)
+        else MAX_TOTAL_BYTES
+    )
     for attachment in attachments:
         attachment_id = str(attachment.get("id", ""))
         if attachment_id in seen:
@@ -216,8 +242,10 @@ def restore_attachment_refs(
         stored = read_stored_attachment(agent_id, session_id, attachment)
         data = base64.b64decode(stored["data_base64"], validate=True)
         total += len(data)
-        if total > MAX_TOTAL_BYTES:
-            raise AttachmentError("引用附件合计不能超过 8 MB")
+        if total > max_total_bytes:
+            raise AttachmentError(
+                f"引用附件合计不能超过 {max_total_bytes // (1024 * 1024)} MB"
+            )
 
         name = str(stored["name"])
         mime_type = str(stored["mime_type"])
@@ -276,9 +304,49 @@ def append_text_attachments(content: str, attachments: list[dict[str, Any]]) -> 
         if item.get("kind") == "document":
             safe_id = html.escape(str(item.get("id", "")), quote=True)
             safe_mime = html.escape(str(item.get("mime_type", "")), quote=True)
+            annotation = item.get("annotation")
+            annotation_context = ""
+            if isinstance(annotation, dict) and annotation.get("selected_text"):
+                selected_text = html.escape(
+                    str(annotation.get("selected_text", "")),
+                    quote=False,
+                )
+                if annotation.get("kind") == "spreadsheet":
+                    sheet = html.escape(str(annotation.get("sheet", "")), quote=True)
+                    cell_range = html.escape(str(annotation.get("range", "")), quote=True)
+                    annotation_context = (
+                        f'\n<document_annotation kind="spreadsheet" sheet="{sheet}" '
+                        f'range="{cell_range}">\n'
+                        f"<selected_cells>{selected_text}</selected_cells>\n"
+                        "Treat the user's message as an instruction for this exact cell range. "
+                        "Modify a copy, preserve formulas and formatting outside the range, "
+                        "and update dependent totals when required.\n"
+                        "</document_annotation>"
+                    )
+                else:
+                    page = annotation.get("page")
+                    page_attribute = f' page="{int(page)}"' if isinstance(page, int) else ""
+                    context_before = html.escape(
+                        str(annotation.get("context_before", "")),
+                        quote=False,
+                    )
+                    context_after = html.escape(
+                        str(annotation.get("context_after", "")),
+                        quote=False,
+                    )
+                    annotation_context = (
+                        f'\n<document_annotation kind="text"{page_attribute}>\n'
+                        f"<context_before>{context_before}</context_before>\n"
+                        f"<selected_text>{selected_text}</selected_text>\n"
+                        f"<context_after>{context_after}</context_after>\n"
+                        "Treat the user's message as an instruction for this exact selection. "
+                        "Modify a copy and preserve unrelated content and formatting.\n"
+                        "</document_annotation>"
+                    )
             sections.append(
                 f'\n<attached_document id="{safe_id}" name="{safe_name}" mime_type="{safe_mime}">\n'
                 "Use the read_document tool with this attachment id to inspect its content.\n"
+                f"{annotation_context}\n"
                 "</attached_document>"
             )
         elif item.get("kind") == "image":

@@ -11,10 +11,19 @@ from xiaomei_brain.plugins.tools.document_word.extractor import WordExtractor
 from xiaomei_brain.plugins.tools.document_word.template_analyzer import (
     WordTemplateAnalyzer,
 )
+from xiaomei_brain.plugins.tools.document_word.structure import (
+    add_sequence_caption,
+    add_table_of_contents,
+    apply_heading_number,
+    configure_page_numbering,
+    ensure_heading_numbering,
+    refresh_word_fields,
+)
 from xiaomei_brain.plugins.tools.document_word.theme import (
     apply_word_theme,
     resolve_word_theme,
     style_header_footer,
+    style_table_cells,
     style_word_table,
 )
 
@@ -22,7 +31,7 @@ from xiaomei_brain.plugins.tools.document_word.theme import (
 class WordWriter:
     format_id = "word"
     suffix = ".docx"
-    writer_version = "1.2.0"
+    writer_version = "1.4.0"
     # Template inspection is an optional capability of this format writer,
     # not a separate plugin category.
     template_analyzer = WordTemplateAnalyzer()
@@ -41,6 +50,12 @@ class WordWriter:
             raise ValueError("Word 写入依赖 python-docx 未安装") from exc
 
         resolved_theme = resolve_word_theme(specification.get("theme"))
+        structure_state: dict[str, Any] = {
+            "caption_counts": {"figure": 0, "table": 0},
+            "heading_num_id": None,
+            "requires_pagination": False,
+        }
+        heading_numbering = specification.get("heading_numbering") is True
         if source_path is not None:
             if source_path.suffix.lower() != self.suffix:
                 raise ValueError("Word writer 只能修改 DOCX 附件")
@@ -57,6 +72,7 @@ class WordWriter:
                 raise ValueError("修改 Word 文档时 specification.operations 不能为空")
             replacements = 0
             insertions = 0
+            styled_cells = 0
             for operation in operations:
                 if not isinstance(operation, dict):
                     raise ValueError("Word operation 必须是对象")
@@ -107,6 +123,8 @@ class WordWriter:
                         blocks,
                         asset_paths=asset_paths,
                         theme=theme,
+                        structure_state=structure_state,
+                        heading_numbering=heading_numbering,
                     ))
                 elif kind == "insert_blocks_after":
                     marker = str(operation.get("marker") or "")
@@ -122,6 +140,8 @@ class WordWriter:
                         remove_marker=operation.get("remove_marker") is True,
                         asset_paths=asset_paths,
                         theme=theme,
+                        structure_state=structure_state,
+                        heading_numbering=heading_numbering,
                     )
                 elif kind == "set_page_layout":
                     self._set_page_layout(document, operation)
@@ -134,6 +154,22 @@ class WordWriter:
                     )
                 elif kind == "set_properties":
                     self._set_properties(document, operation)
+                elif kind == "style_table_cells":
+                    table_index = operation.get("table_index")
+                    if (
+                        isinstance(table_index, bool)
+                        or not isinstance(table_index, int)
+                        or table_index < 1
+                        or table_index > len(document.tables)
+                    ):
+                        raise ValueError(
+                            "style_table_cells.table_index 超出范围；"
+                            f"当前文档共有 {len(document.tables)} 张表格"
+                        )
+                    styled_cells += style_table_cells(
+                        document.tables[table_index - 1],
+                        operation,
+                    )
                 else:
                     raise ValueError(f"不支持的 Word operation: {kind}")
             document.save(str(output_path))
@@ -159,18 +195,46 @@ class WordWriter:
             subtitle = str(specification.get("subtitle") or "").strip()
             if subtitle:
                 document.add_paragraph(subtitle, style="Subtitle")
+            sections = specification.get("sections")
             blocks = specification.get("blocks")
-            if not isinstance(blocks, list) or not blocks:
-                raise ValueError("创建 Word 文档时 specification.blocks 不能为空")
-            self._append_blocks(
-                document,
-                blocks,
-                asset_paths=asset_paths,
-                theme=theme,
-            )
+            if sections is not None:
+                if blocks is not None:
+                    raise ValueError("创建 Word 文档时 blocks 和 sections 不能同时使用")
+                if not isinstance(sections, list) or not sections:
+                    raise ValueError("specification.sections 必须是非空数组")
+                self._append_sections(
+                    document,
+                    sections,
+                    asset_paths=asset_paths,
+                    theme=theme,
+                    structure_state=structure_state,
+                    heading_numbering=heading_numbering,
+                )
+            else:
+                if not isinstance(blocks, list) or not blocks:
+                    raise ValueError("创建 Word 文档时 specification.blocks 不能为空")
+                self._append_blocks(
+                    document,
+                    blocks,
+                    asset_paths=asset_paths,
+                    theme=theme,
+                    structure_state=structure_state,
+                    heading_numbering=heading_numbering,
+                )
             document.save(str(output_path))
             replacements = 0
             insertions = 0
+            styled_cells = 0
+
+        field_refresh = {
+            "status": "not_required",
+            "performed": False,
+        }
+        if (
+            structure_state.get("requires_pagination") is True
+            and specification.get("refresh_fields") is not False
+        ):
+            field_refresh = refresh_word_fields(output_path)
 
         # Structural and semantic verification happen before the file is
         # announced as an artifact.
@@ -195,10 +259,13 @@ class WordWriter:
                 "valid": True,
                 "paragraphs": len(verified.paragraphs),
                 "tables": len(verified.tables),
+                "sections": len(verified.sections),
                 "replacements": replacements,
                 "insertions": insertions,
+                "styled_cells": styled_cells,
                 "content_preview": preview,
                 "theme": theme["preset"] if theme is not None else "preserved",
+                "field_refresh": field_refresh,
                 "render_validation": render_validation,
             },
         }
@@ -242,6 +309,14 @@ class WordWriter:
     def _set_page_layout(document: Any, values: Any) -> None:
         if not isinstance(values, dict) or not values:
             return
+        for section in document.sections:
+            WordWriter._set_section_layout(section, values)
+
+    @staticmethod
+    def _set_section_layout(section: Any, values: Any) -> None:
+        """Apply page geometry to one section without touching its siblings."""
+        if not isinstance(values, dict) or not values:
+            return
         from docx.enum.section import WD_ORIENT
         from docx.shared import Cm
 
@@ -259,41 +334,40 @@ class WordWriter:
         if margins is not None and not isinstance(margins, dict):
             raise ValueError("page.margins_cm 必须是对象")
 
-        for section in document.sections:
-            if size_name:
-                width, height = sizes[size_name]
-                if orientation == "landscape":
-                    width, height = height, width
-                section.page_width = Cm(width)
-                section.page_height = Cm(height)
-            elif (
-                orientation == "landscape"
-                and section.page_width < section.page_height
-            ) or (
-                orientation == "portrait"
-                and section.page_width > section.page_height
-            ):
-                section.page_width, section.page_height = (
-                    section.page_height,
-                    section.page_width,
-                )
-            section.orientation = (
-                WD_ORIENT.LANDSCAPE
-                if orientation == "landscape"
-                else WD_ORIENT.PORTRAIT
+        if size_name:
+            width, height = sizes[size_name]
+            if orientation == "landscape":
+                width, height = height, width
+            section.page_width = Cm(width)
+            section.page_height = Cm(height)
+        elif (
+            orientation == "landscape"
+            and section.page_width < section.page_height
+        ) or (
+            orientation == "portrait"
+            and section.page_width > section.page_height
+        ):
+            section.page_width, section.page_height = (
+                section.page_height,
+                section.page_width,
             )
-            for key, attribute in (
-                ("top", "top_margin"),
-                ("right", "right_margin"),
-                ("bottom", "bottom_margin"),
-                ("left", "left_margin"),
-            ):
-                if key not in margins:
-                    continue
-                margin = float(margins[key])
-                if not 0 <= margin <= 10:
-                    raise ValueError(f"page.margins_cm.{key} 必须在 0 到 10 之间")
-                setattr(section, attribute, Cm(margin))
+        section.orientation = (
+            WD_ORIENT.LANDSCAPE
+            if orientation == "landscape"
+            else WD_ORIENT.PORTRAIT
+        )
+        for key, attribute in (
+            ("top", "top_margin"),
+            ("right", "right_margin"),
+            ("bottom", "bottom_margin"),
+            ("left", "left_margin"),
+        ):
+            if key not in margins:
+                continue
+            margin = float(margins[key])
+            if not 0 <= margin <= 10:
+                raise ValueError(f"page.margins_cm.{key} 必须在 0 到 10 之间")
+            setattr(section, attribute, Cm(margin))
 
     @staticmethod
     def _add_page_number(paragraph: Any) -> None:
@@ -324,22 +398,124 @@ class WordWriter:
         if footer_values is not None and not isinstance(footer_values, dict):
             raise ValueError("footer 必须是对象")
         for section in document.sections:
-            if isinstance(header_values, dict):
-                paragraph = section.header.paragraphs[0]
-                paragraph.clear()
-                paragraph.add_run(str(header_values.get("text") or ""))
-                if theme is not None:
-                    style_header_footer(paragraph, theme, footer=False)
-            if isinstance(footer_values, dict):
-                paragraph = section.footer.paragraphs[0]
-                paragraph.clear()
-                prefix = str(footer_values.get("text") or "")
-                if prefix:
-                    paragraph.add_run(prefix)
-                if footer_values.get("page_number") is True:
-                    cls._add_page_number(paragraph)
-                if theme is not None:
-                    style_header_footer(paragraph, theme, footer=True)
+            cls._set_section_header_footer(
+                section,
+                header_values,
+                footer_values,
+                theme=theme,
+                unlink=False,
+            )
+
+    @classmethod
+    def _set_section_header_footer(
+        cls,
+        section: Any,
+        header_values: Any,
+        footer_values: Any,
+        *,
+        theme: dict[str, Any] | None,
+        unlink: bool,
+    ) -> None:
+        """Set one section's running content, optionally breaking inheritance."""
+        if header_values is not None and not isinstance(header_values, dict):
+            raise ValueError("section.header 必须是对象")
+        if footer_values is not None and not isinstance(footer_values, dict):
+            raise ValueError("section.footer 必须是对象")
+        if isinstance(header_values, dict):
+            if unlink:
+                section.header.is_linked_to_previous = False
+            paragraph = section.header.paragraphs[0]
+            paragraph.clear()
+            paragraph.add_run(str(header_values.get("text") or ""))
+            if theme is not None:
+                style_header_footer(paragraph, theme, footer=False)
+        if isinstance(footer_values, dict):
+            if unlink:
+                section.footer.is_linked_to_previous = False
+            paragraph = section.footer.paragraphs[0]
+            paragraph.clear()
+            prefix = str(footer_values.get("text") or "")
+            if prefix:
+                paragraph.add_run(prefix)
+            if footer_values.get("page_number") is True:
+                cls._add_page_number(paragraph)
+            if theme is not None:
+                style_header_footer(paragraph, theme, footer=True)
+
+    def _append_sections(
+        self,
+        document: Any,
+        sections: Iterable[Any],
+        *,
+        asset_paths: dict[str, Path] | None,
+        theme: dict[str, Any] | None,
+        structure_state: dict[str, Any],
+        heading_numbering: bool,
+    ) -> None:
+        """Build independently formatted cover, TOC, body or wide-table sections."""
+        from docx.enum.section import WD_SECTION
+
+        start_types = {
+            "new_page": WD_SECTION.NEW_PAGE,
+            "continuous": WD_SECTION.CONTINUOUS,
+            "even_page": WD_SECTION.EVEN_PAGE,
+            "odd_page": WD_SECTION.ODD_PAGE,
+        }
+        for index, values in enumerate(sections):
+            if not isinstance(values, dict):
+                raise ValueError("sections 中每一项必须是对象")
+            if index == 0:
+                section = document.sections[0]
+            else:
+                start = str(values.get("start") or "new_page").strip().lower()
+                if start not in start_types:
+                    raise ValueError(
+                        "section.start 仅支持 new_page、continuous、even_page 或 odd_page"
+                    )
+                section = document.add_section(start_types[start])
+
+            self._set_section_layout(
+                section,
+                values.get("page") or {"size": "A4"},
+            )
+            if values.get("different_first_page") is True:
+                section.different_first_page_header_footer = True
+            self._set_section_header_footer(
+                section,
+                values.get("header"),
+                values.get("footer"),
+                theme=theme,
+                unlink=index > 0,
+            )
+            page_number = values.get("page_number")
+            if page_number is not None:
+                if not isinstance(page_number, dict):
+                    raise ValueError("section.page_number 必须是对象")
+                configure_page_numbering(
+                    section,
+                    start=page_number.get("start"),
+                    number_format=page_number.get("format"),
+                )
+            elif index > 0:
+                # python-docx clones the previous section properties. Remove
+                # a cloned restart instruction so numbering naturally
+                # continues across ordinary body and landscape sections.
+                from docx.oxml.ns import qn
+
+                inherited = section._sectPr.find(qn("w:pgNumType"))
+                if inherited is not None:
+                    section._sectPr.remove(inherited)
+            blocks = values.get("blocks")
+            if not isinstance(blocks, list) or not blocks:
+                raise ValueError("section.blocks 必须是非空数组")
+            self._append_blocks(
+                document,
+                blocks,
+                asset_paths=asset_paths,
+                theme=theme,
+                structure_state=structure_state,
+                heading_numbering=heading_numbering,
+            )
 
     def _append_blocks(
         self,
@@ -348,18 +524,43 @@ class WordWriter:
         *,
         asset_paths: dict[str, Path] | None = None,
         theme: dict[str, Any] | None,
+        structure_state: dict[str, Any] | None = None,
+        heading_numbering: bool = False,
     ) -> list[Any]:
+        structure_state = structure_state or {
+            "caption_counts": {"figure": 0, "table": 0},
+            "heading_num_id": None,
+            "requires_pagination": False,
+        }
         elements: list[Any] = []
         for block in blocks:
             if not isinstance(block, dict):
                 raise ValueError("Word block 必须是对象")
             kind = str(block.get("type") or "paragraph")
-            if kind == "heading":
+            if kind == "table_of_contents":
+                levels = block.get("levels", [1, 3])
+                if not isinstance(levels, list) or len(levels) != 2:
+                    raise ValueError("table_of_contents.levels 必须是两个整数")
+                toc_paragraphs = add_table_of_contents(
+                    document,
+                    levels=(int(levels[0]), int(levels[1])),
+                    title=str(block.get("title") or "目录"),
+                )
+                structure_state["requires_pagination"] = True
+                elements.extend(paragraph._p for paragraph in toc_paragraphs)
+            elif kind == "heading":
                 level = max(1, min(int(block.get("level", 1)), 9))
                 paragraph = document.add_heading(
                     str(block.get("text") or ""),
                     level=level,
                 )
+                numbered = block.get("numbered")
+                if numbered is True or (numbered is None and heading_numbering):
+                    num_id = structure_state.get("heading_num_id")
+                    if num_id is None:
+                        num_id = ensure_heading_numbering(document)
+                        structure_state["heading_num_id"] = num_id
+                    apply_heading_number(paragraph, level=level, num_id=num_id)
                 elements.append(paragraph._p)
             elif kind == "paragraph":
                 paragraph = document.add_paragraph(str(block.get("text") or ""))
@@ -389,6 +590,17 @@ class WordWriter:
                 )
                 if width <= 0:
                     raise ValueError("表格至少需要一列")
+                caption = str(block.get("caption") or "").strip()
+                if caption:
+                    counts = structure_state["caption_counts"]
+                    counts["table"] += 1
+                    caption_paragraph = add_sequence_caption(
+                        document,
+                        kind="table",
+                        text=caption,
+                        number=counts["table"],
+                    )
+                    elements.append(caption_paragraph._p)
                 table = document.add_table(rows=1 if headers else 0, cols=width)
                 explicit_style = str(block.get("style") or "").strip()
                 if explicit_style:
@@ -477,11 +689,15 @@ class WordWriter:
                 elements.append(paragraph._p)
                 caption = str(block.get("caption") or "").strip()
                 if caption:
-                    caption_paragraph = document.add_paragraph(
-                        caption,
-                        style="Caption",
+                    counts = structure_state["caption_counts"]
+                    counts["figure"] += 1
+                    caption_paragraph = add_sequence_caption(
+                        document,
+                        kind="figure",
+                        text=caption,
+                        number=counts["figure"],
+                        alignment=alignments[alignment],
                     )
-                    caption_paragraph.alignment = alignments[alignment]
                     elements.append(caption_paragraph._p)
             else:
                 raise ValueError(f"不支持的 Word block: {kind}")
@@ -528,6 +744,8 @@ class WordWriter:
         remove_marker: bool,
         asset_paths: dict[str, Path] | None = None,
         theme: dict[str, Any] | None,
+        structure_state: dict[str, Any] | None = None,
+        heading_numbering: bool = False,
     ) -> int:
         paragraph = next(
             (item for item in document.paragraphs if marker in item.text),
@@ -540,6 +758,8 @@ class WordWriter:
             blocks,
             asset_paths=asset_paths,
             theme=theme,
+            structure_state=structure_state,
+            heading_numbering=heading_numbering,
         )
         anchor = paragraph._p
         for element in elements:

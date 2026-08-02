@@ -8,9 +8,14 @@ import { AddAgentDialog } from "./AddAgentDialog";
 import { openSettingsCenter } from "../settings/events";
 import { openUnifiedSearch } from "../search/events";
 
-export function ConversationList() {
+export function ConversationList({
+  collapsed,
+  onCollapsedChange,
+}: {
+  collapsed: boolean;
+  onCollapsedChange: (collapsed: boolean) => void;
+}) {
   const { t } = useTranslation();
-  const [collapsed, setCollapsed] = useState(false);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
 
   const agents = useCoreStore((s) => s.agents);
@@ -75,7 +80,7 @@ export function ConversationList() {
     <div className={`conversation-list ${collapsed ? "collapsed" : ""}`}>
       <SidebarTopbar
         collapsed={collapsed}
-        onToggleCollapse={() => setCollapsed(!collapsed)}
+        onToggleCollapse={() => onCollapsedChange(!collapsed)}
         onSearch={openUnifiedSearch}
         onRefresh={() => { void refreshLocalAgents(); }}
         onTerminalToggle={() => setTerminalOpen(!terminalOpen)}

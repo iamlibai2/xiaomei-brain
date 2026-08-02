@@ -52,6 +52,25 @@ const OFFICE_MIMES: Record<string, string> = {
   ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 };
 
+async function ensureImmutableCacheFile(cachePath: string, data: Buffer): Promise<void> {
+  try {
+    const existing = await fs.stat(cachePath);
+    if (existing.isFile() && existing.size === data.length) return;
+    throw new Error("Cached file does not match the immutable Agent snapshot");
+  } catch (error) {
+    if ((error as { code?: string }).code !== "ENOENT") throw error;
+  }
+  try {
+    await fs.writeFile(cachePath, data, { flag: "wx" });
+  } catch (error) {
+    // Two clicks can race to materialize the same immutable snapshot. The
+    // winner's complete file is safe to reuse and must not be overwritten.
+    if ((error as { code?: string }).code !== "EEXIST") throw error;
+    const existing = await fs.stat(cachePath);
+    if (!existing.isFile() || existing.size !== data.length) throw error;
+  }
+}
+
 export function registerIpcHandlers(
   _gateway: GatewayClient,
   config: ConfigStore,
@@ -714,6 +733,22 @@ export function registerIpcHandlers(
       sessionId: string;
       clientRequestId: string;
       attachments?: Array<{ id: string; name: string; mimeType: string; size: number; dataBase64?: string }>;
+      artifactReferences?: Array<{
+        artifactId: string;
+        sessionId: string;
+        selection?: ({
+          kind: "text";
+          page?: number;
+          selectedText: string;
+          contextBefore?: string;
+          contextAfter?: string;
+        } | {
+          kind: "spreadsheet";
+          sheet: string;
+          range: string;
+          selectedText: string;
+        });
+      }>;
     }) => {
       const client = getClient(args.agentId);
       if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
@@ -727,6 +762,26 @@ export function registerIpcHandlers(
           mime_type: attachment.mimeType,
           size: attachment.size,
           data_base64: attachment.dataBase64 || "",
+        })),
+        artifact_references: (args.artifactReferences || []).map((reference) => ({
+          artifact_id: reference.artifactId,
+          session_id: reference.sessionId,
+          selection: reference.selection
+            ? reference.selection.kind === "spreadsheet"
+              ? {
+                kind: reference.selection.kind,
+                sheet: reference.selection.sheet,
+                range: reference.selection.range,
+                selected_text: reference.selection.selectedText,
+              }
+              : {
+                kind: reference.selection.kind,
+                page: reference.selection.page,
+                selected_text: reference.selection.selectedText,
+                context_before: reference.selection.contextBefore || "",
+                context_after: reference.selection.contextAfter || "",
+              }
+            : undefined,
         })),
       };
       const first = await client.rpc("chat.send", params);
@@ -888,8 +943,10 @@ export function registerIpcHandlers(
     if (result.error) return { ok: false, error: result.error.message };
     try {
       const attachment = result.attachment;
+      const data = Buffer.from(attachment.dataBase64, "base64");
+      const contentHash = createHash("sha256").update(data).digest("hex").slice(0, 16);
       const cacheKey = createHash("sha256")
-        .update(`${args.agentId}\u0000${args.sessionId}\u0000${args.attachmentId}`)
+        .update(`${args.agentId}\u0000${args.sessionId}\u0000${args.attachmentId}\u0000${contentHash}`)
         .digest("hex")
         .slice(0, 24);
       const safeName = path.basename(attachment.name)
@@ -897,7 +954,7 @@ export function registerIpcHandlers(
       const cacheDir = path.join(app.getPath("temp"), "xiaomei-brain", "attachments", cacheKey);
       await fs.mkdir(cacheDir, { recursive: true });
       const cachePath = path.join(cacheDir, safeName);
-      await fs.writeFile(cachePath, Buffer.from(attachment.dataBase64, "base64"));
+      await ensureImmutableCacheFile(cachePath, data);
       const error = await shell.openPath(cachePath);
       return error ? { ok: false, error } : { ok: true };
     } catch (error) {
@@ -942,8 +999,10 @@ export function registerIpcHandlers(
     if (result.error) return { ok: false, error: result.error.message };
     try {
       const artifact = result.artifact;
+      const data = Buffer.from(artifact.dataBase64, "base64");
+      const contentHash = createHash("sha256").update(data).digest("hex").slice(0, 16);
       const cacheKey = createHash("sha256")
-        .update(`${args.agentId}\u0000${args.sessionId}\u0000${args.artifactId}`)
+        .update(`${args.agentId}\u0000${args.sessionId}\u0000${args.artifactId}\u0000${contentHash}`)
         .digest("hex")
         .slice(0, 24);
       const safeName = path.basename(artifact.name)
@@ -951,7 +1010,7 @@ export function registerIpcHandlers(
       const cacheDir = path.join(app.getPath("temp"), "xiaomei-brain", "artifacts", cacheKey);
       await fs.mkdir(cacheDir, { recursive: true });
       const cachePath = path.join(cacheDir, safeName);
-      await fs.writeFile(cachePath, Buffer.from(artifact.dataBase64, "base64"));
+      await ensureImmutableCacheFile(cachePath, data);
       const error = await shell.openPath(cachePath);
       return error ? { ok: false, error } : { ok: true };
     } catch (error) {
@@ -1230,13 +1289,13 @@ export function registerIpcHandlers(
         typeof value.name === "string" ? value.name : args.artifactId,
       ).replace(/[<>:"/\\|?*\x00-\x1f]/g, "_") || args.artifactId;
       const cacheKey = createHash("sha256")
-        .update(`${args.agentId}\u0000${args.assignmentId}\u0000${args.artifactId}`)
+        .update(`${args.agentId}\u0000${args.assignmentId}\u0000${args.artifactId}\u0000${createHash("sha256").update(data).digest("hex").slice(0, 16)}`)
         .digest("hex")
         .slice(0, 24);
       const cacheDir = path.join(app.getPath("temp"), "xiaomei-brain", "assignments", cacheKey);
       await fs.mkdir(cacheDir, { recursive: true });
       const cachePath = path.join(cacheDir, safeName);
-      await fs.writeFile(cachePath, data);
+      await ensureImmutableCacheFile(cachePath, data);
       const error = await shell.openPath(cachePath);
       return error ? { ok: false, error } : { ok: true };
     } catch (error) {
