@@ -40,7 +40,7 @@ def test_existing_conversation_database_upgrades_without_touching_messages(
         ("group_messages",),
     ).fetchone()
     assert table is not None
-    assert upgraded._get_schema_version("conversation_db") == 4
+    assert upgraded._get_schema_version("conversation_db") == 5
     upgraded.close()
 
 

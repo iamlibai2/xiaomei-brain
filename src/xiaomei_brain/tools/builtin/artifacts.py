@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 from ..base import tool
+from ..execution_context import current_tool_execution
 from .file_ops import get_workspace_dir
 
 
@@ -75,7 +76,7 @@ def present_artifacts(paths: list[str], message: str = "") -> dict | str:
         seen.add(normalized)
         resolved_paths.append(str(resolved))
 
-    return {
+    result = {
         "type": "present_artifacts_result",
         # ``path`` is intentionally a list. Artifact discovery recursively
         # consumes this field and creates immutable conversation snapshots.
@@ -84,6 +85,26 @@ def present_artifacts(paths: list[str], message: str = "") -> dict | str:
         "count": len(resolved_paths),
         "delivered": True,
     }
+    context = current_tool_execution()
+    updated_artifacts: list[dict[str, str]] = []
+    if context is not None:
+        for attachment in context.attachments:
+            source = attachment.get("source_artifact")
+            managed_path = str(attachment.get("managed_artifact_path") or "")
+            if not isinstance(source, dict) or not managed_path:
+                continue
+            managed_key = os.path.normcase(str(Path(managed_path).resolve()))
+            for output_path in resolved_paths:
+                if os.path.normcase(str(Path(output_path).resolve())) != managed_key:
+                    continue
+                updated_artifacts.append({
+                    "artifact_id": str(source.get("artifact_id") or ""),
+                    "session_id": str(source.get("session_id") or ""),
+                    "output_path": output_path,
+                })
+    if updated_artifacts:
+        result["updated_artifacts"] = updated_artifacts
+    return result
 
 
 present_artifacts_tool = present_artifacts

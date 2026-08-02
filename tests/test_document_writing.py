@@ -337,6 +337,68 @@ def test_write_document_revises_copy_without_overwriting_attachment(tmp_path):
     assert "New wording" in text and "Added note" in text
 
 
+def test_write_document_updates_agent_artifact_in_place(tmp_path):
+    registry = _word_registry()
+    tool = create_write_document_tool(registry)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    managed = workspace / "proposal.docx"
+    original = Document()
+    original.add_paragraph("Current wording")
+    original.save(managed)
+    attachment_copy = tmp_path / "artifact-copy.docx"
+    stale = Document()
+    stale.add_paragraph("Old snapshot")
+    stale.save(attachment_copy)
+    spec = workspace / "revision.json"
+    spec.write_text(json.dumps({
+        "operations": [{
+            "type": "replace_text",
+            "old": "Current wording",
+            "new": "New wording",
+        }],
+    }), encoding="utf-8")
+    artifact_id = "a" * 32
+    attachment = {
+        "id": artifact_id,
+        "name": "proposal.docx",
+        "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "size": attachment_copy.stat().st_size,
+        "kind": "document",
+        "local_path": str(attachment_copy),
+        "managed_artifact_path": str(managed),
+        "source_artifact": {
+            "artifact_id": artifact_id,
+            "session_id": "source-session",
+            "relative_path": "workspace/proposal.docx",
+        },
+    }
+
+    with bind_tool_execution(
+        tool_call_id="call-update",
+        tool_name="write_document",
+        arguments={},
+        artifact_callback=None,
+        attachments=(attachment,),
+        workspace_root=str(workspace),
+        output_root=str(workspace),
+    ):
+        result = tool.execute(
+            format="word",
+            specification_path="revision.json",
+            output_name="ignored-new-name.docx",
+            source_attachment_id=artifact_id,
+        )
+
+    assert result["success"] is True
+    assert Path(result["output_path"]) == managed
+    assert result["output_name"] == "proposal.docx"
+    assert result["updated_artifact"]["artifact_id"] == artifact_id
+    assert not (workspace / "ignored-new-name.docx").exists()
+    updated = Document(managed)
+    assert "New wording" in "\n".join(item.text for item in updated.paragraphs)
+
+
 def test_write_document_styles_only_selected_existing_table_cells(tmp_path):
     registry = _word_registry()
     tool = create_write_document_tool(registry)

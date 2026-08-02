@@ -39,6 +39,8 @@ class ConversationDB(SQLiteStore):
                    SELECT MAX(created_at) AS value FROM messages
                    UNION ALL
                    SELECT MAX(created_at) AS value FROM artifacts
+                   UNION ALL
+                   SELECT MAX(updated_at) AS value FROM artifacts
                )""",
         ).fetchone()
         self._last_timeline_timestamp = float(row["latest"] or 0) if row else 0.0
@@ -111,6 +113,7 @@ class ConversationDB(SQLiteStore):
                 storage_suffix TEXT NOT NULL DEFAULT '',
                 presented_at REAL NOT NULL DEFAULT 0,
                 created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
                 UNIQUE(session_id, artifact_id)
             );
 
@@ -153,6 +156,21 @@ class ConversationDB(SQLiteStore):
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
         current = self._get_schema_version("conversation_db")
+
+        # `_upsert_artifact_row` is used by the v2 migration itself, so this
+        # compatibility column must exist before older artifact rows are moved.
+        artifact_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(artifacts)")
+        }
+        if "updated_at" not in artifact_columns:
+            conn.execute(
+                "ALTER TABLE artifacts "
+                "ADD COLUMN updated_at REAL NOT NULL DEFAULT 0",
+            )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_artifacts_user_updated "
+            "ON artifacts(user_id, updated_at DESC)",
+        )
 
         if current < 1:
             # v0 → v1: 添加 user_id 列
@@ -249,6 +267,22 @@ class ConversationDB(SQLiteStore):
             conn.commit()
             logger.info(
                 "[ConversationDB] migrated to v4: tracked artifact presentation",
+            )
+
+        if current < 5:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(artifacts)")}
+            if "updated_at" not in columns:
+                conn.execute(
+                    "ALTER TABLE artifacts "
+                    "ADD COLUMN updated_at REAL NOT NULL DEFAULT 0",
+                )
+            conn.execute(
+                "UPDATE artifacts SET updated_at = created_at WHERE updated_at = 0",
+            )
+            self._set_schema_version("conversation_db", 5)
+            conn.commit()
+            logger.info(
+                "[ConversationDB] migrated to v5: tracked artifact updates",
             )
 
     def store_tool(
@@ -498,19 +532,25 @@ class ConversationDB(SQLiteStore):
     ) -> int:
         """Insert or refresh one Agent-owned output artifact."""
         conn = self._get_conn()
+        timestamp = self._next_timeline_timestamp()
+        artifact["updated_at"] = timestamp
         self._upsert_artifact_row(
             conn,
             session_id=session_id,
             artifact=artifact,
             user_id=user_id,
             tool_call_id=tool_call_id,
-            created_at=self._next_timeline_timestamp(),
+            created_at=timestamp,
         )
         conn.commit()
         row = conn.execute(
-            "SELECT id FROM artifacts WHERE session_id = ? AND artifact_id = ?",
+            "SELECT id, created_at, updated_at, presented_at FROM artifacts "
+            "WHERE session_id = ? AND artifact_id = ?",
             (session_id, str(artifact.get("id", ""))),
         ).fetchone()
+        artifact["created_at"] = float(row["created_at"])
+        artifact["updated_at"] = float(row["updated_at"])
+        artifact["presented_at"] = float(row["presented_at"] or 0)
         return int(row["id"])
 
     def get_artifact_metadata(
@@ -537,20 +577,22 @@ class ConversationDB(SQLiteStore):
         """List artifacts for merging into a Desktop history page."""
         clauses: list[str] = []
         params: list[Any] = []
+        timeline_column = "presented_at" if presented_only else "created_at"
         if session_id:
             clauses.append("session_id = ?")
             params.append(session_id)
         if since is not None:
-            clauses.append("created_at >= ?")
+            clauses.append(f"{timeline_column} >= ?")
             params.append(since)
         if until is not None:
-            clauses.append("created_at <= ?")
+            clauses.append(f"{timeline_column} <= ?")
             params.append(until)
         if presented_only:
             clauses.append("presented_at > 0")
         where = " AND ".join(clauses) if clauses else "1=1"
         rows = self._get_conn().execute(
-            f"SELECT * FROM artifacts WHERE {where} ORDER BY created_at ASC, id ASC",
+            f"SELECT * FROM artifacts WHERE {where} "
+            f"ORDER BY {timeline_column} ASC, id ASC",
             params,
         ).fetchall()
         return [self._artifact_from_row(row) for row in rows]
@@ -566,7 +608,7 @@ class ConversationDB(SQLiteStore):
         rows = self._get_conn().execute(
             """SELECT * FROM artifacts
                WHERE user_id IN (?, 'global')
-               ORDER BY created_at DESC, id DESC
+                ORDER BY updated_at DESC, id DESC
                LIMIT ? OFFSET ?""",
             (
                 person_id,
@@ -594,7 +636,7 @@ class ConversationDB(SQLiteStore):
                    INSTR(LOWER(name), LOWER(?)) > 0
                    OR INSTR(LOWER(description), LOWER(?)) > 0
                  )
-               ORDER BY created_at DESC, id DESC
+                ORDER BY updated_at DESC, id DESC
                LIMIT ?""",
             (person_id, normalized, normalized, max(1, min(int(limit), 50))),
         ).fetchall()
@@ -614,8 +656,9 @@ class ConversationDB(SQLiteStore):
             """INSERT INTO artifacts (
                    artifact_id, user_id, session_id, turn_id, tool_call_id,
                    name, mime_type, size, kind, description,
-                   source_relative_path, storage_suffix, presented_at, created_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   source_relative_path, storage_suffix, presented_at, created_at,
+                   updated_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(session_id, artifact_id) DO UPDATE SET
                    user_id = excluded.user_id,
                    turn_id = excluded.turn_id,
@@ -627,10 +670,11 @@ class ConversationDB(SQLiteStore):
                    description = excluded.description,
                    source_relative_path = excluded.source_relative_path,
                    storage_suffix = excluded.storage_suffix,
-                   presented_at = CASE
-                       WHEN excluded.presented_at > 0 THEN excluded.presented_at
-                       ELSE artifacts.presented_at
-                   END""",
+                    presented_at = CASE
+                        WHEN excluded.presented_at > 0 THEN excluded.presented_at
+                        ELSE artifacts.presented_at
+                    END,
+                    updated_at = excluded.updated_at""",
             (
                 str(artifact.get("id", "")),
                 user_id or "global",
@@ -645,6 +689,7 @@ class ConversationDB(SQLiteStore):
                 str(artifact.get("relative_path", "")),
                 str(artifact.get("storage_suffix", "")),
                 created_at if artifact.get("presented") else 0,
+                created_at,
                 created_at,
             ),
         )
@@ -667,6 +712,7 @@ class ConversationDB(SQLiteStore):
             "presented": float(row["presented_at"] or 0) > 0,
             "presented_at": float(row["presented_at"] or 0),
             "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
         }
 
     def save_interaction(self, payload: dict[str, Any]) -> int | None:

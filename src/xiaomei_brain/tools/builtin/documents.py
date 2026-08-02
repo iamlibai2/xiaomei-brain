@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -14,6 +15,14 @@ from xiaomei_brain.tools.execution_context import current_tool_execution
 
 _DOCUMENT_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 _MAX_DOCUMENT_ASSET_BYTES = 10 * 1024 * 1024
+_TARGET_LOCKS: dict[str, threading.Lock] = {}
+_TARGET_LOCKS_GUARD = threading.Lock()
+
+
+def _target_lock(path: Path) -> threading.Lock:
+    key = str(path.resolve()).casefold()
+    with _TARGET_LOCKS_GUARD:
+        return _TARGET_LOCKS.setdefault(key, threading.Lock())
 
 
 def _workspace_asset_references(value: Any) -> set[str]:
@@ -85,11 +94,18 @@ def create_read_document_tool(plugin_registry: Any, db_path_provider: Any) -> To
         )
         if attachment is None or attachment.get("kind") != "document":
             return {"error": "Attachment is not available in the current execution context"}
+        readable_attachment = dict(attachment)
+        managed_path = Path(str(attachment.get("managed_artifact_path") or ""))
+        if managed_path.is_file():
+            # Referenced Agent artifacts remain mutable during the turn.  The
+            # prepared attachment is an immutable ingress snapshot, so reading
+            # it after write_document would otherwise return stale content.
+            readable_attachment["local_path"] = str(managed_path)
         source = db_path_provider()
         db_path = getattr(source, "db_path", None) if source is not None else None
         try:
             return DocumentService(plugin_registry, db_path).read(
-                attachment,
+                readable_attachment,
                 session_id=context.session_id,
                 section=section,
                 offset=offset,
@@ -171,14 +187,9 @@ def create_write_document_tool(
         suffix = str(getattr(writer, "suffix", "")).lower()
         if Path(safe_name).suffix.lower() != suffix:
             return {"error": f"Output file must use the {suffix} extension"}
-        try:
-            output_root.mkdir(parents=True, exist_ok=True)
-            output_path = _available_output_path(output_root, safe_name).resolve()
-            output_path.relative_to(output_root)
-        except (OSError, ValueError):
-            return {"error": "Output path is outside the current output directory"}
-
         source_path = None
+        source_artifact: dict[str, Any] | None = None
+        managed_artifact_target: Path | None = None
         template_record = None
         if source_attachment_id and template_id:
             return {"error": "source_attachment_id 和 template_id 不能同时使用"}
@@ -211,6 +222,29 @@ def create_write_document_tool(
             source_path = Path(str(attachment.get("local_path") or ""))
             if not source_path.is_file():
                 return {"error": "Source attachment file is unavailable"}
+            raw_source_artifact = attachment.get("source_artifact")
+            raw_managed_path = str(attachment.get("managed_artifact_path") or "")
+            if isinstance(raw_source_artifact, dict) and raw_managed_path:
+                candidate = Path(raw_managed_path).resolve()
+                if candidate.suffix.lower() != suffix:
+                    return {"error": "原产物格式与目标格式不一致"}
+                source_artifact = dict(raw_source_artifact)
+                managed_artifact_target = candidate
+                if candidate.is_file():
+                    # Multiple revisions in one turn must build on the latest
+                    # Agent-owned file, not on the immutable ingress snapshot.
+                    source_path = candidate
+
+        try:
+            output_root.mkdir(parents=True, exist_ok=True)
+            if managed_artifact_target is not None:
+                managed_artifact_target.parent.mkdir(parents=True, exist_ok=True)
+                output_path = managed_artifact_target
+            else:
+                output_path = _available_output_path(output_root, safe_name).resolve()
+                output_path.relative_to(output_root)
+        except (OSError, ValueError):
+            return {"error": "Output path is outside the current output directory"}
 
         asset_paths: dict[str, Path] = {}
         for attachment in context.attachments:
@@ -228,29 +262,30 @@ def create_write_document_tool(
         except ValueError as exc:
             return {"error": str(exc), "format": format}
 
-        temporary_path = output_root / (
+        temporary_path = output_path.parent / (
             f".{output_path.stem}.{uuid4().hex}.tmp{output_path.suffix}"
         )
         try:
-            result = writer.write(
-                specification,
-                temporary_path,
-                source_path=source_path,
-                asset_paths=asset_paths,
-            )
-            if (
-                template_record is not None
-                and specification.get("allow_unresolved_placeholders") is not True
-            ):
-                unresolved = template_service.validate_generated(
-                    template_record,
+            with _target_lock(output_path):
+                result = writer.write(
+                    specification,
                     temporary_path,
+                    source_path=source_path,
+                    asset_paths=asset_paths,
                 )
-                if unresolved:
-                    raise ValueError(
-                        "模板仍有未填写字段: " + ", ".join(unresolved[:30])
+                if (
+                    template_record is not None
+                    and specification.get("allow_unresolved_placeholders") is not True
+                ):
+                    unresolved = template_service.validate_generated(
+                        template_record,
+                        temporary_path,
                     )
-            temporary_path.replace(output_path)
+                    if unresolved:
+                        raise ValueError(
+                            "模板仍有未填写字段: " + ", ".join(unresolved[:30])
+                        )
+                temporary_path.replace(output_path)
         except Exception as exc:
             temporary_path.unlink(missing_ok=True)
             return {"error": str(exc), "format": format}
@@ -266,6 +301,12 @@ def create_write_document_tool(
                 "template_id": template_record.template_id,
                 "name": template_record.name,
             }
+        if source_artifact is not None:
+            response["updated_artifact"] = {
+                "artifact_id": str(source_artifact.get("artifact_id") or ""),
+                "session_id": str(source_artifact.get("session_id") or ""),
+                "output_path": str(output_path),
+            }
         return response
 
     return Tool(
@@ -275,7 +316,9 @@ def create_write_document_tool(
             "format-specific JSON specification inside the current workspace, then pass its "
             "relative path. To revise an uploaded document, pass its current attachment id; "
             "to create from an Agent-owned template, pass template_id instead. The original "
-            "attachment or template is never overwritten. Specifications may reference current image "
+            "uploaded attachment or template is never overwritten. When the source attachment is an "
+            "Agent-owned artifact, update that artifact in place and keep its artifact id. Specifications "
+            "may reference current image "
             "attachment ids or relative workspace image paths exposed by image tools."
         ),
         parameters={

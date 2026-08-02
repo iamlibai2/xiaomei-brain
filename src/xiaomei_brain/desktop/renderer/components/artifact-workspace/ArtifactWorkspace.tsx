@@ -3,6 +3,8 @@ import type { ArtifactSnapshot } from "../../store";
 import { useCoreStore } from "../../store";
 import { Icon } from "../ui";
 import { DocxPreview } from "../right-sidebar/DocxPreview";
+import { TextArtifactPreview } from "../right-sidebar/TextArtifactPreview";
+import { HtmlArtifactPreview } from "../right-sidebar/HtmlArtifactPreview";
 import { artifactPreviewKind } from "../../artifacts/preview-capability";
 
 const PdfPreview = lazy(() => import("../right-sidebar/PdfPreview").then((module) => ({ default: module.PdfPreview })));
@@ -72,7 +74,7 @@ export function ArtifactWorkspace({
       if (!cancelled) setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [agentId, artifact?.id, artifact?.mimeType, artifact?.sessionId, artifact?.size, kind]);
+  }, [agentId, artifact?.id, artifact?.mimeType, artifact?.sessionId, artifact?.size, artifact?.updatedAt, kind]);
 
   useEffect(() => {
     const move = (event: MouseEvent) => {
@@ -154,7 +156,7 @@ export function ArtifactWorkspace({
           </span>
           <div>
             <strong>{artifact?.name || "产物不存在"}</strong>
-            {artifact && <small>{formatBytes(artifact.size)} · {new Date(artifact.createdAt * 1000).toLocaleString()}</small>}
+            {artifact && <small>{formatBytes(artifact.size)} · 更新于 {new Date(artifact.updatedAt * 1000).toLocaleString()}</small>}
           </div>
         </div>
         <div className="artifact-workspace-actions">
@@ -198,6 +200,24 @@ export function ArtifactWorkspace({
           <Suspense fallback={<div className="artifact-preview-state">正在加载表格预览器…</div>}>
             <SpreadsheetPreview dataBase64={dataBase64} fileName={artifact.name} onAnnotate={annotate} />
           </Suspense>
+        )}
+        {artifact && (kind === "text" || kind === "markdown") && dataBase64 && annotate && (
+          <TextArtifactPreview
+            dataBase64={dataBase64}
+            fileName={artifact.name}
+            markdown={kind === "markdown"}
+            onAnnotate={annotate}
+          />
+        )}
+        {artifact && kind === "html" && dataBase64 && annotate && (
+          <HtmlArtifactPreview
+            dataBase64={dataBase64}
+            fileName={artifact.name}
+            onAnnotate={annotate}
+            onOpenOriginal={() => void openOriginal()}
+            onBack={onClose}
+            opening={opening}
+          />
         )}
       </div>
     </aside>

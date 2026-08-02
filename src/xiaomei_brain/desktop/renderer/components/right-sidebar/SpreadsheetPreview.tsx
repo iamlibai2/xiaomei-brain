@@ -19,6 +19,12 @@ function decodeBase64(dataBase64: string): Uint8Array {
   return bytes;
 }
 
+function decodeCsv(dataBase64: string): string {
+  return new TextDecoder("utf-8", { fatal: false })
+    .decode(decodeBase64(dataBase64))
+    .replace(/^\uFEFF/, "");
+}
+
 function normalizedRange(first: CellPosition, second: CellPosition) {
   return {
     start: {
@@ -61,12 +67,16 @@ export function SpreadsheetPreview({
     setFocus(null);
     setShowComposer(false);
     void import("xlsx").then((module) => {
-      const value = module.read(decodeBase64(dataBase64), {
-        type: "array",
-        cellDates: true,
-        cellFormula: true,
-        cellStyles: false,
-      });
+      const isCsv = fileName.toLowerCase().endsWith(".csv");
+      const value = module.read(
+        isCsv ? decodeCsv(dataBase64) : decodeBase64(dataBase64),
+        {
+          type: isCsv ? "string" : "array",
+          cellDates: true,
+          cellFormula: true,
+          cellStyles: false,
+        },
+      );
       if (cancelled) return;
       setXlsx(module);
       setWorkbook(value);

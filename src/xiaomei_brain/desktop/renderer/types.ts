@@ -44,7 +44,17 @@ export interface ArtifactSpreadsheetSelection {
   selectedText: string;
 }
 
-export type ArtifactSelection = ArtifactTextSelection | ArtifactSpreadsheetSelection;
+export interface ArtifactHtmlSelection {
+  kind: "html";
+  selector: string;
+  tag: string;
+  selectedText: string;
+  outerHtml: string;
+  contextBefore?: string;
+  contextAfter?: string;
+}
+
+export type ArtifactSelection = ArtifactTextSelection | ArtifactSpreadsheetSelection | ArtifactHtmlSelection;
 
 export interface ChatArtifactReference {
   artifactId: string;

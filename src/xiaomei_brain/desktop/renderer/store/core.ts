@@ -195,6 +195,7 @@ function displayArtifact(value: unknown): DisplayArtifact | undefined {
 export interface ArtifactSnapshot extends DisplayArtifact {
   sessionId: string;
   createdAt: number;
+  updatedAt: number;
 }
 
 function artifactSnapshot(value: unknown): ArtifactSnapshot | null {
@@ -205,6 +206,9 @@ function artifactSnapshot(value: unknown): ArtifactSnapshot | null {
     ...artifact,
     sessionId: typeof item.session_id === "string" ? item.session_id : "",
     createdAt: typeof item.created_at === "number" ? item.created_at : 0,
+    updatedAt: typeof item.updated_at === "number"
+      ? item.updated_at
+      : typeof item.created_at === "number" ? item.created_at : 0,
   };
 }
 
@@ -215,7 +219,7 @@ function upsertArtifact(state: CoreState, agentId: string, artifact: ArtifactSna
   ));
   if (index >= 0) state.artifactsByAgent[agentId][index] = artifact;
   else state.artifactsByAgent[agentId].push(artifact);
-  state.artifactsByAgent[agentId].sort((left, right) => right.createdAt - left.createdAt);
+  state.artifactsByAgent[agentId].sort((left, right) => right.updatedAt - left.updatedAt);
 }
 
 function clearAgentStreams(agentId: string): void {
@@ -3348,13 +3352,18 @@ export function initGatewayEvents() {
       return;
     }
 
-    if (event === "artifact.created") {
+    if (event === "artifact.created" || event === "artifact.updated") {
       const artifact = displayArtifact(d);
       if (!artifact) return;
       const snapshot = artifactSnapshot({
         ...d,
-        session_id: eventSessionId,
-        created_at: typeof raw.timestamp === "number" ? raw.timestamp / 1000 : Date.now() / 1000,
+        session_id: typeof d.session_id === "string" ? d.session_id : eventSessionId,
+        created_at: typeof d.created_at === "number"
+          ? d.created_at
+          : typeof raw.timestamp === "number" ? raw.timestamp / 1000 : Date.now() / 1000,
+        updated_at: typeof d.updated_at === "number"
+          ? d.updated_at
+          : typeof raw.timestamp === "number" ? raw.timestamp / 1000 : Date.now() / 1000,
       });
       setState(produce((s: CoreState) => {
         if (snapshot) upsertArtifact(s, agentId, snapshot);
@@ -3367,16 +3376,24 @@ export function initGatewayEvents() {
       if (!artifact) return;
       const snapshot = artifactSnapshot({
         ...d,
-        session_id: eventSessionId,
-        created_at: typeof raw.timestamp === "number" ? raw.timestamp / 1000 : Date.now() / 1000,
+        session_id: typeof d.session_id === "string" ? d.session_id : eventSessionId,
+        created_at: typeof d.created_at === "number"
+          ? d.created_at
+          : typeof raw.timestamp === "number" ? raw.timestamp / 1000 : Date.now() / 1000,
+        updated_at: typeof d.updated_at === "number"
+          ? d.updated_at
+          : typeof raw.timestamp === "number" ? raw.timestamp / 1000 : Date.now() / 1000,
       });
       setState(produce((s: CoreState) => {
         if (snapshot) upsertArtifact(s, agentId, snapshot);
         const sessionMessages = eventMessages(s);
-        const existing = sessionMessages
-          .find((message) => message.artifact?.id === artifact.id);
-        if (existing) {
+        const existingIndex = sessionMessages
+          .findIndex((message) => message.artifact?.id === artifact.id);
+        if (existingIndex >= 0) {
+          const [existing] = sessionMessages.splice(existingIndex, 1);
           existing.artifact = artifact;
+          existing.turnId = eventTurnId || artifact.turnId || existing.turnId;
+          sessionMessages.push(existing);
           return;
         }
         sessionMessages.push({

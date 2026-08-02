@@ -510,7 +510,7 @@ function ArtifactPanel({
               </span>
               <span>
                 <strong>{artifact.name}</strong>
-                <small>{formatBytes(artifact.size)} · {new Date(artifact.createdAt * 1000).toLocaleString()}</small>
+                <small>{formatBytes(artifact.size)} · {new Date(artifact.updatedAt * 1000).toLocaleString()}</small>
                 {artifact.description && <em>{artifact.description}</em>}
               </span>
               <i>{openingKey === key ? "打开中…" : previewable ? "预览" : "打开"}</i>

@@ -7,9 +7,11 @@ import base64
 import hashlib
 import json
 import mimetypes
+import os
 import re
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 MAX_ARTIFACT_BYTES = 20 * 1024 * 1024
 _OUTPUT_DIRS = {"workspace", "images", "music", "tts"}
@@ -69,6 +71,7 @@ def discover_tool_artifacts(
         except OSError:
             continue
 
+    replacements = _artifact_replacements(result)
     artifacts: list[dict[str, Any]] = []
     seen: set[str] = set()
     for candidate in candidates:
@@ -87,24 +90,40 @@ def discover_tool_artifacts(
         if size <= 0 or size > MAX_ARTIFACT_BYTES:
             continue
         mime_type = _guess_mime_type(resolved)
-        artifact_id = hashlib.sha256(
-            f"{session_id}\0{turn_id}\0{relative_path}".encode("utf-8"),
-        ).hexdigest()[:32]
+        replacement = replacements.get(
+            os.path.normcase(str(resolved)),
+        )
+        artifact_id = str(replacement.get("artifact_id", "")) if replacement else ""
+        storage_session_id = str(replacement.get("session_id", "")) if replacement else ""
+        if not re.fullmatch(r"[a-f0-9]{32}", artifact_id):
+            artifact_id = hashlib.sha256(
+                f"{session_id}\0{turn_id}\0{relative_path}".encode("utf-8"),
+            ).hexdigest()[:32]
+            replacement = None
+        if not storage_session_id:
+            storage_session_id = session_id
         suffix = resolved.suffix.lower()[:16]
-        storage_path = _artifact_storage_path(agent_id, session_id, artifact_id, suffix)
+        storage_path = _artifact_storage_path(
+            agent_id, storage_session_id, artifact_id, suffix,
+        )
         storage_path.parent.mkdir(parents=True, exist_ok=True)
-        storage_path.write_bytes(resolved.read_bytes())
+        _atomic_write(storage_path, resolved.read_bytes())
         artifacts.append({
             "id": artifact_id,
+            "session_id": storage_session_id,
             "name": resolved.name,
             "mime_type": mime_type,
             "size": size,
             "kind": _artifact_kind(mime_type, resolved.suffix.lower()),
-            "description": f"Created by {tool_name}",
+            "description": (
+                f"Updated by {tool_name}" if replacement
+                else f"Created by {tool_name}"
+            ),
             "relative_path": relative_path,
             "storage_suffix": suffix,
             "tool_call_id": "",
             "turn_id": turn_id,
+            "updated": replacement is not None,
         })
     return artifacts
 
@@ -112,7 +131,8 @@ def discover_tool_artifacts(
 def public_artifact_metadata(artifact: dict[str, Any]) -> dict[str, Any]:
     keys = (
         "id", "name", "mime_type", "size", "kind", "description",
-        "tool_call_id", "turn_id", "workspace_role",
+        "tool_call_id", "turn_id", "workspace_role", "session_id",
+        "updated", "created_at", "updated_at", "presented_at",
     )
     return {key: artifact[key] for key in keys if key in artifact}
 
@@ -185,6 +205,65 @@ def _artifact_storage_path(
     return _agent_root(agent_id) / "artifacts" / session_key / f"{artifact_id}{suffix}"
 
 
+def managed_artifact_path(agent_id: str, artifact: dict[str, Any]) -> Path:
+    """Resolve an artifact's mutable Agent-owned source without trusting clients."""
+    relative = Path(str(artifact.get("relative_path", "")))
+    if (
+        not relative.parts
+        or relative.is_absolute()
+        or ".." in relative.parts
+        or relative.parts[0] not in _OUTPUT_DIRS
+    ):
+        raise ArtifactError("产物源文件位置无效")
+    root = _agent_root(agent_id).resolve()
+    candidate = (root / relative).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as exc:
+        raise ArtifactError("产物源文件位置无效") from exc
+    return candidate
+
+
+def _atomic_write(path: Path, data: bytes) -> None:
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        temporary.write_bytes(data)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _artifact_replacements(result: str) -> dict[str, dict[str, str]]:
+    """Map generated output paths to an existing logical artifact identity."""
+    parsed = _structured_value(result)
+    if not isinstance(parsed, dict):
+        return {}
+    raw_items: list[Any] = []
+    single = parsed.get("updated_artifact")
+    if isinstance(single, dict):
+        raw_items.append(single)
+    multiple = parsed.get("updated_artifacts")
+    if isinstance(multiple, list):
+        raw_items.extend(multiple)
+    replacements: dict[str, dict[str, str]] = {}
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        artifact_id = str(item.get("artifact_id", ""))
+        source_session_id = str(item.get("session_id", ""))
+        output_path = str(item.get("output_path", ""))
+        if (
+            re.fullmatch(r"[a-f0-9]{32}", artifact_id)
+            and source_session_id
+            and output_path
+        ):
+            replacements[os.path.normcase(str(Path(output_path).resolve()))] = {
+                "artifact_id": artifact_id,
+                "session_id": source_session_id,
+            }
+    return replacements
+
+
 def _tool_failed(result: str) -> bool:
     lowered = result.lower()
     return result.startswith(("Error:", "Blocked")) or "timed out" in lowered or "failed" in lowered
@@ -192,13 +271,7 @@ def _tool_failed(result: str) -> bool:
 
 def _structured_strings(result: str) -> list[str]:
     values: list[str] = []
-    parsed: Any = None
-    for loader in (json.loads, ast.literal_eval):
-        try:
-            parsed = loader(result)
-            break
-        except (ValueError, SyntaxError, json.JSONDecodeError):
-            continue
+    parsed = _structured_value(result)
 
     def visit(value: Any) -> None:
         if isinstance(value, str):
@@ -229,6 +302,15 @@ def _structured_strings(result: str) -> list[str]:
         if re.match(r"^[A-Za-z]:[\\/]", candidate) or candidate.startswith("/"):
             values.append(candidate.strip().strip("'\""))
     return values
+
+
+def _structured_value(result: str) -> Any:
+    for loader in (json.loads, ast.literal_eval):
+        try:
+            return loader(result)
+        except (ValueError, SyntaxError, json.JSONDecodeError):
+            continue
+    return None
 
 
 def _artifact_kind(mime_type: str, suffix: str) -> str:

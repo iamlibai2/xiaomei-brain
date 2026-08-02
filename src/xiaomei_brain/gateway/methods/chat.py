@@ -17,7 +17,7 @@ from ..attachments import (
     prepare_attachments,
     restore_attachment_refs,
 )
-from ..artifacts import ArtifactError, read_stored_artifact
+from ..artifacts import ArtifactError, managed_artifact_path, read_stored_artifact
 from ..connection import cm
 from ..protocol import ErrorCode, build_error, build_response
 from ..schemas import (
@@ -211,6 +211,29 @@ class ChatMethods:
                         "artifact_id": reference.artifact_id,
                         "session_id": reference.session_id,
                     }
+                    managed_relative_path = str(
+                        artifact.get("relative_path") or "",
+                    ).replace("\\", "/")
+                    # Artifact paths are stored relative to the Agent root,
+                    # while file tools resolve relative paths from its
+                    # workspace.  Expose the latter so the model can pass the
+                    # value to read/edit without guessing or duplicating the
+                    # leading ``workspace`` directory.
+                    if managed_relative_path.startswith("workspace/"):
+                        item["managed_artifact_relative_path"] = (
+                            managed_relative_path.removeprefix("workspace/")
+                        )
+                    try:
+                        item["managed_artifact_path"] = str(
+                            managed_artifact_path(
+                                getattr(living, "_agent_id", "default"),
+                                artifact,
+                            ),
+                        )
+                    except ArtifactError:
+                        # Legacy artifacts without a managed source remain
+                        # readable, but write_document will create a new file.
+                        pass
                     if annotation is not None:
                         item["annotation"] = annotation
                 artifact_attachments.extend(prepared_artifacts)
@@ -488,7 +511,10 @@ class ChatMethods:
                     "id": f"artifact:{artifact.get('id', '')}",
                     "role": "artifact",
                     "content": artifact.get("name", ""),
-                    "created_at": artifact.get("created_at", 0),
+                    "created_at": (
+                        artifact.get("presented_at")
+                        or artifact.get("created_at", 0)
+                    ),
                     "user_id": artifact.get("user_id", ""),
                     "artifact": artifact,
                 }

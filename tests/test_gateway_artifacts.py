@@ -213,6 +213,7 @@ def test_chat_send_references_person_owned_artifact_as_annotated_attachment(tmp_
         "artifact_id": artifact["id"],
         "session_id": "source-session",
     }
+    assert attachment["managed_artifact_relative_path"] == "proposal.docx"
     assert attachment["annotation"]["selected_text"] == "原来的段落"
     assert Path(attachment["local_path"]).read_bytes() == b"docx snapshot"
     cm.unregister("connection-1")
@@ -382,6 +383,64 @@ def test_present_artifacts_publishes_created_then_presented(tmp_path, monkeypatc
     db.close()
 
 
+def test_artifact_update_reuses_id_and_refreshes_stored_content(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
+    output = tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace" / "report.docx"
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"original")
+    original = discover_tool_artifacts(
+        "xiaomei", "source-session", "turn-1", "write_file",
+        {"path": str(output)}, json.dumps({"output_path": str(output)}),
+    )[0]
+    db = ConversationDB(tmp_path / "brain.db")
+    db.save_artifact("source-session", original, user_id="person-1")
+
+    class Router:
+        def __init__(self):
+            self.events = []
+
+        def route_for_session(self, _session_id):
+            return SimpleNamespace(type="ws")
+
+        def deliver_event(self, event, payload, route, **context):
+            self.events.append((event, payload, route, context))
+
+    gateway_router = Router()
+    parent = SimpleNamespace(
+        _agent_id="xiaomei",
+        agent=SimpleNamespace(conversation_db=db),
+        _router=gateway_router,
+    )
+    callback = ConversationDriver._make_artifact_callback(
+        "current-session", "turn-2", "person-1", parent,
+    )
+    output.write_bytes(b"updated content")
+    result = json.dumps({
+        "success": True,
+        "output_path": str(output),
+        "updated_artifact": {
+            "artifact_id": original["id"],
+            "session_id": "source-session",
+            "output_path": str(output),
+        },
+    })
+
+    callback("tool-update", "write_document", {"output_name": "report.docx"}, result)
+
+    artifacts = db.list_artifacts("source-session")
+    assert len(artifacts) == 1
+    assert artifacts[0]["id"] == original["id"]
+    assert artifacts[0]["size"] == len(b"updated content")
+    stored = artifact_module.read_stored_artifact(
+        "xiaomei", "source-session", artifacts[0],
+    )
+    assert base64.b64decode(stored["data_base64"]) == b"updated content"
+    assert gateway_router.events[0][0] == "artifact.updated"
+    assert gateway_router.events[0][1]["session_id"] == "source-session"
+    assert gateway_router.events[0][3]["session_id"] == "current-session"
+    db.close()
+
+
 def test_chat_history_exposes_artifact_card_without_internal_path(tmp_path, monkeypatch):
     monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
     output = tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace" / "history.txt"
@@ -406,6 +465,39 @@ def test_chat_history_exposes_artifact_card_without_internal_path(tmp_path, monk
 
     assert card["name"] == "history.txt"
     assert "relative_path" not in card
+    db.close()
+
+
+def test_represented_artifact_moves_to_latest_history_position(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
+    output = tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace" / "report.xlsx"
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"first")
+    artifact = discover_tool_artifacts(
+        "xiaomei", "session-1", "turn-1", "present_artifacts",
+        {}, json.dumps({"path": [str(output)]}),
+    )[0]
+    artifact["presented"] = True
+    db = ConversationDB(tmp_path / "brain.db")
+    db.save_artifact("session-1", artifact, tool_call_id="tool-1")
+    assistant_id = db.log("session-1", "assistant", "first delivery complete")
+
+    output.write_bytes(b"second")
+    updated = dict(artifact)
+    updated.update({"size": len(b"second"), "turn_id": "turn-2", "presented": True})
+    db.save_artifact("session-1", updated, tool_call_id="tool-2")
+    router = MethodRouter(living=SimpleNamespace(
+        _agent_id="xiaomei", agent=SimpleNamespace(conversation_db=db),
+    ))
+    router._auth_sessions.add("connection-1")
+
+    messages = router.dispatch("connection-1", "rpc-1", "chat.history", {
+        "session_id": "session-1",
+    })["result"]["messages"]
+
+    assert [item["role"] for item in messages] == ["assistant", "artifact"]
+    assert messages[0]["id"] == assistant_id
+    assert messages[1]["artifact"]["id"] == artifact["id"]
     db.close()
 
 

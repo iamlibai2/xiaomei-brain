@@ -22,6 +22,7 @@ export type IconName =
   | "chart-bar"
   | "dots-vertical"
   | "map-pin"
+  | "globe"
   | "shield"
   | "robot"
   | "folder"
@@ -57,6 +58,13 @@ const ICON_PATHS: Record<IconName, React.ReactNode> = {
     <>
       <circle cx="11" cy="11" r="8" />
       <path d="m21 21-4.3-4.3" />
+    </>
+  ),
+  globe: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <line x1="2" y1="12" x2="22" y2="12" />
+      <path d="M12 2a15.3 15.3 0 0 1 0 20M12 2a15.3 15.3 0 0 0 0 20" />
     </>
   ),
   refresh: (

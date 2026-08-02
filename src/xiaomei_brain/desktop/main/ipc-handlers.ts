@@ -25,6 +25,25 @@ const attachmentCache = new Map<string, {
 const artifactCache = new Map<string, {
   id: string; name: string; mimeType: string; size: number; kind: string; description: string; dataBase64: string;
 }>();
+
+function invalidateArtifactCache(
+  agentId: string,
+  data?: unknown,
+): void {
+  const value = data && typeof data === "object" && !Array.isArray(data)
+    ? data as Record<string, unknown>
+    : null;
+  const sessionId = value && typeof value.session_id === "string" ? value.session_id : "";
+  const artifactId = value && typeof value.id === "string" ? value.id : "";
+  if (sessionId && artifactId) {
+    artifactCache.delete(`${agentId}\u0000${sessionId}\u0000${artifactId}`);
+    return;
+  }
+  const prefix = `${agentId}\u0000`;
+  for (const key of artifactCache.keys()) {
+    if (key.startsWith(prefix)) artifactCache.delete(key);
+  }
+}
 const inspectedCapabilityPackages = new Map<string, {
   filePath: string;
   sha256: string;
@@ -419,6 +438,7 @@ export function registerIpcHandlers(
         connectionSessions.delete(args.agentId);
         connectionReady.delete(args.agentId);
         connectionSessionSwitchers.delete(args.agentId);
+        invalidateArtifactCache(args.agentId);
 
         const client = new GatewayClient();
         // A newly introduced Desktop identity must not silently claim an old
@@ -471,6 +491,9 @@ export function registerIpcHandlers(
           data: unknown,
           metadata: { sequence?: number; timestamp?: number; sessionId?: string } = {},
         ) => {
+          if (["artifact.created", "artifact.updated", "artifact.presented"].includes(eventName)) {
+            invalidateArtifactCache(args.agentId, data);
+          }
           // session.resume below replaces the incomplete local stream with an
           // authoritative snapshot, so frames arriving during recovery are
           // intentionally not projected into the renderer.
@@ -747,6 +770,14 @@ export function registerIpcHandlers(
           sheet: string;
           range: string;
           selectedText: string;
+        } | {
+          kind: "html";
+          selector: string;
+          tag: string;
+          selectedText: string;
+          outerHtml: string;
+          contextBefore?: string;
+          contextAfter?: string;
         });
       }>;
     }) => {
@@ -774,6 +805,16 @@ export function registerIpcHandlers(
                 range: reference.selection.range,
                 selected_text: reference.selection.selectedText,
               }
+              : reference.selection.kind === "html"
+                ? {
+                  kind: reference.selection.kind,
+                  selector: reference.selection.selector,
+                  tag: reference.selection.tag,
+                  selected_text: reference.selection.selectedText,
+                  outer_html: reference.selection.outerHtml,
+                  context_before: reference.selection.contextBefore || "",
+                  context_after: reference.selection.contextAfter || "",
+                }
               : {
                 kind: reference.selection.kind,
                 page: reference.selection.page,

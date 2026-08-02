@@ -194,7 +194,8 @@ write_document(
 
 ## 修改附件
 
-先用 `read_document` 理解原文，再写 operations specification。原附件不会被覆盖：
+先用 `read_document` 理解原文，再写 operations specification。用户上传的附件会生成副本，
+不覆盖上传源文件；Agent 自己生成并交付的产物会原位更新，继续使用同一个产物 ID：
 
 ```json
 {

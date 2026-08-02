@@ -13,6 +13,7 @@ import {
 
 const isMac = process.platform === "darwin";
 const isWindows = process.platform === "win32";
+const useDevelopmentRenderer = !app.isPackaged && process.argv.includes("--dev-renderer");
 const windowsAppId = "com.xiaomei.brain.desktop";
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 
@@ -24,6 +25,26 @@ let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
 const gateway = new GatewayClient();
 const config = new ConfigStore();
+
+async function loadDevelopmentRenderer(window: BrowserWindow): Promise<void> {
+  const rendererUrl = "http://localhost:5173";
+  let lastError: unknown;
+  // `npm run dev` starts Electron and Vite concurrently.  Wait briefly for
+  // Vite instead of falling back to a stale production bundle in dist/.
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    try {
+      await window.loadURL(rendererUrl);
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+  console.error(`[desktop] development renderer unavailable: ${String(lastError)}`);
+  await window.loadURL(
+    `data:text/plain;charset=utf-8,${encodeURIComponent("Desktop 开发服务启动失败，请确认 Vite 正在运行。")}`,
+  );
+}
 
 function registerWindowsShortcutIdentity(): void {
   if (!isWindows) return;
@@ -130,11 +151,10 @@ function createWindow(): void {
     Menu.buildFromTemplate(template).popup({ window: mainWindow || undefined });
   });
 
-  if (process.env.NODE_ENV === "development") {
-    mainWindow.loadURL("http://localhost:5173");
-    mainWindow.webContents.openDevTools();
+  if (useDevelopmentRenderer) {
+    void loadDevelopmentRenderer(mainWindow);
   } else {
-    mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
+    void mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
 
   // 窗口控制 IPC

@@ -1110,9 +1110,12 @@ class ConversationDriver:
             for artifact in artifacts:
                 artifact["tool_call_id"] = tool_call_id
                 artifact["presented"] = tool_name == "present_artifacts"
+                artifact_session_id = str(
+                    artifact.get("session_id") or session_id,
+                )
                 if db is not None:
                     db.save_artifact(
-                        session_id,
+                        artifact_session_id,
                         artifact,
                         user_id=user_id,
                         tool_call_id=tool_call_id,
@@ -1154,7 +1157,7 @@ class ConversationDriver:
                         )
                 ConversationDriver._publish_event(
                     parent,
-                    "artifact.created",
+                    "artifact.updated" if artifact.get("updated") else "artifact.created",
                     public_artifact_metadata(artifact),
                     session_id=session_id,
                     turn_id=turn_id,
@@ -1171,9 +1174,10 @@ class ConversationDriver:
                         turn_id=turn_id,
                     )
                     logger.info(
-                        "Presented artifact to conversation: session=%s "
+                        "Presented artifact to conversation: session=%s source_session=%s "
                         "artifact=%s name=%s",
                         session_id,
+                        artifact_session_id,
                         artifact.get("id", ""),
                         artifact.get("name", ""),
                     )

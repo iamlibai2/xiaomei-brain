@@ -154,3 +154,50 @@ def test_read_document_tool_only_accepts_current_turn_attachment(tmp_path):
 
     assert allowed["content"] == "01234"
     assert "error" in denied
+
+
+def test_read_document_prefers_live_agent_artifact_over_ingress_snapshot(tmp_path):
+    class ContentExtractor(_CountingExtractor):
+        def extract(self, path):
+            self.calls += 1
+            return DocumentExtraction(
+                self.extractor_id,
+                self.extractor_version,
+                (DocumentSection("document", "Body", path.read_text(encoding="utf-8")),),
+            )
+
+    snapshot = tmp_path / "snapshot.docx"
+    snapshot.write_text("old", encoding="utf-8")
+    managed = tmp_path / "managed.docx"
+    managed.write_text("current", encoding="utf-8")
+    extractor = ContentExtractor()
+    registry = PluginRegistry()
+    registry.register_document_extractor(extractor)
+    tool = create_read_document_tool(
+        registry,
+        lambda: SimpleNamespace(db_path=tmp_path / "brain.db"),
+    )
+    attachment = {
+        "id": "artifact-1",
+        "name": "managed.docx",
+        "mime_type": "application/test-document",
+        "kind": "document",
+        "local_path": str(snapshot),
+        "managed_artifact_path": str(managed),
+    }
+
+    with bind_tool_execution(
+        tool_call_id="call-live",
+        tool_name="read_document",
+        arguments={},
+        artifact_callback=None,
+        session_id="session-1",
+        attachments=(attachment,),
+    ):
+        first = tool.execute(attachment_id="artifact-1")
+        managed.write_text("latest", encoding="utf-8")
+        second = tool.execute(attachment_id="artifact-1")
+
+    assert first["content"] == "current"
+    assert second["content"] == "latest"
+    assert extractor.calls == 2

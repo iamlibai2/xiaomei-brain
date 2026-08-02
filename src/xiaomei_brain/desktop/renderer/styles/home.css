@@ -413,7 +413,9 @@ body.is-resizing-artifact-workspace {
 
 .artifact-workspace-body > .docx-preview-shell,
 .artifact-workspace-body > .pdf-preview-shell,
-.artifact-workspace-body > .spreadsheet-preview-shell {
+.artifact-workspace-body > .spreadsheet-preview-shell,
+.artifact-workspace-body > .text-artifact-preview-shell,
+.artifact-workspace-body > .html-artifact-preview-shell {
   display: flex;
   min-height: 0;
   flex: 1;
@@ -425,7 +427,9 @@ body.is-resizing-artifact-workspace {
 
 .artifact-workspace-body .docx-preview-viewport,
 .artifact-workspace-body .pdf-preview-viewport,
-.artifact-workspace-body .spreadsheet-preview-viewport {
+.artifact-workspace-body .spreadsheet-preview-viewport,
+.artifact-workspace-body .text-artifact-preview-viewport,
+.artifact-workspace-body .html-artifact-preview-frame {
   height: auto;
   min-height: 0;
   flex: 1;
@@ -1259,13 +1263,165 @@ body.is-resizing-artifact-workspace {
 }
 
 .pdf-preview-shell,
-.spreadsheet-preview-shell {
+.spreadsheet-preview-shell,
+.text-artifact-preview-shell,
+.html-artifact-preview-shell {
   position: relative;
   margin-bottom: 12px;
   overflow: hidden;
   border: 1px solid var(--ui-border-default);
   border-radius: 10px;
   background: var(--ui-bg-primary);
+}
+
+.text-artifact-preview-shell {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.text-artifact-preview-shell .artifact-preview-toolbar small {
+  color: var(--ui-color-text-tertiary);
+  font-size: 11px;
+}
+
+.text-artifact-preview-viewport {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  background: var(--ui-bg-secondary);
+}
+
+.text-artifact-preview-surface {
+  box-sizing: border-box;
+  min-height: 100%;
+  padding: 24px clamp(20px, 5vw, 54px) 48px;
+  color: var(--ui-color-text-primary);
+  user-select: text;
+}
+
+.text-artifact-preview-surface.plain pre {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.7;
+  tab-size: 4;
+}
+
+.text-artifact-preview-surface.markdown {
+  max-width: 920px;
+  width: 100%;
+  margin: 0 auto;
+  background: var(--ui-bg-primary);
+}
+
+.text-artifact-preview-surface.markdown .message-md {
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.text-artifact-preview-surface ::selection {
+  background: color-mix(in srgb, var(--ui-brand-primary) 28%, transparent);
+}
+
+.html-artifact-preview-shell {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.html-browser-chrome {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--ui-border-default);
+  background: var(--ui-bg-primary);
+}
+
+.html-browser-toolbar {
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--ui-bg-primary);
+}
+
+.html-browser-icon-button,
+.html-browser-action {
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ui-color-text-secondary);
+  cursor: pointer;
+}
+
+.html-browser-icon-button {
+  width: 34px;
+  flex: 0 0 34px;
+  padding: 0;
+}
+
+.html-browser-action {
+  flex: 0 0 auto;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.html-browser-icon-button:hover:not(:disabled),
+.html-browser-action:hover,
+.html-browser-action.active {
+  background: var(--ui-todo-menu-bg-hover);
+  color: var(--ui-brand-primary);
+}
+
+.html-browser-icon-button:disabled {
+  opacity: .45;
+  cursor: default;
+}
+
+.html-browser-address {
+  min-width: 0;
+  height: 36px;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: 10px;
+  background: var(--ui-bg-secondary);
+  color: var(--ui-color-text-tertiary);
+  font-size: 10px;
+}
+
+.html-browser-address svg {
+  flex: 0 0 auto;
+  color: var(--ui-color-text-secondary);
+}
+
+.html-browser-address strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ui-color-text-secondary);
+  font-size: 13px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.html-artifact-preview-frame {
+  width: 100%;
+  min-height: 0;
+  flex: 1;
+  border: 0;
+  background: white;
 }
 
 .artifact-preview-toolbar {

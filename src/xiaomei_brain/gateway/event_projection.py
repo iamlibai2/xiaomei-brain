@@ -29,6 +29,7 @@ class GatewayEventProjection:
         "capability.setup.requested",
         "capability.setup.updated",
         "artifact.created",
+        "artifact.updated",
         "artifact.presented",
         "assignment.changed",
         "assignment.progress",

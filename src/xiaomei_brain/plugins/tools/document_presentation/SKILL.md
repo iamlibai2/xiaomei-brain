@@ -93,7 +93,8 @@ write_document(
 ## 修改附件
 
 先使用 `read_document` 阅读原演示文稿，再通过当前消息中的真实
-`source_attachment_id` 修改副本，原附件不会被覆盖：
+`source_attachment_id` 修改文稿。用户上传的附件会生成副本，不覆盖上传源文件；
+Agent 自己生成并交付的产物会原位更新，继续使用同一个产物 ID：
 
 ```json
 {

@@ -301,48 +301,70 @@ def append_text_attachments(content: str, attachments: list[dict[str, Any]]) -> 
     sections = [content] if content else ["请阅读以下附件并根据其内容作答。"]
     for item in context_items:
         safe_name = html.escape(str(item["name"]), quote=True)
+        managed_relative_path = html.escape(
+            str(item.get("managed_artifact_relative_path", "")),
+            quote=True,
+        )
+        path_attribute = (
+            f' workspace_path="{managed_relative_path}"'
+            if managed_relative_path else ""
+        )
+        annotation = item.get("annotation")
+        annotation_context = ""
+        if isinstance(annotation, dict):
+            annotation_kind = str(annotation.get("kind", ""))
+            selected_text = html.escape(
+                str(annotation.get("selected_text", "")),
+                quote=False,
+            )
+            if annotation_kind == "spreadsheet" and selected_text:
+                sheet = html.escape(str(annotation.get("sheet", "")), quote=True)
+                cell_range = html.escape(str(annotation.get("range", "")), quote=True)
+                annotation_context = (
+                    f'\n<document_annotation kind="spreadsheet" sheet="{sheet}" '
+                    f'range="{cell_range}">\n'
+                    f"<selected_cells>{selected_text}</selected_cells>\n"
+                    "Treat the user's message as an instruction for this exact cell range. "
+                    "Update this Agent-owned artifact in place, preserve formulas and formatting outside the range, "
+                    "and update dependent totals when required.\n"
+                    "</document_annotation>"
+                )
+            elif annotation_kind == "html" and annotation.get("outer_html"):
+                selector = html.escape(str(annotation.get("selector", "")), quote=True)
+                tag = html.escape(str(annotation.get("tag", "")), quote=True)
+                outer_html = html.escape(str(annotation.get("outer_html", "")), quote=False)
+                context_before = html.escape(str(annotation.get("context_before", "")), quote=False)
+                context_after = html.escape(str(annotation.get("context_after", "")), quote=False)
+                annotation_context = (
+                    f'\n<document_annotation kind="html" selector="{selector}" tag="{tag}">\n'
+                    f"<context_before>{context_before}</context_before>\n"
+                    f"<selected_text>{selected_text}</selected_text>\n"
+                    f"<selected_html>{outer_html}</selected_html>\n"
+                    f"<context_after>{context_after}</context_after>\n"
+                    "Treat the user's message as an instruction for this exact HTML element or text selection. "
+                    "Use the attached_file workspace_path exactly. Update the Agent-owned HTML artifact in place, "
+                    "preserve unrelated markup and styling, "
+                    "then present the same artifact again.\n"
+                    "</document_annotation>"
+                )
+            elif selected_text:
+                page = annotation.get("page")
+                page_attribute = f' page="{int(page)}"' if isinstance(page, int) else ""
+                context_before = html.escape(str(annotation.get("context_before", "")), quote=False)
+                context_after = html.escape(str(annotation.get("context_after", "")), quote=False)
+                annotation_context = (
+                    f'\n<document_annotation kind="text"{page_attribute}>\n'
+                    f"<context_before>{context_before}</context_before>\n"
+                    f"<selected_text>{selected_text}</selected_text>\n"
+                    f"<context_after>{context_after}</context_after>\n"
+                    "Treat the user's message as an instruction for this exact selection. "
+                    "Use the attached_file workspace_path exactly. Update this Agent-owned artifact in place, "
+                    "preserve unrelated content and formatting, then present the same artifact again.\n"
+                    "</document_annotation>"
+                )
         if item.get("kind") == "document":
             safe_id = html.escape(str(item.get("id", "")), quote=True)
             safe_mime = html.escape(str(item.get("mime_type", "")), quote=True)
-            annotation = item.get("annotation")
-            annotation_context = ""
-            if isinstance(annotation, dict) and annotation.get("selected_text"):
-                selected_text = html.escape(
-                    str(annotation.get("selected_text", "")),
-                    quote=False,
-                )
-                if annotation.get("kind") == "spreadsheet":
-                    sheet = html.escape(str(annotation.get("sheet", "")), quote=True)
-                    cell_range = html.escape(str(annotation.get("range", "")), quote=True)
-                    annotation_context = (
-                        f'\n<document_annotation kind="spreadsheet" sheet="{sheet}" '
-                        f'range="{cell_range}">\n'
-                        f"<selected_cells>{selected_text}</selected_cells>\n"
-                        "Treat the user's message as an instruction for this exact cell range. "
-                        "Modify a copy, preserve formulas and formatting outside the range, "
-                        "and update dependent totals when required.\n"
-                        "</document_annotation>"
-                    )
-                else:
-                    page = annotation.get("page")
-                    page_attribute = f' page="{int(page)}"' if isinstance(page, int) else ""
-                    context_before = html.escape(
-                        str(annotation.get("context_before", "")),
-                        quote=False,
-                    )
-                    context_after = html.escape(
-                        str(annotation.get("context_after", "")),
-                        quote=False,
-                    )
-                    annotation_context = (
-                        f'\n<document_annotation kind="text"{page_attribute}>\n'
-                        f"<context_before>{context_before}</context_before>\n"
-                        f"<selected_text>{selected_text}</selected_text>\n"
-                        f"<context_after>{context_after}</context_after>\n"
-                        "Treat the user's message as an instruction for this exact selection. "
-                        "Modify a copy and preserve unrelated content and formatting.\n"
-                        "</document_annotation>"
-                    )
             sections.append(
                 f'\n<attached_document id="{safe_id}" name="{safe_name}" mime_type="{safe_mime}">\n'
                 "Use the read_document tool with this attachment id to inspect its content.\n"
@@ -359,8 +381,9 @@ def append_text_attachments(content: str, attachments: list[dict[str, Any]]) -> 
             )
         else:
             sections.append(
-                f'\n<attached_file name="{safe_name}">\n'
+                f'\n<attached_file name="{safe_name}"{path_attribute}>\n'
                 f'{item.get("text_content", "")}\n'
+                f"{annotation_context}\n"
                 "</attached_file>"
             )
     return "\n".join(sections)

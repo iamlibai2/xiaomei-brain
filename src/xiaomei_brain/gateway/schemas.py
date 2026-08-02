@@ -304,10 +304,20 @@ class ArtifactSpreadsheetSelection(BaseModel):
     selected_text: str = Field(..., min_length=1, max_length=20_000)
 
 
+class ArtifactHtmlSelection(BaseModel):
+    kind: Literal["html"] = "html"
+    selector: str = Field(..., min_length=1, max_length=2_000)
+    tag: str = Field(..., min_length=1, max_length=64)
+    selected_text: str = Field(default="", max_length=20_000)
+    outer_html: str = Field(..., min_length=1, max_length=20_000)
+    context_before: str = Field(default="", max_length=2_000)
+    context_after: str = Field(default="", max_length=2_000)
+
+
 class ChatArtifactReference(BaseModel):
     artifact_id: str = Field(..., min_length=32, max_length=32, pattern=r"^[a-f0-9]+$")
     session_id: str = Field(..., min_length=1, max_length=256)
-    selection: ArtifactTextSelection | ArtifactSpreadsheetSelection | None = None
+    selection: ArtifactTextSelection | ArtifactSpreadsheetSelection | ArtifactHtmlSelection | None = None
 
 
 class ChatSendParams(BaseModel):

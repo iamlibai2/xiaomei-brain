@@ -55,6 +55,28 @@ def test_text_attachment_is_saved_and_added_to_model_context(tmp_path, monkeypat
     assert "你好" in model_input
 
 
+def test_text_artifact_annotation_is_added_to_model_context(tmp_path, monkeypatch):
+    monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: tmp_path))
+    prepared, _, _ = prepare_attachments(
+        "xiaomei", "session-1", [payload("notes.md", "text/markdown", b"before selected after")],
+    )
+    prepared[0]["annotation"] = {
+        "kind": "text",
+        "selected_text": "selected",
+        "context_before": "before ",
+        "context_after": " after",
+    }
+    prepared[0]["managed_artifact_relative_path"] = "work/notes.md"
+
+    model_input = append_text_attachments("rewrite", prepared)
+
+    assert '<attached_file name="notes.md" workspace_path="work/notes.md">' in model_input
+    assert '<document_annotation kind="text">' in model_input
+    assert "<selected_text>selected</selected_text>" in model_input
+    assert "workspace_path exactly" in model_input
+    assert "Update this Agent-owned artifact in place" in model_input
+
+
 def test_image_attachment_id_is_added_to_model_context(tmp_path, monkeypatch):
     monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: tmp_path))
     prepared, images, _ = prepare_attachments(
@@ -200,6 +222,55 @@ def test_chat_schema_accepts_spreadsheet_artifact_selection():
     assert selection.kind == "spreadsheet"
     assert selection.sheet == "Sheet1"
     assert selection.range == "A2:B5"
+
+
+def test_html_artifact_annotation_identifies_exact_element(tmp_path, monkeypatch):
+    monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: tmp_path))
+    prepared, _, _ = prepare_attachments(
+        "xiaomei", "session-1", [payload("page.html", "text/html", b"<main><h1>Hello</h1></main>")],
+    )
+    prepared[0]["annotation"] = {
+        "kind": "html",
+        "selector": "main > h1",
+        "tag": "h1",
+        "selected_text": "Hello",
+        "outer_html": '<h1 class="title">Hello</h1>',
+        "context_before": "",
+        "context_after": "",
+    }
+
+    model_input = append_text_attachments("make it blue", prepared)
+
+    assert '<document_annotation kind="html" selector="main &gt; h1" tag="h1">' in model_input
+    assert "&lt;h1 class=\"title\"&gt;Hello&lt;/h1&gt;" in model_input
+    assert "present the same artifact again" in model_input
+
+
+def test_chat_schema_accepts_html_artifact_selection():
+    parsed = ChatSendParams.model_validate({
+        "content": "change selected element",
+        "client_request_id": "request-html",
+        "session_id": "session-1",
+        "artifact_references": [{
+            "artifact_id": "b" * 32,
+            "session_id": "source-session",
+            "selection": {
+                "kind": "html",
+                "selector": "#hero > h1",
+                "tag": "h1",
+                "selected_text": "Hello",
+                "outer_html": '<h1 id="title">Hello</h1>',
+                "context_before": "",
+                "context_after": "",
+            },
+        }],
+    })
+
+    selection = parsed.artifact_references[0].selection
+    assert selection is not None
+    assert selection.kind == "html"
+    assert selection.selector == "#hero > h1"
+    assert selection.outer_html == '<h1 id="title">Hello</h1>'
 
 
 def test_pptx_is_saved_as_document_without_eager_context_extraction(tmp_path, monkeypatch):

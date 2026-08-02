@@ -64,8 +64,8 @@ class FeishuAdapter(ChannelAdapter):
         ] = {}
         self._assignment_notice_lock = threading.Lock()
         self._artifact_delivery_lock = threading.Lock()
-        self._artifact_deliveries_inflight: set[tuple[str, str, str]] = set()
-        self._artifact_deliveries_sent: set[tuple[str, str, str]] = set()
+        self._artifact_deliveries_inflight: set[tuple[str, str, str, str]] = set()
+        self._artifact_deliveries_sent: set[tuple[str, str, str, str]] = set()
 
     @property
     def capabilities(self) -> ChannelCapabilities:
@@ -558,9 +558,10 @@ class FeishuAdapter(ChannelAdapter):
         elif event == "artifact.presented":
             artifact_id = str(payload.get("id", ""))
             if session_id and artifact_id:
+                artifact_session_id = str(payload.get("session_id") or session_id)
                 threading.Thread(
                     target=self._send_conversation_artifact,
-                    args=(target, session_id, dict(payload)),
+                    args=(target, artifact_session_id, dict(payload)),
                     name=f"feishu-artifact-{artifact_id[:8]}",
                     daemon=True,
                 ).start()
@@ -590,7 +591,12 @@ class FeishuAdapter(ChannelAdapter):
         artifact_id = str(descriptor.get("id", ""))
         if not artifact_id:
             return
-        delivery_key = (target, session_id, artifact_id)
+        delivery_key = (
+            target,
+            session_id,
+            artifact_id,
+            str(descriptor.get("turn_id") or ""),
+        )
         with self._artifact_delivery_lock:
             if (
                 delivery_key in self._artifact_deliveries_inflight

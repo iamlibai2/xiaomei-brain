@@ -1,4 +1,4 @@
-export type ArtifactPreviewKind = "image" | "docx" | "pdf" | "spreadsheet";
+export type ArtifactPreviewKind = "image" | "docx" | "pdf" | "spreadsheet" | "text" | "markdown" | "html";
 
 export interface PreviewableArtifact {
   kind?: string;
@@ -16,9 +16,22 @@ export function artifactPreviewKind(artifact: PreviewableArtifact): ArtifactPrev
   if (
     name.endsWith(".xlsx")
     || name.endsWith(".xls")
+    || name.endsWith(".csv")
+    || mimeType === "text/csv"
     || mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     || mimeType === "application/vnd.ms-excel"
   ) return "spreadsheet";
+  if (
+    name.endsWith(".md")
+    || name.endsWith(".markdown")
+    || mimeType === "text/markdown"
+  ) return "markdown";
+  if (
+    name.endsWith(".html")
+    || name.endsWith(".htm")
+    || mimeType === "text/html"
+  ) return "html";
+  if (name.endsWith(".txt") || mimeType === "text/plain") return "text";
   return null;
 }
 
