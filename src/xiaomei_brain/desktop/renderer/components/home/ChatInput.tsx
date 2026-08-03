@@ -11,9 +11,16 @@ import { ModelQuickMenu } from "./ModelQuickMenu";
 
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+const MAX_VIDEO_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+const MAX_VIDEO_TOTAL_ATTACHMENT_BYTES = 32 * 1024 * 1024;
 const IMAGE_TYPES: Record<string, string> = {
   ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
   ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+};
+const VIDEO_TYPES: Record<string, string> = {
+  ".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime",
+  ".webm": "video/webm", ".mkv": "video/x-matroska",
+  ".avi": "video/x-msvideo", ".mpeg": "video/mpeg", ".mpg": "video/mpeg",
 };
 const OFFICE_TYPES: Record<string, string> = {
   ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -178,8 +185,13 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
     }
     const totalSize = attachments.reduce((sum, item) => sum + item.size, 0)
       + files.reduce((sum, file) => sum + file.size, 0);
-    if (totalSize > MAX_TOTAL_ATTACHMENT_BYTES) {
-      setAttachmentError("附件合计不能超过 8 MB");
+    const hasVideo = attachments.some((item) => item.kind === "video")
+      || files.some((file) => VIDEO_TYPES[fileExtension(file.name)]);
+    const totalLimit = hasVideo
+      ? MAX_VIDEO_TOTAL_ATTACHMENT_BYTES
+      : MAX_TOTAL_ATTACHMENT_BYTES;
+    if (totalSize > totalLimit) {
+      setAttachmentError(`附件合计不能超过 ${totalLimit / 1024 / 1024} MB`);
       return;
     }
     try {
@@ -431,24 +443,32 @@ function formatFileSize(size: number): string {
 }
 
 async function droppedAttachment(file: File): Promise<ChatAttachment> {
-  const extensionIndex = file.name.lastIndexOf(".");
-  const extension = extensionIndex >= 0 ? file.name.slice(extensionIndex).toLowerCase() : "";
+  const extension = fileExtension(file.name);
   const imageMime = IMAGE_TYPES[extension];
+  const videoMime = VIDEO_TYPES[extension];
   const officeMime = OFFICE_TYPES[extension];
-  if (!imageMime && !officeMime && !TEXT_EXTENSIONS.has(extension)) {
+  if (!imageMime && !videoMime && !officeMime && !TEXT_EXTENSIONS.has(extension)) {
     throw new Error(`暂不支持 ${file.name} 的文件类型`);
   }
   if (file.size === 0) throw new Error(`${file.name} 是空文件`);
-  if (file.size > MAX_ATTACHMENT_BYTES) throw new Error(`${file.name} 超过 5 MB`);
+  const itemLimit = videoMime ? MAX_VIDEO_ATTACHMENT_BYTES : MAX_ATTACHMENT_BYTES;
+  if (file.size > itemLimit) {
+    throw new Error(`${file.name} 超过 ${itemLimit / 1024 / 1024} MB`);
+  }
   const dataBase64 = await readFileBase64(file);
   return {
     id: crypto.randomUUID(),
     name: file.name,
-    mimeType: imageMime || officeMime || "text/plain",
+    mimeType: imageMime || videoMime || officeMime || "text/plain",
     size: file.size,
-    kind: imageMime ? "image" : officeMime ? "document" : "text",
+    kind: imageMime ? "image" : videoMime ? "video" : officeMime ? "document" : "text",
     dataBase64,
   };
+}
+
+function fileExtension(name: string): string {
+  const index = name.lastIndexOf(".");
+  return index >= 0 ? name.slice(index).toLowerCase() : "";
 }
 
 function readFileBase64(file: File): Promise<string> {

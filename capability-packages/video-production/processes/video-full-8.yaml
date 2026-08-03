@@ -1,0 +1,67 @@
+schema_version: 1
+id: video-full-8
+name: 视频完整制作标准
+description: 用户要求完整八阶段交付、逐阶段确认或正式制作时使用的交付标准。
+project_types: [video.production]
+tags: [video, full, eight-stage, delivery]
+ordered: true
+stages:
+  - id: brief
+    title: 需求和约束
+    requirements:
+      - type: asset
+        kind: brief
+        label: 需求简报
+  - id: director
+    title: 编导与叙事
+    requirements:
+      - type: evidence
+        key: direction
+        label: 编导方案
+  - id: storyboard
+    title: 分镜与转场
+    requirements:
+      - type: asset
+        kind: storyboard
+        label: 结构化分镜
+  - id: visual
+    title: 静态画面与视觉样片
+    requirements:
+      - type: asset
+        kind: image
+        label: 视觉样片
+  - id: motion
+    title: 内容动画与转场
+    requirements:
+      - type: asset
+        kind: video
+        label: 动态镜头
+  - id: audio
+    title: 口播、音乐与声音决定
+    requirements:
+      - type: evidence
+        key: audio_decision
+        label: 有声或默片决定
+  - id: composition
+    title: 时间线、字幕与最终合成
+    requirements:
+      - type: asset
+        kind: video
+        role: deliverable
+        label: 候选成片
+  - id: acceptance
+    title: 技术验收与观看确认
+    requirements:
+      - type: asset
+        kind: video
+        role: deliverable
+        label: 最终成片
+      - type: evidence
+        key: has_video
+        from_asset: true
+        equals: true
+        label: 有效视频流
+      - type: evidence
+        key: user_confirmed
+        equals: true
+        label: 用户观看确认

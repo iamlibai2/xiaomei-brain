@@ -12,7 +12,7 @@ from xiaomei_brain.plugin.registry import PluginRegistry
 
 _SERVICE_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _FIELD_KEY = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
-_CAPABILITIES = frozenset({"image", "tts", "music"})
+_CAPABILITIES = frozenset({"image", "tts", "music", "video"})
 _FIELD_TYPES = frozenset({"secret", "text", "number", "boolean", "select"})
 
 
@@ -62,6 +62,11 @@ class MediaServiceSpec:
     test_path: str = ""
     test_method: str = "POST"
     test_body: dict[str, Any] = field(default_factory=dict)
+    connection_kind: str = "remote"
+    default_enabled: bool = False
+    test_kind: str = "remote"
+    test_module: str = ""
+    test_health_url: str = ""
 
     def field(self, key: str) -> MediaFieldSpec | None:
         return next((item for item in self.fields if item.key == key), None)
@@ -104,6 +109,11 @@ def discover_media_service_specs(
             test_path=str(test.get("path") or "").strip(),
             test_method=str(test.get("method") or "POST").strip().upper(),
             test_body=dict(body),
+            connection_kind=str(raw.get("connectionKind") or "remote").strip().lower(),
+            default_enabled=bool(raw.get("defaultEnabled", False)),
+            test_kind=str(test.get("kind") or "remote").strip().lower(),
+            test_module=str(test.get("module") or "").strip(),
+            test_health_url=str(test.get("healthUrl") or "").strip(),
         )
     return specs
 

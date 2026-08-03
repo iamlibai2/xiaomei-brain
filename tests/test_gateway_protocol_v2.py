@@ -489,6 +489,39 @@ def test_chat_send_returns_the_same_turn_id_that_enters_living():
     assert response["result"]["deferred"] is False
 
 
+def test_chat_send_reports_structured_steer_target():
+    accepted_message = LivingMessage(
+        content="补充一个要求",
+        user_id="user-1",
+        session_id="session-1",
+        source="desktop",
+        steered_into_turn_id="active-turn",
+    )
+
+    class Inbound:
+        def accept(self, _raw):
+            return Accepted(accepted_message)
+
+    router = MethodRouter(living=SimpleNamespace(_gateway_inbound=Inbound()))
+    router._auth_sessions.add("connection-1")
+
+    response = router.dispatch(
+        "connection-1",
+        "request-steer",
+        "chat.send",
+        {
+            "content": "补充一个要求",
+            "client_request_id": "client-request-steer",
+            "session_id": "session-1",
+            "user_id": "user-1",
+        },
+    )
+
+    assert response["result"]["accepted"] is True
+    assert response["result"]["status"] == "steering"
+    assert response["result"]["active_turn_id"] == "active-turn"
+
+
 def test_chat_send_reports_that_dreaming_agent_deferred_the_queued_turn():
     accepted_message = LivingMessage(
         content="醒来后告诉我",

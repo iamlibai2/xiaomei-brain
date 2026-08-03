@@ -11,6 +11,7 @@ import time
 from typing import Any, Callable, Generator
 
 from xiaomei_brain.llm.client import LLMClient
+from xiaomei_brain.agent.steering import SteerMessage
 from xiaomei_brain.memory.conversation_db import ConversationDB
 from xiaomei_brain.base.message_utils import estimate_tokens
 from xiaomei_brain.memory.self_model import SelfModel
@@ -31,6 +32,12 @@ from xiaomei_brain.agent.message_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+MAX_BLOCKED_TOOL_RETRIES_PER_RUN = 2
+REPEATED_TOOL_FAILURE_MESSAGE = (
+    "同一个工具调用已经连续失败，我已停止继续重试，避免陷入无效循环。"
+    "需要先修正调用参数、输入文件或执行方案后再继续。"
+)
 
 
 def _tool_result_failed(result: Any) -> bool:
@@ -109,8 +116,10 @@ class Agent:
         self.tool_workspace_root: str = ""
         self.tool_working_directory: str = ""
         self.tool_output_root: str = ""
+        # Optional immutable Project authority for this isolated execution.
+        self.project_context: Any = None
         self.tool_call_buffer: ToolCallBuffer = ToolCallBuffer()  # 实例级，每个 Agent 独立
-        self._steer_queue: queue.Queue = queue.Queue()  # 线程安全，steer 消息暂存
+        self._steer_queue: queue.Queue[SteerMessage] = queue.Queue()
 
         # ── Intent context (from ConsciousLiving) ──────────────────────
         self.intent_context: str = ""  # 意图上下文（注入 system prompt）
@@ -132,6 +141,7 @@ class Agent:
         self.on_speech: Callable[[Any], str] | None = None
         self.on_tool_approval: Callable[[str, str, dict], dict | None] | None = None
         self.on_action_complete: Callable[[str, str, bool], None] | None = None
+        self.on_steer_consumed: Callable[[list[SteerMessage]], None] | None = None
 
         # ── Internal display (injected by ConversationDriver) ──
         self.internal_display: Any = None  # InternalDisplay 实例
@@ -265,6 +275,8 @@ class Agent:
         _ped = print_edit_diff
         _pwr = print_write_result
         _tool_failure_counts: dict[tuple, int] = {}  # (name, args_json) -> 失败次数
+        _blocked_tool_retries = 0
+        _repeated_failure_stop = False
         _pending_document_outputs: dict[str, str] = {}
         _presented_outputs: set[str] = set()
 
@@ -286,10 +298,31 @@ class Agent:
                     break
 
                 # 注入排队中的 steer 消息（在当前工具批次之后、下一轮 LLM 调用之前）
-                steer_msg = self._drain_steer()
-                if steer_msg:
-                    self.messages.append({"role": "user", "content": steer_msg})
-                    logger.info("[Agent] Steer 注入 (step=%d): %s", step, steer_msg[:80])
+                steer_messages = self._drain_steer()
+                if steer_messages:
+                    for steer_msg in steer_messages:
+                        injected: dict[str, Any] = {
+                            "role": "user",
+                            "content": steer_msg.content,
+                        }
+                        if steer_msg.message_id is not None:
+                            injected["id"] = steer_msg.message_id
+                        self.messages.append(injected)
+                    steer_context = "\n".join(
+                        message.content for message in steer_messages
+                    )
+                    _accumulated_context += f"\nUser steering:\n{steer_context}"
+                    if self.on_steer_consumed is not None:
+                        try:
+                            self.on_steer_consumed(steer_messages)
+                        except Exception:
+                            logger.exception("Failed to record consumed steer messages")
+                    logger.info(
+                        "[Agent] Steer 注入 (step=%d, count=%d): %s",
+                        step,
+                        len(steer_messages),
+                        steer_messages[0].content[:80],
+                    )
 
                 # 每步根据累积上下文动态选择工具
                 if self._dynamic_loader:
@@ -392,12 +425,15 @@ class Agent:
                         call_key = (tc.name, json.dumps(args_dict, sort_keys=True))
                         fail_count = _tool_failure_counts.get(call_key, 0)
                         if fail_count >= 3:
+                            _blocked_tool_retries += 1
                             result = (
                                 f"Blocked retry: {tc.name} with the same arguments has failed "
                                 f"{fail_count} times. Do NOT retry this. Try a different approach "
                                 f"or report the problem to the user."
                             )
                             logger.warning("[Agent] 拦截重复失败工具调用(%d次): %s", fail_count, tc.name)
+                            if _blocked_tool_retries >= MAX_BLOCKED_TOOL_RETRIES_PER_RUN:
+                                _repeated_failure_stop = True
                         else:
                             if self.tools is None:
                                 result = "Error: ToolRegistry not initialized. Please restart the agent."
@@ -421,7 +457,12 @@ class Agent:
                         )
 
                         # 记录失败次数，成功则清除
-                        if _tool_result_failed(result):
+                        if fail_count >= 3:
+                            # The blocked result is framework feedback, not a
+                            # new execution failure. Keep the real failure
+                            # count stable instead of increasing forever.
+                            pass
+                        elif _tool_result_failed(result):
                             _tool_failure_counts[call_key] = fail_count + 1
                         else:
                             _tool_failure_counts.pop(call_key, None)
@@ -501,6 +542,14 @@ class Agent:
                         if tool_control.get("type") == "handoff":
                             handoff_message = str(tool_control.get("message", "")).strip()
                             break
+
+                    if _repeated_failure_stop:
+                        logger.error(
+                            "[Agent] ReAct 因重复失败工具调用停止 (step=%d, blocked=%d)",
+                            step,
+                            _blocked_tool_retries,
+                        )
+                        break
 
                     if handoff_message:
                         assistant_msg_id = None
@@ -645,17 +694,33 @@ class Agent:
                         return
 
         finally:
-            # Drain unprocessed steer messages so they do not leak
-            # into a later stream() call (e.g. after handoff/abort).
-            while True:
-                try:
-                    self._steer_queue.get_nowait()
-                except queue.Empty:
-                    break
+            # Ownership of unconsumed messages returns to Living when the
+            # active Turn closes.  Never discard a human message here.
+            pass
         self._auto_present_document_outputs(
             _pending_document_outputs,
             _presented_outputs,
         )
+        if _repeated_failure_stop:
+            assistant_msg_id = None
+            if self.conversation_db:
+                metadata = {"stop_reason": "repeated_tool_failure"}
+                if self.turn_id:
+                    metadata["turn_id"] = self.turn_id
+                assistant_msg_id = self.conversation_db.log(
+                    session_id=self.session_id,
+                    role="assistant",
+                    content=REPEATED_TOOL_FAILURE_MESSAGE,
+                    user_id=self.user_id,
+                    metadata=metadata,
+                )
+            self.messages.append({
+                "role": "assistant",
+                "content": REPEATED_TOOL_FAILURE_MESSAGE,
+                "id": assistant_msg_id,
+            })
+            yield REPEATED_TOOL_FAILURE_MESSAGE
+            return
         yield "Agent reached maximum steps without producing a final answer."
 
     @staticmethod
@@ -752,8 +817,8 @@ class Agent:
             ", ".join(paths),
         )
 
-    def steer(self, message: str) -> None:
-        """Inject a user-like message into the active ReAct loop.
+    def steer(self, message: SteerMessage) -> None:
+        """Queue one structured human message for the active ReAct loop.
 
         The message appears as a new ``{"role": "user", ...}`` entry in
         ``self.messages`` at the next tool-batch boundary, so the model sees
@@ -761,23 +826,23 @@ class Agent:
 
         Thread-safe: may be called from any thread.
         """
-        text = message.strip()
-        if not text:
+        if not message.content.strip():
             return
-        self._steer_queue.put_nowait(text)
+        self._steer_queue.put_nowait(message)
 
-    def _drain_steer(self) -> str | None:
-        """Drain all queued steer messages, returning the concatenated
-        result or None if the queue was empty."""
-        parts: list[str] = []
+    def _drain_steer(self) -> list[SteerMessage]:
+        """Return all steer messages currently waiting, in arrival order."""
+        messages: list[SteerMessage] = []
         while True:
             try:
-                parts.append(self._steer_queue.get_nowait())
+                messages.append(self._steer_queue.get_nowait())
             except queue.Empty:
                 break
-        if not parts:
-            return None
-        return "\n\n".join(parts)
+        return messages
+
+    def take_pending_steers(self) -> list[SteerMessage]:
+        """Return steers not consumed before the active Turn ended."""
+        return self._drain_steer()
 
     def _execute_tool_call(self, tool_call_id: str, tool_name: str, arguments: dict) -> str:
         """Apply the Agent approval boundary, then execute the sealed tool call."""
@@ -811,6 +876,8 @@ class Agent:
                     workspace_root=self.tool_workspace_root,
                     working_directory=self.tool_working_directory,
                     output_root=self.tool_output_root,
+                    project_context=self.project_context,
+                    project_service=getattr(self, "project_service", None),
                 ):
                     result = normalize_tool_result(
                         self.tools.execute(tool_name, **arguments)
@@ -866,6 +933,7 @@ class Agent:
 
         loop_messages: list[dict[str, Any]] = []
         _tool_failure_counts: dict[tuple, int] = {}
+        _blocked_tool_retries = 0
         _idx = 0
 
         # 动态工具加载：累积上下文供每步 embed 召回
@@ -940,6 +1008,7 @@ class Agent:
                     call_key = (tc.name, json.dumps(args_dict, sort_keys=True))
                     fail_count = _tool_failure_counts.get(call_key, 0)
                     if fail_count >= 3:
+                        _blocked_tool_retries += 1
                         result = (
                             f"Blocked retry: {tc.name} with the same arguments has failed "
                             f"{fail_count} times. Do NOT retry this. Try a different approach "
@@ -953,7 +1022,9 @@ class Agent:
                         else:
                             result = self._execute_tool_call(tc.id, tc.name, args_dict)
 
-                    if _tool_result_failed(result):
+                    if fail_count >= 3:
+                        pass
+                    elif _tool_result_failed(result):
                         _tool_failure_counts[call_key] = fail_count + 1
                     else:
                         _tool_failure_counts.pop(call_key, None)
@@ -1012,6 +1083,14 @@ class Agent:
                     # Action handoff. Stop before another tool or LLM step.
                     if cancel_check and cancel_check():
                         return ""
+
+                if _blocked_tool_retries >= MAX_BLOCKED_TOOL_RETRIES_PER_RUN:
+                    logger.error(
+                        "[Agent] react_nodb 因重复失败工具调用停止 (step=%d, blocked=%d)",
+                        step,
+                        _blocked_tool_retries,
+                    )
+                    return REPEATED_TOOL_FAILURE_MESSAGE
             else:
                 final_text = response.content or response.reasoning or ""
                 if not final_text:

@@ -103,6 +103,18 @@ def create_assignment_tools(agent: Any = None) -> list[Tool]:
         service = _service()
         session_id = str(getattr(core, "session_id", "")).strip()
         turn_id = str(getattr(core, "turn_id", "")).strip()
+        scope_type = "person"
+        scope_id = person.actor_id
+        project_id = str(getattr(core, "active_project_id", "")).strip()
+        project_service = getattr(agent, "project_service", None)
+        if project_id and project_service is not None:
+            from xiaomei_brain.projects import ProjectActor, ProjectActorType
+            project_service.require_project(
+                project_id,
+                actor=ProjectActor(ProjectActorType.PERSON, person.actor_id),
+            )
+            scope_type = "project"
+            scope_id = project_id
         digest = hashlib.sha256(
             f"{person.actor_id}\0{turn_id}\0{title.strip()}".encode("utf-8"),
         ).hexdigest()[:24]
@@ -111,8 +123,8 @@ def create_assignment_tools(agent: Any = None) -> list[Tool]:
             objective=objective,
             actor=person,
             requester_person_id=person.actor_id,
-            scope_type="person",
-            scope_id=person.actor_id,
+            scope_type=scope_type,
+            scope_id=scope_id,
             origin_channel=str(getattr(core, "current_source", "conversation")),
             origin_session_id=session_id,
             origin_turn_id=turn_id,
@@ -128,6 +140,7 @@ def create_assignment_tools(agent: Any = None) -> list[Tool]:
         for resource_type, resource_key, relation in (
             ("session", session_id, "origin"),
             ("turn", turn_id, "origin"),
+            ("project", project_id, "container"),
         ):
             if resource_key:
                 service.link_resource(

@@ -25,7 +25,7 @@ export interface ChatAttachment {
   name: string;
   mimeType: string;
   size: number;
-  kind: "image" | "text" | "document";
+  kind: "image" | "text" | "document" | "video";
   dataBase64?: string;
 }
 
@@ -161,7 +161,7 @@ export interface ModelConfigSnapshot {
   hashes: { global: string; agent: string };
 }
 
-export type MediaCapability = "image" | "tts" | "music";
+export type MediaCapability = "image" | "tts" | "music" | "video";
 
 export interface MediaServiceField {
   key: string;
@@ -187,8 +187,23 @@ export interface MediaServiceConfig {
   secret_configured: boolean;
   secret_hint: string;
   restart_required: boolean;
+  connection_kind: "remote" | "local" | "hybrid";
   fields: MediaServiceField[];
   values: Record<string, string | number | boolean | null>;
+}
+
+export interface MediaRuntimeToolStatus {
+  id: "ffmpeg" | "ffprobe";
+  name: string;
+  available: boolean;
+  version: string;
+  path: string;
+  error: string;
+}
+
+export interface MediaRuntimeStatus {
+  ready: boolean;
+  tools: MediaRuntimeToolStatus[];
 }
 
 export type ToolServiceCapability = "web_search";
@@ -341,6 +356,9 @@ export interface GatewayBridge {
   unifiedSearch(args: { agentId: string; query: string; limit?: number }): Promise<JsonRpcResponse>;
   listAssignments(args: { agentId: string; status?: string; limit?: number }): Promise<JsonRpcResponse>;
   getAssignment(args: { agentId: string; assignmentId: string; eventLimit?: number }): Promise<JsonRpcResponse>;
+  listProjects(args: { agentId: string; status?: string; limit?: number }): Promise<JsonRpcResponse>;
+  getProject(args: { agentId: string; projectId: string; eventLimit?: number }): Promise<JsonRpcResponse>;
+  getCurrentProject(args: { agentId: string; sessionId: string }): Promise<JsonRpcResponse>;
   listActivities(args: {
     agentId: string;
     status?: string;
@@ -447,6 +465,9 @@ export interface GatewayBridge {
   listMediaServices(args: {
     agentId: string;
     capability?: MediaCapability;
+  }): Promise<JsonRpcResponse>;
+  getMediaRuntimeStatus(args: {
+    agentId: string;
   }): Promise<JsonRpcResponse>;
   getMediaService(args: {
     agentId: string;

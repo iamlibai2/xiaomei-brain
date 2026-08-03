@@ -12,6 +12,8 @@ from typing import Any
 from ..attachments import (
     AttachmentError,
     MAX_REFERENCED_ARTIFACT_BYTES,
+    MAX_TOTAL_BYTES,
+    MAX_VIDEO_TOTAL_BYTES,
     attachment_fingerprint,
     cleanup_attachments,
     prepare_attachments,
@@ -246,7 +248,9 @@ class ChatMethods:
             combined_limit = (
                 MAX_REFERENCED_ARTIFACT_BYTES
                 if parsed.artifact_references
-                else 8 * 1024 * 1024
+                else MAX_VIDEO_TOTAL_BYTES
+                if any(item.get("kind") == "video" for item in combined)
+                else MAX_TOTAL_BYTES
             )
             if sum(int(item.get("size", 0)) for item in combined) > combined_limit:
                 raise AttachmentError(
@@ -290,7 +294,17 @@ class ChatMethods:
                 living_state = getattr(getattr(living, "state", None), "value", "")
                 response["turn_id"] = accepted_result.living_message.turn_id
                 response["message_id"] = accepted_result.living_message.message_id
-                response["status"] = "queued"
+                active_turn_id = str(
+                    getattr(
+                        accepted_result.living_message,
+                        "steered_into_turn_id",
+                        "",
+                    )
+                    or ""
+                )
+                response["status"] = "steering" if active_turn_id else "queued"
+                if active_turn_id:
+                    response["active_turn_id"] = active_turn_id
                 response["deferred"] = living_state == "dreaming"
                 if response["deferred"]:
                     response["deferred_reason"] = "dreaming"
@@ -321,9 +335,15 @@ class ChatMethods:
             "session_id": session_id,
             "turn_id": message.turn_id,
             "message_id": getattr(message, "message_id", None),
-            "status": "queued",
+            "status": (
+                "steering"
+                if getattr(message, "steered_into_turn_id", "")
+                else "queued"
+            ),
             "deferred": getattr(getattr(living, "state", None), "value", "") == "dreaming",
         }
+        if getattr(message, "steered_into_turn_id", ""):
+            response["active_turn_id"] = message.steered_into_turn_id
         if response["deferred"]:
             response["deferred_reason"] = "dreaming"
         self._remember_receipt(
@@ -542,7 +562,13 @@ class ChatMethods:
                     ):
                         message["attachments"] = user_metadata["attachments"]
                     if isinstance(user_metadata, dict):
-                        for key in ("turn_id", "status", "error", "retry_of"):
+                        for key in (
+                            "turn_id",
+                            "status",
+                            "error",
+                            "retry_of",
+                            "steered_into_turn_id",
+                        ):
                             if key in user_metadata:
                                 message[key] = user_metadata[key]
                 elif row.get("role") == "assistant":

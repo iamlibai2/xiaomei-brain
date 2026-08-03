@@ -342,6 +342,16 @@ def build_context(
         group_observations = _render_group_observations(agent)
         if group_observations:
             system_content += "\n\n" + group_observations
+        from xiaomei_brain.projects import render_project_context
+        project_context = render_project_context(agent)
+        if project_context:
+            system_content += "\n\n" + project_context
+
+        from xiaomei_brain.processes import render_process_context
+        process_context = render_process_context(agent)
+        if process_context:
+            system_content += "\n\n" + process_context
+
         from xiaomei_brain.assignments import render_assignment_context
         assignment_context = render_assignment_context(agent)
         if assignment_context:

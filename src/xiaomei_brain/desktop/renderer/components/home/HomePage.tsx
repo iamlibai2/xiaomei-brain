@@ -25,7 +25,7 @@ import { supportsArtifactPreview } from "../../artifacts/preview-capability";
 const EMPTY_MSGS: DisplayMessage[] = [];
 const EMPTY_ASSIGNMENTS: AssignmentSnapshot[] = [];
 const EMPTY_ARTIFACTS: ArtifactSnapshot[] = [];
-type RightSidebarSection = "activity" | "state" | "assignment" | "artifact" | "memory" | "context";
+type RightSidebarSection = "activity" | "state" | "project" | "assignment" | "artifact" | "memory" | "context";
 
 function displayMessageTurnId(message: DisplayMessage): string {
   return message.turnId
@@ -960,6 +960,8 @@ function MessageAttachment({
             ? "!"
             : attachment.kind === "audio"
               ? "VOICE"
+              : attachment.kind === "video"
+                ? "VIDEO"
               : "FILE"}
         </span>
       )}

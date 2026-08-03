@@ -24,6 +24,7 @@ from .methods import (
     MediaServiceMethods,
     MemoryMethods,
     ModelMethods,
+    ProjectMethods,
     SearchMethods,
     SessionMethods,
     ToolServiceMethods,
@@ -72,6 +73,7 @@ class MethodRouter:
         self._artifact_methods = ArtifactMethods(living, self._identity_contexts)
         self._assignment_methods = AssignmentMethods(living, self._identity_contexts)
         self._activity_methods = ActivityMethods(living, self._identity_contexts)
+        self._project_methods = ProjectMethods(living, self._identity_contexts)
         self._agent_state_methods = AgentStateMethods(
             living,
             self._identity_contexts,
@@ -102,6 +104,7 @@ class MethodRouter:
             self._artifact_methods,
             self._assignment_methods,
             self._activity_methods,
+            self._project_methods,
             self._agent_state_methods,
             self._search_methods,
             self._channel_methods,
@@ -170,6 +173,12 @@ class MethodRouter:
                 "activity.get",
             },
             "activity.events": {"activity.get"},
+            "project.read": {
+                "project.list",
+                "project.get",
+                "project.current",
+            },
+            "project.events": {"project.get"},
             "memory.read": {"memory.list"},
             "agent.state": {"agent.state.get"},
             "capability.read": {"capability.list", "capability.get"},
@@ -197,6 +206,7 @@ class MethodRouter:
                 "media.service.configure",
                 "media.service.test",
                 "media.service.remove",
+                "media.runtime.status",
             },
             "tool.service.configuration": {
                 "tool.service.list",

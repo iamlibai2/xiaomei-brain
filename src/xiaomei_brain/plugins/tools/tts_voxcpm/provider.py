@@ -41,6 +41,7 @@ class VoxCPMProvider:
         device: str | None = None,
         local_files_only: bool = False,
         agent_id: str = "default",
+        server_url: str | None = None,
     ):
         self.model_id = model_id or DEFAULT_MODEL_ID
         self.voice_desc = voice_desc
@@ -51,9 +52,10 @@ class VoxCPMProvider:
         self._model = None
 
         # 远程服务
-        self._server_url = os.environ.get(
-            "VOXCPM_SERVER_URL", DEFAULT_SERVER_URL
-        )
+        self._server_url = str(
+            server_url
+            or os.environ.get("VOXCPM_SERVER_URL", DEFAULT_SERVER_URL)
+        ).rstrip("/")
         self._remote_available: bool | None = None
         self._remote_sample_rate: int | None = None
 

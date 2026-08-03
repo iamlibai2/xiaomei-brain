@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import copy
 import json
+import logging
 import os
 import re
 import time
@@ -24,6 +25,8 @@ from .execution_context import AssignmentExecutionContext, ExecutionControl
 from .executor import ExecutionResult
 from .models import ActorType, AssignmentActor
 from .service import AssignmentService
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_BACKGROUND_TOOLS = frozenset({
@@ -77,12 +80,14 @@ class IsolatedAssignmentRunner:
         # immediately before it could close its final plan steps.
         max_steps: int = 60,
         realtime_busy: Callable[[], bool] | None = None,
+        project_service: Any | None = None,
     ) -> None:
         self.agent_instance = agent_instance
         self.service = service
         self.allowed_tools = frozenset(allowed_tools)
         self.max_steps = max(1, max_steps)
         self._realtime_busy = realtime_busy
+        self.project_service = project_service
 
     def __call__(
         self,
@@ -119,6 +124,7 @@ class IsolatedAssignmentRunner:
             tools=isolated_tools,
         )
         runtime.active_assignment_id = context.assignment_id
+        runtime.project_context = context.project_context
         runtime.tool_workspace_root = str(workspace_root)
         runtime.tool_working_directory = str(work_dir)
         runtime.tool_output_root = str(outputs_dir)
@@ -294,6 +300,52 @@ class IsolatedAssignmentRunner:
                         tool_call_id=tool_call_id,
                     )
                 public = public_artifact_metadata(artifact)
+                is_new_artifact = not any(
+                    item.get("id") == public.get("id") for item in artifacts
+                )
+                if (
+                    context.project_context is not None
+                    and self.project_service is not None
+                    and artifact["workspace_role"] == "deliverable_candidate"
+                    and is_new_artifact
+                ):
+                    try:
+                        from xiaomei_brain.projects import (
+                            ProjectActor,
+                            ProjectActorType,
+                            ProjectAssetRole,
+                        )
+                        source_path = (
+                            Path.home()
+                            / ".xiaomei-brain"
+                            / context.agent_id
+                            / relative_path
+                        ).resolve()
+                        state_root = Path(context.project_context.state_root).resolve()
+                        relative_to_project = source_path.relative_to(state_root).as_posix()
+                        project_asset = self.project_service.register_asset(
+                            context.project_context.project_id,
+                            actor=ProjectActor(
+                                ProjectActorType.AGENT,
+                                context.agent_id,
+                            ),
+                            relative_uri=relative_to_project,
+                            role=ProjectAssetRole.DELIVERABLE,
+                            kind=str(artifact.get("kind") or "file"),
+                            name=str(artifact.get("name") or source_path.name),
+                            source_type="assignment",
+                            source_id=context.assignment_id,
+                            producer=tool_name,
+                            metadata={"artifact_id": str(artifact["id"])},
+                        )
+                        public["project_asset_id"] = project_asset.id
+                    except Exception:
+                        # Artifact delivery stays authoritative even if its
+                        # secondary Project asset projection cannot be built.
+                        logger.exception(
+                            "Failed to register Project asset for Assignment %s",
+                            context.assignment_id,
+                        )
                 self.service.link_resource(
                     context.assignment_id,
                     actor=AssignmentActor(ActorType.AGENT, context.agent_id),
@@ -306,7 +358,7 @@ class IsolatedAssignmentRunner:
                     ),
                     metadata=public,
                 )
-                if not any(item.get("id") == public.get("id") for item in artifacts):
+                if is_new_artifact:
                     artifacts.append(public)
 
         runtime.on_tool_complete = on_tool_complete
@@ -802,6 +854,15 @@ class IsolatedAssignmentRunner:
     def _workspace_dirs(
         context: AssignmentExecutionContext,
     ) -> tuple[Path, Path, Path]:
+        if context.project_context is not None:
+            project = context.project_context
+            state_root = Path(project.state_root)
+            root = state_root / "state" / "assignments" / context.assignment_id
+            work = Path(project.work_root) if project.work_root else root / "work"
+            outputs = state_root / "deliverables"
+            for directory in (root / "inputs", work, outputs):
+                directory.mkdir(parents=True, exist_ok=True)
+            return root, work, outputs
         root = (
             Path.home() / ".xiaomei-brain" / context.agent_id / "workspace"
             / "assignments" / context.assignment_id
@@ -833,8 +894,7 @@ class IsolatedAssignmentRunner:
         )
         from xiaomei_brain.gateway.attachments import restore_attachment_refs
 
-        agent_root = Path.home() / ".xiaomei-brain" / context.agent_id
-        input_dir = agent_root / "workspace" / "assignments" / context.assignment_id / "inputs"
+        input_dir = self._workspace_dirs(context)[0] / "inputs"
         prepared: list[dict[str, Any]] = []
         for item in context.resources:
             metadata = _thaw(item.metadata)

@@ -14,7 +14,8 @@ from typing import Any
 from uuid import uuid4
 
 MAX_ARTIFACT_BYTES = 20 * 1024 * 1024
-_OUTPUT_DIRS = {"workspace", "images", "music", "tts"}
+MAX_VIDEO_ARTIFACT_BYTES = 128 * 1024 * 1024
+_OUTPUT_DIRS = {"workspace", "images", "music", "tts", "videos", "projects"}
 
 
 class ArtifactError(ValueError):
@@ -86,10 +87,10 @@ def discover_tool_artifacts(
         if relative_path in seen:
             continue
         seen.add(relative_path)
-        size = resolved.stat().st_size
-        if size <= 0 or size > MAX_ARTIFACT_BYTES:
-            continue
         mime_type = _guess_mime_type(resolved)
+        size = resolved.stat().st_size
+        if size <= 0 or size > _max_artifact_bytes(mime_type):
+            continue
         replacement = replacements.get(
             os.path.normcase(str(resolved)),
         )
@@ -153,7 +154,9 @@ def read_stored_artifact(
         data = path.read_bytes()
     except FileNotFoundError as exc:
         raise ArtifactError("产物文件不存在或已被移除") from exc
-    if not data or len(data) > MAX_ARTIFACT_BYTES:
+    if not data or len(data) > _max_artifact_bytes(
+        str(artifact.get("mime_type") or ""),
+    ):
         raise ArtifactError("产物为空或超过 20 MB")
     if int(artifact.get("size", -1)) != len(data):
         raise ArtifactError("产物快照与会话记录不一致")
@@ -311,6 +314,13 @@ def _structured_value(result: str) -> Any:
         except (ValueError, SyntaxError, json.JSONDecodeError):
             continue
     return None
+
+
+def _max_artifact_bytes(mime_type: str) -> int:
+    """Keep the normal snapshot limit small while permitting generated clips."""
+    if mime_type.startswith("video/"):
+        return MAX_VIDEO_ARTIFACT_BYTES
+    return MAX_ARTIFACT_BYTES
 
 
 def _artifact_kind(mime_type: str, suffix: str) -> str:

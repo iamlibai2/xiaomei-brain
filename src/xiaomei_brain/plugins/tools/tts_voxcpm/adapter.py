@@ -18,6 +18,9 @@ def register(ctx):
 
     # 从插件配置读取参数（config.json 的 plugins.entries.tts_voxcpm 段）
     cfg = ctx.config or {}
+    if not cfg.get("enabled", True):
+        ctx.logger.info("VoxCPM 语音合成未启用，跳过注册")
+        return
     # 优先本地路径，否则用 HuggingFace Hub ID
     import os as _os
     model_id = cfg.get("model_id")
@@ -33,6 +36,7 @@ def register(ctx):
         voice_desc=voice_desc,
         device=device,
         agent_id=ctx.agent_id,
+        server_url=cfg.get("server_url"),
     )
     set_provider(provider)
     ctx.summary = f"model={model_id}, device={device}"

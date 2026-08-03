@@ -154,6 +154,14 @@ class AgentManager:
         package_dirs = package_service.runtime_directories()
         agent._capability_package_service = package_service
 
+        # Process templates are executable delivery contracts, not Skill prose.
+        # Loading them independently lets tools apply the exact selected
+        # standard instead of asking the model to rewrite its stages.
+        from xiaomei_brain.processes import ProcessTemplateRegistry
+        agent._process_template_registry = ProcessTemplateRegistry(
+            package_dirs["processes"],
+        )
+
         # 构建 PluginRegistry：内置插件 + 当前 Agent 激活的能力包插件。
         registry = boot_plugins(
             agent_id=agent.id,
@@ -344,6 +352,18 @@ class AgentManager:
         from xiaomei_brain.assignments import create_assignment_tools
         for assignment_tool in create_assignment_tools(agent):
             tools.register(assignment_tool)
+
+        # Project services are attached by ConsciousLiving after the shared
+        # Agent database is available; tools resolve that service lazily.
+        from xiaomei_brain.projects import create_project_tools
+        for project_tool in create_project_tools(agent):
+            tools.register(project_tool)
+
+        # Process is an optional delivery contract around Project work. It
+        # validates promised submissions but never executes or plans the work.
+        from xiaomei_brain.processes import create_process_tools
+        for process_tool in create_process_tools(agent):
+            tools.register(process_tool)
 
         from xiaomei_brain.tools.builtin.being import create_being_tool
         tools.register(create_being_tool(agent))

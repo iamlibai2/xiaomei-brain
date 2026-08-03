@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   MediaCapability,
+  MediaRuntimeStatus,
   MediaServiceConfig,
   MediaServiceField,
 } from "../../types";
@@ -20,10 +21,12 @@ const CAPABILITIES: Array<{
   { id: "image", label: "图片生成", description: "根据文字描述生成图片", icon: "image" },
   { id: "tts", label: "语音合成", description: "朗读文字并生成音频文件", icon: "microphone" },
   { id: "music", label: "音乐生成", description: "根据描述和歌词生成音乐", icon: "sparkles" },
+  { id: "video", label: "视频生成", description: "生成视频片段并参与项目合成", icon: "play" },
 ];
 
 export function MediaServiceSettingsPanel({ agentId, connected }: Props) {
   const [services, setServices] = useState<MediaServiceConfig[]>([]);
+  const [runtime, setRuntime] = useState<MediaRuntimeStatus | null>(null);
   const [editing, setEditing] = useState<MediaServiceConfig | null>(null);
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -34,15 +37,21 @@ export function MediaServiceSettingsPanel({ agentId, connected }: Props) {
   const load = useCallback(async () => {
     if (!agentId || !connected) {
       setServices([]);
+      setRuntime(null);
       return;
     }
     setBusy("load");
     setError("");
     try {
-      const response = await window.gateway.listMediaServices({ agentId });
+      const [response, runtimeResponse] = await Promise.all([
+        window.gateway.listMediaServices({ agentId }),
+        window.gateway.getMediaRuntimeStatus({ agentId }),
+      ]);
       if (response.error) throw new Error(response.error.message);
+      if (runtimeResponse.error) throw new Error(runtimeResponse.error.message);
       const result = response.result?.services;
       setServices(Array.isArray(result) ? result as unknown as MediaServiceConfig[] : []);
+      setRuntime(runtimeResponse.result as unknown as MediaRuntimeStatus);
     } catch (loadError) {
       setError(String(loadError instanceof Error ? loadError.message : loadError));
     } finally {
@@ -169,9 +178,37 @@ export function MediaServiceSettingsPanel({ agentId, connected }: Props) {
       <header className="model-page-heading">
         <div>
           <h2>媒体服务</h2>
-          <p>为当前 Agent 配置图片生成、语音合成和音乐生成能力。</p>
+          <p>为当前 Agent 配置图片、语音、音乐和视频生成服务，并检查本地媒体运行环境。</p>
         </div>
       </header>
+
+      <section className="settings-card image-provider-library">
+        <div className="settings-card-heading">
+          <div>
+            <h3>本地媒体运行环境</h3>
+            <p>视频合成与验收由 Agent 所在机器上的确定性工具完成。</p>
+          </div>
+          <span className={runtime?.ready ? "image-provider-status active" : "image-provider-status"}>
+            {runtime?.ready ? "可用" : "需要配置"}
+          </span>
+        </div>
+        <div className="image-provider-list">
+          {(runtime?.tools || []).map((tool) => (
+            <article key={tool.id} className="image-provider-row">
+              <span className="model-library-icon"><Icon name="terminal" size={16} /></span>
+              <div className="image-provider-copy">
+                <strong>{tool.name}</strong>
+                <span>{tool.version || tool.error || (tool.available ? "已找到可执行文件" : "不可用")}</span>
+                {tool.path && <small>{tool.path}</small>}
+              </div>
+              <span className={tool.available ? "image-provider-status active" : "image-provider-status"}>
+                {tool.available ? "已就绪" : "不可用"}
+              </span>
+            </article>
+          ))}
+          {!runtime?.tools?.length && <div className="settings-empty">正在检查本地媒体工具…</div>}
+        </div>
+      </section>
 
       {CAPABILITIES.map((capability) => {
         const items = grouped.get(capability.id) || [];
@@ -195,7 +232,7 @@ export function MediaServiceSettingsPanel({ agentId, connected }: Props) {
                       <span>{service.vendor || service.plugin}</span>
                       <small>
                         {service.configured
-                          ? `已配置${service.secret_hint ? ` · ${service.secret_hint}` : ""}`
+                          ? `${service.connection_kind === "local" ? "本地运行" : "已配置"}${service.secret_hint ? ` · ${service.secret_hint}` : ""}`
                           : "由插件提供，配置后启用"}
                       </small>
                     </div>

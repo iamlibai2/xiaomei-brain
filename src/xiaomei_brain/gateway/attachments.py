@@ -12,6 +12,8 @@ from typing import Any
 
 MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 MAX_TOTAL_BYTES = 8 * 1024 * 1024
+MAX_VIDEO_ATTACHMENT_BYTES = 20 * 1024 * 1024
+MAX_VIDEO_TOTAL_BYTES = 32 * 1024 * 1024
 MAX_REFERENCED_ARTIFACT_BYTES = 20 * 1024 * 1024
 
 IMAGE_MIMES = {
@@ -29,6 +31,14 @@ AUDIO_MIMES = {
     "audio/wav": ".wav",
     "audio/x-wav": ".wav",
     "audio/amr": ".amr",
+}
+VIDEO_MIMES = {
+    "video/mp4": ".mp4",
+    "video/quicktime": ".mov",
+    "video/webm": ".webm",
+    "video/x-matroska": ".mkv",
+    "video/x-msvideo": ".avi",
+    "video/mpeg": ".mpeg",
 }
 TEXT_EXTENSIONS = {
     ".txt", ".md", ".markdown", ".json", ".jsonl", ".yaml", ".yml",
@@ -74,13 +84,27 @@ def prepare_attachments(
     saved_paths: list[Path] = []
     total = 0
 
+    values_list = [
+        item.model_dump() if hasattr(item, "model_dump") else dict(item)
+        for item in attachments
+    ]
+    contains_video = any(
+        str(values.get("mime_type") or "").lower().split(";", 1)[0].strip()
+        in VIDEO_MIMES
+        for values in values_list
+    )
+    effective_total_bytes = (
+        MAX_VIDEO_TOTAL_BYTES
+        if contains_video and max_total_bytes == MAX_TOTAL_BYTES
+        else max_total_bytes
+    )
+
     safe_agent = re.sub(r"[^A-Za-z0-9_.-]", "_", agent_id or "default")
     session_key = hashlib.sha256((session_id or "main").encode("utf-8")).hexdigest()[:16]
     target_dir = Path.home() / ".xiaomei-brain" / safe_agent / "attachments" / session_key
 
     try:
-        for item in attachments:
-            values = item.model_dump() if hasattr(item, "model_dump") else dict(item)
+        for values in values_list:
             name = Path(str(values["name"])).name
             mime_type = str(values["mime_type"]).lower().split(";", 1)[0].strip()
             declared_size = int(values["size"])
@@ -91,14 +115,19 @@ def prepare_attachments(
 
             if len(data) != declared_size:
                 raise AttachmentError(f"附件 {name} 的大小与声明不一致")
-            if len(data) > max_item_bytes:
+            effective_item_bytes = (
+                MAX_VIDEO_ATTACHMENT_BYTES
+                if mime_type in VIDEO_MIMES and max_item_bytes == MAX_ATTACHMENT_BYTES
+                else max_item_bytes
+            )
+            if len(data) > effective_item_bytes:
                 raise AttachmentError(
-                    f"附件 {name} 超过 {max_item_bytes // (1024 * 1024)} MB"
+                    f"附件 {name} 超过 {effective_item_bytes // (1024 * 1024)} MB"
                 )
             total += len(data)
-            if total > max_total_bytes:
+            if total > effective_total_bytes:
                 raise AttachmentError(
-                    f"单条消息的附件合计不能超过 {max_total_bytes // (1024 * 1024)} MB"
+                    f"单条消息的附件合计不能超过 {effective_total_bytes // (1024 * 1024)} MB"
                 )
 
             suffix = Path(name).suffix.lower()
@@ -109,6 +138,10 @@ def prepare_attachments(
             elif mime_type in AUDIO_MIMES:
                 kind = "audio"
                 suffix = AUDIO_MIMES[mime_type]
+                text_content = None
+            elif mime_type in VIDEO_MIMES:
+                kind = "video"
+                suffix = VIDEO_MIMES[mime_type]
                 text_content = None
             elif suffix in DOCUMENT_TYPES and mime_type in {DOCUMENT_TYPES[suffix], "application/octet-stream"}:
                 kind = "document"
@@ -185,6 +218,8 @@ def read_stored_attachment(
     max_bytes = (
         MAX_REFERENCED_ARTIFACT_BYTES
         if isinstance(attachment.get("source_artifact"), dict)
+        else MAX_VIDEO_ATTACHMENT_BYTES
+        if kind == "video"
         else MAX_ATTACHMENT_BYTES
     )
     if not name or declared_size <= 0 or declared_size > max_bytes:
@@ -194,6 +229,8 @@ def read_stored_attachment(
         suffix = IMAGE_MIMES[mime_type]
     elif kind == "audio" and mime_type in AUDIO_MIMES:
         suffix = AUDIO_MIMES[mime_type]
+    elif kind == "video" and mime_type in VIDEO_MIMES:
+        suffix = VIDEO_MIMES[mime_type]
     elif kind == "document" and Path(name).suffix.lower() in DOCUMENT_TYPES:
         suffix = Path(name).suffix.lower()
     elif kind == "text" and (
@@ -232,6 +269,8 @@ def restore_attachment_refs(
     max_total_bytes = (
         MAX_REFERENCED_ARTIFACT_BYTES
         if any(isinstance(item.get("source_artifact"), dict) for item in attachments)
+        else MAX_VIDEO_TOTAL_BYTES
+        if any(item.get("kind") == "video" for item in attachments)
         else MAX_TOTAL_BYTES
     )
     for attachment in attachments:
@@ -254,6 +293,8 @@ def restore_attachment_refs(
             suffix = IMAGE_MIMES[mime_type]
         elif kind == "audio":
             suffix = AUDIO_MIMES[mime_type]
+        elif kind == "video":
+            suffix = VIDEO_MIMES[mime_type]
         else:
             suffix = Path(name).suffix.lower()
         local_path = _stored_attachment_path(
@@ -265,7 +306,7 @@ def restore_attachment_refs(
         }
         if kind == "image":
             image_paths.append(str(local_path))
-        elif kind == "audio":
+        elif kind in {"audio", "video"}:
             pass
         elif kind == "text":
             try:
@@ -294,7 +335,7 @@ def _stored_attachment_path(
 def append_text_attachments(content: str, attachments: list[dict[str, Any]]) -> str:
     context_items = [
         item for item in attachments
-        if item.get("kind") in {"text", "document", "image"}
+        if item.get("kind") in {"text", "document", "image", "video"}
     ]
     if not context_items:
         return content
@@ -378,6 +419,14 @@ def append_text_attachments(content: str, attachments: list[dict[str, Any]]) -> 
                 f'\n<attached_image id="{safe_id}" name="{safe_name}" mime_type="{safe_mime}">\n'
                 "This image id can be used as attachment_id in a document specification.\n"
                 "</attached_image>"
+            )
+        elif item.get("kind") == "video":
+            safe_id = html.escape(str(item.get("id", "")), quote=True)
+            safe_mime = html.escape(str(item.get("mime_type", "")), quote=True)
+            sections.append(
+                f'\n<attached_video id="{safe_id}" name="{safe_name}" mime_type="{safe_mime}">\n'
+                "Use this attachment_id with an authorized video project tool; do not invent a filesystem path.\n"
+                "</attached_video>"
             )
         else:
             sections.append(

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import os
-import queue
 import threading
 import time
 from typing import Any, TYPE_CHECKING
@@ -355,13 +354,39 @@ class ConversationDriver:
             terminal_text = ""
             terminal_error: dict[str, str] | None = None
             turn_memory_references: list[dict[str, Any]] = []
+            consumed_steers: list[LivingMessage] = []
             self._update_message_status(parent, msg, "processing")
             self._deliver_message_start(parent, msg.session_id, msg.turn_id)
             try:
                 current_msg = msg
                 current_context = intent_context
                 agent = parent.agent._get_agent()
+                begin_active_turn = getattr(parent, "begin_active_turn", None)
+                if callable(begin_active_turn):
+                    begin_active_turn(msg)
                 agent.internal_display = self.display
+
+                def on_steer_consumed(messages) -> None:
+                    known_turns = {item.turn_id for item in consumed_steers}
+                    for steer in messages:
+                        if steer.turn_id in known_turns:
+                            continue
+                        steer_msg = LivingMessage(
+                            content=steer.content,
+                            user_id=steer.user_id,
+                            session_id=steer.session_id,
+                            context_key=steer.context_key,
+                            source=steer.source,
+                            turn_id=steer.turn_id,
+                            message_id=steer.message_id,
+                            user_display_name=steer.user_display_name,
+                            steered_into_turn_id=steer.active_turn_id,
+                        )
+                        consumed_steers.append(steer_msg)
+                        known_turns.add(steer.turn_id)
+                        self._update_message_status(parent, steer_msg, "processing")
+
+                agent.on_steer_consumed = on_steer_consumed
                 # Trusted turn-local resources for Assignment tools. These are
                 # populated by the conversation boundary, not model arguments.
                 requested_assignment_id = str(
@@ -393,6 +418,41 @@ class ConversationDriver:
                             requested_assignment_id,
                             msg.user_id,
                         )
+                # Restore the session's durable Project context. The binding is
+                # verified against the current Person before tools receive it.
+                agent.active_project_id = ""
+                agent.project_context = None
+                project_service = getattr(parent.agent, "project_service", None)
+                if project_service is not None:
+                    try:
+                        binding = project_service.store.get_session_binding(
+                            msg.session_id,
+                        )
+                        if binding is not None:
+                            from xiaomei_brain.projects import (
+                                ProjectActor,
+                                ProjectActorType,
+                            )
+                            project_service.require_project(
+                                binding.project_id,
+                                actor=ProjectActor(
+                                    ProjectActorType.PERSON,
+                                    str(msg.user_id),
+                                ),
+                            )
+                            agent.active_project_id = binding.project_id
+                            agent.project_context = project_service.runtime_context(
+                                binding.project_id,
+                                actor=ProjectActor(
+                                    ProjectActorType.AGENT,
+                                    str(getattr(parent.agent, "id", "agent")),
+                                ),
+                            )
+                    except (AttributeError, KeyError, PermissionError, ValueError):
+                        logger.warning(
+                            "Ignoring inaccessible Project binding for session %s",
+                            msg.session_id,
+                        )
                 agent.current_source = getattr(msg, "source", "conversation")
                 agent.current_attachments = list(
                     getattr(msg, "attachments", None) or [],
@@ -423,23 +483,6 @@ class ConversationDriver:
                     return
 
                 while True:
-                    # 多步 steer 感知：两次 stream() 之间到达的 steer
-                    # 覆盖自动推进的子目标消息（用户中断优先）。
-                    steer_text = agent._drain_steer()
-                    if steer_text:
-                        logger.info(
-                            "[ConversationDriver] 检测到 steer，覆盖子目标消息: %s",
-                            steer_text[:50],
-                        )
-                        current_msg = LivingMessage(
-                            content=steer_text,
-                            user_id=msg.user_id,
-                            session_id=msg.session_id,
-                            source="human",
-                            turn_id=msg.turn_id,
-                        )
-                        current_context = intent_context
-
                     print("\033[90m" + "─" * self._term_width() + "\033[0m", flush=True)
                     print(f"  \033[38;5;203m{parent.agent.name or parent._agent_id}\033[0m: ", end="", flush=True)
                     cs = parent._get_consciousness_state()
@@ -706,6 +749,13 @@ class ConversationDriver:
                             print(f"\033[33m{result['status_msg']}\033[0m", flush=True)
             finally:
                 self._update_message_status(parent, msg, terminal_status, terminal_error)
+                for steer_msg in consumed_steers:
+                    self._update_message_status(
+                        parent,
+                        steer_msg,
+                        terminal_status,
+                        terminal_error,
+                    )
                 self._deliver_response(
                     parent,
                     msg.session_id,
@@ -715,6 +765,13 @@ class ConversationDriver:
                     error=terminal_error,
                     memory_references=turn_memory_references,
                 )
+                pending_steers = []
+                end_active_turn = getattr(parent, "end_active_turn", None)
+                if callable(end_active_turn):
+                    try:
+                        pending_steers = end_active_turn(msg.turn_id)
+                    except Exception:
+                        logger.exception("Failed to close active Turn")
                 parent._chatting = False
                 parent._clarify_listening.clear()
                 # 清理工具回调，避免 PACE/CognitiveLoop 执行时陈旧回调触发
@@ -726,35 +783,39 @@ class ConversationDriver:
                     agent_core.on_speech = None
                     agent_core.on_tool_approval = None
                     agent_core.on_action_complete = None
+                    agent_core.on_steer_consumed = None
                     agent_core.turn_id = ""
                     agent_core.active_assignment_id = ""
+                    agent_core.active_project_id = ""
+                    agent_core.project_context = None
                     agent_core.current_source = ""
                     agent_core.current_attachments = []
                     agent_core.current_memory_references = []
                 except Exception:
                     logger.debug("Failed to cleanup tool callbacks", exc_info=True)
 
-                # 残留 steer 重新入队为下一轮对话，防止跨轮/跨用户泄漏。
-                # _chatting 已置 False，put_message 会正常入队而非再次 steer。
-                try:
-                    agent_core = parent.agent._get_agent()
-                    leftover_steers: list[str] = []
-                    while True:
-                        try:
-                            leftover_steers.append(agent_core._steer_queue.get_nowait())
-                        except queue.Empty:
-                            break
-                    for text in leftover_steers:
-                        logger.info(
-                            "[ConversationDriver] 残留 steer 转下一轮: %s", text[:50]
-                        )
-                        parent.put_message(
-                            content=text,
-                            user_id=msg.user_id,
-                            session_id=msg.session_id,
-                        )
-                except Exception:
-                    logger.debug("Failed to requeue leftover steer", exc_info=True)
+                # A steer arriving after the last safe injection boundary is a
+                # normal next Turn. Preserve its original identity and DB row.
+                for steer in pending_steers:
+                    logger.info(
+                        "[ConversationDriver] Unconsumed steer requeued: turn=%s",
+                        steer.turn_id,
+                    )
+                    parent.put_message(
+                        content=steer.content,
+                        user_id=steer.user_id,
+                        session_id=steer.session_id,
+                        source=steer.source,
+                        display_name=steer.user_display_name or None,
+                        turn_id=steer.turn_id,
+                        message_id=steer.message_id,
+                        context_key=steer.context_key or None,
+                    )
+
+                router = getattr(parent, "_router", None)
+                if router is not None and hasattr(router, "release_turn"):
+                    for steer_msg in consumed_steers:
+                        router.release_turn(steer_msg.turn_id)
 
         run()
 
@@ -1130,6 +1191,7 @@ class ConversationDriver:
         def callback(tool_call_id: str, tool_name: str, arguments: dict, result: str) -> None:
             from xiaomei_brain.gateway.artifacts import (
                 discover_tool_artifacts,
+                managed_artifact_path,
                 public_artifact_metadata,
             )
 
@@ -1194,6 +1256,47 @@ class ConversationDriver:
                             "Failed to link artifact %s to Assignment %s",
                             artifact.get("id"),
                             assignment_id,
+                        )
+                project_id = str(
+                    getattr(core, "active_project_id", ""),
+                ).strip()
+                project_service = getattr(
+                    parent.agent,
+                    "project_service",
+                    None,
+                )
+                if (
+                    tool_name == "present_artifacts"
+                    and project_id
+                    and project_service is not None
+                ):
+                    try:
+                        from xiaomei_brain.projects import (
+                            ProjectActor,
+                            ProjectActorType,
+                        )
+
+                        project_service.import_delivered_asset(
+                            project_id,
+                            actor=ProjectActor(
+                                ProjectActorType.AGENT,
+                                str(getattr(parent.agent, "id", "default")),
+                            ),
+                            source_path=managed_artifact_path(
+                                str(getattr(parent, "_agent_id", "default")),
+                                artifact,
+                            ),
+                            kind=str(artifact.get("kind") or "file"),
+                            name=str(artifact.get("name") or ""),
+                            source_id=str(artifact.get("id") or ""),
+                        )
+                    except Exception:
+                        # Conversation delivery remains authoritative. Project
+                        # adoption is a secondary durable projection.
+                        logger.exception(
+                            "Failed to register delivered artifact %s in Project %s",
+                            artifact.get("id"),
+                            project_id,
                         )
                 ConversationDriver._publish_event(
                     parent,
@@ -1543,6 +1646,11 @@ class ConversationDriver:
             "interrupted": "interrupted",
         }.get(status, status)
         updates: dict[str, Any] = {"status": stored_status}
+        steered_into_turn_id = str(
+            getattr(msg, "steered_into_turn_id", "") or ""
+        )
+        if steered_into_turn_id:
+            updates["steered_into_turn_id"] = steered_into_turn_id
         if stored_status == "processing":
             import time
             updates["processing_at"] = time.time()

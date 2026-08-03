@@ -13,6 +13,7 @@ import type {
 import { useCoreStore } from "../../store";
 import { Icon } from "../ui";
 import { AssignmentPanel } from "./AssignmentPanel";
+import { ProjectPanel } from "./ProjectPanel";
 import { supportsArtifactPreview } from "../../artifacts/preview-capability";
 
 const EMPTY: ActivitySnapshot[] = [];
@@ -69,8 +70,8 @@ export function ActivitySidebar({
   onClose: () => void;
   selectedAssignmentId: string | null;
   onSelectAssignment: (assignmentId: string | null) => void;
-  section: "activity" | "state" | "assignment" | "artifact" | "memory" | "context";
-  onSectionChange: (section: "activity" | "state" | "assignment" | "artifact" | "memory" | "context") => void;
+  section: "activity" | "state" | "project" | "assignment" | "artifact" | "memory" | "context";
+  onSectionChange: (section: "activity" | "state" | "project" | "assignment" | "artifact" | "memory" | "context") => void;
   focusedArtifactKey: string;
   focusedMemories: MemoryReference[];
   onOpenArtifact: (artifactId: string, sessionId: string) => void;
@@ -82,6 +83,10 @@ export function ActivitySidebar({
   const refresh = useCoreStore((state) => state.refreshActivities);
   const assignments = useCoreStore((state) => state.assignmentsByAgent[state.activeAgentId || ""] || EMPTY_ASSIGNMENTS);
   const refreshAssignments = useCoreStore((state) => state.refreshAssignments);
+  const currentProject = useCoreStore((state) => state.currentProjectByAgent[state.activeAgentId || ""] || null);
+  const projectLoading = useCoreStore((state) => state.projectLoadingByAgent[state.activeAgentId || ""] || false);
+  const projectError = useCoreStore((state) => state.projectErrorByAgent[state.activeAgentId || ""] || "");
+  const refreshCurrentProject = useCoreStore((state) => state.refreshCurrentProject);
   const artifacts = useCoreStore((state) => state.artifactsByAgent[state.activeAgentId || ""] || EMPTY_ARTIFACTS);
   const artifactLoading = useCoreStore((state) => state.artifactLoadingByAgent[state.activeAgentId || ""] || false);
   const artifactError = useCoreStore((state) => state.artifactErrorByAgent[state.activeAgentId || ""] || "");
@@ -111,17 +116,20 @@ export function ActivitySidebar({
     if (open && agentId) {
       void refresh(agentId);
       void refreshAssignments(agentId);
+      void refreshCurrentProject(agentId);
       void refreshArtifacts(agentId);
       void refreshMemories(agentId);
       void refreshAgentState(agentId);
     }
   }, [
+    activeSessionId,
     agentId,
     open,
     refresh,
     refreshAgentState,
     refreshArtifacts,
     refreshAssignments,
+    refreshCurrentProject,
     refreshMemories,
   ]);
 
@@ -216,6 +224,11 @@ export function ActivitySidebar({
           <Icon name="sparkles" size={15} />
           <span className="right-sidebar-section-label">状态</span>
         </button>
+        <button type="button" className={section === "project" ? "active" : ""} aria-current={section === "project" ? "page" : undefined} onClick={() => onSectionChange("project")}>
+          <Icon name="folder" size={15} />
+          <span className="right-sidebar-section-label">项目</span>
+          {currentProject && <span className="right-sidebar-section-count">1</span>}
+        </button>
         <button type="button" className={section === "assignment" ? "active" : ""} aria-current={section === "assignment" ? "page" : undefined} onClick={() => onSectionChange("assignment")}>
           <Icon name="robot" size={15} />
           <span className="right-sidebar-section-label">委托</span>
@@ -286,6 +299,13 @@ export function ActivitySidebar({
           agentState={agentState}
           speaking={speaking}
           onRefresh={() => void refreshAgentState(agentId)}
+        />
+      ) : section === "project" ? (
+        <ProjectPanel
+          detail={currentProject}
+          loading={projectLoading}
+          error={projectError}
+          onRefresh={() => void refreshCurrentProject(agentId)}
         />
       ) : section === "assignment" ? (
         <AssignmentPanel

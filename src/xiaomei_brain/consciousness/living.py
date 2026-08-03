@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable
 
+from xiaomei_brain.agent.steering import SteerMessage
 from xiaomei_brain.llm.client import FatalLLMError
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,19 @@ class LivingMessage:
     turn_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     # Database row for an external user message persisted before enqueueing.
     message_id: int | None = None
+    user_display_name: str = ""
+    # Non-empty only when this message was accepted into an active Turn.
+    steered_into_turn_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveTurn:
+    """Identity boundary for the one realtime conversation currently running."""
+
+    user_id: str
+    session_id: str
+    turn_id: str
+    phase: str = "react"
 
 
 #---------------------------------------------------------------------------
@@ -200,6 +214,8 @@ class Living:
         self._running: bool = False
         self._cancel_requested: bool = False
         self._chatting = False
+        self._active_turn: ActiveTurn | None = None
+        self._active_turn_lock = threading.RLock()
         self._clarify_listening = threading.Event()  # 主线程需要监听 clarify 请求
         self._command_done = threading.Event()
 
@@ -295,11 +311,12 @@ class Living:
         """Enqueue a message.
 
         Sanitization and throttle checks are handled by Gateway.accept(),
-        which calls this method after preprocessing. The queue intentionally
-        accepts messages while a Turn is active and processes them FIFO.
+        which calls this method after preprocessing. A same-Person,
+        same-session plain-text follow-up may steer the active ReAct Turn;
+        every other message remains in the FIFO queue.
 
-        将消息放入队列。清洗和限流由 Gateway.accept() 处理；当前 Turn
-        执行期间到达的消息也会入队，并按先进先出顺序处理。
+        将消息放入队列。清洗和限流由 Gateway.accept() 处理；只有同人物、
+        同会话的纯文本补充可注入当前 Turn，其余消息仍按先进先出处理。
         """
         msg = LivingMessage(
             content=content,
@@ -316,19 +333,79 @@ class Living:
         if display_name:
             msg.user_display_name = display_name
 
-        # 如果当前正在聊天，将消息作为 steer 注入活跃 ReAct 循环，
-        # 不进入队列等待下一轮。
-        if self._chatting:
-            try:
-                agent_core = self.agent._get_agent()
-                agent_core.steer(content)
-                logger.info("[Living] Steer: %s", content[:50])
-                return msg
-            except Exception:
-                logger.warning("[Living] Steer 失败，fallback 到正常入队", exc_info=True)
+        if self._try_steer(msg):
+            return msg
 
         self._queue.put_nowait(msg)
         return msg
+
+    def begin_active_turn(self, msg: LivingMessage) -> None:
+        """Open the identity boundary in which text steering is allowed."""
+        with self._active_turn_lock:
+            self._active_turn = ActiveTurn(
+                user_id=msg.user_id,
+                session_id=msg.session_id,
+                turn_id=msg.turn_id,
+            )
+
+    def end_active_turn(self, turn_id: str) -> list[SteerMessage]:
+        """Close one Turn and reclaim every steer its Core did not consume."""
+        with self._active_turn_lock:
+            active = self._active_turn
+            if active is None or active.turn_id != turn_id:
+                return []
+            self._active_turn = None
+            try:
+                agent_core = self.agent._get_agent()
+                return agent_core.take_pending_steers()
+            except Exception:
+                logger.exception("[Living] Failed to reclaim pending steer messages")
+                return []
+
+    def _try_steer(self, msg: LivingMessage) -> bool:
+        """Inject only a same-Person, same-session, plain-text message."""
+        if (
+            not msg.content.strip()
+            or msg.images
+            or msg.attachments
+            or msg.assignment_id
+            or msg.source in {"agent", "system"}
+        ):
+            return False
+        with self._active_turn_lock:
+            active = self._active_turn
+            if (
+                active is None
+                or active.phase != "react"
+                or active.user_id != msg.user_id
+                or active.session_id != msg.session_id
+            ):
+                return False
+            try:
+                self.agent._get_agent().steer(SteerMessage(
+                    content=msg.content,
+                    user_id=msg.user_id,
+                    session_id=msg.session_id,
+                    turn_id=msg.turn_id,
+                    message_id=msg.message_id,
+                    source=msg.source,
+                    context_key=msg.context_key,
+                    user_display_name=msg.user_display_name,
+                    active_turn_id=active.turn_id,
+                ))
+            except Exception:
+                logger.warning(
+                    "[Living] Structured steer failed; enqueueing normally",
+                    exc_info=True,
+                )
+                return False
+            msg.steered_into_turn_id = active.turn_id
+            logger.info(
+                "[Living] Steer accepted: turn=%s active_turn=%s",
+                msg.turn_id,
+                active.turn_id,
+            )
+            return True
 
     @staticmethod
     def _clean_input(text: str) -> str:

@@ -1,8 +1,8 @@
 """ConversationDriver 外层循环 steer 感知测试。
 
-覆盖 Steer 阶段 2 的两个新路径：
-1. 两次 stream() 之间到达的 steer 覆盖自动推进的子目标消息
-2. 循环退出时残留的 steer 重新入队，成为下一轮对话（防跨轮/跨用户泄漏）
+覆盖结构化 Steer 的两个关键路径：
+1. steer 在下一次 Core 边界注入，同时保留原始用户消息
+2. 循环退出时残留 steer 以原身份重新入队
 """
 import queue
 import threading
@@ -12,6 +12,7 @@ from unittest.mock import Mock
 import pytest
 
 from xiaomei_brain.agent.core import Agent
+from xiaomei_brain.agent.steering import SteerMessage
 from xiaomei_brain.consciousness.conversation_driver import ConversationDriver
 from xiaomei_brain.consciousness.living import LivingMessage
 from xiaomei_brain.llm.types import NormalizedResponse
@@ -36,11 +37,23 @@ class FakeParent:
         self.on_chat_flush = None
         self._queue = queue.Queue()
         self.put_calls: list[dict] = []
+        self.released_turns: list[str] = []
+        self._router = SimpleNamespace(
+            release_turn=lambda turn_id: self.released_turns.append(turn_id),
+        )
         self.agent = SimpleNamespace(
             name="测试",
             _get_agent=lambda: agent_core,
             _skill_loader=None,
         )
+
+    def begin_active_turn(self, msg):
+        self.active_turn_id = msg.turn_id
+
+    def end_active_turn(self, turn_id):
+        assert turn_id == self.active_turn_id
+        self.active_turn_id = ""
+        return self.agent._get_agent().take_pending_steers()
 
     def _get_consciousness_state(self) -> dict:
         return {}
@@ -50,6 +63,7 @@ class FakeParent:
             "content": content,
             "user_id": user_id,
             "session_id": session_id,
+            **kwargs,
         })
 
 
@@ -69,8 +83,11 @@ def _make_driver(parent: FakeParent, goal_manager, agent_core: Agent) -> Convers
         clear=lambda: None,
         to_dict=lambda: {},
     )
+    driver.status_updates = []
     # Delivery/status hooks → no-op to keep the harness hermetic.
-    driver._update_message_status = lambda *a, **k: None
+    driver._update_message_status = lambda _parent, message, status, error=None: (
+        driver.status_updates.append((message.turn_id, status))
+    )
     driver._deliver_message_start = lambda *a, **k: None
     driver._deliver_chunk = lambda *a, **k: None
     driver._deliver_response = lambda *a, **k: None
@@ -134,8 +151,8 @@ def patch_build_context(monkeypatch):
     return captured
 
 
-def test_steer_between_streams_overrides_subgoal(agent_core, patch_build_context):
-    """A steer queued before the next stream() wins over the sub-goal push."""
+def test_steer_at_stream_boundary_preserves_original(agent_core, patch_build_context):
+    """A steer is added at the Core boundary without replacing the request."""
     parent = FakeParent(agent_core)
     gm = _make_goal_manager()
     driver = _make_driver(parent, gm, agent_core)
@@ -144,11 +161,24 @@ def test_steer_between_streams_overrides_subgoal(agent_core, patch_build_context
         source="human", turn_id="t1",
     )
 
-    agent_core.steer("interrupt now")
+    agent_core.steer(SteerMessage(
+        content="interrupt now",
+        user_id="u1",
+        session_id="main",
+        turn_id="t2",
+        active_turn_id="t1",
+    ))
     driver._run_react(msg, "intent")
 
-    # The steer replaced the original "start" message for the stream() call.
-    assert patch_build_context["content"] == "interrupt now"
+    assert patch_build_context["content"] == "start"
+    llm_messages = agent_core.llm.chat_stream.call_args.args[0]
+    user_contents = [
+        item["content"] for item in llm_messages if item.get("role") == "user"
+    ]
+    assert user_contents == ["start", "interrupt now"]
+    assert ("t2", "processing") in driver.status_updates
+    assert ("t2", "complete") in driver.status_updates
+    assert parent.released_turns == ["t2"]
 
 
 def test_leftover_steer_requeued_on_turn_exit(agent_core, patch_build_context):
@@ -156,7 +186,16 @@ def test_leftover_steer_requeued_on_turn_exit(agent_core, patch_build_context):
     parent = FakeParent(agent_core)
 
     def late_steer():
-        agent_core.steer("late steer")
+        agent_core.steer(SteerMessage(
+            content="late steer",
+            user_id="u1",
+            session_id="main",
+            turn_id="t2",
+            message_id=22,
+            source="ws",
+            context_key="person:u1",
+            active_turn_id="t1",
+        ))
 
     gm = _make_goal_manager(should_advance=False, on_advance_check=late_steer)
     driver = _make_driver(parent, gm, agent_core)
@@ -172,3 +211,5 @@ def test_leftover_steer_requeued_on_turn_exit(agent_core, patch_build_context):
     assert [c["content"] for c in parent.put_calls] == ["late steer"]
     assert parent.put_calls[0]["user_id"] == "u1"
     assert parent.put_calls[0]["session_id"] == "main"
+    assert parent.put_calls[0]["turn_id"] == "t2"
+    assert parent.put_calls[0]["message_id"] == 22

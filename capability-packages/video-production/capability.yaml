@@ -1,0 +1,36 @@
+schema_version: 1
+package:
+  id: xiaomei.video-production
+  name: 视频制作
+  version: 1.0.11
+  description: 以项目方式完成视频策划、分镜、素材整理、技术检查和 FFmpeg 合成
+  publisher: xiaomei-brain
+  license: Apache-2.0
+capabilities:
+  - id: video_production
+    name: 视频制作
+    summary: 从需求澄清和分镜开始，组织素材并合成交付可验收的视频
+permissions:
+  filesystem:
+    - 读写当前视频项目的工作目录、审阅目录和交付目录
+    - 读取当前消息中由 Agent 授权的媒体附件
+  process:
+    - 调用 Agent 所在机器已有的 FFmpeg 和 FFprobe
+requirements:
+  xiaomei_brain: ">=0.1.0"
+  python: ">=3.11"
+  python_packages: []
+  node_packages: []
+  executables: []
+contents:
+  capabilities:
+    - capabilities/video_production.yaml
+  plugins:
+    - plugins/video_production/plugin.yaml
+    - plugins/video_production/adapter.py
+    - plugins/video_production/tool.py
+  processes:
+    - processes/video-fast-3.yaml
+    - processes/video-full-8.yaml
+  skills:
+    - skills/video-production/SKILL.md

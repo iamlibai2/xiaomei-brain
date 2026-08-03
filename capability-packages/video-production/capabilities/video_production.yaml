@@ -1,0 +1,64 @@
+id: video_production
+name: 视频制作
+summary: 通过项目化流程完成视频策划、分镜、素材整理、技术检查、合成和交付
+category: creative
+version: "1.0.11"
+source: xiaomei.video-production
+
+examples:
+  - 制作一个 30 秒的企业介绍视频
+  - 把这些图片和口播合成一段竖屏短视频
+  - 为这个产品制作带字幕和背景音乐的宣传片
+
+components:
+  - id: plugin_video_production
+    kind: plugin
+    target: video_production
+    label: 视频项目执行工具
+    required: true
+  - id: skill_video_production
+    kind: skill
+    target: video-production
+    label: 视频制作工作方法
+    required: true
+  - id: tool_initialize_video_project
+    kind: tool
+    target: initialize_video_project
+    label: 初始化视频项目
+    required: true
+  - id: tool_save_video_storyboard
+    kind: tool
+    target: save_video_storyboard
+    label: 保存并校验分镜
+    required: true
+  - id: tool_stage_video_asset
+    kind: tool
+    target: stage_video_asset
+    label: 将会话素材纳入项目
+    required: true
+  - id: tool_inspect_video_media
+    kind: tool
+    target: inspect_video_media
+    label: 媒体技术探测
+  - id: tool_create_video_contact_sheet
+    kind: tool
+    target: create_video_contact_sheet
+    label: 视频联系表
+  - id: tool_compose_video_timeline
+    kind: tool
+    target: compose_video_timeline
+    label: 时间线合成
+
+outcomes:
+  - id: production_blueprint
+    name: 视频制作蓝图
+    description: 形成可继续执行的需求简报、适合当前目标的阶段地图和结构化分镜
+    components: [plugin_video_production, skill_video_production, tool_initialize_video_project, tool_save_video_storyboard]
+  - id: prepared_assets
+    name: 可追踪的项目素材
+    description: 将当前附件安全纳入项目并形成真实媒体技术信息和联系表
+    components: [plugin_video_production, skill_video_production, tool_stage_video_asset, tool_inspect_video_media, tool_create_video_contact_sheet]
+  - id: composed_video
+    name: 合成视频
+    description: 按镜头顺序合并画面，并可加入口播、音乐和字幕，输出 MP4
+    components: [plugin_video_production, skill_video_production, tool_compose_video_timeline]

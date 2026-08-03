@@ -204,6 +204,42 @@ def test_list_skills_excludes_content(populated_storage):
         assert "content" not in s, f"{s['name']} should not expose content"
 
 
+def test_semantic_search_orders_smallest_lance_distance_first(populated_storage):
+    """LanceDB distance is ascending relevance, not a descending score."""
+    rows = populated_storage._get_conn().execute(
+        "SELECT id, name FROM skills"
+    ).fetchall()
+    ids = {row["name"]: row["id"] for row in rows}
+
+    frame = MagicMock()
+    frame.empty = False
+    frame.__getitem__.side_effect = lambda key: MagicMock(
+        tolist=lambda: {
+            "id": [
+                ids["python-testing"],
+                ids["git-workflow"],
+                ids["browser-automation"],
+            ],
+            "_distance": [0.1, 0.5, 0.9],
+        }[key]
+    )
+    table = MagicMock()
+    table.search.return_value.limit.return_value.to_pandas.return_value = frame
+
+    with (
+        patch.object(populated_storage, "_embed", return_value=[0.0]),
+        patch.object(populated_storage, "_get_lance_table", return_value=table),
+    ):
+        skills = populated_storage.list_skills(query="python tests", top_k=3)
+
+    assert [item["name"] for item in skills] == [
+        "python-testing",
+        "git-workflow",
+        "browser-automation",
+    ]
+    assert [item["_distance"] for item in skills] == [0.1, 0.5, 0.9]
+
+
 # ═══ SkillStorage — view_skill ═══════════════════════════════════
 
 

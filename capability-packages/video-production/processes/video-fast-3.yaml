@@ -1,0 +1,32 @@
+schema_version: 1
+id: video-fast-3
+name: 视频快速交付标准
+description: 适合普通视频任务的轻量正式交付标准，约束需求、分镜和成片三类结果。
+project_types: [video.production]
+tags: [video, fast, delivery]
+ordered: false
+stages:
+  - id: brief
+    title: 作品定义
+    requirements:
+      - type: asset
+        kind: brief
+        label: 需求简报
+  - id: storyboard
+    title: 分镜方案
+    requirements:
+      - type: asset
+        kind: storyboard
+        label: 结构化分镜
+  - id: delivery
+    title: 成片交付
+    requirements:
+      - type: asset
+        kind: video
+        role: deliverable
+        label: 候选成片
+      - type: evidence
+        key: has_video
+        from_asset: true
+        equals: true
+        label: 有效视频流

@@ -15,6 +15,7 @@ from .interactions import InteractionMethods
 from .media import MediaServiceMethods
 from .memories import MemoryMethods
 from .models import ModelMethods
+from .projects import ProjectMethods
 from .search import SearchMethods
 from .sessions import SessionMethods
 from .tools import ToolServiceMethods
@@ -35,6 +36,7 @@ __all__ = [
     "MediaServiceMethods",
     "MemoryMethods",
     "ModelMethods",
+    "ProjectMethods",
     "SearchMethods",
     "SessionMethods",
     "ToolServiceMethods",

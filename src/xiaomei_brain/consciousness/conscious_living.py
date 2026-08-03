@@ -561,6 +561,42 @@ class ConsciousLiving(Living):
         )
 
         # 统一加载所有子系统（先加载数据，确保 drive/purpose/self_image 已就绪）
+        # Projects share brain.db while owning only their independent tables.
+        # They organize work but do not execute it in place of Assignment.
+        from xiaomei_brain.projects import (
+            ProjectService,
+            ProjectStore,
+            ProjectWorkspaceManager,
+        )
+        project_root = os.path.expanduser(
+            f"~/.xiaomei-brain/{self._agent_id}/projects"
+        )
+        self._project_service = ProjectService(
+            ProjectStore(db_path),
+            ProjectWorkspaceManager(project_root),
+            publish=self._event_hub.publish,
+        )
+        self.agent.project_service = self._project_service
+        self.agent._get_agent().project_service = self._project_service
+        logger.info("[ConsciousLiving] Project service initialized")
+        boot_line("Project system", "OK")
+
+        # Process is deliberately separate from ProjectStep: the former is a
+        # user-selected delivery standard, the latter is the Agent's own map.
+        from xiaomei_brain.processes import ProcessService, ProcessStore
+        self._process_service = ProcessService(
+            ProcessStore(db_path),
+            self._project_service,
+            publish=self._event_hub.publish,
+        )
+        self._project_service.set_completion_guard(
+            self._process_service.completion_blocker,
+        )
+        self.agent.process_service = self._process_service
+        self.agent._get_agent().process_service = self._process_service
+        logger.info("[ConsciousLiving] Process service initialized")
+        boot_line("Process contracts", "OK")
+
         # Assignments share this Agent's brain.db while owning independent
         # tables. All lifecycle writes pass through the domain service.
         from xiaomei_brain.assignments import AssignmentService, AssignmentStore
@@ -595,6 +631,7 @@ class ConsciousLiving(Living):
                 self.agent,
                 self._assignment_worker_service,
                 realtime_busy=lambda: bool(self._chatting),
+                project_service=self._project_service,
             )
         self._assignment_scheduler = AssignmentScheduler(
             AssignmentExecutor(
@@ -602,6 +639,7 @@ class ConsciousLiving(Living):
                 agent_id=self._agent_id,
                 runner=assignment_runner,
                 activity_service=self._activity_service,
+                project_service=self._project_service,
                 model_failure_observer=lambda error: self._on_model_service_failure(
                     error,
                     source="assignment",
@@ -2293,6 +2331,12 @@ class ConsciousLiving(Living):
         )
         if assignment_worker_service is not None:
             assignment_worker_service.store.close()
+        project_service = getattr(self, "_project_service", None)
+        if project_service is not None:
+            project_service.store.close()
+        process_service = getattr(self, "_process_service", None)
+        if process_service is not None:
+            process_service.store.close()
         activity_service = getattr(self, "_activity_service", None)
         if activity_service is not None:
             activity_service.store.close()

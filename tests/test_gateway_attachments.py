@@ -12,6 +12,7 @@ from xiaomei_brain.consciousness.context_pipeline import build_context
 from xiaomei_brain.gateway import attachments as attachment_module
 from xiaomei_brain.gateway.attachments import (
     AttachmentError,
+    MAX_ATTACHMENT_BYTES,
     append_text_attachments,
     prepare_attachments,
     public_attachment_metadata,
@@ -90,6 +91,47 @@ def test_image_attachment_id_is_added_to_model_context(tmp_path, monkeypatch):
     assert len(images) == 1
     assert '<attached_image id="image-42" name="cover.png" mime_type="image/png">' in model_input
     assert "attachment_id" in model_input
+
+
+def test_video_attachment_is_saved_restored_and_added_to_tool_context(tmp_path, monkeypatch):
+    monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: tmp_path))
+    prepared, images, saved = prepare_attachments(
+        "xiaomei",
+        "session-1",
+        [payload("shot-001.mp4", "video/mp4", b"video-bytes", "video-42")],
+    )
+
+    assert images == []
+    assert saved[0].suffix == ".mp4"
+    assert prepared[0]["kind"] == "video"
+    model_input = append_text_attachments("把这个镜头加入项目", prepared)
+    assert '<attached_video id="video-42" name="shot-001.mp4" mime_type="video/mp4">' in model_input
+    assert "attachment_id" in model_input
+
+    metadata = public_attachment_metadata(prepared)
+    restored, restored_images = restore_attachment_refs("xiaomei", "session-1", metadata)
+    assert restored_images == []
+    assert restored[0]["kind"] == "video"
+    assert Path(restored[0]["local_path"]).read_bytes() == b"video-bytes"
+
+
+def test_video_attachment_has_larger_limit_than_documents(tmp_path, monkeypatch):
+    monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: tmp_path))
+    data = b"v" * (MAX_ATTACHMENT_BYTES + 1)
+
+    prepared, _, _ = prepare_attachments(
+        "xiaomei",
+        "session-1",
+        [payload("clip.mp4", "video/mp4", data)],
+    )
+
+    assert prepared[0]["size"] == len(data)
+    with pytest.raises(AttachmentError, match="超过 5 MB"):
+        prepare_attachments(
+            "xiaomei",
+            "session-2",
+            [payload("notes.pdf", "application/pdf", data)],
+        )
 
 
 def test_unsupported_binary_attachment_is_rejected_without_file(tmp_path, monkeypatch):
@@ -374,6 +416,40 @@ def test_chat_send_transports_attachments_and_deduplicates(monkeypatch):
     assert duplicate["result"]["duplicate"] is True
     assert len(inbound.messages) == 1
     assert inbound.messages[0].attachments == prepared
+
+
+def test_chat_send_allows_video_total_above_document_limit(monkeypatch):
+    prepared = [{
+        "id": "video-1", "name": "clip.mp4", "mime_type": "video/mp4",
+        "size": 9 * 1024 * 1024, "kind": "video", "local_path": "clip.mp4",
+    }]
+    monkeypatch.setattr(
+        "xiaomei_brain.gateway.methods.chat.prepare_attachments",
+        lambda *_args: (prepared, [], []),
+    )
+
+    class Inbound:
+        def accept(self, raw):
+            return Accepted(LivingMessage(
+                content=raw.content,
+                session_id=raw.session_id,
+                attachments=raw.attachments,
+                images=raw.images,
+            ))
+
+    router = MethodRouter(living=SimpleNamespace(
+        _agent_id="xiaomei",
+        _gateway_inbound=Inbound(),
+    ))
+    router._auth_sessions.add("connection-1")
+    response = router.dispatch("connection-1", "rpc-video", "chat.send", {
+        "content": "处理这个视频",
+        "client_request_id": "request-video",
+        "session_id": "session-1",
+        "attachments": [payload("clip.mp4", "video/mp4", b"video").model_dump()],
+    })
+
+    assert response["result"]["accepted"] is True
 
 
 def test_chat_history_returns_public_attachment_metadata():

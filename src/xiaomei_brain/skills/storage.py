@@ -374,6 +374,8 @@ class SkillStorage(SQLiteStore):
             return []
 
         skill_ids = results["id"].tolist()
+        # LanceDB returns a distance, not a similarity score: smaller values
+        # are more relevant. Keep that meaning explicit when ranking results.
         distances = dict(zip(results["id"].tolist(), results["_distance"].tolist()))
 
         placeholders = ",".join("?" * len(skill_ids))
@@ -385,9 +387,9 @@ class SkillStorage(SQLiteStore):
         skills = []
         for row in rows:
             d = self._row_to_dict(row, include_content=False)
-            d["_score"] = round(distances.get(row["id"], 0), 4)
+            d["_distance"] = round(distances.get(row["id"], 0), 4)
             skills.append(d)
-        skills.sort(key=lambda x: x["_score"], reverse=True)
+        skills.sort(key=lambda x: x["_distance"])
         return skills
 
     def _keyword_search(self, query: str, top_k: int) -> list[dict[str, Any]]:

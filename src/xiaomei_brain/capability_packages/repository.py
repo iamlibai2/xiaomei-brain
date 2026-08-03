@@ -25,6 +25,7 @@ from .models import PACKAGE_ID_PATTERN
 RUNTIME_CONTENT_KINDS = frozenset({
     "capabilities",
     "plugins",
+    "processes",
     "skills",
     "scripts",
     "resources",
@@ -360,7 +361,14 @@ class CapabilityPackageService:
         """Return verified directories for packages active for this Agent."""
         self._runtime_issues = {}
         self._loaded_packages = set()
-        result = {"plugins": [], "skills": [], "capabilities": [], "resources": [], "scripts": []}
+        result = {
+            "plugins": [],
+            "processes": [],
+            "skills": [],
+            "capabilities": [],
+            "resources": [],
+            "scripts": [],
+        }
         activation = self._read_activation_lock().get("packages", {})
         if not isinstance(activation, dict):
             return result
@@ -605,6 +613,11 @@ class CapabilityPackageService:
                 f"外部能力包不能覆盖内置能力: {', '.join(collisions)}"
             )
 
+        process_root = content_dir / "processes"
+        if process_root.is_dir():
+            from xiaomei_brain.processes import ProcessTemplateRegistry
+            ProcessTemplateRegistry([process_root])
+
     def _validate_activation_collisions(
         self,
         candidate: InstalledPackage,
@@ -613,6 +626,7 @@ class CapabilityPackageService:
         candidate_caps = self._package_capability_ids(candidate)
         candidate_plugins = self._package_plugin_ids(candidate)
         candidate_skills = self._package_skill_names(candidate)
+        candidate_processes = self._package_process_ids(candidate)
         for package_id, entry in (lock.get("packages") or {}).items():
             if package_id == candidate.package_id or not isinstance(entry, dict) or entry.get("enabled") is not True:
                 continue
@@ -623,6 +637,7 @@ class CapabilityPackageService:
                 ("能力", candidate_caps & self._package_capability_ids(other)),
                 ("插件", candidate_plugins & self._package_plugin_ids(other)),
                 ("Skill", candidate_skills & self._package_skill_names(other)),
+                ("Process", candidate_processes & self._package_process_ids(other)),
             ]
             for label, values in conflicts:
                 if values:
@@ -680,6 +695,15 @@ class CapabilityPackageService:
             self._read_skill_name(path)
             for path in root.rglob("SKILL.md")
         } if root.is_dir() else set()
+
+    @staticmethod
+    def _package_process_ids(installed: InstalledPackage) -> set[str]:
+        from xiaomei_brain.processes import ProcessTemplateRegistry
+
+        root = installed.content_dir / "processes"
+        if not root.is_dir():
+            return set()
+        return {item.id for item in ProcessTemplateRegistry([root]).list()}
 
     def _protected_skill_names(self) -> set[str]:
         import xiaomei_brain.plugins as builtin_plugins

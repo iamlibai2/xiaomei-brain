@@ -3,3 +3,35 @@ version: "1.0.0"
 description: "文本转语音工具 — vox_speak / vox_speak_to_file（VoxCPM1.5 本地模型）"
 kind: bundle
 entry: adapter:register
+mediaProvider:
+  id: tts_voxcpm
+  capability: tts
+  vendor: openbmb
+  displayName: VoxCPM 本地语音合成
+  connectionKind: local
+  defaultEnabled: true
+  fields:
+    - key: server_url
+      label: 本地服务地址
+      type: text
+      default: http://127.0.0.1:18766
+    - key: model_id
+      label: 模型路径或模型 ID
+      type: text
+      default: openbmb/VoxCPM1.5
+      advanced: true
+    - key: device
+      label: 运行设备
+      type: select
+      default: auto
+      options: [auto, cpu, cuda]
+      advanced: true
+    - key: voice_desc
+      label: 默认声音描述
+      type: text
+      default: 一位温柔的年轻女性，声音甜美、亲切，略带俏皮感
+      advanced: true
+  test:
+    kind: local
+    module: voxcpm
+    healthUrl: $server_url/health

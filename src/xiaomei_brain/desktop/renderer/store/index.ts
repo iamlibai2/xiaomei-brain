@@ -15,5 +15,10 @@ export type {
   MemoryReference,
   PersonMemoryListState,
   PersonMemorySnapshot,
+  ProjectAssetSnapshot,
+  ProjectDetailSnapshot,
+  ProjectSnapshot,
+  ProjectStatus,
+  ProjectStepSnapshot,
 } from "./core";
 export type { AgentEntry } from "../types";

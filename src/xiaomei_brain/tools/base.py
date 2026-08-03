@@ -57,6 +57,18 @@ def _python_type_to_json_schema(py_type: Any) -> dict[str, Any]:
         if item_types:
             schema["items"] = _python_type_to_json_schema(item_types[0])
         return schema
+    if origin is typing.Literal:
+        values = list(typing.get_args(py_type))
+        schema: dict[str, Any] = {"enum": values}
+        if values:
+            literal_type = type(values[0])
+            schema.update({
+                str: {"type": "string"},
+                int: {"type": "integer"},
+                float: {"type": "number"},
+                bool: {"type": "boolean"},
+            }.get(literal_type, {}))
+        return schema
 
     type_map = {
         str: {"type": "string"},
@@ -79,7 +91,7 @@ def _resolve_annotated_type(type_str: str) -> Any:
     if type_str in type_map:
         return type_map[type_str]
     try:
-        return eval(type_str, {"typing": typing})
+        return eval(type_str, {"typing": typing, **vars(typing)})
     except Exception:
         logger.debug("Failed to resolve type annotation: %s", type_str, exc_info=True)
         return str

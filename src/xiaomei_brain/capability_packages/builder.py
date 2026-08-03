@@ -137,6 +137,10 @@ class CapabilityPackageBuilder:
                 "capability.yaml 声明的能力与 capabilities/ 清单不一致"
             )
 
+        if manifest.contents.get("processes"):
+            from xiaomei_brain.processes import ProcessTemplateRegistry
+            ProcessTemplateRegistry([source / "processes"])
+
     @staticmethod
     def _destination(
         source: Path,

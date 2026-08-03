@@ -12,6 +12,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Callable, Iterator
 
+from xiaomei_brain.projects.models import ProjectRuntimeContext
+
 
 ArtifactCallback = Callable[[str, str, dict, str], None]
 SpeechCallback = Callable[[Any], str]
@@ -32,6 +34,8 @@ class ToolExecutionContext:
     workspace_root: str = ""
     working_directory: str = ""
     output_root: str = ""
+    project_context: ProjectRuntimeContext | None = None
+    project_service: Any = None
 
     def publish_artifacts(self, result: str) -> None:
         """Run the original turn's artifact projection, if one was installed."""
@@ -75,6 +79,8 @@ def bind_tool_execution(
     workspace_root: str = "",
     working_directory: str = "",
     output_root: str = "",
+    project_context: ProjectRuntimeContext | None = None,
+    project_service: Any = None,
 ) -> Iterator[ToolExecutionContext]:
     """Expose one tool call's immutable context while its function starts."""
     context = ToolExecutionContext(
@@ -89,6 +95,8 @@ def bind_tool_execution(
         workspace_root=workspace_root,
         working_directory=working_directory,
         output_root=output_root,
+        project_context=project_context,
+        project_service=project_service,
     )
     token = _current_context.set(context)
     try:

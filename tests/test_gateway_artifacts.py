@@ -18,6 +18,13 @@ from xiaomei_brain.gateway.server_methods import MethodRouter
 from xiaomei_brain.gateway.inbound import Accepted
 from xiaomei_brain.memory.conversation_db import ConversationDB
 from xiaomei_brain.people import IdentityContext
+from xiaomei_brain.projects import (
+    ProjectActor,
+    ProjectActorType,
+    ProjectService,
+    ProjectStore,
+    ProjectWorkspaceManager,
+)
 
 
 def _identity(person_id: str, conn_id: str) -> IdentityContext:
@@ -73,6 +80,33 @@ def test_artifact_discovery_ignores_files_outside_agent_outputs(tmp_path, monkey
     )
 
     assert artifacts == []
+
+
+def test_project_video_uses_video_specific_artifact_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(artifact_module, "MAX_ARTIFACT_BYTES", 4)
+    monkeypatch.setattr(artifact_module, "MAX_VIDEO_ARTIFACT_BYTES", 16)
+    output = (
+        tmp_path / ".xiaomei-brain" / "xiaomei" / "projects"
+        / "project_1" / "deliverables" / "clip.mp4"
+    )
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"video123")
+
+    artifacts = discover_tool_artifacts(
+        "xiaomei",
+        "session-1",
+        "turn-1",
+        "generate_video_minimax",
+        {},
+        f"- output_path: {output}",
+    )
+
+    assert len(artifacts) == 1
+    assert artifacts[0]["kind"] == "video"
+    assert artifacts[0]["relative_path"] == (
+        "projects/project_1/deliverables/clip.mp4"
+    )
 
 
 def test_read_file_is_not_reported_as_created_artifact(tmp_path, monkeypatch):
@@ -380,6 +414,48 @@ def test_present_artifacts_publishes_created_then_presented(tmp_path, monkeypatc
     stored = db.list_artifacts("session-1")[0]
     assert stored["name"] == "answer.md"
     assert stored["presented"] is True
+    db.close()
+
+
+def test_presented_workspace_artifact_is_adopted_by_active_project(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
+    output = tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace" / "final.mp4"
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"final-video")
+    db = ConversationDB(tmp_path / "conversation.db")
+    project_service = ProjectService(
+        ProjectStore(tmp_path / "project.db"),
+        ProjectWorkspaceManager(tmp_path / "projects"),
+    )
+    actor = ProjectActor(ProjectActorType.AGENT, "xiaomei")
+    project = project_service.create(
+        name="Film", project_type="video.production", actor=actor,
+        scope_type="person", scope_id="person-1",
+    )
+    core = SimpleNamespace(active_assignment_id="", active_project_id=project.id)
+    agent = SimpleNamespace(
+        id="xiaomei",
+        conversation_db=db,
+        project_service=project_service,
+        _get_agent=lambda: core,
+    )
+    parent = SimpleNamespace(_agent_id="xiaomei", agent=agent, _router=None)
+    callback = ConversationDriver._make_artifact_callback(
+        "session-1", "turn-1", "person-1", parent,
+    )
+
+    callback(
+        "tool-1", "present_artifacts",
+        {"paths": [str(output)], "message": "final"},
+        json.dumps({"path": [str(output)]}),
+    )
+
+    assets = project_service.store.list_assets(project.id)
+    assert len(assets) == 1
+    assert assets[0].role.value == "deliverable"
+    adopted = Path(project.state_root) / assets[0].relative_uri
+    assert adopted.read_bytes() == b"final-video"
+    project_service.store.close()
     db.close()
 
 

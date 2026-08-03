@@ -69,6 +69,7 @@ class AssignmentExecutor:
         agent_id: str,
         runner: AssignmentRunner,
         activity_service: ActivityService | None = None,
+        project_service: Any | None = None,
         model_failure_observer: Callable[[BaseException], None] | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
@@ -76,6 +77,7 @@ class AssignmentExecutor:
         self.agent_id = agent_id
         self.runner = runner
         self.activity_service = activity_service
+        self.project_service = project_service
         self._model_failure_observer = model_failure_observer
         self._clock = clock
         self._actor = AssignmentActor(ActorType.AGENT, agent_id)
@@ -106,11 +108,20 @@ class AssignmentExecutor:
             started_at=now,
             updated_at=now,
         ))
+        project_context = None
+        if assignment.scope_type == "project" and self.project_service is not None:
+            from xiaomei_brain.projects import ProjectActor, ProjectActorType
+            project_context = self.project_service.runtime_context(
+                assignment.scope_id,
+                actor=ProjectActor(ProjectActorType.AGENT, self.agent_id),
+                active_assignment_id=assignment.id,
+            )
         context = AssignmentExecutionContext.capture(
             assignment,
             run_id=run.run_id,
             agent_id=self.agent_id,
             resources=self.service.store.list_resources(assignment.id),
+            project_context=project_context,
         )
         activity_id = self._start_activity(assignment, context, run)
         token = cancellation or CancellationToken()

@@ -57,6 +57,10 @@ _CORE_TOOL_NAMES = frozenset({
     "list_assignments",
     "revise_assignment",
     "start_assignment",
+    # Project confirmation often arrives as a context-dependent short reply
+    # such as "可以了".  Keep the small reflection tool available so the Agent
+    # can reconcile its plan without turning Project into a fixed workflow.
+    "review_project",
 })
 
 DEFAULT_TOP_K = 10

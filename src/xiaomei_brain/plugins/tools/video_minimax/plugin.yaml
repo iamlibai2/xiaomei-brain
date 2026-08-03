@@ -1,0 +1,48 @@
+name: video_minimax
+version: "1.0.1"
+description: "MiniMax 视频生成工具，支持 MiniMax-H3 与 Hailuo 2.3"
+kind: bundle
+entry: adapter:register
+mediaProvider:
+  id: video_minimax
+  capability: video
+  vendor: minimax
+  displayName: MiniMax 视频生成
+  models: [MiniMax-H3, MiniMax-Hailuo-2.3]
+  fields:
+    - key: api_key
+      label: API Key
+      type: secret
+      required: true
+    - key: base_url
+      label: Base URL
+      type: text
+      default: https://api.minimaxi.com
+      advanced: true
+    - key: model
+      label: 默认模型
+      type: select
+      default: MiniMax-H3
+      required: true
+      options: [MiniMax-H3, MiniMax-Hailuo-2.3]
+    - key: aigc_watermark
+      label: AIGC 水印
+      type: boolean
+      default: false
+    - key: poll_interval
+      label: 轮询间隔（秒）
+      type: number
+      default: 10
+      minimum: 5
+      maximum: 60
+      advanced: true
+    - key: max_wait_seconds
+      label: 最长等待时间（秒）
+      type: number
+      default: 3600
+      minimum: 60
+      maximum: 7200
+      advanced: true
+  test:
+    method: GET
+    path: /v1/query/video_generation?task_id=xiaomei-connection-test

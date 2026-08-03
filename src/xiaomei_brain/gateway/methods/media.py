@@ -7,6 +7,7 @@ from typing import Any
 from xiaomei_brain.media_services import (
     MediaServiceConfigurationError,
     MediaServiceConfigurationService,
+    inspect_media_runtime,
 )
 
 from ..protocol import ErrorCode, build_error, build_response
@@ -31,7 +32,16 @@ class MediaServiceMethods:
             "media.service.configure": self.handle_configure,
             "media.service.test": self.handle_test,
             "media.service.remove": self.handle_remove,
+            "media.runtime.status": self.handle_runtime_status,
         }
+
+    def handle_runtime_status(
+        self,
+        _conn_id: str,
+        req_id: str,
+        _params: dict,
+    ) -> dict:
+        return build_response(req_id, result=inspect_media_runtime())
 
     def handle_list(self, _conn_id: str, req_id: str, params: dict) -> dict:
         parsed, error = self._parse(MediaServiceListParams, params, req_id)

@@ -33,6 +33,9 @@ class GatewayEventProjection:
         "artifact.presented",
         "assignment.changed",
         "assignment.progress",
+        "project.created",
+        "project.updated",
+        "process.updated",
         "activity.queued",
         "activity.started",
         "activity.progress",
@@ -52,12 +55,16 @@ class GatewayEventProjection:
     def __call__(self, event: DomainEvent) -> None:
         is_assignment_event = event.name.startswith("assignment.")
         is_activity_event = event.name.startswith("activity.")
+        is_project_event = event.name.startswith("project.")
+        is_process_event = event.name.startswith("process.")
         is_agent_state_event = event.name.startswith("agent.state.")
         is_agent_speech_event = event.name.startswith("agent.speech.")
         if event.name not in self.PUBLIC_EVENTS or (
             not event.session_id
             and not is_assignment_event
             and not is_activity_event
+            and not is_project_event
+            and not is_process_event
             and not is_agent_state_event
             and not is_agent_speech_event
         ):
@@ -106,14 +113,24 @@ class GatewayEventProjection:
             # exists; only fall back to the Person's latest active channel when
             # the origin is unavailable (for example a CLI-created Assignment).
             if (
-                (is_assignment_event or is_activity_event)
+                (
+                    is_assignment_event
+                    or is_activity_event
+                    or is_project_event
+                    or is_process_event
+                )
                 and event.session_id
                 and hasattr(router, "route_for_session")
             ):
                 route = router.route_for_session(event.session_id)
             if (
                 route is None
-                and (is_assignment_event or is_activity_event)
+                and (
+                    is_assignment_event
+                    or is_activity_event
+                    or is_project_event
+                    or is_process_event
+                )
                 and target_person_id
                 and hasattr(router, "route_for_user")
             ):
@@ -206,6 +223,8 @@ class GatewayEventProjection:
             if (
                 is_assignment_event
                 or is_activity_event
+                or is_project_event
+                or is_process_event
                 or is_agent_state_event
                 or is_agent_speech_event
             ):

@@ -5,7 +5,8 @@ import json
 import pytest
 from unittest.mock import Mock
 
-from xiaomei_brain.agent.core import Agent
+from xiaomei_brain.agent.core import Agent, REPEATED_TOOL_FAILURE_MESSAGE
+from xiaomei_brain.agent.steering import SteerMessage
 from xiaomei_brain.llm.types import NormalizedResponse, ToolCall
 from xiaomei_brain.tools.registry import ToolRegistry
 from xiaomei_brain.tools.registry import TOOL_CONTROL_KEY
@@ -15,6 +16,16 @@ def _chat(agent: Agent, user_input: str) -> str:
     """Helper: send a user message through Agent.stream() and collect output."""
     messages = [{"role": "user", "content": user_input}]
     return "".join(agent.stream(messages))
+
+
+def _steer(content: str, *, turn_id: str = "steer-turn") -> SteerMessage:
+    return SteerMessage(
+        content=content,
+        user_id="person-1",
+        session_id="session-1",
+        turn_id=turn_id,
+        active_turn_id="active-turn",
+    )
 
 
 def _setup_mock_llm(mock_llm, content: str = "Hello!"):
@@ -73,6 +84,66 @@ def test_agent_max_steps(mock_llm, registry):
     response = _chat(agent, "Run tool")
     # After max_steps, stream() stops without final answer
     assert isinstance(response, str)
+
+
+def test_agent_stops_after_model_ignores_blocked_retry(mock_llm, registry):
+    """A stubborn model must not turn one failed command into a long loop."""
+    from xiaomei_brain.tools import tool
+
+    executions = {"count": 0}
+
+    @tool(name="always_fail", description="Always fail for retry tests")
+    def always_fail() -> str:
+        executions["count"] += 1
+        return "Error: deterministic failure"
+
+    registry.register(always_fail)
+    agent = Agent(llm=mock_llm, tools=registry, max_steps=20)
+    tool_call = ToolCall(id="failed-call", name="always_fail", arguments="{}")
+    mock_llm.chat_stream.return_value = iter(())
+    mock_llm._last_stream_response = NormalizedResponse(
+        content="",
+        tool_calls=[tool_call],
+        finish_reason="tool_calls",
+    )
+    mock_llm._reasoning_end_yielded = False
+
+    response = _chat(agent, "Keep retrying")
+
+    assert response == REPEATED_TOOL_FAILURE_MESSAGE
+    assert executions["count"] == 3
+    assert mock_llm.chat_stream.call_count == 5
+
+
+def test_react_nodb_stops_after_model_ignores_blocked_retry(mock_llm, registry):
+    """The same circuit breaker also protects isolated/internal runtimes."""
+    from xiaomei_brain.tools import tool
+
+    executions = {"count": 0}
+
+    @tool(name="always_fail", description="Always fail for retry tests")
+    def always_fail() -> str:
+        executions["count"] += 1
+        return "Error: deterministic failure"
+
+    registry.register(always_fail)
+    agent = Agent(llm=mock_llm, tools=registry, max_steps=20)
+    tool_call = ToolCall(id="failed-call", name="always_fail", arguments="{}")
+    mock_llm.chat.return_value = NormalizedResponse(
+        content="",
+        tool_calls=[tool_call],
+        finish_reason="tool_calls",
+    )
+
+    response = agent.react_nodb(
+        [{"role": "user", "content": "Keep retrying"}],
+        max_steps=20,
+        quiet=True,
+    )
+
+    assert response == REPEATED_TOOL_FAILURE_MESSAGE
+    assert executions["count"] == 3
+    assert mock_llm.chat.call_count == 5
 
 
 def test_execute_tool_call_accepts_structured_result(mock_llm, registry):
@@ -269,11 +340,14 @@ def test_steer_injected_at_tool_batch_boundary(mock_llm, registry):
     from xiaomei_brain.tools import tool
 
     agent = Agent(llm=mock_llm, tools=registry, max_steps=5)
+    dynamic_loader = Mock()
+    dynamic_loader.select_openai_tools.return_value = None
+    agent._dynamic_loader = dynamic_loader
     calls: list[list[dict]] = []
 
     @tool(name="echo", description="Echo the given text")
     def echo(text: str) -> str:
-        agent.steer("interrupt now")
+        agent.steer(_steer("interrupt now"))
         return text
 
     registry.register(echo)
@@ -292,10 +366,12 @@ def test_steer_injected_at_tool_batch_boundary(mock_llm, registry):
     assert len(calls) == 2
     # The steer message must appear before the second LLM call.
     assert any("interrupt now" in c for c in _user_contents(calls[1]))
+    second_selection_context = dynamic_loader.select_openai_tools.call_args_list[1].args[0]
+    assert "interrupt now" in second_selection_context
 
 
-def test_steer_multiple_messages_joined(mock_llm, registry):
-    """Multiple steer() calls are joined and injected together."""
+def test_steer_multiple_messages_preserve_boundaries(mock_llm, registry):
+    """Multiple steer messages remain separate user messages in order."""
     from xiaomei_brain.tools import tool
 
     agent = Agent(llm=mock_llm, tools=registry, max_steps=5)
@@ -303,8 +379,8 @@ def test_steer_multiple_messages_joined(mock_llm, registry):
 
     @tool(name="echo", description="Echo the given text")
     def echo(text: str) -> str:
-        agent.steer("first steer")
-        agent.steer("second steer")
+        agent.steer(_steer("first steer", turn_id="steer-1"))
+        agent.steer(_steer("second steer", turn_id="steer-2"))
         return text
 
     registry.register(echo)
@@ -320,24 +396,21 @@ def test_steer_multiple_messages_joined(mock_llm, registry):
     _chat(agent, "start")
 
     steer_blocks = [c for c in _user_contents(calls[1]) if "steer" in c]
-    assert steer_blocks, "steer message missing from second LLM call"
-    assert "\n\n" in steer_blocks[0]
-    assert "first steer" in steer_blocks[0]
-    assert "second steer" in steer_blocks[0]
+    assert steer_blocks == ["first steer", "second steer"]
 
 
 def test_steer_empty_message_ignored(mock_llm, registry):
     """Whitespace-only steer() calls are discarded."""
     agent = Agent(llm=mock_llm, tools=registry)
-    agent.steer("   ")
-    agent.steer("")
+    agent.steer(_steer("   "))
+    agent.steer(_steer(""))
     assert agent._steer_queue.empty()
 
 
 def test_steer_queue_empty_after_stream(mock_llm, registry):
     """Queued steer messages do not leak into a later stream() call."""
     agent = Agent(llm=mock_llm, tools=registry)
-    agent.steer("pending while idle")
+    agent.steer(_steer("pending while idle"))
 
     _setup_mock_llm(mock_llm, "Hello!")
     response = _chat(agent, "Hi")
@@ -346,8 +419,8 @@ def test_steer_queue_empty_after_stream(mock_llm, registry):
     assert agent._steer_queue.empty()
 
 
-def test_steer_cleared_after_handoff(mock_llm, registry):
-    """A handoff-exit must still drain any unprocessed steer messages."""
+def test_steer_preserved_after_handoff(mock_llm, registry):
+    """A handoff exit leaves late steer ownership to Living."""
     from xiaomei_brain.tools import tool
 
     agent = Agent(llm=mock_llm, tools=registry, max_steps=5)
@@ -355,7 +428,7 @@ def test_steer_cleared_after_handoff(mock_llm, registry):
 
     @tool(name="delegate", description="Transfer work to a background runner")
     def delegate() -> dict:
-        agent.steer("late steer")
+        agent.steer(_steer("late steer"))
         return {
             "status": "queued",
             TOOL_CONTROL_KEY: {
@@ -376,9 +449,10 @@ def test_steer_cleared_after_handoff(mock_llm, registry):
 
     response = _chat(agent, "请接下这个持续任务")
 
-    # Handoff stops the loop on the first step; the steer message must be
-    # drained by the finally block, not delivered to a later stream() call.
+    # Handoff stops the loop on the first step. The message was not consumed,
+    # so Living must be able to reclaim and enqueue it as the next Turn.
     assert response == "已转入后台执行。"
     assert len(calls) == 1
-    assert agent._steer_queue.empty()
+    pending = agent.take_pending_steers()
+    assert [item.content for item in pending] == ["late steer"]
     assert not any("late steer" in c for c in _user_contents(calls[0]))

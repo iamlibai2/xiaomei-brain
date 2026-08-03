@@ -238,7 +238,7 @@ class ModelSelectionSetParams(BaseModel):
 
 
 class MediaServiceListParams(BaseModel):
-    capability: Literal["", "image", "tts", "music"] = ""
+    capability: Literal["", "image", "tts", "music", "video"] = ""
 
 
 class MediaServiceParams(BaseModel):
@@ -285,7 +285,7 @@ class ChatAttachment(BaseModel):
     id: str = Field(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
     name: str = Field(..., min_length=1, max_length=255)
     mime_type: str = Field(..., min_length=1, max_length=128)
-    size: int = Field(..., ge=1, le=5 * 1024 * 1024)
+    size: int = Field(..., ge=1, le=20 * 1024 * 1024)
     data_base64: str = Field(..., min_length=1)
 
 
@@ -430,6 +430,22 @@ class AssignmentResumeParams(BaseModel):
     response: str = Field(default="", max_length=8000)
     decision: Literal["approve", "deny"] | None = None
     expected_revision: int | None = Field(default=None, ge=1)
+
+
+# Project
+
+class ProjectListParams(BaseModel):
+    status: str = Field(default="active", min_length=1, max_length=32)
+    limit: int = Field(default=100, ge=1, le=200)
+
+
+class ProjectGetParams(BaseModel):
+    project_id: str = Field(..., min_length=1, max_length=128)
+    event_limit: int = Field(default=100, ge=1, le=500)
+
+
+class ProjectCurrentParams(BaseModel):
+    session_id: str = Field(..., min_length=1, max_length=256)
 
 
 # ── Activity ──────────────────────────────────────────────────────────────

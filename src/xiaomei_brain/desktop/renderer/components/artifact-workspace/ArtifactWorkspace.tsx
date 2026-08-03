@@ -29,9 +29,12 @@ export function ArtifactWorkspace({
   artifactKey: string;
   onClose: () => void;
 }) {
-  const artifacts = useCoreStore((state) => state.artifactsByAgent[agentId] || []);
+  // Keep the external-store snapshot referentially stable while this Agent has
+  // no artifacts. Returning `[]` from the selector creates a new snapshot on
+  // every read and makes React's useSyncExternalStore rerender forever.
+  const artifacts = useCoreStore((state) => state.artifactsByAgent[agentId]);
   const sendMessage = useCoreStore((state) => state.sendMessage);
-  const artifact = useMemo(() => artifacts.find((item) => (
+  const artifact = useMemo(() => artifacts?.find((item) => (
     `${item.sessionId}:${item.id}` === artifactKey
   )) || null, [artifactKey, artifacts]);
   const [dataBase64, setDataBase64] = useState("");

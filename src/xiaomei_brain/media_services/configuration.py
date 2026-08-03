@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import os
 import tempfile
 from pathlib import Path
@@ -60,17 +61,29 @@ class MediaServiceConfigurationService:
                     secret_hint = self._mask_secret(str(raw))
                 continue
             values[field.key] = raw
+        enabled = bool(entry.get("enabled", spec.default_enabled))
+        required_ready = all(
+            entry.get(field.key, field.default) not in (None, "")
+            for field in spec.fields
+            if field.required and field.field_type != "secret"
+        )
+        configured = enabled and required_ready and (
+            secret_configured
+            if any(field.field_type == "secret" and field.required for field in spec.fields)
+            else True
+        )
         return {
             "id": spec.service_id,
             "name": spec.name,
             "plugin": spec.plugin,
             "capability": spec.capability,
             "vendor": spec.vendor,
-            "configured": secret_configured,
-            "enabled": bool(entry.get("enabled", False)),
+            "configured": configured,
+            "enabled": enabled,
             "secret_configured": secret_configured,
             "secret_hint": secret_hint,
             "restart_required": True,
+            "connection_kind": spec.connection_kind,
             "fields": [field.public() for field in spec.fields],
             "values": values,
         }
@@ -103,6 +116,13 @@ class MediaServiceConfigurationService:
 
     def remove(self, service_id: str) -> bool:
         spec = self._spec(service_id)
+        if spec.default_enabled:
+            previous = self._entry(service_id)
+            removed = previous.get("enabled", True) is not False
+            if removed:
+                self._set_entry(spec.plugin, {"enabled": False})
+            return removed
+
         data = self._read_config(self.config_path)
         plugins = data.get("plugins", {})
         entries = plugins.get("entries", {}) if isinstance(plugins, dict) else {}
@@ -125,6 +145,9 @@ class MediaServiceConfigurationService:
                 resolved[field.key] = self._validate_field(field, value)
             elif field.required:
                 raise MediaServiceConfigurationError(f"请输入{field.label}")
+
+        if spec.test_kind == "local":
+            return self._test_local_service(spec, resolved)
 
         api_key = str(resolved.get("api_key") or "")
         base_url = str(resolved.get("base_url") or "").rstrip("/")
@@ -162,7 +185,43 @@ class MediaServiceConfigurationService:
             "ok": True,
             "service_id": service_id,
             "authenticated": response.status_code not in {401, 403},
+            "mode": "remote",
         }
+
+    def _test_local_service(
+        self,
+        spec: MediaServiceSpec,
+        values: dict[str, Any],
+    ) -> dict[str, Any]:
+        health_url = spec.test_health_url
+        for key, value in values.items():
+            health_url = health_url.replace(f"${key}", str(value))
+        if health_url.startswith(("http://", "https://")):
+            try:
+                response = requests.request("GET", health_url, timeout=3)
+                if response.status_code < 400:
+                    return {
+                        "ok": True,
+                        "service_id": spec.service_id,
+                        "authenticated": True,
+                        "mode": "local_service",
+                    }
+            except requests.RequestException:
+                pass
+
+        module_available = bool(
+            spec.test_module and importlib.util.find_spec(spec.test_module) is not None
+        )
+        if module_available:
+            return {
+                "ok": True,
+                "service_id": spec.service_id,
+                "authenticated": True,
+                "mode": "in_process",
+            }
+        raise MediaServiceConfigurationError(
+            "本地服务未启动，当前 Python 环境也没有安装所需运行库"
+        )
 
     def raw_entry(self, service_id: str) -> dict[str, Any]:
         return dict(self._entry(service_id))

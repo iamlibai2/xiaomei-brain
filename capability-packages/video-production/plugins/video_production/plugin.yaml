@@ -1,0 +1,12 @@
+name: video_production
+version: "1.0.11"
+description: 视频项目规划、素材检查和 FFmpeg 合成工具
+kind: tool
+entry: adapter:register
+provides_tools:
+  - initialize_video_project
+  - save_video_storyboard
+  - stage_video_asset
+  - inspect_video_media
+  - create_video_contact_sheet
+  - compose_video_timeline

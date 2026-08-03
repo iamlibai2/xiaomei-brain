@@ -10,6 +10,7 @@ from xiaomei_brain.media_services import (
     MediaServiceConfigurationError,
     MediaServiceConfigurationService,
     discover_media_service_specs,
+    inspect_media_runtime,
 )
 from xiaomei_brain.plugin.bootstrap import _extract_plugins_config
 
@@ -20,7 +21,15 @@ def test_catalog_discovers_all_built_in_media_capabilities():
     assert specs["image_minimax"].capability == "image"
     assert specs["image_seedream"].capability == "image"
     assert specs["tts_minimax"].capability == "tts"
+    assert specs["tts_voxcpm"].capability == "tts"
+    assert specs["tts_voxcpm"].connection_kind == "local"
+    assert specs["tts_voxcpm"].default_enabled is True
     assert specs["music_minimax"].capability == "music"
+    assert specs["video_minimax"].capability == "video"
+    assert specs["video_minimax"].models == (
+        "MiniMax-H3",
+        "MiniMax-Hailuo-2.3",
+    )
     assert specs["tts_minimax"].field("voice_id").default == "female-tianmei"
     assert specs["music_minimax"].field("model").default == "music-2.6"
 
@@ -170,7 +179,38 @@ def test_list_can_filter_by_capability(tmp_path):
 
     result = service.list("tts")
 
-    assert [item["id"] for item in result["services"]] == ["tts_minimax"]
+    assert [item["id"] for item in result["services"]] == [
+        "tts_minimax",
+        "tts_voxcpm",
+    ]
+
+
+def test_local_media_service_uses_defaults_and_can_be_disabled(tmp_path):
+    service = MediaServiceConfigurationService("xiaomei", tmp_path)
+
+    current = service.get("tts_voxcpm")
+    assert current["configured"] is True
+    assert current["enabled"] is True
+    assert current["secret_configured"] is False
+    assert current["connection_kind"] == "local"
+
+    assert service.remove("tts_voxcpm") is True
+    disabled = service.get("tts_voxcpm")
+    assert disabled["enabled"] is False
+    assert disabled["configured"] is False
+
+
+def test_local_media_service_accepts_running_local_server(tmp_path, monkeypatch):
+    service = MediaServiceConfigurationService("xiaomei", tmp_path)
+    monkeypatch.setattr(
+        "xiaomei_brain.media_services.configuration.requests.request",
+        lambda *args, **kwargs: SimpleNamespace(status_code=200, text="ok"),
+    )
+
+    result = service.test("tts_voxcpm", config={})
+
+    assert result["ok"] is True
+    assert result["mode"] == "local_service"
 
 
 def test_numeric_fields_are_validated(tmp_path):
@@ -239,6 +279,47 @@ def test_gateway_media_methods_never_return_secret(tmp_path):
     assert "rpc-secret" not in str(listed)
 
 
+def test_media_runtime_reports_deterministic_tool_status(monkeypatch):
+    monkeypatch.setattr(
+        "xiaomei_brain.media_services.runtime.shutil.which",
+        lambda command: f"/tools/{command}",
+    )
+    monkeypatch.setattr(
+        "xiaomei_brain.media_services.runtime.subprocess.run",
+        lambda args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=f"{args[0]} version 1.0\n",
+        ),
+    )
+
+    result = inspect_media_runtime()
+
+    assert result["ready"] is True
+    assert [item["id"] for item in result["tools"]] == ["ffmpeg", "ffprobe"]
+    assert all(item["available"] for item in result["tools"])
+
+
+def test_media_runtime_does_not_treat_version_timeout_as_missing(monkeypatch):
+    import subprocess
+
+    monkeypatch.setattr(
+        "xiaomei_brain.media_services.runtime.shutil.which",
+        lambda command: f"/tools/{command}",
+    )
+    monkeypatch.setattr(
+        "xiaomei_brain.media_services.runtime.subprocess.run",
+        lambda args, **kwargs: (_ for _ in ()).throw(
+            subprocess.TimeoutExpired(args, kwargs.get("timeout", 0)),
+        ),
+    )
+
+    result = inspect_media_runtime()
+
+    assert result["ready"] is True
+    assert all(item["available"] for item in result["tools"])
+    assert all(item["error"] == "版本检测超时" for item in result["tools"])
+
+
 def test_plugin_bootstrap_passes_explicit_media_entries(monkeypatch):
     monkeypatch.setattr(
         "xiaomei_brain.plugin.bootstrap._read_merged_config",
@@ -265,6 +346,7 @@ def test_plugin_bootstrap_passes_explicit_media_entries(monkeypatch):
         ("xiaomei_brain.plugins.tools.image_minimax.adapter", "generate_image_minimax"),
         ("xiaomei_brain.plugins.tools.image_seedream.adapter", "generate_image_seedream"),
         ("xiaomei_brain.plugins.tools.music_minimax.adapter", "generate_music"),
+        ("xiaomei_brain.plugins.tools.video_minimax.adapter", "generate_video_minimax"),
     ],
 )
 def test_configured_media_service_registers_its_tool(

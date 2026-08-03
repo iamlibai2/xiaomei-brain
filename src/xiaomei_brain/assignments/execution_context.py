@@ -7,6 +7,8 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from xiaomei_brain.projects.models import ProjectRuntimeContext
+
 from .models import Assignment
 
 
@@ -60,6 +62,7 @@ class AssignmentExecutionContext:
     acceptance_criteria: tuple[str, ...]
     constraints: tuple[tuple[str, Any], ...]
     resources: tuple[ExecutionResource, ...]
+    project_context: ProjectRuntimeContext | None = None
 
     @classmethod
     def capture(
@@ -69,6 +72,7 @@ class AssignmentExecutionContext:
         run_id: str,
         agent_id: str,
         resources: list[Any] | tuple[Any, ...] = (),
+        project_context: ProjectRuntimeContext | None = None,
     ) -> "AssignmentExecutionContext":
         captured_resources = []
         for resource in resources:
@@ -94,6 +98,7 @@ class AssignmentExecutionContext:
             acceptance_criteria=tuple(assignment.acceptance_criteria),
             constraints=_freeze(assignment.constraints),
             resources=tuple(captured_resources),
+            project_context=project_context,
         )
 
 

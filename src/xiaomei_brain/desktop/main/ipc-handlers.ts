@@ -50,12 +50,21 @@ const inspectedCapabilityPackages = new Map<string, {
 }>();
 const MAX_CACHED_ATTACHMENTS = 32;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
-const MAX_ARTIFACT_BYTES = 20 * 1024 * 1024;
+const MAX_VIDEO_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+const MAX_VIDEO_TOTAL_ATTACHMENT_BYTES = 32 * 1024 * 1024;
+// Conversation documents remain limited by the Agent. Generated video clips
+// have a larger server-side allowance and still pass exact metadata checks.
+const MAX_ARTIFACT_BYTES = 128 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 const MAX_CAPABILITY_PACKAGE_BYTES = 8 * 1024 * 1024;
 const IMAGE_MIMES: Record<string, string> = {
   ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
   ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+};
+const VIDEO_MIMES: Record<string, string> = {
+  ".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime",
+  ".webm": "video/webm", ".mkv": "video/x-matroska",
+  ".avi": "video/x-msvideo", ".mpeg": "video/mpeg", ".mpg": "video/mpeg",
 };
 const TEXT_EXTENSIONS = new Set([
   ".txt", ".md", ".markdown", ".json", ".jsonl", ".yaml", ".yml", ".toml",
@@ -347,7 +356,10 @@ export function registerIpcHandlers(
     const dataBase64 = typeof value.data_base64 === "string" ? value.data_base64 : "";
     const data = Buffer.from(dataBase64, "base64");
     const size = typeof value.size === "number" ? value.size : -1;
-    if (value.id !== attachmentId || !dataBase64 || size !== data.length || size > MAX_ATTACHMENT_BYTES) {
+    const attachmentLimit = String(value.mime_type || "").startsWith("video/")
+      ? MAX_VIDEO_ATTACHMENT_BYTES
+      : MAX_ATTACHMENT_BYTES;
+    if (value.id !== attachmentId || !dataBase64 || size !== data.length || size > attachmentLimit) {
       return { error: { code: -32603, message: "Agent returned inconsistent attachment data" } };
     }
     const attachment = {
@@ -934,6 +946,7 @@ export function registerIpcHandlers(
               "toml", "csv", "tsv", "xml", "html", "css", "js", "jsx", "ts", "tsx", "py", "java",
               "c", "h", "cpp", "cs", "go", "rs", "rb", "php", "swift", "sql", "sh", "ps1", "log",
               "docx", "pptx", "pdf", "xlsx",
+              "mp4", "m4v", "mov", "webm", "mkv", "avi", "mpeg", "mpg",
             ] },
           ],
         })
@@ -948,21 +961,32 @@ export function registerIpcHandlers(
       const name = path.basename(filePath);
       const extension = path.extname(filePath).toLowerCase();
       if (stat.size === 0) return { attachments: [], error: `${name} 是空文件` };
-      if (stat.size > MAX_ATTACHMENT_BYTES) return { attachments: [], error: `${name} 超过 5 MB` };
+      const videoMime = VIDEO_MIMES[extension];
+      const itemLimit = videoMime ? MAX_VIDEO_ATTACHMENT_BYTES : MAX_ATTACHMENT_BYTES;
+      if (stat.size > itemLimit) {
+        return { attachments: [], error: `${name} 超过 ${itemLimit / 1024 / 1024} MB` };
+      }
       total += stat.size;
-      if (total > MAX_TOTAL_ATTACHMENT_BYTES) return { attachments: [], error: "附件合计不能超过 8 MB" };
+      const selectedHasVideo = Boolean(videoMime)
+        || attachments.some((item) => item.kind === "video");
+      const totalLimit = selectedHasVideo
+        ? MAX_VIDEO_TOTAL_ATTACHMENT_BYTES
+        : MAX_TOTAL_ATTACHMENT_BYTES;
+      if (total > totalLimit) {
+        return { attachments: [], error: `附件合计不能超过 ${totalLimit / 1024 / 1024} MB` };
+      }
       const imageMime = IMAGE_MIMES[extension];
       const officeMime = OFFICE_MIMES[extension];
-      if (!imageMime && !officeMime && !TEXT_EXTENSIONS.has(extension)) {
+      if (!imageMime && !videoMime && !officeMime && !TEXT_EXTENSIONS.has(extension)) {
         return { attachments: [], error: `暂不支持 ${name} 的文件类型` };
       }
       const data = await fs.readFile(filePath);
       attachments.push({
         id: crypto.randomUUID(),
         name,
-        mimeType: imageMime || officeMime || "text/plain",
+        mimeType: imageMime || videoMime || officeMime || "text/plain",
         size: stat.size,
-        kind: imageMime ? "image" : officeMime ? "document" : "text",
+        kind: imageMime ? "image" : videoMime ? "video" : officeMime ? "document" : "text",
         dataBase64: data.toString("base64"),
       });
     }
@@ -1105,6 +1129,36 @@ export function registerIpcHandlers(
       assignment_id: args.assignmentId,
       event_limit: args.eventLimit || 100,
     });
+  });
+
+  ipcMain.handle("gateway:listProjects", async (_event, args: {
+    agentId: string; status?: string; limit?: number;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("project.list", {
+      status: args.status || "all",
+      limit: args.limit || 100,
+    });
+  });
+
+  ipcMain.handle("gateway:getProject", async (_event, args: {
+    agentId: string; projectId: string; eventLimit?: number;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("project.get", {
+      project_id: args.projectId,
+      event_limit: args.eventLimit || 100,
+    });
+  });
+
+  ipcMain.handle("gateway:getCurrentProject", async (_event, args: {
+    agentId: string; sessionId: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("project.current", { session_id: args.sessionId });
   });
 
   ipcMain.handle("gateway:listActivities", async (_event, args: {
@@ -1577,10 +1631,14 @@ export function registerIpcHandlers(
   }));
 
   ipcMain.handle("gateway:listMediaServices", async (_event, args: {
-    agentId: string; capability?: "image" | "tts" | "music";
+    agentId: string; capability?: "image" | "tts" | "music" | "video";
   }) => channelRpc(args, "media.service.list", {
     capability: args.capability || "",
   }));
+
+  ipcMain.handle("gateway:getMediaRuntimeStatus", async (_event, args: {
+    agentId: string;
+  }) => channelRpc(args, "media.runtime.status", {}));
 
   ipcMain.handle("gateway:getMediaService", async (_event, args: {
     agentId: string; serviceId: string;

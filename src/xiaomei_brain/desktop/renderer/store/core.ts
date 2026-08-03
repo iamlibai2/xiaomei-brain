@@ -481,6 +481,9 @@ function historyMessages(
       attachments: displayAttachments(row.attachments),
       memoryReferences: role === "agent" ? memoryReferences(row.memory_references) : undefined,
       turnId: typeof row.turn_id === "string" ? row.turn_id : undefined,
+      steeredIntoTurnId: typeof row.steered_into_turn_id === "string"
+        ? row.steered_into_turn_id
+        : undefined,
       deliveryStatus: role === "user" ? deliveryStatus : undefined,
       deliveryErrorCode: role === "user" ? deliveryErrorCode : undefined,
       deliveryError: role === "user" ? deliveryError : undefined,
@@ -796,6 +799,7 @@ export interface DisplayMessage {
   attachments?: DisplayAttachment[];
   memoryReferences?: MemoryReference[];
   turnId?: string;
+  steeredIntoTurnId?: string;
   deliveryStatus?: "queued" | "processing" | "completed" | "failed" | "interrupted";
   deliveryErrorCode?: string;
   deliveryError?: string;
@@ -926,6 +930,87 @@ export interface AssignmentSnapshot {
   createdAt: number;
   updatedAt: number;
   completedAt: number | null;
+}
+
+export type ProjectStatus = "active" | "completed" | "discontinued";
+
+export interface ProjectSnapshot {
+  id: string;
+  name: string;
+  summary: string;
+  projectType: string;
+  status: ProjectStatus;
+  workspaceKind: "managed" | "linked" | "virtual";
+  progressSummary: string;
+  currentStepId: string;
+  waitingReason: string;
+  revision: number;
+  createdAt: number;
+  updatedAt: number;
+  completedAt: number | null;
+}
+
+export interface ProjectStepSnapshot {
+  stepId: string;
+  parentStepId: string | null;
+  title: string;
+  position: number;
+  status: "pending" | "running" | "waiting_review" | "completed" | "needs_revision" | "skipped";
+  summary: string;
+  completedUnits: number | null;
+  totalUnits: number | null;
+  updatedAt: number;
+}
+
+export interface ProjectAssetSnapshot {
+  id: string;
+  role: "source" | "working" | "cache" | "review" | "deliverable";
+  kind: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  status: "available" | "superseded" | "removed" | "failed";
+  updatedAt: number;
+}
+
+export interface ProjectReviewSnapshot {
+  assessment: string;
+  planChanges: string[];
+  deviations: string[];
+  nextAction: string;
+  createdAt: number;
+}
+
+export interface ProjectProcessStageSnapshot {
+  id: string;
+  title: string;
+  position: number;
+  required: boolean;
+  requirementLabels: string[];
+  status: "pending" | "incomplete" | "satisfied";
+  summary: string;
+  missing: string[];
+}
+
+export interface ProjectProcessSnapshot {
+  id: string;
+  name: string;
+  ordered: boolean;
+  status: "active" | "satisfied" | "abandoned";
+  revision: number;
+  stages: ProjectProcessStageSnapshot[];
+  updatedAt: number;
+  satisfiedAt: number | null;
+}
+
+export interface ProjectDetailSnapshot {
+  project: ProjectSnapshot;
+  process: ProjectProcessSnapshot | null;
+  steps: ProjectStepSnapshot[];
+  assets: ProjectAssetSnapshot[];
+  assignments: AssignmentSnapshot[];
+  activities: ActivitySnapshot[];
+  latestReview: ProjectReviewSnapshot | null;
 }
 
 export type ActivityStatus = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled";
@@ -1216,6 +1301,156 @@ function upsertAssignment(state: CoreState, agentId: string, assignment: Assignm
   return true;
 }
 
+function projectSnapshot(value: unknown): ProjectSnapshot | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const item = value as Record<string, unknown>;
+  if (typeof item.id !== "string" || typeof item.name !== "string") return null;
+  if (!["active", "completed", "discontinued"].includes(String(item.status))) return null;
+  return {
+    id: item.id,
+    name: item.name,
+    summary: typeof item.summary === "string" ? item.summary : "",
+    projectType: typeof item.project_type === "string" ? item.project_type : "",
+    status: item.status as ProjectStatus,
+    workspaceKind: (["managed", "linked", "virtual"].includes(String(item.workspace_kind))
+      ? item.workspace_kind : "managed") as ProjectSnapshot["workspaceKind"],
+    progressSummary: typeof item.progress_summary === "string" ? item.progress_summary : "",
+    currentStepId: typeof item.current_step_id === "string" ? item.current_step_id : "",
+    waitingReason: typeof item.waiting_reason === "string" ? item.waiting_reason : "",
+    revision: typeof item.revision === "number" ? item.revision : 0,
+    createdAt: typeof item.created_at === "number" ? item.created_at : 0,
+    updatedAt: typeof item.updated_at === "number" ? item.updated_at : 0,
+    completedAt: typeof item.completed_at === "number" ? item.completed_at : null,
+  };
+}
+
+function projectDetailSnapshot(value: unknown): ProjectDetailSnapshot | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const item = value as Record<string, unknown>;
+  const project = projectSnapshot(item.project);
+  if (!project) return null;
+  let process: ProjectProcessSnapshot | null = null;
+  if (item.process && typeof item.process === "object" && !Array.isArray(item.process)) {
+    const rawProcess = item.process as Record<string, unknown>;
+    if (typeof rawProcess.id === "string" && typeof rawProcess.name === "string") {
+      const stages = Array.isArray(rawProcess.stages) ? rawProcess.stages.flatMap((value) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+        const stage = value as Record<string, unknown>;
+        if (typeof stage.id !== "string" || typeof stage.title !== "string") return [];
+        const submission = stage.submission && typeof stage.submission === "object"
+          && !Array.isArray(stage.submission)
+          ? stage.submission as Record<string, unknown> : null;
+        const requirements = Array.isArray(stage.requirements) ? stage.requirements : [];
+        return [{
+          id: stage.id,
+          title: stage.title,
+          position: typeof stage.position === "number" ? stage.position : 0,
+          required: stage.required !== false,
+          requirementLabels: requirements.flatMap((entry) => (
+            entry && typeof entry === "object" && !Array.isArray(entry)
+              && typeof (entry as Record<string, unknown>).label === "string"
+              ? [String((entry as Record<string, unknown>).label)] : []
+          )),
+          status: String(stage.status || "pending") as ProjectProcessStageSnapshot["status"],
+          summary: submission && typeof submission.summary === "string" ? submission.summary : "",
+          missing: submission && Array.isArray(submission.missing)
+            ? submission.missing.filter((entry): entry is string => typeof entry === "string") : [],
+        }];
+      }) : [];
+      process = {
+        id: rawProcess.id,
+        name: rawProcess.name,
+        ordered: rawProcess.ordered === true,
+        status: String(rawProcess.status || "active") as ProjectProcessSnapshot["status"],
+        revision: typeof rawProcess.revision === "number" ? rawProcess.revision : 0,
+        stages,
+        updatedAt: typeof rawProcess.updated_at === "number" ? rawProcess.updated_at : 0,
+        satisfiedAt: typeof rawProcess.satisfied_at === "number" ? rawProcess.satisfied_at : null,
+      };
+    }
+  }
+  const steps = Array.isArray(item.steps) ? item.steps.flatMap((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    const step = value as Record<string, unknown>;
+    if (typeof step.step_id !== "string" || typeof step.title !== "string") return [];
+    return [{
+      stepId: step.step_id,
+      parentStepId: typeof step.parent_step_id === "string" ? step.parent_step_id : null,
+      title: step.title,
+      position: typeof step.position === "number" ? step.position : 0,
+      status: String(step.status || "pending") as ProjectStepSnapshot["status"],
+      summary: typeof step.summary === "string" ? step.summary : "",
+      completedUnits: typeof step.completed_units === "number" ? step.completed_units : null,
+      totalUnits: typeof step.total_units === "number" ? step.total_units : null,
+      updatedAt: typeof step.updated_at === "number" ? step.updated_at : 0,
+    }];
+  }) : [];
+  const assets = Array.isArray(item.assets) ? item.assets.flatMap((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    const asset = value as Record<string, unknown>;
+    if (typeof asset.id !== "string" || typeof asset.name !== "string") return [];
+    return [{
+      id: asset.id,
+      role: String(asset.role || "working") as ProjectAssetSnapshot["role"],
+      kind: typeof asset.kind === "string" ? asset.kind : "file",
+      name: asset.name,
+      mimeType: typeof asset.mime_type === "string" ? asset.mime_type : "",
+      size: typeof asset.size === "number" ? asset.size : 0,
+      status: String(asset.status || "available") as ProjectAssetSnapshot["status"],
+      updatedAt: typeof asset.updated_at === "number" ? asset.updated_at : 0,
+    }];
+  }) : [];
+  let latestReview: ProjectReviewSnapshot | null = null;
+  if (Array.isArray(item.events)) {
+    const reviews: ProjectReviewSnapshot[] = [];
+    for (const value of item.events) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const event = value as Record<string, unknown>;
+      if (event.type !== "reviewed" || !event.payload || typeof event.payload !== "object"
+        || Array.isArray(event.payload)) continue;
+      const payload = event.payload as Record<string, unknown>;
+      reviews.push({
+        assessment: typeof payload.assessment === "string" ? payload.assessment : "",
+        planChanges: Array.isArray(payload.plan_changes)
+          ? payload.plan_changes.filter((entry): entry is string => typeof entry === "string") : [],
+        deviations: Array.isArray(payload.deviations)
+          ? payload.deviations.filter((entry): entry is string => typeof entry === "string") : [],
+        nextAction: typeof payload.next_action === "string" ? payload.next_action : "",
+        createdAt: typeof event.created_at === "number" ? event.created_at : 0,
+      });
+    }
+    reviews.sort((left, right) => left.createdAt - right.createdAt);
+    const newest = reviews.at(-1);
+    if (newest) {
+      // A final acceptance review is often intentionally terse. Keep its
+      // assessment and next action, while retaining the most recent structured
+      // scope changes from the preceding substantive review.
+      const latestPlanChanges = [...reviews].reverse()
+        .find((review) => review.planChanges.length > 0)?.planChanges || [];
+      const latestDeviations = [...reviews].reverse()
+        .find((review) => review.deviations.length > 0)?.deviations || [];
+      latestReview = {
+        ...newest,
+        planChanges: latestPlanChanges,
+        deviations: latestDeviations,
+      };
+    }
+  }
+  return {
+    project,
+    process,
+    steps,
+    assets,
+    assignments: Array.isArray(item.assignments)
+      ? item.assignments.map(assignmentSnapshot).filter((entry): entry is AssignmentSnapshot => entry !== null)
+      : [],
+    activities: Array.isArray(item.activities)
+      ? item.activities.map(activitySnapshot).filter((entry): entry is ActivitySnapshot => entry !== null)
+      : [],
+    latestReview,
+  };
+}
+
 export interface ConnectionState {
   status: "disconnected" | "connecting" | "connected" | "error";
   agentName: string;
@@ -1258,6 +1493,9 @@ interface CoreState {
   assignmentsByAgent: Record<string, AssignmentSnapshot[]>;
   assignmentLoadingByAgent: Record<string, boolean>;
   assignmentErrorByAgent: Record<string, string>;
+  currentProjectByAgent: Record<string, ProjectDetailSnapshot | null>;
+  projectLoadingByAgent: Record<string, boolean>;
+  projectErrorByAgent: Record<string, string>;
   activitiesByAgent: Record<string, ActivitySnapshot[]>;
   activityLoadingByAgent: Record<string, boolean>;
   activityErrorByAgent: Record<string, string>;
@@ -1320,6 +1558,7 @@ interface CoreActions {
   searchSessions: (query: string) => Promise<void>;
   loadMoreSessions: () => Promise<void>;
   refreshAssignments: (agentId?: string) => Promise<void>;
+  refreshCurrentProject: (agentId?: string) => Promise<void>;
   refreshActivities: (agentId?: string) => Promise<void>;
   refreshArtifacts: (agentId?: string) => Promise<void>;
   refreshPersonMemories: (agentId?: string) => Promise<void>;
@@ -1356,6 +1595,9 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   assignmentsByAgent: {},
   assignmentLoadingByAgent: {},
   assignmentErrorByAgent: {},
+  currentProjectByAgent: {},
+  projectLoadingByAgent: {},
+  projectErrorByAgent: {},
   activitiesByAgent: {},
   activityLoadingByAgent: {},
   activityErrorByAgent: {},
@@ -1734,6 +1976,9 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       delete s.assignmentsByAgent[agentId];
       delete s.assignmentLoadingByAgent[agentId];
       delete s.assignmentErrorByAgent[agentId];
+      delete s.currentProjectByAgent[agentId];
+      delete s.projectLoadingByAgent[agentId];
+      delete s.projectErrorByAgent[agentId];
       delete s.activitiesByAgent[agentId];
       delete s.activityLoadingByAgent[agentId];
       delete s.activityErrorByAgent[agentId];
@@ -1859,6 +2104,11 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
           }
           if (userMessage && res.result?.status === "queued") {
             userMessage.deliveryStatus = "queued";
+          } else if (userMessage && res.result?.status === "steering") {
+            userMessage.deliveryStatus = "processing";
+            if (typeof res.result?.active_turn_id === "string") {
+              userMessage.steeredIntoTurnId = res.result.active_turn_id;
+            }
           }
         }));
         return;
@@ -1914,6 +2164,9 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       s.assignmentsByAgent = {};
       s.assignmentLoadingByAgent = {};
       s.assignmentErrorByAgent = {};
+      s.currentProjectByAgent = {};
+      s.projectLoadingByAgent = {};
+      s.projectErrorByAgent = {};
       s.activitiesByAgent = {};
       s.activityLoadingByAgent = {};
       s.activityErrorByAgent = {};
@@ -2583,6 +2836,46 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     }
   },
 
+  refreshCurrentProject: async (requestedAgentId) => {
+    const agentId = requestedAgentId || get().activeAgentId;
+    if (!agentId || get().connectionByAgent[agentId]?.status !== "connected") return;
+    const sessionId = get().activeSessionByAgent[agentId];
+    if (!sessionId) {
+      set(produce((s: CoreState) => {
+        s.currentProjectByAgent[agentId] = null;
+        s.projectLoadingByAgent[agentId] = false;
+        s.projectErrorByAgent[agentId] = "";
+      }));
+      return;
+    }
+    set(produce((s: CoreState) => {
+      s.projectLoadingByAgent[agentId] = true;
+      s.projectErrorByAgent[agentId] = "";
+    }));
+    try {
+      const response = await window.gateway.getCurrentProject({ agentId, sessionId });
+      if (response.error) throw new Error(response.error.message);
+      const detail = response.result?.project ? projectDetailSnapshot(response.result) : null;
+      set(produce((s: CoreState) => {
+        if (s.activeSessionByAgent[agentId] !== sessionId) return;
+        const previous = s.currentProjectByAgent[agentId];
+        if (
+          detail
+          && previous?.project.id === detail.project.id
+          && previous.project.revision > detail.project.revision
+        ) return;
+        s.currentProjectByAgent[agentId] = detail;
+        s.projectLoadingByAgent[agentId] = false;
+        s.projectErrorByAgent[agentId] = "";
+      }));
+    } catch (error) {
+      set(produce((s: CoreState) => {
+        s.projectLoadingByAgent[agentId] = false;
+        s.projectErrorByAgent[agentId] = String(error);
+      }));
+    }
+  },
+
   refreshActivities: async (requestedAgentId) => {
     const agentId = requestedAgentId || get().activeAgentId;
     if (!agentId || get().connectionByAgent[agentId]?.status !== "connected") return;
@@ -2842,6 +3135,11 @@ export function initGatewayEvents() {
     const setState = useCoreStore.setState;
 
     if (!agentId) return;
+
+    if (event === "project.created" || event === "project.updated" || event === "process.updated") {
+      void store().refreshCurrentProject(agentId);
+      return;
+    }
 
     if (event.startsWith("activity.")) {
       const activity = activitySnapshot(d.activity);
@@ -3438,17 +3736,27 @@ export function initGatewayEvents() {
         const userMessage = [...eventMessages(s)]
           .reverse()
           .find((message) => message.role === "user" && message.turnId === eventTurnId);
-        if (!userMessage) return;
-        retryMessageId = userMessage.sourceMessageId;
-        userMessage.deliveryStatus = status === "error"
+        const terminalDeliveryStatus: DisplayMessage["deliveryStatus"] = status === "error"
           ? "failed"
           : status === "interrupted" ? "interrupted" : "completed";
-        userMessage.deliveryErrorCode = status === "error"
+        const terminalErrorCode = status === "error"
           ? String(error?.code || "")
           : "";
-        userMessage.deliveryError = status === "error"
+        const terminalErrorMessage = status === "error"
           ? String(error?.message || "Unknown error")
           : "";
+        if (userMessage) {
+          retryMessageId = userMessage.sourceMessageId;
+          userMessage.deliveryStatus = terminalDeliveryStatus;
+          userMessage.deliveryErrorCode = terminalErrorCode;
+          userMessage.deliveryError = terminalErrorMessage;
+        }
+        for (const message of eventMessages(s)) {
+          if (message.role !== "user" || message.steeredIntoTurnId !== eventTurnId) continue;
+          message.deliveryStatus = terminalDeliveryStatus;
+          message.deliveryErrorCode = terminalErrorCode;
+          message.deliveryError = terminalErrorMessage;
+        }
       }));
       let completedText = "";
       if (stream.id) {
