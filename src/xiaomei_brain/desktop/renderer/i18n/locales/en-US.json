@@ -80,6 +80,8 @@
       "startContinuousVoice": "Start continuous voice conversation",
       "stopContinuousVoice": "Stop continuous voice conversation",
       "voiceListening": "Listening continuously. Speech is sent automatically",
+      "voiceConversation": "Voice conversation",
+      "voiceThinking": "Agent is thinking…",
       "voiceHearing": "Listening to you…",
       "voicePausedWhileSpeaking": "Listening is paused while the Agent is speaking",
       "voiceRecognitionFailed": "Speech recognition failed",

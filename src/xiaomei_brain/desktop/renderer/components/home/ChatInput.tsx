@@ -8,6 +8,7 @@ import type {
   ModelThinkingSelection,
 } from "../../types";
 import { ModelQuickMenu } from "./ModelQuickMenu";
+import { VoiceOrb, type VoiceOrbPhase } from "./VoiceOrb";
 
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 8 * 1024 * 1024;
@@ -60,10 +61,12 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
   const speechFramesRef = useRef(0);
   const noiseFloorRef = useRef(0.006);
   const pendingVoiceRef = useRef(0);
+  const voiceLevelRef = useRef(0);
   const [dragging, setDragging] = useState(false);
   const [listening, setListening] = useState(false);
   const [mediaBusy, setMediaBusy] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState("");
+  const [voicePhase, setVoicePhase] = useState<VoiceOrbPhase>("listening");
   const [modelSnapshot, setModelSnapshot] = useState<ModelConfigSnapshot | null>(null);
   const [modelBusy, setModelBusy] = useState(false);
   const [modelError, setModelError] = useState("");
@@ -128,8 +131,10 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       discardRecordingRef.current = true;
       if (recorderRef.current?.state === "recording") recorderRef.current.stop();
       setVoiceStatus(t("home.voicePausedWhileSpeaking"));
+      setVoicePhase("speaking");
     } else {
       setVoiceStatus(t("home.voiceListening"));
+      setVoicePhase("listening");
     }
   }, [agentSpeaking, t]);
 
@@ -139,6 +144,10 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       || raw.event !== "embodiment.audio.input.completed"
     ) return;
     const payload = raw.data as Record<string, unknown>;
+    if (pendingVoiceRef.current > 0) {
+      pendingVoiceRef.current -= 1;
+      setMediaBusy(pendingVoiceRef.current > 0);
+    }
     if (payload.status === "failed") {
       setAttachmentError(
         typeof payload.error === "string"
@@ -146,14 +155,38 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
           : t("home.voiceRecognitionFailed"),
       );
     }
-    setVoiceStatus(continuousActiveRef.current
-      ? speakingRef.current
-        ? t("home.voicePausedWhileSpeaking")
-        : recorderRef.current
-          ? t("home.voiceHearing")
-          : t("home.voiceListening")
-      : "");
+    if (!continuousActiveRef.current) {
+      setVoiceStatus("");
+    } else if (speakingRef.current) {
+      setVoiceStatus(t("home.voicePausedWhileSpeaking"));
+      setVoicePhase("speaking");
+    } else if (pendingVoiceRef.current > 0) {
+      setVoiceStatus(t("home.voiceProcessing"));
+      setVoicePhase("processing");
+    } else if (recorderRef.current) {
+      setVoiceStatus(t("home.voiceHearing"));
+      setVoicePhase("hearing");
+    } else {
+      setVoiceStatus(t("home.voiceListening"));
+      setVoicePhase("listening");
+    }
   }), [activeAgentId, setAttachmentError, t]);
+
+  useEffect(() => {
+    if (
+      !continuousActiveRef.current
+      || speakingRef.current
+      || pendingVoiceRef.current > 0
+      || recorderRef.current
+    ) return;
+    if (sending) {
+      setVoiceStatus(t("home.voiceThinking"));
+      setVoicePhase("processing");
+    } else {
+      setVoiceStatus(t("home.voiceListening"));
+      setVoicePhase("listening");
+    }
+  }, [sending, t]);
 
   useEffect(() => {
     const handleModelChange = (event: Event) => {
@@ -259,6 +292,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
     if (updateUI) {
       setListening(false);
       setVoiceStatus("");
+      setVoicePhase("listening");
     }
     if (agentId) {
       await window.gateway.setContinuousHearing({ agentId, enabled: false }).catch(() => undefined);
@@ -288,6 +322,8 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
     pendingVoiceRef.current += 1;
     setMediaBusy(true);
     setVoiceStatus(t("home.voiceProcessing"));
+    setVoicePhase("processing");
+    let accepted = false;
     try {
       const response = await window.gateway.sendVoice({
         agentId,
@@ -298,13 +334,20 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
         continuous: true,
       });
       if (response.error) throw new Error(response.error.message);
+      accepted = true;
     } catch (error) {
       setAttachmentError(error instanceof Error ? error.message : String(error));
     } finally {
-      pendingVoiceRef.current = Math.max(0, pendingVoiceRef.current - 1);
+      if (!accepted) pendingVoiceRef.current = Math.max(0, pendingVoiceRef.current - 1);
       setMediaBusy(pendingVoiceRef.current > 0);
-      if (continuousActiveRef.current && !speakingRef.current) {
+      if (
+        !accepted
+        && continuousActiveRef.current
+        && !speakingRef.current
+        && pendingVoiceRef.current === 0
+      ) {
         setVoiceStatus(t("home.voiceListening"));
+        setVoicePhase("listening");
       }
     }
   }, [setAttachmentError, t]);
@@ -336,6 +379,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
     }, { once: true });
     recorder.start(250);
     setVoiceStatus(t("home.voiceHearing"));
+    setVoicePhase("hearing");
   }, [sendContinuousSegment, t]);
 
   const beginVadLoop = useCallback((stream: MediaStream, analyser: AnalyserNode) => {
@@ -352,6 +396,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       let squareSum = 0;
       for (const sample of samples) squareSum += sample * sample;
       const rms = Math.sqrt(squareSum / samples.length);
+      voiceLevelRef.current = rms;
       const threshold = Math.max(0.014, noiseFloorRef.current * 2.8);
       if (rms >= threshold) {
         speechFramesRef.current += 1;
@@ -413,6 +458,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       noiseFloorRef.current = 0.006;
       setListening(true);
       setVoiceStatus(t("home.voiceListening"));
+      setVoicePhase("listening");
       beginVadLoop(stream, analyser);
     } catch (error) {
       setVoiceStatus("");
@@ -510,7 +556,25 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
         </div>
       )}
       {attachmentError && <div className="attachment-error">{attachmentError}</div>}
-      {voiceStatus && <div className="embodiment-media-status">{voiceStatus}</div>}
+      {listening && (
+        <div className={`voice-live-panel is-${voicePhase}`} role="status" aria-live="polite">
+          <VoiceOrb levelRef={voiceLevelRef} phase={voicePhase} />
+          <div className="voice-live-copy">
+            <strong>{t("home.voiceConversation")}</strong>
+            <span>{voiceStatus}</span>
+          </div>
+          <button
+            type="button"
+            className="voice-live-stop"
+            onClick={() => { void releaseContinuousHearing(); }}
+            title={t("home.stopContinuousVoice")}
+            aria-label={t("home.stopContinuousVoice")}
+          >
+            <Icon name="x" size={17} />
+          </button>
+        </div>
+      )}
+      {!listening && voiceStatus && <div className="embodiment-media-status">{voiceStatus}</div>}
       {modelError && <div className="chat-model-error">{modelError}</div>}
       <textarea
         ref={textareaRef}

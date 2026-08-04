@@ -80,6 +80,8 @@
       "startContinuousVoice": "开启持续语音对话",
       "stopContinuousVoice": "关闭持续语音对话",
       "voiceListening": "持续监听中，说话后会自动发送",
+      "voiceConversation": "语音对话",
+      "voiceThinking": "Agent 正在思考…",
       "voiceHearing": "正在听你说话…",
       "voicePausedWhileSpeaking": "Agent 正在说话，监听已暂时暂停",
       "voiceRecognitionFailed": "语音识别失败",
