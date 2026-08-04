@@ -1,4 +1,5 @@
 import { execFile } from "child_process";
+import http from "http";
 import { promises as fs } from "fs";
 import os from "os";
 import path from "path";
@@ -6,6 +7,13 @@ import { promisify } from "util";
 import { RuntimeManager } from "./runtime-manager";
 
 const execFileAsync = promisify(execFile);
+const SERVICE_ENDPOINTS: Record<string, string> = {
+  embedding: "http://127.0.0.1:18765",
+  tts_voxcpm: "http://127.0.0.1:18766",
+  stt: "http://127.0.0.1:18767",
+  voiceprint: "http://127.0.0.1:18768",
+  face: "http://127.0.0.1:18769",
+};
 
 async function pathExists(filePath: string): Promise<boolean> {
   try {
@@ -89,6 +97,13 @@ export interface LocalAIDownloadProgress {
   error: string;
 }
 
+export interface LocalAIStartupState {
+  serviceId: string;
+  online: boolean;
+  failed: boolean;
+  error: string;
+}
+
 interface CommandEnvelope<T> {
   ok: boolean;
   result?: T;
@@ -96,10 +111,41 @@ interface CommandEnvelope<T> {
 }
 
 export class LocalAIRuntimeManager {
+  private snapshotPromise: Promise<{ services: LocalAIServiceStatus[]; system: LocalAISystemStatus }> | null = null;
+  private snapshotCache: { services: LocalAIServiceStatus[]; system: LocalAISystemStatus } | null = null;
+
   constructor(private readonly runtime: RuntimeManager) {}
 
   async snapshot(): Promise<{ services: LocalAIServiceStatus[]; system: LocalAISystemStatus }> {
-    return this.invoke<{ services: LocalAIServiceStatus[]; system: LocalAISystemStatus }>(["list"]);
+    // Desktop startup and the settings page can request the same expensive
+    // inventory at nearly the same time. Share that work instead of spawning
+    // two Python processes and scanning every model cache twice.
+    if (this.snapshotPromise) return this.snapshotPromise;
+    this.snapshotPromise = this.invoke<{ services: LocalAIServiceStatus[]; system: LocalAISystemStatus }>(["list"])
+      .then(async (snapshot) => {
+        this.snapshotCache = snapshot;
+        await this.writeSnapshotCache(snapshot);
+        return snapshot;
+      })
+      .finally(() => {
+        this.snapshotPromise = null;
+      });
+    return this.snapshotPromise;
+  }
+
+  async cachedSnapshot(): Promise<{ services: LocalAIServiceStatus[]; system: LocalAISystemStatus } | null> {
+    if (this.snapshotCache) return this.snapshotCache;
+    try {
+      const value = JSON.parse(await fs.readFile(this.snapshotCachePath(), "utf8")) as {
+        services?: LocalAIServiceStatus[];
+        system?: LocalAISystemStatus;
+      };
+      if (!Array.isArray(value.services) || !value.system) return null;
+      this.snapshotCache = { services: value.services, system: value.system };
+      return this.snapshotCache;
+    } catch {
+      return null;
+    }
   }
 
   async list(): Promise<LocalAIServiceStatus[]> {
@@ -181,6 +227,37 @@ export class LocalAIRuntimeManager {
     };
   }
 
+  async startupState(serviceId: string): Promise<LocalAIStartupState> {
+    if (!/^[a-z0-9_]+$/.test(serviceId) || !SERVICE_ENDPOINTS[serviceId]) {
+      throw new Error("Invalid local AI service ID");
+    }
+    if (await this.healthAvailable(SERVICE_ENDPOINTS[serviceId])) {
+      return { serviceId, online: true, failed: false, error: "" };
+    }
+    const runtimeDir = this.runtimeDirectory();
+    let pid = 0;
+    try {
+      const metadata = JSON.parse(
+        await fs.readFile(path.join(runtimeDir, `${serviceId}.json`), "utf8"),
+      ) as { pid?: number };
+      pid = Number(metadata.pid || 0);
+    } catch {
+      // The full status refresh will explain a missing runtime record.
+    }
+    const running = this.processIsRunning(pid);
+    if (pid <= 0 || running) {
+      return { serviceId, online: false, failed: false, error: "" };
+    }
+    const log = await this.readFileTail(path.join(runtimeDir, `${serviceId}.log`), 32 * 1024);
+    const lines = log.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    return {
+      serviceId,
+      online: false,
+      failed: true,
+      error: lines.at(-1) || "模型服务进程已意外退出",
+    };
+  }
+
   async selectModel(serviceId: string, modelId: string): Promise<LocalAIServiceStatus> {
     if (!/^[a-z0-9_]+$/.test(serviceId)) throw new Error("Invalid local AI service ID");
     if (!/^[a-z0-9._-]+$/.test(modelId)) throw new Error("Invalid local AI model ID");
@@ -225,6 +302,26 @@ export class LocalAIRuntimeManager {
     return path.join(os.homedir(), ".xiaomei-brain", "runtime", "ai-services");
   }
 
+  private snapshotCachePath(): string {
+    return path.join(this.runtimeDirectory(), "snapshot.json");
+  }
+
+  private async writeSnapshotCache(snapshot: {
+    services: LocalAIServiceStatus[];
+    system: LocalAISystemStatus;
+  }): Promise<void> {
+    try {
+      await this.ensureRuntimeDirectory();
+      const target = this.snapshotCachePath();
+      const temporary = `${target}.${process.pid}.tmp`;
+      await fs.writeFile(temporary, JSON.stringify(snapshot), "utf8");
+      await fs.rename(temporary, target);
+    } catch (error) {
+      // A cache failure must never make service management unavailable.
+      console.warn("[local-ai] failed to cache runtime snapshot", error);
+    }
+  }
+
   async ensureRuntimeDirectory(): Promise<string> {
     const directory = this.runtimeDirectory();
     await fs.mkdir(directory, { recursive: true });
@@ -246,6 +343,30 @@ export class LocalAIRuntimeManager {
     } catch {
       return "";
     }
+  }
+
+  private processIsRunning(pid: number): boolean {
+    if (pid <= 0) return false;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "EPERM";
+    }
+  }
+
+  private healthAvailable(endpoint: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      const request = http.get(`${endpoint}/health`, (response) => {
+        response.resume();
+        resolve(response.statusCode === 200);
+      });
+      request.setTimeout(800, () => {
+        request.destroy();
+        resolve(false);
+      });
+      request.once("error", () => resolve(false));
+    });
   }
 
   private async invoke<T>(args: string[]): Promise<T> {

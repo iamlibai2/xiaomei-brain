@@ -144,6 +144,14 @@ export function registerIpcHandlers(
       return { ok: false, services: [], error: String(error instanceof Error ? error.message : error) };
     }
   });
+  ipcMain.handle("localAI:cachedList", async () => {
+    try {
+      const snapshot = await localAIRuntime.cachedSnapshot();
+      return snapshot ? { ok: true, ...snapshot } : { ok: true, services: [] };
+    } catch (error) {
+      return { ok: false, services: [], error: String(error instanceof Error ? error.message : error) };
+    }
+  });
   ipcMain.handle("localAI:control", async (_event, args: {
     serviceId: string;
     action: LocalAIServiceAction;
@@ -188,6 +196,13 @@ export function registerIpcHandlers(
         ok: true,
         progress: await localAIRuntime.downloadProgress(args.serviceId, args.modelId),
       };
+    } catch (error) {
+      return { ok: false, error: String(error instanceof Error ? error.message : error) };
+    }
+  });
+  ipcMain.handle("localAI:startupState", async (_event, args: { serviceId: string }) => {
+    try {
+      return { ok: true, state: await localAIRuntime.startupState(args.serviceId) };
     } catch (error) {
       return { ok: false, error: String(error instanceof Error ? error.message : error) };
     }

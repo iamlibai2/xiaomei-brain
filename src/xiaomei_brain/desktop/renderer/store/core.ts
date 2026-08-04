@@ -149,7 +149,9 @@ function displayAttachments(values: unknown): DisplayAttachment[] {
         ? "document"
         : item.kind === "audio"
           ? "audio"
-          : "text";
+          : item.kind === "video"
+            ? "video"
+            : "text";
     const rawAnnotation = item.annotation;
     const annotation = rawAnnotation && typeof rawAnnotation === "object" && !Array.isArray(rawAnnotation)
       ? rawAnnotation as Record<string, unknown>
@@ -830,7 +832,7 @@ export interface DisplayAttachment {
   name: string;
   mimeType: string;
   size: number;
-  kind: "image" | "audio" | "text" | "document";
+  kind: "image" | "audio" | "video" | "text" | "document";
   previewUrl?: string;
   annotation?: {
     selectedText: string;

@@ -93,11 +93,13 @@ const CHANNEL_MAP = {
     control:         { invoke: "localAgents:control" },
   },
   localAI: {
+    cachedList:       { invoke: "localAI:cachedList" },
     list:             { invoke: "localAI:list" },
     control:          { invoke: "localAI:control" },
     selectModel:      { invoke: "localAI:selectModel" },
     selectDevice:     { invoke: "localAI:selectDevice" },
     downloadProgress: { invoke: "localAI:downloadProgress" },
+    startupState:     { invoke: "localAI:startupState" },
     readLog:          { invoke: "localAI:readLog" },
     openDirectory:    { invoke: "localAI:openDirectory" },
   },

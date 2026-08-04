@@ -655,7 +655,20 @@ export interface LocalAIDownloadProgress {
   error: string;
 }
 
+export interface LocalAIStartupState {
+  serviceId: string;
+  online: boolean;
+  failed: boolean;
+  error: string;
+}
+
 export interface LocalAIBridge {
+  cachedList(): Promise<{
+    ok: boolean;
+    services: LocalAIServiceStatus[];
+    system?: LocalAISystemStatus;
+    error?: string;
+  }>;
   list(): Promise<{
     ok: boolean;
     services: LocalAIServiceStatus[];
@@ -679,6 +692,11 @@ export interface LocalAIBridge {
   downloadProgress(args: { serviceId: string; modelId: string }): Promise<{
     ok: boolean;
     progress?: LocalAIDownloadProgress;
+    error?: string;
+  }>;
+  startupState(args: { serviceId: string }): Promise<{
+    ok: boolean;
+    state?: LocalAIStartupState;
     error?: string;
   }>;
   readLog(args: { serviceId: string }): Promise<{ ok: boolean; content: string; error?: string }>;

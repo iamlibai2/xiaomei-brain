@@ -13,6 +13,7 @@ const STATE_LABELS: Record<LocalAIServiceStatus["state"], string> = {
   available: "待接入",
   error: "异常",
 };
+const ACTIVE_TASK_POLL_INTERVAL_MS = 3_000;
 
 export function LocalAIRuntimePanel({ language }: { language: DesktopSettings["language"] }) {
   const [services, setServices] = useState<LocalAIServiceStatus[]>([]);
@@ -37,7 +38,23 @@ export function LocalAIRuntimePanel({ language }: { language: DesktopSettings["l
   }, []);
 
   useEffect(() => {
-    void load();
+    let cancelled = false;
+    const initialize = async () => {
+      const cached = await window.localAI.cachedList();
+      if (cancelled) return;
+      const hasCachedSnapshot = cached.ok && cached.services.length > 0;
+      if (hasCachedSnapshot) {
+        setServices(cached.services);
+        setSystem(cached.system || null);
+        setLoading(false);
+      }
+      // Refresh slow facts such as cache sizes and GPU load in the background.
+      await load(hasCachedSnapshot);
+    };
+    void initialize();
+    return () => {
+      cancelled = true;
+    };
   }, [load]);
 
   const summary = useMemo(() => {
@@ -48,6 +65,10 @@ export function LocalAIRuntimePanel({ language }: { language: DesktopSettings["l
   const downloadingKey = useMemo(() => services
     .filter((service) => service.state === "downloading")
     .map((service) => `${service.id}:${service.selected_model_id}`)
+    .join("|"), [services]);
+  const startingKey = useMemo(() => services
+    .filter((service) => service.state === "starting")
+    .map((service) => service.id)
     .join("|"), [services]);
 
   useEffect(() => {
@@ -79,15 +100,41 @@ export function LocalAIRuntimePanel({ language }: { language: DesktopSettings["l
       if (terminal) {
         await load(true);
       } else if (!cancelled) {
-        timer = window.setTimeout(() => void poll(), 1_000);
+        timer = window.setTimeout(() => void poll(), ACTIVE_TASK_POLL_INTERVAL_MS);
       }
     };
-    timer = window.setTimeout(() => void poll(), 400);
+    timer = window.setTimeout(() => void poll(), ACTIVE_TASK_POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [downloadingKey, load]);
+
+  useEffect(() => {
+    if (!startingKey) return undefined;
+    const serviceIds = startingKey.split("|");
+    let cancelled = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      const results = await Promise.all(serviceIds.map((serviceId) => (
+        window.localAI.startupState({ serviceId })
+      )));
+      if (cancelled) return;
+      const terminal = results.some((result) => (
+        result.ok && (result.state?.online || result.state?.failed)
+      ));
+      if (terminal) {
+        await load(true);
+      } else if (!cancelled) {
+        timer = window.setTimeout(() => void poll(), ACTIVE_TASK_POLL_INTERVAL_MS);
+      }
+    };
+    timer = window.setTimeout(() => void poll(), ACTIVE_TASK_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [startingKey, load]);
 
   async function control(
     service: LocalAIServiceStatus,
