@@ -21,6 +21,7 @@ import { TerminalPanel } from "../terminal/TerminalPanel";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { ArtifactWorkspace } from "../artifact-workspace/ArtifactWorkspace";
 import { supportsArtifactPreview } from "../../artifacts/preview-capability";
+import { FirstRunReadinessCard } from "./FirstRunReadinessCard";
 
 const EMPTY_MSGS: DisplayMessage[] = [];
 const EMPTY_ASSIGNMENTS: AssignmentSnapshot[] = [];
@@ -83,12 +84,8 @@ export function HomePage({
       || t("home.defaultAgentName");
   });
   const activeAgent = useCoreStore((s) => s.agents.find((agent) => agent.id === s.activeAgentId));
-  const activeAgentOnline = useCoreStore((s) => s.localAvailabilityByAgent[s.activeAgentId || ""]);
-  const activeAgentInfo = useCoreStore((s) => s.localInfoByAgent[s.activeAgentId || ""]);
-  const activeAgentLifecycle = useCoreStore((s) => s.lifecycleByAgent[s.activeAgentId || ""]);
   const terminalOpen = useCoreStore((s) => s.terminalOpen);
   const terminalAgentId = useCoreStore((s) => s.terminalAgentId);
-  const controlLocalAgent = useCoreStore((s) => s.controlLocalAgent);
   const sendMessage = useCoreStore((s) => s.sendMessage);
   const abortMessage = useCoreStore((s) => s.abortMessage);
   const activeSessionId = useCoreStore((s) => s.activeSessionByAgent[s.activeAgentId || ""] || null);
@@ -354,9 +351,6 @@ export function HomePage({
     && !historyPage.error,
   );
   const isDreaming = agentState?.living === "dreaming";
-  const showAgentStart = !hasMessages && activeAgent?.source === "local" && activeAgentOnline === false;
-  const agentStarting = activeAgentLifecycle?.status === "starting" || activeAgentLifecycle?.status === "restarting";
-  const agentNeedsRestart = Boolean(activeAgentInfo?.pid);
   const visibleAssignments = assignments
     .filter((assignment) => (
       assignment.originSessionId === activeSessionId
@@ -388,7 +382,7 @@ export function HomePage({
   return (
     <div className={`main-content ${focusedArtifactKey ? "has-artifact-workspace" : ""}`}>
       <div className="main-content-primary">
-      {activeAgentId && !showAgentStart && (
+      {activeAgentId && (
         <ChatTopbar
           taskName={taskName}
           onToggleRightPanel={() => {
@@ -407,50 +401,20 @@ export function HomePage({
         />
       )}
       <div className={`wb-home-page ${hasMessages ? "is-conversation" : "is-empty"}`}>
-        {showAgentStart && activeAgent && activeAgentId && (
-          <div className="agent-start-state">
-            <div className="agent-start-avatar">{activeAgent.name.charAt(0)}</div>
-            <h1>
-              {agentNeedsRestart
-                ? t("home.agentDisconnectedTitle", { name: activeAgent.name })
-                : t("home.agentCreatedTitle", { name: activeAgent.name })}
-            </h1>
-            <p className="agent-start-role">
-              <span>{t("home.agentResponsibility")}</span>
-              {activeAgent.description || t("home.agentResponsibilityFallback")}
-            </p>
-            {agentNeedsRestart && (
-              <p className="agent-start-status-hint">{t("home.agentDisconnectedHint")}</p>
-            )}
-            <Button
-              variant="primary"
-              size="lg"
-              icon={agentStarting ? "refresh" : "play"}
-              disabled={agentStarting}
-              onClick={() => { void controlLocalAgent(activeAgentId, agentNeedsRestart ? "restart" : "start"); }}
-            >
-              {agentStarting
-                ? t("home.agentStarting")
-                : agentNeedsRestart
-                  ? t("home.restartAgent", { name: activeAgent.name })
-                  : t("home.startAgent", { name: activeAgent.name })}
-            </Button>
-            {activeAgentLifecycle?.status === "error" && (
-              <div className="agent-start-error">{activeAgentLifecycle.error}</div>
-            )}
-          </div>
-        )}
-        {!hasMessages && !showAgentStart && (
+        {!hasMessages && (
           <>
-            <div className="agent-empty-profile">
-              <div className="agent-empty-avatar">{agentName.charAt(0)}</div>
-              <h1>{agentName}</h1>
-              <p>{activeAgent?.description || t("home.agentResponsibilityFallback")}</p>
-              <span className={`agent-empty-presence ${agentState?.living || "idle"}`}>
-                <i />
-                {agentState?.focusSummary || (agentState ? livingStateName(agentState.living) : t("home.agentReady"))}
-              </span>
-            </div>
+            {activeAgent && (
+              <div className="agent-empty-profile">
+                <div className="agent-empty-avatar">{agentName.charAt(0)}</div>
+                <h1>{agentName}</h1>
+                <p>{activeAgent.description || t("home.agentResponsibilityFallback")}</p>
+                <span className={`agent-empty-presence ${agentState?.living || "idle"}`}>
+                  <i />
+                  {agentState?.focusSummary || (agentState ? livingStateName(agentState.living) : t("home.agentReady"))}
+                </span>
+              </div>
+            )}
+            <FirstRunReadinessCard />
             {visibleAssignments.length > 0 && (
               <div className="assignment-home-cards">
                 {visibleAssignments.map((assignment) => (
@@ -527,7 +491,7 @@ export function HomePage({
             )}
           </>
         )}
-        {!showAgentStart && (
+        {activeAgentId && connectionStatus === "connected" && (
           <div className="wb-home-composer">
             <ChatInput onSend={sendMessage} sending={sending} onAbort={abortMessage} />
           </div>

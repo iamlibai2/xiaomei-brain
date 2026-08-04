@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { useCoreStore, initGatewayEvents } from "./store";
-import { ConnectPage } from "./components/ConnectPage";
 import { MenuBar } from "./components/MenuBar";
 import { MainShell } from "./components/MainShell";
 import { DesktopInfoProvider } from "./desktop-info";
@@ -9,10 +8,8 @@ import type { IdentityStatus } from "./types";
 import i18n from "./i18n";
 
 export function App() {
-  const page = useCoreStore((s) => s.page);
   const agents = useCoreStore((s) => s.agents);
   const connectToAgent = useCoreStore((s) => s.connectToAgent);
-  const setPage = useCoreStore((s) => s.setPage);
   const refreshLocalAgents = useCoreStore((s) => s.refreshLocalAgents);
   const localDiscoveryComplete = useCoreStore((s) => s.localDiscoveryComplete);
   const localAvailabilityByAgent = useCoreStore((s) => s.localAvailabilityByAgent);
@@ -45,11 +42,11 @@ export function App() {
     };
   }, []);
 
-  // Auto-connect saved agents on first render when agents are loaded
+  // Discovery is the first-use boundary. Once it completes, the main shell can
+  // guide both an empty installation and an existing set of Agents.
   useEffect(() => {
     if (identityStatus?.unlocked && localDiscoveryComplete && !didAutoConnect.current && agents.length > 0) {
       didAutoConnect.current = true;
-      if (page === "connect") setPage("chat");
       agents.forEach((agent) => {
         if (agent.source !== "local" || localAvailabilityByAgent[agent.id]) {
           void connectToAgent(agent.id);
@@ -64,8 +61,11 @@ export function App() {
         <MenuBar />
         {!identityStatus ? null : !identityStatus.unlocked ? (
           <IdentityPage status={identityStatus} onReady={setIdentityStatus} />
-        ) : page === "connect" ? (
-          <ConnectPage />
+        ) : !localDiscoveryComplete ? (
+          <div className="desktop-startup-check" role="status">
+            <span />
+            <p>正在检查本机 Agent…</p>
+          </div>
         ) : (
           <MainShell />
         )}
