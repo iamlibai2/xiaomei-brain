@@ -769,6 +769,12 @@ export interface DesktopBridge {
   openLogDirectory(): Promise<DirectoryOpenResult>;
   openConfigDirectory(): Promise<DirectoryOpenResult>;
   openExternal(url: string): Promise<DirectoryOpenResult>;
+  reportRendererError(payload: {
+    type: string;
+    message: string;
+    stack?: string;
+    componentStack?: string;
+  }): void;
 }
 
 export interface WinBridge {

@@ -1431,6 +1431,14 @@ class ActionDispatcher:
                 self._conscious_living
                 and self._conscious_living._chatting
             ),
+            model_failure_observer=lambda error: (
+                self._conscious_living._on_model_service_failure(
+                    error,
+                    source="autonomous",
+                )
+                if self._conscious_living
+                else None
+            ),
         )
         self._autonomous_executor.start()
 

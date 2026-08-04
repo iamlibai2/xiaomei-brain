@@ -17,6 +17,8 @@ from ..activity import (
     PauseReason,
 )
 from ..agent.runtime import AgentRuntimeContext, AgentRuntimeFactory
+from ..llm.client import FatalLLMError
+from ..llm.public_error import model_service_error
 
 logger = logging.getLogger(__name__)
 _STOP = object()
@@ -41,6 +43,7 @@ class AutonomousBehaviorExecutor:
         *,
         activity_service: ActivityService | None = None,
         realtime_busy: Callable[[], bool] | None = None,
+        model_failure_observer: Callable[[BaseException], None] | None = None,
     ) -> None:
         self._factory = AgentRuntimeFactory(agent_instance)
         self._execute = execute
@@ -49,6 +52,7 @@ class AutonomousBehaviorExecutor:
             or getattr(agent_instance, "activity_service", None)
         )
         self._realtime_busy = realtime_busy or (lambda: False)
+        self._model_failure_observer = model_failure_observer
         self._queue: queue.Queue[Any] = queue.Queue()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -154,6 +158,28 @@ class AutonomousBehaviorExecutor:
                     activity_context,
                 )
                 self._finish_activity(activity_id, item, succeeded)
+            except FatalLLMError as exc:
+                # Fatal model errors inherit BaseException so they can escape
+                # the main ReAct loop. This worker must keep running: the
+                # realtime Agent and later autonomous intents still need it.
+                if self._model_failure_observer is not None:
+                    try:
+                        self._model_failure_observer(exc)
+                    except Exception:
+                        logger.exception(
+                            "[AutonomousExecutor] Model failure observer failed",
+                        )
+                public_error = model_service_error(exc.status_code)
+                logger.warning(
+                    "[AutonomousExecutor] Model service unavailable: %s",
+                    public_error["code"],
+                )
+                self._safe_activity_change(
+                    "fail",
+                    activity_id,
+                    message=public_error["message"],
+                    code=public_error["code"],
+                )
             except Exception as exc:
                 logger.exception(
                     "[AutonomousExecutor] Autonomous behavior failed",

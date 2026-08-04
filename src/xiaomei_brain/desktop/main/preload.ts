@@ -127,6 +127,7 @@ const CHANNEL_MAP = {
     openLogDirectory:       { invoke: "desktop:openLogDirectory" },
     openConfigDirectory:    { invoke: "desktop:openConfigDirectory" },
     openExternal:           { invoke: "desktop:openExternal" },
+    reportRendererError:    { send: "desktop:reportRendererError" },
   },
   win: {
     minimize:          { send: "window:minimize" },

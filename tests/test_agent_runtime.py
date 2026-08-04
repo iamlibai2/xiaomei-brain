@@ -17,6 +17,7 @@ from xiaomei_brain.agent.runtime import (
 )
 from xiaomei_brain.consciousness.action_dispatcher import ActionExecutor
 from xiaomei_brain.consciousness.autonomous_executor import AutonomousBehaviorExecutor
+from xiaomei_brain.llm.client import FatalLLMError
 from xiaomei_brain.tools.base import Tool
 from xiaomei_brain.tools.registry import ToolRegistry
 
@@ -112,6 +113,45 @@ def test_autonomous_executor_is_non_blocking_and_serial() -> None:
     assert len(runtimes) == 2
     assert runtimes[0] is not runtimes[1]
     assert all(runtime is not instance._agent for runtime in runtimes)
+
+
+def test_autonomous_executor_survives_fatal_model_error(tmp_path) -> None:
+    instance = FakeAgentInstance()
+    store = ActivityStore(tmp_path / "brain.db")
+    service = ActivityService(store)
+    observed = []
+    completed = threading.Event()
+    attempts = 0
+
+    def execute(_item, _runtime, _cancel_check, _activity_context):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise FatalLLMError("balance", status_code=402)
+        completed.set()
+        return True
+
+    executor = AutonomousBehaviorExecutor(
+        instance,
+        execute,
+        activity_service=service,
+        model_failure_observer=observed.append,
+    )
+    item = SimpleNamespace(action_type=SimpleNamespace(value="work"))
+    assert executor.submit(item)
+    assert executor.submit(item)
+    assert completed.wait(2.0)
+    executor.stop()
+
+    activities = store.list()
+    assert len(activities) == 2
+    assert {activity.status for activity in activities} == {
+        ActivityStatus.FAILED,
+        ActivityStatus.COMPLETED,
+    }
+    assert len(observed) == 1
+    assert isinstance(observed[0], FatalLLMError)
+    store.close()
 
 
 def test_autonomous_executor_projects_lifecycle_and_realtime_pause(tmp_path) -> None:

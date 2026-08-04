@@ -2,6 +2,10 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { installDesktopEmbodiment } from "./embodiment";
+import {
+  installRendererErrorReporting,
+  RendererErrorBoundary,
+} from "./components/RendererErrorBoundary";
 import "./i18n";
 import "./styles/ui.css";
 import "./styles/global.css";
@@ -26,6 +30,11 @@ document.body.setAttribute(
   isMac ? "mac" : isWindows ? "windows" : "linux"
 );
 installDesktopEmbodiment();
+installRendererErrorReporting();
 
 const root = createRoot(document.getElementById("root")!);
-root.render(<App />);
+root.render(
+  <RendererErrorBoundary>
+    <App />
+  </RendererErrorBoundary>,
+);

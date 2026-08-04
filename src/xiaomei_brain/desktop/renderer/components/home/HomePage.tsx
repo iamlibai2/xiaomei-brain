@@ -119,6 +119,7 @@ export function HomePage({
   const [followingLatest, setFollowingLatest] = useState(true);
   const [unreadWhileAway, setUnreadWhileAway] = useState(false);
   const [focusedSearchMessageId, setFocusedSearchMessageId] = useState("");
+  const [conversationReady, setConversationReady] = useState(false);
   const autoCollapsedLeftSidebarRef = useRef(false);
   const conversationItems = useMemo(() => groupConversationMessages(messages), [messages]);
 
@@ -252,6 +253,10 @@ export function HomePage({
     setFocusedMemories([]);
     setFocusedArtifactKey("");
     autoCollapsedLeftSidebarRef.current = false;
+  }, [activeAgentId]);
+
+  useEffect(() => {
+    setConversationReady(false);
   }, [activeAgentId]);
 
   const scrollToLatest = useCallback(() => {
@@ -401,6 +406,10 @@ export function HomePage({
         />
       )}
       <div className={`wb-home-page ${hasMessages ? "is-conversation" : "is-empty"}`}>
+        <FirstRunReadinessCard
+          compact={hasMessages}
+          onReadyChange={setConversationReady}
+        />
         {!hasMessages && (
           <>
             {activeAgent && (
@@ -414,7 +423,6 @@ export function HomePage({
                 </span>
               </div>
             )}
-            <FirstRunReadinessCard />
             {visibleAssignments.length > 0 && (
               <div className="assignment-home-cards">
                 {visibleAssignments.map((assignment) => (
@@ -491,7 +499,7 @@ export function HomePage({
             )}
           </>
         )}
-        {activeAgentId && connectionStatus === "connected" && (
+        {activeAgentId && connectionStatus === "connected" && conversationReady && (
           <div className="wb-home-composer">
             <ChatInput onSend={sendMessage} sending={sending} onAbort={abortMessage} />
           </div>

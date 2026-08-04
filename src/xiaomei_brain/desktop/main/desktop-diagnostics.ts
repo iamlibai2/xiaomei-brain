@@ -78,6 +78,17 @@ async function openDirectory(directory: string): Promise<{ ok: boolean; error?: 
 }
 
 export function registerDesktopDiagnosticsIpc(): void {
+  ipcMain.on("desktop:reportRendererError", (_event, payload: unknown) => {
+    const value = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? payload as Record<string, unknown>
+      : {};
+    const type = String(value.type || "error").slice(0, 80);
+    const message = String(value.message || "Unknown renderer error").slice(0, 8_000);
+    const stack = String(value.stack || "").slice(0, 24_000);
+    const componentStack = String(value.componentStack || "").slice(0, 12_000);
+    console.error(`[renderer:${type}] ${message}${stack ? `\n${stack}` : ""}${componentStack ? `\n${componentStack}` : ""}`);
+  });
+
   ipcMain.handle("desktop:getInfo", async () => ({
     version: app.getVersion(),
     environment: app.isPackaged ? "production" : "development",

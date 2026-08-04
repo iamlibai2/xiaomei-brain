@@ -28,7 +28,13 @@ function hasConfiguredPrimary(snapshot: ModelConfigSnapshot): boolean {
     ?.models.some((model) => model.id === modelId));
 }
 
-export function FirstRunReadinessCard() {
+export function FirstRunReadinessCard({
+  compact = false,
+  onReadyChange,
+}: {
+  compact?: boolean;
+  onReadyChange?: (ready: boolean) => void;
+}) {
   const agents = useCoreStore((state) => state.agents);
   const activeAgentId = useCoreStore((state) => state.activeAgentId);
   const connection = useCoreStore((state) => (
@@ -240,10 +246,14 @@ export function FirstRunReadinessCard() {
     servicesError,
   ]);
 
+  useEffect(() => {
+    onReadyChange?.(missingItems.length === 0);
+  }, [missingItems.length, onReadyChange]);
+
   if (missingItems.length === 0) return null;
 
   return (
-    <section className="first-run-card" aria-label="完成初始准备">
+    <section className={`first-run-card ${compact ? "is-compact" : ""}`} aria-label="完成初始准备">
       <header>
         <div className="first-run-card-icon"><Icon name="sparkles" size={20} /></div>
         <div>

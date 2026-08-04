@@ -2234,12 +2234,24 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         s.attachmentErrorByConversation[draftKey] = "一次最多添加 4 个附件";
         return;
       }
-      const total = [...existing, ...additions].reduce((sum, item) => sum + item.size, 0);
-      if (total > 8 * 1024 * 1024) {
-        s.attachmentErrorByConversation[draftKey] = "附件合计不能超过 8 MB";
+      const combined = [...existing, ...additions];
+      const invalidItem = additions.find((item) => item.size > (
+        item.kind === "video" ? 20 * 1024 * 1024 : 5 * 1024 * 1024
+      ));
+      if (invalidItem) {
+        const limit = invalidItem.kind === "video" ? 20 : 5;
+        s.attachmentErrorByConversation[draftKey] = `${invalidItem.name} 超过 ${limit} MB`;
         return;
       }
-      s.attachmentsByConversation[draftKey] = [...existing, ...additions];
+      const total = combined.reduce((sum, item) => sum + item.size, 0);
+      const totalLimit = combined.some((item) => item.kind === "video")
+        ? 32 * 1024 * 1024
+        : 8 * 1024 * 1024;
+      if (total > totalLimit) {
+        s.attachmentErrorByConversation[draftKey] = `附件合计不能超过 ${totalLimit / 1024 / 1024} MB`;
+        return;
+      }
+      s.attachmentsByConversation[draftKey] = combined;
     }));
   },
 
