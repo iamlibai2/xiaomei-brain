@@ -194,6 +194,9 @@ def _run_agent(
     ``headless`` is used by the lifecycle ``start`` command. It deliberately
     skips login and stdin handling; external identities enter through Gateway.
     """
+    # Gateway-hosted remote bodies also need the human-facing name for wake
+    # word attention, including headless Agents without local ears.
+    living._display_name = agent_name
     _stream_lock = threading.Lock()
     _login_done = threading.Event()
     _pending_proactive: list[tuple[str, str]] = []  # [(content, user_id), ...]
@@ -694,6 +697,7 @@ def _run_agent(
         if sp_id:
             attention_gate = AttentionGate(sp_id, identity_mgr, wake_words=[agent_name])
             attention_gate.set_current_user(user_id)
+            living._attention_gate = attention_gate
             attention_gate.set_on_user_change(_switch_user)
             print(f"  \033[90m🚪 注意力门控已就绪（唤醒词：{agent_name}，对话超时：3分钟）\033[0m", flush=True)
 

@@ -1023,6 +1023,7 @@ export function registerIpcHandlers(
     mimeType: string;
     size: number;
     clientRequestId: string;
+    continuous?: boolean;
   }) => {
     const client = getClient(args.agentId);
     if (!client) {
@@ -1036,7 +1037,22 @@ export function registerIpcHandlers(
       mime_type: args.mimeType,
       size: args.size,
       client_request_id: args.clientRequestId,
+      continuous: args.continuous === true,
     });
+  });
+
+  ipcMain.handle("gateway:setContinuousHearing", async (_event, args: {
+    agentId: string;
+    enabled: boolean;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) {
+      return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    }
+    return client.rpc(
+      args.enabled ? "embodiment.hearing.acquire" : "embodiment.hearing.release",
+      {},
+    );
   });
 
   ipcMain.handle("gateway:pickAttachments", async () => {

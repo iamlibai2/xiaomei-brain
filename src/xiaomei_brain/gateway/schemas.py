@@ -114,6 +114,7 @@ class EmbodimentAudioInputParams(BaseModel):
     ]
     size: int = Field(..., ge=1, le=5 * 1024 * 1024)
     client_request_id: str = Field(..., min_length=1, max_length=128)
+    continuous: bool = False
 
 
 # ── Person identity ──────────────────────────

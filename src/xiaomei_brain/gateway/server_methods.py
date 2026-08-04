@@ -157,6 +157,11 @@ class MethodRouter:
                 "embodiment.unregister",
                 "embodiment.audio.input",
             },
+            "embodiment.continuous_hearing": {
+                "embodiment.hearing.acquire",
+                "embodiment.hearing.release",
+                "embodiment.audio.input",
+            },
             "attachment.read": {"attachment.get"},
             "artifact.read": {"artifact.get", "artifact.list"},
             "artifact.events": {"artifact.get"},
@@ -248,6 +253,7 @@ class MethodRouter:
 
     def drop_session(self, conn_id: str) -> None:
         """断开连接时清除认证状态。"""
+        self._embodiment_methods.drop_connection(conn_id)
         self._connected_sessions.discard(conn_id)
         self._auth_sessions.discard(conn_id)
         self._identity_methods.drop_connection(conn_id)

@@ -339,6 +339,11 @@ export interface GatewayBridge {
     mimeType: string;
     size: number;
     clientRequestId: string;
+    continuous?: boolean;
+  }): Promise<JsonRpcResponse>;
+  setContinuousHearing(args: {
+    agentId: string;
+    enabled: boolean;
   }): Promise<JsonRpcResponse>;
   pickAttachments(): Promise<AttachmentPickResult>;
   getAttachment(args: { agentId: string; sessionId: string; attachmentId: string }): Promise<JsonRpcResponse>;

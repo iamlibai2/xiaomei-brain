@@ -47,14 +47,34 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const microphoneStreamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const vadFrameRef = useRef<number | null>(null);
+  const continuousActiveRef = useRef(false);
+  const continuousAgentIdRef = useRef("");
+  const continuousConversationRef = useRef("");
+  const speakingRef = useRef(false);
+  const discardRecordingRef = useRef(false);
+  const speechStartedAtRef = useRef(0);
+  const silenceStartedAtRef = useRef(0);
+  const speechFramesRef = useRef(0);
+  const noiseFloorRef = useRef(0.006);
+  const pendingVoiceRef = useRef(0);
   const [dragging, setDragging] = useState(false);
-  const [recording, setRecording] = useState(false);
+  const [listening, setListening] = useState(false);
   const [mediaBusy, setMediaBusy] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState("");
   const [modelSnapshot, setModelSnapshot] = useState<ModelConfigSnapshot | null>(null);
   const [modelBusy, setModelBusy] = useState(false);
   const [modelError, setModelError] = useState("");
   const activeAgentId = useCoreStore((s) => s.activeAgentId);
+  const activeSessionId = useCoreStore((s) => {
+    const agentId = s.activeAgentId || "";
+    return agentId ? s.activeSessionByAgent[agentId] || "" : "";
+  });
+  const agentSpeaking = useCoreStore((s) => Boolean(
+    s.activeAgentId && s.speakingByAgent[s.activeAgentId],
+  ));
   const input = useCoreStore((s) => {
     const agentId = s.activeAgentId || "";
     const sessionId = agentId ? s.activeSessionByAgent[agentId] : null;
@@ -101,10 +121,17 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
     void loadModels();
   }, [loadModels]);
 
-  useEffect(() => () => {
-    if (recorderRef.current?.state === "recording") recorderRef.current.stop();
-    microphoneStreamRef.current?.getTracks().forEach((track) => track.stop());
-  }, []);
+  useEffect(() => {
+    speakingRef.current = agentSpeaking;
+    if (!continuousActiveRef.current) return;
+    if (agentSpeaking) {
+      discardRecordingRef.current = true;
+      if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+      setVoiceStatus(t("home.voicePausedWhileSpeaking"));
+    } else {
+      setVoiceStatus(t("home.voiceListening"));
+    }
+  }, [agentSpeaking, t]);
 
   useEffect(() => window.gateway.onEvent((raw) => {
     if (
@@ -119,7 +146,13 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
           : t("home.voiceRecognitionFailed"),
       );
     }
-    setVoiceStatus("");
+    setVoiceStatus(continuousActiveRef.current
+      ? speakingRef.current
+        ? t("home.voicePausedWhileSpeaking")
+        : recorderRef.current
+          ? t("home.voiceHearing")
+          : t("home.voiceListening")
+      : "");
   }), [activeAgentId, setAttachmentError, t]);
 
   useEffect(() => {
@@ -203,13 +236,160 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
     }
   };
 
-  const toggleVoiceRecording = async () => {
-    if (recording) {
-      recorderRef.current?.stop();
+  const releaseContinuousHearing = useCallback(async (updateUI = true) => {
+    const agentId = continuousAgentIdRef.current;
+    continuousActiveRef.current = false;
+    continuousAgentIdRef.current = "";
+    continuousConversationRef.current = "";
+    if (vadFrameRef.current !== null) {
+      window.cancelAnimationFrame(vadFrameRef.current);
+      vadFrameRef.current = null;
+    }
+    discardRecordingRef.current = true;
+    if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+    recorderRef.current = null;
+    microphoneStreamRef.current?.getTracks().forEach((track) => track.stop());
+    microphoneStreamRef.current = null;
+    analyserRef.current = null;
+    const audioContext = audioContextRef.current;
+    audioContextRef.current = null;
+    if (audioContext && audioContext.state !== "closed") {
+      await audioContext.close().catch(() => {});
+    }
+    if (updateUI) {
+      setListening(false);
+      setVoiceStatus("");
+    }
+    if (agentId) {
+      await window.gateway.setContinuousHearing({ agentId, enabled: false }).catch(() => undefined);
+    }
+  }, []);
+
+  useEffect(() => () => {
+    void releaseContinuousHearing(false);
+  }, [releaseContinuousHearing]);
+
+  useEffect(() => {
+    if (!continuousActiveRef.current) return;
+    const key = `${activeAgentId || ""}\u0000${activeSessionId}`;
+    if (!connected || key !== continuousConversationRef.current) {
+      void releaseContinuousHearing();
+    }
+  }, [activeAgentId, activeSessionId, connected, releaseContinuousHearing]);
+
+  const sendContinuousSegment = useCallback(async (
+    blob: Blob,
+    agentId: string,
+  ) => {
+    if (!blob.size || blob.size > MAX_ATTACHMENT_BYTES) {
+      if (blob.size > MAX_ATTACHMENT_BYTES) setAttachmentError(t("home.voiceTooLarge"));
       return;
     }
-    if (!activeAgentId || !connected || sending || mediaBusy) return;
+    pendingVoiceRef.current += 1;
+    setMediaBusy(true);
+    setVoiceStatus(t("home.voiceProcessing"));
+    try {
+      const response = await window.gateway.sendVoice({
+        agentId,
+        dataBase64: await blobToBase64(blob),
+        mimeType: (blob.type || "audio/webm").split(";", 1)[0],
+        size: blob.size,
+        clientRequestId: crypto.randomUUID(),
+        continuous: true,
+      });
+      if (response.error) throw new Error(response.error.message);
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : String(error));
+    } finally {
+      pendingVoiceRef.current = Math.max(0, pendingVoiceRef.current - 1);
+      setMediaBusy(pendingVoiceRef.current > 0);
+      if (continuousActiveRef.current && !speakingRef.current) {
+        setVoiceStatus(t("home.voiceListening"));
+      }
+    }
+  }, [setAttachmentError, t]);
+
+  const startSpeechSegment = useCallback((stream: MediaStream) => {
+    if (!continuousActiveRef.current || speakingRef.current || recorderRef.current) return;
+    const preferred = [
+      "audio/webm;codecs=opus",
+      "audio/ogg;codecs=opus",
+    ].find((type) => MediaRecorder.isTypeSupported(type));
+    const recorder = new MediaRecorder(stream, preferred ? { mimeType: preferred } : undefined);
+    const chunks: BlobPart[] = [];
+    recorderRef.current = recorder;
+    discardRecordingRef.current = false;
+    speechStartedAtRef.current = performance.now();
+    silenceStartedAtRef.current = 0;
+    recorder.addEventListener("dataavailable", (event) => {
+      if (event.data.size > 0) chunks.push(event.data);
+    });
+    recorder.addEventListener("stop", () => {
+      if (recorderRef.current === recorder) recorderRef.current = null;
+      const discard = discardRecordingRef.current;
+      discardRecordingRef.current = false;
+      const duration = performance.now() - speechStartedAtRef.current;
+      speechStartedAtRef.current = 0;
+      if (discard || duration < 450 || chunks.length === 0) return;
+      const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+      void sendContinuousSegment(blob, continuousAgentIdRef.current);
+    }, { once: true });
+    recorder.start(250);
+    setVoiceStatus(t("home.voiceHearing"));
+  }, [sendContinuousSegment, t]);
+
+  const beginVadLoop = useCallback((stream: MediaStream, analyser: AnalyserNode) => {
+    const samples = new Float32Array(analyser.fftSize);
+    const tick = (now: number) => {
+      if (!continuousActiveRef.current) return;
+      if (speakingRef.current) {
+        speechFramesRef.current = 0;
+        silenceStartedAtRef.current = 0;
+        vadFrameRef.current = window.requestAnimationFrame(tick);
+        return;
+      }
+      analyser.getFloatTimeDomainData(samples);
+      let squareSum = 0;
+      for (const sample of samples) squareSum += sample * sample;
+      const rms = Math.sqrt(squareSum / samples.length);
+      const threshold = Math.max(0.014, noiseFloorRef.current * 2.8);
+      if (rms >= threshold) {
+        speechFramesRef.current += 1;
+        silenceStartedAtRef.current = 0;
+        if (speechFramesRef.current >= 2 && !recorderRef.current) startSpeechSegment(stream);
+      } else {
+        noiseFloorRef.current = noiseFloorRef.current * 0.97 + rms * 0.03;
+        speechFramesRef.current = 0;
+        if (recorderRef.current?.state === "recording") {
+          if (!silenceStartedAtRef.current) silenceStartedAtRef.current = now;
+          if (now - silenceStartedAtRef.current >= 900) recorderRef.current.stop();
+        }
+      }
+      if (
+        recorderRef.current?.state === "recording"
+        && speechStartedAtRef.current
+        && now - speechStartedAtRef.current >= 30_000
+      ) {
+        recorderRef.current.stop();
+      }
+      vadFrameRef.current = window.requestAnimationFrame(tick);
+    };
+    vadFrameRef.current = window.requestAnimationFrame(tick);
+  }, [startSpeechSegment]);
+
+  const toggleVoiceRecording = async () => {
+    if (listening) {
+      await releaseContinuousHearing();
+      return;
+    }
+    if (!activeAgentId || !connected || sending) return;
     setAttachmentError("");
+    const agentId = activeAgentId;
+    const lease = await window.gateway.setContinuousHearing({ agentId, enabled: true });
+    if (lease.error) {
+      setAttachmentError(lease.error.message);
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -218,65 +398,28 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
           autoGainControl: true,
         },
       });
-      const preferred = [
-        "audio/webm;codecs=opus",
-        "audio/ogg;codecs=opus",
-      ].find((type) => MediaRecorder.isTypeSupported(type));
-      const recorder = new MediaRecorder(
-        stream,
-        preferred ? { mimeType: preferred } : undefined,
-      );
-      const chunks: BlobPart[] = [];
       microphoneStreamRef.current = stream;
-      recorderRef.current = recorder;
-      recorder.addEventListener("dataavailable", (event) => {
-        if (event.data.size > 0) chunks.push(event.data);
-      });
-      recorder.addEventListener("stop", () => {
-        setRecording(false);
-        stream.getTracks().forEach((track) => track.stop());
-        microphoneStreamRef.current = null;
-        recorderRef.current = null;
-        const blob = new Blob(chunks, {
-          type: recorder.mimeType || "audio/webm",
-        });
-        if (!blob.size) {
-          setAttachmentError(t("home.voiceEmpty"));
-          return;
-        }
-        if (blob.size > MAX_ATTACHMENT_BYTES) {
-          setAttachmentError(t("home.voiceTooLarge"));
-          return;
-        }
-        setVoiceStatus(t("home.voiceProcessing"));
-        setMediaBusy(true);
-        void blobToBase64(blob)
-          .then((dataBase64) => window.gateway.sendVoice({
-            agentId: activeAgentId,
-            dataBase64,
-            mimeType: (blob.type || "audio/webm").split(";", 1)[0],
-            size: blob.size,
-            clientRequestId: crypto.randomUUID(),
-          }))
-          .then((response) => {
-            if (response.error) throw new Error(response.error.message);
-          })
-          .catch((error) => {
-            setVoiceStatus("");
-            setAttachmentError(
-              error instanceof Error ? error.message : String(error),
-            );
-          })
-          .finally(() => setMediaBusy(false));
-      }, { once: true });
-      recorder.start(250);
-      setRecording(true);
-      setVoiceStatus(t("home.voiceRecording"));
+      const audioContext = new AudioContext();
+      const source = audioContext.createMediaStreamSource(stream);
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 1024;
+      analyser.smoothingTimeConstant = 0.15;
+      source.connect(analyser);
+      audioContextRef.current = audioContext;
+      analyserRef.current = analyser;
+      continuousActiveRef.current = true;
+      continuousAgentIdRef.current = agentId;
+      continuousConversationRef.current = `${agentId}\u0000${activeSessionId}`;
+      noiseFloorRef.current = 0.006;
+      setListening(true);
+      setVoiceStatus(t("home.voiceListening"));
+      beginVadLoop(stream, analyser);
     } catch (error) {
       setVoiceStatus("");
       setAttachmentError(
         error instanceof Error ? error.message : t("home.mediaPermissionDenied"),
       );
+      await window.gateway.setContinuousHearing({ agentId, enabled: false }).catch(() => undefined);
     }
   };
 
@@ -400,10 +543,10 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
           />
           <button
             type="button"
-            className={`chat-input-btn ${recording ? "is-recording" : ""}`}
-            title={recording ? t("home.stopVoiceInput") : t("home.voiceInput")}
+            className={`chat-input-btn ${listening ? "is-recording" : ""}`}
+            title={listening ? t("home.stopContinuousVoice") : t("home.startContinuousVoice")}
             onClick={() => { void toggleVoiceRecording(); }}
-            disabled={!recording && (!connected || sending || mediaBusy)}
+            disabled={!listening && (!connected || sending)}
           >
             <Icon name="microphone" size={18} />
           </button>

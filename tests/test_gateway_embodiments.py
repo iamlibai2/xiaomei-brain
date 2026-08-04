@@ -44,6 +44,111 @@ def test_desktop_registration_is_bound_to_authenticated_connection():
         cm.unregister(conn_id)
 
 
+def test_continuous_hearing_temporarily_owns_local_listener():
+    conn_id = "desktop-embodiment-hearing-owner"
+    cm.set_session("session-hearing-owner", conn_id, "person-1")
+
+    class Listener:
+        is_running = True
+        stops = 0
+        starts = 0
+
+        def stop(self):
+            self.is_running = False
+            self.stops += 1
+
+        def start(self):
+            self.is_running = True
+            self.starts += 1
+            return True
+
+    listener = Listener()
+    living = SimpleNamespace(
+        _voice_listener=listener,
+        _ears_enabled=True,
+        _identity_mgr=None,
+    )
+    methods = MethodRouter(living=living)
+    methods._auth_sessions.add(conn_id)
+    try:
+        methods.dispatch(conn_id, "1", "embodiment.register", {
+            "device_id": "device-hearing-owner",
+            "label": "Desktop",
+            "capabilities": ["hearing"],
+        })
+        acquired = methods.dispatch(conn_id, "2", "embodiment.hearing.acquire", {})
+        assert acquired["result"]["acquired"] is True
+        assert listener.stops == 1
+        assert listener.is_running is False
+
+        methods.drop_session(conn_id)
+        assert listener.starts == 1
+        assert listener.is_running is True
+    finally:
+        cm.unregister(conn_id)
+
+
+def test_continuous_hearing_respects_attention_gate(monkeypatch):
+    conn_id = "desktop-embodiment-attention"
+    session_id = "session-attention"
+    cm.set_session(session_id, conn_id, "person-1")
+    events = []
+
+    class Router:
+        def deliver_event(self, event, payload, route, **metadata):
+            events.append((event, payload, route, metadata))
+            return True
+
+    living = SimpleNamespace(
+        _agent_id="test",
+        _identity_mgr=None,
+        _gateway_inbound=SimpleNamespace(
+            accept=lambda _raw: (_ for _ in ()).throw(AssertionError("ignored audio entered Gateway")),
+        ),
+        _router=Router(),
+    )
+    methods = MethodRouter(living=living)
+    methods._auth_sessions.add(conn_id)
+    monkeypatch.setattr(
+        "xiaomei_brain.gateway.methods.embodiments.threading.Thread",
+        ImmediateThread,
+    )
+    monkeypatch.setattr(
+        "xiaomei_brain.body.perception.remote_audio."
+        "RemoteAudioPerception.perceive_with_pcm",
+        lambda _self, _data: ({"text": "background speech", "emotion": ""}, b"\0\0" * 16000),
+    )
+
+    class Gate:
+        current_user_id = "person-1"
+
+        def process(self, _text, _pcm, _emotion):
+            return False, None
+
+    try:
+        methods.dispatch(conn_id, "1", "embodiment.register", {
+            "device_id": "device-attention-1",
+            "label": "Desktop",
+            "capabilities": ["hearing"],
+        })
+        methods.dispatch(conn_id, "2", "embodiment.hearing.acquire", {})
+        methods._embodiment_methods._attention_gates[conn_id] = Gate()
+        data = b"webm-audio"
+        response = methods.dispatch(conn_id, "3", "embodiment.audio.input", {
+            "data_base64": base64.b64encode(data).decode("ascii"),
+            "mime_type": "audio/webm",
+            "size": len(data),
+            "client_request_id": "continuous-1",
+            "continuous": True,
+        })
+        assert response["result"]["status"] == "processing"
+        assert events[-1][0] == "embodiment.audio.input.completed"
+        assert events[-1][1]["status"] == "ignored"
+    finally:
+        methods.drop_session(conn_id)
+        cm.unregister(conn_id)
+
+
 def test_desktop_microphone_is_transcribed_and_enters_gateway(monkeypatch):
     conn_id = "desktop-embodiment-2"
     session_id = "session-voice"
@@ -74,12 +179,12 @@ def test_desktop_microphone_is_transcribed_and_enters_gateway(monkeypatch):
     )
     monkeypatch.setattr(
         "xiaomei_brain.body.perception.remote_audio."
-        "RemoteAudioPerception.perceive",
-        lambda _self, data: {
+        "RemoteAudioPerception.perceive_with_pcm",
+        lambda _self, data: ({
             "text": "帮我查看今天的安排",
             "emotion": "calm",
             "events": ["speech"],
-        } if data == b"webm-audio" else {},
+        }, b"\0\0" * 16000) if data == b"webm-audio" else ({}, b""),
     )
     monkeypatch.setattr(
         "xiaomei_brain.gateway.attachments.prepare_attachments",
