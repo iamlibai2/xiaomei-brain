@@ -9,6 +9,11 @@ import type {
 } from "../../types";
 import { ModelQuickMenu } from "./ModelQuickMenu";
 import { VoiceOrb, type VoiceOrbPhase } from "./VoiceOrb";
+import {
+  DESKTOP_SPEECH_FINISHED,
+  DESKTOP_SPEECH_STARTED,
+  stopDesktopSpeech,
+} from "../../embodiment";
 
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 8 * 1024 * 1024;
@@ -62,11 +67,18 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
   const noiseFloorRef = useRef(0.006);
   const pendingVoiceRef = useRef(0);
   const voiceLevelRef = useRef(0);
+  const bargeInFramesRef = useRef(0);
+  const playbackStartedAtRef = useRef(0);
+  const lastBargeInAtRef = useRef(0);
+  const bargeInCandidateRef = useRef(false);
+  const voiceHintTimerRef = useRef<number | null>(null);
   const [dragging, setDragging] = useState(false);
   const [listening, setListening] = useState(false);
   const [mediaBusy, setMediaBusy] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState("");
+  const [voiceHint, setVoiceHint] = useState("");
   const [voicePhase, setVoicePhase] = useState<VoiceOrbPhase>("listening");
+  const [desktopSpeaking, setDesktopSpeaking] = useState(false);
   const [modelSnapshot, setModelSnapshot] = useState<ModelConfigSnapshot | null>(null);
   const [modelBusy, setModelBusy] = useState(false);
   const [modelError, setModelError] = useState("");
@@ -124,19 +136,56 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
     void loadModels();
   }, [loadModels]);
 
+  const showVoiceHint = useCallback((message: string) => {
+    setVoiceHint(message);
+    if (voiceHintTimerRef.current !== null) {
+      window.clearTimeout(voiceHintTimerRef.current);
+    }
+    voiceHintTimerRef.current = window.setTimeout(() => {
+      voiceHintTimerRef.current = null;
+      setVoiceHint("");
+    }, 3_500);
+  }, []);
+
   useEffect(() => {
-    speakingRef.current = agentSpeaking;
+    const onStarted = (event: Event) => {
+      const detail = (event as CustomEvent<{ agentId?: string }>).detail;
+      if (detail?.agentId !== activeAgentId) return;
+      playbackStartedAtRef.current = performance.now();
+      setDesktopSpeaking(true);
+    };
+    const onFinished = (event: Event) => {
+      const detail = (event as CustomEvent<{ agentId?: string }>).detail;
+      if (detail?.agentId !== activeAgentId) return;
+      setDesktopSpeaking(false);
+    };
+    window.addEventListener(DESKTOP_SPEECH_STARTED, onStarted);
+    window.addEventListener(DESKTOP_SPEECH_FINISHED, onFinished);
+    return () => {
+      window.removeEventListener(DESKTOP_SPEECH_STARTED, onStarted);
+      window.removeEventListener(DESKTOP_SPEECH_FINISHED, onFinished);
+    };
+  }, [activeAgentId]);
+
+  useEffect(() => {
+    const speaking = agentSpeaking || desktopSpeaking;
+    speakingRef.current = speaking;
     if (!continuousActiveRef.current) return;
-    if (agentSpeaking) {
+    if (speaking) {
       discardRecordingRef.current = true;
       if (recorderRef.current?.state === "recording") recorderRef.current.stop();
       setVoiceStatus(t("home.voicePausedWhileSpeaking"));
       setVoicePhase("speaking");
     } else {
+      if (bargeInCandidateRef.current && recorderRef.current?.state === "recording") {
+        discardRecordingRef.current = true;
+        recorderRef.current.stop();
+      }
+      bargeInCandidateRef.current = false;
       setVoiceStatus(t("home.voiceListening"));
       setVoicePhase("listening");
     }
-  }, [agentSpeaking, t]);
+  }, [agentSpeaking, desktopSpeaking, t]);
 
   useEffect(() => window.gateway.onEvent((raw) => {
     if (
@@ -149,7 +198,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       setMediaBusy(pendingVoiceRef.current > 0);
     }
     if (payload.status === "failed") {
-      setAttachmentError(
+      showVoiceHint(
         typeof payload.error === "string"
           ? payload.error
           : t("home.voiceRecognitionFailed"),
@@ -170,7 +219,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       setVoiceStatus(t("home.voiceListening"));
       setVoicePhase("listening");
     }
-  }), [activeAgentId, setAttachmentError, t]);
+  }), [activeAgentId, showVoiceHint, t]);
 
   useEffect(() => {
     if (
@@ -274,6 +323,12 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
     continuousActiveRef.current = false;
     continuousAgentIdRef.current = "";
     continuousConversationRef.current = "";
+    bargeInCandidateRef.current = false;
+    bargeInFramesRef.current = 0;
+    if (voiceHintTimerRef.current !== null) {
+      window.clearTimeout(voiceHintTimerRef.current);
+      voiceHintTimerRef.current = null;
+    }
     if (vadFrameRef.current !== null) {
       window.cancelAnimationFrame(vadFrameRef.current);
       vadFrameRef.current = null;
@@ -293,6 +348,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       setListening(false);
       setVoiceStatus("");
       setVoicePhase("listening");
+      setVoiceHint("");
     }
     if (agentId) {
       await window.gateway.setContinuousHearing({ agentId, enabled: false }).catch(() => undefined);
@@ -316,7 +372,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
     agentId: string,
   ) => {
     if (!blob.size || blob.size > MAX_ATTACHMENT_BYTES) {
-      if (blob.size > MAX_ATTACHMENT_BYTES) setAttachmentError(t("home.voiceTooLarge"));
+      if (blob.size > MAX_ATTACHMENT_BYTES) showVoiceHint(t("home.voiceTooLarge"));
       return;
     }
     pendingVoiceRef.current += 1;
@@ -336,7 +392,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       if (response.error) throw new Error(response.error.message);
       accepted = true;
     } catch (error) {
-      setAttachmentError(error instanceof Error ? error.message : String(error));
+      showVoiceHint(error instanceof Error ? error.message : String(error));
     } finally {
       if (!accepted) pendingVoiceRef.current = Math.max(0, pendingVoiceRef.current - 1);
       setMediaBusy(pendingVoiceRef.current > 0);
@@ -350,10 +406,17 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
         setVoicePhase("listening");
       }
     }
-  }, [setAttachmentError, t]);
+  }, [showVoiceHint, t]);
 
-  const startSpeechSegment = useCallback((stream: MediaStream) => {
-    if (!continuousActiveRef.current || speakingRef.current || recorderRef.current) return;
+  const startSpeechSegment = useCallback((
+    stream: MediaStream,
+    duringSpeech = false,
+  ) => {
+    if (
+      !continuousActiveRef.current
+      || (speakingRef.current && !duringSpeech)
+      || recorderRef.current
+    ) return;
     const preferred = [
       "audio/webm;codecs=opus",
       "audio/ogg;codecs=opus",
@@ -361,6 +424,8 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
     const recorder = new MediaRecorder(stream, preferred ? { mimeType: preferred } : undefined);
     const chunks: BlobPart[] = [];
     recorderRef.current = recorder;
+    bargeInCandidateRef.current = duringSpeech;
+    setVoiceHint("");
     discardRecordingRef.current = false;
     speechStartedAtRef.current = performance.now();
     silenceStartedAtRef.current = 0;
@@ -378,25 +443,63 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       void sendContinuousSegment(blob, continuousAgentIdRef.current);
     }, { once: true });
     recorder.start(250);
-    setVoiceStatus(t("home.voiceHearing"));
-    setVoicePhase("hearing");
+    if (!duringSpeech) {
+      setVoiceStatus(t("home.voiceHearing"));
+      setVoicePhase("hearing");
+    }
   }, [sendContinuousSegment, t]);
 
   const beginVadLoop = useCallback((stream: MediaStream, analyser: AnalyserNode) => {
     const samples = new Float32Array(analyser.fftSize);
     const tick = (now: number) => {
       if (!continuousActiveRef.current) return;
-      if (speakingRef.current) {
-        speechFramesRef.current = 0;
-        silenceStartedAtRef.current = 0;
-        vadFrameRef.current = window.requestAnimationFrame(tick);
-        return;
-      }
       analyser.getFloatTimeDomainData(samples);
       let squareSum = 0;
       for (const sample of samples) squareSum += sample * sample;
       const rms = Math.sqrt(squareSum / samples.length);
       voiceLevelRef.current = rms;
+      if (speakingRef.current) {
+        speechFramesRef.current = 0;
+        silenceStartedAtRef.current = 0;
+        // Give browser echo cancellation time to settle, then require a much
+        // stronger and sustained signal than normal VAD before interrupting.
+        const bargeInThreshold = Math.max(0.035, noiseFloorRef.current * 5.5);
+        const playbackWarmedUp = now - playbackStartedAtRef.current >= 650;
+        if (playbackWarmedUp && rms >= bargeInThreshold) {
+          bargeInFramesRef.current += 1;
+          if (bargeInFramesRef.current === 1 && !recorderRef.current) {
+            // Keep the beginning of a possible interruption. The recording is
+            // discarded below unless enough consecutive frames confirm speech.
+            startSpeechSegment(stream, true);
+          }
+        } else {
+          bargeInFramesRef.current = 0;
+          if (bargeInCandidateRef.current && recorderRef.current?.state === "recording") {
+            discardRecordingRef.current = true;
+            recorderRef.current.stop();
+          }
+          bargeInCandidateRef.current = false;
+        }
+        if (
+          bargeInFramesRef.current >= 18
+          && now - lastBargeInAtRef.current >= 1_500
+        ) {
+          lastBargeInAtRef.current = now;
+          bargeInFramesRef.current = 0;
+          bargeInCandidateRef.current = false;
+          speakingRef.current = false;
+          stopDesktopSpeech(continuousAgentIdRef.current);
+          onAbort();
+          if (!recorderRef.current) startSpeechSegment(stream);
+          else {
+            setVoiceStatus(t("home.voiceHearing"));
+            setVoicePhase("hearing");
+          }
+        }
+        vadFrameRef.current = window.requestAnimationFrame(tick);
+        return;
+      }
+      bargeInFramesRef.current = 0;
       const threshold = Math.max(0.014, noiseFloorRef.current * 2.8);
       if (rms >= threshold) {
         speechFramesRef.current += 1;
@@ -420,7 +523,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       vadFrameRef.current = window.requestAnimationFrame(tick);
     };
     vadFrameRef.current = window.requestAnimationFrame(tick);
-  }, [startSpeechSegment]);
+  }, [onAbort, startSpeechSegment]);
 
   const toggleVoiceRecording = async () => {
     if (listening) {
@@ -562,6 +665,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
           <div className="voice-live-copy">
             <strong>{t("home.voiceConversation")}</strong>
             <span>{voiceStatus}</span>
+            {voiceHint && <small>{voiceHint}</small>}
           </div>
           <button
             type="button"

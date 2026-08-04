@@ -3641,6 +3641,101 @@ body.is-resizing-artifact-workspace {
   white-space: nowrap;
 }
 
+.message-voice-attachment {
+  min-width: 184px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 11px 5px 7px;
+  border: 0;
+  border-radius: 21px;
+  background: rgba(255, 255, 255, .12);
+  color: inherit;
+  cursor: pointer;
+  transition: background var(--ui-motion-duration-sm) var(--ui-motion-easing-standard);
+}
+
+.message-voice-attachment:hover {
+  background: rgba(255, 255, 255, .19);
+}
+
+.message-voice-attachment.error {
+  opacity: .72;
+}
+
+.message-voice-control {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .2);
+}
+
+.voice-play-symbol {
+  width: 0;
+  height: 0;
+  margin-left: 2px;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 8px solid currentColor;
+}
+
+.voice-pause-symbol {
+  width: 8px;
+  height: 10px;
+  border-right: 3px solid currentColor;
+  border-left: 3px solid currentColor;
+}
+
+.message-voice-wave {
+  height: 20px;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: .76;
+}
+
+.message-voice-wave i {
+  width: 2px;
+  border-radius: 2px;
+  background: currentColor;
+  transform-origin: center;
+}
+
+.message-voice-attachment.is-playing .message-voice-wave i {
+  animation: message-voice-wave 680ms ease-in-out infinite alternate;
+}
+
+.message-voice-attachment.is-playing .message-voice-wave i:nth-child(3n + 2) {
+  animation-delay: -240ms;
+}
+
+.message-voice-attachment.is-playing .message-voice-wave i:nth-child(3n) {
+  animation-delay: -430ms;
+}
+
+.message-voice-duration {
+  min-width: 25px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  opacity: .76;
+}
+
+@keyframes message-voice-wave {
+  to { transform: scaleY(.48); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-voice-attachment.is-playing .message-voice-wave i {
+    animation: none;
+  }
+}
+
 /* ─── Tool activity ─── */
 .artifact-message-row {
   align-items: flex-start;
@@ -4966,6 +5061,12 @@ body.is-resizing-artifact-workspace {
   color: var(--ui-color-text-secondary);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.voice-live-copy small {
+  color: color-mix(in srgb, var(--ui-color-text-secondary) 82%, #b36b4d);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .voice-live-stop {

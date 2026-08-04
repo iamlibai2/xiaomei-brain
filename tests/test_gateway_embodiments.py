@@ -149,6 +149,58 @@ def test_continuous_hearing_respects_attention_gate(monkeypatch):
         cm.unregister(conn_id)
 
 
+def test_desktop_hearing_ignores_short_transcript_fragments(monkeypatch):
+    conn_id = "desktop-embodiment-fragment"
+    session_id = "session-fragment"
+    cm.set_session(session_id, conn_id, "person-1")
+    events = []
+
+    class Router:
+        def deliver_event(self, event, payload, route, **metadata):
+            events.append((event, payload, route, metadata))
+            return True
+
+    living = SimpleNamespace(
+        _agent_id="test",
+        _gateway_inbound=SimpleNamespace(
+            accept=lambda _raw: (_ for _ in ()).throw(
+                AssertionError("speech fragment entered Gateway"),
+            ),
+        ),
+        _router=Router(),
+    )
+    methods = MethodRouter(living=living)
+    methods._auth_sessions.add(conn_id)
+    monkeypatch.setattr(
+        "xiaomei_brain.gateway.methods.embodiments.threading.Thread",
+        ImmediateThread,
+    )
+    monkeypatch.setattr(
+        "xiaomei_brain.body.perception.remote_audio."
+        "RemoteAudioPerception.perceive_with_pcm",
+        lambda _self, _data: ({"text": "。", "emotion": ""}, b"\0\0" * 16000),
+    )
+    try:
+        methods.dispatch(conn_id, "1", "embodiment.register", {
+            "device_id": "device-fragment-1",
+            "label": "Desktop",
+            "capabilities": ["hearing"],
+        })
+        data = b"webm-audio"
+        response = methods.dispatch(conn_id, "2", "embodiment.audio.input", {
+            "data_base64": base64.b64encode(data).decode("ascii"),
+            "mime_type": "audio/webm",
+            "size": len(data),
+            "client_request_id": "fragment-1",
+        })
+        assert response["result"]["status"] == "processing"
+        assert events[-1][0] == "embodiment.audio.input.completed"
+        assert events[-1][1]["status"] == "ignored"
+        assert events[-1][1]["reason"] == "transcript_fragment"
+    finally:
+        cm.unregister(conn_id)
+
+
 def test_desktop_microphone_is_transcribed_and_enters_gateway(monkeypatch):
     conn_id = "desktop-embodiment-2"
     session_id = "session-voice"

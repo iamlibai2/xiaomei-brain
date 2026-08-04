@@ -872,11 +872,19 @@ function MessageAttachment({
   const [previewUrl, setPreviewUrl] = useState(attachment.previewUrl || "");
   const [error, setError] = useState("");
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [audioPlaying, setAudioPlaying] = useState(false);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
     setPreviewUrl(attachment.previewUrl || "");
     setError("");
-    if (attachment.kind !== "image" || attachment.previewUrl || !agentId || !sessionId) return;
+    if (
+      (attachment.kind !== "image" && attachment.kind !== "audio")
+      || attachment.previewUrl
+      || !agentId
+      || !sessionId
+    ) return;
     let cancelled = false;
     void window.gateway.getAttachment({
       agentId,
@@ -907,6 +915,10 @@ function MessageAttachment({
     return () => { cancelled = true; };
   }, [agentId, attachment.id, attachment.kind, attachment.mimeType, attachment.previewUrl, sessionId]);
 
+  useEffect(() => () => {
+    audioRef.current?.pause();
+  }, []);
+
   const open = async () => {
     if (!agentId || !sessionId) return;
     const result = await window.gateway.openAttachment({
@@ -916,6 +928,57 @@ function MessageAttachment({
     });
     setError(result.ok ? "" : result.error || "无法打开附件");
   };
+
+  const toggleAudio = async () => {
+    const audio = audioRef.current;
+    if (!audio) {
+      if (error) await open();
+      return;
+    }
+    try {
+      if (audio.paused) await audio.play();
+      else audio.pause();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
+
+  if (attachment.kind === "audio") {
+    return (
+      <button
+        type="button"
+        className={`message-voice-attachment ${audioPlaying ? "is-playing" : ""} ${error ? "error" : ""}`}
+        onClick={() => { void toggleAudio(); }}
+        title={error || "播放语音消息"}
+      >
+        {previewUrl && (
+          <audio
+            ref={audioRef}
+            src={previewUrl}
+            preload="metadata"
+            onLoadedMetadata={(event) => {
+              const duration = event.currentTarget.duration;
+              setAudioDuration(Number.isFinite(duration) ? duration : 0);
+            }}
+            onPlay={() => setAudioPlaying(true)}
+            onPause={() => setAudioPlaying(false)}
+            onEnded={() => setAudioPlaying(false)}
+          />
+        )}
+        <span className="message-voice-control" aria-hidden="true">
+          <span className={audioPlaying ? "voice-pause-symbol" : "voice-play-symbol"} />
+        </span>
+        <span className="message-voice-wave" aria-hidden="true">
+          {[5, 9, 14, 8, 18, 12, 7, 16, 10, 6, 13, 9].map((height, index) => (
+            <i key={`${height}-${index}`} style={{ height }} />
+          ))}
+        </span>
+        <span className="message-voice-duration">
+          {audioDuration > 0 ? formatAudioDuration(audioDuration) : error ? "无法播放" : "语音"}
+        </span>
+      </button>
+    );
+  }
 
   if (attachment.kind === "image") {
     return (
@@ -958,9 +1021,7 @@ function MessageAttachment({
         <span className={`message-attachment-icon ${error ? "error" : ""}`}>
           {error
             ? "!"
-            : attachment.kind === "audio"
-              ? "VOICE"
-              : attachment.kind === "video"
+            : attachment.kind === "video"
                 ? "VIDEO"
               : "FILE"}
         </span>
@@ -980,6 +1041,13 @@ function MessageAttachment({
       </blockquote>
     </div>
   );
+}
+
+function formatAudioDuration(seconds: number): string {
+  const rounded = Math.max(1, Math.round(seconds));
+  const minutes = Math.floor(rounded / 60);
+  const remainder = rounded % 60;
+  return minutes > 0 ? `${minutes}:${String(remainder).padStart(2, "0")}` : `${remainder}″`;
 }
 
 function ArtifactCard({

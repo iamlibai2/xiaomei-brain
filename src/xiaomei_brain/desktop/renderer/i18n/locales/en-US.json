@@ -83,7 +83,7 @@
       "voiceConversation": "Voice conversation",
       "voiceThinking": "Agent is thinking…",
       "voiceHearing": "Listening to you…",
-      "voicePausedWhileSpeaking": "Listening is paused while the Agent is speaking",
+      "voicePausedWhileSpeaking": "Agent is speaking. Start talking to interrupt",
       "voiceRecognitionFailed": "Speech recognition failed",
       "voiceTooLarge": "The recording exceeds 5 MB",
       "cameraCapture": "Take a camera photo",

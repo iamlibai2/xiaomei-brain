@@ -248,6 +248,18 @@ class EmbodimentMethods:
             text = str(result.get("text", "")).strip()
             if not text:
                 raise ValueError("没有辨认出语音内容")
+            from xiaomei_brain.body.perception.transcript_filter import (
+                is_meaningful_transcript,
+            )
+            if not is_meaningful_transcript(text):
+                logger.debug("[Embodiment] 丢弃远程语音碎片: %r", text)
+                self._notify(route, "embodiment.audio.input.completed", {
+                    "request_id": request_id,
+                    "status": "ignored",
+                    "text": text,
+                    "reason": "transcript_fragment",
+                })
+                return
 
             if continuous:
                 with self._hearing_lock:

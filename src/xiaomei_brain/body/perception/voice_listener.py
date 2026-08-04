@@ -28,6 +28,8 @@ from typing import Callable
 
 import numpy as np
 
+from .transcript_filter import is_meaningful_transcript
+
 logger = logging.getLogger(__name__)
 
 # ── 阈值 ──────────────────────────────────────────────────
@@ -288,12 +290,8 @@ class VoiceListener:
         emotion = result.get("emotion", "")
 
         if text:
-            # 碎片丢弃：CJK < 2 字 且 英文 < 2 词 → 99% STT 幻觉
-            import re
-            cjk = len(re.findall(r'[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]', text))
-            words = re.sub(r'[^a-zA-Z ]', ' ', text).split()
-            if cjk < 2 and len(words) < 2:
-                logger.debug("VoiceListener _process: 丢弃碎片 cjk=%d words=%d '%s'", cjk, len(words), text)
+            if not is_meaningful_transcript(text):
+                logger.debug("VoiceListener _process: 丢弃语音碎片 '%s'", text)
                 return
             logger.info("VoiceListener 识别: '%s' emotion=%s", text, emotion)
             try:

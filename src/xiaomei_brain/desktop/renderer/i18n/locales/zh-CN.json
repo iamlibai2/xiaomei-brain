@@ -83,7 +83,7 @@
       "voiceConversation": "语音对话",
       "voiceThinking": "Agent 正在思考…",
       "voiceHearing": "正在听你说话…",
-      "voicePausedWhileSpeaking": "Agent 正在说话，监听已暂时暂停",
+      "voicePausedWhileSpeaking": "Agent 正在说话，你可以直接开口打断",
       "voiceRecognitionFailed": "语音识别失败",
       "voiceTooLarge": "语音超过 5 MB，请缩短录音时间",
       "cameraCapture": "使用摄像头拍照",
