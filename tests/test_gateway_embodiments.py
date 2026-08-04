@@ -54,7 +54,7 @@ def test_desktop_microphone_is_transcribed_and_enters_gateway(monkeypatch):
     class Gateway:
         def accept(self, raw):
             admitted.append(raw)
-            return Accepted(SimpleNamespace(turn_id="turn-voice"))
+            return Accepted(SimpleNamespace(turn_id="turn-voice", message_id=42))
 
     class Router:
         def deliver_event(self, event, payload, route, **metadata):
@@ -116,6 +116,11 @@ def test_desktop_microphone_is_transcribed_and_enters_gateway(monkeypatch):
         assert admitted[0].metadata["embodiment_id"] == "desktop:device-voice-1"
         assert events[-1][0] == "embodiment.audio.input.completed"
         assert events[-1][1]["status"] == "completed"
+        assert events[-1][1]["message_id"] == 42
+        assert events[-1][1]["attachments"] == [{
+            key: admitted[0].attachments[0][key]
+            for key in ("id", "name", "mime_type", "size", "kind")
+        }]
     finally:
         cm.unregister(conn_id)
 

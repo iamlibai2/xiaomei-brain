@@ -3292,6 +3292,36 @@ export function initGatewayEvents() {
       }));
     };
 
+    if (event === "embodiment.audio.input.completed") {
+      if (d.status !== "completed" || !text.trim()) return;
+      const messageId = typeof d.message_id === "number" ? d.message_id : undefined;
+      setState(produce((s: CoreState) => {
+        const sessionMessages = eventMessages(s);
+        const duplicate = sessionMessages.some((message) => (
+          message.role === "user"
+          && ((messageId !== undefined && message.sourceMessageId === messageId)
+            || (eventTurnId && message.turnId === eventTurnId))
+        ));
+        if (duplicate) return;
+        sessionMessages.push({
+          id: messageId !== undefined
+            ? `voice-user-${messageId}`
+            : `voice-user-${eventTurnId || Date.now()}`,
+          role: "user",
+          content: text,
+          streaming: false,
+          createdAt: typeof raw.timestamp === "number" ? raw.timestamp : Date.now(),
+          attachments: displayAttachments(d.attachments),
+          turnId: eventTurnId || undefined,
+          sourceMessageId: messageId,
+          deliveryStatus: "processing",
+        });
+        touchSession(s, agentId, eventSessionId, 1, text);
+        setSessionSending(s, agentId, eventSessionId, true);
+      }));
+      return;
+    }
+
     if (event === "reconnecting") {
       setState(produce((s: CoreState) => {
         const previous = s.connectionByAgent[agentId];
@@ -3348,6 +3378,26 @@ export function initGatewayEvents() {
         }
       }));
       restoreStreamFromResume(agentId, sessionId, resume);
+      if (event === "reconnected") {
+        // session.resume only restores the active conversation. Refresh the
+        // authoritative list as well, otherwise an Agent process restart can
+        // leave the sidebar containing only that resumed session.
+        const fallbackSessions = store().sessionsByAgent[agentId] || [];
+        void fetchAgentSessions(agentId, sessionId, messages, fallbackSessions)
+          .then((sessionResult) => {
+            setState(produce((s: CoreState) => {
+              if (s.connectionByAgent[agentId]?.status !== "connected") return;
+              s.sessionsByAgent[agentId] = sessionResult.sessions;
+              s.sessionListByAgent[agentId] = sessionResult.listState;
+            }));
+          })
+          .catch((error) => {
+            setState(produce((s: CoreState) => {
+              const current = s.sessionListByAgent[agentId];
+              if (current) current.error = String(error);
+            }));
+          });
+      }
       void useCoreStore.getState().refreshActivities(agentId);
       void useCoreStore.getState().refreshArtifacts(agentId);
       void useCoreStore.getState().refreshPersonMemories(agentId);

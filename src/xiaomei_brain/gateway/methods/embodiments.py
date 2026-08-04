@@ -159,7 +159,7 @@ class EmbodimentMethods:
             if not text:
                 raise ValueError("没有辨认出语音内容")
 
-            from ..attachments import prepare_attachments
+            from ..attachments import prepare_attachments, public_attachment_metadata
             suffix = {
                 "audio/webm": ".webm",
                 "audio/ogg": ".ogg",
@@ -208,6 +208,8 @@ class EmbodimentMethods:
                 "status": "completed",
                 "text": text,
                 "turn_id": accepted.living_message.turn_id,
+                "message_id": accepted.living_message.message_id,
+                "attachments": public_attachment_metadata(attachments),
             })
         except Exception as exc:
             logger.exception("[Embodiment] Desktop microphone processing failed")

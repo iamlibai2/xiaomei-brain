@@ -658,6 +658,8 @@ export interface LocalAIDownloadProgress {
 export interface LocalAIStartupState {
   serviceId: string;
   online: boolean;
+  running: boolean;
+  pid: number | null;
   failed: boolean;
   error: string;
 }

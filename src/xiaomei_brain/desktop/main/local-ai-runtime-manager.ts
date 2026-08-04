@@ -100,6 +100,8 @@ export interface LocalAIDownloadProgress {
 export interface LocalAIStartupState {
   serviceId: string;
   online: boolean;
+  running: boolean;
+  pid: number | null;
   failed: boolean;
   error: string;
 }
@@ -133,19 +135,64 @@ export class LocalAIRuntimeManager {
     return this.snapshotPromise;
   }
 
-  async cachedSnapshot(): Promise<{ services: LocalAIServiceStatus[]; system: LocalAISystemStatus } | null> {
-    if (this.snapshotCache) return this.snapshotCache;
-    try {
-      const value = JSON.parse(await fs.readFile(this.snapshotCachePath(), "utf8")) as {
-        services?: LocalAIServiceStatus[];
-        system?: LocalAISystemStatus;
-      };
-      if (!Array.isArray(value.services) || !value.system) return null;
-      this.snapshotCache = { services: value.services, system: value.system };
-      return this.snapshotCache;
-    } catch {
-      return null;
+  async cachedSnapshot(): Promise<{ services: LocalAIServiceStatus[]; system?: LocalAISystemStatus } | null> {
+    let cached = this.snapshotCache;
+    if (!cached) {
+      try {
+        const value = JSON.parse(await fs.readFile(this.snapshotCachePath(), "utf8")) as {
+          services?: LocalAIServiceStatus[];
+          system?: LocalAISystemStatus;
+        };
+        if (!Array.isArray(value.services) || !value.system) return null;
+        cached = { services: value.services, system: value.system };
+        this.snapshotCache = cached;
+      } catch {
+        return null;
+      }
     }
+
+    // Cached model metadata makes the cards available immediately, but live
+    // process and load fields must never be copied from the previous run.
+    const services = await Promise.all(cached.services.map(async (service) => {
+      const runtime = await this.startupState(service.id);
+      const downloadRunning = await this.downloadIsRunning(service.id);
+      let state: LocalAIServiceStatus["state"];
+      let error = "";
+      if (runtime.online) {
+        state = "online";
+      } else if (runtime.running) {
+        state = "starting";
+      } else if (downloadRunning) {
+        state = "downloading";
+      } else if (runtime.failed) {
+        state = "error";
+        error = runtime.error;
+      } else if (!service.installed) {
+        state = "unavailable";
+        error = service.error;
+      } else if (service.downloadable && !service.model_present) {
+        state = "not_installed";
+      } else if (!service.controllable) {
+        state = "available";
+        error = service.error;
+      } else {
+        state = "stopped";
+      }
+      return {
+        ...service,
+        state,
+        pid: runtime.pid,
+        started_at: runtime.running ? service.started_at : "",
+        health: {},
+        memory_bytes: 0,
+        system_memory_total_bytes: 0,
+        gpu_memory_bytes: 0,
+        gpu_memory_total_bytes: 0,
+        error,
+      };
+    }));
+    // CPU/GPU load is deliberately omitted until the background refresh.
+    return { services };
   }
 
   async list(): Promise<LocalAIServiceStatus[]> {
@@ -232,7 +279,7 @@ export class LocalAIRuntimeManager {
       throw new Error("Invalid local AI service ID");
     }
     if (await this.healthAvailable(SERVICE_ENDPOINTS[serviceId])) {
-      return { serviceId, online: true, failed: false, error: "" };
+      return { serviceId, online: true, running: true, pid: null, failed: false, error: "" };
     }
     const runtimeDir = this.runtimeDirectory();
     let pid = 0;
@@ -246,16 +293,29 @@ export class LocalAIRuntimeManager {
     }
     const running = this.processIsRunning(pid);
     if (pid <= 0 || running) {
-      return { serviceId, online: false, failed: false, error: "" };
+      return { serviceId, online: false, running, pid: running ? pid : null, failed: false, error: "" };
     }
     const log = await this.readFileTail(path.join(runtimeDir, `${serviceId}.log`), 32 * 1024);
     const lines = log.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     return {
       serviceId,
       online: false,
+      running: false,
+      pid: null,
       failed: true,
       error: lines.at(-1) || "模型服务进程已意外退出",
     };
+  }
+
+  private async downloadIsRunning(serviceId: string): Promise<boolean> {
+    try {
+      const metadata = JSON.parse(
+        await fs.readFile(path.join(this.runtimeDirectory(), `${serviceId}.download.json`), "utf8"),
+      ) as { pid?: number };
+      return this.processIsRunning(Number(metadata.pid || 0));
+    } catch {
+      return false;
+    }
   }
 
   async selectModel(serviceId: string, modelId: string): Promise<LocalAIServiceStatus> {
