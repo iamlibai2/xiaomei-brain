@@ -167,6 +167,10 @@ def _main_impl() -> None:
         from xiaomei_brain.cli.capability import cmd_capability
         cmd_capability(args)
 
+    elif cmd == "runtime-service":
+        from xiaomei_brain.cli.runtime_service import cmd_runtime_service
+        cmd_runtime_service(args)
+
     else:
         print(f"Unknown command: {cmd}")
         sys.exit(1)

@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { DesktopSettings } from "../../types";
 import { useCoreStore } from "../../store";
 import { IdentitySettingsDialog } from "../IdentitySettingsDialog";
 import { Button, Icon, type IconName } from "../ui";
@@ -10,6 +12,7 @@ import { ModelSettingsPanel } from "./ModelSettingsPanel";
 import { MediaServiceSettingsPanel } from "./MediaServiceSettingsPanel";
 import { SearchServiceSettingsPanel } from "./SearchServiceSettingsPanel";
 import { SystemSettingsPanel } from "./SystemSettingsPanel";
+import { LocalAIRuntimePanel } from "./LocalAIRuntimePanel";
 import { SETTINGS_EVENT, type SettingsSection } from "./events";
 
 const DESKTOP_NAVIGATION: Array<{
@@ -20,6 +23,7 @@ const DESKTOP_NAVIGATION: Array<{
 }> = [
   { id: "agents", label: "Agent 管理", description: "创建、连接与管理所有 Agent", icon: "robot" },
   { id: "accounts", label: "账户管理", description: "本机身份、切换与备份", icon: "shield" },
+  { id: "local-ai", label: "本机 AI 服务", description: "下载模型与管理共享推理服务", icon: "sparkles" },
   { id: "system", label: "系统设置", description: "Desktop 运行环境与日志", icon: "settings" },
 ];
 
@@ -40,6 +44,7 @@ const AGENT_NAVIGATION: Array<{
 const AGENT_SECTIONS = new Set<SettingsSection>(["overview", "capabilities", "models", "media", "search", "channels"]);
 
 export function SettingsCenter() {
+  const { i18n } = useTranslation();
   const agents = useCoreStore((state) => state.agents);
   const activeAgentId = useCoreStore((state) => state.activeAgentId);
   const connectionByAgent = useCoreStore((state) => state.connectionByAgent);
@@ -212,6 +217,9 @@ export function SettingsCenter() {
               />
             )}
             {section === "system" && <SystemSettingsPanel />}
+            {section === "local-ai" && (
+              <LocalAIRuntimePanel language={i18n.language as DesktopSettings["language"]} />
+            )}
             {section === "accounts" && (
               <IdentitySettingsDialog embedded onClose={() => setOpen(false)} />
             )}

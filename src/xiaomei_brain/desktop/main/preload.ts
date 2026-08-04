@@ -92,6 +92,15 @@ const CHANNEL_MAP = {
     create:          { invoke: "localAgents:create" },
     control:         { invoke: "localAgents:control" },
   },
+  localAI: {
+    list:             { invoke: "localAI:list" },
+    control:          { invoke: "localAI:control" },
+    selectModel:      { invoke: "localAI:selectModel" },
+    selectDevice:     { invoke: "localAI:selectDevice" },
+    downloadProgress: { invoke: "localAI:downloadProgress" },
+    readLog:          { invoke: "localAI:readLog" },
+    openDirectory:    { invoke: "localAI:openDirectory" },
+  },
   identity: {
     status:           { invoke: "identity:status" },
     create:           { invoke: "identity:create" },

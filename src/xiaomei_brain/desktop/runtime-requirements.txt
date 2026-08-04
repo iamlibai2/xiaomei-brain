@@ -1,7 +1,12 @@
 # Core dependencies bundled into the Desktop Agent Runtime.
-# Local embedding dependencies (sentence-transformers, modelscope, torch) are
-# intentionally omitted; Desktop uses the shared HTTP embedding service.
+# Embedding is a required host service, so its inference dependencies belong
+# to the bundled Runtime even though the BGE-M3 weights remain in the shared
+# user model cache. STT/TTS/biometric inference libraries are bundled as well;
+# their large model weights are downloaded only when the user enables them.
 requests>=2.31.0
+sentence-transformers>=2.2.0
+transformers>=4.40.0
+modelscope>=1.14.0
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
 pyyaml>=6.0
@@ -15,3 +20,13 @@ psutil>=5.9.0
 mcp>=1.0.0
 lark-oapi
 dingtalk-stream
+
+# Local AI services managed by Desktop. Model weights are downloaded after
+# installation, but inference libraries must already be present in Runtime.
+Pillow>=10.0
+dlib-bin>=20.0.0
+face-recognition-models>=0.3.0
+funasr>=1.0.0
+soundfile>=0.12.0
+speechbrain>=1.0.0
+voxcpm>=1.5.0,<2.0.0

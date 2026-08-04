@@ -10,6 +10,7 @@ import { discoverLocalAgents } from "./local-agent-discovery";
 import { AgentLifecycleAction, RuntimeManager } from "./runtime-manager";
 import { sanitizeNotificationText } from "./notification-text";
 import { IdentityVault } from "./identity-vault";
+import { LocalAIRuntimeManager, type LocalAIServiceAction } from "./local-ai-runtime-manager";
 
 const connections = new Map<string, GatewayClient>();
 const connectionSessions = new Map<string, string>();
@@ -106,6 +107,7 @@ export function registerIpcHandlers(
 ): void {
   const terminalMgr = new TerminalManager();
   const runtimeManager = new RuntimeManager(config);
+  const localAIRuntime = new LocalAIRuntimeManager(runtimeManager);
   const identityVault = new IdentityVault();
   let desktopDeviceId = config.get("desktop_device_id") || "";
   if (!desktopDeviceId) {
@@ -123,6 +125,80 @@ export function registerIpcHandlers(
   );
   void runtimeManager.warmup().catch((error) => {
     console.error("[runtime] background initialization failed", error);
+  });
+  // A fresh installation must let the person choose an embedding model before
+  // the first download. Existing installations still start their cached model
+  // automatically so normal Desktop startup remains unchanged.
+  void localAIRuntime.list().then((services) => {
+    const embedding = services.find((item) => item.id === "embedding");
+    if (embedding?.model_present) return localAIRuntime.ensureEmbedding();
+    return undefined;
+  }).catch((error) => {
+    console.error("[local-ai] embedding initialization failed", error);
+  });
+
+  ipcMain.handle("localAI:list", async () => {
+    try {
+      return { ok: true, ...(await localAIRuntime.snapshot()) };
+    } catch (error) {
+      return { ok: false, services: [], error: String(error instanceof Error ? error.message : error) };
+    }
+  });
+  ipcMain.handle("localAI:control", async (_event, args: {
+    serviceId: string;
+    action: LocalAIServiceAction;
+    device?: "auto" | "cpu" | "cuda";
+  }) => {
+    try {
+      return {
+        ok: true,
+        service: await localAIRuntime.control(args.serviceId, args.action, args.device || "auto"),
+      };
+    } catch (error) {
+      return { ok: false, error: String(error instanceof Error ? error.message : error) };
+    }
+  });
+  ipcMain.handle("localAI:selectModel", async (_event, args: { serviceId: string; modelId: string }) => {
+    try {
+      return { ok: true, service: await localAIRuntime.selectModel(args.serviceId, args.modelId) };
+    } catch (error) {
+      return { ok: false, error: String(error instanceof Error ? error.message : error) };
+    }
+  });
+  ipcMain.handle("localAI:selectDevice", async (_event, args: {
+    serviceId: string;
+    device: "auto" | "cpu" | "cuda";
+  }) => {
+    try {
+      return { ok: true, service: await localAIRuntime.selectDevice(args.serviceId, args.device) };
+    } catch (error) {
+      return { ok: false, error: String(error instanceof Error ? error.message : error) };
+    }
+  });
+  ipcMain.handle("localAI:readLog", async (_event, args: { serviceId: string }) => {
+    try {
+      return { ok: true, content: await localAIRuntime.readLog(args.serviceId) };
+    } catch (error) {
+      return { ok: false, content: "", error: String(error instanceof Error ? error.message : error) };
+    }
+  });
+  ipcMain.handle("localAI:downloadProgress", async (_event, args: { serviceId: string; modelId: string }) => {
+    try {
+      return {
+        ok: true,
+        progress: await localAIRuntime.downloadProgress(args.serviceId, args.modelId),
+      };
+    } catch (error) {
+      return { ok: false, error: String(error instanceof Error ? error.message : error) };
+    }
+  });
+  ipcMain.handle("localAI:openDirectory", async () => {
+    try {
+      const result = await shell.openPath(await localAIRuntime.ensureRuntimeDirectory());
+      return result ? { ok: false, error: result } : { ok: true };
+    } catch (error) {
+      return { ok: false, error: String(error instanceof Error ? error.message : error) };
+    }
   });
 
   ipcMain.handle("identity:status", async () => {
@@ -296,6 +372,19 @@ export function registerIpcHandlers(
   }) => {
     if (!["start", "stop", "restart"].includes(args.action)) {
       return { ok: false, action: args.action, agentId: args.agentId, message: "Invalid lifecycle action" };
+    }
+
+    if (args.action === "start" || args.action === "restart") {
+      try {
+        await localAIRuntime.ensureEmbedding();
+      } catch (error) {
+        return {
+          ok: false,
+          action: args.action,
+          agentId: args.agentId,
+          message: `向量服务未就绪：${String(error instanceof Error ? error.message : error)}`,
+        };
+      }
     }
 
     if (args.action === "stop" || args.action === "restart") {

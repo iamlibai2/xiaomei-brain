@@ -1003,8 +1003,21 @@ def cmd_run(args: list[str]) -> None:
         print(f"\033[31m[错误] agent '{agent_id}' 不存在。可用: {', '.join(available)}\033[0m")
         sys.exit(1)
 
-    # ── 预热 Embedding（banner 之前：避免 pyarrow 导入耗时卡在 banner 后面）───
-    import pyarrow  # 必须在 sentence_transformers 之前导入，避免 DLL 首次加载冲突
+    # CLI and Desktop share one host-wide embedding process. Do not load a
+    # private model inside every Agent process when the shared service is down.
+    from xiaomei_brain.runtime_services.manager import LocalAIRuntimeError, LocalAIRuntimeManager
+    embedding_runtime = LocalAIRuntimeManager()
+    embedding_status = embedding_runtime.status("embedding")
+    if embedding_status["state"] != "online":
+        print("  → 正在启动共享向量服务…", flush=True)
+    try:
+        embedding_runtime.ensure_running("embedding")
+    except LocalAIRuntimeError as exc:
+        print(f"\033[31m[错误] 共享向量服务不可用：{exc}\033[0m")
+        sys.exit(1)
+    os.environ["XIAOMEI_EMBED_REMOTE_REQUIRED"] = "1"
+
+    # ── 连接 Embedding（banner 之前，确保后续能力和记忆初始化可用）───
     from xiaomei_brain.base.config import Config as _Config
     from xiaomei_brain.base.shared_embedder import SharedEmbedder
     _emb_cfg = _Config.from_json()

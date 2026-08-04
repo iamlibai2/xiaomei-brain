@@ -573,6 +573,118 @@ export interface LocalAgentsBridge {
   control(args: { agentId: string; connectionId: string; action: AgentLifecycleAction }): Promise<AgentLifecycleResult>;
 }
 
+export type LocalAIServiceState =
+  | "online"
+  | "starting"
+  | "downloading"
+  | "not_installed"
+  | "download_error"
+  | "stopped"
+  | "unavailable"
+  | "available"
+  | "error";
+
+export interface LocalAIServiceStatus {
+  id: "embedding" | "stt" | "tts_voxcpm" | "voiceprint" | "face";
+  name: string;
+  description: string;
+  model: string;
+  selected_model_id: string;
+  models: LocalAIModelOption[];
+  selection_locked: boolean;
+  selection_lock_reason: string;
+  selected_device: "auto" | "cpu" | "cuda";
+  supported_devices: Array<"auto" | "cpu" | "cuda">;
+  expected_size: string;
+  endpoint: string;
+  required: boolean;
+  controllable: boolean;
+  downloadable: boolean;
+  installed: boolean;
+  missing_dependencies: string[];
+  model_present: boolean;
+  model_path: string;
+  expected_size_bytes: number;
+  downloaded_bytes: number;
+  download_progress: number;
+  state: LocalAIServiceState;
+  pid?: number | null;
+  started_at: string;
+  device: string;
+  health: Record<string, unknown>;
+  memory_bytes: number;
+  system_memory_total_bytes: number;
+  gpu_memory_bytes: number;
+  gpu_memory_total_bytes: number;
+  error: string;
+  log_path: string;
+  download_log_path: string;
+}
+
+export interface LocalAIModelOption {
+  id: string;
+  name: string;
+  source: string;
+  expected_size: string;
+  expected_size_bytes: number;
+  downloaded_bytes: number;
+  model_present: boolean;
+  recommended_device: string;
+  supported_devices: string[];
+}
+
+export interface LocalAISystemStatus {
+  cpu_percent: number;
+  memory_percent: number;
+  memory_used_bytes: number;
+  memory_total_bytes: number;
+  gpus: Array<{
+    name: string;
+    utilization_percent: number;
+    memory_used_bytes: number;
+    memory_total_bytes: number;
+  }>;
+}
+
+export interface LocalAIDownloadProgress {
+  serviceId: string;
+  modelId: string;
+  progress: number;
+  completed: boolean;
+  failed: boolean;
+  error: string;
+}
+
+export interface LocalAIBridge {
+  list(): Promise<{
+    ok: boolean;
+    services: LocalAIServiceStatus[];
+    system?: LocalAISystemStatus;
+    error?: string;
+  }>;
+  control(args: {
+    serviceId: string;
+    action: "start" | "stop" | "restart" | "download" | "cancel-download";
+    device?: "auto" | "cpu" | "cuda";
+  }): Promise<{ ok: boolean; service?: LocalAIServiceStatus; error?: string }>;
+  selectModel(args: { serviceId: string; modelId: string }): Promise<{
+    ok: boolean;
+    service?: LocalAIServiceStatus;
+    error?: string;
+  }>;
+  selectDevice(args: {
+    serviceId: string;
+    device: "auto" | "cpu" | "cuda";
+  }): Promise<{ ok: boolean; service?: LocalAIServiceStatus; error?: string }>;
+  downloadProgress(args: { serviceId: string; modelId: string }): Promise<{
+    ok: boolean;
+    progress?: LocalAIDownloadProgress;
+    error?: string;
+  }>;
+  readLog(args: { serviceId: string }): Promise<{ ok: boolean; content: string; error?: string }>;
+  openDirectory(): Promise<DirectoryOpenResult>;
+}
+
 export interface NotificationsBridge {
   show(args: { title: string; body: string; agentId: string; sessionId: string }): Promise<{ shown: boolean }>;
   onSelect(callback: (target: { agentId: string; sessionId: string }) => void): () => void;
@@ -662,6 +774,7 @@ declare global {
     gateway: GatewayBridge;
     identity: IdentityBridge;
     localAgents: LocalAgentsBridge;
+    localAI: LocalAIBridge;
     notifications: NotificationsBridge;
     desktop: DesktopBridge;
     win: WinBridge;

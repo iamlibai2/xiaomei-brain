@@ -262,7 +262,7 @@ export class RuntimeManager {
 
       await execFileAsync(stagingPython, [
         "-c",
-        "import fastapi, lancedb, numpy, pyarrow, xiaomei_brain; print('runtime ready')",
+        "import fastapi, lancedb, modelscope, numpy, pyarrow, sentence_transformers, xiaomei_brain; print('runtime ready')",
       ], {
         windowsHide: true,
         timeout: 60_000,

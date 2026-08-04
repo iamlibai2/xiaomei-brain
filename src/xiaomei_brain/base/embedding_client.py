@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 import urllib.request
 
 logger = logging.getLogger(__name__)
@@ -36,21 +37,26 @@ class RemoteEmbedder:
         self._checked: bool = False
         self._available: bool = False
         self._dim: int | None = None
+        self._checked_at: float = 0.0
 
     @property
     def available(self) -> bool:
         """远程服务器是否可用（首次访问时自动检测，结果缓存）。"""
-        if not self._checked:
+        # Cache a successful service indefinitely, but retry a failed probe.
+        # Desktop may bring the host service online after this Agent started.
+        if not self._checked or (not self._available and time.monotonic() - self._checked_at >= 3):
             self._available = self._do_check()
             self._checked = True
+            self._checked_at = time.monotonic()
         return self._available
 
     @property
     def dim(self) -> int | None:
         """远程服务器返回的向量维度。"""
-        if not self._checked:
+        if not self._checked or (not self._available and time.monotonic() - self._checked_at >= 3):
             self._available = self._do_check()
             self._checked = True
+            self._checked_at = time.monotonic()
         return self._dim
 
     def _do_check(self) -> bool:

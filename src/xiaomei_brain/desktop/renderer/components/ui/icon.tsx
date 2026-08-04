@@ -25,6 +25,7 @@ export type IconName =
   | "globe"
   | "shield"
   | "robot"
+  | "cpu"
   | "folder"
   | "image"
   | "sparkles"
@@ -234,6 +235,13 @@ const ICON_PATHS: Record<IconName, React.ReactNode> = {
       <rect x="2" y="3" width="20" height="18" rx="2" />
       <polyline points="6 8 10 12 6 16" />
       <line x1="12" y1="16" x2="18" y2="16" />
+    </>
+  ),
+  cpu: (
+    <>
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+      <rect x="9" y="9" width="6" height="6" />
+      <path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3" />
     </>
   ),
   camera: (

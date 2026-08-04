@@ -7,7 +7,11 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
+from pathlib import Path
+import urllib.request
 import warnings
 
 # face_recognition_models 使用了过时的 pkg_resources，消除噪声
@@ -32,6 +36,10 @@ class FaceID:
     _loaded: bool = False
 
     def __init__(self) -> None:
+        self._server_url = os.environ.get(
+            "FACE_SERVER_URL",
+            "http://127.0.0.1:18769",
+        ).rstrip("/")
         self._known_faces: list[dict] = []  # [{"name": "李白", "encoding": np.array}, ...]
 
     # ── 懒加载 ────────────────────────────────────────────
@@ -51,6 +59,14 @@ class FaceID:
         返回: [{"bbox": (top,right,bottom,left), "encoding": np.array}, ...]
         没有检测到人脸则返回空列表。
         """
+        if os.environ.get("XIAOMEI_FACE_LOCAL_ONLY") != "1":
+            remote = self._detect_remote(image_path)
+            if remote is not None:
+                return [
+                    {"bbox": face["bbox"], "encoding": face["encoding"]}
+                    for face in remote
+                ]
+
         self._ensure_loaded()
         import face_recognition
 
@@ -82,6 +98,11 @@ class FaceID:
         返回: [{"bbox": (top,right,bottom,left), "encoding": np.array,
                  "landmarks": {chin, left_eye, ...}}, ...]
         """
+        if os.environ.get("XIAOMEI_FACE_LOCAL_ONLY") != "1":
+            remote = self._detect_remote(image_path)
+            if remote is not None:
+                return remote
+
         self._ensure_loaded()
         import face_recognition
 
@@ -106,6 +127,53 @@ class FaceID:
             logger.exception("人脸检测失败")
             return []
 
+    def _detect_remote(self, image_path: str) -> list[dict] | None:
+        """Use the machine-wide face service when available.
+
+        ``None`` means the service is unavailable. An empty list is a valid
+        response meaning that no face was detected.
+        """
+        path = Path(image_path)
+        if not path.is_file():
+            return []
+        payload = json.dumps({
+            "image_base64": base64.b64encode(path.read_bytes()).decode("ascii"),
+            "suffix": path.suffix,
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self._server_url}/detect",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                value = json.loads(response.read())
+            raw_faces = value.get("faces") if isinstance(value, dict) else None
+            if not isinstance(raw_faces, list):
+                return None
+            faces: list[dict] = []
+            for raw in raw_faces:
+                if not isinstance(raw, dict):
+                    continue
+                bbox = raw.get("bbox")
+                encoding = raw.get("encoding")
+                if not isinstance(bbox, list) or len(bbox) != 4 or not isinstance(encoding, list):
+                    continue
+                landmarks = {
+                    str(key): [tuple(int(coordinate) for coordinate in point) for point in points]
+                    for key, points in (raw.get("landmarks") or {}).items()
+                    if isinstance(points, list)
+                }
+                faces.append({
+                    "bbox": tuple(int(coordinate) for coordinate in bbox),
+                    "encoding": np.asarray(encoding, dtype=np.float32),
+                    "landmarks": landmarks,
+                })
+            return faces
+        except Exception:
+            logger.debug("Shared face service unavailable, falling back in-process", exc_info=True)
+            return None
+
     def match(self, encoding, tolerance: float = 0.5) -> str | None:
         """单个特征向量 → 匹配已知身份。
 
@@ -116,10 +184,10 @@ class FaceID:
             logger.warning("[FaceID] match: 已知人脸为空，无法匹配")
             return None
 
-        import face_recognition
-        known_encodings = [f["encoding"] for f in self._known_faces]
-        distances = face_recognition.face_distance(known_encodings, encoding)
-        results = face_recognition.compare_faces(known_encodings, encoding, tolerance=tolerance)
+        known_encodings = np.asarray([f["encoding"] for f in self._known_faces])
+        candidate = np.asarray(encoding)
+        distances = np.linalg.norm(known_encodings - candidate, axis=1)
+        results = [bool(distance <= tolerance) for distance in distances]
         logger.debug("[FaceID] match: %d 个已知人脸, distances=%s, matched=%s",
                     len(self._known_faces),
                     [round(float(d), 3) for d in distances],
@@ -173,8 +241,6 @@ class FaceID:
         """从 faces_dir/*.npy 加载人脸特征。"""
         if not os.path.isdir(faces_dir):
             return
-        import face_recognition
-        self._ensure_loaded()
         for filename in sorted(os.listdir(faces_dir)):
             if not filename.endswith(".npy"):
                 continue

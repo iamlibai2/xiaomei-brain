@@ -11,6 +11,9 @@ from __future__ import annotations
 import logging
 import os
 import io
+import base64
+import json
+import urllib.request
 import wave
 import tempfile
 from typing import Any
@@ -63,8 +66,13 @@ class SpeakerID:
     _loaded: bool = False
     _recognizer: Any = None
 
-    def __init__(self) -> None:
+    def __init__(self, device: str | None = None) -> None:
+        self._device = device
         self._voices: list[dict] = []  # [{"name": "李白", "embedding": np.array}, ...]
+        self._server_url = os.environ.get(
+            "VOICEPRINT_SERVER_URL",
+            "http://127.0.0.1:18768",
+        ).rstrip("/")
 
     # ── 懒加载 ────────────────────────────────────────────
 
@@ -73,7 +81,7 @@ class SpeakerID:
             return
         import torch
 
-        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        device = self._device or ("cuda:0" if torch.cuda.is_available() else "cpu")
         logger.info("加载声纹模型: %s (device=%s)...", _MODEL_SOURCE, device)
 
         savedir = _resolve_savedir(
@@ -106,20 +114,12 @@ class SpeakerID:
         返回: (是否同人, 置信度分数)
         分数 > 0.5 通常视为同人。
         """
-        self._ensure_loaded()
-
-        wav1 = self._pcm_to_wav_path(pcm1, sample_rate)
-        wav2 = self._pcm_to_wav_path(pcm2, sample_rate)
-        try:
-            score, prediction = SpeakerID._recognizer.verify_files(wav1, wav2)
-            is_same = bool(prediction.item()) if hasattr(prediction, 'item') else bool(prediction)
-            return is_same, float(score.item()) if hasattr(score, 'item') else float(score)
-        except Exception:
-            logger.exception("声纹验证失败")
+        first = self._extract_embedding(pcm1, sample_rate)
+        second = self._extract_embedding(pcm2, sample_rate)
+        if first is None or second is None:
             return False, 0.0
-        finally:
-            os.unlink(wav1)
-            os.unlink(wav2)
+        score = self._cosine_sim(first, second)
+        return score > 0.5, score
 
     def enroll(self, name: str, pcm: bytes, sample_rate: int = 16000) -> bool:
         """注册一个声纹。
@@ -167,7 +167,6 @@ class SpeakerID:
             n = 5  # 最多取 5 段
 
         temp_sp = SpeakerID()
-        temp_sp._ensure_loaded()
         embeddings = []
         for i in range(n):
             start = i * chunk_bytes
@@ -225,6 +224,10 @@ class SpeakerID:
 
     def _extract_embedding(self, pcm: bytes, sample_rate: int) -> np.ndarray | None:
         """PCM → 声纹特征向量。"""
+        if os.environ.get("XIAOMEI_VOICEPRINT_LOCAL_ONLY") != "1":
+            remote = self._extract_embedding_remote(pcm, sample_rate)
+            if remote is not None:
+                return remote
         self._ensure_loaded()
         import soundfile as sf
         import torch
@@ -246,6 +249,26 @@ class SpeakerID:
             return None
         finally:
             os.unlink(wav_path)
+
+    def _extract_embedding_remote(self, pcm: bytes, sample_rate: int) -> np.ndarray | None:
+        payload = json.dumps({
+            "pcm_base64": base64.b64encode(pcm).decode("ascii"),
+            "sample_rate": sample_rate,
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self._server_url}/encode",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                value = json.loads(response.read())
+            embedding = value.get("embedding") if isinstance(value, dict) else None
+            if isinstance(embedding, list) and embedding:
+                return np.asarray(embedding, dtype=np.float32)
+        except Exception:
+            logger.debug("Shared voiceprint service unavailable, falling back in-process", exc_info=True)
+        return None
 
     @staticmethod
     def _pcm_to_wav_path(pcm: bytes, sample_rate: int) -> str:

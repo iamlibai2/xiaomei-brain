@@ -49,6 +49,7 @@ class SharedEmbedder:
         self._model: Any = None
         self._model_lock = threading.Lock()
         self._ready = threading.Event()
+        self._remote_required = os.environ.get("XIAOMEI_EMBED_REMOTE_REQUIRED", "").strip() == "1"
 
         # WSL2 / Windows PyTorch 线程数限制，防止 segfault
         for _key in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
@@ -124,6 +125,11 @@ class SharedEmbedder:
             self._ready.set()
             return
 
+        if self._remote_required:
+            logger.error("Required shared embedding service is unavailable")
+            self._ready.set()
+            return
+
         # 后台预加载本地模型
         try:
             logger.info("Embedding warmup: loading %s in background...", self._model_name)
@@ -187,6 +193,8 @@ class SharedEmbedder:
 
     def _get_model(self) -> Any:
         """获取本地模型实例，未加载则同步加载。"""
+        if self._remote_required:
+            raise RuntimeError("共享向量服务不可用，已禁止在 Agent 进程内重复加载模型")
         if self._model is not None:
             return self._model
         return self._load_model()
@@ -199,7 +207,12 @@ class SharedEmbedder:
             try:
                 return self._remote.embed(text)
             except Exception as e:
+                if self._remote_required:
+                    raise RuntimeError("共享向量服务请求失败") from e
                 logger.warning("[Embed] Remote failed, falling back to local: %s", e)
+
+        if self._remote_required:
+            raise RuntimeError("共享向量服务不可用")
 
         model = self._get_model()
         return self._safe_encode(model, text)
@@ -210,7 +223,12 @@ class SharedEmbedder:
             try:
                 return self._remote.embed_batch(texts)
             except Exception as e:
+                if self._remote_required:
+                    raise RuntimeError("共享向量服务请求失败") from e
                 logger.warning("[Embed] Remote batch failed, falling back to local: %s", e)
+
+        if self._remote_required:
+            raise RuntimeError("共享向量服务不可用")
 
         model = self._get_model()
         return self._safe_encode(model, texts, batch=True)

@@ -1,4 +1,4 @@
-export type SettingsSection = "system" | "accounts" | "agents" | "overview" | "capabilities" | "models" | "media" | "search" | "channels";
+export type SettingsSection = "system" | "local-ai" | "accounts" | "agents" | "overview" | "capabilities" | "models" | "media" | "search" | "channels";
 
 export const SETTINGS_EVENT = "xiaomei:open-settings";
 export const CAPABILITY_STATUS_CHANGED_EVENT = "xiaomei:capability-status-changed";

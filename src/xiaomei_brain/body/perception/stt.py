@@ -17,7 +17,10 @@ from __future__ import annotations
 import logging
 import os
 import io
+import base64
+import json
 import threading
+import urllib.request
 import warnings
 import wave
 import numpy as np
@@ -59,6 +62,10 @@ class STT:
     def __init__(self, model: str = _MODEL_NAME, device: str = "cpu") -> None:
         self._model_name = model
         self._device = device
+        self._server_url = os.environ.get(
+            "STT_SERVER_URL",
+            "http://127.0.0.1:18767",
+        ).rstrip("/")
 
     # ── 懒加载 ────────────────────────────────────────────
 
@@ -150,6 +157,10 @@ class STT:
         """
         if self.is_silence(pcm):
             return {"text": "", "emotion": "", "events": []}
+        if os.environ.get("XIAOMEI_STT_LOCAL_ONLY") != "1":
+            remote = self._transcribe_remote(pcm, sample_rate)
+            if remote is not None:
+                return remote
         self._ensure_model()
         wav_bytes = self._pcm_to_wav(pcm, sample_rate)
         import tempfile
@@ -169,6 +180,34 @@ class STT:
             return {"text": "", "emotion": "", "events": []}
         finally:
             os.unlink(wav_path)
+
+    def _transcribe_remote(self, pcm: bytes, sample_rate: int) -> dict | None:
+        """Use the host-shared STT service when it is available.
+
+        A failed probe is deliberately not cached: the Desktop may start the
+        service after an Agent process is already alive.
+        """
+        payload = json.dumps({
+            "pcm_base64": base64.b64encode(pcm).decode("ascii"),
+            "sample_rate": sample_rate,
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self._server_url}/transcribe",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                value = json.loads(response.read())
+            if isinstance(value, dict) and "text" in value:
+                return {
+                    "text": str(value.get("text") or ""),
+                    "emotion": str(value.get("emotion") or ""),
+                    "events": list(value.get("events") or []),
+                }
+        except Exception:
+            logger.debug("Shared STT service unavailable, falling back in-process", exc_info=True)
+        return None
 
     def listen(self, pcm: bytes, sample_rate: int = 16000) -> dict:
         """同 transcribe() 的别名，语义更匹配 Ears.listen()."""
