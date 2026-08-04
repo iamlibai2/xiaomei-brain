@@ -176,6 +176,31 @@ def test_deepseek_drops_incomplete_historical_tool_turn():
     ]
 
 
+def test_deepseek_keeps_current_tool_turn_with_empty_reasoning():
+    """空思考是有效响应值，不能连同工具结果一起从上下文删除。"""
+    from xiaomei_brain.llm.transport.chat_completions import ChatCompletionsTransport
+
+    profile, model = deepseek_profile_and_model()
+    messages = ChatCompletionsTransport().convert_messages([
+        {"role": "user", "content": "运行检查"},
+        {
+            "role": "assistant",
+            "content": "",
+            "reasoning_content": "",
+            "tool_calls": [{
+                "id": "current-call",
+                "type": "function",
+                "function": {"name": "lookup", "arguments": "{}"},
+            }],
+        },
+        {"role": "tool", "tool_call_id": "current-call", "content": "检查失败"},
+    ], model, profile, thinking={"enabled": True})
+
+    assert [message["role"] for message in messages] == ["user", "assistant", "tool"]
+    assert messages[1]["reasoning_content"] == ""
+    assert messages[2]["content"] == "检查失败"
+
+
 def test_deepseek_non_reasoning_explicitly_disables_thinking():
     from xiaomei_brain.llm.transport.chat_completions import ChatCompletionsTransport
 

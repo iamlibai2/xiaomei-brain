@@ -321,6 +321,14 @@ class ChatArtifactReference(BaseModel):
     selection: ArtifactTextSelection | ArtifactSpreadsheetSelection | ArtifactHtmlSelection | None = None
 
 
+class ChatInvocation(BaseModel):
+    """An explicit user choice made in the conversation composer."""
+
+    kind: Literal["capability", "skill", "execution"]
+    id: str = Field(..., min_length=1, max_length=160)
+    process_template_id: str = Field(default="", max_length=160)
+
+
 class ChatSendParams(BaseModel):
     content: str = Field(default="", max_length=200_000)
     client_request_id: str = Field(..., min_length=1, max_length=128)
@@ -331,6 +339,7 @@ class ChatSendParams(BaseModel):
         default_factory=list,
         max_length=4,
     )
+    invocation: ChatInvocation | None = None
     retry_of_message_id: int | None = Field(default=None, ge=1)
 
 
@@ -341,6 +350,10 @@ class ChatRetryParams(BaseModel):
 
 
 class ChatAbortParams(BaseModel):
+    session_id: str = ""
+
+
+class ChatCompactParams(BaseModel):
     session_id: str = ""
 
 

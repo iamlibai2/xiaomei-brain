@@ -190,12 +190,14 @@ class ProviderProfile:
 
         # Old rows may contain tool calls created before reasoning_content was
         # persisted. Never fabricate it: omit the invalid tool exchange so the
-        # provider does not reject the whole request.
+        # provider does not reject the whole request.  Presence, not truthiness,
+        # is the boundary: providers may legitimately return an empty string and
+        # still require that exact field to be echoed with the tool result.
         invalid_tool_call_ids: set[str] = set()
         prepared: list[dict] = []
         for message in messages:
             if message.get("role") == "assistant" and message.get("tool_calls"):
-                if not message.get("reasoning_content"):
+                if "reasoning_content" not in message:
                     invalid_tool_call_ids.update(
                         str(call.get("id", ""))
                         for call in message["tool_calls"]
@@ -227,9 +229,9 @@ class ProviderProfile:
             and self._thinking_enabled(model, context)
             and message.get("role") == "assistant"
             and message.get("tool_calls")
-            and message.get("reasoning_content")
+            and "reasoning_content" in message
         ):
-            return {"reasoning_content": message["reasoning_content"]}
+            return {"reasoning_content": message.get("reasoning_content") or ""}
         return {}
 
     def build_request_extras(

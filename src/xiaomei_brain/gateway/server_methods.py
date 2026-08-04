@@ -21,6 +21,7 @@ from .methods import (
     EmbodimentMethods,
     IdentityMethods,
     InteractionMethods,
+    InvocationMethods,
     MediaServiceMethods,
     MemoryMethods,
     ModelMethods,
@@ -59,6 +60,7 @@ class MethodRouter:
         self._session_methods = SessionMethods(living, self._chat_methods.handle_history)
         self._attachment_methods = AttachmentMethods(living)
         self._interaction_methods = InteractionMethods(living)
+        self._invocation_methods = InvocationMethods(living)
         self._memory_methods = MemoryMethods(living, self._identity_contexts)
         self._model_methods = ModelMethods(living)
         self._media_service_methods = MediaServiceMethods(living)
@@ -96,6 +98,7 @@ class MethodRouter:
             self._session_methods,
             self._attachment_methods,
             self._interaction_methods,
+            self._invocation_methods,
             self._memory_methods,
             self._model_methods,
             self._media_service_methods,
@@ -144,6 +147,7 @@ class MethodRouter:
             "message.lifecycle": {"chat.send"},
             "tool.lifecycle": {"chat.send"},
             "interaction.question": {"interaction.respond"},
+            "interaction.catalog": {"interaction.catalog"},
             "action.approval": {"action.respond"},
             "session.resume": {"session.resume"},
             "session.subscribe": {"session.subscribe"},
@@ -205,6 +209,7 @@ class MethodRouter:
                 "model.selection.set",
             },
             "message.retry": {"chat.retry"},
+            "message.compact": {"chat.compact"},
             "media.service.configuration": {
                 "media.service.list",
                 "media.service.get",

@@ -163,6 +163,71 @@ def test_react_nodb_stops_after_model_ignores_blocked_retry(mock_llm, registry):
     assert mock_llm.chat.call_count == 5
 
 
+def test_stream_preserves_empty_reasoning_for_tool_result(mock_llm, registry):
+    """The realtime ReAct loop must keep an empty reasoning field for providers."""
+    from xiaomei_brain.tools import tool
+
+    @tool(name="echo_once", description="Return a deterministic result")
+    def echo_once() -> str:
+        return "tool-result"
+
+    registry.register(echo_once)
+    agent = Agent(llm=mock_llm, tools=registry)
+    responses = [
+        NormalizedResponse(
+            content="",
+            reasoning="",
+            tool_calls=[ToolCall(id="call-1", name="echo_once", arguments="{}")],
+            finish_reason="tool_calls",
+        ),
+        NormalizedResponse(content="done", finish_reason="stop"),
+    ]
+    calls: list[list[dict]] = []
+    _mk_step_llm(mock_llm, responses, calls)
+    response = _chat(agent, "run")
+
+    assert response == "done"
+    second_messages = calls[1]
+    assistant = next(message for message in second_messages if message.get("tool_calls"))
+    tool_result = next(message for message in second_messages if message.get("role") == "tool")
+    assert assistant["reasoning_content"] == ""
+    assert tool_result["content"] == "tool-result"
+
+
+def test_react_nodb_preserves_empty_reasoning_for_tool_result(mock_llm, registry):
+    """The internal ReAct loop has the same provider round-trip contract."""
+    from xiaomei_brain.tools import tool
+
+    @tool(name="echo_internal", description="Return a deterministic result")
+    def echo_internal() -> str:
+        return "internal-result"
+
+    registry.register(echo_internal)
+    agent = Agent(llm=mock_llm, tools=registry)
+    mock_llm.chat.side_effect = [
+        NormalizedResponse(
+            content="",
+            reasoning="",
+            tool_calls=[ToolCall(id="call-2", name="echo_internal", arguments="{}")],
+            finish_reason="tool_calls",
+        ),
+        NormalizedResponse(content="done", finish_reason="stop"),
+    ]
+
+    response = agent.react_nodb(
+        [{"role": "user", "content": "run"}],
+        max_steps=3,
+        quiet=True,
+    )
+
+    assert response == "done"
+    second_messages = mock_llm.chat.call_args_list[1].kwargs["messages"]
+    assistant = next(message for message in second_messages if message.get("tool_calls"))
+    tool_result = next(message for message in second_messages if message.get("role") == "tool")
+    assert assistant["reasoning_content"] == ""
+    assert tool_result["content"] == "internal-result"
+
+
 def test_explicit_delivery_project_requires_background_assignment(mock_llm, registry, tmp_path):
     """A formal deliverable cannot end with only a promise to continue."""
     from types import SimpleNamespace

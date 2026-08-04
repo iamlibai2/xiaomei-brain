@@ -534,9 +534,18 @@ class ConversationDriver:
                         getattr(current_msg, "images", None),
                     )
 
+                    from xiaomei_brain.agent.invocations import render_invocation_context
+                    invocation_context = render_invocation_context(
+                        parent.agent,
+                        getattr(current_msg, "invocation", None),
+                    )
+                    effective_context = "\n\n".join(
+                        part for part in (current_context, invocation_context) if part
+                    )
+
                     assembled = build_context(
                         agent, current_msg.content,
-                        consciousness_state=cs, intent_context=current_context,
+                        consciousness_state=cs, intent_context=effective_context,
                         assemble=getattr(parent, "assemble_context", True),
                         images=routed_images,
                         attachments=getattr(current_msg, "attachments", None),

@@ -660,7 +660,7 @@ def test_two_assignment_workspaces_isolate_same_named_outputs(tmp_path, monkeypa
         command_result = command_tool.execute(
             command="[IO.Directory]::GetCurrentDirectory()" if os.name == "nt" else "pwd",
         )
-    assert Path(command_result["output"].strip()).resolve() == work.resolve()
+    assert Path(command_result.strip()).resolve() == work.resolve()
     store.close()
 
 

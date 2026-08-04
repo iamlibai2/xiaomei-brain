@@ -20,6 +20,8 @@ const CHANNEL_MAP = {
     switchSession:   { invoke: "gateway:switchSession" },
     disconnect:      { invoke: "gateway:disconnect" },
     sendMessage:     { invoke: "gateway:sendMessage" },
+    getInteractionCatalog: { invoke: "gateway:getInteractionCatalog" },
+    compactSession:  { invoke: "gateway:compactSession" },
     sendVoice:       { invoke: "gateway:sendVoice" },
     setContinuousHearing: { invoke: "gateway:setContinuousHearing" },
     pickAttachments: { invoke: "gateway:pickAttachments" },

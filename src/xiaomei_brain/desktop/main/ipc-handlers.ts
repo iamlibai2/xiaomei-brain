@@ -896,6 +896,13 @@ export function registerIpcHandlers(
           contextAfter?: string;
         });
       }>;
+      invocation?: {
+        kind: "capability" | "skill" | "execution";
+        id: string;
+        name: string;
+        processTemplateId?: string;
+        processName?: string;
+      };
     }) => {
       const client = getClient(args.agentId);
       if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
@@ -940,6 +947,11 @@ export function registerIpcHandlers(
               }
             : undefined,
         })),
+        invocation: args.invocation ? {
+          kind: args.invocation.kind,
+          id: args.invocation.id,
+          process_template_id: args.invocation.processTemplateId || "",
+        } : undefined,
       };
       const first = await client.rpc("chat.send", params);
       if (first.error?.code !== -32099) return first;
@@ -1016,6 +1028,20 @@ export function registerIpcHandlers(
       });
     }
   );
+
+  ipcMain.handle("gateway:getInteractionCatalog", async (_event, args: { agentId: string }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("interaction.catalog", {});
+  });
+
+  ipcMain.handle("gateway:compactSession", async (_event, args: { agentId: string; sessionId: string }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("chat.compact", {
+      session_id: args.sessionId || connectionSessions.get(args.agentId) || "",
+    });
+  });
 
   ipcMain.handle("gateway:sendVoice", async (_event, args: {
     agentId: string;

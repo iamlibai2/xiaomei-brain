@@ -319,6 +319,39 @@ export interface InstalledCapabilityPackage {
   requirements: Record<string, unknown>;
 }
 
+export type ChatInvocationKind = "capability" | "skill" | "execution";
+
+export interface InvocationProcessOption {
+  id: string;
+  name: string;
+  description: string;
+  stage_count: number;
+}
+
+export interface ComposerInvocationOption {
+  id: string;
+  name: string;
+  description: string;
+  kind: ChatInvocationKind;
+  status?: string;
+  tags?: string[];
+  processes?: InvocationProcessOption[];
+}
+
+export interface ComposerInvocationCatalog {
+  capabilities: ComposerInvocationOption[];
+  skills: ComposerInvocationOption[];
+  execution_modes: ComposerInvocationOption[];
+}
+
+export interface ChatInvocationSelection {
+  kind: ChatInvocationKind;
+  id: string;
+  name: string;
+  processTemplateId?: string;
+  processName?: string;
+}
+
 // ── Bridge API ──
 
 export interface GatewayBridge {
@@ -332,7 +365,10 @@ export interface GatewayBridge {
     clientRequestId: string;
     attachments: ChatAttachment[];
     artifactReferences?: ChatArtifactReference[];
+    invocation?: ChatInvocationSelection;
   }): Promise<JsonRpcResponse>;
+  getInteractionCatalog(args: { agentId: string }): Promise<JsonRpcResponse>;
+  compactSession(args: { agentId: string; sessionId: string }): Promise<JsonRpcResponse>;
   sendVoice(args: {
     agentId: string;
     dataBase64: string;

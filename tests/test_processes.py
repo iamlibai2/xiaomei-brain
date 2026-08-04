@@ -327,6 +327,7 @@ def test_process_template_is_listed_and_applied_without_model_rewriting(tmp_path
         "id": "silent-fast",
         "name": _definition()["name"],
         "description": "test template",
+        "capability_ids": [],
         "project_types": ["video.production"],
         "tags": [],
         "stage_count": 2,

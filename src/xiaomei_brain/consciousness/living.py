@@ -91,6 +91,8 @@ class LivingMessage:
     images: list[str] = field(default_factory=list)
     # Prepared attachment metadata and internal text/path data.
     attachments: list[dict[str, Any]] = field(default_factory=list)
+    # Explicit capability, Skill, or execution choice made by the human.
+    invocation: dict[str, str] = field(default_factory=dict)
     # Optional durable work context. Transport adapters must not treat this as
     # authority; ConversationDriver verifies it against the current Person.
     assignment_id: str = ""
@@ -301,6 +303,7 @@ class Living:
         source: str = "",
         images: list[str] | None = None,
         attachments: list[dict[str, Any]] | None = None,
+        invocation: dict[str, str] | None = None,
         urgent: bool = False,
         display_name: str | None = None,
         turn_id: str | None = None,
@@ -326,6 +329,7 @@ class Living:
             source=source,
             images=images or [],
             attachments=attachments or [],
+            invocation=invocation or {},
             assignment_id=assignment_id,
             turn_id=turn_id or str(uuid.uuid4()),
             message_id=message_id,
@@ -368,6 +372,7 @@ class Living:
             not msg.content.strip()
             or msg.images
             or msg.attachments
+            or msg.invocation
             or msg.assignment_id
             or msg.source in {"agent", "system"}
         ):

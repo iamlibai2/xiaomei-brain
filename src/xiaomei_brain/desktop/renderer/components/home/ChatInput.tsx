@@ -4,10 +4,15 @@ import { useCoreStore } from "../../store";
 import { Icon } from "../ui";
 import type {
   ChatAttachment,
+  ChatInvocationSelection,
   ModelConfigSnapshot,
   ModelThinkingSelection,
 } from "../../types";
 import { ModelQuickMenu } from "./ModelQuickMenu";
+import {
+  SlashInvocationMenu,
+  type SlashInvocationMenuHandle,
+} from "./SlashInvocationMenu";
 import { VoiceOrb, type VoiceOrbPhase } from "./VoiceOrb";
 import {
   DESKTOP_SPEECH_FINISHED,
@@ -51,6 +56,7 @@ interface ChatInputProps {
 export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
   const { t } = useTranslation();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const slashMenuRef = useRef<SlashInvocationMenuHandle>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const microphoneStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -82,6 +88,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
   const [modelSnapshot, setModelSnapshot] = useState<ModelConfigSnapshot | null>(null);
   const [modelBusy, setModelBusy] = useState(false);
   const [modelError, setModelError] = useState("");
+  const [commandStatus, setCommandStatus] = useState("");
   const activeAgentId = useCoreStore((s) => s.activeAgentId);
   const activeSessionId = useCoreStore((s) => {
     const agentId = s.activeAgentId || "";
@@ -96,6 +103,13 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
     return s.draftByConversation[`${agentId}\u0000${sessionId || "new"}`] || "";
   });
   const setInput = useCoreStore((s) => s.setDraft);
+  const invocation = useCoreStore((s) => {
+    const agentId = s.activeAgentId || "";
+    const sessionId = agentId ? s.activeSessionByAgent[agentId] : null;
+    return s.invocationByConversation[`${agentId}\u0000${sessionId || "new"}`];
+  });
+  const setInvocation = useCoreStore((s) => s.setInvocation);
+  const newSession = useCoreStore((s) => s.newSession);
   const pendingAttachments = useCoreStore((s) => {
     const agentId = s.activeAgentId || "";
     const sessionId = agentId ? s.activeSessionByAgent[agentId] : null;
@@ -274,18 +288,93 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
     }
   };
 
-  const handleSend = () => {
+  const slashMenuOpen = Boolean(
+    connected
+      && !sending
+      && !invocation
+      && input.startsWith("/")
+      && !input.includes("\n"),
+  );
+  const slashQuery = slashMenuOpen ? input.slice(1) : "";
+
+  const showCommandStatus = useCallback((message: string) => {
+    setCommandStatus(message);
+    window.setTimeout(() => {
+      setCommandStatus((current) => current === message ? "" : current);
+    }, 3_500);
+  }, []);
+
+  const handleSend = async () => {
     const text = input.trim();
     if (!text && attachments.length === 0) return;
+
+    if (
+      attachments.length === 0
+      && slashMenuOpen
+      && text !== "/new"
+      && text !== "/compact"
+    ) return;
+
+    if (attachments.length === 0 && text === "/new") {
+      setInput("");
+      setInvocation(undefined);
+      await newSession();
+      textareaRef.current?.focus();
+      return;
+    }
+
+    if (attachments.length === 0 && text === "/compact") {
+      if (!activeAgentId || !activeSessionId) {
+        showCommandStatus("当前还没有可压缩的会话");
+        return;
+      }
+      setInput("");
+      setInvocation(undefined);
+      setCommandStatus("正在压缩当前会话…");
+      try {
+        const response = await window.gateway.compactSession({
+          agentId: activeAgentId,
+          sessionId: activeSessionId,
+        });
+        if (response.error) throw new Error(response.error.message);
+        const result = (response.result || {}) as Record<string, unknown>;
+        showCommandStatus(
+          result.compacted === false
+            ? "当前会话暂时没有需要压缩的内容"
+            : "当前会话已压缩",
+        );
+      } catch (error) {
+        showCommandStatus(error instanceof Error ? error.message : String(error));
+      }
+      textareaRef.current?.focus();
+      return;
+    }
+
     onSend(text);
     textareaRef.current?.focus();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    const hiddenCommand = input.trim() === "/new" || input.trim() === "/compact";
+    if (slashMenuOpen && !hiddenCommand) {
+      if (slashMenuRef.current?.handleKeyDown(
+        e as React.KeyboardEvent<HTMLTextAreaElement>,
+      )) return;
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      void handleSend();
     }
+  };
+
+  const selectInvocation = (selection: ChatInvocationSelection) => {
+    setInvocation(selection);
+    setInput("");
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
   const handleDrop = async (event: React.DragEvent<HTMLDivElement>) => {
@@ -637,6 +726,15 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       onDrop={(event) => { void handleDrop(event); }}
     >
       {dragging && <div className="attachment-drop-hint">松开以添加附件</div>}
+      {slashMenuOpen && activeAgentId && (
+        <SlashInvocationMenu
+          ref={slashMenuRef}
+          agentId={activeAgentId}
+          query={slashQuery}
+          onSelect={selectInvocation}
+          onClose={() => setInput("")}
+        />
+      )}
       {attachments.length > 0 && (
         <div className="attachment-preview-list">
           {attachments.map((attachment) => (
@@ -680,6 +778,26 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       )}
       {!listening && voiceStatus && <div className="embodiment-media-status">{voiceStatus}</div>}
       {modelError && <div className="chat-model-error">{modelError}</div>}
+      {commandStatus && <div className="composer-command-status">{commandStatus}</div>}
+      {invocation && (
+        <div className="composer-invocation-chip">
+          <span className={`slash-invocation-kind is-${invocation.kind}`}>
+            {invocation.kind === "capability" ? "能" : invocation.kind === "skill" ? "法" : "行"}
+          </span>
+          <span>
+            {invocation.name}
+            {invocation.processName ? ` · ${invocation.processName}` : ""}
+          </span>
+          <button
+            type="button"
+            onClick={() => setInvocation(undefined)}
+            title="取消所选工作方式"
+            aria-label="取消所选工作方式"
+          >
+            <Icon name="x" size={13} />
+          </button>
+        </div>
+      )}
       <textarea
         ref={textareaRef}
         className="chat-input-textarea"
@@ -734,7 +852,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
           ) : (
             <button
               className="chat-input-send"
-              onClick={handleSend}
+              onClick={() => { void handleSend(); }}
               disabled={(!input.trim() && attachments.length === 0) || !connected}
               title={t("home.send")}
             >

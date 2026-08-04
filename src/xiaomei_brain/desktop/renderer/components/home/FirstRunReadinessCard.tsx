@@ -161,7 +161,10 @@ export function FirstRunReadinessCard({
       return items;
     }
 
-    if (activeAgent.source === "local" && !localEmbeddingReady) {
+    // An empty service list while the background check is still running means
+    // "unknown", not "missing".  Rendering the first-run card at that point
+    // makes an already configured Desktop flash the onboarding UI on startup.
+    if (activeAgent.source === "local" && !servicesChecking && !localEmbeddingReady) {
       const downloading = embedding?.state === "downloading";
       items.push({
         id: "embedding",
@@ -182,7 +185,9 @@ export function FirstRunReadinessCard({
       });
     }
 
-    if (!agentConnected) {
+    const agentIssueConfirmed = activeAgent.source === "local" && localOnline === false
+      || connection?.status === "error";
+    if (!agentConnected && agentIssueConfirmed) {
       const isLocalStopped = activeAgent.source === "local" && localOnline === false;
       const waitingForEmbedding = activeAgent.source === "local" && !localEmbeddingReady;
       items.push({
@@ -211,18 +216,18 @@ export function FirstRunReadinessCard({
       });
     }
 
-    if (agentConnected && modelState !== "ready") {
+    // Reading the model configuration is also a background health check.  Do
+    // not present it as unfinished onboarding until it has actually failed or
+    // confirmed that the primary model is missing.
+    if (agentConnected && (modelState === "missing" || modelState === "error")) {
       items.push({
         id: "model",
         title: "配置主模型",
-        detail: modelState === "checking"
-          ? "正在读取 Agent 的模型配置…"
-          : modelState === "error"
-            ? modelError || "暂时无法读取模型配置。"
-            : "添加可用模型并将它设为主模型。",
+        detail: modelState === "error"
+          ? modelError || "暂时无法读取模型配置。"
+          : "添加可用模型并将它设为主模型。",
         actionLabel: "配置模型",
         icon: "sparkles",
-        busy: modelState === "checking",
         action: () => openSettingsCenter("models", activeAgent.id),
       });
     }

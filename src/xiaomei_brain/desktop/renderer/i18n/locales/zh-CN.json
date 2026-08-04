@@ -67,7 +67,7 @@
       "actionFailed": "操作执行失败",
       "searchInConversation": "对话内搜索",
       "toggleRightPanel": "打开右侧面板",
-      "inputPlaceholder": "今天帮你做些什么？ @ 引用对话文件，/ 调用技能与指令",
+      "inputPlaceholder": "今天帮你做些什么？ @ 引用材料，/ 选择能力与工作方法",
       "addAttachment": "添加附件",
       "removeAttachment": "移除附件",
       "mode": "模式",

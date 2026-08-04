@@ -400,18 +400,22 @@ class Agent:
                         "role": "assistant",
                         "content": response.content,
                         "tool_calls": tool_calls_data,
+                        # DeepSeek/GLM require this field to be echoed on the
+                        # following tool-result request.  An empty string is a
+                        # valid response value and must remain distinguishable
+                        # from legacy rows where the field was never stored.
+                        "reasoning_content": response.reasoning or "",
                     }
-                    if response.reasoning:
-                        msg["reasoning_content"] = response.reasoning
                     self.messages.append(msg)
 
                     # 存 assistant(tool_calls) 到 DB，tool_calls + reasoning_content 存入 metadata
                     if self.conversation_db:
-                        meta = {"tool_calls": tool_calls_data}
+                        meta = {
+                            "tool_calls": tool_calls_data,
+                            "reasoning_content": response.reasoning or "",
+                        }
                         if self.turn_id:
                             meta["turn_id"] = self.turn_id
-                        if response.reasoning:
-                            meta["reasoning_content"] = response.reasoning
                         tool_msg_id = self.conversation_db.log(
                             session_id=self.session_id,
                             role="assistant",
@@ -454,7 +458,12 @@ class Agent:
                                 result = "Error: ToolRegistry not initialized. Please restart the agent."
                                 logger.error("[Agent] self.tools is None, cannot execute %s", tc.name)
                             else:
-                                result = self._execute_tool_call(tc.id, tc.name, args_dict)
+                                result = self._execute_tool_call(
+                                    tc.id,
+                                    tc.name,
+                                    args_dict,
+                                    cancel_check=cancel_check,
+                                )
 
                         # Some tools transfer execution ownership to an isolated
                         # runtime. Strip the internal envelope before normal tool
@@ -893,7 +902,14 @@ class Agent:
         """Return steers not consumed before the active Turn ended."""
         return self._drain_steer()
 
-    def _execute_tool_call(self, tool_call_id: str, tool_name: str, arguments: dict) -> str:
+    def _execute_tool_call(
+        self,
+        tool_call_id: str,
+        tool_name: str,
+        arguments: dict,
+        *,
+        cancel_check: Callable[[], bool] | None = None,
+    ) -> str:
         """Apply the Agent approval boundary, then execute the sealed tool call."""
         approval: dict | None = None
         if self.on_tool_approval is not None:
@@ -927,6 +943,7 @@ class Agent:
                     output_root=self.tool_output_root,
                     project_context=self.project_context,
                     project_service=getattr(self, "project_service", None),
+                    cancel_check=cancel_check,
                 ):
                     result = normalize_tool_result(
                         self.tools.execute(tool_name, **arguments)
@@ -1039,6 +1056,10 @@ class Agent:
                     "role": "assistant",
                     "content": response.content,
                     "tool_calls": tool_calls_data,
+                    # Preserve an explicitly empty reasoning response.  The
+                    # provider needs the field on the next request even when
+                    # the model returned no reasoning text for this tool call.
+                    "reasoning_content": response.reasoning or "",
                 })
 
                 for tc in response.tool_calls:
@@ -1069,7 +1090,12 @@ class Agent:
                             result = "Error: ToolRegistry not initialized. Please restart the agent."
                             logger.error("[Agent] self.tools is None, cannot execute %s", tc.name)
                         else:
-                            result = self._execute_tool_call(tc.id, tc.name, args_dict)
+                            result = self._execute_tool_call(
+                                tc.id,
+                                tc.name,
+                                args_dict,
+                                cancel_check=cancel_check,
+                            )
 
                     if fail_count >= 3:
                         pass

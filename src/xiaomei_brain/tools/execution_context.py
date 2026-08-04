@@ -36,6 +36,7 @@ class ToolExecutionContext:
     output_root: str = ""
     project_context: ProjectRuntimeContext | None = None
     project_service: Any = None
+    cancel_check: Callable[[], bool] | None = None
 
     def publish_artifacts(self, result: str) -> None:
         """Run the original turn's artifact projection, if one was installed."""
@@ -81,6 +82,7 @@ def bind_tool_execution(
     output_root: str = "",
     project_context: ProjectRuntimeContext | None = None,
     project_service: Any = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> Iterator[ToolExecutionContext]:
     """Expose one tool call's immutable context while its function starts."""
     context = ToolExecutionContext(
@@ -97,6 +99,7 @@ def bind_tool_execution(
         output_root=output_root,
         project_context=project_context,
         project_service=project_service,
+        cancel_check=cancel_check,
     )
     token = _current_context.set(context)
     try:

@@ -2,6 +2,7 @@ schema_version: 1
 id: video-fast-3
 name: 视频快速交付标准
 description: 适合普通视频任务的轻量正式交付标准，约束需求、分镜和成片三类结果。
+capability_ids: [video_production]
 project_types: [video.production]
 tags: [video, fast, delivery]
 ordered: false

@@ -759,10 +759,15 @@ function MessageRow({
     );
   }
 
-  const { thinking, content } = parseThinkingContent(message.content, message.streaming);
+  const parsed = parseThinkingContent(message.content, message.streaming);
+  const structuredThinking = message.reasoningContent?.trim() || "";
+  const thinking = structuredThinking || parsed.thinking;
   const hasThinking = thinking.length > 0;
-  const displayedContent = hasThinking ? content : message.content;
-  const thinkingComplete = !message.streaming || /\x1b\[0m/.test(message.content) || /\[0m/.test(message.content);
+  const displayedContent = parsed.thinking ? parsed.content : message.content;
+  const thinkingComplete = Boolean(structuredThinking)
+    || !message.streaming
+    || /\x1b\[0m/.test(message.content)
+    || /\[0m/.test(message.content);
 
   return (
     <div

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import sys
+import threading
+import time
 from pathlib import Path
 
 from xiaomei_brain.tools.builtin import command, file_ops
 from xiaomei_brain.tools.builtin.process import manage_process
+from xiaomei_brain.tools.execution_context import bind_tool_execution
 
 
 def test_command_name_matches_agent_host():
@@ -25,9 +28,8 @@ def test_command_runs_in_agent_workspace(tmp_path, monkeypatch):
 
     result = command.run_command(expression)
 
-    assert result["status"] == "completed"
-    assert Path(result["cwd"]) == agent_dir / "workspace"
-    assert str(agent_dir / "workspace").lower() in result["output"].strip().lower()
+    assert isinstance(result, str)
+    assert Path(result.strip()).resolve() == agent_dir / "workspace"
 
 
 def test_command_preserves_utf8_output(tmp_path, monkeypatch):
@@ -40,8 +42,62 @@ def test_command_preserves_utf8_output(tmp_path, monkeypatch):
 
     result = command.run_command(expression)
 
-    assert result["status"] == "completed"
-    assert result["output"] == "你好"
+    assert result == "你好"
+
+
+def test_command_nonzero_exit_is_an_explicit_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(file_ops, "_output_base", str(tmp_path / "agent"))
+    expression = "exit 7"
+
+    result = command.run_command(expression)
+
+    assert isinstance(result, str)
+    assert result.startswith("Error: command exited with code 7")
+
+
+def test_command_can_be_cancelled_during_execution(tmp_path, monkeypatch):
+    monkeypatch.setattr(file_ops, "_output_base", str(tmp_path / "agent"))
+    cancelled = threading.Event()
+    timer = threading.Timer(0.2, cancelled.set)
+    expression = (
+        "Start-Sleep -Seconds 5"
+        if sys.platform == "win32"
+        else "sleep 5"
+    )
+
+    timer.start()
+    started = time.monotonic()
+    try:
+        with bind_tool_execution(
+            tool_call_id="cancel-test",
+            tool_name=command.command_tool_name(),
+            arguments={"command": expression},
+            artifact_callback=None,
+            cancel_check=cancelled.is_set,
+        ):
+            result = command.run_command(expression)
+    finally:
+        timer.cancel()
+
+    assert isinstance(result, str)
+    assert result.startswith("Error: command cancelled")
+    assert time.monotonic() - started < 4
+
+
+def test_command_timeout_stops_the_process_tree(tmp_path, monkeypatch):
+    monkeypatch.setattr(file_ops, "_output_base", str(tmp_path / "agent"))
+    expression = (
+        "Start-Sleep -Seconds 5"
+        if sys.platform == "win32"
+        else "sleep 5"
+    )
+
+    started = time.monotonic()
+    result = command.run_command(expression, timeout=0.2)
+
+    assert isinstance(result, str)
+    assert result.startswith("Error: command timed out after 0.2 seconds")
+    assert time.monotonic() - started < 4
 
 
 def test_background_command_can_be_waited_for(tmp_path, monkeypatch):

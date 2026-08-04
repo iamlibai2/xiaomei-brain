@@ -171,6 +171,32 @@ class GatewaySessionsTest(unittest.TestCase):
             references,
         )
 
+    def test_chat_history_restores_assistant_reasoning_content(self):
+        self.db.log(
+            "reasoning-session",
+            "assistant",
+            "final answer",
+            metadata={
+                "turn_id": "turn-reasoning",
+                "reasoning_content": "consider the evidence first",
+            },
+        )
+        living = SimpleNamespace(agent=SimpleNamespace(conversation_db=self.db))
+        router = MethodRouter(living=living)
+        router._auth_sessions.add("desktop-connection")
+
+        result = router.dispatch(
+            "desktop-connection",
+            "history-reasoning",
+            "chat.history",
+            {"session_id": "reasoning-session", "limit": 20},
+        )["result"]
+
+        self.assertEqual(
+            result["messages"][0]["reasoning_content"],
+            "consider the evidence first",
+        )
+
     def test_chat_history_restores_interaction_timeline_record(self):
         self.db.log("card-session", "user", "help me choose")
         self.db.save_interaction({

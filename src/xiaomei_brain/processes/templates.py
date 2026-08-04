@@ -17,6 +17,7 @@ class ProcessTemplate:
     id: str
     name: str
     description: str
+    capability_ids: tuple[str, ...]
     project_types: tuple[str, ...]
     tags: tuple[str, ...]
     definition: dict[str, Any]
@@ -27,6 +28,7 @@ class ProcessTemplate:
             "id": self.id,
             "name": self.name,
             "description": self.description,
+            "capability_ids": list(self.capability_ids),
             "project_types": list(self.project_types),
             "tags": list(self.tags),
             "stage_count": len(self.definition["stages"]),
@@ -79,14 +81,24 @@ class ProcessTemplateRegistry:
             "ordered": normalized["ordered"],
             "stages": stages,
         }
+        capability_ids = raw.get("capability_ids") or []
         project_types = raw.get("project_types") or []
         tags = raw.get("tags") or []
-        if not isinstance(project_types, list) or not isinstance(tags, list):
-            raise ValueError(f"Process template project_types and tags must be lists: {source}")
+        if (
+            not isinstance(capability_ids, list)
+            or not isinstance(project_types, list)
+            or not isinstance(tags, list)
+        ):
+            raise ValueError(
+                f"Process template capability_ids, project_types and tags must be lists: {source}"
+            )
         return ProcessTemplate(
             id=definition["id"],
             name=definition["name"],
             description=str(raw.get("description") or "").strip(),
+            capability_ids=tuple(
+                str(item).strip() for item in capability_ids if str(item).strip()
+            ),
             project_types=tuple(str(item).strip() for item in project_types if str(item).strip()),
             tags=tuple(str(item).strip() for item in tags if str(item).strip()),
             definition=definition,

@@ -2191,9 +2191,12 @@ class ConsciousLiving(Living):
                     if metadata.get("tool_calls"):
                         msg["tool_calls"] = metadata["tool_calls"]
                         # DeepSeek V4: 有工具调用的轮次必须传回 reasoning_content
-                        rc = metadata.get("reasoning_content") or metadata.get("reasoning")
-                        if rc:
-                            msg["reasoning_content"] = rc
+                        # 空字符串也是新工具轮次的有效值；只有字段完全
+                        # 缺失时才视为无法安全恢复的旧历史记录。
+                        if "reasoning_content" in metadata:
+                            msg["reasoning_content"] = metadata.get("reasoning_content") or ""
+                        elif "reasoning" in metadata:
+                            msg["reasoning_content"] = metadata.get("reasoning") or ""
                     elif metadata.get("reasoning_content"):
                         # 无工具调用的轮次不需要传回，但保留 metadata 以备他用
                         pass

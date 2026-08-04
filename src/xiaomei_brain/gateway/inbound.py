@@ -261,6 +261,9 @@ class Gateway:
         )
         if isinstance(message_id, int):
             message_kwargs["message_id"] = message_id
+        invocation = raw.metadata.get("invocation")
+        if isinstance(invocation, dict):
+            message_kwargs["invocation"] = dict(invocation)
         try:
             import inspect
             put_parameters = inspect.signature(self._living.put_message).parameters
@@ -289,6 +292,7 @@ class Gateway:
                 source=raw.source,
                 images=raw.images,
                 attachments=raw.attachments,
+                invocation=dict(invocation) if isinstance(invocation, dict) else {},
                 turn_id=turn_id,
                 message_id=message_id if isinstance(message_id, int) else None,
                 context_key=context_key,
@@ -425,6 +429,15 @@ class Gateway:
         retry_of = raw.metadata.get("retry_of")
         if isinstance(retry_of, int) and retry_of > 0:
             metadata["retry_of"] = retry_of
+        invocation = raw.metadata.get("invocation")
+        if isinstance(invocation, dict):
+            metadata["invocation"] = {
+                "kind": str(invocation.get("kind") or ""),
+                "id": str(invocation.get("id") or ""),
+                "process_template_id": str(
+                    invocation.get("process_template_id") or ""
+                ),
+            }
         if raw.metadata.get("message_type") == "audio":
             metadata["message_type"] = "audio"
             metadata["audio_duration_ms"] = int(

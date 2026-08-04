@@ -12,6 +12,7 @@ from .connection import ConnectionMethods
 from .embodiments import EmbodimentMethods
 from .identity import IdentityMethods
 from .interactions import InteractionMethods
+from .invocations import InvocationMethods
 from .media import MediaServiceMethods
 from .memories import MemoryMethods
 from .models import ModelMethods
@@ -33,6 +34,7 @@ __all__ = [
     "EmbodimentMethods",
     "IdentityMethods",
     "InteractionMethods",
+    "InvocationMethods",
     "MediaServiceMethods",
     "MemoryMethods",
     "ModelMethods",

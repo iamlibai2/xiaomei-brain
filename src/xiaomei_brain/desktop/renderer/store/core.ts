@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { produce } from "immer";
-import type { AgentCreationResult, AgentEntry, AgentLifecycleAction, ChatArtifactReference, ChatAttachment, LocalAgentInfo, SessionEntry } from "../types";
+import type { AgentCreationResult, AgentEntry, AgentLifecycleAction, ChatArtifactReference, ChatAttachment, ChatInvocationSelection, LocalAgentInfo, SessionEntry } from "../types";
 
 // ── Persistence (manual, avoid zustand/persist rehydration during render) ──
 
@@ -129,6 +129,7 @@ function touchConversationState(state: CoreState, agentId: string, sessionId: st
     delete state.unreadByConversation[oldest];
     delete state.attachmentsByConversation[oldest];
     delete state.attachmentErrorByConversation[oldest];
+    delete state.invocationByConversation[oldest];
     delete state.sendingByConversation[oldest];
     protectedAttempts = 0;
   }
@@ -461,7 +462,10 @@ function historyMessages(
     }
     const role = row.role === "user" ? "user" : row.role === "assistant" ? "agent" : null;
     if (!role || typeof row.content !== "string") return [];
-    if (role === "agent" && !row.content.trim()) return [];
+    const reasoningContent = role === "agent" && typeof row.reasoning_content === "string"
+      ? row.reasoning_content
+      : "";
+    if (role === "agent" && !row.content.trim() && !reasoningContent.trim()) return [];
     const rawDeliveryStatus = typeof row.status === "string" ? row.status : "";
     const deliveryStatus = ["queued", "processing", "completed", "failed", "interrupted"].includes(rawDeliveryStatus)
       ? rawDeliveryStatus as DisplayMessage["deliveryStatus"]
@@ -478,6 +482,7 @@ function historyMessages(
         : `history-${sessionId}-${String(row.created_at || index)}-${index}`,
       role,
       content: row.content,
+      reasoningContent: reasoningContent || undefined,
       streaming: false,
       createdAt: typeof row.created_at === "number" ? row.created_at * 1000 : undefined,
       attachments: displayAttachments(row.attachments),
@@ -791,6 +796,7 @@ export interface DisplayMessage {
   id: string;
   role: "user" | "agent";
   content: string;
+  reasoningContent?: string;
   streaming: boolean;
   createdAt?: number;
   interaction?: InteractionRequest;
@@ -1518,6 +1524,7 @@ interface CoreState {
   draftByConversation: Record<string, string>;
   attachmentsByConversation: Record<string, ChatAttachment[]>;
   attachmentErrorByConversation: Record<string, string>;
+  invocationByConversation: Record<string, ChatInvocationSelection | undefined>;
   activeAgentId: string | null;
   agents: AgentEntry[];
   page: "connect" | "chat";
@@ -1557,6 +1564,7 @@ interface CoreActions {
   respondToInteraction: (requestId: string, response: string) => Promise<void>;
   respondToAction: (actionId: string, decision: "allow" | "deny") => Promise<void>;
   setDraft: (text: string) => void;
+  setInvocation: (invocation?: ChatInvocationSelection) => void;
   newSession: (name?: string) => Promise<void>;
   switchSession: (sessionId: string) => Promise<void>;
   openSearchMessage: (sessionId: string, messageId: number) => Promise<void>;
@@ -1620,6 +1628,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   draftByConversation: {},
   attachmentsByConversation: {},
   attachmentErrorByConversation: {},
+  invocationByConversation: {},
   activeAgentId: persisted.activeAgentId ?? null,
   agents: persisted.agents ?? [],
   page: (persisted.agents && persisted.agents.length > 0) ? "chat" : "connect",
@@ -2003,6 +2012,9 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       for (const key of Object.keys(s.draftByConversation)) {
         if (key.startsWith(`${agentId}\u0000`)) delete s.draftByConversation[key];
       }
+      for (const key of Object.keys(s.invocationByConversation)) {
+        if (key.startsWith(`${agentId}\u0000`)) delete s.invocationByConversation[key];
+      }
       for (const key of Object.keys(s.unreadByConversation)) {
         if (key.startsWith(`${agentId}\u0000`)) delete s.unreadByConversation[key];
       }
@@ -2045,6 +2057,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     const attachments = artifactReferences.length > 0
       ? []
       : (get().attachmentsByConversation[draftKey] || []);
+    const invocation = get().invocationByConversation[draftKey];
     if (!text.trim() && attachments.length === 0 && artifactReferences.length === 0) return;
     const clientRequestId = crypto.randomUUID();
 
@@ -2087,6 +2100,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         s.draftByConversation[conversationStateKey(agentId, sessionId)] = "";
         delete s.attachmentsByConversation[draftKey];
         delete s.attachmentErrorByConversation[draftKey];
+        delete s.invocationByConversation[draftKey];
       }
     }));
 
@@ -2097,6 +2111,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       clientRequestId,
       attachments,
       artifactReferences,
+      invocation,
     }).then((res) => {
       if (!res.error && res.result?.accepted !== false) {
         set(produce((s: CoreState) => {
@@ -2189,6 +2204,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       s.draftByConversation = {};
       s.attachmentsByConversation = {};
       s.attachmentErrorByConversation = {};
+      s.invocationByConversation = {};
       s.unreadByAgent = {};
       s.unreadByConversation = {};
       s.recentConversationKeys = [];
@@ -2489,6 +2505,18 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       touchConversationState(s, agentId, sessionId || "new");
       s.draftByAgent[agentId] = text;
       s.draftByConversation[conversationStateKey(agentId, sessionId)] = text;
+    }));
+  },
+
+  setInvocation: (invocation) => {
+    const agentId = get().activeAgentId;
+    if (!agentId) return;
+    const sessionId = get().activeSessionByAgent[agentId];
+    set(produce((s: CoreState) => {
+      const key = conversationStateKey(agentId, sessionId);
+      touchConversationState(s, agentId, sessionId || "new");
+      if (invocation) s.invocationByConversation[key] = invocation;
+      else delete s.invocationByConversation[key];
     }));
   },
 

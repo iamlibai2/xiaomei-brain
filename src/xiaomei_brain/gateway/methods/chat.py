@@ -24,6 +24,7 @@ from ..connection import cm
 from ..protocol import ErrorCode, build_error, build_response
 from ..schemas import (
     ChatAbortParams,
+    ChatCompactParams,
     ChatHistoryParams,
     ChatRetryParams,
     ChatSendParams,
@@ -47,6 +48,7 @@ class ChatMethods:
             "chat.send": self.handle_send,
             "chat.retry": self.handle_retry,
             "chat.abort": self.handle_abort,
+            "chat.compact": self.handle_compact,
             "chat.history": self.handle_history,
         }
 
@@ -88,6 +90,17 @@ class ChatMethods:
         user_id = cm.resolve_user(conn_id, requested_user_id, "ws-user")
         if user_id is None:
             return build_error(req_id, ErrorCode.UNAUTHORIZED, "当前连接身份无效或尚未认证")
+        invocation: dict[str, str] = {}
+        if parsed.invocation is not None:
+            from xiaomei_brain.agent.invocations import validate_invocation
+
+            try:
+                invocation = validate_invocation(
+                    getattr(self._living, "agent", None),
+                    parsed.invocation.model_dump(mode="json"),
+                )
+            except (AttributeError, KeyError, ValueError) as exc:
+                return build_error(req_id, ErrorCode.INVALID_PARAMS, str(exc))
         attachments_fingerprint = (
             attachment_fingerprint(parsed.attachments)
             + ":" + ",".join(parsed.attachment_refs)
@@ -98,6 +111,12 @@ class ChatMethods:
                 separators=(",", ":"),
             )
             + f":retry={parsed.retry_of_message_id or ''}"
+            + ":invocation=" + json.dumps(
+                invocation,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
         )
         receipt_key = (session_id, parsed.client_request_id)
         with self._receipts_lock:
@@ -284,6 +303,7 @@ class ChatMethods:
                 metadata={
                     **({"retry_of": parsed.retry_of_message_id} if parsed.retry_of_message_id else {}),
                     **({"resumed_capability_id": capability_resume_id} if capability_resume_id else {}),
+                    **({"invocation": invocation} if invocation else {}),
                 },
                 reply_channel="ws",
                 reply_target=session_id,
@@ -329,6 +349,7 @@ class ChatMethods:
             user_id=user_id,
             images=image_paths,
             attachments=prepared_attachments,
+            invocation=invocation,
         )
         response = {
             "accepted": True,
@@ -398,6 +419,7 @@ class ChatMethods:
             "client_request_id": parsed.client_request_id,
             "session_id": session_id,
             "attachment_refs": attachment_refs,
+            "invocation": metadata.get("invocation") if isinstance(metadata, dict) else None,
             "retry_of_message_id": parsed.message_id,
         })
 
@@ -482,6 +504,38 @@ class ChatMethods:
             return build_response(req_id, result={"aborted": True})
         except Exception as exc:
             return build_error(req_id, ErrorCode.INTERNAL_ERROR, str(exc))
+
+    def handle_compact(self, conn_id: str, req_id: str, params: dict) -> dict:
+        """Manually compact the current conversation without creating a chat turn."""
+        try:
+            parsed = ChatCompactParams.model_validate(params)
+        except Exception as exc:
+            return build_error(req_id, ErrorCode.INVALID_REQUEST, f"参数无效: {format_error(exc)}")
+        session_id = cm.resolve_session(conn_id, parsed.session_id)
+        if session_id is None:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, "不能压缩当前连接之外的会话")
+        user_id = cm.resolve_user(conn_id, "")
+        if user_id is None:
+            return build_error(req_id, ErrorCode.UNAUTHORIZED, "当前连接身份无效或尚未认证")
+        instance = getattr(self._living, "agent", None)
+        commands = getattr(instance, "commands", None)
+        if commands is None:
+            return build_error(req_id, ErrorCode.GATEWAY_NOT_READY, "会话压缩服务尚未就绪")
+        try:
+            result = commands.execute(
+                "summarize",
+                user_id=user_id,
+                session_id=session_id,
+            )
+        except Exception as exc:
+            logger.exception("Manual conversation compact failed")
+            return build_error(req_id, ErrorCode.INTERNAL_ERROR, str(exc))
+        data = dict(getattr(result, "data", None) or {})
+        return build_response(req_id, result={
+            "compacted": bool(data.get("node_id")),
+            "session_id": session_id,
+            **data,
+        })
 
     def handle_history(self, conn_id: str, req_id: str, params: dict) -> dict:
         try:
@@ -568,6 +622,7 @@ class ChatMethods:
                             "error",
                             "retry_of",
                             "steered_into_turn_id",
+                            "invocation",
                         ):
                             if key in user_metadata:
                                 message[key] = user_metadata[key]
@@ -579,6 +634,13 @@ class ChatMethods:
                     except (TypeError, json.JSONDecodeError):
                         assistant_metadata = {}
                     if isinstance(assistant_metadata, dict):
+                        if isinstance(
+                            assistant_metadata.get("reasoning_content"),
+                            str,
+                        ):
+                            message["reasoning_content"] = assistant_metadata[
+                                "reasoning_content"
+                            ]
                         if isinstance(
                             assistant_metadata.get("memory_references"),
                             list,

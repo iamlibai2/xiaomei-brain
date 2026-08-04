@@ -67,7 +67,7 @@
       "actionFailed": "Action failed",
       "searchInConversation": "Search in conversation",
       "toggleRightPanel": "Toggle right panel",
-      "inputPlaceholder": "What can I help you with? @ to reference files, / to invoke skills & commands",
+      "inputPlaceholder": "What can I help you with? @ references context, / chooses capabilities and methods",
       "addAttachment": "Add attachment",
       "removeAttachment": "Remove attachment",
       "mode": "Mode",

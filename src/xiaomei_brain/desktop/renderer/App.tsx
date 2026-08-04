@@ -61,7 +61,7 @@ export function App() {
         <MenuBar />
         {!identityStatus ? null : !identityStatus.unlocked ? (
           <IdentityPage status={identityStatus} onReady={setIdentityStatus} />
-        ) : !localDiscoveryComplete ? (
+        ) : !localDiscoveryComplete && agents.length === 0 ? (
           <div className="desktop-startup-check" role="status">
             <span />
             <p>正在检查本机 Agent…</p>
