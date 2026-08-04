@@ -28,6 +28,7 @@ from .store import (
 from .workspace import ProjectWorkspace, ProjectWorkspaceManager
 from .tools import create_project_tools
 from .context import render_project_context
+from .execution_guard import ProjectExecutionCompletionGuard
 
 __all__ = [
     "InvalidProjectTransition",
@@ -55,5 +56,6 @@ __all__ = [
     "new_project_id",
     "create_project_tools",
     "render_project_context",
+    "ProjectExecutionCompletionGuard",
     "validate_project_transition",
 ]

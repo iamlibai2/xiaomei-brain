@@ -994,6 +994,7 @@ export interface ProjectProcessStageSnapshot {
 
 export interface ProjectProcessSnapshot {
   id: string;
+  projectId: string;
   name: string;
   ordered: boolean;
   status: "active" | "satisfied" | "abandoned";
@@ -1324,51 +1325,54 @@ function projectSnapshot(value: unknown): ProjectSnapshot | null {
   };
 }
 
+function projectProcessSnapshot(value: unknown): ProjectProcessSnapshot | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const rawProcess = value as Record<string, unknown>;
+  if (typeof rawProcess.id !== "string" || typeof rawProcess.name !== "string"
+    || typeof rawProcess.project_id !== "string") return null;
+  const stages = Array.isArray(rawProcess.stages) ? rawProcess.stages.flatMap((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    const stage = value as Record<string, unknown>;
+    if (typeof stage.id !== "string" || typeof stage.title !== "string") return [];
+    const submission = stage.submission && typeof stage.submission === "object"
+      && !Array.isArray(stage.submission)
+      ? stage.submission as Record<string, unknown> : null;
+    const requirements = Array.isArray(stage.requirements) ? stage.requirements : [];
+    return [{
+      id: stage.id,
+      title: stage.title,
+      position: typeof stage.position === "number" ? stage.position : 0,
+      required: stage.required !== false,
+      requirementLabels: requirements.flatMap((entry) => (
+        entry && typeof entry === "object" && !Array.isArray(entry)
+          && typeof (entry as Record<string, unknown>).label === "string"
+          ? [String((entry as Record<string, unknown>).label)] : []
+      )),
+      status: String(stage.status || "pending") as ProjectProcessStageSnapshot["status"],
+      summary: submission && typeof submission.summary === "string" ? submission.summary : "",
+      missing: submission && Array.isArray(submission.missing)
+        ? submission.missing.filter((entry): entry is string => typeof entry === "string") : [],
+    }];
+  }) : [];
+  return {
+    id: rawProcess.id,
+    projectId: rawProcess.project_id,
+    name: rawProcess.name,
+    ordered: rawProcess.ordered === true,
+    status: String(rawProcess.status || "active") as ProjectProcessSnapshot["status"],
+    revision: typeof rawProcess.revision === "number" ? rawProcess.revision : 0,
+    stages,
+    updatedAt: typeof rawProcess.updated_at === "number" ? rawProcess.updated_at : 0,
+    satisfiedAt: typeof rawProcess.satisfied_at === "number" ? rawProcess.satisfied_at : null,
+  };
+}
+
 function projectDetailSnapshot(value: unknown): ProjectDetailSnapshot | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const item = value as Record<string, unknown>;
   const project = projectSnapshot(item.project);
   if (!project) return null;
-  let process: ProjectProcessSnapshot | null = null;
-  if (item.process && typeof item.process === "object" && !Array.isArray(item.process)) {
-    const rawProcess = item.process as Record<string, unknown>;
-    if (typeof rawProcess.id === "string" && typeof rawProcess.name === "string") {
-      const stages = Array.isArray(rawProcess.stages) ? rawProcess.stages.flatMap((value) => {
-        if (!value || typeof value !== "object" || Array.isArray(value)) return [];
-        const stage = value as Record<string, unknown>;
-        if (typeof stage.id !== "string" || typeof stage.title !== "string") return [];
-        const submission = stage.submission && typeof stage.submission === "object"
-          && !Array.isArray(stage.submission)
-          ? stage.submission as Record<string, unknown> : null;
-        const requirements = Array.isArray(stage.requirements) ? stage.requirements : [];
-        return [{
-          id: stage.id,
-          title: stage.title,
-          position: typeof stage.position === "number" ? stage.position : 0,
-          required: stage.required !== false,
-          requirementLabels: requirements.flatMap((entry) => (
-            entry && typeof entry === "object" && !Array.isArray(entry)
-              && typeof (entry as Record<string, unknown>).label === "string"
-              ? [String((entry as Record<string, unknown>).label)] : []
-          )),
-          status: String(stage.status || "pending") as ProjectProcessStageSnapshot["status"],
-          summary: submission && typeof submission.summary === "string" ? submission.summary : "",
-          missing: submission && Array.isArray(submission.missing)
-            ? submission.missing.filter((entry): entry is string => typeof entry === "string") : [],
-        }];
-      }) : [];
-      process = {
-        id: rawProcess.id,
-        name: rawProcess.name,
-        ordered: rawProcess.ordered === true,
-        status: String(rawProcess.status || "active") as ProjectProcessSnapshot["status"],
-        revision: typeof rawProcess.revision === "number" ? rawProcess.revision : 0,
-        stages,
-        updatedAt: typeof rawProcess.updated_at === "number" ? rawProcess.updated_at : 0,
-        satisfiedAt: typeof rawProcess.satisfied_at === "number" ? rawProcess.satisfied_at : null,
-      };
-    }
-  }
+  const process = projectProcessSnapshot(item.process);
   const steps = Array.isArray(item.steps) ? item.steps.flatMap((value) => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return [];
     const step = value as Record<string, unknown>;
@@ -2864,6 +2868,14 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
           && previous?.project.id === detail.project.id
           && previous.project.revision > detail.project.revision
         ) return;
+        if (
+          detail
+          && previous?.project.id === detail.project.id
+          && previous.process
+          && (!detail.process || previous.process.revision > detail.process.revision)
+        ) {
+          detail.process = previous.process;
+        }
         s.currentProjectByAgent[agentId] = detail;
         s.projectLoadingByAgent[agentId] = false;
         s.projectErrorByAgent[agentId] = "";
@@ -3136,7 +3148,23 @@ export function initGatewayEvents() {
 
     if (!agentId) return;
 
-    if (event === "project.created" || event === "project.updated" || event === "process.updated") {
+    if (event === "process.updated") {
+      const process = projectProcessSnapshot(d.process);
+      const current = store().currentProjectByAgent[agentId];
+      if (process && current?.project.id === process.projectId) {
+        setState(produce((s: CoreState) => {
+          const detail = s.currentProjectByAgent[agentId];
+          if (!detail || detail.project.id !== process.projectId) return;
+          if (detail.process && detail.process.revision > process.revision) return;
+          detail.process = process;
+        }));
+      } else {
+        void store().refreshCurrentProject(agentId);
+      }
+      return;
+    }
+
+    if (event === "project.created" || event === "project.updated") {
       void store().refreshCurrentProject(agentId);
       return;
     }

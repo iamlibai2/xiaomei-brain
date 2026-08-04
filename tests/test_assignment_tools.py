@@ -4,6 +4,8 @@ import json
 import time
 from types import SimpleNamespace
 
+import pytest
+
 from xiaomei_brain.assignments import (
     ActorType,
     AssignmentActor,
@@ -15,6 +17,14 @@ from xiaomei_brain.assignments import (
     AssignmentScheduler,
     ExecutionResult,
     create_assignment_tools,
+)
+from xiaomei_brain.processes import ProcessService, ProcessStore
+from xiaomei_brain.projects import (
+    ProjectActor,
+    ProjectActorType,
+    ProjectService,
+    ProjectStore,
+    ProjectWorkspaceManager,
 )
 
 
@@ -178,6 +188,69 @@ def test_repeated_accept_in_same_turn_is_idempotent(tmp_path):
     assert purpose.goals == []
     assert len(agent.assignment_scheduler.submissions) == 1
     store.close()
+
+
+def test_project_assignment_requires_declared_process_first(tmp_path):
+    database = tmp_path / "brain.db"
+    assignment_store = AssignmentStore(database)
+    assignments = AssignmentService(
+        assignment_store,
+        person_exists=lambda person_id: person_id == "person_1",
+    )
+    projects = ProjectService(
+        ProjectStore(database),
+        ProjectWorkspaceManager(tmp_path / "projects"),
+    )
+    processes = ProcessService(ProcessStore(database), projects)
+    project = projects.create(
+        name="Delivery film",
+        project_type="video.production",
+        actor=ProjectActor(ProjectActorType.AGENT, "xiaomei"),
+        scope_type="person",
+        scope_id="person_1",
+        metadata={
+            "delivery_process": {"required": True, "requested_stage_count": 5},
+            "execution": {"assignment_required": True},
+        },
+    )
+    agent = FakeAgentInstance(assignments, FakePurpose())
+    agent.project_service = projects
+    agent.process_service = processes
+    agent.core.project_service = projects
+    agent.core.process_service = processes
+    agent.core.active_project_id = project.id
+    tool = _tools(agent)["accept_assignment"]
+
+    with pytest.raises(ValueError, match="必须先建立 Process"):
+        tool.execute(
+            title="Produce film",
+            objective="Deliver the film",
+            acceptance_criteria=["Final film"],
+        )
+
+    processes.define(
+        project.id,
+        {
+            "id": "five-stage",
+            "name": "Five stages",
+            "stages": [
+                {"id": f"stage-{index}", "title": f"Stage {index}"}
+                for index in range(1, 6)
+            ],
+        },
+        actor=ProjectActor(ProjectActorType.AGENT, "xiaomei"),
+    )
+    accepted = json.loads(tool.execute(
+        title="Produce film",
+        objective="Deliver the film",
+        acceptance_criteria=["Final film"],
+    ))
+    assert accepted["scope_type"] == "project"
+    assert accepted["scope_id"] == project.id
+
+    processes.store.close()
+    projects.store.close()
+    assignment_store.close()
 
 
 def test_assignment_tools_reject_unidentified_conversation(tmp_path):

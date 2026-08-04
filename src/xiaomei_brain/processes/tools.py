@@ -121,7 +121,20 @@ def create_process_tools(agent: Any) -> list[Any]:
         stage_id: str,
         submission_json: str,
     ) -> str:
-        _require_visible_project(project_id)
+        project = _require_visible_project(project_id)
+        execution = project.metadata.get("execution")
+        active_assignment_id = str(
+            getattr(_core(), "active_assignment_id", "") or "",
+        ).strip()
+        if (
+            isinstance(execution, dict)
+            and execution.get("assignment_required") is True
+            and not active_assignment_id
+        ):
+            raise ValueError(
+                "这个 Project 要求由后台委托持续执行。Process 建立后请先调用 "
+                "accept_assignment；正式阶段结果必须由该 Assignment 执行现场提交。"
+            )
         try:
             payload = json.loads(submission_json)
         except json.JSONDecodeError as exc:

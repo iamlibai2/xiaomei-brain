@@ -40,6 +40,13 @@ class FakeProjectService:
         self.step_statuses = {}
         self.updates = []
         self.assets = []
+        self.metadata = {
+            "delivery_process": {"required": True, "requested_stage_count": 5},
+            "execution": {"assignment_required": True},
+        }
+
+    def require_project(self, project_id, **_kwargs):
+        return SimpleNamespace(id=project_id, metadata=dict(self.metadata))
 
     def put_step(self, project_id, **kwargs):
         step_id = kwargs["step_id"]
@@ -100,7 +107,7 @@ def test_installed_video_package_loads_complete_runtime(tmp_path):
     installed = service.install(archive.read_bytes(), file_name=archive.name)
     service.activate(
         "xiaomei.video-production",
-        "1.0.11",
+        "1.0.12",
         installed["package"]["sha256"],
     )
 
@@ -181,6 +188,10 @@ def test_video_project_initialization_and_storyboard_are_durable(tmp_path):
     assert saved["total_duration"] == 12.5
     assert storyboard["status"] == "saved"
     assert storyboard["project_asset_id"] == "asset_2"
+    updated_metadata = service.updates[0][1]["metadata"]
+    assert updated_metadata["delivery_process"]["requested_stage_count"] == 5
+    assert updated_metadata["execution"]["assignment_required"] is True
+    assert updated_metadata["video"]["target_duration"] == 30
 
 
 def test_video_tools_explain_that_project_must_be_created_first():

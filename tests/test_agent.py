@@ -5,6 +5,7 @@ import json
 import pytest
 from unittest.mock import Mock
 
+from xiaomei_brain.agent.completion import CompletionGuardResult
 from xiaomei_brain.agent.core import Agent, REPEATED_TOOL_FAILURE_MESSAGE
 from xiaomei_brain.agent.steering import SteerMessage
 from xiaomei_brain.llm.types import NormalizedResponse, ToolCall
@@ -55,6 +56,22 @@ def test_agent_simple_response(mock_llm, registry):
     response = _chat(agent, "Hi")
 
     assert response == "Hello!"
+
+
+def test_agent_completion_guard_is_generic_and_bounded(mock_llm, registry):
+    agent = Agent(llm=mock_llm, tools=registry, system_prompt="Test")
+    agent.add_completion_guard(lambda _runtime, _content: CompletionGuardResult(
+        key="test.handoff",
+        reason="A durable worker has not accepted this work.",
+        failure_message="Handoff failed.",
+        max_retries=2,
+    ))
+    _setup_mock_llm(mock_llm, "I will do that next.")
+
+    response = _chat(agent, "Start sustained work")
+
+    assert response.endswith("Handoff failed.")
+    assert mock_llm.chat_stream.call_count == 3
 
 
 def test_agent_reset(mock_llm, registry):
@@ -144,6 +161,80 @@ def test_react_nodb_stops_after_model_ignores_blocked_retry(mock_llm, registry):
     assert response == REPEATED_TOOL_FAILURE_MESSAGE
     assert executions["count"] == 3
     assert mock_llm.chat.call_count == 5
+
+
+def test_explicit_delivery_project_requires_background_assignment(mock_llm, registry, tmp_path):
+    """A formal deliverable cannot end with only a promise to continue."""
+    from types import SimpleNamespace
+
+    from xiaomei_brain.assignments import AssignmentStatus
+    from xiaomei_brain.processes import ProcessService, ProcessStore
+    from xiaomei_brain.projects import (
+        ProjectActor,
+        ProjectActorType,
+        ProjectExecutionCompletionGuard,
+        ProjectService,
+        ProjectStore,
+        ProjectWorkspaceManager,
+    )
+
+    database = tmp_path / "brain.db"
+    projects = ProjectService(
+        ProjectStore(database),
+        ProjectWorkspaceManager(tmp_path / "projects"),
+    )
+    processes = ProcessService(ProcessStore(database), projects)
+    actor = ProjectActor(ProjectActorType.AGENT, "test")
+    project = projects.create(
+        name="Particle film",
+        project_type="video.production",
+        actor=actor,
+        scope_type="person",
+        scope_id="person-1",
+        metadata={
+            "delivery_process": {"required": True, "requested_stage_count": 5},
+            "execution": {"assignment_required": True},
+        },
+    )
+    assignment_rows = []
+    agent = Agent(llm=mock_llm, tools=registry)
+    agent.active_project_id = project.id
+    agent.project_service = projects
+    agent.process_service = processes
+    agent.assignment_service = SimpleNamespace(store=SimpleNamespace(
+        list_assignments=lambda **_kwargs: list(assignment_rows),
+    ))
+    guard = ProjectExecutionCompletionGuard(
+        projects,
+        processes,
+        agent.assignment_service,
+    )
+
+    result = guard(agent, "I will continue")
+    assert result is not None
+    assert "Process 尚未建立" in result.reason
+
+    processes.define(
+        project.id,
+        {
+            "id": "five-stage",
+            "name": "Five stages",
+            "stages": [{"id": "delivery", "title": "Delivery"}],
+        },
+        actor=actor,
+    )
+    result = guard(agent, "I will continue")
+    assert result is not None
+    assert "accept_assignment" in result.reason
+
+    assignment_rows.append(SimpleNamespace(status=AssignmentStatus.QUEUED))
+    assert guard(agent, "I will continue") is None
+
+    assignment_rows.clear()
+    agent.active_assignment_id = "assignment-1"
+    assert guard(agent, "I will continue") is None
+    processes.store.close()
+    projects.store.close()
 
 
 def test_execute_tool_call_accepts_structured_result(mock_llm, registry):

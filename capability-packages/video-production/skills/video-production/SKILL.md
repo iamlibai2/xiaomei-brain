@@ -1,9 +1,10 @@
 ---
 name: video-production
 description: 以项目方式策划、制作、验收和交付多阶段视频，适用于企业介绍、产品宣传、科普、汇报和图文短视频
-version: 1.0.11
+version: 1.0.12
 tags: [video, project, storyboard, ffmpeg, production]
 requires_tools:
+  - accept_assignment
   - create_project
   - set_project_step
   - remove_project_step
@@ -63,6 +64,11 @@ Process 不适合当前目标时，应根据用户决定修订定义，而不是
 - 用户要求企业可交付成片。
 
 单个短镜头试验可以直接调用视频生成工具；持续的视频制作工作应使用 Project 保存现场。
+
+Project 和 Process 建立后，实际制作必须调用 `accept_assignment` 转入项目范围的后台委托，并立即结束当前实时
+对话的执行现场。委托的 objective 使用项目目标，acceptance_criteria 使用 Process 要求的正式结果；不要在实时
+对话中说“接下来开始制作”后停止，也不要一边创建委托一边继续重复执行。若当前已经处于 Assignment 隔离运行现场，
+直接继续完成工作，不要再次创建委托。
 
 ## 参考认知地图
 

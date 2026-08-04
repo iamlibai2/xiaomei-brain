@@ -12,6 +12,7 @@ from typing import Any, Callable, Generator
 
 from xiaomei_brain.llm.client import LLMClient
 from xiaomei_brain.agent.steering import SteerMessage
+from xiaomei_brain.agent.completion import CompletionGuard, CompletionGuardResult
 from xiaomei_brain.memory.conversation_db import ConversationDB
 from xiaomei_brain.base.message_utils import estimate_tokens
 from xiaomei_brain.memory.self_model import SelfModel
@@ -142,6 +143,7 @@ class Agent:
         self.on_tool_approval: Callable[[str, str, dict], dict | None] | None = None
         self.on_action_complete: Callable[[str, str, bool], None] | None = None
         self.on_steer_consumed: Callable[[list[SteerMessage]], None] | None = None
+        self.completion_guards: list[CompletionGuard] = []
 
         # ── Internal display (injected by ConversationDriver) ──
         self.internal_display: Any = None  # InternalDisplay 实例
@@ -154,6 +156,18 @@ class Agent:
     @messages.setter
     def messages(self, value: list[dict[str, Any]]) -> None:
         self._messages[self.context_key] = value
+
+    def add_completion_guard(self, guard: CompletionGuard) -> None:
+        """Register a domain policy evaluated before a normal final response."""
+        if guard not in self.completion_guards:
+            self.completion_guards.append(guard)
+
+    def _completion_guard_result(self, content: str) -> CompletionGuardResult | None:
+        for guard in tuple(self.completion_guards):
+            result = guard(self, content)
+            if result is not None:
+                return result
+        return None
 
     def _auto_compact(self, session_id: str, max_tokens: int, messages: list[dict] | None = None) -> None:
         """Auto-compact: 消息积累到阈值时自动压缩为 DAG 叶子摘要。
@@ -277,6 +291,7 @@ class Agent:
         _tool_failure_counts: dict[tuple, int] = {}  # (name, args_json) -> 失败次数
         _blocked_tool_retries = 0
         _repeated_failure_stop = False
+        _completion_guard_retries: dict[str, int] = {}
         _pending_document_outputs: dict[str, str] = {}
         _presented_outputs: set[str] = set()
 
@@ -595,6 +610,40 @@ class Agent:
                 else:
                     content = response.content or ""
                     if content:
+                        completion_guard = self._completion_guard_result(content)
+                        if completion_guard:
+                            retries = _completion_guard_retries.get(
+                                completion_guard.key,
+                                0,
+                            )
+                            if retries < completion_guard.max_retries:
+                                retries += 1
+                                _completion_guard_retries[completion_guard.key] = retries
+                                self.messages.append({
+                                    "role": "assistant",
+                                    "content": content,
+                                })
+                                self.messages.append({
+                                    "role": "user",
+                                    "content": (
+                                        "[Completion guard] "
+                                        f"{completion_guard.reason} "
+                                        "不要只描述接下来要做什么；请立即调用所需工具。"
+                                    ),
+                                })
+                                _accumulated_context += (
+                                    "\nCompletion guard: " + completion_guard.reason
+                                )
+                                logger.warning(
+                                    "[Agent] Completion guard %s continued ReAct (%d/%d): %s",
+                                    completion_guard.key,
+                                    retries,
+                                    completion_guard.max_retries,
+                                    completion_guard.reason,
+                                )
+                                continue
+                            content = completion_guard.failure_message
+                            yield "\n\n" + content
                         self._auto_present_document_outputs(
                             _pending_document_outputs,
                             _presented_outputs,

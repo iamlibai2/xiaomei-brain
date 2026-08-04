@@ -36,7 +36,7 @@ def _services(tmp_path):
     return projects, processes
 
 
-def _project(projects):
+def _project(projects, *, metadata=None):
     actor = ProjectActor(ProjectActorType.AGENT, "test")
     project = projects.create(
         name="Silent film",
@@ -44,6 +44,7 @@ def _project(projects):
         actor=actor,
         scope_type="person",
         scope_id="person_1",
+        metadata=metadata,
     )
     return actor, project
 
@@ -229,6 +230,7 @@ class _FakeAgent:
         self.core = SimpleNamespace(
             user_id="person_1",
             active_project_id="",
+            active_assignment_id="",
             process_service=processes,
         )
 
@@ -268,6 +270,38 @@ def test_process_tools_and_context_keep_contract_separate_from_plan(tmp_path):
     context = render_process_context(agent.core)
     assert "约束必须提交的结果，不规定你如何思考或执行" in context
     assert "作品定义" in context
+    processes.store.close()
+    projects.store.close()
+
+
+def test_formal_project_submissions_require_background_assignment_owner(tmp_path):
+    projects, processes = _services(tmp_path)
+    _actor, project = _project(projects, metadata={
+        "delivery_process": {"required": True, "requested_stage_count": 2},
+        "execution": {"assignment_required": True},
+    })
+    agent = _FakeAgent(processes)
+    agent.core.active_project_id = project.id
+    tools = {item.name: item for item in create_process_tools(agent)}
+    tools["define_project_process"].execute(
+        project_id=project.id,
+        process_json=json.dumps(_definition(), ensure_ascii=False),
+    )
+
+    with pytest.raises(ValueError, match="accept_assignment"):
+        tools["submit_process_stage"].execute(
+            project_id=project.id,
+            stage_id="brief",
+            submission_json="{}",
+        )
+
+    agent.core.active_assignment_id = "assignment-1"
+    submitted = json.loads(tools["submit_process_stage"].execute(
+        project_id=project.id,
+        stage_id="brief",
+        submission_json="{}",
+    ))
+    assert submitted["submission"]["complete"] is False
     processes.store.close()
     projects.store.close()
 

@@ -189,7 +189,10 @@ class ProjectService:
                     raise ValueError("Project name cannot be empty")
                 updates[key] = normalized
         if metadata is not None:
-            updates["metadata_json"] = dict(metadata)
+            updates["metadata_json"] = _deep_merge_dict(
+                dict(current.metadata),
+                metadata,
+            )
         if not updates:
             return current
         changed = self.store.mutate_project(

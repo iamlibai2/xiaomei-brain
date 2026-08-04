@@ -103,12 +103,17 @@ def test_explicit_delivery_standard_requires_real_process_before_steps(tmp_path)
         "requested_stage_count": 5,
         "status": "must_define_before_project_steps",
     }
+    assert created["execution_requirement"] == {
+        "assignment_required": True,
+        "status": "must_handoff_to_project_assignment",
+    }
     assert set(activated) == {
         "list_project_process_templates",
         "apply_project_process_template",
         "define_project_process",
         "inspect_project_process",
         "submit_process_stage",
+        "accept_assignment",
     }
     with pytest.raises(ValueError, match="不能代替 Process"):
         tools["set_project_step"].execute(

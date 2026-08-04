@@ -178,9 +178,10 @@ def initialize_video_project(
     if service is not None:
         from xiaomei_brain.projects import ProjectAssetRole
 
+        actor = _project_actor(context)
         asset = service.register_asset(
             project.project_id,
-            actor=_project_actor(context),
+            actor=actor,
             relative_uri=brief_path.relative_to(state_root).as_posix(),
             role=ProjectAssetRole.WORKING,
             kind="brief",
@@ -193,17 +194,18 @@ def initialize_video_project(
             },
         )
         brief_asset_id = asset.id
+        current = service.require_project(project.project_id, actor=actor)
+        project_metadata = dict(current.metadata)
+        project_metadata["video"] = {
+            "target_duration": int(target_duration),
+            "aspect_ratio": aspect_ratio,
+            "language": language.strip() or "zh-CN",
+        }
         service.update(
             project.project_id,
-            actor=_project_actor(context),
+            actor=actor,
             progress_summary="视频项目工作区和需求简报已初始化",
-            metadata={
-                "video": {
-                    "target_duration": int(target_duration),
-                    "aspect_ratio": aspect_ratio,
-                    "language": language.strip() or "zh-CN",
-                },
-            },
+            metadata=project_metadata,
         )
     return json.dumps({
         "project_id": project.project_id,

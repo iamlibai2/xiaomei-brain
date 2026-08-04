@@ -109,10 +109,28 @@ def create_assignment_tools(agent: Any = None) -> list[Tool]:
         project_service = getattr(agent, "project_service", None)
         if project_id and project_service is not None:
             from xiaomei_brain.projects import ProjectActor, ProjectActorType
-            project_service.require_project(
+            project = project_service.require_project(
                 project_id,
                 actor=ProjectActor(ProjectActorType.PERSON, person.actor_id),
             )
+            process_requirement = project.metadata.get("delivery_process")
+            if (
+                isinstance(process_requirement, dict)
+                and process_requirement.get("required") is True
+            ):
+                process_service = getattr(agent, "process_service", None)
+                if process_service is None:
+                    process_service = getattr(core, "process_service", None)
+                process = (
+                    process_service.store.get_for_project(project_id)
+                    if process_service is not None
+                    else None
+                )
+                if process is None:
+                    raise ValueError(
+                        "当前 Project 明确要求正式交付标准。必须先建立 Process，"
+                        "再接受项目范围的 Assignment；不能在没有交付合同的情况下开始后台执行。"
+                    )
             scope_type = "project"
             scope_id = project_id
         digest = hashlib.sha256(

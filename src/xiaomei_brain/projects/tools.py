@@ -24,6 +24,7 @@ _PROCESS_TOOL_NAMES = [
     "define_project_process",
     "inspect_project_process",
     "submit_process_stage",
+    "accept_assignment",
 ]
 _DELIVERY_STANDARD_PATTERN = re.compile(
     r"(?:(?P<count>\d{1,2}|[一二三四五六七八九十两]{1,4})\s*个?\s*阶段(?:的)?\s*)?"
@@ -137,6 +138,12 @@ def create_project_tools(agent: Any = None) -> list[Tool]:
                 "required": True,
                 "requested_stage_count": process_requirement.get("requested_stage_count"),
                 "status": "must_define_before_project_steps",
+            }
+        execution_requirement = project.metadata.get("execution")
+        if isinstance(execution_requirement, dict) and execution_requirement.get("assignment_required") is True:
+            value["execution_requirement"] = {
+                "assignment_required": True,
+                "status": "must_handoff_to_project_assignment",
             }
         if details:
             value["steps"] = [
@@ -323,7 +330,13 @@ def create_project_tools(agent: Any = None) -> list[Tool]:
             workspace_kind=_workspace_kind(workspace_kind, workspace_uri),
             workspace_uri=workspace_uri,
             metadata=(
-                {"delivery_process": process_requirement}
+                {
+                    "delivery_process": process_requirement,
+                    "execution": {
+                        "assignment_required": True,
+                        "reason": "explicit_delivery_standard",
+                    },
+                }
                 if process_requirement is not None
                 else None
             ),

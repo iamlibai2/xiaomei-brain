@@ -609,6 +609,14 @@ class ConsciousLiving(Living):
         )
         self.agent.assignment_service = self._assignment_service
         self.agent._get_agent().assignment_service = self._assignment_service
+        from xiaomei_brain.projects import ProjectExecutionCompletionGuard
+        self.agent._get_agent().add_completion_guard(
+            ProjectExecutionCompletionGuard(
+                self._project_service,
+                self._process_service,
+                self._assignment_service,
+            )
+        )
         # A production background Runner must own an isolated runtime. We only
         # construct the scheduler when one is explicitly injected; silently
         # reusing the live conversation Agent Core would corrupt concurrent chat.

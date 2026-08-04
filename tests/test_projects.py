@@ -91,8 +91,19 @@ def test_project_lifecycle_revision_and_idempotency(tmp_path):
         actor=agent,
         expected_revision=1,
         progress_summary="Storyboard drafted",
+        metadata={"execution": {"assignment_required": True}},
     )
     assert changed.revision == 2
+    merged = service.update(
+        created.id,
+        actor=agent,
+        expected_revision=2,
+        metadata={"video": {"target_duration": 10}},
+    )
+    assert merged.metadata == {
+        "execution": {"assignment_required": True},
+        "video": {"target_duration": 10},
+    }
     with pytest.raises(ProjectConflictError):
         service.update(
             created.id,
@@ -103,7 +114,7 @@ def test_project_lifecycle_revision_and_idempotency(tmp_path):
 
     completed = service.transition(
         created.id, ProjectStatus.COMPLETED,
-        actor=agent, expected_revision=2,
+        actor=agent, expected_revision=3,
     )
     assert completed.completed_at == 100.0
     with pytest.raises(InvalidProjectTransition):

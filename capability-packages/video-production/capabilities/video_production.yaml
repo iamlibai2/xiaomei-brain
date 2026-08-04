@@ -2,7 +2,7 @@ id: video_production
 name: 视频制作
 summary: 通过项目化流程完成视频策划、分镜、素材整理、技术检查、合成和交付
 category: creative
-version: "1.0.11"
+version: "1.0.12"
 source: xiaomei.video-production
 
 examples:
