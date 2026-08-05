@@ -139,6 +139,7 @@
       "memoryReferences": "查看本次召回的 {{count}} 条记忆",
       "unablePlay": "无法播放",
       "audio": "语音",
+      "file": "文件",
       "openAttachment": "打开 {{name}}",
       "invalidAttachment": "附件内容无效",
       "emptyAttachment": "附件内容为空",

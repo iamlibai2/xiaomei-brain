@@ -1064,7 +1064,7 @@ function MessageAttachment({
             ? "!"
             : attachment.kind === "video"
                 ? "VIDEO"
-              : "FILE"}
+              : t("home.file")}
         </span>
       )}
       <span className="message-attachment-name">{attachment.name}</span>

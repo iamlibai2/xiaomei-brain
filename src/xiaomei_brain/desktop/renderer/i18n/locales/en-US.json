@@ -139,6 +139,7 @@
       "memoryReferences": "View {{count}} memories recalled for this answer",
       "unablePlay": "Unable to play",
       "audio": "Voice",
+      "file": "File",
       "openAttachment": "Open {{name}}",
       "invalidAttachment": "Invalid attachment content",
       "emptyAttachment": "The attachment is empty",

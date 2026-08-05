@@ -3581,17 +3581,23 @@ body.is-resizing-artifact-workspace {
   gap: 8px;
   min-width: 180px;
   max-width: 320px;
-  padding: 0;
-  border: 0;
-  background: transparent;
+  padding: 6px 11px 6px 6px;
+  border: 1px solid color-mix(in srgb, var(--ui-brand-primary) 18%, var(--ui-border-default));
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--ui-brand-primary) 7%, var(--ui-bg-primary));
   color: inherit;
   font: inherit;
   text-align: left;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .04);
   cursor: pointer;
+  transition:
+    background var(--ui-motion-duration-sm) var(--ui-motion-easing-standard),
+    border-color var(--ui-motion-duration-sm) var(--ui-motion-easing-standard);
 }
 
-.message-attachment:hover .message-attachment-name {
-  text-decoration: underline;
+.message-attachment:hover {
+  border-color: color-mix(in srgb, var(--ui-brand-primary) 30%, var(--ui-border-default));
+  background: color-mix(in srgb, var(--ui-brand-primary) 11%, var(--ui-bg-primary));
 }
 
 .message-attachment img {
@@ -3606,8 +3612,10 @@ body.is-resizing-artifact-workspace {
   place-items: center;
   width: 38px;
   height: 38px;
+  flex: 0 0 38px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--ui-brand-primary) 18%, var(--ui-bg-primary));
+  color: color-mix(in srgb, var(--ui-brand-primary) 76%, var(--ui-color-text-primary));
   font-size: 9px;
   font-weight: 700;
 }
@@ -3619,6 +3627,8 @@ body.is-resizing-artifact-workspace {
 .message-attachment-name {
   min-width: 0;
   overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3632,7 +3642,7 @@ body.is-resizing-artifact-workspace {
   margin: 5px 0 0;
   padding: 5px 8px;
   overflow: hidden;
-  border-left: 2px solid rgba(255, 255, 255, .55);
+  border-left: 2px solid color-mix(in srgb, var(--ui-brand-primary) 44%, var(--ui-border-default));
   color: inherit;
   font-size: 11px;
   line-height: 1.45;
