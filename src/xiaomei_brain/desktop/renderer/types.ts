@@ -163,6 +163,36 @@ export interface ModelConfigSnapshot {
   hashes: { global: string; agent: string };
 }
 
+export type ExecutionBackend = "protected_host" | "docker";
+
+export interface ExecutionEnvironmentConfiguration {
+  backend: ExecutionBackend;
+  network: "enabled" | "disabled";
+  resources: {
+    cpu: number;
+    memory_mb: number;
+    pids: number;
+  };
+  docker: {
+    image: string;
+  };
+}
+
+export interface ExecutionEnvironmentRuntime {
+  backend: ExecutionBackend | "unknown";
+  display_name: string;
+  strong_isolation: boolean;
+  state: "ready" | "not_created" | "running" | "stopped" | "unavailable" | string;
+  shell?: string;
+  shell_runtime?: string;
+  workspace_root?: string;
+  docker_version?: string;
+  image?: string;
+  container_name?: string;
+  network?: "enabled" | "disabled";
+  error?: string;
+}
+
 export type MediaCapability = "image" | "tts" | "music" | "video";
 
 export interface MediaServiceField {
@@ -558,6 +588,16 @@ export interface GatewayBridge {
     agentId: string;
     serviceId: string;
   }): Promise<JsonRpcResponse>;
+  getExecutionEnvironment(args: { agentId: string }): Promise<JsonRpcResponse>;
+  getExecutionEnvironmentStatus(args: { agentId: string }): Promise<JsonRpcResponse>;
+  testExecutionEnvironment(args: {
+    agentId: string;
+    configuration: ExecutionEnvironmentConfiguration;
+  }): Promise<JsonRpcResponse>;
+  saveExecutionEnvironment(args: {
+    agentId: string;
+    configuration: ExecutionEnvironmentConfiguration;
+  }): Promise<JsonRpcResponse>;
   getConfig(key: string): Promise<string | null>;
 
   /**
@@ -780,6 +820,7 @@ export interface DesktopSettings {
   openAtLoginAvailable: boolean;
   closeBehavior: "exit" | "minimize";
   notificationsEnabled: boolean;
+  messageSoundsEnabled: boolean;
   language: "zh-CN" | "en-US";
   theme: "system" | "light" | "dark";
   openRightSidebarByDefault: boolean;
@@ -804,6 +845,7 @@ export interface DesktopBridge {
       | "openAtLogin"
       | "closeBehavior"
       | "notificationsEnabled"
+      | "messageSoundsEnabled"
       | "language"
       | "theme"
       | "openRightSidebarByDefault"

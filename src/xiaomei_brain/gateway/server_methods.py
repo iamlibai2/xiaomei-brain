@@ -19,6 +19,7 @@ from .methods import (
     ChannelMethods,
     ConnectionMethods,
     EmbodimentMethods,
+    ExecutionEnvironmentMethods,
     IdentityMethods,
     InteractionMethods,
     InvocationMethods,
@@ -57,6 +58,7 @@ class MethodRouter:
         self._chat_methods = ChatMethods(living)
         self._capability_methods = CapabilityMethods(living)
         self._embodiment_methods = EmbodimentMethods(living)
+        self._execution_environment_methods = ExecutionEnvironmentMethods(living)
         self._session_methods = SessionMethods(living, self._chat_methods.handle_history)
         self._attachment_methods = AttachmentMethods(living)
         self._interaction_methods = InteractionMethods(living)
@@ -95,6 +97,7 @@ class MethodRouter:
             self._chat_methods,
             self._capability_methods,
             self._embodiment_methods,
+            self._execution_environment_methods,
             self._session_methods,
             self._attachment_methods,
             self._interaction_methods,
@@ -231,6 +234,12 @@ class MethodRouter:
                 "tool.service.configure",
                 "tool.service.test",
                 "tool.service.remove",
+            },
+            "execution.environment.configuration": {
+                "execution.environment.get",
+                "execution.environment.status",
+                "execution.environment.test",
+                "execution.environment.save",
             },
             "identity.list": {"identity.list"},
             "identity.challenge": {

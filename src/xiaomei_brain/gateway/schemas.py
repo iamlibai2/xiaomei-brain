@@ -280,6 +280,29 @@ class ToolServiceConfigureParams(ToolServiceTestParams):
     enabled: bool = True
 
 
+# Execution environment configuration
+
+class ExecutionResourcesParams(BaseModel):
+    cpu: float = Field(default=2, ge=0, le=128)
+    memory_mb: int = Field(default=4096, ge=0, le=1_048_576)
+    pids: int = Field(default=256, ge=0, le=1_000_000)
+
+
+class DockerExecutionParams(BaseModel):
+    image: str = Field(default="python:3.11-slim-bookworm", min_length=1, max_length=500)
+
+
+class ExecutionEnvironmentTestParams(BaseModel):
+    backend: Literal["protected_host", "docker"] = "protected_host"
+    network: Literal["enabled", "disabled"] = "enabled"
+    resources: ExecutionResourcesParams = Field(default_factory=ExecutionResourcesParams)
+    docker: DockerExecutionParams = Field(default_factory=DockerExecutionParams)
+
+
+class ExecutionEnvironmentSaveParams(ExecutionEnvironmentTestParams):
+    pass
+
+
 # ── Chat ─────────────────────────────────────
 
 class ChatAttachment(BaseModel):

@@ -35,6 +35,10 @@ interface StreamingPlayback {
 export const DESKTOP_SPEECH_STARTED = "xiaomei:desktop-speech-started";
 export const DESKTOP_SPEECH_FINISHED = "xiaomei:desktop-speech-finished";
 
+export function isDesktopSpeechActive(): boolean {
+  return activePlayback !== null || activeStream !== null;
+}
+
 /** Install the Desktop speaker once; every Agent connection remains isolated. */
 export function installDesktopEmbodiment(): () => void {
   return window.gateway.onEvent((raw) => {

@@ -1600,7 +1600,9 @@ export function registerIpcHandlers(
 
       const title = sanitizeNotificationText(args?.title, 80) || "xiaomei-brain";
       const body = sanitizeNotificationText(args?.body, 160);
-      const notification = new Notification({ title, body });
+      // Desktop owns the message chime so notification and application audio
+      // never play twice, and the message-sound setting remains authoritative.
+      const notification = new Notification({ title, body, silent: true });
       activeNotifications.add(notification);
       const releaseNotification = () => activeNotifications.delete(notification);
       notification.on("click", () => {
@@ -1869,6 +1871,24 @@ export function registerIpcHandlers(
   }) => channelRpc(args, "tool.service.remove", {
     service_id: args.serviceId,
   }));
+
+  ipcMain.handle("gateway:getExecutionEnvironment", async (_event, args: {
+    agentId: string;
+  }) => channelRpc(args, "execution.environment.get", {}));
+
+  ipcMain.handle("gateway:getExecutionEnvironmentStatus", async (_event, args: {
+    agentId: string;
+  }) => channelRpc(args, "execution.environment.status", {}));
+
+  ipcMain.handle("gateway:testExecutionEnvironment", async (_event, args: {
+    agentId: string;
+    configuration: Record<string, unknown>;
+  }) => channelRpc(args, "execution.environment.test", args.configuration));
+
+  ipcMain.handle("gateway:saveExecutionEnvironment", async (_event, args: {
+    agentId: string;
+    configuration: Record<string, unknown>;
+  }) => channelRpc(args, "execution.environment.save", args.configuration));
 
   ipcMain.handle("store:getConfig", async (_event, key: string) => {
     return config.get(key);

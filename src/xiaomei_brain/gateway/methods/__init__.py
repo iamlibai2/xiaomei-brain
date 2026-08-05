@@ -10,6 +10,7 @@ from .capabilities import CapabilityMethods
 from .channels import ChannelMethods
 from .connection import ConnectionMethods
 from .embodiments import EmbodimentMethods
+from .execution import ExecutionEnvironmentMethods
 from .identity import IdentityMethods
 from .interactions import InteractionMethods
 from .invocations import InvocationMethods
@@ -32,6 +33,7 @@ __all__ = [
     "ChannelMethods",
     "ConnectionMethods",
     "EmbodimentMethods",
+    "ExecutionEnvironmentMethods",
     "IdentityMethods",
     "InteractionMethods",
     "InvocationMethods",

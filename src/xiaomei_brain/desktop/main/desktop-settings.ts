@@ -10,6 +10,7 @@ export interface DesktopSettings {
   openAtLoginAvailable: boolean;
   closeBehavior: CloseBehavior;
   notificationsEnabled: boolean;
+  messageSoundsEnabled: boolean;
   language: DesktopLanguage;
   theme: DesktopTheme;
   openRightSidebarByDefault: boolean;
@@ -23,6 +24,7 @@ const KEYS = {
   openAtLogin: "desktop.openAtLogin",
   closeBehavior: "desktop.closeBehavior",
   notificationsEnabled: "desktop.notificationsEnabled",
+  messageSoundsEnabled: "desktop.messageSoundsEnabled",
   language: "desktop.language",
   theme: "desktop.theme",
   openRightSidebarByDefault: "desktop.openRightSidebarByDefault",
@@ -44,6 +46,7 @@ export function readDesktopSettings(config: ConfigStore): DesktopSettings {
     openAtLoginAvailable: process.platform === "win32" || process.platform === "darwin",
     closeBehavior: closeBehavior === "minimize" ? "minimize" : "exit",
     notificationsEnabled: readBoolean(config, KEYS.notificationsEnabled, true),
+    messageSoundsEnabled: readBoolean(config, KEYS.messageSoundsEnabled, true),
     language: language === "en-US" ? "en-US" : "zh-CN",
     theme: theme === "light" || theme === "dark" ? theme : "system",
     openRightSidebarByDefault: readBoolean(
@@ -101,6 +104,9 @@ export function registerDesktopSettingsIpc(config: ConfigStore): void {
       }
       if (typeof patch?.notificationsEnabled === "boolean") {
         config.set(KEYS.notificationsEnabled, String(patch.notificationsEnabled));
+      }
+      if (typeof patch?.messageSoundsEnabled === "boolean") {
+        config.set(KEYS.messageSoundsEnabled, String(patch.messageSoundsEnabled));
       }
       if (patch?.language === "zh-CN" || patch?.language === "en-US") {
         config.set(KEYS.language, patch.language);

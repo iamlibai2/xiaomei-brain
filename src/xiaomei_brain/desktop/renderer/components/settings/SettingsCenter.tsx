@@ -13,6 +13,7 @@ import { MediaServiceSettingsPanel } from "./MediaServiceSettingsPanel";
 import { SearchServiceSettingsPanel } from "./SearchServiceSettingsPanel";
 import { SystemSettingsPanel } from "./SystemSettingsPanel";
 import { LocalAIRuntimePanel } from "./LocalAIRuntimePanel";
+import { ExecutionEnvironmentSettingsPanel } from "./ExecutionEnvironmentSettingsPanel";
 import { SETTINGS_EVENT, type SettingsSection } from "./events";
 
 const DESKTOP_NAVIGATION: Array<{
@@ -38,10 +39,11 @@ const AGENT_NAVIGATION: Array<{
   { id: "models", labelKey: "settings.models.label", descriptionKey: "settings.models.description", icon: "sparkles" },
   { id: "media", labelKey: "settings.media.label", descriptionKey: "settings.media.description", icon: "image" },
   { id: "search", labelKey: "settings.search.label", descriptionKey: "settings.search.description", icon: "search" },
+  { id: "execution", labelKey: "settings.execution.label", descriptionKey: "settings.execution.description", icon: "terminal" },
   { id: "channels", labelKey: "settings.channels.label", descriptionKey: "settings.channels.description", icon: "bell" },
 ];
 
-const AGENT_SECTIONS = new Set<SettingsSection>(["overview", "capabilities", "models", "media", "search", "channels"]);
+const AGENT_SECTIONS = new Set<SettingsSection>(["overview", "capabilities", "models", "media", "search", "execution", "channels"]);
 
 export function SettingsCenter() {
   const { t, i18n } = useTranslation();
@@ -269,6 +271,12 @@ export function SettingsCenter() {
               <ChannelSettingsPanel
                 agentId={settingsAgent.id}
                 agentName={settingsAgent.name}
+                connected={connected}
+              />
+            )}
+            {section === "execution" && settingsAgent && (
+              <ExecutionEnvironmentSettingsPanel
+                agentId={settingsAgent.id}
                 connected={connected}
               />
             )}

@@ -11,6 +11,7 @@ from .docker import (
     DockerEnvironmentConfig,
     DockerUnavailableError,
 )
+from .configuration import ExecutionConfigurationService
 from .manager import (
     ExecutionEnvironmentManager,
     current_execution_environment,
@@ -21,6 +22,7 @@ from .workspace import WorkspaceBroker, protected_host_roots
 
 __all__ = [
     "ExecutionEnvironment",
+    "ExecutionConfigurationService",
     "ExecutionEnvironmentManager",
     "ExecutionProcess",
     "DockerEnvironment",

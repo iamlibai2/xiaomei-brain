@@ -115,6 +115,12 @@ export function SystemSettingsPanel() {
             onChange={(checked) => void update({ notificationsEnabled: checked })}
           />
         </SettingRow>
+        <SettingRow icon="bell" title={t("systemUi.messageSounds")} description={t("systemUi.messageSoundsHint")}>
+          <Switch
+            checked={settings.messageSoundsEnabled}
+            onChange={(checked) => void update({ messageSoundsEnabled: checked })}
+          />
+        </SettingRow>
         <SettingRow icon="info" title={t("systemUi.language")} description={t("systemUi.languageHint")}>
           <select
             value={settings.language}

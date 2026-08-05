@@ -350,7 +350,50 @@
       "models": {"label": "Models", "description": "Main, vision, and provider models"},
       "media": {"label": "Media services", "description": "Image, voice, and music generation"},
       "search": {"label": "Web search", "description": "Search services and access credentials"},
+      "execution": {"label": "Execution environment", "description": "Where commands run and how they are isolated"},
       "channels": {"label": "Channels and bindings", "description": "Feishu, DingTalk, and person bindings"}
+    },
+    "executionSettingsUi": {
+      "connectToView": "Connect the Agent to view its execution environment.",
+      "loading": "Loading execution environment…",
+      "title": "Execution environment",
+      "description": "Choose where this Agent runs commands and works with files. The setting belongs only to this Agent.",
+      "chooseTitle": "Choose an environment",
+      "chooseHint": "The current environment keeps running. Restart the Agent after saving to switch.",
+      "protectedHost": "Protected Host",
+      "protectedHostDescription": "Use this computer's PowerShell and installed tools directly.",
+      "protectedHostDetail": "Fast and compatible, with workspace and process protection but no OS-level isolation.",
+      "docker": "Docker isolation",
+      "dockerDescription": "Run commands inside a container dedicated to this Agent.",
+      "dockerDetail": "Stronger isolation. Docker must be installed and running on the Agent host.",
+      "dockerOptions": "Docker settings",
+      "dockerOptionsHint": "Only this Agent's workspace is mounted. Identity, memory, and model secrets are not passed in automatically.",
+      "image": "Container image",
+      "cpu": "CPU limit",
+      "memory": "Memory limit (MB)",
+      "pids": "Process limit",
+      "network": "Network access",
+      "networkHint": "When off, the container cannot reach the internet or local network.",
+      "networkValues": {"enabled": "Allow", "disabled": "Off"},
+      "statusTitle": "Environment check",
+      "statusHint": "Check whether the selection is available without creating a container or running a user command.",
+      "test": "Check environment",
+      "testing": "Checking…",
+      "notTested": "This selection has not been checked yet.",
+      "dockerCheckRequired": "Check the environment before saving to confirm Docker is installed and running.",
+      "testPassed": "Environment check passed.",
+      "runtimeEnvironment": "Current environment",
+      "runtimeState": "Status",
+      "shell": "Command line",
+      "workspace": "Agent workspace",
+      "container": "Container",
+      "dockerVersion": "Docker version",
+      "reset": "Discard changes",
+      "save": "Save",
+      "saving": "Saving…",
+      "saved": "The execution environment configuration is unchanged.",
+      "savedRestart": "Execution environment saved. Restart the Agent to apply it.",
+      "states": {"ready": "Available", "running": "Running", "stopped": "Stopped", "not_created": "Not created", "unavailable": "Unavailable", "unknown": "Unknown"}
     },
     "identityUi": {
       "accountManagement": "Account management",
@@ -606,7 +649,7 @@
       "notConfiguredChannel": "Not configured"
     },
     "localAiUi": { "statusOnline": "Online", "statusStarting": "Starting", "statusDownloading": "Downloading", "statusNotInstalled": "Not downloaded", "statusDownloadError": "Download failed", "statusStopped": "Stopped", "statusUnavailable": "Unavailable", "statusAvailable": "Available", "statusError": "Error", "preparing": "preparing", "onlineSummary": "{{online}}/{{total}} online", "readStatusError": "Unable to read local AI service status", "operationFailed": "operation failed", "readLogError": "Unable to read service log", "emptyLog": "The log file is empty.", "modelSwitchFailed": "model switch failed", "deviceSwitchFailed": "device switch failed", "title": "Local AI services", "description": "Download and run model services shared by all local Agents on this computer.", "sharedInference": "Shared inference services", "checking": "Checking…", "systemLoad": "System load", "memory": "Memory", "gpuMemory": "GPU memory", "coreDependency": "Core dependency", "model": "Model", "device": "Device", "selectModel": "Select model", "selectDevice": "Select device", "auto": "Automatic", "downloaded": "Downloaded", "retryDownload": "Retry download", "download": "Download", "cancel": "Cancel", "start": "Start", "stop": "Stop", "restart": "Restart", "collapseLog": "Hide log", "log": "Log", "actualRuntime": "running on {{device}}", "memoryUsage": "Memory {{value}}", "memoryUnavailable": "Memory unavailable", "gpuUsage": "GPU memory {{value}}", "gpuUnavailable": "GPU memory unavailable", "location": "Location", "locked": "Locked: {{reason}}", "downloadProgress": "Download progress {{progress}}%", "empty": "No local AI services found.", "refresh": "Refresh status", "openDirectory": "Open service directory", "downloadTitle": "Download {{model}}", "downloadDescription": "The model will be saved in the shared local cache for all local Agents.", "close": "Close", "service": "Service", "source": "Source", "expectedSize": "Expected size", "remaining": "Remaining download", "downloadWarning": "The download may take several minutes and use network bandwidth and disk space. You can cancel and retry later.", "confirmDownload": "Confirm to start the network download.", "confirm": "Confirm download", "selectDeviceAuto": "Automatically select device", "embeddingName": "Embedding service", "embeddingDescription": "Shared vector embedding service for memory and retrieval", "sttName": "Speech recognition", "sttDescription": "Local speech-to-text and audio understanding service", "ttsName": "Speech synthesis", "ttsDescription": "Local text-to-speech service", "voiceprintName": "Voiceprint recognition", "voiceprintDescription": "Recognize a speaker by voice", "faceName": "Face recognition", "faceDescription": "Recognize a person by camera input" }
-,    "systemUi": { "title": "System settings", "subtitle": "These preferences affect only this Desktop, not any Agent.", "behavior": "Startup and window", "openAtLogin": "Open at login", "openAtLoginHint": "Start xiaomei-brain Desktop after signing in.", "unavailable": "Unavailable on this system", "closeBehavior": "When closing the window", "closeHint": "Exit Desktop or keep it running in a minimized window.", "exit": "Exit Desktop", "minimize": "Minimize window", "experience": "Interface and notifications", "notifications": "Windows notifications", "notificationsHint": "Show Agent message notifications when Desktop is minimized or unfocused.", "language": "Language", "languageHint": "Change the Desktop interface language.", "rightSidebar": "Open right sidebar by default", "rightSidebarHint": "Show Agent activity and status when entering a conversation.", "update": "Automatic updates", "updateDisabled": "Not enabled", "updateHint": "The release service is not enabled, so Desktop does not check for updates.", "directories": "Directories and diagnostics", "configDirectory": "Desktop configuration", "logDirectory": "Desktop logs", "open": "Open directory", "viewLog": "View log", "hideLog": "Hide log", "emptyLog": "The log is currently empty.", "saved": "Settings saved", "failed": "Failed to save settings", "loading": "Loading Desktop settings…", "chinese": "Chinese (Simplified)" }
+,    "systemUi": { "title": "System settings", "subtitle": "These preferences affect only this Desktop, not any Agent.", "behavior": "Startup and window", "openAtLogin": "Open at login", "openAtLoginHint": "Start xiaomei-brain Desktop after signing in.", "unavailable": "Unavailable on this system", "closeBehavior": "When closing the window", "closeHint": "Exit Desktop or keep it running in a minimized window.", "exit": "Exit Desktop", "minimize": "Minimize window", "experience": "Interface and notifications", "notifications": "Windows notifications", "notificationsHint": "Show Agent message notifications when Desktop is minimized or unfocused.", "messageSounds": "Message sounds", "messageSoundsHint": "Play one subtle sound when an Agent finishes a reply in the background.", "language": "Language", "languageHint": "Change the Desktop interface language.", "rightSidebar": "Open right sidebar by default", "rightSidebarHint": "Show Agent activity and status when entering a conversation.", "update": "Automatic updates", "updateDisabled": "Not enabled", "updateHint": "The release service is not enabled, so Desktop does not check for updates.", "directories": "Directories and diagnostics", "configDirectory": "Desktop configuration", "logDirectory": "Desktop logs", "open": "Open directory", "viewLog": "View log", "hideLog": "Hide log", "emptyLog": "The log is currently empty.", "saved": "Settings saved", "failed": "Failed to save settings", "loading": "Loading Desktop settings…", "chinese": "Chinese (Simplified)" }
     ,"appearanceUi": { "title": "Appearance", "description": "Choose how Desktop looks", "light": "Light", "dark": "Dark", "system": "System", "accountSettings": "Account management", "close": "Close" }
     ,"storeUi": { "sessionUnavailable": "The current conversation is unavailable", "sessionProcessing": "The current conversation is still processing", "blockedRequestMissing": "The blocked request could not be found", "resumeFailed": "Failed to resume request", "assignmentMissing": "Assignment not found", "waitingReply": "{{title}} is waiting for your reply", "modelUnavailable": "The model service is temporarily unavailable" }
   }

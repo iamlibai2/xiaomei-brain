@@ -350,7 +350,50 @@
       "models": {"label": "模型", "description": "主模型、视觉模型与服务商"},
       "media": {"label": "媒体服务", "description": "图片、语音与音乐生成"},
       "search": {"label": "联网搜索", "description": "网页搜索服务与访问凭证"},
+      "execution": {"label": "执行环境", "description": "命令运行位置与隔离方式"},
       "channels": {"label": "渠道与绑定", "description": "飞书、钉钉和人物绑定"}
+    },
+    "executionSettingsUi": {
+      "connectToView": "连接 Agent 后才能查看执行环境。",
+      "loading": "正在读取执行环境…",
+      "title": "执行环境",
+      "description": "决定这个 Agent 在哪里运行命令和处理文件。配置只属于当前 Agent。",
+      "chooseTitle": "选择执行环境",
+      "chooseHint": "当前环境会继续运行，保存新的选择后需重启 Agent 才会切换。",
+      "protectedHost": "本机受保护模式",
+      "protectedHostDescription": "直接使用当前电脑的 PowerShell 和工具。",
+      "protectedHostDetail": "启动快、兼容性好；提供工作区和进程保护，但不是操作系统级隔离。",
+      "docker": "Docker 隔离环境",
+      "dockerDescription": "在这个 Agent 专属的容器中执行命令。",
+      "dockerDetail": "隔离更强；需要本机已安装并启动 Docker。",
+      "dockerOptions": "Docker 设置",
+      "dockerOptionsHint": "只挂载当前 Agent 的工作区，不会自动传入身份、记忆或模型密钥。",
+      "image": "容器镜像",
+      "cpu": "CPU 上限",
+      "memory": "内存上限（MB）",
+      "pids": "进程数上限",
+      "network": "网络访问",
+      "networkHint": "关闭后，容器不能访问互联网和局域网。",
+      "networkValues": {"enabled": "允许", "disabled": "关闭"},
+      "statusTitle": "环境检查",
+      "statusHint": "检查当前选择是否可用；不会创建 Docker 容器或执行用户命令。",
+      "test": "检查环境",
+      "testing": "检查中…",
+      "notTested": "尚未检查当前选择。",
+      "dockerCheckRequired": "保存 Docker 前请先检查环境，确认 Docker 已安装并正在运行。",
+      "testPassed": "环境检查通过。",
+      "runtimeEnvironment": "当前运行环境",
+      "runtimeState": "状态",
+      "shell": "命令行",
+      "workspace": "Agent 工作区",
+      "container": "容器",
+      "dockerVersion": "Docker 版本",
+      "reset": "撤销修改",
+      "save": "保存",
+      "saving": "保存中…",
+      "saved": "执行环境配置未发生变化。",
+      "savedRestart": "执行环境已保存，重启 Agent 后生效。",
+      "states": {"ready": "可用", "running": "运行中", "stopped": "已停止", "not_created": "尚未创建", "unavailable": "不可用", "unknown": "未知"}
     },
     "identityUi": {
       "accountManagement": "账户管理",
@@ -606,7 +649,7 @@
       "notConfiguredChannel": "未配置"
     },
     "localAiUi": { "statusOnline": "在线", "statusStarting": "加载中", "statusDownloading": "下载中", "statusNotInstalled": "未下载", "statusDownloadError": "下载失败", "statusStopped": "已停止", "statusUnavailable": "不可用", "statusAvailable": "待接入", "statusError": "异常", "preparing": "项正在准备", "onlineSummary": "{{online}}/{{total}} 项在线", "readStatusError": "无法读取本机 AI 服务状态", "operationFailed": "操作失败", "readLogError": "无法读取服务日志", "emptyLog": "日志文件目前为空。", "modelSwitchFailed": "模型切换失败", "deviceSwitchFailed": "运行设备切换失败", "title": "本机 AI 服务", "description": "下载并运行这台电脑上由所有本机 Agent 共享的模型服务。", "sharedInference": "共享推理服务", "checking": "检查中…", "systemLoad": "系统负载", "memory": "内存", "gpuMemory": "显存", "coreDependency": "核心依赖", "model": "模型", "device": "运行设备", "selectModel": "选择模型", "selectDevice": "选择设备", "auto": "自动", "downloaded": "已下载", "retryDownload": "重试下载", "download": "下载", "cancel": "取消", "start": "启动", "stop": "停止", "restart": "重启", "collapseLog": "收起日志", "log": "日志", "actualRuntime": "实际运行于 {{device}}", "memoryUsage": "内存 {{value}}", "memoryUnavailable": "内存暂不可统计", "gpuUsage": "显存 {{value}}", "gpuUnavailable": "显存暂不可统计", "location": "位置", "locked": "已锁定：{{reason}}", "downloadProgress": "下载进度 {{progress}}%", "empty": "没有发现本机 AI 服务。", "refresh": "刷新状态", "openDirectory": "打开服务目录", "downloadTitle": "下载 {{model}}", "downloadDescription": "模型将保存到本机共享缓存，供所有本机 Agent 使用。", "close": "关闭", "service": "服务", "source": "来源", "expectedSize": "预计大小", "remaining": "尚需下载", "downloadWarning": "下载可能持续数分钟，并占用网络带宽和磁盘空间。下载期间可以取消，之后可继续重试。", "confirmDownload": "确认后才会开始联网下载。", "confirm": "确认下载", "selectDeviceAuto": "自动选择设备", "embeddingName": "向量服务", "embeddingDescription": "为记忆和检索提供共享向量服务", "sttName": "语音识别", "sttDescription": "本地语音转文字和音频理解服务", "ttsName": "语音合成", "ttsDescription": "本地文字转语音服务", "voiceprintName": "声纹识别", "voiceprintDescription": "通过声音识别说话人", "faceName": "人脸识别", "faceDescription": "通过摄像头识别人" }
-,    "systemUi": { "title": "系统设置", "subtitle": "这些设置只影响当前 Desktop，不会修改任何 Agent。", "behavior": "启动与窗口", "openAtLogin": "开机启动", "openAtLoginHint": "登录 Windows 后自动启动 xiaomei-brain Desktop。", "unavailable": "当前系统不可用", "closeBehavior": "关闭窗口时", "closeHint": "选择点击关闭按钮后退出 Desktop，或仅最小化窗口。", "exit": "退出 Desktop", "minimize": "最小化窗口", "experience": "界面与通知", "notifications": "Windows 通知", "notificationsHint": "Desktop 最小化或失焦时，显示 Agent 的新消息通知。", "language": "语言", "languageHint": "切换 Desktop 界面语言。", "rightSidebar": "默认打开右侧栏", "rightSidebarHint": "进入会话时默认展示 Agent 的动态和状态。", "update": "自动更新", "updateDisabled": "暂未启用", "updateHint": "正式更新服务尚未启用，Desktop 不会自动检查更新。", "directories": "目录与诊断", "configDirectory": "Desktop 配置目录", "logDirectory": "Desktop 日志目录", "open": "打开目录", "viewLog": "查看日志", "hideLog": "收起日志", "emptyLog": "日志文件目前为空。", "saved": "设置已保存", "failed": "保存设置失败", "loading": "正在读取 Desktop 设置…", "chinese": "简体中文" }
+,    "systemUi": { "title": "系统设置", "subtitle": "这些设置只影响当前 Desktop，不会修改任何 Agent。", "behavior": "启动与窗口", "openAtLogin": "开机启动", "openAtLoginHint": "登录 Windows 后自动启动 xiaomei-brain Desktop。", "unavailable": "当前系统不可用", "closeBehavior": "关闭窗口时", "closeHint": "选择点击关闭按钮后退出 Desktop，或仅最小化窗口。", "exit": "退出 Desktop", "minimize": "最小化窗口", "experience": "界面与通知", "notifications": "Windows 通知", "notificationsHint": "Desktop 最小化或失焦时，显示 Agent 的新消息通知。", "messageSounds": "消息提示音", "messageSoundsHint": "后台会话收到 Agent 的完整回复时播放一次轻提示音。", "language": "语言", "languageHint": "切换 Desktop 界面语言。", "rightSidebar": "默认打开右侧栏", "rightSidebarHint": "进入会话时默认展示 Agent 的动态和状态。", "update": "自动更新", "updateDisabled": "暂未启用", "updateHint": "正式更新服务尚未启用，Desktop 不会自动检查更新。", "directories": "目录与诊断", "configDirectory": "Desktop 配置目录", "logDirectory": "Desktop 日志目录", "open": "打开目录", "viewLog": "查看日志", "hideLog": "收起日志", "emptyLog": "日志文件目前为空。", "saved": "设置已保存", "failed": "保存设置失败", "loading": "正在读取 Desktop 设置…", "chinese": "简体中文" }
     ,"appearanceUi": { "title": "外观", "description": "选择 Desktop 的显示外观", "light": "浅色", "dark": "深色", "system": "跟随系统", "accountSettings": "账户管理", "close": "关闭" }
     ,"storeUi": { "sessionUnavailable": "当前会话不可用", "sessionProcessing": "当前会话仍在处理中", "blockedRequestMissing": "找不到被阻塞的原始请求", "resumeFailed": "恢复请求失败", "assignmentMissing": "委托不存在", "waitingReply": "{{title}} 正在等你回复", "modelUnavailable": "模型服务暂时不可用" }
   }

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { produce } from "immer";
 import i18n from "../i18n";
 import type { AgentCreationResult, AgentEntry, AgentLifecycleAction, ChatArtifactReference, ChatAttachment, ChatInvocationSelection, LocalAgentInfo, SessionEntry } from "../types";
+import { playMessageSound } from "../message-sound";
 
 // ── Persistence (manual, avoid zustand/persist rehydration during render) ──
 
@@ -4077,6 +4078,17 @@ export function initGatewayEvents(): () => void {
       }));
       if (completedText) {
         const state = store();
+        const isActiveConversation = state.activeAgentId === agentId
+          && state.activeSessionByAgent[agentId] === eventSessionId;
+        const shouldAlert = !isActiveConversation
+          || document.visibilityState !== "visible"
+          || !document.hasFocus();
+        if (shouldAlert) {
+          window.setTimeout(() => {
+            if (store().speakingByAgent[agentId]) return;
+            void playMessageSound();
+          }, 160);
+        }
         const agent = state.agents.find((entry) => entry.id === agentId);
         const agentName = state.connectionByAgent[agentId]?.agentName || agent?.name || "Agent";
         const summary = publicResponseText(terminalText || completedText).replace(/\s+/g, " ");

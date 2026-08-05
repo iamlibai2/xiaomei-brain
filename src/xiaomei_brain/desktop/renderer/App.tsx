@@ -7,6 +7,7 @@ import { DesktopInfoProvider } from "./desktop-info";
 import { IdentityPage } from "./components/IdentityPage";
 import type { IdentityStatus } from "./types";
 import i18n from "./i18n";
+import { setMessageSoundEnabled } from "./message-sound";
 
 export function App() {
   const page = useCoreStore((s) => s.page);
@@ -26,6 +27,7 @@ export function App() {
     void window.identity.status().then(setIdentityStatus);
     const applySettings = (settings: import("./types").DesktopSettings) => {
       void i18n.changeLanguage(settings.language);
+      setMessageSoundEnabled(settings.messageSoundsEnabled);
       const root = document.documentElement;
       if (settings.theme === "system") root.removeAttribute("data-theme");
       else root.setAttribute("data-theme", settings.theme);

@@ -25,6 +25,7 @@ import {
   DESKTOP_SPEECH_STARTED,
   stopDesktopSpeech,
 } from "../../embodiment";
+import { setLiveVoiceActive } from "../../message-sound";
 
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 8 * 1024 * 1024;
@@ -91,6 +92,11 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
   const [voiceStatus, setVoiceStatus] = useState("");
   const [voiceHint, setVoiceHint] = useState("");
   const [voicePhase, setVoicePhase] = useState<VoiceOrbPhase>("listening");
+
+  useEffect(() => {
+    setLiveVoiceActive(listening);
+    return () => setLiveVoiceActive(false);
+  }, [listening]);
   const [desktopSpeaking, setDesktopSpeaking] = useState(false);
   const [modelSnapshot, setModelSnapshot] = useState<ModelConfigSnapshot | null>(null);
   const [modelBusy, setModelBusy] = useState(false);
