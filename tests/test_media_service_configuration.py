@@ -31,7 +31,7 @@ def test_catalog_discovers_all_built_in_media_capabilities():
         "MiniMax-Hailuo-2.3",
     )
     assert specs["tts_minimax"].field("voice_id").default == "female-tianmei"
-    assert specs["music_minimax"].field("model").default == "music-2.6"
+    assert specs["music_minimax"].field("model").default == "music-3.0"
 
 
 def test_catalog_discovers_third_party_service_from_manifest(tmp_path):

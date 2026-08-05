@@ -8,7 +8,7 @@ from xiaomei_brain.tools.execution_context import bind_tool_execution
 
 
 class _FakeMusicProvider:
-    def generate_to_file(self, *, prompt: str, lyrics: str, output_path: str) -> None:
+    def generate_to_file(self, *, prompt: str, lyrics: str, output_path: str, **_kwargs) -> None:
         Path(output_path).write_bytes(b"fake music")
 
 

@@ -6,7 +6,8 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass
-from typing import Iterable
+from pathlib import Path
+from typing import Iterable, Iterator
 
 
 class AudioConversionError(RuntimeError):
@@ -31,6 +32,67 @@ class EncodedAudio:
     data: bytes
     duration_ms: int
     codec: str
+
+
+def stream_audio_file_as_pcm(
+    path: str | os.PathLike[str],
+    *,
+    sample_rate: int = 44100,
+    channels: int = 2,
+    chunk_frames: int = 4410,
+) -> Iterator[bytes]:
+    """Decode an audio file with FFmpeg and yield signed 16-bit PCM chunks."""
+    source = Path(path)
+    if not source.is_file():
+        raise AudioConversionError(f"音频文件不存在：{source}")
+    executable = shutil.which("ffmpeg")
+    if not executable:
+        raise AudioConversionError("未找到 ffmpeg，无法播放音频文件")
+    creationflags = (
+        subprocess.CREATE_NO_WINDOW
+        if os.name == "nt" and hasattr(subprocess, "CREATE_NO_WINDOW")
+        else 0
+    )
+    process = subprocess.Popen(
+        [
+            executable,
+            "-hide_banner", "-loglevel", "error",
+            "-i", str(source),
+            "-f", "s16le",
+            "-acodec", "pcm_s16le",
+            "-ac", str(channels),
+            "-ar", str(sample_rate),
+            "pipe:1",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        creationflags=creationflags,
+    )
+    chunk_size = max(channels * 2, chunk_frames * channels * 2)
+    try:
+        assert process.stdout is not None
+        while True:
+            chunk = process.stdout.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
+        return_code = process.wait(timeout=10)
+        if return_code != 0:
+            detail = ""
+            if process.stderr is not None:
+                detail = process.stderr.read().decode("utf-8", errors="replace").strip()
+            raise AudioConversionError(f"音频解码失败：{detail[:300] or return_code}")
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        if process.stdout is not None:
+            process.stdout.close()
+        if process.stderr is not None:
+            process.stderr.close()
 
 
 def encode_speech_as_opus(

@@ -5,9 +5,13 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
+import wave
+from itertools import chain
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable, Iterator
 
+from xiaomei_brain.media_services.audio import SpeechAudio
 from xiaomei_brain.tools.base import tool
 from xiaomei_brain.tools.execution_context import current_tool_execution
 
@@ -50,14 +54,61 @@ def set_music_provider(provider) -> None:
     _music_provider = provider
 
 
+def _singing_path(filename: str) -> str:
+    output_dir = _get_output_dir()
+    os.makedirs(output_dir, exist_ok=True)
+    requested = os.path.basename(filename.strip()) if filename else ""
+    if not requested:
+        requested = f"singing_{time.strftime('%Y%m%d_%H%M%S')}.wav"
+    return os.path.join(output_dir, str(Path(requested).with_suffix(".wav")))
+
+
+def _save_pcm_while_streaming(
+    chunks: Iterable[bytes],
+    output_path: str,
+    *,
+    sample_rate: int,
+    channels: int,
+    cancel_check: Callable[[], bool] | None,
+) -> Iterator[bytes]:
+    """Write one valid WAV while forwarding aligned PCM frames for playback."""
+    frame_size = channels * 2
+    pending = bytearray()
+    with wave.open(output_path, "wb") as wav_file:
+        wav_file.setnchannels(channels)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        for chunk in chunks:
+            if cancel_check is not None and cancel_check():
+                raise RuntimeError("演唱已中断")
+            if not chunk:
+                continue
+            pending.extend(chunk)
+            aligned_size = len(pending) - (len(pending) % frame_size)
+            if aligned_size <= 0:
+                continue
+            value = bytes(pending[:aligned_size])
+            del pending[:aligned_size]
+            wav_file.writeframesraw(value)
+            yield value
+    if pending:
+        logger.warning("Discarded %d unaligned PCM bytes from music stream", len(pending))
+
+
 @tool(
     name="generate_music",
-    description="根据文字描述和歌词生成音乐。必须提供歌词（支持 [verse], [chorus], [bridge] 等标签）。filename 必须带扩展名（如 .mp3、.wav）。生成在后台进行，不会阻塞对话。",
+    description=(
+        "生成并交付音乐文件，支持歌曲和纯音乐。歌曲可提供带 [Verse]/[Chorus] 等标签的歌词，"
+        "也可设置 lyrics_optimizer=true 让模型自动写词；纯音乐请设置 is_instrumental=true，"
+        "无需歌词。filename 必须带扩展名（如 .mp3、.wav）。生成在后台进行，不会阻塞对话。"
+    ),
 )
 def music_generate(
     prompt: str,
-    lyrics: str,
+    lyrics: str = "",
     filename: str = "generated_music.mp3",
+    is_instrumental: bool = False,
+    lyrics_optimizer: bool = False,
 ) -> str:
     """Generate music from text description (non-blocking, background).
 
@@ -66,6 +117,8 @@ def music_generate(
                 Examples: "独立民谣,忧郁,内省", "欢快电子乐,节拍强劲"
         lyrics: Optional lyrics in [verse], [chorus], [bridge] format.
         filename: Output audio file path. 必须带扩展名。
+        is_instrumental: Generate music without vocals.
+        lyrics_optimizer: Ask MiniMax to write lyrics when none are supplied.
     """
     global _music_provider
 
@@ -74,6 +127,9 @@ def music_generate(
 
     if not prompt or not prompt.strip():
         return "音乐描述不能为空。"
+
+    if not is_instrumental and not lyrics.strip() and not lyrics_optimizer:
+        return "歌曲需要提供歌词，或启用自动写词；生成纯音乐请设置 is_instrumental=true。"
 
     # If filename is relative, save to output dir
     if not os.path.isabs(filename):
@@ -93,12 +149,15 @@ def music_generate(
                 prompt=prompt,
                 lyrics=lyrics,
                 output_path=filename,
+                is_instrumental=is_instrumental,
+                lyrics_optimizer=lyrics_optimizer,
             )
             size = os.path.getsize(filename)
             logger.info("Music generated: %s (%d KB)", filename, size // 1024)
             completion_message = (
                 f"音乐生成完成: {os.path.basename(filename)} ({size // 1024} KB)\n"
-                f"- 文件: {filename}"
+                f"- 文件: {filename}\n"
+                "文件已交付；除非用户明确要求播放，否则不要调用播放工具。"
             )
             if execution_context is not None:
                 try:
@@ -126,16 +185,102 @@ def music_generate(
 
 
 @tool(
+    name="sing",
+    description=(
+        "通过当前会话对应的身体实时演唱一首歌，并默认保存 WAV 录音作为产物。"
+        "用于用户明确要求 Agent 唱歌的场景；不要用它代替只需生成音乐文件的 generate_music。"
+    ),
+)
+def music_sing(
+    prompt: str,
+    lyrics: str,
+    filename: str = "",
+) -> str:
+    """Prepare a song in the background, then stream it through one Embodiment."""
+    if _music_provider is None:
+        return "音乐生成未启用或未配置。请先配置音乐服务。"
+    if not prompt or not prompt.strip():
+        return "音乐描述不能为空。"
+    if not lyrics or not lyrics.strip():
+        return "歌词不能为空。"
+
+    context = current_tool_execution()
+    if context is None or context.speech_callback is None:
+        return "当前会话没有可用于演唱的身体。"
+
+    output_path = _singing_path(filename)
+    sample_rate = int(_music_provider.audio_config.sample_rate)
+    channels = 2
+    provider = _music_provider
+
+    def _sing() -> None:
+        started_at = time.monotonic()
+        try:
+            source = iter(provider.generate_streaming(
+                prompt=prompt,
+                lyrics=lyrics,
+                audio_format="pcm",
+            ))
+            # MiniMax music can spend tens of seconds preparing its first
+            # segment.  Do not announce that the body is speaking until real
+            # audio exists, otherwise Desktop appears stuck in "speaking".
+            first_chunk = next(source)
+            logger.info(
+                "Music singing first audio chunk ready after %.2fs",
+                time.monotonic() - started_at,
+            )
+            stream = _save_pcm_while_streaming(
+                chain((first_chunk,), source),
+                output_path,
+                sample_rate=sample_rate,
+                channels=channels,
+                cancel_check=context.cancel_check,
+            )
+            result = context.publish_speech(SpeechAudio(
+                chunks=stream,
+                codec="pcm_s16",
+                sample_rate=sample_rate,
+                channels=channels,
+                initial_buffer_ms=1000,
+            ))
+            if not os.path.isfile(output_path) or os.path.getsize(output_path) <= 44:
+                raise RuntimeError("演唱没有产生有效音频")
+            size_kb = os.path.getsize(output_path) // 1024
+            completion_message = (
+                f"{result or '演唱完成。'}\n"
+                f"演唱录音已保存: {os.path.basename(output_path)} ({size_kb} KB)\n"
+                f"- 文件: {output_path}"
+            )
+            context.publish_artifacts(completion_message)
+            logger.info(
+                "Music singing completed in %.2fs: %s",
+                time.monotonic() - started_at,
+                output_path,
+            )
+        except StopIteration:
+            logger.error("Music singing failed: MiniMax returned no audio")
+        except Exception:
+            logger.exception("Music singing failed")
+
+    threading.Thread(target=_sing, daemon=True, name="music-sing").start()
+    return (
+        "正在准备演唱。MiniMax 生成首段音频后会通过当前身体开始播放，"
+        f"唱完会自动交付录音 {os.path.basename(output_path)}。"
+    )
+
+
+@tool(
     name="list_music_models",
     description="列出可用的音乐生成模型。",
 )
 def music_list_models() -> str:
     """List available music generation models."""
-    from xiaomei_brain.speech.music import get_available_models
+    from .provider import get_available_models
 
     models = get_available_models()
     return "可用音乐模型: " + ", ".join(models)
 
 
 music_generate_tool = music_generate
+music_sing_tool = music_sing
 music_list_models_tool = music_list_models

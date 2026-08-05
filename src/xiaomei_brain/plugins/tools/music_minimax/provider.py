@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import Generator
@@ -10,7 +11,7 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "music-2.6"
+DEFAULT_MODEL = "music-3.0"
 DEFAULT_FORMAT = "mp3"
 DEFAULT_SAMPLE_RATE = 44100
 DEFAULT_BITRATE = 256000
@@ -42,23 +43,37 @@ class MusicProvider:
         self.model = model
         self._audio_config = audio_config or MusicAudioConfig()
 
+    @property
+    def audio_config(self) -> MusicAudioConfig:
+        return self._audio_config
+
     def generate(
         self,
         prompt: str,
         lyrics: str | None = None,
         model: str | None = None,
+        *,
+        is_instrumental: bool = False,
+        lyrics_optimizer: bool = False,
     ) -> bytes:
         """Generate music synchronously (blocking, may take time).
 
         Args:
             prompt: Music description/prompt (style, mood, instruments, etc.)
             lyrics: Optional lyrics in [verse], [chorus], [bridge] format.
-            model: Model name (default: music-2.6).
+            model: Model name (default: music-3.0).
 
         Returns:
             Audio data as bytes.
         """
-        payload = self._build_payload(prompt, lyrics, model or self.model, stream=False)
+        payload = self._build_payload(
+            prompt,
+            lyrics,
+            model or self.model,
+            stream=False,
+            is_instrumental=is_instrumental,
+            lyrics_optimizer=lyrics_optimizer,
+        )
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -91,6 +106,9 @@ class MusicProvider:
         output_path: str,
         lyrics: str | None = None,
         model: str | None = None,
+        *,
+        is_instrumental: bool = False,
+        lyrics_optimizer: bool = False,
     ) -> None:
         """Generate music and save to file.
 
@@ -100,7 +118,13 @@ class MusicProvider:
             lyrics: Optional lyrics.
             model: Model name.
         """
-        audio_data = self.generate(prompt, lyrics=lyrics, model=model)
+        audio_data = self.generate(
+            prompt,
+            lyrics=lyrics,
+            model=model,
+            is_instrumental=is_instrumental,
+            lyrics_optimizer=lyrics_optimizer,
+        )
         with open(output_path, "wb") as f:
             f.write(audio_data)
         logger.info("Saved music to: %s", output_path)
@@ -110,12 +134,10 @@ class MusicProvider:
         prompt: str,
         lyrics: str | None = None,
         model: str | None = None,
+        *,
+        audio_format: str | None = None,
     ) -> Generator[bytes, None, None]:
-        """Generate music with streaming chunks (async API, yields progress).
-
-        Note: MiniMax music API is async - this polls for results and yields chunks.
-        For simplicity, this still blocks until audio is ready but yields chunks
-        as they arrive from the polling loop.
+        """Generate music and yield incremental audio chunks from MiniMax.
 
         Args:
             prompt: Music description/prompt.
@@ -125,34 +147,83 @@ class MusicProvider:
         Yields:
             Audio data chunks as they arrive.
         """
-        # Build task creation request
-        payload = self._build_payload(prompt, lyrics, model or self.model, stream=True)
+        payload = self._build_payload(
+            prompt,
+            lyrics,
+            model or self.model,
+            stream=True,
+            audio_format=audio_format,
+        )
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
 
-        # Start async generation task
         response = requests.post(
             f"{self.base_url}/v1/music_generation",
             headers=headers,
             json=payload,
-            timeout=10,
+            stream=True,
+            timeout=(10, 600),
         )
-        response.raise_for_status()
-        data = response.json()
+        try:
+            response.raise_for_status()
+            received_audio = False
+            received_incremental_audio = False
+            for raw_line in response.iter_lines(decode_unicode=True):
+                if isinstance(raw_line, bytes):
+                    raw_line = raw_line.decode("utf-8", errors="replace")
+                line = (raw_line or "").strip()
+                if not line:
+                    continue
+                if line.startswith("data:"):
+                    line = line[5:].strip()
+                if not line or line == "[DONE]":
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    logger.debug(
+                        "Ignoring non-JSON MiniMax music stream line: %s",
+                        line[:160],
+                    )
+                    continue
 
-        base_resp = data.get("base_resp", {})
-        if base_resp.get("status_code", 0) != 0:
-            raise ValueError(
-                f"MiniMax music API 错误 (code={base_resp['status_code']}): {base_resp.get('status_msg', 'unknown')}"
-            )
-
-        # For streaming, audio may come in chunks if task supports it
-        # Otherwise yield the complete audio at the end
-        audio_hex = data.get("data", {}).get("audio", "")
-        if audio_hex:
-            yield bytes.fromhex(audio_hex)
+                base_resp = event.get("base_resp") or {}
+                status_code = int(base_resp.get("status_code", 0) or 0)
+                if status_code != 0:
+                    raise ValueError(
+                        "MiniMax music API 错误 "
+                        f"(code={status_code}): {base_resp.get('status_msg', 'unknown')}"
+                    )
+                event_data = event.get("data") or {}
+                status = int(event_data.get("status", 0) or 0)
+                audio_hex = str(event_data.get("audio", "") or "")
+                if audio_hex:
+                    # MiniMax streams incremental audio with status=1, then
+                    # repeats the complete song in the final status=2 event.
+                    # Appending that final snapshot would play and save the
+                    # entire song twice.
+                    if status == 2 and received_incremental_audio:
+                        logger.debug(
+                            "Ignoring final cumulative MiniMax music snapshot "
+                            "(%d hex chars)",
+                            len(audio_hex),
+                        )
+                        continue
+                    try:
+                        chunk = bytes.fromhex(audio_hex)
+                    except ValueError as exc:
+                        raise ValueError("MiniMax music API 返回了无效音频分片") from exc
+                    if chunk:
+                        received_audio = True
+                        if status == 1:
+                            received_incremental_audio = True
+                        yield chunk
+            if not received_audio:
+                raise ValueError("MiniMax music API 未返回音频数据")
+        finally:
+            response.close()
 
     def _build_payload(
         self,
@@ -160,6 +231,9 @@ class MusicProvider:
         lyrics: str | None,
         model: str,
         stream: bool,
+        audio_format: str | None = None,
+        is_instrumental: bool = False,
+        lyrics_optimizer: bool = False,
     ) -> dict:
         """Build API request payload."""
         payload = {
@@ -168,14 +242,26 @@ class MusicProvider:
             "audio_setting": {
                 "sample_rate": self._audio_config.sample_rate,
                 "bitrate": self._audio_config.bitrate,
-                "format": self._audio_config.format,
+                "format": audio_format or self._audio_config.format,
             },
+            "stream": stream,
         }
+        if stream:
+            payload["output_format"] = "hex"
         if lyrics:
             payload["lyrics"] = lyrics
+        if is_instrumental:
+            payload["is_instrumental"] = True
+        if lyrics_optimizer:
+            payload["lyrics_optimizer"] = True
         return payload
 
 
 def get_available_models() -> list[str]:
     """Return list of available music models."""
-    return ["music-2.6"]
+    return [
+        "music-3.0",
+        "music-2.6",
+        "music-3.0-free",
+        "music-2.6-free",
+    ]

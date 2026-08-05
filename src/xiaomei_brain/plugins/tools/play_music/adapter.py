@@ -2,6 +2,8 @@
 
 from xiaomei_brain.tools.base import Tool
 from xiaomei_brain.plugins.body._refs import body_ref
+from xiaomei_brain.media_services.audio import SpeechAudio, stream_audio_file_as_pcm
+from xiaomei_brain.tools.execution_context import current_tool_execution
 
 
 def play_music(audio_path: str) -> dict:
@@ -12,6 +14,18 @@ def play_music(audio_path: str) -> dict:
     Returns:
         {"played": "..."}
     """
+    context = current_tool_execution()
+    if context is not None and context.speech_callback is not None:
+        result = context.publish_speech(SpeechAudio(
+            chunks=stream_audio_file_as_pcm(audio_path),
+            codec="pcm_s16",
+            sample_rate=44100,
+            channels=2,
+            initial_buffer_ms=1000,
+        ))
+        return {"played": audio_path, "through": result or "当前身体"}
+
+    # CLI and route-less internal turns retain the local-body fallback.
     b = body_ref[0]
     if not b or not b.throat or not b.throat.is_available():
         return {"error": "喉咙不可用"}
@@ -22,7 +36,7 @@ def play_music(audio_path: str) -> dict:
 def register(ctx):
     tool = Tool(
         name="play_music",
-        description="从本地播放音频文件或音乐。用于唱歌、播放背景音乐等场景。",
+        description="通过当前会话对应的身体播放已有音频文件。仅在用户明确要求播放时调用；不要在生成音乐后自动调用。",
         parameters={
             "type": "object",
             "properties": {

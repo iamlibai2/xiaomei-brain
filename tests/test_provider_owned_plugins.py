@@ -54,7 +54,7 @@ def test_minimax_music_plugin_owns_provider_and_tool(tmp_path):
 
     adapter.register(context)
 
-    assert [item.name for item in context.tools] == ["generate_music"]
+    assert [item.name for item in context.tools] == ["generate_music", "sing"]
     assert tool._music_provider is not None
     assert tool._music_provider.base_url == "https://music.example.com"
     assert tool._music_provider._audio_config.format == "wav"

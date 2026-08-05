@@ -1,6 +1,6 @@
 name: music_minimax
 version: "1.0.0"
-description: "音乐生成工具 — generate_music（MiniMax Music API）"
+description: "音乐生成与具身演唱工具 — generate_music / sing（MiniMax Music API）"
 kind: bundle
 entry: adapter:register
 mediaProvider:
@@ -21,9 +21,9 @@ mediaProvider:
     - key: model
       label: 默认模型
       type: select
-      default: music-2.6
+      default: music-3.0
       required: true
-      options: [music-2.6]
+      options: [music-3.0, music-2.6, music-3.0-free, music-2.6-free]
     - key: format
       label: 输出格式
       type: select
