@@ -8,7 +8,9 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +21,8 @@ from .process import process_registry, terminate_process_tree
 
 MAX_OUTPUT_BYTES = 1024 * 1024
 COMMAND_POLL_SECONDS = 0.2
+_EXECUTION_ENV_LOCK = threading.Lock()
+
 
 def command_tool_name() -> str:
     return "powershell" if sys.platform == "win32" else "bash"
@@ -42,6 +46,37 @@ def _find_shell() -> tuple[str, list[str]]:
     return executable, ["-lc"]
 
 
+@lru_cache(maxsize=1)
+def shell_runtime_label() -> str:
+    """Describe the shell actually selected on this host."""
+    executable, _prefix = _find_shell()
+    if sys.platform != "win32":
+        return f"Bash ({executable})"
+    try:
+        completed = subprocess.run(
+            [
+                executable,
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "$PSVersionTable.PSVersion.ToString()",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+            check=False,
+        )
+        version = completed.stdout.decode("utf-8", errors="replace").strip()
+        if version:
+            return f"PowerShell {version}"
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return f"PowerShell ({executable})"
+
+
 _HARD_DENY: tuple[tuple[str, str], ...] = (
     (r"(?i)(?:^|[;&|])\s*(?:shutdown|reboot|poweroff|halt)\b", "system power control"),
     (r"(?i)\b(?:mkfs(?:\.\w+)?|fdisk|parted)\b", "disk formatting or partitioning"),
@@ -63,6 +98,14 @@ def check_command(command: str) -> str | None:
         return "Command cannot be empty"
     if "\x00" in command:
         return "Command cannot contain NUL bytes"
+    if re.search(
+        r"(?i)(?:^|[\r\n;&|]\s*)pip(?:3(?:\.\d+)?)?(?:\.exe)?\b",
+        command,
+    ):
+        return (
+            "Do not invoke pip directly. Install Python packages in the "
+            "Agent execution environment with 'python -m pip'."
+        )
     for pattern, effect in _HARD_DENY:
         if re.search(pattern, command):
             return f"Command blocked: {effect} is not allowed."
@@ -94,12 +137,79 @@ def _invocation(command: str) -> tuple[list[str], str]:
     return [executable, *prefix, command], shell_name
 
 
-def _popen_kwargs(cwd: str) -> dict[str, Any]:
+def _execution_environment_dir(cwd: str) -> Path:
+    return Path(cwd) / ".venv"
+
+
+def _execution_python_path(environment_dir: Path) -> Path:
+    return environment_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
+def _command_uses_python(command: str) -> bool:
+    return bool(
+        re.search(
+            r"(?i)(?:^|[\s;&|()])python(?:3(?:\.\d+)?)?(?:\.exe)?(?=\s|$)",
+            command,
+        )
+    )
+
+
+def _ensure_execution_environment(cwd: str) -> Path:
+    environment_dir = _execution_environment_dir(cwd)
+    python_path = _execution_python_path(environment_dir)
+    if python_path.is_file():
+        return environment_dir
+    with _EXECUTION_ENV_LOCK:
+        if python_path.is_file():
+            return environment_dir
+        environment_dir.parent.mkdir(parents=True, exist_ok=True)
+        create_env = os.environ.copy()
+        create_env.pop("VIRTUAL_ENV", None)
+        create_env.pop("PYTHONHOME", None)
+        completed = subprocess.run(
+            [sys.executable, "-m", "venv", str(environment_dir)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env=create_env,
+            timeout=120,
+            creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0),
+            check=False,
+        )
+        if completed.returncode != 0 or not python_path.is_file():
+            detail = _decode(completed.stdout).strip()
+            suffix = f": {detail}" if detail else ""
+            raise RuntimeError(f"Unable to create isolated Python execution environment{suffix}")
+    return environment_dir
+
+
+def _shell_environment(cwd: str, command: str) -> dict[str, str]:
+    environment = os.environ.copy()
+    environment.pop("PYTHONHOME", None)
+    environment.pop("VIRTUAL_ENV", None)
+    environment_dir = _execution_environment_dir(cwd)
+    if _command_uses_python(command):
+        environment_dir = _ensure_execution_environment(cwd)
+    python_path = _execution_python_path(environment_dir)
+    if python_path.is_file():
+        bin_dir = str(python_path.parent)
+        path_key = next((key for key in environment if key.lower() == "path"), "PATH")
+        current_path = environment.get(path_key, "")
+        entries = [entry for entry in current_path.split(os.pathsep) if entry]
+        environment[path_key] = os.pathsep.join(
+            [bin_dir, *[entry for entry in entries if os.path.normcase(entry) != os.path.normcase(bin_dir)]]
+        )
+        environment["VIRTUAL_ENV"] = str(environment_dir)
+    return environment
+
+
+def _popen_kwargs(cwd: str, command: str) -> dict[str, Any]:
     kwargs: dict[str, Any] = {
         "cwd": cwd,
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.PIPE,
         "stderr": subprocess.STDOUT,
+        "env": _shell_environment(cwd, command),
     }
     if os.name == "nt":
         kwargs["creationflags"] = (
@@ -116,14 +226,14 @@ def _format_foreground_result(
     exit_code: int | None,
     truncated: bool = False,
 ) -> str:
-    """Return model-facing text without equating process exit with task success."""
+    """Return command output and process facts without judging task success."""
     text = output or "(no output)"
     if truncated:
         text += (
             f"\n\n[Output truncated: showing the last {MAX_OUTPUT_BYTES} UTF-8 bytes.]"
         )
     if exit_code not in {0, None}:
-        return f"Error: command exited with code {exit_code}\n\n{text}"
+        text += f"\n\n[Process exit code: {exit_code}]"
     return text
 
 
@@ -167,7 +277,7 @@ def run_command(
         argv, shell_name = _invocation(command)
         cwd = get_working_directory()
         Path(cwd).mkdir(parents=True, exist_ok=True)
-        process = subprocess.Popen(argv, **_popen_kwargs(cwd))
+        process = subprocess.Popen(argv, **_popen_kwargs(cwd, command))
     except (OSError, RuntimeError, ValueError) as exc:
         return f"Error: {exc}"
     if run_in_background:
@@ -211,15 +321,25 @@ def run_command(
 
 def create_command_tool() -> Tool:
     name = command_tool_name()
-    label = "PowerShell" if name == "powershell" else "Bash"
+    label = shell_runtime_label()
+    platform_guidance = (
+        " Use native PowerShell syntax and Windows executables. Do not assume "
+        "Unix-only commands such as head, tail, sed, or awk exist unless "
+        "Get-Command confirms them; use Select-Object -First to limit output."
+        if name == "powershell"
+        else ""
+    )
     return Tool(
         name=name,
         description=(
-            f"Run a non-interactive {label} command on the Agent host. Use "
+            f"Run a non-interactive {label} command on the Agent host."
+            f"{platform_guidance} Python commands use this Agent's isolated "
+            "workspace execution environment; install packages only with "
+            "'python -m pip', never bare 'pip'. Use "
             "read/write/edit/glob/grep for file operations. For long commands, "
-            "run in the background and inspect them with process. A zero exit "
-            "code only means the shell process ended normally; inspect output "
-            "and verify requested side effects before reporting success."
+            "run in the background and inspect them with process. Non-zero exit "
+            "codes are returned as neutral process facts; inspect the command "
+            "output and verify requested side effects before deciding success."
         ),
         parameters={
             "type": "object",

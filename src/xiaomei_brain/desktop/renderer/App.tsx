@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useCoreStore, initGatewayEvents } from "./store";
+import { ConnectPage } from "./components/ConnectPage";
 import { MenuBar } from "./components/MenuBar";
 import { MainShell } from "./components/MainShell";
 import { DesktopInfoProvider } from "./desktop-info";
@@ -8,30 +9,38 @@ import type { IdentityStatus } from "./types";
 import i18n from "./i18n";
 
 export function App() {
+  const page = useCoreStore((s) => s.page);
   const agents = useCoreStore((s) => s.agents);
+  const activeAgentId = useCoreStore((s) => s.activeAgentId);
   const connectToAgent = useCoreStore((s) => s.connectToAgent);
+  const setPage = useCoreStore((s) => s.setPage);
   const refreshLocalAgents = useCoreStore((s) => s.refreshLocalAgents);
   const localDiscoveryComplete = useCoreStore((s) => s.localDiscoveryComplete);
   const localAvailabilityByAgent = useCoreStore((s) => s.localAvailabilityByAgent);
   const [identityStatus, setIdentityStatus] = useState<IdentityStatus | null>(null);
-  const didAutoConnect = useRef(false);
+  const [startupRestoreComplete, setStartupRestoreComplete] = useState(false);
+  const startupRestoreAgentRef = useRef<string | null>(null);
 
   useEffect(() => {
-    initGatewayEvents();
+    const disposeGatewayEvents = initGatewayEvents();
     void window.identity.status().then(setIdentityStatus);
     void window.desktop.getSettings().then((settings) => {
       void i18n.changeLanguage(settings.language);
     });
+    return disposeGatewayEvents;
   }, []);
 
   useEffect(() => {
-    if (identityStatus?.unlocked) void refreshLocalAgents();
-    else didAutoConnect.current = false;
+    if (identityStatus?.unlocked) {
+      void refreshLocalAgents();
+    } else {
+      startupRestoreAgentRef.current = null;
+      setStartupRestoreComplete(false);
+    }
   }, [identityStatus?.unlocked]);
 
   useEffect(() => {
     const handleIdentityChange = (event: Event) => {
-      didAutoConnect.current = false;
       setIdentityStatus((event as CustomEvent<IdentityStatus>).detail);
     };
     window.addEventListener("xiaomei:identity-locked", handleIdentityChange);
@@ -42,18 +51,47 @@ export function App() {
     };
   }, []);
 
-  // Discovery is the first-use boundary. Once it completes, the main shell can
-  // guide both an empty installation and an existing set of Agents.
+  // Restore the selected Agent first. The promise resolves only after its
+  // resume snapshot and session list have been loaded, which is the actual
+  // boundary for rendering the saved conversation.
   useEffect(() => {
-    if (identityStatus?.unlocked && localDiscoveryComplete && !didAutoConnect.current && agents.length > 0) {
-      didAutoConnect.current = true;
-      agents.forEach((agent) => {
-        if (agent.source !== "local" || localAvailabilityByAgent[agent.id]) {
-          void connectToAgent(agent.id);
-        }
-      });
+    if (!identityStatus?.unlocked || !localDiscoveryComplete || startupRestoreComplete) return;
+    if (page === "connect" && agents.length > 0) setPage("chat");
+    if (agents.length === 0) {
+      setStartupRestoreComplete(true);
+      return;
     }
-  }, [agents, localDiscoveryComplete, identityStatus?.unlocked]);
+
+    const activeAgent = agents.find((agent) => agent.id === activeAgentId) || agents[0];
+    if (startupRestoreAgentRef.current === activeAgent.id) return;
+    startupRestoreAgentRef.current = activeAgent.id;
+    if (activeAgent.source === "local" && localAvailabilityByAgent[activeAgent.id] === false) {
+      setStartupRestoreComplete(true);
+      return;
+    }
+    void connectToAgent(activeAgent.id).finally(() => setStartupRestoreComplete(true));
+  }, [
+    activeAgentId,
+    agents,
+    connectToAgent,
+    identityStatus?.unlocked,
+    localAvailabilityByAgent,
+    localDiscoveryComplete,
+    page,
+    setPage,
+    startupRestoreComplete,
+  ]);
+
+  // Once the visible conversation is restored, connect the remaining Agents
+  // in the background and react to later local availability changes.
+  useEffect(() => {
+    if (!identityStatus?.unlocked || !localDiscoveryComplete || !startupRestoreComplete) return;
+    agents.forEach((agent) => {
+      if (agent.source !== "local" || localAvailabilityByAgent[agent.id] === true) {
+        void connectToAgent(agent.id);
+      }
+    });
+  }, [agents, connectToAgent, identityStatus?.unlocked, localAvailabilityByAgent, localDiscoveryComplete, startupRestoreComplete]);
 
   return (
     <DesktopInfoProvider>
@@ -61,11 +99,8 @@ export function App() {
         <MenuBar />
         {!identityStatus ? null : !identityStatus.unlocked ? (
           <IdentityPage status={identityStatus} onReady={setIdentityStatus} />
-        ) : !localDiscoveryComplete && agents.length === 0 ? (
-          <div className="desktop-startup-check" role="status">
-            <span />
-            <p>正在检查本机 Agent…</p>
-          </div>
+        ) : !startupRestoreComplete ? null : page === "connect" ? (
+          <ConnectPage />
         ) : (
           <MainShell />
         )}

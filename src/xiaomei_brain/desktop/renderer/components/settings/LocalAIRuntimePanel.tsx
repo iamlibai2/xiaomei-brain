@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { DesktopSettings, LocalAIServiceStatus, LocalAISystemStatus } from "../../types";
 import { Button, Icon, SelectMenu } from "../ui";
-import { notifyLocalAIStatusChanged } from "./events";
 
 const STATE_LABELS: Record<LocalAIServiceStatus["state"], string> = {
   online: "在线",
@@ -32,7 +31,6 @@ export function LocalAIRuntimePanel({ language }: { language: DesktopSettings["l
       setServices(result.services);
       setSystem(result.system || null);
       setError("");
-      notifyLocalAIStatusChanged(result.services);
     } else {
       setError(result.error || "无法读取本机 AI 服务状态");
     }
@@ -49,7 +47,6 @@ export function LocalAIRuntimePanel({ language }: { language: DesktopSettings["l
         setServices(cached.services);
         setSystem(cached.system || null);
         setLoading(false);
-        notifyLocalAIStatusChanged(cached.services);
       }
       // Refresh slow facts such as cache sizes and GPU load in the background.
       await load(hasCachedSnapshot);

@@ -191,6 +191,35 @@ def test_conversation_driver_message_events_share_session_and_turn():
     assert router.events[-1][1] == {"text": "你好", "status": "complete"}
 
 
+def test_conversation_driver_complete_event_excludes_private_reasoning():
+    class EventRouter:
+        def __init__(self):
+            self.events = []
+
+        def route_for_session(self, session_id):
+            return OutputRoute(type="ws", target=session_id)
+
+        def deliver_event(self, event, payload, route, **metadata):
+            self.events.append((event, payload, metadata))
+            return True
+
+    router = EventRouter()
+    parent = SimpleNamespace(_router=router)
+
+    ConversationDriver._deliver_response(
+        parent,
+        "session-1",
+        "turn-1",
+        "\n\x1b[2mprivate reasoning\x1b[0m\npublic answer",
+    )
+
+    assert router.events == [(
+        "message.complete",
+        {"text": "\n\npublic answer", "status": "complete"},
+        {"session_id": "session-1", "turn_id": "turn-1"},
+    )]
+
+
 def test_realtime_pace_uses_the_public_conversation_event_path():
     class EventHub:
         def __init__(self):

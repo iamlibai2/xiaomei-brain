@@ -19,5 +19,8 @@ def test_discovers_user_shared_skills_independent_of_working_directory(
     assert str(project_skills) not in _discover_user_skill_directories(str(home))
 
 
-def test_ignores_missing_user_shared_skills(tmp_path):
-    assert _discover_user_skill_directories(str(tmp_path / "home")) == []
+def test_watches_missing_user_shared_skills_for_later_install(tmp_path):
+    home = tmp_path / "home"
+    assert _discover_user_skill_directories(str(home)) == [
+        str(home / ".agents" / "skills"),
+    ]

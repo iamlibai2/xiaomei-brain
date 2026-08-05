@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -75,6 +76,8 @@ class SkillLoader:
         self._storage: Any = None
         self._disabled_names: set[str] = set()
         self._package_disabled_names: set[str] = set()
+        self._scan_lock = threading.RLock()
+        self._source_snapshot: tuple[tuple[str, int, int], ...] | None = None
 
     def set_disabled_names(self, names: set[str] | list[str]) -> None:
         """Hide capability-owned Skills without deleting their stored data."""
@@ -105,22 +108,47 @@ class SkillLoader:
         后续运行：增量更新（已有技能按名称更新，新技能追加）。
         extra_dirs（如 .agents/skills/）的技能导入 but 不覆盖同名已有技能。
         """
-        storage = self._get_storage()
+        with self._scan_lock:
+            storage = self._get_storage()
 
-        # Import lower-priority shared/package Skills first. Later directories
-        # win name conflicts, and Agent-local Skills are imported last.
-        for extra_dir in self._extra_dirs:
-            if extra_dir.is_dir():
-                m = storage.import_from_dir(extra_dir)
-                if m:
-                    logger.info("SkillLoader: imported %d skills from %s", m, extra_dir)
-            else:
-                logger.debug("SkillLoader: extra dir not found: %s", extra_dir)
+            # Import lower-priority shared/package Skills first. Later directories
+            # win name conflicts, and Agent-local Skills are imported last.
+            for extra_dir in self._extra_dirs:
+                if extra_dir.is_dir():
+                    m = storage.import_from_dir(extra_dir)
+                    if m:
+                        logger.info("SkillLoader: imported %d skills from %s", m, extra_dir)
+                else:
+                    logger.debug("SkillLoader: extra dir not found: %s", extra_dir)
 
-        n = storage.import_from_dir(self._skills_dir)
-        logger.info("SkillLoader: imported %d Agent-local skills from %s", n, self._skills_dir)
+            n = storage.import_from_dir(self._skills_dir)
+            logger.info("SkillLoader: imported %d Agent-local skills from %s", n, self._skills_dir)
+            self._source_snapshot = self._snapshot_sources()
 
         return []  # Phase 2 no longer returns Skill objects from scan
+
+    def _snapshot_sources(self) -> tuple[tuple[str, int, int], ...]:
+        """Return a cheap fingerprint of every discoverable SKILL.md file."""
+        files: list[tuple[str, int, int]] = []
+        for root in [*self._extra_dirs, self._skills_dir]:
+            if not root.is_dir():
+                continue
+            for path in root.rglob("SKILL.md"):
+                try:
+                    stat = path.stat()
+                except OSError:
+                    continue
+                files.append((str(path.resolve()), stat.st_mtime_ns, stat.st_size))
+        return tuple(sorted(files))
+
+    def refresh_if_changed(self) -> bool:
+        """Import newly installed or edited Skill files without restarting."""
+        with self._scan_lock:
+            current = self._snapshot_sources()
+            if self._source_snapshot is not None and current == self._source_snapshot:
+                return False
+            self.scan()
+            return True
 
     def build_index(self) -> None:
         """构建向量索引（已在 import_from_dir 中自动完成，此处为兼容旧 API）。"""

@@ -178,6 +178,32 @@ function displayAttachments(values: unknown): DisplayAttachment[] {
   });
 }
 
+function publicResponseText(value: string): string {
+  return value
+    .replace(/\u001b\[2m[\s\S]*?\u001b\[0m/g, "")
+    .replace(/\u001b\[[0-9;]*m/g, "")
+    .trim();
+}
+
+function displayInvocation(value: unknown): ChatInvocationSelection | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const item = value as Record<string, unknown>;
+  const kind = item.kind;
+  const id = typeof item.id === "string" ? item.id.trim() : "";
+  if (!id || !["capability", "skill", "execution"].includes(String(kind))) return undefined;
+  return {
+    kind: kind as ChatInvocationSelection["kind"],
+    id,
+    name: typeof item.name === "string" && item.name.trim() ? item.name : id,
+    processTemplateId: typeof item.process_template_id === "string" && item.process_template_id
+      ? item.process_template_id
+      : typeof item.processTemplateId === "string" ? item.processTemplateId : undefined,
+    processName: typeof item.process_name === "string" && item.process_name
+      ? item.process_name
+      : typeof item.processName === "string" ? item.processName : undefined,
+  };
+}
+
 function displayArtifact(value: unknown): DisplayArtifact | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const item = value as Record<string, unknown>;
@@ -483,6 +509,7 @@ function historyMessages(
       role,
       content: row.content,
       reasoningContent: reasoningContent || undefined,
+      invocation: role === "user" ? displayInvocation(row.invocation) : undefined,
       streaming: false,
       createdAt: typeof row.created_at === "number" ? row.created_at * 1000 : undefined,
       attachments: displayAttachments(row.attachments),
@@ -797,6 +824,7 @@ export interface DisplayMessage {
   role: "user" | "agent";
   content: string;
   reasoningContent?: string;
+  invocation?: ChatInvocationSelection;
   streaming: boolean;
   createdAt?: number;
   interaction?: InteractionRequest;
@@ -1681,6 +1709,16 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
 
           s.localAvailabilityByAgent[agentId] = localAgent.online;
           s.localInfoByAgent[agentId] = localAgent;
+          if (!localAgent.online) {
+            const connection = s.connectionByAgent[agentId];
+            if (connection) connection.status = "disconnected";
+            delete s.agentStateByAgent[agentId];
+            delete s.speakingByAgent[agentId];
+            for (const key of Object.keys(s.sendingByConversation)) {
+              if (key.startsWith(`${agentId}\u0000`)) s.sendingByConversation[key] = false;
+            }
+            s.sendingByAgent[agentId] = false;
+          }
           if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
           if (!s.connectionByAgent[agentId]) {
             s.connectionByAgent[agentId] = {
@@ -1694,6 +1732,14 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         for (const agent of s.agents) {
           if (agent.source === "local" && !discoveredIds.has(agent.id)) {
             s.localAvailabilityByAgent[agent.id] = false;
+            const connection = s.connectionByAgent[agent.id];
+            if (connection) connection.status = "disconnected";
+            delete s.agentStateByAgent[agent.id];
+            delete s.speakingByAgent[agent.id];
+            for (const key of Object.keys(s.sendingByConversation)) {
+              if (key.startsWith(`${agent.id}\u0000`)) s.sendingByConversation[key] = false;
+            }
+            s.sendingByAgent[agent.id] = false;
           }
         }
 
@@ -2067,6 +2113,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         id: `user-${clientRequestId}`, role: "user", content: text, streaming: false,
         createdAt: Date.now(),
         deliveryStatus: "queued",
+        invocation: invocation ? { ...invocation } : undefined,
         attachments: [
           ...attachments.map((attachment) => ({
           id: attachment.id,
@@ -3159,8 +3206,18 @@ useCoreStore.subscribe((state) => savePersisted(state));
 
 // ── Gateway event handler ──
 
-export function initGatewayEvents() {
-  window.notifications.onSelect((target) => {
+type GatewayEventRegistry = typeof globalThis & {
+  __xiaomeiGatewayEventsCleanup?: () => void;
+};
+
+export function initGatewayEvents(): () => void {
+  // Vite HMR recreates this module without recreating the renderer window.
+  // Keep ownership on globalThis so a refreshed module can dispose the
+  // previous listener before registering its replacement.
+  const registry = globalThis as GatewayEventRegistry;
+  registry.__xiaomeiGatewayEventsCleanup?.();
+
+  const disposeNotificationSelect = window.notifications.onSelect((target) => {
     const state = useCoreStore.getState();
     if (!state.agents.some((agent) => agent.id === target.agentId)) return;
 
@@ -3175,7 +3232,7 @@ export function initGatewayEvents() {
     });
   });
 
-  window.gateway.onEvent((raw: {
+  const disposeGatewayEvent = window.gateway.onEvent((raw: {
     event: string;
     data: unknown;
     agentId: string;
@@ -3371,6 +3428,8 @@ export function initGatewayEvents() {
           error: "",
         };
       }));
+      const agent = store().agents.find((entry) => entry.id === agentId);
+      if (agent?.source === "local") void store().refreshLocalAgents();
       return;
     }
 
@@ -3389,6 +3448,9 @@ export function initGatewayEvents() {
             agentName: (d.agent_name as string) || previous?.agentName || "",
             error: "",
           };
+          if (s.agents.find((entry) => entry.id === agentId)?.source === "local") {
+            s.localAvailabilityByAgent[agentId] = true;
+          }
         }
         if (sessionId) {
           if (event === "reconnected") s.activeSessionByAgent[agentId] = sessionId;
@@ -3954,13 +4016,15 @@ export function initGatewayEvents() {
         const state = store();
         const agent = state.agents.find((entry) => entry.id === agentId);
         const agentName = state.connectionByAgent[agentId]?.agentName || agent?.name || "Agent";
-        const summary = completedText.replace(/\s+/g, " ").trim();
-        void window.notifications.show({
-          title: agentName,
-          body: summary,
-          agentId,
-          sessionId: eventSessionId,
-        }).catch(() => {});
+        const summary = publicResponseText(terminalText || completedText).replace(/\s+/g, " ");
+        if (summary) {
+          void window.notifications.show({
+            title: agentName,
+            body: summary,
+            agentId,
+            sessionId: eventSessionId,
+          }).catch(() => {});
+        }
       }
     } else if (event === "error") {
       cancelPendingStreamRender();
@@ -3974,5 +4038,22 @@ export function initGatewayEvents() {
       stream.id = null;
       stream.ref = "";
     }
+  });
+
+  const cleanup = () => {
+    disposeNotificationSelect();
+    disposeGatewayEvent();
+    if (registry.__xiaomeiGatewayEventsCleanup === cleanup) {
+      delete registry.__xiaomeiGatewayEventsCleanup;
+    }
+  };
+  registry.__xiaomeiGatewayEventsCleanup = cleanup;
+  return cleanup;
+}
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    const registry = globalThis as GatewayEventRegistry;
+    registry.__xiaomeiGatewayEventsCleanup?.();
   });
 }

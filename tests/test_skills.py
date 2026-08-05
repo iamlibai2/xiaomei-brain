@@ -466,6 +466,26 @@ description: Test skill description
         names = loader.list_names()
         assert "test-skill" in names
 
+    def test_refresh_if_changed_imports_skill_installed_after_startup(self, tmp_db):
+        skills_dir = os.path.join(os.path.dirname(tmp_db), "live-skills")
+        loader = SkillLoader(skills_dir=skills_dir, db_path=tmp_db)
+        loader.scan()
+        assert loader.refresh_if_changed() is False
+
+        skill_dir = os.path.join(skills_dir, "installed-live")
+        os.makedirs(skill_dir, exist_ok=True)
+        with open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8") as f:
+            f.write("""---
+name: installed-live
+description: Installed while Agent is running
+---
+# Live Skill
+""")
+
+        assert loader.refresh_if_changed() is True
+        assert "installed-live" in loader.list_names()
+        assert loader.refresh_if_changed() is False
+
     def test_list_skills_delegates(self, tmp_db):
         loader = SkillLoader(skills_dir="/tmp/x", db_path=tmp_db)
         storage = loader._get_storage()

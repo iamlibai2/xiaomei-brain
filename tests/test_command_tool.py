@@ -45,14 +45,15 @@ def test_command_preserves_utf8_output(tmp_path, monkeypatch):
     assert result == "你好"
 
 
-def test_command_nonzero_exit_is_an_explicit_error(tmp_path, monkeypatch):
+def test_command_nonzero_exit_is_returned_without_judging_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(file_ops, "_output_base", str(tmp_path / "agent"))
     expression = "exit 7"
 
     result = command.run_command(expression)
 
     assert isinstance(result, str)
-    assert result.startswith("Error: command exited with code 7")
+    assert not result.startswith("Error:")
+    assert "[Process exit code: 7]" in result
 
 
 def test_command_can_be_cancelled_during_execution(tmp_path, monkeypatch):
@@ -118,3 +119,34 @@ def test_background_command_can_be_waited_for(tmp_path, monkeypatch):
 def test_catastrophic_commands_are_blocked():
     assert command.check_command("rm -rf /") is not None
     assert command.check_command("echo ok") is None
+
+
+def test_bare_pip_is_blocked_but_python_module_pip_is_allowed():
+    assert "python -m pip" in command.check_command("pip install demo")
+    assert "python -m pip" in command.check_command("Write-Output ok\npip install demo")
+    assert command.check_command("python -m pip install demo") is None
+
+
+def test_python_commands_use_an_isolated_workspace_environment(tmp_path, monkeypatch):
+    agent_dir = tmp_path / "agent"
+    monkeypatch.setattr(file_ops, "_output_base", str(agent_dir))
+
+    result = command.run_command(
+        "python -c \"import os,sys; print(sys.prefix); print(os.environ.get('VIRTUAL_ENV', ''))\"",
+        timeout=120,
+    )
+
+    assert isinstance(result, str)
+    lines = [line.strip() for line in result.splitlines() if line.strip()]
+    expected = agent_dir / "workspace" / ".venv"
+    assert Path(lines[0]).resolve() == expected.resolve()
+    assert Path(lines[1]).resolve() == expected.resolve()
+
+
+def test_shell_description_reports_dialect_and_safe_python_installation():
+    description = command.command_tool.description
+    assert "python -m pip" in description
+    if sys.platform == "win32":
+        assert "PowerShell " in description
+        assert "Select-Object -First" in description
+        assert "head" in description

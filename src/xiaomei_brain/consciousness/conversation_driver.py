@@ -1621,6 +1621,11 @@ class ConversationDriver:
         memory_references: list[dict[str, Any]] | None = None,
     ) -> None:
         import re
+        # Streaming transports wrap private reasoning in ANSI dim/reset markers
+        # so interactive clients can render it separately. The terminal event
+        # is also used by notification and channel projections, where only the
+        # public answer belongs.
+        content = re.sub(r'\x1b\[2m.*?\x1b\[0m', '', content, flags=re.DOTALL)
         content = re.sub(r'\x1b\[[0-9;]*m', '', content)
         payload: dict[str, Any] = {"text": content, "status": status}
         if error:

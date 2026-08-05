@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 def _discover_user_skill_directories(home_dir: str | None = None) -> list[str]:
-    """Return existing user-level directories managed by Agent Skills tools.
+    """Return user-level directories managed by Agent Skills tools.
 
     Shared Skills belong to the operating-system user, not to the source tree.
     Keeping this path independent from the process working directory also makes
@@ -28,7 +28,8 @@ def _discover_user_skill_directories(home_dir: str | None = None) -> list[str]:
     """
     home = os.path.abspath(home_dir or os.path.expanduser("~"))
     shared_dir = os.path.join(home, ".agents", "skills")
-    return [shared_dir] if os.path.isdir(shared_dir) else []
+    # Watch the canonical location before its first Skill is installed, too.
+    return [shared_dir]
 
 
 class AgentManager:

@@ -51,6 +51,9 @@ class InvocationMethods:
         loader = getattr(instance, "_skill_loader", None)
         skills = []
         if loader is not None:
+            refresh = getattr(loader, "refresh_if_changed", None)
+            if callable(refresh):
+                refresh()
             skills = [
                 {
                     "id": str(item.get("name", "")),
