@@ -326,6 +326,10 @@ def test_artifact_rpc_lists_only_person_and_global_assets(tmp_path, monkeypatch)
     assert {item["name"] for item in artifacts} == {"mine.txt", "shared.txt"}
     assert all("user_id" not in item for item in artifacts)
     assert all("relative_path" not in item for item in artifacts)
+    assert {item["display_path"] for item in artifacts} == {
+        "workspace/mine.txt",
+        "workspace/shared.txt",
+    }
     db.close()
 
 

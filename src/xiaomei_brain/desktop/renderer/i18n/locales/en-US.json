@@ -515,6 +515,15 @@
       "chooseProcess": "Choose acceptance standard", "back": "Back", "optional": "Choose an acceptance standard (optional)", "auto": "Let Xiaomei decide", "autoHint": "Choose an acceptance standard based on the task", "stages": "{{count}} stages", "empty": "No matching capabilities or methods", "choose": "Choose a capability or method",
       "kindCapability": "C", "kindSkill": "S", "kindProcess": "P"
     },
+    "mentionUi": {
+      "loading": "Loading files you can reference…",
+      "error": "Files are temporarily unavailable",
+      "empty": "No matching files or artifacts",
+      "choose": "Choose a file to reference",
+      "recent": "Recent files and artifacts",
+      "file": "File saved by the Agent",
+      "remove": "Remove reference"
+    },
     "markdownUi": {
       "generating": "Generating chart content…", "drawing": "Drawing chart…", "parseFailed": "Mermaid chart parsing failed",
       "viewDiagram": "View chart", "viewSource": "View source", "zoom": "Zoom", "download": "Download",

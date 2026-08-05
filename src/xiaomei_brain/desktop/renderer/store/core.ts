@@ -129,6 +129,7 @@ function touchConversationState(state: CoreState, agentId: string, sessionId: st
     delete state.draftByConversation[oldest];
     delete state.unreadByConversation[oldest];
     delete state.attachmentsByConversation[oldest];
+    delete state.artifactReferencesByConversation[oldest];
     delete state.attachmentErrorByConversation[oldest];
     delete state.invocationByConversation[oldest];
     delete state.sendingByConversation[oldest];
@@ -1552,6 +1553,7 @@ interface CoreState {
   draftByAgent: Record<string, string>;
   draftByConversation: Record<string, string>;
   attachmentsByConversation: Record<string, ChatAttachment[]>;
+  artifactReferencesByConversation: Record<string, ChatArtifactReference[]>;
   attachmentErrorByConversation: Record<string, string>;
   invocationByConversation: Record<string, ChatInvocationSelection | undefined>;
   activeAgentId: string | null;
@@ -1582,9 +1584,15 @@ interface CoreActions {
   removeAgent: (agentId: string) => void;
   disconnectAgent: (agentId: string) => Promise<void>;
   resetIdentityState: () => void;
-  sendMessage: (text: string, artifactReferences?: ChatArtifactReference[]) => void;
+  sendMessage: (
+    text: string,
+    artifactReferences?: ChatArtifactReference[],
+    options?: { preserveComposer?: boolean },
+  ) => void;
   pickAttachments: () => Promise<void>;
   addAttachments: (attachments: ChatAttachment[]) => void;
+  addArtifactReference: (reference: ChatArtifactReference) => void;
+  removeArtifactReference: (artifactId: string, sessionId: string) => void;
   setAttachmentError: (error: string) => void;
   removeAttachment: (attachmentId: string) => void;
   abortMessage: () => Promise<void>;
@@ -1656,6 +1664,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   draftByAgent: {},
   draftByConversation: {},
   attachmentsByConversation: {},
+  artifactReferencesByConversation: {},
   attachmentErrorByConversation: {},
   invocationByConversation: {},
   activeAgentId: persisted.activeAgentId ?? null,
@@ -2059,6 +2068,9 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       for (const key of Object.keys(s.draftByConversation)) {
         if (key.startsWith(`${agentId}\u0000`)) delete s.draftByConversation[key];
       }
+      for (const key of Object.keys(s.artifactReferencesByConversation)) {
+        if (key.startsWith(`${agentId}\u0000`)) delete s.artifactReferencesByConversation[key];
+      }
       for (const key of Object.keys(s.invocationByConversation)) {
         if (key.startsWith(`${agentId}\u0000`)) delete s.invocationByConversation[key];
       }
@@ -2096,16 +2108,21 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
 
   // ── Send message ──
 
-  sendMessage: (text, artifactReferences = []) => {
+  sendMessage: (text, artifactReferences = [], options = {}) => {
     const agentId = get().activeAgentId;
     if (!agentId) return;
     const sessionId = get().activeSessionByAgent[agentId] || "";
     const draftKey = attachmentDraftKey(agentId, sessionId);
-    const attachments = artifactReferences.length > 0
+    const composerReferences = options.preserveComposer
+      ? artifactReferences
+      : artifactReferences.length > 0
+        ? artifactReferences
+        : (get().artifactReferencesByConversation[draftKey] || []);
+    const attachments = options.preserveComposer
       ? []
       : (get().attachmentsByConversation[draftKey] || []);
     const invocation = get().invocationByConversation[draftKey];
-    if (!text.trim() && attachments.length === 0 && artifactReferences.length === 0) return;
+    if (!text.trim() && attachments.length === 0 && composerReferences.length === 0) return;
     const clientRequestId = crypto.randomUUID();
 
     set(produce((s: CoreState) => {
@@ -2126,12 +2143,20 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
             ? `data:${attachment.mimeType};base64,${attachment.dataBase64}`
             : undefined,
           })),
-          ...artifactReferences.map((reference) => ({
+          ...composerReferences.map((reference) => ({
             id: reference.artifactId,
             name: reference.name || i18n.t("preview.document"),
             mimeType: reference.mimeType || "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             size: reference.size || 0,
-            kind: "document" as const,
+            kind: reference.kind === "image"
+              ? "image" as const
+              : reference.kind === "audio"
+                ? "audio" as const
+                : reference.kind === "video"
+                  ? "video" as const
+                  : reference.kind === "text"
+                    ? "text" as const
+                    : "document" as const,
             annotation: reference.selection ? {
               selectedText: reference.selection.selectedText,
               page: reference.selection.kind === "text" ? reference.selection.page : undefined,
@@ -2143,10 +2168,11 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       });
       touchSession(s, agentId, s.activeSessionByAgent[agentId] || "", 1, text);
       setSessionSending(s, agentId, sessionId, true);
-      if (artifactReferences.length === 0) {
+      if (!options.preserveComposer) {
         s.draftByAgent[agentId] = "";
         s.draftByConversation[conversationStateKey(agentId, sessionId)] = "";
         delete s.attachmentsByConversation[draftKey];
+        delete s.artifactReferencesByConversation[draftKey];
         delete s.attachmentErrorByConversation[draftKey];
         delete s.invocationByConversation[draftKey];
       }
@@ -2158,7 +2184,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       sessionId,
       clientRequestId,
       attachments,
-      artifactReferences,
+      artifactReferences: composerReferences,
       invocation,
     }).then((res) => {
       if (!res.error && res.result?.accepted !== false) {
@@ -2251,6 +2277,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       s.draftByAgent = {};
       s.draftByConversation = {};
       s.attachmentsByConversation = {};
+      s.artifactReferencesByConversation = {};
       s.attachmentErrorByConversation = {};
       s.invocationByConversation = {};
       s.unreadByAgent = {};
@@ -2291,10 +2318,11 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     set(produce((s: CoreState) => {
       s.attachmentErrorByConversation[draftKey] = "";
       const existing = s.attachmentsByConversation[draftKey] || [];
+      const references = s.artifactReferencesByConversation[draftKey] || [];
       const additions = attachments.filter((item) => !existing.some(
         (current) => current.name === item.name && current.size === item.size,
       ));
-      if (existing.length + additions.length > 4) {
+      if (existing.length + references.length + additions.length > 4) {
         s.attachmentErrorByConversation[draftKey] = i18n.t("home.maxAttachments");
         return;
       }
@@ -2316,6 +2344,40 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         return;
       }
       s.attachmentsByConversation[draftKey] = combined;
+    }));
+  },
+
+  addArtifactReference: (reference) => {
+    const agentId = get().activeAgentId;
+    if (!agentId) return;
+    const draftKey = attachmentDraftKey(agentId, get().activeSessionByAgent[agentId]);
+    set(produce((s: CoreState) => {
+      const existing = s.artifactReferencesByConversation[draftKey] || [];
+      if (existing.some((item) => (
+        item.artifactId === reference.artifactId && item.sessionId === reference.sessionId
+      ))) return;
+      const attachments = s.attachmentsByConversation[draftKey] || [];
+      if (attachments.length + existing.length >= 4) {
+        s.attachmentErrorByConversation[draftKey] = i18n.t("home.maxAttachments");
+        return;
+      }
+      touchConversationState(s, agentId, get().activeSessionByAgent[agentId] || "new");
+      s.artifactReferencesByConversation[draftKey] = [...existing, reference];
+      delete s.attachmentErrorByConversation[draftKey];
+    }));
+  },
+
+  removeArtifactReference: (artifactId, sessionId) => {
+    const agentId = get().activeAgentId;
+    if (!agentId) return;
+    const draftKey = attachmentDraftKey(agentId, get().activeSessionByAgent[agentId]);
+    set(produce((s: CoreState) => {
+      s.artifactReferencesByConversation[draftKey] = (
+        s.artifactReferencesByConversation[draftKey] || []
+      ).filter((reference) => !(
+        reference.artifactId === artifactId && reference.sessionId === sessionId
+      ));
+      delete s.attachmentErrorByConversation[draftKey];
     }));
   },
 

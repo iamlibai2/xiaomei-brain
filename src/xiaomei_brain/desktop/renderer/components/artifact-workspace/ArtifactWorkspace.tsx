@@ -133,7 +133,7 @@ export function ArtifactWorkspace({
       name: artifact.name,
       mimeType: artifact.mimeType,
       size: artifact.size,
-    }]);
+    }], { preserveComposer: true });
   } : undefined;
 
   return (

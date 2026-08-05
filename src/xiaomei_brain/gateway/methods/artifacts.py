@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 from typing import Any
 
 from ..artifacts import ArtifactError, read_stored_artifact
@@ -76,18 +77,37 @@ class ArtifactMethods:
             offset=parsed.offset,
         )
         has_more = len(rows) > parsed.limit
-        public = [
-            {
+        public = []
+        for row in rows[:parsed.limit]:
+            item = {
                 key: value
                 for key, value in row.items()
                 if key not in {"relative_path", "storage_suffix", "user_id"}
             }
-            for row in rows[:parsed.limit]
-        ]
+            display_path = self._display_path(row.get("relative_path"))
+            if display_path:
+                item["display_path"] = display_path
+            public.append(item)
         return build_response(req_id, result={
             "artifacts": public,
             "has_more": has_more,
         })
+
+    @staticmethod
+    def _display_path(value: Any) -> str:
+        """Expose only a relative Agent-owned path, never a host filesystem path."""
+        normalized = str(value or "").replace("\\", "/").strip("/")
+        path = PurePosixPath(normalized)
+        if (
+            not normalized
+            or path.is_absolute()
+            or ".." in path.parts
+            or path.parts[0] not in {
+                "workspace", "images", "music", "tts", "videos", "projects",
+            }
+        ):
+            return ""
+        return path.as_posix()
 
     def _person_id(
         self,

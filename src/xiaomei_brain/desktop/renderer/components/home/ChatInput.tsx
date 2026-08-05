@@ -4,11 +4,16 @@ import i18n from "../../i18n";
 import { useCoreStore } from "../../store";
 import { Icon } from "../ui";
 import type {
+  ChatArtifactReference,
   ChatAttachment,
   ChatInvocationSelection,
   ModelConfigSnapshot,
   ModelThinkingSelection,
 } from "../../types";
+import {
+  ArtifactMentionMenu,
+  type ArtifactMentionMenuHandle,
+} from "./ArtifactMentionMenu";
 import { ModelQuickMenu } from "./ModelQuickMenu";
 import {
   SlashInvocationMenu,
@@ -49,7 +54,7 @@ const TEXT_EXTENSIONS = new Set([
 ]);
 
 interface ChatInputProps {
-  onSend: (text: string) => void;
+  onSend: (text: string, artifactReferences?: ChatArtifactReference[]) => void;
   sending: boolean;
   onAbort: () => void;
 }
@@ -58,6 +63,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
   const { t } = useTranslation();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const slashMenuRef = useRef<SlashInvocationMenuHandle>(null);
+  const artifactMentionMenuRef = useRef<ArtifactMentionMenuHandle>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const microphoneStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -90,6 +96,8 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
   const [modelBusy, setModelBusy] = useState(false);
   const [modelError, setModelError] = useState("");
   const [commandStatus, setCommandStatus] = useState("");
+  const [dismissedSlashInput, setDismissedSlashInput] = useState("");
+  const [dismissedMentionInput, setDismissedMentionInput] = useState("");
   const activeAgentId = useCoreStore((s) => s.activeAgentId);
   const activeAgentIsLocal = useCoreStore((s) => (
     s.agents.find((agent) => agent.id === s.activeAgentId)?.source === "local"
@@ -120,6 +128,12 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
     return s.attachmentsByConversation[`${agentId}\u0000${sessionId || "new"}`];
   });
   const attachments = pendingAttachments || [];
+  const pendingArtifactReferences = useCoreStore((s) => {
+    const agentId = s.activeAgentId || "";
+    const sessionId = agentId ? s.activeSessionByAgent[agentId] : null;
+    return s.artifactReferencesByConversation[`${agentId}\u0000${sessionId || "new"}`];
+  });
+  const artifactReferences = pendingArtifactReferences || [];
   const attachmentError = useCoreStore((s) => {
     const agentId = s.activeAgentId || "";
     const sessionId = agentId ? s.activeSessionByAgent[agentId] : null;
@@ -127,6 +141,8 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
   });
   const pickAttachments = useCoreStore((s) => s.pickAttachments);
   const addAttachments = useCoreStore((s) => s.addAttachments);
+  const addArtifactReference = useCoreStore((s) => s.addArtifactReference);
+  const removeArtifactReference = useCoreStore((s) => s.removeArtifactReference);
   const setAttachmentError = useCoreStore((s) => s.setAttachmentError);
   const removeAttachment = useCoreStore((s) => s.removeAttachment);
   const connected = useCoreStore((s) => {
@@ -297,9 +313,35 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       && !sending
       && !invocation
       && input.startsWith("/")
-      && !input.includes("\n"),
+      && !input.includes("\n")
+      && dismissedSlashInput !== input,
   );
   const slashQuery = slashMenuOpen ? input.slice(1) : "";
+  const artifactMention = !slashMenuOpen && !invocation
+    ? artifactMentionAtEnd(input)
+    : null;
+  const artifactMentionMenuOpen = Boolean(
+    connected
+      && !sending
+      && activeAgentId
+      && artifactMention
+      && dismissedMentionInput !== input,
+  );
+
+  useEffect(() => {
+    if (!slashMenuOpen && !artifactMentionMenuOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Element
+        && target.closest(".slash-invocation-menu, .artifact-mention-menu")
+      ) return;
+      if (slashMenuOpen) setDismissedSlashInput(input);
+      if (artifactMentionMenuOpen) setDismissedMentionInput(input);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer, true);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
+  }, [artifactMentionMenuOpen, input, slashMenuOpen]);
 
   const showCommandStatus = useCallback((message: string) => {
     setCommandStatus(message);
@@ -310,16 +352,17 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
 
   const handleSend = async () => {
     const text = input.trim();
-    if (!text && attachments.length === 0) return;
+    if (!text && attachments.length === 0 && artifactReferences.length === 0) return;
 
     if (
       attachments.length === 0
+      && artifactReferences.length === 0
       && slashMenuOpen
       && text !== "/new"
       && text !== "/compact"
     ) return;
 
-    if (attachments.length === 0 && text === "/new") {
+    if (attachments.length === 0 && artifactReferences.length === 0 && text === "/new") {
       setInput("");
       setInvocation(undefined);
       await newSession();
@@ -327,7 +370,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       return;
     }
 
-    if (attachments.length === 0 && text === "/compact") {
+    if (attachments.length === 0 && artifactReferences.length === 0 && text === "/compact") {
       if (!activeAgentId || !activeSessionId) {
         showCommandStatus(t("home.noSessionToCompact"));
         return;
@@ -354,11 +397,22 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       return;
     }
 
-    onSend(text);
+    onSend(text, artifactReferences);
+    setDismissedSlashInput("");
+    setDismissedMentionInput("");
     textareaRef.current?.focus();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (artifactMentionMenuOpen) {
+      if (artifactMentionMenuRef.current?.handleKeyDown(
+        e as React.KeyboardEvent<HTMLTextAreaElement>,
+      )) return;
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        return;
+      }
+    }
     const hiddenCommand = input.trim() === "/new" || input.trim() === "/compact";
     if (slashMenuOpen && !hiddenCommand) {
       if (slashMenuRef.current?.handleKeyDown(
@@ -378,6 +432,19 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
   const selectInvocation = (selection: ChatInvocationSelection) => {
     setInvocation(selection);
     setInput("");
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
+  const selectArtifactReference = (reference: ChatArtifactReference) => {
+    if (!artifactMention) return;
+    if (attachments.length + artifactReferences.length >= 4) {
+      setAttachmentError(t("home.maxAttachments"));
+      setDismissedMentionInput(input);
+      return;
+    }
+    addArtifactReference(reference);
+    setInput(input.slice(0, artifactMention.start));
+    setDismissedMentionInput("");
     window.requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
@@ -754,8 +821,38 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
           agentId={activeAgentId}
           query={slashQuery}
           onSelect={selectInvocation}
-          onClose={() => setInput("")}
+          onClose={() => setDismissedSlashInput(input)}
         />
+      )}
+      {artifactMentionMenuOpen && activeAgentId && artifactMention && (
+        <ArtifactMentionMenu
+          ref={artifactMentionMenuRef}
+          agentId={activeAgentId}
+          query={artifactMention.query}
+          onSelect={selectArtifactReference}
+          onClose={() => setDismissedMentionInput(input)}
+        />
+      )}
+      {artifactReferences.length > 0 && (
+        <div className="composer-artifact-reference-list">
+          {artifactReferences.map((reference) => (
+            <div
+              className="composer-artifact-reference"
+              key={`${reference.sessionId}:${reference.artifactId}`}
+            >
+              <span className="composer-artifact-at">@</span>
+              <span title={reference.name}>{reference.name || t("mentionUi.file")}</span>
+              <button
+                type="button"
+                onClick={() => removeArtifactReference(reference.artifactId, reference.sessionId)}
+                title={t("mentionUi.remove")}
+                aria-label={t("mentionUi.remove")}
+              >
+                <Icon name="x" size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
       )}
       {attachments.length > 0 && (
         <div className="attachment-preview-list">
@@ -824,7 +921,11 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
         ref={textareaRef}
         className="chat-input-textarea"
         value={input}
-        onChange={(e) => setInput(e.target.value)}
+        onChange={(e) => {
+          setDismissedSlashInput("");
+          setDismissedMentionInput("");
+          setInput(e.target.value);
+        }}
         onKeyDown={handleKeyDown}
         placeholder={t("home.inputPlaceholder")}
         rows={2}
@@ -875,7 +976,11 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
             <button
               className="chat-input-send"
               onClick={() => { void handleSend(); }}
-              disabled={(!input.trim() && attachments.length === 0) || !connected}
+              disabled={(
+                !input.trim()
+                && attachments.length === 0
+                && artifactReferences.length === 0
+              ) || !connected}
               title={t("home.send")}
             >
               <Icon name="arrow-up" size={16} />
@@ -885,6 +990,15 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       </div>
     </div>
   );
+}
+
+function artifactMentionAtEnd(input: string): { start: number; query: string } | null {
+  const match = /(^|[\s(（])@([^@\n]*)$/.exec(input);
+  if (!match || typeof match.index !== "number") return null;
+  return {
+    start: match.index + match[1].length,
+    query: match[2],
+  };
 }
 
 function formatFileSize(size: number): string {

@@ -515,6 +515,15 @@
       "chooseProcess": "选择交付标准", "back": "返回", "optional": "选择交付标准（可选）", "auto": "由小美判断", "autoHint": "根据任务需求决定是否使用交付标准", "stages": "{{count}} 阶段", "empty": "没有匹配的能力或工作方法", "choose": "选择能力或工作方法",
       "kindCapability": "能", "kindSkill": "法", "kindProcess": "行"
     },
+    "mentionUi": {
+      "loading": "正在读取可引用的文件…",
+      "error": "暂时无法读取文件",
+      "empty": "没有找到匹配的文件或产物",
+      "choose": "选择要引用的文件",
+      "recent": "最近文件与产物",
+      "file": "Agent 保存的文件",
+      "remove": "移除引用"
+    },
     "markdownUi": {
       "generating": "图表内容生成中…", "drawing": "正在绘制图表…", "parseFailed": "Mermaid 图表解析失败",
       "viewDiagram": "查看图表", "viewSource": "查看源码", "zoom": "放大", "download": "下载",
