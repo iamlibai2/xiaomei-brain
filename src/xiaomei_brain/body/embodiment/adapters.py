@@ -69,6 +69,7 @@ class LocalBodyEmbodiment:
             codec=audio.codec,
             sample_rate=audio.sample_rate,
             channels=audio.channels,
+            initial_buffer_ms=audio.initial_buffer_ms,
         )
         return True
 

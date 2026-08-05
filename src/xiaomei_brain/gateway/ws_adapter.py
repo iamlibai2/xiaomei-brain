@@ -10,6 +10,7 @@ import base64
 import logging
 import threading
 import time
+import uuid
 
 from .channel_adapter import ChannelAdapter, ChannelCapabilities
 from .connection import ConnectionManager
@@ -112,28 +113,74 @@ class WSAdapter(ChannelAdapter):
         return statuses
 
     def send_audio(self, target: str, audio) -> bool:
-        """Encode one speech expression and deliver it to a Desktop speaker."""
+        """Stream one PCM speech expression to a Desktop speaker."""
         embodiment = self.embodiment_for_target(target)
         if embodiment is None:
             return False
         from xiaomei_brain.body.embodiment import OrganCapability
-        from xiaomei_brain.media_services.audio import encode_speech_as_opus
 
         if not embodiment.supports(OrganCapability.SPEECH):
             return False
-        encoded = encode_speech_as_opus(audio)
-        self.send_event(
-            target,
-            "embodiment.audio.output",
-            {
-                "embodiment_id": embodiment.body_id,
-                "mime_type": "audio/ogg",
-                "duration_ms": encoded.duration_ms,
-                "data_base64": base64.b64encode(encoded.data).decode("ascii"),
-            },
-            session_id=target,
+        sample_width = {"pcm_s16": 2, "pcm_f32": 4}.get(audio.codec)
+        if sample_width is None or audio.sample_rate <= 0 or audio.channels <= 0:
+            raise ValueError(f"Unsupported Desktop speech format: {audio.codec}")
+
+        speech_id = uuid.uuid4().hex
+        chunk_target = max(
+            sample_width * audio.channels,
+            audio.sample_rate * audio.channels * sample_width // 10,
         )
-        return True
+        self.send_event(target, "embodiment.audio.output.started", {
+            "speech_id": speech_id,
+            "embodiment_id": embodiment.body_id,
+            "codec": audio.codec,
+            "sample_rate": audio.sample_rate,
+            "channels": audio.channels,
+            "initial_buffer_ms": max(0, int(audio.initial_buffer_ms)),
+        }, session_id=target)
+
+        pending = bytearray()
+        chunk_sequence = 0
+        total_bytes = 0
+
+        def publish(raw: bytes) -> None:
+            nonlocal chunk_sequence, total_bytes
+            chunk_sequence += 1
+            total_bytes += len(raw)
+            self.send_event(target, "embodiment.audio.output.chunk", {
+                "speech_id": speech_id,
+                "sequence": chunk_sequence,
+                "data_base64": base64.b64encode(raw).decode("ascii"),
+            }, session_id=target)
+
+        try:
+            for value in audio.chunks:
+                if not isinstance(value, (bytes, bytearray, memoryview)) or not value:
+                    continue
+                pending.extend(value)
+                while len(pending) >= chunk_target:
+                    publish(bytes(pending[:chunk_target]))
+                    del pending[:chunk_target]
+            if pending:
+                publish(bytes(pending))
+            duration_ms = round(
+                total_bytes
+                / (audio.sample_rate * audio.channels * sample_width)
+                * 1000,
+            )
+            self.send_event(target, "embodiment.audio.output.completed", {
+                "speech_id": speech_id,
+                "chunks": chunk_sequence,
+                "total_bytes": total_bytes,
+                "duration_ms": max(0, duration_ms),
+            }, session_id=target)
+            return total_bytes > 0
+        except Exception as exc:
+            self.send_event(target, "embodiment.audio.output.failed", {
+                "speech_id": speech_id,
+                "message": str(exc),
+            }, session_id=target)
+            raise
 
     def send(self, target: str, text: str, msg_type: str = "text") -> None:
         """推送文本到指定 WebSocket 连接。

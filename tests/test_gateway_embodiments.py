@@ -9,7 +9,7 @@ from xiaomei_brain.gateway.inbound import Accepted
 from xiaomei_brain.gateway.router import OutputRoute
 from xiaomei_brain.gateway.server_methods import MethodRouter
 from xiaomei_brain.gateway.ws_adapter import WSAdapter
-from xiaomei_brain.media_services.audio import EncodedAudio, SpeechAudio
+from xiaomei_brain.media_services.audio import SpeechAudio
 
 
 class ImmediateThread:
@@ -19,6 +19,12 @@ class ImmediateThread:
 
     def start(self):
         self._target(*self._args)
+
+
+def test_gateway_advertises_desktop_audio_streaming():
+    methods = MethodRouter(living=SimpleNamespace())
+
+    assert "embodiment.audio_stream" in methods._capabilities()
 
 
 def test_desktop_registration_is_bound_to_authenticated_connection():
@@ -351,10 +357,6 @@ def test_ws_turn_resolves_concrete_desktop_and_sends_audio(monkeypatch):
     adapter = WSAdapter(cm)
     sent = []
     monkeypatch.setattr(
-        "xiaomei_brain.media_services.audio.encode_speech_as_opus",
-        lambda _audio: EncodedAudio(b"ogg-audio", 900, "opus"),
-    )
-    monkeypatch.setattr(
         adapter,
         "send_event",
         lambda target, event, payload, **metadata: sent.append(
@@ -376,9 +378,18 @@ def test_ws_turn_resolves_concrete_desktop_and_sends_audio(monkeypatch):
         ]
         assert manager.speak(
             resolution,
-            SpeechAudio([b"pcm"], "pcm_s16", 16000),
+            SpeechAudio([b"pcm"], "pcm_s16", 16000, initial_buffer_ms=500),
         )
-        assert sent[0][0:2] == (session_id, "embodiment.audio.output")
-        assert base64.b64decode(sent[0][2]["data_base64"]) == b"ogg-audio"
+        assert [item[1] for item in sent] == [
+            "embodiment.audio.output.started",
+            "embodiment.audio.output.chunk",
+            "embodiment.audio.output.completed",
+        ]
+        speech_id = sent[0][2]["speech_id"]
+        assert sent[0][2]["initial_buffer_ms"] == 500
+        assert sent[1][2]["speech_id"] == speech_id
+        assert sent[1][2]["sequence"] == 1
+        assert base64.b64decode(sent[1][2]["data_base64"]) == b"pcm"
+        assert sent[2][2]["duration_ms"] == 0
     finally:
         cm.unregister(conn_id)

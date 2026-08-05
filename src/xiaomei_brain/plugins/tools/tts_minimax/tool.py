@@ -168,12 +168,14 @@ def tts_speak(
                 chunks=gen,
                 codec="pcm_s16",
                 sample_rate=sr,
+                initial_buffer_ms=500,
             ))
             return result or "语音已发送。"
         throat = _get_throat()
         if throat is None:
             return "语音系统未初始化。请确保 body 插件已加载。"
-        throat.play_stream(gen, codec="pcm_s16", sample_rate=sr)
+        throat.play_stream(gen, codec="pcm_s16", sample_rate=sr,
+                           initial_buffer_ms=500)
         return f"已朗读: {text[:50]}{'...' if len(text) > 50 else ''}"
     except Exception as e:
         logger.error("TTS speak error: %s", e)

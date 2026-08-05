@@ -159,9 +159,10 @@ def test_desktop_route_uses_local_body_until_it_registers_audio():
     assert resolution.embodiment.body_id == "local-host"
     assert manager.speak(
         resolution,
-        SpeechAudio([b"pcm"], "pcm_s16", 16000),
+        SpeechAudio([b"pcm"], "pcm_s16", 16000, initial_buffer_ms=500),
     )
     assert throat.calls[0][0] == [b"pcm"]
+    assert throat.calls[0][1]["initial_buffer_ms"] == 500
 
 
 def test_known_remote_body_never_falls_back_to_server_speaker():

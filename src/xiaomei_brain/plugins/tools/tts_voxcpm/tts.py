@@ -55,6 +55,7 @@ def voxcpm_speak(text: str) -> str:
                 chunks=stream,
                 codec="pcm_f32",
                 sample_rate=sr,
+                initial_buffer_ms=3000,
             ))
             return result or "语音已发送。"
         throat = _get_throat()
@@ -62,7 +63,8 @@ def voxcpm_speak(text: str) -> str:
             return "语音系统未初始化。请确保 body 插件已加载。"
         # play_stream 内部用 producer 线程驱动生成器 + 预填充 + 非阻塞回调，
         # 确保 WASAPI 音频回调永不阻塞。
-        throat.play_stream(stream, codec="pcm_f32", sample_rate=sr)
+        throat.play_stream(stream, codec="pcm_f32", sample_rate=sr,
+                           initial_buffer_ms=3000)
         return f"已朗读: {text[:50]}{'...' if len(text) > 50 else ''}"
     except Exception as e:
         logger.error("VoxCPM speak error: %s", e)

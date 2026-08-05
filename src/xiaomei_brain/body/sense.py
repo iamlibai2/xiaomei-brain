@@ -313,7 +313,8 @@ class Throat(Sense):
             device.play(audio_path)
 
     def play_stream(self, gen, codec: str = "pcm_s16",
-                    sample_rate: int = 24000, channels: int = 1) -> None:
+                    sample_rate: int = 24000, channels: int = 1,
+                    initial_buffer_ms: int = 3000) -> None:
         """流式播放 — 工具层生成 chunk，喉咙层实时播放。
 
         Args:
@@ -327,7 +328,8 @@ class Throat(Sense):
         device = self.device
         if device and hasattr(device, "play_stream"):
             device.play_stream(gen, codec=codec, sample_rate=sample_rate,
-                               channels=channels)
+                               channels=channels,
+                               initial_buffer_ms=initial_buffer_ms)
 
     def contribute_to(self, state) -> None:
         """贡献发声数据到 BodyState。读取设备最近输出记录。"""

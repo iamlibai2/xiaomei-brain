@@ -196,7 +196,8 @@ class RealSpeaker(Speaker):
             logger.exception("[RealSpeaker] 播放失败: %s", audio_path)
 
     def play_stream(self, gen, codec: str = "pcm_s16",
-                    sample_rate: int = 24000, channels: int = 1) -> None:
+                    sample_rate: int = 24000, channels: int = 1,
+                    initial_buffer_ms: int = 3000) -> None:
         """流式播放。WSL2 PulseAudio 跨边界延迟大，缓冲到文件后播放。"""
         import numpy as np
 

@@ -122,7 +122,8 @@ class RealSpeaker(Speaker):
     # ── 流式播放 ──────────────────────────────────────────
 
     def play_stream(self, gen, codec: str = "pcm_s16",
-                    sample_rate: int = 24000, channels: int = 1) -> None:
+                    sample_rate: int = 24000, channels: int = 1,
+                    initial_buffer_ms: int = 3000) -> None:
         """流式播放。PCM → sounddevice → CoreAudio；mp3 → 缓冲文件。
 
         安装 sounddevice 获得真流式：pip install -e .[audio]

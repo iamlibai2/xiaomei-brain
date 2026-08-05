@@ -95,7 +95,8 @@ class RealSpeaker(Speaker):
             logger.exception("[RealSpeaker] 播放失败: %s", audio_path)
 
     def play_stream(self, gen, codec: str = "pcm_s16",
-                    sample_rate: int = 24000, channels: int = 1) -> None:
+                    sample_rate: int = 24000, channels: int = 1,
+                    initial_buffer_ms: int = 3000) -> None:
         """流式播放。PCM → ffmpeg stdin → PulseAudio；mp3 → ffmpeg stdin → PulseAudio。"""
         import numpy as np
 

@@ -161,6 +161,9 @@ class MethodRouter:
                 "embodiment.unregister",
                 "embodiment.audio.input",
             },
+            "embodiment.audio_stream": {
+                "embodiment.register",
+            },
             "embodiment.continuous_hearing": {
                 "embodiment.hearing.acquire",
                 "embodiment.hearing.release",

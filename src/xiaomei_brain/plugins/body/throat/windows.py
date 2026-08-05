@@ -94,7 +94,8 @@ class RealSpeaker(Speaker):
     # ── 流式播放 ──────────────────────────────────────────
 
     def play_stream(self, gen, codec: str = "pcm_s16",
-                    sample_rate: int = 24000, channels: int = 1) -> None:
+                    sample_rate: int = 24000, channels: int = 1,
+                    initial_buffer_ms: int = 3000) -> None:
         """流式播放。PCM → sounddevice → WASAPI；mp3 → 缓冲文件 → play()。
 
         安装 sounddevice 获得真流式：pip install -e .[audio]
@@ -141,11 +142,10 @@ class RealSpeaker(Speaker):
 
         threading.Thread(target=_producer, daemon=True).start()
 
-        # Pre-fill: wait for at least 3 seconds of audio before starting OutputStream.
-        # VoxCPM1.5 yields 80ms chunks with 100-300ms inter-chunk latency (diffusion).
-        # 3s pre-fill provides extra runway for long utterances where generation
-        # speed barely keeps up with real-time playback.
-        prefill_target = sample_rate * bytes_per_sample * 3  # 3 seconds
+        # Cloud and local TTS providers have very different generation speeds.
+        # The speech value carries a provider-specific jitter-buffer hint.
+        buffer_ms = max(0, min(int(initial_buffer_ms), 10_000))
+        prefill_target = sample_rate * bytes_per_sample * buffer_ms // 1000
         buf_data = bytearray()
 
         while len(buf_data) < prefill_target and not gen_done.is_set():

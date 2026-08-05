@@ -21,6 +21,7 @@ class SpeechAudio:
     codec: str
     sample_rate: int
     channels: int = 1
+    initial_buffer_ms: int = 3000
 
 
 @dataclass(frozen=True)
