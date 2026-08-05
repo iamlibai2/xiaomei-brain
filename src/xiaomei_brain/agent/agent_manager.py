@@ -172,6 +172,25 @@ class AgentManager:
         if merged_config:
             load_config_providers(registry, merged_config)
 
+        # Execution is Agent-owned.  Conversation, Assignment, and autonomous
+        # runtimes inherit this same boundary while keeping independent Core
+        # state.  The first backend formalizes the existing protected host
+        # behavior; Docker is added behind this manager in the next stage.
+        from xiaomei_brain.execution import ExecutionEnvironmentManager
+
+        execution_config = (
+            merged_config.get("execution", {})
+            if isinstance(merged_config, dict)
+            else {}
+        )
+        execution_manager = ExecutionEnvironmentManager(
+            agent_id=agent.id,
+            workspace_root=os.path.join(self._agent_dir(agent.id), "workspace"),
+            config=execution_config if isinstance(execution_config, dict) else {},
+        )
+        agent._execution_environment_manager = execution_manager
+        agent.tool_execution_environment = execution_manager.environment
+
         # 解析 API key（优先级：agent 指定 → config.json provider 配置 → env var → 全局 fallback）
         api_key = ""
         # 1. 从 config.json _provider_configs 中获取该 provider 的专属 key
@@ -495,6 +514,8 @@ class AgentManager:
         agent.llm = llm
         agent.tools = tools
         agent.session_manager = session_manager
+        if agent._agent is not None:
+            agent._agent.tool_execution_environment = agent.tool_execution_environment
 
         return agent
 

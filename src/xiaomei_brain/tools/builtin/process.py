@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import locale
-import os
-import signal
 import subprocess
 import threading
 import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
+
+from xiaomei_brain.execution import (
+    ExecutionEnvironment,
+    current_execution_environment,
+)
 
 from ..base import Tool
 
@@ -34,6 +37,7 @@ class ProcessRecord:
     shell_name: str
     cwd: str
     process: subprocess.Popen[bytes]
+    environment: ExecutionEnvironment
     started_at: float = field(default_factory=time.time)
     finished_at: float | None = None
     exit_code: int | None = None
@@ -68,6 +72,7 @@ class ProcessRecord:
             "status": self.status,
             "command": self.command,
             "shell": self.shell_name,
+            "execution_environment": self.environment.backend,
             "cwd": self.cwd,
             "exit_code": self.exit_code,
             "started_at": self.started_at,
@@ -90,6 +95,7 @@ class ProcessRegistry:
         shell_name: str,
         cwd: str,
         process: subprocess.Popen[bytes],
+        environment: ExecutionEnvironment | None = None,
     ) -> ProcessRecord:
         record = ProcessRecord(
             id=f"process_{uuid.uuid4().hex[:12]}",
@@ -97,6 +103,7 @@ class ProcessRegistry:
             shell_name=shell_name,
             cwd=cwd,
             process=process,
+            environment=environment or current_execution_environment(),
         )
         with self._lock:
             self._records[record.id] = record
@@ -147,24 +154,8 @@ process_registry = ProcessRegistry()
 
 
 def terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is not None:
-        return
-    if os.name == "nt":
-        subprocess.run(
-            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-            capture_output=True,
-            check=False,
-            timeout=10,
-        )
-        return
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
-    try:
-        process.wait(timeout=3)
-    except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGKILL)
+    """Compatibility wrapper for callers outside the process registry."""
+    current_execution_environment().terminate_process_tree(process)
 
 
 def manage_process(
@@ -189,7 +180,7 @@ def manage_process(
             return result
         return record.snapshot(include_output=True)
     if action == "kill":
-        terminate_process_tree(record.process)
+        record.environment.terminate_process_tree(record.process)
         return record.snapshot(include_output=True)
     return {"error": "Error: action must be list, poll, log, wait, or kill"}
 

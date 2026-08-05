@@ -59,6 +59,8 @@ class AgentInstance:
     _capability_registry: Any = field(default=None, init=False, repr=False)
     _capability_package_service: Any = field(default=None, init=False, repr=False)
     _process_template_registry: Any = field(default=None, init=False, repr=False)
+    _execution_environment_manager: Any = field(default=None, init=False, repr=False)
+    tool_execution_environment: Any = field(default=None, init=False, repr=False)
 
     def get_system_prompt(self) -> str:
         """Dynamically read identity.md for system prompt."""
@@ -123,6 +125,7 @@ class AgentInstance:
             self._agent._procedure_memory = getattr(self, "_procedure_memory", None)
             self._agent._dynamic_loader = getattr(self, "_dynamic_loader", None)
             self._agent._capability_registry = self._capability_registry
+            self._agent.tool_execution_environment = self.tool_execution_environment
         return self._agent
 
     def chat(

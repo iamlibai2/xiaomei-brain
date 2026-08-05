@@ -34,6 +34,7 @@ class ToolExecutionContext:
     workspace_root: str = ""
     working_directory: str = ""
     output_root: str = ""
+    execution_environment: Any = None
     project_context: ProjectRuntimeContext | None = None
     project_service: Any = None
     cancel_check: Callable[[], bool] | None = None
@@ -80,6 +81,7 @@ def bind_tool_execution(
     workspace_root: str = "",
     working_directory: str = "",
     output_root: str = "",
+    execution_environment: Any = None,
     project_context: ProjectRuntimeContext | None = None,
     project_service: Any = None,
     cancel_check: Callable[[], bool] | None = None,
@@ -97,6 +99,7 @@ def bind_tool_execution(
         workspace_root=workspace_root,
         working_directory=working_directory,
         output_root=output_root,
+        execution_environment=execution_environment,
         project_context=project_context,
         project_service=project_service,
         cancel_check=cancel_check,

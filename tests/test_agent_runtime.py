@@ -40,6 +40,7 @@ class FakeAgentInstance:
         self._agent = SimpleNamespace(
             exp_stream=object(),
             longterm_memory=object(),
+            tool_execution_environment=object(),
         )
 
     def _get_agent(self):
@@ -66,6 +67,11 @@ def test_runtime_factory_creates_isolated_mutable_state() -> None:
     assert first.messages is not second.messages
     assert first.exp_stream is second.exp_stream is instance._agent.exp_stream
     assert first.longterm_memory is instance._agent.longterm_memory
+    assert (
+        first.tool_execution_environment
+        is second.tool_execution_environment
+        is instance._agent.tool_execution_environment
+    )
     assert first.session_id == "autonomous:test"
     assert first.turn_id == "turn_1"
 

@@ -7,6 +7,7 @@ import threading
 import time
 from pathlib import Path
 
+from xiaomei_brain.execution import ProtectedHostEnvironment, WorkspaceBroker
 from xiaomei_brain.tools.builtin import command, file_ops
 from xiaomei_brain.tools.builtin.process import manage_process
 from xiaomei_brain.tools.execution_context import bind_tool_execution
@@ -30,6 +31,48 @@ def test_command_runs_in_agent_workspace(tmp_path, monkeypatch):
 
     assert isinstance(result, str)
     assert Path(result.strip()).resolve() == agent_dir / "workspace"
+
+
+def test_command_uses_environment_bound_to_tool_context(tmp_path):
+    workspace = tmp_path / "workspace"
+
+    class RecordingEnvironment(ProtectedHostEnvironment):
+        def __init__(self) -> None:
+            self.commands = []
+
+        def start_process(self, requested_command: str, cwd: str):
+            self.commands.append((requested_command, cwd))
+            return super().start_process(requested_command, cwd)
+
+    environment = RecordingEnvironment()
+    expression = "Write-Output bound" if sys.platform == "win32" else "printf bound"
+    with bind_tool_execution(
+        tool_call_id="environment-test",
+        tool_name=command.command_tool_name(),
+        arguments={"command": expression},
+        artifact_callback=None,
+        workspace_root=str(workspace),
+        working_directory=str(workspace),
+        execution_environment=environment,
+    ):
+        result = command.run_command(expression)
+
+    assert result.strip() == "bound"
+    assert environment.commands == [(expression, str(workspace))]
+
+
+def test_workspace_broker_rejects_paths_outside_agent_workspace(tmp_path):
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside.txt"
+    broker = WorkspaceBroker.create(
+        workspace_root=workspace,
+        working_directory=workspace,
+    )
+
+    resolved, error = broker.resolve(str(outside))
+
+    assert resolved is None
+    assert "outside this Agent's workspace" in error
 
 
 def test_command_preserves_utf8_output(tmp_path, monkeypatch):

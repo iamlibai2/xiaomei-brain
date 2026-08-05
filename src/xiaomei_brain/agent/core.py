@@ -117,6 +117,9 @@ class Agent:
         self.tool_workspace_root: str = ""
         self.tool_working_directory: str = ""
         self.tool_output_root: str = ""
+        # Commands and workspace processes run through this replaceable
+        # boundary.  None resolves to the default Protected Host backend.
+        self.tool_execution_environment: Any = None
         # Optional immutable Project authority for this isolated execution.
         self.project_context: Any = None
         self.tool_call_buffer: ToolCallBuffer = ToolCallBuffer()  # 实例级，每个 Agent 独立
@@ -941,6 +944,7 @@ class Agent:
                     workspace_root=self.tool_workspace_root,
                     working_directory=self.tool_working_directory,
                     output_root=self.tool_output_root,
+                    execution_environment=self.tool_execution_environment,
                     project_context=self.project_context,
                     project_service=getattr(self, "project_service", None),
                     cancel_check=cancel_check,

@@ -113,6 +113,7 @@ class AgentRuntimeFactory:
             "exp_stream",
             "essence",
             "_living_cfg",
+            "tool_execution_environment",
         )
         # AgentInstance owns the durable services; the live Core contains a few
         # late-bound integrations.  Copy both when available, with the live
