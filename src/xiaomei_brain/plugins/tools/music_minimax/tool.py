@@ -95,6 +95,57 @@ def _save_pcm_while_streaming(
         logger.warning("Discarded %d unaligned PCM bytes from music stream", len(pending))
 
 
+def _prepare_continuous_pcm_stream(
+    chunks: Iterable[bytes],
+    *,
+    sample_rate: int,
+    channels: int,
+    clock: Callable[[], float] = time.monotonic,
+    cancel_check: Callable[[], bool] | None = None,
+    minimum_buffer_seconds: float = 6.0,
+    minimum_generation_ratio: float = 1.5,
+) -> tuple[Iterator[bytes], str, float]:
+    """Avoid audible gaps when an upstream music stream is slower than playback.
+
+    MiniMax may call a response "streaming" while producing long PCM segments
+    more slowly than real time.  Starting after the first segment then drains
+    Desktop's audio queue before the next segment exists.  Observe at least one
+    inter-segment interval: start early only when new audio is arriving safely
+    faster than it can be played; otherwise finish buffering the short song.
+    """
+    source = iter(chunks)
+    buffered: list[bytes] = []
+    total_bytes = 0
+    bytes_after_first = 0
+    first_arrived_at: float | None = None
+    bytes_per_second = sample_rate * channels * 2
+
+    for chunk in source:
+        if cancel_check is not None and cancel_check():
+            raise RuntimeError("演唱已中断")
+        if not chunk:
+            continue
+        now = clock()
+        buffered.append(chunk)
+        total_bytes += len(chunk)
+        if first_arrived_at is None:
+            first_arrived_at = now
+            continue
+
+        bytes_after_first += len(chunk)
+        observed_seconds = max(0.001, now - first_arrived_at)
+        buffered_seconds = total_bytes / bytes_per_second
+        generation_ratio = (bytes_after_first / bytes_per_second) / observed_seconds
+        if (
+            buffered_seconds >= minimum_buffer_seconds
+            and generation_ratio >= minimum_generation_ratio
+        ):
+            return chain(buffered, source), "streaming", buffered_seconds
+
+    buffered_seconds = total_bytes / bytes_per_second
+    return iter(buffered), "buffered", buffered_seconds
+
+
 @tool(
     name="generate_music",
     description=(
@@ -216,21 +267,27 @@ def music_sing(
     def _sing() -> None:
         started_at = time.monotonic()
         try:
-            source = iter(provider.generate_streaming(
+            source = provider.generate_streaming(
                 prompt=prompt,
                 lyrics=lyrics,
                 audio_format="pcm",
-            ))
-            # MiniMax music can spend tens of seconds preparing its first
-            # segment.  Do not announce that the body is speaking until real
-            # audio exists, otherwise Desktop appears stuck in "speaking".
-            first_chunk = next(source)
+            )
+            stream_source, playback_mode, buffered_seconds = _prepare_continuous_pcm_stream(
+                source,
+                sample_rate=sample_rate,
+                channels=channels,
+                cancel_check=context.cancel_check,
+            )
+            if buffered_seconds <= 0:
+                raise RuntimeError("MiniMax 没有返回可播放的音乐")
             logger.info(
-                "Music singing first audio chunk ready after %.2fs",
+                "Music singing audio ready after %.2fs: mode=%s buffer=%.2fs",
                 time.monotonic() - started_at,
+                playback_mode,
+                buffered_seconds,
             )
             stream = _save_pcm_while_streaming(
-                chain((first_chunk,), source),
+                stream_source,
                 output_path,
                 sample_rate=sample_rate,
                 channels=channels,
@@ -257,8 +314,6 @@ def music_sing(
                 time.monotonic() - started_at,
                 output_path,
             )
-        except StopIteration:
-            logger.error("Music singing failed: MiniMax returned no audio")
         except Exception:
             logger.exception("Music singing failed")
 

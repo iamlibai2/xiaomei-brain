@@ -169,7 +169,7 @@ class MusicProvider:
         try:
             response.raise_for_status()
             received_audio = False
-            received_incremental_audio = False
+            incremental_audio = bytearray()
             for raw_line in response.iter_lines(decode_unicode=True):
                 if isinstance(raw_line, bytes):
                     raw_line = raw_line.decode("utf-8", errors="replace")
@@ -200,25 +200,29 @@ class MusicProvider:
                 status = int(event_data.get("status", 0) or 0)
                 audio_hex = str(event_data.get("audio", "") or "")
                 if audio_hex:
-                    # MiniMax streams incremental audio with status=1, then
-                    # repeats the complete song in the final status=2 event.
-                    # Appending that final snapshot would play and save the
-                    # entire song twice.
-                    if status == 2 and received_incremental_audio:
-                        logger.debug(
-                            "Ignoring final cumulative MiniMax music snapshot "
-                            "(%d hex chars)",
-                            len(audio_hex),
-                        )
-                        continue
                     try:
                         chunk = bytes.fromhex(audio_hex)
                     except ValueError as exc:
                         raise ValueError("MiniMax music API 返回了无效音频分片") from exc
+                    if status == 2 and incremental_audio:
+                        # MiniMax normally repeats every status=1 segment as
+                        # one cumulative status=2 snapshot.  Music 3.0 may
+                        # append a final tail to that snapshot, so remove only
+                        # the bytes already delivered instead of discarding the
+                        # complete event.
+                        if chunk.startswith(incremental_audio):
+                            chunk = chunk[len(incremental_audio):]
+                        else:
+                            logger.warning(
+                                "MiniMax final music snapshot does not match "
+                                "the %d incremental bytes; ignoring it to avoid duplicate audio",
+                                len(incremental_audio),
+                            )
+                            chunk = b""
                     if chunk:
                         received_audio = True
                         if status == 1:
-                            received_incremental_audio = True
+                            incremental_audio.extend(chunk)
                         yield chunk
             if not received_audio:
                 raise ValueError("MiniMax music API 未返回音频数据")

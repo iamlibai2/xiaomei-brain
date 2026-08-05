@@ -63,6 +63,22 @@ def test_music_provider_accepts_status_2_only_response(monkeypatch) -> None:
     ]
 
 
+def test_music_provider_keeps_new_tail_from_final_snapshot(monkeypatch) -> None:
+    class FinalTailResponse(_StreamingResponse):
+        def iter_lines(self, decode_unicode: bool = False):
+            yield 'data: {"data":{"audio":"01000200","status":1},"base_resp":{"status_code":0}}'
+            yield 'data: {"data":{"audio":"0100020003000400","status":2},"base_resp":{"status_code":0}}'
+
+    response = FinalTailResponse()
+    monkeypatch.setattr(provider_module.requests, "post", lambda *_args, **_kwargs: response)
+    provider = provider_module.MusicProvider("secret")
+
+    assert list(provider.generate_streaming("warm pop", "[verse] hello")) == [
+        b"\x01\x00\x02\x00",
+        b"\x03\x00\x04\x00",
+    ]
+
+
 def test_music_provider_builds_documented_instrumental_payload() -> None:
     provider = provider_module.MusicProvider("secret", model="music-3.0")
 
@@ -101,6 +117,52 @@ def test_music_model_catalog_prefers_3_0_and_keeps_2_6() -> None:
         "music-3.0-free",
         "music-2.6-free",
     ]
+
+
+def test_sing_buffers_complete_song_when_generation_is_slower_than_playback() -> None:
+    now = [0.0]
+    chunks = [b"a" * 4_000, b"b" * 4_000, b"c" * 4_000]
+
+    def slow_source():
+        yield chunks[0]
+        now[0] = 10.0
+        yield chunks[1]
+        now[0] = 20.0
+        yield chunks[2]
+
+    stream, mode, buffered_seconds = music_tool._prepare_continuous_pcm_stream(
+        slow_source(),
+        sample_rate=1_000,
+        channels=1,
+        clock=lambda: now[0],
+    )
+
+    assert mode == "buffered"
+    assert buffered_seconds == 6.0
+    assert list(stream) == chunks
+
+
+def test_sing_starts_streaming_when_generation_stays_ahead_of_playback() -> None:
+    now = [0.0]
+    chunks = [b"a" * 6_000, b"b" * 6_000, b"c" * 2_000]
+
+    def fast_source():
+        yield chunks[0]
+        now[0] = 0.5
+        yield chunks[1]
+        now[0] = 1.0
+        yield chunks[2]
+
+    stream, mode, buffered_seconds = music_tool._prepare_continuous_pcm_stream(
+        fast_source(),
+        sample_rate=1_000,
+        channels=1,
+        clock=lambda: now[0],
+    )
+
+    assert mode == "streaming"
+    assert buffered_seconds == 6.0
+    assert list(stream) == chunks
 
 
 class _FakeSingingProvider:
