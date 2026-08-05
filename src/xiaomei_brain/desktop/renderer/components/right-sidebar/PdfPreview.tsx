@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { GlobalWorkerOptions, TextLayer, getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
@@ -60,6 +61,7 @@ function PdfPage({
   pageNumber: number;
   scale: number;
 }) {
+  const { t } = useTranslation();
   const pageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
@@ -95,7 +97,7 @@ function PdfPage({
       const viewport = page.getViewport({ scale });
       const outputScale = window.devicePixelRatio || 1;
       const context = canvas.getContext("2d", { alpha: false });
-      if (!context) throw new Error("无法创建 PDF 画布");
+      if (!context) throw new Error(t("preview.pdfCanvasError"));
       canvas.width = Math.floor(viewport.width * outputScale);
       canvas.height = Math.floor(viewport.height * outputScale);
       canvas.style.width = `${Math.floor(viewport.width)}px`;
@@ -130,10 +132,10 @@ function PdfPage({
 
   return (
     <article ref={pageRef} className="pdf-preview-page" data-pdf-page={pageNumber}>
-      {!visible && <div className="pdf-preview-page-placeholder">第 {pageNumber} 页</div>}
+      {!visible && <div className="pdf-preview-page-placeholder">{t("preview.page", { page: pageNumber })}</div>}
       <canvas ref={canvasRef} />
       <div ref={textRef} className="textLayer" />
-      {error && <div className="pdf-preview-page-error">第 {pageNumber} 页渲染失败：{error}</div>}
+      {error && <div className="pdf-preview-page-error">{t("preview.pageRenderFailed", { page: pageNumber, error })}</div>}
       <span className="pdf-preview-page-number">{pageNumber}</span>
     </article>
   );
@@ -148,6 +150,7 @@ export function PdfPreview({
   fileName: string;
   onAnnotate: (selection: ArtifactTextSelection, instruction: string) => void;
 }) {
+  const { t } = useTranslation();
   const viewportRef = useRef<HTMLDivElement>(null);
   const selectionRangeRef = useRef<Range | null>(null);
   const [document, setDocument] = useState<PDFDocumentProxy | null>(null);
@@ -196,8 +199,8 @@ export function PdfPreview({
     <div className="pdf-preview-shell">
       <div className="artifact-preview-toolbar">
         <div>
-          <strong>PDF 预览</strong>
-          <span>{document ? `${document.numPages} 页` : fileName}</span>
+          <strong>{t("preview.pdf")}</strong>
+          <span>{document ? t("preview.pageCount", { count: document.numPages }) : fileName}</span>
         </div>
         <div className="pdf-preview-zoom">
           <button type="button" onClick={() => setScale((value) => Math.max(.6, value - .15))}>−</button>
@@ -217,20 +220,20 @@ export function PdfPreview({
           setSelection(value);
         }}
       >
-        {loading && <div className="artifact-preview-state">正在读取 PDF…</div>}
-        {error && <div className="artifact-preview-state error">预览失败：{error}</div>}
+        {loading && <div className="artifact-preview-state">{t("preview.readingPdf")}</div>}
+        {error && <div className="artifact-preview-state error">{t("preview.failed", { error })}</div>}
         {document && Array.from({ length: pageCount }, (_, index) => (
           <PdfPage key={index + 1} document={document} pageNumber={index + 1} scale={scale} />
         ))}
         {document && document.numPages > MAX_PREVIEW_PAGES && (
-          <div className="artifact-preview-limit">文档超过 {MAX_PREVIEW_PAGES} 页，仅预览前 {MAX_PREVIEW_PAGES} 页。</div>
+          <div className="artifact-preview-limit">{t("preview.pageLimit", { count: MAX_PREVIEW_PAGES })}</div>
         )}
       </div>
       {selection && (
         <ArtifactAnnotationComposer
           excerpt={selection.selectedText}
-          location={selection.page ? `第 ${selection.page} 页` : "已选择文字"}
-          placeholder="例如：把这一段改得更简洁"
+          location={selection.page ? t("preview.page", { page: selection.page }) : t("artifactUi.selectedText")}
+          placeholder={t("preview.editPdfExample")}
           getAnchorRect={() => selectionRangeRef.current?.getBoundingClientRect() || null}
           onCancel={() => {
             setSelection(null);

@@ -88,6 +88,57 @@ def test_continuous_hearing_temporarily_owns_local_listener():
         cm.unregister(conn_id)
 
 
+def test_desktop_camera_temporarily_releases_and_restores_local_eyes():
+    from xiaomei_brain.body import Body
+    from xiaomei_brain.body.device.mock import MockCamera
+    from xiaomei_brain.body.sense import Eyes
+
+    conn_id = "desktop-embodiment-camera-owner"
+    cm.set_session("session-camera-owner", conn_id, "person-1")
+
+    class Monitor:
+        _running = True
+        stops = 0
+        starts = 0
+
+        def stop(self):
+            self._running = False
+            self.stops += 1
+
+        def start(self):
+            self._running = True
+            self.starts += 1
+
+    body = Body()
+    eyes = Eyes()
+    camera = MockCamera()
+    body.register_sense(eyes, camera)
+    body.open()
+    monitor = Monitor()
+    living = SimpleNamespace(body=body, _expression_monitor=monitor)
+    methods = MethodRouter(living=living)
+    methods._auth_sessions.add(conn_id)
+    try:
+        methods.dispatch(conn_id, "1", "embodiment.register", {
+            "device_id": "device-camera-owner",
+            "label": "Desktop",
+            "capabilities": ["vision"],
+        })
+        acquired = methods.dispatch(conn_id, "2", "embodiment.vision.acquire", {})
+        assert acquired["result"]["acquired"] is True
+        assert camera.is_operational() is False
+        assert eyes.online is False
+        assert monitor.stops == 1
+
+        released = methods.dispatch(conn_id, "3", "embodiment.vision.release", {})
+        assert released["result"]["released"] is True
+        assert camera.is_operational() is True
+        assert eyes.online is True
+        assert monitor.starts == 1
+    finally:
+        cm.unregister(conn_id)
+
+
 def test_continuous_hearing_respects_attention_gate(monkeypatch):
     conn_id = "desktop-embodiment-attention"
     session_id = "session-attention"

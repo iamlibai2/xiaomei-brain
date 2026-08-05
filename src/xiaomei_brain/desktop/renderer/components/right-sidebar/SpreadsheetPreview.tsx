@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { WorkBook } from "xlsx";
 import type { ArtifactSpreadsheetSelection } from "../../types";
 import { ArtifactAnnotationComposer } from "./ArtifactAnnotationComposer";
@@ -47,6 +48,7 @@ export function SpreadsheetPreview({
   fileName: string;
   onAnnotate: (selection: ArtifactSpreadsheetSelection, instruction: string) => void;
 }) {
+  const { t } = useTranslation();
   const [xlsx, setXlsx] = useState<XlsxModule | null>(null);
   const [workbook, setWorkbook] = useState<WorkBook | null>(null);
   const [activeSheet, setActiveSheet] = useState("");
@@ -142,7 +144,7 @@ export function SpreadsheetPreview({
       kind: "spreadsheet" as const,
       sheet: activeSheet,
       range: startAddress === endAddress ? startAddress : `${startAddress}:${endAddress}`,
-      selectedText: (values.join("\n").trim() || "（空白单元格）").slice(0, MAX_SELECTION_LENGTH),
+      selectedText: (values.join("\n").trim() || t("preview.blankCell")).slice(0, MAX_SELECTION_LENGTH),
       bounds: range,
     };
   }, [activeSheet, anchor, focus, grid, workbook, xlsx]);
@@ -158,12 +160,12 @@ export function SpreadsheetPreview({
     <div className="spreadsheet-preview-shell">
       <div className="artifact-preview-toolbar">
         <div>
-          <strong>表格预览</strong>
+          <strong>{t("preview.spreadsheet")}</strong>
           <span>{fileName}</span>
         </div>
       </div>
       {workbook && workbook.SheetNames.length > 0 && (
-        <div className="spreadsheet-sheet-tabs" role="tablist" aria-label="工作表">
+        <div className="spreadsheet-sheet-tabs" role="tablist" aria-label={t("preview.worksheets")}>
           {workbook.SheetNames.map((name) => (
             <button
               type="button"
@@ -187,8 +189,8 @@ export function SpreadsheetPreview({
           setShowComposer(true);
         }}
       >
-        {loading && <div className="artifact-preview-state">正在读取工作簿…</div>}
-        {error && <div className="artifact-preview-state error">预览失败：{error}</div>}
+        {loading && <div className="artifact-preview-state">{t("preview.readingWorkbook")}</div>}
+        {error && <div className="artifact-preview-state error">{t("preview.failed", { error })}</div>}
         {grid && xlsx && (
           <table className="spreadsheet-preview-table">
             <thead>
@@ -242,7 +244,7 @@ export function SpreadsheetPreview({
         )}
         {grid && (grid.truncatedRows || grid.truncatedColumns) && (
           <div className="artifact-preview-limit">
-            工作表较大，当前预览前 {MAX_ROWS} 行、{MAX_COLUMNS} 列；完整文件仍可交给 Agent 分析。
+            {t("preview.sheetLimit", { rows: MAX_ROWS, columns: MAX_COLUMNS })}
           </div>
         )}
       </div>
@@ -250,7 +252,7 @@ export function SpreadsheetPreview({
         <ArtifactAnnotationComposer
           excerpt={selection.selectedText}
           location={`${selection.sheet}!${selection.range}`}
-          placeholder="例如：把这一区域的金额改为含税价，并更新合计"
+          placeholder={t("preview.editSheetExample")}
           getAnchorRect={() => {
             const cells = Array.from(viewportRef.current?.querySelectorAll<HTMLElement>('td[data-selected="true"]') || []);
             if (cells.length === 0) return null;

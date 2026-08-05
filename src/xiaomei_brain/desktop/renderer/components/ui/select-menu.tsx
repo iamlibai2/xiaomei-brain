@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Icon } from "./icon";
 
 export interface SelectMenuOption {
@@ -15,8 +16,8 @@ export function SelectMenu({
   disabled = false,
   placement = "down",
   className = "",
-  searchPlaceholder = "搜索",
-  emptyText = "没有匹配项",
+  searchPlaceholder,
+  emptyText,
   onChange,
 }: {
   value: string;
@@ -30,6 +31,9 @@ export function SelectMenu({
   emptyText?: string;
   onChange: (value: string) => void;
 }) {
+  const { t } = useTranslation();
+  const resolvedSearchPlaceholder = searchPlaceholder || t("searchUi.title");
+  const resolvedEmptyText = emptyText || t("searchUi.empty");
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
@@ -79,7 +83,7 @@ export function SelectMenu({
                 autoFocus
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder={searchPlaceholder}
+                placeholder={resolvedSearchPlaceholder}
               />
             </div>
           )}
@@ -105,7 +109,7 @@ export function SelectMenu({
                 {option.description && <small>{option.description}</small>}
               </button>
             ))}
-            {filtered.length === 0 && <p>{emptyText}</p>}
+            {filtered.length === 0 && <p>{resolvedEmptyText}</p>}
           </div>
         </div>
       )}

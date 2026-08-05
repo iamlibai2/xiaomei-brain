@@ -56,15 +56,20 @@ def toggle_eyes(action: str = 'status') -> str:
         _save_config(living.agent.id, False)
         if em is not None:
             em.stop()
+        if eyes.device is not None:
+            eyes.device.close()
+        eyes.online = False
         return "视觉感知已关闭。"
 
     elif action == "on":
         living._eyes_enabled = True
         eyes.enabled = True
         _save_config(living.agent.id, True)
-        if em is not None:
+        opened = eyes.device is not None and eyes.device.open()
+        eyes.online = bool(opened)
+        if em is not None and opened:
             em.start()
-        return "视觉感知已开启。"
+        return "视觉感知已开启。" if opened else "视觉感知已开启，但摄像头不可用。"
 
     else:  # status
         enabled = getattr(living, '_eyes_enabled', True)

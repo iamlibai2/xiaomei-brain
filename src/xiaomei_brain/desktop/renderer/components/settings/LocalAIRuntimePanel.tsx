@@ -1,21 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { DesktopSettings, LocalAIServiceStatus, LocalAISystemStatus } from "../../types";
 import { Button, Icon, SelectMenu } from "../ui";
 
-const STATE_LABELS: Record<LocalAIServiceStatus["state"], string> = {
-  online: "在线",
-  starting: "加载中",
-  downloading: "下载中",
-  not_installed: "未下载",
-  download_error: "下载失败",
-  stopped: "已停止",
-  unavailable: "不可用",
-  available: "待接入",
-  error: "异常",
+const STATE_KEYS: Record<LocalAIServiceStatus["state"], string> = {
+  online: "statusOnline", starting: "statusStarting", downloading: "statusDownloading",
+  not_installed: "statusNotInstalled", download_error: "statusDownloadError", stopped: "statusStopped",
+  unavailable: "statusUnavailable", available: "statusAvailable", error: "statusError",
+};
+const SERVICE_NAME_KEYS: Record<LocalAIServiceStatus["id"], string> = {
+  embedding: "embeddingName", stt: "sttName", tts_voxcpm: "ttsName", voiceprint: "voiceprintName", face: "faceName",
+};
+const SERVICE_DESCRIPTION_KEYS: Record<LocalAIServiceStatus["id"], string> = {
+  embedding: "embeddingDescription", stt: "sttDescription", tts_voxcpm: "ttsDescription", voiceprint: "voiceprintDescription", face: "faceDescription",
 };
 const ACTIVE_TASK_POLL_INTERVAL_MS = 3_000;
 
 export function LocalAIRuntimePanel({ language }: { language: DesktopSettings["language"] }) {
+  const { t } = useTranslation();
   const [services, setServices] = useState<LocalAIServiceStatus[]>([]);
   const [system, setSystem] = useState<LocalAISystemStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -32,7 +34,7 @@ export function LocalAIRuntimePanel({ language }: { language: DesktopSettings["l
       setSystem(result.system || null);
       setError("");
     } else {
-      setError(result.error || "无法读取本机 AI 服务状态");
+      setError(result.error || t("localAiUi.readStatusError"));
     }
     if (!quiet) setLoading(false);
   }, []);
@@ -60,8 +62,10 @@ export function LocalAIRuntimePanel({ language }: { language: DesktopSettings["l
   const summary = useMemo(() => {
     const online = services.filter((item) => item.state === "online").length;
     const active = services.filter((item) => ["starting", "downloading"].includes(item.state)).length;
-    return active ? `${active} 项正在准备` : `${online}/${services.length} 项在线`;
-  }, [services]);
+    return active
+      ? `${active} ${t("localAiUi.preparing")}`
+      : t("localAiUi.onlineSummary", { online, total: services.length });
+  }, [services, t]);
   const downloadingKey = useMemo(() => services
     .filter((service) => service.state === "downloading")
     .map((service) => `${service.id}:${service.selected_model_id}`)
@@ -146,7 +150,7 @@ export function LocalAIRuntimePanel({ language }: { language: DesktopSettings["l
       serviceId: service.id,
       action,
     });
-    if (!result.ok) setError(result.error || `${service.name}操作失败`);
+    if (!result.ok) setError(result.error || `${service.name}${t("localAiUi.operationFailed")}`);
     await load(true);
     setBusy("");
   }
@@ -158,10 +162,10 @@ export function LocalAIRuntimePanel({ language }: { language: DesktopSettings["l
     }
     const result = await window.localAI.readLog({ serviceId: service.id });
     if (!result.ok) {
-      setError(result.error || "无法读取服务日志");
+      setError(result.error || t("localAiUi.readLogError"));
       return;
     }
-    setLog({ id: service.id, content: result.content || "日志文件目前为空。" });
+    setLog({ id: service.id, content: result.content || t("localAiUi.emptyLog") });
   }
 
   async function selectModel(service: LocalAIServiceStatus, modelId: string) {
@@ -194,7 +198,7 @@ export function LocalAIRuntimePanel({ language }: { language: DesktopSettings["l
       setServices((current) => current.map((item) => (
         item.id === service.id ? service : item
       )));
-      setError(result.error || `${service.name}模型切换失败`);
+      setError(result.error || `${service.name}${t("localAiUi.modelSwitchFailed")}`);
     }
     setBusy("");
   }
@@ -216,7 +220,7 @@ export function LocalAIRuntimePanel({ language }: { language: DesktopSettings["l
       setServices((current) => current.map((item) => (
         item.id === service.id ? service : item
       )));
-      setError(result.error || `${service.name}运行设备切换失败`);
+      setError(result.error || `${service.name}${t("localAiUi.deviceSwitchFailed")}`);
     }
     setBusy("");
   }
@@ -224,29 +228,27 @@ export function LocalAIRuntimePanel({ language }: { language: DesktopSettings["l
   return (
     <div className="desktop-settings-panel local-ai-runtime-panel">
       <header className="desktop-settings-intro">
-        <h2>{language === "zh-CN" ? "本机 AI 服务" : "Local AI services"}</h2>
-        <p>{language === "zh-CN"
-          ? "下载并运行这台电脑上由所有本机 Agent 共享的模型服务。"
-          : "Download and run model services shared by all local Agents on this computer."}</p>
+        <h2>{t("localAiUi.title")}</h2>
+        <p>{t("localAiUi.description")}</p>
       </header>
 
       <section className="local-ai-runtime-section">
         <div className="settings-card-heading">
         <div>
-          <h3>{language === "zh-CN" ? "共享推理服务" : "Shared inference services"}</h3>
+          <h3>{t("localAiUi.sharedInference")}</h3>
         </div>
-        <span className="desktop-setting-status">{loading ? "检查中…" : summary}</span>
+        <span className="desktop-setting-status">{loading ? t("localAiUi.checking") : summary}</span>
       </div>
 
       {system && (
-        <div className="local-ai-system-load" aria-label="系统负载">
+        <div className="local-ai-system-load" aria-label={t("localAiUi.systemLoad")}>
           <div>
             <span>CPU</span>
             <strong>{Math.round(system.cpu_percent)}%</strong>
             <meter min={0} max={100} value={system.cpu_percent} />
           </div>
           <div>
-            <span>内存</span>
+            <span>{t("localAiUi.memory")}</span>
             <strong>{Math.round(system.memory_percent)}%</strong>
             <small>{formatBytes(system.memory_used_bytes)} / {formatBytes(system.memory_total_bytes)}</small>
             <meter min={0} max={100} value={system.memory_percent} />
@@ -255,7 +257,7 @@ export function LocalAIRuntimePanel({ language }: { language: DesktopSettings["l
             <div key={`${gpu.name}:${index}`} title={gpu.name}>
               <span>GPU{system.gpus.length > 1 ? ` ${index + 1}` : ""}</span>
               <strong>{Math.round(gpu.utilization_percent)}%</strong>
-              <small>{formatBytes(gpu.memory_used_bytes)} / {formatBytes(gpu.memory_total_bytes)} 显存</small>
+              <small>{formatBytes(gpu.memory_used_bytes)} / {formatBytes(gpu.memory_total_bytes)} {t("localAiUi.gpuMemory")}</small>
               <meter min={0} max={100} value={gpu.utilization_percent} />
             </div>
           ))}
@@ -270,25 +272,25 @@ export function LocalAIRuntimePanel({ language }: { language: DesktopSettings["l
               <span className="desktop-setting-icon"><Icon name="cpu" size={17} /></span>
               <div className="local-ai-service-copy">
                 <div className="local-ai-service-title">
-                  <strong>{service.name}</strong>
-                  {service.required && <span className="local-ai-required">核心依赖</span>}
-                  <span className={`local-ai-state ${service.state}`}>{STATE_LABELS[service.state]}</span>
+                <strong>{t(`localAiUi.${SERVICE_NAME_KEYS[service.id]}`)}</strong>
+                  {service.required && <span className="local-ai-required">{t("localAiUi.coreDependency")}</span>}
+                  <span className={`local-ai-state ${service.state}`}>{t(`localAiUi.${STATE_KEYS[service.state]}`)}</span>
                 </div>
-                <p>{service.description}</p>
+                <p>{t(`localAiUi.${SERVICE_DESCRIPTION_KEYS[service.id]}`)}</p>
                 <div className="local-ai-runtime-controls">
                   {(service.models.length > 1 || service.supported_devices.length > 1) && (
                     <div className="local-ai-runtime-selectors">
                     {service.models.length > 1 && (
                       <label className="local-ai-model-selector is-model">
-                        <span>模型</span>
+                        <span>{t("localAiUi.model")}</span>
                         <SelectMenu
                           value={service.selected_model_id}
-                          placeholder="选择模型"
+                          placeholder={t("localAiUi.selectModel")}
                           disabled={working || service.selection_locked || ["online", "starting", "downloading"].includes(service.state)}
                           options={service.models.map((model) => ({
                             value: model.id,
                             label: model.name,
-                            description: `${model.expected_size}${model.model_present ? " · 已下载" : ""}`,
+                            description: `${model.expected_size}${model.model_present ? ` · ${t("localAiUi.downloaded")}` : ""}`,
                           }))}
                           onChange={(value) => void selectModel(service, value)}
                         />
@@ -296,13 +298,13 @@ export function LocalAIRuntimePanel({ language }: { language: DesktopSettings["l
                     )}
                     {service.supported_devices.length > 1 && (
                       <label className="local-ai-model-selector is-device">
-                        <span>运行设备</span>
+                        <span>{t("localAiUi.device")}</span>
                         <SelectMenu
                           value={service.selected_device}
-                          placeholder="选择设备"
+                          placeholder={t("localAiUi.selectDevice")}
                           disabled={working || ["online", "starting", "downloading"].includes(service.state)}
                           options={[
-                            ...(service.supported_devices.includes("auto") ? [{ value: "auto", label: "自动" }] : []),
+                            ...(service.supported_devices.includes("auto") ? [{ value: "auto", label: t("localAiUi.auto") }] : []),
                             ...(service.supported_devices.includes("cpu") ? [{ value: "cpu", label: "CPU" }] : []),
                             ...(service.supported_devices.includes("cuda") && system?.gpus.length
                               ? [{ value: "cuda", label: "CUDA", description: system.gpus[0]?.name }]
@@ -320,55 +322,55 @@ export function LocalAIRuntimePanel({ language }: { language: DesktopSettings["l
                   <div className="local-ai-service-actions">
                     {service.downloadable && !service.model_present && service.state !== "downloading" && (
                       <Button size="sm" disabled={working} onClick={() => setDownloadTarget(service)}>
-                        {service.state === "download_error" ? "重试下载" : "下载"}
+                        {service.state === "download_error" ? t("localAiUi.retryDownload") : t("localAiUi.download")}
                       </Button>
                     )}
                     {service.state === "downloading" && (
-                      <Button size="sm" variant="secondary" disabled={working} onClick={() => void control(service, "cancel-download")}>取消</Button>
+                      <Button size="sm" variant="secondary" disabled={working} onClick={() => void control(service, "cancel-download")}>{t("localAiUi.cancel")}</Button>
                     )}
                     {service.controllable && service.installed && service.model_present && ["stopped", "error"].includes(service.state) && (
-                      <Button size="sm" variant="secondary" disabled={working} onClick={() => void control(service, "start")}>启动</Button>
+                      <Button size="sm" variant="secondary" disabled={working} onClick={() => void control(service, "start")}>{t("localAiUi.start")}</Button>
                     )}
                     {service.controllable && service.state === "starting" && (
-                      <Button size="sm" variant="secondary" disabled={working} onClick={() => void control(service, "stop")}>停止</Button>
+                      <Button size="sm" variant="secondary" disabled={working} onClick={() => void control(service, "stop")}>{t("localAiUi.stop")}</Button>
                     )}
                     {service.controllable && service.state === "online" && (
-                      <Button size="sm" variant="secondary" disabled={working} onClick={() => void control(service, "restart")}>重启</Button>
+                      <Button size="sm" variant="secondary" disabled={working} onClick={() => void control(service, "restart")}>{t("localAiUi.restart")}</Button>
                     )}
                     {service.controllable && service.state === "online" && (
-                      <Button size="sm" variant="ghost" disabled={working} onClick={() => void control(service, "stop")}>停止</Button>
+                      <Button size="sm" variant="ghost" disabled={working} onClick={() => void control(service, "stop")}>{t("localAiUi.stop")}</Button>
                     )}
                     {service.controllable && (
                       <Button size="sm" variant="ghost" onClick={() => void toggleLog(service)}>
-                        {log?.id === service.id ? "收起日志" : "日志"}
+                        {log?.id === service.id ? t("localAiUi.collapseLog") : t("localAiUi.log")}
                       </Button>
                     )}
                   </div>
                 </div>
                 <small>
                   {service.model} · {service.expected_size}
-                  {service.state === "online" ? ` · 实际运行于 ${service.device.toUpperCase()}` : ` · ${deviceLabel(service.selected_device)}`}
+                  {service.state === "online" ? ` · ${t("localAiUi.actualRuntime", { device: service.device.toUpperCase() })}` : ` · ${deviceLabel(service.selected_device, t)}`}
                   {service.pid ? ` · PID ${service.pid}` : ""}
                 </small>
                 {["online", "starting"].includes(service.state) && (
                   <small className="local-ai-resource-usage">
-                    {service.memory_bytes > 0 ? `内存 ${formatBytes(service.memory_bytes)}` : "内存暂不可统计"}
+                    {service.memory_bytes > 0 ? t("localAiUi.memoryUsage", { value: formatBytes(service.memory_bytes) }) : t("localAiUi.memoryUnavailable")}
                     {service.gpu_memory_bytes > 0
-                      ? ` · 显存 ${formatBytes(service.gpu_memory_bytes)}${service.gpu_memory_total_bytes > 0 ? ` / ${formatBytes(service.gpu_memory_total_bytes)}` : ""}`
-                      : service.device.startsWith("cuda") ? " · 显存暂不可统计" : ""}
+                      ? ` · ${t("localAiUi.gpuUsage", { value: `${formatBytes(service.gpu_memory_bytes)}${service.gpu_memory_total_bytes > 0 ? ` / ${formatBytes(service.gpu_memory_total_bytes)}` : ""}` })}`
+                      : service.device.startsWith("cuda") ? ` · ${t("localAiUi.gpuUnavailable")}` : ""}
                   </small>
                 )}
-                {service.model_path && <small title={service.model_path}>位置：{service.model_path}</small>}
+                {service.model_path && <small title={service.model_path}>{t("localAiUi.location")}：{service.model_path}</small>}
                 {service.selection_locked && (
                   <small className="local-ai-selection-lock">
-                    已锁定：{service.selection_lock_reason || "该模型已经产生兼容性数据"}
+                    {t("localAiUi.locked", { reason: service.selection_lock_reason || "compatibility data exists for this model" })}
                   </small>
                 )}
                 {service.downloadable
                   && !service.model_present
                   && ["downloading", "download_error"].includes(service.state) && (
                   <div className="local-ai-download-progress">
-                    <div className="local-ai-download-track" aria-label={`下载进度 ${service.download_progress}%`}>
+                    <div className="local-ai-download-track" aria-label={t("localAiUi.downloadProgress", { progress: service.download_progress })}>
                       <span style={{ width: `${service.download_progress}%` }} />
                     </div>
                     <small>
@@ -382,12 +384,12 @@ export function LocalAIRuntimePanel({ language }: { language: DesktopSettings["l
             </article>
           );
         })}
-        {!loading && services.length === 0 && <div className="settings-empty">没有发现本机 AI 服务。</div>}
+        {!loading && services.length === 0 && <div className="settings-empty">{t("localAiUi.empty")}</div>}
       </div>
 
       <div className="local-ai-runtime-footer">
-        <Button variant="secondary" size="sm" onClick={() => void load()}>刷新状态</Button>
-        <Button variant="ghost" size="sm" onClick={() => void window.localAI.openDirectory()}>打开服务目录</Button>
+        <Button variant="secondary" size="sm" onClick={() => void load()}>{t("localAiUi.refresh")}</Button>
+        <Button variant="ghost" size="sm" onClick={() => void window.localAI.openDirectory()}>{t("localAiUi.openDirectory")}</Button>
       </div>
       {log && <pre className="desktop-settings-log local-ai-log">{log.content}</pre>}
       {error && <p className="settings-error">{error}</p>}
@@ -416,6 +418,7 @@ function DownloadConfirmationDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const { t } = useTranslation();
   const model = service.models.find((item) => item.id === service.selected_model_id);
   const remaining = Math.max(0, service.expected_size_bytes - service.downloaded_bytes);
   return (
@@ -429,28 +432,28 @@ function DownloadConfirmationDialog({
       >
         <header className="model-editor-header">
           <div>
-            <h2 id="local-ai-download-title">下载 {model?.name || service.model}</h2>
-            <p>模型将保存到本机共享缓存，供所有本机 Agent 使用。</p>
+            <h2 id="local-ai-download-title">{t("localAiUi.downloadTitle", { model: model?.name || service.model })}</h2>
+            <p>{t("localAiUi.downloadDescription")}</p>
           </div>
-          <button type="button" aria-label="关闭" onClick={onCancel}>
+          <button type="button" aria-label={t("localAiUi.close")} onClick={onCancel}>
             <Icon name="x" size={18} />
           </button>
         </header>
         <div className="model-editor-body local-ai-download-body">
           <dl>
-            <div><dt>服务</dt><dd>{service.name}</dd></div>
-            <div><dt>模型</dt><dd>{model?.name || service.model}</dd></div>
-            <div><dt>来源</dt><dd>{model?.source || "未声明"}</dd></div>
-            <div><dt>预计大小</dt><dd>{service.expected_size}</dd></div>
-            <div><dt>尚需下载</dt><dd>{formatBytes(remaining)}</dd></div>
+            <div><dt>{t("localAiUi.service")}</dt><dd>{service.name}</dd></div>
+            <div><dt>{t("localAiUi.model")}</dt><dd>{model?.name || service.model}</dd></div>
+            <div><dt>{t("localAiUi.source")}</dt><dd>{model?.source || t("capabilityUi.undeclared")}</dd></div>
+            <div><dt>{t("localAiUi.expectedSize")}</dt><dd>{service.expected_size}</dd></div>
+            <div><dt>{t("localAiUi.remaining")}</dt><dd>{formatBytes(remaining)}</dd></div>
           </dl>
-          <p>下载可能持续数分钟，并占用网络带宽和磁盘空间。下载期间可以取消，之后可继续重试。</p>
+          <p>{t("localAiUi.downloadWarning")}</p>
         </div>
         <footer className="model-editor-footer">
-          <span>确认后才会开始联网下载。</span>
+          <span>{t("localAiUi.confirmDownload")}</span>
           <div>
-            <Button variant="secondary" onClick={onCancel}>取消</Button>
-            <Button variant="primary" onClick={onConfirm}>确认下载</Button>
+            <Button variant="secondary" onClick={onCancel}>{t("localAiUi.cancel")}</Button>
+            <Button variant="primary" onClick={onConfirm}>{t("localAiUi.confirm")}</Button>
           </div>
         </footer>
       </section>
@@ -464,7 +467,7 @@ function formatBytes(value: number): string {
   return `${Math.max(1, Math.round(value / 1024 ** 2))} MB`;
 }
 
-function deviceLabel(device: "auto" | "cpu" | "cuda"): string {
-  if (device === "auto") return "自动选择设备";
+function deviceLabel(device: "auto" | "cpu" | "cuda", t: (key: string) => string): string {
+  if (device === "auto") return t("localAiUi.selectDeviceAuto");
   return device.toUpperCase();
 }

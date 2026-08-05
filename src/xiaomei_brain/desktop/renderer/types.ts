@@ -381,6 +381,10 @@ export interface GatewayBridge {
     agentId: string;
     enabled: boolean;
   }): Promise<JsonRpcResponse>;
+  setCameraCapture(args: {
+    agentId: string;
+    enabled: boolean;
+  }): Promise<JsonRpcResponse>;
   pickAttachments(): Promise<AttachmentPickResult>;
   getAttachment(args: { agentId: string; sessionId: string; attachmentId: string }): Promise<JsonRpcResponse>;
   openAttachment(args: { agentId: string; sessionId: string; attachmentId: string }): Promise<{ ok: boolean; error?: string }>;

@@ -1081,6 +1081,20 @@ export function registerIpcHandlers(
     );
   });
 
+  ipcMain.handle("gateway:setCameraCapture", async (_event, args: {
+    agentId: string;
+    enabled: boolean;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) {
+      return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    }
+    return client.rpc(
+      args.enabled ? "embodiment.vision.acquire" : "embodiment.vision.release",
+      {},
+    );
+  });
+
   ipcMain.handle("gateway:pickAttachments", async () => {
     const win = getWindow();
     const result = win

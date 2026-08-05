@@ -24,6 +24,7 @@ const CHANNEL_MAP = {
     compactSession:  { invoke: "gateway:compactSession" },
     sendVoice:       { invoke: "gateway:sendVoice" },
     setContinuousHearing: { invoke: "gateway:setContinuousHearing" },
+    setCameraCapture: { invoke: "gateway:setCameraCapture" },
     pickAttachments: { invoke: "gateway:pickAttachments" },
     getAttachment:   { invoke: "gateway:getAttachment" },
     openAttachment:  { invoke: "gateway:openAttachment" },

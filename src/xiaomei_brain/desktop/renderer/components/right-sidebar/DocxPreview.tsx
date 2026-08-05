@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { ArtifactTextSelection } from "../../types";
 import { ArtifactAnnotationComposer } from "./ArtifactAnnotationComposer";
 
@@ -65,6 +66,7 @@ export function DocxPreview({
   fileName: string;
   onAnnotate: (selection: ArtifactTextSelection, instruction: string) => void;
 }) {
+  const { t } = useTranslation();
   const bodyRef = useRef<HTMLDivElement>(null);
   const styleRef = useRef<HTMLDivElement>(null);
   const selectionRangeRef = useRef<Range | null>(null);
@@ -130,19 +132,19 @@ export function DocxPreview({
     <div className="docx-preview-shell">
       <div ref={styleRef} className="docx-preview-styles" />
       <div className="docx-preview-help">
-        <strong>文档预览</strong>
-        <span>选中文字后，可以告诉 Agent 如何修改；原文件不会被覆盖。</span>
+        <strong>{t("preview.document")}</strong>
+        <span>{t("preview.documentHint")}</span>
       </div>
       <div className="docx-preview-viewport" onMouseUp={captureSelection}>
-        {loading && <div className="docx-preview-state">正在渲染文档…</div>}
-        {error && <div className="docx-preview-state error">预览失败：{error}</div>}
-        <div ref={bodyRef} className="docx-preview-surface" aria-label={`${fileName} 预览`} />
+        {loading && <div className="docx-preview-state">{t("preview.rendering")}</div>}
+        {error && <div className="docx-preview-state error">{t("preview.failed", { error })}</div>}
+        <div ref={bodyRef} className="docx-preview-surface" aria-label={`${fileName} ${t("common.preview")}`} />
       </div>
       {selection && (
         <ArtifactAnnotationComposer
           excerpt={selection.selectedText}
-          location={selection.page ? `第 ${selection.page} 页` : "已选择文字"}
-          placeholder="例如：改得更正式，并保留原意"
+          location={selection.page ? t("preview.selectedPage", { page: selection.page }) : t("preview.selectedText")}
+          placeholder={t("preview.editExample")}
           getAnchorRect={() => selectionRangeRef.current?.getBoundingClientRect() || null}
           onCancel={() => {
             setSelection(null);

@@ -37,7 +37,12 @@ def register(ctx):
     eyes.enabled = eyes_enabled
 
     cam = Device()
-    if cam.open():
+    if not eyes_enabled:
+        # Register the organ without claiming the physical camera. It can be
+        # opened later by toggle_eyes when the person explicitly enables sight.
+        ctx.register_sense(eyes, cam)
+        logger.info("眼睛已注册但保持关闭，未占用摄像头")
+    elif cam.open():
         ctx.register_sense(eyes, cam)
         logger.info("眼睛已就绪（%s）", Device.__name__)
     else:

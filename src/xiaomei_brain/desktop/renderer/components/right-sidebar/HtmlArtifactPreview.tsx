@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { ArtifactHtmlSelection } from "../../types";
 import { ArtifactAnnotationComposer } from "./ArtifactAnnotationComposer";
 import { Icon } from "../ui";
@@ -173,6 +174,7 @@ export function HtmlArtifactPreview({
   onBack: () => void;
   opening?: boolean;
 }) {
+  const { t } = useTranslation();
   const frameRef = useRef<HTMLIFrameElement>(null);
   const anchorRectRef = useRef<DOMRect | null>(null);
   const [elementMode, setElementMode] = useState(false);
@@ -226,8 +228,8 @@ export function HtmlArtifactPreview({
           <button
             type="button"
             className="html-browser-icon-button"
-            title="返回会话"
-            aria-label="返回会话"
+            title={t("artifactUi.back")}
+            aria-label={t("artifactUi.back")}
             onClick={onBack}
           >
             <Icon name="chevron-left" size={21} />
@@ -235,15 +237,15 @@ export function HtmlArtifactPreview({
           <button
             type="button"
             className="html-browser-icon-button"
-            title="没有可前进的页面"
-            aria-label="前进"
+            title={t("artifactUi.forwardDisabled")}
+            aria-label={t("artifactUi.forwardDisabled")}
             disabled
           >
             <Icon name="chevron-right" size={21} />
           </button>
           <div
             className="html-browser-address"
-            title="本地安全预览：页面脚本和外部网络已禁用"
+            title={t("artifactUi.safePreview")}
           >
             <Icon name="globe" size={18} />
             <strong>{`file:///${fileName}`}</strong>
@@ -251,8 +253,8 @@ export function HtmlArtifactPreview({
           <button
             type="button"
             className="html-browser-icon-button"
-            title="重新加载预览"
-            aria-label="重新加载预览"
+            title={t("artifactUi.reload")}
+            aria-label={t("artifactUi.reload")}
             onClick={() => {
               clearSelection();
               setReloadRevision((value) => value + 1);
@@ -263,8 +265,8 @@ export function HtmlArtifactPreview({
           <button
             type="button"
             className="html-browser-icon-button"
-            title="用系统浏览器打开原文件"
-            aria-label="用系统浏览器打开原文件"
+            title={t("artifactUi.openBrowser")}
+            aria-label={t("artifactUi.openBrowser")}
             disabled={opening}
             onClick={onOpenOriginal}
           >
@@ -275,7 +277,7 @@ export function HtmlArtifactPreview({
             className={`html-browser-action ${elementMode ? "active" : ""}`}
             onClick={() => setElementMode((value) => !value)}
           >
-            {elementMode ? "退出选择" : "选择元素"}
+            {elementMode ? t("artifactUi.exitSelect") : t("artifactUi.selectElement")}
           </button>
         </div>
       </div>
@@ -285,7 +287,7 @@ export function HtmlArtifactPreview({
         className="html-artifact-preview-frame"
         sandbox="allow-scripts"
         srcDoc={sourceDocument}
-        title={`${fileName} 安全预览`}
+        title={t("artifactUi.safePreviewTitle", { name: fileName })}
         onLoad={() => {
           frameRef.current?.contentWindow?.postMessage({
             source: BRIDGE_SOURCE,
@@ -299,7 +301,7 @@ export function HtmlArtifactPreview({
         <ArtifactAnnotationComposer
           excerpt={selection.selectedText || selection.outerHtml}
           location={`${selection.tag} · ${selection.selector}`}
-          placeholder="例如：把这个区域改成浅色背景，并缩小标题字号"
+          placeholder={t("artifactUi.editAreaExample")}
           getAnchorRect={() => anchorRectRef.current}
           onCancel={clearSelection}
           onSubmit={(instruction) => {

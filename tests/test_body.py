@@ -164,6 +164,22 @@ class TestMockSenses:
         assert "mock vision" in result
         assert "安静的室内场景" in result
 
+    def test_body_does_not_open_disabled_eyes(self):
+        from xiaomei_brain.body import Body
+        from xiaomei_brain.body.device.mock import MockCamera
+        from xiaomei_brain.body.sense import Eyes
+
+        body = Body()
+        eyes = Eyes()
+        eyes.enabled = False
+        camera = MockCamera()
+        body.register_sense(eyes, camera)
+
+        body.open()
+
+        assert camera.is_operational() is False
+        assert eyes.online is False
+
     def test_mock_eyes_recognize_faces(self):
         from xiaomei_brain.body import Body
         from xiaomei_brain.body.device.mock import MockCamera, MockEyes

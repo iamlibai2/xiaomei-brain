@@ -89,7 +89,7 @@ export function IdentityPage({ status, onReady }: IdentityPageProps) {
 
         {!creating && status.accounts.length > 1 && (
           <div className="connect-field">
-            <label>账户</label>
+            <label>{t("identity.account")}</label>
             <select
               value={selectedSubject}
               onChange={(event) => {
@@ -171,7 +171,7 @@ export function IdentityPage({ status, onReady }: IdentityPageProps) {
               }}
               disabled={loading}
             >
-              {creating ? "返回账户登录" : "添加本机账户"}
+              {creating ? t("identity.backToLogin") : t("identity.addLocalAccount")}
             </Button>
           )}
           <Button

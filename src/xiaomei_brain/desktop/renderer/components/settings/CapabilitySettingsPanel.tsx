@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type {
   AgentCapability,
   CapabilityPackageInspection,
@@ -16,15 +17,15 @@ interface Props {
   onNavigate: (section: string, target?: string) => void;
 }
 
-const STATUS_LABELS: Record<CapabilityStatus, string> = {
-  not_acquired: "未获得",
-  disabled: "已关闭",
-  preparing: "准备中",
-  needs_setup: "需要完善",
-  ready: "可用",
-  degraded: "部分可用",
-  unavailable: "暂不可用",
-  error: "异常",
+const STATUS_KEYS: Record<CapabilityStatus, string> = {
+  not_acquired: "statusNotAcquired",
+  disabled: "statusDisabled",
+  preparing: "statusPreparing",
+  needs_setup: "statusNeedsSetup",
+  ready: "statusReady",
+  degraded: "statusDegraded",
+  unavailable: "statusUnavailable",
+  error: "statusError",
 };
 
 export function CapabilitySettingsPanel({
@@ -34,6 +35,7 @@ export function CapabilitySettingsPanel({
   onTargetConsumed,
   onNavigate,
 }: Props) {
+  const { t } = useTranslation();
   const [capabilities, setCapabilities] = useState<AgentCapability[]>([]);
   const [packages, setPackages] = useState<InstalledCapabilityPackage[]>([]);
   const [loading, setLoading] = useState(false);
@@ -132,7 +134,7 @@ export function CapabilitySettingsPanel({
       if (response.result?.canceled) return;
       const inspection = response.result?.inspection;
       if (!inspection || typeof inspection !== "object" || Array.isArray(inspection)) {
-        throw new Error("Agent 返回了无效的能力包检查结果");
+        throw new Error(t("capabilityUi.invalidInspection"));
       }
       setPackageInspection(inspection as unknown as CapabilityPackageInspection);
     } catch (inspectError) {
@@ -159,8 +161,8 @@ export function CapabilitySettingsPanel({
       setPackageInspection(null);
       await load();
       setPackageNotice(operation === "upgraded"
-        ? `能力包已更新${affectedAgents ? `，已同步 ${affectedAgents} 个 Agent` : ""}。重启受影响的 Agent 后加载新版本。`
-        : "能力包已安装并为当前 Agent 启用。重启 Agent 后开始加载。");
+        ? t("capabilityUi.upgradeNotice", { suffix: affectedAgents ? ` (${affectedAgents})` : "" })
+        : t("capabilityUi.installNotice"));
     } catch (installError) {
       setPackageError(installError instanceof Error ? installError.message : String(installError));
       await load();
@@ -170,7 +172,7 @@ export function CapabilitySettingsPanel({
   }, [agentId, load]);
 
   const uninstallPackage = useCallback(async (item: InstalledCapabilityPackage) => {
-    if (!window.confirm(`确定从本机卸载“${item.name}”？\n\n所有本地 Agent 都将停止使用该能力包。`)) return;
+    if (!window.confirm(t("capabilityUi.confirmUninstall", { name: item.name }))) return;
     setChangingPackageId(item.id);
     setPackageError("");
     setPackageNotice("");
@@ -184,7 +186,7 @@ export function CapabilitySettingsPanel({
         ? response.result.affected_agents.length
         : 0;
       await load();
-      setPackageNotice(`能力包已从本机卸载${affected ? `，已从 ${affected} 个 Agent 移除` : ""}。重启受影响的 Agent 后完全卸载。`);
+      setPackageNotice(t("capabilityUi.uninstallNotice", { suffix: affected ? ` (${affected})` : "" }));
     } catch (uninstallError) {
       setPackageError(uninstallError instanceof Error ? uninstallError.message : String(uninstallError));
     } finally {
@@ -207,8 +209,8 @@ export function CapabilitySettingsPanel({
       if (response.error) throw new Error(response.error.message);
       await load();
       setPackageNotice(active
-        ? "能力包已为当前 Agent 启用，重启 Agent 后开始加载。"
-        : "能力包已为当前 Agent 停用，重启 Agent 后完全卸载运行内容。",
+        ? t("capabilityUi.enableNotice")
+        : t("capabilityUi.disableNotice"),
       );
     } catch (changeError) {
       setPackageError(changeError instanceof Error ? changeError.message : String(changeError));
@@ -221,8 +223,8 @@ export function CapabilitySettingsPanel({
     <div className="capability-settings-page">
       <div className="capability-page-heading">
         <div>
-          <h2>能力</h2>
-          <p>查看这个 Agent 当前真正能够完成的工作，以及尚有条件限制的部分。</p>
+          <h2>{t("capabilityUi.title")}</h2>
+          <p>{t("capabilityUi.description")}</p>
         </div>
         <div className="capability-page-actions">
           <Button
@@ -232,10 +234,10 @@ export function CapabilitySettingsPanel({
             disabled={packageBusy || !connected}
             onClick={() => void inspectPackage()}
           >
-            {packageBusy ? "检查中…" : "导入能力"}
+            {packageBusy ? t("capabilityUi.checking") : t("capabilityUi.import")}
           </Button>
           <Button variant="ghost" size="sm" icon="refresh" disabled={loading || !connected} onClick={() => void load()}>
-            {loading ? "刷新中" : "刷新"}
+            {loading ? t("capabilityUi.refreshing") : t("capabilityUi.refresh")}
           </Button>
         </div>
       </div>
@@ -246,20 +248,20 @@ export function CapabilitySettingsPanel({
       {!connected && (
         <div className="settings-empty capability-empty">
           <Icon name="sparkles" size={22} />
-          <strong>连接 Agent 后查看能力</strong>
-          <span>能力状态由 Agent 自己确认，Desktop 不在本地猜测。</span>
+          <strong>{t("capabilityUi.connectTitle")}</strong>
+          <span>{t("capabilityUi.connectDescription")}</span>
         </div>
       )}
       {connected && !loading && !error && capabilities.length === 0 && (
         <div className="settings-empty capability-empty">
-          <strong>这个 Agent 暂未声明能力</strong>
-          <span>后续获得的能力会自然出现在这里。</span>
+          <strong>{t("capabilityUi.noDeclaredTitle")}</strong>
+          <span>{t("capabilityUi.noDeclaredDescription")}</span>
         </div>
       )}
       {error && (
         <div className="settings-error capability-load-error">
           <span>{error}</span>
-          <Button variant="ghost" size="sm" onClick={() => void load()}>重试</Button>
+          <Button variant="ghost" size="sm" onClick={() => void load()}>{t("capabilityUi.retry")}</Button>
         </div>
       )}
 
@@ -267,8 +269,8 @@ export function CapabilitySettingsPanel({
         <section className="capability-installed-section">
           <div className="settings-card-heading">
             <div>
-              <h3>已安装能力包</h3>
-              <p>安装文件由本机 Agent 共享；启用状态只属于当前 Agent。</p>
+              <h3>{t("capabilityUi.installedPackages")}</h3>
+              <p>{t("capabilityUi.installedHint")}</p>
             </div>
           </div>
           <div className="capability-package-list">
@@ -278,17 +280,17 @@ export function CapabilitySettingsPanel({
                 <div className="capability-package-row-copy">
                   <strong>{item.name}</strong>
                   <span>{item.id} · {item.version}</span>
-                  <small>{packageRuntimeLabel(item)}</small>
+                  <small>{packageRuntimeLabel(item, t)}</small>
                   {item.issue && <small className="error">{item.issue}</small>}
                 </div>
                 <span className={`capability-package-state ${item.active ? "active" : ""} ${item.runtime_valid ? "" : "error"}`}>
-                  {!item.runtime_valid ? "异常" : item.active ? "已启用" : "未启用"}
+                  {!item.runtime_valid ? t("capabilityUi.packageError") : item.active ? t("capabilityUi.packageEnabled") : t("capabilityUi.packageDisabled")}
                 </span>
                 <button
                   type="button"
                   className={`desktop-switch capability-toggle ${item.active ? "is-on" : ""}`}
                   role="switch"
-                  aria-label={`${item.active ? "停用" : "启用"}${item.name}`}
+                  aria-label={`${item.active ? t("capabilityUi.disable") : t("capabilityUi.enable")}${item.name}`}
                   aria-checked={item.active}
                   disabled={changingPackageId === item.id || !item.runtime_valid}
                   onClick={() => void setPackageActive(item, !item.active)}
@@ -299,8 +301,8 @@ export function CapabilitySettingsPanel({
                   variant="ghost"
                   size="icon-sm"
                   icon="trash"
-                  title={`卸载${item.name}`}
-                  aria-label={`卸载${item.name}`}
+                  title={`${t("capabilityUi.uninstall")}${item.name}`}
+                  aria-label={`${t("capabilityUi.uninstall")}${item.name}`}
                   disabled={changingPackageId === item.id}
                   onClick={() => void uninstallPackage(item)}
                 />
@@ -358,13 +360,14 @@ function CapabilityPackageInspectionDialog({
   onInstall: () => void;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const manifest = inspection.manifest;
   const identity = manifest?.package;
   const requirements = manifest?.requirements;
   const externalRequirements = [
     ...(requirements?.python_packages || []).map((item) => `Python: ${item}`),
     ...(requirements?.node_packages || []).map((item) => `Node: ${item}`),
-    ...(requirements?.executables || []).map((item) => `程序: ${item}`),
+    ...(requirements?.executables || []).map((item) => `${t("capabilityUi.program")}: ${item}`),
   ];
   const installable = inspection.valid && externalRequirements.length === 0;
   return (
@@ -379,11 +382,11 @@ function CapabilityPackageInspectionDialog({
         <header className="model-editor-header">
           <div>
             <h2 id="capability-package-title">
-              {identity?.name || inspection.file_name || "能力包检查"}
+              {identity?.name || inspection.file_name || t("capabilityUi.packageCheck")}
             </h2>
-            <p>由当前 Agent 完成只读安全检查，未执行或安装包内内容。</p>
+            <p>{t("capabilityUi.inspectionDescription")}</p>
           </div>
-          <button type="button" aria-label="关闭" disabled={installing} onClick={onClose}>
+          <button type="button" aria-label={t("capabilityUi.close")} disabled={installing} onClick={onClose}>
             <Icon name="x" size={18} />
           </button>
         </header>
@@ -392,19 +395,19 @@ function CapabilityPackageInspectionDialog({
           <div className={`capability-package-verdict ${inspection.valid ? "valid" : "invalid"}`}>
             <Icon name={inspection.valid ? "shield" : "info"} size={19} />
             <div>
-              <strong>{inspection.valid ? "能力包格式与完整性检查通过" : "能力包未通过检查"}</strong>
-              <span>{inspection.valid ? "这只说明归档结构有效，不代表已经信任或安装。" : "不会安装或执行此文件。"}</span>
+              <strong>{inspection.valid ? t("capabilityUi.inspectionPassed") : t("capabilityUi.inspectionFailed")}</strong>
+              <span>{inspection.valid ? t("capabilityUi.inspectionPassedHint") : t("capabilityUi.inspectionFailedHint")}</span>
             </div>
           </div>
 
           {identity && (
             <section className="capability-package-section">
-              <h3>包信息</h3>
+              <h3>{t("capabilityUi.packageInfo")}</h3>
               <dl className="capability-package-facts">
-                <div><dt>标识</dt><dd>{identity.id}</dd></div>
-                <div><dt>版本</dt><dd>{identity.version}</dd></div>
-                <div><dt>发布者</dt><dd>{identity.publisher || "未声明"}</dd></div>
-                <div><dt>文件</dt><dd>{inspection.file_name} · {formatBytes(inspection.archive_size)}</dd></div>
+                <div><dt>{t("capabilityUi.identifier")}</dt><dd>{identity.id}</dd></div>
+                <div><dt>{t("capabilityUi.version")}</dt><dd>{identity.version}</dd></div>
+                <div><dt>{t("capabilityUi.publisher")}</dt><dd>{identity.publisher || t("capabilityUi.undeclared")}</dd></div>
+                <div><dt>{t("capabilityUi.file")}</dt><dd>{inspection.file_name} · {formatBytes(inspection.archive_size)}</dd></div>
               </dl>
               {identity.description && <p>{identity.description}</p>}
             </section>
@@ -412,7 +415,7 @@ function CapabilityPackageInspectionDialog({
 
           {manifest?.capabilities.length ? (
             <section className="capability-package-section">
-              <h3>提供的能力</h3>
+              <h3>{t("capabilityUi.providedCapabilities")}</h3>
               <div className="capability-package-items">
                 {manifest.capabilities.map((capability) => (
                   <div key={capability.id}>
@@ -426,25 +429,25 @@ function CapabilityPackageInspectionDialog({
 
           {manifest && (
             <section className="capability-package-section">
-              <h3>权限声明</h3>
+              <h3>{t("capabilityUi.permissions")}</h3>
               {manifest.permissions.length ? (
                 <div className="capability-package-tags">
                   {manifest.permissions.map((permission) => (
                     <span key={`${permission.category}:${permission.value}`}>
-                      {permissionLabel(permission.category)} · {permission.value}
+                      {permissionLabel(permission.category, t)} · {permission.value}
                     </span>
                   ))}
                 </div>
-              ) : <p>未声明额外权限。</p>}
+              ) : <p>{t("capabilityUi.noExtraPermissions")}</p>}
             </section>
           )}
 
           {requirements && (
             <section className="capability-package-section">
-              <h3>运行要求</h3>
+              <h3>{t("capabilityUi.requirements")}</h3>
               <p>
-                xiaomei-brain {requirements.xiaomei_brain || "未限制"}
-                {" · "}Python {requirements.python || "未限制"}
+                xiaomei-brain {requirements.xiaomei_brain || t("capabilityUi.unlimited")}
+                {" · "}Python {requirements.python || t("capabilityUi.unlimited")}
               </p>
               {externalRequirements.length > 0 && (
                 <div className="capability-package-tags warning">
@@ -456,19 +459,19 @@ function CapabilityPackageInspectionDialog({
 
           {inspection.errors.length > 0 && (
             <section className="capability-package-messages error">
-              <strong>检查错误</strong>
+              <strong>{t("capabilityUi.checkErrors")}</strong>
               {inspection.errors.map((item) => <span key={item}>{item}</span>)}
             </section>
           )}
           {inspection.warnings.length > 0 && (
             <section className="capability-package-messages warning">
-              <strong>注意</strong>
+              <strong>{t("capabilityUi.warnings")}</strong>
               {inspection.warnings.map((item) => <span key={item}>{item}</span>)}
             </section>
           )}
           {actionError && (
             <section className="capability-package-messages error">
-              <strong>安装失败</strong>
+              <strong>{t("capabilityUi.installFailed")}</strong>
               <span>{actionError}</span>
             </section>
           )}
@@ -477,12 +480,12 @@ function CapabilityPackageInspectionDialog({
 
         <footer className="model-editor-footer capability-package-footer">
           <span>{installable
-            ? "安装后将进入本机共享仓库，并只为当前 Agent 启用。"
-            : "当前能力包不能安装，请先处理检查错误或外部依赖。"}</span>
+            ? t("capabilityUi.installHint")
+            : t("capabilityUi.cannotInstall")}</span>
           <div>
-            <Button variant="secondary" disabled={installing} onClick={onClose}>取消</Button>
+            <Button variant="secondary" disabled={installing} onClick={onClose}>{t("capabilityUi.cancel")}</Button>
             <Button variant="primary" disabled={!installable || installing} onClick={onInstall}>
-              {installing ? (updating ? "更新中…" : "安装中…") : (updating ? "更新并启用" : "安装并启用")}
+              {installing ? (updating ? t("capabilityUi.updating") : t("capabilityUi.installing")) : (updating ? t("capabilityUi.updateAndEnable") : t("capabilityUi.installAndEnable"))}
             </Button>
           </div>
         </footer>
@@ -491,13 +494,14 @@ function CapabilityPackageInspectionDialog({
   );
 }
 
-function permissionLabel(category: string): string {
-  return ({
-    filesystem: "文件",
-    network: "网络",
-    process: "进程",
-    secrets: "凭证",
-  } as Record<string, string>)[category] || category;
+function permissionLabel(category: string, t: (key: string) => string): string {
+  const keys: Record<string, string> = {
+    filesystem: "capabilityUi.filePermission",
+    network: "capabilityUi.networkPermission",
+    process: "capabilityUi.processPermission",
+    secrets: "capabilityUi.secretsPermission",
+  };
+  return keys[category] ? t(keys[category]) : category;
 }
 
 function formatBytes(value: number): string {
@@ -506,12 +510,12 @@ function formatBytes(value: number): string {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function packageRuntimeLabel(item: InstalledCapabilityPackage): string {
-  if (!item.runtime_valid) return "安装文件异常，Agent 不会加载";
-  if (item.active && item.loaded) return "当前 Agent 已加载";
-  if (item.active) return "已启用，重启 Agent 后加载";
-  if (item.loaded) return "已停用，重启 Agent 后卸载";
-  return "已安装，可为当前 Agent 启用";
+function packageRuntimeLabel(item: InstalledCapabilityPackage, t: (key: string) => string): string {
+  if (!item.runtime_valid) return t("capabilityUi.packageCheckError");
+  if (item.active && item.loaded) return t("capabilityUi.packageLoaded");
+  if (item.active) return t("capabilityUi.packageRestartLoad");
+  if (item.loaded) return t("capabilityUi.packageRestartUnload");
+  return t("capabilityUi.packageReady");
 }
 
 function CapabilityCard({
@@ -527,6 +531,7 @@ function CapabilityCard({
   onToggle: (enabled: boolean) => void;
   onNavigate: (section: string, target?: string) => void;
 }) {
+  const { t } = useTranslation();
   const issueWithAction = capability.issues.find((issue) => issue.action);
   const setupAction = capability.actions?.[0] || issueWithAction?.action;
   return (
@@ -542,13 +547,13 @@ function CapabilityCard({
         </div>
         <div className="capability-card-actions">
           <span className={`capability-status ${capability.status}`}>
-            {STATUS_LABELS[capability.status] || capability.status}
+            {STATUS_KEYS[capability.status] ? t(`capabilityUi.${STATUS_KEYS[capability.status]}`) : capability.status}
           </span>
           <button
             type="button"
             className={`desktop-switch capability-toggle ${capability.enabled ? "is-on" : ""}`}
             role="switch"
-            aria-label={`${capability.enabled ? "关闭" : "启用"}${capability.name}`}
+            aria-label={`${capability.enabled ? t("capabilityUi.disableCapability") : t("capabilityUi.enableCapability")}${capability.name}`}
             aria-checked={capability.enabled}
             disabled={changing}
             onClick={() => onToggle(!capability.enabled)}
@@ -576,7 +581,7 @@ function CapabilityCard({
       {setupAction && capability.enabled && issueWithAction && (
         <div className="capability-setup">
           <div>
-            <strong>还需要完成配置</strong>
+            <strong>{t("capabilityUi.setupNeeded")}</strong>
             <span>{issueWithAction.message}</span>
           </div>
           <Button variant="secondary" size="sm" onClick={() => onNavigate(setupAction.section, setupAction.target)}>
@@ -587,7 +592,7 @@ function CapabilityCard({
 
       {capability.examples.length > 0 && (
         <div className="capability-examples">
-          <span>可以这样说</span>
+          <span>{t("capabilityUi.sayThis")}</span>
           {capability.examples.slice(0, 3).map((example) => <q key={example}>{example}</q>)}
         </div>
       )}

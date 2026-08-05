@@ -168,6 +168,7 @@ class SkillLoader:
             query: 语义搜索查询，为空则返回所有（按使用频率排序）
             top_k: 返回数量
         """
+        self.refresh_if_changed()
         storage = self._get_storage()
         disabled_names = self._effective_disabled_names()
         results = storage.list_skills(
@@ -178,6 +179,7 @@ class SkillLoader:
 
     def view_skill(self, name: str) -> dict[str, Any] | None:
         """查看技能完整内容（Tier 1）。"""
+        self.refresh_if_changed()
         if name in self._effective_disabled_names():
             return None
         storage = self._get_storage()
@@ -185,6 +187,7 @@ class SkillLoader:
 
     def list_names(self) -> list[str]:
         """返回所有已加载的技能名称。"""
+        self.refresh_if_changed()
         storage = self._get_storage()
         disabled_names = self._effective_disabled_names()
         return [name for name in storage.list_names() if name not in disabled_names]

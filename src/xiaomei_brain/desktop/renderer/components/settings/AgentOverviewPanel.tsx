@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { DesktopInfo, IdentityStatus, ModelConfigSnapshot } from "../../types";
 import { Icon } from "../ui";
 import type { SettingsSection } from "./events";
@@ -21,15 +22,8 @@ interface ChannelSummary {
   state: string;
 }
 
-const RUNTIME_LABELS: Record<string, string> = {
-  starting: "连接中",
-  running: "在线",
-  reconnecting: "重连中",
-  error: "异常",
-  stopped: "未启用",
-};
-
 export function AgentOverviewPanel(props: Props) {
+  const { t } = useTranslation();
   const {
     agentId, name, description, address, source, localAgentId, connected, pid, onNavigate,
   } = props;
@@ -97,7 +91,7 @@ export function AgentOverviewPanel(props: Props) {
     return `${desktopInfo.agentDirectory}${separator}${localAgentId}`;
   }, [desktopInfo, localAgentId]);
 
-  if (!name) return <div className="settings-empty">请先选择一个 Agent。</div>;
+  if (!name) return <div className="settings-empty">{t("overviewUi.selectAgent")}</div>;
   const channelValues = Object.values(channels);
   const configuredCount = channelValues.filter((item) => item.configured).length;
   const onlineCount = channelValues.filter((item) => item.state === "running").length;
@@ -108,50 +102,50 @@ export function AgentOverviewPanel(props: Props) {
         <span className="settings-agent-avatar">{name.charAt(0)}</span>
         <div>
           <h3>{name}</h3>
-          <p>{description || "本地 AI Agent"}</p>
+          <p>{description || t("overviewUi.localAgent")}</p>
           <span className={`settings-connection ${connected ? "online" : ""}`}>
-            <i />{connected ? "在线" : "未连接"}
+            <i />{connected ? t("overviewUi.online") : t("overviewUi.disconnected")}
           </span>
         </div>
-        {loading && <span className="settings-badge agent-overview-refreshing">刷新中</span>}
+        {loading && <span className="settings-badge agent-overview-refreshing">{t("overviewUi.refreshing")}</span>}
       </section>
 
       <section className="agent-overview-facts">
-        <OverviewFact icon="external-link" label="连接" value={connected ? "已连接" : "未连接"} detail={address || "—"} tone={connected ? "success" : "muted"} />
-        <OverviewFact icon="terminal" label="运行位置" value={source === "local" ? "本机" : "远程"} detail={pid ? `PID ${pid}` : source === "local" ? "进程信息不可用" : "由远端维护"} />
-        <OverviewFact icon="shield" label="Desktop 账户" value={identity?.displayName || "未解锁"} detail={identity?.subject ? `${identity.subject.slice(0, 12)}…` : "未提供身份凭证"} />
-        <OverviewFact icon="bell" label="外部渠道" value={`${onlineCount} 个在线`} detail={`${configuredCount} 个已配置`} tone={onlineCount ? "success" : "muted"} />
+        <OverviewFact icon="external-link" label={t("overviewUi.connection")} value={connected ? t("overviewUi.connected") : t("overviewUi.disconnected")} detail={address || "—"} tone={connected ? "success" : "muted"} />
+        <OverviewFact icon="terminal" label={t("overviewUi.location")} value={source === "local" ? t("settings.local") : t("settings.remote")} detail={pid ? `PID ${pid}` : source === "local" ? t("overviewUi.processUnavailable") : t("overviewUi.remoteMaintained")} />
+        <OverviewFact icon="shield" label={t("overviewUi.desktopAccount")} value={identity?.displayName || t("overviewUi.notUnlocked")} detail={identity?.subject ? `${identity.subject.slice(0, 12)}…` : t("overviewUi.noCredential")} />
+        <OverviewFact icon="bell" label={t("overviewUi.externalChannels")} value={t("overviewUi.onlineCount", { count: onlineCount })} detail={t("overviewUi.configuredCount", { count: configuredCount })} tone={onlineCount ? "success" : "muted"} />
       </section>
 
       <section className="settings-card agent-overview-config">
         <div className="settings-card-heading">
           <div>
-            <h3>核心配置</h3>
-            <p>这里只汇总当前状态；具体修改进入对应设置页面。</p>
+            <h3>{t("overviewUi.coreConfig")}</h3>
+            <p>{t("overviewUi.coreConfigHint")}</p>
           </div>
         </div>
         <button type="button" onClick={() => onNavigate("capabilities")}>
           <span className="agent-overview-config-icon"><Icon name="file-text" size={17} /></span>
           <span>
-            <strong>能力</strong>
-            <small>查看这个 Agent 当前真正能够完成的工作</small>
+            <strong>{t("overviewUi.capabilities")}</strong>
+            <small>{t("overviewUi.capabilitiesHint")}</small>
           </span>
           <Icon name="chevron-right" size={15} />
         </button>
         <button type="button" onClick={() => onNavigate("models")}>
           <span className="agent-overview-config-icon"><Icon name="sparkles" size={17} /></span>
           <span>
-            <strong>模型</strong>
-            <small>主模型：{shortModelName(model?.selection.primary) || (connected ? "未配置" : "连接后查看")}</small>
-            {model?.selection.vision && <small>视觉模型：{shortModelName(model.selection.vision)}</small>}
+            <strong>{t("overviewUi.models")}</strong>
+            <small>{t("overviewUi.primaryModel", { name: shortModelName(model?.selection.primary) || (connected ? t("overviewUi.notConfigured") : t("overviewUi.connectToView")) })}</small>
+            {model?.selection.vision && <small>{t("overviewUi.visionModel", { name: shortModelName(model.selection.vision) })}</small>}
           </span>
           <Icon name="chevron-right" size={15} />
         </button>
         <button type="button" onClick={() => onNavigate("channels")}>
           <span className="agent-overview-config-icon"><Icon name="bell" size={17} /></span>
           <span>
-            <strong>渠道与绑定</strong>
-            <small>飞书：{channelLabel(channels.feishu)} · 钉钉：{channelLabel(channels.dingtalk)}</small>
+            <strong>{t("overviewUi.channels")}</strong>
+            <small>{t("overviewUi.feishu")}：{channelLabel(channels.feishu, t)} · {t("overviewUi.dingtalk")}：{channelLabel(channels.dingtalk, t)}</small>
           </span>
           <Icon name="chevron-right" size={15} />
         </button>
@@ -160,15 +154,15 @@ export function AgentOverviewPanel(props: Props) {
       <section className="settings-card">
         <div className="settings-card-heading">
           <div>
-            <h3>运行信息</h3>
-            <p>本地 Agent 由本机维护；远程 Agent 的运行由其所在主机维护。</p>
+            <h3>{t("overviewUi.runtimeInfo")}</h3>
+            <p>{t("overviewUi.runtimeHint")}</p>
           </div>
         </div>
         <dl className="settings-facts">
-          <div><dt>地址</dt><dd>{address || "—"}</dd></div>
-          <div><dt>来源</dt><dd>{source === "local" ? "本地 Agent" : "远程 / 手动连接"}</dd></div>
-          {pid && <div><dt>进程</dt><dd>PID {pid}</dd></div>}
-          {source === "local" && agentDirectory && <div><dt>数据目录</dt><dd title={agentDirectory}>{agentDirectory}</dd></div>}
+          <div><dt>{t("overviewUi.address")}</dt><dd>{address || "—"}</dd></div>
+          <div><dt>{t("overviewUi.source")}</dt><dd>{source === "local" ? t("overviewUi.localSource") : t("overviewUi.remoteSource")}</dd></div>
+          {pid && <div><dt>{t("overviewUi.process")}</dt><dd>PID {pid}</dd></div>}
+          {source === "local" && agentDirectory && <div><dt>{t("overviewUi.dataDirectory")}</dt><dd title={agentDirectory}>{agentDirectory}</dd></div>}
         </dl>
       </section>
       {error && <div className="settings-error">{error}</div>}
@@ -203,9 +197,16 @@ function channelSummary(response: Awaited<ReturnType<typeof window.gateway.getCh
   };
 }
 
-function channelLabel(summary: ChannelSummary): string {
-  if (!summary.configured) return "未配置";
-  return RUNTIME_LABELS[summary.state] || summary.state;
+function channelLabel(summary: ChannelSummary, t: (key: string) => string): string {
+  if (!summary.configured) return t("overviewUi.notConfiguredChannel");
+  const labels: Record<string, string> = {
+    starting: t("channelUi.connecting"),
+    running: t("channelUi.online"),
+    reconnecting: t("channelUi.reconnecting"),
+    error: t("channelUi.error"),
+    stopped: t("channelUi.disabled"),
+  };
+  return labels[summary.state] || summary.state;
 }
 
 function shortModelName(value?: string): string {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Button, Icon } from "../ui";
 
 interface Props {
@@ -26,18 +27,6 @@ type IdentityLink = {
 
 export type ChannelProvider = "feishu" | "dingtalk";
 
-const CHANNEL_RUNTIME_LABELS: Record<string, string> = {
-  starting: "连接中",
-  running: "在线",
-  reconnecting: "重连中",
-  error: "异常",
-  stopped: "未启用",
-};
-
-function channelRuntimeLabel(state: string): string {
-  return CHANNEL_RUNTIME_LABELS[state] || state || "未知";
-}
-
 export function AgentSettingsDialog({
   open,
   agentId,
@@ -46,6 +35,7 @@ export function AgentSettingsDialog({
   initialChannel = "feishu",
   onChanged,
 }: Props) {
+  const { t } = useTranslation();
   const [channel, setChannel] = useState<ChannelProvider>(initialChannel);
   const [appId, setAppId] = useState("");
   const [appSecret, setAppSecret] = useState("");
@@ -59,8 +49,14 @@ export function AgentSettingsDialog({
   const [linkCommand, setLinkCommand] = useState("");
   const [linkStatus, setLinkStatus] = useState("");
   const [identityLinks, setIdentityLinks] = useState<IdentityLink[]>([]);
-  const channelName = channel === "feishu" ? "飞书" : "钉钉";
-  const runtimeLabel = channelRuntimeLabel(runtimeState);
+  const channelName = channel === "feishu" ? t("channelUi.feishu") : t("channelUi.dingtalk");
+  const runtimeLabel = ({
+    starting: t("channelUi.connecting"),
+    running: t("channelUi.online"),
+    reconnecting: t("channelUi.reconnecting"),
+    error: t("channelUi.error"),
+    stopped: t("channelUi.disabled"),
+  } as Record<string, string>)[runtimeState] || runtimeState || t("channelUi.unknown");
 
   useEffect(() => {
     if (open) setChannel(initialChannel);
@@ -98,8 +94,8 @@ export function AgentSettingsDialog({
       const config = (response.result?.config || {}) as ChannelConfig;
       const runtime = (response.result?.runtime || {}) as Record<string, unknown>;
       setAppId(config.app_id || "");
-      const channelName = channel === "feishu" ? "飞书" : "钉钉";
-      setDisplayName(config.display_name || `${agentName}${channelName}机器人`);
+      const channelName = channel === "feishu" ? t("channelUi.feishu") : t("channelUi.dingtalk");
+      setDisplayName(config.display_name || `${agentName} ${channelName}`);
       setSecretConfigured(Boolean(config.secret_configured));
       setRuntimeState(typeof runtime.state === "string" ? runtime.state : "stopped");
       setAppSecret("");
@@ -119,7 +115,7 @@ export function AgentSettingsDialog({
           const status = String(response.result?.status || "");
           setLinkStatus(status);
           if (status === "completed") {
-            setNotice(`${channel === "feishu" ? "飞书" : "钉钉"}身份已绑定到当前人物。`);
+            setNotice(t("channelUi.boundSuccess"));
             void refreshIdentityLinks();
             window.clearInterval(timer);
           }
@@ -152,7 +148,7 @@ export function AgentSettingsDialog({
         agentId, channel, appId, appSecret,
       });
       if (response.error) setError(response.error.message);
-      else setNotice("连接测试成功。");
+      else setNotice(t("channelUi.testSuccess"));
     } finally {
       setBusy("");
     }
@@ -179,7 +175,7 @@ export function AgentSettingsDialog({
       setRuntimeState(String(runtime.state || "running"));
       setSecretConfigured(true);
       setAppSecret("");
-      setNotice(`${channelName}渠道已保存并启用。`);
+      setNotice(t("channelUi.saved", { channel: channelName }));
       onChanged?.();
     } finally {
       setBusy("");
@@ -221,7 +217,7 @@ export function AgentSettingsDialog({
       setSecretConfigured(false);
       setLinkRequestId("");
       setLinkCommand("");
-      setNotice(`${channelName}渠道已移除。`);
+      setNotice(t("channelUi.removed", { channel: channelName }));
       onChanged?.();
     } finally {
       setBusy("");
@@ -241,7 +237,7 @@ export function AgentSettingsDialog({
         setError(response.error.message);
         return;
       }
-      setNotice(`${channelName}身份已解除绑定。`);
+      setNotice(t("channelUi.unbound", { channel: channelName }));
       setLinkRequestId("");
       setLinkCommand("");
       setLinkStatus("");
@@ -261,7 +257,7 @@ export function AgentSettingsDialog({
         <header>
           <div>
             <h2>{channelName}</h2>
-            <p>{agentName} · 渠道设置</p>
+            <p>{agentName} · {t("channelUi.settings")}</p>
           </div>
           <button type="button" className="agent-settings-close" onClick={onClose}>
             <Icon name="x" />
@@ -279,7 +275,7 @@ export function AgentSettingsDialog({
         </div>
 
         <label>
-          机器人名称
+          {t("channelUi.botName")}
           <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
         </label>
         <label>
@@ -296,29 +292,29 @@ export function AgentSettingsDialog({
             type="password"
             value={appSecret}
             onChange={(event) => setAppSecret(event.target.value)}
-            placeholder={secretConfigured ? "已配置；留空表示不修改" : "请输入 App Secret"}
+            placeholder={secretConfigured ? t("channelUi.secretConfigured") : t("channelUi.secretPlaceholder")}
           />
         </label>
 
         <div className="channel-actions">
           <Button variant="secondary" disabled={!appId || Boolean(busy)} onClick={() => void test()}>
-            {busy === "test" ? "测试中…" : "测试连接"}
+            {busy === "test" ? t("channelUi.testing") : t("channelUi.test")}
           </Button>
           <Button variant="primary" disabled={!appId || Boolean(busy)} onClick={() => void save()}>
-            {busy === "save" ? "启用中…" : "保存并启用"}
+            {busy === "save" ? t("channelUi.enabling") : t("channelUi.saveEnable")}
           </Button>
         </div>
 
         {secretConfigured && (
           <div className="identity-link-panel">
-            <h3>绑定当前人物</h3>
-            <p>生成绑定码后，在{channelName}中私聊机器人并发送下面的命令。</p>
+            <h3>{t("channelUi.bindTitle")}</h3>
+            <p>{t("channelUi.bindDescription", { channel: channelName })}</p>
             {identityLinks.length > 0 && (
               <div className="identity-link-list">
                 {identityLinks.map((binding) => (
                   <div className="identity-link-item" key={binding.binding_id}>
                     <div>
-                      <strong>已绑定{channelName}身份</strong>
+                      <strong>{t("channelUi.bound", { channel: channelName })}</strong>
                       <code>{binding.subject_hint}</code>
                     </div>
                     <button
@@ -326,7 +322,7 @@ export function AgentSettingsDialog({
                       disabled={Boolean(busy)}
                       onClick={() => void revokeIdentity(binding.binding_id)}
                     >
-                      {busy === `revoke:${binding.binding_id}` ? "解除中…" : "解除绑定"}
+                      {busy === `revoke:${binding.binding_id}` ? t("channelUi.generating") : t("channelUi.unbind")}
                     </button>
                   </div>
                 ))}
@@ -340,10 +336,10 @@ export function AgentSettingsDialog({
                   onClick={() => void navigator.clipboard.writeText(linkCommand)}
                 >
                   <code>{linkCommand}</code>
-                  <span>点击复制</span>
+                  <span>{t("channelUi.copy")}</span>
                 </button>
                 <div className={`link-status ${linkStatus}`}>
-                  {linkStatus === "completed" ? "绑定成功" : `等待${channelName}消息…`}
+                  {linkStatus === "completed" ? t("channelUi.boundSuccess") : t("channelUi.waitingMessage", { channel: channelName })}
                 </div>
               </>
             ) : (
@@ -352,12 +348,12 @@ export function AgentSettingsDialog({
                 disabled={Boolean(busy) || runtimeState !== "running"}
                 onClick={() => void beginLink()}
               >
-                {busy === "link" ? "生成中…" : "生成绑定码"}
+                {busy === "link" ? t("channelUi.generating") : t("channelUi.generate")}
               </Button>
             )}
             {runtimeState !== "running" && (
               <div className="link-status">
-                {channelName}连接尚未建立，当前状态：{runtimeLabel}。连接在线后可生成绑定码。
+                {t("channelUi.notConnected", { channel: channelName, status: runtimeLabel })}
               </div>
             )}
           </div>
@@ -369,10 +365,10 @@ export function AgentSettingsDialog({
         <footer>
           {secretConfigured && (
             <button type="button" className="channel-remove" disabled={Boolean(busy)} onClick={() => void remove()}>
-              移除{channelName}渠道
+              {t("channelUi.remove", { channel: channelName })}
             </button>
           )}
-          <Button variant="secondary" onClick={onClose}>完成</Button>
+          <Button variant="secondary" onClick={onClose}>{t("channelUi.done")}</Button>
         </footer>
       </section>
     </div>

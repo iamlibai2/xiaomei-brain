@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { produce } from "immer";
+import i18n from "../i18n";
 import type { AgentCreationResult, AgentEntry, AgentLifecycleAction, ChatArtifactReference, ChatAttachment, ChatInvocationSelection, LocalAgentInfo, SessionEntry } from "../types";
 
 // ── Persistence (manual, avoid zustand/persist rehydration during render) ──
@@ -327,7 +328,7 @@ function capabilitySetupRequest(
       ? payload.capability_name
       : capabilityId,
     status: typeof payload.capability_status === "string" ? payload.capability_status : "needs_setup",
-    summary: typeof payload.summary === "string" ? payload.summary : "完成配置后即可继续使用这项能力。",
+    summary: typeof payload.summary === "string" ? payload.summary : i18n.t("capabilityUi.continueTask"),
     sessionId: typeof payload.session_id === "string" ? payload.session_id : fallbackSessionId,
     turnId: typeof payload.turn_id === "string" ? payload.turn_id : "",
     sourceMessageId: typeof payload.source_message_id === "number"
@@ -340,7 +341,7 @@ function capabilitySetupRequest(
       type: "open_settings",
       section,
       target: typeof action.target === "string" ? action.target : "",
-      label: typeof action.label === "string" ? action.label : "前往配置",
+      label: typeof action.label === "string" ? action.label : i18n.t("capabilityUi.goToSettings"),
     },
   };
 }
@@ -540,7 +541,7 @@ function historyMessages(
           turnId: typeof row.turn_id === "string" ? row.turn_id : undefined,
           serviceError: {
             code: deliveryErrorCode,
-            message: deliveryError || "当前模型服务暂时不可用。请稍后重试或切换模型。",
+            message: deliveryError || i18n.t("home.modelUnavailable"),
             retryMessageId: typeof row.id === "number" ? row.id : undefined,
           },
         } satisfies DisplayMessage,
@@ -1220,7 +1221,7 @@ function agentStateSnapshot(value: unknown): AgentStateSnapshot | null {
       ? relationship ? {
         personId: typeof relationship.person_id === "string" ? relationship.person_id : "",
         displayName: typeof relationship.display_name === "string" ? relationship.display_name : "",
-        relationType: typeof relationship.relation_type === "string" ? relationship.relation_type : "普通用户",
+        relationType: typeof relationship.relation_type === "string" ? relationship.relation_type : i18n.t("rightSidebarUi.relationship"),
         status: typeof relationship.status === "string" ? relationship.status : "",
         depth: Math.max(0, Math.min(1, typeof relationship.depth === "number" ? relationship.depth : 0)),
         trust: Math.max(0, Math.min(1, typeof relationship.trust === "number" ? relationship.trust : 0)),
@@ -2127,7 +2128,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
           })),
           ...artifactReferences.map((reference) => ({
             id: reference.artifactId,
-            name: reference.name || "Word 文档",
+            name: reference.name || i18n.t("preview.document"),
             mimeType: reference.mimeType || "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             size: reference.size || 0,
             kind: "document" as const,
@@ -2294,7 +2295,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         (current) => current.name === item.name && current.size === item.size,
       ));
       if (existing.length + additions.length > 4) {
-        s.attachmentErrorByConversation[draftKey] = "一次最多添加 4 个附件";
+        s.attachmentErrorByConversation[draftKey] = i18n.t("home.maxAttachments");
         return;
       }
       const combined = [...existing, ...additions];
@@ -2303,7 +2304,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       ));
       if (invalidItem) {
         const limit = invalidItem.kind === "video" ? 20 : 5;
-        s.attachmentErrorByConversation[draftKey] = `${invalidItem.name} 超过 ${limit} MB`;
+        s.attachmentErrorByConversation[draftKey] = i18n.t("home.fileTooLarge", { name: invalidItem.name, size: limit });
         return;
       }
       const total = combined.reduce((sum, item) => sum + item.size, 0);
@@ -2311,7 +2312,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         ? 32 * 1024 * 1024
         : 8 * 1024 * 1024;
       if (total > totalLimit) {
-        s.attachmentErrorByConversation[draftKey] = `附件合计不能超过 ${totalLimit / 1024 / 1024} MB`;
+        s.attachmentErrorByConversation[draftKey] = i18n.t("home.attachmentTotalLimit", { size: totalLimit / 1024 / 1024 });
         return;
       }
       s.attachmentsByConversation[draftKey] = combined;
@@ -2425,13 +2426,13 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   resumeCapabilityRequest: async (messageId) => {
     const agentId = get().activeAgentId;
     const sessionId = agentId ? get().activeSessionByAgent[agentId] || "" : "";
-    if (!agentId || !sessionId) return "当前会话不可用";
+    if (!agentId || !sessionId) return i18n.t("storeUi.sessionUnavailable");
     if (get().sendingByConversation[conversationStateKey(agentId, sessionId)]) {
-      return "当前会话仍在处理中";
+      return i18n.t("storeUi.sessionProcessing");
     }
     const source = (get().messagesByAgent[agentId] || [])
       .find((message) => message.sourceMessageId === messageId && message.role === "user");
-    if (!source) return "找不到被阻塞的原始请求";
+    if (!source) return i18n.t("storeUi.blockedRequestMissing");
 
     const clientRequestId = crypto.randomUUID();
     const optimisticId = `capability-resume-${clientRequestId}`;
@@ -2454,7 +2455,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
         agentId, sessionId, messageId, clientRequestId,
       });
       if (response.error || response.result?.accepted === false) {
-        const error = response.error?.message || String(response.result?.reason || "恢复请求失败");
+        const error = response.error?.message || String(response.result?.reason || i18n.t("storeUi.resumeFailed"));
         set(produce((s: CoreState) => {
           s.messagesByAgent[agentId] = (s.messagesByAgent[agentId] || [])
             .filter((message) => message.id !== optimisticId);
@@ -3155,7 +3156,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     const assignment = agentId
       ? (get().assignmentsByAgent[agentId] || []).find((item) => item.id === assignmentId)
       : undefined;
-    if (!agentId || !assignment) return "委托不存在";
+    if (!agentId || !assignment) return i18n.t("storeUi.assignmentMissing");
     const response = await window.gateway.requestAssignmentCancel({
       agentId,
       assignmentId,
@@ -3173,7 +3174,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     const assignment = agentId
       ? (get().assignmentsByAgent[agentId] || []).find((item) => item.id === assignmentId)
       : undefined;
-    if (!agentId || !assignment) return "委托不存在";
+    if (!agentId || !assignment) return i18n.t("storeUi.assignmentMissing");
     const response = await window.gateway.requestAssignmentResume({
       agentId,
       assignmentId,
@@ -3340,7 +3341,7 @@ export function initGatewayEvents(): () => void {
         const agent = state.agents.find((entry) => entry.id === agentId);
         const agentName = state.connectionByAgent[agentId]?.agentName || agent?.name || "Agent";
         const body = assignment.status === "waiting_person"
-          ? assignment.waitingReason || `${assignment.title} 正在等你回复`
+          ? assignment.waitingReason || i18n.t("storeUi.waitingReply", { title: assignment.title })
           : assignment.progressSummary || assignment.terminalReason || assignment.title;
         void window.notifications.show({
           title: `${agentName} · ${assignment.title}`,
@@ -3911,7 +3912,7 @@ export function initGatewayEvents(): () => void {
         ? d.error as Record<string, unknown>
         : null;
       const terminalText = text || (status === "error"
-        ? String(error?.message || "模型服务暂时不可用")
+        ? String(error?.message || i18n.t("storeUi.modelUnavailable"))
         : "");
       let retryMessageId: number | undefined;
       setState(produce((s: CoreState) => {

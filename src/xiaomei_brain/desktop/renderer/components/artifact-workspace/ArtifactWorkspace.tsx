@@ -6,6 +6,7 @@ import { DocxPreview } from "../right-sidebar/DocxPreview";
 import { TextArtifactPreview } from "../right-sidebar/TextArtifactPreview";
 import { HtmlArtifactPreview } from "../right-sidebar/HtmlArtifactPreview";
 import { artifactPreviewKind } from "../../artifacts/preview-capability";
+import { useTranslation } from "react-i18next";
 
 const PdfPreview = lazy(() => import("../right-sidebar/PdfPreview").then((module) => ({ default: module.PdfPreview })));
 const SpreadsheetPreview = lazy(() => import("../right-sidebar/SpreadsheetPreview").then((module) => ({ default: module.SpreadsheetPreview })));
@@ -29,6 +30,7 @@ export function ArtifactWorkspace({
   artifactKey: string;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   // Keep the external-store snapshot referentially stable while this Agent has
   // no artifacts. Returning `[]` from the selector creates a new snapshot on
   // every read and makes React's useSyncExternalStore rerender forever.
@@ -53,7 +55,7 @@ export function ArtifactWorkspace({
     setError("");
     if (!artifact) return;
     if (artifact.size > MAX_INLINE_BYTES) {
-      setError("文件超过 20 MB，请使用外部应用打开");
+      setError(t("preview.fileTooLarge"));
       return;
     }
     if (!kind) return;
@@ -67,7 +69,7 @@ export function ArtifactWorkspace({
       if (cancelled) return;
       if (response.error) throw new Error(response.error.message);
       const raw = response.result?.artifact;
-      if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("Agent 没有返回可预览的文件内容");
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(t("preview.noPreviewContent"));
       const value = raw as Record<string, unknown>;
       setDataBase64(typeof value.dataBase64 === "string" ? value.dataBase64 : "");
       setMimeType(typeof value.mimeType === "string" ? value.mimeType : artifact.mimeType);
@@ -117,7 +119,7 @@ export function ArtifactWorkspace({
         sessionId: artifact.sessionId,
         artifactId: artifact.id,
       });
-      if (!result.ok) setError(result.error || "无法打开文件");
+      if (!result.ok) setError(result.error || t("preview.openFailed"));
     } finally {
       setOpening(false);
     }
@@ -138,13 +140,13 @@ export function ArtifactWorkspace({
     <aside
       className={`artifact-workspace ${maximized ? "maximized" : ""}`}
       style={maximized ? undefined : { width }}
-      aria-label="产物工作区"
+      aria-label={t("preview.workspace")}
     >
       {!maximized && (
         <button
           type="button"
           className="artifact-workspace-resizer"
-          aria-label="调整产物工作区宽度"
+          aria-label={t("preview.resize")}
           onMouseDown={(event) => {
             event.preventDefault();
             resizeRef.current = { startX: event.clientX, startWidth: width };
@@ -158,32 +160,32 @@ export function ArtifactWorkspace({
             <Icon name={artifact?.kind === "image" ? "image" : "file-text"} size={17} />
           </span>
           <div>
-            <strong>{artifact?.name || "产物不存在"}</strong>
-            {artifact && <small>{formatBytes(artifact.size)} · 更新于 {new Date(artifact.updatedAt * 1000).toLocaleString()}</small>}
+            <strong>{artifact?.name || t("preview.missing")}</strong>
+            {artifact && <small>{formatBytes(artifact.size)} · {t("preview.updated", { date: new Date(artifact.updatedAt * 1000).toLocaleString() })}</small>}
           </div>
         </div>
         <div className="artifact-workspace-actions">
-          <button type="button" onClick={() => void openOriginal()} disabled={!artifact || opening} title="使用外部应用打开">
+          <button type="button" onClick={() => void openOriginal()} disabled={!artifact || opening} title={t("preview.openExternal")}>
             <Icon name="external-link" size={16} />
-            <span>{opening ? "打开中…" : "打开原文件"}</span>
+            <span>{opening ? t("preview.opening") : t("preview.openOriginal")}</span>
           </button>
-          <button type="button" onClick={() => setMaximized((value) => !value)} title={maximized ? "退出全屏预览" : "最大化预览"}>
+          <button type="button" onClick={() => setMaximized((value) => !value)} title={maximized ? t("preview.exitFullscreen") : t("preview.maximize")}>
             <Icon name="maximize" size={16} />
           </button>
-          <button type="button" onClick={onClose} title="关闭产物工作区" aria-label="关闭产物工作区">
+          <button type="button" onClick={onClose} title={t("preview.close")} aria-label={t("preview.close")}>
             <Icon name="x" size={17} />
           </button>
         </div>
       </header>
       <div className="artifact-workspace-body">
-        {loading && <div className="artifact-preview-state">正在读取文件…</div>}
+        {loading && <div className="artifact-preview-state">{t("preview.reading")}</div>}
         {error && <div className="artifact-workspace-error">{error}</div>}
-        {!artifact && <div className="artifact-workspace-empty">找不到这个产物，它可能已被移除。</div>}
+        {!artifact && <div className="artifact-workspace-empty">{t("preview.notFound")}</div>}
         {artifact && !kind && (
           <div className="artifact-workspace-empty">
             <Icon name="file-text" size={34} />
-            <strong>此文件暂不支持内嵌预览</strong>
-            <span>可以使用系统中的默认应用打开。</span>
+            <strong>{t("preview.unsupported")}</strong>
+            <span>{t("preview.useDefault")}</span>
           </div>
         )}
         {artifact && kind === "image" && dataBase64 && (
@@ -195,12 +197,12 @@ export function ArtifactWorkspace({
           <DocxPreview dataBase64={dataBase64} fileName={artifact.name} onAnnotate={annotate} />
         )}
         {artifact && kind === "pdf" && dataBase64 && annotate && (
-          <Suspense fallback={<div className="artifact-preview-state">正在加载 PDF 预览器…</div>}>
+          <Suspense fallback={<div className="artifact-preview-state">{t("preview.loadingPdf")}</div>}>
             <PdfPreview dataBase64={dataBase64} fileName={artifact.name} onAnnotate={annotate} />
           </Suspense>
         )}
         {artifact && kind === "spreadsheet" && dataBase64 && annotate && (
-          <Suspense fallback={<div className="artifact-preview-state">正在加载表格预览器…</div>}>
+          <Suspense fallback={<div className="artifact-preview-state">{t("preview.loadingSheet")}</div>}>
             <SpreadsheetPreview dataBase64={dataBase64} fileName={artifact.name} onAnnotate={annotate} />
           </Suspense>
         )}

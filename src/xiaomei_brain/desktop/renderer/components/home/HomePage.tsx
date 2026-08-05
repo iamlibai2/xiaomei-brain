@@ -465,9 +465,9 @@ export function HomePage({
                 <span className={`agent-empty-presence ${visibleAgentState?.living || "idle"}`}>
                   <i />
                   {connectionStatus === "connecting"
-                    ? "正在连接"
+                    ? t("home.connecting")
                     : visibleAgentState?.focusSummary
-                      || (visibleAgentState ? livingStateName(visibleAgentState.living) : t("home.agentReady"))}
+                      || (visibleAgentState ? livingStateName(visibleAgentState.living, t) : t("home.agentReady"))}
                 </span>
               </div>
             )}
@@ -539,10 +539,10 @@ export function HomePage({
                 type="button"
                 className={`scroll-to-latest ${unreadWhileAway ? "has-unread" : ""}`}
                 onClick={scrollToLatest}
-                title="回到底部"
+                title={t("home.oldestReached")}
               >
                 <Icon name="chevron-down" size={16} />
-                {unreadWhileAway && <span>有新消息</span>}
+                {unreadWhileAway && <span>{t("home.newMessage")}</span>}
               </button>
             )}
           </>
@@ -578,26 +578,27 @@ export function HomePage({
 }
 
 function DreamingNotice({ agentName }: { agentName: string }) {
+  const { t } = useTranslation();
   return (
     <div className="dreaming-message-notice" role="status">
       <Icon name="moon" size={16} />
       <div>
-        <strong>{agentName}正在梦境中</strong>
-        <span>收到的消息会安全排队，并在醒来后按顺序处理。</span>
+        <strong>{t("home.dreamingTitle", { name: agentName })}</strong>
+        <span>{t("home.dreamingNotice")}</span>
       </div>
     </div>
   );
 }
 
-function livingStateName(state: import("../../store").AgentStateSnapshot["living"]): string {
+function livingStateName(state: import("../../store").AgentStateSnapshot["living"], t: (key: string) => string): string {
   return {
-    dormant: "休眠",
-    waking: "正在苏醒",
-    awake: "清醒",
-    idle: "已准备好",
-    working: "工作中",
-    sleeping: "睡眠中",
-    dreaming: "梦境中",
+    dormant: t("home.livingDormant"),
+    waking: t("home.livingWaking"),
+    awake: t("home.livingAwake"),
+    idle: t("home.agentReady"),
+    working: t("sidebar.agentWorking"),
+    sleeping: t("home.livingSleeping"),
+    dreaming: t("home.livingDreaming"),
   }[state];
 }
 
@@ -715,7 +716,7 @@ function MessageRow({
           <Icon name="info" size={17} />
         </div>
         <div className="model-service-error-body">
-          <strong>暂时无法回应</strong>
+          <strong>{t("home.unavailable")}</strong>
           <p>{message.serviceError.message}</p>
           <div className="model-service-error-actions">
             <Button
@@ -723,7 +724,7 @@ function MessageRow({
               size="sm"
               onClick={() => openSettingsCenter("models", activeAgentId)}
             >
-              切换模型
+              {t("home.switchModel")}
             </Button>
             {message.serviceError.retryMessageId && (
               <Button
@@ -732,7 +733,7 @@ function MessageRow({
                 disabled={!canRetry}
                 onClick={() => void retryMessage(message.serviceError!.retryMessageId!)}
               >
-                重试
+                {t("home.retry")}
               </Button>
             )}
           </div>
@@ -755,7 +756,7 @@ function MessageRow({
                 title={message.invocation.name || message.invocation.id}
               >
                 <span className={`slash-invocation-kind is-${message.invocation.kind}`}>
-                  {message.invocation.kind === "capability" ? "能" : message.invocation.kind === "skill" ? "法" : "行"}
+                  {message.invocation.kind === "capability" ? t("home.kindCapability") : message.invocation.kind === "skill" ? t("home.kindSkill") : t("home.kindProcess")}
                 </span>
                 <span>
                   {message.invocation.id}
@@ -785,19 +786,19 @@ function MessageRow({
                   disabled={agentSending}
                   onClick={() => void retryMessage(message.sourceMessageId!)}
                 >
-                  重试
+                  {t("home.retry")}
                 </button>
               )}
             {message.deliveryStatus && message.deliveryStatus !== "completed" && (
               <div className={`message-delivery-status ${message.deliveryStatus}`}>
-                {message.deliveryStatus === "queued" && "已排队"}
-                {message.deliveryStatus === "processing" && "处理中"}
+                {message.deliveryStatus === "queued" && t("home.queued")}
+                {message.deliveryStatus === "processing" && t("home.processing")}
                 {message.deliveryStatus === "failed" && (
                   message.deliveryErrorCode?.startsWith("MODEL_")
-                    ? "模型服务不可用"
-                    : `处理失败${message.deliveryError ? `：${message.deliveryError}` : ""}`
+                    ? t("home.modelUnavailable")
+                    : `${t("home.processingFailed")}${message.deliveryError ? `: ${message.deliveryError}` : ""}`
                 )}
-                {message.deliveryStatus === "interrupted" && "已中断"}
+                {message.deliveryStatus === "interrupted" && t("home.interrupted")}
               </div>
             )}
           </div>
@@ -809,11 +810,11 @@ function MessageRow({
             )}
             <button
               type="button"
-              title="复制整条消息"
+              title={t("home.copyMessage")}
               onClick={() => void copyWholeMessage(message.content)}
             >
               <Icon name="copy" size={13} />
-              <span>{messageCopied ? "已复制" : "复制"}</span>
+              <span>{messageCopied ? t("common.copied") : t("common.copy")}</span>
             </button>
           </div>
         </div>
@@ -839,11 +840,11 @@ function MessageRow({
       <button
         type="button"
         className="message-copy-action"
-        title="复制整条回答"
+        title={t("home.copyAnswer")}
         onClick={() => void copyWholeMessage(displayedContent)}
       >
         <Icon name="copy" size={14} />
-        <span>{messageCopied ? "已复制" : "复制"}</span>
+        <span>{messageCopied ? t("common.copied") : t("common.copy")}</span>
       </button>
       {showAgentHeader && (
         <div className="assistant-avatar">
@@ -883,7 +884,7 @@ function MessageRow({
             onClick={() => onShowMemories(message.memoryReferences || [])}
           >
             <Icon name="sparkles" size={13} />
-            查看本次召回的 {message.memoryReferences.length} 条记忆
+            {t("home.memoryReferences", { count: message.memoryReferences.length })}
           </button>
         )}
       </div>
@@ -908,6 +909,7 @@ function MessageAttachment({
   agentId: string;
   sessionId: string;
 }) {
+  const { t } = useTranslation();
   const [previewUrl, setPreviewUrl] = useState(attachment.previewUrl || "");
   const [error, setError] = useState("");
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -937,14 +939,14 @@ function MessageAttachment({
       }
       const value = response.result?.attachment;
       if (!value || typeof value !== "object" || Array.isArray(value)) {
-        setError("附件内容无效");
+        setError(t("home.invalidAttachment"));
         return;
       }
       const item = value as Record<string, unknown>;
       const dataBase64 = typeof item.dataBase64 === "string" ? item.dataBase64 : "";
       const mimeType = typeof item.mimeType === "string" ? item.mimeType : attachment.mimeType;
       if (!dataBase64) {
-        setError("附件内容为空");
+        setError(t("home.emptyAttachment"));
         return;
       }
       setPreviewUrl(`data:${mimeType};base64,${dataBase64}`);
@@ -965,7 +967,7 @@ function MessageAttachment({
       sessionId,
       attachmentId: attachment.id,
     });
-    setError(result.ok ? "" : result.error || "无法打开附件");
+    setError(result.ok ? "" : result.error || t("home.openAttachmentFailed"));
   };
 
   const toggleAudio = async () => {
@@ -988,7 +990,7 @@ function MessageAttachment({
         type="button"
         className={`message-voice-attachment ${audioPlaying ? "is-playing" : ""} ${error ? "error" : ""}`}
         onClick={() => { void toggleAudio(); }}
-        title={error || "播放语音消息"}
+        title={error || t("home.voiceConversation")}
       >
         {previewUrl && (
           <audio
@@ -1013,7 +1015,7 @@ function MessageAttachment({
           ))}
         </span>
         <span className="message-voice-duration">
-          {audioDuration > 0 ? formatAudioDuration(audioDuration) : error ? "无法播放" : "语音"}
+          {audioDuration > 0 ? formatAudioDuration(audioDuration) : error ? t("home.unablePlay") : t("home.audio")}
         </span>
       </button>
     );
@@ -1052,7 +1054,7 @@ function MessageAttachment({
       type="button"
       className={`message-attachment ${attachment.kind}`}
       onClick={() => { void open(); }}
-      title={error || `打开 ${attachment.name}`}
+      title={error || t("home.openAttachment", { name: attachment.name })}
     >
       {previewUrl ? (
         <img src={previewUrl} alt={attachment.name} />
@@ -1075,7 +1077,7 @@ function MessageAttachment({
       <blockquote title={attachment.annotation.selectedText}>
         {attachment.annotation.sheet && attachment.annotation.range
           ? `${attachment.annotation.sheet}!${attachment.annotation.range} · `
-          : attachment.annotation.page ? `第 ${attachment.annotation.page} 页 · ` : ""}
+          : attachment.annotation.page ? `${t("preview.selectedPage", { page: attachment.annotation.page })} · ` : ""}
         {attachment.annotation.selectedText}
       </blockquote>
     </div>
@@ -1104,6 +1106,7 @@ function ArtifactCard({
   sessionId: string;
   onShowArtifact: (artifactId: string, sessionId: string) => void;
 }) {
+  const { t } = useTranslation();
   const artifact = message.artifact!;
   const [previewUrl, setPreviewUrl] = useState("");
   const [error, setError] = useState("");
@@ -1140,7 +1143,7 @@ function ArtifactCard({
       const result = await window.gateway.openArtifact({
         agentId, sessionId, artifactId: artifact.id,
       });
-      setError(result.ok ? "" : result.error || "无法打开产物");
+      setError(result.ok ? "" : result.error || t("preview.openFailed"));
     } finally {
       setOpening(false);
     }
@@ -1167,21 +1170,21 @@ function ArtifactCard({
             className={`artifact-inline-image ${error ? "error" : ""}`}
             onClick={() => onShowArtifact(artifact.id, sessionId)}
             disabled={opening}
-            title={error || `预览 ${artifact.name}`}
+            title={error || `${t("common.preview")} ${artifact.name}`}
           >
             {previewUrl ? (
               <img src={previewUrl} alt={artifact.name} />
             ) : (
               <span className="artifact-inline-image-loading">
                 <Icon name="sparkles" size={22} />
-                {error || "正在加载图片…"}
+                {error || t("home.loadImage")}
               </span>
             )}
           </button>
           <div className="artifact-inline-image-meta">
             <span title={artifact.name}>{artifact.name}</span>
             <button type="button" onClick={() => onShowArtifact(artifact.id, sessionId)}>
-              预览
+              {t("common.preview")}
             </button>
           </div>
         </div>
@@ -1203,7 +1206,7 @@ function ArtifactCard({
           className={`artifact-card artifact-${artifact.kind}`}
           onClick={() => previewSupported ? onShowArtifact(artifact.id, sessionId) : void open()}
           disabled={opening}
-          title={error || `${previewSupported ? "预览" : "打开"} ${artifact.name}`}
+          title={error || `${previewSupported ? t("common.preview") : t("common.open")} ${artifact.name}`}
         >
           {previewUrl ? (
             <img className="artifact-preview" src={previewUrl} alt={artifact.name} />
@@ -1213,10 +1216,10 @@ function ArtifactCard({
             </span>
           )}
           <span className="artifact-info">
-            <span className="artifact-label">Agent 产物</span>
+            <span className="artifact-label">{t("home.artifactLabel")}</span>
             <span className="artifact-name">{artifact.name}</span>
             <span className="artifact-meta">
-              {size} · {opening ? "正在打开" : previewSupported ? "预览" : "打开"}
+              {size} · {opening ? t("home.opening") : previewSupported ? t("home.preview") : t("home.open")}
             </span>
             {error && <span className="artifact-error">{error}</span>}
           </span>
@@ -1238,6 +1241,7 @@ function ImageLightbox({
   onClose: () => void;
   onOpenOriginal: () => void;
 }) {
+  const { t } = useTranslation();
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -1252,9 +1256,9 @@ function ImageLightbox({
         <span title={name}>{name}</span>
         <button type="button" onClick={onOpenOriginal}>
           <Icon name="external-link" size={15} />
-          打开原文件
+          {t("home.openOriginal")}
         </button>
-        <button type="button" className="message-image-lightbox-close" onClick={onClose} aria-label="关闭">
+        <button type="button" className="message-image-lightbox-close" onClick={onClose} aria-label={t("common.close")}>
           ×
         </button>
       </div>
@@ -1487,6 +1491,7 @@ function CapabilitySetupCard({ message, agentName, showAgentHeader }: {
   agentName: string;
   showAgentHeader: boolean;
 }) {
+  const { t } = useTranslation();
   const setup = message.capabilitySetup!;
   const activeAgentId = useCoreStore((state) => state.activeAgentId || "");
   const connectionStatus = useCoreStore((state) => (
@@ -1535,20 +1540,20 @@ function CapabilitySetupCard({ message, agentName, showAgentHeader }: {
 
   const ready = runtimeStatus === "ready" || runtimeStatus === "degraded";
   const statusText = setup.resumeStatus === "resumed"
-    ? "原任务已恢复"
+    ? t("home.capabilityResumed")
     : statusLoading
-      ? "正在确认能力状态…"
+      ? t("home.capabilityChecking")
       : connectionStatus !== "connected"
-        ? "Agent 离线，连接后确认状态"
+        ? t("home.capabilityOffline")
         : runtimeStatus === "preparing"
-          ? "配置已保存，需要重启 Agent"
+          ? t("home.capabilityRestartRequired")
           : runtimeStatus === "needs_setup"
-            ? "尚未完成配置"
+            ? t("home.capabilityNeedsSetup")
             : runtimeStatus === "disabled"
-              ? "能力当前已关闭"
+              ? t("home.capabilityDisabled")
               : ready
-                ? "能力已就绪，可以继续任务"
-                : "能力暂不可用";
+                ? t("home.capabilityReady")
+                : t("home.capabilityUnavailable");
 
   return (
     <div className={`assistant-message-row interaction-message-row ${showAgentHeader ? "" : "agent-turn-continuation"}`}>
@@ -1562,7 +1567,7 @@ function CapabilitySetupCard({ message, agentName, showAgentHeader }: {
         <div className="capability-setup-heading">
           <span className="capability-setup-icon"><Icon name="settings" size={16} /></span>
           <div>
-            <div className="interaction-card-label">需要完善能力配置</div>
+            <div className="interaction-card-label">{t("home.capabilitySetupTitle")}</div>
             <div className="capability-setup-name">{setup.capabilityName}</div>
           </div>
         </div>
@@ -1580,7 +1585,7 @@ function CapabilitySetupCard({ message, agentName, showAgentHeader }: {
               openSettingsCenter(section, activeAgentId, setup.action.target);
             }}
           >
-            {setup.action.label || "前往配置"}
+            {setup.action.label || t("home.goToSettings")}
           </Button>
           {setup.sourceMessageId && setup.resumeStatus !== "resumed" && (
             <Button
@@ -1595,7 +1600,7 @@ function CapabilitySetupCard({ message, agentName, showAgentHeader }: {
                 setResumeBusy(false);
               }}
             >
-              {resumeBusy ? "正在恢复…" : "配置完成，继续任务"}
+              {resumeBusy ? t("home.resumingTask") : t("home.continueTask")}
             </Button>
           )}
         </div>

@@ -21,6 +21,8 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
 import { Icon } from "../ui";
+import { useTranslation } from "react-i18next";
+import i18n from "../../i18n";
 
 const MarkdownStreamingContext = createContext(false);
 let mermaidRenderQueue: Promise<void> = Promise.resolve();
@@ -85,6 +87,7 @@ function downloadText(content: string, fileName: string, type = "text/plain;char
 }
 
 function MermaidBlock({ source, streaming }: { source: string; streaming: boolean }) {
+  const { t } = useTranslation();
   const id = useId().replace(/[^a-z0-9]/gi, "");
   const [svg, setSvg] = useState("");
   const [error, setError] = useState("");
@@ -118,12 +121,12 @@ function MermaidBlock({ source, streaming }: { source: string; streaming: boolea
     <div className="md-mermaid-canvas">
       {!svg && !error && (
         <div className="md-mermaid-loading">
-          {streaming ? "图表内容生成中…" : "正在绘制图表…"}
+          {streaming ? t("markdownUi.generating") : t("markdownUi.drawing")}
         </div>
       )}
       {error && (
         <div className="md-mermaid-error">
-          Mermaid 图表解析失败
+          {t("markdownUi.parseFailed")}
           <span>{error}</span>
         </div>
       )}
@@ -137,16 +140,16 @@ function MermaidBlock({ source, streaming }: { source: string; streaming: boolea
         <span>Mermaid</span>
         <div>
           <button type="button" onClick={() => setShowSource((value) => !value)}>
-            {showSource ? "查看图表" : "查看源码"}
+            {showSource ? t("markdownUi.viewDiagram") : t("markdownUi.viewSource")}
           </button>
           {svg && (
             <>
-              <button type="button" onClick={() => setExpanded(true)}>放大</button>
+              <button type="button" onClick={() => setExpanded(true)}>{t("markdownUi.zoom")}</button>
               <button
                 type="button"
                 onClick={() => downloadText(svg, safeDownloadName("mermaid"), "image/svg+xml;charset=utf-8")}
               >
-                下载
+                {t("markdownUi.download")}
               </button>
             </>
           )}
@@ -155,7 +158,7 @@ function MermaidBlock({ source, streaming }: { source: string; streaming: boolea
       {showSource ? <pre><code>{source}</code></pre> : diagram}
       {expanded && (
         <div className="md-mermaid-overlay" role="dialog" aria-modal="true" onClick={() => setExpanded(false)}>
-          <button type="button" className="md-mermaid-close" onClick={() => setExpanded(false)}>关闭</button>
+          <button type="button" className="md-mermaid-close" onClick={() => setExpanded(false)}>{t("markdownUi.close")}</button>
           <div className="md-mermaid-expanded" onClick={(event) => event.stopPropagation()}>
             {diagram}
           </div>
@@ -171,6 +174,7 @@ function CodeBlock({
   node: _node,
   ...props
 }: React.ComponentPropsWithoutRef<"code"> & { node?: unknown }) {
+  const { t } = useTranslation();
   const language = /language-([\w-]+)/.exec(className || "")?.[1] || "";
   const streaming = useContext(MarkdownStreamingContext);
   const source = nodeText(children).replace(/\n$/, "");
@@ -200,7 +204,7 @@ function CodeBlock({
         <span className="md-pre-lang">{language || "code"}</span>
         <button type="button" className="md-pre-copy" onClick={() => void copy()}>
           <Icon name="copy" size={14} />
-          {copied ? "已复制" : "复制"}
+          {copied ? t("markdownUi.copied") : t("markdownUi.copy")}
         </button>
       </div>
       <pre><code className={className} {...props}>{children}</code></pre>
@@ -240,7 +244,7 @@ const markdownComponents: Components = {
       <button
         type="button"
         className="md-image-button"
-        title={alt || "打开图片"}
+        title={alt || i18n.t("markdownUi.openImage")}
         onClick={() => src && void window.desktop.openExternal(src)}
       >
         <img src={src} alt={alt || ""} loading="lazy" {...props} />

@@ -375,11 +375,12 @@ function SessionItem({
   unreadCount?: number;
   onClick: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div
       className={`session-item ${isActive ? "active" : ""} ${isCurrent ? "current" : ""} ${disabled ? "disabled" : ""} ${unreadCount > 0 ? "unread" : ""}`}
       onClick={disabled ? undefined : onClick}
-      title={disabled ? "Agent 正在回复，完成后可切换会话" : session.name}
+      title={disabled ? t("sidebar.sessionSwitchBlocked") : session.name}
       onKeyDown={(event) => {
         if (disabled || isCurrent) return;
         if (event.key === "Enter" || event.key === " ") {
@@ -396,7 +397,7 @@ function SessionItem({
       </span>
       <span className="session-item-status">
         <span className="session-item-meta">{formatSessionMeta(session)}</span>
-        {isWorking && <span className="session-working-dot" title="工作中" />}
+        {isWorking && <span className="session-working-dot" title={t("sidebar.agentWorking")} />}
         {unreadCount > 0 && (
           <span className="session-unread-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>
         )}

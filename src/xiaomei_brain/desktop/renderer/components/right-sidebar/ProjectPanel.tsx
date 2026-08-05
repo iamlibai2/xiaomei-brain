@@ -1,40 +1,8 @@
 import type { ProjectDetailSnapshot } from "../../store";
 import { Icon } from "../ui";
+import { useTranslation } from "react-i18next";
 
-const stepStatus: Record<string, string> = {
-  pending: "待开始",
-  running: "进行中",
-  waiting_review: "待审阅",
-  completed: "已完成",
-  needs_revision: "需修改",
-  skipped: "已跳过",
-};
-
-const projectStatus: Record<string, string> = {
-  active: "进行中",
-  completed: "已完成",
-  discontinued: "已终止",
-};
-
-const assetRole: Record<string, string> = {
-  source: "素材",
-  working: "工作文件",
-  cache: "缓存",
-  review: "审阅件",
-  deliverable: "交付物",
-};
-
-const processStatus: Record<string, string> = {
-  active: "待满足",
-  satisfied: "已满足",
-  abandoned: "已取消",
-};
-
-const processStageStatus: Record<string, string> = {
-  pending: "待提交",
-  incomplete: "材料不完整",
-  satisfied: "已满足",
-};
+const projectKey = (prefix: string, value: string) => `projectUi.${prefix}${value.replace(/(^|_)([a-z])/g, (_, __, char) => char.toUpperCase())}`;
 
 export function ProjectPanel({
   detail,
@@ -47,14 +15,15 @@ export function ProjectPanel({
   error: string;
   onRefresh: () => void;
 }) {
+  const { t } = useTranslation();
   if (loading && !detail) {
-    return <section className="current-project-card loading">正在读取当前项目…</section>;
+    return <section className="current-project-card loading">{t("projectUi.loading")}</section>;
   }
   if (error && !detail) {
     return (
       <section className="current-project-card error">
         <span>{error}</span>
-        <button type="button" onClick={onRefresh}>重试</button>
+        <button type="button" onClick={onRefresh}>{t("projectUi.retry")}</button>
       </section>
     );
   }
@@ -62,9 +31,9 @@ export function ProjectPanel({
     return (
       <section className="project-sidebar-panel empty">
         <span className="project-sidebar-empty-icon"><Icon name="folder" size={20} /></span>
-        <strong>当前会话还没有项目</strong>
-        <p>直接在对话中告诉 Agent 要开展的长期工作，Agent 会创建项目并持续记录阶段、委托和资产。</p>
-        <button type="button" onClick={onRefresh}>刷新</button>
+        <strong>{t("projectUi.emptyTitle")}</strong>
+        <p>{t("projectUi.emptyDescription")}</p>
+        <button type="button" onClick={onRefresh}>{t("projectUi.refresh")}</button>
       </section>
     );
   }
@@ -102,13 +71,13 @@ export function ProjectPanel({
       <header>
         <span className="current-project-icon"><Icon name="folder" size={15} /></span>
         <div>
-          <small>当前项目</small>
+          <small>{t("projectUi.current")}</small>
           <strong>{project.name}</strong>
         </div>
         <span className={`project-status-badge ${project.status}`}>
-          {projectStatus[project.status] || project.status}
+          {t(projectKey("status", project.status), { defaultValue: project.status })}
         </span>
-        <button type="button" onClick={onRefresh} title="刷新项目">
+        <button type="button" onClick={onRefresh} title={t("projectUi.refreshTitle")}>
           <Icon name="refresh" size={14} />
         </button>
       </header>
@@ -120,7 +89,7 @@ export function ProjectPanel({
           <div
             className="current-project-progress-track"
             role="progressbar"
-            aria-label="项目进度"
+            aria-label={t("projectUi.progress")}
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={percent}
@@ -128,7 +97,7 @@ export function ProjectPanel({
             <span style={{ width: `${percent}%` }} />
           </div>
           <small>
-            {progressFinished}/{progressTotal} {usesProcessProgress ? "正式提交" : "已收束"} · {percent}%
+            {progressFinished}/{progressTotal} {usesProcessProgress ? t("projectUi.submitted") : t("projectUi.settled")} · {percent}%
           </small>
         </div>
       )}
@@ -136,12 +105,12 @@ export function ProjectPanel({
       {process && (
         <section className="project-detail-section project-process-summary">
           <header>
-            <strong>交付标准</strong>
-            <small className={process.status}>{processStatus[process.status] || process.status}</small>
+            <strong>{t("projectUi.deliveryStandard")}</strong>
+            <small className={process.status}>{t(projectKey("process", process.status), { defaultValue: process.status })}</small>
           </header>
           <div className="project-process-heading">
             <strong>{process.name}</strong>
-            <small>{process.ordered ? "按顺序提交" : "提交顺序自由"}</small>
+            <small>{process.ordered ? t("projectUi.ordered") : t("projectUi.unordered")}</small>
           </div>
           <ol className="project-process-stage-list">
             {[...process.stages]
@@ -152,13 +121,13 @@ export function ProjectPanel({
                   <div>
                     <div>
                       <strong>{stage.title}</strong>
-                      <small>{processStageStatus[stage.status] || stage.status}</small>
+                    <small>{t(projectKey("stage", stage.status), { defaultValue: stage.status })}</small>
                     </div>
                     {stage.requirementLabels.length > 0 && (
-                      <p>要求：{stage.requirementLabels.join("、")}</p>
+                      <p>{t("projectUi.requirement", { value: stage.requirementLabels.join("、") })}</p>
                     )}
                     {stage.missing.length > 0 && (
-                      <p className="missing">缺少：{stage.missing.join("、")}</p>
+                      <p className="missing">{t("projectUi.missing", { value: stage.missing.join("、") })}</p>
                     )}
                     {stage.summary && <p className="submitted">{stage.summary}</p>}
                   </div>
@@ -170,31 +139,31 @@ export function ProjectPanel({
       {latestReview && (
         <section className="project-detail-section project-review-summary">
           <header>
-            <strong>最近复盘</strong>
+            <strong>{t("projectUi.latestReview")}</strong>
             <small>{formatTime(latestReview.createdAt)}</small>
           </header>
           <p>{latestReview.assessment}</p>
           {latestReview.deviations.length > 0 && (
             <div>
-              <strong>与原计划的差异</strong>
+              <strong>{t("projectUi.deviations")}</strong>
               <ul>{latestReview.deviations.map((item) => <li key={item}>{item}</li>)}</ul>
             </div>
           )}
           {latestReview.planChanges.length > 0 && (
             <div>
-              <strong>计划调整</strong>
+              <strong>{t("projectUi.planChanges")}</strong>
               <ul>{latestReview.planChanges.map((item) => <li key={item}>{item}</li>)}</ul>
             </div>
           )}
           {latestReview.nextAction && (
-            <p className="project-review-next"><strong>下一步</strong>{latestReview.nextAction}</p>
+            <p className="project-review-next"><strong>{t("projectUi.next")}</strong>{latestReview.nextAction}</p>
           )}
         </section>
       )}
       {orderedSteps.length > 0 && (
         <section className="project-detail-section">
           <header>
-            <strong>项目阶段</strong>
+            <strong>{t("projectUi.stages")}</strong>
             <small>{finished}/{orderedSteps.length}</small>
           </header>
           <ol className="project-step-list">
@@ -212,7 +181,7 @@ export function ProjectPanel({
                   <div className="project-step-content">
                     <div>
                       <strong>{step.title}</strong>
-                      <small>{stepStatus[step.status] || step.status}</small>
+                    <small>{t(projectKey("status", step.status), { defaultValue: step.status })}</small>
                     </div>
                     {step.summary && <p>{step.summary}</p>}
                     {step.totalUnits !== null && (
@@ -228,8 +197,8 @@ export function ProjectPanel({
       {keyAssets.length > 0 && (
         <section className="project-detail-section">
           <header>
-            <strong>项目资产</strong>
-            <small>{assets.length} 份</small>
+            <strong>{t("projectUi.assets")}</strong>
+            <small>{t("projectUi.assetCount", { count: assets.length })}</small>
           </header>
           <ul className="project-asset-list">
             {keyAssets.map((asset) => (
@@ -239,34 +208,34 @@ export function ProjectPanel({
                 </span>
                 <div>
                   <strong title={asset.name}>{asset.name}</strong>
-                  <small>{assetRole[asset.role] || asset.role} · {formatBytes(asset.size)}</small>
+                  <small>{t(projectKey("role", asset.role), { defaultValue: asset.role })} · {formatBytes(asset.size)}</small>
                 </div>
               </li>
             ))}
           </ul>
           {assets.length > keyAssets.length && (
-            <small className="project-more-count">另有 {assets.length - keyAssets.length} 份项目资产</small>
+            <small className="project-more-count">{t("projectUi.moreAssets", { count: assets.length - keyAssets.length })}</small>
           )}
         </section>
       )}
       {(assignments.length > 0 || activities.length > 0) && (
         <section className="project-detail-section project-work-summary">
-          <header><strong>执行现场</strong></header>
+          <header><strong>{t("projectUi.execution")}</strong></header>
           <div>
-            <span><b>{activeAssignments.length}</b> 项进行中的委托</span>
-            <span><b>{activeActivities.length}</b> 条正在运行的活动</span>
+            <span>{t("projectUi.activeAssignments", { count: activeAssignments.length })}</span>
+            <span>{t("projectUi.activeActivities", { count: activeActivities.length })}</span>
           </div>
         </section>
       )}
       <dl className="project-metadata">
-        <dt>创建时间</dt><dd>{formatTime(project.createdAt)}</dd>
-        <dt>最近更新</dt><dd>{formatTime(project.updatedAt)}</dd>
-        {project.completedAt && <><dt>完成时间</dt><dd>{formatTime(project.completedAt)}</dd></>}
+        <dt>{t("projectUi.createdAt")}</dt><dd>{formatTime(project.createdAt)}</dd>
+        <dt>{t("projectUi.updatedAt")}</dt><dd>{formatTime(project.updatedAt)}</dd>
+        {project.completedAt && <><dt>{t("projectUi.completedAt")}</dt><dd>{formatTime(project.completedAt)}</dd></>}
       </dl>
       <footer>
-        <span>{assignments.length} 项委托</span>
-        <span>{activities.length} 条活动</span>
-        <span>{assets.length} 份资产</span>
+        <span>{t("projectUi.assignments", { count: assignments.length })}</span>
+        <span>{t("projectUi.activities", { count: activities.length })}</span>
+        <span>{t("projectUi.assetSummary", { count: assets.length })}</span>
       </footer>
     </section>
   );

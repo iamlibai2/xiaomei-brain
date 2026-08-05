@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import i18n from "../../i18n";
 import { useCoreStore } from "../../store";
 import { Icon } from "../ui";
 import type {
@@ -90,6 +91,9 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
   const [modelError, setModelError] = useState("");
   const [commandStatus, setCommandStatus] = useState("");
   const activeAgentId = useCoreStore((s) => s.activeAgentId);
+  const activeAgentIsLocal = useCoreStore((s) => (
+    s.agents.find((agent) => agent.id === s.activeAgentId)?.source === "local"
+  ));
   const activeSessionId = useCoreStore((s) => {
     const agentId = s.activeAgentId || "";
     return agentId ? s.activeSessionByAgent[agentId] || "" : "";
@@ -325,12 +329,12 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
 
     if (attachments.length === 0 && text === "/compact") {
       if (!activeAgentId || !activeSessionId) {
-        showCommandStatus("当前还没有可压缩的会话");
+        showCommandStatus(t("home.noSessionToCompact"));
         return;
       }
       setInput("");
       setInvocation(undefined);
-      setCommandStatus("正在压缩当前会话…");
+      setCommandStatus(t("home.compacting"));
       try {
         const response = await window.gateway.compactSession({
           agentId: activeAgentId,
@@ -340,8 +344,8 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
         const result = (response.result || {}) as Record<string, unknown>;
         showCommandStatus(
           result.compacted === false
-            ? "当前会话暂时没有需要压缩的内容"
-            : "当前会话已压缩",
+            ? t("home.nothingToCompact")
+            : t("home.compacted"),
         );
       } catch (error) {
         showCommandStatus(error instanceof Error ? error.message : String(error));
@@ -384,7 +388,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
     const files = Array.from(event.dataTransfer.files);
     if (!files.length) return;
     if (attachments.length + files.length > 4) {
-      setAttachmentError("一次最多添加 4 个附件");
+      setAttachmentError(t("home.maxAttachments"));
       return;
     }
     const totalSize = attachments.reduce((sum, item) => sum + item.size, 0)
@@ -395,7 +399,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       ? MAX_VIDEO_TOTAL_ATTACHMENT_BYTES
       : MAX_TOTAL_ATTACHMENT_BYTES;
     if (totalSize > totalLimit) {
-      setAttachmentError(`附件合计不能超过 ${totalLimit / 1024 / 1024} MB`);
+      setAttachmentError(t("home.attachmentTotalLimit", { size: totalLimit / 1024 / 1024 }));
       return;
     }
     try {
@@ -666,7 +670,19 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
     setAttachmentError("");
     setMediaBusy(true);
     let stream: MediaStream | null = null;
+    let cameraLeaseAcquired = false;
     try {
+      if (activeAgentIsLocal && activeAgentId) {
+        const lease = await window.gateway.setCameraCapture({
+          agentId: activeAgentId,
+          enabled: true,
+        });
+        if (lease.error) throw new Error(lease.error.message);
+        cameraLeaseAcquired = true;
+        // Some Windows camera drivers need a short hand-off interval after
+        // OpenCV releases the DirectShow device.
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+      }
       stream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 1280 }, height: { ideal: 720 } },
       });
@@ -702,6 +718,12 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       );
     } finally {
       stream?.getTracks().forEach((track) => track.stop());
+      if (cameraLeaseAcquired && activeAgentId) {
+        await window.gateway.setCameraCapture({
+          agentId: activeAgentId,
+          enabled: false,
+        }).catch(() => undefined);
+      }
       setMediaBusy(false);
     }
   };
@@ -725,7 +747,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       }}
       onDrop={(event) => { void handleDrop(event); }}
     >
-      {dragging && <div className="attachment-drop-hint">松开以添加附件</div>}
+      {dragging && <div className="attachment-drop-hint">{t("home.dropToAttach")}</div>}
       {slashMenuOpen && activeAgentId && (
         <SlashInvocationMenu
           ref={slashMenuRef}
@@ -782,7 +804,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       {invocation && (
         <div className="composer-invocation-chip">
           <span className={`slash-invocation-kind is-${invocation.kind}`}>
-            {invocation.kind === "capability" ? "能" : invocation.kind === "skill" ? "法" : "行"}
+            {invocation.kind === "capability" ? t("home.kindCapability") : invocation.kind === "skill" ? t("home.kindSkill") : t("home.kindProcess")}
           </span>
           <span>
             {invocation.name}
@@ -791,8 +813,8 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
           <button
             type="button"
             onClick={() => setInvocation(undefined)}
-            title="取消所选工作方式"
-            aria-label="取消所选工作方式"
+            title={t("home.cancelInvocation")}
+            aria-label={t("home.cancelInvocation")}
           >
             <Icon name="x" size={13} />
           </button>
@@ -877,12 +899,12 @@ async function droppedAttachment(file: File): Promise<ChatAttachment> {
   const videoMime = VIDEO_TYPES[extension];
   const officeMime = OFFICE_TYPES[extension];
   if (!imageMime && !videoMime && !officeMime && !TEXT_EXTENSIONS.has(extension)) {
-    throw new Error(`暂不支持 ${file.name} 的文件类型`);
+    throw new Error(i18n.t("home.unsupportedFile", { name: file.name }));
   }
-  if (file.size === 0) throw new Error(`${file.name} 是空文件`);
+  if (file.size === 0) throw new Error(i18n.t("home.emptyFile", { name: file.name }));
   const itemLimit = videoMime ? MAX_VIDEO_ATTACHMENT_BYTES : MAX_ATTACHMENT_BYTES;
   if (file.size > itemLimit) {
-    throw new Error(`${file.name} 超过 ${itemLimit / 1024 / 1024} MB`);
+    throw new Error(i18n.t("home.fileTooLarge", { name: file.name, size: itemLimit / 1024 / 1024 }));
   }
   const dataBase64 = await readFileBase64(file);
   return {
@@ -903,11 +925,11 @@ function fileExtension(name: string): string {
 function readFileBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error(`无法读取 ${file.name}`));
+    reader.onerror = () => reject(new Error(i18n.t("home.readFileFailed", { name: file.name })));
     reader.onload = () => {
       const result = typeof reader.result === "string" ? reader.result : "";
       const separator = result.indexOf(",");
-      if (separator < 0) reject(new Error(`无法读取 ${file.name}`));
+      if (separator < 0) reject(new Error(i18n.t("home.readFileFailed", { name: file.name })));
       else resolve(result.slice(separator + 1));
     };
     reader.readAsDataURL(file);
@@ -917,11 +939,11 @@ function readFileBase64(file: File): Promise<string> {
 function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error("无法读取媒体数据"));
+    reader.onerror = () => reject(new Error(i18n.t("home.mediaDataFailed")));
     reader.onload = () => {
       const result = typeof reader.result === "string" ? reader.result : "";
       const separator = result.indexOf(",");
-      if (separator < 0) reject(new Error("无法读取媒体数据"));
+      if (separator < 0) reject(new Error(i18n.t("home.mediaDataFailed")));
       else resolve(result.slice(separator + 1));
     };
     reader.readAsDataURL(blob);
@@ -935,7 +957,7 @@ function canvasToBlob(
 ): Promise<Blob> {
   return new Promise((resolve, reject) => {
     canvas.toBlob(
-      (blob) => blob ? resolve(blob) : reject(new Error("摄像头画面编码失败")),
+      (blob) => blob ? resolve(blob) : reject(new Error(i18n.t("home.cameraEncodeFailed"))),
       type,
       quality,
     );

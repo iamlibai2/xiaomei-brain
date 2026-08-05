@@ -166,6 +166,10 @@ class MethodRouter:
                 "embodiment.hearing.release",
                 "embodiment.audio.input",
             },
+            "embodiment.camera_lease": {
+                "embodiment.vision.acquire",
+                "embodiment.vision.release",
+            },
             "attachment.read": {"attachment.get"},
             "artifact.read": {"artifact.get", "artifact.list"},
             "artifact.events": {"artifact.get"},

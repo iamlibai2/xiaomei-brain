@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { ArtifactTextSelection } from "../../types";
 import { MarkdownMessage } from "../home/MarkdownMessage";
 import { ArtifactAnnotationComposer } from "./ArtifactAnnotationComposer";
@@ -58,6 +59,7 @@ export function TextArtifactPreview({
   markdown: boolean;
   onAnnotate: (selection: ArtifactTextSelection, instruction: string) => void;
 }) {
+  const { t } = useTranslation();
   const rootRef = useRef<HTMLDivElement>(null);
   const selectionRangeRef = useRef<Range | null>(null);
   const [selection, setSelection] = useState<ArtifactTextSelection | null>(null);
@@ -86,10 +88,10 @@ export function TextArtifactPreview({
     <div className="text-artifact-preview-shell">
       <div className="artifact-preview-toolbar">
         <div>
-          <strong>{markdown ? "Markdown 预览" : "文本预览"}</strong>
+          <strong>{markdown ? t("artifactUi.markdownPreview") : t("artifactUi.textPreview")}</strong>
           <span>{fileName}</span>
         </div>
-        <small>选中文字后可让 Agent 修改</small>
+        <small>{t("artifactUi.selectTextHint")}</small>
       </div>
       <div className="text-artifact-preview-viewport">
         <div
@@ -101,15 +103,15 @@ export function TextArtifactPreview({
         </div>
         {truncated && (
           <div className="artifact-preview-limit">
-            文件较大，当前只预览前 {MAX_RENDERED_CHARACTERS.toLocaleString()} 个字符；完整文件仍可交给 Agent 处理。
+            {t("artifactUi.largeFile", { count: MAX_RENDERED_CHARACTERS.toLocaleString() })}
           </div>
         )}
       </div>
       {selection && (
         <ArtifactAnnotationComposer
           excerpt={selection.selectedText}
-          location="已选择文字"
-          placeholder="例如：把这段改得更简洁，并保持原意"
+          location={t("artifactUi.selectedText")}
+          placeholder={t("artifactUi.editExample")}
           getAnchorRect={() => selectionRangeRef.current?.getBoundingClientRect() || null}
           onCancel={clearSelection}
           onSubmit={(instruction) => {

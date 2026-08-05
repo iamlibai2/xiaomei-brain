@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import i18n from "../../i18n";
 import { useCoreStore } from "../../store";
 import { Icon, type IconName } from "../ui";
 import { UNIFIED_SEARCH_EVENT } from "./events";
@@ -28,15 +30,16 @@ const EMPTY_RESULT: SearchResult = {
 };
 
 const SECTION_META: Array<{
-  kind: SearchKind; label: string; icon: IconName;
+  kind: SearchKind; labelKey: string; icon: IconName;
 }> = [
-  { kind: "sessions", label: "会话", icon: "folder" },
-  { kind: "messages", label: "消息", icon: "search" },
-  { kind: "artifacts", label: "产物", icon: "file-text" },
-  { kind: "assignments", label: "委托", icon: "sparkles" },
+  { kind: "sessions", labelKey: "sessions", icon: "folder" },
+  { kind: "messages", labelKey: "messages", icon: "search" },
+  { kind: "artifacts", labelKey: "artifacts", icon: "file-text" },
+  { kind: "assignments", labelKey: "assignments", icon: "sparkles" },
 ];
 
 export function UnifiedSearchDialog() {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<SearchResult>(EMPTY_RESULT);
@@ -148,7 +151,7 @@ export function UnifiedSearchDialog() {
         className="unified-search-dialog"
         role="dialog"
         aria-modal="true"
-        aria-label="统一搜索"
+        aria-label={t("searchUi.title")}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header className="unified-search-input-row">
@@ -157,24 +160,24 @@ export function UnifiedSearchDialog() {
             ref={inputRef}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder={`搜索 ${agentName} 的会话、消息、产物和委托`}
+            placeholder={t("searchUi.placeholder")}
           />
-          {loading && <span className="unified-search-loading">搜索中</span>}
+          {loading && <span className="unified-search-loading">{t("searchUi.searching")}</span>}
           {query && !loading && (
-            <button type="button" onClick={() => setQuery("")} aria-label="清空搜索">
+            <button type="button" onClick={() => setQuery("")} aria-label={t("searchUi.clear")}>
               <Icon name="x" size={15} />
             </button>
           )}
         </header>
         <div className="unified-search-results">
           {!connected ? (
-            <SearchNotice text="当前 Agent 尚未连接" />
+            <SearchNotice text={t("searchUi.notConnected")} />
           ) : error ? (
             <SearchNotice text={error} error />
           ) : !query.trim() ? (
-            <SearchNotice text="输入关键词开始搜索" hint="Ctrl K 可随时打开" />
+            <SearchNotice text={t("searchUi.start")} hint={t("searchUi.shortcut")} />
           ) : !loading && total === 0 ? (
-            <SearchNotice text="没有找到相关内容" />
+            <SearchNotice text={t("searchUi.empty")} />
           ) : (
             SECTION_META.map((section) => {
               const items = result[section.kind];
@@ -182,7 +185,7 @@ export function UnifiedSearchDialog() {
               return (
                 <div className="unified-search-section" key={section.kind}>
                   <div className="unified-search-section-title">
-                    <span>{section.label}</span><small>{items.length}</small>
+                    <span>{t(`searchUi.${section.labelKey}`)}</span><small>{t("searchUi.count", { count: items.length })}</small>
                   </div>
                   {items.map((item) => (
                     <button
@@ -209,7 +212,7 @@ export function UnifiedSearchDialog() {
           )}
         </div>
         <footer className="unified-search-footer">
-          <span>Enter 打开</span><span>Esc 关闭</span>
+          <span>{t("searchUi.enter")}</span><span>{t("searchUi.escape")}</span>
         </footer>
       </section>
     </div>
@@ -242,23 +245,20 @@ function searchItems(value: unknown): SearchItem[] {
 
 function resultTitle(kind: SearchKind, item: SearchItem): string {
   if (item.title) return item.title;
-  if (kind === "messages") return item.role === "user" ? "你的消息" : "Agent 回复";
-  return "搜索结果";
+  if (kind === "messages") return item.role === "user" ? i18n.t("searchUi.yourMessage") : i18n.t("searchUi.agentReply");
+  return i18n.t("searchUi.result");
 }
 
 function resultMeta(kind: SearchKind, item: SearchItem): string {
-  if (kind === "sessions" && item.message_count !== undefined) return `${item.message_count} 条`;
+  if (kind === "sessions" && item.message_count !== undefined) return i18n.t("searchUi.count", { count: item.message_count });
   if (kind === "assignments" && item.status) return assignmentStatus(item.status);
   const timestamp = item.updated_at || item.created_at;
   return timestamp ? new Date(timestamp * 1000).toLocaleDateString([], { month: "2-digit", day: "2-digit" }) : "";
 }
 
 function assignmentStatus(status: string): string {
-  return ({
-    offered: "待确认", clarifying: "待澄清", accepted: "已接受", queued: "排队中",
-    in_progress: "进行中", waiting_person: "等待回复", paused: "已暂停",
-    completed: "已完成", declined: "已拒绝", cancelled: "已取消", failed: "失败",
-  } as Record<string, string>)[status] || status;
+  const key = `searchUi.status${status.replace(/(^|_)([a-z])/g, (_, __, char) => char.toUpperCase())}`;
+  return i18n.t(key, { defaultValue: status });
 }
 
 function SearchNotice({ text, hint, error = false }: { text: string; hint?: string; error?: boolean }) {

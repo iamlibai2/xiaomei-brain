@@ -778,14 +778,22 @@ def cmd_eyes(living, args: str) -> None:
             _save_eyes_config(living, False)
             if em is not None:
                 em.stop()
+            if eyes.device is not None:
+                eyes.device.close()
+            eyes.online = False
             print(f"\n  {X}眼睛已关闭{R}", flush=True)
         else:  # on
             living._eyes_enabled = True
             eyes.enabled = True
             _save_eyes_config(living, True)
-            if em is not None:
+            opened = eyes.device is not None and eyes.device.open()
+            eyes.online = bool(opened)
+            if em is not None and opened:
                 em.start()
-            print(f"\n  {G}眼睛已开启{R}", flush=True)
+            if opened:
+                print(f"\n  {G}眼睛已开启{R}", flush=True)
+            else:
+                print(f"\n  {V}眼睛已开启，但摄像头不可用{R}", flush=True)
         return
 
     # 状态显示

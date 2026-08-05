@@ -71,7 +71,7 @@ export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySe
   };
 
   const createAccount = async () => {
-    if (!newAccountName.trim()) return setError("请输入账户名称。");
+    if (!newAccountName.trim()) return setError(t("identityUi.nameRequired"));
     if (newAccountPassword !== newAccountConfirmation) {
       return setError(t("identity.passwordMismatch"));
     }
@@ -92,7 +92,7 @@ export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySe
     setNewAccountPassword("");
     setNewAccountConfirmation("");
     setBusy("");
-    setMessage(`账户“${result.status.displayName || newAccountName}”已创建并切换。`);
+    setMessage(t("identityUi.created", { name: result.status.displayName || newAccountName }));
   };
 
   const switchAccount = async (subject: string) => {
@@ -108,7 +108,7 @@ export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySe
     publishStatus(result.status);
     closeAction();
     setBusy("");
-    setMessage(`已切换到“${result.status.displayName || "该账户"}”。Desktop 将使用此账户重新连接 Agent。`);
+    setMessage(t("identityUi.switched", { name: result.status.displayName || t("common.unknown") }));
   };
 
   const changePassword = async (subject: string) => {
@@ -158,7 +158,7 @@ export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySe
     setImportingAccount(false);
     setPassword("");
     setBusy("");
-    setMessage(`账户“${result.status.displayName || ""}”已导入并切换。`);
+    setMessage(t("identityUi.imported", { name: result.status.displayName || "" }));
   };
 
   const removeAccount = async (subject: string) => {
@@ -176,7 +176,7 @@ export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySe
     closeAction();
     setBusy("");
     if (wasActive) onClose();
-    else setMessage("本机账户已删除，Agent 中的数据没有改变。");
+    else setMessage(t("identityUi.closedAccount"));
   };
 
   const actionAccount = action
@@ -198,8 +198,8 @@ export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySe
       >
         <header className="identity-settings-header">
           <div>
-            <h2 id="identity-settings-title">账户管理</h2>
-            <p>管理这台电脑用于向各个 Agent 证明身份的本地账户。</p>
+            <h2 id="identity-settings-title">{t("identityUi.accountManagement")}</h2>
+            <p>{t("identityUi.accountDescription")}</p>
           </div>
           <div className="identity-settings-header-actions">
             <Button
@@ -213,7 +213,7 @@ export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySe
                 closeAction();
               }}
             >
-              导入备份
+              {t("identityUi.importBackup")}
             </Button>
             <Button
               variant="primary"
@@ -226,7 +226,7 @@ export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySe
                 closeAction();
               }}
             >
-              添加账户
+              {t("identityUi.addAccount")}
             </Button>
             {!embedded && (
               <button className="identity-settings-close" onClick={onClose} aria-label={t("about.close")}>
@@ -244,7 +244,7 @@ export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySe
                 <div className="identity-account-copy">
                   <div>
                     <strong>{account.displayName}</strong>
-                    {account.active && <span>当前账户</span>}
+                    {account.active && <span>{t("identityUi.current")}</span>}
                   </div>
                   <code title={account.subject}>{account.subject.slice(0, 16)}…</code>
                 </div>
@@ -258,7 +258,7 @@ export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySe
                       disabled={Boolean(busy)}
                       onClick={() => openAction("switch", account.subject)}
                     >
-                      切换到此账户
+                      {t("identityUi.switch")}
                     </Button>
                   )}
                   <Button
@@ -269,7 +269,7 @@ export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySe
                     disabled={Boolean(busy)}
                     onClick={() => openAction("password", account.subject)}
                   >
-                    修改密码
+                    {t("identityUi.changePassword")}
                   </Button>
                   <Button
                     variant="ghost"
@@ -279,7 +279,7 @@ export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySe
                     disabled={Boolean(busy)}
                     onClick={() => void exportBackup(account.subject)}
                   >
-                    {busy === `export:${account.subject}` ? "导出中…" : "导出备份"}
+                    {busy === `export:${account.subject}` ? t("identityUi.exporting") : t("identityUi.exportBackup")}
                   </Button>
                   <Button
                     variant="ghost"
@@ -289,7 +289,7 @@ export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySe
                     disabled={Boolean(busy)}
                     onClick={() => openAction("delete", account.subject)}
                   >
-                    删除
+                    {t("identityUi.delete")}
                   </Button>
                 </div>
               </div>
@@ -314,12 +314,12 @@ export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySe
             >
               <header>
                 <div>
-                  <h3 id="identity-account-modal-title">添加账户</h3>
-                  <p>创建一个独立的本机身份，用于连接和被 Agent 识别。</p>
+                  <h3 id="identity-account-modal-title">{t("identityUi.addAccount")}</h3>
+                  <p>{t("identityUi.createDescription")}</p>
                 </div>
                 <button
                   type="button"
-                  aria-label="关闭"
+                  aria-label={t("common.close")}
                   disabled={Boolean(busy)}
                   onClick={() => setAddingAccount(false)}
                 >
@@ -327,42 +327,42 @@ export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySe
                 </button>
               </header>
               <div className="connect-field">
-                <label>账户名称</label>
+                <label>{t("identityUi.accountName")}</label>
                 <input
                   autoFocus
                   value={newAccountName}
                   onChange={(event) => setNewAccountName(event.target.value)}
-                  placeholder="例如：李白"
+                  placeholder={t("identityUi.exampleName")}
                 />
               </div>
               <div className="connect-field">
-                <label>本机密码</label>
+                <label>{t("identityUi.password")}</label>
                 <input
                   type="password"
                   value={newAccountPassword}
                   onChange={(event) => setNewAccountPassword(event.target.value)}
-                  placeholder="至少 8 个字符"
+                  placeholder={t("identityUi.atLeastEight")}
                 />
               </div>
               <div className="connect-field">
-                <label>确认密码</label>
+                <label>{t("identityUi.confirmPassword")}</label>
                 <input
                   type="password"
                   value={newAccountConfirmation}
                   onChange={(event) => setNewAccountConfirmation(event.target.value)}
-                  placeholder="再次输入密码"
+                  placeholder={t("identityUi.enterAgain")}
                 />
               </div>
               <footer>
                 <Button variant="secondary" disabled={Boolean(busy)} onClick={() => setAddingAccount(false)}>
-                  取消
+                  {t("identityUi.cancel")}
                 </Button>
                 <Button
                   variant="primary"
                   disabled={Boolean(busy) || !newAccountName.trim() || !newAccountPassword}
                   onClick={() => void createAccount()}
                 >
-                  {busy === "create" ? "创建中…" : "创建并切换"}
+                  {busy === "create" ? t("identityUi.creating") : t("identityUi.createAndSwitch")}
                 </Button>
               </footer>
             </section>
@@ -383,21 +383,21 @@ export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySe
             >
               <header>
                 <div>
-                  <h3 id="identity-import-modal-title">导入账户备份</h3>
-                  <p>输入备份密码，然后选择加密身份备份文件。</p>
+                  <h3 id="identity-import-modal-title">{t("identityUi.importTitle")}</h3>
+                  <p>{t("identityUi.importDescription")}</p>
                 </div>
-                <button type="button" aria-label="关闭" disabled={Boolean(busy)} onClick={() => setImportingAccount(false)}>
+                <button type="button" aria-label={t("common.close")} disabled={Boolean(busy)} onClick={() => setImportingAccount(false)}>
                   <Icon name="x" size={18} />
                 </button>
               </header>
               <div className="connect-field">
-                <label>备份文件密码</label>
+                <label>{t("identityUi.backupPassword")}</label>
                 <input type="password" autoFocus value={password} onChange={(event) => setPassword(event.target.value)} />
               </div>
               <footer>
-                <Button variant="secondary" disabled={Boolean(busy)} onClick={() => setImportingAccount(false)}>取消</Button>
+                <Button variant="secondary" disabled={Boolean(busy)} onClick={() => setImportingAccount(false)}>{t("identityUi.cancel")}</Button>
                 <Button variant="primary" disabled={Boolean(busy) || !password} onClick={() => void importAccount()}>
-                  {busy === "import" ? "导入中…" : "选择文件并导入"}
+                  {busy === "import" ? t("identityUi.importing") : t("identityUi.selectAndImport")}
                 </Button>
               </footer>
             </section>
@@ -420,39 +420,39 @@ export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySe
                 <div>
                   <h3 id="identity-action-modal-title">
                     {action.type === "switch"
-                      ? `切换到“${actionAccount.displayName}”`
+                      ? t("identityUi.switchTitle", { name: actionAccount.displayName })
                       : action.type === "password"
-                        ? `修改“${actionAccount.displayName}”的密码`
-                        : `删除“${actionAccount.displayName}”`}
+                        ? t("identityUi.passwordTitle", { name: actionAccount.displayName })
+                        : t("identityUi.deleteTitle", { name: actionAccount.displayName })}
                   </h3>
                   <p>
-                    {action.type === "switch" && "验证密码后，Desktop 将使用此账户重新连接各个 Agent。"}
-                    {action.type === "password" && "新密码只用于保护这台电脑上的身份私钥。"}
-                    {action.type === "delete" && "这里只删除本机身份密钥，不会删除任何 Agent 中的数据。"}
+                    {action.type === "switch" && t("identityUi.switchDescription")}
+                    {action.type === "password" && t("identityUi.passwordDescription")}
+                    {action.type === "delete" && t("identityUi.deleteDescription")}
                   </p>
                 </div>
-                <button type="button" aria-label="关闭" disabled={Boolean(busy)} onClick={closeAction}>
+                <button type="button" aria-label={t("common.close")} disabled={Boolean(busy)} onClick={closeAction}>
                   <Icon name="x" size={18} />
                 </button>
               </header>
               <div className="connect-field">
-                <label>{action.type === "password" ? "当前密码" : "账户密码"}</label>
+                <label>{action.type === "password" ? t("identityUi.currentPassword") : t("identityUi.accountPassword")}</label>
                 <input type="password" autoFocus value={password} onChange={(event) => setPassword(event.target.value)} />
               </div>
               {action.type === "password" && (
                 <>
                   <div className="connect-field">
-                    <label>新密码</label>
-                    <input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="至少 8 个字符" />
+                    <label>{t("identityUi.newPassword")}</label>
+                    <input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder={t("identityUi.atLeastEight")} />
                   </div>
                   <div className="connect-field">
-                    <label>确认新密码</label>
+                    <label>{t("identityUi.confirmNewPassword")}</label>
                     <input type="password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} />
                   </div>
                 </>
               )}
               <footer>
-                <Button variant="secondary" disabled={Boolean(busy)} onClick={closeAction}>取消</Button>
+                <Button variant="secondary" disabled={Boolean(busy)} onClick={closeAction}>{t("identityUi.cancel")}</Button>
                 <Button
                   variant={action.type === "delete" ? "danger" : "primary"}
                   disabled={Boolean(busy) || !password || (action.type === "password" && !newPassword)}
@@ -462,7 +462,7 @@ export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySe
                     if (action.type === "delete") void removeAccount(action.subject);
                   }}
                 >
-                  {action.type === "switch" ? "确认切换" : action.type === "password" ? "保存密码" : "确认删除"}
+                  {action.type === "switch" ? t("identityUi.confirmSwitch") : action.type === "password" ? t("identityUi.savePassword") : t("identityUi.confirmDelete")}
                 </Button>
               </footer>
             </section>

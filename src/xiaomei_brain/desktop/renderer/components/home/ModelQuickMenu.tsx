@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type {
   ModelConfigSnapshot,
   ModelDefinition,
@@ -6,14 +7,6 @@ import type {
   ThinkingEffort,
 } from "../../types";
 import { Icon } from "../ui";
-
-const EFFORT_LABELS: Record<ThinkingEffort, string> = {
-  default: "默认",
-  low: "低",
-  medium: "中",
-  high: "高",
-  max: "最大",
-};
 
 interface ModelOption {
   value: string;
@@ -36,6 +29,14 @@ export function ModelQuickMenu({
     thinking?: ModelThinkingSelection,
   ) => Promise<void>;
 }) {
+  const { t } = useTranslation();
+  const effortLabels: Record<ThinkingEffort, string> = {
+    default: t("modelQuick.default"),
+    low: t("modelQuick.low"),
+    medium: t("modelQuick.medium"),
+    high: t("modelQuick.high"),
+    max: t("modelQuick.max"),
+  };
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const options = useMemo<ModelOption[]>(() => (
@@ -102,11 +103,11 @@ export function ModelQuickMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={disabled || options.length === 0}
-        title="当前 Agent 的模型与思考设置"
+        title={t("modelQuick.title")}
         onClick={() => setOpen((current) => !current)}
       >
         <span className="chat-model-menu-trigger-copy">
-          <strong>{busy ? "切换中…" : selected?.label || "选择模型"}</strong>
+          <strong>{busy ? t("modelQuick.switching") : selected?.label || t("modelQuick.select")}</strong>
         </span>
         <Icon name="chevron-down" size={14} />
       </button>
@@ -123,9 +124,9 @@ export function ModelQuickMenu({
               const optionEfforts = option.model.thinking_efforts;
               const optionThinkingSummary = optionThinking.enabled
                 ? optionEfforts.length
-                  ? EFFORT_LABELS[optionThinking.effort]
-                  : "已开启"
-                : "未开启";
+                  ? effortLabels[optionThinking.effort]
+                  : t("modelQuick.enabled")
+                : t("modelQuick.disabled");
               return (
                 <div
                   key={option.value}
@@ -140,7 +141,7 @@ export function ModelQuickMenu({
                     <span className="chat-model-option-name">{option.label}</span>
                     <span className="chat-model-option-end">
                       {option.value === primary && (
-                        <span className="chat-model-current-mark" aria-label="当前模型">✓</span>
+                        <span className="chat-model-current-mark" aria-label={t("modelQuick.current")}>✓</span>
                       )}
                       {optionSupportsThinking && <Icon name="chevron-left" size={14} />}
                     </span>
@@ -155,7 +156,7 @@ export function ModelQuickMenu({
                       <div className="chat-model-detail-divider" />
                       <div className="chat-model-thinking-shell">
                         <button type="button" className="chat-model-detail-action">
-                          <span>思考强度</span>
+                          <span>{t("modelQuick.effort")}</span>
                           <span>
                             {optionThinkingSummary}
                             <Icon name="chevron-left" size={14} />
@@ -166,7 +167,7 @@ export function ModelQuickMenu({
                           {option.model.thinking_toggle && (
                             <>
                               <div className="chat-model-thinking-toggle">
-                                <span>思考模式</span>
+                                <span>{t("modelQuick.mode")}</span>
                                 <button
                                   type="button"
                                   role="switch"
@@ -183,7 +184,7 @@ export function ModelQuickMenu({
                           )}
                           {optionEfforts.length > 0 && (
                             <div className="chat-model-effort-list">
-                              <small>思考强度</small>
+                              <small>{t("modelQuick.effort")}</small>
                               {optionEfforts.map((effort) => (
                                 <button
                                   type="button"
@@ -194,7 +195,7 @@ export function ModelQuickMenu({
                                     : ""}
                                   onClick={() => void selectEffort(option, effort)}
                                 >
-                                  <span>{EFFORT_LABELS[effort]}</span>
+                                  <span>{effortLabels[effort]}</span>
                                   {optionThinking.enabled && optionThinking.effort === effort && (
                                     <span aria-hidden="true">✓</span>
                                   )}

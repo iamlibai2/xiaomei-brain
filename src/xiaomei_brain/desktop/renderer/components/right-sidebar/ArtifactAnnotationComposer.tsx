@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 const COMPOSER_WIDTH = 360;
 const COMPOSER_HEIGHT_ESTIMATE = 218;
@@ -20,6 +21,7 @@ export function ArtifactAnnotationComposer({
   onCancel: () => void;
   onSubmit: (instruction: string) => void;
 }) {
+  const { t } = useTranslation();
   const [instruction, setInstruction] = useState("");
   const [position, setPosition] = useState({ left: VIEWPORT_MARGIN, top: VIEWPORT_MARGIN });
 
@@ -80,9 +82,9 @@ export function ArtifactAnnotationComposer({
       />
       <div>
         <small>{location}</small>
-        <button type="button" onClick={onCancel}>取消</button>
+        <button type="button" onClick={onCancel}>{t("artifactUi.cancel")}</button>
         <button type="button" className="primary" onClick={submit} disabled={!instruction.trim()}>
-          让 Agent 修改
+          {t("artifactUi.edit")}
         </button>
       </div>
     </div>

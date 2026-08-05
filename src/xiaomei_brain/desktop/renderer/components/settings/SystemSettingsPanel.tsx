@@ -1,75 +1,12 @@
 import { useEffect, useState, type ReactNode } from "react";
 import i18n from "../../i18n";
+import { useTranslation } from "react-i18next";
 import { useDesktopInfo } from "../../desktop-info";
 import type { DesktopSettings } from "../../types";
 import { Button, Icon } from "../ui";
 
-const COPY = {
-  "zh-CN": {
-    title: "系统设置",
-    subtitle: "这些设置只影响当前 Desktop，不会修改任何 Agent。",
-    behavior: "启动与窗口",
-    openAtLogin: "开机启动",
-    openAtLoginHint: "登录 Windows 后自动启动 xiaomei-brain Desktop。",
-    unavailable: "当前系统不可用",
-    closeBehavior: "关闭窗口时",
-    closeHint: "选择点击关闭按钮后退出 Desktop，或仅最小化窗口。",
-    exit: "退出 Desktop",
-    minimize: "最小化窗口",
-    experience: "界面与通知",
-    notifications: "Windows 通知",
-    notificationsHint: "Desktop 最小化或失焦时，显示 Agent 的新消息通知。",
-    language: "语言",
-    languageHint: "切换 Desktop 界面语言。",
-    rightSidebar: "默认打开右侧栏",
-    rightSidebarHint: "进入会话时默认展示 Agent 的动态和状态。",
-    update: "自动更新",
-    updateDisabled: "暂未启用",
-    updateHint: "正式更新服务尚未启用，Desktop 不会自动检查更新。",
-    directories: "目录与诊断",
-    configDirectory: "Desktop 配置目录",
-    logDirectory: "Desktop 日志目录",
-    open: "打开目录",
-    viewLog: "查看日志",
-    hideLog: "收起日志",
-    emptyLog: "日志文件目前为空。",
-    saved: "设置已保存",
-    failed: "保存设置失败",
-  },
-  "en-US": {
-    title: "System settings",
-    subtitle: "These preferences affect only this Desktop, not any Agent.",
-    behavior: "Startup and window",
-    openAtLogin: "Open at login",
-    openAtLoginHint: "Start xiaomei-brain Desktop after signing in.",
-    unavailable: "Unavailable on this system",
-    closeBehavior: "When closing the window",
-    closeHint: "Exit Desktop or keep it running in a minimized window.",
-    exit: "Exit Desktop",
-    minimize: "Minimize window",
-    experience: "Interface and notifications",
-    notifications: "Windows notifications",
-    notificationsHint: "Show Agent message notifications when Desktop is minimized or unfocused.",
-    language: "Language",
-    languageHint: "Change the Desktop interface language.",
-    rightSidebar: "Open right sidebar by default",
-    rightSidebarHint: "Show Agent activity and status when entering a conversation.",
-    update: "Automatic updates",
-    updateDisabled: "Not enabled",
-    updateHint: "The release service is not enabled, so Desktop does not check for updates.",
-    directories: "Directories and diagnostics",
-    configDirectory: "Desktop configuration",
-    logDirectory: "Desktop logs",
-    open: "Open directory",
-    viewLog: "View log",
-    hideLog: "Hide log",
-    emptyLog: "The log is currently empty.",
-    saved: "Settings saved",
-    failed: "Failed to save settings",
-  },
-} as const;
-
 export function SystemSettingsPanel() {
+  const { t } = useTranslation();
   const info = useDesktopInfo();
   const [settings, setSettings] = useState<DesktopSettings | null>(null);
   const [error, setError] = useState("");
@@ -91,7 +28,6 @@ export function SystemSettingsPanel() {
   }, []);
 
   const language = settings?.language || "zh-CN";
-  const copy = COPY[language];
 
   async function update(
     patch: Parameters<typeof window.desktop.updateSettings>[0],
@@ -100,7 +36,7 @@ export function SystemSettingsPanel() {
     setNotice("");
     const result = await window.desktop.updateSettings(patch);
     if (!result.ok || !result.settings) {
-      setError(result.error || copy.failed);
+      setError(result.error || t("systemUi.failed"));
       return;
     }
     setSettings(result.settings);
@@ -109,14 +45,14 @@ export function SystemSettingsPanel() {
       "xiaomei:desktop-settings-changed",
       { detail: result.settings },
     ));
-    setNotice(COPY[result.settings.language].saved);
+    setNotice(t("systemUi.saved"));
   }
 
   async function openDirectory(kind: "config" | "log") {
     const result = kind === "config"
       ? await window.desktop.openConfigDirectory()
       : await window.desktop.openLogDirectory();
-    if (!result.ok) setError(result.error || copy.failed);
+    if (!result.ok) setError(result.error || t("systemUi.failed"));
   }
 
   async function toggleLog() {
@@ -125,30 +61,30 @@ export function SystemSettingsPanel() {
       return;
     }
     const result = await window.desktop.readLog();
-    setLogContent(result.content || copy.emptyLog);
+    setLogContent(result.content || t("systemUi.emptyLog"));
   }
 
   if (!settings) {
-    return <div className="settings-empty">{error || "正在读取 Desktop 设置…"}</div>;
+    return <div className="settings-empty">{error || t("systemUi.loading")}</div>;
   }
 
   return (
     <div className="desktop-settings-panel">
       <header className="desktop-settings-intro">
-        <h2>{copy.title}</h2>
-        <p>{copy.subtitle}</p>
+        <h2>{t("systemUi.title")}</h2>
+        <p>{t("systemUi.subtitle")}</p>
       </header>
 
       <section className="settings-card">
         <div className="settings-card-heading">
           <div>
-            <h3>{copy.behavior}</h3>
+            <h3>{t("systemUi.behavior")}</h3>
           </div>
         </div>
         <SettingRow
           icon="power"
-          title={copy.openAtLogin}
-          description={settings.openAtLoginAvailable ? copy.openAtLoginHint : copy.unavailable}
+          title={t("systemUi.openAtLogin")}
+          description={settings.openAtLoginAvailable ? t("systemUi.openAtLoginHint") : t("systemUi.unavailable")}
         >
           <Switch
             checked={settings.openAtLogin}
@@ -156,44 +92,44 @@ export function SystemSettingsPanel() {
             onChange={(checked) => void update({ openAtLogin: checked })}
           />
         </SettingRow>
-        <SettingRow icon="x" title={copy.closeBehavior} description={copy.closeHint}>
+        <SettingRow icon="x" title={t("systemUi.closeBehavior")} description={t("systemUi.closeHint")}>
           <select
             value={settings.closeBehavior}
             onChange={(event) => void update({
               closeBehavior: event.target.value as DesktopSettings["closeBehavior"],
             })}
           >
-            <option value="exit">{copy.exit}</option>
-            <option value="minimize">{copy.minimize}</option>
+            <option value="exit">{t("systemUi.exit")}</option>
+            <option value="minimize">{t("systemUi.minimize")}</option>
           </select>
         </SettingRow>
       </section>
 
       <section className="settings-card">
         <div className="settings-card-heading">
-          <div><h3>{copy.experience}</h3></div>
+          <div><h3>{t("systemUi.experience")}</h3></div>
         </div>
-        <SettingRow icon="bell" title={copy.notifications} description={copy.notificationsHint}>
+        <SettingRow icon="bell" title={t("systemUi.notifications")} description={t("systemUi.notificationsHint")}>
           <Switch
             checked={settings.notificationsEnabled}
             onChange={(checked) => void update({ notificationsEnabled: checked })}
           />
         </SettingRow>
-        <SettingRow icon="info" title={copy.language} description={copy.languageHint}>
+        <SettingRow icon="info" title={t("systemUi.language")} description={t("systemUi.languageHint")}>
           <select
             value={settings.language}
             onChange={(event) => void update({
               language: event.target.value as DesktopSettings["language"],
             })}
           >
-            <option value="zh-CN">简体中文</option>
+            <option value="zh-CN">{t("systemUi.chinese")}</option>
             <option value="en-US">English</option>
           </select>
         </SettingRow>
         <SettingRow
           icon="sidebar-panel-right"
-          title={copy.rightSidebar}
-          description={copy.rightSidebarHint}
+          title={t("systemUi.rightSidebar")}
+          description={t("systemUi.rightSidebarHint")}
         >
           <Switch
             checked={settings.openRightSidebarByDefault}
@@ -205,32 +141,32 @@ export function SystemSettingsPanel() {
       <section className="settings-card">
         <SettingRow
           icon="refresh"
-          title={copy.update}
-          description={copy.updateHint}
+          title={t("systemUi.update")}
+          description={t("systemUi.updateHint")}
         >
-          <span className="desktop-setting-status">{copy.updateDisabled}</span>
+          <span className="desktop-setting-status">{t("systemUi.updateDisabled")}</span>
         </SettingRow>
       </section>
 
       <section className="settings-card">
         <div className="settings-card-heading">
-          <div><h3>{copy.directories}</h3></div>
+          <div><h3>{t("systemUi.directories")}</h3></div>
         </div>
         <DirectoryRow
-          label={copy.configDirectory}
+          label={t("systemUi.configDirectory")}
           path={info?.configDirectory || "—"}
-          action={copy.open}
+          action={t("systemUi.open")}
           onOpen={() => void openDirectory("config")}
         />
         <DirectoryRow
-          label={copy.logDirectory}
+          label={t("systemUi.logDirectory")}
           path={info?.logDirectory || "—"}
-          action={copy.open}
+          action={t("systemUi.open")}
           onOpen={() => void openDirectory("log")}
         />
         <div className="desktop-log-action">
           <Button variant="secondary" size="sm" onClick={() => void toggleLog()}>
-            {logContent === null ? copy.viewLog : copy.hideLog}
+            {logContent === null ? t("systemUi.viewLog") : t("systemUi.hideLog")}
           </Button>
         </div>
         {logContent !== null && <pre className="desktop-settings-log">{logContent}</pre>}

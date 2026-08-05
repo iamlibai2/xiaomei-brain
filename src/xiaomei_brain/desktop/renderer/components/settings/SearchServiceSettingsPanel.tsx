@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type {
   MediaServiceField,
   ToolServiceConfig,
@@ -19,6 +20,7 @@ export function SearchServiceSettingsPanel({
   target = "",
   onTargetConsumed,
 }: Props) {
+  const { t } = useTranslation();
   const [services, setServices] = useState<ToolServiceConfig[]>([]);
   const [editing, setEditing] = useState<ToolServiceConfig | null>(null);
   const [values, setValues] = useState<Record<string, unknown>>({});
@@ -83,7 +85,7 @@ export function SearchServiceSettingsPanel({
       return values[field.key] == null || String(values[field.key]).trim() === "";
     });
     if (missing) {
-      setError(`请输入${missing.label}`);
+      setError(t("searchSettingsUi.required", { label: missing.label }));
       return false;
     }
     return true;
@@ -104,7 +106,7 @@ export function SearchServiceSettingsPanel({
       setEditing(null);
       await load();
       notifyCapabilityStatusChanged(agentId, "web_search");
-      setNotice("搜索服务已保存。重启 Agent 后，联网搜索工具会使用此配置。");
+      setNotice(t("searchSettingsUi.saved"));
     } catch (saveError) {
       setError(String(saveError instanceof Error ? saveError.message : saveError));
     } finally {
@@ -124,7 +126,7 @@ export function SearchServiceSettingsPanel({
         config: values,
       });
       if (response.error) throw new Error(response.error.message);
-      setNotice("连接成功。测试会执行一次轻量搜索，以确认凭证和搜索接口均可使用。");
+      setNotice(t("searchSettingsUi.testSuccess"));
     } catch (testError) {
       setError(String(testError instanceof Error ? testError.message : testError));
     } finally {
@@ -133,7 +135,7 @@ export function SearchServiceSettingsPanel({
   }
 
   async function remove(serviceId: string) {
-    if (!window.confirm("移除该搜索服务配置？重启 Agent 后将不能再使用此搜索服务。")) return;
+    if (!window.confirm(t("searchSettingsUi.confirmRemove"))) return;
     setBusy(`remove:${serviceId}`);
     setError("");
     try {
@@ -142,7 +144,7 @@ export function SearchServiceSettingsPanel({
       setEditing(null);
       await load();
       notifyCapabilityStatusChanged(agentId, "web_search");
-      setNotice("搜索服务配置已移除，重启 Agent 后完全生效。");
+      setNotice(t("searchSettingsUi.removed"));
     } catch (removeError) {
       setError(String(removeError instanceof Error ? removeError.message : removeError));
     } finally {
@@ -150,10 +152,10 @@ export function SearchServiceSettingsPanel({
     }
   }
 
-  if (!agentId) return <EmptyState text="请先选择一个 Agent。" />;
-  if (!connected) return <EmptyState text="连接 Agent 后才能管理它的联网搜索服务。" />;
+  if (!agentId) return <EmptyState text={t("searchSettingsUi.selectAgent")} />;
+  if (!connected) return <EmptyState text={t("searchSettingsUi.connectToView")} />;
   if (!services.length && busy === "load") {
-    return <EmptyState text="正在读取搜索服务配置…" />;
+    return <EmptyState text={t("searchSettingsUi.loading")} />;
   }
 
   const visibleFields = editing?.fields.filter(
@@ -165,16 +167,16 @@ export function SearchServiceSettingsPanel({
     <div className="image-provider-settings">
       <header className="model-page-heading">
         <div>
-          <h2>联网搜索</h2>
-          <p>为当前 Agent 配置网页搜索能力。凭证只保存在这个 Agent 的配置中。</p>
+          <h2>{t("searchSettingsUi.title")}</h2>
+          <p>{t("searchSettingsUi.description")}</p>
         </div>
       </header>
 
       <section className="settings-card image-provider-library">
         <div className="settings-card-heading">
           <div>
-            <h3>搜索服务</h3>
-            <p>Agent 在需要获取实时信息时，可以自主调用已启用的搜索服务。</p>
+            <h3>{t("searchSettingsUi.services")}</h3>
+            <p>{t("searchSettingsUi.servicesHint")}</p>
           </div>
         </div>
         {services.length ? (
@@ -189,24 +191,24 @@ export function SearchServiceSettingsPanel({
                   <span>{service.vendor || service.plugin}</span>
                   <small>
                     {service.configured
-                      ? `已配置${service.secret_hint ? ` · ${service.secret_hint}` : ""}`
-                      : "由插件提供，配置后启用"}
+                      ? `${t("searchSettingsUi.configured")}${service.secret_hint ? ` · ${service.secret_hint}` : ""}`
+                      : t("searchSettingsUi.pluginProvided")}
                   </small>
                 </div>
                 <span className={service.enabled && service.configured
                   ? "image-provider-status active"
                   : "image-provider-status"}
                 >
-                  {service.enabled && service.configured ? "已启用" : "未配置"}
+                  {service.enabled && service.configured ? t("searchSettingsUi.enabled") : t("searchSettingsUi.notConfigured")}
                 </span>
                 <Button variant="secondary" onClick={() => openEditor(service)}>
-                  {service.configured ? "编辑" : "配置"}
+                  {service.configured ? t("searchSettingsUi.edit") : t("searchSettingsUi.configure")}
                 </Button>
               </article>
             ))}
           </div>
         ) : (
-          <div className="settings-empty">暂时没有安装可配置的搜索插件。</div>
+          <div className="settings-empty">{t("searchSettingsUi.noPlugin")}</div>
         )}
       </section>
 
@@ -225,11 +227,11 @@ export function SearchServiceSettingsPanel({
             <header className="model-editor-header">
               <div>
                 <h2 id="search-service-title">{editing.name}</h2>
-                <p>配置只属于当前 Agent，API Key 不会返回给 Desktop。</p>
+                <p>{t("searchSettingsUi.editorHint")}</p>
               </div>
               <button
                 type="button"
-                aria-label="关闭"
+                aria-label={t("searchSettingsUi.close")}
                 disabled={Boolean(busy)}
                 onClick={() => setEditing(null)}
               >
@@ -257,7 +259,7 @@ export function SearchServiceSettingsPanel({
                   size="sm"
                   onClick={() => setShowAdvanced((current) => !current)}
                 >
-                  {showAdvanced ? "收起高级设置" : "高级设置"}
+                  {showAdvanced ? t("searchSettingsUi.advancedCollapse") : t("searchSettingsUi.advanced")}
                 </Button>
               )}
               {notice && <div className="settings-notice">{notice}</div>}
@@ -272,19 +274,19 @@ export function SearchServiceSettingsPanel({
                     disabled={Boolean(busy)}
                     onClick={() => void remove(editing.id)}
                   >
-                    移除配置
+                    {t("searchSettingsUi.removeConfig")}
                   </Button>
                 )}
               </div>
               <div>
                 <Button variant="secondary" disabled={Boolean(busy)} onClick={() => setEditing(null)}>
-                  取消
+                  {t("searchSettingsUi.cancel")}
                 </Button>
                 <Button variant="secondary" disabled={Boolean(busy)} onClick={() => void testConnection()}>
-                  {busy === "test" ? "测试中…" : "测试连接"}
+                  {busy === "test" ? t("searchSettingsUi.testing") : t("searchSettingsUi.test")}
                 </Button>
                 <Button variant="primary" disabled={Boolean(busy)} onClick={() => void save()}>
-                  {busy === "save" ? "保存中…" : "保存"}
+                  {busy === "save" ? t("searchSettingsUi.saving") : t("searchSettingsUi.save")}
                 </Button>
               </div>
             </footer>
@@ -308,6 +310,7 @@ function ServiceField({
   secretHint: string;
   onChange: (value: unknown) => void;
 }) {
+  const { t } = useTranslation();
   if (field.type === "boolean") {
     return (
       <label className="image-provider-checkbox">
@@ -327,7 +330,7 @@ function ServiceField({
         <SelectMenu
           value={String(value ?? "")}
           options={(field.options || []).map((option) => ({ value: option, label: option }))}
-          placeholder={`请选择${field.label}`}
+          placeholder={t("searchSettingsUi.selectField", { label: field.label })}
           onChange={onChange}
         />
       </label>
@@ -343,8 +346,8 @@ function ServiceField({
         max={field.maximum}
         step={field.step}
         placeholder={field.type === "secret" && secretConfigured
-          ? `已配置 ${secretHint}，留空表示不修改`
-          : `请输入${field.label}`}
+          ? t("searchSettingsUi.configuredSecret", { hint: secretHint })
+          : t("searchSettingsUi.enterField", { label: field.label })}
         onChange={(event) => onChange(
           field.type === "number" && event.target.value !== ""
             ? Number(event.target.value)

@@ -5,6 +5,7 @@ import {
   useMemo,
   useState,
 } from "react";
+import { useTranslation } from "react-i18next";
 import type {
   ChatInvocationSelection,
   ComposerInvocationCatalog,
@@ -46,6 +47,7 @@ export const SlashInvocationMenu = forwardRef<
   SlashInvocationMenuHandle,
   SlashInvocationMenuProps
 >(function SlashInvocationMenu({ agentId, query, onSelect, onClose }, ref) {
+  const { t } = useTranslation();
   const [catalog, setCatalog] = useState(EMPTY_CATALOG);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -78,16 +80,16 @@ export const SlashInvocationMenu = forwardRef<
     if (pendingCapability) return [];
     return [
       ...catalog.capabilities.filter((item) => matches(item, query)).map((item) => ({
-        ...item, section: "能力",
+        ...item, section: t("slashUi.capability"),
       })),
       ...catalog.skills.filter((item) => matches(item, query)).map((item) => ({
-        ...item, section: "工作方法",
+        ...item, section: t("slashUi.skill"),
       })),
       ...catalog.execution_modes.filter((item) => matches(item, query)).map((item) => ({
-        ...item, section: "执行方式",
+        ...item, section: t("slashUi.process"),
       })),
     ].slice(0, 24);
-  }, [catalog, pendingCapability, query]);
+  }, [catalog, pendingCapability, query, t]);
 
   const processes = pendingCapability?.processes || [];
   const selectableCount = pendingCapability ? processes.length + 1 : entries.length;
@@ -148,20 +150,20 @@ export const SlashInvocationMenu = forwardRef<
   }), [activeIndex, entries, onClose, pendingCapability, processes, selectableCount]);
 
   if (loading) {
-    return <div className="slash-invocation-menu is-message">正在读取小美的能力…</div>;
+    return <div className="slash-invocation-menu is-message">{t("slashUi.loading")}</div>;
   }
   if (error) {
-    return <div className="slash-invocation-menu is-message">暂时无法读取工作方式</div>;
+    return <div className="slash-invocation-menu is-message">{t("slashUi.error")}</div>;
   }
 
   if (pendingCapability) {
     return (
-      <div className="slash-invocation-menu" role="listbox" aria-label="选择交付标准">
+      <div className="slash-invocation-menu" role="listbox" aria-label={t("slashUi.chooseProcess")}>
         <div className="slash-invocation-heading">
-          <button type="button" onClick={() => setPendingCapability(null)} aria-label="返回">←</button>
+          <button type="button" onClick={() => setPendingCapability(null)} aria-label={t("slashUi.back")}>←</button>
           <div>
             <strong>{pendingCapability.name}</strong>
-            <span>选择交付标准（可选）</span>
+            <span>{t("slashUi.optional")}</span>
           </div>
         </div>
         <button
@@ -170,7 +172,7 @@ export const SlashInvocationMenu = forwardRef<
           onMouseEnter={() => setActiveIndex(0)}
           onClick={() => selectProcess()}
         >
-          <span className="slash-invocation-item-main"><strong>由小美判断</strong><small>根据任务需求决定是否使用交付标准</small></span>
+          <span className="slash-invocation-item-main"><strong>{t("slashUi.auto")}</strong><small>{t("slashUi.autoHint")}</small></span>
         </button>
         {processes.map((process, index) => (
           <button
@@ -184,7 +186,7 @@ export const SlashInvocationMenu = forwardRef<
               <strong>{process.name}</strong>
               <small>{process.description}</small>
             </span>
-            <span className="slash-invocation-count">{process.stage_count} 阶段</span>
+            <span className="slash-invocation-count">{t("slashUi.stages", { count: process.stage_count })}</span>
           </button>
         ))}
       </div>
@@ -192,12 +194,12 @@ export const SlashInvocationMenu = forwardRef<
   }
 
   if (!entries.length) {
-    return <div className="slash-invocation-menu is-message">没有匹配的能力或工作方法</div>;
+    return <div className="slash-invocation-menu is-message">{t("slashUi.empty")}</div>;
   }
 
   let previousSection = "";
   return (
-    <div className="slash-invocation-menu" role="listbox" aria-label="选择能力或工作方法">
+    <div className="slash-invocation-menu" role="listbox" aria-label={t("slashUi.choose")}>
       {entries.map((entry, index) => {
         const heading = entry.section !== previousSection;
         previousSection = entry.section;
@@ -211,7 +213,7 @@ export const SlashInvocationMenu = forwardRef<
               onClick={() => selectEntry(entry)}
             >
               <span className={`slash-invocation-kind is-${entry.kind}`}>
-                {entry.kind === "capability" ? "能" : entry.kind === "skill" ? "法" : "行"}
+                {entry.kind === "capability" ? t("slashUi.kindCapability") : entry.kind === "skill" ? t("slashUi.kindSkill") : t("slashUi.kindProcess")}
               </span>
               <span className="slash-invocation-item-main">
                 <strong>{entry.name}</strong>
@@ -225,4 +227,3 @@ export const SlashInvocationMenu = forwardRef<
     </div>
   );
 });
-

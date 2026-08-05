@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type {
   MediaCapability,
   MediaRuntimeStatus,
@@ -18,13 +19,14 @@ const CAPABILITIES: Array<{
   description: string;
   icon: IconName;
 }> = [
-  { id: "image", label: "图片生成", description: "根据文字描述生成图片", icon: "image" },
-  { id: "tts", label: "语音合成", description: "朗读文字并生成音频文件", icon: "microphone" },
-  { id: "music", label: "音乐生成", description: "根据描述和歌词生成音乐", icon: "sparkles" },
-  { id: "video", label: "视频生成", description: "生成视频片段并参与项目合成", icon: "play" },
+  { id: "image", label: "mediaUi.imageLabel", description: "mediaUi.imageDescription", icon: "image" },
+  { id: "tts", label: "mediaUi.ttsLabel", description: "mediaUi.ttsDescription", icon: "microphone" },
+  { id: "music", label: "mediaUi.musicLabel", description: "mediaUi.musicDescription", icon: "sparkles" },
+  { id: "video", label: "mediaUi.videoLabel", description: "mediaUi.videoDescription", icon: "play" },
 ];
 
 export function MediaServiceSettingsPanel({ agentId, connected }: Props) {
+  const { t } = useTranslation();
   const [services, setServices] = useState<MediaServiceConfig[]>([]);
   const [runtime, setRuntime] = useState<MediaRuntimeStatus | null>(null);
   const [editing, setEditing] = useState<MediaServiceConfig | null>(null);
@@ -97,7 +99,7 @@ export function MediaServiceSettingsPanel({ agentId, connected }: Props) {
       return values[field.key] == null || String(values[field.key]).trim() === "";
     });
     if (missing) {
-      setError(`请输入${missing.label}`);
+      setError(t("mediaUi.required", { label: missing.label }));
       return false;
     }
     return true;
@@ -117,7 +119,7 @@ export function MediaServiceSettingsPanel({ agentId, connected }: Props) {
       if (response.error) throw new Error(response.error.message);
       setEditing(null);
       await load();
-      setNotice("媒体服务已保存。重启 Agent 后，相应工具会生效。");
+      setNotice(t("mediaUi.saved"));
     } catch (saveError) {
       setError(String(saveError instanceof Error ? saveError.message : saveError));
     } finally {
@@ -137,7 +139,7 @@ export function MediaServiceSettingsPanel({ agentId, connected }: Props) {
         config: values,
       });
       if (response.error) throw new Error(response.error.message);
-      setNotice("连接成功，服务地址和凭据可以访问。测试不会生成媒体内容。");
+      setNotice(t("mediaUi.testSuccess"));
     } catch (testError) {
       setError(String(testError instanceof Error ? testError.message : testError));
     } finally {
@@ -146,7 +148,7 @@ export function MediaServiceSettingsPanel({ agentId, connected }: Props) {
   }
 
   async function remove(serviceId: string) {
-    if (!window.confirm("移除该媒体服务配置？重启 Agent 后对应工具将不再可用。")) return;
+    if (!window.confirm(t("mediaUi.confirmRemove"))) return;
     setBusy(`remove:${serviceId}`);
     setError("");
     try {
@@ -154,7 +156,7 @@ export function MediaServiceSettingsPanel({ agentId, connected }: Props) {
       if (response.error) throw new Error(response.error.message);
       setEditing(null);
       await load();
-      setNotice("媒体服务配置已移除，重启 Agent 后完全生效。");
+      setNotice(t("mediaUi.removed"));
     } catch (removeError) {
       setError(String(removeError instanceof Error ? removeError.message : removeError));
     } finally {
@@ -162,10 +164,10 @@ export function MediaServiceSettingsPanel({ agentId, connected }: Props) {
     }
   }
 
-  if (!agentId) return <EmptyState text="请先选择一个 Agent。" />;
-  if (!connected) return <EmptyState text="连接 Agent 后才能管理它的媒体服务。" />;
+  if (!agentId) return <EmptyState text={t("mediaUi.selectAgent")} />;
+  if (!connected) return <EmptyState text={t("mediaUi.connectToView")} />;
   if (!services.length && busy === "load") {
-    return <EmptyState text="正在读取媒体服务配置…" />;
+    return <EmptyState text={t("mediaUi.loading")} />;
   }
 
   const visibleFields = editing?.fields.filter(
@@ -177,19 +179,19 @@ export function MediaServiceSettingsPanel({ agentId, connected }: Props) {
     <div className="image-provider-settings">
       <header className="model-page-heading">
         <div>
-          <h2>媒体服务</h2>
-          <p>为当前 Agent 配置图片、语音、音乐和视频生成服务，并检查本地媒体运行环境。</p>
+          <h2>{t("mediaUi.title")}</h2>
+          <p>{t("mediaUi.description")}</p>
         </div>
       </header>
 
       <section className="settings-card image-provider-library">
         <div className="settings-card-heading">
           <div>
-            <h3>本地媒体运行环境</h3>
-            <p>视频合成与验收由 Agent 所在机器上的确定性工具完成。</p>
+            <h3>{t("mediaUi.localRuntime")}</h3>
+            <p>{t("mediaUi.localRuntimeHint")}</p>
           </div>
           <span className={runtime?.ready ? "image-provider-status active" : "image-provider-status"}>
-            {runtime?.ready ? "可用" : "需要配置"}
+            {runtime?.ready ? t("mediaUi.available") : t("mediaUi.needsConfig")}
           </span>
         </div>
         <div className="image-provider-list">
@@ -198,15 +200,15 @@ export function MediaServiceSettingsPanel({ agentId, connected }: Props) {
               <span className="model-library-icon"><Icon name="terminal" size={16} /></span>
               <div className="image-provider-copy">
                 <strong>{tool.name}</strong>
-                <span>{tool.version || tool.error || (tool.available ? "已找到可执行文件" : "不可用")}</span>
+                <span>{tool.version || tool.error || (tool.available ? t("mediaUi.foundExecutable") : t("mediaUi.unavailable"))}</span>
                 {tool.path && <small>{tool.path}</small>}
               </div>
               <span className={tool.available ? "image-provider-status active" : "image-provider-status"}>
-                {tool.available ? "已就绪" : "不可用"}
+                {tool.available ? t("mediaUi.ready") : t("mediaUi.unavailable")}
               </span>
             </article>
           ))}
-          {!runtime?.tools?.length && <div className="settings-empty">正在检查本地媒体工具…</div>}
+          {!runtime?.tools?.length && <div className="settings-empty">{t("mediaUi.checkingTools")}</div>}
         </div>
       </section>
 
@@ -216,8 +218,8 @@ export function MediaServiceSettingsPanel({ agentId, connected }: Props) {
           <section className="settings-card image-provider-library" key={capability.id}>
             <div className="settings-card-heading">
               <div>
-                <h3>{capability.label}</h3>
-                <p>{capability.description}</p>
+                <h3>{t(capability.label)}</h3>
+                <p>{t(capability.description)}</p>
               </div>
             </div>
             {items.length ? (
@@ -232,24 +234,24 @@ export function MediaServiceSettingsPanel({ agentId, connected }: Props) {
                       <span>{service.vendor || service.plugin}</span>
                       <small>
                         {service.configured
-                          ? `${service.connection_kind === "local" ? "本地运行" : "已配置"}${service.secret_hint ? ` · ${service.secret_hint}` : ""}`
-                          : "由插件提供，配置后启用"}
+                          ? `${service.connection_kind === "local" ? t("mediaUi.localRunning") : t("mediaUi.configured")}${service.secret_hint ? ` · ${service.secret_hint}` : ""}`
+                          : t("mediaUi.pluginProvided")}
                       </small>
                     </div>
                     <span className={service.enabled && service.configured
                       ? "image-provider-status active"
                       : "image-provider-status"}
                     >
-                      {service.enabled && service.configured ? "已启用" : "未配置"}
+                      {service.enabled && service.configured ? t("mediaUi.enabled") : t("mediaUi.notConfigured")}
                     </span>
                     <Button variant="secondary" onClick={() => openEditor(service)}>
-                      {service.configured ? "编辑" : "配置"}
+                      {service.configured ? t("mediaUi.edit") : t("mediaUi.configure")}
                     </Button>
                   </article>
                 ))}
               </div>
             ) : (
-              <div className="settings-empty">暂时没有安装此类媒体插件。</div>
+              <div className="settings-empty">{t("mediaUi.noPlugin")}</div>
             )}
           </section>
         );
@@ -270,11 +272,11 @@ export function MediaServiceSettingsPanel({ agentId, connected }: Props) {
             <header className="model-editor-header">
               <div>
                 <h2 id="media-service-title">{editing.name}</h2>
-                <p>配置只属于当前 Agent，API Key 不会返回给 Desktop。</p>
+                <p>{t("mediaUi.editorHint")}</p>
               </div>
               <button
                 type="button"
-                aria-label="关闭"
+                aria-label={t("mediaUi.close")}
                 disabled={Boolean(busy)}
                 onClick={() => setEditing(null)}
               >
@@ -299,7 +301,7 @@ export function MediaServiceSettingsPanel({ agentId, connected }: Props) {
                   size="sm"
                   onClick={() => setShowAdvanced((current) => !current)}
                 >
-                  {showAdvanced ? "收起高级设置" : "高级设置"}
+                  {showAdvanced ? t("mediaUi.advancedCollapse") : t("mediaUi.advanced")}
                 </Button>
               )}
               {notice && <div className="settings-notice">{notice}</div>}
@@ -314,19 +316,19 @@ export function MediaServiceSettingsPanel({ agentId, connected }: Props) {
                     disabled={Boolean(busy)}
                     onClick={() => void remove(editing.id)}
                   >
-                    移除配置
+                    {t("mediaUi.removeConfig")}
                   </Button>
                 )}
               </div>
               <div>
                 <Button variant="secondary" disabled={Boolean(busy)} onClick={() => setEditing(null)}>
-                  取消
+                  {t("mediaUi.cancel")}
                 </Button>
                 <Button variant="secondary" disabled={Boolean(busy)} onClick={() => void testConnection()}>
-                  {busy === "test" ? "测试中…" : "测试连接"}
+                  {busy === "test" ? t("mediaUi.testing") : t("mediaUi.test")}
                 </Button>
                 <Button variant="primary" disabled={Boolean(busy)} onClick={() => void save()}>
-                  {busy === "save" ? "保存中…" : "保存"}
+                  {busy === "save" ? t("mediaUi.saving") : t("mediaUi.save")}
                 </Button>
               </div>
             </footer>
@@ -350,6 +352,7 @@ function MediaField({
   secretHint: string;
   onChange: (value: unknown) => void;
 }) {
+  const { t } = useTranslation();
   if (field.type === "boolean") {
     return (
       <label className="image-provider-checkbox">
@@ -369,7 +372,7 @@ function MediaField({
         <SelectMenu
           value={String(value ?? "")}
           options={(field.options || []).map((option) => ({ value: option, label: option }))}
-          placeholder={`请选择${field.label}`}
+          placeholder={t("mediaUi.selectField", { label: field.label })}
           onChange={onChange}
         />
       </label>
@@ -385,8 +388,8 @@ function MediaField({
         max={field.maximum}
         step={field.step}
         placeholder={field.type === "secret" && secretConfigured
-          ? `已配置 ${secretHint}，留空表示不修改`
-          : `请输入${field.label}`}
+          ? t("mediaUi.configuredSecret", { hint: secretHint })
+          : t("mediaUi.enterField", { label: field.label })}
         onChange={(event) => onChange(
           field.type === "number" && event.target.value !== ""
             ? Number(event.target.value)

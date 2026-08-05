@@ -28,8 +28,12 @@ class EmbodimentMethods:
         self._living = living
         self._hearing_owner: str | None = None
         self._resume_local_listener = False
+        self._vision_owner: str | None = None
+        self._resume_local_camera = False
+        self._resume_expression_monitor = False
         self._attention_gates: dict[str, Any] = {}
         self._hearing_lock = threading.RLock()
+        self._vision_lock = threading.RLock()
         self._gate_lock = threading.Lock()
 
     @property
@@ -39,6 +43,8 @@ class EmbodimentMethods:
             "embodiment.unregister": self.handle_unregister,
             "embodiment.hearing.acquire": self.handle_hearing_acquire,
             "embodiment.hearing.release": self.handle_hearing_release,
+            "embodiment.vision.acquire": self.handle_vision_acquire,
+            "embodiment.vision.release": self.handle_vision_release,
             "embodiment.audio.input": self.handle_audio_input,
         }
 
@@ -126,9 +132,74 @@ class EmbodimentMethods:
         released = self._release_hearing(conn_id)
         return build_response(req_id, result={"released": released})
 
+    def handle_vision_acquire(
+        self,
+        conn_id: str,
+        req_id: str,
+        _params: dict,
+    ) -> dict:
+        embodiment = cm.get_embodiment_for_conn(conn_id)
+        if not embodiment or "vision" not in embodiment.get("capabilities", []):
+            return build_error(
+                req_id,
+                ErrorCode.UNAUTHORIZED,
+                "当前 Desktop 没有可用的摄像头身体",
+            )
+        with self._vision_lock:
+            if self._vision_owner not in {None, conn_id}:
+                return build_error(
+                    req_id,
+                    ErrorCode.INVALID_REQUEST,
+                    "另一具身体正在使用摄像头",
+                )
+            if self._vision_owner == conn_id:
+                return build_response(req_id, result={
+                    "acquired": True,
+                    "local_camera_released": self._resume_local_camera,
+                })
+            self._vision_owner = conn_id
+            eyes = getattr(getattr(self._living, "body", None), "eyes", None)
+            device = getattr(eyes, "device", None)
+            monitor = getattr(self._living, "_expression_monitor", None)
+            self._resume_local_camera = bool(
+                eyes is not None
+                and getattr(eyes, "enabled", False)
+                and device is not None
+                and device.is_operational()
+            )
+            self._resume_expression_monitor = bool(
+                self._resume_local_camera
+                and monitor is not None
+                and getattr(monitor, "_running", False)
+            )
+            if self._resume_expression_monitor:
+                monitor.stop()
+            if self._resume_local_camera:
+                device.close()
+                eyes.online = False
+        logger.info(
+            "[Embodiment] Camera leased to Desktop: %s released_local=%s",
+            embodiment.get("device_id"),
+            self._resume_local_camera,
+        )
+        return build_response(req_id, result={
+            "acquired": True,
+            "local_camera_released": self._resume_local_camera,
+        })
+
+    def handle_vision_release(
+        self,
+        conn_id: str,
+        req_id: str,
+        _params: dict,
+    ) -> dict:
+        released = self._release_vision(conn_id)
+        return build_response(req_id, result={"released": released})
+
     def drop_connection(self, conn_id: str) -> None:
-        """Release connection-scoped hearing even after an unclean socket close."""
+        """Release connection-scoped senses after an unclean socket close."""
         self._release_hearing(conn_id)
+        self._release_vision(conn_id)
 
     def _release_hearing(self, conn_id: str) -> bool:
         with self._hearing_lock:
@@ -146,6 +217,40 @@ class EmbodimentMethods:
                 except Exception:
                     logger.exception("[Embodiment] Failed to restore local VoiceListener")
         logger.info("[Embodiment] Continuous hearing released")
+        return True
+
+    def _release_vision(self, conn_id: str) -> bool:
+        with self._vision_lock:
+            if self._vision_owner != conn_id:
+                return False
+            self._vision_owner = None
+            should_resume_camera = self._resume_local_camera
+            should_resume_monitor = self._resume_expression_monitor
+            self._resume_local_camera = False
+            self._resume_expression_monitor = False
+
+        eyes = getattr(getattr(self._living, "body", None), "eyes", None)
+        device = getattr(eyes, "device", None)
+        reopened = False
+        if (
+            should_resume_camera
+            and eyes is not None
+            and getattr(eyes, "enabled", False)
+            and device is not None
+        ):
+            try:
+                reopened = bool(device.open())
+                eyes.online = reopened
+            except Exception:
+                logger.exception("[Embodiment] Failed to restore local camera")
+        if reopened and should_resume_monitor:
+            monitor = getattr(self._living, "_expression_monitor", None)
+            if monitor is not None:
+                try:
+                    monitor.start()
+                except Exception:
+                    logger.exception("[Embodiment] Failed to restore ExpressionMonitor")
+        logger.info("[Embodiment] Desktop camera lease released: restored=%s", reopened)
         return True
 
     def _new_attention_gate(self, person_id: str) -> Any | None:

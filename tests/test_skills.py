@@ -486,6 +486,30 @@ description: Installed while Agent is running
         assert "installed-live" in loader.list_names()
         assert loader.refresh_if_changed() is False
 
+    def test_public_reads_import_skill_installed_after_startup(self, tmp_db):
+        skills_dir = os.path.join(os.path.dirname(tmp_db), "skills-live-read")
+        loader = SkillLoader(skills_dir=skills_dir, db_path=tmp_db)
+        loader.scan()
+        assert loader.list_names() == []
+
+        skill_dir = os.path.join(skills_dir, "installed-live")
+        os.makedirs(skill_dir)
+        with open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8") as handle:
+            handle.write(
+                "---\n"
+                "name: installed-live\n"
+                "description: Installed while the Agent is running\n"
+                "---\n\n"
+                "# Live Skill\n"
+            )
+
+        assert "installed-live" in loader.list_names()
+        assert loader.view_skill("installed-live") is not None
+        assert any(
+            item["name"] == "installed-live"
+            for item in loader.list_skills(query="", top_k=20)
+        )
+
     def test_list_skills_delegates(self, tmp_db):
         loader = SkillLoader(skills_dir="/tmp/x", db_path=tmp_db)
         storage = loader._get_storage()

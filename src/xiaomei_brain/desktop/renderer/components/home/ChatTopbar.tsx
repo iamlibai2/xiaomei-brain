@@ -24,12 +24,12 @@ export function ChatTopbar({
   const { t } = useTranslation();
   const isDreaming = agentState?.living === "dreaming";
   const stateText = isDreaming
-    ? "梦境中"
+    ? t("home.livingDreaming")
     : speaking
-      ? "正在说话"
+      ? t("home.speaking")
     : agentState?.focusSummary
       || activitySummary
-      || (agentState ? livingStateName(agentState.living) : "");
+      || (agentState ? livingStateName(agentState.living, t) : "");
   const stateClass = isDreaming
     ? "dreaming"
     : speaking
@@ -52,7 +52,7 @@ export function ChatTopbar({
           size="icon-md"
           icon="settings"
           onClick={onOpenAgentSettings}
-          title={t("home.agentSettings", "Agent 设置")}
+          title={t("home.agentSettings")}
         />
         {!rightPanelOpen && (
           <Button
@@ -70,14 +70,14 @@ export function ChatTopbar({
   );
 }
 
-function livingStateName(state: AgentStateSnapshot["living"]): string {
+function livingStateName(state: AgentStateSnapshot["living"], t: (key: string) => string): string {
   return {
-    dormant: "休眠",
-    waking: "正在苏醒",
-    awake: "清醒",
-    idle: "空闲",
-    working: "工作中",
-    sleeping: "睡眠中",
-    dreaming: "梦境中",
+    dormant: t("home.livingDormant"),
+    waking: t("home.livingWaking"),
+    awake: t("home.livingAwake"),
+    idle: t("home.agentReady"),
+    working: t("sidebar.agentWorking"),
+    sleeping: t("home.livingSleeping"),
+    dreaming: t("home.livingDreaming"),
   }[state];
 }

@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import i18n from "../i18n";
 import { Button } from "./ui";
 
 interface Props {
@@ -55,13 +56,13 @@ export class RendererErrorBoundary extends Component<Props, State> {
       <main className="renderer-fatal-error" role="alert">
         <div className="renderer-fatal-error-card">
           <span className="renderer-fatal-error-mark">!</span>
-          <h1>Desktop 页面出现异常</h1>
-          <p>错误已经写入 Desktop 日志。可以先重新加载；如果仍然出现，请打开日志目录进行排查。</p>
+          <h1>{i18n.t("renderer.errorTitle")}</h1>
+          <p>{i18n.t("renderer.errorDescription")}</p>
           <code>{this.state.error.message}</code>
           <div className="renderer-fatal-error-actions">
-            <Button variant="primary" onClick={() => window.location.reload()}>重新加载</Button>
+            <Button variant="primary" onClick={() => window.location.reload()}>{i18n.t("renderer.reload")}</Button>
             <Button variant="secondary" onClick={() => { void window.desktop.openLogDirectory(); }}>
-              打开日志目录
+              {i18n.t("renderer.openLogs")}
             </Button>
           </div>
         </div>

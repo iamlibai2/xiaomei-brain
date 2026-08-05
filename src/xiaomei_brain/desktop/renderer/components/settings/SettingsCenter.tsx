@@ -17,34 +17,34 @@ import { SETTINGS_EVENT, type SettingsSection } from "./events";
 
 const DESKTOP_NAVIGATION: Array<{
   id: SettingsSection;
-  label: string;
-  description: string;
+  labelKey: string;
+  descriptionKey: string;
   icon: IconName;
 }> = [
-  { id: "agents", label: "Agent 管理", description: "创建、连接与管理所有 Agent", icon: "robot" },
-  { id: "accounts", label: "账户管理", description: "本机身份、切换与备份", icon: "shield" },
-  { id: "local-ai", label: "本机 AI 服务", description: "下载模型与管理共享推理服务", icon: "sparkles" },
-  { id: "system", label: "系统设置", description: "Desktop 运行环境与日志", icon: "settings" },
+  { id: "agents", labelKey: "settings.agents.label", descriptionKey: "settings.agents.description", icon: "robot" },
+  { id: "accounts", labelKey: "settings.accounts.label", descriptionKey: "settings.accounts.description", icon: "shield" },
+  { id: "local-ai", labelKey: "settings.localAi.label", descriptionKey: "settings.localAi.description", icon: "sparkles" },
+  { id: "system", labelKey: "settings.system.label", descriptionKey: "settings.system.description", icon: "settings" },
 ];
 
 const AGENT_NAVIGATION: Array<{
   id: SettingsSection;
-  label: string;
-  description: string;
+  labelKey: string;
+  descriptionKey: string;
   icon: IconName;
 }> = [
-  { id: "overview", label: "概览", description: "连接与基本信息", icon: "info" },
-  { id: "capabilities", label: "能力", description: "这个 Agent 能完成什么", icon: "file-text" },
-  { id: "models", label: "模型", description: "主模型、视觉模型与服务商", icon: "sparkles" },
-  { id: "media", label: "媒体服务", description: "图片、语音与音乐生成", icon: "image" },
-  { id: "search", label: "联网搜索", description: "网页搜索服务与访问凭证", icon: "search" },
-  { id: "channels", label: "渠道与绑定", description: "飞书、钉钉和人物绑定", icon: "bell" },
+  { id: "overview", labelKey: "settings.overview.label", descriptionKey: "settings.overview.description", icon: "info" },
+  { id: "capabilities", labelKey: "settings.capabilities.label", descriptionKey: "settings.capabilities.description", icon: "file-text" },
+  { id: "models", labelKey: "settings.models.label", descriptionKey: "settings.models.description", icon: "sparkles" },
+  { id: "media", labelKey: "settings.media.label", descriptionKey: "settings.media.description", icon: "image" },
+  { id: "search", labelKey: "settings.search.label", descriptionKey: "settings.search.description", icon: "search" },
+  { id: "channels", labelKey: "settings.channels.label", descriptionKey: "settings.channels.description", icon: "bell" },
 ];
 
 const AGENT_SECTIONS = new Set<SettingsSection>(["overview", "capabilities", "models", "media", "search", "channels"]);
 
 export function SettingsCenter() {
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   const agents = useCoreStore((state) => state.agents);
   const activeAgentId = useCoreStore((state) => state.activeAgentId);
   const connectionByAgent = useCoreStore((state) => state.connectionByAgent);
@@ -124,22 +124,22 @@ export function SettingsCenter() {
         className="settings-center"
         role="dialog"
         aria-modal="true"
-        aria-label="设置"
+          aria-label={t("settings.title")}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header className="settings-center-header">
           <div>
-            <h2>设置</h2>
-            <p>管理 Desktop、本机账户，以及每个 Agent 独立的配置。</p>
+            <h2>{t("settings.title")}</h2>
+            <p>{t("settings.description")}</p>
           </div>
-          <button type="button" aria-label="关闭设置" onClick={() => setOpen(false)}>
+          <button type="button" aria-label={t("settings.close")} onClick={() => setOpen(false)}>
             <Icon name="x" size={18} />
           </button>
         </header>
 
         <div className="settings-center-body">
-          <nav className="settings-center-nav" aria-label="设置分类">
-            <span className="settings-nav-group">Desktop</span>
+          <nav className="settings-center-nav" aria-label={t("settings.categories")}>
+            <span className="settings-nav-group">{t("settings.desktop")}</span>
             {DESKTOP_NAVIGATION.map((item) => (
               <button
                 key={item.id}
@@ -157,15 +157,15 @@ export function SettingsCenter() {
               >
                 <Icon name={item.icon} size={17} />
                 <span>
-                  <strong>{item.label}</strong>
-                  <small>{item.description}</small>
+                  <strong>{t(item.labelKey)}</strong>
+                  <small>{t(item.descriptionKey)}</small>
                 </span>
               </button>
             ))}
 
             {settingsAgent && (
               <>
-                <span className="settings-nav-group">正在设置</span>
+                <span className="settings-nav-group">{t("settings.agent")}</span>
                 <div className="settings-nav-agent">
                   <span className="settings-nav-avatar">
                     {settingsAgent.name.charAt(0) || "A"}
@@ -173,9 +173,9 @@ export function SettingsCenter() {
                   <div>
                     <strong>{settingsAgent.name}</strong>
                     <small className={connected ? "online" : ""}>
-                      {settingsAgent.source === "local" ? "本地" : "远程"}
+                      {settingsAgent.source === "local" ? t("settings.local") : t("settings.remote")}
                       {" · "}
-                      {connected ? "在线" : "未连接"}
+                      {connected ? t("settings.online") : t("settings.disconnected")}
                     </small>
                   </div>
                 </div>
@@ -188,8 +188,8 @@ export function SettingsCenter() {
                   >
                     <Icon name={item.icon} size={17} />
                     <span>
-                      <strong>{item.label}</strong>
-                      <small>{item.description}</small>
+                      <strong>{t(item.labelKey)}</strong>
+                      <small>{t(item.descriptionKey)}</small>
                     </span>
                   </button>
                 ))}
@@ -206,7 +206,7 @@ export function SettingsCenter() {
                   icon="chevron-left"
                   onClick={openAgentList}
                 >
-                  返回 Agent 列表
+                  {t("settings.backToAgents")}
                 </Button>
               </div>
             )}

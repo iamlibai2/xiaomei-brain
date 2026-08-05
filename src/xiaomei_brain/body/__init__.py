@@ -41,9 +41,12 @@ class Body:
     def open(self) -> None:
         """全部感官上线。依赖各 Device.open() 的幂等性，不会重复打开。"""
         for sense in self._senses.values():
-            if sense._device is not None:
-                sense._device.open()
-                sense.online = True
+            if sense._device is None:
+                continue
+            if getattr(sense, "enabled", True) is False:
+                sense.online = False
+                continue
+            sense.online = bool(sense._device.open())
 
     def tick(self) -> BodyState:
         """采集所有感官状态，产出感知快照。

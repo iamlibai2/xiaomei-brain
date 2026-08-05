@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+import i18n from "../../i18n";
 import type { ReactNode } from "react";
 import type {
   ActivityCategory,
@@ -29,31 +31,21 @@ const EMPTY_MEMORY_LIST: PersonMemoryListState = {
 };
 const ACTIVE = new Set(["queued", "running", "paused"]);
 
-const categoryNames: Record<ActivityCategory, string> = {
-  work: "工作",
-  cognition: "认知",
-  sleep: "睡眠",
-  communication: "沟通",
-};
+function categoryName(category: ActivityCategory): string {
+  return i18n.t(`rightSidebarUi.category${category.charAt(0).toUpperCase()}${category.slice(1)}`);
+}
 
-const statusNames: Record<ActivitySnapshot["status"], string> = {
-  queued: "等待中",
-  running: "进行中",
-  paused: "已暂停",
-  completed: "已完成",
-  failed: "失败",
-  cancelled: "已取消",
-};
+function statusName(status: ActivitySnapshot["status"]): string {
+  return i18n.t(`rightSidebarUi.status${status.charAt(0).toUpperCase()}${status.slice(1)}`);
+}
 
-const pauseNames: Record<string, string> = {
-  realtime_message: "正在优先回复实时消息",
-  waiting_approval: "等待你的批准",
-  waiting_input: "等待你的回复",
-  waiting_resource: "等待资源恢复",
-  agent_stopping: "Agent 已停止",
-  self_paused: "Agent 主动暂停",
-  interrupted: "上次运行被中断",
-};
+function pauseName(reason?: string): string {
+  const keys: Record<string, string> = {
+    realtime_message: "pauseRealtime", waiting_approval: "pauseApproval", waiting_input: "pauseInput",
+    waiting_resource: "pauseResource", agent_stopping: "pauseStopping", self_paused: "pauseSelf", interrupted: "pauseInterrupted",
+  };
+  return reason && keys[reason] ? i18n.t(`rightSidebarUi.${keys[reason]}`) : reason || i18n.t("rightSidebarUi.noCurrent");
+}
 
 export function ActivitySidebar({
   open,
@@ -76,6 +68,7 @@ export function ActivitySidebar({
   focusedMemories: MemoryReference[];
   onOpenArtifact: (artifactId: string, sessionId: string) => void;
 }) {
+  const { t } = useTranslation();
   const agentId = useCoreStore((state) => state.activeAgentId || "");
   const activities = useCoreStore((state) => state.activitiesByAgent[state.activeAgentId || ""] || EMPTY);
   const loading = useCoreStore((state) => state.activityLoadingByAgent[state.activeAgentId || ""] || false);
@@ -180,10 +173,10 @@ export function ActivitySidebar({
     <button
       type="button"
       className="agent-right-sidebar-backdrop"
-      aria-label="关闭 Agent 详情"
+      aria-label={t("rightSidebarUi.close")}
       onClick={onClose}
     />
-    <aside className="agent-right-sidebar" aria-label="Agent 详情">
+    <aside className="agent-right-sidebar" aria-label={t("rightSidebarUi.details")}>
       <header className="agent-right-sidebar-header">
         <div className="agent-right-sidebar-identity">
           <div className="agent-right-sidebar-avatar">{agentName.charAt(0)}</div>
@@ -191,8 +184,8 @@ export function ActivitySidebar({
             <strong>{agentName}</strong>
             <span>
               <i className={connectionStatus === "connected" ? "online" : "offline"} />
-              {connectionStatus === "connected" ? "在线" : "未连接"}
-              {agentState ? ` · ${livingStateNames[agentState.living]}` : ""}
+              {connectionStatus === "connected" ? t("rightSidebarUi.online") : t("rightSidebarUi.disconnected")}
+              {agentState ? ` · ${livingStateName(agentState.living)}` : ""}
             </span>
             {(agentState?.focusSummary || primaryActivity) && (
               <small>
@@ -207,67 +200,67 @@ export function ActivitySidebar({
           <button type="button" onClick={() => {
             void refresh(agentId);
             void refreshAgentState(agentId);
-          }} title="刷新">
+          }} title={t("rightSidebarUi.refresh")}>
             <Icon name="refresh" size={15} />
           </button>
-          <button type="button" onClick={onClose} title="关闭右栏" aria-label="关闭右栏">
+          <button type="button" onClick={onClose} title={t("rightSidebarUi.close")} aria-label={t("rightSidebarUi.close")}>
             <Icon name="sidebar-panel-right" size={15} />
           </button>
         </div>
       </header>
-      <nav className="right-sidebar-sections" aria-label="Agent 详情栏目">
+      <nav className="right-sidebar-sections" aria-label={t("rightSidebarUi.sections")}>
         <button type="button" className={section === "activity" ? "active" : ""} aria-current={section === "activity" ? "page" : undefined} onClick={() => onSectionChange("activity")}>
           <Icon name="clock" size={15} />
-          <span className="right-sidebar-section-label">动态</span>
+          <span className="right-sidebar-section-label">{t("rightSidebarUi.activity")}</span>
         </button>
         <button type="button" className={section === "state" ? "active" : ""} aria-current={section === "state" ? "page" : undefined} onClick={() => onSectionChange("state")}>
           <Icon name="sparkles" size={15} />
-          <span className="right-sidebar-section-label">状态</span>
+          <span className="right-sidebar-section-label">{t("rightSidebarUi.state")}</span>
         </button>
         <button type="button" className={section === "project" ? "active" : ""} aria-current={section === "project" ? "page" : undefined} onClick={() => onSectionChange("project")}>
           <Icon name="folder" size={15} />
-          <span className="right-sidebar-section-label">项目</span>
+          <span className="right-sidebar-section-label">{t("rightSidebarUi.project")}</span>
           {currentProject && <span className="right-sidebar-section-count">1</span>}
         </button>
         <button type="button" className={section === "assignment" ? "active" : ""} aria-current={section === "assignment" ? "page" : undefined} onClick={() => onSectionChange("assignment")}>
           <Icon name="robot" size={15} />
-          <span className="right-sidebar-section-label">委托</span>
+          <span className="right-sidebar-section-label">{t("rightSidebarUi.assignment")}</span>
           {activeAssignmentCount > 0 && <span className="right-sidebar-section-count">{activeAssignmentCount}</span>}
         </button>
         <button type="button" className={section === "artifact" ? "active" : ""} aria-current={section === "artifact" ? "page" : undefined} onClick={() => onSectionChange("artifact")}>
           <Icon name="folder" size={15} />
-          <span className="right-sidebar-section-label">产物</span>
+          <span className="right-sidebar-section-label">{t("rightSidebarUi.artifact")}</span>
           {artifacts.length > 0 && <span className="right-sidebar-section-count">{artifacts.length}</span>}
         </button>
         <button type="button" className={section === "memory" ? "active" : ""} aria-current={section === "memory" ? "page" : undefined} onClick={() => onSectionChange("memory")}>
           <Icon name="info" size={15} />
-          <span className="right-sidebar-section-label">记忆</span>
+          <span className="right-sidebar-section-label">{t("rightSidebarUi.memory")}</span>
           {memories.length > 0 && <span className="right-sidebar-section-count">{memories.length}{memoryList.hasMore ? "+" : ""}</span>}
         </button>
         <button type="button" className={section === "context" ? "active" : ""} aria-current={section === "context" ? "page" : undefined} onClick={() => onSectionChange("context")}>
           <Icon name="file-text" size={15} />
-          <span className="right-sidebar-section-label">上下文</span>
+          <span className="right-sidebar-section-label">{t("rightSidebarUi.context")}</span>
         </button>
       </nav>
       {section === "activity" ? <>
         <div className="activity-view-tabs">
         <button className={view === "current" ? "active" : ""} onClick={() => setView("current")}>
-          当前
+          {t("rightSidebarUi.current")}
           <span>{activities.filter((item) => ACTIVE.has(item.status)).length}</span>
         </button>
         <button className={view === "history" ? "active" : ""} onClick={() => setView("history")}>
-          最近完成
+          {t("rightSidebarUi.history")}
         </button>
       </div>
       <div className="activity-sidebar-body">
         <nav className="activity-list">
-          {loading && visible.length === 0 && <p className="activity-empty">正在加载…</p>}
+              {loading && visible.length === 0 && <p className="activity-empty">{t("rightSidebarUi.loading")}</p>}
           {error && <p className="activity-error">{error}</p>}
           {!loading && !error && visible.length === 0 && (
             <div className="activity-empty-state">
               <span className="activity-empty-orbit" />
-              <strong>{view === "current" ? "现在没有后台活动" : "还没有最近活动"}</strong>
-              <p>{view === "current" ? "Agent 有新的工作或内在整理时会自然出现在这里。" : "完成的活动会按时间浮到这里。"}</p>
+              <strong>{view === "current" ? t("rightSidebarUi.noCurrent") : t("rightSidebarUi.noHistory")}</strong>
+              <p>{view === "current" ? t("rightSidebarUi.currentHint") : t("rightSidebarUi.historyHint")}</p>
             </div>
           )}
           {visible.map((activity) => (
@@ -280,10 +273,10 @@ export function ActivitySidebar({
               <span className={`activity-category-dot ${activity.category}`} />
               <span className="activity-list-copy">
                 <strong>{activity.title}</strong>
-                <small>{activity.progressSummary || statusNames[activity.status]}</small>
+                <small>{activity.progressSummary || statusName(activity.status)}</small>
               </span>
               <span className={`activity-status-pill ${activity.status}`}>
-                {statusNames[activity.status]}
+                {statusName(activity.status)}
               </span>
             </button>
           ))}
@@ -361,14 +354,15 @@ function MemoryPanel({
   onRefresh: () => void;
   onLoadMore: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <section className="person-memory-panel">
       {focusedMemories.length > 0 && (
         <div className="focused-memory-section">
           <div className="person-memory-heading">
             <div>
-              <strong>本次回答召回的记忆</strong>
-              <p>这些记忆在回答前被召回并提供给 Agent，不代表逐条直接引用。</p>
+          <strong>{t("rightSidebarUi.memoryReferences")}</strong>
+          <p>{t("rightSidebarUi.memoryReferencesHint")}</p>
             </div>
           </div>
           <div className="memory-reference-list">
@@ -376,7 +370,7 @@ function MemoryPanel({
               <article key={`${memory.id || "memory"}-${index}`}>
                 <strong>{memory.summary}</strong>
                 <span>
-                  {memory.source ? memorySourceName(memory.source) : "长期记忆"}
+                  {memory.source ? memorySourceName(memory.source) : t("rightSidebarUi.longTermMemory")}
                   {memory.createdAt > 0
                     ? ` · ${new Date(memory.createdAt * 1000).toLocaleString()}`
                     : ""}
@@ -391,19 +385,19 @@ function MemoryPanel({
       )}
       <div className="person-memory-heading">
         <div>
-          <strong>与当前人物相关的长期记忆</strong>
-          <p>只展示 Agent 可以向当前人物呈现的记忆，不包含全局知识、梦境或内在叙事。</p>
+          <strong>{t("rightSidebarUi.longTermMemory")}</strong>
+          <p>{t("rightSidebarUi.longTermMemoryHint")}</p>
         </div>
         <button type="button" onClick={onRefresh} disabled={page.loading || page.loadingMore}>
-          刷新
+          {t("rightSidebarUi.refresh")}
         </button>
       </div>
-      {page.loading && memories.length === 0 && <p className="activity-empty">正在加载…</p>}
+      {page.loading && memories.length === 0 && <p className="activity-empty">{t("rightSidebarUi.loading")}</p>}
       {page.error && <p className="activity-error">{page.error}</p>}
       {!page.loading && !page.error && memories.length === 0 && (
         <div className="activity-empty-state">
-          <strong>还没有形成长期记忆</strong>
-          <p>随着你们持续交流，适合长期保留的内容会自然出现在这里。</p>
+          <strong>{t("rightSidebarUi.noLongTermMemory")}</strong>
+          <p>{t("rightSidebarUi.longTermMemoryEmpty")}</p>
         </div>
       )}
       <div className="person-memory-list">
@@ -411,7 +405,7 @@ function MemoryPanel({
           <article key={memory.id}>
             <strong>{memory.summary}</strong>
             <div className="person-memory-meta">
-              <span>{memorySourceName(memory.source) || "长期记忆"}</span>
+              <span>{memorySourceName(memory.source) || t("rightSidebarUi.longTermMemory")}</span>
               {memory.createdAt > 0 && <time>{new Date(memory.createdAt * 1000).toLocaleString()}</time>}
             </div>
             {memory.tags.length > 0 && (
@@ -420,7 +414,7 @@ function MemoryPanel({
               </div>
             )}
             {memory.lastAccessed > memory.createdAt && (
-              <small>最近使用：{new Date(memory.lastAccessed * 1000).toLocaleString()}</small>
+              <small>{t("projectUi.lastUsed", { value: new Date(memory.lastAccessed * 1000).toLocaleString() })}</small>
             )}
           </article>
         ))}
@@ -432,7 +426,7 @@ function MemoryPanel({
           onClick={onLoadMore}
           disabled={page.loadingMore}
         >
-          {page.loadingMore ? "正在加载…" : "加载更多"}
+          {page.loadingMore ? t("rightSidebarUi.loading") : t("sidebar.loadMoreSessions")}
         </button>
       )}
     </section>
@@ -458,6 +452,7 @@ function ArtifactPanel({
   focusedArtifactKey: string;
   onOpenArtifact: (artifactId: string, sessionId: string) => void;
 }) {
+  const { t } = useTranslation();
   const [scope, setScope] = useState<"current" | "all">("current");
   const [openingKey, setOpeningKey] = useState("");
   const [actionError, setActionError] = useState("");
@@ -485,7 +480,7 @@ function ArtifactPanel({
         sessionId: artifact.sessionId,
         artifactId: artifact.id,
       });
-      if (!result.ok) setActionError(result.error || "无法打开产物");
+      if (!result.ok) setActionError(result.error || t("projectUi.openArtifactFailed"));
     } finally {
       setOpeningKey("");
     }
@@ -495,21 +490,21 @@ function ArtifactPanel({
       <div className="artifact-sidebar-toolbar">
         <div className="artifact-scope-tabs">
           <button type="button" className={scope === "current" ? "active" : ""} onClick={() => setScope("current")}>
-            当前会话
+            {t("rightSidebarUi.currentConversation")}
           </button>
           <button type="button" className={scope === "all" ? "active" : ""} onClick={() => setScope("all")}>
-            全部
+            {t("rightSidebarUi.all")}
           </button>
         </div>
-        <button type="button" onClick={onRefresh}>刷新</button>
+        <button type="button" onClick={onRefresh}>{t("rightSidebarUi.refresh")}</button>
       </div>
-      {loading && visible.length === 0 && <p className="activity-empty">正在加载…</p>}
+      {loading && visible.length === 0 && <p className="activity-empty">{t("rightSidebarUi.loading")}</p>}
       {error && <p className="activity-error">{error}</p>}
       {actionError && <p className="activity-error">{actionError}</p>}
       {!loading && !error && visible.length === 0 && (
         <div className="activity-empty-state">
-          <strong>{scope === "current" ? "当前会话还没有产物" : "还没有产物"}</strong>
-          <p>文件、图片和报告生成后会集中出现在这里。</p>
+          <strong>{scope === "current" ? t("rightSidebarUi.artifactsCurrentEmpty") : t("rightSidebarUi.artifactsEmpty")}</strong>
+          <p>{t("rightSidebarUi.artifactsHint")}</p>
         </div>
       )}
       <div className="artifact-sidebar-grid">
@@ -523,7 +518,7 @@ function ArtifactPanel({
               className={focusedArtifactKey === key ? "selected" : ""}
               onClick={() => { void activateArtifact(artifact); }}
               disabled={Boolean(openingKey)}
-              title={`${previewable ? "预览" : "打开"} ${artifact.name}`}
+              title={`${previewable ? t("common.preview") : t("common.open")} ${artifact.name}`}
             >
               <span className={`artifact-kind-icon ${artifact.kind}`}>
                 <Icon name={artifact.kind === "image" ? "sparkles" : "file-text"} size={17} />
@@ -533,7 +528,7 @@ function ArtifactPanel({
                 <small>{formatBytes(artifact.size)} · {new Date(artifact.updatedAt * 1000).toLocaleString()}</small>
                 {artifact.description && <em>{artifact.description}</em>}
               </span>
-              <i>{openingKey === key ? "打开中…" : previewable ? "预览" : "打开"}</i>
+              <i>{openingKey === key ? t("home.opening") : previewable ? t("common.preview") : t("common.open")}</i>
             </button>
           );
         })}
@@ -559,6 +554,7 @@ function ContextPanel({
   agentState: import("../../store").AgentStateSnapshot | undefined;
   focusedMemories: MemoryReference[];
 }) {
+  const { t } = useTranslation();
   const active = activities.filter((item) => ACTIVE.has(item.status));
   const personId = activities.find((item) => item.personId)?.personId || "";
   const goal = active.find((item) => item.kind === "goal_pace");
@@ -569,15 +565,15 @@ function ContextPanel({
   ));
   return (
     <section className="context-sidebar-panel">
-      <ContextBlock title="本次回答召回的记忆">
+      <ContextBlock title={t("rightSidebarUi.memoryReferences")}>
         {focusedMemories.length > 0 ? (
           <div className="memory-reference-list">
-            <p>这些记忆在回答前被召回并提供给 Agent，不代表逐条直接引用。</p>
+            <p>{t("rightSidebarUi.recalledHint")}</p>
             {focusedMemories.map((memory, index) => (
               <article key={`${memory.id || "memory"}-${index}`}>
                 <strong>{memory.summary}</strong>
                 <span>
-                  {memory.source ? memorySourceName(memory.source) : "长期记忆"}
+                  {memory.source ? memorySourceName(memory.source) : t("rightSidebarUi.longTermMemory")}
                   {memory.createdAt > 0
                     ? ` · ${new Date(memory.createdAt * 1000).toLocaleString()}`
                     : ""}
@@ -590,50 +586,50 @@ function ContextPanel({
           </div>
         ) : (
           <>
-            <strong>点击一条带有记忆标记的回答查看</strong>
-            <span>这里只展示回答前实际召回的长期记忆摘要。</span>
+            <strong>{t("rightSidebarUi.clickMemoryHint")}</strong>
+            <span>{t("rightSidebarUi.memorySummaryHint")}</span>
           </>
         )}
       </ContextBlock>
-      <ContextBlock title="当前 Agent">
+      <ContextBlock title={t("rightSidebarUi.currentAgent")}>
         <strong>{agentName}</strong>
         <span>
-          {connectionStatus === "connected" ? "在线" : "未连接"}
-          {agentState ? ` · ${livingStateNames[agentState.living]}` : ""}
+          {connectionStatus === "connected" ? t("rightSidebarUi.statusOnline") : t("rightSidebarUi.statusNoConnection")}
+          {agentState ? ` · ${livingStateName(agentState.living)}` : ""}
         </span>
         {agentState?.focusSummary && <span>{agentState.focusSummary}</span>}
         {agentState && agentState.livingSince > 0 && (
-          <span>当前状态持续 {formatDuration(Date.now() / 1000 - agentState.livingSince)}</span>
+          <span>{t("rightSidebarUi.duration", { value: formatDuration(Date.now() / 1000 - agentState.livingSince) })}</span>
         )}
       </ContextBlock>
-      <ContextBlock title="最近意图">
+      <ContextBlock title={t("rightSidebarUi.intent")}>
         <strong>{agentState?.lastIntent
           ? intentTypeName(agentState.lastIntent.type)
-          : "暂时没有可观察的意图决策"}</strong>
+          : t("rightSidebarUi.noIntent")}</strong>
         {agentState?.lastIntent?.summary && <span>{agentState.lastIntent.summary}</span>}
         {agentState?.lastIntent?.decidedAt ? (
           <span>{new Date(agentState.lastIntent.decidedAt * 1000).toLocaleString()}</span>
         ) : null}
       </ContextBlock>
-      <ContextBlock title="当前会话">
-        <strong>{sessionId || "尚未选择会话"}</strong>
-        {personId && <span>人物：{personId}</span>}
+      <ContextBlock title={t("rightSidebarUi.session")}>
+        <strong>{sessionId || t("rightSidebarUi.notSelected")}</strong>
+        {personId && <span>{t("rightSidebarUi.person", { value: personId })}</span>}
       </ContextBlock>
-      <ContextBlock title="正在发生">
-        <strong>{active.length > 0 ? `${active.length} 项活动` : "没有后台活动"}</strong>
-        {active.slice(0, 3).map((item) => <span key={item.id}>{item.title} · {statusNames[item.status]}</span>)}
+      <ContextBlock title={t("rightSidebarUi.happening")}>
+        <strong>{active.length > 0 ? t("rightSidebarUi.activeCount", { count: active.length }) : t("rightSidebarUi.noBackground")}</strong>
+        {active.slice(0, 3).map((item) => <span key={item.id}>{item.title} · {statusName(item.status)}</span>)}
       </ContextBlock>
-      <ContextBlock title="当前 Goal">
-        <strong>{goal?.title || "当前没有可观察的 Goal 推进"}</strong>
+      <ContextBlock title={t("rightSidebarUi.goal")}>
+        <strong>{goal?.title || t("rightSidebarUi.noGoal")}</strong>
         {goal?.progressSummary && <span>{goal.progressSummary}</span>}
       </ContextBlock>
-      <ContextBlock title="记忆整理">
-        <strong>{recentMemory ? recentMemory.title : "暂无最近整理记录"}</strong>
+      <ContextBlock title={t("rightSidebarUi.memoryWork")}>
+        <strong>{recentMemory ? recentMemory.title : t("rightSidebarUi.noMemoryWork")}</strong>
         {recentMemory?.progressSummary && <span>{recentMemory.progressSummary}</span>}
       </ContextBlock>
-      <ContextBlock title="产物">
-        <strong>{artifacts.length} 个可读取产物</strong>
-        <span>仅展示 Agent 已授权给当前人物或全局可见的资产</span>
+      <ContextBlock title={t("rightSidebarUi.artifact")}>
+        <strong>{t("rightSidebarUi.artifactCount", { count: artifacts.length })}</strong>
+        <span>{t("rightSidebarUi.authorizedHint")}</span>
       </ContextBlock>
     </section>
   );
@@ -656,6 +652,7 @@ function StatusPanel({
   speaking: boolean;
   onRefresh: () => void;
 }) {
+  const { t } = useTranslation();
   const internal = agentState?.internal;
   const relationship = agentState?.relationship;
 
@@ -663,34 +660,34 @@ function StatusPanel({
     <section className="agent-status-panel">
       <div className="agent-status-panel-heading">
         <div>
-          <strong>{agentName}的状态</strong>
-          <span>Agent 当前正在经历的生命、关系与身体状态</span>
+          <strong>{t("rightSidebarUi.stateTitle", { name: agentName })}</strong>
+          <span>{t("rightSidebarUi.stateHint")}</span>
         </div>
-        <button type="button" onClick={onRefresh}>刷新</button>
+        <button type="button" onClick={onRefresh}>{t("rightSidebarUi.refresh")}</button>
       </div>
 
-      <StateCard title="当前状态" accent={speaking ? "speaking" : agentState?.living || "idle"}>
+      <StateCard title={t("rightSidebarUi.currentState")} accent={speaking ? "speaking" : agentState?.living || "idle"}>
         <div className="agent-current-state">
           <span className={`agent-current-state-dot ${speaking ? "speaking" : agentState?.living || "idle"}`} />
           <div>
             <strong>
               {connectionStatus === "connected"
                 ? speaking
-                  ? "正在说话"
+                  ? t("rightSidebarUi.statusSpeaking")
                   : agentState
-                    ? livingStateNames[agentState.living]
-                    : "在线"
-                : "未连接"}
+                    ? livingStateName(agentState.living)
+                    : t("rightSidebarUi.statusOnline")
+                : t("rightSidebarUi.statusNoConnection")}
             </strong>
             {agentState?.focusSummary && <p>{agentState.focusSummary}</p>}
             {agentState?.livingSince ? (
-              <small>已持续 {formatDuration(Date.now() / 1000 - agentState.livingSince)}</small>
+              <small>{t("rightSidebarUi.duration", { value: formatDuration(Date.now() / 1000 - agentState.livingSince) })}</small>
             ) : null}
           </div>
         </div>
       </StateCard>
 
-      <StateCard title={relationship ? `与${relationship.displayName}的关系` : "当前关系"}>
+      <StateCard title={relationship ? t("rightSidebarUi.relationshipWith", { name: relationship.displayName }) : t("rightSidebarUi.relationship")}>
         {relationship ? (
           <>
             <div className="relationship-summary">
@@ -700,41 +697,41 @@ function StatusPanel({
             <StateMetricList metrics={[
               {
                 key: "depth",
-                label: "熟悉深度",
+                label: t("rightSidebarUi.familiarity"),
                 value: relationship.depth,
                 description: relationship.depthDescription,
               },
               {
                 key: "trust",
-                label: "信任",
+                label: t("rightSidebarUi.trust"),
                 value: relationship.trust,
                 description: relationship.trustDescription,
               },
               {
                 key: "closeness",
-                label: "亲密",
+                label: t("rightSidebarUi.closeness"),
                 value: relationship.closeness,
                 description: relationship.closenessDescription,
               },
             ]} compact />
             <small className="relationship-interactions">
-              已互动 {relationship.interactionCount} 次
+              {t("rightSidebarUi.interactionCount", { count: relationship.interactionCount })}
               {relationship.lastInteractionAt
-                ? ` · 最近 ${new Date(relationship.lastInteractionAt * 1000).toLocaleString()}`
+                ? ` · ${t("rightSidebarUi.lastInteraction", { value: new Date(relationship.lastInteractionAt * 1000).toLocaleString() })}`
                 : ""}
             </small>
           </>
         ) : (
-          <p className="state-empty-copy">当前连接还没有可展示的人物关系。</p>
+          <p className="state-empty-copy">{t("rightSidebarUi.stateNoRelationship")}</p>
         )}
       </StateCard>
 
       {internal ? (
         <>
-          <StateCard title="当前心情">
+          <StateCard title={t("rightSidebarUi.mood")}>
             <div className="mood-summary">
-              <strong>{internal.moodSummary || "平静"}</strong>
-              <span>能量 {formatPercent(internal.energy)} · {internal.energyDescription}</span>
+              <strong>{internal.moodSummary || t("rightSidebarUi.statusCalm")}</strong>
+              <span>{t("rightSidebarUi.energy", { value: formatPercent(internal.energy) })} · {internal.energyDescription}</span>
             </div>
             {internal.emotions.length > 0 ? (
               <div className="emotion-state-list">
@@ -745,33 +742,33 @@ function StatusPanel({
                 ))}
               </div>
             ) : (
-              <p className="state-empty-copy">没有明显的活跃情绪。</p>
+              <p className="state-empty-copy">{t("rightSidebarUi.noActiveEmotion")}</p>
             )}
           </StateCard>
 
-          <StateCard title="身体感受">
+          <StateCard title={t("rightSidebarUi.body")}>
             <p className="state-natural-language">{internal.somatic}</p>
           </StateCard>
 
-          <StateCard title="欲望">
+          <StateCard title={t("rightSidebarUi.drives")}>
             <StateMetricList metrics={internal.desires} />
           </StateCard>
 
-          <StateCard title="激素">
+          <StateCard title={t("rightSidebarUi.hormones")}>
             <StateMetricList metrics={internal.hormones} />
           </StateCard>
 
-          <StateCard title="状态矛盾">
+          <StateCard title={t("rightSidebarUi.contradictions")}>
             {internal.contradictions.length > 0 ? (
               <div className="state-tension-list">
                 {internal.contradictions.map((item) => <p key={item}>{item}</p>)}
               </div>
             ) : (
-              <p className="state-empty-copy">当前没有检测到明显的内在矛盾。</p>
+              <p className="state-empty-copy">{t("rightSidebarUi.noContradictions")}</p>
             )}
           </StateCard>
 
-          <StateCard title="行为倾向">
+          <StateCard title={t("rightSidebarUi.tendencies")}>
             {internal.impulse && <p className="state-natural-language">{internal.impulse}</p>}
             {internal.behaviorTendencies.length > 0 && (
               <ul className="behavior-tendency-list">
@@ -779,32 +776,32 @@ function StatusPanel({
               </ul>
             )}
             {!internal.impulse && internal.behaviorTendencies.length === 0 && (
-              <p className="state-empty-copy">当前状态没有形成明显的行为倾向。</p>
+              <p className="state-empty-copy">{t("rightSidebarUi.noTendencies")}</p>
             )}
           </StateCard>
 
           <details className="raw-state-details">
-            <summary>原始状态</summary>
+            <summary>{t("rightSidebarUi.rawState")}</summary>
             {relationship?.rawContext && (
               <>
-                <h4>关系上下文</h4>
+                <h4>{t("rightSidebarUi.relationshipContext")}</h4>
                 <pre>{relationship.rawContext}</pre>
               </>
             )}
-            <h4>身体状态上下文</h4>
+            <h4>{t("rightSidebarUi.bodyContext")}</h4>
             <pre>{internal.rawContext}</pre>
           </details>
 
           {internal.observedAt > 0 && (
             <time className="agent-state-observed-at">
-              最近更新：{new Date(internal.observedAt * 1000).toLocaleString()}
+              {t("rightSidebarUi.recentUpdate", { value: new Date(internal.observedAt * 1000).toLocaleString() })}
             </time>
           )}
         </>
       ) : (
         <div className="activity-empty-state">
-          <strong>身体状态尚不可用</strong>
-          <p>Agent 未启用意识系统，或状态仍在初始化。</p>
+          <strong>{t("rightSidebarUi.stateUnavailableTitle")}</strong>
+          <p>{t("rightSidebarUi.stateUnavailableCopy")}</p>
         </div>
       )}
     </section>
@@ -854,20 +851,12 @@ function StateCard({
 }
 
 function memorySourceName(value: string): string {
-  const names: Record<string, string> = {
-    immediate: "对话中形成",
-    periodic: "周期整理",
-    dream: "梦境整理",
-    manual: "明确记录",
-    internal: "内部经验",
-    every_turn: "轮次整理",
-    merged: "记忆合并",
-    task_completion: "任务完成后形成",
-  };
-  return names[value] || value;
+  const key = `rightSidebarUi.memorySource${value.replace(/(^|_)([a-z])/g, (_, __, char) => char.toUpperCase())}`;
+  return i18n.t(key, { defaultValue: value });
 }
 
 function ActivityDetail({ activity }: { activity: ActivitySnapshot }) {
+  const { t } = useTranslation();
   const hasProgress = activity.totalSteps !== null && activity.totalSteps > 0;
   const percent = hasProgress && activity.completedSteps !== null
     ? Math.round((activity.completedSteps / activity.totalSteps!) * 100)
@@ -875,10 +864,10 @@ function ActivityDetail({ activity }: { activity: ActivitySnapshot }) {
   return (
     <section className="activity-detail">
       <div className="activity-detail-heading">
-        <span>{categoryNames[activity.category]}</span>
+        <span>{categoryName(activity.category)}</span>
         <time>{formatTime(activity.updatedAt)}</time>
         <h2>{activity.title}</h2>
-        <p>{activity.progressSummary || activity.resultSummary || statusNames[activity.status]}</p>
+        <p>{activity.progressSummary || activity.resultSummary || statusName(activity.status)}</p>
       </div>
       {percent !== null && (
         <div className="activity-detail-progress">
@@ -888,7 +877,7 @@ function ActivityDetail({ activity }: { activity: ActivitySnapshot }) {
       )}
       {activity.status === "paused" && (
         <div className="activity-pause-reason">
-          {pauseNames[activity.pauseReason] || activity.pauseReason || "活动已暂停"}
+          {pauseName(activity.pauseReason)}
         </div>
       )}
       {activity.errorMessage && <div className="activity-error">{activity.errorMessage}</div>}
@@ -906,9 +895,9 @@ function ActivityDetail({ activity }: { activity: ActivitySnapshot }) {
         </ol>
       )}
       <dl className="activity-metadata">
-        {activity.currentStep && <><dt>当前阶段</dt><dd>{activity.currentStep}</dd></>}
-        <dt>活动类型</dt><dd>{activity.kind}</dd>
-        {activity.originSessionId && <><dt>来源会话</dt><dd>{activity.originSessionId}</dd></>}
+        {activity.currentStep && <><dt>{t("rightSidebarUi.currentStage")}</dt><dd>{activity.currentStep}</dd></>}
+        <dt>{t("rightSidebarUi.activityType")}</dt><dd>{activity.kind}</dd>
+        {activity.originSessionId && <><dt>{t("rightSidebarUi.sourceSession")}</dt><dd>{activity.originSessionId}</dd></>}
       </dl>
     </section>
   );
@@ -925,41 +914,28 @@ function formatBytes(value: number): string {
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
-const livingStateNames = {
-  dormant: "休眠",
-  waking: "正在苏醒",
-  awake: "清醒",
-  idle: "空闲",
-  working: "工作中",
-  sleeping: "睡眠中",
-  dreaming: "梦境中",
-} as const;
+function livingStateName(state: string): string {
+  const keys: Record<string, string> = {
+    dormant: "livingDormant", waking: "livingWaking", awake: "livingAwake", idle: "livingIdle",
+    working: "livingWorking", sleeping: "livingSleeping", dreaming: "livingDreaming",
+  };
+  return keys[state] ? i18n.t(`rightSidebarUi.${keys[state]}`) : state;
+}
 
 function formatPercent(value: number): string {
   return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
 }
 
 function intentTypeName(value: string): string {
-  const names: Record<string, string> = {
-    wait: "暂不行动",
-    learn: "学习",
-    progress: "推进目标",
-    work: "工作",
-    express: "表达",
-    care: "关心",
-    greet: "问候",
-    sleep: "准备睡眠",
-    reflect: "反思",
-    dream: "进入梦境",
-  };
-  return names[value.toLowerCase()] || value || "未知意图";
+  const key = `rightSidebarUi.intent${value.charAt(0).toUpperCase()}${value.slice(1).toLowerCase()}`;
+  return value ? i18n.t(key, { defaultValue: value }) : i18n.t("rightSidebarUi.unknownIntent");
 }
 
 function formatDuration(seconds: number): string {
-  if (seconds < 60) return "不到 1 分钟";
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时`;
-  return `${Math.floor(seconds / 86400)} 天`;
+  if (seconds < 60) return i18n.t("rightSidebarUi.lessThanMinute");
+  if (seconds < 3600) return i18n.t("rightSidebarUi.minutes", { count: Math.floor(seconds / 60) });
+  if (seconds < 86400) return i18n.t("rightSidebarUi.hours", { count: Math.floor(seconds / 3600) });
+  return i18n.t("rightSidebarUi.days", { count: Math.floor(seconds / 86400) });
 }
 
 function activityStatusForAssignment(status: AssignmentSnapshot["status"]): ActivitySnapshot["status"] {

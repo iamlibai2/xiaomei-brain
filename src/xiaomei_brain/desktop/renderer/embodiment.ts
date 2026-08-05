@@ -1,3 +1,5 @@
+import i18n from "./i18n";
+
 let playbackQueue = Promise.resolve();
 let playbackEpoch = 0;
 let activePlayback: ActivePlayback | null = null;
@@ -72,7 +74,7 @@ async function playBase64Audio(
       window.dispatchEvent(new CustomEvent(DESKTOP_SPEECH_FINISHED, {
         detail: { agentId, status },
       }));
-      if (status === "failed") reject(new Error("Desktop 无法播放 Agent 语音"));
+      if (status === "failed") reject(new Error(i18n.t("home.unablePlay")));
       else resolve();
     };
     const onEnded = () => finish("completed");
