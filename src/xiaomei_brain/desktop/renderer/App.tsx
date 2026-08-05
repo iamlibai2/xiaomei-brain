@@ -24,10 +24,22 @@ export function App() {
   useEffect(() => {
     const disposeGatewayEvents = initGatewayEvents();
     void window.identity.status().then(setIdentityStatus);
-    void window.desktop.getSettings().then((settings) => {
+    const applySettings = (settings: import("./types").DesktopSettings) => {
       void i18n.changeLanguage(settings.language);
-    });
-    return disposeGatewayEvents;
+      const root = document.documentElement;
+      if (settings.theme === "system") root.removeAttribute("data-theme");
+      else root.setAttribute("data-theme", settings.theme);
+    };
+    void window.desktop.getSettings().then(applySettings);
+    const handleSettings = (event: Event) => {
+      const settings = (event as CustomEvent<import("./types").DesktopSettings>).detail;
+      if (settings) applySettings(settings);
+    };
+    window.addEventListener("xiaomei:desktop-settings-changed", handleSettings);
+    return () => {
+      window.removeEventListener("xiaomei:desktop-settings-changed", handleSettings);
+      disposeGatewayEvents();
+    };
   }, []);
 
   useEffect(() => {

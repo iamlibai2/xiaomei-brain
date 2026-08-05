@@ -641,3 +641,106 @@
     --ui-color-link: #4a9eff;
   }
 }
+
+/* Explicit appearance choices from Desktop identity menu. These aliases sit
+   after the OS preference so a saved choice always wins. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --ui-palette-gray-1: #fafafa;
+  --ui-palette-gray-2: #f7f7f7;
+  --ui-palette-gray-3: #f2f2f2;
+  --ui-palette-gray-4: #ebebeb;
+  --ui-palette-gray-5: #e6e6e6;
+  --ui-palette-brand-7: #40d1b3;
+  --ui-palette-brand-8: #00c29a;
+  --ui-palette-brand-9: #009273;
+  --ui-color-bg-primary-default: #ffffff;
+  --ui-color-bg-primary-hover: #ebebeb;
+  --ui-color-bg-primary-active: #f2f2f2;
+  --ui-color-bg-secondary-default: #1a1a1a;
+  --ui-color-bg-secondary-hover-active: #f7f7f7;
+  --ui-color-text-primary: rgba(0, 0, 0, 0.9);
+  --ui-color-text-secondary: rgba(0, 0, 0, 0.7);
+  --ui-color-text-tertiary: rgba(0, 0, 0, 0.5);
+  --ui-color-text-disabled: rgba(0, 0, 0, 0.3);
+  --ui-bg-primary: #ffffff;
+  --ui-bg-secondary: #f7f7f7;
+  --ui-bg-tertiary: #ebebeb;
+  --ui-bg-hover: rgba(0, 0, 0, 0.05);
+  --ui-bg-active: rgba(0, 0, 0, 0.08);
+  --ui-bg-overlay: rgba(0, 0, 0, 0.4);
+  --ui-border-default: rgba(0, 0, 0, 0.08);
+  --ui-border-weak: rgba(0, 0, 0, 0.04);
+  --ui-border-subtle: #f2f2f2;
+  --ui-border-strong: #e6e6e6;
+  --ui-sidebar-bg: #f2f2f2;
+  --ui-sidebar-border: #ebebeb;
+  --ui-button-ghost-bg-hover: rgba(0, 0, 0, 0.05);
+  --ui-button-ghost-bg-active: rgba(0, 0, 0, 0.08);
+  --ui-button-ghost-fg: rgba(0, 0, 0, 0.96);
+  --ui-icon-primary: rgba(0, 0, 0, 0.9);
+  --ui-icon-secondary: rgba(0, 0, 0, 0.7);
+  --ui-icon-tertiary: rgba(0, 0, 0, 0.5);
+  --ui-scrollbar-thumb: rgba(0, 0, 0, 0.2);
+  --ui-scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
+  --ui-home-bg-primary: #f2f2f2;
+  --ui-home-bg-secondary: #fafafa;
+  --ui-user-bubble-bg: #f2f2f2;
+  --ui-markdown-code-bg: rgba(0, 0, 0, 0.06);
+  --ui-pre-border: #ebebeb;
+  --ui-pre-header-bg: #f7f7f7;
+  --ui-pre-bg: transparent;
+  --ui-reasoning-border: #ebebeb;
+  --ui-color-link: #1470b4;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ui-palette-gray-1: #0e0f11;
+  --ui-palette-gray-2: #141518;
+  --ui-palette-gray-3: #1a1b1e;
+  --ui-palette-gray-4: #212327;
+  --ui-palette-gray-5: #2a2c31;
+  --ui-palette-brand-7: #3dd9b6;
+  --ui-palette-brand-8: #5fe3c5;
+  --ui-palette-brand-9: #82ecd3;
+  --ui-color-bg-primary-default: #1a1b1e;
+  --ui-color-bg-primary-hover: #212327;
+  --ui-color-bg-primary-active: #2a2c31;
+  --ui-color-bg-secondary-default: #141518;
+  --ui-color-bg-secondary-hover-active: #1a1b1e;
+  --ui-color-text-primary: rgba(255, 255, 255, 0.92);
+  --ui-color-text-secondary: rgba(255, 255, 255, 0.65);
+  --ui-color-text-tertiary: rgba(255, 255, 255, 0.45);
+  --ui-color-text-disabled: rgba(255, 255, 255, 0.25);
+  --ui-color-text-solid: #ffffff;
+  --ui-bg-primary: #1a1b1e;
+  --ui-bg-secondary: #141518;
+  --ui-bg-tertiary: #212327;
+  --ui-bg-hover: rgba(255, 255, 255, 0.06);
+  --ui-bg-active: rgba(255, 255, 255, 0.1);
+  --ui-bg-overlay: rgba(0, 0, 0, 0.6);
+  --ui-border-default: rgba(255, 255, 255, 0.08);
+  --ui-border-weak: rgba(255, 255, 255, 0.04);
+  --ui-border-subtle: rgba(255, 255, 255, 0.06);
+  --ui-border-strong: #34373d;
+  --ui-sidebar-bg: #1a1b1e;
+  --ui-sidebar-border: #34373d;
+  --ui-button-ghost-bg-hover: #212327;
+  --ui-button-ghost-bg-active: #2a2c31;
+  --ui-button-ghost-fg: rgba(255, 255, 255, 0.92);
+  --ui-icon-primary: rgba(255, 255, 255, 0.92);
+  --ui-icon-secondary: rgba(255, 255, 255, 0.65);
+  --ui-icon-tertiary: rgba(255, 255, 255, 0.45);
+  --ui-scrollbar-thumb: rgba(255, 255, 255, 0.2);
+  --ui-scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
+  --ui-home-bg-primary: #1f1f1f;
+  --ui-home-bg-secondary: #141414;
+  --ui-user-bubble-bg: #242424;
+  --ui-markdown-code-bg: rgba(255, 255, 255, 0.1);
+  --ui-pre-border: #454545;
+  --ui-pre-header-bg: rgba(255, 255, 255, 0.05);
+  --ui-pre-bg: rgba(0, 0, 0, 0.2);
+  --ui-reasoning-border: #3c3c3c;
+  --ui-color-link: #4a9eff;
+}

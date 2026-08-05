@@ -779,6 +779,7 @@ export interface DesktopSettings {
   closeBehavior: "exit" | "minimize";
   notificationsEnabled: boolean;
   language: "zh-CN" | "en-US";
+  theme: "system" | "light" | "dark";
   openRightSidebarByDefault: boolean;
   automaticUpdates: {
     state: "disabled";
@@ -802,6 +803,7 @@ export interface DesktopBridge {
       | "closeBehavior"
       | "notificationsEnabled"
       | "language"
+      | "theme"
       | "openRightSidebarByDefault"
     >>,
   ): Promise<DesktopSettingsResult>;

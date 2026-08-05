@@ -3,6 +3,7 @@ import type { ConfigStore } from "./config-store";
 
 export type DesktopLanguage = "zh-CN" | "en-US";
 export type CloseBehavior = "exit" | "minimize";
+export type DesktopTheme = "system" | "light" | "dark";
 
 export interface DesktopSettings {
   openAtLogin: boolean;
@@ -10,6 +11,7 @@ export interface DesktopSettings {
   closeBehavior: CloseBehavior;
   notificationsEnabled: boolean;
   language: DesktopLanguage;
+  theme: DesktopTheme;
   openRightSidebarByDefault: boolean;
   automaticUpdates: {
     state: "disabled";
@@ -22,6 +24,7 @@ const KEYS = {
   closeBehavior: "desktop.closeBehavior",
   notificationsEnabled: "desktop.notificationsEnabled",
   language: "desktop.language",
+  theme: "desktop.theme",
   openRightSidebarByDefault: "desktop.openRightSidebarByDefault",
 } as const;
 
@@ -35,12 +38,14 @@ function readBoolean(config: ConfigStore, key: string, fallback: boolean): boole
 export function readDesktopSettings(config: ConfigStore): DesktopSettings {
   const closeBehavior = config.get(KEYS.closeBehavior);
   const language = config.get(KEYS.language);
+  const theme = config.get(KEYS.theme);
   return {
     openAtLogin: readBoolean(config, KEYS.openAtLogin, false),
     openAtLoginAvailable: process.platform === "win32" || process.platform === "darwin",
     closeBehavior: closeBehavior === "minimize" ? "minimize" : "exit",
     notificationsEnabled: readBoolean(config, KEYS.notificationsEnabled, true),
     language: language === "en-US" ? "en-US" : "zh-CN",
+    theme: theme === "light" || theme === "dark" ? theme : "system",
     openRightSidebarByDefault: readBoolean(
       config,
       KEYS.openRightSidebarByDefault,
@@ -99,6 +104,9 @@ export function registerDesktopSettingsIpc(config: ConfigStore): void {
       }
       if (patch?.language === "zh-CN" || patch?.language === "en-US") {
         config.set(KEYS.language, patch.language);
+      }
+      if (patch?.theme === "system" || patch?.theme === "light" || patch?.theme === "dark") {
+        config.set(KEYS.theme, patch.theme);
       }
       if (typeof patch?.openRightSidebarByDefault === "boolean") {
         config.set(
