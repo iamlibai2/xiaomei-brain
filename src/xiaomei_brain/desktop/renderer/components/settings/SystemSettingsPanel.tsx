@@ -3,7 +3,8 @@ import i18n from "../../i18n";
 import { useTranslation } from "react-i18next";
 import { useDesktopInfo } from "../../desktop-info";
 import type { DesktopSettings } from "../../types";
-import { Button, Icon } from "../ui";
+import { Button, Icon, SelectMenu } from "../ui";
+import { previewMessageSound } from "../../message-sound";
 
 export function SystemSettingsPanel() {
   const { t } = useTranslation();
@@ -116,9 +117,23 @@ export function SystemSettingsPanel() {
           />
         </SettingRow>
         <SettingRow icon="bell" title={t("systemUi.messageSounds")} description={t("systemUi.messageSoundsHint")}>
-          <Switch
-            checked={settings.messageSoundsEnabled}
-            onChange={(checked) => void update({ messageSoundsEnabled: checked })}
+          <SelectMenu
+            value={settings.messageSound}
+            className="desktop-message-sound-select"
+            placeholder={t("systemUi.messageSounds")}
+            options={[
+              { value: "none", label: t("systemUi.messageSoundNone") },
+              { value: "soft", label: t("systemUi.messageSoundSoft") },
+              { value: "crisp", label: t("systemUi.messageSoundCrisp") },
+              { value: "bubble", label: t("systemUi.messageSoundBubble") },
+            ]}
+            onOptionHover={(value) => {
+              void previewMessageSound(value as DesktopSettings["messageSound"]);
+            }}
+            onChange={(value) => {
+              const sound = value as DesktopSettings["messageSound"];
+              void update({ messageSound: sound });
+            }}
           />
         </SettingRow>
         <SettingRow icon="info" title={t("systemUi.language")} description={t("systemUi.languageHint")}>

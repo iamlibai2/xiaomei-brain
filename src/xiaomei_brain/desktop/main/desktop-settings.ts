@@ -4,13 +4,14 @@ import type { ConfigStore } from "./config-store";
 export type DesktopLanguage = "zh-CN" | "en-US";
 export type CloseBehavior = "exit" | "minimize";
 export type DesktopTheme = "system" | "light" | "dark";
+export type MessageSound = "none" | "soft" | "crisp" | "bubble";
 
 export interface DesktopSettings {
   openAtLogin: boolean;
   openAtLoginAvailable: boolean;
   closeBehavior: CloseBehavior;
   notificationsEnabled: boolean;
-  messageSoundsEnabled: boolean;
+  messageSound: MessageSound;
   language: DesktopLanguage;
   theme: DesktopTheme;
   openRightSidebarByDefault: boolean;
@@ -24,7 +25,7 @@ const KEYS = {
   openAtLogin: "desktop.openAtLogin",
   closeBehavior: "desktop.closeBehavior",
   notificationsEnabled: "desktop.notificationsEnabled",
-  messageSoundsEnabled: "desktop.messageSoundsEnabled",
+  messageSound: "desktop.messageSound",
   language: "desktop.language",
   theme: "desktop.theme",
   openRightSidebarByDefault: "desktop.openRightSidebarByDefault",
@@ -41,12 +42,15 @@ export function readDesktopSettings(config: ConfigStore): DesktopSettings {
   const closeBehavior = config.get(KEYS.closeBehavior);
   const language = config.get(KEYS.language);
   const theme = config.get(KEYS.theme);
+  const messageSound = config.get(KEYS.messageSound);
   return {
     openAtLogin: readBoolean(config, KEYS.openAtLogin, false),
     openAtLoginAvailable: process.platform === "win32" || process.platform === "darwin",
     closeBehavior: closeBehavior === "minimize" ? "minimize" : "exit",
     notificationsEnabled: readBoolean(config, KEYS.notificationsEnabled, true),
-    messageSoundsEnabled: readBoolean(config, KEYS.messageSoundsEnabled, true),
+    messageSound: messageSound === "none" || messageSound === "crisp" || messageSound === "bubble"
+      ? messageSound
+      : "soft",
     language: language === "en-US" ? "en-US" : "zh-CN",
     theme: theme === "light" || theme === "dark" ? theme : "system",
     openRightSidebarByDefault: readBoolean(
@@ -105,8 +109,8 @@ export function registerDesktopSettingsIpc(config: ConfigStore): void {
       if (typeof patch?.notificationsEnabled === "boolean") {
         config.set(KEYS.notificationsEnabled, String(patch.notificationsEnabled));
       }
-      if (typeof patch?.messageSoundsEnabled === "boolean") {
-        config.set(KEYS.messageSoundsEnabled, String(patch.messageSoundsEnabled));
+      if (patch?.messageSound === "none" || patch?.messageSound === "soft" || patch?.messageSound === "crisp" || patch?.messageSound === "bubble") {
+        config.set(KEYS.messageSound, patch.messageSound);
       }
       if (patch?.language === "zh-CN" || patch?.language === "en-US") {
         config.set(KEYS.language, patch.language);

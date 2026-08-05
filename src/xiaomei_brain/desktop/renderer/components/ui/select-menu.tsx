@@ -19,6 +19,7 @@ export function SelectMenu({
   searchPlaceholder,
   emptyText,
   onChange,
+  onOptionHover,
 }: {
   value: string;
   options: SelectMenuOption[];
@@ -30,6 +31,7 @@ export function SelectMenu({
   searchPlaceholder?: string;
   emptyText?: string;
   onChange: (value: string) => void;
+  onOptionHover?: (value: string) => void;
 }) {
   const { t } = useTranslation();
   const resolvedSearchPlaceholder = searchPlaceholder || t("searchUi.title");
@@ -95,6 +97,7 @@ export function SelectMenu({
                 aria-selected={option.value === value}
                 className={option.value === value ? "selected" : ""}
                 key={option.value}
+                onMouseEnter={() => onOptionHover?.(option.value)}
                 onClick={(event) => {
                   // SelectMenu is sometimes placed inside a form label. Stop
                   // the label's default activation from clicking the trigger

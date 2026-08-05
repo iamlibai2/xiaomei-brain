@@ -820,7 +820,7 @@ export interface DesktopSettings {
   openAtLoginAvailable: boolean;
   closeBehavior: "exit" | "minimize";
   notificationsEnabled: boolean;
-  messageSoundsEnabled: boolean;
+  messageSound: "none" | "soft" | "crisp" | "bubble";
   language: "zh-CN" | "en-US";
   theme: "system" | "light" | "dark";
   openRightSidebarByDefault: boolean;
@@ -845,7 +845,7 @@ export interface DesktopBridge {
       | "openAtLogin"
       | "closeBehavior"
       | "notificationsEnabled"
-      | "messageSoundsEnabled"
+      | "messageSound"
       | "language"
       | "theme"
       | "openRightSidebarByDefault"
