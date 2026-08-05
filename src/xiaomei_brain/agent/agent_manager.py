@@ -242,13 +242,13 @@ class AgentManager:
         tools = ToolRegistry()
 
         from xiaomei_brain.tools.builtin import (
-            command_tool, read_tool, write_tool, edit_tool, glob_tool, grep_tool,
+            create_command_tool, read_tool, write_tool, edit_tool, glob_tool, grep_tool,
             process_tool,
             present_artifacts_tool,
             send_message_tool, check_inbox_tool, set_send_message_context,
             websearch_tools, webget_tools,
         )
-        tools.register(command_tool)
+        tools.register(create_command_tool(agent.tool_execution_environment))
         tools.register(read_tool)
         tools.register(write_tool)
         tools.register(edit_tool)

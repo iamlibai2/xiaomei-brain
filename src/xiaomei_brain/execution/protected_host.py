@@ -220,3 +220,10 @@ class ProtectedHostEnvironment(ExecutionEnvironment):
             process.wait(timeout=3)
         except subprocess.TimeoutExpired:
             os.killpg(process.pid, signal.SIGKILL)
+
+    def status(self) -> dict[str, object]:
+        return {
+            **super().status(),
+            "shell": self.shell_name,
+            "shell_runtime": self.shell_runtime_label(),
+        }

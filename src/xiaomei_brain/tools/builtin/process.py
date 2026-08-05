@@ -127,6 +127,7 @@ class ProcessRegistry:
                 record.append(chunk)
         record.exit_code = record.process.wait()
         record.finished_at = time.time()
+        record.environment.release_process(record.process)
 
     def _prune(self) -> None:
         finished = [

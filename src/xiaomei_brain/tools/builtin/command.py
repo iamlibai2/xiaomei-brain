@@ -169,6 +169,7 @@ def run_command(
         environment=environment,
         timeout=timeout,
     )
+    environment.release_process(process)
     if terminal_reason == "cancelled":
         text = _decode(output)
         suffix = f"\n\n{text}" if text else ""
@@ -192,9 +193,12 @@ def run_command(
     )
 
 
-def create_command_tool() -> Tool:
-    name = command_tool_name()
-    label = shell_runtime_label()
+def create_command_tool(
+    environment: ExecutionEnvironment | None = None,
+) -> Tool:
+    selected = environment or current_execution_environment()
+    name = selected.shell_name
+    label = selected.shell_runtime_label()
     platform_guidance = (
         " Use native PowerShell syntax and Windows executables. Do not assume "
         "Unix-only commands such as head, tail, sed, or awk exist unless "
@@ -206,8 +210,7 @@ def create_command_tool() -> Tool:
         name=name,
         description=(
             f"Run a non-interactive {label} command through the Agent's "
-            "Protected Host execution environment. This provides workspace "
-            "and process protection, not strong operating-system isolation."
+            f"{selected.display_name} execution environment."
             f"{platform_guidance} Python commands use this Agent's dedicated "
             "workspace execution environment; install packages only with "
             "'python -m pip', never bare 'pip'. Use "

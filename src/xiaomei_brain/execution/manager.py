@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .environment import ExecutionEnvironment
+from .docker import DockerEnvironment, DockerEnvironmentConfig
 from .protected_host import ProtectedHostEnvironment
 
 
@@ -26,9 +27,16 @@ class ExecutionEnvironmentManager:
         self.workspace_root = Path(workspace_root).expanduser().resolve()
         self._config = dict(config or {})
         backend = str(self._config.get("backend", "protected_host")).strip().lower()
-        if backend != "protected_host":
+        if backend == "protected_host":
+            self._environment = ProtectedHostEnvironment()
+        elif backend == "docker":
+            self._environment = DockerEnvironment(
+                agent_id=self.agent_id,
+                workspace_root=self.workspace_root,
+                config=DockerEnvironmentConfig.from_mapping(self._config),
+            )
+        else:
             raise ValueError(f"Unsupported execution backend: {backend}")
-        self._environment: ExecutionEnvironment = ProtectedHostEnvironment()
 
     @property
     def environment(self) -> ExecutionEnvironment:
@@ -37,18 +45,16 @@ class ExecutionEnvironmentManager:
     def describe(self) -> dict[str, Any]:
         environment = self._environment
         return {
+            **environment.status(),
             "agent_id": self.agent_id,
-            "backend": environment.backend,
-            "display_name": environment.display_name,
-            "strong_isolation": environment.strong_isolation,
             "shell": environment.shell_name,
             "shell_runtime": environment.shell_runtime_label(),
             "workspace_root": str(self.workspace_root),
-            "state": "ready",
         }
 
     def close(self) -> None:
         """Release backend resources. Protected Host owns no long-lived resource."""
+        self._environment.close()
 
 
 def protected_host_environment() -> ProtectedHostEnvironment:

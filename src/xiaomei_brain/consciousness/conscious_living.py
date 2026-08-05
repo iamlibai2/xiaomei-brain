@@ -2383,6 +2383,14 @@ class ConsciousLiving(Living):
             body.close()
             logger.info("[ConsciousLiving] Body 感官已下线")
 
+        execution_manager = getattr(
+            self.agent,
+            "_execution_environment_manager",
+            None,
+        )
+        if execution_manager is not None:
+            execution_manager.close()
+
         if self.drive:
             self.drive.save()
         if self.purpose:

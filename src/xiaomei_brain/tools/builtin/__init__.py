@@ -1,6 +1,6 @@
 """Built-in tools for xiaomei-brain."""
 
-from .command import command_tool
+from .command import command_tool, create_command_tool
 from .file_ops import read_tool, write_tool, edit_tool, glob_tool, grep_tool
 from .process import process_tool
 from .artifacts import present_artifacts_tool
@@ -13,6 +13,7 @@ from . import webget as webget_tools
 
 __all__ = [
     "command_tool",
+    "create_command_tool",
     "read_tool",
     "write_tool",
     "edit_tool",
