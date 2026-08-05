@@ -1,4 +1,31 @@
 @import "./tokens.css";
+@import "../assets/fonts/honglei/font.css";
+
+@font-face {
+  font-family: "WoAiWanWeiWeiLocal";
+  src: url("../assets/fonts/WoAiWanWeiWeiShouXieTi-Regular.ttf") format("truetype");
+  font-display: swap;
+}
+
+:root {
+  --ui-message-font: var(--ui-font-family);
+}
+
+:root[data-message-font="pianpian"] {
+  --ui-message-font: "PianPian", "翩翩体-简", "STKaiti", "KaiTi", cursive;
+}
+
+:root[data-message-font="wanweiwei"] {
+  --ui-message-font: "WoAiWanWeiWeiLocal", "WoAiWanWeiWeiShouXieTi", "STKaiti", "KaiTi", cursive;
+}
+
+:root[data-message-font="honglei"] {
+  --ui-message-font: "HongLeiZhuoShu", "STKaiti", "KaiTi", cursive;
+}
+
+:root[data-message-font="ozcaramel"] {
+  --ui-message-font: "OzCaramel", "OzCaramel Regular", "OZ焦糖体", "STKaiti", "KaiTi", cursive;
+}
 
 *,
 *::before,

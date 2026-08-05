@@ -5,6 +5,7 @@ export type DesktopLanguage = "zh-CN" | "en-US";
 export type CloseBehavior = "exit" | "minimize";
 export type DesktopTheme = "system" | "light" | "dark";
 export type MessageSound = "none" | "soft" | "crisp" | "bubble";
+export type MessageFont = "default" | "pianpian" | "wanweiwei" | "honglei" | "ozcaramel";
 
 export interface DesktopSettings {
   openAtLogin: boolean;
@@ -12,6 +13,7 @@ export interface DesktopSettings {
   closeBehavior: CloseBehavior;
   notificationsEnabled: boolean;
   messageSound: MessageSound;
+  messageFont: MessageFont;
   language: DesktopLanguage;
   theme: DesktopTheme;
   openRightSidebarByDefault: boolean;
@@ -26,6 +28,7 @@ const KEYS = {
   closeBehavior: "desktop.closeBehavior",
   notificationsEnabled: "desktop.notificationsEnabled",
   messageSound: "desktop.messageSound",
+  messageFont: "desktop.messageFont",
   language: "desktop.language",
   theme: "desktop.theme",
   openRightSidebarByDefault: "desktop.openRightSidebarByDefault",
@@ -43,6 +46,7 @@ export function readDesktopSettings(config: ConfigStore): DesktopSettings {
   const language = config.get(KEYS.language);
   const theme = config.get(KEYS.theme);
   const messageSound = config.get(KEYS.messageSound);
+  const messageFont = config.get(KEYS.messageFont);
   return {
     openAtLogin: readBoolean(config, KEYS.openAtLogin, false),
     openAtLoginAvailable: process.platform === "win32" || process.platform === "darwin",
@@ -51,6 +55,9 @@ export function readDesktopSettings(config: ConfigStore): DesktopSettings {
     messageSound: messageSound === "none" || messageSound === "crisp" || messageSound === "bubble"
       ? messageSound
       : "soft",
+    messageFont: messageFont === "pianpian" || messageFont === "wanweiwei" || messageFont === "honglei" || messageFont === "ozcaramel"
+      ? messageFont
+      : "default",
     language: language === "en-US" ? "en-US" : "zh-CN",
     theme: theme === "light" || theme === "dark" ? theme : "system",
     openRightSidebarByDefault: readBoolean(
@@ -111,6 +118,9 @@ export function registerDesktopSettingsIpc(config: ConfigStore): void {
       }
       if (patch?.messageSound === "none" || patch?.messageSound === "soft" || patch?.messageSound === "crisp" || patch?.messageSound === "bubble") {
         config.set(KEYS.messageSound, patch.messageSound);
+      }
+      if (patch?.messageFont === "default" || patch?.messageFont === "pianpian" || patch?.messageFont === "wanweiwei" || patch?.messageFont === "honglei" || patch?.messageFont === "ozcaramel") {
+        config.set(KEYS.messageFont, patch.messageFont);
       }
       if (patch?.language === "zh-CN" || patch?.language === "en-US") {
         config.set(KEYS.language, patch.language);

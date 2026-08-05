@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>小美 · 对话字迹预览</title>
+  <link rel="stylesheet" href="./fonts/honglei/font.css">
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #f7f4ee;
+      --ink: #28251f;
+      --muted: #827b70;
+      --line: #ddd6ca;
+      --accent: #d46d42;
+      --card: rgba(255, 253, 248, .84);
+    }
+
+    * { box-sizing: border-box; }
+    @font-face {
+      font-family: "PianPianLocal";
+      src: url("./fonts/HanziPenSC-W3.otf") format("opentype");
+      font-display: swap;
+    }
+    @font-face {
+      font-family: "WoAiWanWeiWeiLocal";
+      src: url("./fonts/WoAiWanWeiWeiShouXieTi-Regular.ttf") format("truetype");
+      font-display: swap;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      padding: 48px 22px;
+      color: var(--ink);
+      background:
+        linear-gradient(rgba(50, 42, 29, .035) 1px, transparent 1px),
+        var(--paper);
+      background-size: 100% 28px;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    main { width: min(920px, 100%); margin: 0 auto; }
+    header { margin-bottom: 28px; }
+    .eyebrow {
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 9px 0 7px;
+      font-family: "STKaiti", "KaiTi", serif;
+      font-size: clamp(30px, 5vw, 52px);
+      font-weight: 400;
+      letter-spacing: .04em;
+    }
+    header p { margin: 0; color: var(--muted); font-size: 14px; }
+    .samples { display: grid; gap: 14px; }
+    .sample {
+      padding: 22px 24px 20px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--card);
+      box-shadow: 0 10px 30px rgba(73, 55, 31, .05);
+    }
+    .sample-label {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 11px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .sample-label strong { color: var(--ink); font-size: 14px; }
+    .message { margin: 0; font-size: 21px; line-height: 1.9; }
+    .message small {
+      display: block;
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 13px;
+      letter-spacing: .02em;
+    }
+    .regular { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+    .wenkai {
+      font-family: "LXGW WenKai", "霞鹜文楷", "STKaiti", "KaiTi", serif;
+      font-weight: 400;
+    }
+    .pianpian {
+      font-family: "PianPianLocal", "翩翩体-简", "翩翩体", "STKaiti", "KaiTi", serif;
+      font-weight: 400;
+    }
+    .handwriting {
+      font-family: "Segoe Print", "Bradley Hand", "Comic Sans MS", "STKaiti", "KaiTi", cursive;
+      font-weight: 500;
+      letter-spacing: .03em;
+    }
+    .script {
+      font-family: "Lucida Handwriting", "French Script MT", "Segoe Print", "STKaiti", cursive;
+      font-size: 24px;
+      letter-spacing: .04em;
+    }
+    .wanweiwei {
+      font-family: "WoAiWanWeiWeiLocal", "WoAiWanWeiWeiShouXieTi", "STKaiti", "KaiTi", cursive;
+      font-weight: 400;
+      letter-spacing: .045em;
+    }
+    .honglei {
+      font-family: "HongLeiZhuoShu", "STKaiti", "KaiTi", cursive;
+      font-weight: 400;
+      letter-spacing: .035em;
+    }
+    .ozcaramel {
+      font-family: "OzCaramel", "OzCaramel Regular", "OZ焦糖体", "STKaiti", "KaiTi", cursive;
+      font-weight: 400;
+      letter-spacing: .02em;
+    }
+    .note {
+      margin-top: 24px;
+      padding: 13px 15px;
+      border-left: 3px solid var(--accent);
+      color: var(--muted);
+      background: rgba(212, 109, 66, .07);
+      font-size: 13px;
+      line-height: 1.7;
+    }
+    code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="eyebrow">xiaomei / handwriting study</div>
+      <h1>给小美一行自己的字迹</h1>
+      <p>同一段回复的三种显示方式。浏览器会优先使用本机已安装的字体。</p>
+    </header>
+
+    <section class="samples" aria-label="字体对比">
+      <article class="sample">
+        <div class="sample-label"><strong>普通界面字体</strong><span>清晰、稳定、适合长对话</span></div>
+        <p class="message regular">我在这里。今天想和你一起把事情慢慢做好。<small>Good typography should disappear when you need to read.</small></p>
+      </article>
+      <article class="sample">
+        <div class="sample-label"><strong>文楷 · 推荐试用</strong><span>像认真写下来的字，仍然易读</span></div>
+        <p class="message wenkai">我在这里。今天想和你一起把事情慢慢做好。<small>Good typography should disappear when you need to read.</small></p>
+      </article>
+      <article class="sample">
+        <div class="sample-label"><strong>翩翩体-简</strong><span>更轻、更飘逸，适合短句</span></div>
+        <p class="message pianpian">我在这里。今天想和你一起把事情慢慢做好。<small>Good typography should disappear when you need to read.</small></p>
+      </article>
+      <article class="sample">
+        <div class="sample-label"><strong>我爱万伟伟手写体</strong><span>真实字体文件 · 更明显的手写感</span></div>
+        <p class="message wanweiwei">我在这里。今天想和你一起把事情慢慢做好。<small>Good typography should disappear when you need to read.</small></p>
+      </article>
+      <article class="sample">
+        <div class="sample-label"><strong>鸿雷拙书简体</strong><span>拙朴、随性，辨识度很高</span></div>
+        <p class="message honglei">我在这里。今天想和你一起把事情慢慢做好。<small>Good typography should disappear when you need to read.</small></p>
+      </article>
+      <article class="sample">
+        <div class="sample-label"><strong>OZ焦糖体</strong><span>温暖、俏皮，适合轻松的短句</span></div>
+        <p class="message ozcaramel">我在这里。今天想和你一起把事情慢慢做好。<small>当前使用本机已安装的 OzCaramel；未安装时会回退到楷体。</small></p>
+      </article>
+      <article class="sample">
+        <div class="sample-label"><strong>手写感增强</strong><span>个性更强，适合日记与主动表达</span></div>
+        <p class="message handwriting">我在这里。今天想和你一起把事情慢慢做好。<small>Good typography should disappear when you need to read.</small></p>
+      </article>
+      <article class="sample">
+        <div class="sample-label"><strong>英文手写候选</strong><span>更明显的签字／手稿感</span></div>
+        <p class="message script">我在这里。今天想和你一起把事情慢慢做好。<small>Good typography should disappear when you need to read.</small></p>
+      </article>
+    </section>
+
+    <div class="note">
+      如果“翩翩体-简”看起来和备用字体一样，说明还没有放入字体文件。将 <code>HanziPenSC-W3.otf</code> 放入 <code>docs/fonts/</code> 后刷新页面即可。<br>
+      文件：<code>docs/handwriting-preview.html</code>
+    </div>
+  </main>
+</body>
+</html>

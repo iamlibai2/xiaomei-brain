@@ -821,6 +821,7 @@ export interface DesktopSettings {
   closeBehavior: "exit" | "minimize";
   notificationsEnabled: boolean;
   messageSound: "none" | "soft" | "crisp" | "bubble";
+  messageFont: "default" | "pianpian" | "wanweiwei" | "honglei" | "ozcaramel";
   language: "zh-CN" | "en-US";
   theme: "system" | "light" | "dark";
   openRightSidebarByDefault: boolean;
@@ -846,6 +847,7 @@ export interface DesktopBridge {
       | "closeBehavior"
       | "notificationsEnabled"
       | "messageSound"
+      | "messageFont"
       | "language"
       | "theme"
       | "openRightSidebarByDefault"

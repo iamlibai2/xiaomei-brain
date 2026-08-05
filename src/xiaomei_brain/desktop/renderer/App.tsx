@@ -30,6 +30,7 @@ export function App() {
       void i18n.changeLanguage(settings.language);
       setMessageSound(settings.messageSound);
       const root = document.documentElement;
+      root.setAttribute("data-message-font", settings.messageFont || "default");
       if (settings.theme === "system") root.removeAttribute("data-theme");
       else root.setAttribute("data-theme", settings.theme);
     };

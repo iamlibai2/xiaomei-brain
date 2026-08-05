@@ -3403,6 +3403,7 @@ body.is-resizing-artifact-workspace {
 }
 
 .assistant-text-content {
+  font-family: var(--ui-message-font);
   font-size: 14px;
   line-height: 22px;
   color: var(--ui-color-text-primary);

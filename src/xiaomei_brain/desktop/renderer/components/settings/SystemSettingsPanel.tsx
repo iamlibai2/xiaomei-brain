@@ -136,6 +136,22 @@ export function SystemSettingsPanel() {
             }}
           />
         </SettingRow>
+        <SettingRow icon="file-text" title={t("fontUi.title")} description={t("fontUi.hint")}>
+          <SelectMenu
+            value={settings.messageFont}
+            placeholder={t("fontUi.title")}
+            options={[
+              { value: "default", label: t("fontUi.default") },
+              { value: "pianpian", label: t("fontUi.pianpian") },
+              { value: "wanweiwei", label: t("fontUi.wanweiwei") },
+              { value: "honglei", label: t("fontUi.honglei") },
+              { value: "ozcaramel", label: t("fontUi.ozcaramel") },
+            ]}
+            onChange={(value) => void update({
+              messageFont: value as DesktopSettings["messageFont"],
+            })}
+          />
+        </SettingRow>
         <SettingRow icon="info" title={t("systemUi.language")} description={t("systemUi.languageHint")}>
           <select
             value={settings.language}
