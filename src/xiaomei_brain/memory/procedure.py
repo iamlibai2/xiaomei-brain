@@ -44,6 +44,33 @@ from ..prompts import (
 _PROC_TAG_RE = re.compile(r"<PROC>([^<]+)</PROC>", re.IGNORECASE)
 
 
+def _parse_llm_json_object(response: str) -> dict[str, Any]:
+    """Parse a JSON object from plain or Markdown-fenced LLM output."""
+    text = (response or "").strip()
+    if not text:
+        return {}
+
+    if text.startswith("```"):
+        first_newline = text.find("\n")
+        if first_newline >= 0:
+            text = text[first_newline + 1:]
+        if text.rstrip().endswith("```"):
+            text = text.rstrip()[:-3]
+        text = text.strip()
+
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            value, _ = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return value
+    raise ValueError("LLM response does not contain a valid JSON object")
+
+
 def extract_procedure_block(response: str) -> str | None:
     """Extract first <PROC>xxx</PROC> tag from LLM response.
 
@@ -491,7 +518,7 @@ class ProcedureLearner:
                 tools=None,
             )
             raw = (resp.content or "").strip()
-            data = json.loads(raw or "{}")
+            data = _parse_llm_json_object(raw)
         except Exception as e:
             logger.warning("%s 检测失败: %s", _P_LOG, e)
             return []
@@ -518,7 +545,7 @@ class ProcedureLearner:
                 tools=None,
             )
             raw2 = (resp2.content or "").strip()
-            proc_data = json.loads(raw2 or "{}")
+            proc_data = _parse_llm_json_object(raw2)
         except Exception as e:
             logger.info("%s 生成失败: %s", _P_LOG, e)
             return []
@@ -592,7 +619,7 @@ class ProcedureLearner:
                 tools=None,
             )
             raw = (resp.content or "").strip()
-            data = json.loads(raw or "{}")
+            data = _parse_llm_json_object(raw)
         except Exception as e:
             logger.warning("%s infer failed: %s", _P_LOG, e)
             return []

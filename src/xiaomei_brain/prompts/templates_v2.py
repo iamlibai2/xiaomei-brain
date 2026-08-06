@@ -186,6 +186,9 @@ PROCEDURE_LEARN_PROMPT = """你是过程记忆提取专家。分析对话，主�
 - 可复用性：这个流程下次遇到类似需求是否能用
 - 清晰度：步骤是否足够明确，能写成指引
 
+【需要分析的对话历史】
+{conversation_history}
+
 【输出要求】只输出 JSON，不要解释：
 {{
   "teach_intent": true/false,
