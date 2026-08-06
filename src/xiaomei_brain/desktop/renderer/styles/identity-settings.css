@@ -374,6 +374,169 @@
   border-color: rgb(196 50 50 / 34%);
 }
 
+.identity-biometric-modal {
+  width: min(620px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+
+.identity-biometric-agent {
+  display: grid;
+  grid-template-columns: 120px minmax(180px, 1fr);
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.identity-biometric-agent label {
+  margin: 0;
+}
+
+.identity-biometric-agent small {
+  grid-column: 2;
+  color: var(--ui-color-text-tertiary);
+  font-size: 11px;
+}
+
+.identity-biometric-grid {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.identity-biometric-card {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--ui-border-default);
+  border-radius: 12px;
+  padding: 14px;
+  background: var(--ui-bg-secondary);
+}
+
+.identity-biometric-icon {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  color: var(--ui-brand-primary);
+  background: color-mix(in srgb, var(--ui-brand-primary) 10%, transparent);
+}
+
+.identity-biometric-copy {
+  min-width: 0;
+}
+
+.identity-biometric-copy > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.identity-biometric-copy strong {
+  font-size: 13px;
+}
+
+.identity-biometric-copy span {
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: var(--ui-color-text-tertiary);
+  background: var(--ui-bg-primary);
+  font-size: 10px;
+}
+
+.identity-biometric-copy span.is-enrolled {
+  color: #147253;
+  background: rgb(34 160 107 / 11%);
+}
+
+.identity-biometric-copy p {
+  margin: 5px 0 0;
+  color: var(--ui-color-text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.identity-camera-stage {
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  margin-top: 14px;
+  border-radius: 14px;
+  background: #101318;
+  aspect-ratio: 16 / 9;
+}
+
+.identity-camera-capture {
+  margin-top: 14px;
+  border: 1px solid var(--ui-border-default);
+  border-radius: 14px;
+  padding: 10px;
+  background: var(--ui-bg-secondary);
+}
+
+.identity-camera-capture .identity-camera-stage {
+  margin-top: 0;
+}
+
+.identity-camera-stage video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+.identity-camera-guide {
+  position: absolute;
+  width: 31%;
+  height: 67%;
+  border: 2px solid rgb(255 255 255 / 72%);
+  border-radius: 48%;
+  box-shadow: 0 0 0 999px rgb(0 0 0 / 17%);
+  pointer-events: none;
+}
+
+.identity-camera-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 2px 1px;
+}
+
+.identity-camera-actions > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.identity-camera-actions strong,
+.identity-camera-actions span {
+  display: block;
+}
+
+.identity-camera-actions strong {
+  color: var(--ui-color-text-primary);
+  font-size: 12px;
+}
+
+.identity-camera-actions span {
+  margin-top: 3px;
+  color: var(--ui-color-text-tertiary);
+  font-size: 10px;
+}
+
+.identity-biometric-progress,
+.identity-biometric-empty {
+  margin: 16px 0 0;
+  border-radius: 10px;
+  padding: 13px;
+  color: var(--ui-color-text-secondary);
+  background: var(--ui-bg-secondary);
+  font-size: 12px;
+  text-align: center;
+}
+
 .identity-account-modal.is-danger > header h3 {
   color: #b42318;
 }
@@ -468,5 +631,26 @@
 
   .identity-password-fields {
     grid-template-columns: 1fr;
+  }
+
+  .identity-biometric-agent,
+  .identity-biometric-card {
+    grid-template-columns: 1fr;
+  }
+
+  .identity-biometric-agent small {
+    grid-column: 1;
+  }
+
+  .identity-biometric-card .ui-button {
+    justify-self: start;
+  }
+
+  .identity-camera-actions {
+    flex-wrap: wrap;
+  }
+
+  .identity-camera-actions > div {
+    flex-basis: 100%;
   }
 }

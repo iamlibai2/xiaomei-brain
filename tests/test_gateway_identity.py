@@ -43,9 +43,29 @@ class _Inbound:
         ))
 
 
+class _Biometrics:
+    def __init__(self) -> None:
+        self.voices: set[str] = set()
+        self.faces: set[str] = set()
+        self.last_face_person = ""
+
+    def has_voiceprint(self, person_id: str) -> bool:
+        return person_id in self.voices
+
+    def has_face(self, person_id: str) -> bool:
+        return person_id in self.faces
+
+    def register_face(self, person_id: str, image_path: str) -> bool:
+        assert open(image_path, "rb").read() == b"fake-jpeg"
+        self.last_face_person = person_id
+        self.faces.add(person_id)
+        return True
+
+
 class _Living:
     def __init__(self, db_path) -> None:
         self._people_service = PeopleService.for_agent_db(db_path)
+        self._people_biometrics = _Biometrics()
         self._gateway_inbound = _Inbound()
         self._agent_id = "xiaomei"
         self.user_id = "global"
@@ -177,6 +197,53 @@ def test_existing_identity_can_authenticate_on_a_new_connection(tmp_path):
     finally:
         router.drop_session(second_conn)
         cm.unregister(second_conn)
+
+
+def test_biometrics_are_scoped_to_authenticated_person(tmp_path):
+    living = _Living(tmp_path / "brain.db")
+    router = MethodRouter(living=living)
+    conn_id = "biometric-connection"
+    private_key, public_key = _identity_key()
+    _connect(router, conn_id, "session-biometric")
+
+    unauthorized = router.dispatch(
+        conn_id,
+        "biometric-before-auth",
+        "identity.biometrics.status",
+        {},
+    )
+    begin = router.dispatch(conn_id, "register-1", "identity.register.begin", {
+        "display_name": "李白",
+        "public_key": public_key,
+    })
+    complete = router.dispatch(conn_id, "register-2", "identity.register.complete", {
+        "challenge_id": begin["result"]["challenge_id"],
+        "signature": _sign(private_key, begin["result"]["challenge"]),
+    })
+    person_id = complete["result"]["person"]["person_id"]
+
+    before = router.dispatch(conn_id, "biometric-status-1", "identity.biometrics.status", {})
+    image = base64.b64encode(b"fake-jpeg").decode("ascii")
+    enrolled = router.dispatch(conn_id, "biometric-enroll", "identity.biometrics.enroll", {
+        "kind": "face",
+        "data_base64": image,
+        "mime_type": "image/jpeg",
+        "size": len(b"fake-jpeg"),
+        # 客户端提交的人物 ID 不参与登记归属判断。
+        "person_id": "attacker-selected",
+    })
+    after = router.dispatch(conn_id, "biometric-status-2", "identity.biometrics.status", {})
+
+    try:
+        assert unauthorized["error"]["code"] == -32001
+        assert before["result"]["person_id"] == person_id
+        assert before["result"]["face_enrolled"] is False
+        assert enrolled["result"]["person_id"] == person_id
+        assert living._people_biometrics.last_face_person == person_id
+        assert after["result"]["face_enrolled"] is True
+    finally:
+        router.drop_session(conn_id)
+        cm.unregister(conn_id)
 
 
 def test_failed_signature_consumes_challenge(tmp_path):

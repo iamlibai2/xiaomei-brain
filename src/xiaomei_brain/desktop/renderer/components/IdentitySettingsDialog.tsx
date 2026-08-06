@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { IdentityStatus } from "../types";
 import { useCoreStore } from "../store";
 import { Button, Icon } from "./ui";
+import { PersonBiometricModal } from "./PersonBiometricModal";
 
 interface IdentitySettingsDialogProps {
   onClose: () => void;
@@ -17,6 +18,8 @@ type AccountAction = {
 export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySettingsDialogProps) {
   const { t } = useTranslation();
   const agents = useCoreStore((state) => state.agents);
+  const activeAgentId = useCoreStore((state) => state.activeAgentId);
+  const connectionByAgent = useCoreStore((state) => state.connectionByAgent);
   const disconnectAgent = useCoreStore((state) => state.disconnectAgent);
   const resetIdentityState = useCoreStore((state) => state.resetIdentityState);
   const [status, setStatus] = useState<IdentityStatus | null>(null);
@@ -32,6 +35,11 @@ export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySe
   const [newAccountName, setNewAccountName] = useState("");
   const [newAccountPassword, setNewAccountPassword] = useState("");
   const [newAccountConfirmation, setNewAccountConfirmation] = useState("");
+  const [showBiometrics, setShowBiometrics] = useState(false);
+
+  const connectedAgents = agents.filter(
+    (agent) => connectionByAgent[agent.id]?.status === "connected",
+  );
 
   useEffect(() => {
     void window.identity.status().then(setStatus);
@@ -261,6 +269,18 @@ export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySe
                       {t("identityUi.switch")}
                     </Button>
                   )}
+                  {account.active && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon="camera"
+                      className="settings-list-action primary"
+                      disabled={Boolean(busy)}
+                      onClick={() => setShowBiometrics(true)}
+                    >
+                      {t("identityUi.faceAndVoiceprint")}
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     size="sm"
@@ -467,6 +487,13 @@ export function IdentitySettingsDialog({ onClose, embedded = false }: IdentitySe
               </footer>
             </section>
           </div>
+        )}
+        {showBiometrics && (
+          <PersonBiometricModal
+            agents={connectedAgents}
+            initialAgentId={activeAgentId}
+            onClose={() => setShowBiometrics(false)}
+          />
         )}
       </section>
     </div>

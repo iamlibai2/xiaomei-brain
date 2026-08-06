@@ -85,6 +85,13 @@ export interface LocalAgentInfo {
   startedAt?: string;
 }
 
+export interface PersonBiometricStatus {
+  person_id: string;
+  display_name: string;
+  voiceprint_enrolled: boolean;
+  face_enrolled: boolean;
+}
+
 export type AgentLifecycleAction = "start" | "stop" | "restart";
 
 export interface AgentLifecycleResult {
@@ -485,6 +492,14 @@ export interface GatewayBridge {
     expectedRevision?: number;
   }): Promise<JsonRpcResponse>;
   listIdentities(args: { agentId: string }): Promise<JsonRpcResponse>;
+  getPersonBiometrics(args: { agentId: string }): Promise<JsonRpcResponse>;
+  enrollPersonBiometric(args: {
+    agentId: string;
+    kind: "voiceprint" | "face";
+    dataBase64: string;
+    mimeType: "audio/webm" | "audio/ogg" | "audio/wav" | "image/jpeg" | "image/png";
+    size: number;
+  }): Promise<JsonRpcResponse>;
   listLegacySessions(args: { agentId: string }): Promise<JsonRpcResponse>;
   claimLegacySession(args: { agentId: string; sessionId: string }): Promise<JsonRpcResponse>;
   getChannelConfig(args: { agentId: string; channel: "feishu" | "dingtalk" }): Promise<JsonRpcResponse>;

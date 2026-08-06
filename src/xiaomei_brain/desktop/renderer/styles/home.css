@@ -5481,6 +5481,10 @@ body.is-resizing-artifact-workspace {
   color: #5f72d9;
 }
 
+.voice-live-panel.is-waiting .voice-live-copy strong {
+  color: var(--ui-color-text-secondary);
+}
+
 @media (max-width: 680px) {
   .voice-live-panel {
     min-height: 82px;

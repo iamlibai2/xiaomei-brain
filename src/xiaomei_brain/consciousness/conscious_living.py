@@ -547,12 +547,24 @@ class ConsciousLiving(Living):
         # identities.yaml 自动推断，否则“旧联系人”会被误当成已确认身份。
         from xiaomei_brain.people import PeopleService
         self._people_service = PeopleService.for_agent_db(db_path)
+        from xiaomei_brain.people import PeopleBiometricService
+        _people_biometrics_dir = _os.path.join(
+            _os.path.expanduser(f"~/.xiaomei-brain/{self._agent_id}"),
+            "people",
+            "biometrics",
+        )
+        self._people_biometrics = PeopleBiometricService(
+            self._people_service,
+            _people_biometrics_dir,
+        )
         from xiaomei_brain.people import IdentityLinkService
         from xiaomei_brain.channels import ChannelConfigurationService
         self._identity_link_service = IdentityLinkService(self._people_service)
         self._channel_configuration = ChannelConfigurationService(self._agent_id)
         self.agent.people_service = self._people_service
         self.agent._get_agent().people_service = self._people_service
+        self.agent.people_biometrics = self._people_biometrics
+        self.agent._get_agent().people_biometrics = self._people_biometrics
         logger.info("[ConsciousLiving] 人物服务已初始化")
         boot_line(
             "人物与身份",

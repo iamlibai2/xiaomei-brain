@@ -84,6 +84,9 @@ def test_continuous_hearing_temporarily_owns_local_listener():
         })
         acquired = methods.dispatch(conn_id, "2", "embodiment.hearing.acquire", {})
         assert acquired["result"]["acquired"] is True
+        assert acquired["result"]["attention_timeout_seconds"] == 0
+        assert acquired["result"]["wake_words"] == []
+        assert acquired["result"]["voiceprint_enrolled"] is False
         assert listener.stops == 1
         assert listener.is_running is False
 
@@ -91,6 +94,88 @@ def test_continuous_hearing_temporarily_owns_local_listener():
         assert listener.starts == 1
         assert listener.is_running is True
     finally:
+        cm.unregister(conn_id)
+
+
+def test_same_desktop_can_nest_hearing_lease_without_stopping_live_voice():
+    conn_id = "desktop-embodiment-nested-hearing"
+    cm.set_session("session-nested-hearing", conn_id, "person-1")
+
+    class Listener:
+        is_running = True
+        stops = 0
+        starts = 0
+
+        def stop(self):
+            self.is_running = False
+            self.stops += 1
+
+        def start(self):
+            self.is_running = True
+            self.starts += 1
+            return True
+
+    listener = Listener()
+    methods = MethodRouter(living=SimpleNamespace(
+        _voice_listener=listener,
+        _ears_enabled=True,
+    ))
+    methods._auth_sessions.add(conn_id)
+    try:
+        methods.dispatch(conn_id, "1", "embodiment.register", {
+            "device_id": "device-nested-hearing",
+            "label": "Desktop",
+            "capabilities": ["hearing"],
+        })
+        methods.dispatch(conn_id, "2", "embodiment.hearing.acquire", {})
+        methods.dispatch(conn_id, "3", "embodiment.hearing.acquire", {})
+        methods.dispatch(conn_id, "4", "embodiment.hearing.release", {})
+
+        embodiment_methods = methods._embodiment_methods
+        assert embodiment_methods._hearing_owner == conn_id
+        assert embodiment_methods._hearing_lease_depth == 1
+        assert listener.stops == 1
+        assert listener.starts == 0
+
+        methods.dispatch(conn_id, "5", "embodiment.hearing.release", {})
+        assert embodiment_methods._hearing_owner is None
+        assert listener.starts == 1
+    finally:
+        methods.drop_session(conn_id)
+        cm.unregister(conn_id)
+
+
+def test_desktop_hearing_uses_person_biometrics_instead_of_legacy_identities():
+    conn_id = "desktop-person-biometrics"
+    cm.set_session("session-person-biometrics", conn_id, "person-1")
+
+    class LegacyIdentityManager:
+        @property
+        def speaker_id(self):
+            raise AssertionError("Desktop hearing accessed legacy identities.yaml biometrics")
+
+    living = SimpleNamespace(
+        _agent_id="test",
+        _display_name="Test Agent",
+        _identity_mgr=LegacyIdentityManager(),
+        _people_biometrics=SimpleNamespace(
+            speaker_id=SimpleNamespace(known_voices=["person-1"]),
+        ),
+    )
+    methods = MethodRouter(living=living)
+    methods._auth_sessions.add(conn_id)
+    try:
+        methods.dispatch(conn_id, "1", "embodiment.register", {
+            "device_id": "device-person-biometrics",
+            "label": "Desktop",
+            "capabilities": ["hearing"],
+        })
+        acquired = methods.dispatch(conn_id, "2", "embodiment.hearing.acquire", {})
+
+        assert acquired["result"]["voiceprint_enrolled"] is True
+        assert acquired["result"]["wake_words"] == ["Test Agent", "test"]
+    finally:
+        methods.drop_session(conn_id)
         cm.unregister(conn_id)
 
 

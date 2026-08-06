@@ -46,15 +46,18 @@ class AttentionGate:
         identity_mgr,
         wake_words: list[str] | None = None,
         timeout_minutes: int = DEFAULT_TIMEOUT_MINUTES,
+        allow_user_switch: bool = True,
     ) -> None:
         self._speaker_id = speaker_id        # SpeakerID 实例
         self._identity_mgr = identity_mgr    # IdentityManager 实例
         self._wake_words = wake_words or list(WAKE_WORDS)
         self._timeout_s = timeout_minutes * 60
+        self._allow_user_switch = allow_user_switch
 
         self._current_user_id: str | None = None
         self._dialog_active = False
         self._last_speech_time = 0.0
+        self._last_decision_reason = "initialized"
         self._on_user_change: Callable[[str], None] | None = None
 
         # 当前说话人声学画像（EMA 平均）
@@ -102,15 +105,34 @@ class AttentionGate:
         if not self._dialog_active:
             # ── 对话态外：只响应唤醒词 ──
             if has_wake:
-                logger.warning("AttentionGate 对话态外检测到唤醒词，开始声纹验证...")
-                user_id = self._verify_speaker(pcm)
-                if user_id and user_id != self._current_user_id:
-                    self._do_switch(user_id)
+                if self.voiceprint_enrolled:
+                    logger.warning("AttentionGate 对话态外检测到唤醒词，开始声纹验证...")
+                    user_id = self._verify_speaker(pcm)
+                    if not user_id:
+                        self._last_decision_reason = "voiceprint_unverified"
+                        logger.warning("AttentionGate 唤醒声纹未通过，保持锁定")
+                        return False, None
+                    if user_id != self._current_user_id and not self._allow_user_switch:
+                        self._last_decision_reason = "voiceprint_mismatch"
+                        logger.warning(
+                            "AttentionGate 唤醒声纹与当前人物不匹配: expected=%s actual=%s",
+                            self._current_user_id,
+                            user_id,
+                        )
+                        return False, None
+                    if user_id != self._current_user_id:
+                        self._do_switch(user_id)
+                    self._last_decision_reason = "voiceprint_verified"
+                else:
+                    # 当前人物尚未登记声纹时，保留唤醒词降级能力。
+                    # 这与“已登记但验证失败”是两种不同的安全状态。
+                    self._last_decision_reason = "wake_word_only"
                 self._update_profile(pcm)
                 self._dialog_active = True
                 logger.warning("AttentionGate 唤醒 → 进入对话态 (user=%s)", self._current_user_id)
                 return True, self._current_user_id
             else:
+                self._last_decision_reason = "wake_required"
                 logger.warning("AttentionGate 对话态外无唤醒词 → 忽略")
                 return False, None
 
@@ -130,24 +152,31 @@ class AttentionGate:
             self._update_profile(pcm)
 
             if is_same:
+                self._last_decision_reason = "accepted"
                 logger.warning("AttentionGate 同一说话人 → 放行")
                 return True, None  # 同一个人，不切用户
 
             if has_wake:
-                # 换人 + 唤醒词 → 声纹验证 → 切用户
-                logger.warning("AttentionGate 不同说话人+唤醒词 → 声纹验证")
-                user_id = self._verify_speaker(pcm)
-                if user_id:
+                if self.voiceprint_enrolled:
+                    # 换人 + 唤醒词 → 声纹验证 → 按策略切换或拒绝
+                    logger.warning("AttentionGate 不同说话人+唤醒词 → 声纹验证")
+                    user_id = self._verify_speaker(pcm)
+                    if not user_id:
+                        self._last_decision_reason = "voiceprint_unverified"
+                        return False, None
+                    if user_id != self._current_user_id and not self._allow_user_switch:
+                        self._last_decision_reason = "voiceprint_mismatch"
+                        return False, None
                     if user_id != self._current_user_id:
                         self._do_switch(user_id)
+                    self._last_decision_reason = "voiceprint_verified"
                 else:
-                    user_id = "global"
-                    if user_id != self._current_user_id:
-                        self._do_switch(user_id)
+                    self._last_decision_reason = "wake_word_only"
                 logger.warning("AttentionGate 切换完成 → 放行 (user=%s)", self._current_user_id)
                 return True, None
 
             # 不同人、没喊名字 → 忽略
+            self._last_decision_reason = "speaker_mismatch"
             logger.warning("AttentionGate 不同说话人+无唤醒词 → 忽略 (text=%s)", text[:30])
             return False, None
 
@@ -158,6 +187,33 @@ class AttentionGate:
     @property
     def is_dialog_active(self) -> bool:
         return self._dialog_active
+
+    @property
+    def timeout_seconds(self) -> int:
+        return self._timeout_s
+
+    @property
+    def wake_words(self) -> list[str]:
+        return list(self._wake_words)
+
+    @property
+    def voiceprint_enrolled(self) -> bool:
+        """当前人物是否已登记声纹。
+
+        Desktop 会话绑定了具体 Person；其他人物有声纹不代表
+        当前 Person 具备可验证的声纹。
+        """
+        if not self._speaker_id or not self._current_user_id:
+            return False
+        try:
+            return self._current_user_id in self._speaker_id.known_voices
+        except Exception:
+            logger.exception("AttentionGate 读取已登记声纹失败")
+            return False
+
+    @property
+    def last_decision_reason(self) -> str:
+        return self._last_decision_reason
 
     # ── 唤醒词检测 ────────────────────────────────────────
 

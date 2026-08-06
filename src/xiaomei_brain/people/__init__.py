@@ -10,6 +10,7 @@ from .models import (
 )
 from .link_service import IdentityLinkService
 from .service import PeopleService
+from .biometrics import PeopleBiometricService
 from .store import PeopleStore
 
 __all__ = [
@@ -19,6 +20,7 @@ __all__ = [
     "IdentityEvent",
     "IdentityLinkRequest",
     "IdentityLinkService",
+    "PeopleBiometricService",
     "PeopleService",
     "PeopleStore",
     "Person",

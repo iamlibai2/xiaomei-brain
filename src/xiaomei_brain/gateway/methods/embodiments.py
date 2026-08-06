@@ -21,12 +21,17 @@ from ..schemas import (
 logger = logging.getLogger(__name__)
 
 
+class _HearingLeaseEnded(RuntimeError):
+    """A queued audio segment finished after continuous hearing was released."""
+
+
 class EmbodimentMethods:
     """Own connection-scoped bodies without turning them into identities."""
 
     def __init__(self, living: Any) -> None:
         self._living = living
         self._hearing_owner: str | None = None
+        self._hearing_lease_depth = 0
         self._resume_local_listener = False
         self._vision_owner: str | None = None
         self._resume_local_camera = False
@@ -111,16 +116,35 @@ class EmbodimentMethods:
         with self._hearing_lock:
             if self._hearing_owner not in {None, conn_id}:
                 return build_error(req_id, ErrorCode.INVALID_REQUEST, "另一具身体正在持续监听")
+            if self._hearing_owner == conn_id:
+                self._hearing_lease_depth += 1
+                gate = self._attention_gates.get(conn_id)
+                logger.debug(
+                    "[Embodiment] Continuous hearing lease nested: depth=%d",
+                    self._hearing_lease_depth,
+                )
+                return build_response(req_id, result={
+                    "acquired": True,
+                    "embodiment_id": f"desktop:{embodiment.get('device_id', '')}",
+                    "attention_timeout_seconds": getattr(gate, "timeout_seconds", 0),
+                    "wake_words": getattr(gate, "wake_words", []),
+                    "voiceprint_enrolled": bool(getattr(gate, "voiceprint_enrolled", False)),
+                })
             self._hearing_owner = conn_id
+            self._hearing_lease_depth = 1
             listener = getattr(self._living, "_voice_listener", None)
             if listener is not None and getattr(listener, "is_running", False):
                 listener.stop()
                 self._resume_local_listener = True
-            self._attention_gates[conn_id] = self._new_attention_gate(person_id)
+            gate = self._new_attention_gate(person_id)
+            self._attention_gates[conn_id] = gate
         logger.info("[Embodiment] Continuous hearing acquired: %s", embodiment.get("device_id"))
         return build_response(req_id, result={
             "acquired": True,
             "embodiment_id": f"desktop:{embodiment.get('device_id', '')}",
+            "attention_timeout_seconds": getattr(gate, "timeout_seconds", 0),
+            "wake_words": getattr(gate, "wake_words", []),
+            "voiceprint_enrolled": bool(getattr(gate, "voiceprint_enrolled", False)),
         })
 
     def handle_hearing_release(
@@ -198,15 +222,23 @@ class EmbodimentMethods:
 
     def drop_connection(self, conn_id: str) -> None:
         """Release connection-scoped senses after an unclean socket close."""
-        self._release_hearing(conn_id)
+        self._release_hearing(conn_id, force=True)
         self._release_vision(conn_id)
 
-    def _release_hearing(self, conn_id: str) -> bool:
+    def _release_hearing(self, conn_id: str, *, force: bool = False) -> bool:
         with self._hearing_lock:
-            self._attention_gates.pop(conn_id, None)
             if self._hearing_owner != conn_id:
                 return False
+            if not force and self._hearing_lease_depth > 1:
+                self._hearing_lease_depth -= 1
+                logger.debug(
+                    "[Embodiment] Continuous hearing lease released: depth=%d",
+                    self._hearing_lease_depth,
+                )
+                return True
+            self._attention_gates.pop(conn_id, None)
             self._hearing_owner = None
+            self._hearing_lease_depth = 0
             should_resume = self._resume_local_listener
             self._resume_local_listener = False
         if should_resume:
@@ -254,8 +286,8 @@ class EmbodimentMethods:
         return True
 
     def _new_attention_gate(self, person_id: str) -> Any | None:
-        identity_mgr = getattr(self._living, "_identity_mgr", None)
-        if identity_mgr is None:
+        biometrics = getattr(self._living, "_people_biometrics", None)
+        if biometrics is None:
             return None
         try:
             from xiaomei_brain.body.perception.attention_gate import AttentionGate
@@ -264,9 +296,10 @@ class EmbodimentMethods:
                 str(getattr(self._living, "_agent_id", "") or ""),
             ]
             gate = AttentionGate(
-                getattr(identity_mgr, "speaker_id", None),
-                identity_mgr,
+                getattr(biometrics, "speaker_id", None),
+                None,
                 wake_words=[word for word in wake_words if word],
+                allow_user_switch=False,
             )
             # Enabling continuous hearing is an explicit start of a dialog.
             gate.set_current_user(person_id)
@@ -371,7 +404,7 @@ class EmbodimentMethods:
                     owns_hearing = self._hearing_owner == conn_id
                     gate = self._attention_gates.get(conn_id)
                 if not owns_hearing:
-                    raise RuntimeError("Desktop 已失去持续监听权")
+                    raise _HearingLeaseEnded("Desktop 已失去持续监听权")
                 if gate is not None:
                     with self._gate_lock:
                         should_pass, _target_person = gate.process(
@@ -381,11 +414,23 @@ class EmbodimentMethods:
                         )
                         same_person = gate.current_user_id == person_id
                     if not should_pass or not same_person:
+                        decision_reason = str(
+                            getattr(gate, "last_decision_reason", "attention_gate")
+                        )
                         self._notify(route, "embodiment.audio.input.completed", {
                             "request_id": request_id,
                             "status": "ignored",
                             "text": text,
-                            "reason": "attention_gate",
+                            "reason": decision_reason,
+                            "attention_state": (
+                                "waiting_wake"
+                                if decision_reason in {
+                                    "wake_required",
+                                    "voiceprint_unverified",
+                                    "voiceprint_mismatch",
+                                }
+                                else "active"
+                            ),
                         })
                         return
 
@@ -441,6 +486,14 @@ class EmbodimentMethods:
                 "turn_id": accepted.living_message.turn_id,
                 "message_id": accepted.living_message.message_id,
                 "attachments": public_attachment_metadata(attachments),
+            })
+        except _HearingLeaseEnded as exc:
+            logger.info("[Embodiment] Discarded queued audio after hearing release")
+            self._notify(route, "embodiment.audio.input.completed", {
+                "request_id": request_id,
+                "status": "ignored",
+                "reason": "hearing_released",
+                "error": str(exc),
             })
         except Exception as exc:
             logger.exception("[Embodiment] Desktop microphone processing failed")

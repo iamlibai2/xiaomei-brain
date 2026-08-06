@@ -1638,6 +1638,29 @@ export function registerIpcHandlers(
     return client.rpc("identity.list", {});
   });
 
+  ipcMain.handle("gateway:getPersonBiometrics", async (_event, args: { agentId: string }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("identity.biometrics.status", {});
+  });
+
+  ipcMain.handle("gateway:enrollPersonBiometric", async (_event, args: {
+    agentId: string;
+    kind: "voiceprint" | "face";
+    dataBase64: string;
+    mimeType: string;
+    size: number;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("identity.biometrics.enroll", {
+      kind: args.kind,
+      data_base64: args.dataBase64,
+      mime_type: args.mimeType,
+      size: args.size,
+    });
+  });
+
   ipcMain.handle("gateway:listLegacySessions", async (_event, args: { agentId: string }) => {
     const client = getClient(args.agentId);
     if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };

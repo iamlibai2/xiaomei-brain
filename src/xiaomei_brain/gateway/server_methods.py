@@ -176,6 +176,10 @@ class MethodRouter:
                 "embodiment.vision.acquire",
                 "embodiment.vision.release",
             },
+            "identity.biometrics": {
+                "identity.biometrics.status",
+                "identity.biometrics.enroll",
+            },
             "attachment.read": {"attachment.get"},
             "artifact.read": {"artifact.get", "artifact.list"},
             "artifact.events": {"artifact.get"},

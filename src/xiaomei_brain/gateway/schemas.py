@@ -143,6 +143,19 @@ class IdentityLegacySessionClaimParams(BaseModel):
     session_id: str = Field(..., min_length=1, max_length=256)
 
 
+class IdentityBiometricEnrollParams(BaseModel):
+    kind: Literal["voiceprint", "face"]
+    data_base64: str = Field(..., min_length=1, max_length=12_000_000)
+    mime_type: Literal[
+        "audio/webm",
+        "audio/ogg",
+        "audio/wav",
+        "image/jpeg",
+        "image/png",
+    ]
+    size: int = Field(..., ge=1, le=8 * 1024 * 1024)
+
+
 ExternalChannel = Literal["feishu", "dingtalk"]
 
 

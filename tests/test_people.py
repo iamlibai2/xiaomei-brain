@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from xiaomei_brain.people import PeopleService, PeopleStore
+from xiaomei_brain.people import PeopleBiometricService, PeopleService, PeopleStore
 
 
 def test_people_schema_is_additive_and_preserves_existing_user_id(tmp_path):
@@ -102,6 +102,23 @@ def test_initialization_does_not_create_people_implicitly(tmp_path):
     service = PeopleService.for_agent_db(tmp_path / "brain.db")
 
     assert service.store.list_people() == []
+
+
+def test_person_biometrics_are_scoped_to_people_and_not_legacy_contacts(tmp_path):
+    import numpy as np
+
+    people = PeopleService.for_agent_db(tmp_path / "memory" / "brain.db")
+    person = people.create_person("李白", person_id="person-1")
+    biometric_dir = tmp_path / "people" / "biometrics"
+    voices_dir = biometric_dir / "voices"
+    voices_dir.mkdir(parents=True)
+    np.save(voices_dir / f"{person.person_id}.npy", np.asarray([0.1, 0.2]))
+
+    biometrics = PeopleBiometricService(people, biometric_dir)
+
+    assert biometrics.has_voiceprint(person.person_id) is True
+    with pytest.raises(ValueError, match="人物不存在"):
+        biometrics.has_voiceprint("legacy-contact")
 
 
 def test_conversation_session_scope_cannot_change(tmp_path):

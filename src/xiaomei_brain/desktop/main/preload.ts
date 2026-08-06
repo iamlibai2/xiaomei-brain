@@ -59,6 +59,8 @@ const CHANNEL_MAP = {
     requestAssignmentCancel: { invoke: "gateway:requestAssignmentCancel" },
     requestAssignmentResume: { invoke: "gateway:requestAssignmentResume" },
     listIdentities:  { invoke: "gateway:listIdentities" },
+    getPersonBiometrics: { invoke: "gateway:getPersonBiometrics" },
+    enrollPersonBiometric: { invoke: "gateway:enrollPersonBiometric" },
     listLegacySessions: { invoke: "gateway:listLegacySessions" },
     claimLegacySession: { invoke: "gateway:claimLegacySession" },
     getChannelConfig: { invoke: "gateway:getChannelConfig" },

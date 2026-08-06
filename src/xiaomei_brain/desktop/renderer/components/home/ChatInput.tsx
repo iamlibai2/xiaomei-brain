@@ -86,6 +86,11 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
   const lastBargeInAtRef = useRef(0);
   const bargeInCandidateRef = useRef(false);
   const voiceHintTimerRef = useRef<number | null>(null);
+  const attentionTimerRef = useRef<number | null>(null);
+  const attentionTimeoutSecondsRef = useRef(0);
+  const attentionLockedRef = useRef(false);
+  const voiceprintEnrolledRef = useRef(false);
+  const wakeWordRef = useRef("小美");
   const [dragging, setDragging] = useState(false);
   const [listening, setListening] = useState(false);
   const [mediaBusy, setMediaBusy] = useState(false);
@@ -187,6 +192,37 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
     }, 3_500);
   }, []);
 
+  const clearAttentionTimer = useCallback(() => {
+    if (attentionTimerRef.current !== null) {
+      window.clearTimeout(attentionTimerRef.current);
+      attentionTimerRef.current = null;
+    }
+  }, []);
+
+  const showWaitingForWake = useCallback((hint = "") => {
+    attentionLockedRef.current = true;
+    clearAttentionTimer();
+    if (voiceHintTimerRef.current !== null) {
+      window.clearTimeout(voiceHintTimerRef.current);
+      voiceHintTimerRef.current = null;
+    }
+    setVoiceStatus(t("home.voiceWaitingWake", { wakeWord: wakeWordRef.current }));
+    setVoicePhase("waiting");
+    setVoiceHint(
+      hint || (!voiceprintEnrolledRef.current ? t("home.voiceprintNotConfigured") : ""),
+    );
+  }, [clearAttentionTimer, t]);
+
+  const scheduleAttentionTimeout = useCallback(() => {
+    clearAttentionTimer();
+    const timeoutSeconds = attentionTimeoutSecondsRef.current;
+    if (!continuousActiveRef.current || timeoutSeconds <= 0) return;
+    attentionTimerRef.current = window.setTimeout(() => {
+      attentionTimerRef.current = null;
+      if (continuousActiveRef.current && !speakingRef.current) showWaitingForWake();
+    }, timeoutSeconds * 1_000);
+  }, [clearAttentionTimer, showWaitingForWake]);
+
   useEffect(() => {
     const onStarted = (event: Event) => {
       const detail = (event as CustomEvent<{ agentId?: string }>).detail;
@@ -222,8 +258,13 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
         recorderRef.current.stop();
       }
       bargeInCandidateRef.current = false;
-      setVoiceStatus(t("home.voiceListening"));
-      setVoicePhase("listening");
+      if (attentionLockedRef.current) {
+        setVoiceStatus(t("home.voiceWaitingWake", { wakeWord: wakeWordRef.current }));
+        setVoicePhase("waiting");
+      } else {
+        setVoiceStatus(t("home.voiceListening"));
+        setVoicePhase("listening");
+      }
     }
   }, [agentSpeaking, desktopSpeaking, t]);
 
@@ -233,19 +274,39 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       || raw.event !== "embodiment.audio.input.completed"
     ) return;
     const payload = raw.data as Record<string, unknown>;
+    const status = typeof payload.status === "string" ? payload.status : "";
+    const reason = typeof payload.reason === "string" ? payload.reason : "";
     if (pendingVoiceRef.current > 0) {
       pendingVoiceRef.current -= 1;
       setMediaBusy(pendingVoiceRef.current > 0);
     }
-    if (payload.status === "failed") {
+    if (status === "failed") {
       showVoiceHint(
         typeof payload.error === "string"
           ? payload.error
           : t("home.voiceRecognitionFailed"),
       );
     }
+    if (continuousActiveRef.current) {
+      if (status === "completed") {
+        attentionLockedRef.current = false;
+        setVoiceHint("");
+        scheduleAttentionTimeout();
+      } else if (payload.attention_state === "waiting_wake") {
+        showWaitingForWake(
+          reason === "voiceprint_unverified" || reason === "voiceprint_mismatch"
+            ? t("home.voiceprintRejected")
+            : "",
+        );
+      } else if (status === "ignored" && reason !== "transcript_fragment") {
+        scheduleAttentionTimeout();
+      }
+    }
     if (!continuousActiveRef.current) {
       setVoiceStatus("");
+    } else if (attentionLockedRef.current && !recorderRef.current) {
+      setVoiceStatus(t("home.voiceWaitingWake", { wakeWord: wakeWordRef.current }));
+      setVoicePhase("waiting");
     } else if (speakingRef.current) {
       setVoiceStatus(t("home.voicePausedWhileSpeaking"));
       setVoicePhase("speaking");
@@ -259,7 +320,13 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       setVoiceStatus(t("home.voiceListening"));
       setVoicePhase("listening");
     }
-  }), [activeAgentId, showVoiceHint, t]);
+  }), [
+    activeAgentId,
+    scheduleAttentionTimeout,
+    showVoiceHint,
+    showWaitingForWake,
+    t,
+  ]);
 
   useEffect(() => {
     if (
@@ -268,7 +335,10 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       || pendingVoiceRef.current > 0
       || recorderRef.current
     ) return;
-    if (sending) {
+    if (attentionLockedRef.current) {
+      setVoiceStatus(t("home.voiceWaitingWake", { wakeWord: wakeWordRef.current }));
+      setVoicePhase("waiting");
+    } else if (sending) {
       setVoiceStatus(t("home.voiceThinking"));
       setVoicePhase("processing");
     } else {
@@ -489,6 +559,11 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
     continuousActiveRef.current = false;
     continuousAgentIdRef.current = "";
     continuousConversationRef.current = "";
+    attentionLockedRef.current = false;
+    attentionTimeoutSecondsRef.current = 0;
+    voiceprintEnrolledRef.current = false;
+    wakeWordRef.current = "小美";
+    clearAttentionTimer();
     bargeInCandidateRef.current = false;
     bargeInFramesRef.current = 0;
     if (voiceHintTimerRef.current !== null) {
@@ -519,7 +594,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
     if (agentId) {
       await window.gateway.setContinuousHearing({ agentId, enabled: false }).catch(() => undefined);
     }
-  }, []);
+  }, [clearAttentionTimer]);
 
   useEffect(() => () => {
     void releaseContinuousHearing(false);
@@ -704,6 +779,17 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       setAttachmentError(lease.error.message);
       return;
     }
+    const hearing = lease.result && typeof lease.result === "object"
+      ? lease.result as Record<string, unknown>
+      : {};
+    attentionTimeoutSecondsRef.current = typeof hearing.attention_timeout_seconds === "number"
+      ? Math.max(0, hearing.attention_timeout_seconds)
+      : 0;
+    voiceprintEnrolledRef.current = hearing.voiceprint_enrolled === true;
+    const wakeWords = Array.isArray(hearing.wake_words)
+      ? hearing.wake_words.filter((word): word is string => typeof word === "string" && Boolean(word))
+      : [];
+    wakeWordRef.current = wakeWords[0] || "小美";
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -728,6 +814,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
       setListening(true);
       setVoiceStatus(t("home.voiceListening"));
       setVoicePhase("listening");
+      scheduleAttentionTimeout();
       beginVadLoop(stream, analyser);
     } catch (error) {
       setVoiceStatus("");

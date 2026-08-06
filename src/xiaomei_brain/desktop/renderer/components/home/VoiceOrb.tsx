@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-export type VoiceOrbPhase = "listening" | "hearing" | "processing" | "speaking";
+export type VoiceOrbPhase = "listening" | "waiting" | "hearing" | "processing" | "speaking";
 
 interface VoiceOrbProps {
   levelRef: React.MutableRefObject<number>;
@@ -9,6 +9,7 @@ interface VoiceOrbProps {
 
 const COLORS: Record<VoiceOrbPhase, [string, string, string]> = {
   listening: ["#8b83f6", "#70c8ce", "#b49aef"],
+  waiting: ["#8d879d", "#7f9298", "#9c8faa"],
   hearing: ["#6f78ee", "#49bcc6", "#a376e6"],
   processing: ["#8178ed", "#a379e4", "#62b9cc"],
   speaking: ["#6d8eea", "#79c7bd", "#9c82e6"],

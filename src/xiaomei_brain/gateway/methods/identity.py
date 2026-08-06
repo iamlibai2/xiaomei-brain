@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import os
+import tempfile
 import time
 from typing import Any
 
@@ -18,6 +22,7 @@ from ..protocol import ErrorCode, build_error, build_response
 from ..schemas import (
     IdentityAuthenticateBeginParams,
     IdentityAuthenticateCompleteParams,
+    IdentityBiometricEnrollParams,
     IdentityLegacySessionClaimParams,
     IdentityRegisterBeginParams,
     IdentityRegisterCompleteParams,
@@ -60,6 +65,8 @@ class IdentityMethods:
     def handlers(self) -> dict[str, Any]:
         return {
             "identity.list": self.handle_list,
+            "identity.biometrics.status": self.handle_biometrics_status,
+            "identity.biometrics.enroll": self.handle_biometrics_enroll,
             "identity.legacy_sessions.list": self.handle_legacy_sessions_list,
             "identity.legacy_sessions.claim": self.handle_legacy_session_claim,
         }
@@ -325,6 +332,103 @@ class IdentityMethods:
             ],
         })
 
+    def handle_biometrics_status(
+        self,
+        conn_id: str,
+        req_id: str,
+        _params: dict,
+    ) -> dict:
+        context = self._identity_contexts.get(conn_id)
+        biometrics = self._biometric_service()
+        service = self._people_service()
+        if context is None:
+            return build_error(req_id, ErrorCode.UNAUTHORIZED, "当前连接没有人物身份")
+        if biometrics is None or service is None:
+            return build_error(req_id, ErrorCode.GATEWAY_NOT_READY, "人物生物特征服务未就绪")
+        person = service.store.get_person(context.person_id)
+        if person is None:
+            return build_error(req_id, ErrorCode.UNAUTHORIZED, "当前人物不存在")
+        return build_response(req_id, result={
+            "person_id": person.person_id,
+            "display_name": person.display_name,
+            "voiceprint_enrolled": biometrics.has_voiceprint(person.person_id),
+            "face_enrolled": biometrics.has_face(person.person_id),
+        })
+
+    def handle_biometrics_enroll(
+        self,
+        conn_id: str,
+        req_id: str,
+        params: dict,
+    ) -> dict:
+        context = self._identity_contexts.get(conn_id)
+        biometrics = self._biometric_service()
+        if context is None:
+            return build_error(req_id, ErrorCode.UNAUTHORIZED, "当前连接没有人物身份")
+        if biometrics is None:
+            return build_error(req_id, ErrorCode.GATEWAY_NOT_READY, "人物生物特征服务未就绪")
+        try:
+            parsed = IdentityBiometricEnrollParams.model_validate(params)
+            data = base64.b64decode(parsed.data_base64, validate=True)
+            if len(data) != parsed.size:
+                raise ValueError("生物特征数据大小不一致")
+            if parsed.kind == "voiceprint":
+                if not parsed.mime_type.startswith("audio/"):
+                    raise ValueError("声纹登记需要语音数据")
+                from xiaomei_brain.media_services.audio import (
+                    AudioConversionError,
+                    decode_to_pcm_s16,
+                )
+
+                try:
+                    pcm = decode_to_pcm_s16(data, sample_rate=16000)
+                except AudioConversionError as exc:
+                    raise ValueError(str(exc)) from exc
+                duration_seconds = len(pcm) / (16000 * 2)
+                if duration_seconds < 5:
+                    raise ValueError("声纹录音至少需要 5 秒")
+                if duration_seconds > 30:
+                    raise ValueError("声纹录音不能超过 30 秒")
+                enrolled = biometrics.register_voice(
+                    context.person_id,
+                    pcm,
+                    sample_rate=16000,
+                )
+            else:
+                if not parsed.mime_type.startswith("image/"):
+                    raise ValueError("人脸登记需要图片数据")
+                suffix = ".png" if parsed.mime_type == "image/png" else ".jpg"
+                file_path = ""
+                try:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
+                        handle.write(data)
+                        file_path = handle.name
+                    enrolled = biometrics.register_face(context.person_id, file_path)
+                finally:
+                    if file_path:
+                        try:
+                            os.unlink(file_path)
+                        except OSError:
+                            pass
+            if not enrolled:
+                raise ValueError(
+                    "未能提取有效声纹，请在安静环境中重新录音"
+                    if parsed.kind == "voiceprint"
+                    else "未检测到清晰正脸，请重新拍摄"
+                )
+        except (binascii.Error, ValueError) as exc:
+            return build_error(req_id, ErrorCode.INVALID_REQUEST, str(exc))
+        except Exception as exc:
+            return build_error(req_id, ErrorCode.INTERNAL_ERROR, str(exc))
+
+        return build_response(req_id, result={
+            "enrolled": True,
+            "kind": parsed.kind,
+            "person_id": context.person_id,
+            "voiceprint_enrolled": biometrics.has_voiceprint(context.person_id),
+            "face_enrolled": biometrics.has_face(context.person_id),
+        })
+
     def handle_legacy_sessions_list(
         self,
         conn_id: str,
@@ -399,6 +503,11 @@ class IdentityMethods:
         if self._living is None:
             return None
         return getattr(self._living, "_people_service", None)
+
+    def _biometric_service(self):
+        if self._living is None:
+            return None
+        return getattr(self._living, "_people_biometrics", None)
 
     def _require_people_service(self):
         service = self._people_service()
