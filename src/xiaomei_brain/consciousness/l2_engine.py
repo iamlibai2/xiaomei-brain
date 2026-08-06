@@ -96,15 +96,18 @@ class L2Engine:
         - 只注册探索类工具
         - 共享 LLM 客户端（线程安全，只做 HTTP 请求）
         """
-        if self._l2_agent is not None:
-            return self._l2_agent
-
         from ..agent.core import Agent
         from ..tools.registry import ToolRegistry
 
         c = self._c
+        if self._l2_agent is not None and not hasattr(c, "agent"):
+            return self._l2_agent
+
         agent_instance = c.agent  # AgentInstance
         main_agent = agent_instance._get_agent()  # core Agent
+        if self._l2_agent is not None:
+            self._sync_execution_context(self._l2_agent, main_agent)
+            return self._l2_agent
 
         # 创建探索类工具专用 ToolRegistry
         l2_tools = ToolRegistry()
@@ -125,6 +128,7 @@ class L2Engine:
         )
         self._l2_agent.session_id = "l2-internal"
         self._l2_agent.user_id = c._agent_id
+        self._sync_execution_context(self._l2_agent, main_agent)
 
         logger.info(
             "[L2Engine] 独立 Agent 已创建: session=%s, tools=%d",
@@ -132,6 +136,17 @@ class L2Engine:
             len(l2_tools.list_tools()),
         )
         return self._l2_agent
+
+    @staticmethod
+    def _sync_execution_context(runtime: Any, main_agent: Any) -> None:
+        """Keep the isolated L2 Core inside this Agent's execution boundary."""
+        for attribute in (
+            "tool_execution_environment",
+            "tool_workspace_root",
+            "tool_working_directory",
+            "tool_output_root",
+        ):
+            setattr(runtime, attribute, getattr(main_agent, attribute, None))
 
     # ── 公共入口 ─────────────────────────────────────────────
 
