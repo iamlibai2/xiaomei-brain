@@ -41,6 +41,9 @@ class FakeAgentInstance:
             exp_stream=object(),
             longterm_memory=object(),
             tool_execution_environment=object(),
+            tool_workspace_root="C:/agent/workspace",
+            tool_working_directory="C:/agent/workspace/work",
+            tool_output_root="C:/agent/workspace/outputs",
         )
 
     def _get_agent(self):
@@ -72,6 +75,9 @@ def test_runtime_factory_creates_isolated_mutable_state() -> None:
         is second.tool_execution_environment
         is instance._agent.tool_execution_environment
     )
+    assert first.tool_workspace_root == "C:/agent/workspace"
+    assert first.tool_working_directory == "C:/agent/workspace/work"
+    assert first.tool_output_root == "C:/agent/workspace/outputs"
     assert first.session_id == "autonomous:test"
     assert first.turn_id == "turn_1"
 
