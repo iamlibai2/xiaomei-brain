@@ -13,7 +13,6 @@ Narrative Memory（NARR）已拆到 RoundScheduler._invoke_narrative_learn()。
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import time
@@ -815,87 +814,30 @@ class L2Engine:
         )
 
     def _call_emergence_react(self, llm, prompt: str, exclude_tools: set[str] | None = None) -> tuple[str, list[str]]:
-        """意识涌现 ReAct 循环（带探索工具），最多 2 轮工具调用。
+        """通过独立 L2 Agent Core 执行意识涌现，最多 2 轮工具调用。
 
         Returns:
             (content, reasoning_list) — content 为正文，reasoning_list 为各轮推理过程
         """
-        from ..tools.registry import ToolRegistry
-
         all_reasoning: list[str] = []
-
-        # 从 L2 独立 Agent 获取探索类工具
         l2_agent = self._get_l2_agent()
-        l2_tools = getattr(l2_agent, "tools", None)
-        explore_tool_names = set(self.EXPLORE_TOOL_NAMES)
-        if exclude_tools:
-            explore_tool_names -= exclude_tools
-        explore_tools: list = []
-        if l2_tools:
-            for name in explore_tool_names:
-                tool = l2_tools.get(name)
-                if tool:
-                    explore_tools.append(tool)
-
-        if not explore_tools:
-            resp = llm.chat(
-                messages=[{"role": "user", "content": prompt}],
-                tools=None,
-            )
-            if resp.reasoning:
-                all_reasoning.append(resp.reasoning)
-            return (resp.content or "", all_reasoning)
-
-        tmp_registry = ToolRegistry()
-        for t in explore_tools:
-            tmp_registry.register(t)
-
-        openai_tools = tmp_registry.to_openai_tools()
-        messages: list[dict] = [{"role": "user", "content": prompt}]
-
-        max_rounds = 2
-        for _round in range(max_rounds):
-            resp = llm.chat(messages=messages, tools=openai_tools)
-            if resp.reasoning:
-                all_reasoning.append(resp.reasoning)
-
-            if resp.tool_calls:
-                assistant_msg = {
-                    "role": "assistant",
-                    "content": resp.content or "",
-                    "tool_calls": [
-                        {"id": tc.id, "type": "function",
-                         "function": {"name": tc.name, "arguments": json.dumps(tc.arguments, ensure_ascii=False)}}
-                        for tc in resp.tool_calls
-                    ],
-                }
-                messages.append(assistant_msg)
-
-                for tc in resp.tool_calls:
-                    try:
-                        result = tmp_registry.execute(tc.name, **tc.arguments)
-                    except Exception as e:
-                        result = f"工具执行失败: {e}"
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": result[:2000],
-                    })
-
-                logger.info(
-                    "[Consciousness] 涌现探索 round=%d, tool_calls=%s",
-                    _round + 1, [tc.name for tc in resp.tool_calls],
-                )
-            else:
-                return (resp.content or "", all_reasoning)
-
-        resp = llm.chat(
-            messages=messages + [{"role": "user", "content": "请基于以上探索，输出你的内心独白。" + L2_EMERGENCE_FORMAT_APPENDIX}],
-            tools=None,
+        # Model settings may replace the main LLM client after the L2 Core was
+        # created. Keep the isolated runtime on the caller's current client.
+        l2_agent.llm = llm
+        content = l2_agent.react_nodb(
+            messages=[{"role": "user", "content": prompt}],
+            max_steps=2,
+            label="l2_emergence",
+            silent=True,
+            quiet=True,
+            excluded_tool_names=exclude_tools,
+            reasoning_collector=all_reasoning,
+            final_instruction=(
+                "请基于以上探索，输出你的内心独白。不要调用工具。"
+                + L2_EMERGENCE_FORMAT_APPENDIX
+            ),
         )
-        if resp.reasoning:
-            all_reasoning.append(resp.reasoning)
-        return (resp.content or "", all_reasoning)
+        return content, all_reasoning
 
     # ── 后处理 ──────────────────────────────────────────────
 

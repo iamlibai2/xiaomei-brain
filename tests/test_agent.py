@@ -225,7 +225,48 @@ def test_react_nodb_preserves_empty_reasoning_for_tool_result(mock_llm, registry
     assistant = next(message for message in second_messages if message.get("tool_calls"))
     tool_result = next(message for message in second_messages if message.get("role") == "tool")
     assert assistant["reasoning_content"] == ""
+    assert assistant["tool_calls"][0]["function"]["arguments"] == "{}"
     assert tool_result["content"] == "internal-result"
+
+
+def test_react_nodb_filters_tools_and_collects_reasoning(mock_llm, registry):
+    """Internal callers can narrow Core tools without implementing another ReAct loop."""
+    from xiaomei_brain.tools import tool
+
+    @tool(name="allowed_tool", description="Allowed internal tool")
+    def allowed_tool() -> str:
+        return "allowed"
+
+    @tool(name="recursive_tool", description="Tool excluded for this run")
+    def recursive_tool() -> str:
+        return "recursive"
+
+    registry.register(allowed_tool)
+    registry.register(recursive_tool)
+    agent = Agent(llm=mock_llm, tools=registry)
+    mock_llm.chat.return_value = NormalizedResponse(
+        content="inner voice",
+        reasoning="private reasoning",
+        finish_reason="stop",
+    )
+    reasoning: list[str] = []
+
+    result = agent.react_nodb(
+        [{"role": "user", "content": "reflect"}],
+        quiet=True,
+        silent=True,
+        excluded_tool_names={"recursive_tool"},
+        reasoning_collector=reasoning,
+    )
+
+    assert result == "inner voice"
+    assert reasoning == ["private reasoning"]
+    offered_names = {
+        spec["function"]["name"]
+        for spec in mock_llm.chat.call_args.kwargs["tools"]
+    }
+    assert "allowed_tool" in offered_names
+    assert "recursive_tool" not in offered_names
 
 
 def test_explicit_delivery_project_requires_background_assignment(mock_llm, registry, tmp_path):

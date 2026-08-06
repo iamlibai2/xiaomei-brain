@@ -975,6 +975,9 @@ class Agent:
         silent: bool = False,
         summarize: bool = False,
         quiet: bool = False,
+        excluded_tool_names: set[str] | None = None,
+        reasoning_collector: list[str] | None = None,
+        final_instruction: str | None = None,
     ) -> str:
         """纯内部推理 ReAct — 非流式，不写 DB、不加 MEMORY_PROMPT、不提取记忆。
 
@@ -987,6 +990,9 @@ class Agent:
             label: 输出标签（intent/alarm/pleasure/work/comms），控制终端颜色。
             silent: True 时不打印最终结果（调用方自己处理展示）。
             quiet: True 时同时隐藏思考和工具过程，供后台隔离运行使用。
+            excluded_tool_names: 本次内部执行不向模型提供的工具名。
+            reasoning_collector: 可选列表，按轮次收集模型返回的 reasoning。
+            final_instruction: 步数耗尽时用于强制收束的指令。
         """
         if exp_stream is None:
             exp_stream = getattr(self, "exp_stream", None)
@@ -1025,6 +1031,11 @@ class Agent:
                 openai_tools = self._dynamic_loader.select_openai_tools(_accumulated_context, step=step)
             else:
                 openai_tools = self.tools.to_openai_tools() if self.tools and self.tools.list_tools() else None
+            if openai_tools and excluded_tool_names:
+                openai_tools = [
+                    tool_spec for tool_spec in openai_tools
+                    if tool_spec.get("function", {}).get("name") not in excluded_tool_names
+                ] or None
 
             all_messages = list(messages) + loop_messages
             all_messages = strip_orphaned_assistant_tool_calls(all_messages)
@@ -1035,6 +1046,9 @@ class Agent:
                 print("💭 思考中...", flush=True)
 
             response = self.llm.chat(messages=all_messages, tools=openai_tools)
+
+            if response.reasoning and reasoning_collector is not None:
+                reasoning_collector.append(response.reasoning)
 
             # LLM 调用期间可能已被 Ctrl+C 取消，及时丢弃结果
             if cancel_check and cancel_check():
@@ -1188,10 +1202,15 @@ class Agent:
                 return final_text
 
         # 步数用尽仍未收敛 → 最后一轮不带工具，基于已有探索做最终输出
-        finish_msg = {"role": "user", "content": "请基于以上探索，直接输出你的最终结论。不要调用工具。"}
+        finish_msg = {
+            "role": "user",
+            "content": final_instruction or "请基于以上探索，直接输出你的最终结论。不要调用工具。",
+        }
         all_messages = list(messages) + loop_messages + [finish_msg]
         all_messages = clean_messages(all_messages)
         resp = self.llm.chat(messages=all_messages, tools=None)
+        if resp.reasoning and reasoning_collector is not None:
+            reasoning_collector.append(resp.reasoning)
         final_text = resp.content or resp.reasoning or ""
 
         if final_text:
