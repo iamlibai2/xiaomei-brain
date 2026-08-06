@@ -25,6 +25,40 @@ def test_gateway_advertises_desktop_audio_streaming():
     methods = MethodRouter(living=SimpleNamespace())
 
     assert "embodiment.audio_stream" in methods._capabilities()
+    assert "embodiment.commands" in methods._capabilities()
+
+
+def test_desktop_can_acknowledge_only_its_registered_command():
+    conn_id = "desktop-command-response"
+    cm.set_session("session-command-response", conn_id, "person-1")
+
+    class Broker:
+        received = None
+
+        def respond(self, **kwargs):
+            self.received = kwargs
+            return True
+
+    broker = Broker()
+    methods = MethodRouter(living=SimpleNamespace(_embodiment_command_broker=broker))
+    methods._auth_sessions.add(conn_id)
+    try:
+        methods.dispatch(conn_id, "1", "embodiment.register", {
+            "device_id": "device-command-response",
+            "label": "Desktop",
+            "capabilities": ["commands"],
+        })
+        response = methods.dispatch(conn_id, "2", "embodiment.command.respond", {
+            "command_id": "1234567890abcdef",
+            "status": "completed",
+            "result": {"visible": True},
+        })
+
+        assert response["result"]["accepted"] is True
+        assert broker.received["session_id"] == "session-command-response"
+        assert broker.received["embodiment_id"] == "desktop:device-command-response"
+    finally:
+        cm.unregister(conn_id)
 
 
 def test_desktop_registration_is_bound_to_authenticated_connection():

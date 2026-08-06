@@ -119,7 +119,7 @@ export function registerIpcHandlers(
     {
       device_id: desktopDeviceId,
       label: `${os.hostname()} Desktop`,
-      capabilities: ["hearing", "speech", "vision"],
+      capabilities: ["hearing", "speech", "vision", "commands"],
       allow_proactive_use: false,
     },
   );
@@ -1241,6 +1241,23 @@ export function registerIpcHandlers(
     } catch (error) {
       return { ok: false, error: String(error) };
     }
+  });
+
+  ipcMain.handle("gateway:respondEmbodimentCommand", async (_event, args: {
+    agentId: string;
+    commandId: string;
+    status: "completed" | "failed" | "rejected";
+    result?: Record<string, unknown>;
+    error?: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("embodiment.command.respond", {
+      command_id: args.commandId,
+      status: args.status,
+      result: args.result || {},
+      error: args.error || "",
+    });
   });
 
   ipcMain.handle(

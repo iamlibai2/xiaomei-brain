@@ -431,6 +431,13 @@ export interface GatewayBridge {
   listArtifacts(args: { agentId: string; limit?: number; offset?: number }): Promise<JsonRpcResponse>;
   listMemories(args: { agentId: string; limit?: number; offset?: number }): Promise<JsonRpcResponse>;
   openArtifact(args: { agentId: string; sessionId: string; artifactId: string }): Promise<{ ok: boolean; error?: string }>;
+  respondEmbodimentCommand(args: {
+    agentId: string;
+    commandId: string;
+    status: "completed" | "failed" | "rejected";
+    result?: Record<string, unknown>;
+    error?: string;
+  }): Promise<JsonRpcResponse>;
   abortMessage(args: { agentId: string }): Promise<JsonRpcResponse>;
   retryMessage(args: { agentId: string; sessionId: string; messageId: number; clientRequestId: string }): Promise<JsonRpcResponse>;
   respondInteraction(args: { agentId: string; requestId: string; turnId: string; response: string }): Promise<JsonRpcResponse>;

@@ -29,6 +29,7 @@ class ToolExecutionContext:
     artifact_callback: ArtifactCallback | None = None
     speech_callback: SpeechCallback | None = None
     session_id: str = ""
+    turn_id: str = ""
     person_id: str = ""
     attachments: tuple[dict[str, Any], ...] = ()
     workspace_root: str = ""
@@ -76,6 +77,7 @@ def bind_tool_execution(
     artifact_callback: ArtifactCallback | None,
     speech_callback: SpeechCallback | None = None,
     session_id: str = "",
+    turn_id: str = "",
     person_id: str = "",
     attachments: tuple[dict[str, Any], ...] = (),
     workspace_root: str = "",
@@ -94,6 +96,7 @@ def bind_tool_execution(
         artifact_callback=artifact_callback,
         speech_callback=speech_callback,
         session_id=session_id,
+        turn_id=turn_id,
         person_id=person_id,
         attachments=tuple(dict(item) for item in attachments),
         workspace_root=workspace_root,

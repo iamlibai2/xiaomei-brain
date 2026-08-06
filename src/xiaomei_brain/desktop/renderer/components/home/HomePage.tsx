@@ -21,6 +21,7 @@ import { TerminalPanel } from "../terminal/TerminalPanel";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { ArtifactWorkspace } from "../artifact-workspace/ArtifactWorkspace";
 import { supportsArtifactPreview } from "../../artifacts/preview-capability";
+import { registerEmbodimentCommand } from "../../embodiment/command-registry";
 
 const EMPTY_MSGS: DisplayMessage[] = [];
 const EMPTY_ASSIGNMENTS: AssignmentSnapshot[] = [];
@@ -167,6 +168,71 @@ export function HomePage({
       artifactId,
     });
   }, [activeAgentId, activeArtifacts, openArtifactWorkspace]);
+
+  useEffect(() => {
+    const validSections = new Set<RightSidebarSection>([
+      "activity", "state", "project", "assignment", "artifact", "memory", "context",
+    ]);
+    const belongsToVisibleConversation = (agentId: string, sessionId: string) => (
+      agentId === activeAgentId && sessionId === activeSessionId
+    );
+    const currentArtifact = (artifactId: string) => activeArtifacts.find((artifact) => (
+      artifact.sessionId === activeSessionId && (!artifactId || artifact.id === artifactId)
+    ));
+
+    const disposers = [
+      registerEmbodimentCommand("ui.right_sidebar.set", ({ agentId, sessionId, arguments: args }) => {
+        if (!belongsToVisibleConversation(agentId, sessionId)) {
+          return { status: "rejected", error: "发起命令的会话当前不可见" };
+        }
+        const state = String(args.state || "");
+        if (!["open", "closed", "toggle"].includes(state)) {
+          return { status: "rejected", error: "无效的右侧栏状态" };
+        }
+        setFocusedArtifactKey("");
+        setActivityPanelOpen((open) => state === "toggle" ? !open : state === "open");
+        return { status: "completed" };
+      }),
+      registerEmbodimentCommand("ui.right_sidebar.section.open", ({ agentId, sessionId, arguments: args }) => {
+        if (!belongsToVisibleConversation(agentId, sessionId)) {
+          return { status: "rejected", error: "发起命令的会话当前不可见" };
+        }
+        const section = String(args.section || "") as RightSidebarSection;
+        if (!validSections.has(section)) {
+          return { status: "rejected", error: "未知的右侧栏栏目" };
+        }
+        setFocusedArtifactKey("");
+        setRightSidebarSection(section);
+        setActivityPanelOpen(true);
+        return { status: "completed" };
+      }),
+      registerEmbodimentCommand("ui.artifact.open", ({ agentId, sessionId, arguments: args }) => {
+        if (!belongsToVisibleConversation(agentId, sessionId)) {
+          return { status: "rejected", error: "发起命令的会话当前不可见" };
+        }
+        const artifact = currentArtifact(String(args.artifact_id || ""));
+        if (!artifact) return { status: "failed", error: "当前会话没有可打开的产物" };
+        activateArtifact(artifact.id, artifact.sessionId);
+        return { status: "completed", result: { artifact_id: artifact.id } };
+      }),
+      registerEmbodimentCommand("file.artifact.open_external", async ({ agentId, sessionId, arguments: args }) => {
+        if (!belongsToVisibleConversation(agentId, sessionId)) {
+          return { status: "rejected", error: "发起命令的会话当前不可见" };
+        }
+        const artifact = currentArtifact(String(args.artifact_id || ""));
+        if (!artifact) return { status: "failed", error: "当前会话没有可打开的产物" };
+        const response = await window.gateway.openArtifact({
+          agentId,
+          sessionId: artifact.sessionId,
+          artifactId: artifact.id,
+        });
+        return response.ok
+          ? { status: "completed", result: { artifact_id: artifact.id } }
+          : { status: "failed", error: response.error || "无法打开产物" };
+      }),
+    ];
+    return () => disposers.forEach((dispose) => dispose());
+  }, [activeAgentId, activeArtifacts, activeSessionId, activateArtifact]);
 
   useEffect(() => {
     if (focusedArtifactKey && !leftSidebarCollapsed) {

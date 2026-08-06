@@ -3,6 +3,7 @@ import { produce } from "immer";
 import i18n from "../i18n";
 import type { AgentCreationResult, AgentEntry, AgentLifecycleAction, ChatArtifactReference, ChatAttachment, ChatInvocationSelection, LocalAgentInfo, SessionEntry } from "../types";
 import { playMessageSound } from "../message-sound";
+import { executeEmbodimentCommand } from "../embodiment/command-registry";
 
 // ── Persistence (manual, avoid zustand/persist rehydration during render) ──
 
@@ -3310,6 +3311,34 @@ export function initGatewayEvents(): () => void {
     const setState = useCoreStore.setState;
 
     if (!agentId) return;
+
+    if (event === "embodiment.command.requested") {
+      const commandId = typeof d.command_id === "string" ? d.command_id : "";
+      const command = typeof d.command === "string" ? d.command : "";
+      const embodimentId = typeof d.embodiment_id === "string" ? d.embodiment_id : "";
+      const sessionId = typeof d.session_id === "string" ? d.session_id : "";
+      const commandArguments = d.arguments && typeof d.arguments === "object" && !Array.isArray(d.arguments)
+        ? d.arguments as Record<string, unknown>
+        : {};
+      if (!commandId || !command || !embodimentId || !sessionId) return;
+      void executeEmbodimentCommand({
+        commandId,
+        embodimentId,
+        command,
+        arguments: commandArguments,
+        agentId,
+        sessionId,
+      }).then((response) => window.gateway.respondEmbodimentCommand({
+        agentId,
+        commandId,
+        status: response.status,
+        result: response.result,
+        error: response.error,
+      })).catch((error) => {
+        console.error("[embodiment] command response failed", error);
+      });
+      return;
+    }
 
     if (event === "process.updated") {
       const process = projectProcessSnapshot(d.process);

@@ -14,6 +14,7 @@ from ..protocol import ErrorCode, build_error, build_response
 from ..router import OutputRoute
 from ..schemas import (
     EmbodimentAudioInputParams,
+    EmbodimentCommandResponseParams,
     EmbodimentRegisterParams,
     format_error,
 )
@@ -51,7 +52,31 @@ class EmbodimentMethods:
             "embodiment.vision.acquire": self.handle_vision_acquire,
             "embodiment.vision.release": self.handle_vision_release,
             "embodiment.audio.input": self.handle_audio_input,
+            "embodiment.command.respond": self.handle_command_respond,
         }
+
+    def handle_command_respond(self, conn_id: str, req_id: str, params: dict) -> dict:
+        try:
+            parsed = EmbodimentCommandResponseParams.model_validate(params)
+        except Exception as exc:
+            return build_error(req_id, ErrorCode.INVALID_REQUEST, f"参数无效: {format_error(exc)}")
+        embodiment = cm.get_embodiment_for_conn(conn_id)
+        session_id = cm.get_session_id(conn_id) or ""
+        if not embodiment or "commands" not in embodiment.get("capabilities", []):
+            return build_error(req_id, ErrorCode.UNAUTHORIZED, "当前 Desktop 未登记命令能力")
+        broker = getattr(self._living, "_embodiment_command_broker", None)
+        embodiment_id = f"desktop:{embodiment.get('device_id', '')}"
+        accepted = bool(broker and broker.respond(
+            command_id=parsed.command_id,
+            session_id=session_id,
+            embodiment_id=embodiment_id,
+            status=parsed.status,
+            result=parsed.result,
+            error=parsed.error,
+        ))
+        if not accepted:
+            return build_error(req_id, ErrorCode.INVALID_REQUEST, "命令不存在或不属于当前 Desktop")
+        return build_response(req_id, result={"accepted": True})
 
     def handle_register(
         self,

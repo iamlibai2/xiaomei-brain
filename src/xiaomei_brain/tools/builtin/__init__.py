@@ -7,6 +7,7 @@ from .artifacts import present_artifacts_tool
 from .documents import create_read_document_tool, create_write_document_tool
 from .send_message import send_message_tool, check_inbox_tool, set_context as set_send_message_context
 from .manage_session import create_session_tool, set_living as set_manage_session_living
+from .embodiment_control import embodiment_control, set_embodiment_command_broker
 from .clarify import clarify_tool, set_clarify_callback, _cli_callback
 from . import websearch as websearch_tools
 from . import webget as webget_tools
@@ -28,6 +29,8 @@ __all__ = [
     "set_send_message_context",
     "create_session_tool",
     "set_manage_session_living",
+    "embodiment_control",
+    "set_embodiment_command_broker",
     "clarify_tool",
     "set_clarify_callback",
     "_cli_callback",

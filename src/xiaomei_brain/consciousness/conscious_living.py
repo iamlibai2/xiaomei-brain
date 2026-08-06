@@ -687,6 +687,8 @@ class ConsciousLiving(Living):
 
         # Router：消息路由 + 输出分发
         self._router = Router()
+        from xiaomei_brain.body.embodiment import EmbodimentCommandBroker
+        self._embodiment_command_broker = EmbodimentCommandBroker(self._router)
 
         # 启动插件系统，加载频道适配器 + body 器官
         self._boot_plugins()
@@ -1277,6 +1279,13 @@ class ConsciousLiving(Living):
             logger.warning("[ConsciousLiving] send_message set_context 失败: %s", e)
 
         # ── WS Gateway（Web UI 入口）──────────────────────────
+        # Tools are registered before Gateway startup, so inject the live
+        # command broker only after the communication router exists.
+        from xiaomei_brain.tools.builtin.embodiment_control import (
+            set_embodiment_command_broker,
+        )
+        set_embodiment_command_broker(self._embodiment_command_broker)
+
         self._ws_thread = None
         self._ws_server = None
         self._admin_thread = None

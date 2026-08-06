@@ -245,6 +245,7 @@ class AgentManager:
             create_command_tool, read_tool, write_tool, edit_tool, glob_tool, grep_tool,
             process_tool,
             present_artifacts_tool,
+            embodiment_control,
             send_message_tool, check_inbox_tool, set_send_message_context,
             websearch_tools, webget_tools,
         )
@@ -256,6 +257,7 @@ class AgentManager:
         tools.register(grep_tool)
         tools.register(process_tool)
         tools.register(present_artifacts_tool)
+        tools.register(embodiment_control)
         # Agent 间通讯 — send_message + check_inbox 工具
         from xiaomei_brain.plugins.channels.p2p.directory import AgentDirectory
         agent._directory = AgentDirectory()

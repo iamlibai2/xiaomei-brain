@@ -97,7 +97,7 @@ class EmbodimentRegisterParams(BaseModel):
     )
     label: str = Field(default="Desktop", min_length=1, max_length=100)
     capabilities: list[
-        Literal["hearing", "speech", "vision"]
+        Literal["hearing", "speech", "vision", "commands"]
     ] = Field(default_factory=list, max_length=8)
     allow_proactive_use: bool = False
 
@@ -115,6 +115,15 @@ class EmbodimentAudioInputParams(BaseModel):
     size: int = Field(..., ge=1, le=5 * 1024 * 1024)
     client_request_id: str = Field(..., min_length=1, max_length=128)
     continuous: bool = False
+
+
+class EmbodimentCommandResponseParams(BaseModel):
+    """Terminal acknowledgement for one allowlisted embodiment command."""
+
+    command_id: str = Field(..., min_length=16, max_length=64, pattern=r"^[a-fA-F0-9]+$")
+    status: Literal["completed", "failed", "rejected"]
+    result: dict[str, Any] = Field(default_factory=dict)
+    error: str = Field(default="", max_length=2000)
 
 
 # ── Person identity ──────────────────────────

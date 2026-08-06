@@ -82,6 +82,7 @@ class WSAdapter(ChannelAdapter):
             "hearing": OrganCapability.HEARING,
             "speech": OrganCapability.SPEECH,
             "vision": OrganCapability.VISION,
+            "commands": OrganCapability.COMMANDS,
         }
         capabilities = frozenset(
             supported[item]

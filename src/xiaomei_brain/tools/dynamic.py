@@ -50,6 +50,9 @@ _CORE_TOOL_NAMES = frozenset({
     "dag",
     "skills_list",
     "skill_view",
+    # Direct control of the current Desktop body must not depend on semantic
+    # Top-K retrieval; short phrases such as "打开右侧栏" are common.
+    "embodiment_control",
     # A Person may refer to earlier work with a short phrase such as
     # "continue that report".  Semantic tool retrieval cannot reliably infer
     # the Assignment lifecycle from those words alone, so keep the two small

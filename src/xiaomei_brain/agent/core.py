@@ -939,6 +939,7 @@ class Agent:
                     artifact_callback=self.on_artifact,
                     speech_callback=self.on_speech,
                     session_id=self.session_id,
+                    turn_id=self.turn_id,
                     person_id=self.user_id,
                     attachments=tuple(self.current_attachments),
                     workspace_root=self.tool_workspace_root,

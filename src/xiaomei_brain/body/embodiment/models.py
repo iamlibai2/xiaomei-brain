@@ -17,6 +17,7 @@ class OrganCapability(str, Enum):
     HEARING = "hearing"
     SPEECH = "speech"
     VISION = "vision"
+    COMMANDS = "commands"
 
 
 @dataclass(frozen=True)

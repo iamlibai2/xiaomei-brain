@@ -252,6 +252,12 @@ class Router:
                     return rule.output_route
         return None
 
+    def embodiment_for_route(self, route: OutputRoute):
+        """Resolve the concrete body behind a route without exposing adapters."""
+        adapter = self._adapters.get(route.type)
+        resolver = getattr(adapter, "embodiment_for_target", None)
+        return resolver(route.target) if callable(resolver) else None
+
     def release_turn(self, turn_id: str) -> None:
         """Release routing state after the Turn's terminal event is delivered."""
         if not turn_id:

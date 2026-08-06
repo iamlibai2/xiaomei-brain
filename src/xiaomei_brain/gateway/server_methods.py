@@ -176,6 +176,10 @@ class MethodRouter:
                 "embodiment.vision.acquire",
                 "embodiment.vision.release",
             },
+            "embodiment.commands": {
+                "embodiment.register",
+                "embodiment.command.respond",
+            },
             "identity.biometrics": {
                 "identity.biometrics.status",
                 "identity.biometrics.enroll",
