@@ -379,6 +379,7 @@ class EmbodimentMethods:
                 parsed.mime_type,
                 data,
                 parsed.continuous,
+                parsed.verify_identity,
                 conn_id,
             ),
             name="desktop-remote-hearing",
@@ -400,6 +401,7 @@ class EmbodimentMethods:
         mime_type: str,
         data: bytes,
         continuous: bool,
+        verify_identity: bool,
         conn_id: str,
     ) -> None:
         route = OutputRoute("ws", session_id)
@@ -423,6 +425,17 @@ class EmbodimentMethods:
                     "reason": "transcript_fragment",
                 })
                 return
+
+            voiceprint_verified = False
+            if verify_identity:
+                biometrics = getattr(self._living, "_people_biometrics", None)
+                if biometrics is not None:
+                    try:
+                        voiceprint_verified = bool(
+                            biometrics.verify_voice(person_id, pcm, sample_rate=16000)
+                        )
+                    except Exception:
+                        logger.exception("[Embodiment] Voiceprint unlock verification failed")
 
             if continuous:
                 with self._hearing_lock:
@@ -456,6 +469,7 @@ class EmbodimentMethods:
                                 }
                                 else "active"
                             ),
+                            "voiceprint_verified": voiceprint_verified,
                         })
                         return
 
@@ -511,6 +525,7 @@ class EmbodimentMethods:
                 "turn_id": accepted.living_message.turn_id,
                 "message_id": accepted.living_message.message_id,
                 "attachments": public_attachment_metadata(attachments),
+                "voiceprint_verified": voiceprint_verified,
             })
         except _HearingLeaseEnded as exc:
             logger.info("[Embodiment] Discarded queued audio after hearing release")

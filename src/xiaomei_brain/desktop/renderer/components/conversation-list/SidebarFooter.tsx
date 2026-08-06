@@ -81,6 +81,17 @@ export function SidebarFooter({ userName, onSettings, onNotifications }: Sidebar
                 <span aria-hidden="true">›</span>
               </button>
             )}
+            <button
+              type="button"
+              className="sidebar-identity-menu-account"
+              onClick={() => {
+                setAppearanceOpen(false);
+                window.dispatchEvent(new CustomEvent("xiaomei:desktop-lock-requested"));
+              }}
+            >
+              <span>{t("appearanceUi.lockDesktop")}</span>
+              <span aria-hidden="true">›</span>
+            </button>
           </div>
         )}
       </div>

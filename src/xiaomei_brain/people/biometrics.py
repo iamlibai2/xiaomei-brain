@@ -74,6 +74,28 @@ class PeopleBiometricService:
             self._record_event(person_id, "face_enrolled")
         return bool(enrolled)
 
+    def verify_voice(
+        self,
+        person_id: str,
+        pcm: bytes,
+        sample_rate: int = 16000,
+    ) -> bool:
+        """Verify that one voice sample belongs to the specified Person."""
+        person_id = self._require_person(person_id)
+        if not self.has_voiceprint(person_id):
+            return False
+        return self.speaker_id.identify(pcm, sample_rate) == person_id
+
+    def verify_face(self, person_id: str, image_path: str | Path) -> bool:
+        """Verify one clear, single face against the specified Person."""
+        person_id = self._require_person(person_id)
+        if not self.has_face(person_id):
+            return False
+        faces = self.face_id.detect(str(image_path))
+        if len(faces) != 1:
+            return False
+        return self.face_id.match(faces[0]["encoding"], tolerance=0.45) == person_id
+
     def _require_person(self, person_id: str) -> str:
         value = str(person_id or "").strip()
         if not _SAFE_PERSON_ID.fullmatch(value):

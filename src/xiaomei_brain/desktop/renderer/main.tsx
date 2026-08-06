@@ -16,6 +16,7 @@ import "./styles/terminal.css";
 import "./styles/about.css";
 import "./styles/agent-dialog.css";
 import "./styles/identity-settings.css";
+import "./styles/desktop-lock.css";
 import "./styles/agent-settings.css";
 import "./styles/settings-center.css";
 import "./styles/unified-search.css";

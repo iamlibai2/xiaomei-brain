@@ -5,6 +5,7 @@ import { MenuBar } from "./components/MenuBar";
 import { MainShell } from "./components/MainShell";
 import { DesktopInfoProvider } from "./desktop-info";
 import { IdentityPage } from "./components/IdentityPage";
+import { DesktopLockScreen } from "./components/DesktopLockScreen";
 import type { IdentityStatus } from "./types";
 import i18n from "./i18n";
 import { initializeMessageSound, setMessageSound } from "./message-sound";
@@ -20,6 +21,7 @@ export function App() {
   const localAvailabilityByAgent = useCoreStore((s) => s.localAvailabilityByAgent);
   const [identityStatus, setIdentityStatus] = useState<IdentityStatus | null>(null);
   const [startupRestoreComplete, setStartupRestoreComplete] = useState(false);
+  const [desktopLocked, setDesktopLocked] = useState(false);
   const startupRestoreAgentRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -46,6 +48,22 @@ export function App() {
       disposeGatewayEvents();
     };
   }, []);
+
+  useEffect(() => {
+    const lock = () => setDesktopLocked(true);
+    const biometricUnlock = () => setDesktopLocked(false);
+    window.addEventListener("xiaomei:desktop-lock-requested", lock);
+    window.addEventListener("xiaomei:desktop-biometric-verified", biometricUnlock);
+    return () => {
+      window.removeEventListener("xiaomei:desktop-lock-requested", lock);
+      window.removeEventListener("xiaomei:desktop-biometric-verified", biometricUnlock);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (desktopLocked) document.documentElement.dataset.desktopLocked = "true";
+    else delete document.documentElement.dataset.desktopLocked;
+  }, [desktopLocked]);
 
   useEffect(() => {
     if (identityStatus?.unlocked) {
@@ -120,6 +138,9 @@ export function App() {
           <ConnectPage />
         ) : (
           <MainShell />
+        )}
+        {identityStatus?.unlocked && desktopLocked && (
+          <DesktopLockScreen identity={identityStatus} onUnlock={() => setDesktopLocked(false)} />
         )}
       </div>
     </DesktopInfoProvider>

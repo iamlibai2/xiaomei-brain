@@ -3483,6 +3483,11 @@ export function initGatewayEvents(): () => void {
     };
 
     if (event === "embodiment.audio.input.completed") {
+      if (d.voiceprint_verified === true) {
+        window.dispatchEvent(new CustomEvent("xiaomei:desktop-biometric-verified", {
+          detail: { kind: "voiceprint", agentId },
+        }));
+      }
       if (d.status !== "completed" || !text.trim()) return;
       const messageId = typeof d.message_id === "number" ? d.message_id : undefined;
       setState(produce((s: CoreState) => {

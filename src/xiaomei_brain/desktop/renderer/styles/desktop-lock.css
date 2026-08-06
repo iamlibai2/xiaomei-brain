@@ -1,0 +1,170 @@
+.desktop-lock-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  display: grid;
+  place-items: center;
+  color: var(--ui-color-text-primary);
+  background:
+    radial-gradient(circle at 50% 30%, color-mix(in srgb, var(--ui-brand-primary) 10%, transparent), transparent 42%),
+    var(--ui-bg-primary);
+  -webkit-app-region: no-drag;
+}
+
+.desktop-lock-card {
+  width: min(360px, calc(100vw - 48px));
+  text-align: center;
+}
+
+.desktop-lock-avatar {
+  display: grid;
+  width: 78px;
+  height: 78px;
+  margin: 0 auto 18px;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--ui-brand-primary);
+  font-size: 28px;
+  font-weight: 650;
+  box-shadow: 0 12px 36px color-mix(in srgb, var(--ui-brand-primary) 24%, transparent);
+}
+
+.desktop-lock-card h1 {
+  margin: 0;
+  font-size: 23px;
+  font-weight: 650;
+}
+
+.desktop-lock-title,
+.desktop-lock-background-hint {
+  margin: 7px 0 24px;
+  color: var(--ui-color-text-secondary);
+  font-size: 13px;
+}
+
+.desktop-lock-card form {
+  text-align: left;
+}
+
+.desktop-lock-card form label {
+  display: block;
+  margin: 0 0 7px 2px;
+  color: var(--ui-color-text-secondary);
+  font-size: 12px;
+}
+
+.desktop-lock-password-row {
+  display: grid;
+  grid-template-columns: 1fr 42px;
+  gap: 8px;
+}
+
+.desktop-lock-password-row input {
+  min-width: 0;
+  height: 42px;
+  padding: 0 13px;
+  border: 1px solid var(--ui-border-default);
+  border-radius: 10px;
+  outline: 0;
+  color: var(--ui-color-text-primary);
+  background: var(--ui-bg-secondary);
+  font: inherit;
+}
+
+.desktop-lock-password-row input:focus {
+  border-color: var(--ui-brand-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-brand-primary) 13%, transparent);
+}
+
+.desktop-lock-password-row button {
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  color: #fff;
+  background: var(--ui-brand-primary);
+  cursor: pointer;
+}
+
+.desktop-lock-password-row button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.desktop-lock-camera {
+  position: relative;
+  width: 0;
+  height: 0;
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: 14px;
+  opacity: 0;
+  transition: width 160ms ease, height 160ms ease, opacity 160ms ease, margin 160ms ease;
+}
+
+.desktop-lock-camera.is-active {
+  width: 224px;
+  height: 126px;
+  margin: 16px auto 20px;
+  opacity: 1;
+}
+
+.desktop-lock-camera video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+.desktop-lock-camera span {
+  position: absolute;
+  right: 9px;
+  bottom: 9px;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.48);
+}
+
+.desktop-lock-error {
+  margin: 10px 0 0;
+  color: var(--ui-color-danger, #d04444);
+  font-size: 12px;
+}
+
+.desktop-lock-biometric-actions {
+  display: flex;
+  min-height: 36px;
+  margin-top: 16px;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: var(--ui-color-text-secondary);
+  font-size: 12px;
+}
+
+.desktop-lock-biometric-actions button,
+.desktop-lock-biometric-actions span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.desktop-lock-biometric-actions button {
+  padding: 7px 10px;
+  border: 1px solid var(--ui-border-default);
+  border-radius: 9px;
+  color: inherit;
+  background: var(--ui-bg-secondary);
+  cursor: pointer;
+}
+
+.desktop-lock-background-hint {
+  margin-top: 18px;
+  font-size: 11px;
+}

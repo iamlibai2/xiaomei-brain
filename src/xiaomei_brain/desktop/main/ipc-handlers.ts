@@ -246,6 +246,9 @@ export function registerIpcHandlers(
       return { ok: false, error: String(error instanceof Error ? error.message : error) };
     }
   });
+  ipcMain.handle("identity:verifyPassword", async (_event, args: { password: string; subject?: string }) => ({
+    ok: identityVault.verifyPassword(args.password, args.subject),
+  }));
   ipcMain.handle("identity:select", async (_event, args: { subject: string }) => {
     try {
       return { ok: true, status: identityVault.select(args.subject) };
@@ -1050,6 +1053,7 @@ export function registerIpcHandlers(
     size: number;
     clientRequestId: string;
     continuous?: boolean;
+    verifyIdentity?: boolean;
   }) => {
     const client = getClient(args.agentId);
     if (!client) {
@@ -1064,6 +1068,7 @@ export function registerIpcHandlers(
       size: args.size,
       client_request_id: args.clientRequestId,
       continuous: args.continuous === true,
+      verify_identity: args.verifyIdentity === true,
     });
   });
 
@@ -1671,6 +1676,23 @@ export function registerIpcHandlers(
     const client = getClient(args.agentId);
     if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
     return client.rpc("identity.biometrics.enroll", {
+      kind: args.kind,
+      data_base64: args.dataBase64,
+      mime_type: args.mimeType,
+      size: args.size,
+    });
+  });
+
+  ipcMain.handle("gateway:verifyPersonBiometric", async (_event, args: {
+    agentId: string;
+    kind: "voiceprint" | "face";
+    dataBase64: string;
+    mimeType: string;
+    size: number;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("identity.biometrics.verify", {
       kind: args.kind,
       data_base64: args.dataBase64,
       mime_type: args.mimeType,

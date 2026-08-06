@@ -26,6 +26,9 @@ test("IdentityVault manages multiple encrypted Desktop accounts", () => {
     assert.equal(selected.unlocked, false);
     assert.equal(selected.activeSubject, aliceSubject);
     assert.equal(vault.unlock("alice-password", aliceSubject).displayName, "Alice");
+    assert.equal(vault.verifyPassword("alice-password", aliceSubject), true);
+    assert.equal(vault.verifyPassword("wrong-password", aliceSubject), false);
+    assert.equal(vault.status().unlocked, true);
     vault.changePassword("bob-password", "bob-password-new", bobSubject);
     assert.equal(vault.status().activeSubject, aliceSubject);
     assert.equal(vault.status().unlocked, true);

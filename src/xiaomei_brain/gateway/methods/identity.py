@@ -23,6 +23,7 @@ from ..schemas import (
     IdentityAuthenticateBeginParams,
     IdentityAuthenticateCompleteParams,
     IdentityBiometricEnrollParams,
+    IdentityBiometricVerifyParams,
     IdentityLegacySessionClaimParams,
     IdentityRegisterBeginParams,
     IdentityRegisterCompleteParams,
@@ -67,6 +68,7 @@ class IdentityMethods:
             "identity.list": self.handle_list,
             "identity.biometrics.status": self.handle_biometrics_status,
             "identity.biometrics.enroll": self.handle_biometrics_enroll,
+            "identity.biometrics.verify": self.handle_biometrics_verify,
             "identity.legacy_sessions.list": self.handle_legacy_sessions_list,
             "identity.legacy_sessions.claim": self.handle_legacy_session_claim,
         }
@@ -427,6 +429,61 @@ class IdentityMethods:
             "person_id": context.person_id,
             "voiceprint_enrolled": biometrics.has_voiceprint(context.person_id),
             "face_enrolled": biometrics.has_face(context.person_id),
+        })
+
+    def handle_biometrics_verify(
+        self,
+        conn_id: str,
+        req_id: str,
+        params: dict,
+    ) -> dict:
+        """Verify a biometric sample against the Person on this connection."""
+        context = self._identity_contexts.get(conn_id)
+        biometrics = self._biometric_service()
+        if context is None:
+            return build_error(req_id, ErrorCode.UNAUTHORIZED, "当前连接没有人物身份")
+        if biometrics is None:
+            return build_error(req_id, ErrorCode.GATEWAY_NOT_READY, "人物生物特征服务未就绪")
+        try:
+            parsed = IdentityBiometricVerifyParams.model_validate(params)
+            data = base64.b64decode(parsed.data_base64, validate=True)
+            if len(data) != parsed.size:
+                raise ValueError("生物特征数据大小不一致")
+            if parsed.kind == "voiceprint":
+                if not parsed.mime_type.startswith("audio/"):
+                    raise ValueError("声纹验证需要语音数据")
+                from xiaomei_brain.media_services.audio import (
+                    AudioConversionError,
+                    decode_to_pcm_s16,
+                )
+                try:
+                    pcm = decode_to_pcm_s16(data, sample_rate=16000)
+                except AudioConversionError as exc:
+                    raise ValueError(str(exc)) from exc
+                matched = biometrics.verify_voice(context.person_id, pcm, sample_rate=16000)
+            else:
+                if not parsed.mime_type.startswith("image/"):
+                    raise ValueError("人脸验证需要图片数据")
+                suffix = ".png" if parsed.mime_type == "image/png" else ".jpg"
+                file_path = ""
+                try:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
+                        handle.write(data)
+                        file_path = handle.name
+                    matched = biometrics.verify_face(context.person_id, file_path)
+                finally:
+                    if file_path:
+                        try:
+                            os.unlink(file_path)
+                        except OSError:
+                            pass
+        except (binascii.Error, ValueError) as exc:
+            return build_error(req_id, ErrorCode.INVALID_REQUEST, str(exc))
+        except Exception as exc:
+            return build_error(req_id, ErrorCode.INTERNAL_ERROR, str(exc))
+        return build_response(req_id, result={
+            "matched": bool(matched),
+            "kind": parsed.kind,
         })
 
     def handle_legacy_sessions_list(

@@ -149,6 +149,19 @@ export class IdentityVault {
     return this.status();
   }
 
+  /** Verify the active account password without changing the unlocked vault. */
+  verifyPassword(password: string, subject = ""): boolean {
+    const file = this.requireAccount(subject || this.requireActiveFile().subject);
+    try {
+      const keyDer = this.decryptPrivateKey(file, password);
+      const privateKey = createPrivateKey({ key: keyDer, format: "der", type: "pkcs8" });
+      this.assertKeyMatches(file, privateKey);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   select(subject: string): IdentityVaultStatus {
     const file = this.requireAccount(subject);
     this.privateKey = null;

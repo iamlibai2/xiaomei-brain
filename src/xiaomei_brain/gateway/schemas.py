@@ -115,6 +115,7 @@ class EmbodimentAudioInputParams(BaseModel):
     size: int = Field(..., ge=1, le=5 * 1024 * 1024)
     client_request_id: str = Field(..., min_length=1, max_length=128)
     continuous: bool = False
+    verify_identity: bool = False
 
 
 class EmbodimentCommandResponseParams(BaseModel):
@@ -163,6 +164,10 @@ class IdentityBiometricEnrollParams(BaseModel):
         "image/png",
     ]
     size: int = Field(..., ge=1, le=8 * 1024 * 1024)
+
+
+class IdentityBiometricVerifyParams(IdentityBiometricEnrollParams):
+    """One biometric sample used only to verify the authenticated Person."""
 
 
 ExternalChannel = Literal["feishu", "dingtalk"]

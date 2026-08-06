@@ -629,6 +629,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
         size: blob.size,
         clientRequestId: crypto.randomUUID(),
         continuous: true,
+        verifyIdentity: document.documentElement.dataset.desktopLocked === "true",
       });
       if (response.error) throw new Error(response.error.message);
       accepted = true;

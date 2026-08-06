@@ -61,6 +61,10 @@ class _Biometrics:
         self.faces.add(person_id)
         return True
 
+    def verify_face(self, person_id: str, image_path: str) -> bool:
+        assert open(image_path, "rb").read() == b"fake-jpeg"
+        return person_id in self.faces
+
 
 class _Living:
     def __init__(self, db_path) -> None:
@@ -233,6 +237,14 @@ def test_biometrics_are_scoped_to_authenticated_person(tmp_path):
         "person_id": "attacker-selected",
     })
     after = router.dispatch(conn_id, "biometric-status-2", "identity.biometrics.status", {})
+    verified = router.dispatch(conn_id, "biometric-verify", "identity.biometrics.verify", {
+        "kind": "face",
+        "data_base64": image,
+        "mime_type": "image/jpeg",
+        "size": len(b"fake-jpeg"),
+        # 验证目标同样只能来自已认证连接。
+        "person_id": "attacker-selected",
+    })
 
     try:
         assert unauthorized["error"]["code"] == -32001
@@ -241,6 +253,7 @@ def test_biometrics_are_scoped_to_authenticated_person(tmp_path):
         assert enrolled["result"]["person_id"] == person_id
         assert living._people_biometrics.last_face_person == person_id
         assert after["result"]["face_enrolled"] is True
+        assert verified["result"] == {"matched": True, "kind": "face"}
     finally:
         router.drop_session(conn_id)
         cm.unregister(conn_id)

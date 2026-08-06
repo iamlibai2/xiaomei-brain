@@ -415,6 +415,7 @@ export interface GatewayBridge {
     size: number;
     clientRequestId: string;
     continuous?: boolean;
+    verifyIdentity?: boolean;
   }): Promise<JsonRpcResponse>;
   setContinuousHearing(args: {
     agentId: string;
@@ -501,6 +502,13 @@ export interface GatewayBridge {
   listIdentities(args: { agentId: string }): Promise<JsonRpcResponse>;
   getPersonBiometrics(args: { agentId: string }): Promise<JsonRpcResponse>;
   enrollPersonBiometric(args: {
+    agentId: string;
+    kind: "voiceprint" | "face";
+    dataBase64: string;
+    mimeType: "audio/webm" | "audio/ogg" | "audio/wav" | "image/jpeg" | "image/png";
+    size: number;
+  }): Promise<JsonRpcResponse>;
+  verifyPersonBiometric(args: {
     agentId: string;
     kind: "voiceprint" | "face";
     dataBase64: string;
@@ -664,6 +672,7 @@ export interface IdentityBridge {
   status(): Promise<IdentityStatus>;
   create(args: { displayName: string; password: string }): Promise<IdentityOperationResult>;
   unlock(args: { password: string; subject?: string }): Promise<IdentityOperationResult>;
+  verifyPassword(args: { password: string; subject?: string }): Promise<{ ok: boolean }>;
   select(args: { subject: string }): Promise<IdentityOperationResult>;
   remove(args: { subject: string; password: string }): Promise<IdentityOperationResult>;
   lock(): Promise<IdentityStatus>;
