@@ -8,7 +8,7 @@ from xiaomei_brain.plugin.context import PluginContext
 from xiaomei_brain.plugin.registry import PluginRegistry
 from xiaomei_brain.plugins.tools.document_pdf.adapter import register as register_pdf
 from xiaomei_brain.plugins.tools.document_pdf.extractor import PdfExtractor
-from xiaomei_brain.tools.builtin.documents import create_write_document_tool
+from xiaomei_brain.plugins.tools.document_io.tool import create_write_document_tool
 from xiaomei_brain.tools.execution_context import bind_tool_execution
 
 

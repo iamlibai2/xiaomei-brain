@@ -1,7 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from xiaomei_brain.tools.builtin.documents import (
+from .tool import (
     create_read_document_tool,
     create_write_document_tool,
 )

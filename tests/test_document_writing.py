@@ -12,7 +12,7 @@ from xiaomei_brain.plugin.context import PluginContext
 from xiaomei_brain.plugin.loader import PluginLoader
 from xiaomei_brain.plugin.registry import PluginRegistry
 from xiaomei_brain.plugins.tools.document_word.adapter import register as register_word
-from xiaomei_brain.tools.builtin.documents import create_write_document_tool
+from xiaomei_brain.plugins.tools.document_io.tool import create_write_document_tool
 from xiaomei_brain.tools.execution_context import bind_tool_execution
 from xiaomei_brain.gateway import artifacts as artifact_module
 from xiaomei_brain.gateway.artifacts import discover_tool_artifacts

@@ -13,7 +13,7 @@ from xiaomei_brain.plugins.tools.document_presentation.adapter import (
 from xiaomei_brain.plugins.tools.document_presentation.extractor import (
     PresentationExtractor,
 )
-from xiaomei_brain.tools.builtin.documents import create_write_document_tool
+from xiaomei_brain.plugins.tools.document_io.tool import create_write_document_tool
 from xiaomei_brain.tools.execution_context import bind_tool_execution
 
 

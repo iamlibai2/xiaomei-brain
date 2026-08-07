@@ -11,7 +11,7 @@ from xiaomei_brain.plugins.tools.document_pdf.extractor import PdfExtractor
 from xiaomei_brain.plugins.tools.document_presentation.extractor import PresentationExtractor
 from xiaomei_brain.plugins.tools.document_spreadsheet.extractor import SpreadsheetExtractor
 from xiaomei_brain.plugins.tools.document_word.extractor import WordExtractor
-from xiaomei_brain.tools.builtin.documents import create_read_document_tool
+from xiaomei_brain.plugins.tools.document_io.tool import create_read_document_tool
 from xiaomei_brain.tools.execution_context import bind_tool_execution
 
 
