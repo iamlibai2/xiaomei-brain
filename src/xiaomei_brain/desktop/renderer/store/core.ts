@@ -63,6 +63,24 @@ function streamingKey(agentId: string, sessionId: string, turnId: string): strin
   return `${agentId}\u0000${sessionId || "legacy"}\u0000${turnId || "legacy"}`;
 }
 
+function pendingResponseId(turnId: string): string {
+  return `agent-response-${turnId || "pending"}`;
+}
+
+function pendingRequestResponseId(clientRequestId: string): string {
+  return `agent-response-request-${clientRequestId}`;
+}
+
+function responsePhaseForStream(content: string): DisplayMessage["responsePhase"] {
+  const lastAnsiStart = content.lastIndexOf("\u001b[2m");
+  const lastAnsiEnd = content.lastIndexOf("\u001b[0m");
+  const lastPlainStart = content.lastIndexOf("[2m");
+  const lastPlainEnd = content.lastIndexOf("[0m");
+  return Math.max(lastAnsiStart, lastPlainStart) > Math.max(lastAnsiEnd, lastPlainEnd)
+    ? "thinking"
+    : undefined;
+}
+
 function attachmentDraftKey(agentId: string, sessionId: string | null | undefined): string {
   return `${agentId}\u0000${sessionId || "new"}`;
 }
@@ -828,6 +846,7 @@ export interface DisplayMessage {
   role: "user" | "agent";
   content: string;
   reasoningContent?: string;
+  responsePhase?: "waiting" | "replying" | "thinking";
   invocation?: ChatInvocationSelection;
   streaming: boolean;
   createdAt?: number;
@@ -2132,7 +2151,7 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       s.messagesByAgent[agentId].push({
         id: `user-${clientRequestId}`, role: "user", content: text, streaming: false,
         createdAt: Date.now(),
-        deliveryStatus: "queued",
+        deliveryStatus: "processing",
         invocation: invocation ? { ...invocation } : undefined,
         attachments: [
           ...attachments.map((attachment) => ({
@@ -2168,6 +2187,14 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
           })),
         ],
       });
+      s.messagesByAgent[agentId].push({
+        id: pendingRequestResponseId(clientRequestId),
+        role: "agent",
+        content: "",
+        streaming: true,
+        createdAt: Date.now(),
+        responsePhase: "replying",
+      });
       touchSession(s, agentId, s.activeSessionByAgent[agentId] || "", 1, text);
       setSessionSending(s, agentId, sessionId, true);
       if (!options.preserveComposer) {
@@ -2200,11 +2227,51 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
             userMessage.sourceMessageId = res.result.message_id;
           }
           if (userMessage && res.result?.status === "queued") {
-            userMessage.deliveryStatus = "queued";
+            userMessage.deliveryStatus = res.result?.deferred === true
+              ? "queued"
+              : "processing";
           } else if (userMessage && res.result?.status === "steering") {
             userMessage.deliveryStatus = "processing";
             if (typeof res.result?.active_turn_id === "string") {
               userMessage.steeredIntoTurnId = res.result.active_turn_id;
+            }
+          }
+          const localPendingId = pendingRequestResponseId(clientRequestId);
+          const localPendingIndex = messagesForSession(s, agentId, sessionId)
+            .findIndex((message) => message.id === localPendingId);
+          if (res.result?.status === "steering") {
+            if (localPendingIndex >= 0) {
+              messagesForSession(s, agentId, sessionId).splice(localPendingIndex, 1);
+            }
+            return;
+          }
+          const turnId = typeof res.result?.turn_id === "string"
+            ? res.result.turn_id
+            : "";
+          if (turnId) {
+            const sessionMessages = messagesForSession(s, agentId, sessionId);
+            const existing = sessionMessages.find((message) => (
+              message.role === "agent"
+              && message.turnId === turnId
+              && (message.responsePhase || message.streaming)
+            ));
+            const localPending = sessionMessages.find((message) => message.id === localPendingId);
+            if (existing && localPending && existing !== localPending) {
+              sessionMessages.splice(sessionMessages.indexOf(localPending), 1);
+            } else if (localPending) {
+              localPending.id = pendingResponseId(turnId);
+              localPending.turnId = turnId;
+              localPending.responsePhase = res.result?.deferred === true ? "waiting" : "replying";
+            } else if (!existing) {
+              sessionMessages.push({
+                id: pendingResponseId(turnId),
+                role: "agent",
+                content: "",
+                streaming: true,
+                createdAt: Date.now(),
+                turnId,
+                responsePhase: res.result?.deferred === true ? "waiting" : "replying",
+              });
             }
           }
         }));
@@ -2214,6 +2281,9 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       const message = res.error?.message || "Message was not accepted";
       set(produce((s: CoreState) => {
         const sessionMessages = messagesForSession(s, agentId, sessionId);
+        const pendingIndex = sessionMessages
+          .findIndex((entry) => entry.id === pendingRequestResponseId(clientRequestId));
+        if (pendingIndex >= 0) sessionMessages.splice(pendingIndex, 1);
         const userMessage = sessionMessages
           .find((entry) => entry.id === `user-${clientRequestId}`);
         if (userMessage) {
@@ -2231,6 +2301,9 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     }).catch((error) => {
       set(produce((s: CoreState) => {
         const sessionMessages = messagesForSession(s, agentId, sessionId);
+        const pendingIndex = sessionMessages
+          .findIndex((entry) => entry.id === pendingRequestResponseId(clientRequestId));
+        if (pendingIndex >= 0) sessionMessages.splice(pendingIndex, 1);
         const userMessage = sessionMessages
           .find((entry) => entry.id === `user-${clientRequestId}`);
         if (userMessage) {
@@ -3471,6 +3544,7 @@ export function initGatewayEvents(): () => void {
           eventMessages(s).push({
             id: stream.id!, role: "agent", content: stream.ref, streaming: true,
             turnId: eventTurnId || undefined,
+            responsePhase: responsePhaseForStream(stream.ref),
           });
         }));
         return;
@@ -3478,7 +3552,10 @@ export function initGatewayEvents(): () => void {
       setState(produce((s: CoreState) => {
         const sessionMessages = eventMessages(s);
         const message = sessionMessages.find((item) => item.id === stream.id);
-        if (message) message.content = stream.ref;
+        if (message) {
+          message.content = stream.ref;
+          message.responsePhase = responsePhaseForStream(stream.ref);
+        }
       }));
     };
 
@@ -3620,17 +3697,46 @@ export function initGatewayEvents(): () => void {
     if (event === "message.start") {
       cancelPendingStreamRender();
       stream.ref = "";
-      stream.id = null;
+      stream.id = pendingResponseId(eventTurnId);
       setState(produce((s: CoreState) => {
         setSessionSending(s, agentId, eventSessionId, true);
-        const userMessage = [...eventMessages(s)]
+        const sessionMessages = eventMessages(s);
+        const userMessage = [...sessionMessages]
           .reverse()
-          .find((message) => message.role === "user"
-            && ["queued", "processing"].includes(message.deliveryStatus || "")
-            && (!message.turnId || message.turnId === eventTurnId));
+          .find((message) => message.role === "user" && (
+            message.turnId === eventTurnId
+            || (["queued", "processing"].includes(message.deliveryStatus || "")
+              && !message.turnId)
+          ));
         if (userMessage) {
           if (eventTurnId) userMessage.turnId = eventTurnId;
           userMessage.deliveryStatus = "processing";
+        }
+        const pending = sessionMessages.find((message) => (
+          message.id === stream.id
+          || (message.role === "agent"
+            && message.turnId === eventTurnId
+            && Boolean(message.responsePhase))
+        )) || [...sessionMessages].reverse().find((message) => (
+          message.role === "agent"
+          && !message.turnId
+          && Boolean(message.responsePhase)
+        ));
+        if (pending) {
+          stream.id = pending.id;
+          if (eventTurnId) pending.turnId = eventTurnId;
+          pending.streaming = true;
+          pending.responsePhase = "replying";
+        } else {
+          sessionMessages.push({
+            id: stream.id!,
+            role: "agent",
+            content: "",
+            streaming: true,
+            createdAt: Date.now(),
+            turnId: eventTurnId || undefined,
+            responsePhase: "replying",
+          });
         }
       }));
       return;
@@ -3646,10 +3752,14 @@ export function initGatewayEvents(): () => void {
         const sessionMessages = eventMessages(s);
         if (sessionMessages.some((message) => message.capabilitySetup?.id === setup.id)) return;
         if (activeStreamId) {
-          const activeMessage = sessionMessages.find((message) => message.id === activeStreamId);
-          if (activeMessage) {
+          const activeIndex = sessionMessages.findIndex((message) => message.id === activeStreamId);
+          const activeMessage = activeIndex >= 0 ? sessionMessages[activeIndex] : undefined;
+          if (activeMessage && !stream.ref.trim() && activeMessage.responsePhase) {
+            sessionMessages.splice(activeIndex, 1);
+          } else if (activeMessage) {
             activeMessage.content = stream.ref;
             activeMessage.streaming = false;
+            activeMessage.responsePhase = undefined;
           }
         }
         sessionMessages.push({
@@ -3702,11 +3812,14 @@ export function initGatewayEvents(): () => void {
         const sessionMessages = eventMessages(s);
         if (sessionMessages.some((message) => message.action?.id === actionId)) return;
         if (activeStreamId) {
-          const activeMessage = sessionMessages
-            .find((message) => message.id === activeStreamId);
-          if (activeMessage) {
+          const activeIndex = sessionMessages.findIndex((message) => message.id === activeStreamId);
+          const activeMessage = activeIndex >= 0 ? sessionMessages[activeIndex] : undefined;
+          if (activeMessage && !stream.ref.trim() && activeMessage.responsePhase) {
+            sessionMessages.splice(activeIndex, 1);
+          } else if (activeMessage) {
             activeMessage.content = stream.ref;
             activeMessage.streaming = false;
+            activeMessage.responsePhase = undefined;
           }
         }
         sessionMessages.push({
@@ -3780,11 +3893,14 @@ export function initGatewayEvents(): () => void {
         // any text emitted before the question so content produced after
         // the answer starts a new message below the interaction card.
         if (activeStreamId) {
-          const activeMessage = sessionMessages
-            .find((message) => message.id === activeStreamId);
-          if (activeMessage) {
+          const activeIndex = sessionMessages.findIndex((message) => message.id === activeStreamId);
+          const activeMessage = activeIndex >= 0 ? sessionMessages[activeIndex] : undefined;
+          if (activeMessage && !stream.ref.trim() && activeMessage.responsePhase) {
+            sessionMessages.splice(activeIndex, 1);
+          } else if (activeMessage) {
             activeMessage.content = stream.ref;
             activeMessage.streaming = false;
+            activeMessage.responsePhase = undefined;
           }
         }
         sessionMessages.push({
@@ -4048,18 +4164,23 @@ export function initGatewayEvents(): () => void {
           const sessionMessages = eventMessages(s);
           const idx = sessionMessages.findIndex(m => m.id === stream.id);
           if (idx !== -1) {
-            sessionMessages[idx].content = finalText;
-            sessionMessages[idx].streaming = false;
-            sessionMessages[idx].memoryReferences = recalledMemories;
-            sessionMessages[idx].serviceError =
-              status === "error" && String(error?.code || "").startsWith("MODEL_")
-                ? {
-                    code: String(error?.code || "MODEL_UNAVAILABLE"),
-                    message: String(error?.message || finalText),
-                    retryMessageId,
-                  }
-                : undefined;
-            touchSession(s, agentId, eventSessionId, 1);
+            if (!finalText.trim()) {
+              sessionMessages.splice(idx, 1);
+            } else {
+              sessionMessages[idx].content = finalText;
+              sessionMessages[idx].streaming = false;
+              sessionMessages[idx].responsePhase = undefined;
+              sessionMessages[idx].memoryReferences = recalledMemories;
+              sessionMessages[idx].serviceError =
+                status === "error" && String(error?.code || "").startsWith("MODEL_")
+                  ? {
+                      code: String(error?.code || "MODEL_UNAVAILABLE"),
+                      message: String(error?.message || finalText),
+                      retryMessageId,
+                    }
+                  : undefined;
+              touchSession(s, agentId, eventSessionId, 1);
+            }
           }
         }));
         stream.id = null;
@@ -4097,6 +4218,20 @@ export function initGatewayEvents(): () => void {
           }));
         }
       }
+      setState(produce((s: CoreState) => {
+        const sessionMessages = eventMessages(s);
+        for (let index = sessionMessages.length - 1; index >= 0; index -= 1) {
+          const message = sessionMessages[index];
+          if (
+            message.role === "agent"
+            && message.turnId === eventTurnId
+            && !message.content.trim()
+            && message.responsePhase
+          ) {
+            sessionMessages.splice(index, 1);
+          }
+        }
+      }));
       delete _streamingByTurn[activeStreamKey];
       cancelPendingStreamRender();
       setState(produce((s: CoreState) => {

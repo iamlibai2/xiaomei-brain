@@ -855,10 +855,9 @@ function MessageRow({
                   {t("home.retry")}
                 </button>
               )}
-            {message.deliveryStatus && message.deliveryStatus !== "completed" && (
+            {message.deliveryStatus && ["queued", "failed", "interrupted"].includes(message.deliveryStatus) && (
               <div className={`message-delivery-status ${message.deliveryStatus}`}>
                 {message.deliveryStatus === "queued" && t("home.queued")}
-                {message.deliveryStatus === "processing" && t("home.processing")}
                 {message.deliveryStatus === "failed" && (
                   message.deliveryErrorCode?.startsWith("MODEL_")
                     ? t("home.modelUnavailable")
@@ -903,15 +902,17 @@ function MessageRow({
       id={`conversation-message-${message.id}`}
       className={`assistant-message-row ${showAgentHeader ? "" : "agent-turn-continuation"} ${highlighted ? "search-message-highlight" : ""}`}
     >
-      <button
-        type="button"
-        className="message-copy-action"
-        title={t("home.copyAnswer")}
-        onClick={() => void copyWholeMessage(displayedContent)}
-      >
-        <Icon name="copy" size={14} />
-        <span>{messageCopied ? t("common.copied") : t("common.copy")}</span>
-      </button>
+      {displayedContent.trim() && (
+        <button
+          type="button"
+          className="message-copy-action"
+          title={t("home.copyAnswer")}
+          onClick={() => void copyWholeMessage(displayedContent)}
+        >
+          <Icon name="copy" size={14} />
+          <span>{messageCopied ? t("common.copied") : t("common.copy")}</span>
+        </button>
+      )}
       {showAgentHeader && (
         <div className="assistant-avatar">
           <div className="assistant-avatar-face">
@@ -920,13 +921,27 @@ function MessageRow({
           <span className="assistant-avatar-name">{agentName}</span>
         </div>
       )}
+      {message.responsePhase && !message.content.trim() && (
+        <div className={`agent-response-phase is-${message.responsePhase}`} role="status">
+          <span className="agent-response-phase-dot" aria-hidden="true" />
+          <span>
+            {message.responsePhase === "waiting"
+              ? t("home.responseWaiting")
+              : message.responsePhase === "thinking"
+                ? t("home.deepThinking")
+                : t("home.replying")}
+          </span>
+        </div>
+      )}
       {hasThinking && (
         <div className={`thinking-block ${!thinkingExpanded ? "thinking-collapsed" : ""} ${thinkingComplete ? "thinking-complete" : ""}`}>
           <div
             className={`thinking-header ${!thinkingComplete ? "thinking-loading" : ""}`}
             onClick={() => setThinkingExpanded(!thinkingExpanded)}
           >
-            <span className="thinking-title">{t("home.deepThink")}</span>
+            <span className="thinking-title">
+              {thinkingComplete ? t("home.deepThink") : t("home.deepThinking")}
+            </span>
             {thinkingComplete && (
               <span className={`thinking-chevron ${thinkingExpanded ? "expanded" : ""}`}>▼</span>
             )}

@@ -1132,7 +1132,7 @@ class ConversationDriver:
 
     @staticmethod
     def _deliver_chunk(parent, session_id: str, turn_id: str, chunk: str) -> None:
-        """流式推送单个 chunk 到 WS 通道（仅 WS，其他通道忽略）。"""
+        """Publish one chunk to transports that opt into stream events."""
         ConversationDriver._publish_event(
             parent,
             "message.delta",

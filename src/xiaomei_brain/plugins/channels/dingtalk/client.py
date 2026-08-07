@@ -14,11 +14,13 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
 import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlencode
 
 from dingtalk_stream import (
     AckMessage,
@@ -171,7 +173,7 @@ class _OurHandler(ChatbotHandler):
             elif msg.message_type == "file":
                 dc = _extract_download_code(data)
                 if dc:
-                    path = self._try_download(dc)
+                    path = self._try_download(dc, _extract_file_name(data))
                     if path:
                         media_paths.append(path)
                         # 如果是文本文件，读取内容作为 text
@@ -231,13 +233,22 @@ class _OurHandler(ChatbotHandler):
 
         return AckMessage.STATUS_OK, "OK"
 
-    def _try_download(self, download_code: str) -> str | None:
+    def _try_download(
+        self,
+        download_code: str,
+        file_name: str = "",
+    ) -> str | None:
         token = self._get_token()
         if not token:
             logger.warning("[DingTalk] 无 access token，跳过媒体下载")
             return None
         from .media import download_media
-        return download_media(download_code, self._robot_code, token)
+        return download_media(
+            download_code,
+            self._robot_code,
+            token,
+            file_name=file_name,
+        )
 
 
 def _extract_download_code(data: dict) -> str | None:
@@ -246,6 +257,18 @@ def _extract_download_code(data: dict) -> str | None:
     if isinstance(content, dict):
         return content.get("downloadCode")
     return None
+
+
+def _extract_file_name(data: dict) -> str:
+    """Read the original attachment name from DingTalk's raw callback."""
+    content = data.get("content", {})
+    sources = [content, data] if isinstance(content, dict) else [data]
+    for source in sources:
+        for key in ("fileName", "file_name", "name"):
+            value = str(source.get(key) or "").strip()
+            if value:
+                return Path(value).name
+    return ""
 
 
 def _extract_audio_duration(data: dict) -> int:
@@ -582,6 +605,72 @@ class DingTalkClient:
             logger.exception("[DingTalk/Card] update failed: %s", out_track_id)
             return False
 
+    def set_emotion(
+        self,
+        open_msg_id: str,
+        open_conversation_id: str,
+        emoji_name: str,
+        *,
+        recall: bool = False,
+    ) -> bool:
+        """Add or recall a native DingTalk emoji on an inbound message."""
+        import requests
+
+        token = self.get_access_token()
+        if not token or not open_msg_id or not open_conversation_id:
+            return False
+        body = {
+            "robotCode": self.client_id,
+            "openMsgId": open_msg_id,
+            "openConversationId": open_conversation_id,
+            "emotionType": 2,
+            "emotionName": emoji_name,
+            "textEmotion": {
+                "emotionId": "2659900",
+                "emotionName": emoji_name,
+                "text": emoji_name,
+                "backgroundId": "im_bg_1",
+            },
+        }
+        action = "recall" if recall else "reply"
+        try:
+            response = requests.post(
+                f"https://api.dingtalk.com/v1.0/robot/emotion/{action}",
+                json=body,
+                headers={
+                    "x-acs-dingtalk-access-token": token,
+                    "Content-Type": "application/json",
+                },
+                timeout=15,
+            )
+            response.raise_for_status()
+            payload = response.json() if response.content else {}
+            succeeded = payload.get("success", True) is not False
+            if succeeded:
+                logger.info(
+                    "[DingTalk/Emotion] %s %s on %s",
+                    action,
+                    emoji_name,
+                    open_msg_id,
+                )
+                return True
+            logger.warning(
+                "[DingTalk/Emotion] %s rejected: message=%s emoji=%s payload=%s",
+                action,
+                open_msg_id,
+                emoji_name,
+                payload,
+            )
+        except Exception:
+            logger.warning(
+                "[DingTalk/Emotion] %s failed: message=%s emoji=%s",
+                action,
+                open_msg_id,
+                emoji_name,
+                exc_info=True,
+            )
+        return False
+
     def send_file(
         self,
         target: str,
@@ -590,26 +679,119 @@ class DingTalkClient:
         *,
         is_group: bool,
     ) -> bool:
-        """Upload and send an Agent-owned artifact as a native file message."""
-        import requests
+        """Send an artifact using DingTalk's native image/video/file message."""
         from .media import upload_media_bytes
 
         token = self.get_access_token()
         safe_name = Path(file_name).name
         if not token or not safe_name or not data:
             return False
+        suffix = Path(safe_name).suffix.lower()
+        content_type = mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
+
+        if suffix in {
+            ".wav", ".wave", ".mp3", ".flac", ".m4a", ".aac",
+            ".ogg", ".opus",
+        }:
+            try:
+                from xiaomei_brain.media.audio import encode_audio_file_as_opus
+
+                encoded = encode_audio_file_as_opus(data, safe_name)
+                if self.send_audio(
+                    target,
+                    f"{Path(safe_name).stem}.ogg",
+                    encoded.data,
+                    encoded.duration_ms,
+                    is_group=is_group,
+                ):
+                    return True
+            except Exception:
+                logger.warning(
+                    "[DingTalk/Audio] native delivery unavailable; falling back "
+                    "to file: %s",
+                    safe_name,
+                    exc_info=True,
+                )
+        elif suffix in {".jpg", ".jpeg", ".png", ".gif", ".bmp"}:
+            media_id = upload_media_bytes(
+                safe_name,
+                data,
+                token,
+                media_type="image",
+                content_type=content_type,
+            )
+            if media_id:
+                photo_url = (
+                    "https://oapi.dingtalk.com/media/downloadFile?"
+                    + urlencode({"access_token": token, "media_id": f"@{media_id}"})
+                )
+                if self._send_robot_media(
+                    target,
+                    token,
+                    "sampleImageMsg",
+                    {"photoURL": photo_url},
+                    is_group=is_group,
+                ):
+                    return True
+            logger.warning(
+                "[DingTalk/Image] native delivery failed; falling back to file: %s",
+                safe_name,
+            )
+        elif suffix == ".mp4":
+            media_id = upload_media_bytes(
+                safe_name,
+                data,
+                token,
+                media_type="video",
+                content_type="video/mp4",
+            )
+            if media_id and self._send_robot_media(
+                target,
+                token,
+                "sampleVideo",
+                {
+                    "videoMediaId": f"@{media_id}",
+                    "videoType": "mp4",
+                },
+                is_group=is_group,
+            ):
+                return True
+            logger.warning(
+                "[DingTalk/Video] native delivery failed; falling back to file: %s",
+                safe_name,
+            )
+
         media_id = upload_media_bytes(safe_name, data, token)
         if not media_id:
             return False
-        suffix = Path(safe_name).suffix.lower().lstrip(".") or "file"
-        body = {
-            "robotCode": self.client_id,
-            "msgKey": "sampleFile",
-            "msgParam": json.dumps({
+        return self._send_robot_media(
+            target,
+            token,
+            "sampleFile",
+            {
                 "mediaId": f"@{media_id.lstrip('@')}",
                 "fileName": safe_name,
-                "fileType": suffix,
-            }, ensure_ascii=False),
+                "fileType": suffix.lstrip(".") or "file",
+            },
+            is_group=is_group,
+        )
+
+    def _send_robot_media(
+        self,
+        target: str,
+        token: str,
+        msg_key: str,
+        msg_param: dict,
+        *,
+        is_group: bool,
+    ) -> bool:
+        """Send one already-uploaded DingTalk robot media payload."""
+        import requests
+
+        body = {
+            "robotCode": self.client_id,
+            "msgKey": msg_key,
+            "msgParam": json.dumps(msg_param, ensure_ascii=False),
         }
         if is_group:
             url = "https://api.dingtalk.com/v1.0/robot/groupMessages/send"
@@ -629,16 +811,16 @@ class DingTalkClient:
             )
             response.raise_for_status()
             logger.info(
-                "[DingTalk/File] delivered: target=%s file=%s",
+                "[DingTalk/Media] delivered: target=%s type=%s",
                 target,
-                safe_name,
+                msg_key,
             )
             return True
         except Exception:
             logger.exception(
-                "[DingTalk/File] delivery failed: target=%s file=%s",
+                "[DingTalk/Media] delivery failed: target=%s type=%s",
                 target,
-                safe_name,
+                msg_key,
             )
             return False
 

@@ -8,7 +8,11 @@ import pytest
 from xiaomei_brain.body.perception.remote_audio import RemoteAudioPerception
 from xiaomei_brain.gateway.attachments import prepare_attachments, read_stored_attachment
 from xiaomei_brain.media import audio as audio_module
-from xiaomei_brain.media.audio import SpeechAudio, encode_speech_as_opus
+from xiaomei_brain.media.audio import (
+    SpeechAudio,
+    encode_audio_file_as_opus,
+    encode_speech_as_opus,
+)
 from xiaomei_brain.media.audio import decode_to_pcm_s16
 from xiaomei_brain.plugins.channels.feishu.client import FeishuChannel
 from xiaomei_brain.tools.execution_context import (
@@ -36,6 +40,27 @@ def test_encode_pcm_speech_as_opus_tracks_duration(monkeypatch):
     assert encoded.duration_ms == 200
     assert captured["data"] == b"\0" * 6400
     assert "libopus" in captured["arguments"]
+
+
+def test_encode_wav_artifact_as_opus_tracks_duration(monkeypatch):
+    import io
+    import wave
+
+    output = io.BytesIO()
+    with wave.open(output, "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(16000)
+        wav_file.writeframes(b"\0\0" * 8000)
+    monkeypatch.setattr(
+        "xiaomei_brain.media.audio._run_ffmpeg",
+        lambda arguments, data: b"opus-music",
+    )
+
+    encoded = encode_audio_file_as_opus(output.getvalue(), "music.wav")
+
+    assert encoded.data == b"opus-music"
+    assert encoded.duration_ms == 500
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg unavailable")

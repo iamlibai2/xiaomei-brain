@@ -250,7 +250,10 @@ class ChatCompletionsTransport(Transport):
                             text = text[end_idx + 8:]
                         else:
                             _tag_buffer = _save_partial_closing_tag(text, "</think>")
-                            text = "" if not _tag_buffer else text[:-len(_tag_buffer)]
+                            # Everything before the closing tag still belongs to
+                            # the hidden think block. Keep only a possible tag
+                            # prefix for the next chunk and expose none of it.
+                            text = ""
 
                     if not in_think:
                         start_idx = text.find("<think")
@@ -269,7 +272,10 @@ class ChatCompletionsTransport(Transport):
                             text = text[end_idx + 9:]
                         else:
                             _tag_buffer = _save_partial_closing_tag(text, "</MEMORY>")
-                            text = "" if not _tag_buffer else text[:-len(_tag_buffer)]
+                            # The MEMORY payload is private even when the closing
+                            # tag is split across SSE chunks. Buffer only the tag
+                            # prefix; never emit the JSON preceding it.
+                            text = ""
 
                     if not in_memory:
                         start_idx = text.find("<MEMORY>")

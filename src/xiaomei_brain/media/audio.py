@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import io
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Iterator
@@ -32,6 +34,35 @@ class EncodedAudio:
     data: bytes
     duration_ms: int
     codec: str
+
+
+def encode_audio_file_as_opus(
+    data: bytes,
+    file_name: str,
+    *,
+    max_input_bytes: int = 20 * 1024 * 1024,
+) -> EncodedAudio:
+    """Transcode a bounded audio artifact into a channel-playable Opus copy."""
+    if not data:
+        raise AudioConversionError("音频文件为空")
+    if len(data) > max_input_bytes:
+        raise AudioConversionError("音频文件超过 20 MB")
+    duration_ms = _probe_audio_duration_ms(data, file_name)
+    output = _run_ffmpeg(
+        [
+            "-i", "pipe:0",
+            "-vn",
+            "-c:a", "libopus",
+            "-b:a", "64k",
+            "-vbr", "on",
+            "-f", "opus",
+            "pipe:1",
+        ],
+        data,
+    )
+    if not output:
+        raise AudioConversionError("音频转码结果为空")
+    return EncodedAudio(output, duration_ms, "opus")
 
 
 def stream_audio_file_as_pcm(
@@ -180,6 +211,51 @@ def _collect(chunks: Iterable[bytes], *, max_input_bytes: int) -> bytes:
             raise AudioConversionError("语音数据过大")
         parts.append(bytes(chunk))
     return b"".join(parts)
+
+
+def _probe_audio_duration_ms(data: bytes, file_name: str) -> int:
+    if Path(file_name).suffix.lower() in {".wav", ".wave"}:
+        try:
+            with wave.open(io.BytesIO(data), "rb") as source:
+                frame_rate = source.getframerate()
+                if frame_rate <= 0:
+                    raise AudioConversionError("WAV 采样率无效")
+                return max(1, round(source.getnframes() / frame_rate * 1000))
+        except (wave.Error, EOFError) as exc:
+            raise AudioConversionError(f"WAV 文件无效：{exc}") from exc
+
+    executable = shutil.which("ffprobe")
+    if not executable:
+        raise AudioConversionError("未找到 ffprobe，无法读取音频时长")
+    try:
+        result = subprocess.run(
+            [
+                executable,
+                "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                "pipe:0",
+            ],
+            input=data,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=False,
+            creationflags=(
+                subprocess.CREATE_NO_WINDOW
+                if os.name == "nt" and hasattr(subprocess, "CREATE_NO_WINDOW")
+                else 0
+            ),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise AudioConversionError(f"音频时长读取失败：{exc}") from exc
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", errors="replace").strip()
+        raise AudioConversionError(f"音频时长读取失败：{detail[:300]}")
+    try:
+        return max(1, round(float(result.stdout.decode("ascii").strip()) * 1000))
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise AudioConversionError("音频时长读取结果无效") from exc
 
 
 def _run_ffmpeg(arguments: list[str], data: bytes) -> bytes:

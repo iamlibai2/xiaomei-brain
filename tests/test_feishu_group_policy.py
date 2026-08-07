@@ -20,14 +20,16 @@ def _event(
     chat_type: str = "group",
     create_time: str | None = None,
     mentions: list | None = None,
+    message_type: str = "text",
+    content: dict | None = None,
 ):
     message = SimpleNamespace(
         message_id=message_id,
-        content=json.dumps({"text": text}),
+        content=json.dumps(content if content is not None else {"text": text}),
         chat_type=chat_type,
         chat_id="oc_group",
         create_time=create_time or str(int(time.time() * 1000)),
-        message_type="text",
+        message_type=message_type,
         mentions=mentions or [],
     )
     sender = SimpleNamespace(
@@ -117,7 +119,9 @@ def test_feishu_client_uploads_and_sends_assignment_file(monkeypatch):
     monkeypatch.setattr(
         channel,
         "_send_payload",
-        lambda target, msg_type, content: sent.append((target, msg_type, content)),
+        lambda target, msg_type, content: (
+            sent.append((target, msg_type, content)) or "om-sent"
+        ),
     )
 
     assert channel.send_file("oc_group", "报告.pptx", b"ppt-data") is True
@@ -131,6 +135,100 @@ def test_feishu_client_uploads_and_sends_assignment_file(monkeypatch):
         b"ppt-data",
     )
     assert sent == [("oc_group", "file", {"file_key": "file-key-1"})]
+
+
+def test_feishu_client_sends_native_image_and_video(monkeypatch):
+    import requests
+
+    channel = FeishuChannel("cli_demo", "secret")
+    monkeypatch.setattr(channel, "_get_token", lambda: "tenant-token")
+    uploads = []
+
+    def fake_post(url, **kwargs):
+        uploads.append((url, kwargs))
+        key = "image_key" if url.endswith("/images") else "file_key"
+        value = "image-key-1" if key == "image_key" else "video-key-1"
+        return SimpleNamespace(
+            status_code=200,
+            json=lambda: {"code": 0, "data": {key: value}},
+        )
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    sent = []
+    monkeypatch.setattr(
+        channel,
+        "_send_payload",
+        lambda target, msg_type, content: (
+            sent.append((target, msg_type, content)) or "om-sent"
+        ),
+    )
+
+    assert channel.send_file("oc_group", "现场.png", b"png-data") is True
+    assert uploads[0][0].endswith("/open-apis/im/v1/images")
+    assert uploads[0][1]["data"] == {"image_type": "message"}
+    assert sent[0] == ("oc_group", "image", {"image_key": "image-key-1"})
+
+    assert channel.send_file("oc_group", "演示.mp4", b"video-data") is True
+    assert uploads[1][0].endswith("/open-apis/im/v1/files")
+    assert uploads[1][1]["data"]["file_type"] == "mp4"
+    assert sent[1] == ("oc_group", "media", {"file_key": "video-key-1"})
+
+
+def test_feishu_client_transcodes_audio_artifact_for_native_playback(monkeypatch):
+    channel = FeishuChannel("cli_demo", "secret")
+    monkeypatch.setattr(
+        "xiaomei_brain.media.audio.encode_audio_file_as_opus",
+        lambda data, name: SimpleNamespace(
+            data=b"opus-preview",
+            duration_ms=4200,
+        ),
+    )
+    sent = []
+    monkeypatch.setattr(
+        channel,
+        "send_audio",
+        lambda target, name, data, duration: (
+            sent.append((target, name, data, duration)) or True
+        ),
+    )
+
+    assert channel.send_file("oc_group", "歌曲.wav", b"wav-original") is True
+    assert sent == [("oc_group", "歌曲.opus", b"opus-preview", 4200)]
+
+
+def test_feishu_client_exposes_inbound_media_resource_metadata():
+    channel = FeishuChannel("cli_demo", "secret")
+    channel._generation = 1
+    received = []
+    channel.set_on_message(received.append)
+
+    channel._on_message(
+        _event(
+            message_id="om_image",
+            text="",
+            chat_type="p2p",
+            message_type="image",
+            content={"image_key": "img-1"},
+        ),
+        generation=1,
+    )
+    channel._on_message(
+        _event(
+            message_id="om_video",
+            text="",
+            chat_type="p2p",
+            message_type="media",
+            content={"file_key": "file-1", "file_name": "演示.mp4"},
+        ),
+        generation=1,
+    )
+
+    assert received[0]["text"] == "[图片]"
+    assert received[0]["resource_key"] == "img-1"
+    assert received[0]["resource_type"] == "image"
+    assert received[1]["text"] == "[视频: 演示.mp4]"
+    assert received[1]["resource_key"] == "file-1"
+    assert received[1]["resource_type"] == "file"
 
 
 def test_feishu_client_updates_existing_card_message(monkeypatch):

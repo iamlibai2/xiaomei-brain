@@ -104,6 +104,10 @@ class DingTalkAdapter(ChannelAdapter):
         self._conversation_artifact_deliveries_sent: set[
             tuple[str, str, str, str]
         ] = set()
+        self._response_reactions: dict[
+            tuple[str, str, str], dict[str, str]
+        ] = {}
+        self._response_reactions_lock = threading.Lock()
 
     @property
     def capabilities(self) -> ChannelCapabilities:
@@ -190,8 +194,24 @@ class DingTalkAdapter(ChannelAdapter):
         turn_id: str = "",
         timestamp: int = 0,
     ) -> None:
-        """Render interaction protocol events as DingTalk cards."""
+        """Render ordinary replies natively and interactions as cards."""
+        if event == "message.start":
+            return
+        if event == "message.complete":
+            self._finish_response_reaction(target, turn_id, payload)
+            super().send_event(
+                target,
+                event,
+                payload,
+                session_id=session_id,
+                turn_id=turn_id,
+                timestamp=timestamp,
+            )
+            return
         if event == "interaction.requested":
+            self._finish_response_reaction(
+                target, turn_id, {"status": "waiting"}
+            )
             choices = [
                 str(item).strip()
                 for item in payload.get("choices", [])
@@ -220,7 +240,12 @@ class DingTalkAdapter(ChannelAdapter):
                 )
                 if card_id:
                     return
+        elif event == "interaction.updated":
+            return
         elif event == "action.proposed":
+            self._finish_response_reaction(
+                target, turn_id, {"status": "waiting"}
+            )
             summary = str(payload.get("summary", ""))
             reason = str(payload.get("reason", ""))
             markdown = f"**{summary}**"
@@ -247,6 +272,8 @@ class DingTalkAdapter(ChannelAdapter):
             )
             if card_id:
                 return
+        elif event == "action.completed":
+            return
         elif event == "artifact.presented":
             artifact_id = str(payload.get("id", ""))
             if session_id and artifact_id:
@@ -270,6 +297,104 @@ class DingTalkAdapter(ChannelAdapter):
             turn_id=turn_id,
             timestamp=timestamp,
         )
+
+    def _start_response_reaction(
+        self,
+        target: str,
+        turn_id: str,
+        message_id: str,
+        conversation_id: str,
+    ) -> None:
+        if not target or not turn_id or not message_id or not conversation_id:
+            return
+        key = (target, turn_id, message_id)
+        binding = {
+            "message_id": message_id,
+            "conversation_id": conversation_id,
+            "active": "false",
+            "terminal": "",
+        }
+        with self._response_reactions_lock:
+            if key in self._response_reactions:
+                return
+            self._response_reactions[key] = binding
+        set_emotion = getattr(self._client, "set_emotion", None)
+        if not callable(set_emotion):
+            with self._response_reactions_lock:
+                self._response_reactions.pop(key, None)
+            return
+
+        def add_in_background() -> None:
+            added = bool(set_emotion(
+                message_id,
+                conversation_id,
+                "🤔Thinking",
+            ))
+            with self._response_reactions_lock:
+                current = self._response_reactions.get(key)
+                terminal = binding.get("terminal", "")
+                if current is binding and not terminal:
+                    if added:
+                        binding["active"] = "true"
+                    else:
+                        self._response_reactions.pop(key, None)
+                    return
+
+            if added:
+                set_emotion(
+                    message_id,
+                    conversation_id,
+                    "🤔Thinking",
+                    recall=True,
+                )
+            if terminal == "complete":
+                set_emotion(
+                    message_id,
+                    conversation_id,
+                    "🥳Done",
+                )
+
+        threading.Thread(
+            target=add_in_background,
+            name=f"dingtalk-reaction-{message_id[:8]}",
+            daemon=True,
+        ).start()
+
+    def _finish_response_reaction(
+        self,
+        target: str,
+        turn_id: str,
+        payload: dict,
+    ) -> None:
+        with self._response_reactions_lock:
+            keys = [
+                key for key in self._response_reactions
+                if key[:2] == (target, turn_id)
+            ]
+            bindings = []
+            terminal = str(payload.get("status") or "complete")
+            for key in keys:
+                binding = self._response_reactions.pop(key)
+                binding["terminal"] = terminal
+                bindings.append(binding)
+        set_emotion = getattr(self._client, "set_emotion", None)
+        if not callable(set_emotion):
+            return
+        succeeded = terminal == "complete"
+        for binding in bindings:
+            if binding.get("active") == "true":
+                set_emotion(
+                    binding["message_id"],
+                    binding["conversation_id"],
+                    "🤔Thinking",
+                    recall=True,
+                )
+            if succeeded:
+                set_emotion(
+                    binding["message_id"],
+                    binding["conversation_id"],
+                    "🥳Done",
+                )
 
     def _send_conversation_artifact(
         self,
@@ -1067,6 +1192,21 @@ class DingTalkAdapter(ChannelAdapter):
                 reply_channel="dingtalk",
                 reply_target=output_target,
             ))
+            accepted_message = getattr(admission, "living_message", None)
+            accepted_turn_id = str(
+                getattr(accepted_message, "turn_id", "") or ""
+            )
+            steered_turn_id = str(
+                getattr(accepted_message, "steered_into_turn_id", "") or ""
+            )
+            effective_turn_id = steered_turn_id or accepted_turn_id
+            if effective_turn_id:
+                self._start_response_reaction(
+                    output_target,
+                    effective_turn_id,
+                    str(msg_dict.get("msg_id", "")),
+                    conversation_id,
+                )
             reason = getattr(admission, "reason", "")
             if reason and not getattr(admission, "silent", False):
                 self.send(output_target, "这段语音暂时没有接收成功，请稍后重试。")
@@ -1245,7 +1385,11 @@ class DingTalkAdapter(ChannelAdapter):
                         "[DingTalk] failed to persist inbound media for session=%s",
                         session_id,
                     )
-                    durable_image_paths = list(media_paths)
+                    self.send(
+                        output_target,
+                        "附件接收失败，请确认文件格式和大小后重试。",
+                    )
+                    return
 
             # 注册 Peer 映射
             has_route = (
@@ -1283,6 +1427,21 @@ class DingTalkAdapter(ChannelAdapter):
                     },
                     reply_channel="dingtalk", reply_target=output_target,
                 ))
+                accepted_message = getattr(result, "living_message", None)
+                accepted_turn_id = str(
+                    getattr(accepted_message, "turn_id", "") or ""
+                )
+                steered_turn_id = str(
+                    getattr(accepted_message, "steered_into_turn_id", "") or ""
+                )
+                effective_turn_id = steered_turn_id or accepted_turn_id
+                if effective_turn_id:
+                    self._start_response_reaction(
+                        output_target,
+                        effective_turn_id,
+                        str(msg_dict.get("msg_id", "")),
+                        conversation_id,
+                    )
                 reason = getattr(result, "reason", "")
                 if reason and not getattr(result, "silent", False):
                     self.send(output_target, "这条消息暂时没有接收成功，请稍后重试。")
@@ -1303,6 +1462,21 @@ class DingTalkAdapter(ChannelAdapter):
         """关闭钉钉通道。"""
         if self._client:
             try:
+                with self._response_reactions_lock:
+                    bindings = list(self._response_reactions.values())
+                    self._response_reactions.clear()
+                    for binding in bindings:
+                        binding["terminal"] = "stopped"
+                set_emotion = getattr(self._client, "set_emotion", None)
+                if callable(set_emotion):
+                    for binding in bindings:
+                        if binding.get("active") == "true":
+                            set_emotion(
+                                binding["message_id"],
+                                binding["conversation_id"],
+                                "🤔Thinking",
+                                recall=True,
+                            )
                 self._client.stop()
                 with self._sessions_lock:
                     self._sessions.clear()

@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import mimetypes
 import re
 import threading
 import time
+from pathlib import Path
 from typing import Callable
 
 from lark_oapi.api.im.v1.model import P2ImMessageReceiveV1, P2ImMessageReactionCreatedV1, P2ImMessageReactionDeletedV1
@@ -171,6 +173,25 @@ class FeishuChannel:
                     msg_dict["duration"] = int(content_obj.get("duration", 0) or 0)
                 except (TypeError, ValueError):
                     msg_dict["duration"] = 0
+            elif message.message_type == "image":
+                msg_dict.update({
+                    "resource_key": str(content_obj.get("image_key", "")),
+                    "resource_type": "image",
+                    "file_name": f"feishu-{message_id or int(time.time() * 1000)}.jpg",
+                })
+                if not text:
+                    msg_dict["text"] = "[图片]"
+            elif message.message_type in {"file", "media"}:
+                default_suffix = ".mp4" if message.message_type == "media" else ""
+                msg_dict.update({
+                    "resource_key": str(content_obj.get("file_key", "")),
+                    "resource_type": "file",
+                    "file_name": str(content_obj.get("file_name", "")).strip()
+                    or f"feishu-{message_id or int(time.time() * 1000)}{default_suffix}",
+                })
+                if not text:
+                    label = "视频" if message.message_type == "media" else "文件"
+                    msg_dict["text"] = f"[{label}: {msg_dict['file_name']}]"
 
             logger.info("[Feishu] <- %s: %s", sender_open_id, text[:80] if text else "(empty)")
 
@@ -549,13 +570,210 @@ class FeishuChannel:
             logger.exception("[Feishu/Card] update failed: %s", message_id)
         return False
 
+    def add_reaction(self, message_id: str, emoji_type: str) -> str:
+        """Add one native Feishu reaction and return its reaction ID."""
+        import requests as _requests
+
+        if not message_id or not emoji_type:
+            return ""
+        try:
+            for _attempt in range(3):
+                token = self._get_token()
+                if not token:
+                    return ""
+                response = _requests.post(
+                    "https://open.feishu.cn/open-apis/im/v1/messages/"
+                    f"{message_id}/reactions",
+                    json={"reaction_type": {"emoji_type": emoji_type}},
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json; charset=utf-8",
+                    },
+                    timeout=15,
+                )
+                payload = response.json()
+                code = payload.get("code", -1)
+                if response.status_code == 200 and code == 0:
+                    reaction_id = str(
+                        (payload.get("data") or {}).get("reaction_id", "")
+                    )
+                    logger.info(
+                        "[Feishu/Reaction] added %s to %s",
+                        emoji_type,
+                        message_id,
+                    )
+                    return reaction_id
+                if response.status_code == 401 or code in {
+                    99991663, 99991664, 99991665, 99991666,
+                }:
+                    self._invalidate_token_cache(self.app_id)
+                    continue
+                logger.warning(
+                    "[Feishu/Reaction] add failed: message=%s emoji=%s "
+                    "HTTP=%s code=%s msg=%s",
+                    message_id,
+                    emoji_type,
+                    response.status_code,
+                    code,
+                    payload.get("msg", ""),
+                )
+                return ""
+        except Exception:
+            logger.warning(
+                "[Feishu/Reaction] add failed: message=%s emoji=%s",
+                message_id,
+                emoji_type,
+                exc_info=True,
+            )
+        return ""
+
+    def remove_reaction(self, message_id: str, reaction_id: str) -> bool:
+        """Remove one reaction previously created by this Feishu app."""
+        import requests as _requests
+
+        if not message_id or not reaction_id:
+            return False
+        try:
+            for _attempt in range(3):
+                token = self._get_token()
+                if not token:
+                    return False
+                response = _requests.delete(
+                    "https://open.feishu.cn/open-apis/im/v1/messages/"
+                    f"{message_id}/reactions/{reaction_id}",
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=15,
+                )
+                payload = response.json()
+                code = payload.get("code", -1)
+                if response.status_code == 200 and code == 0:
+                    logger.info(
+                        "[Feishu/Reaction] removed %s from %s",
+                        reaction_id,
+                        message_id,
+                    )
+                    return True
+                if response.status_code == 401 or code in {
+                    99991663, 99991664, 99991665, 99991666,
+                }:
+                    self._invalidate_token_cache(self.app_id)
+                    continue
+                logger.warning(
+                    "[Feishu/Reaction] remove failed: message=%s reaction=%s "
+                    "HTTP=%s code=%s msg=%s",
+                    message_id,
+                    reaction_id,
+                    response.status_code,
+                    code,
+                    payload.get("msg", ""),
+                )
+                return False
+        except Exception:
+            logger.warning(
+                "[Feishu/Reaction] remove failed: message=%s reaction=%s",
+                message_id,
+                reaction_id,
+                exc_info=True,
+            )
+        return False
+
     def send_file(self, to: str, file_name: str, data: bytes) -> bool:
-        """Upload an Agent-owned artifact and send it as a Feishu file."""
-        file_key = self._upload_file(file_name, data)
+        """Send an artifact using Feishu's native image/media/file message."""
+        suffix = Path(file_name).suffix.lower()
+        if suffix in {
+            ".wav", ".wave", ".mp3", ".flac", ".m4a", ".aac",
+            ".ogg", ".opus",
+        }:
+            try:
+                from xiaomei_brain.media.audio import encode_audio_file_as_opus
+
+                encoded = encode_audio_file_as_opus(data, file_name)
+                if self.send_audio(
+                    to,
+                    f"{Path(file_name).stem}.opus",
+                    encoded.data,
+                    encoded.duration_ms,
+                ):
+                    return True
+            except Exception:
+                logger.warning(
+                    "[Feishu/Audio] native delivery unavailable; falling back "
+                    "to file: %s",
+                    file_name,
+                    exc_info=True,
+                )
+        elif suffix in {
+            ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp",
+            ".ico", ".tiff", ".tif", ".heic",
+        }:
+            image_key = self._upload_image(file_name, data)
+            if image_key and self._send_payload(
+                to, "image", {"image_key": image_key}
+            ):
+                return True
+            logger.warning(
+                "[Feishu/Image] native delivery failed; falling back to file: %s",
+                file_name,
+            )
+        elif suffix == ".mp4":
+            file_key = self._upload_file(file_name, data)
+            if file_key and self._send_payload(
+                to, "media", {"file_key": file_key}
+            ):
+                return True
+            logger.warning(
+                "[Feishu/Video] native delivery failed; falling back to file: %s",
+                file_name,
+            )
+
+        file_key = self._upload_file(
+            file_name,
+            data,
+            file_type_override="stream" if suffix == ".mp4" else None,
+        )
         if not file_key:
             return False
-        self._send_payload(to, "file", {"file_key": file_key})
-        return True
+        return bool(self._send_payload(to, "file", {"file_key": file_key}))
+
+    def _upload_image(self, file_name: str, data: bytes) -> str:
+        """Upload one image for use in a native Feishu image message."""
+        import requests as _requests
+
+        safe_name = Path(file_name).name
+        if not safe_name or not data:
+            return ""
+        content_type = mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
+        try:
+            for attempt in range(3):
+                token = self._get_token()
+                if not token:
+                    return ""
+                response = _requests.post(
+                    "https://open.feishu.cn/open-apis/im/v1/images",
+                    data={"image_type": "message"},
+                    files={"image": (safe_name, data, content_type)},
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=30,
+                )
+                payload = response.json()
+                code = payload.get("code", -1)
+                if response.status_code == 200 and code == 0:
+                    return str((payload.get("data") or {}).get("image_key", ""))
+                if attempt < 2 and code in {
+                    99991663, 99991664, 99991665, 99991666,
+                }:
+                    self._invalidate_token_cache(self.app_id)
+                    continue
+                logger.error(
+                    "[Feishu/Image] upload failed: HTTP=%s code=%s msg=%s",
+                    response.status_code,
+                    code,
+                    payload.get("msg", ""),
+                )
+                return ""
+        except Exception:
+            logger.exception("[Feishu/Image] upload failed: %s", safe_name)
+        return ""
 
     def send_audio(
         self,
@@ -580,13 +798,16 @@ class FeishuChannel:
         file_key: str,
         *,
         max_bytes: int = 5 * 1024 * 1024,
+        resource_type: str = "file",
     ) -> bytes:
         """Download an audio/file resource owned by one received message."""
         import requests as _requests
         from urllib.parse import quote
 
         if not message_id or not file_key:
-            raise ValueError("飞书语音资源标识为空")
+            raise ValueError("飞书消息资源标识为空")
+        if resource_type not in {"file", "image"}:
+            raise ValueError("飞书消息资源类型无效")
         url = (
             "https://open.feishu.cn/open-apis/im/v1/messages/"
             f"{quote(message_id, safe='')}/resources/{quote(file_key, safe='')}"
@@ -597,7 +818,7 @@ class FeishuChannel:
                 raise RuntimeError("无法获取飞书访问令牌")
             response = _requests.get(
                 url,
-                params={"type": "file"},
+                params={"type": resource_type},
                 headers={"Authorization": f"Bearer {token}"},
                 stream=True,
                 timeout=30,
@@ -624,7 +845,13 @@ class FeishuChannel:
             return data
         raise RuntimeError("下载飞书语音失败：身份令牌已失效")
 
-    def _upload_file(self, file_name: str, data: bytes) -> str:
+    def _upload_file(
+        self,
+        file_name: str,
+        data: bytes,
+        *,
+        file_type_override: str | None = None,
+    ) -> str:
         """Upload one file using Feishu's multipart file API."""
         import requests as _requests
 
@@ -632,7 +859,7 @@ class FeishuChannel:
             logger.error("[Feishu/File] refusing empty file: %s", file_name)
             return ""
         suffix = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
-        file_type = {
+        file_type = file_type_override or {
             "opus": "opus",
             "mp4": "mp4",
             "pdf": "pdf",

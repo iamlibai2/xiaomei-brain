@@ -50,6 +50,7 @@ def download_media(
     robot_code: str,
     access_token: str,
     media_dir: str | None = None,
+    file_name: str = "",
 ) -> str | None:
     """根据 downloadCode 下载媒体文件到本地。
 
@@ -78,8 +79,17 @@ def download_media(
     if downloaded is None:
         return None
     content, ext = downloaded
-    filename = f"{int(time.time() * 1000)}_{_random_suffix()}{ext}"
-    filepath = os.path.join(media_dir, filename)
+    safe_name = Path(file_name).name if file_name else ""
+    if safe_name and Path(safe_name).suffix:
+        unique_dir = os.path.join(
+            media_dir,
+            f"{int(time.time() * 1000)}_{_random_suffix()}",
+        )
+        _ensure_directory(unique_dir)
+        filepath = os.path.join(unique_dir, safe_name)
+    else:
+        filename = f"{int(time.time() * 1000)}_{_random_suffix()}{ext}"
+        filepath = os.path.join(media_dir, filename)
 
     with open(filepath, "wb") as f:
         f.write(content)
@@ -191,6 +201,26 @@ def _guess_extension(content_type: str, content: bytes) -> str:
         return ".amr"
     if content[:3] == b"ID3" or content[:2] in {b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"}:
         return ".mp3"
+    if content.startswith(b"%PDF-"):
+        return ".pdf"
+    if content.startswith(b"PK\x03\x04"):
+        # DingTalk's download URL often returns OOXML as octet-stream without
+        # a filename. Inspect the ZIP members so Word/Excel/PowerPoint never
+        # degrade to a misleading .bin image path.
+        try:
+            import io
+            import zipfile
+
+            with zipfile.ZipFile(io.BytesIO(content)) as archive:
+                names = archive.namelist()
+            if any(name.startswith("word/") for name in names):
+                return ".docx"
+            if any(name.startswith("xl/") for name in names):
+                return ".xlsx"
+            if any(name.startswith("ppt/") for name in names):
+                return ".pptx"
+        except (OSError, zipfile.BadZipFile):
+            pass
     return ".bin"
 
 

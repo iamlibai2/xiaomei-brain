@@ -90,6 +90,32 @@ def test_handler_defers_audio_download_to_adapter_worker() -> None:
     assert received[0]["media_paths"] == []
 
 
+def test_file_callback_preserves_original_file_name() -> None:
+    received = []
+    downloads = []
+    handler = _OurHandler(received.append, lambda: "token", "robot-code")
+    handler._try_download = lambda code, name="": (
+        downloads.append((code, name)) or f"C:/temp/{name}"
+    )
+    data = {
+        "msgId": "file-1",
+        "msgtype": "file",
+        "content": {
+            "downloadCode": "download-file-1",
+            "fileName": "项目说明.docx",
+        },
+        "senderStaffId": "staff-1",
+        "conversationId": "single-1",
+        "conversationType": "1",
+    }
+
+    asyncio.run(handler.process(_callback(data)))
+
+    assert downloads == [("download-file-1", "项目说明.docx")]
+    assert received[0]["media_paths"] == ["C:/temp/项目说明.docx"]
+    assert received[0]["text"] == "[文件: C:/temp/项目说明.docx]"
+
+
 def test_message_dedup_ttl(monkeypatch) -> None:
     client = DingTalkClient("client", "secret")
     now = [100.0]
@@ -218,6 +244,79 @@ def test_client_uploads_and_sends_native_file(monkeypatch) -> None:
     assert calls[-1][1]["json"]["openConversationId"] == "cid-group"
 
 
+def test_client_uploads_and_sends_native_image_and_video(monkeypatch) -> None:
+    import json
+    import requests
+
+    client = DingTalkClient("ding-demo", "secret")
+    monkeypatch.setattr(client, "get_access_token", lambda: "token")
+    uploads = []
+
+    def upload(name, data, token, **kwargs):
+        uploads.append((name, data, token, kwargs))
+        return "media-1"
+
+    monkeypatch.setattr(
+        "xiaomei_brain.plugins.channels.dingtalk.media.upload_media_bytes",
+        upload,
+    )
+    calls = []
+    monkeypatch.setattr(
+        requests,
+        "post",
+        lambda url, **kwargs: calls.append((url, kwargs)) or SimpleNamespace(
+            raise_for_status=lambda: None,
+        ),
+    )
+
+    assert client.send_file("staff-1", "现场.png", b"png", is_group=False)
+    assert uploads[0][3]["media_type"] == "image"
+    image_request = calls[0][1]["json"]
+    assert image_request["msgKey"] == "sampleImageMsg"
+    image_param = json.loads(image_request["msgParam"])
+    assert "media/downloadFile?" in image_param["photoURL"]
+    assert "media_id=%40media-1" in image_param["photoURL"]
+
+    assert client.send_file("cid-group", "演示.mp4", b"mp4", is_group=True)
+    assert uploads[1][3] == {
+        "media_type": "video",
+        "content_type": "video/mp4",
+    }
+    video_request = calls[1][1]["json"]
+    assert video_request["msgKey"] == "sampleVideo"
+    assert json.loads(video_request["msgParam"]) == {
+        "videoMediaId": "@media-1",
+        "videoType": "mp4",
+    }
+
+
+def test_client_transcodes_audio_artifact_for_native_playback(monkeypatch) -> None:
+    client = DingTalkClient("ding-demo", "secret")
+    monkeypatch.setattr(client, "get_access_token", lambda: "token")
+    monkeypatch.setattr(
+        "xiaomei_brain.media.audio.encode_audio_file_as_opus",
+        lambda data, name: SimpleNamespace(
+            data=b"opus-preview",
+            duration_ms=4200,
+        ),
+    )
+    sent = []
+    monkeypatch.setattr(
+        client,
+        "send_audio",
+        lambda target, name, data, duration, *, is_group: (
+            sent.append((target, name, data, duration, is_group)) or True
+        ),
+    )
+
+    assert client.send_file(
+        "staff-1", "歌曲.wav", b"wav-original", is_group=False,
+    ) is True
+    assert sent == [(
+        "staff-1", "歌曲.ogg", b"opus-preview", 4200, False,
+    )]
+
+
 def test_client_uploads_and_sends_native_audio(monkeypatch) -> None:
     import json
     import requests
@@ -336,6 +435,44 @@ def test_download_media_bytes_streams_and_detects_audio(monkeypatch) -> None:
         "token",
         max_size=4,
     ) is None
+
+
+def test_dingtalk_media_detects_ooxml_without_content_type() -> None:
+    import io
+    import zipfile
+    from xiaomei_brain.plugins.channels.dingtalk.media import _guess_extension
+
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.writestr("word/document.xml", "<document />")
+
+    assert _guess_extension(
+        "application/octet-stream",
+        payload.getvalue(),
+    ) == ".docx"
+
+
+def test_dingtalk_download_preserves_safe_original_name(tmp_path, monkeypatch) -> None:
+    from pathlib import Path
+    from xiaomei_brain.plugins.channels.dingtalk import media
+
+    monkeypatch.setattr(
+        media,
+        "download_media_bytes",
+        lambda *_args, **_kwargs: (b"docx-data", ".bin"),
+    )
+
+    result = media.download_media(
+        "download-1",
+        "robot-1",
+        "token",
+        media_dir=str(tmp_path),
+        file_name="../项目说明.docx",
+    )
+
+    assert result is not None
+    assert Path(result).name == "项目说明.docx"
+    assert Path(result).read_bytes() == b"docx-data"
 
 
 def test_websocket_health_compatibility() -> None:

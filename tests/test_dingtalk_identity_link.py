@@ -312,6 +312,18 @@ def test_dingtalk_adapter_consumes_link_then_routes_as_person(tmp_path, monkeypa
         tmp_path / ".xiaomei-brain" / "default" / "attachments"
     )
 
+    invalid_attachment = tmp_path / "unknown.bin"
+    invalid_attachment.write_bytes(b"not-an-image-or-document")
+    previous_count = len(gateway.messages)
+    client.callback({
+        **base,
+        "text": f"[文件: {invalid_attachment}]",
+        "msg_type": "file",
+        "media_paths": [str(invalid_attachment)],
+    })
+    assert len(gateway.messages) == previous_count
+    assert client.sent[-1] == "附件接收失败，请确认文件格式和大小后重试。"
+
     # Group chatter that doesn't mention the Agent is observed without
     # creating a Turn. A mentioned message enters the group's shared scene.
     before = len(gateway.messages)

@@ -3402,6 +3402,38 @@ body.is-resizing-artifact-workspace {
   color: var(--ui-color-text-primary);
 }
 
+.agent-response-phase {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 7px;
+  min-height: 22px;
+  color: var(--ui-color-text-tertiary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.agent-response-phase-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: agent-response-pulse 1.25s ease-in-out infinite;
+}
+
+.agent-response-phase.is-thinking {
+  color: color-mix(in srgb, var(--ui-brand-primary) 72%, var(--ui-color-text-secondary));
+}
+
+.agent-response-phase.is-waiting .agent-response-phase-dot {
+  animation-duration: 2s;
+}
+
+@keyframes agent-response-pulse {
+  0%, 100% { opacity: 0.28; transform: scale(0.82); }
+  50% { opacity: 0.9; transform: scale(1); }
+}
+
 .assistant-text-content {
   font-family: var(--ui-message-font);
   font-size: 14px;

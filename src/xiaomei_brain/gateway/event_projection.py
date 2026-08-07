@@ -173,8 +173,9 @@ class GatewayEventProjection:
                 route.target,
             )
 
-        # Streaming deltas are a rich-client capability. Other channels receive
-        # the final message and can render structured events through send_event.
+        # Streaming deltas are opt-in. Non-streaming chat adapters still see
+        # start/complete boundaries, so they can maintain lightweight native
+        # processing reactions while delivering the final reply normally.
         supports_streaming = (
             bool(capabilities.streaming) if capabilities is not None
             else route.type == "ws"

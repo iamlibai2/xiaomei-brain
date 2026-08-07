@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import mimetypes
 import os
 import re
 import threading
@@ -67,6 +68,13 @@ class FeishuAdapter(ChannelAdapter):
         self._artifact_delivery_lock = threading.Lock()
         self._artifact_deliveries_inflight: set[tuple[str, str, str, str]] = set()
         self._artifact_deliveries_sent: set[tuple[str, str, str, str]] = set()
+        # Processing feedback belongs to the inbound message, while the
+        # Agent's answer remains a native Feishu text message.  Keying by Turn
+        # lets completion events clean up exactly the reaction they started.
+        self._response_reactions: dict[
+            tuple[str, str, str], dict[str, str]
+        ] = {}
+        self._response_reactions_lock = threading.Lock()
 
     @property
     def capabilities(self) -> ChannelCapabilities:
@@ -131,6 +139,24 @@ class FeishuAdapter(ChannelAdapter):
                     target=self._handle_audio_message,
                     args=(msg_dict, living, router, people, issuer),
                     name="feishu-remote-hearing",
+                    daemon=True,
+                ).start()
+                return
+
+            if (
+                msg_dict.get("msg_type") in {"image", "file", "media"}
+                and not msg_dict.get("_media_prepared")
+                and (
+                    chat_type == "p2p"
+                    or msg_dict.get("bot_mentioned", False)
+                )
+            ):
+                # Resource download is HTTP I/O. Keep it off the Feishu SDK's
+                # WebSocket callback so large videos cannot block heartbeats.
+                threading.Thread(
+                    target=self._handle_media_message,
+                    args=(msg_dict, on_message),
+                    name="feishu-inbound-media",
                     daemon=True,
                 ).start()
                 return
@@ -238,6 +264,26 @@ class FeishuAdapter(ChannelAdapter):
                 session_id = f"feishu-{person_id}"
                 people.store.ensure_person_session(session_id, person_id)
 
+            attachments: list[dict] = []
+            durable_image_paths: list[str] = []
+            attachment_payloads = list(msg_dict.get("attachment_payloads") or [])
+            if attachment_payloads:
+                try:
+                    from xiaomei_brain.gateway.attachments import prepare_attachments
+
+                    attachments, durable_image_paths, _saved_paths = prepare_attachments(
+                        getattr(living, "_agent_id", "default"),
+                        session_id,
+                        attachment_payloads,
+                    )
+                except Exception:
+                    logger.exception(
+                        "[Feishu] failed to persist inbound media for session=%s",
+                        session_id,
+                    )
+                    self.send(conversation_id, "附件接收失败，请确认文件格式和大小后重试。")
+                    return
+
             # 注册 peer（确保 Router 能匹配到）
             has_route = (
                 router.has_route(session_id, "feishu", conversation_id)
@@ -263,6 +309,8 @@ class FeishuAdapter(ChannelAdapter):
                 result = gw.accept(RawMessage(
                     content=text, source="human", channel="feishu",
                     peer_id=person_id, peer_type="human",
+                    images=durable_image_paths,
+                    attachments=attachments,
                     session_id=session_id,
                     metadata={
                         "external_issuer": issuer,
@@ -273,13 +321,33 @@ class FeishuAdapter(ChannelAdapter):
                     reply_channel="feishu",
                     reply_target=conversation_id,
                 ))
+                accepted_message = getattr(result, "living_message", None)
+                accepted_turn_id = str(
+                    getattr(accepted_message, "turn_id", "") or ""
+                )
+                steered_turn_id = str(
+                    getattr(accepted_message, "steered_into_turn_id", "") or ""
+                )
+                effective_turn_id = steered_turn_id or accepted_turn_id
+                if effective_turn_id:
+                    self._start_response_reaction(
+                        conversation_id,
+                        effective_turn_id,
+                        str(msg_dict.get("message_id", "")),
+                    )
                 # External channels cannot inspect Gateway return values.
                 # Surface exceptional admission failures instead of silence.
                 reason = getattr(result, "reason", "")
                 if reason and not getattr(result, "silent", False):
                     self.send(conversation_id, "这条消息暂时没有接收成功，请稍后重试。")
             else:
-                living.put_message(text, source="human", session_id=session_id)
+                living.put_message(
+                    text,
+                    source="human",
+                    session_id=session_id,
+                    images=durable_image_paths,
+                    attachments=attachments,
+                )
             if hasattr(living, "_debug_log"):
                 living._debug_log("feishu", f"{ts} ← {sender}: {text[:80]}")
             logger.info("[Feishu/Step4] 等待主循环处理 (session=%s)", session_id)
@@ -389,6 +457,17 @@ class FeishuAdapter(ChannelAdapter):
         """关闭飞书通道。"""
         if self._channel:
             try:
+                with self._response_reactions_lock:
+                    bindings = list(self._response_reactions.values())
+                    self._response_reactions.clear()
+                    for binding in bindings:
+                        binding["terminal"] = "stopped"
+                remove_reaction = getattr(self._channel, "remove_reaction", None)
+                if callable(remove_reaction):
+                    for binding in bindings:
+                        reaction_id = binding.get("reaction_id", "")
+                        if reaction_id:
+                            remove_reaction(binding["message_id"], reaction_id)
                 self._channel.stop()
                 logger.info("[FeishuAdapter] 通道已关闭")
             except Exception as e:
@@ -413,6 +492,66 @@ class FeishuAdapter(ChannelAdapter):
             encoded.data,
             encoded.duration_ms,
         )
+
+    def _handle_media_message(self, msg_dict: dict, resume) -> None:
+        """Download one Feishu image/file/video, then resume normal routing."""
+        conversation_id = str(msg_dict.get("conversation_id", ""))
+        message_type = str(msg_dict.get("msg_type", ""))
+        try:
+            resource_key = str(msg_dict.get("resource_key", ""))
+            resource_type = str(msg_dict.get("resource_type", "file"))
+            max_bytes = 20 * 1024 * 1024 if message_type == "media" else 5 * 1024 * 1024
+            data = self._channel.download_message_resource(
+                str(msg_dict.get("message_id", "")),
+                resource_key,
+                resource_type=resource_type,
+                max_bytes=max_bytes,
+            )
+            file_name = str(msg_dict.get("file_name", "")).strip()
+            if message_type == "image":
+                suffix, mime_type = self._detect_image_format(data)
+                file_name = f"feishu-{msg_dict.get('message_id') or uuid.uuid4().hex}{suffix}"
+            elif message_type == "media":
+                file_name = file_name or f"feishu-{uuid.uuid4().hex}.mp4"
+                mime_type = "video/mp4"
+            else:
+                file_name = file_name or f"feishu-{uuid.uuid4().hex}"
+                mime_type = mimetypes.guess_type(file_name)[0] or "application/octet-stream"
+
+            prepared = dict(msg_dict)
+            prepared["_media_prepared"] = True
+            prepared["file_name"] = file_name
+            prepared["attachment_payloads"] = [{
+                "id": f"feishu_{uuid.uuid4().hex}",
+                "name": file_name,
+                "mime_type": mime_type,
+                "size": len(data),
+                "data_base64": base64.b64encode(data).decode("ascii"),
+            }]
+            resume(prepared)
+        except Exception:
+            logger.exception(
+                "[Feishu/Media] inbound download failed: message=%s type=%s",
+                msg_dict.get("message_id", ""),
+                message_type,
+            )
+            if conversation_id:
+                self.send(conversation_id, "附件接收失败，请稍后重试。")
+
+    @staticmethod
+    def _detect_image_format(data: bytes) -> tuple[str, str]:
+        """Recognize the common Feishu image formats without extra packages."""
+        if data.startswith(b"\x89PNG\r\n\x1a\n"):
+            return ".png", "image/png"
+        if data.startswith(b"\xff\xd8\xff"):
+            return ".jpg", "image/jpeg"
+        if data.startswith((b"GIF87a", b"GIF89a")):
+            return ".gif", "image/gif"
+        if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+            return ".webp", "image/webp"
+        if data.startswith(b"BM"):
+            return ".bmp", "image/bmp"
+        return ".jpg", "image/jpeg"
 
     def _handle_audio_message(
         self,
@@ -504,6 +643,20 @@ class FeishuAdapter(ChannelAdapter):
                 reply_channel="feishu",
                 reply_target=conversation_id,
             ))
+            accepted_message = getattr(admission, "living_message", None)
+            accepted_turn_id = str(
+                getattr(accepted_message, "turn_id", "") or ""
+            )
+            steered_turn_id = str(
+                getattr(accepted_message, "steered_into_turn_id", "") or ""
+            )
+            effective_turn_id = steered_turn_id or accepted_turn_id
+            if effective_turn_id:
+                self._start_response_reaction(
+                    conversation_id,
+                    effective_turn_id,
+                    str(msg_dict.get("message_id", "")),
+                )
             reason = getattr(admission, "reason", "")
             if reason and not getattr(admission, "silent", False):
                 self.send(conversation_id, "这段语音暂时没有接收成功，请稍后重试。")
@@ -524,8 +677,24 @@ class FeishuAdapter(ChannelAdapter):
         turn_id: str = "",
         timestamp: int = 0,
     ) -> None:
-        """Render structured interaction events as native Feishu cards."""
+        """Render ordinary replies natively and interactions as cards."""
+        if event == "message.start":
+            return
+        if event == "message.complete":
+            self._finish_response_reaction(target, turn_id, payload)
+            super().send_event(
+                target,
+                event,
+                payload,
+                session_id=session_id,
+                turn_id=turn_id,
+                timestamp=timestamp,
+            )
+            return
         if event == "interaction.requested":
+            self._finish_response_reaction(
+                target, turn_id, {"status": "waiting"}
+            )
             choices = [
                 str(item).strip()
                 for item in payload.get("choices", [])
@@ -550,11 +719,18 @@ class FeishuAdapter(ChannelAdapter):
                     ),
                 )
                 return
+        elif event == "interaction.updated":
+            return
         elif event == "action.proposed":
+            self._finish_response_reaction(
+                target, turn_id, {"status": "waiting"}
+            )
             self._channel.send_card(
                 target,
                 self._action_card(payload, target, session_id, turn_id),
             )
+            return
+        elif event == "action.completed":
             return
         elif event == "artifact.presented":
             artifact_id = str(payload.get("id", ""))
@@ -581,6 +757,86 @@ class FeishuAdapter(ChannelAdapter):
             turn_id=turn_id,
             timestamp=timestamp,
         )
+
+    def _start_response_reaction(
+        self,
+        target: str,
+        turn_id: str,
+        message_id: str,
+    ) -> None:
+        if not target or not turn_id or not message_id:
+            return
+        key = (target, turn_id, message_id)
+        binding = {
+            "message_id": message_id,
+            "reaction_id": "",
+            "terminal": "",
+        }
+        with self._response_reactions_lock:
+            if key in self._response_reactions:
+                return
+            self._response_reactions[key] = binding
+        add_reaction = getattr(self._channel, "add_reaction", None)
+        if not callable(add_reaction):
+            with self._response_reactions_lock:
+                self._response_reactions.pop(key, None)
+            return
+
+        def add_in_background() -> None:
+            reaction_id = str(add_reaction(message_id, "Typing") or "")
+            with self._response_reactions_lock:
+                current = self._response_reactions.get(key)
+                terminal = binding.get("terminal", "")
+                if current is binding and not terminal:
+                    if reaction_id:
+                        binding["reaction_id"] = reaction_id
+                    else:
+                        self._response_reactions.pop(key, None)
+                    return
+
+            # A very fast response may finish before the reaction request.
+            # Clean up the late Typing marker instead of leaving it behind.
+            remove_reaction = getattr(self._channel, "remove_reaction", None)
+            if reaction_id and callable(remove_reaction):
+                remove_reaction(message_id, reaction_id)
+            if terminal == "error":
+                add_reaction(message_id, "CrossMark")
+
+        threading.Thread(
+            target=add_in_background,
+            name=f"feishu-reaction-{message_id[:8]}",
+            daemon=True,
+        ).start()
+
+    def _finish_response_reaction(
+        self,
+        target: str,
+        turn_id: str,
+        payload: dict,
+    ) -> None:
+        with self._response_reactions_lock:
+            keys = [
+                key for key in self._response_reactions
+                if key[:2] == (target, turn_id)
+            ]
+            bindings = []
+            terminal = str(payload.get("status") or "complete")
+            for key in keys:
+                binding = self._response_reactions.pop(key)
+                binding["terminal"] = terminal
+                bindings.append(binding)
+        if not bindings:
+            return
+        remove_reaction = getattr(self._channel, "remove_reaction", None)
+        add_reaction = getattr(self._channel, "add_reaction", None)
+        failed = terminal == "error"
+        for binding in bindings:
+            message_id = binding.get("message_id", "")
+            reaction_id = binding.get("reaction_id", "")
+            if reaction_id and callable(remove_reaction):
+                remove_reaction(message_id, reaction_id)
+            if failed and callable(add_reaction):
+                add_reaction(message_id, "CrossMark")
 
     def _send_conversation_artifact(
         self,
