@@ -58,10 +58,16 @@ class CapabilityChangeParams(CapabilityGetParams):
 
 class CapabilitySetupStartParams(CapabilityGetParams):
     action: Literal["install", "configure", "authorize", "disconnect"]
+    input: dict[str, str] = Field(default_factory=dict)
 
 
 class CapabilitySetupStatusParams(CapabilityGetParams):
     job_id: str = Field(default="", max_length=64, pattern=r"^(?:[a-fA-F0-9]{32})?$")
+
+
+class CapabilitySetupCompleteParams(CapabilityGetParams):
+    job_id: str = Field(..., min_length=32, max_length=32, pattern=r"^[a-fA-F0-9]{32}$")
+    input: dict[str, str] = Field(default_factory=dict)
 
 
 class CapabilityPackageInspectParams(BaseModel):

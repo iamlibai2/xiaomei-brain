@@ -1,6 +1,7 @@
 import { ipcMain, BrowserWindow, Notification, app, dialog, shell } from "electron";
 import { createHash, randomUUID } from "crypto";
 import { promises as fs } from "fs";
+import { createServer } from "http";
 import os from "os";
 import path from "path";
 import { GatewayClient } from "./gateway-client";
@@ -1410,13 +1411,14 @@ export function registerIpcHandlers(
   });
 
   ipcMain.handle("gateway:startCapabilitySetup", async (_event, args: {
-    agentId: string; capabilityId: string; action: string;
+    agentId: string; capabilityId: string; action: string; input?: Record<string, string>;
   }) => {
     const client = getClient(args.agentId);
     if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
     return client.rpc("capability.setup.start", {
       capability_id: args.capabilityId,
       action: args.action,
+      input: args.input || {},
     });
   });
 
@@ -1428,6 +1430,86 @@ export function registerIpcHandlers(
     return client.rpc("capability.setup.cancel", {
       capability_id: args.capabilityId,
       job_id: args.jobId || "",
+    });
+  });
+
+  ipcMain.handle("gateway:runCapabilityOAuth", async (_event, args: {
+    agentId: string;
+    capabilityId: string;
+    jobId: string;
+    authorizationUrl: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    let authorization: URL;
+    let redirect: URL;
+    try {
+      authorization = new URL(args.authorizationUrl);
+      redirect = new URL(authorization.searchParams.get("redirect_uri") || "");
+    } catch {
+      return { error: { code: -32602, message: "Invalid OAuth authorization URL" } };
+    }
+    if (
+      redirect.protocol !== "http:"
+      || !["127.0.0.1", "localhost"].includes(redirect.hostname)
+      || !redirect.port
+    ) {
+      return { error: { code: -32602, message: "OAuth redirect must use a fixed localhost HTTP port" } };
+    }
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (value: unknown) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        server.close();
+        resolve(value);
+      };
+      const server = createServer((request, response) => {
+        let callback: URL;
+        try {
+          callback = new URL(request.url || "/", redirect.origin);
+        } catch {
+          response.writeHead(400).end("Bad Request");
+          return;
+        }
+        if (callback.pathname !== redirect.pathname) {
+          response.writeHead(404).end("Not Found");
+          return;
+        }
+        const code = callback.searchParams.get("code") || "";
+        const state = callback.searchParams.get("state") || "";
+        const error = callback.searchParams.get("error") || "";
+        const body = Buffer.from(
+          "<!doctype html><meta charset=utf-8><title>小美</title><h2>授权信息已收到</h2><p>可以关闭此页面并返回小美。</p>",
+          "utf8",
+        );
+        response.writeHead(200, {
+          "Content-Type": "text/html; charset=utf-8",
+          "Content-Length": body.length,
+          "Connection": "close",
+        });
+        response.end(body);
+        void client.rpc("capability.setup.complete", {
+          capability_id: args.capabilityId,
+          job_id: args.jobId,
+          input: { code, state, error },
+        }).then(finish).catch((reason) => finish({
+          error: { code: -32099, message: reason instanceof Error ? reason.message : String(reason) },
+        }));
+      });
+      const timeout = setTimeout(() => {
+        finish({ error: { code: -32098, message: "OAuth authorization timed out" } });
+      }, 5 * 60 * 1000);
+      server.once("error", (reason) => finish({
+        error: { code: -32097, message: `Cannot start OAuth callback: ${reason.message}` },
+      }));
+      server.listen(Number(redirect.port), redirect.hostname, () => {
+        void shell.openExternal(authorization.toString()).catch((reason) => finish({
+          error: { code: -32096, message: reason instanceof Error ? reason.message : String(reason) },
+        }));
+      });
     });
   });
 

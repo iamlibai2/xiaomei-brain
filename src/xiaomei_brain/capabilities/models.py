@@ -37,6 +37,25 @@ class CapabilityComponent:
 
 
 @dataclass(frozen=True)
+class CapabilityRequirement:
+    """A dependency supplied by the host or another capability.
+
+    Components describe what implements this capability. Requirements describe
+    what that implementation expects to find in its execution environment.
+    Keeping the two separate prevents system programs and cross-capability
+    dependencies from being disguised as plugins.
+    """
+
+    id: str
+    kind: str
+    target: str
+    label: str = ""
+    required: bool = True
+    setup_section: str = ""
+    outcomes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class CapabilityOutcome:
     """A concrete result the capability can deliver."""
 
@@ -56,6 +75,7 @@ class CapabilityDefinition:
     category: str
     outcomes: tuple[CapabilityOutcome, ...]
     components: tuple[CapabilityComponent, ...]
+    requirements: tuple[CapabilityRequirement, ...] = ()
     examples: tuple[str, ...] = ()
     version: str = "1.0.0"
     source: str = "builtin"

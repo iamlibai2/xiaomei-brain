@@ -54,6 +54,7 @@ const CHANNEL_MAP = {
     getCapabilitySetupStatus: { invoke: "gateway:getCapabilitySetupStatus" },
     startCapabilitySetup: { invoke: "gateway:startCapabilitySetup" },
     cancelCapabilitySetup: { invoke: "gateway:cancelCapabilitySetup" },
+    runCapabilityOAuth: { invoke: "gateway:runCapabilityOAuth" },
     inspectCapabilityPackage: { invoke: "gateway:inspectCapabilityPackage" },
     listCapabilityPackages: { invoke: "gateway:listCapabilityPackages" },
     installCapabilityPackage: { invoke: "gateway:installCapabilityPackage" },

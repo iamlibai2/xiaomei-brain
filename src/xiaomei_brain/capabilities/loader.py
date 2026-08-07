@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+import re
 from typing import Any
 
 import yaml
@@ -12,6 +13,7 @@ from .models import (
     CapabilityComponent,
     CapabilityDefinition,
     CapabilityOutcome,
+    CapabilityRequirement,
 )
 
 logger = logging.getLogger(__name__)
@@ -25,6 +27,13 @@ VALID_COMPONENT_KINDS = frozenset({
     "tool_service",
     "runtime_probe",
 })
+
+REQUIREMENT_GROUPS = {
+    "capabilities": "capability",
+    "executables": "executable",
+    "services": "service",
+    "tools": "tool",
+}
 
 
 class CapabilityManifestLoader:
@@ -124,6 +133,54 @@ class CapabilityManifestLoader:
         if not isinstance(examples_raw, list):
             raise ValueError("examples 必须是数组")
 
+        requirements_raw = raw.get("requirements", {})
+        if requirements_raw is None:
+            requirements_raw = {}
+        if not isinstance(requirements_raw, dict):
+            raise ValueError("requirements 必须是对象")
+        unknown_groups = sorted(set(requirements_raw) - set(REQUIREMENT_GROUPS))
+        if unknown_groups:
+            raise ValueError(f"requirements 包含未知分类: {', '.join(unknown_groups)}")
+        outcome_ids = {item.id for item in outcomes}
+        requirements: list[CapabilityRequirement] = []
+        requirement_ids: set[str] = set()
+        for group, kind in REQUIREMENT_GROUPS.items():
+            values = requirements_raw.get(group, [])
+            if not isinstance(values, list):
+                raise ValueError(f"requirements.{group} 必须是数组")
+            for value in values:
+                item = {"target": value} if isinstance(value, str) else value
+                if not isinstance(item, dict):
+                    raise ValueError(f"requirements.{group} 的条目必须是字符串或对象")
+                target = str(item.get("target") or "").strip()
+                if not target:
+                    raise ValueError(f"requirements.{group} 包含空 target")
+                generated_id = re.sub(r"[^a-zA-Z0-9_-]+", "_", target).strip("_")
+                requirement_id = str(item.get("id") or f"requirement_{kind}_{generated_id}").strip()
+                if not requirement_id or requirement_id in requirement_ids:
+                    raise ValueError(f"重复或无效 requirement ID: {requirement_id or '<empty>'}")
+                selected_outcomes = tuple(
+                    str(outcome_id).strip()
+                    for outcome_id in item.get("outcomes", [])
+                    if str(outcome_id).strip()
+                )
+                unknown_outcomes = set(selected_outcomes) - outcome_ids
+                if unknown_outcomes:
+                    raise ValueError(
+                        f"requirement {requirement_id} 引用了未知 outcome: "
+                        f"{', '.join(sorted(unknown_outcomes))}"
+                    )
+                requirement_ids.add(requirement_id)
+                requirements.append(CapabilityRequirement(
+                    id=requirement_id,
+                    kind=kind,
+                    target=target,
+                    label=str(item.get("label") or target).strip(),
+                    required=item.get("required") is not False,
+                    setup_section=str(item.get("setup_section") or "").strip(),
+                    outcomes=selected_outcomes,
+                ))
+
         return CapabilityDefinition(
             id=capability_id,
             name=name,
@@ -131,6 +188,7 @@ class CapabilityManifestLoader:
             category=category,
             outcomes=tuple(outcomes),
             components=tuple(components),
+            requirements=tuple(requirements),
             examples=tuple(str(value).strip() for value in examples_raw if str(value).strip()),
             version=str(raw.get("version") or "1.0.0"),
             source=str(raw.get("source") or source),

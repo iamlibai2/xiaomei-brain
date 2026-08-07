@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+import shutil
 from typing import Any, Iterable
 
 from .loader import CapabilityManifestLoader
@@ -12,6 +13,7 @@ from .models import (
     CapabilityDefinition,
     CapabilityIssue,
     CapabilityOutcomeView,
+    CapabilityRequirement,
     CapabilityStatus,
     CapabilityView,
 )
@@ -198,11 +200,25 @@ class CapabilityRegistry:
         }
         return ascii_terms | chinese_terms
 
-    def _build_view(self, definition: CapabilityDefinition, *, person_id: str = "") -> CapabilityView:
+    def _build_view(
+        self,
+        definition: CapabilityDefinition,
+        *,
+        person_id: str = "",
+        _stack: frozenset[str] = frozenset(),
+    ) -> CapabilityView:
         enabled = self._is_enabled(definition.id)
         health = {
             component.id: self._component_health(component, person_id=person_id)
             for component in definition.components
+        }
+        requirement_health = {
+            requirement.id: self._requirement_health(
+                requirement,
+                person_id=person_id,
+                stack=_stack | {definition.id},
+            )
+            for requirement in definition.requirements
         }
 
         outcomes: list[CapabilityOutcomeView] = []
@@ -211,6 +227,13 @@ class CapabilityRegistry:
                 health[component_id].message
                 for component_id in outcome.components
                 if component_id in health and not health[component_id].available
+            ) + tuple(
+                requirement_health[requirement.id].message
+                for requirement in definition.requirements
+                if requirement.required
+                and requirement.outcomes
+                and outcome.id in requirement.outcomes
+                and not requirement_health[requirement.id].available
             ))
             outcomes.append(CapabilityOutcomeView(
                 id=outcome.id,
@@ -232,14 +255,35 @@ class CapabilityRegistry:
                     setup_target=component.target if component.setup_section else "",
                     setup_label=(f"配置{component.label}" if component.setup_section else ""),
                 ))
+        for requirement in definition.requirements:
+            state = requirement_health[requirement.id]
+            if state.message and (not state.available or state.warning):
+                issues.append(CapabilityIssue(
+                    code=state.code,
+                    message=state.message,
+                    component_id=requirement.id,
+                    setup_section=requirement.setup_section,
+                    setup_target=requirement.target if requirement.setup_section else "",
+                    setup_label=(f"配置{requirement.label}" if requirement.setup_section else ""),
+                ))
 
         required_failures = [
             health[component.id]
             for component in definition.components
             if component.required and not health[component.id].available
         ]
+        required_failures.extend(
+            requirement_health[requirement.id]
+            for requirement in definition.requirements
+            if requirement.required
+            and not requirement.outcomes
+            and not requirement_health[requirement.id].available
+        )
         available_count = sum(1 for outcome in outcomes if outcome.available)
-        warning_present = any(state.warning for state in health.values())
+        warning_present = (
+            any(state.warning for state in health.values())
+            or any(state.warning for state in requirement_health.values())
+        )
         if not enabled:
             status = CapabilityStatus.DISABLED
         elif required_failures:
@@ -254,6 +298,10 @@ class CapabilityRegistry:
                 "identity_required",
                 "runtime_missing",
                 "skill_missing",
+                "executable_missing",
+                "service_missing",
+                "capability_disabled",
+                "capability_needs_setup",
             }
             if failure_codes and failure_codes <= (setup_codes | {"tool_missing"}):
                 status = CapabilityStatus.NEEDS_SETUP
@@ -286,6 +334,17 @@ class CapabilityRegistry:
             "available": health[component.id].available,
             "status": health[component.id].code or "ready",
         } for component in definition.components)
+        technical_components += tuple({
+            "id": requirement.id,
+            "kind": f"requirement.{requirement.kind}",
+            "target": requirement.target,
+            "label": requirement.label,
+            "required": requirement.required,
+            "setup_section": requirement.setup_section,
+            "outcomes": list(requirement.outcomes),
+            "available": requirement_health[requirement.id].available,
+            "status": requirement_health[requirement.id].code or "ready",
+        } for requirement in definition.requirements)
 
         actions = tuple({
             "type": "open_settings",
@@ -293,6 +352,16 @@ class CapabilityRegistry:
             "target": component.target,
             "label": f"管理{component.label}" if health[component.id].available else f"配置{component.label}",
         } for component in definition.components if component.setup_section)
+        actions += tuple({
+            "type": "open_settings",
+            "section": requirement.setup_section,
+            "target": requirement.target,
+            "label": (
+                f"管理{requirement.label}"
+                if requirement_health[requirement.id].available
+                else f"配置{requirement.label}"
+            ),
+        } for requirement in definition.requirements if requirement.setup_section)
 
         return CapabilityView(
             id=definition.id,
@@ -310,6 +379,91 @@ class CapabilityRegistry:
             technical_components=technical_components,
             runtime_setup=any(component.kind == "runtime_probe" for component in definition.components),
         )
+
+    def _requirement_health(
+        self,
+        requirement: CapabilityRequirement,
+        *,
+        person_id: str,
+        stack: frozenset[str],
+    ) -> _ComponentHealth:
+        label = requirement.label or requirement.target
+        state: _ComponentHealth
+        if requirement.kind == "tool":
+            tool = self._tool_registry.get(requirement.target) if self._tool_registry is not None else None
+            state = (
+                _ComponentHealth(True)
+                if tool is not None
+                else _ComponentHealth(False, "tool_missing", f"依赖的{label}尚未就绪")
+            )
+        elif requirement.kind == "executable":
+            state = (
+                _ComponentHealth(True)
+                if shutil.which(requirement.target)
+                else _ComponentHealth(False, "executable_missing", f"未找到运行依赖：{label}")
+            )
+        elif requirement.kind == "capability":
+            target = self._definitions.get(requirement.target)
+            if target is None:
+                state = _ComponentHealth(False, "capability_missing", f"依赖的{label}尚未获得")
+            elif requirement.target in stack:
+                state = _ComponentHealth(False, "capability_cycle", f"能力依赖形成循环：{label}")
+            elif not self._is_enabled(requirement.target):
+                state = _ComponentHealth(False, "capability_disabled", f"依赖的{label}已关闭")
+            else:
+                target_view = self._build_view(target, person_id=person_id, _stack=stack)
+                if target_view.status == CapabilityStatus.READY:
+                    state = _ComponentHealth(True)
+                elif target_view.status == CapabilityStatus.DEGRADED:
+                    state = _ComponentHealth(
+                        True,
+                        "capability_degraded",
+                        f"依赖的{label}目前部分可用",
+                        True,
+                    )
+                elif target_view.status in {CapabilityStatus.NEEDS_SETUP, CapabilityStatus.PREPARING}:
+                    state = _ComponentHealth(
+                        False,
+                        "capability_needs_setup",
+                        f"依赖的{label}尚未就绪",
+                    )
+                else:
+                    state = _ComponentHealth(
+                        False,
+                        "capability_unavailable",
+                        f"依赖的{label}当前不可用",
+                    )
+        elif requirement.kind == "service":
+            probe = self._runtime_probes.get(requirement.target)
+            if probe is not None:
+                try:
+                    runtime_state = probe.inspect(person_id)
+                    state = _ComponentHealth(
+                        bool(runtime_state.available),
+                        str(runtime_state.code or ""),
+                        "" if runtime_state.available else str(runtime_state.message or f"{label}尚未就绪"),
+                    )
+                except Exception as exc:
+                    state = _ComponentHealth(False, "component_error", f"{label}状态异常：{exc}")
+            elif self._tool_service_configuration is not None:
+                try:
+                    service = self._tool_service_configuration.get(requirement.target)
+                except Exception:
+                    service = None
+                if isinstance(service, dict) and service.get("configured") and service.get("enabled"):
+                    state = _ComponentHealth(True)
+                elif isinstance(service, dict):
+                    state = _ComponentHealth(False, "configuration_required", f"{label}尚未配置或启用")
+                else:
+                    state = _ComponentHealth(False, "service_missing", f"依赖的{label}尚未接入")
+            else:
+                state = _ComponentHealth(False, "service_missing", f"依赖的{label}尚未接入")
+        else:
+            state = _ComponentHealth(False, "requirement_unknown", f"无法检查运行依赖：{label}")
+
+        if not requirement.required and not state.available:
+            return _ComponentHealth(False, state.code, state.message, True)
+        return state
 
     def _is_enabled(self, capability_id: str) -> bool:
         if self._configuration is None:

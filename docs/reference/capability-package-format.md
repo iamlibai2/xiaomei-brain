@@ -63,6 +63,12 @@ contents:
 
 `contents` 中声明的每个文件必须真实存在。检查器对未知清单字段采取拒绝策略，避免拼写错误被静默忽略。
 
+能力包根 `capability.yaml` 中的 `requirements` 描述归档的安装兼容性。每个
+`capabilities/*.yaml` 还可以声明 Tool、系统程序、其他能力和服务等运行时依赖，
+并可通过 `outcomes` 把依赖限制到特定交付结果。运行时依赖格式和能力开发边界见
+[Agent 能力开发边界](../architecture/09-CAPABILITY-DEVELOPMENT-BOUNDARIES.md)。当前安装器不会
+自动安装这些外部依赖；Agent 加载后由能力注册表如实展示可用、降级或不可用状态。
+
 ## checksums.json
 
 ```json

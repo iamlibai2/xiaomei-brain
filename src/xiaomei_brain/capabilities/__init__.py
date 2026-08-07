@@ -12,6 +12,7 @@ from .models import (
     CapabilityIssue,
     CapabilityOutcome,
     CapabilityOutcomeView,
+    CapabilityRequirement,
     CapabilityStatus,
     CapabilityView,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "CapabilityManifestLoader",
     "CapabilityOutcome",
     "CapabilityOutcomeView",
+    "CapabilityRequirement",
     "CapabilityRuntime",
     "CapabilityRuntimeFactory",
     "CapabilityRuntimeRegistry",

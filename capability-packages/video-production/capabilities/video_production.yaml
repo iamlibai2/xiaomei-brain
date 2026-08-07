@@ -2,13 +2,33 @@ id: video_production
 name: 视频制作
 summary: 通过项目化流程完成视频策划、分镜、素材整理、技术检查、合成和交付
 category: creative
-version: "1.0.12"
+version: "1.0.13"
 source: xiaomei.video-production
 
 examples:
   - 制作一个 30 秒的企业介绍视频
   - 把这些图片和口播合成一段竖屏短视频
   - 为这个产品制作带字幕和背景音乐的宣传片
+
+requirements:
+  tools:
+    - target: accept_assignment
+      label: 后台委托执行
+    - target: create_project
+      label: 项目工作现场
+    - target: review_project
+      label: 项目复盘
+    - target: apply_project_process_template
+      label: 交付标准应用
+    - target: submit_process_stage
+      label: 交付阶段提交
+  executables:
+    - target: ffmpeg
+      label: FFmpeg 媒体合成
+      outcomes: [prepared_assets, composed_video]
+    - target: ffprobe
+      label: FFprobe 媒体检查
+      outcomes: [prepared_assets, composed_video]
 
 components:
   - id: plugin_video_production

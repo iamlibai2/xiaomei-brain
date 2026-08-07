@@ -2,7 +2,7 @@ schema_version: 1
 package:
   id: xiaomei.video-production
   name: 视频制作
-  version: 1.0.12
+  version: 1.0.13
   description: 以项目方式完成视频策划、分镜、素材整理、技术检查和 FFmpeg 合成
   publisher: xiaomei-brain
   license: Apache-2.0

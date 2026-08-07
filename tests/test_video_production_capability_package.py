@@ -107,7 +107,7 @@ def test_installed_video_package_loads_complete_runtime(tmp_path):
     installed = service.install(archive.read_bytes(), file_name=archive.name)
     service.activate(
         "xiaomei.video-production",
-        "1.0.12",
+        "1.0.13",
         installed["package"]["sha256"],
     )
 
@@ -129,6 +129,12 @@ def test_installed_video_package_loads_complete_runtime(tmp_path):
         "compose_video_timeline",
     }
     assert [definition.id for definition in definitions] == ["video_production"]
+    assert {item.target for item in definitions[0].requirements} >= {
+        "accept_assignment",
+        "create_project",
+        "ffmpeg",
+        "ffprobe",
+    }
     assert [(item.id, len(item.definition["stages"])) for item in process_templates] == [
         ("video-full-8", 8),
         ("video-fast-3", 3),

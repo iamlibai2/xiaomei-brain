@@ -469,10 +469,16 @@ class AgentManager:
         capability_runtime_registry.register_factories(
             registry.get_runtime_factories()
         )
+        from xiaomei_brain.external_accounts import ExternalAccountStore
+        external_accounts = ExternalAccountStore(
+            brain_db_path,
+            os.path.join(self._agent_dir(agent.id), "secrets", "external-accounts.key"),
+        )
         agent._capability_runtimes = capability_runtime_registry.create_all(
             agent_dir=self._agent_dir(agent.id),
             skill_loader=skill_loader,
             execution_environment=agent.tool_execution_environment,
+            external_accounts=external_accounts,
         )
         capability_registry = CapabilityRegistry(
             plugin_registry=registry,

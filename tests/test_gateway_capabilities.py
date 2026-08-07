@@ -190,6 +190,35 @@ def test_capability_setup_status_is_scoped_to_verified_person():
     assert response["result"]["runtime"]["actions"] == ["authorize"]
 
 
+def test_capability_setup_complete_forwards_desktop_oauth_to_verified_person():
+    class Runtime:
+        def complete(self, person_id, job_id, parameters):
+            assert person_id == "person-1"
+            assert job_id == "a" * 32
+            assert parameters == {"code": "oauth-code", "state": "oauth-state"}
+            return {"id": job_id, "state": "running"}
+
+    agent = _Agent()
+    agent._capability_runtimes = {"gmail": Runtime()}
+    router = _router(agent)
+    cm.set_session("session-1", "conn-1", "person-1")
+    try:
+        response = router.dispatch(
+            "conn-1",
+            "rpc-runtime-complete",
+            "capability.setup.complete",
+            {
+                "capability_id": "gmail",
+                "job_id": "a" * 32,
+                "input": {"code": "oauth-code", "state": "oauth-state"},
+            },
+        )
+    finally:
+        cm.unregister("conn-1")
+
+    assert response["result"]["job"]["state"] == "running"
+
+
 def test_capability_package_inspect_returns_read_only_report():
     data = build_package()
     response = _router(_Agent()).dispatch(

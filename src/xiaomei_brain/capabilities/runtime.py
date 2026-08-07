@@ -24,7 +24,12 @@ class CapabilityRuntime(Protocol):
 
     def inspect(self, person_id: str = "") -> CapabilityRuntimeState: ...
 
-    def start(self, action: str, person_id: str) -> dict[str, Any]: ...
+    def start(
+        self,
+        action: str,
+        person_id: str,
+        parameters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
 
     def job_status(
         self,
@@ -36,6 +41,13 @@ class CapabilityRuntime(Protocol):
         self,
         person_id: str,
         job_id: str = "",
+    ) -> dict[str, Any] | None: ...
+
+    def complete(
+        self,
+        person_id: str,
+        job_id: str,
+        parameters: dict[str, Any],
     ) -> dict[str, Any] | None: ...
 
 
@@ -53,11 +65,24 @@ class UnavailableCapabilityRuntime:
             message=f"运行组件加载失败：{self.reason}",
         )
 
-    def start(self, action: str, person_id: str) -> dict[str, Any]:
+    def start(
+        self,
+        action: str,
+        person_id: str,
+        parameters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         raise RuntimeError(self.reason)
 
     def job_status(self, person_id: str, job_id: str = "") -> None:
         return None
 
     def cancel(self, person_id: str, job_id: str = "") -> None:
+        return None
+
+    def complete(
+        self,
+        person_id: str,
+        job_id: str,
+        parameters: dict[str, Any],
+    ) -> None:
         return None

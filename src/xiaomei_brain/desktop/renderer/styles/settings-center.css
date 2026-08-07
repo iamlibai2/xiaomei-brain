@@ -2271,6 +2271,43 @@
   flex-wrap: wrap;
 }
 
+.capability-runtime-form {
+  display: grid;
+  gap: 14px;
+}
+
+.capability-runtime-scope {
+  width: fit-content;
+  border-radius: 999px;
+  padding: 4px 9px;
+  color: var(--ui-text-muted);
+  background: var(--ui-bg-secondary);
+  font-size: 11px;
+}
+
+.capability-runtime-form .settings-field {
+  display: grid;
+  gap: 6px;
+  color: var(--ui-text-medium);
+  font-size: 12px;
+}
+
+.capability-runtime-form .settings-field input:not([type="checkbox"]),
+.capability-runtime-form .settings-field select {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid var(--ui-border-default);
+  border-radius: 8px;
+  padding: 7px 9px;
+  color: var(--ui-text-strong);
+  background: var(--ui-bg-primary);
+}
+
+.capability-runtime-form .settings-field small {
+  color: var(--ui-text-muted);
+  font-size: 11px;
+}
+
 .capability-runtime-job {
   align-items: flex-start;
   flex-wrap: wrap;

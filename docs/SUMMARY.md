@@ -17,6 +17,7 @@
 - [Metacognition 层](architecture/06-METACOGNITION.md) — 元认知
 - [Gateway 实时交互协议](architecture/07-GATEWAY-PROTOCOL.md) — Agent 与外界的实时通信协议
 - [人物、身份与访问架构](architecture/08-IDENTITY-AND-PEOPLE.md) — 多用户身份、Agent 本地人物与企业扩展
+- [Agent 能力开发边界](architecture/09-CAPABILITY-DEVELOPMENT-BOUNDARIES.md) — 能力、Skill、Plugin、Runtime 与能力包的职责边界
 
 ## 开发者指南
 

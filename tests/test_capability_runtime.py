@@ -8,11 +8,14 @@ from xiaomei_brain.capabilities import (
     CapabilityManifestLoader,
     CapabilityRuntimeRegistry,
 )
+from xiaomei_brain.external_accounts import ExternalAccountStore
 from xiaomei_brain.plugin.context import PluginContext
 from xiaomei_brain.plugin.loader import PluginLoader
 from xiaomei_brain.plugin.registry import PluginRegistry
 from xiaomei_brain.plugins.runtimes.feishu_office.adapter import register as register_feishu_runtime
 from xiaomei_brain.plugins.runtimes.feishu_office.runtime import FeishuOfficeRuntime
+from xiaomei_brain.plugins.runtimes.gmail_workspace.adapter import register as register_gmail_runtime
+from xiaomei_brain.plugins.runtimes.gmail_workspace.runtime import GmailRuntime
 from xiaomei_brain.skills.sources.base import SourceBundle
 
 
@@ -32,6 +35,25 @@ def test_feishu_plugin_registers_runtime_factory(tmp_path):
     assert isinstance(runtimes["feishu_office"], FeishuOfficeRuntime)
 
 
+def test_gmail_plugin_uses_platform_external_account_store(tmp_path):
+    plugins = PluginRegistry()
+    register_gmail_runtime(PluginContext({}, "gmail-runtime", "test", plugins))
+    registry = CapabilityRuntimeRegistry()
+    registry.register_factories(plugins.get_runtime_factories())
+    store = ExternalAccountStore(
+        tmp_path / "agent" / "memory" / "brain.db",
+        tmp_path / "agent" / "secrets" / "external-accounts.key",
+    )
+
+    runtimes = registry.create_all(
+        agent_dir=tmp_path / "agent",
+        external_accounts=store,
+    )
+
+    assert isinstance(runtimes["gmail"], GmailRuntime)
+    assert runtimes["gmail"].account_store is store
+
+
 def test_plugin_loader_discovers_feishu_runtime_plugin():
     plugins = PluginRegistry()
     loader = PluginLoader(plugins, agent_id="test")
@@ -39,9 +61,13 @@ def test_plugin_loader_discovers_feishu_runtime_plugin():
 
     loaded = loader.boot([str(runtime_plugins)])
 
-    assert [item.manifest.name for item in loaded] == ["feishu_office_runtime"]
-    assert loaded[0].status == "loaded"
+    assert [item.manifest.name for item in loaded] == [
+        "feishu_office_runtime",
+        "gmail_workspace",
+    ]
+    assert all(item.status == "loaded" for item in loaded)
     assert "feishu_office" in plugins.get_runtime_factories()
+    assert "gmail" in plugins.get_runtime_factories()
 
 
 def test_feishu_capability_only_references_runtime_probe():

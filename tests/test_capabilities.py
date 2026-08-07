@@ -134,6 +134,7 @@ def test_builtin_manifests_describe_user_facing_capabilities():
     assert [definition.id for definition in definitions] == [
         "data_analysis",
         "feishu_office",
+        "gmail",
         "office_documents",
         "web_search",
     ]
@@ -146,6 +147,10 @@ def test_builtin_manifests_describe_user_facing_capabilities():
         "pdf",
     }
     assert len({component.id for component in office.components}) == len(office.components)
+    data = next(item for item in definitions if item.id == "data_analysis")
+    assert [(item.kind, item.target, item.required) for item in data.requirements] == [
+        ("capability", "office_documents", False),
+    ]
 
 
 def test_data_analysis_capability_is_backed_by_real_plugin_tool_and_skill():
@@ -442,6 +447,7 @@ def test_agent_exposes_read_only_capability_queries():
     assert [item["id"] for item in listed] == [
         "data_analysis",
         "feishu_office",
+        "gmail",
         "office_documents",
         "web_search",
     ]
@@ -507,3 +513,79 @@ outcomes:
 
     with pytest.raises(ValueError, match="未知 component"):
         CapabilityManifestLoader.load_file(manifest)
+
+
+def test_manifest_parses_targeted_runtime_requirements(tmp_path):
+    manifest = tmp_path / "runtime-requirements.yaml"
+    manifest.write_text(
+        """
+id: media_example
+name: 媒体样例
+summary: 验证运行依赖
+category: test
+requirements:
+  tools:
+    - create_project
+  executables:
+    - target: ffmpeg
+      label: FFmpeg
+      outcomes: [delivery]
+components: []
+outcomes:
+  - id: planning
+    name: 策划
+  - id: delivery
+    name: 交付
+""".strip(),
+        encoding="utf-8",
+    )
+
+    definition = CapabilityManifestLoader.load_file(manifest)
+
+    assert [(item.kind, item.target) for item in definition.requirements] == [
+        ("executable", "ffmpeg"),
+        ("tool", "create_project"),
+    ]
+    ffmpeg = next(item for item in definition.requirements if item.target == "ffmpeg")
+    assert ffmpeg.outcomes == ("delivery",)
+
+
+def test_missing_targeted_executable_only_degrades_affected_outcome(tmp_path, monkeypatch):
+    manifest = tmp_path / "runtime-requirements.yaml"
+    manifest.write_text(
+        """
+id: media_example
+name: 媒体样例
+summary: 验证运行依赖
+category: test
+requirements:
+  executables:
+    - target: missing-media-binary
+      label: 媒体处理程序
+      outcomes: [delivery]
+components: []
+outcomes:
+  - id: planning
+    name: 策划
+  - id: delivery
+    name: 交付
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("xiaomei_brain.capabilities.registry.shutil.which", lambda _name: None)
+    registry = CapabilityRegistry(
+        plugin_registry=PluginRegistry(),
+        definitions=[CapabilityManifestLoader.load_file(manifest)],
+    )
+
+    view = registry.get("media_example")
+
+    assert view is not None and view.status == CapabilityStatus.DEGRADED
+    outcomes = {item.id: item for item in view.outcomes}
+    assert outcomes["planning"].available is True
+    assert outcomes["delivery"].available is False
+    assert outcomes["delivery"].limitations == ("未找到运行依赖：媒体处理程序",)
+    technical = view.to_dict(include_technical=True)["components"]
+    requirement = next(item for item in technical if item["target"] == "missing-media-binary")
+    assert requirement["kind"] == "requirement.executable"
+    assert requirement["outcomes"] == ["delivery"]

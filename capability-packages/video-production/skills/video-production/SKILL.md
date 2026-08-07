@@ -1,7 +1,7 @@
 ---
 name: video-production
 description: 以项目方式策划、制作、验收和交付多阶段视频，适用于企业介绍、产品宣传、科普、汇报和图文短视频
-version: 1.0.12
+version: 1.0.13
 tags: [video, project, storyboard, ffmpeg, production]
 requires_tools:
   - accept_assignment

@@ -325,8 +325,34 @@ export interface CapabilityRuntimeStatus {
     tenant_name?: string;
     profile?: string;
     scopes?: string[];
+    documentation_url?: string;
+    setup_forms?: CapabilitySetupForm[];
   };
   actions: Array<"install" | "configure" | "authorize" | "disconnect">;
+}
+
+export type CapabilitySetupAction = "install" | "configure" | "authorize" | "disconnect";
+
+export interface CapabilitySetupField {
+  key: string;
+  label: string;
+  type: "text" | "secret" | "number" | "boolean" | "select";
+  required?: boolean;
+  value?: string | number | boolean;
+  configured?: boolean;
+  placeholder?: string;
+  help?: string;
+  options?: Array<{ value: string; label: string }>;
+}
+
+export interface CapabilitySetupForm {
+  action: CapabilitySetupAction;
+  scope: "agent" | "person";
+  action_label?: string;
+  title: string;
+  description?: string;
+  submit_label?: string;
+  fields: CapabilitySetupField[];
 }
 
 export interface CapabilitySetupJob {
@@ -336,6 +362,7 @@ export interface CapabilitySetupJob {
   output: string;
   error: string;
   urls: string[];
+  callback_mode?: "desktop" | "";
   started_at: number;
   completed_at?: number | null;
 }
@@ -507,11 +534,18 @@ export interface GatewayBridge {
     agentId: string;
     capabilityId: string;
     action: "install" | "configure" | "authorize" | "disconnect";
+    input?: Record<string, string>;
   }): Promise<JsonRpcResponse>;
   cancelCapabilitySetup(args: {
     agentId: string;
     capabilityId: string;
     jobId?: string;
+  }): Promise<JsonRpcResponse>;
+  runCapabilityOAuth(args: {
+    agentId: string;
+    capabilityId: string;
+    jobId: string;
+    authorizationUrl: string;
   }): Promise<JsonRpcResponse>;
   inspectCapabilityPackage(args: { agentId: string }): Promise<JsonRpcResponse>;
   listCapabilityPackages(args: { agentId: string }): Promise<JsonRpcResponse>;

@@ -267,7 +267,12 @@ class FeishuOfficeRuntime:
         self._status_cache[cache_key] = (time.monotonic(), state)
         return state
 
-    def start(self, action: str, person_id: str) -> dict[str, Any]:
+    def start(
+        self,
+        action: str,
+        person_id: str,
+        parameters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         normalized = str(action or "").strip().lower()
         if normalized not in self._ACTIONS:
             raise ValueError(f"不支持的飞书能力操作: {normalized}")
@@ -601,6 +606,7 @@ def create_runtime(
     agent_dir: str | Path,
     skill_loader: Any = None,
     execution_environment: Any = None,
+    **_dependencies: Any,
 ) -> FeishuOfficeRuntime:
     """Create this capability runtime from generic platform dependencies."""
 

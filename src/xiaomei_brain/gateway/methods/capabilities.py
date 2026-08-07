@@ -21,6 +21,7 @@ from ..schemas import (
     CapabilityPackageInspectParams,
     CapabilityPackageUninstallParams,
     CapabilitySetupStartParams,
+    CapabilitySetupCompleteParams,
     CapabilitySetupStatusParams,
     format_error,
 )
@@ -43,6 +44,7 @@ class CapabilityMethods:
             "capability.setup.status": self.handle_setup_status,
             "capability.setup.start": self.handle_setup_start,
             "capability.setup.cancel": self.handle_setup_cancel,
+            "capability.setup.complete": self.handle_setup_complete,
             "capability.package.inspect": self.handle_package_inspect,
             "capability.package.list": self.handle_package_list,
             "capability.package.install": self.handle_package_install,
@@ -108,7 +110,7 @@ class CapabilityMethods:
         if error:
             return error
         try:
-            job = runtime.start(parsed.action, person_id)
+            job = runtime.start(parsed.action, person_id, parsed.input)
         except (ValueError, RuntimeError) as exc:
             return build_error(req_id, ErrorCode.INVALID_REQUEST, str(exc))
         return build_response(req_id, result={"job": job})
@@ -122,6 +124,25 @@ class CapabilityMethods:
         if error:
             return error
         job = runtime.cancel(person_id, parsed.job_id)
+        if job is None:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, "未找到配置任务")
+        return build_response(req_id, result={"job": job})
+
+    def handle_setup_complete(self, conn_id: str, req_id: str, params: dict) -> dict:
+        try:
+            parsed = CapabilitySetupCompleteParams.model_validate(params)
+        except Exception as exc:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, format_error(exc))
+        runtime, person_id, error = self._runtime(conn_id, req_id, parsed.capability_id)
+        if error:
+            return error
+        complete = getattr(runtime, "complete", None)
+        if not callable(complete):
+            return build_error(req_id, ErrorCode.INVALID_REQUEST, "该能力不接受外部授权回调")
+        try:
+            job = complete(person_id, parsed.job_id, parsed.input)
+        except (ValueError, RuntimeError) as exc:
+            return build_error(req_id, ErrorCode.INVALID_REQUEST, str(exc))
         if job is None:
             return build_error(req_id, ErrorCode.INVALID_PARAMS, "未找到配置任务")
         return build_response(req_id, result={"job": job})

@@ -1,0 +1,5 @@
+name: gmail_workspace
+version: "1.0.0"
+description: "Person-scoped Gmail OAuth, remote MCP tools, and direct delivery"
+kind: bundle
+entry: adapter:register

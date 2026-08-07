@@ -1,0 +1,63 @@
+id: gmail
+name: Gmail 邮箱
+summary: 在当前人物授权后，搜索、阅读、起草、发送和回复 Gmail 邮件
+category: enterprise
+version: "1.0.0"
+source: xiaomei-brain
+
+examples:
+  - 查看我最近一周未读的 Gmail 邮件并按重要程度汇总
+  - 起草一封回复客户的邮件，先让我确认再发送
+  - 把刚生成的报价文件通过 Gmail 发给指定收件人
+
+components:
+  - id: gmail_runtime
+    kind: runtime_probe
+    target: gmail
+    label: Gmail 账户连接
+    required: true
+    setup_section: capabilities
+  - id: gmail_skill
+    kind: skill
+    target: gmail
+    label: Gmail 操作方法
+    required: true
+  - id: gmail_search_tool
+    kind: tool
+    target: search_gmail
+    label: 搜索 Gmail
+    required: true
+  - id: gmail_read_tool
+    kind: tool
+    target: read_gmail
+    label: 阅读 Gmail
+    required: true
+  - id: gmail_draft_tool
+    kind: tool
+    target: create_gmail_draft
+    label: 创建 Gmail 草稿
+    required: true
+  - id: gmail_send_tool
+    kind: tool
+    target: send_gmail
+    label: 发送 Gmail
+    required: true
+  - id: gmail_reply_tool
+    kind: tool
+    target: reply_gmail
+    label: 回复 Gmail
+    required: true
+
+outcomes:
+  - id: discover
+    name: 搜索与阅读
+    description: 使用 Gmail 搜索语法定位邮件，并读取单封邮件或完整往来
+    components: [gmail_runtime, gmail_skill, gmail_search_tool, gmail_read_tool]
+  - id: draft
+    name: 草稿与确认
+    description: 先创建 Gmail 草稿，供人物确认后再发送
+    components: [gmail_runtime, gmail_skill, gmail_draft_tool]
+  - id: deliver
+    name: 发送与回复
+    description: 直接发送、回复邮件，并可附带 Agent 已生成的产物
+    components: [gmail_runtime, gmail_skill, gmail_send_tool, gmail_reply_tool]

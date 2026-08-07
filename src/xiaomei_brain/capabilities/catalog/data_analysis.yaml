@@ -10,6 +10,13 @@ examples:
   - 按地区汇总销售额并生成柱状图
   - 检查这份表格的缺失值和异常字段
 
+requirements:
+  capabilities:
+    - target: office_documents
+      label: 办公文档能力
+      required: false
+      setup_section: capabilities
+
 components:
   - id: plugin_data_analysis
     kind: plugin

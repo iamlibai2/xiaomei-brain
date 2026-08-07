@@ -214,6 +214,7 @@ class MethodRouter:
                 "capability.setup.status",
                 "capability.setup.start",
                 "capability.setup.cancel",
+                "capability.setup.complete",
             },
             "capability.package.inspect": {"capability.package.inspect"},
             "capability.package.lifecycle": {
