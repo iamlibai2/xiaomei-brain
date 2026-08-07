@@ -1398,6 +1398,39 @@ export function registerIpcHandlers(
     });
   });
 
+  ipcMain.handle("gateway:getCapabilitySetupStatus", async (_event, args: {
+    agentId: string; capabilityId: string; jobId?: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("capability.setup.status", {
+      capability_id: args.capabilityId,
+      job_id: args.jobId || "",
+    });
+  });
+
+  ipcMain.handle("gateway:startCapabilitySetup", async (_event, args: {
+    agentId: string; capabilityId: string; action: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("capability.setup.start", {
+      capability_id: args.capabilityId,
+      action: args.action,
+    });
+  });
+
+  ipcMain.handle("gateway:cancelCapabilitySetup", async (_event, args: {
+    agentId: string; capabilityId: string; jobId?: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("capability.setup.cancel", {
+      capability_id: args.capabilityId,
+      job_id: args.jobId || "",
+    });
+  });
+
   ipcMain.handle("gateway:inspectCapabilityPackage", async (_event, args: {
     agentId: string;
   }) => {

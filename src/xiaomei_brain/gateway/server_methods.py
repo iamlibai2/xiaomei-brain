@@ -210,6 +210,11 @@ class MethodRouter:
             "agent.state": {"agent.state.get"},
             "capability.read": {"capability.list", "capability.get"},
             "capability.activation": {"capability.enable", "capability.disable"},
+            "capability.setup": {
+                "capability.setup.status",
+                "capability.setup.start",
+                "capability.setup.cancel",
+            },
             "capability.package.inspect": {"capability.package.inspect"},
             "capability.package.lifecycle": {
                 "capability.package.list",

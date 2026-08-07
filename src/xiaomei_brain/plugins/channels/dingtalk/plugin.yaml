@@ -7,6 +7,9 @@ configSchema:
   type: object
   additionalProperties: false
   properties:
+    appId:
+      type: string
+      description: 通用应用标识（Desktop 保存格式）
     clientId:
       type: string
       description: 钉钉应用 Client ID（推荐）

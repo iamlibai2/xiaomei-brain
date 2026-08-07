@@ -8,6 +8,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from xiaomei_brain.tools.base import Tool, tool
+from xiaomei_brain.tools.execution_context import current_tool_execution
 
 if TYPE_CHECKING:
     from xiaomei_brain.agent.instance import AgentInstance
@@ -36,6 +37,11 @@ _SECTION_LABELS = {
 def create_capability_tools(agent: "AgentInstance") -> list[Tool]:
     """Create a truthful business-level capability inspection tool."""
 
+    def current_person_id() -> str:
+        """Use the identity sealed into this tool invocation by Agent Core."""
+        context = current_tool_execution()
+        return str(context.person_id or "").strip() if context is not None else ""
+
     @tool(
         name="capability_status",
         description=(
@@ -50,13 +56,14 @@ def create_capability_tools(agent: "AgentInstance") -> list[Tool]:
         if registry is None:
             return json.dumps({"error": "能力体系尚未初始化"}, ensure_ascii=False)
 
+        person_id = current_person_id()
         if capability_id.strip():
-            view = registry.get(capability_id.strip())
+            view = registry.get(capability_id.strip(), person_id=person_id)
             views = [view] if view is not None else []
         elif query.strip():
-            views = registry.resolve(query.strip(), limit=5)
+            views = registry.resolve(query.strip(), limit=5, person_id=person_id)
         else:
-            views = registry.list()
+            views = registry.list(person_id=person_id)
 
         values: list[dict[str, Any]] = []
         for view in views:
@@ -106,7 +113,8 @@ def create_capability_tools(agent: "AgentInstance") -> list[Tool]:
         if registry is None:
             return json.dumps({"error": "能力体系尚未初始化"}, ensure_ascii=False)
 
-        view = registry.get(capability_id.strip())
+        person_id = current_person_id()
+        view = registry.get(capability_id.strip(), person_id=person_id)
         if view is None:
             return json.dumps({"error": "没有找到该能力"}, ensure_ascii=False)
         if view.status.value in {"ready", "degraded"}:
@@ -134,7 +142,7 @@ def create_capability_tools(agent: "AgentInstance") -> list[Tool]:
         core = agent._get_agent()
         session_id = str(getattr(core, "session_id", "") or "")
         turn_id = str(getattr(core, "turn_id", "") or "")
-        user_id = str(getattr(core, "user_id", "global") or "global")
+        user_id = person_id or str(getattr(core, "user_id", "global") or "global")
         source_message_id = next((
             message.get("id")
             for message in reversed(getattr(core, "_last_all_messages", []) or [])

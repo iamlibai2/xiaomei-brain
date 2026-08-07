@@ -77,6 +77,14 @@ class PluginContext:
         self._registry.register_channel(name, adapter)
         self.logger.info("频道已注册: %s", name)
 
+    def register_channel_factory(
+        self,
+        name: str,
+        factory: Callable[[dict[str, Any]], Any],
+    ) -> None:
+        """Register a Channel-owned constructor for runtime reconfiguration."""
+        self._registry.register_channel_factory(name, factory)
+
     # ── Provider ─────────────────────────────────────────────────
 
     def register_provider(self, provider: Any) -> None:
@@ -88,6 +96,22 @@ class PluginContext:
         provider_id = getattr(provider, "provider_id", "unknown")
         self._registry.register_provider(provider_id, provider)
         self.logger.info("Provider 已注册: %s", provider_id)
+
+    # ── Managed Runtime ──────────────────────────────────────────
+
+    def register_runtime(
+        self,
+        runtime_id: str,
+        factory: Callable[..., Any],
+    ) -> None:
+        """Register a managed runtime factory without constructing it yet.
+
+        Plugins are loaded before every Agent dependency is ready.  Keeping a
+        factory here lets the runtime manager inject the Skill loader,
+        execution environment, and Agent directory at the proper time.
+        """
+        self._registry.register_runtime_factory(runtime_id, factory)
+        self.logger.info("Runtime 已注册: %s", runtime_id)
 
     # ── Tool ─────────────────────────────────────────────────────
 

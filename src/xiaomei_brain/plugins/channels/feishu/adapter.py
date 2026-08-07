@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 def register(ctx):
     """插件入口：注册飞书频道。"""
+    ctx.register_channel_factory("feishu", create_adapter)
     app_id = ctx.config.get("appId") or ctx.config.get("app_id") or os.getenv("FEISHU_APP_ID", "")
     app_secret = ctx.config.get("appSecret") or ctx.config.get("app_secret") or os.getenv("FEISHU_APP_SECRET", "")
     if not app_id or not app_secret:

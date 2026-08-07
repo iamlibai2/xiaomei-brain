@@ -2212,6 +2212,93 @@
   display: block;
 }
 
+.capability-runtime-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: 10px;
+  background: var(--ui-bg-secondary);
+}
+
+.capability-runtime-panel.is-loading {
+  color: var(--ui-text-muted);
+  font-size: 13px;
+}
+
+.capability-runtime-summary,
+.capability-runtime-actions,
+.capability-runtime-job {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.capability-runtime-summary > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.capability-runtime-summary strong {
+  color: var(--ui-text-strong);
+  font-size: 13px;
+}
+
+.capability-runtime-summary span:not(.capability-runtime-mark) {
+  color: var(--ui-text-muted);
+  font-size: 12px;
+}
+
+.capability-runtime-mark {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--ui-text-muted);
+  background: var(--ui-bg-primary);
+}
+
+.capability-runtime-mark.ready {
+  color: var(--ui-color-text-success-default);
+  background: var(--ui-badge-success-bg);
+}
+
+.capability-runtime-actions {
+  flex-wrap: wrap;
+}
+
+.capability-runtime-job {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  color: var(--ui-text-medium);
+  font-size: 12px;
+}
+
+.capability-runtime-job button {
+  border: 0;
+  padding: 0;
+  color: var(--ui-text-link);
+  background: transparent;
+  cursor: pointer;
+}
+
+.capability-runtime-job pre {
+  width: 100%;
+  max-height: 140px;
+  margin: 0;
+  padding: 9px 10px;
+  overflow: auto;
+  border-radius: 8px;
+  color: var(--ui-text-medium);
+  background: var(--ui-bg-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .capability-setup strong {
   color: #936000;
   font-size: 11px;

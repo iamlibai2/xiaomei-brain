@@ -188,6 +188,7 @@ class PluginRegistry:
 
     def __init__(self) -> None:
         self._channels: dict[str, Any] = {}
+        self._channel_factories: dict[str, Callable[[dict[str, Any]], Any]] = {}
         self._providers: dict[str, Any] = {}
         self._tools = ToolRegistry()
         self._agent_tools: list[Any] = []  # tools.base.Tool 对象
@@ -200,11 +201,47 @@ class PluginRegistry:
         self._document_extractors: list[Any] = []
         self._document_writers: dict[str, Any] = {}
         self._skill_directories: list[str] = []
+        self._runtime_factories: dict[str, Callable[..., Any]] = {}
 
     # ── Channel ─────────────────────────────────────────────────
 
     def register_channel(self, name: str, adapter: Any) -> None:
         self._channels[name] = adapter
+
+    def register_channel_factory(
+        self,
+        name: str,
+        factory: Callable[[dict[str, Any]], Any],
+    ) -> None:
+        """Register the adapter constructor used for hot configuration."""
+        self._channel_factories[name] = factory
+
+    def get_channel_factory(
+        self,
+        name: str,
+    ) -> Callable[[dict[str, Any]], Any] | None:
+        return self._channel_factories.get(name)
+
+    # ── Managed Runtime ──────────────────────────────────────────
+
+    def register_runtime_factory(
+        self,
+        runtime_id: str,
+        factory: Callable[..., Any],
+    ) -> None:
+        """Register a factory for an externally managed runtime component."""
+        normalized = str(runtime_id).strip()
+        if not normalized:
+            raise ValueError("Runtime must define a non-empty id")
+        if not callable(factory):
+            raise ValueError(f"Runtime factory is not callable: {normalized}")
+        if normalized in self._runtime_factories:
+            raise ValueError(f"Duplicate runtime: {normalized}")
+        self._runtime_factories[normalized] = factory
+
+    def get_runtime_factories(self) -> dict[str, Callable[..., Any]]:
+        """Return factories registered by loaded plugins."""
+        return dict(self._runtime_factories)
 
     def get_channel(self, name: str) -> Any | None:
         return self._channels.get(name)

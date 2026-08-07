@@ -17,6 +17,7 @@
     "start": "electron ."
   },
   "dependencies": {
+    "@larksuite/cli": "1.0.84",
     "docx-preview": "^0.3.7",
     "extract-zip": "^2.0.1",
     "immer": "^11.1.11",

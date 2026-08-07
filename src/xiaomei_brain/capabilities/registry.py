@@ -41,6 +41,7 @@ class CapabilityRegistry:
         dynamic_tool_loader: Any | None = None,
         configuration: Any | None = None,
         tool_service_configuration: Any | None = None,
+        runtime_probes: dict[str, Any] | None = None,
         definitions: Iterable[CapabilityDefinition] | None = None,
     ) -> None:
         self._plugin_registry = plugin_registry
@@ -49,18 +50,19 @@ class CapabilityRegistry:
         self._dynamic_tool_loader = dynamic_tool_loader
         self._configuration = configuration
         self._tool_service_configuration = tool_service_configuration
+        self._runtime_probes = dict(runtime_probes or {})
         loaded = list(definitions) if definitions is not None else CapabilityManifestLoader().load()
         self._definitions = {definition.id: definition for definition in loaded}
         self._apply_activation_policy()
 
-    def list(self) -> list[CapabilityView]:
-        return [self._build_view(self._definitions[key]) for key in sorted(self._definitions)]
+    def list(self, *, person_id: str = "") -> list[CapabilityView]:
+        return [self._build_view(self._definitions[key], person_id=person_id) for key in sorted(self._definitions)]
 
-    def get(self, capability_id: str) -> CapabilityView | None:
+    def get(self, capability_id: str, *, person_id: str = "") -> CapabilityView | None:
         definition = self._definitions.get(str(capability_id).strip())
-        return self._build_view(definition) if definition else None
+        return self._build_view(definition, person_id=person_id) if definition else None
 
-    def set_enabled(self, capability_id: str, enabled: bool) -> CapabilityView | None:
+    def set_enabled(self, capability_id: str, enabled: bool, *, person_id: str = "") -> CapabilityView | None:
         """Persist activation and immediately update Skill/Tool visibility."""
         normalized = str(capability_id or "").strip()
         definition = self._definitions.get(normalized)
@@ -70,17 +72,17 @@ class CapabilityRegistry:
             raise RuntimeError("能力配置服务尚未初始化")
         self._configuration.set_enabled(normalized, enabled)
         self._apply_activation_policy()
-        return self._build_view(definition)
+        return self._build_view(definition, person_id=person_id)
 
     def bind_dynamic_tool_loader(self, loader: Any | None) -> None:
         """Attach the loader created after capability tools enter the index."""
         self._dynamic_tool_loader = loader
         self._apply_activation_policy()
 
-    def to_list(self, *, include_technical: bool = False) -> list[dict[str, Any]]:
-        return [view.to_dict(include_technical=include_technical) for view in self.list()]
+    def to_list(self, *, include_technical: bool = False, person_id: str = "") -> list[dict[str, Any]]:
+        return [view.to_dict(include_technical=include_technical) for view in self.list(person_id=person_id)]
 
-    def resolve(self, query: str, *, limit: int = 3) -> list[CapabilityView]:
+    def resolve(self, query: str, *, limit: int = 3, person_id: str = "") -> list[CapabilityView]:
         """Return capabilities lexically relevant to one task description.
 
         Skill and Tool retrieval remain embedding based.  This inexpensive
@@ -108,13 +110,13 @@ class CapabilityRegistry:
                 if term in searchable
             )
             if score:
-                ranked.append((score, definition.id, self._build_view(definition)))
+                ranked.append((score, definition.id, self._build_view(definition, person_id=person_id)))
         ranked.sort(key=lambda item: (-item[0], item[1]))
         return [item[2] for item in ranked[:max(1, limit)]]
 
-    def build_context(self, query: str, *, limit: int = 3) -> str:
+    def build_context(self, query: str, *, limit: int = 3, person_id: str = "") -> str:
         """Build a compact runtime-truth block for the current conversation."""
-        views = self.resolve(query, limit=limit)
+        views = self.resolve(query, limit=limit, person_id=person_id)
         if not views:
             return ""
         labels = {
@@ -196,10 +198,10 @@ class CapabilityRegistry:
         }
         return ascii_terms | chinese_terms
 
-    def _build_view(self, definition: CapabilityDefinition) -> CapabilityView:
+    def _build_view(self, definition: CapabilityDefinition, *, person_id: str = "") -> CapabilityView:
         enabled = self._is_enabled(definition.id)
         health = {
-            component.id: self._component_health(component)
+            component.id: self._component_health(component, person_id=person_id)
             for component in definition.components
         }
 
@@ -246,10 +248,14 @@ class CapabilityRegistry:
                 component.kind == "tool_service" and health[component.id].available
                 for component in definition.components
             )
-            if (
-                "configuration_required" in failure_codes
-                and failure_codes <= {"configuration_required", "tool_missing"}
-            ):
+            setup_codes = {
+                "configuration_required",
+                "authorization_required",
+                "identity_required",
+                "runtime_missing",
+                "skill_missing",
+            }
+            if failure_codes and failure_codes <= (setup_codes | {"tool_missing"}):
                 status = CapabilityStatus.NEEDS_SETUP
             elif "tool_missing" in failure_codes and service_configured:
                 status = CapabilityStatus.PREPARING
@@ -302,6 +308,7 @@ class CapabilityRegistry:
             version=definition.version,
             source=definition.source,
             technical_components=technical_components,
+            runtime_setup=any(component.kind == "runtime_probe" for component in definition.components),
         )
 
     def _is_enabled(self, capability_id: str) -> bool:
@@ -340,7 +347,7 @@ class CapabilityRegistry:
         if callable(set_disabled_tools):
             set_disabled_tools(disabled_tools)
 
-    def _component_health(self, component: CapabilityComponent) -> _ComponentHealth:
+    def _component_health(self, component: CapabilityComponent, *, person_id: str = "") -> _ComponentHealth:
         label = component.label or component.id
         if component.kind == "plugin":
             plugin = self._plugin_registry.get_plugin(component.target)
@@ -380,6 +387,16 @@ class CapabilityRegistry:
             if not service.get("enabled"):
                 return _ComponentHealth(False, "configuration_required", f"{label}尚未启用")
             return _ComponentHealth(True)
+
+        if component.kind == "runtime_probe":
+            probe = self._runtime_probes.get(component.target)
+            if probe is None:
+                return _ComponentHealth(False, "component_missing", f"{label}状态检查器尚未加载")
+            try:
+                state = probe.inspect(person_id)
+            except Exception as exc:
+                return _ComponentHealth(False, "component_error", f"{label}状态异常：{exc}")
+            return _ComponentHealth(bool(state.available), str(state.code), str(state.message))
 
         if component.kind == "document_writer":
             writer = self._plugin_registry.get_document_writer(component.target)

@@ -17,6 +17,7 @@ from xiaomei_brain.agent.instance import AgentInstance
 from xiaomei_brain.plugin.loader import PluginLoader
 from xiaomei_brain.plugin.registry import PluginRegistry
 from xiaomei_brain.tools.registry import ToolRegistry
+from xiaomei_brain.tools.execution_context import bind_tool_execution
 from xiaomei_brain.consciousness.event_hub import EventHub
 
 
@@ -132,6 +133,7 @@ def test_builtin_manifests_describe_user_facing_capabilities():
 
     assert [definition.id for definition in definitions] == [
         "data_analysis",
+        "feishu_office",
         "office_documents",
         "web_search",
     ]
@@ -239,6 +241,59 @@ def test_agent_can_inspect_business_capabilities_without_technical_leakage():
     assert result["matched"][0]["status_label"] == "可用"
     assert "PowerPoint 演示文稿" in result["matched"][0]["available_outcomes"]
     assert "plugin" not in json.dumps(result, ensure_ascii=False).lower()
+
+
+def test_capability_status_uses_person_from_sealed_tool_context():
+    calls = []
+
+    class _Registry:
+        def resolve(self, query, *, limit, person_id):
+            calls.append((query, limit, person_id))
+            return []
+
+    agent = AgentInstance(id="test", name="测试")
+    agent._capability_registry = _Registry()
+    capability_tool = create_capability_tools(agent)[0]
+
+    with bind_tool_execution(
+        tool_call_id="call-1",
+        tool_name="capability_status",
+        arguments={"query": "飞书文档"},
+        artifact_callback=None,
+        person_id="person-verified",
+    ):
+        capability_tool.execute(query="飞书文档")
+
+    assert calls == [("飞书文档", 5, "person-verified")]
+
+
+def test_capability_setup_uses_person_from_sealed_tool_context():
+    calls = []
+    ready_view = SimpleNamespace(status=SimpleNamespace(value="ready"), id="feishu_office")
+
+    class _Registry:
+        def get(self, capability_id, *, person_id):
+            calls.append((capability_id, person_id))
+            return ready_view
+
+    agent = AgentInstance(id="test", name="测试")
+    agent._capability_registry = _Registry()
+    setup_tool = next(
+        item for item in create_capability_tools(agent)
+        if item.name == "request_capability_setup"
+    )
+
+    with bind_tool_execution(
+        tool_call_id="call-2",
+        tool_name="request_capability_setup",
+        arguments={"capability_id": "feishu_office"},
+        artifact_callback=None,
+        person_id="person-verified",
+    ):
+        result = json.loads(setup_tool.execute(capability_id="feishu_office"))
+
+    assert calls == [("feishu_office", "person-verified")]
+    assert result["status"] == "ready"
 
 
 def test_agent_can_publish_non_mutating_capability_setup_request(tmp_path):
@@ -386,6 +441,7 @@ def test_agent_exposes_read_only_capability_queries():
 
     assert [item["id"] for item in listed] == [
         "data_analysis",
+        "feishu_office",
         "office_documents",
         "web_search",
     ]

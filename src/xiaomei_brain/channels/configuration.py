@@ -47,8 +47,9 @@ class ChannelConfigurationService:
             ),
         }
 
-    def configure_feishu(
+    def configure(
         self,
+        channel: str,
         app_id: str,
         app_secret: str,
         *,
@@ -56,23 +57,7 @@ class ChannelConfigurationService:
         account_id: str = "default",
     ) -> dict[str, Any]:
         return self._configure(
-            "feishu",
-            app_id,
-            app_secret,
-            display_name=display_name,
-            account_id=account_id,
-        )
-
-    def configure_dingtalk(
-        self,
-        app_id: str,
-        app_secret: str,
-        *,
-        display_name: str = "",
-        account_id: str = "default",
-    ) -> dict[str, Any]:
-        return self._configure(
-            "dingtalk",
+            channel,
             app_id,
             app_secret,
             display_name=display_name,
@@ -111,11 +96,9 @@ class ChannelConfigurationService:
         if not isinstance(accounts, dict):
             accounts = {}
             channel["accounts"] = accounts
-        id_key = "clientId" if channel_name == "dingtalk" else "appId"
-        secret_key = "clientSecret" if channel_name == "dingtalk" else "appSecret"
         accounts[account_id] = {
-            id_key: app_id,
-            secret_key: app_secret,
+            "appId": app_id,
+            "appSecret": app_secret,
             "displayName": display_name.strip(),
             "accountId": account_id,
         }

@@ -16,6 +16,12 @@ from .models import (
     CapabilityView,
 )
 from .registry import CapabilityRegistry
+from .runtime import (
+    CapabilityRuntime,
+    CapabilityRuntimeState,
+    UnavailableCapabilityRuntime,
+)
+from .runtime_registry import CapabilityRuntimeFactory, CapabilityRuntimeRegistry
 from .tools import create_capability_tools
 
 __all__ = [
@@ -26,8 +32,13 @@ __all__ = [
     "CapabilityManifestLoader",
     "CapabilityOutcome",
     "CapabilityOutcomeView",
+    "CapabilityRuntime",
+    "CapabilityRuntimeFactory",
+    "CapabilityRuntimeRegistry",
+    "CapabilityRuntimeState",
     "CapabilityRegistry",
     "CapabilityStatus",
     "CapabilityView",
+    "UnavailableCapabilityRuntime",
     "create_capability_tools",
 ]

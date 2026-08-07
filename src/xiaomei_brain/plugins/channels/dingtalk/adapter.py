@@ -29,7 +29,12 @@ def register(ctx):
 
     兼容新旧命名：clientId/clientSecret 优先，appKey/appSecret 兜底。
     """
-    client_id = ctx.config.get("clientId") or ctx.config.get("appKey", "")
+    ctx.register_channel_factory("dingtalk", create_adapter)
+    client_id = (
+        ctx.config.get("clientId")
+        or ctx.config.get("appId")
+        or ctx.config.get("appKey", "")
+    )
     client_secret = ctx.config.get("clientSecret") or ctx.config.get("appSecret", "")
 
     if not client_id or not client_secret:

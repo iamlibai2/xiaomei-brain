@@ -8,6 +8,7 @@ import type {
 } from "../../types";
 import { Button, Icon, type IconName } from "../ui";
 import { notifyCapabilityStatusChanged } from "./events";
+import { CapabilityRuntimeSetup } from "./CapabilityRuntimeSetup";
 
 interface Props {
   agentId: string;
@@ -316,11 +317,13 @@ export function CapabilitySettingsPanel({
         {capabilities.map((capability) => (
           <CapabilityCard
             key={capability.id}
+            agentId={agentId}
             capability={capability}
             changing={changingId === capability.id}
             highlighted={highlightedId === capability.id}
             onToggle={(enabled) => void setEnabled(capability.id, enabled)}
             onNavigate={onNavigate}
+            onRuntimeChanged={() => void load()}
           />
         ))}
       </div>
@@ -519,21 +522,29 @@ function packageRuntimeLabel(item: InstalledCapabilityPackage, t: (key: string) 
 }
 
 function CapabilityCard({
+  agentId,
   capability,
   changing,
   highlighted,
   onToggle,
   onNavigate,
+  onRuntimeChanged,
 }: {
+  agentId: string;
   capability: AgentCapability;
   changing: boolean;
   highlighted: boolean;
   onToggle: (enabled: boolean) => void;
   onNavigate: (section: string, target?: string) => void;
+  onRuntimeChanged: () => void;
 }) {
   const { t } = useTranslation();
-  const issueWithAction = capability.issues.find((issue) => issue.action);
-  const setupAction = capability.actions?.[0] || issueWithAction?.action;
+  const issueWithAction = capability.runtime_setup
+    ? undefined
+    : capability.issues.find((issue) => issue.action);
+  const setupAction = capability.runtime_setup
+    ? undefined
+    : capability.actions?.[0] || issueWithAction?.action;
   return (
     <section
       className={`settings-card capability-card ${highlighted ? "is-targeted" : ""}`}
@@ -577,6 +588,14 @@ function CapabilityCard({
           </div>
         ))}
       </div>
+
+      {capability.runtime_setup && capability.enabled && (
+        <CapabilityRuntimeSetup
+          agentId={agentId}
+          capabilityId={capability.id}
+          onChanged={onRuntimeChanged}
+        />
+      )}
 
       {setupAction && capability.enabled && issueWithAction && (
         <div className="capability-setup">

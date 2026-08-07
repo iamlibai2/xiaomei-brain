@@ -8,7 +8,11 @@ from typing import Any
 
 import yaml
 
-from .models import CapabilityComponent, CapabilityDefinition, CapabilityOutcome
+from .models import (
+    CapabilityComponent,
+    CapabilityDefinition,
+    CapabilityOutcome,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +23,7 @@ VALID_COMPONENT_KINDS = frozenset({
     "document_extractor",
     "document_writer",
     "tool_service",
+    "runtime_probe",
 })
 
 

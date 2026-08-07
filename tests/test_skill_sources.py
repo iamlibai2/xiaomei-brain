@@ -163,6 +163,7 @@ class TestGitHubSourceAdapter:
         from xiaomei_brain.skills.sources.github import GitHubSourceAdapter
         adapter = GitHubSourceAdapter()
         assert adapter.can_handle("owner/repo/path/to/skill:dev")
+        assert adapter.can_handle("owner/repo/path/to/skill:v1.0.84")
 
     def test_resolve_simple(self):
         from xiaomei_brain.skills.sources.github import GitHubSourceAdapter
@@ -188,6 +189,12 @@ class TestGitHubSourceAdapter:
         url = adapter.resolve("owner/repo/path:dev")
         assert url == "https://raw.githubusercontent.com/owner/repo/dev/path/SKILL.md"
 
+    def test_resolve_with_version_tag(self):
+        from xiaomei_brain.skills.sources.github import GitHubSourceAdapter
+        adapter = GitHubSourceAdapter()
+        url = adapter.resolve("owner/repo/path:v1.0.84")
+        assert url == "https://raw.githubusercontent.com/owner/repo/v1.0.84/path/SKILL.md"
+
     def test_resolve_invalid(self):
         from xiaomei_brain.skills.sources.github import GitHubSourceAdapter
         adapter = GitHubSourceAdapter()
@@ -199,6 +206,21 @@ class TestGitHubSourceAdapter:
         adapter = GitHubSourceAdapter()
         url = adapter._build_url("owner/repo", "https://custom.mirror.com")
         assert url == "https://custom.mirror.com/owner/repo/main/SKILL.md"
+
+    def test_fetch_auxiliary_file_uses_requested_ref(self, mock_requests):
+        from xiaomei_brain.skills.sources.github import GitHubSourceAdapter
+
+        response = Mock(status_code=200, text="versioned content")
+        mock_requests.return_value = response
+
+        content = GitHubSourceAdapter._fetch_file_content(
+            "owner", "repo", "references/guide.md", "v1.0.84"
+        )
+
+        assert content == "versioned content"
+        assert mock_requests.call_args.args[0] == (
+            "https://raw.githubusercontent.com/owner/repo/v1.0.84/references/guide.md"
+        )
 
     def test_fetch_success(self, mock_requests):
         from xiaomei_brain.skills.sources.github import GitHubSourceAdapter

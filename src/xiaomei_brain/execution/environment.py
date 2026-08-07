@@ -5,7 +5,7 @@ from __future__ import annotations
 import subprocess
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,25 @@ class ExecutionEnvironment(ABC):
     backend: str
     display_name: str
     strong_isolation: bool = False
+
+    def register_environment_provider(
+        self,
+        provider: Callable[[dict[str, str], str, str], None],
+    ) -> None:
+        """Allow plugin runtimes to add per-tool process environment safely."""
+        providers = self.__dict__.setdefault("_environment_providers", [])
+        if provider not in providers:
+            providers.append(provider)
+
+    def apply_environment_providers(
+        self,
+        environment: dict[str, str],
+        cwd: str,
+        command: str,
+    ) -> dict[str, str]:
+        for provider in self.__dict__.get("_environment_providers", ()):
+            provider(environment, cwd, command)
+        return environment
 
     @property
     @abstractmethod

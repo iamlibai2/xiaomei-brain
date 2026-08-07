@@ -16,11 +16,7 @@ class FakeRuntime:
     def __init__(self):
         self.applied = None
 
-    def apply_feishu(self, config):
-        self.applied = config
-        return FakeAdapter()
-
-    def apply_dingtalk(self, config):
+    def apply(self, _channel, config):
         self.applied = config
         return FakeAdapter()
 
@@ -92,7 +88,7 @@ def test_channel_rpc_does_not_return_configured_secret(tmp_path):
         _identity_link_service=None,
         _people_service=None,
     )
-    living._channel_configuration.configure_feishu("cli_demo", "do-not-return")
+    living._channel_configuration.configure("feishu", "cli_demo", "do-not-return")
     methods = ChannelMethods(living, {})
 
     response = methods.handle_get("desktop", "1", {"channel": "feishu"})
@@ -123,7 +119,7 @@ def test_channel_rpc_configures_dingtalk_and_links_person(tmp_path):
         "account_id": "default",
     })
     assert configured["result"]["configured"] is True
-    assert living._channel_runtime.applied["clientSecret"] == "ding-secret"
+    assert living._channel_runtime.applied["appSecret"] == "ding-secret"
 
     link = methods.handle_link_begin(
         "desktop", "2", {"provider": "dingtalk"},

@@ -447,6 +447,7 @@ class AgentManager:
             CapabilityConfigurationService,
             CapabilityManifestLoader,
             CapabilityRegistry,
+            CapabilityRuntimeRegistry,
             create_capability_tools,
         )
         capability_configuration = CapabilityConfigurationService(
@@ -464,12 +465,22 @@ class AgentManager:
         capability_definitions = CapabilityManifestLoader(
             capability_directories,
         ).load()
+        capability_runtime_registry = CapabilityRuntimeRegistry()
+        capability_runtime_registry.register_factories(
+            registry.get_runtime_factories()
+        )
+        agent._capability_runtimes = capability_runtime_registry.create_all(
+            agent_dir=self._agent_dir(agent.id),
+            skill_loader=skill_loader,
+            execution_environment=agent.tool_execution_environment,
+        )
         capability_registry = CapabilityRegistry(
             plugin_registry=registry,
             tool_registry=tools,
             skill_loader=skill_loader,
             configuration=capability_configuration,
             tool_service_configuration=tool_service_configuration,
+            runtime_probes=agent._capability_runtimes,
             definitions=capability_definitions,
         )
         agent._capability_registry = capability_registry

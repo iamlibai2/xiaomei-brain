@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import locale
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -171,7 +172,7 @@ class ProtectedHostEnvironment(ExecutionEnvironment):
                 ]
             )
             environment["VIRTUAL_ENV"] = str(environment_dir)
-        return environment
+        return self.apply_environment_providers(environment, cwd, command)
 
     def _invocation(self, command: str) -> list[str]:
         executable, prefix = self._find_shell()

@@ -12,6 +12,7 @@ import yaml
 from xiaomei_brain.gateway.protocol import ErrorCode
 from xiaomei_brain.gateway.server_methods import MethodRouter
 from xiaomei_brain.capability_packages import CapabilityPackageService
+from xiaomei_brain.gateway.connection import cm
 
 
 
@@ -66,19 +67,19 @@ class _Agent:
     def __init__(self) -> None:
         self._capability_registry = object()
 
-    def list_capabilities(self) -> list[dict]:
+    def list_capabilities(self, *, person_id: str = "") -> list[dict]:
         return [{
             "id": "office_documents",
             "name": "办公文档",
             "status": "degraded",
         }]
 
-    def get_capability(self, capability_id: str) -> dict | None:
+    def get_capability(self, capability_id: str, *, person_id: str = "") -> dict | None:
         if capability_id != "office_documents":
             return None
         return self.list_capabilities()[0]
 
-    def set_capability_enabled(self, capability_id: str, enabled: bool) -> dict | None:
+    def set_capability_enabled(self, capability_id: str, enabled: bool, *, person_id: str = "") -> dict | None:
         capability = self.get_capability(capability_id)
         if capability is None:
             return None
@@ -150,8 +151,43 @@ def test_gateway_advertises_capability_read_support():
 
     assert "capability.read" in router._capabilities()
     assert "capability.activation" in router._capabilities()
+    assert "capability.setup" in router._capabilities()
     assert "capability.package.inspect" in router._capabilities()
     assert "capability.package.lifecycle" in router._capabilities()
+
+
+def test_capability_setup_status_is_scoped_to_verified_person():
+    class Runtime:
+        def inspect(self, person_id):
+            assert person_id == "person-1"
+            return SimpleNamespace(
+                available=False,
+                code="authorization_required",
+                message="需要授权",
+                details={"authenticated": False},
+                actions=("authorize",),
+            )
+
+        def job_status(self, person_id, job_id):
+            assert person_id == "person-1"
+            return None
+
+    agent = _Agent()
+    agent._capability_runtimes = {"feishu_office": Runtime()}
+    router = _router(agent)
+    cm.set_session("session-1", "conn-1", "person-1")
+    try:
+        response = router.dispatch(
+            "conn-1",
+            "rpc-runtime",
+            "capability.setup.status",
+            {"capability_id": "feishu_office"},
+        )
+    finally:
+        cm.unregister("conn-1")
+
+    assert response["result"]["runtime"]["code"] == "authorization_required"
+    assert response["result"]["runtime"]["actions"] == ["authorize"]
 
 
 def test_capability_package_inspect_returns_read_only_report():

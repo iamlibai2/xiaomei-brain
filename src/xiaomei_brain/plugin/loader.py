@@ -69,10 +69,10 @@ class PluginLoader:
     def _default_dirs(self) -> list[str]:
         """默认插件扫描目录。"""
         dirs: list[str] = []
-        # 统一插件目录（plugins/ 下按四类组织）
+        # 统一插件目录。Plugin 是代码扩展载体，各目录仅按实现类型分组。
         import xiaomei_brain.plugins as _plugins
         plugins_root = Path(_plugins.__file__).parent
-        for category in ("channels", "providers", "body", "tools"):
+        for category in ("channels", "providers", "body", "tools", "runtimes"):
             category_dir = plugins_root / category
             if category_dir.is_dir():
                 dirs.append(str(category_dir))

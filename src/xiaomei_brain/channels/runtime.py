@@ -9,28 +9,17 @@ class ChannelRuntimeService:
     def __init__(self, living: Any) -> None:
         self.living = living
 
-    def apply_feishu(self, config: dict[str, Any]):
-        from xiaomei_brain.plugins.channels.feishu.adapter import create_adapter
-
-        adapter = create_adapter(config)
-        gateway = self.living._gateway_inbound
-        gateway.replace_channel("feishu", adapter)
-        self.living._router.register_adapter("feishu", adapter)
+    def apply(self, channel: str, config: dict[str, Any]):
         registry = getattr(self.living, "_registry", None)
-        if registry is not None:
-            registry.register_channel("feishu", adapter)
-        return adapter
-
-    def apply_dingtalk(self, config: dict[str, Any]):
-        from xiaomei_brain.plugins.channels.dingtalk.adapter import create_adapter
-
-        adapter = create_adapter(config)
+        factory = registry.get_channel_factory(channel) if registry is not None else None
+        if not callable(factory):
+            raise ValueError(f"Channel '{channel}' does not support runtime configuration")
+        adapter = factory(config)
         gateway = self.living._gateway_inbound
-        gateway.replace_channel("dingtalk", adapter)
-        self.living._router.register_adapter("dingtalk", adapter)
-        registry = getattr(self.living, "_registry", None)
+        gateway.replace_channel(channel, adapter)
+        self.living._router.register_adapter(channel, adapter)
         if registry is not None:
-            registry.register_channel("dingtalk", adapter)
+            registry.register_channel(channel, adapter)
         return adapter
 
     def remove(self, channel: str) -> bool:

@@ -19,7 +19,8 @@ def test_configure_feishu_preserves_other_agent_config(tmp_path):
     )
     service = ChannelConfigurationService("xiaomei", tmp_path)
 
-    result = service.configure_feishu(
+    result = service.configure(
+        "feishu",
         "cli_app",
         "secret-value",
         display_name="小美飞书机器人",
@@ -40,16 +41,17 @@ def test_configure_feishu_preserves_other_agent_config(tmp_path):
 def test_same_feishu_app_cannot_be_bound_to_two_agents(tmp_path):
     first = ChannelConfigurationService("xiaomei", tmp_path)
     second = ChannelConfigurationService("xiaoming", tmp_path)
-    first.configure_feishu("cli_shared", "one")
+    first.configure("feishu", "cli_shared", "one")
 
     with pytest.raises(ValueError, match="xiaomei"):
-        second.configure_feishu("cli_shared", "two")
+        second.configure("feishu", "cli_shared", "two")
 
 
 def test_configure_dingtalk_uses_client_credentials_and_binding(tmp_path):
     service = ChannelConfigurationService("xiaomei", tmp_path)
 
-    public = service.configure_dingtalk(
+    public = service.configure(
+        "dingtalk",
         "ding-client",
         "ding-secret",
         display_name="小美钉钉机器人",
@@ -59,13 +61,13 @@ def test_configure_dingtalk_uses_client_credentials_and_binding(tmp_path):
     assert public["app_id"] == "ding-client"
     assert public["secret_configured"] is True
     raw = service.raw_account("dingtalk")
-    assert raw["clientId"] == "ding-client"
-    assert raw["clientSecret"] == "ding-secret"
+    assert raw["appId"] == "ding-client"
+    assert raw["appSecret"] == "ding-secret"
 
 
 def test_remove_channel_preserves_unrelated_bindings(tmp_path):
     service = ChannelConfigurationService("xiaomei", tmp_path)
-    service.configure_feishu("cli_app", "secret")
+    service.configure("feishu", "cli_app", "secret")
     path = tmp_path / "xiaomei" / "config.json"
     data = json.loads(path.read_text(encoding="utf-8"))
     data["bindings"].append({
@@ -85,7 +87,8 @@ def test_remove_channel_preserves_unrelated_bindings(tmp_path):
 
 def test_desktop_feishu_config_matches_plugin_schema(tmp_path):
     service = ChannelConfigurationService("xiaomei", tmp_path)
-    service.configure_feishu(
+    service.configure(
+        "feishu",
         "cli_app",
         "secret",
         display_name="小美飞书机器人",

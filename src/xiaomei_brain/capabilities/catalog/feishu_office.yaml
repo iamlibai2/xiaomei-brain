@@ -1,0 +1,95 @@
+id: feishu_office
+name: 飞书办公
+summary: 在获得当前人物授权后，处理飞书中的消息、日历、文档、云盘、表格、任务和企业协作事项
+category: enterprise
+version: "1.0.0"
+source: xiaomei-brain
+
+examples:
+  - 查看我今天的飞书日程并找出时间冲突
+  - 创建一份飞书项目周报并把链接发给我
+  - 汇总这张飞书多维表格中的本周销售数据
+
+components:
+  - id: feishu_runtime
+    kind: runtime_probe
+    target: feishu_office
+    label: 飞书账户连接
+    required: true
+    setup_section: capabilities
+  - id: skill_lark_shared
+    kind: skill
+    target: lark-shared
+    label: 飞书基础操作方法
+    required: true
+    setup_section: capabilities
+  - id: skill_lark_im
+    kind: skill
+    target: lark-im
+    label: 飞书消息
+  - id: skill_lark_calendar
+    kind: skill
+    target: lark-calendar
+    label: 飞书日历
+  - id: skill_lark_doc
+    kind: skill
+    target: lark-doc
+    label: 飞书文档
+  - id: skill_lark_drive
+    kind: skill
+    target: lark-drive
+    label: 飞书云盘
+  - id: skill_lark_sheets
+    kind: skill
+    target: lark-sheets
+    label: 飞书表格
+  - id: skill_lark_base
+    kind: skill
+    target: lark-base
+    label: 飞书多维表格
+  - id: skill_lark_task
+    kind: skill
+    target: lark-task
+    label: 飞书任务
+  - id: skill_lark_approval
+    kind: skill
+    target: lark-approval
+    label: 飞书审批
+  - id: skill_lark_wiki
+    kind: skill
+    target: lark-wiki
+    label: 飞书知识库
+  - id: skill_lark_mail
+    kind: skill
+    target: lark-mail
+    label: 飞书邮件
+  - id: skill_lark_vc
+    kind: skill
+    target: lark-vc
+    label: 飞书会议
+  - id: skill_lark_okr
+    kind: skill
+    target: lark-okr
+    label: 飞书 OKR
+
+outcomes:
+  - id: messages
+    name: 消息与群聊
+    description: 搜索、发送和回复消息，处理群聊与附件
+    components: [feishu_runtime, skill_lark_shared, skill_lark_im]
+  - id: calendar
+    name: 日历与会议
+    description: 查看和安排日程、查询忙闲并处理会议资料
+    components: [feishu_runtime, skill_lark_shared, skill_lark_calendar, skill_lark_vc]
+  - id: documents
+    name: 文档与知识库
+    description: 创建、读取和修改飞书文档、云盘文件及知识库内容
+    components: [feishu_runtime, skill_lark_shared, skill_lark_doc, skill_lark_drive, skill_lark_wiki]
+  - id: data
+    name: 表格与多维表格
+    description: 读取和维护飞书表格、多维表格及其中的业务数据
+    components: [feishu_runtime, skill_lark_shared, skill_lark_sheets, skill_lark_base]
+  - id: work
+    name: 任务与审批
+    description: 查询和推进任务、审批、邮件与 OKR
+    components: [feishu_runtime, skill_lark_shared, skill_lark_task, skill_lark_approval, skill_lark_mail, skill_lark_okr]

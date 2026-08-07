@@ -681,5 +681,6 @@
     ,"appearanceUi": { "title": "外观", "description": "选择 Desktop 的显示外观", "light": "浅色", "dark": "深色", "system": "跟随系统", "accountSettings": "账户管理", "lockDesktop": "锁定 Desktop", "close": "关闭" }
     ,"lockUi": { "title": "Desktop 已锁定", "password": "本机密码", "passwordPlaceholder": "输入密码解锁", "passwordIncorrect": "密码不正确", "unlock": "解锁", "faceUnlock": "使用人脸解锁", "faceMismatch": "没有认出当前人物，请重试或输入密码", "cameraUnavailable": "无法使用摄像头", "voiceHint": "实时语音中可用声纹解锁", "backgroundHint": "Agent 与远程渠道仍在后台正常工作" }
     ,"storeUi": { "sessionUnavailable": "当前会话不可用", "sessionProcessing": "当前会话仍在处理中", "blockedRequestMissing": "找不到被阻塞的原始请求", "resumeFailed": "恢复请求失败", "assignmentMissing": "委托不存在", "waitingReply": "{{title}} 正在等你回复", "modelUnavailable": "模型服务暂时不可用" }
+    ,"feishuCapabilityUi": { "checking": "正在检查飞书运行状态…", "unavailable": "飞书办公暂不可用", "connectedAs": "已连接：{{identity}}", "skillsReady": "{{count}} 个飞书 Skill 已就绪", "action_install": "安装运行组件", "action_configure": "配置飞书应用", "action_authorize": "连接飞书账户", "action_disconnect": "解除连接", "disconnectConfirm": "确定解除当前人物的飞书账户连接？", "cancel": "取消", "job_running": "正在进行…", "job_completed": "操作完成", "job_failed": "操作失败", "job_cancelled": "已取消", "openAuthorization": "打开飞书授权页面" }
   }
 }

@@ -56,6 +56,14 @@ class CapabilityChangeParams(CapabilityGetParams):
     pass
 
 
+class CapabilitySetupStartParams(CapabilityGetParams):
+    action: Literal["install", "configure", "authorize", "disconnect"]
+
+
+class CapabilitySetupStatusParams(CapabilityGetParams):
+    job_id: str = Field(default="", max_length=64, pattern=r"^(?:[a-fA-F0-9]{32})?$")
+
+
 class CapabilityPackageInspectParams(BaseModel):
     file_name: str = Field(..., min_length=1, max_length=255)
     data_base64: str = Field(..., min_length=1, max_length=12_000_000)

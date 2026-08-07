@@ -14,7 +14,16 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-VALID_KINDS = frozenset({"channel", "provider", "tool", "speech", "memory", "hook", "bundle"})
+VALID_KINDS = frozenset({
+    "channel",
+    "provider",
+    "tool",
+    "runtime",
+    "speech",
+    "memory",
+    "hook",
+    "bundle",
+})
 
 
 @dataclass
@@ -24,7 +33,7 @@ class PluginManifest:
     name: str
     version: str
     description: str
-    kind: str                          # channel | provider | tool | speech | memory | hook | bundle
+    kind: str                          # channel | provider | tool | runtime | speech | memory | hook | bundle
     channel: str | None = None         # 频道标识（kind=channel 时）
     requires_env: list[str] = field(default_factory=list)
     provides_tools: list[str] = field(default_factory=list)

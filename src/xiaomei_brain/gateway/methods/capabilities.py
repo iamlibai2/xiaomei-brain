@@ -20,6 +20,8 @@ from ..schemas import (
     CapabilityPackageDeactivateParams,
     CapabilityPackageInspectParams,
     CapabilityPackageUninstallParams,
+    CapabilitySetupStartParams,
+    CapabilitySetupStatusParams,
     format_error,
 )
 
@@ -38,6 +40,9 @@ class CapabilityMethods:
             "capability.get": self.handle_get,
             "capability.enable": self.handle_enable,
             "capability.disable": self.handle_disable,
+            "capability.setup.status": self.handle_setup_status,
+            "capability.setup.start": self.handle_setup_start,
+            "capability.setup.cancel": self.handle_setup_cancel,
             "capability.package.inspect": self.handle_package_inspect,
             "capability.package.list": self.handle_package_list,
             "capability.package.install": self.handle_package_install,
@@ -46,16 +51,16 @@ class CapabilityMethods:
             "capability.package.uninstall": self.handle_package_uninstall,
         }
 
-    def handle_list(self, _conn_id: str, req_id: str, _params: dict) -> dict:
+    def handle_list(self, conn_id: str, req_id: str, _params: dict) -> dict:
         agent, error = self._agent(req_id)
         if error:
             return error
         return build_response(
             req_id,
-            result={"capabilities": agent.list_capabilities()},
+            result={"capabilities": agent.list_capabilities(person_id=self._person_id(conn_id))},
         )
 
-    def handle_get(self, _conn_id: str, req_id: str, params: dict) -> dict:
+    def handle_get(self, conn_id: str, req_id: str, params: dict) -> dict:
         try:
             parsed = CapabilityGetParams.model_validate(params)
         except Exception as exc:
@@ -64,7 +69,7 @@ class CapabilityMethods:
         agent, error = self._agent(req_id)
         if error:
             return error
-        capability = agent.get_capability(parsed.capability_id)
+        capability = agent.get_capability(parsed.capability_id, person_id=self._person_id(conn_id))
         if capability is None:
             return build_error(
                 req_id,
@@ -73,11 +78,59 @@ class CapabilityMethods:
             )
         return build_response(req_id, result={"capability": capability})
 
-    def handle_enable(self, _conn_id: str, req_id: str, params: dict) -> dict:
-        return self._change(req_id, params, enabled=True)
+    def handle_setup_status(self, conn_id: str, req_id: str, params: dict) -> dict:
+        try:
+            parsed = CapabilitySetupStatusParams.model_validate(params)
+        except Exception as exc:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, format_error(exc))
+        runtime, person_id, error = self._runtime(conn_id, req_id, parsed.capability_id)
+        if error:
+            return error
+        state = runtime.inspect(person_id)
+        job = runtime.job_status(person_id, parsed.job_id)
+        return build_response(req_id, result={
+            "runtime": {
+                "available": state.available,
+                "code": state.code,
+                "message": state.message,
+                "details": state.details,
+                "actions": list(state.actions),
+            },
+            "job": job,
+        })
 
-    def handle_disable(self, _conn_id: str, req_id: str, params: dict) -> dict:
-        return self._change(req_id, params, enabled=False)
+    def handle_setup_start(self, conn_id: str, req_id: str, params: dict) -> dict:
+        try:
+            parsed = CapabilitySetupStartParams.model_validate(params)
+        except Exception as exc:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, format_error(exc))
+        runtime, person_id, error = self._runtime(conn_id, req_id, parsed.capability_id)
+        if error:
+            return error
+        try:
+            job = runtime.start(parsed.action, person_id)
+        except (ValueError, RuntimeError) as exc:
+            return build_error(req_id, ErrorCode.INVALID_REQUEST, str(exc))
+        return build_response(req_id, result={"job": job})
+
+    def handle_setup_cancel(self, conn_id: str, req_id: str, params: dict) -> dict:
+        try:
+            parsed = CapabilitySetupStatusParams.model_validate(params)
+        except Exception as exc:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, format_error(exc))
+        runtime, person_id, error = self._runtime(conn_id, req_id, parsed.capability_id)
+        if error:
+            return error
+        job = runtime.cancel(person_id, parsed.job_id)
+        if job is None:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, "未找到配置任务")
+        return build_response(req_id, result={"job": job})
+
+    def handle_enable(self, conn_id: str, req_id: str, params: dict) -> dict:
+        return self._change(conn_id, req_id, params, enabled=True)
+
+    def handle_disable(self, conn_id: str, req_id: str, params: dict) -> dict:
+        return self._change(conn_id, req_id, params, enabled=False)
 
     def handle_package_inspect(self, _conn_id: str, req_id: str, params: dict) -> dict:
         """Inspect a package without extracting, installing, or executing it."""
@@ -177,7 +230,7 @@ class CapabilityMethods:
             return None, None, build_error(req_id, ErrorCode.INVALID_PARAMS, "能力包传输校验失败")
         return parsed, data, None
 
-    def _change(self, req_id: str, params: dict, *, enabled: bool) -> dict:
+    def _change(self, conn_id: str, req_id: str, params: dict, *, enabled: bool) -> dict:
         try:
             parsed = CapabilityChangeParams.model_validate(params)
         except Exception as exc:
@@ -185,7 +238,11 @@ class CapabilityMethods:
         agent, error = self._agent(req_id)
         if error:
             return error
-        capability = agent.set_capability_enabled(parsed.capability_id, enabled)
+        capability = agent.set_capability_enabled(
+            parsed.capability_id,
+            enabled,
+            person_id=self._person_id(conn_id),
+        )
         if capability is None:
             return build_error(
                 req_id,
@@ -215,3 +272,19 @@ class CapabilityMethods:
                 "Agent 能力包服务尚未初始化",
             )
         return service, None
+
+    @staticmethod
+    def _person_id(conn_id: str) -> str:
+        from ..connection import cm
+        return str(cm.get_person_id(conn_id) or "")
+
+    def _runtime(self, conn_id: str, req_id: str, capability_id: str):
+        agent = getattr(self._living, "agent", None)
+        runtimes = getattr(agent, "_capability_runtimes", {}) if agent is not None else {}
+        runtime = runtimes.get(capability_id)
+        if runtime is None:
+            return None, "", build_error(req_id, ErrorCode.INVALID_PARAMS, f"该能力没有可配置运行组件: {capability_id}")
+        person_id = self._person_id(conn_id)
+        if not person_id:
+            return None, "", build_error(req_id, ErrorCode.UNAUTHORIZED, "当前连接没有经过验证的人物身份")
+        return runtime, person_id, None

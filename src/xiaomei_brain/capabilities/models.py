@@ -123,6 +123,7 @@ class CapabilityView:
     version: str = "1.0.0"
     source: str = "builtin"
     technical_components: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    runtime_setup: bool = False
 
     def to_dict(self, *, include_technical: bool = False) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -141,6 +142,7 @@ class CapabilityView:
             "actions": [dict(action) for action in self.actions],
             "version": self.version,
             "source": self.source,
+            "runtime_setup": self.runtime_setup,
         }
         if include_technical:
             result["components"] = list(self.technical_components)

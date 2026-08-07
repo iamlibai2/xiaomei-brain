@@ -132,6 +132,22 @@ function runtimeStorageRoot(): string {
   return path.join(app.getPath("userData"), "runtimes");
 }
 
+function bundledLarkCliPath(): string {
+  const executable = process.platform === "win32" ? "lark-cli.exe" : "lark-cli";
+  if (app.isPackaged) {
+    return path.join(
+      process.resourcesPath,
+      "app.asar.unpacked",
+      "node_modules",
+      "@larksuite",
+      "cli",
+      "bin",
+      executable,
+    );
+  }
+  return path.resolve(__dirname, "../../node_modules/@larksuite/cli/bin", executable);
+}
+
 async function readRuntimeManifest(manifestPath: string): Promise<RuntimePackageManifest> {
   const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8")) as RuntimePackageManifest;
   if (
@@ -366,6 +382,7 @@ export class RuntimeManager {
       ...process.env,
       PYTHONDONTWRITEBYTECODE: "1",
       PYTHONUTF8: "1",
+      XIAOMEI_BRAIN_LARK_CLI: bundledLarkCliPath(),
       ...(pythonPath ? { PYTHONPATH: pythonPath } : {}),
     };
   }

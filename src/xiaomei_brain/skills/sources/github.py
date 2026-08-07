@@ -20,12 +20,12 @@ from xiaomei_brain.skills.sources.base import BaseSourceAdapter, SourceBundle
 logger = logging.getLogger(__name__)
 
 # 匹配: owner/repo[/path][:ref]
-_PATTERN = re.compile(r'^([\w.-]+)/([\w.-]+)(?:/([\w./-]+))?(?::([\w-]+))?$')
+_PATTERN = re.compile(r'^([\w.-]+)/([\w.-]+)(?:/([\w./-]+))?(?::([\w./-]+))?$')
 
 # GitHub raw 镜像列表（按优先级）
 _MIRRORS: list[str] = []
 
-# session 级 repo tree 缓存: repo → (default_branch, tree_entries)
+# session 级 repo tree 缓存: repo@ref → (default_branch, tree_entries)
 _TREE_CACHE: dict[str, tuple[str, list[dict]]] = {}
 
 
@@ -151,7 +151,7 @@ class GitHubSourceAdapter(BaseSourceAdapter):
         if files is not None:
             return files
         logger.debug("Tree API unavailable for %s/%s, falling back to Contents", owner, repo)
-        return self._download_recursive(owner, repo, path)
+        return self._download_recursive(owner, repo, path, ref)
 
     def _download_via_tree(
         self, owner: str, repo: str, path: str, ref: str
@@ -161,13 +161,13 @@ class GitHubSourceAdapter(BaseSourceAdapter):
         Returns:
             dict 或 {}（路径存在但没文件），None（回退到 Contents API）。
         """
-        repo_full = f"{owner}/{repo}"
-        cached = _TREE_CACHE.get(repo_full)
+        cache_key = f"{owner}/{repo}@{ref}"
+        cached = _TREE_CACHE.get(cache_key)
         if cached is None:
             branch, entries = self._fetch_repo_tree(owner, repo, ref)
             if branch is None:
                 return None
-            _TREE_CACHE[repo_full] = (branch, entries)
+            _TREE_CACHE[cache_key] = (branch, entries)
         else:
             _branch, entries = cached
 
@@ -188,17 +188,17 @@ class GitHubSourceAdapter(BaseSourceAdapter):
             if not rel_path or rel_path == "SKILL.md":
                 continue
             # 跳过子目录中的文件（保留在路径中)
-            content = self._fetch_file_content(owner, repo, item_path)
+            content = self._fetch_file_content(owner, repo, item_path, ref)
             if content is not None:
                 files[rel_path] = content
 
         return files
 
     def _download_recursive(
-        self, owner: str, repo: str, path: str
+        self, owner: str, repo: str, path: str, ref: str
     ) -> dict[str, str]:
         """通过 Contents API 递归下载目录（兜底方案）。"""
-        url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}"
+        url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={ref}"
         try:
             resp = requests.get(url, timeout=15)
             if resp.status_code != 200:
@@ -219,11 +219,11 @@ class GitHubSourceAdapter(BaseSourceAdapter):
             if entry_type == "file":
                 if name == "SKILL.md":
                     continue
-                content = self._fetch_file_content(owner, repo, entry.get("path", ""))
+                content = self._fetch_file_content(owner, repo, entry.get("path", ""), ref)
                 if content is not None:
                     files[name] = content
             elif entry_type == "dir":
-                sub = self._download_recursive(owner, repo, entry.get("path", ""))
+                sub = self._download_recursive(owner, repo, entry.get("path", ""), ref)
                 for sub_name, sub_content in sub.items():
                     files[f"{name}/{sub_name}"] = sub_content
 
@@ -285,10 +285,10 @@ class GitHubSourceAdapter(BaseSourceAdapter):
             return default_branch, []
 
     @staticmethod
-    def _fetch_file_content(owner: str, repo: str, path: str) -> str | None:
+    def _fetch_file_content(owner: str, repo: str, path: str, ref: str = "main") -> str | None:
         """获取单个文件内容。先用 raw URL，失败则用 Contents API。"""
         # 尝试 raw URL
-        raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/main/{path}"
+        raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}"
         try:
             r = requests.get(raw_url, timeout=15)
             if r.status_code == 200:
@@ -297,7 +297,7 @@ class GitHubSourceAdapter(BaseSourceAdapter):
             pass
 
         # 兜底：Contents API
-        api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}"
+        api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={ref}"
         try:
             r = requests.get(api_url, timeout=15)
             if r.status_code == 200:

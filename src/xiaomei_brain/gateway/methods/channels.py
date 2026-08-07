@@ -90,18 +90,15 @@ class ChannelMethods:
         if not secret:
             return build_error(req_id, ErrorCode.INVALID_PARAMS, "请输入 appSecret")
         try:
-            configure = getattr(
-                self._configuration(),
-                f"configure_{parsed.channel}",
-            )
-            config = configure(
+            config = self._configuration().configure(
+                parsed.channel,
                 parsed.app_id,
                 secret,
                 display_name=parsed.display_name,
                 account_id=parsed.account_id,
             )
-            apply_channel = getattr(self._runtime(), f"apply_{parsed.channel}")
-            adapter = apply_channel(
+            adapter = self._runtime().apply(
+                parsed.channel,
                 self._configuration().raw_account(parsed.channel),
             )
         except ValueError as exc:

@@ -12,6 +12,9 @@ files:
   - "!node_modules/@napi-rs/canvas*/**/*"
 asarUnpack:
   - node_modules/node-pty/**/*
+  # The Agent executes the official Go binary directly. It must remain outside
+  # app.asar; no system Node/npm installation is required at runtime.
+  - node_modules/@larksuite/cli/bin/**/*
 extraResources:
   - from: runtime-stage/package
     to: runtime-package

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from scripts.create_sample_capability_package import create_package
 from xiaomei_brain.capabilities.loader import CapabilityManifestLoader
+from xiaomei_brain.capabilities.runtime_registry import CapabilityRuntimeRegistry
 from xiaomei_brain.capability_packages import CapabilityPackageService
 from xiaomei_brain.plugin.loader import PluginLoader
 from xiaomei_brain.plugin.registry import PluginRegistry
@@ -37,6 +38,38 @@ def write_external_plugin(root: Path, *, result: str) -> Path:
         "def register(ctx):\n"
         "    package_text_statistics.source = 'plugin:xmcap_text_statistics'\n"
         "    ctx.register_agent_tool(package_text_statistics)\n",
+        encoding="utf-8",
+    )
+    return root / "plugins"
+
+
+def write_external_runtime_plugin(root: Path) -> Path:
+    plugin_dir = root / "plugins" / "xmcap_runtime"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text(
+        "\n".join([
+            "name: xmcap_runtime",
+            "version: 1.0.0",
+            "description: external runtime plugin",
+            "kind: runtime",
+            "entry: adapter:register",
+        ]),
+        encoding="utf-8",
+    )
+    (plugin_dir / "runtime.py").write_text(
+        "class Runtime:\n"
+        "    capability_id = 'xmcap_runtime'\n"
+        "    def __init__(self, agent_dir):\n"
+        "        self.agent_dir = str(agent_dir)\n"
+        "def create_runtime(*, capability_id, agent_dir, **_dependencies):\n"
+        "    assert capability_id == 'xmcap_runtime'\n"
+        "    return Runtime(agent_dir)\n",
+        encoding="utf-8",
+    )
+    (plugin_dir / "adapter.py").write_text(
+        "from .runtime import create_runtime\n"
+        "def register(ctx):\n"
+        "    ctx.register_runtime('xmcap_runtime', create_runtime)\n",
         encoding="utf-8",
     )
     return root / "plugins"
@@ -86,6 +119,19 @@ def test_external_plugin_entry_cannot_escape_package_directory(tmp_path: Path):
     assert registry.get_agent_tools() == []
 
 
+def test_external_package_plugin_can_register_managed_runtime(tmp_path: Path):
+    plugin_root = write_external_runtime_plugin(tmp_path / "package-runtime")
+    plugins = PluginRegistry()
+
+    loaded = PluginLoader(plugins, agent_id="test").boot([str(plugin_root)])
+    runtimes = CapabilityRuntimeRegistry()
+    runtimes.register_factories(plugins.get_runtime_factories())
+    created = runtimes.create_all(agent_dir=tmp_path / "agent")
+
+    assert loaded[0].status == "loaded"
+    assert created["xmcap_runtime"].agent_dir == str(tmp_path / "agent")
+
+
 def test_runnable_sample_package_is_isolated_per_agent(tmp_path: Path):
     archive_path = create_package(tmp_path / "text-statistics.xmcap")
     data = archive_path.read_bytes()
@@ -116,6 +162,9 @@ def test_runnable_sample_package_is_isolated_per_agent(tmp_path: Path):
 
 def test_package_and_capability_skill_filters_are_combined(tmp_path: Path):
     class FakeStorage:
+        def import_from_dir(self, _path):
+            return 0
+
         def list_names(self):
             return ["active", "package-disabled", "capability-disabled"]
 

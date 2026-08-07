@@ -1,0 +1,5 @@
+name: feishu_office_runtime
+version: "1.0.0"
+description: "飞书 CLI 安装、配置、授权和执行环境"
+kind: runtime
+entry: adapter:register

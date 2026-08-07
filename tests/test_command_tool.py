@@ -61,6 +61,35 @@ def test_command_uses_environment_bound_to_tool_context(tmp_path):
     assert environment.commands == [(expression, str(workspace))]
 
 
+def test_protected_host_scopes_feishu_cli_to_current_person(tmp_path, monkeypatch):
+    agent_dir = tmp_path / "agent"
+    workspace = agent_dir / "workspace"
+    environment = ProtectedHostEnvironment()
+    from xiaomei_brain.plugins.runtimes.feishu_office.runtime import FeishuOfficeRuntime
+
+    runtime = FeishuOfficeRuntime(agent_dir, execution_environment=environment)
+    monkeypatch.setattr(runtime, "executable", lambda: None)
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "foreign-hermes"))
+
+    with bind_tool_execution(
+        tool_call_id="feishu-person-scope",
+        tool_name=command.command_tool_name(),
+        arguments={"command": "lark-cli auth status"},
+        artifact_callback=None,
+        person_id="person-a",
+        workspace_root=str(workspace),
+        working_directory=str(workspace),
+        execution_environment=environment,
+    ):
+        variables = environment._environment(str(workspace), "lark-cli auth status")
+
+    config_dir = Path(variables["LARKSUITE_CLI_CONFIG_DIR"])
+    assert config_dir == agent_dir / "integrations" / "feishu" / "lark-cli"
+    assert config_dir.is_dir()
+    assert variables["LARKSUITE_CLI_PROFILE"] == runtime.profile_name("person-a")
+    assert "HERMES_HOME" not in variables
+
+
 def test_workspace_broker_rejects_paths_outside_agent_workspace(tmp_path):
     workspace = tmp_path / "workspace"
     outside = tmp_path / "outside.txt"
