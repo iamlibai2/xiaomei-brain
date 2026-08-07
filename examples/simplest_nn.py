@@ -7,8 +7,11 @@
 """
 import json
 import math
-import os
 import random
+from pathlib import Path
+
+
+DEFAULT_WEIGHTS_PATH = Path(__file__).resolve().parent / "output" / "and_neuron_weights.json"
 
 # ═════════════════════════════════════════════════════
 # 神经元（计算单元，和之前一样）
@@ -27,7 +30,7 @@ def neuron(w1: float, w2: float, bias: float, x1: float, x2: float) -> float:
 # 训练（只做一次）
 # ═════════════════════════════════════════════════════
 
-def train(save_path: str = "and_neuron_weights.json"):
+def train(save_path: str | Path = DEFAULT_WEIGHTS_PATH):
     w1 = random.uniform(-1, 1)
     w2 = random.uniform(-1, 1)
     bias = random.uniform(-1, 1)
@@ -52,10 +55,12 @@ def train(save_path: str = "and_neuron_weights.json"):
             print(f"epoch {epoch:4d}  loss={total_loss:.6f}")
 
     weights = {"w1": w1, "w2": w2, "bias": bias}
-    with open(save_path, "w") as f:
+    output_path = Path(save_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as f:
         json.dump(weights, f, indent=2)
 
-    print(f"\n已保存到 {save_path}")
+    print(f"\n已保存到 {output_path}")
     return w1, w2, bias
 
 
@@ -63,9 +68,9 @@ def train(save_path: str = "and_neuron_weights.json"):
 # 加载 + 推理（每次使用只需这两步）
 # ═════════════════════════════════════════════════════
 
-def load_weights(path: str = "and_neuron_weights.json") -> dict:
+def load_weights(path: str | Path = DEFAULT_WEIGHTS_PATH) -> dict:
     """从 JSON 文件加载训练好的权重。"""
-    with open(path, "r") as f:
+    with Path(path).open("r", encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -78,10 +83,10 @@ def predict(w1: float, w2: float, bias: float, x1: int, x2: int) -> int:
 # ═════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    save_path = "and_neuron_weights.json"
+    save_path = DEFAULT_WEIGHTS_PATH
 
     # ── 训练阶段（只做一次）────────────────────
-    if not os.path.exists(save_path):
+    if not save_path.exists():
         print("未找到权重文件，开始训练...\n")
         train(save_path)
     else:

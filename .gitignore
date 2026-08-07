@@ -46,6 +46,7 @@ tmp/
 
 # Build artifacts
 dist/
+examples/output/
 
 # Local docs (conversation records, dev notes)
 docs-local/
