@@ -1,7 +1,7 @@
 ---
 name: qq-mail
 description: Search, read, send, and reply to email in the current Person's connected QQ mailbox.
-tools:
+requires_tools:
   - search_qq_mail
   - read_qq_mail
   - download_qq_mail_attachment

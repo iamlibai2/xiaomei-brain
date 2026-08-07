@@ -265,6 +265,15 @@ class ConsciousLiving(Living):
         live_agent.tool_workspace_root = workspace_dir
         live_agent.tool_working_directory = workspace_dir
         live_agent.tool_output_root = workspace_dir
+        live_agent.tool_writable_roots = tuple(
+            os.path.join(agent_base_dir, name)
+            for name in ("images", "music", "tts")
+        )
+        # The canonical attachment archive belongs to this Agent. File tools
+        # may discover and read it, but must not modify it.
+        live_agent.tool_read_only_roots = (
+            os.path.join(agent_base_dir, "attachments"),
+        )
 
         boot_line("记忆提取器", "OK")
 

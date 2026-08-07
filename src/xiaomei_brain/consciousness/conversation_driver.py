@@ -524,8 +524,9 @@ class ConversationDriver:
 
                     si = getattr(getattr(parent, "consciousness", None), "self_image", None)
                     if si:
-                        skill_loader = getattr(parent.agent, '_skill_loader', None)
-                        si.memory.skill_index = skill_loader.build_skill_index_prompt(current_msg.content) if skill_loader else ""
+                        # Skill selection is injected centrally by Agent Core
+                        # so every execution path uses the same multi-turn query.
+                        si.memory.skill_index = ""
 
                     from xiaomei_brain.agent.vision_routing import route_chat_images
                     routed_images, image_analysis = route_chat_images(

@@ -25,7 +25,10 @@ from xiaomei_brain.tools.registry import (
     normalize_tool_result,
     split_tool_control,
 )
-from xiaomei_brain.tools.dynamic import build_tool_selection_context
+from xiaomei_brain.tools.dynamic import (
+    build_step_tool_selection_context,
+    build_tool_selection_context,
+)
 from xiaomei_brain.agent.message_utils import (
     strip_orphaned_tool_messages,
     strip_orphaned_assistant_tool_calls, clean_messages,
@@ -107,6 +110,8 @@ class Agent:
         self.memory_scope_id: str = "global"
         self.shared_conversation: bool = False
         self._dynamic_loader: Any = None      # DynamicToolLoader, set by agent_manager
+        self._skill_loader: Any = None
+        self._capability_registry: Any = None
         self.user_display_name: str = "这位用户"  # 当前用户的显示名，identity 绑定后设置
         self.session_id: str = "main"
         self.turn_id: str = ""
@@ -117,6 +122,8 @@ class Agent:
         self.tool_workspace_root: str = ""
         self.tool_working_directory: str = ""
         self.tool_output_root: str = ""
+        self.tool_writable_roots: tuple[str, ...] = ()
+        self.tool_read_only_roots: tuple[str, ...] = ()
         # Commands and workspace processes run through this replaceable
         # boundary.  None resolves to the default Protected Host backend.
         self.tool_execution_environment: Any = None
@@ -164,6 +171,52 @@ class Agent:
         """Register a domain policy evaluated before a normal final response."""
         if guard not in self.completion_guards:
             self.completion_guards.append(guard)
+
+    def _prepare_execution_selection(
+        self,
+        messages: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], str]:
+        """Prepare one shared Capability -> Skill -> Tool selection context."""
+        selection_query = build_tool_selection_context(
+            messages,
+            self.current_attachments,
+        )
+        if self._dynamic_loader:
+            self._dynamic_loader.begin_run(self.session_id)
+
+        required_skills: list[str] = []
+        prepare = getattr(
+            self._capability_registry,
+            "prepare_execution_selection",
+            None,
+        )
+        if callable(prepare):
+            required_skills = prepare(
+                selection_query,
+                scope_id=self.session_id,
+                person_id=self.user_id,
+            )
+            # Capability pinning may have populated the current scope after
+            # begin_run; refresh the active reference defensively.
+            if self._dynamic_loader:
+                self._dynamic_loader.begin_run(self.session_id)
+
+        skill_prompt = ""
+        if self._skill_loader:
+            skill_prompt = self._skill_loader.build_skill_index_prompt(
+                selection_query,
+                required_names=required_skills,
+            )
+
+        prepared = [dict(message) for message in messages]
+        if skill_prompt:
+            if prepared and prepared[0].get("role") == "system":
+                prepared[0]["content"] = (
+                    str(prepared[0].get("content", "")) + "\n\n" + skill_prompt
+                )
+            else:
+                prepared.insert(0, {"role": "system", "content": skill_prompt})
+        return prepared, selection_query
 
     def _completion_guard_result(self, content: str) -> CompletionGuardResult | None:
         for guard in tuple(self.completion_guards):
@@ -302,12 +355,8 @@ class Agent:
         _pre_count = len(self.messages)
 
         # 动态工具加载：累积上下文供每步 embed 召回
-        _accumulated_context = build_tool_selection_context(
-            messages,
-            self.current_attachments,
-        )
-        if self._dynamic_loader:
-            self._dynamic_loader.begin_run(self.session_id)
+        messages, _accumulated_context = self._prepare_execution_selection(messages)
+        _selection_progress: list[str] = []
 
         try:
             for step in range(self.max_steps):
@@ -329,7 +378,7 @@ class Agent:
                     steer_context = "\n".join(
                         message.content for message in steer_messages
                     )
-                    _accumulated_context += f"\nUser steering:\n{steer_context}"
+                    _selection_progress.append(f"User steering: {steer_context}")
                     if self.on_steer_consumed is not None:
                         try:
                             self.on_steer_consumed(steer_messages)
@@ -344,7 +393,11 @@ class Agent:
 
                 # 每步根据累积上下文动态选择工具
                 if self._dynamic_loader:
-                    openai_tools = self._dynamic_loader.select_openai_tools(_accumulated_context, step=step)
+                    selection_context = build_step_tool_selection_context(
+                        _accumulated_context,
+                        _selection_progress,
+                    )
+                    openai_tools = self._dynamic_loader.select_openai_tools(selection_context, step=step)
                 else:
                     openai_tools = self.tools.to_openai_tools() if self.tools and self.tools.list_tools() else None
 
@@ -564,7 +617,7 @@ class Agent:
                         )
 
                         # 累积上下文供下步动态工具召回
-                        _accumulated_context += f"\n{tc.name}: {str(result)[:500]}"
+                        _selection_progress.append(f"{tc.name}: {str(result)[:500]}")
 
                         if tool_control.get("type") == "handoff":
                             handoff_message = str(tool_control.get("message", "")).strip()
@@ -643,8 +696,8 @@ class Agent:
                                         "不要只描述接下来要做什么；请立即调用所需工具。"
                                     ),
                                 })
-                                _accumulated_context += (
-                                    "\nCompletion guard: " + completion_guard.reason
+                                _selection_progress.append(
+                                    "Completion guard: " + completion_guard.reason
                                 )
                                 logger.warning(
                                     "[Agent] Completion guard %s continued ReAct (%d/%d): %s",
@@ -945,6 +998,8 @@ class Agent:
                     workspace_root=self.tool_workspace_root,
                     working_directory=self.tool_working_directory,
                     output_root=self.tool_output_root,
+                    writable_roots=self.tool_writable_roots,
+                    read_only_roots=self.tool_read_only_roots,
                     execution_environment=self.tool_execution_environment,
                     project_context=self.project_context,
                     project_service=getattr(self, "project_service", None),
@@ -1014,12 +1069,8 @@ class Agent:
         _idx = 0
 
         # 动态工具加载：累积上下文供每步 embed 召回
-        _accumulated_context = build_tool_selection_context(
-            messages,
-            self.current_attachments,
-        )
-        if self._dynamic_loader:
-            self._dynamic_loader.begin_run(self.session_id)
+        messages, _accumulated_context = self._prepare_execution_selection(messages)
+        _selection_progress: list[str] = []
 
         for step in range(max_steps):
             if cancel_check and cancel_check():
@@ -1028,7 +1079,11 @@ class Agent:
 
             # 每步根据累积上下文动态选择工具
             if self._dynamic_loader:
-                openai_tools = self._dynamic_loader.select_openai_tools(_accumulated_context, step=step)
+                selection_context = build_step_tool_selection_context(
+                    _accumulated_context,
+                    _selection_progress,
+                )
+                openai_tools = self._dynamic_loader.select_openai_tools(selection_context, step=step)
             else:
                 openai_tools = self.tools.to_openai_tools() if self.tools and self.tools.list_tools() else None
             if openai_tools and excluded_tool_names:
@@ -1159,7 +1214,7 @@ class Agent:
                     })
 
                     # 累积上下文供下步动态工具召回
-                    _accumulated_context += f"\n{tc.name}: {str(result)[:500]}"
+                    _selection_progress.append(f"{tc.name}: {str(result)[:500]}")
 
                     # Co-write to experience stream (internal tool exec)
                     if exp_stream:

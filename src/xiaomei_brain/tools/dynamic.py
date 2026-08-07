@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -71,6 +73,7 @@ STEP_GROWTH = 3       # 每步增加动态工具名额
 MAX_DYNAMIC = 50       # 动态工具上限
 TOOL_CONTEXT_USER_MESSAGES = 3
 TOOL_CONTEXT_MAX_CHARS = 2400
+TOOL_PROGRESS_MAX_CHARS = 1200
 
 # 全局活跃的 loader，供 MCP/Plugin 热重载后通知重建索引
 _active_loader: DynamicToolLoader | None = None
@@ -157,6 +160,21 @@ def build_tool_selection_context(
     return f"{protected}{heading}{recent_text[:remaining]}".strip()
 
 
+def build_step_tool_selection_context(
+    original_intent: str,
+    progress: list[str],
+    *,
+    max_progress_chars: int = TOOL_PROGRESS_MAX_CHARS,
+) -> str:
+    """Keep the original request dominant while adding bounded execution facts."""
+    if not progress:
+        return original_intent
+    recent_progress = "\n".join(reversed(progress))[:max_progress_chars]
+    return (
+        f"{original_intent}\n\nRecent execution progress:\n{recent_progress}"
+    ).strip()
+
+
 def set_active_loader(loader: DynamicToolLoader) -> None:
     """注册当前活跃的 DynamicToolLoader（agent 初始化时调用）。"""
     global _active_loader
@@ -208,7 +226,23 @@ class DynamicToolLoader:
 
     def _tool_embedding_text(self, tool: Tool) -> str:
         """构造每个工具的 embedding 文本。"""
-        return f"{tool.name}: {tool.description} {tool.category}"
+        parameters = json.dumps(
+            tool.parameters or {},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return (
+            f"Tool: {tool.name}\n"
+            f"Category: {tool.category}\n"
+            f"Purpose: {tool.description}\n"
+            f"Inputs: {parameters}"
+        )
+
+    def _tool_fingerprint(self, tool: Tool) -> str:
+        return hashlib.sha256(
+            self._tool_embedding_text(tool).encode("utf-8")
+        ).hexdigest()
 
     # ── LanceDB 缓存 ──────────────────────────────────────────
 
@@ -235,11 +269,17 @@ class DynamicToolLoader:
         # 尝试直接打开（list_tables() 有时不返回已存在的表）
         try:
             tbl = self._lance_db.open_table("tool_embeddings")
-            actual = tbl.to_arrow().schema.field("vector").type.list_size
+            table_schema = tbl.to_arrow().schema
+            actual = table_schema.field("vector").type.list_size
             if actual != expected_dim:
                 logger.warning(
                     "DynamicToolLoader: dim mismatch (table=%d vs model=%d), dropping and rebuilding",
                     actual, expected_dim,
+                )
+                self._lance_db.drop_table("tool_embeddings")
+            elif "fingerprint" not in table_schema.names:
+                logger.info(
+                    "DynamicToolLoader: legacy cache schema detected, rebuilding"
                 )
                 self._lance_db.drop_table("tool_embeddings")
             else:
@@ -253,27 +293,32 @@ class DynamicToolLoader:
 
         schema = pa.schema([
             pa.field("id", pa.string()),
+            pa.field("fingerprint", pa.string()),
             pa.field("vector", pa.list_(pa.float32(), expected_dim)),
         ])
         self._lance_table = self._lance_db.create_table("tool_embeddings", schema=schema)
         logger.info("DynamicToolLoader: LanceDB cache created (%s)", self._lance_db_path)
         return self._lance_table
 
-    def _get_cached_names(self) -> set[str]:
-        """LanceDB 中已缓存的工具名集合。"""
+    def _get_cached_fingerprints(self) -> dict[str, str]:
+        """Return cached tool fingerprints keyed by tool name."""
         table = self._get_lance_table()
         if table is None:
-            return set()
+            return {}
         try:
             n = table.count_rows()
             if n == 0:
-                return set()
-            names = set(table.to_pandas()["id"].tolist())
-            logger.debug("DynamicToolLoader: read %d cached names from LanceDB", len(names))
-            return names
+                return {}
+            frame = table.to_pandas()
+            cached = dict(zip(frame["id"].tolist(), frame["fingerprint"].tolist()))
+            logger.debug(
+                "DynamicToolLoader: read %d cached fingerprints from LanceDB",
+                len(cached),
+            )
+            return cached
         except Exception:
-            logger.warning("DynamicToolLoader: failed to read cached names", exc_info=True)
-            return set()
+            logger.warning("DynamicToolLoader: failed to read cached fingerprints", exc_info=True)
+            return {}
 
     # ── 索引构建 ──────────────────────────────────────────
 
@@ -289,10 +334,14 @@ class DynamicToolLoader:
         tools.sort(key=lambda t: t.name)
         current_names = [t.name for t in tools]
         name_to_tool = {t.name: t for t in tools}
-        cached_names = self._get_cached_names()
+        current_fingerprints = {
+            tool.name: self._tool_fingerprint(tool) for tool in tools
+        }
+        cached_fingerprints = self._get_cached_fingerprints()
+        cached_names = set(cached_fingerprints)
 
         if cached_names:
-            if sorted(cached_names) == current_names:
+            if cached_fingerprints == current_fingerprints:
                 self._built = True
                 logger.info("DynamicToolLoader: cache hit, %d tools (skipped embed)", len(tools))
                 return
@@ -300,21 +349,26 @@ class DynamicToolLoader:
             # 增量更新
             added = set(current_names) - cached_names
             removed = cached_names - set(current_names)
+            changed = {
+                name for name in set(current_names) & cached_names
+                if cached_fingerprints.get(name) != current_fingerprints[name]
+            }
             logger.info(
-                "DynamicToolLoader: cache stale — added=%d removed=%d",
-                len(added), len(removed),
+                "DynamicToolLoader: cache stale — added=%d changed=%d removed=%d",
+                len(added), len(changed), len(removed),
             )
 
             table = self._get_lance_table()
-            if removed and table:
-                for name in removed:
+            if (removed or changed) and table:
+                for name in removed | changed:
                     try:
                         table.delete(f"id = '{name}'")
                     except Exception:
                         logger.debug("DynamicToolLoader: delete stale embedding failed for '%s'", name, exc_info=True)
 
-            if added and table:
-                new_tools = [name_to_tool[n] for n in current_names if n in added]
+            pending = added | changed
+            if pending and table:
+                new_tools = [name_to_tool[n] for n in current_names if n in pending]
                 embedder = self._get_embedder()
                 try:
                     texts = [self._tool_embedding_text(t) for t in new_tools]
@@ -327,6 +381,7 @@ class DynamicToolLoader:
                 import pyarrow as pa
                 data = pa.table({
                     "id": [t.name for t in new_tools],
+                    "fingerprint": [current_fingerprints[t.name] for t in new_tools],
                     "vector": vectors,
                 })
                 table.add(data)
@@ -365,7 +420,11 @@ class DynamicToolLoader:
                 return
 
             import pyarrow as pa
-            data = pa.table({"id": current_names, "vector": vectors})
+            data = pa.table({
+                "id": current_names,
+                "fingerprint": [self._tool_fingerprint(tool) for tool in tools],
+                "vector": vectors,
+            })
             table.add(data)
             logger.info("DynamicToolLoader: saved %d tool embeddings to cache", len(current_names))
 
@@ -419,6 +478,31 @@ class DynamicToolLoader:
                 "DynamicToolLoader: Skill dependencies are not registered: %s",
                 ", ".join(missing),
             )
+        return activated, missing
+
+    def pin_required_tools(
+        self,
+        scope_id: str,
+        names: list[str],
+    ) -> tuple[list[str], list[str]]:
+        """Pin deterministic dependencies without changing the active run."""
+        normalized_scope = str(scope_id or "main")
+        target = self._required_tools_by_scope.setdefault(normalized_scope, set())
+        registered = {
+            tool.name for tool in self._registry.list_tools()
+            if tool.name not in self._disabled_names
+        }
+        activated: list[str] = []
+        missing: list[str] = []
+        for name in names:
+            normalized = str(name).strip()
+            if not normalized:
+                continue
+            if normalized in registered:
+                target.add(normalized)
+                activated.append(normalized)
+            else:
+                missing.append(normalized)
         return activated, missing
 
     # ── 搜索 ──────────────────────────────────────────────

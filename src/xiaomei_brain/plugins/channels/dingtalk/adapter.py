@@ -1219,6 +1219,34 @@ class DingTalkAdapter(ChannelAdapter):
                 session_id = f"dingtalk-{person_id}"
                 people.store.ensure_person_session(session_id, person_id)
 
+            attachments: list[dict] = []
+            durable_image_paths: list[str] = []
+            if media_paths:
+                try:
+                    from xiaomei_brain.gateway.attachments import (
+                        prepare_local_attachments,
+                    )
+
+                    attachments, durable_image_paths, _saved_paths = (
+                        prepare_local_attachments(
+                            getattr(living, "_agent_id", "default"),
+                            session_id,
+                            media_paths,
+                        )
+                    )
+                    # Persist a stable attachment name, never an OS temp path.
+                    for source_path, attachment in zip(media_paths, attachments):
+                        text = text.replace(
+                            str(source_path),
+                            str(attachment.get("name", "附件")),
+                        )
+                except Exception:
+                    logger.exception(
+                        "[DingTalk] failed to persist inbound media for session=%s",
+                        session_id,
+                    )
+                    durable_image_paths = list(media_paths)
+
             # 注册 Peer 映射
             has_route = (
                 router.has_route(session_id, "dingtalk", output_target)
@@ -1244,7 +1272,9 @@ class DingTalkAdapter(ChannelAdapter):
                 result = gw.accept(RawMessage(
                     content=text, source="human", channel="dingtalk",
                     peer_id=person_id, peer_type="human",
-                    images=media_paths, session_id=session_id,
+                    images=durable_image_paths,
+                    attachments=attachments,
+                    session_id=session_id,
                     metadata={
                         "external_issuer": issuer,
                         "external_subject": sender,
@@ -1258,7 +1288,8 @@ class DingTalkAdapter(ChannelAdapter):
                     self.send(output_target, "这条消息暂时没有接收成功，请稍后重试。")
             else:
                 living.put_message(text, source="human", session_id=session_id,
-                                  images=media_paths)
+                                  images=durable_image_paths,
+                                  attachments=attachments)
             if hasattr(living, "_debug_log"):
                 living._debug_log("dingtalk", f"{ts} <- {sender}: {text[:80]}")
 

@@ -53,20 +53,82 @@ def get_working_directory() -> str:
     return get_workspace_dir()
 
 
+def _read_only_roots() -> list[Path]:
+    context = current_tool_execution()
+    if context is None:
+        return []
+    return list(dict.fromkeys(
+        Path(item).expanduser().resolve()
+        for item in context.read_only_roots
+        if str(item).strip()
+    ))
+
+
+def _writable_roots() -> list[Path]:
+    context = current_tool_execution()
+    if context is None:
+        return []
+    return list(dict.fromkeys(
+        Path(item).expanduser().resolve()
+        for item in context.writable_roots
+        if str(item).strip()
+    ))
+
+
 def _allowed_roots() -> list[Path]:
     roots = [Path(get_workspace_dir()).resolve()]
     context = current_tool_execution()
     if context and context.output_root:
         roots.append(Path(context.output_root).expanduser().resolve())
+    roots.extend(_writable_roots())
     for item in os.environ.get("XIAOMEI_ALLOWED_PATHS", "").split(os.pathsep):
         if item.strip():
             roots.append(Path(item.strip()).expanduser().resolve())
     return list(dict.fromkeys(roots))
 
 
-def _resolve(path: str, *, exists: bool = False) -> tuple[Path | None, str]:
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        Path(os.path.normcase(str(path))).relative_to(
+            Path(os.path.normcase(str(root))),
+        )
+        return True
+    except ValueError:
+        return False
+
+
+def _expand_virtual_root(path: str) -> str:
+    candidate = Path(path).expanduser()
+    if candidate.is_absolute() or not candidate.parts:
+        return path
+    first = candidate.parts[0].lower()
+    for root in (*_writable_roots(), *_read_only_roots()):
+        if first == root.name.lower():
+            return str(root.joinpath(*candidate.parts[1:]))
+    return path
+
+
+def _resolve(
+    path: str,
+    *,
+    exists: bool = False,
+    for_write: bool = False,
+) -> tuple[Path | None, str]:
     workspace_root = get_workspace_dir()
-    allowed_roots = _allowed_roots()
+    path = _expand_virtual_root(path)
+    candidate = Path(path).expanduser()
+    if not candidate.is_absolute():
+        candidate = Path(get_working_directory()) / candidate
+    try:
+        resolved_candidate = candidate.resolve(strict=False)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return None, f"Error: cannot resolve path: {exc}"
+    read_only_roots = _read_only_roots()
+    if for_write and any(
+        _is_within(resolved_candidate, root) for root in read_only_roots
+    ):
+        return None, "Error: Agent attachment archives are read-only."
+    allowed_roots = [*_allowed_roots(), *([] if for_write else read_only_roots)]
     broker = WorkspaceBroker.create(
         workspace_root=workspace_root,
         working_directory=get_working_directory(),
@@ -76,13 +138,23 @@ def _resolve(path: str, *, exists: bool = False) -> tuple[Path | None, str]:
     return broker.resolve(path, exists=exists)
 
 
+def resolve_readable_path(path: str, *, exists: bool = True) -> tuple[Path | None, str]:
+    """Resolve a model-supplied path inside writable or read-only Agent roots."""
+    return _resolve(path, exists=exists)
+
+
 def _display(path: Path) -> str:
+    resolved = path.resolve()
+    for root in (*_writable_roots(), *_read_only_roots()):
+        if _is_within(resolved, root):
+            relative = resolved.relative_to(root)
+            return (Path(root.name) / relative).as_posix()
     try:
-        return path.resolve().relative_to(
+        return resolved.relative_to(
             Path(get_working_directory()).resolve(),
         ).as_posix()
     except ValueError:
-        return str(path.resolve())
+        return str(resolved)
 
 
 def _binary(data: bytes) -> bool:
@@ -185,7 +257,7 @@ def _atomic_write(path: Path, content: str) -> tuple[int, bool]:
 def write(path: str, content: str) -> dict[str, Any]:
     if not isinstance(content, str):
         return {"error": "Error: content must be text"}
-    resolved, error = _resolve(path)
+    resolved, error = _resolve(path, for_write=True)
     if error:
         return {"error": error}
     assert resolved is not None
@@ -207,7 +279,7 @@ def edit(
     new_string: str,
     replace_all: bool = False,
 ) -> dict[str, Any]:
-    resolved, error = _resolve(path, exists=True)
+    resolved, error = _resolve(path, exists=True, for_write=True)
     if error:
         return {"error": error}
     assert resolved is not None
@@ -414,7 +486,7 @@ def _tool(
 
 read_tool = _tool(
     "read",
-    "Read a text file with line numbers and pagination.",
+    "Read a text file with line numbers and pagination. Agent assets are available under images/, music/, and tts/; historical attachments are read-only under attachments/.",
     {
         "path": {"type": "string"},
         "offset": {"type": "integer", "minimum": 1, "default": 1},
@@ -425,14 +497,14 @@ read_tool = _tool(
 )
 write_tool = _tool(
     "write",
-    "Create or completely replace a UTF-8 text file atomically.",
+    "Create or completely replace a UTF-8 text file atomically in workspace/, images/, music/, or tts/. The attachments/ archive is read-only.",
     {"path": {"type": "string"}, "content": {"type": "string"}},
     ["path", "content"],
     write,
 )
 edit_tool = _tool(
     "edit",
-    "Edit a text file by exact replacement and return a unified diff.",
+    "Edit a text file by exact replacement in workspace/, images/, music/, or tts/ and return a unified diff. The attachments/ archive is read-only.",
     {
         "path": {"type": "string"},
         "old_string": {"type": "string"},
@@ -444,7 +516,7 @@ edit_tool = _tool(
 )
 glob_tool = _tool(
     "glob",
-    "Find files using a glob path pattern.",
+    "Find files using a glob path pattern. Agent asset roots are images/, music/, tts/, and the read-only historical archive attachments/.",
     {
         "pattern": {"type": "string"},
         "path": {"type": "string", "default": "."},
@@ -455,7 +527,7 @@ glob_tool = _tool(
 )
 grep_tool = _tool(
     "grep",
-    "Search text contents with a regular expression.",
+    "Search text contents with a regular expression. Agent-owned historical attachments are available read-only under attachments/.",
     {
         "pattern": {"type": "string"},
         "path": {"type": "string", "default": "."},

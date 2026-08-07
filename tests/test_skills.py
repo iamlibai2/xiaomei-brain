@@ -322,6 +322,36 @@ def test_build_skill_index_prompt_with_keyword_fallback(populated_storage):
     assert "skill_view" in result
 
 
+def test_skill_prompt_keeps_capability_required_skill_outside_semantic_top_k(monkeypatch):
+    loader = SkillLoader.__new__(SkillLoader)
+    monkeypatch.setattr(
+        loader,
+        "list_skills",
+        lambda query, top_k: [{
+            "name": "semantic-result",
+            "description": "A semantic candidate",
+            "tags": [],
+        }],
+    )
+    monkeypatch.setattr(
+        loader,
+        "view_skill",
+        lambda name: {
+            "name": name,
+            "description": "Capability-required method",
+            "tags": [],
+        } if name == "required-skill" else None,
+    )
+
+    prompt = loader.build_skill_index_prompt(
+        "short follow-up",
+        top_k=1,
+        required_names=["required-skill"],
+    )
+
+    assert prompt.index("required-skill") < prompt.index("semantic-result")
+
+
 def test_build_skill_index_prompt_no_match_returns_empty(populated_storage):
     result = populated_storage.build_skill_index_prompt("zzz_nonexistent_xyz", top_k=3)
     assert result == ""
@@ -407,6 +437,28 @@ requires_tools:
     assert skill["tags"] == ["browser", "web"]
     assert skill["tool_bindings"] == ["navigate_page", "take_screenshot"]
     assert "## Steps" in skill["content"]
+
+
+def test_import_from_dir_accepts_common_tools_alias(storage, tmp_path):
+    skill_dir = tmp_path / "mail-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        """---
+name: mail-skill
+description: Work with mail
+tools: [search_mail, send_mail]
+---
+# Mail
+""",
+        encoding="utf-8",
+    )
+
+    storage.import_from_dir(tmp_path)
+
+    assert storage.view_skill("mail-skill")["tool_bindings"] == [
+        "search_mail",
+        "send_mail",
+    ]
 
 
 def test_import_from_dir_tags_as_comma_string(storage, tmp_db):

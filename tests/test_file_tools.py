@@ -89,3 +89,73 @@ def test_assignment_named_directories_resolve_from_workspace_root(tmp_path):
 
     assert helper["path"] == str(work / "helper.py")
     assert deliverable["path"] == str(outputs / "result.md")
+
+
+def test_attachment_archive_is_searchable_and_read_only(tmp_path):
+    workspace = tmp_path / "workspace"
+    attachments = tmp_path / "attachments"
+    session = attachments / "session-hash"
+    workspace.mkdir()
+    session.mkdir(parents=True)
+    stored = session / "photo.jpg"
+    stored.write_bytes(b"photo")
+    note = session / "source.txt"
+    note.write_text("from dingtalk", encoding="utf-8")
+
+    with bind_tool_execution(
+        tool_call_id="call-assets",
+        tool_name="glob",
+        arguments={},
+        artifact_callback=None,
+        workspace_root=str(workspace),
+        working_directory=str(workspace),
+        output_root=str(workspace),
+        read_only_roots=(str(attachments),),
+    ):
+        found = file_ops.glob("**/*.jpg", path="attachments")
+        read = file_ops.read("attachments/session-hash/source.txt")
+        write = file_ops.write("attachments/session-hash/new.txt", "no")
+        edit = file_ops.edit(
+            "attachments/session-hash/source.txt",
+            "dingtalk",
+            "changed",
+        )
+        outside = file_ops.glob("**/*", path=str(tmp_path))
+
+    assert found["files"] == ["attachments/session-hash/photo.jpg"]
+    assert "from dingtalk" in read["content"]
+    assert "read-only" in write["error"]
+    assert "read-only" in edit["error"]
+    assert "outside this Agent" in outside["error"]
+    assert note.read_text(encoding="utf-8") == "from dingtalk"
+
+
+def test_agent_media_roots_are_addressable_and_writable(tmp_path):
+    workspace = tmp_path / "workspace"
+    images = tmp_path / "images"
+    music = tmp_path / "music"
+    tts = tmp_path / "tts"
+    workspace.mkdir()
+
+    with bind_tool_execution(
+        tool_call_id="call-media-assets",
+        tool_name="write",
+        arguments={},
+        artifact_callback=None,
+        workspace_root=str(workspace),
+        working_directory=str(workspace),
+        output_root=str(workspace),
+        writable_roots=(str(images), str(music), str(tts)),
+    ):
+        image_result = file_ops.write("images/description.txt", "image")
+        music_result = file_ops.write("music/credits.txt", "music")
+        tts_result = file_ops.write("tts/transcript.txt", "speech")
+        found = file_ops.glob("**/*.txt", path="music")
+
+    assert image_result["relative_path"] == "images/description.txt"
+    assert music_result["relative_path"] == "music/credits.txt"
+    assert tts_result["relative_path"] == "tts/transcript.txt"
+    assert found["files"] == ["music/credits.txt"]
+    assert (images / "description.txt").read_text() == "image"
+    assert (music / "credits.txt").read_text() == "music"
+    assert (tts / "transcript.txt").read_text() == "speech"

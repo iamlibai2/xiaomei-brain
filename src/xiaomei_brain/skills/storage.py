@@ -255,7 +255,10 @@ class SkillStorage(SQLiteStore):
                 tags = fm.get("tags", [])
                 if isinstance(tags, str):
                     tags = [t.strip() for t in tags.split(",")]
-                tool_bindings = fm.get("requires_tools", [])
+                # ``requires_tools`` is Xiaomei's canonical field. Accept the
+                # common ``tools`` alias so third-party Skills do not silently
+                # lose their runtime dependencies.
+                tool_bindings = fm.get("requires_tools", fm.get("tools", []))
                 if isinstance(tool_bindings, str):
                     tool_bindings = [t.strip() for t in tool_bindings.split(",")]
 
@@ -297,9 +300,10 @@ class SkillStorage(SQLiteStore):
         tags_json = json.dumps(tags, ensure_ascii=False)
         bindings_json = json.dumps(tool_bindings or [], ensure_ascii=False)
 
-        # 内容指纹：name + description + tags + content — 用于判断是否需要重新 embed
+        # Include tool bindings so dependency-only changes are persisted and
+        # cannot be mistaken for an unchanged Skill.
         content_fp = hashlib.sha256(
-            f"{name}|{description}|{tags_json}|{content}".encode("utf-8")
+            f"{name}|{description}|{tags_json}|{bindings_json}|{content}".encode("utf-8")
         ).hexdigest()
 
         existing = conn.execute(

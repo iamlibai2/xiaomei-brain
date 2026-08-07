@@ -1,7 +1,7 @@
 ---
 name: gmail
 description: Search, read, draft, send, and reply to email in the current Person's connected Gmail account.
-tools:
+requires_tools:
   - search_gmail
   - read_gmail
   - create_gmail_draft

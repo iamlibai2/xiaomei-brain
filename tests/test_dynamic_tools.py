@@ -6,6 +6,7 @@ from xiaomei_brain.tools.base import Tool
 from xiaomei_brain.tools.registry import ToolRegistry
 from xiaomei_brain.tools.dynamic import (
     DynamicToolLoader,
+    build_step_tool_selection_context,
     build_tool_selection_context,
     set_active_loader,
     notify_tools_changed,
@@ -92,6 +93,39 @@ def test_tool_selection_context_is_bounded():
     assert len(context) <= 400
     assert "Current user request" in context
     assert "C" * 100 in context
+
+
+def test_step_selection_context_keeps_intent_and_bounds_tool_progress():
+    context = build_step_tool_selection_context(
+        "Current user request:\n分析销售数据并生成图表",
+        ["read_document: " + "old" * 500, "analyze_data: latest result"],
+        max_progress_chars=120,
+    )
+
+    assert context.startswith("Current user request:\n分析销售数据并生成图表")
+    assert "analyze_data: latest result" in context
+    assert len(context.split("Recent execution progress:\n", 1)[1]) <= 120
+
+
+def test_tool_embedding_fingerprint_includes_parameter_schema():
+    reg = ToolRegistry()
+    first = Tool(
+        name="search_mail",
+        description="Search mail",
+        category="mail",
+        parameters={"type": "object", "properties": {"query": {"type": "string"}}},
+        func=lambda: None,
+    )
+    second = Tool(
+        name="search_mail",
+        description="Search mail",
+        category="mail",
+        parameters={"type": "object", "properties": {"sender": {"type": "string"}}},
+        func=lambda: None,
+    )
+    loader = DynamicToolLoader(reg)
+
+    assert loader._tool_fingerprint(first) != loader._tool_fingerprint(second)
 
 
 # ── Basic loading ──────────────────────────────────────────────

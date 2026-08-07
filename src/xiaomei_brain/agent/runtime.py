@@ -117,6 +117,8 @@ class AgentRuntimeFactory:
             "tool_workspace_root",
             "tool_working_directory",
             "tool_output_root",
+            "tool_writable_roots",
+            "tool_read_only_roots",
         )
         # AgentInstance owns the durable services; the live Core contains a few
         # late-bound integrations.  Copy both when available, with the live

@@ -116,6 +116,89 @@ class CapabilityRegistry:
         ranked.sort(key=lambda item: (-item[0], item[1]))
         return [item[2] for item in ranked[:max(1, limit)]]
 
+    def select_execution_components(
+        self,
+        query: str,
+        *,
+        limit: int = 3,
+        person_id: str = "",
+    ) -> tuple[list[str], list[str]]:
+        """Resolve deterministic Tool and Skill dependencies for one request.
+
+        Capability manifests define the reliable execution floor. Semantic
+        retrieval may still add optional tools, but cannot remove these.
+        """
+        tool_names: list[str] = []
+        skill_names: list[str] = []
+        query_terms = self._terms(self._normalized_text(query))
+        for view in self.resolve(query, limit=limit, person_id=person_id):
+            if view.status not in {CapabilityStatus.READY, CapabilityStatus.DEGRADED}:
+                continue
+            definition = self._definitions.get(view.id)
+            if definition is None:
+                continue
+
+            outcome_scores: list[tuple[int, Any]] = []
+            for outcome in definition.outcomes:
+                searchable = self._normalized_text(
+                    f"{outcome.id} {outcome.name} {outcome.description}"
+                )
+                score = sum(1 for term in query_terms if term in searchable)
+                outcome_scores.append((score, outcome))
+            best_score = max((score for score, _ in outcome_scores), default=0)
+            if best_score:
+                selected_outcomes = [
+                    outcome for score, outcome in outcome_scores
+                    if score == best_score
+                ]
+            else:
+                selected_outcomes = list(definition.outcomes)
+
+            component_ids = {
+                component_id
+                for outcome in selected_outcomes
+                for component_id in outcome.components
+            }
+            component_ids.update(
+                component.id for component in definition.components
+                if component.required
+            )
+            for component in definition.components:
+                if component.id not in component_ids:
+                    continue
+                if component.kind == "tool" and component.target not in tool_names:
+                    tool_names.append(component.target)
+                elif component.kind == "skill" and component.target not in skill_names:
+                    skill_names.append(component.target)
+        return tool_names, skill_names
+
+    def prepare_execution_selection(
+        self,
+        query: str,
+        *,
+        scope_id: str,
+        person_id: str = "",
+        limit: int = 3,
+    ) -> list[str]:
+        """Pin Capability and Skill dependencies for one scoped ReAct run."""
+        tool_names, skill_names = self.select_execution_components(
+            query,
+            limit=limit,
+            person_id=person_id,
+        )
+        for skill_name in skill_names:
+            if self._skill_loader is None:
+                break
+            skill = self._skill_loader.view_skill(skill_name)
+            if skill:
+                for tool_name in skill.get("tool_bindings", []):
+                    if tool_name not in tool_names:
+                        tool_names.append(tool_name)
+        pin = getattr(self._dynamic_tool_loader, "pin_required_tools", None)
+        if callable(pin) and tool_names:
+            pin(scope_id, tool_names)
+        return skill_names
+
     def build_context(self, query: str, *, limit: int = 3, person_id: str = "") -> str:
         """Build a compact runtime-truth block for the current conversation."""
         views = self.resolve(query, limit=limit, person_id=person_id)

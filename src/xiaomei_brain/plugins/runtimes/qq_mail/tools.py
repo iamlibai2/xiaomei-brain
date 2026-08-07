@@ -30,22 +30,13 @@ def _addresses(value: str | list[str]) -> list[str]:
 def _attachment_paths(values: list[str]) -> list[Path]:
     if not values:
         return []
-    context = current_tool_execution()
-    roots = [
-        Path(value).resolve()
-        for value in (
-            context.workspace_root if context is not None else "",
-            context.output_root if context is not None else "",
-        )
-        if value
-    ]
+    from xiaomei_brain.tools.builtin.file_ops import resolve_readable_path
+
     paths: list[Path] = []
     for value in values:
-        path = Path(value).expanduser().resolve()
-        if not path.is_file():
-            raise ValueError(f"附件不存在: {value}")
-        if roots and not any(path == root or root in path.parents for root in roots):
-            raise ValueError(f"附件必须位于当前 Agent 工作区或产物目录: {value}")
+        path, error = resolve_readable_path(value, exists=True)
+        if error or path is None or not path.is_file():
+            raise ValueError(error or f"附件不存在: {value}")
         paths.append(path)
     return paths
 

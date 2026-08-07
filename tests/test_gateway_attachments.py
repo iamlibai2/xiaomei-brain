@@ -15,6 +15,7 @@ from xiaomei_brain.gateway.attachments import (
     MAX_ATTACHMENT_BYTES,
     append_text_attachments,
     prepare_attachments,
+    prepare_local_attachments,
     public_attachment_metadata,
     read_stored_attachment,
     restore_attachment_refs,
@@ -33,6 +34,32 @@ def payload(name: str, mime_type: str, data: bytes, attachment_id: str = "attach
         size=len(data),
         data_base64=base64.b64encode(data).decode("ascii"),
     )
+
+
+def test_channel_local_image_is_imported_as_durable_session_attachment(
+    tmp_path, monkeypatch,
+):
+    home = tmp_path / "home"
+    channel_temp = tmp_path / "channel-temp"
+    channel_temp.mkdir()
+    source = channel_temp / "meal.jpg"
+    source.write_bytes(b"jpeg-content")
+    monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: home))
+
+    prepared, images, saved = prepare_local_attachments(
+        "test", "dingtalk-person-1", [source],
+    )
+
+    assert len(prepared) == 1
+    assert prepared[0]["name"] == "meal.jpg"
+    assert prepared[0]["kind"] == "image"
+    assert prepared[0]["mime_type"] == "image/jpeg"
+    assert images == [str(saved[0])]
+    assert saved[0].read_bytes() == b"jpeg-content"
+    assert saved[0].is_relative_to(
+        home / ".xiaomei-brain" / "test" / "attachments"
+    )
+    assert source.exists()
 
 
 def test_text_attachment_is_saved_and_added_to_model_context(tmp_path, monkeypatch):

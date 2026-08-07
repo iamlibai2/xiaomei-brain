@@ -219,12 +219,27 @@ class SkillLoader:
         storage = self._get_storage()
         return storage.remove_skill(name)
 
-    def build_skill_index_prompt(self, query: str, top_k: int = 5) -> str:
+    def build_skill_index_prompt(
+        self,
+        query: str,
+        top_k: int = 5,
+        required_names: list[str] | tuple[str, ...] | None = None,
+    ) -> str:
         """生成注入 system prompt 的动态技能索引文本。
 
         embed(query) → LanceDB 语义召回 → 格式化 <available_skills> 块。
         """
-        skills = self.list_skills(query=query, top_k=top_k)
+        skills: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for name in required_names or ():
+            skill = self.view_skill(str(name))
+            if skill and skill["name"] not in seen:
+                skills.append(skill)
+                seen.add(skill["name"])
+        for skill in self.list_skills(query=query, top_k=top_k):
+            if skill["name"] not in seen:
+                skills.append(skill)
+                seen.add(skill["name"])
         if not skills:
             return ""
         lines = [

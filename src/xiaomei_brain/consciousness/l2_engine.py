@@ -145,6 +145,8 @@ class L2Engine:
             "tool_workspace_root",
             "tool_working_directory",
             "tool_output_root",
+            "tool_writable_roots",
+            "tool_read_only_roots",
         ):
             setattr(runtime, attribute, getattr(main_agent, attribute, None))
 

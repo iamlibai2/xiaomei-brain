@@ -6,6 +6,7 @@ import base64
 import binascii
 import hashlib
 import html
+import mimetypes
 import re
 from pathlib import Path
 from typing import Any
@@ -179,6 +180,72 @@ def prepare_attachments(
         raise
 
     return prepared, image_paths, saved_paths
+
+
+def prepare_local_attachments(
+    agent_id: str,
+    session_id: str,
+    paths: list[str | Path],
+) -> tuple[list[dict[str, Any]], list[str], list[Path]]:
+    """Import channel-downloaded files into the Agent's durable attachment store.
+
+    Channel SDKs commonly download inbound media to an operating-system temp
+    directory. Those paths are outside the Agent workspace and may disappear
+    after the current turn, so they must not be persisted as conversation
+    assets. This helper is only for trusted paths produced by a channel
+    adapter; user supplied filesystem paths still go through the execution
+    sandbox.
+    """
+    payloads: list[dict[str, Any]] = []
+    total = 0
+    contains_video = False
+    for value in paths:
+        source = Path(value)
+        if not source.is_file():
+            raise AttachmentError(f"渠道附件不存在: {source.name or source}")
+        size = source.stat().st_size
+        suffix = source.suffix.lower()
+        mime_type = _local_attachment_mime_type(suffix, source.name)
+        is_video = mime_type in VIDEO_MIMES
+        contains_video = contains_video or is_video
+        item_limit = MAX_VIDEO_ATTACHMENT_BYTES if is_video else MAX_ATTACHMENT_BYTES
+        if size > item_limit:
+            raise AttachmentError(
+                f"附件 {source.name} 超过 {item_limit // (1024 * 1024)} MB"
+            )
+        total += size
+        data = source.read_bytes()
+        digest = hashlib.sha256(data).hexdigest()
+        payloads.append({
+            "id": f"channel_{digest[:24]}",
+            "name": source.name,
+            "mime_type": mime_type,
+            "size": len(data),
+            "data_base64": base64.b64encode(data).decode("ascii"),
+        })
+    total_limit = MAX_VIDEO_TOTAL_BYTES if contains_video else MAX_TOTAL_BYTES
+    if total > total_limit:
+        raise AttachmentError(
+            f"单条消息的附件合计不能超过 {total_limit // (1024 * 1024)} MB"
+        )
+    return prepare_attachments(agent_id, session_id, payloads)
+
+
+def _local_attachment_mime_type(suffix: str, name: str) -> str:
+    for mime_type, expected_suffix in IMAGE_MIMES.items():
+        if suffix == expected_suffix or (suffix == ".jpeg" and expected_suffix == ".jpg"):
+            return mime_type
+    for mime_type, expected_suffix in AUDIO_MIMES.items():
+        if suffix == expected_suffix:
+            return mime_type
+    for mime_type, expected_suffix in VIDEO_MIMES.items():
+        if suffix == expected_suffix:
+            return mime_type
+    if suffix in DOCUMENT_TYPES:
+        return DOCUMENT_TYPES[suffix]
+    if suffix in TEXT_EXTENSIONS:
+        return mimetypes.guess_type(name)[0] or "text/plain"
+    return mimetypes.guess_type(name)[0] or "application/octet-stream"
 
 
 def cleanup_attachments(paths: list[Path]) -> None:

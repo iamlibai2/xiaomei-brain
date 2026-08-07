@@ -35,6 +35,8 @@ class ToolExecutionContext:
     workspace_root: str = ""
     working_directory: str = ""
     output_root: str = ""
+    writable_roots: tuple[str, ...] = ()
+    read_only_roots: tuple[str, ...] = ()
     execution_environment: Any = None
     project_context: ProjectRuntimeContext | None = None
     project_service: Any = None
@@ -83,6 +85,8 @@ def bind_tool_execution(
     workspace_root: str = "",
     working_directory: str = "",
     output_root: str = "",
+    writable_roots: tuple[str, ...] = (),
+    read_only_roots: tuple[str, ...] = (),
     execution_environment: Any = None,
     project_context: ProjectRuntimeContext | None = None,
     project_service: Any = None,
@@ -102,6 +106,12 @@ def bind_tool_execution(
         workspace_root=workspace_root,
         working_directory=working_directory,
         output_root=output_root,
+        writable_roots=tuple(
+            str(item) for item in (writable_roots or ()) if str(item)
+        ),
+        read_only_roots=tuple(
+            str(item) for item in (read_only_roots or ()) if str(item)
+        ),
         execution_environment=execution_environment,
         project_context=project_context,
         project_service=project_service,

@@ -131,9 +131,12 @@ class AgentInstance:
             self._agent.longterm_memory = self.longterm_memory
             self._agent.memory_extractor = self.memory_extractor
             self._agent._procedure_memory = getattr(self, "_procedure_memory", None)
-            self._agent._dynamic_loader = getattr(self, "_dynamic_loader", None)
-            self._agent._capability_registry = self._capability_registry
             self._agent.tool_execution_environment = self.tool_execution_environment
+        # These registries are assembled after the core in some startup paths
+        # and can be hot-reloaded. Synchronize them whenever the core is used.
+        self._agent._dynamic_loader = getattr(self, "_dynamic_loader", None)
+        self._agent._skill_loader = getattr(self, "_skill_loader", None)
+        self._agent._capability_registry = self._capability_registry
         return self._agent
 
     def chat(
@@ -191,12 +194,6 @@ class AgentInstance:
             capability_context = self._capability_registry.build_context(user_input, person_id=user_id)
             if capability_context:
                 system_prompt = system_prompt + "\n\n" + capability_context if system_prompt else capability_context
-        # 技能索引（简化路径：无 ConsciousLiving 时在此拼接）
-        skill_loader = getattr(agent, '_skill_loader', None)
-        if skill_loader:
-            skill_index = skill_loader.build_skill_index_prompt(user_input)
-            if skill_index:
-                system_prompt = system_prompt + "\n\n" + skill_index if system_prompt else skill_index
         if intent_context:
             system_prompt = system_prompt + "\n\n" + intent_context if system_prompt else intent_context
         assembled = []

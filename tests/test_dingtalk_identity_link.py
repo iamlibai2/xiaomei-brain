@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from xiaomei_brain.people import IdentityLinkService, PeopleService, PeopleStore
@@ -131,7 +133,7 @@ def test_dingtalk_audio_is_transcribed_persisted_and_admitted(
     assert client.sent == []
 
 
-def test_dingtalk_adapter_consumes_link_then_routes_as_person(tmp_path):
+def test_dingtalk_adapter_consumes_link_then_routes_as_person(tmp_path, monkeypatch):
     pytest.importorskip("dingtalk_stream")
     from xiaomei_brain.plugins.channels.dingtalk.adapter import DingTalkAdapter
 
@@ -283,6 +285,32 @@ def test_dingtalk_adapter_consumes_link_then_routes_as_person(tmp_path):
     session = people.store.get_session(raw.session_id)
     assert session is not None
     assert session.scope_id == person.person_id
+
+    from xiaomei_brain.gateway import attachments as attachment_module
+
+    monkeypatch.setattr(
+        attachment_module.Path,
+        "home",
+        classmethod(lambda cls: tmp_path),
+    )
+    inbound_image = tmp_path / "dingtalk-temp" / "meal.jpg"
+    inbound_image.parent.mkdir()
+    inbound_image.write_bytes(b"meal-image")
+    client.callback({
+        **base,
+        "text": f"[图片: {inbound_image}]",
+        "msg_type": "picture",
+        "media_paths": [str(inbound_image)],
+    })
+    raw = gateway.messages[-1]
+    assert len(raw.attachments) == 1
+    assert raw.attachments[0]["name"] == "meal.jpg"
+    assert raw.attachments[0]["kind"] == "image"
+    assert raw.images == [raw.attachments[0]["local_path"]]
+    assert str(inbound_image) not in raw.content
+    assert Path(raw.images[0]).is_relative_to(
+        tmp_path / ".xiaomei-brain" / "default" / "attachments"
+    )
 
     # Group chatter that doesn't mention the Agent is observed without
     # creating a Turn. A mentioned message enters the group's shared scene.

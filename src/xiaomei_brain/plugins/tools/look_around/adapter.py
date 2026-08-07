@@ -63,23 +63,12 @@ def look_at(image_path: str, prompt: str = "描述这张图片") -> dict:
         return {"error": "视觉感知已关闭"}
 
     image_path = image_path.strip()
-    path = _os.path.expanduser(image_path)
-    if not _os.path.isabs(path):
-        # 相对路径 → 以 workspace 为基准
-        from xiaomei_brain.base.config import Config
-        try:
-            cfg = Config.from_json()
-            if cfg and cfg.workspace:
-                ws = cfg.workspace
-                if ws:
-                    resolved = _os.path.expanduser(_os.path.join(ws, image_path))
-                    if _os.path.isfile(resolved):
-                        path = resolved
-        except Exception:
-            logger.debug("Image path resolution failed, using original path", exc_info=True)
+    from xiaomei_brain.tools.builtin.file_ops import resolve_readable_path
 
-    if not _os.path.isfile(path):
-        return {"error": f"图片不存在: {image_path}"}
+    resolved, error = resolve_readable_path(image_path, exists=True)
+    if error or resolved is None or not resolved.is_file():
+        return {"error": error or f"图片不存在: {image_path}"}
+    path = str(resolved)
 
     suffix = _os.path.splitext(path)[1].lower()
     if suffix not in _SUPPORTED_SUFFIXES:

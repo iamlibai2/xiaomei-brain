@@ -49,10 +49,19 @@ class _SkillLoader:
     def set_disabled_names(self, names) -> None:
         self.disabled = set(names)
 
+    def view_skill(self, name: str):
+        if name not in self.list_names():
+            return None
+        return {"name": name, "tool_bindings": []}
+
 
 class _DynamicLoader:
     def set_disabled_names(self, names) -> None:
         self.disabled = set(names)
+
+    def pin_required_tools(self, scope_id, names):
+        self.pinned = (scope_id, list(names))
+        return list(names), []
 
 
 class _ToolServiceConfiguration:
@@ -233,6 +242,24 @@ def test_capability_resolver_exposes_only_task_relevant_business_facts():
     assert "数据分析与可视化 [可用]" in context
     assert "plugin" not in context.lower()
     assert "analyze_data" not in context
+
+
+def test_capability_selection_pins_outcome_tools_and_required_skill():
+    registry = _document_runtime()
+    dynamic = _DynamicLoader()
+    registry.bind_dynamic_tool_loader(dynamic)
+
+    skills = registry.prepare_execution_selection(
+        "制作一份项目汇报 PPT",
+        scope_id="desktop-session",
+        person_id="person-1",
+    )
+
+    assert "presentation-documents" in skills
+    assert dynamic.pinned[0] == "desktop-session"
+    assert "read_document" in dynamic.pinned[1]
+    assert "write_document" in dynamic.pinned[1]
+    assert "manage_document_template" not in dynamic.pinned[1]
 
 
 def test_agent_can_inspect_business_capabilities_without_technical_leakage():
