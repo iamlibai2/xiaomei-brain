@@ -7,9 +7,9 @@ import pytest
 
 from xiaomei_brain.body.perception.remote_audio import RemoteAudioPerception
 from xiaomei_brain.gateway.attachments import prepare_attachments, read_stored_attachment
-from xiaomei_brain.media_services import audio as audio_module
-from xiaomei_brain.media_services.audio import SpeechAudio, encode_speech_as_opus
-from xiaomei_brain.media_services.audio import decode_to_pcm_s16
+from xiaomei_brain.media import audio as audio_module
+from xiaomei_brain.media.audio import SpeechAudio, encode_speech_as_opus
+from xiaomei_brain.media.audio import decode_to_pcm_s16
 from xiaomei_brain.plugins.channels.feishu.client import FeishuChannel
 from xiaomei_brain.tools.execution_context import (
     bind_tool_execution,

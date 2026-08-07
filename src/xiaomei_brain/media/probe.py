@@ -1,4 +1,4 @@
-"""Objective media facts collected when files enter a Project."""
+"""Objective facts extracted from audio and video files with FFprobe."""
 
 from __future__ import annotations
 

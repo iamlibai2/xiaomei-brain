@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from xiaomei_brain.media_services.audio import decode_to_pcm_s16
+from xiaomei_brain.media.audio import decode_to_pcm_s16
 
 
 class RemoteAudioPerception:

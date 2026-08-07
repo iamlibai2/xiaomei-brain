@@ -87,7 +87,7 @@ def _extract_plugins_config(agent_id: str = "") -> dict:
         # Ensure the legacy global MiniMax block is copied into this Agent
         # before plugin configuration is assembled.
         if agent_id:
-            from ..media_services import MediaServiceConfigurationService
+            from ..media import MediaServiceConfigurationService
             from ..tool_services import ToolServiceConfigurationService
 
             MediaServiceConfigurationService(agent_id)

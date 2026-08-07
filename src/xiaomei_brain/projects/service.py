@@ -27,7 +27,7 @@ from .models import (
     WorkspaceKind,
     validate_project_transition,
 )
-from .media import probe_media_facts
+from xiaomei_brain.media import probe_media_facts
 from .store import ProjectStore, new_project_asset_id, new_project_id
 from .workspace import ProjectWorkspaceManager
 

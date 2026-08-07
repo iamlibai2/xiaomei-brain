@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from xiaomei_brain.media_services import (
+from xiaomei_brain.media import (
     MediaServiceConfigurationError,
     MediaServiceConfigurationService,
     inspect_media_runtime,

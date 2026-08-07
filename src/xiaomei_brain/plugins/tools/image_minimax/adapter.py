@@ -2,7 +2,7 @@
 
 
 def register(ctx):
-    from xiaomei_brain.media_services import get_media_service_spec
+    from xiaomei_brain.media import get_media_service_spec
 
     from .provider import ImageConfig, ImageProvider
     from .tool import image_generate_tool, set_image_provider, set_output_base

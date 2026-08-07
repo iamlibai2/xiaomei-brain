@@ -10,7 +10,7 @@ import logging
 import os
 
 from xiaomei_brain.tools.base import tool
-from xiaomei_brain.media_services.audio import SpeechAudio
+from xiaomei_brain.media.audio import SpeechAudio
 from xiaomei_brain.tools.execution_context import current_tool_execution
 
 logger = logging.getLogger(__name__)

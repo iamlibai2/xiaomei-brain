@@ -1,4 +1,4 @@
-"""Transport-neutral audio values and ffmpeg conversion helpers."""
+"""Transport-neutral audio values and FFmpeg conversion helpers."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""One configuration surface for image, TTS, and music plugins."""
+"""One configuration surface for image, TTS, music, and video plugins."""
 
 from __future__ import annotations
 

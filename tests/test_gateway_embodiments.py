@@ -9,7 +9,7 @@ from xiaomei_brain.gateway.inbound import Accepted
 from xiaomei_brain.gateway.router import OutputRoute
 from xiaomei_brain.gateway.server_methods import MethodRouter
 from xiaomei_brain.gateway.ws_adapter import WSAdapter
-from xiaomei_brain.media_services.audio import SpeechAudio
+from xiaomei_brain.media.audio import SpeechAudio
 
 
 class ImmediateThread:

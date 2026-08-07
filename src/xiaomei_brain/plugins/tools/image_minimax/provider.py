@@ -237,7 +237,7 @@ def get_available_aspect_ratios() -> list[str]:
 
 def get_available_models() -> list[str]:
     """Return list of available image models."""
-    from xiaomei_brain.media_services import get_media_service_spec
+    from xiaomei_brain.media import get_media_service_spec
 
     return list(get_media_service_spec("image_minimax").models)
 

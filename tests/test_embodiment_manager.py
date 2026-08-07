@@ -14,7 +14,7 @@ from xiaomei_brain.gateway.channel_adapter import (
     ChannelCapabilities,
 )
 from xiaomei_brain.gateway.router import OutputRoute
-from xiaomei_brain.media_services.audio import SpeechAudio
+from xiaomei_brain.media.audio import SpeechAudio
 
 
 class FakeRouter:

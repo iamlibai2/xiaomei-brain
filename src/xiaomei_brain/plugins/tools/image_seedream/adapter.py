@@ -1,7 +1,7 @@
 """Image Seedream 插件 — 注册 generate_image_seedream 工具。"""
 
 def register(ctx):
-    from xiaomei_brain.media_services import get_media_service_spec
+    from xiaomei_brain.media import get_media_service_spec
 
     from .provider import SeedreamProvider
     from .tool import (

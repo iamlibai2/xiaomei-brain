@@ -377,7 +377,7 @@ class IdentityMethods:
             if parsed.kind == "voiceprint":
                 if not parsed.mime_type.startswith("audio/"):
                     raise ValueError("声纹登记需要语音数据")
-                from xiaomei_brain.media_services.audio import (
+                from xiaomei_brain.media.audio import (
                     AudioConversionError,
                     decode_to_pcm_s16,
                 )
@@ -452,7 +452,7 @@ class IdentityMethods:
             if parsed.kind == "voiceprint":
                 if not parsed.mime_type.startswith("audio/"):
                     raise ValueError("声纹验证需要语音数据")
-                from xiaomei_brain.media_services.audio import (
+                from xiaomei_brain.media.audio import (
                     AudioConversionError,
                     decode_to_pcm_s16,
                 )

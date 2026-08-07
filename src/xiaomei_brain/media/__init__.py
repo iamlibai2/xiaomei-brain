@@ -1,4 +1,4 @@
-"""Declarative per-Agent media service configuration."""
+"""Shared media domain infrastructure for audio, video and providers."""
 
 from .catalog import (
     MediaFieldSpec,
@@ -11,6 +11,7 @@ from .configuration import (
     MediaServiceConfigurationService,
 )
 from .runtime import inspect_media_runtime
+from .probe import probe_media_facts
 
 __all__ = [
     "MediaFieldSpec",
@@ -20,4 +21,5 @@ __all__ = [
     "discover_media_service_specs",
     "get_media_service_spec",
     "inspect_media_runtime",
+    "probe_media_facts",
 ]

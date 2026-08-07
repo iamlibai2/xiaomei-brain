@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from xiaomei_brain.gateway.methods.media import MediaServiceMethods
-from xiaomei_brain.media_services import (
+from xiaomei_brain.media import (
     MediaServiceConfigurationError,
     MediaServiceConfigurationService,
     discover_media_service_specs,
@@ -203,7 +203,7 @@ def test_local_media_service_uses_defaults_and_can_be_disabled(tmp_path):
 def test_local_media_service_accepts_running_local_server(tmp_path, monkeypatch):
     service = MediaServiceConfigurationService("xiaomei", tmp_path)
     monkeypatch.setattr(
-        "xiaomei_brain.media_services.configuration.requests.request",
+        "xiaomei_brain.media.configuration.requests.request",
         lambda *args, **kwargs: SimpleNamespace(status_code=200, text="ok"),
     )
 
@@ -232,7 +232,7 @@ def test_connection_test_uses_plugin_owned_endpoint(tmp_path, monkeypatch):
         return SimpleNamespace(status_code=400, text="")
 
     monkeypatch.setattr(
-        "xiaomei_brain.media_services.configuration.requests.request",
+        "xiaomei_brain.media.configuration.requests.request",
         fake_request,
     )
     result = service.test(
@@ -249,7 +249,7 @@ def test_connection_test_uses_plugin_owned_endpoint(tmp_path, monkeypatch):
 def test_connection_test_rejects_unauthorized_credentials(tmp_path, monkeypatch):
     service = MediaServiceConfigurationService("xiaomei", tmp_path)
     monkeypatch.setattr(
-        "xiaomei_brain.media_services.configuration.requests.request",
+        "xiaomei_brain.media.configuration.requests.request",
         lambda *args, **kwargs: SimpleNamespace(status_code=401, text=""),
     )
 
@@ -281,11 +281,11 @@ def test_gateway_media_methods_never_return_secret(tmp_path):
 
 def test_media_runtime_reports_deterministic_tool_status(monkeypatch):
     monkeypatch.setattr(
-        "xiaomei_brain.media_services.runtime.shutil.which",
+        "xiaomei_brain.media.runtime.shutil.which",
         lambda command: f"/tools/{command}",
     )
     monkeypatch.setattr(
-        "xiaomei_brain.media_services.runtime.subprocess.run",
+        "xiaomei_brain.media.runtime.subprocess.run",
         lambda args, **kwargs: SimpleNamespace(
             returncode=0,
             stdout=f"{args[0]} version 1.0\n",
@@ -303,11 +303,11 @@ def test_media_runtime_does_not_treat_version_timeout_as_missing(monkeypatch):
     import subprocess
 
     monkeypatch.setattr(
-        "xiaomei_brain.media_services.runtime.shutil.which",
+        "xiaomei_brain.media.runtime.shutil.which",
         lambda command: f"/tools/{command}",
     )
     monkeypatch.setattr(
-        "xiaomei_brain.media_services.runtime.subprocess.run",
+        "xiaomei_brain.media.runtime.subprocess.run",
         lambda args, **kwargs: (_ for _ in ()).throw(
             subprocess.TimeoutExpired(args, kwargs.get("timeout", 0)),
         ),

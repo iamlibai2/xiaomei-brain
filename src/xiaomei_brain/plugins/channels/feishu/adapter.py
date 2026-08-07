@@ -404,7 +404,7 @@ class FeishuAdapter(ChannelAdapter):
 
     def send_audio(self, target: str, audio) -> bool:
         """Expose the Feishu chat as a remote speech body."""
-        from xiaomei_brain.media_services.audio import encode_speech_as_opus
+        from xiaomei_brain.media.audio import encode_speech_as_opus
 
         encoded = encode_speech_as_opus(audio)
         return self._channel.send_audio(

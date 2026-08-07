@@ -2,7 +2,7 @@
 
 from xiaomei_brain.tools.base import Tool
 from xiaomei_brain.plugins.body._refs import body_ref
-from xiaomei_brain.media_services.audio import SpeechAudio, stream_audio_file_as_pcm
+from xiaomei_brain.media.audio import SpeechAudio, stream_audio_file_as_pcm
 from xiaomei_brain.tools.execution_context import current_tool_execution
 
 
