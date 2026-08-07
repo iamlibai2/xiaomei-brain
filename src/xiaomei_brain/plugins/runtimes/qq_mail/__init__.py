@@ -1,0 +1,2 @@
+"""QQ Mail capability plugin."""
+

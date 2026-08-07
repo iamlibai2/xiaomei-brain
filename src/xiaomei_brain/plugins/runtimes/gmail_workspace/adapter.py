@@ -3,29 +3,15 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+
+from xiaomei_brain.capabilities import DeferredCapabilityRuntime
 
 from .runtime import GmailRuntime
 from .tools import create_gmail_tools
 
 
-class _RuntimeReference:
-    """Let tools resolve the runtime after Agent dependencies are injected."""
-
-    def __init__(self) -> None:
-        self._runtime: GmailRuntime | None = None
-
-    def bind(self, runtime: GmailRuntime) -> None:
-        self._runtime = runtime
-
-    def __getattr__(self, name: str) -> Any:
-        if self._runtime is None:
-            raise RuntimeError("Gmail 运行组件尚未完成初始化")
-        return getattr(self._runtime, name)
-
-
 def register(ctx):
-    runtime_reference = _RuntimeReference()
+    runtime_reference = DeferredCapabilityRuntime[GmailRuntime]("Gmail")
 
     def create_runtime(
         *,

@@ -1,0 +1,59 @@
+id: qq_mail
+name: QQ 邮箱
+summary: 连接当前人物的 QQ 邮箱，搜索、阅读、发送和回复邮件
+category: enterprise
+version: "1.0.0"
+source: xiaomei-brain
+
+examples:
+  - 查看我最近一周未读的 QQ 邮件并汇总重点
+  - 回复客户刚发来的报价确认邮件
+  - 把刚生成的合同文件发送到指定邮箱
+
+components:
+  - id: qq_mail_runtime
+    kind: runtime_probe
+    target: qq_mail
+    label: QQ 邮箱连接
+    required: true
+    setup_section: capabilities
+  - id: qq_mail_skill
+    kind: skill
+    target: qq-mail
+    label: QQ 邮箱操作方法
+    required: true
+  - id: qq_mail_search_tool
+    kind: tool
+    target: search_qq_mail
+    label: 搜索 QQ 邮箱
+    required: true
+  - id: qq_mail_read_tool
+    kind: tool
+    target: read_qq_mail
+    label: 阅读 QQ 邮件
+    required: true
+  - id: qq_mail_send_tool
+    kind: tool
+    target: send_qq_mail
+    label: 发送 QQ 邮件
+    required: true
+  - id: qq_mail_attachment_tool
+    kind: tool
+    target: download_qq_mail_attachment
+    label: 下载邮件附件
+    required: true
+  - id: qq_mail_reply_tool
+    kind: tool
+    target: reply_qq_mail
+    label: 回复 QQ 邮件
+    required: true
+
+outcomes:
+  - id: discover
+    name: 搜索与阅读
+    description: 按人物、主题、日期和未读状态定位并阅读 QQ 邮件
+    components: [qq_mail_runtime, qq_mail_skill, qq_mail_search_tool, qq_mail_read_tool, qq_mail_attachment_tool]
+  - id: deliver
+    name: 发送与回复
+    description: 发送和回复 QQ 邮件，并可附带 Agent 已生成的产物
+    components: [qq_mail_runtime, qq_mail_skill, qq_mail_send_tool, qq_mail_reply_tool]

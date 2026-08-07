@@ -233,7 +233,11 @@ export function CapabilityRuntimeSetup({ agentId, capabilityId, onChanged }: Pro
                   className="capability-runtime-doc-link"
                   onClick={() => void window.desktop.openExternal(details.documentation_url || "")}
                 >
-                  {t("capabilityRuntimeUi.openDocumentation")}
+                  <span className="capability-runtime-doc-icon">
+                    <Icon name="file-text" size={16} />
+                  </span>
+                  <strong>{t("capabilityRuntimeUi.openDocumentation")}</strong>
+                  <Icon name="external-link" size={15} />
                 </button>
               )}
             </div>

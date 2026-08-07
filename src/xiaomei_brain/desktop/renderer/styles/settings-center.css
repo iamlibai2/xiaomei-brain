@@ -2308,6 +2308,43 @@
   font-size: 11px;
 }
 
+.capability-runtime-doc-link {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: 10px;
+  padding: 10px 11px;
+  color: var(--ui-text-medium);
+  text-align: left;
+  background: var(--ui-bg-secondary);
+  cursor: pointer;
+  transition: border-color .14s ease, background-color .14s ease, transform .14s ease;
+}
+
+.capability-runtime-doc-link:hover {
+  border-color: rgb(34 160 107 / 38%);
+  background: rgb(34 160 107 / 6%);
+  transform: translateY(-1px);
+}
+
+.capability-runtime-doc-icon {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--ui-text-link);
+  background: var(--ui-bg-primary);
+}
+
+.capability-runtime-doc-link > strong {
+  color: var(--ui-text-strong);
+  font-size: 12px;
+}
+
 .capability-runtime-job {
   align-items: flex-start;
   flex-wrap: wrap;

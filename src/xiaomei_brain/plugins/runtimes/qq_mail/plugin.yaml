@@ -1,0 +1,6 @@
+name: qq_mail
+version: "1.0.0"
+description: "Person-scoped QQ Mail access through IMAP and SMTP"
+kind: bundle
+entry: adapter:register
+

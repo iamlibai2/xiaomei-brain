@@ -140,6 +140,10 @@ Runtime 管理 lark-cli、应用配置、Person 授权和执行环境，官方 l
 
 Gmail 插件组合 Runtime、邮件 Tool 和 Skill。Google OAuth 应用配置属于 Agent，邮箱授权和令牌属于 Person；两者通过通用动作表单和外部账户存储完成，不在 Desktop、Gateway 或 AgentManager 中保留 Gmail 分支。未来 QQ Mail 等能力应复用同一边界，只新增自己的 Capability 清单、Plugin/Runtime、Tool 和 Skill。
 
+### QQ 邮箱
+
+QQ 邮箱是通用外部账户平台的第二个参考实现。Runtime 用 Person 级表单接收邮箱地址与授权码，连接时验证 IMAP/SMTP，并将授权码交给统一账户库加密保存；Tool 负责搜索、阅读、发送、回复和附件边界，Skill 负责邮件安全规则。基础平台中不包含 QQ 邮箱专用页面、RPC 或 AgentManager 分支。
+
 ### 视频制作
 
 可安装能力包组合 Capability、Skill、项目 Tool 和 Process。项目保存工作现场，Process 约束正式提交，FFmpeg/FFprobe 作为特定结果的运行依赖。视频 Provider 仍通过独立媒体插件提供。

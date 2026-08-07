@@ -20,6 +20,7 @@ from .registry import CapabilityRegistry
 from .runtime import (
     CapabilityRuntime,
     CapabilityRuntimeState,
+    DeferredCapabilityRuntime,
     UnavailableCapabilityRuntime,
 )
 from .runtime_registry import CapabilityRuntimeFactory, CapabilityRuntimeRegistry
@@ -38,6 +39,7 @@ __all__ = [
     "CapabilityRuntimeFactory",
     "CapabilityRuntimeRegistry",
     "CapabilityRuntimeState",
+    "DeferredCapabilityRuntime",
     "CapabilityRegistry",
     "CapabilityStatus",
     "CapabilityView",
