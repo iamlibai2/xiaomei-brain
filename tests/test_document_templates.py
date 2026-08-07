@@ -13,10 +13,10 @@ from xiaomei_brain.documents.templates import (
 )
 from xiaomei_brain.plugin.context import PluginContext
 from xiaomei_brain.plugin.registry import PluginRegistry
-from xiaomei_brain.plugins.tools.document_word.adapter import register as register_word
-from xiaomei_brain.tools.builtin.document_templates import (
+from xiaomei_brain.plugins.tools.document_io.template_tool import (
     create_manage_document_template_tool,
 )
+from xiaomei_brain.plugins.tools.document_word.adapter import register as register_word
 from xiaomei_brain.plugins.tools.document_io.tool import create_write_document_tool
 from xiaomei_brain.tools.execution_context import bind_tool_execution
 

@@ -5,10 +5,8 @@ from .tool import (
     create_read_document_tool,
     create_write_document_tool,
 )
+from .template_tool import create_manage_document_template_tool
 from xiaomei_brain.documents.templates import DocumentTemplateService
-from xiaomei_brain.tools.builtin.document_templates import (
-    create_manage_document_template_tool,
-)
 
 
 def register(ctx):
