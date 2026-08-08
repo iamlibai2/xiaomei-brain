@@ -116,9 +116,10 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         return service().surfaces.snapshot(surface)
 
     def get_workspace(workspace_id: str) -> dict[str, Any]:
-        """Inspect a Workspace and all of its Surfaces."""
+        """Inspect a Workspace, its Surfaces and current business world."""
         return service().snapshot(
             service().require(workspace_id), include_surfaces=True,
+            include_business=True, include_records=True,
         )
 
     def list_workspaces() -> dict[str, Any]:
@@ -128,6 +129,145 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
                 service().snapshot(item)
                 for item in service().list_all(limit=100)
             ],
+        }
+
+    def create_data_source(
+        workspace_id: str,
+        kind: str,
+        name: str,
+        locator: str = "",
+    ) -> dict[str, Any]:
+        """Register a stable source from which business observations arrive."""
+        session_id, turn_id = context()
+        source = service().business.create_data_source(
+            workspace_id,
+            kind=kind,
+            name=name,
+            locator=locator,
+            session_id=session_id,
+            turn_id=turn_id,
+        )
+        return service().business.data_source_snapshot(source)
+
+    def record_observation(
+        workspace_id: str,
+        content: str,
+        data_source_id: str = "",
+        external_ref: str = "",
+        attributes: dict[str, Any] | None = None,
+        asset_id: str = "",
+        occurred_at: float | None = None,
+    ) -> dict[str, Any]:
+        """Record what was received before deciding whether it is a business fact."""
+        session_id, turn_id = context()
+        observation = service().business.observe(
+            workspace_id,
+            content=content,
+            data_source_id=data_source_id,
+            source_person_id=person_id(),
+            external_ref=external_ref,
+            attributes=attributes,
+            asset_id=asset_id,
+            occurred_at=occurred_at,
+            session_id=session_id,
+            turn_id=turn_id,
+        )
+        return service().business.observation_snapshot(observation)
+
+    def define_collection(
+        workspace_id: str,
+        name: str,
+        label: str,
+        purpose: str,
+        fields: list[dict[str, Any]],
+        maturity: str = "candidate",
+    ) -> dict[str, Any]:
+        """Define a stable business object and its typed fields."""
+        session_id, turn_id = context()
+        collection, definitions = service().business.create_collection(
+            workspace_id,
+            name=name,
+            label=label,
+            purpose=purpose,
+            fields=fields,
+            maturity=maturity,
+            session_id=session_id,
+            turn_id=turn_id,
+        )
+        return service().business.collection_snapshot(collection, definitions)
+
+    def upsert_business_record(
+        collection_id: str,
+        values: dict[str, Any],
+        business_intent: str,
+        record_id: str = "",
+        stable_key: str = "",
+        expected_revision: int | None = None,
+        observation_id: str = "",
+        event_type: str = "",
+        event_summary: str = "",
+        event_occurred_at: float | None = None,
+        event_idempotency_key: str = "",
+        event_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Create or update current business state and preserve every field change."""
+        session_id, turn_id = context()
+        record, changes, event = service().business.upsert_record(
+            collection_id,
+            values=values,
+            record_id=record_id,
+            stable_key=stable_key,
+            expected_revision=expected_revision,
+            business_intent=business_intent,
+            person_id=person_id(),
+            session_id=session_id,
+            turn_id=turn_id,
+            observation_id=observation_id,
+            event_type=event_type,
+            event_summary=event_summary,
+            event_occurred_at=event_occurred_at,
+            event_idempotency_key=event_idempotency_key,
+            event_metadata=event_metadata,
+        )
+        fields = service().business.store.list_fields(collection_id)
+        return {
+            "record": service().business.record_snapshot(record, fields),
+            "changes": [
+                service().business.change_snapshot(change, fields)
+                for change in changes
+            ],
+            "event": (
+                service().business.event_snapshot(event)
+                if event is not None else None
+            ),
+        }
+
+    def add_collection_fields(
+        collection_id: str,
+        expected_revision: int,
+        fields: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Extend a Collection as the Agent learns more about the business."""
+        session_id, turn_id = context()
+        collection, definitions = service().business.add_collection_fields(
+            collection_id,
+            expected_revision=expected_revision,
+            fields=fields,
+            session_id=session_id,
+            turn_id=turn_id,
+        )
+        return service().business.collection_snapshot(collection, definitions)
+
+    def query_business_records(
+        collection_id: str,
+        filters: dict[str, Any] | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Query current records using field names, labels, aliases or IDs."""
+        return {
+            "records": service().business.query_records(
+                collection_id, filters=filters, limit=limit,
+            ),
         }
 
     component_schema = {
@@ -256,7 +396,10 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         ),
         Tool(
             name="get_workspace",
-            description="Read one Workspace and its Surfaces before changing them.",
+            description=(
+                "Read one Workspace, its Surfaces, business schema, current records "
+                "and Events before changing them."
+            ),
             parameters={
                 "type": "object",
                 "properties": {"workspace_id": {"type": "string"}},
@@ -270,6 +413,195 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             description="List the persistent business Workspaces known by this Agent.",
             parameters={"type": "object", "properties": {}},
             func=list_workspaces,
+            category="workspace",
+        ),
+        Tool(
+            name="create_data_source",
+            description=(
+                "Register a stable source such as a conversation, file, channel, "
+                "manual entry, import or external API. Store only a locator here, "
+                "never credentials or secret tokens."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "workspace_id": {"type": "string"},
+                    "kind": {
+                        "type": "string",
+                        "enum": [
+                            "conversation", "file", "channel", "manual",
+                            "external_api", "import",
+                        ],
+                    },
+                    "name": {"type": "string"},
+                    "locator": {"type": "string"},
+                },
+                "required": ["workspace_id", "kind", "name"],
+            },
+            func=create_data_source,
+            category="workspace",
+        ),
+        Tool(
+            name="record_observation",
+            description=(
+                "Preserve information received by the Agent before treating it as "
+                "verified business state. Use this when the meaning, object or truth "
+                "still needs interpretation; later link it through upsert_business_record."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "workspace_id": {"type": "string"},
+                    "content": {"type": "string"},
+                    "data_source_id": {"type": "string"},
+                    "external_ref": {"type": "string"},
+                    "attributes": {"type": "object", "additionalProperties": True},
+                    "asset_id": {"type": "string"},
+                    "occurred_at": {"type": "number"},
+                },
+                "required": ["workspace_id", "content"],
+            },
+            func=record_observation,
+            category="workspace",
+        ),
+        Tool(
+            name="define_collection",
+            description=(
+                "Define a reusable typed business object such as customer, quote, "
+                "contract or payment. Use a stable machine name and human-readable label."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "workspace_id": {"type": "string"},
+                    "name": {"type": "string"},
+                    "label": {"type": "string"},
+                    "purpose": {"type": "string"},
+                    "maturity": {
+                        "type": "string",
+                        "enum": ["provisional", "candidate", "established"],
+                    },
+                    "fields": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 128,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "label": {"type": "string"},
+                                "data_type": {
+                                    "type": "string",
+                                    "enum": [
+                                        "text", "integer", "number", "boolean",
+                                        "date", "datetime", "money", "enum",
+                                        "reference", "json",
+                                    ],
+                                },
+                                "required": {"type": "boolean"},
+                                "aliases": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                            },
+                            "required": ["name", "label", "data_type"],
+                        },
+                    },
+                },
+                "required": ["workspace_id", "name", "label", "purpose", "fields"],
+            },
+            func=define_collection,
+            category="workspace",
+        ),
+        Tool(
+            name="upsert_business_record",
+            description=(
+                "Create or revise current business state. Address fields by ID, name, "
+                "label or alias. Every changed field is recorded. Add event_type and "
+                "event_summary only when a meaningful past-tense business fact is known "
+                "to have occurred; ordinary data cleanup must not manufacture Events."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "collection_id": {"type": "string"},
+                    "record_id": {"type": "string"},
+                    "stable_key": {"type": "string"},
+                    "expected_revision": {"type": "integer", "minimum": 1},
+                    "values": {"type": "object", "additionalProperties": True},
+                    "business_intent": {"type": "string"},
+                    "observation_id": {"type": "string"},
+                    "event_type": {"type": "string"},
+                    "event_summary": {"type": "string"},
+                    "event_occurred_at": {"type": "number"},
+                    "event_idempotency_key": {"type": "string"},
+                    "event_metadata": {"type": "object", "additionalProperties": True},
+                },
+                "required": ["collection_id", "values", "business_intent"],
+            },
+            func=upsert_business_record,
+            category="workspace",
+        ),
+        Tool(
+            name="add_collection_fields",
+            description=(
+                "Extend an existing Collection when repeated business use reveals "
+                "new facts worth storing. Inspect the Collection first and provide "
+                "its current revision. Existing field IDs and values remain unchanged."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "collection_id": {"type": "string"},
+                    "expected_revision": {"type": "integer", "minimum": 1},
+                    "fields": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 128,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "label": {"type": "string"},
+                                "data_type": {
+                                    "type": "string",
+                                    "enum": [
+                                        "text", "integer", "number", "boolean",
+                                        "date", "datetime", "money", "enum",
+                                        "reference", "json",
+                                    ],
+                                },
+                                "required": {"type": "boolean"},
+                                "aliases": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                            },
+                            "required": ["name", "label", "data_type"],
+                        },
+                    },
+                },
+                "required": ["collection_id", "expected_revision", "fields"],
+            },
+            func=add_collection_fields,
+            category="workspace",
+        ),
+        Tool(
+            name="query_business_records",
+            description=(
+                "Query a Collection's current records. Filters are exact matches and "
+                "may use field IDs, names, labels or aliases."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "collection_id": {"type": "string"},
+                    "filters": {"type": "object", "additionalProperties": True},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+                },
+                "required": ["collection_id"],
+            },
+            func=query_business_records,
             category="workspace",
         ),
     ]

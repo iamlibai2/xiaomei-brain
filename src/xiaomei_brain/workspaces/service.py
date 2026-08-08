@@ -7,6 +7,8 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from .business_service import BusinessWorldService
+from .business_store import BusinessStore
 from .models import Surface, Workspace, WorkspacePermissionError
 from .store import WorkspaceStore
 
@@ -27,12 +29,22 @@ class WorkspaceService:
         *,
         publish: PublishCallback | None = None,
         clock: Callable[[], float] = time.time,
+        before_business_migration: Callable[[], Any] | None = None,
     ) -> None:
         self.store = store
         self._publish = publish
         self._clock = clock
         self.surfaces = SurfaceService(
             store, publish=publish, clock=clock,
+        )
+        self.business = BusinessWorldService(
+            BusinessStore(
+                store.db_path,
+                before_schema_migration=before_business_migration,
+            ),
+            store,
+            publish=publish,
+            clock=clock,
         )
 
     def create(
@@ -134,7 +146,14 @@ class WorkspaceService:
         )
         return updated
 
-    def snapshot(self, workspace: Workspace, *, include_surfaces: bool = False) -> dict[str, Any]:
+    def snapshot(
+        self,
+        workspace: Workspace,
+        *,
+        include_surfaces: bool = False,
+        include_business: bool = False,
+        include_records: bool = False,
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "id": workspace.id,
             "name": workspace.name,
@@ -153,6 +172,10 @@ class WorkspaceService:
                 self.surfaces.snapshot(item)
                 for item in self.store.list_surfaces(workspace.id)
             ]
+        if include_business:
+            payload["business"] = self.business.workspace_snapshot(
+                workspace.id, include_records=include_records,
+            )
         return payload
 
     def _publish_workspace(

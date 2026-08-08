@@ -1,0 +1,549 @@
+"""Reliable services for a Workspace's evolving business facts."""
+
+from __future__ import annotations
+
+import datetime as dt
+import math
+import time
+from collections.abc import Callable
+from typing import Any
+
+from .business_store import BusinessStore
+from .models import (
+    BusinessEvent,
+    BusinessRecord,
+    CollectionDefinition,
+    DataSource,
+    FieldDefinition,
+    Observation,
+    RecordChange,
+)
+from .store import WorkspaceStore
+
+PublishCallback = Callable[..., Any]
+
+ALLOWED_SOURCE_KINDS = frozenset({
+    "conversation", "file", "channel", "manual", "external_api", "import",
+})
+ALLOWED_FIELD_TYPES = frozenset({
+    "text", "integer", "number", "boolean", "date", "datetime", "money",
+    "enum", "reference", "json",
+})
+ALLOWED_MATURITY = frozenset({"provisional", "candidate", "established"})
+
+
+class BusinessWorldService:
+    """Facade over business sources, observations and current facts."""
+
+    def __init__(
+        self,
+        store: BusinessStore,
+        workspace_store: WorkspaceStore,
+        *,
+        publish: PublishCallback | None = None,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
+        self.store = store
+        self.workspace_store = workspace_store
+        self._publish = publish
+        self._clock = clock
+
+    def create_data_source(
+        self,
+        workspace_id: str,
+        *,
+        kind: str,
+        name: str,
+        locator: str = "",
+        session_id: str = "",
+        turn_id: str = "",
+    ) -> DataSource:
+        self._require_workspace(workspace_id)
+        resolved_kind = kind.strip().lower()
+        if resolved_kind not in ALLOWED_SOURCE_KINDS:
+            raise ValueError(f"Unsupported data source kind: {resolved_kind}")
+        resolved_name = name.strip()
+        if not resolved_name:
+            raise ValueError("Data source name cannot be empty")
+        source = self.store.create_data_source(
+            workspace_id,
+            kind=resolved_kind,
+            name=resolved_name,
+            locator=locator.strip(),
+            now=self._clock(),
+        )
+        self._publish_to_workspace(
+            "data_source.created", workspace_id, self.data_source_snapshot(source),
+            session_id=session_id, turn_id=turn_id,
+        )
+        return source
+
+    def observe(
+        self,
+        workspace_id: str,
+        *,
+        content: str,
+        data_source_id: str = "",
+        source_person_id: str = "",
+        external_ref: str = "",
+        attributes: dict[str, Any] | None = None,
+        asset_id: str = "",
+        occurred_at: float | None = None,
+        session_id: str = "",
+        turn_id: str = "",
+    ) -> Observation:
+        self._require_workspace(workspace_id)
+        if data_source_id:
+            source = self.store.get_data_source(data_source_id)
+            if source is None or source.workspace_id != workspace_id:
+                raise ValueError("Data source does not belong to the Workspace")
+        resolved_content = content.strip()
+        if not resolved_content and not asset_id.strip() and not attributes:
+            raise ValueError("Observation requires content, attributes or an Asset")
+        observation = self.store.create_observation(
+            workspace_id,
+            data_source_id=data_source_id.strip(),
+            source_person_id=source_person_id.strip(),
+            external_ref=external_ref.strip(),
+            content=resolved_content,
+            attributes=dict(attributes or {}),
+            asset_id=asset_id.strip(),
+            occurred_at=occurred_at,
+            now=self._clock(),
+        )
+        self._publish_to_workspace(
+            "observation.created", workspace_id,
+            self.observation_snapshot(observation),
+            session_id=session_id, turn_id=turn_id,
+        )
+        return observation
+
+    def create_collection(
+        self,
+        workspace_id: str,
+        *,
+        name: str,
+        label: str,
+        purpose: str,
+        fields: list[dict[str, Any]],
+        maturity: str = "candidate",
+        session_id: str = "",
+        turn_id: str = "",
+    ) -> tuple[CollectionDefinition, list[FieldDefinition]]:
+        self._require_workspace(workspace_id)
+        normalized_fields = self._normalize_fields(fields)
+        resolved_name = name.strip()
+        resolved_label = label.strip()
+        resolved_maturity = maturity.strip().lower()
+        if not resolved_name or not resolved_label:
+            raise ValueError("Collection name and label cannot be empty")
+        if resolved_maturity not in ALLOWED_MATURITY:
+            raise ValueError(f"Unsupported collection maturity: {resolved_maturity}")
+        collection, definitions = self.store.create_collection(
+            workspace_id,
+            name=resolved_name,
+            label=resolved_label,
+            purpose=purpose.strip(),
+            maturity=resolved_maturity,
+            fields=normalized_fields,
+            now=self._clock(),
+        )
+        payload = self.collection_snapshot(collection, definitions)
+        self._publish_to_workspace(
+            "collection.created", workspace_id, payload,
+            session_id=session_id, turn_id=turn_id,
+        )
+        return collection, definitions
+
+    def upsert_record(
+        self,
+        collection_id: str,
+        *,
+        values: dict[str, Any],
+        record_id: str = "",
+        stable_key: str = "",
+        expected_revision: int | None = None,
+        business_intent: str,
+        person_id: str = "",
+        session_id: str = "",
+        turn_id: str = "",
+        observation_id: str = "",
+        event_type: str = "",
+        event_summary: str = "",
+        event_occurred_at: float | None = None,
+        event_idempotency_key: str = "",
+        event_metadata: dict[str, Any] | None = None,
+    ) -> tuple[BusinessRecord, list[RecordChange], BusinessEvent | None]:
+        collection = self.require_collection(collection_id)
+        fields = self.store.list_fields(collection.id)
+        normalized = self._normalize_record_values(values, fields)
+        current = None
+        if record_id.strip():
+            current = self.store.get_record(record_id.strip())
+            if current is None:
+                raise KeyError(record_id)
+        elif stable_key.strip():
+            current = self.store.find_record_by_key(collection.id, stable_key.strip())
+        if current is not None:
+            if expected_revision is None:
+                raise ValueError(
+                    "expected_revision is required when updating an existing record",
+                )
+            record_id = current.id
+            resolved_key = stable_key.strip() or current.stable_key
+        else:
+            record_id = ""
+            resolved_key = stable_key.strip()
+            missing = [
+                field.label for field in fields
+                if field.required and field.id not in normalized
+            ]
+            if missing:
+                raise ValueError(f"Missing required fields: {', '.join(missing)}")
+        resolved_summary = event_summary.strip()
+        resolved_type = event_type.strip()
+        if bool(resolved_summary) != bool(resolved_type):
+            raise ValueError("Business Event requires both event_type and event_summary")
+        if observation_id:
+            observation = self.store.get_observation(observation_id)
+            if observation is None or observation.workspace_id != collection.workspace_id:
+                raise ValueError("Observation does not belong to the Workspace")
+        record, changes, event = self.store.write_record(
+            workspace_id=collection.workspace_id,
+            collection_id=collection.id,
+            record_id=record_id,
+            stable_key=resolved_key,
+            values=normalized,
+            expected_revision=expected_revision,
+            business_intent=business_intent.strip(),
+            person_id=person_id.strip(),
+            session_id=session_id,
+            turn_id=turn_id,
+            observation_id=observation_id.strip(),
+            event_type=resolved_type,
+            event_summary=resolved_summary,
+            event_occurred_at=event_occurred_at,
+            event_idempotency_key=event_idempotency_key.strip(),
+            event_metadata=dict(event_metadata or {}),
+            now=self._clock(),
+        )
+        payload = {
+            "record": self.record_snapshot(record, fields),
+            "changes": [self.change_snapshot(item, fields) for item in changes],
+            "event": self.event_snapshot(event) if event is not None else None,
+        }
+        self._publish_to_workspace(
+            "record.changed", collection.workspace_id, payload,
+            session_id=session_id, turn_id=turn_id,
+        )
+        if event is not None:
+            self._publish_to_workspace(
+                "business_event.created", collection.workspace_id,
+                self.event_snapshot(event),
+                session_id=session_id, turn_id=turn_id,
+            )
+        return record, changes, event
+
+    def require_collection(self, collection_id: str) -> CollectionDefinition:
+        collection = self.store.get_collection(collection_id.strip())
+        if collection is None:
+            raise KeyError(collection_id)
+        return collection
+
+    def add_collection_fields(
+        self,
+        collection_id: str,
+        *,
+        fields: list[dict[str, Any]],
+        expected_revision: int,
+        session_id: str = "",
+        turn_id: str = "",
+    ) -> tuple[CollectionDefinition, list[FieldDefinition]]:
+        collection = self.require_collection(collection_id)
+        normalized = self._normalize_fields(fields)
+        existing = self.store.list_fields(collection.id)
+        identities = {
+            identity.casefold()
+            for field in existing
+            for identity in (field.name, field.label, *field.aliases)
+        }
+        for field in normalized:
+            for identity in (field["name"], field["label"], *field["aliases"]):
+                if identity.casefold() in identities:
+                    raise ValueError(f"Duplicate field name or alias: {identity}")
+                identities.add(identity.casefold())
+        if any(field["required"] for field in normalized):
+            if self.store.list_records(collection.id, limit=1):
+                raise ValueError(
+                    "Cannot add a required field after records exist without a default value",
+                )
+        updated, definitions = self.store.add_collection_fields(
+            collection.id,
+            fields=normalized,
+            expected_revision=expected_revision,
+            now=self._clock(),
+        )
+        payload = self.collection_snapshot(updated, definitions)
+        self._publish_to_workspace(
+            "collection.updated", updated.workspace_id, payload,
+            session_id=session_id, turn_id=turn_id,
+        )
+        return updated, definitions
+
+    def query_records(
+        self,
+        collection_id: str,
+        *,
+        filters: dict[str, Any] | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        collection = self.require_collection(collection_id)
+        fields = self.store.list_fields(collection.id)
+        normalized_filters = self._normalize_record_values(filters or {}, fields)
+        records = self.store.query_records(
+            collection.id, filters=normalized_filters, limit=limit,
+        )
+        return [self.record_snapshot(record, fields) for record in records]
+
+    def workspace_snapshot(
+        self,
+        workspace_id: str,
+        *,
+        include_records: bool = False,
+        record_limit: int = 50,
+    ) -> dict[str, Any]:
+        self._require_workspace(workspace_id)
+        collections = []
+        for collection in self.store.list_collections(workspace_id):
+            fields = self.store.list_fields(collection.id)
+            item = self.collection_snapshot(collection, fields)
+            if include_records:
+                item["records"] = [
+                    self.record_snapshot(record, fields)
+                    for record in self.store.list_records(
+                        collection.id, limit=record_limit,
+                    )
+                ]
+            collections.append(item)
+        return {
+            "summary": self.store.summary(workspace_id),
+            "data_sources": [
+                self.data_source_snapshot(item)
+                for item in self.store.list_data_sources(workspace_id)
+            ],
+            "observations": [
+                self.observation_snapshot(item)
+                for item in self.store.list_observations(workspace_id, limit=100)
+            ],
+            "collections": collections,
+            "events": [
+                self.event_snapshot(item)
+                for item in self.store.list_events(workspace_id, limit=100)
+            ],
+        }
+
+    @staticmethod
+    def data_source_snapshot(source: DataSource) -> dict[str, Any]:
+        return {
+            "id": source.id, "workspace_id": source.workspace_id,
+            "kind": source.kind, "name": source.name, "locator": source.locator,
+            "status": source.status, "created_at": source.created_at,
+            "updated_at": source.updated_at,
+        }
+
+    @staticmethod
+    def observation_snapshot(item: Observation) -> dict[str, Any]:
+        return {
+            "id": item.id, "workspace_id": item.workspace_id,
+            "data_source_id": item.data_source_id,
+            "source_person_id": item.source_person_id,
+            "external_ref": item.external_ref, "content": item.content,
+            "attributes": item.attributes, "asset_id": item.asset_id,
+            "status": item.status, "occurred_at": item.occurred_at,
+            "received_at": item.received_at,
+            "resolved_collection_id": item.resolved_collection_id,
+            "resolved_record_id": item.resolved_record_id,
+        }
+
+    @staticmethod
+    def collection_snapshot(
+        collection: CollectionDefinition,
+        fields: list[FieldDefinition],
+    ) -> dict[str, Any]:
+        return {
+            "id": collection.id, "workspace_id": collection.workspace_id,
+            "name": collection.name, "label": collection.label,
+            "purpose": collection.purpose, "maturity": collection.maturity,
+            "status": collection.status, "revision": collection.revision,
+            "created_at": collection.created_at, "updated_at": collection.updated_at,
+            "fields": [
+                {
+                    "id": field.id, "name": field.name, "label": field.label,
+                    "data_type": field.data_type, "required": field.required,
+                    "aliases": list(field.aliases), "status": field.status,
+                    "revision": field.revision,
+                }
+                for field in fields
+            ],
+        }
+
+    @staticmethod
+    def record_snapshot(
+        record: BusinessRecord,
+        fields: list[FieldDefinition],
+    ) -> dict[str, Any]:
+        by_id = {field.id: field for field in fields}
+        values = {
+            by_id[field_id].name if field_id in by_id else field_id: value
+            for field_id, value in record.values.items()
+        }
+        return {
+            "id": record.id, "workspace_id": record.workspace_id,
+            "collection_id": record.collection_id, "stable_key": record.stable_key,
+            "values": values, "values_by_field_id": record.values,
+            "status": record.status, "revision": record.revision,
+            "created_at": record.created_at, "updated_at": record.updated_at,
+        }
+
+    @staticmethod
+    def change_snapshot(
+        change: RecordChange,
+        fields: list[FieldDefinition],
+    ) -> dict[str, Any]:
+        field = next((item for item in fields if item.id == change.field_id), None)
+        return {
+            "id": change.id, "record_id": change.record_id,
+            "operation": change.operation, "field_id": change.field_id,
+            "field_name": field.name if field is not None else change.field_id,
+            "before": change.before_value, "after": change.after_value,
+            "business_intent": change.business_intent,
+            "person_id": change.person_id, "session_id": change.session_id,
+            "turn_id": change.turn_id, "observation_id": change.observation_id,
+            "changed_at": change.changed_at,
+        }
+
+    @staticmethod
+    def event_snapshot(event: BusinessEvent) -> dict[str, Any]:
+        return {
+            "id": event.id, "workspace_id": event.workspace_id,
+            "event_type": event.event_type, "summary": event.summary,
+            "collection_id": event.collection_id, "record_id": event.record_id,
+            "person_id": event.person_id, "observation_id": event.observation_id,
+            "record_change_ids": list(event.record_change_ids),
+            "occurred_at": event.occurred_at, "recorded_at": event.recorded_at,
+            "supersedes_event_id": event.supersedes_event_id,
+            "idempotency_key": event.idempotency_key,
+            "metadata": event.metadata,
+        }
+
+    def _require_workspace(self, workspace_id: str) -> None:
+        if self.workspace_store.get(workspace_id.strip()) is None:
+            raise KeyError(workspace_id)
+
+    def _publish_to_workspace(
+        self,
+        event: str,
+        workspace_id: str,
+        payload: dict[str, Any],
+        *,
+        session_id: str,
+        turn_id: str,
+    ) -> None:
+        if self._publish is None:
+            return
+        for person_id in self.workspace_store.linked_person_ids(workspace_id):
+            targeted = dict(payload)
+            targeted["_target_person_id"] = person_id
+            self._publish(event, targeted, session_id=session_id, turn_id=turn_id)
+
+    @staticmethod
+    def _normalize_fields(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not fields:
+            raise ValueError("Collection requires at least one field")
+        if len(fields) > 128:
+            raise ValueError("Collection supports at most 128 fields")
+        normalized = []
+        identities: set[str] = set()
+        for index, field in enumerate(fields):
+            if not isinstance(field, dict):
+                raise ValueError(f"Field {index + 1} must be an object")
+            name = str(field.get("name") or "").strip()
+            label = str(field.get("label") or name).strip()
+            data_type = str(field.get("data_type") or "text").strip().lower()
+            if not name or not label:
+                raise ValueError("Field name and label cannot be empty")
+            if data_type not in ALLOWED_FIELD_TYPES:
+                raise ValueError(f"Unsupported field type: {data_type}")
+            aliases = tuple(
+                str(item).strip() for item in (field.get("aliases") or [])
+                if str(item).strip()
+            )
+            for identity in (name, label, *aliases):
+                folded = identity.casefold()
+                if folded in identities:
+                    raise ValueError(f"Duplicate field name or alias: {identity}")
+                identities.add(folded)
+            normalized.append({
+                "name": name, "label": label, "data_type": data_type,
+                "required": bool(field.get("required", False)),
+                "aliases": aliases,
+            })
+        return normalized
+
+    @classmethod
+    def _normalize_record_values(
+        cls,
+        values: dict[str, Any],
+        fields: list[FieldDefinition],
+    ) -> dict[str, Any]:
+        if not isinstance(values, dict) or not values:
+            if values == {}:
+                return {}
+            raise ValueError("Record values must be an object")
+        lookup: dict[str, FieldDefinition] = {}
+        for field in fields:
+            for identity in (field.id, field.name, field.label, *field.aliases):
+                lookup[identity.casefold()] = field
+        normalized: dict[str, Any] = {}
+        for key, value in values.items():
+            field = lookup.get(str(key).strip().casefold())
+            if field is None:
+                raise ValueError(f"Unknown Collection field: {key}")
+            normalized[field.id] = cls._validate_value(field, value)
+        return normalized
+
+    @staticmethod
+    def _validate_value(field: FieldDefinition, value: Any) -> Any:
+        if value is None:
+            if field.required:
+                raise ValueError(f"Field {field.label} is required")
+            return None
+        kind = field.data_type
+        if kind == "integer":
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(f"Field {field.label} requires an integer")
+        elif kind in {"number", "money"}:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"Field {field.label} requires a number")
+            if not math.isfinite(float(value)):
+                raise ValueError(f"Field {field.label} requires a finite number")
+        elif kind == "boolean":
+            if not isinstance(value, bool):
+                raise ValueError(f"Field {field.label} requires true or false")
+        elif kind == "date":
+            if not isinstance(value, str):
+                raise ValueError(f"Field {field.label} requires an ISO date")
+            try:
+                dt.date.fromisoformat(value)
+            except ValueError as exc:
+                raise ValueError(f"Field {field.label} requires an ISO date") from exc
+        elif kind == "datetime":
+            if not isinstance(value, str):
+                raise ValueError(f"Field {field.label} requires an ISO datetime")
+            try:
+                dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError(f"Field {field.label} requires an ISO datetime") from exc
+        elif kind != "json" and not isinstance(value, str):
+            raise ValueError(f"Field {field.label} requires text")
+        return value

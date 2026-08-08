@@ -629,6 +629,9 @@ class ConsciousLiving(Living):
                 ),
             ),
             publish=self._event_hub.publish,
+            before_business_migration=lambda: self._backup_service.backup_now(
+                reason="workspace_business_schema_migration",
+            ),
         )
         self.agent.workspace_service = self._workspace_service
         self.agent._get_agent().workspace_service = self._workspace_service

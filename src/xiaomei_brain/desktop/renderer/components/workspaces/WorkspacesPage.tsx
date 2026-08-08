@@ -18,6 +18,26 @@ type WorkspaceComponent = {
   [key: string]: unknown;
 };
 
+type BusinessField = { id: string; name: string; label: string; data_type: string };
+type BusinessRecord = {
+  id: string;
+  revision: number;
+  values: Record<string, unknown>;
+};
+type BusinessCollection = {
+  id: string;
+  name: string;
+  label: string;
+  fields: BusinessField[];
+  records: BusinessRecord[];
+};
+type BusinessEvent = { id: string; summary: string; occurred_at: number };
+type BusinessSnapshot = {
+  summary: Record<string, number>;
+  collections: BusinessCollection[];
+  events: BusinessEvent[];
+};
+
 type WorkspaceSnapshot = {
   id: string;
   name: string;
@@ -28,6 +48,7 @@ type WorkspaceSnapshot = {
   components: WorkspaceComponent[];
   surfaceId: string;
   surfaceRevision: number;
+  business: BusinessSnapshot | null;
 };
 
 function snapshot(value: unknown): WorkspaceSnapshot | null {
@@ -48,6 +69,20 @@ function snapshot(value: unknown): WorkspaceSnapshot | null {
       Boolean(entry) && typeof entry === "object" && typeof (entry as WorkspaceComponent).type === "string"
     ))
     : [];
+  const businessValue = item.business && typeof item.business === "object"
+    ? item.business as Record<string, unknown>
+    : null;
+  const business: BusinessSnapshot | null = businessValue ? {
+    summary: businessValue.summary && typeof businessValue.summary === "object"
+      ? businessValue.summary as Record<string, number>
+      : {},
+    collections: Array.isArray(businessValue.collections)
+      ? businessValue.collections as BusinessCollection[]
+      : [],
+    events: Array.isArray(businessValue.events)
+      ? businessValue.events as BusinessEvent[]
+      : [],
+  } : null;
   return {
     id: item.id,
     name: item.name,
@@ -58,6 +93,7 @@ function snapshot(value: unknown): WorkspaceSnapshot | null {
     components,
     surfaceId: typeof surface?.id === "string" ? surface.id : "",
     surfaceRevision: typeof surface?.revision === "number" ? surface.revision : 0,
+    business,
   };
 }
 
@@ -162,7 +198,11 @@ export function WorkspacesPage({
   useEffect(() => window.gateway.onEvent((event: { event?: string; agentId?: string; data?: unknown }) => {
     if (event.agentId !== activeAgentId) return;
     const eventName = typeof event.event === "string" ? event.event : "";
-    if (["workspace.created", "workspace.updated", "surface.created", "surface.updated"].includes(eventName)) {
+    if ([
+      "workspace.created", "workspace.updated", "surface.created", "surface.updated",
+      "data_source.created", "observation.created", "collection.created", "collection.updated",
+      "record.changed", "business_event.created",
+    ].includes(eventName)) {
       const data = event.data && typeof event.data === "object"
         ? event.data as Record<string, unknown>
         : {};
@@ -213,7 +253,10 @@ export function WorkspacesPage({
               type="button"
               key={item.id}
               className={`workspace-list-item ${item.id === selectedId ? "active" : ""}`}
-              onClick={() => setSelectedId(item.id)}
+              onClick={() => {
+                setSelectedId(item.id);
+                void load(item.id, true);
+              }}
             >
               <span className="workspace-list-icon"><Icon name="chart-bar" size={17} /></span>
               <span className="workspace-list-copy">
@@ -248,6 +291,9 @@ export function WorkspacesPage({
                   <WorkspaceComponentCard key={component.id} component={component} />
                 ))}
               </div>
+              {selected.business && (
+                <WorkspaceBusinessFacts business={selected.business} locale={locale} />
+              )}
               <footer className="workspace-conversation-hint">
                 <Icon name="sparkles" size={15} />
                 <span>{t("workspaceUi.modifyHint", { name: selected.name })}</span>
@@ -259,6 +305,77 @@ export function WorkspacesPage({
       </div>
     </main>
   );
+}
+
+function WorkspaceBusinessFacts({
+  business,
+  locale,
+}: {
+  business: BusinessSnapshot;
+  locale: string;
+}) {
+  const { t } = useTranslation();
+  if (!business.collections.length && !business.events.length) return null;
+  return (
+    <section className="workspace-business-world">
+      <header>
+        <div>
+          <span className="workspace-eyebrow">BUSINESS WORLD</span>
+          <h3>{t("workspaceUi.businessFacts")}</h3>
+        </div>
+        <div className="workspace-fact-counts">
+          <span>{t("workspaceUi.collectionsCount", { count: business.summary.collections || 0 })}</span>
+          <span>{t("workspaceUi.recordsCount", { count: business.summary.records || 0 })}</span>
+          <span>{t("workspaceUi.eventsCount", { count: business.summary.events || 0 })}</span>
+          <span>{t("workspaceUi.pendingObservations", { count: business.summary.unprocessed_observations || 0 })}</span>
+        </div>
+      </header>
+      {business.collections.map((collection) => (
+        <article className="workspace-fact-collection" key={collection.id}>
+          <h4>{collection.label || collection.name}</h4>
+          <div className="workspace-table-scroll">
+            <table>
+              <thead>
+                <tr>{collection.fields.map((field) => <th key={field.id}>{field.label}</th>)}</tr>
+              </thead>
+              <tbody>
+                {(collection.records || []).map((record) => (
+                  <tr key={record.id}>
+                    {collection.fields.map((field) => (
+                      <td key={field.id}>{formatBusinessValue(record.values?.[field.name], locale)}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!collection.records?.length && (
+              <p className="workspace-fact-empty">{t("workspaceUi.noRecords")}</p>
+            )}
+          </div>
+        </article>
+      ))}
+      {business.events.length > 0 && (
+        <article className="workspace-event-list">
+          <h4>{t("workspaceUi.recentEvents")}</h4>
+          {business.events.slice(0, 12).map((event) => (
+            <div key={event.id}>
+              <i />
+              <span>{event.summary}</span>
+              <time>{new Date(event.occurred_at * 1000).toLocaleString(locale)}</time>
+            </div>
+          ))}
+        </article>
+      )}
+    </section>
+  );
+}
+
+function formatBusinessValue(value: unknown, locale: string) {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "boolean") return value ? "✓" : "—";
+  if (typeof value === "number") return value.toLocaleString(locale);
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
 }
 
 function WorkspaceEmpty({ text, error = false }: { text: string; error?: boolean }) {

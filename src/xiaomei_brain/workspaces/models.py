@@ -35,6 +35,113 @@ class Surface:
     updated_at: float
 
 
+@dataclass(frozen=True)
+class DataSource:
+    id: str
+    workspace_id: str
+    kind: str
+    name: str
+    locator: str
+    status: str
+    created_at: float
+    updated_at: float
+
+
+@dataclass(frozen=True)
+class Observation:
+    id: str
+    workspace_id: str
+    data_source_id: str
+    source_person_id: str
+    external_ref: str
+    content: str
+    attributes: dict[str, Any]
+    asset_id: str
+    status: str
+    occurred_at: float | None
+    received_at: float
+    resolved_collection_id: str
+    resolved_record_id: str
+
+
+@dataclass(frozen=True)
+class CollectionDefinition:
+    id: str
+    workspace_id: str
+    name: str
+    label: str
+    purpose: str
+    maturity: str
+    status: str
+    revision: int
+    created_at: float
+    updated_at: float
+
+
+@dataclass(frozen=True)
+class FieldDefinition:
+    id: str
+    collection_id: str
+    name: str
+    label: str
+    data_type: str
+    required: bool
+    aliases: tuple[str, ...]
+    status: str
+    revision: int
+    created_at: float
+    updated_at: float
+
+
+@dataclass(frozen=True)
+class BusinessRecord:
+    id: str
+    workspace_id: str
+    collection_id: str
+    stable_key: str
+    values: dict[str, Any]
+    status: str
+    revision: int
+    created_at: float
+    updated_at: float
+
+
+@dataclass(frozen=True)
+class RecordChange:
+    id: str
+    workspace_id: str
+    collection_id: str
+    record_id: str
+    operation: str
+    field_id: str
+    before_value: Any
+    after_value: Any
+    business_intent: str
+    person_id: str
+    session_id: str
+    turn_id: str
+    observation_id: str
+    changed_at: float
+
+
+@dataclass(frozen=True)
+class BusinessEvent:
+    id: str
+    workspace_id: str
+    event_type: str
+    summary: str
+    collection_id: str
+    record_id: str
+    person_id: str
+    observation_id: str
+    record_change_ids: tuple[str, ...]
+    occurred_at: float
+    recorded_at: float
+    supersedes_event_id: str
+    idempotency_key: str
+    metadata: dict[str, Any]
+
+
 class WorkspacePermissionError(PermissionError):
     """The current external identity has no relationship with a workspace."""
 

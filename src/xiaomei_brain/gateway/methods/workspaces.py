@@ -51,7 +51,10 @@ class WorkspaceMethods:
             return build_error(req_id, ErrorCode.INVALID_REQUEST, str(exc))
         return build_response(req_id, result={
             "workspace": self._service().snapshot(
-                workspace, include_surfaces=True,
+                workspace,
+                include_surfaces=True,
+                include_business=True,
+                include_records=True,
             ),
         })
 
