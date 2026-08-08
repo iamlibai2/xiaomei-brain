@@ -142,6 +142,26 @@ class BusinessEvent:
     metadata: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class Dataset:
+    id: str
+    workspace_id: str
+    name: str
+    kind: str
+    description: str
+    source_collection_id: str
+    source_spec: dict[str, Any]
+    schema: dict[str, Any]
+    data: dict[str, Any]
+    status: str
+    revision: int
+    created_at: float
+    updated_at: float
+    computed_at: float
+    invalidated_at: float | None
+    invalidation_reason: str
+
+
 class WorkspacePermissionError(PermissionError):
     """The current external identity has no relationship with a workspace."""
 

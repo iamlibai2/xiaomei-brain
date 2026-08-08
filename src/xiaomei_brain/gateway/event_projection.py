@@ -45,6 +45,8 @@ class GatewayEventProjection:
         "collection.updated",
         "record.changed",
         "business_event.created",
+        "dataset.created",
+        "dataset.updated",
         "process.updated",
         "activity.queued",
         "activity.started",
@@ -74,6 +76,7 @@ class GatewayEventProjection:
             or event.name.startswith("collection.")
             or event.name.startswith("record.")
             or event.name.startswith("business_event.")
+            or event.name.startswith("dataset.")
         )
         is_process_event = event.name.startswith("process.")
         is_agent_state_event = event.name.startswith("agent.state.")

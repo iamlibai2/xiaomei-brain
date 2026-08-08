@@ -47,6 +47,7 @@ class BusinessWorldService:
         self.workspace_store = workspace_store
         self._publish = publish
         self._clock = clock
+        self._on_collection_changed: Callable[..., Any] | None = None
 
     def create_data_source(
         self,
@@ -227,6 +228,14 @@ class BusinessWorldService:
             event_metadata=dict(event_metadata or {}),
             now=self._clock(),
         )
+        if self._on_collection_changed is not None:
+            self._on_collection_changed(
+                collection.id,
+                reason=(
+                    event.summary if event is not None
+                    else business_intent.strip() or "Business record changed"
+                ),
+            )
         payload = {
             "record": self.record_snapshot(record, fields),
             "changes": [self.change_snapshot(item, fields) for item in changes],

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import time
 from collections.abc import Callable
@@ -9,6 +10,8 @@ from typing import Any
 
 from .business_service import BusinessWorldService
 from .business_store import BusinessStore
+from .dataset_service import DatasetService
+from .dataset_store import DatasetStore
 from .models import Surface, Workspace, WorkspacePermissionError
 from .store import WorkspaceStore
 
@@ -34,9 +37,6 @@ class WorkspaceService:
         self.store = store
         self._publish = publish
         self._clock = clock
-        self.surfaces = SurfaceService(
-            store, publish=publish, clock=clock,
-        )
         self.business = BusinessWorldService(
             BusinessStore(
                 store.db_path,
@@ -45,6 +45,19 @@ class WorkspaceService:
             store,
             publish=publish,
             clock=clock,
+        )
+        self.datasets = DatasetService(
+            DatasetStore(
+                store.db_path,
+                before_schema_migration=before_business_migration,
+            ),
+            self.business,
+            publish=publish,
+            clock=clock,
+        )
+        self.business._on_collection_changed = self.datasets.invalidate_collection
+        self.surfaces = SurfaceService(
+            store, datasets=self.datasets, publish=publish, clock=clock,
         )
 
     def create(
@@ -176,6 +189,10 @@ class WorkspaceService:
             payload["business"] = self.business.workspace_snapshot(
                 workspace.id, include_records=include_records,
             )
+            payload["datasets"] = [
+                self.datasets.snapshot(item)
+                for item in self.datasets.list_for_workspace(workspace.id)
+            ]
         return payload
 
     def _publish_workspace(
@@ -202,10 +219,12 @@ class SurfaceService:
         self,
         store: WorkspaceStore,
         *,
+        datasets: DatasetService | None = None,
         publish: PublishCallback | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.store = store
+        self.datasets = datasets
         self._publish = publish
         self._clock = clock
 
@@ -292,6 +311,12 @@ class SurfaceService:
             item["id"] = component_id
             item["type"] = component_type
             item["title"] = str(item.get("title") or "").strip()
+            binding = item.get("binding")
+            if binding is not None:
+                if not isinstance(binding, dict):
+                    raise ValueError("Surface component binding must be an object")
+                if not str(binding.get("dataset_id") or "").strip():
+                    raise ValueError("Surface Dataset binding requires dataset_id")
             normalized.append(item)
         result = dict(definition)
         result["components"] = normalized
@@ -300,9 +325,8 @@ class SurfaceService:
             raise ValueError("Surface definition is too large")
         return result
 
-    @staticmethod
-    def snapshot(surface: Surface) -> dict[str, Any]:
-        return {
+    def snapshot(self, surface: Surface) -> dict[str, Any]:
+        payload = {
             "id": surface.id,
             "workspace_id": surface.workspace_id,
             "name": surface.name,
@@ -314,6 +338,77 @@ class SurfaceService:
             "created_at": surface.created_at,
             "updated_at": surface.updated_at,
         }
+        if self.datasets is not None:
+            payload["resolved_definition"] = self._resolve_definition(
+                surface.definition,
+            )
+        return payload
+
+    def _resolve_definition(self, definition: dict[str, Any]) -> dict[str, Any]:
+        resolved = copy.deepcopy(definition)
+        components = resolved.get("components")
+        if not isinstance(components, list) or self.datasets is None:
+            return resolved
+        for component in components:
+            if not isinstance(component, dict):
+                continue
+            binding = component.get("binding")
+            if not isinstance(binding, dict):
+                continue
+            dataset_id = str(binding.get("dataset_id") or "").strip()
+            if not dataset_id:
+                component["binding_error"] = "Dataset binding has no dataset_id"
+                continue
+            try:
+                dataset = self.datasets.require(dataset_id, refresh_stale=True)
+                self._apply_dataset(component, dataset.data, binding)
+                component["dataset_revision"] = dataset.revision
+                component["dataset_status"] = dataset.status
+            except Exception as exc:
+                component["binding_error"] = str(exc)
+        return resolved
+
+    @staticmethod
+    def _apply_dataset(
+        component: dict[str, Any],
+        data: dict[str, Any],
+        binding: dict[str, Any],
+    ) -> None:
+        component_type = str(component.get("type") or "")
+        if component_type == "metric":
+            metric_key = str(binding.get("metric_key") or "")
+            metrics = data.get("metrics") if isinstance(data.get("metrics"), list) else []
+            metric = next(
+                (item for item in metrics if str(item.get("key") or "") == metric_key),
+                None,
+            )
+            if metric is None:
+                raise ValueError(f"Dataset metric not found: {metric_key}")
+            component["value"] = metric.get("value")
+            component["unit"] = metric.get("unit") or component.get("unit") or ""
+            if not component.get("title"):
+                component["title"] = metric.get("label") or metric_key
+            return
+        if component_type in {"table", "record"}:
+            component["columns"] = data.get("columns") or []
+            component["rows"] = data.get("rows") or []
+            return
+        if component_type in {"bar_chart", "line_chart", "pie_chart"}:
+            if isinstance(data.get("points"), list):
+                component["data"] = [
+                    {"label": item.get("period"), "value": item.get("value")}
+                    for item in data["points"]
+                ]
+                return
+            rows = data.get("rows") if isinstance(data.get("rows"), list) else []
+            label_field = str(binding.get("label_field") or "")
+            value_field = str(binding.get("value_field") or "")
+            if not label_field or not value_field:
+                raise ValueError("Chart binding requires label_field and value_field")
+            component["data"] = [
+                {"label": row.get(label_field), "value": row.get(value_field)}
+                for row in rows if isinstance(row, dict)
+            ]
 
     def _publish_surface(
         self,

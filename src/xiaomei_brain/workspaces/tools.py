@@ -6,6 +6,8 @@ from typing import Any
 
 from xiaomei_brain.tools.base import Tool
 
+from .dataset_tools import create_dataset_tools
+
 
 def create_workspace_tools(agent: Any) -> list[Tool]:
     def core() -> Any:
@@ -296,6 +298,17 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
                 "type": "array",
                 "items": {"type": "object", "additionalProperties": True},
             },
+            "binding": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "dataset_id": {"type": "string"},
+                    "metric_key": {"type": "string"},
+                    "label_field": {"type": "string"},
+                    "value_field": {"type": "string"},
+                },
+                "required": ["dataset_id"],
+            },
         },
         "required": ["type"],
     }
@@ -312,7 +325,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         },
         "required": ["components"],
     }
-    return [
+    tools = [
         Tool(
             name="create_workspace",
             description=(
@@ -358,7 +371,9 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             name="create_surface",
             description=(
                 "Create a persistent interactive Surface in an existing Workspace. "
-                "A Surface presents business data; it is not the Workspace itself."
+                "A Surface presents business data; it is not the Workspace itself. "
+                "For durable business values, bind components to a Dataset instead "
+                "of copying static values into the Surface."
             ),
             parameters={
                 "type": "object",
@@ -605,3 +620,4 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             category="workspace",
         ),
     ]
+    return tools + create_dataset_tools(agent)

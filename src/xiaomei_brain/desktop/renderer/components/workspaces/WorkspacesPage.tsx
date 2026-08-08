@@ -60,8 +60,9 @@ function snapshot(value: unknown): WorkspaceSnapshot | null {
     ))
     : [];
   const surface = surfaces.find((entry) => entry.is_default === true) || surfaces[0];
-  const definition = surface?.definition && typeof surface.definition === "object"
-    ? surface.definition as Record<string, unknown>
+  const definitionValue = surface?.resolved_definition || surface?.definition;
+  const definition = definitionValue && typeof definitionValue === "object"
+    ? definitionValue as Record<string, unknown>
     : {};
   if (typeof item.id !== "string" || typeof item.name !== "string") return null;
   const components = Array.isArray(definition.components)
@@ -202,6 +203,7 @@ export function WorkspacesPage({
       "workspace.created", "workspace.updated", "surface.created", "surface.updated",
       "data_source.created", "observation.created", "collection.created", "collection.updated",
       "record.changed", "business_event.created",
+      "dataset.created", "dataset.updated",
     ].includes(eventName)) {
       const data = event.data && typeof event.data === "object"
         ? event.data as Record<string, unknown>

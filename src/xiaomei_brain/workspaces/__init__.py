@@ -2,11 +2,14 @@
 
 from .business_service import BusinessWorldService
 from .business_store import BusinessStore
+from .dataset_service import DatasetService
+from .dataset_store import DatasetStore
 from .models import (
     BusinessEvent,
     BusinessRecord,
     CollectionDefinition,
     DataSource,
+    Dataset,
     FieldDefinition,
     Observation,
     RecordChange,
@@ -27,6 +30,9 @@ __all__ = [
     "BusinessWorldService",
     "CollectionDefinition",
     "DataSource",
+    "Dataset",
+    "DatasetService",
+    "DatasetStore",
     "FieldDefinition",
     "Observation",
     "RecordChange",

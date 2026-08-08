@@ -483,7 +483,7 @@ class BusinessStore(SQLiteStore):
         collection_id: str,
         *,
         filters: dict[str, Any],
-        limit: int = 100,
+        limit: int | None = 100,
     ) -> list[BusinessRecord]:
         sql = (
             "SELECT * FROM business_records "
@@ -495,8 +495,10 @@ class BusinessStore(SQLiteStore):
             # bound parameter keeps values and paths out of SQL text.
             sql += " AND json_extract(values_json, ?) IS ?"
             params.extend([f'$."{field_id}"', value])
-        sql += " ORDER BY updated_at DESC LIMIT ?"
-        params.append(max(1, min(limit, 500)))
+        sql += " ORDER BY updated_at DESC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(max(1, min(limit, 500)))
         rows = self._get_conn().execute(sql, params).fetchall()
         return [self._record_row(row) for row in rows]
 
