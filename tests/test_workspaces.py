@@ -114,6 +114,65 @@ def test_workspace_tools_use_person_as_provenance_not_agent_ownership(tmp_path):
     assert tools["list_workspaces"].execute()["workspaces"][0]["id"] == created["id"]
 
 
+def test_workspace_tools_reject_nested_resources_from_another_person(tmp_path):
+    service = WorkspaceService(WorkspaceStore(tmp_path / "workspaces.db"))
+    foreign = service.create(
+        name="其他人物的业务",
+        purpose="隔离测试",
+        created_by_person_id="person-2",
+    )
+    collection, _fields = service.business.create_collection(
+        foreign.id,
+        name="customers",
+        label="客户",
+        purpose="客户状态",
+        fields=[{"name": "name", "label": "名称", "data_type": "text"}],
+    )
+    surface = service.surfaces.create(
+        foreign.id,
+        name="概览",
+        purpose="隔离测试",
+        definition={"components": [{"id": "title", "type": "text", "text": "秘密"}]},
+    )
+    dataset = service.datasets.create(
+        foreign.id,
+        name="客户列表",
+        kind="table",
+        description="",
+        source_collection_id=collection.id,
+        source_spec={"fields": ["name"]},
+    )
+
+    core = SimpleNamespace(user_id="person-1", session_id="session-1", turn_id="turn-1")
+    agent = SimpleNamespace(workspace_service=service, _get_agent=lambda: core)
+    tools = {item.name: item for item in create_workspace_tools(agent)}
+
+    denied_calls = (
+        ("update_workspace", {
+            "workspace_id": foreign.id,
+            "expected_revision": foreign.revision,
+            "name": "越权修改",
+        }),
+        ("update_surface", {
+            "surface_id": surface.id,
+            "expected_revision": surface.revision,
+            "definition": surface.definition,
+        }),
+        ("query_business_records", {"collection_id": collection.id}),
+        ("recompute_dataset", {
+            "dataset_id": dataset.id,
+            "expected_revision": dataset.revision,
+        }),
+    )
+    for tool_name, arguments in denied_calls:
+        try:
+            tools[tool_name].execute(**arguments)
+        except PermissionError as exc:
+            assert str(exc) == "Workspace is not available to the current Person"
+        else:
+            raise AssertionError(f"{tool_name} unexpectedly crossed Person isolation")
+
+
 def test_conversation_workspace_focus_persists_and_is_person_scoped(tmp_path):
     db_path = tmp_path / "workspaces.db"
     service = WorkspaceService(WorkspaceStore(db_path))

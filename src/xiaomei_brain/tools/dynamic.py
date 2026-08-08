@@ -108,16 +108,24 @@ def _contextual_required_tool_names(query: str) -> set[str]:
         "客户", "报价", "合同", "订单", "回款", "应收", "经营",
         "customer", "quote", "contract", "order", "payment", "receivable",
     ))
-    has_business_operation = any(marker in text for marker in (
-        "推进", "更新", "登记", "修改", "查询", "统计", "汇总", "多少", "哪些",
-        "advance", "update", "register", "change", "query", "summarize", "count",
+    has_business_change = any(marker in text for marker in (
+        "推进", "更新", "登记", "修改", "记下", "记录", "录入", "保存",
+        "确认", "反馈", "收到", "已经", "预计", "承诺", "签了", "付款", "到账",
+        "advance", "update", "register", "change", "record", "save",
+        "confirmed", "reported", "received", "paid",
     ))
-    if has_business_object and has_business_operation:
+    has_business_query = any(marker in text for marker in (
+        "查询", "统计", "汇总", "多少", "哪些",
+        "query", "summarize", "count",
+    ))
+    if has_business_object and (has_business_change or has_business_query):
         required.update({
             "get_current_workspace",
             "query_business_records",
             "upsert_business_record",
         })
+    if has_business_object and has_business_change:
+        required.add("record_observation")
     return required
 
 # 全局活跃的 loader，供 MCP/Plugin 热重载后通知重建索引

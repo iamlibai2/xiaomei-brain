@@ -11,7 +11,11 @@ def _world(tmp_path):
         WorkspaceStore(tmp_path / "workspaces.db"),
         clock=lambda: next(tick),
     )
-    workspace = service.create(name="客户经营", purpose="持续经营客户")
+    workspace = service.create(
+        name="客户经营",
+        purpose="持续经营客户",
+        created_by_person_id="person-1",
+    )
     collection, _ = service.business.create_collection(
         workspace.id,
         name="customers",

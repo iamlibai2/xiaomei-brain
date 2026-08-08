@@ -302,6 +302,7 @@ def test_customer_business_followup_requires_workspace_tools(monkeypatch):
         ("get_current_workspace", "Inspect focused Workspace"),
         ("query_business_records", "Query business records"),
         ("upsert_business_record", "Update a business record"),
+        ("record_observation", "Preserve received business information"),
         ("write_document", "Write a document"),
     )
     loader = DynamicToolLoader(reg, top_k=1)
@@ -332,6 +333,17 @@ def test_customer_business_followup_requires_workspace_tools(monkeypatch):
     assert "get_current_workspace" in names
     assert "query_business_records" in names
     assert "upsert_business_record" in names
+    assert "record_observation" in names
+
+    query_names = [
+        tool.name for tool in loader.select_tools(
+            "统计当前有多少客户",
+            top_k=1,
+        )
+    ]
+    assert "get_current_workspace" in query_names
+    assert "query_business_records" in query_names
+    assert "record_observation" not in query_names
 
 
 # ── Dynamic tool selection ─────────────────────────────────────

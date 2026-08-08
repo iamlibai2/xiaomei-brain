@@ -35,6 +35,24 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             str(getattr(current, "turn_id", "") or ""),
         )
 
+    def require_workspace(workspace_id: str):
+        return service().require_for_person(
+            workspace_id,
+            person_id=person_id(),
+        )
+
+    def require_collection(collection_id: str):
+        collection = service().business.require_collection(collection_id)
+        require_workspace(collection.workspace_id)
+        return collection
+
+    def require_surface(surface_id: str):
+        surface = service().store.get_surface(surface_id)
+        if surface is None:
+            raise KeyError(surface_id)
+        require_workspace(surface.workspace_id)
+        return surface
+
     def focus(workspace_id: str) -> None:
         session_id, turn_id = context()
         if session_id:
@@ -75,6 +93,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         status: str = "",
     ) -> dict[str, Any]:
         """Update a Workspace's identity, purpose, lifecycle or description."""
+        require_workspace(workspace_id)
         session_id, turn_id = context()
         workspace = service().update(
             workspace_id,
@@ -96,7 +115,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         is_default: bool = False,
     ) -> dict[str, Any]:
         """Create a durable interactive Surface inside a Workspace."""
-        service().require(workspace_id)
+        require_workspace(workspace_id)
         session_id, turn_id = context()
         surface = service().surfaces.create(
             workspace_id,
@@ -117,6 +136,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         purpose: str = "",
     ) -> dict[str, Any]:
         """Replace one Surface definition after inspecting its current revision."""
+        require_surface(surface_id)
         session_id, turn_id = context()
         surface = service().surfaces.update(
             surface_id,
@@ -131,10 +151,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
 
     def get_workspace(workspace_id: str) -> dict[str, Any]:
         """Inspect a Workspace, its Surfaces and current business world."""
-        workspace = service().require_for_person(
-            workspace_id,
-            person_id=person_id(),
-        )
+        workspace = require_workspace(workspace_id)
         focus(workspace.id)
         return service().snapshot(
             workspace, include_surfaces=True,
@@ -159,10 +176,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
     def focus_workspace(workspace_id: str) -> dict[str, Any]:
         """Make one Workspace the continuing business context of this Session."""
         focus(workspace_id)
-        workspace = service().require_for_person(
-            workspace_id,
-            person_id=person_id(),
-        )
+        workspace = require_workspace(workspace_id)
         return service().snapshot(
             workspace,
             include_surfaces=True,
@@ -198,6 +212,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         locator: str = "",
     ) -> dict[str, Any]:
         """Register a stable source from which business observations arrive."""
+        require_workspace(workspace_id)
         session_id, turn_id = context()
         source = service().business.create_data_source(
             workspace_id,
@@ -219,6 +234,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         occurred_at: float | None = None,
     ) -> dict[str, Any]:
         """Record what was received before deciding whether it is a business fact."""
+        require_workspace(workspace_id)
         session_id, turn_id = context()
         observation = service().business.observe(
             workspace_id,
@@ -243,6 +259,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         maturity: str = "candidate",
     ) -> dict[str, Any]:
         """Define a stable business object and its typed fields."""
+        require_workspace(workspace_id)
         session_id, turn_id = context()
         collection, definitions = service().business.create_collection(
             workspace_id,
@@ -271,6 +288,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         event_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Create or update current business state and preserve every field change."""
+        require_collection(collection_id)
         session_id, turn_id = context()
         record, changes, event = service().business.upsert_record(
             collection_id,
@@ -308,6 +326,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         fields: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """Extend a Collection as the Agent learns more about the business."""
+        require_collection(collection_id)
         session_id, turn_id = context()
         collection, definitions = service().business.add_collection_fields(
             collection_id,
@@ -324,6 +343,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         limit: int = 100,
     ) -> dict[str, Any]:
         """Query current records using field names, labels, aliases or IDs."""
+        require_collection(collection_id)
         return {
             "records": service().business.query_records(
                 collection_id, filters=filters, limit=limit,
@@ -545,9 +565,12 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         Tool(
             name="record_observation",
             description=(
-                "Preserve information received by the Agent before treating it as "
-                "verified business state. Use this when the meaning, object or truth "
-                "still needs interpretation; later link it through upsert_business_record."
+                "Preserve information received in the current conversation before "
+                "treating it as verified business state. When a Person reports or "
+                "requests a customer, quote, contract, order or payment change, call "
+                "this first with a faithful concise account of what they said, then "
+                "pass its observation_id to upsert_business_record. Keep uncertain "
+                "statements here without prematurely changing a Collection."
             ),
             parameters={
                 "type": "object",
@@ -618,9 +641,11 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             name="upsert_business_record",
             description=(
                 "Create or revise current business state. Address fields by ID, name, "
-                "label or alias. Every changed field is recorded. Add event_type and "
-                "event_summary only when a meaningful past-tense business fact is known "
-                "to have occurred; ordinary data cleanup must not manufacture Events."
+                "label or alias. Every changed field is recorded. For facts or change "
+                "requests received in conversation, first call record_observation and "
+                "link its observation_id so the source remains traceable. Add event_type "
+                "and event_summary only when a meaningful past-tense business fact is "
+                "known to have occurred; ordinary data cleanup must not manufacture Events."
             ),
             parameters={
                 "type": "object",

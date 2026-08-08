@@ -11,13 +11,34 @@ def create_dataset_tools(agent: Any) -> list[Tool]:
     def core() -> Any:
         return agent._get_agent()
 
-    def service():
+    def workspace_service():
         workspace_service = getattr(agent, "workspace_service", None)
         if workspace_service is None:
             workspace_service = getattr(core(), "workspace_service", None)
         if workspace_service is None:
             raise RuntimeError("Workspace service is not initialized")
-        return workspace_service.datasets
+        return workspace_service
+
+    def service():
+        return workspace_service().datasets
+
+    def person_id() -> str:
+        value = str(getattr(core(), "user_id", "")).strip()
+        if not value or value in {"global", "system"}:
+            raise ValueError("The current conversation has no verified Person")
+        return value
+
+    def require_workspace(workspace_id: str) -> None:
+        workspace_service().require_for_person(
+            workspace_id,
+            person_id=person_id(),
+        )
+
+    def require_dataset(dataset_id: str) -> None:
+        dataset = service().store.get(dataset_id)
+        if dataset is None:
+            raise KeyError(dataset_id)
+        require_workspace(dataset.workspace_id)
 
     def context() -> tuple[str, str]:
         current = core()
@@ -34,6 +55,12 @@ def create_dataset_tools(agent: Any) -> list[Tool]:
         source_spec: dict[str, Any],
         description: str = "",
     ) -> dict[str, Any]:
+        require_workspace(workspace_id)
+        collection = workspace_service().business.require_collection(
+            source_collection_id,
+        )
+        if collection.workspace_id != workspace_id:
+            raise ValueError("Collection does not belong to the Workspace")
         session_id, turn_id = context()
         dataset = service().create(
             workspace_id,
@@ -48,6 +75,7 @@ def create_dataset_tools(agent: Any) -> list[Tool]:
         return service().snapshot(dataset)
 
     def recompute_dataset(dataset_id: str, expected_revision: int) -> dict[str, Any]:
+        require_dataset(dataset_id)
         session_id, turn_id = context()
         return service().snapshot(service().recompute(
             dataset_id,
@@ -57,6 +85,7 @@ def create_dataset_tools(agent: Any) -> list[Tool]:
         ))
 
     def list_datasets(workspace_id: str) -> dict[str, Any]:
+        require_workspace(workspace_id)
         return {
             "datasets": [
                 service().snapshot(item)
