@@ -1346,6 +1346,22 @@ export function registerIpcHandlers(
     return client.rpc("project.current", { session_id: args.sessionId });
   });
 
+  ipcMain.handle("gateway:listWorkspaces", async (_event, args: {
+    agentId: string; limit?: number;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("workspace.list", { limit: args.limit || 100 });
+  });
+
+  ipcMain.handle("gateway:getWorkspace", async (_event, args: {
+    agentId: string; workspaceId: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("workspace.get", { workspace_id: args.workspaceId });
+  });
+
   ipcMain.handle("gateway:listActivities", async (_event, args: {
     agentId: string; status?: string; category?: string; limit?: number; offset?: number;
   }) => {

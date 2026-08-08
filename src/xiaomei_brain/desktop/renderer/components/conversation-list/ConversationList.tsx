@@ -11,9 +11,15 @@ import { openUnifiedSearch } from "../search/events";
 export function ConversationList({
   collapsed,
   onCollapsedChange,
+  surface,
+  onOpenChat,
+  onOpenWorkspaces,
 }: {
   collapsed: boolean;
   onCollapsedChange: (collapsed: boolean) => void;
+  surface: "chat" | "workspaces";
+  onOpenChat: () => void;
+  onOpenWorkspaces: () => void;
 }) {
   const { t } = useTranslation();
   const [addDialogOpen, setAddDialogOpen] = useState(false);
@@ -60,6 +66,7 @@ export function ConversationList({
   }, []);
 
   function handleNewSession() {
+    onOpenChat();
     void newSession();
   }
 
@@ -116,6 +123,13 @@ export function ConversationList({
             })}
             <button
               className="sidebar-collapsed-agent-btn"
+              onClick={onOpenWorkspaces}
+              title={t("workspaceUi.title")}
+            >
+              <Icon name="chart-bar" size={16} />
+            </button>
+            <button
+              className="sidebar-collapsed-agent-btn"
               onClick={() => { setAddDialogOpen(true); }}
               title={t("sidebar.addAgent")}
             >
@@ -164,6 +178,17 @@ export function ConversationList({
             )}
           </div>
 
+          <div className="sidebar-primary-nav">
+            <button
+              type="button"
+              className={surface === "workspaces" ? "active" : ""}
+              onClick={onOpenWorkspaces}
+            >
+              <Icon name="chart-bar" size={16} />
+              <span>{t("workspaceUi.title")}</span>
+            </button>
+          </div>
+
           {/* Sessions list for active agent */}
           {activeAgentId && (
             <div className="session-section">
@@ -194,7 +219,7 @@ export function ConversationList({
                     disabled={sessionBusy}
                     isWorking={Boolean(sendingByConversation[`${activeAgentId}\u0000${session.id}`])}
                     unreadCount={unreadByConversation[`${activeAgentId}\u0000${session.id}`] || 0}
-                    onClick={() => { void switchSession(session.id); }}
+                    onClick={() => { onOpenChat(); void switchSession(session.id); }}
                   />
                 ))}
                 {sessionListState?.error && (

@@ -30,6 +30,7 @@ from .methods import (
     SearchMethods,
     SessionMethods,
     ToolServiceMethods,
+    WorkspaceMethods,
 )
 from .protocol import ErrorCode, build_error
 
@@ -78,6 +79,7 @@ class MethodRouter:
         self._assignment_methods = AssignmentMethods(living, self._identity_contexts)
         self._activity_methods = ActivityMethods(living, self._identity_contexts)
         self._project_methods = ProjectMethods(living, self._identity_contexts)
+        self._workspace_methods = WorkspaceMethods(living, self._identity_contexts)
         self._agent_state_methods = AgentStateMethods(
             living,
             self._identity_contexts,
@@ -111,6 +113,7 @@ class MethodRouter:
             self._assignment_methods,
             self._activity_methods,
             self._project_methods,
+            self._workspace_methods,
             self._agent_state_methods,
             self._search_methods,
             self._channel_methods,
@@ -206,6 +209,8 @@ class MethodRouter:
                 "project.current",
             },
             "project.events": {"project.get"},
+            "workspace.read": {"workspace.list", "workspace.get"},
+            "workspace.events": {"workspace.get"},
             "memory.read": {"memory.list"},
             "agent.state": {"agent.state.get"},
             "capability.read": {"capability.list", "capability.get"},

@@ -527,6 +527,16 @@ class ProjectCurrentParams(BaseModel):
     session_id: str = Field(..., min_length=1, max_length=256)
 
 
+# Workspace
+
+class WorkspaceListParams(BaseModel):
+    limit: int = Field(default=100, ge=1, le=200)
+
+
+class WorkspaceGetParams(BaseModel):
+    workspace_id: str = Field(..., min_length=1, max_length=128)
+
+
 # ── Activity ──────────────────────────────────────────────────────────────
 
 class ActivityListParams(BaseModel):

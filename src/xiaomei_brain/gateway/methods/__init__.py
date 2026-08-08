@@ -21,6 +21,7 @@ from .projects import ProjectMethods
 from .search import SearchMethods
 from .sessions import SessionMethods
 from .tools import ToolServiceMethods
+from .workspaces import WorkspaceMethods
 
 __all__ = [
     "ActivityMethods",
@@ -44,4 +45,5 @@ __all__ = [
     "SearchMethods",
     "SessionMethods",
     "ToolServiceMethods",
+    "WorkspaceMethods",
 ]

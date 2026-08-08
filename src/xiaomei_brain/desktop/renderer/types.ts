@@ -511,6 +511,8 @@ export interface GatewayBridge {
   listProjects(args: { agentId: string; status?: string; limit?: number }): Promise<JsonRpcResponse>;
   getProject(args: { agentId: string; projectId: string; eventLimit?: number }): Promise<JsonRpcResponse>;
   getCurrentProject(args: { agentId: string; sessionId: string }): Promise<JsonRpcResponse>;
+  listWorkspaces(args: { agentId: string; limit?: number }): Promise<JsonRpcResponse>;
+  getWorkspace(args: { agentId: string; workspaceId: string }): Promise<JsonRpcResponse>;
   listActivities(args: {
     agentId: string;
     status?: string;

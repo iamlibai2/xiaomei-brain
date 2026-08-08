@@ -602,6 +602,19 @@ class ConsciousLiving(Living):
         logger.info("[ConsciousLiving] Project service initialized")
         boot_line("Project system", "OK")
 
+        # Workspaces are persistent, Person-scoped data views assembled by the
+        # Agent. They are deliberately separate from Project file workspaces
+        # and from the transient presentation stage in Desktop.
+        from xiaomei_brain.workspaces import WorkspaceService, WorkspaceStore
+        self._workspace_service = WorkspaceService(
+            WorkspaceStore(db_path),
+            publish=self._event_hub.publish,
+        )
+        self.agent.workspace_service = self._workspace_service
+        self.agent._get_agent().workspace_service = self._workspace_service
+        logger.info("[ConsciousLiving] Workspace service initialized")
+        boot_line("Workspaces", "OK")
+
         # Process is deliberately separate from ProjectStep: the former is a
         # user-selected delivery standard, the latter is the Agent's own map.
         from xiaomei_brain.processes import ProcessService, ProcessStore

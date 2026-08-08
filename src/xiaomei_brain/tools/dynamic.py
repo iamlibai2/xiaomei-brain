@@ -66,6 +66,12 @@ _CORE_TOOL_NAMES = frozenset({
     # such as "可以了".  Keep the small reflection tool available so the Agent
     # can reconcile its plan without turning Project into a fixed workflow.
     "review_project",
+    # Short follow-up requests such as "把华东放前面" still need access to the
+    # currently discussed workspace even when semantic retrieval is ambiguous.
+    "list_workspaces",
+    "get_workspace",
+    "create_workspace",
+    "update_workspace",
 })
 
 DEFAULT_TOP_K = 10

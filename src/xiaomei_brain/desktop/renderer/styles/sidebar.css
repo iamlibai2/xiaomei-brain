@@ -355,6 +355,37 @@ body[data-platform="mac"] .sidebar-topbar {
 }
 
 /* ─── Session Section ─── */
+.sidebar-primary-nav {
+  padding: 8px 10px 0;
+}
+
+.sidebar-primary-nav button {
+  width: 100%;
+  height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ui-color-text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.sidebar-primary-nav button:hover {
+  background: var(--ui-bg-hover);
+  color: var(--ui-color-text-primary);
+}
+
+.sidebar-primary-nav button.active {
+  background: var(--ui-bg-active);
+  color: var(--ui-color-text-primary);
+  font-weight: 580;
+}
+
 .session-section {
   display: flex;
   flex-direction: column;

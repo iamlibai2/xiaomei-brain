@@ -1,0 +1,288 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { useCoreStore } from "../../store";
+import { Icon } from "../ui";
+import "./workspaces.css";
+
+type WorkspaceComponent = {
+  id: string;
+  type: "metric" | "text" | "table" | "bar_chart" | "line_chart" | "pie_chart";
+  title?: string;
+  value?: unknown;
+  detail?: string;
+  unit?: string;
+  content?: string;
+  columns?: Array<string | { key?: string; label?: string }>;
+  rows?: Array<Record<string, unknown>>;
+  data?: Array<{ label?: string; value?: number; name?: string }>;
+  [key: string]: unknown;
+};
+
+type WorkspaceSnapshot = {
+  id: string;
+  name: string;
+  description: string;
+  revision: number;
+  createdAt: number;
+  updatedAt: number;
+  components: WorkspaceComponent[];
+};
+
+function snapshot(value: unknown): WorkspaceSnapshot | null {
+  if (!value || typeof value !== "object") return null;
+  const item = value as Record<string, unknown>;
+  const spec = item.spec && typeof item.spec === "object"
+    ? item.spec as Record<string, unknown>
+    : {};
+  if (typeof item.id !== "string" || typeof item.name !== "string") return null;
+  const components = Array.isArray(spec.components)
+    ? spec.components.filter((entry): entry is WorkspaceComponent => (
+      Boolean(entry) && typeof entry === "object" && typeof (entry as WorkspaceComponent).type === "string"
+    ))
+    : [];
+  return {
+    id: item.id,
+    name: item.name,
+    description: typeof item.description === "string" ? item.description : "",
+    revision: typeof item.revision === "number" ? item.revision : 1,
+    createdAt: typeof item.created_at === "number" ? item.created_at : 0,
+    updatedAt: typeof item.updated_at === "number" ? item.updated_at : 0,
+    components,
+  };
+}
+
+export function WorkspacesPage({
+  preferredWorkspaceId,
+  onBackToChat,
+}: {
+  preferredWorkspaceId?: string;
+  onBackToChat: () => void;
+}) {
+  const { t, i18n } = useTranslation();
+  const activeAgentId = useCoreStore((state) => state.activeAgentId || "");
+  const connectionStatus = useCoreStore((state) => (
+    state.connectionByAgent[state.activeAgentId || ""]?.status || "disconnected"
+  ));
+  const [items, setItems] = useState<WorkspaceSnapshot[]>([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    if (!activeAgentId || connectionStatus !== "connected") {
+      setItems([]);
+      setSelectedId("");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const response = await window.gateway.listWorkspaces({ agentId: activeAgentId, limit: 100 });
+      if (response.error) throw new Error(response.error.message);
+      const values = Array.isArray(response.result?.workspaces) ? response.result.workspaces : [];
+      const next = values.map(snapshot).filter((entry): entry is WorkspaceSnapshot => entry !== null);
+      setItems(next);
+      setSelectedId((current) => (
+        preferredWorkspaceId && next.some((item) => item.id === preferredWorkspaceId)
+          ? preferredWorkspaceId
+          : current && next.some((item) => item.id === current) ? current : next[0]?.id || ""
+      ));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setLoading(false);
+    }
+  }, [activeAgentId, connectionStatus, preferredWorkspaceId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => window.gateway.onEvent((event: { event?: string; agentId?: string }) => {
+    if (event.agentId !== activeAgentId) return;
+    const eventName = typeof event.event === "string" ? event.event : "";
+    if (eventName === "workspace.created" || eventName === "workspace.updated") void load();
+  }), [activeAgentId, load]);
+
+  const selected = useMemo(
+    () => items.find((item) => item.id === selectedId) || null,
+    [items, selectedId],
+  );
+  const locale = i18n.language.startsWith("zh") ? "zh-CN" : "en-US";
+
+  return (
+    <main className="workspaces-page">
+      <header className="workspaces-topbar">
+        <div>
+          <h1>{t("workspaceUi.title")}</h1>
+          <p>{t("workspaceUi.subtitle")}</p>
+        </div>
+        <div className="workspaces-topbar-actions">
+          <button type="button" onClick={() => void load()} disabled={loading}>
+            <Icon name="refresh" size={15} />
+            {t("common.refresh")}
+          </button>
+          <button type="button" onClick={onBackToChat}>
+            <Icon name="chevron-left" size={15} />
+            {t("workspaceUi.backToChat")}
+          </button>
+        </div>
+      </header>
+
+      <div className="workspaces-body">
+        <aside className="workspace-list-panel">
+          <div className="workspace-list-heading">
+            <span>{t("workspaceUi.saved")}</span>
+            <strong>{items.length}</strong>
+          </div>
+          {items.map((item) => (
+            <button
+              type="button"
+              key={item.id}
+              className={`workspace-list-item ${item.id === selectedId ? "active" : ""}`}
+              onClick={() => setSelectedId(item.id)}
+            >
+              <span className="workspace-list-icon"><Icon name="chart-bar" size={17} /></span>
+              <span className="workspace-list-copy">
+                <strong>{item.name}</strong>
+                <small>{new Date(item.updatedAt * 1000).toLocaleString(locale, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</small>
+              </span>
+            </button>
+          ))}
+          {!loading && !error && items.length === 0 && (
+            <div className="workspace-list-empty">{t("workspaceUi.emptyList")}</div>
+          )}
+        </aside>
+
+        <section className="workspace-canvas-wrap">
+          {loading && items.length === 0 && <WorkspaceEmpty text={t("workspaceUi.loading")} />}
+          {error && <WorkspaceEmpty text={error} error />}
+          {!loading && !error && !selected && (
+            <WorkspaceEmpty text={t("workspaceUi.emptyHint")} />
+          )}
+          {selected && (
+            <div className="workspace-canvas">
+              <header className="workspace-heading">
+                <div>
+                  <span className="workspace-eyebrow">WORKSPACE</span>
+                  <h2>{selected.name}</h2>
+                  {selected.description && <p>{selected.description}</p>}
+                </div>
+                <span className="workspace-revision">R{selected.revision}</span>
+              </header>
+              <div className="workspace-component-grid">
+                {selected.components.map((component) => (
+                  <WorkspaceComponentCard key={component.id} component={component} />
+                ))}
+              </div>
+              <footer className="workspace-conversation-hint">
+                <Icon name="sparkles" size={15} />
+                <span>{t("workspaceUi.modifyHint", { name: selected.name })}</span>
+                <button type="button" onClick={onBackToChat}>{t("workspaceUi.openConversation")}</button>
+              </footer>
+            </div>
+          )}
+        </section>
+      </div>
+    </main>
+  );
+}
+
+function WorkspaceEmpty({ text, error = false }: { text: string; error?: boolean }) {
+  return (
+    <div className={`workspace-empty ${error ? "error" : ""}`}>
+      <span><Icon name={error ? "info" : "chart-bar"} size={22} /></span>
+      <p>{text}</p>
+    </div>
+  );
+}
+
+function WorkspaceComponentCard({ component }: { component: WorkspaceComponent }) {
+  if (component.type === "metric") {
+    return (
+      <article className="workspace-component workspace-metric">
+        <span>{component.title}</span>
+        <strong>{String(component.value ?? "—")}{component.unit || ""}</strong>
+        {component.detail && <small>{component.detail}</small>}
+      </article>
+    );
+  }
+  if (component.type === "text") {
+    return (
+      <article className="workspace-component workspace-text">
+        {component.title && <h3>{component.title}</h3>}
+        <p>{component.content || String(component.value || "")}</p>
+      </article>
+    );
+  }
+  if (component.type === "table") return <WorkspaceTable component={component} />;
+  return <WorkspaceChart component={component} />;
+}
+
+function WorkspaceTable({ component }: { component: WorkspaceComponent }) {
+  const rows = Array.isArray(component.rows) ? component.rows : [];
+  const columns = Array.isArray(component.columns) && component.columns.length
+    ? component.columns.map((column) => typeof column === "string"
+      ? { key: column, label: column }
+      : { key: String(column.key || column.label || ""), label: String(column.label || column.key || "") })
+    : Object.keys(rows[0] || {}).map((key) => ({ key, label: key }));
+  return (
+    <article className="workspace-component workspace-table-card">
+      {component.title && <h3>{component.title}</h3>}
+      <div className="workspace-table-scroll">
+        <table>
+          <thead><tr>{columns.map((column) => <th key={column.key}>{column.label}</th>)}</tr></thead>
+          <tbody>
+            {rows.slice(0, 200).map((row, index) => (
+              <tr key={index}>{columns.map((column) => <td key={column.key}>{String(row[column.key] ?? "")}</td>)}</tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  );
+}
+
+function WorkspaceChart({ component }: { component: WorkspaceComponent }) {
+  const data = (Array.isArray(component.data) ? component.data : [])
+    .map((item) => ({
+      label: String(item.label || item.name || ""),
+      value: Number(item.value || 0),
+    }));
+  const max = Math.max(1, ...data.map((item) => Math.abs(item.value)));
+  if (component.type === "pie_chart") {
+    const total = data.reduce((sum, item) => sum + Math.max(0, item.value), 0) || 1;
+    let offset = 0;
+    const colors = ["#4f7cff", "#50b39a", "#f2b84b", "#e57676", "#9879d8", "#69a9d5"];
+    const gradient = data.map((item, index) => {
+      const start = offset;
+      offset += Math.max(0, item.value) / total * 360;
+      return `${colors[index % colors.length]} ${start}deg ${offset}deg`;
+    }).join(", ");
+    return (
+      <article className="workspace-component workspace-chart-card">
+        {component.title && <h3>{component.title}</h3>}
+        <div className="workspace-pie-layout">
+          <div className="workspace-pie" style={{ background: `conic-gradient(${gradient})` }} />
+          <div className="workspace-chart-legend">
+            {data.map((item, index) => (
+              <span key={`${item.label}-${index}`}><i style={{ background: colors[index % colors.length] }} />{item.label}<strong>{item.value}</strong></span>
+            ))}
+          </div>
+        </div>
+      </article>
+    );
+  }
+  return (
+    <article className="workspace-component workspace-chart-card">
+      {component.title && <h3>{component.title}</h3>}
+      <div className={`workspace-bars ${component.type === "line_chart" ? "line-like" : ""}`}>
+        {data.map((item, index) => (
+          <div className="workspace-bar-column" key={`${item.label}-${index}`}>
+            <span>{item.value}</span>
+            <i style={{ height: `${Math.max(4, Math.abs(item.value) / max * 100)}%` }} />
+            <small>{item.label}</small>
+          </div>
+        ))}
+      </div>
+    </article>
+  );
+}

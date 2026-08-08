@@ -381,6 +381,12 @@ class AgentManager:
         for project_tool in create_project_tools(agent):
             tools.register(project_tool)
 
+        # Workspaces are a first-class Agent domain: tools resolve the service
+        # lazily after ConsciousLiving has attached the shared database.
+        from xiaomei_brain.workspaces import create_workspace_tools
+        for workspace_tool in create_workspace_tools(agent):
+            tools.register(workspace_tool)
+
         # Process is an optional delivery contract around Project work. It
         # validates promised submissions but never executes or plans the work.
         from xiaomei_brain.processes import create_process_tools

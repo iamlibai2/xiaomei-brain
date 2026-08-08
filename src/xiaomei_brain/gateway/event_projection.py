@@ -35,6 +35,8 @@ class GatewayEventProjection:
         "assignment.progress",
         "project.created",
         "project.updated",
+        "workspace.created",
+        "workspace.updated",
         "process.updated",
         "activity.queued",
         "activity.started",
@@ -56,6 +58,7 @@ class GatewayEventProjection:
         is_assignment_event = event.name.startswith("assignment.")
         is_activity_event = event.name.startswith("activity.")
         is_project_event = event.name.startswith("project.")
+        is_workspace_event = event.name.startswith("workspace.")
         is_process_event = event.name.startswith("process.")
         is_agent_state_event = event.name.startswith("agent.state.")
         is_agent_speech_event = event.name.startswith("agent.speech.")
@@ -64,6 +67,7 @@ class GatewayEventProjection:
             and not is_assignment_event
             and not is_activity_event
             and not is_project_event
+            and not is_workspace_event
             and not is_process_event
             and not is_agent_state_event
             and not is_agent_speech_event
@@ -117,6 +121,7 @@ class GatewayEventProjection:
                     is_assignment_event
                     or is_activity_event
                     or is_project_event
+                    or is_workspace_event
                     or is_process_event
                 )
                 and event.session_id
@@ -129,6 +134,7 @@ class GatewayEventProjection:
                     is_assignment_event
                     or is_activity_event
                     or is_project_event
+                    or is_workspace_event
                     or is_process_event
                 )
                 and target_person_id
@@ -225,6 +231,7 @@ class GatewayEventProjection:
                 is_assignment_event
                 or is_activity_event
                 or is_project_event
+                or is_workspace_event
                 or is_process_event
                 or is_agent_state_event
                 or is_agent_speech_event

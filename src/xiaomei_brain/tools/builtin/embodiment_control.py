@@ -27,6 +27,7 @@ def set_embodiment_command_broker(broker: Any) -> None:
         "get_presentation_state 核对台面实际装载的布局、顺序和产物。"
         "控制当前对话来源的 Desktop 界面。适用于用户要求打开、关闭或切换左右侧栏，"
         "打开右侧栏的动态、状态、项目、委托、产物、记忆、上下文栏目，或打开当前产物。"
+        "也可用 open_workspace、close_workspace 和 get_workspace_state 打开、关闭或核对工作台页面。"
         "它只控制界面和打开文件，不用于修改文件内容，也不能控制飞书、钉钉或其他软件。"
     ),
 )
@@ -49,6 +50,9 @@ def embodiment_control(
         "play_presentation_media",
         "pause_presentation_media",
         "get_presentation_state",
+        "open_workspace",
+        "close_workspace",
+        "get_workspace_state",
     ],
     section: Literal[
         "activity", "state", "project", "assignment", "artifact", "memory", "context",
@@ -56,6 +60,7 @@ def embodiment_control(
     artifact_id: str = "",
     artifact_ids: list[str] | None = None,
     layout: Literal["single", "split", "gallery", "media_with_details"] = "single",
+    workspace_id: str = "",
 ) -> str:
     if _broker is None:
         return "Error: Desktop 控制服务尚未初始化"
@@ -98,6 +103,9 @@ def embodiment_control(
         "play_presentation_media": ("stage.play", {}),
         "pause_presentation_media": ("stage.pause", {}),
         "get_presentation_state": ("stage.state.get", {}),
+        "open_workspace": ("ui.workspace.open", {"workspace_id": workspace_id}),
+        "close_workspace": ("ui.workspace.close", {}),
+        "get_workspace_state": ("ui.workspace.state.get", {}),
     }
     command, arguments = commands[action]
     response = _broker.request(
