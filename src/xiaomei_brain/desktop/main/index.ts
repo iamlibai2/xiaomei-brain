@@ -169,6 +169,12 @@ function createWindow(): void {
   ipcMain.on("window:close", () => mainWindow?.close());
   ipcMain.on("window:quit", () => app.quit());
   ipcMain.handle("window:isMaximized", () => mainWindow?.isMaximized() ?? false);
+  ipcMain.handle("window:setFullScreen", (event, enabled: unknown) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window || typeof enabled !== "boolean") return false;
+    window.setFullScreen(enabled);
+    return window.isFullScreen();
+  });
 
   mainWindow.on("maximize", () => {
     mainWindow?.webContents.send("window:maximizeChanged", true);

@@ -121,6 +121,7 @@ export interface SessionEntry {
   createdAt: number; // timestamp ms
   updatedAt?: number;
   messageCount?: number;
+  channel?: "desktop" | "ws" | "feishu" | "dingtalk" | string;
 }
 
 export interface ModelDefinition {
@@ -983,6 +984,7 @@ export interface WinBridge {
   close(): void;
   quit(): void;
   isMaximized(): Promise<boolean>;
+  setFullScreen(enabled: boolean): Promise<boolean>;
   onMaximizeChange(callback: (maximized: boolean) => void): void;
 }
 

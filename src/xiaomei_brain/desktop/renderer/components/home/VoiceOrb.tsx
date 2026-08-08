@@ -107,25 +107,19 @@ function drawBlob(
   colors: [string, string, string],
   still: boolean,
 ) {
-  const points = 72;
+  const pulse = still ? 0 : Math.sin(time * 2.2) * 0.018;
+  const drift = still ? 0 : Math.sin(time * 0.9) * 0.035;
+  const stretchX = 1 + pulse + level * 0.2;
+  const stretchY = 1 - pulse * 0.5 - level * 0.055;
   context.save();
+  context.translate(x, y);
+  context.rotate(drift);
+  context.scale(stretchX, stretchY);
   context.shadowBlur = 14;
   context.shadowColor = withAlpha(colors[0], 0.34);
   context.beginPath();
-  for (let index = 0; index <= points; index += 1) {
-    const angle = (index / points) * Math.PI * 2;
-    const movement = still
-      ? 0
-      : Math.sin(angle * 3 + time * 1.7) * (1.2 + level * 2.8)
-        + Math.sin(angle * 5 - time * 1.15) * (0.7 + level * 1.7);
-    const pointRadius = radius + movement;
-    const pointX = x + Math.cos(angle) * pointRadius;
-    const pointY = y + Math.sin(angle) * pointRadius;
-    if (index === 0) context.moveTo(pointX, pointY);
-    else context.lineTo(pointX, pointY);
-  }
-  context.closePath();
-  const gradient = context.createLinearGradient(x - radius, y - radius, x + radius, y + radius);
+  context.arc(0, 0, radius, 0, Math.PI * 2);
+  const gradient = context.createLinearGradient(-radius, -radius, radius, radius);
   gradient.addColorStop(0, colors[0]);
   gradient.addColorStop(0.48, colors[1]);
   gradient.addColorStop(1, colors[2]);
@@ -133,11 +127,11 @@ function drawBlob(
   context.fill();
 
   const highlight = context.createRadialGradient(
-    x - radius * 0.35,
-    y - radius * 0.42,
+    -radius * 0.35,
+    -radius * 0.42,
     1,
-    x - radius * 0.2,
-    y - radius * 0.25,
+    -radius * 0.2,
+    -radius * 0.25,
     radius * 1.1,
   );
   highlight.addColorStop(0, "rgba(255,255,255,.48)");

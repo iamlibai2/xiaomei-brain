@@ -58,11 +58,27 @@ class CapabilityRegistry:
         self._apply_activation_policy()
 
     def list(self, *, person_id: str = "") -> list[CapabilityView]:
-        return [self._build_view(self._definitions[key], person_id=person_id) for key in sorted(self._definitions)]
+        skill_names = self._load_skill_names()
+        return [
+            self._build_view(
+                self._definitions[key],
+                person_id=person_id,
+                _skill_names=skill_names,
+            )
+            for key in sorted(self._definitions)
+        ]
 
     def get(self, capability_id: str, *, person_id: str = "") -> CapabilityView | None:
         definition = self._definitions.get(str(capability_id).strip())
-        return self._build_view(definition, person_id=person_id) if definition else None
+        return (
+            self._build_view(
+                definition,
+                person_id=person_id,
+                _skill_names=self._load_skill_names(),
+            )
+            if definition
+            else None
+        )
 
     def set_enabled(self, capability_id: str, enabled: bool, *, person_id: str = "") -> CapabilityView | None:
         """Persist activation and immediately update Skill/Tool visibility."""
@@ -95,6 +111,7 @@ class CapabilityRegistry:
         if not normalized_query:
             return []
         query_terms = self._terms(normalized_query)
+        skill_names = self._load_skill_names()
         ranked: list[tuple[int, str, CapabilityView]] = []
         for definition in self._definitions.values():
             searchable = self._normalized_text(" ".join([
@@ -112,7 +129,11 @@ class CapabilityRegistry:
                 if term in searchable
             )
             if score:
-                ranked.append((score, definition.id, self._build_view(definition, person_id=person_id)))
+                ranked.append((score, definition.id, self._build_view(
+                    definition,
+                    person_id=person_id,
+                    _skill_names=skill_names,
+                )))
         ranked.sort(key=lambda item: (-item[0], item[1]))
         return [item[2] for item in ranked[:max(1, limit)]]
 
@@ -289,10 +310,16 @@ class CapabilityRegistry:
         *,
         person_id: str = "",
         _stack: frozenset[str] = frozenset(),
+        _skill_names: frozenset[str] | None = None,
     ) -> CapabilityView:
+        skill_names = _skill_names if _skill_names is not None else self._load_skill_names()
         enabled = self._is_enabled(definition.id)
         health = {
-            component.id: self._component_health(component, person_id=person_id)
+            component.id: self._component_health(
+                component,
+                person_id=person_id,
+                skill_names=skill_names,
+            )
             for component in definition.components
         }
         requirement_health = {
@@ -300,6 +327,7 @@ class CapabilityRegistry:
                 requirement,
                 person_id=person_id,
                 stack=_stack | {definition.id},
+                skill_names=skill_names,
             )
             for requirement in definition.requirements
         }
@@ -469,6 +497,7 @@ class CapabilityRegistry:
         *,
         person_id: str,
         stack: frozenset[str],
+        skill_names: frozenset[str],
     ) -> _ComponentHealth:
         label = requirement.label or requirement.target
         state: _ComponentHealth
@@ -494,7 +523,12 @@ class CapabilityRegistry:
             elif not self._is_enabled(requirement.target):
                 state = _ComponentHealth(False, "capability_disabled", f"依赖的{label}已关闭")
             else:
-                target_view = self._build_view(target, person_id=person_id, _stack=stack)
+                target_view = self._build_view(
+                    target,
+                    person_id=person_id,
+                    _stack=stack,
+                    _skill_names=skill_names,
+                )
                 if target_view.status == CapabilityStatus.READY:
                     state = _ComponentHealth(True)
                 elif target_view.status == CapabilityStatus.DEGRADED:
@@ -584,7 +618,13 @@ class CapabilityRegistry:
         if callable(set_disabled_tools):
             set_disabled_tools(disabled_tools)
 
-    def _component_health(self, component: CapabilityComponent, *, person_id: str = "") -> _ComponentHealth:
+    def _component_health(
+        self,
+        component: CapabilityComponent,
+        *,
+        person_id: str = "",
+        skill_names: frozenset[str] | None = None,
+    ) -> _ComponentHealth:
         label = component.label or component.id
         if component.kind == "plugin":
             plugin = self._plugin_registry.get_plugin(component.target)
@@ -601,7 +641,7 @@ class CapabilityRegistry:
             return _ComponentHealth(True)
 
         if component.kind == "skill":
-            names = self._skill_names()
+            names = skill_names if skill_names is not None else self._load_skill_names()
             if component.target in names:
                 return _ComponentHealth(True)
             return _ComponentHealth(False, "skill_missing", f"{label}尚未就绪")
@@ -652,10 +692,10 @@ class CapabilityRegistry:
 
         return _ComponentHealth(False, "component_unknown", f"{label}状态无法确认")
 
-    def _skill_names(self) -> set[str]:
+    def _load_skill_names(self) -> frozenset[str]:
         if self._skill_loader is None:
-            return set()
+            return frozenset()
         try:
-            return set(self._skill_loader.list_names())
+            return frozenset(self._skill_loader.list_names())
         except Exception:
-            return set()
+            return frozenset()

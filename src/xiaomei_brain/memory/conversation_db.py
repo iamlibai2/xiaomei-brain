@@ -1108,7 +1108,23 @@ class ConversationDB(SQLiteStore):
                           AND first_user.role = 'user'
                         ORDER BY first_user.created_at ASC, first_user.id ASC
                         LIMIT 1
-                    ), '') AS first_user_message
+                    ), '') AS first_user_message,
+                    COALESCE(NULLIF((
+                        SELECT CASE
+                            WHEN json_valid(first_user.metadata)
+                            THEN json_extract(first_user.metadata, '$.channel')
+                            ELSE NULL
+                        END
+                        FROM messages AS first_user
+                        WHERE first_user.session_id = m.session_id
+                          AND first_user.role = 'user'
+                        ORDER BY first_user.created_at ASC, first_user.id ASC
+                        LIMIT 1
+                    ), ''), CASE
+                        WHEN m.session_id LIKE 'feishu-%' THEN 'feishu'
+                        WHEN m.session_id LIKE 'dingtalk-%' THEN 'dingtalk'
+                        ELSE 'desktop'
+                    END) AS channel
                 FROM messages AS m
                 {scope_join}
                 WHERE m.session_id <> ''

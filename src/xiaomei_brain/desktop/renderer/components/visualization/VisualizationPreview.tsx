@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Icon } from "../ui";
 import {
@@ -77,6 +78,14 @@ export function VisualizationPreview({
   }, [dataBase64, sourceDocument, t]);
 
   useEffect(() => {
+    if (!fullscreen) return undefined;
+    void window.win.setFullScreen(true);
+    return () => {
+      void window.win.setFullScreen(false);
+    };
+  }, [fullscreen]);
+
+  useEffect(() => {
     const receive = (event: MessageEvent) => {
       if (event.source !== frameRef.current?.contentWindow) return;
       const data = event.data as Record<string, unknown> | null;
@@ -96,9 +105,9 @@ export function VisualizationPreview({
     return () => window.removeEventListener("message", receive);
   }, [inline, onFollowUp, t, token]);
 
-  return (
+  const preview = (
     <section className={`visualization-preview ${inline ? "inline" : "workspace"} ${fullscreen ? "fullscreen" : ""}`}>
-      {inline && (
+      {inline && !fullscreen && (
         <header className="visualization-preview-header">
           <span><Icon name="chart-bar" size={16} />{fileName.replace(/\.visualization\.html$/i, "")}</span>
           <div className="visualization-preview-actions">
@@ -120,6 +129,17 @@ export function VisualizationPreview({
           </div>
         </header>
       )}
+      {fullscreen && onFullscreen && (
+        <button
+          type="button"
+          className="visualization-fullscreen-exit"
+          onClick={onFullscreen}
+          title={t("visualize.exitFullscreen")}
+          aria-label={t("visualize.exitFullscreen")}
+        >
+          <Icon name="minimize" size={17} />
+        </button>
+      )}
       {error && <div className="visualization-preview-error">{error}</div>}
       {sourceDocument && (
         <iframe
@@ -133,4 +153,8 @@ export function VisualizationPreview({
       )}
     </section>
   );
+
+  // Fullscreen previews must leave the message-list stacking and clipping
+  // context so they can cover the complete Desktop renderer viewport.
+  return fullscreen ? createPortal(preview, document.body) : preview;
 }

@@ -466,6 +466,31 @@ body[data-platform="mac"] .sidebar-topbar {
   min-width: 0;
 }
 
+.session-channel-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--ui-color-text-secondary);
+  background: color-mix(in srgb, var(--ui-color-text-secondary) 9%, transparent);
+}
+
+.session-channel-mark.feishu {
+  color: #3370ff;
+  background: color-mix(in srgb, #3370ff 10%, transparent);
+}
+
+.session-channel-mark.dingtalk {
+  color: #147ffa;
+  background: color-mix(in srgb, #147ffa 10%, transparent);
+}
+
 .session-working-dot {
   width: 7px;
   height: 7px;

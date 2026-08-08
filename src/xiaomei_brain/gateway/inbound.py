@@ -420,6 +420,10 @@ class Gateway:
 
         metadata: dict[str, Any] = {
             "turn_id": turn_id,
+            # Keep the durable conversation origin independent of the
+            # channel-specific session-id convention. Desktop uses this to
+            # distinguish external conversations in the unified session list.
+            "channel": raw.channel,
             # Gateway acceptance only means the input is durable and waiting
             # in Living's FIFO queue.  ConversationDriver changes this to
             # ``processing`` when the Turn actually starts.

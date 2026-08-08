@@ -403,6 +403,33 @@ function personMemorySnapshot(value: unknown): PersonMemorySnapshot | null {
   };
 }
 
+function interactionDisplayText(value: unknown): string {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const item = value as Record<string, unknown>;
+    for (const key of ["label", "title", "name", "value", "text", "description"]) {
+      if (typeof item[key] === "string" && item[key].trim()) return item[key].trim();
+    }
+    return "";
+  }
+  if (typeof value !== "string") return "";
+  const text = value.trim();
+  if (!text) return "";
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    const normalized = interactionDisplayText(parsed);
+    if (normalized) return normalized;
+  } catch {
+    // Older malformed choices were persisted using Python's dict repr.
+  }
+  const legacy = text.match(/^\{\s*['"](?:label|title|name|value|text|description)['"]\s*:\s*(['"])([\s\S]*)\1\s*\}$/);
+  return legacy ? legacy[2].trim() : text;
+}
+
+function interactionChoices(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map(interactionDisplayText).filter(Boolean);
+}
+
 function historyMessages(
   result: Record<string, unknown> | undefined,
   sessionId: string,
@@ -449,13 +476,11 @@ function historyMessages(
         interaction: {
           id,
           question,
-          choices: Array.isArray(interaction.choices)
-            ? interaction.choices.filter((choice): choice is string => typeof choice === "string")
-            : [],
+          choices: interactionChoices(interaction.choices),
           sessionId: typeof interaction.session_id === "string" ? interaction.session_id : sessionId,
           turnId: typeof interaction.turn_id === "string" ? interaction.turn_id : "",
           status,
-          response: typeof interaction.response === "string" ? interaction.response : "",
+          response: interactionDisplayText(interaction.response),
         },
       } satisfies DisplayMessage];
     }
@@ -656,13 +681,11 @@ function resumeMessages(result: Record<string, unknown> | undefined, sessionId: 
         interaction: {
           id,
           question,
-          choices: Array.isArray(item.choices)
-            ? item.choices.filter((choice): choice is string => typeof choice === "string")
-            : [],
+          choices: interactionChoices(item.choices),
           sessionId,
           turnId,
           status,
-          response: typeof item.response === "string" ? item.response : "",
+          response: interactionDisplayText(item.response),
         },
       }];
     }
@@ -758,6 +781,7 @@ function sessionEntries(result: Record<string, unknown> | undefined): SessionEnt
       createdAt,
       updatedAt,
       messageCount: typeof row.message_count === "number" ? row.message_count : undefined,
+      channel: typeof row.channel === "string" ? row.channel : undefined,
     } satisfies SessionEntry];
   });
 }
@@ -3879,9 +3903,7 @@ export function initGatewayEvents(): () => void {
       const requestId = typeof payload.id === "string" ? payload.id : "";
       const question = typeof payload.question === "string" ? payload.question : "";
       if (!requestId || !question) return;
-      const choices = Array.isArray(payload.choices)
-        ? payload.choices.filter((choice): choice is string => typeof choice === "string")
-        : [];
+      const choices = interactionChoices(payload.choices);
       flushStreamToStore();
       const activeStreamId = stream.id;
       let inserted = false;
@@ -3939,7 +3961,7 @@ export function initGatewayEvents(): () => void {
       const payload = d;
       const requestId = typeof payload.id === "string" ? payload.id : "";
       const status = typeof payload.status === "string" ? payload.status : "";
-      const response = typeof payload.response === "string" ? payload.response : "";
+      const response = interactionDisplayText(payload.response);
       if (!requestId) return;
       setState(produce((s: CoreState) => {
         const message = eventMessages(s)

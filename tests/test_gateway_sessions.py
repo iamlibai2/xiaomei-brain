@@ -73,6 +73,25 @@ class GatewaySessionsTest(unittest.TestCase):
         self.assertEqual(session["session_id"], "desktop-session")
         self.assertEqual(session["first_user_message"], "restore me")
 
+    def test_session_list_exposes_channel_and_recognizes_legacy_channel_ids(self):
+        self.db.log(
+            "feishu-person-1",
+            "user",
+            "from feishu",
+            metadata={"channel": "feishu"},
+        )
+        self.db.log("dingtalk-person-1", "user", "legacy dingtalk")
+        self.db.log("desktop-session", "user", "from desktop")
+
+        sessions = {
+            item["session_id"]: item
+            for item in self.db.list_sessions()
+        }
+
+        self.assertEqual(sessions["feishu-person-1"]["channel"], "feishu")
+        self.assertEqual(sessions["dingtalk-person-1"]["channel"], "dingtalk")
+        self.assertEqual(sessions["desktop-session"]["channel"], "desktop")
+
     def test_chat_history_uses_message_id_cursor_without_duplicates(self):
         message_ids = [
             self.db.log("paged-session", "user", f"message {index}")

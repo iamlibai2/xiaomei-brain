@@ -42,8 +42,10 @@ DOCUMENT_SKILLS = [
 class _SkillLoader:
     def __init__(self, names: list[str]) -> None:
         self._names = names
+        self.list_calls = 0
 
     def list_names(self) -> list[str]:
+        self.list_calls += 1
         return [name for name in self._names if name not in getattr(self, "disabled", set())]
 
     def set_disabled_names(self, names) -> None:
@@ -108,6 +110,15 @@ def _document_runtime(*, skills: list[str] | None = None):
         skill_loader=_SkillLoader(skills if skills is not None else DOCUMENT_SKILLS),
     )
     return capability_registry
+
+
+def test_capability_list_reads_skill_catalog_once_per_snapshot():
+    registry = _document_runtime()
+    skill_loader = registry._skill_loader
+
+    registry.list()
+
+    assert skill_loader.list_calls == 1
 
 
 def _configurable_runtime(tmp_path):

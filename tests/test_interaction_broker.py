@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from xiaomei_brain.consciousness.interaction_broker import InteractionBroker
 from xiaomei_brain.gateway.connection import cm
 from xiaomei_brain.gateway.server_methods import MethodRouter
-from xiaomei_brain.tools.builtin.clarify import clarify
+from xiaomei_brain.tools.builtin.clarify import _normalize_choices, clarify
 
 
 class InteractionBrokerTest(unittest.TestCase):
@@ -14,6 +14,21 @@ class InteractionBrokerTest(unittest.TestCase):
             "type": "array",
             "items": {"type": "string"},
         })
+
+    def test_clarify_normalizes_provider_object_choices(self):
+        self.assertEqual(_normalize_choices([
+            {"description": "Continue with the current design"},
+            {"label": "Start over", "description": "Ignore the current version"},
+        ]), [
+            "Continue with the current design",
+            "Start over",
+        ])
+
+    def test_clarify_normalizes_object_choices_from_json_string(self):
+        self.assertEqual(
+            _normalize_choices('[{"description":"Option A"},{"title":"Option B"}]'),
+            ["Option A", "Option B"],
+        )
 
     def test_request_waits_for_response_from_same_session(self):
         published = []

@@ -376,6 +376,9 @@ function SessionItem({
   onClick: () => void;
 }) {
   const { t } = useTranslation();
+  const channel = session.channel
+    || (session.id.startsWith("feishu-") ? "feishu" : undefined)
+    || (session.id.startsWith("dingtalk-") ? "dingtalk" : undefined);
   return (
     <div
       className={`session-item ${isActive ? "active" : ""} ${isCurrent ? "current" : ""} ${disabled ? "disabled" : ""} ${unreadCount > 0 ? "unread" : ""}`}
@@ -396,6 +399,12 @@ function SessionItem({
         {session.name}
       </span>
       <span className="session-item-status">
+        {channel === "feishu" && (
+          <span className="session-channel-mark feishu" title={t("channelUi.feishu")}>飞</span>
+        )}
+        {channel === "dingtalk" && (
+          <span className="session-channel-mark dingtalk" title={t("channelUi.dingtalk")}>钉</span>
+        )}
         <span className="session-item-meta">{formatSessionMeta(session)}</span>
         {isWorking && <span className="session-working-dot" title={t("sidebar.agentWorking")} />}
         {unreadCount > 0 && (

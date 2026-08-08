@@ -89,10 +89,34 @@ def _normalize_choices(choices: Any) -> list[str] | None:
                 choices = [choices]
     if not isinstance(choices, list):
         return None
-    result = [str(c).strip() for c in choices if str(c).strip()]
+    result = []
+    for choice in choices:
+        text = _choice_text(choice)
+        if text:
+            result.append(text)
     if len(result) > MAX_CHOICES:
         result = result[:MAX_CHOICES]
     return result or None
+
+
+def _choice_text(choice: Any) -> str:
+    """Reduce provider-tolerated structured choices to the public text form.
+
+    The tool schema intentionally exposes ``string[]``. Some OpenAI-compatible
+    providers nevertheless emit objects such as ``{"description": "..."}``.
+    Never leak their Python representation into interaction events or history.
+    """
+    if isinstance(choice, str):
+        return choice.strip()
+    if isinstance(choice, dict):
+        for key in ("label", "title", "name", "value", "text", "description"):
+            value = choice.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
+    if isinstance(choice, (int, float, bool)):
+        return str(choice).strip()
+    return ""
 
 
 @tool(

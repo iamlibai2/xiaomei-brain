@@ -151,6 +151,7 @@ const CHANNEL_MAP = {
     close:             { send: "window:close" },
     quit:              { send: "window:quit" },
     isMaximized:       { invoke: "window:isMaximized" },
+    setFullScreen:     { invoke: "window:setFullScreen" },
     onMaximizeChange:  { event: "window:maximizeChanged" },
   },
   terminal: {

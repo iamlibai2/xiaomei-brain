@@ -32,6 +32,11 @@ const EMPTY_CATALOG: ComposerInvocationCatalog = {
   execution_modes: [],
 };
 
+// The catalog changes infrequently. Keep the latest copy per Agent so reopening
+// the slash menu is immediate, while the request below refreshes it in the
+// background to pick up newly installed Skills and capabilities.
+const catalogCache = new Map<string, ComposerInvocationCatalog>();
+
 function normalized(value: string): string {
   return value.trim().toLocaleLowerCase();
 }
@@ -48,28 +53,40 @@ export const SlashInvocationMenu = forwardRef<
   SlashInvocationMenuProps
 >(function SlashInvocationMenu({ agentId, query, onSelect, onClose }, ref) {
   const { t } = useTranslation();
-  const [catalog, setCatalog] = useState(EMPTY_CATALOG);
-  const [loading, setLoading] = useState(true);
+  const cachedCatalog = catalogCache.get(agentId);
+  const [catalog, setCatalog] = useState(cachedCatalog || EMPTY_CATALOG);
+  const [loading, setLoading] = useState(!cachedCatalog);
   const [error, setError] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const [pendingCapability, setPendingCapability] = useState<ComposerInvocationOption | null>(null);
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    const cached = catalogCache.get(agentId);
+    if (cached) {
+      setCatalog(cached);
+      setLoading(false);
+    } else {
+      setCatalog(EMPTY_CATALOG);
+      setLoading(true);
+    }
     setError("");
     setPendingCapability(null);
     void window.gateway.getInteractionCatalog({ agentId }).then((response) => {
       if (!active) return;
       if (response.error) throw new Error(response.error.message);
       const result = (response.result || {}) as unknown as ComposerInvocationCatalog;
-      setCatalog({
+      const nextCatalog = {
         capabilities: Array.isArray(result.capabilities) ? result.capabilities : [],
         skills: Array.isArray(result.skills) ? result.skills : [],
         execution_modes: Array.isArray(result.execution_modes) ? result.execution_modes : [],
-      });
+      };
+      catalogCache.set(agentId, nextCatalog);
+      setCatalog(nextCatalog);
     }).catch((reason) => {
-      if (active) setError(reason instanceof Error ? reason.message : String(reason));
+      if (active && !cached) {
+        setError(reason instanceof Error ? reason.message : String(reason));
+      }
     }).finally(() => {
       if (active) setLoading(false);
     });

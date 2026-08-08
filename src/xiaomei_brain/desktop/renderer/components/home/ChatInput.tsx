@@ -891,7 +891,7 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
 
   return (
     <div
-      className={`chat-input-container ${dragging ? "drag-active" : ""}`}
+      className={`chat-input-container ${dragging ? "drag-active" : ""} ${listening ? "is-listening" : ""} ${sending ? "is-sending" : ""}`}
       onDragEnter={(event) => {
         if (!connected || sending || !event.dataTransfer.types.includes("Files")) return;
         event.preventDefault();
@@ -1063,9 +1063,15 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
             <Icon name="camera" size={18} />
           </button>
           {sending ? (
-            <button className="chat-input-abort" onClick={onAbort}>
-              {t("home.abort")}
-            </button>
+            <>
+              <span className="chat-input-running-state" role="status" aria-live="polite">
+                <i aria-hidden="true" />
+                {t("home.processing")}
+              </span>
+              <button className="chat-input-abort" onClick={onAbort}>
+                {t("home.abort")}
+              </button>
+            </>
           ) : (
             <button
               className="chat-input-send"
