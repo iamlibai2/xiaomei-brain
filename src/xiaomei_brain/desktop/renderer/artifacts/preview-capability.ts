@@ -1,4 +1,4 @@
-export type ArtifactPreviewKind = "image" | "docx" | "pdf" | "spreadsheet" | "text" | "markdown" | "html";
+export type ArtifactPreviewKind = "image" | "docx" | "pdf" | "spreadsheet" | "text" | "markdown" | "html" | "visualization";
 
 export interface PreviewableArtifact {
   kind?: string;
@@ -10,6 +10,7 @@ export interface PreviewableArtifact {
 export function artifactPreviewKind(artifact: PreviewableArtifact): ArtifactPreviewKind | null {
   const name = artifact.name.toLowerCase();
   const mimeType = (artifact.mimeType || "").toLowerCase();
+  if (artifact.kind === "visualization" || name.endsWith(".visualization.html")) return "visualization";
   if (artifact.kind === "image" || mimeType.startsWith("image/")) return "image";
   if (name.endsWith(".docx") || mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") return "docx";
   if (name.endsWith(".pdf") || mimeType === "application/pdf") return "pdf";

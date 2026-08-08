@@ -65,7 +65,7 @@ export interface ChatArtifactReference {
   name?: string;
   mimeType?: string;
   size?: number;
-  kind?: "image" | "audio" | "video" | "text" | "document" | "file";
+  kind?: "image" | "audio" | "video" | "text" | "document" | "file" | "visualization";
   description?: string;
 }
 

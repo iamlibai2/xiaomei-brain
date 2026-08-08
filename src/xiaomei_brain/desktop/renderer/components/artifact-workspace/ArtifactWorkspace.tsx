@@ -7,6 +7,7 @@ import { TextArtifactPreview } from "../right-sidebar/TextArtifactPreview";
 import { HtmlArtifactPreview } from "../right-sidebar/HtmlArtifactPreview";
 import { artifactPreviewKind } from "../../artifacts/preview-capability";
 import { useTranslation } from "react-i18next";
+import { VisualizationPreview } from "../visualization/VisualizationPreview";
 
 const PdfPreview = lazy(() => import("../right-sidebar/PdfPreview").then((module) => ({ default: module.PdfPreview })));
 const SpreadsheetPreview = lazy(() => import("../right-sidebar/SpreadsheetPreview").then((module) => ({ default: module.SpreadsheetPreview })));
@@ -222,6 +223,13 @@ export function ArtifactWorkspace({
             onOpenOriginal={() => void openOriginal()}
             onBack={onClose}
             opening={opening}
+          />
+        )}
+        {artifact && kind === "visualization" && dataBase64 && (
+          <VisualizationPreview
+            dataBase64={dataBase64}
+            fileName={artifact.name}
+            onFollowUp={(prompt) => sendMessage(prompt, [], { preserveComposer: true })}
           />
         )}
       </div>

@@ -15,6 +15,7 @@ from uuid import uuid4
 
 MAX_ARTIFACT_BYTES = 20 * 1024 * 1024
 MAX_VIDEO_ARTIFACT_BYTES = 128 * 1024 * 1024
+MAX_VISUALIZATION_ARTIFACT_BYTES = 1 * 1024 * 1024
 _OUTPUT_DIRS = {"workspace", "images", "music", "tts", "videos", "projects"}
 
 
@@ -88,8 +89,13 @@ def discover_tool_artifacts(
             continue
         seen.add(relative_path)
         mime_type = _guess_mime_type(resolved)
+        kind = _artifact_kind(
+            mime_type,
+            resolved.suffix.lower(),
+            resolved.name,
+        )
         size = resolved.stat().st_size
-        if size <= 0 or size > _max_artifact_bytes(mime_type):
+        if size <= 0 or size > _max_artifact_bytes(mime_type, kind):
             continue
         replacement = replacements.get(
             os.path.normcase(str(resolved)),
@@ -115,7 +121,7 @@ def discover_tool_artifacts(
             "name": resolved.name,
             "mime_type": mime_type,
             "size": size,
-            "kind": _artifact_kind(mime_type, resolved.suffix.lower()),
+            "kind": kind,
             "description": (
                 f"Updated by {tool_name}" if replacement
                 else f"Created by {tool_name}"
@@ -156,8 +162,9 @@ def read_stored_artifact(
         raise ArtifactError("产物文件不存在或已被移除") from exc
     if not data or len(data) > _max_artifact_bytes(
         str(artifact.get("mime_type") or ""),
+        str(artifact.get("kind") or ""),
     ):
-        raise ArtifactError("产物为空或超过 20 MB")
+        raise ArtifactError("产物为空或超过该类型允许的大小")
     if int(artifact.get("size", -1)) != len(data):
         raise ArtifactError("产物快照与会话记录不一致")
     return {
@@ -316,14 +323,18 @@ def _structured_value(result: str) -> Any:
     return None
 
 
-def _max_artifact_bytes(mime_type: str) -> int:
+def _max_artifact_bytes(mime_type: str, kind: str = "") -> int:
     """Keep the normal snapshot limit small while permitting generated clips."""
+    if kind == "visualization":
+        return MAX_VISUALIZATION_ARTIFACT_BYTES
     if mime_type.startswith("video/"):
         return MAX_VIDEO_ARTIFACT_BYTES
     return MAX_ARTIFACT_BYTES
 
 
-def _artifact_kind(mime_type: str, suffix: str) -> str:
+def _artifact_kind(mime_type: str, suffix: str, name: str = "") -> str:
+    if name.lower().endswith(".visualization.html"):
+        return "visualization"
     if mime_type.startswith("image/"):
         return "image"
     if mime_type.startswith("audio/"):

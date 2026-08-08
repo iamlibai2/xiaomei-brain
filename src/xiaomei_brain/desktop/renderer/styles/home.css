@@ -11,6 +11,7 @@
 
 .main-content-primary {
   --ui-chat-content-max-width: 832px;
+  --ui-chat-visualization-max-width: 1120px;
   flex: 1;
   display: flex;
   min-width: 0;
@@ -2893,10 +2894,22 @@ body.is-resizing-artifact-workspace {
 
 .message-list-inner {
   width: 100%;
-  max-width: calc(var(--ui-chat-content-max-width) + 48px);
+  max-width: calc(var(--ui-chat-visualization-max-width) + 48px);
   min-height: 100%;
   margin: 0 auto;
   padding: 16px 24px 48px;
+}
+
+/* Keep ordinary conversation content comfortably readable while allowing
+   interactive visualizations to use the wider working area. */
+.message-list-inner > :not(.visualization-message-row) {
+  width: 100%;
+  max-width: var(--ui-chat-content-max-width);
+  margin-inline: auto;
+}
+
+.message-list-inner > .visualization-message-row {
+  width: 100%;
 }
 
 .scroll-to-latest {
@@ -4965,6 +4978,45 @@ body.is-resizing-artifact-workspace {
   max-width: var(--ui-chat-content-max-width);
   margin: 0 auto auto;
   padding: 0;
+}
+
+/* Fullscreen visualizations retain a compact conversation entry point. */
+.main-content.visualization-fullscreen-mode .wb-home-composer {
+  position: fixed;
+  z-index: 80;
+  left: 50%;
+  bottom: 12px;
+  width: min(720px, calc(100vw - 32px));
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  transform: translateX(-50%);
+}
+
+.main-content.visualization-fullscreen-mode .chat-input-container {
+  gap: 2px;
+  padding: 6px 10px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--ui-bg-primary) 94%, transparent);
+  box-shadow: 0 8px 28px color-mix(in srgb, #000 18%, transparent);
+  backdrop-filter: blur(14px);
+}
+
+.main-content.visualization-fullscreen-mode .chat-input-textarea {
+  min-height: 20px;
+  max-height: 44px;
+  line-height: 1.4;
+}
+
+.main-content.visualization-fullscreen-mode .chat-input-toolbar {
+  min-height: 28px;
+}
+
+.main-content.visualization-fullscreen-mode .chat-input-btn,
+.main-content.visualization-fullscreen-mode .chat-input-send,
+.main-content.visualization-fullscreen-mode .chat-input-abort {
+  width: 28px;
+  height: 28px;
 }
 
 /* ─── Chat Input (核心输入框) ─── */

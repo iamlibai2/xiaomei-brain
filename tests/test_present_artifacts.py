@@ -50,6 +50,20 @@ def test_present_artifacts_schema_exposes_path_array():
     assert present_artifacts_tool.parameters["required"] == ["paths"]
 
 
+def test_present_artifacts_rejects_oversized_visualization(tmp_path, monkeypatch):
+    agent_root = tmp_path / "agent"
+    workspace = agent_root / "workspace"
+    workspace.mkdir(parents=True)
+    visualization = workspace / "large.visualization.html"
+    visualization.write_bytes(b"x" * (1024 * 1024 + 1))
+    monkeypatch.setattr(file_ops, "_output_base", str(agent_root))
+
+    result = present_artifacts_tool.execute(paths=[visualization.name])
+
+    assert str(result).startswith("Error:")
+    assert "1 MB" in str(result)
+
+
 def test_present_artifacts_preserves_agent_artifact_identity(tmp_path, monkeypatch):
     agent_root = tmp_path / "agent"
     workspace = agent_root / "workspace"

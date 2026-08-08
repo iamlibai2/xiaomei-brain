@@ -1,0 +1,52 @@
+id: visualize
+name: 可视化
+summary: 将数据、关系、过程和抽象概念转化为可操作的图表、图解与模拟器
+category: productivity
+version: "1.0.0"
+source: xiaomei-brain
+
+examples:
+  - 把这份销售数据做成可以筛选地区的交互图表
+  - 用动画解释陀螺为什么不会立刻倒下
+  - 把这个数据库结构展示成可探索的关系图
+  - 做一个可调参数的贷款计算器
+
+components:
+  - id: plugin_visualize
+    kind: plugin
+    target: visualize
+    label: 可视化组件
+    required: true
+  - id: skill_visualize
+    kind: skill
+    target: visualize
+    label: 可视化工作方法
+    required: true
+  - id: tool_write_visualization
+    kind: tool
+    target: write_visualization
+    label: 可视化内容生成
+    required: true
+  - id: tool_present_artifacts
+    kind: tool
+    target: present_artifacts
+    label: 对话展示
+    required: true
+
+outcomes:
+  - id: charts
+    name: 交互图表
+    description: 展示数值比较、趋势、分布和可筛选的数据关系
+    components: [plugin_visualize, skill_visualize, tool_write_visualization, tool_present_artifacts]
+  - id: explainers
+    name: 交互图解
+    description: 通过步骤、状态变化和直接操作解释复杂概念
+    components: [plugin_visualize, skill_visualize, tool_write_visualization, tool_present_artifacts]
+  - id: simulations
+    name: 参数模拟
+    description: 调节参数并立即观察结果、运动或方案变化
+    components: [plugin_visualize, skill_visualize, tool_write_visualization, tool_present_artifacts]
+  - id: previews
+    name: 方案预览
+    description: 在对话中探索界面、流程和信息结构方案
+    components: [plugin_visualize, skill_visualize, tool_write_visualization, tool_present_artifacts]

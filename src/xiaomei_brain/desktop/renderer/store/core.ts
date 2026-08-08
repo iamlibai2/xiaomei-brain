@@ -230,7 +230,7 @@ function displayArtifact(value: unknown): DisplayArtifact | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const item = value as Record<string, unknown>;
   if (typeof item.id !== "string" || typeof item.name !== "string") return undefined;
-  const allowedKinds = ["image", "audio", "video", "text", "document", "file"];
+  const allowedKinds = ["image", "audio", "video", "text", "document", "file", "visualization"];
   return {
     id: item.id,
     name: item.name,
@@ -904,7 +904,7 @@ export interface DisplayArtifact {
   name: string;
   mimeType: string;
   size: number;
-  kind: "image" | "audio" | "video" | "text" | "document" | "file";
+  kind: "image" | "audio" | "video" | "text" | "document" | "file" | "visualization";
   description: string;
   toolCallId: string;
   turnId: string;

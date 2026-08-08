@@ -1,0 +1,108 @@
+.visualization-preview {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ui-color-text-primary);
+}
+
+.visualization-preview.inline {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--ui-color-border-secondary);
+  border-radius: 12px;
+  background: var(--ui-color-bg-secondary-hover-active);
+}
+
+.visualization-preview.workspace {
+  width: 100%;
+  min-height: 100%;
+  background: var(--ui-color-bg-secondary-hover-active);
+}
+
+.visualization-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 38px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--ui-color-border-secondary);
+  color: var(--ui-color-text-secondary);
+}
+
+.visualization-preview-header > span {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.visualization-preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.visualization-preview-header button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.visualization-preview-header button:hover {
+  background: var(--ui-color-bg-primary-hover);
+  color: var(--ui-color-text-primary);
+}
+
+.visualization-preview iframe {
+  display: block;
+  width: 100%;
+  min-height: 220px;
+  border: 0;
+  background: transparent;
+}
+
+.visualization-preview.fullscreen {
+  position: fixed;
+  z-index: 70;
+  inset: 0;
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+  flex-direction: column;
+  border: 0;
+  border-radius: 0;
+  background: var(--ui-bg-primary);
+}
+
+.visualization-preview.fullscreen .visualization-preview-header {
+  flex: 0 0 44px;
+  padding-left: 16px;
+  background: var(--ui-bg-primary);
+}
+
+.visualization-preview.fullscreen iframe {
+  flex: 1 1 auto;
+  height: auto !important;
+  min-height: 0;
+}
+
+.visualization-preview-error {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--ui-color-border-secondary);
+  color: var(--ui-color-text-error-default);
+  font-size: 13px;
+}
+
+@media (max-width: 900px) {
+  .visualization-preview.inline {
+    width: min(100%, calc(100vw - 48px));
+    min-width: 0;
+  }
+}

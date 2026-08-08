@@ -348,7 +348,7 @@ class Agent:
         _blocked_tool_retries = 0
         _repeated_failure_stop = False
         _completion_guard_retries: dict[str, int] = {}
-        _pending_document_outputs: dict[str, str] = {}
+        _pending_artifact_outputs: dict[str, str] = {}
         _presented_outputs: set[str] = set()
 
         # 记录此时的 messages 长度，后续只拼接 ReAct 循环中新增的消息
@@ -525,10 +525,10 @@ class Agent:
                         # runtime. Strip the internal envelope before normal tool
                         # bookkeeping, then stop this live ReAct loop below.
                         result, tool_control = split_tool_control(result)
-                        self._track_document_delivery(
+                        self._track_artifact_delivery(
                             tc.name,
                             result,
-                            _pending_document_outputs,
+                            _pending_artifact_outputs,
                             _presented_outputs,
                         )
                         tool_duration_ms = max(
@@ -555,7 +555,7 @@ class Agent:
                         args_dict = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
                         if tc.name in {"edit", "edit_file"}:
                             _ped(idx, tc.name, args_dict, result)
-                        elif tc.name in {"write", "write_file"}:
+                        elif tc.name in {"write", "write_file", "write_visualization"}:
                             _pwr(idx, tc.name, args_dict, result)
                         else:
                             _ptr(idx, result)
@@ -709,8 +709,8 @@ class Agent:
                                 continue
                             content = completion_guard.failure_message
                             yield "\n\n" + content
-                        self._auto_present_document_outputs(
-                            _pending_document_outputs,
+                        self._auto_present_artifact_outputs(
+                            _pending_artifact_outputs,
                             _presented_outputs,
                         )
                         # Extract MEMORY block from response and execute
@@ -800,8 +800,8 @@ class Agent:
                         return
                     else:
                         logger.warning("LLM returned empty content with no tool calls")
-                        self._auto_present_document_outputs(
-                            _pending_document_outputs,
+                        self._auto_present_artifact_outputs(
+                            _pending_artifact_outputs,
                             _presented_outputs,
                         )
                         yield ""
@@ -811,8 +811,8 @@ class Agent:
             # Ownership of unconsumed messages returns to Living when the
             # active Turn closes.  Never discard a human message here.
             pass
-        self._auto_present_document_outputs(
-            _pending_document_outputs,
+        self._auto_present_artifact_outputs(
+            _pending_artifact_outputs,
             _presented_outputs,
         )
         if _repeated_failure_stop:
@@ -843,14 +843,14 @@ class Agent:
         return os.path.normcase(os.path.abspath(os.path.expanduser(str(path))))
 
     @classmethod
-    def _track_document_delivery(
+    def _track_artifact_delivery(
         cls,
         tool_name: str,
         result: str,
         pending: dict[str, str],
         presented: set[str],
     ) -> None:
-        """Track document outputs and explicit presentation results."""
+        """Track stable outputs that must be visible to the person."""
         try:
             payload = json.loads(str(result))
         except (TypeError, json.JSONDecodeError):
@@ -861,6 +861,21 @@ class Agent:
         if tool_name == "write_document" and payload.get("success") is True:
             output_path = str(payload.get("output_path", "")).strip()
             if output_path:
+                pending[cls._normalized_delivery_path(output_path)] = output_path
+            return
+
+        if tool_name == "write_visualization" and payload.get("success") is True:
+            output_path = str(payload.get("output_path") or payload.get("path") or "").strip()
+            if output_path:
+                pending[cls._normalized_delivery_path(output_path)] = output_path
+            return
+
+        # Interactive visualizations are written as self-contained HTML by the
+        # generic write tool.  Treat only the dedicated suffix as a deliverable;
+        # ordinary source/config/text writes must remain silent.
+        if tool_name in {"write", "write_file"}:
+            output_path = str(payload.get("path", "")).strip()
+            if output_path.lower().endswith(".visualization.html"):
                 pending[cls._normalized_delivery_path(output_path)] = output_path
             return
 
@@ -875,7 +890,7 @@ class Agent:
             if str(path).strip():
                 presented.add(cls._normalized_delivery_path(str(path)))
 
-    def _auto_present_document_outputs(
+    def _auto_present_artifact_outputs(
         self,
         pending: dict[str, str],
         presented: set[str],
@@ -890,14 +905,14 @@ class Agent:
             return
         if self.tools.get("present_artifacts") is None:
             logger.warning(
-                "[Artifact] document outputs exist but present_artifacts is unavailable",
+                "[Artifact] deliverable outputs exist but present_artifacts is unavailable",
             )
             return
 
         tool_call_id = f"auto-present-{self.turn_id or int(time.time() * 1000)}"
         arguments = {
             "paths": paths,
-            "message": "本轮生成的文档已自动交付。",
+            "message": "本轮生成的产物已自动交付。",
         }
         result = self._execute_tool_call(
             tool_call_id,
@@ -920,7 +935,7 @@ class Agent:
         except Exception:
             logger.exception("Failed to publish automatic document presentation")
             return
-        self._track_document_delivery(
+        self._track_artifact_delivery(
             "present_artifacts",
             str(result),
             pending,

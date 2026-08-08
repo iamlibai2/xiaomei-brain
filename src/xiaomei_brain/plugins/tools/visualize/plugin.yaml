@@ -1,0 +1,5 @@
+name: visualize
+version: "1.0.0"
+description: "在对话中创建交互图表、图解和模拟器"
+kind: bundle
+entry: adapter:register

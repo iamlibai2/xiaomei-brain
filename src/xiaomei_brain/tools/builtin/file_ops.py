@@ -486,7 +486,7 @@ def _tool(
 
 read_tool = _tool(
     "read",
-    "Read a text file with line numbers and pagination. Agent assets are available under images/, music/, and tts/; historical attachments are read-only under attachments/.",
+    "Read a text file with line numbers and pagination. Reuse relative paths returned by glob/write/edit exactly; never reconstruct ~/.xiaomei-brain or another Agent data directory as an absolute path. Agent assets are available under images/, music/, and tts/; historical attachments are read-only under attachments/.",
     {
         "path": {"type": "string"},
         "offset": {"type": "integer", "minimum": 1, "default": 1},
@@ -504,7 +504,7 @@ write_tool = _tool(
 )
 edit_tool = _tool(
     "edit",
-    "Edit a text file by exact replacement in workspace/, images/, music/, or tts/ and return a unified diff. The attachments/ archive is read-only.",
+    "Edit a text file by exact replacement in workspace/, images/, music/, or tts/ and return a unified diff. Reuse the exact relative path returned by glob/read; do not rebuild an absolute Agent data path. The attachments/ archive is read-only.",
     {
         "path": {"type": "string"},
         "old_string": {"type": "string"},
@@ -516,7 +516,7 @@ edit_tool = _tool(
 )
 glob_tool = _tool(
     "glob",
-    "Find files using a glob path pattern. Agent asset roots are images/, music/, tts/, and the read-only historical archive attachments/.",
+    "Find files using a glob path pattern. Returned file names are canonical paths relative to the Agent workspace or a named asset root; pass them unchanged to read/edit or the shell. Do not prepend an inferred absolute Agent data directory. Agent asset roots are images/, music/, tts/, and the read-only historical archive attachments/.",
     {
         "pattern": {"type": "string"},
         "path": {"type": "string", "default": "."},

@@ -35,6 +35,7 @@ export type IconName =
   | "external-link"
   | "eye"
   | "maximize"
+  | "minimize"
   | "terminal"
   | "play"
   | "power"
@@ -102,6 +103,18 @@ const ICON_PATHS: Record<IconName, React.ReactNode> = {
       <path d="m3 21 6-6" />
       <path d="M16 21h5v-5" />
       <path d="m21 21-6-6" />
+    </>
+  ),
+  minimize: (
+    <>
+      <path d="M8 3v5H3" />
+      <path d="m3 8 6-6" />
+      <path d="M16 3v5h5" />
+      <path d="m21 8-6-6" />
+      <path d="M8 21v-5H3" />
+      <path d="m3 16 6 6" />
+      <path d="M16 21v-5h5" />
+      <path d="m21 16-6 6" />
     </>
   ),
   eye: (

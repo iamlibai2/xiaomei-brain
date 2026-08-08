@@ -13,6 +13,7 @@ from .file_ops import get_workspace_dir
 _PRESENTABLE_DIRS = frozenset({"workspace", "images", "music", "tts"})
 _MAX_PRESENTED_FILES = 10
 _MAX_PRESENTED_BYTES = 20 * 1024 * 1024
+_MAX_VISUALIZATION_BYTES = 1 * 1024 * 1024
 
 
 def _resolve_presentable_file(raw_path: str) -> tuple[Path | None, str]:
@@ -39,6 +40,11 @@ def _resolve_presentable_file(raw_path: str) -> tuple[Path | None, str]:
     size = resolved.stat().st_size
     if size <= 0:
         return None, f"不能交付空文件：{raw_path}"
+    if (
+        resolved.name.lower().endswith(".visualization.html")
+        and size > _MAX_VISUALIZATION_BYTES
+    ):
+        return None, f"交互可视化不能超过 1 MB：{raw_path}"
     if size > _MAX_PRESENTED_BYTES:
         return None, f"文件超过 20 MB，无法通过会话交付：{raw_path}"
     return resolved, ""

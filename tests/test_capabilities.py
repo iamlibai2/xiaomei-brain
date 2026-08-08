@@ -146,6 +146,7 @@ def test_builtin_manifests_describe_user_facing_capabilities():
         "gmail",
         "office_documents",
         "qq_mail",
+        "visualize",
         "web_search",
     ]
     office = next(item for item in definitions if item.id == "office_documents")
@@ -478,6 +479,7 @@ def test_agent_exposes_read_only_capability_queries():
         "gmail",
         "office_documents",
         "qq_mail",
+        "visualize",
         "web_search",
     ]
     assert office is not None

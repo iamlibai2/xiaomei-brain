@@ -68,6 +68,54 @@ def test_write_file_becomes_agent_owned_artifact(tmp_path, monkeypatch):
     assert "relative_path" not in public_artifact_metadata(artifacts[0])
 
 
+def test_visualization_html_becomes_sandboxed_artifact_kind(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
+    output = (
+        tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace"
+        / "sales.visualization.html"
+    )
+    output.parent.mkdir(parents=True)
+    output.write_text(
+        '<section id="sales"><button>切换地区</button><script>void 0</script></section>',
+        encoding="utf-8",
+    )
+
+    artifact = discover_tool_artifacts(
+        "xiaomei",
+        "session-1",
+        "turn-visualize",
+        "write",
+        {"path": "sales.visualization.html"},
+        json.dumps({"path": str(output)}, ensure_ascii=False),
+    )[0]
+
+    assert artifact["kind"] == "visualization"
+    assert artifact["mime_type"] == "text/html"
+    assert public_artifact_metadata(artifact)["kind"] == "visualization"
+
+
+def test_oversized_visualization_is_not_discovered(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(artifact_module, "MAX_VISUALIZATION_ARTIFACT_BYTES", 8)
+    output = (
+        tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace"
+        / "large.visualization.html"
+    )
+    output.parent.mkdir(parents=True)
+    output.write_text("<div>too large</div>", encoding="utf-8")
+
+    artifacts = discover_tool_artifacts(
+        "xiaomei",
+        "session-1",
+        "turn-visualize",
+        "write",
+        {"path": str(output)},
+        json.dumps({"path": str(output)}, ensure_ascii=False),
+    )
+
+    assert artifacts == []
+
+
 def test_artifact_discovery_ignores_files_outside_agent_outputs(tmp_path, monkeypatch):
     monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
     outside = tmp_path / "private.txt"

@@ -22,6 +22,7 @@ import { MarkdownMessage } from "./MarkdownMessage";
 import { ArtifactWorkspace } from "../artifact-workspace/ArtifactWorkspace";
 import { supportsArtifactPreview } from "../../artifacts/preview-capability";
 import { registerEmbodimentCommand } from "../../embodiment/command-registry";
+import { VisualizationPreview } from "../visualization/VisualizationPreview";
 
 const EMPTY_MSGS: DisplayMessage[] = [];
 const EMPTY_ASSIGNMENTS: AssignmentSnapshot[] = [];
@@ -123,6 +124,7 @@ export function HomePage({
   const [activityPanelOpen, setActivityPanelOpen] = useState(false);
   const [rightSidebarSection, setRightSidebarSection] = useState<RightSidebarSection>("activity");
   const [focusedArtifactKey, setFocusedArtifactKey] = useState("");
+  const [fullscreenVisualizationKey, setFullscreenVisualizationKey] = useState("");
   const [focusedMemories, setFocusedMemories] = useState<MemoryReference[]>([]);
   const [selectedAssignmentId, setSelectedAssignmentId] = useState<string | null>(null);
   const [historyTraversalStarted, setHistoryTraversalStarted] = useState<Set<string>>(() => new Set());
@@ -449,6 +451,31 @@ export function HomePage({
   const showArtifact = useCallback((artifactId: string, sessionId: string) => {
     openArtifactWorkspace(artifactId, sessionId);
   }, [openArtifactWorkspace]);
+  const maximizeVisualization = useCallback(() => {
+    // Visualizations already live in the primary conversation surface. Give
+    // that surface the available width instead of duplicating the preview in
+    // the artifact/right-side workspace.
+    autoCollapsedLeftSidebarRef.current = false;
+    setFocusedArtifactKey("");
+    setActivityPanelOpen(false);
+    if (!leftSidebarCollapsed) onLeftSidebarCollapsedChange(true);
+  }, [leftSidebarCollapsed, onLeftSidebarCollapsedChange]);
+  const toggleVisualizationFullscreen = useCallback((artifactKey: string) => {
+    setFullscreenVisualizationKey((current) => current === artifactKey ? "" : artifactKey);
+  }, []);
+
+  useEffect(() => {
+    if (!fullscreenVisualizationKey) return undefined;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFullscreenVisualizationKey("");
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [fullscreenVisualizationKey]);
+
+  useEffect(() => {
+    setFullscreenVisualizationKey("");
+  }, [activeAgentId, activeSessionId]);
   const showMemories = useCallback((references: MemoryReference[]) => {
     setFocusedMemories(references);
     setRightSidebarSection("context");
@@ -465,7 +492,7 @@ export function HomePage({
   })();
 
   return (
-    <div className={`main-content ${focusedArtifactKey ? "has-artifact-workspace" : ""}`}>
+    <div className={`main-content ${focusedArtifactKey ? "has-artifact-workspace" : ""} ${fullscreenVisualizationKey ? "visualization-fullscreen-mode" : ""}`}>
       <div className="main-content-primary">
       {activeAgentId && !showAgentStart && (
         <ChatTopbar
@@ -592,6 +619,9 @@ export function HomePage({
                         showAgentHeader={showAgentHeader}
                         highlighted={focusedSearchMessageId === m.id}
                         onShowArtifact={showArtifact}
+                        onMaximizeVisualization={maximizeVisualization}
+                        fullscreenVisualizationKey={fullscreenVisualizationKey}
+                        onToggleVisualizationFullscreen={toggleVisualizationFullscreen}
                         onShowMemories={showMemories}
                       />
                     );
@@ -710,6 +740,9 @@ function MessageRow({
   showAgentHeader,
   highlighted,
   onShowArtifact,
+  onMaximizeVisualization,
+  fullscreenVisualizationKey,
+  onToggleVisualizationFullscreen,
   onShowMemories,
 }: {
   message: DisplayMessage;
@@ -717,6 +750,9 @@ function MessageRow({
   showAgentHeader: boolean;
   highlighted: boolean;
   onShowArtifact: (artifactId: string, sessionId: string) => void;
+  onMaximizeVisualization: () => void;
+  fullscreenVisualizationKey: string;
+  onToggleVisualizationFullscreen: (artifactKey: string) => void;
   onShowMemories: (references: MemoryReference[]) => void;
 }) {
   const { t } = useTranslation();
@@ -766,6 +802,9 @@ function MessageRow({
         agentId={activeAgentId}
         sessionId={activeSessionId}
         onShowArtifact={onShowArtifact}
+        onMaximizeVisualization={onMaximizeVisualization}
+        fullscreenVisualizationKey={fullscreenVisualizationKey}
+        onToggleVisualizationFullscreen={onToggleVisualizationFullscreen}
       />
     );
   }
@@ -1179,6 +1218,9 @@ function ArtifactCard({
   agentId,
   sessionId,
   onShowArtifact,
+  onMaximizeVisualization,
+  fullscreenVisualizationKey,
+  onToggleVisualizationFullscreen,
 }: {
   message: DisplayMessage;
   agentName: string;
@@ -1186,18 +1228,29 @@ function ArtifactCard({
   agentId: string;
   sessionId: string;
   onShowArtifact: (artifactId: string, sessionId: string) => void;
+  onMaximizeVisualization: () => void;
+  fullscreenVisualizationKey: string;
+  onToggleVisualizationFullscreen: (artifactKey: string) => void;
 }) {
   const { t } = useTranslation();
   const artifact = message.artifact!;
   const [previewUrl, setPreviewUrl] = useState("");
+  const [visualizationData, setVisualizationData] = useState("");
   const [error, setError] = useState("");
   const [opening, setOpening] = useState(false);
   const previewSupported = supportsArtifactPreview(artifact);
+  const setDraft = useCoreStore((state) => state.setDraft);
 
   useEffect(() => {
     setPreviewUrl("");
+    setVisualizationData("");
     setError("");
-    if (artifact.kind !== "image" || artifact.size > 20 * 1024 * 1024 || !agentId || !sessionId) return;
+    if (
+      !["image", "visualization"].includes(artifact.kind)
+      || artifact.size > 20 * 1024 * 1024
+      || !agentId
+      || !sessionId
+    ) return;
     let cancelled = false;
     void window.gateway.getArtifact({ agentId, sessionId, artifactId: artifact.id })
       .then((response) => {
@@ -1211,7 +1264,8 @@ function ArtifactCard({
         const value = raw as Record<string, unknown>;
         const data = typeof value.dataBase64 === "string" ? value.dataBase64 : "";
         const mime = typeof value.mimeType === "string" ? value.mimeType : artifact.mimeType;
-        if (data) setPreviewUrl(`data:${mime};base64,${data}`);
+        if (data && artifact.kind === "visualization") setVisualizationData(data);
+        else if (data) setPreviewUrl(`data:${mime};base64,${data}`);
       })
       .catch((reason) => { if (!cancelled) setError(String(reason)); });
     return () => { cancelled = true; };
@@ -1235,6 +1289,37 @@ function ArtifactCard({
     : artifact.size < 1024 * 1024
       ? `${(artifact.size / 1024).toFixed(1)} KB`
       : `${(artifact.size / 1024 / 1024).toFixed(1)} MB`;
+
+  if (artifact.kind === "visualization") {
+    const visualizationKey = `${sessionId}:${artifact.id}`;
+    const visualizationFullscreen = fullscreenVisualizationKey === visualizationKey;
+    return (
+      <div className={`assistant-message-row artifact-message-row visualization-message-row ${showAgentHeader ? "" : "agent-turn-continuation"}`}>
+        {showAgentHeader && (
+          <div className="assistant-avatar">
+            <div className="assistant-avatar-face">{agentName.charAt(0)}</div>
+            <span className="assistant-avatar-name">{agentName}</span>
+          </div>
+        )}
+        {visualizationData ? (
+          <VisualizationPreview
+            dataBase64={visualizationData}
+            fileName={artifact.name}
+            inline
+            fullscreen={visualizationFullscreen}
+            onExpand={onMaximizeVisualization}
+            onFullscreen={() => onToggleVisualizationFullscreen(visualizationKey)}
+            onFollowUp={(prompt) => setDraft(prompt)}
+          />
+        ) : (
+          <div className="visualization-inline-loading">
+            <Icon name="sparkles" size={18} />
+            {error || t("visualize.loading")}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   if (artifact.kind === "image") {
     return (
