@@ -497,7 +497,7 @@ class EmbodimentMethods:
             gateway = getattr(self._living, "_gateway_inbound", None)
             if gateway is None:
                 raise RuntimeError("Gateway 尚未初始化")
-            from ..inbound import Accepted, RawMessage
+            from ..inbound import Accepted, RawMessage, Rejected
             accepted = gateway.accept(RawMessage(
                 content=text,
                 source="human",
@@ -516,6 +516,16 @@ class EmbodimentMethods:
                 reply_channel="ws",
                 reply_target=session_id,
             ))
+            if isinstance(accepted, Rejected) and accepted.reason == "HANDLED":
+                self._notify(route, "embodiment.audio.input.completed", {
+                    "request_id": request_id,
+                    "status": "completed",
+                    "disposition": "interaction_response",
+                    "text": text,
+                    "attachments": public_attachment_metadata(attachments),
+                    "voiceprint_verified": voiceprint_verified,
+                })
+                return
             if not isinstance(accepted, Accepted):
                 raise RuntimeError(getattr(accepted, "reason", "语音消息未被接收"))
             self._notify(route, "embodiment.audio.input.completed", {

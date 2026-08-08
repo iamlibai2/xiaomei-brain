@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from xiaomei_brain.body.embodiment import EmbodimentManager, OrganCapability
 from xiaomei_brain.gateway.connection import cm
-from xiaomei_brain.gateway.inbound import Accepted
+from xiaomei_brain.gateway.inbound import Accepted, Rejected
 from xiaomei_brain.gateway.router import OutputRoute
 from xiaomei_brain.gateway.server_methods import MethodRouter
 from xiaomei_brain.gateway.ws_adapter import WSAdapter
@@ -454,6 +454,69 @@ def test_desktop_microphone_is_transcribed_and_enters_gateway(monkeypatch):
             key: admitted[0].attachments[0][key]
             for key in ("id", "name", "mime_type", "size", "kind")
         }]
+    finally:
+        cm.unregister(conn_id)
+
+
+def test_desktop_clarify_audio_is_completed_without_creating_turn(monkeypatch):
+    conn_id = "desktop-embodiment-clarify"
+    session_id = "session-clarify"
+    cm.set_session(session_id, conn_id, "person-1")
+    events = []
+
+    class Gateway:
+        def accept(self, _raw):
+            return Rejected(reason="HANDLED", silent=True)
+
+    class Router:
+        def deliver_event(self, event, payload, route, **metadata):
+            events.append((event, payload, route, metadata))
+            return True
+
+    living = SimpleNamespace(
+        _agent_id="test",
+        _gateway_inbound=Gateway(),
+        _router=Router(),
+    )
+    methods = MethodRouter(living=living)
+    methods._auth_sessions.add(conn_id)
+    monkeypatch.setattr(
+        "xiaomei_brain.gateway.methods.embodiments.threading.Thread",
+        ImmediateThread,
+    )
+    monkeypatch.setattr(
+        "xiaomei_brain.body.perception.remote_audio."
+        "RemoteAudioPerception.perceive_with_pcm",
+        lambda _self, _data: ({"text": "就演示小美 Agent", "emotion": "calm"}, b"\0\0" * 16000),
+    )
+    monkeypatch.setattr(
+        "xiaomei_brain.gateway.attachments.prepare_attachments",
+        lambda _agent, _session, attachments: (
+            [{**attachments[0], "kind": "audio", "local_path": "stored.webm"}],
+            [],
+            [],
+        ),
+    )
+    try:
+        methods.dispatch(conn_id, "1", "embodiment.register", {
+            "device_id": "device-clarify-1",
+            "label": "Desktop",
+            "capabilities": ["hearing"],
+        })
+        data = b"webm-audio"
+        response = methods.dispatch(conn_id, "2", "embodiment.audio.input", {
+            "data_base64": base64.b64encode(data).decode("ascii"),
+            "mime_type": "audio/webm",
+            "size": len(data),
+            "client_request_id": "voice-clarify-1",
+        })
+
+        assert response["result"]["status"] == "processing"
+        assert events[-1][0] == "embodiment.audio.input.completed"
+        assert events[-1][1]["status"] == "completed"
+        assert events[-1][1]["disposition"] == "interaction_response"
+        assert "turn_id" not in events[-1][1]
+        assert "message_id" not in events[-1][1]
     finally:
         cm.unregister(conn_id)
 

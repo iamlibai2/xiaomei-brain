@@ -115,6 +115,73 @@ def test_feishu_reply_resumes_clarify_while_agent_is_busy():
     assert published[-1][0] == "interaction.updated"
 
 
+def test_desktop_audio_resumes_clarify_while_agent_is_busy():
+    requested = threading.Event()
+
+    def publish(name, _payload):
+        if name == "interaction.requested":
+            requested.set()
+
+    broker = InteractionBroker(publish)
+    living = _living(_interaction_broker=broker, _action_broker=ActionBroker())
+    adapter = RecordingAdapter(ChannelCapabilities(clarify=True, action_approval=True))
+    gateway = Gateway(living, FakeRouter("ws", adapter))
+    result = {}
+
+    thread = threading.Thread(target=lambda: result.setdefault(
+        "answer",
+        broker.request("演示哪个产品？", ["小美 Agent", "其他"], "session-1", "person-1", 2),
+    ))
+    thread.start()
+    assert requested.wait(1)
+
+    accepted = gateway.accept(RawMessage(
+        content="就演示小美 Agent",
+        source="human",
+        channel="ws",
+        peer_id="person-1",
+        peer_type="human",
+        session_id="session-1",
+        metadata={"message_type": "audio"},
+    ))
+    thread.join(1)
+
+    assert isinstance(accepted, Rejected)
+    assert accepted.reason == "HANDLED"
+    assert result["answer"] == "就演示小美 Agent"
+    assert living.messages == []
+
+
+def test_desktop_text_does_not_implicitly_answer_clarify():
+    requested = threading.Event()
+    broker = InteractionBroker(
+        lambda name, _payload: requested.set() if name == "interaction.requested" else None,
+    )
+    living = _living(_interaction_broker=broker, _action_broker=ActionBroker())
+    adapter = RecordingAdapter(ChannelCapabilities(clarify=True, action_approval=True))
+    gateway = Gateway(living, FakeRouter("ws", adapter))
+
+    thread = threading.Thread(target=lambda: broker.request(
+        "演示哪个产品？", ["小美 Agent", "其他"], "session-1", "person-1", 2,
+    ))
+    thread.start()
+    assert requested.wait(1)
+
+    accepted = gateway.accept(RawMessage(
+        content="这是另一条普通消息",
+        source="human",
+        channel="ws",
+        peer_id="person-1",
+        peer_type="human",
+        session_id="session-1",
+    ))
+    broker.cancel_session("session-1")
+    thread.join(1)
+
+    assert isinstance(accepted, Accepted)
+    assert living.messages[-1]["content"] == "这是另一条普通消息"
+
+
 def test_action_command_requires_owning_channel_user_and_session():
     requested = threading.Event()
     request_payload = {}

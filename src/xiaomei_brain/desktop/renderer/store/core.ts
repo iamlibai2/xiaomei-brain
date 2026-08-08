@@ -3589,6 +3589,9 @@ export function initGatewayEvents(): () => void {
           detail: { kind: "voiceprint", agentId },
         }));
       }
+      // A spoken Clarify answer resumes the existing Turn and is rendered by
+      // interaction.updated. It is not a second user message or a new Turn.
+      if (d.disposition === "interaction_response") return;
       if (d.status !== "completed" || !text.trim()) return;
       const messageId = typeof d.message_id === "number" ? d.message_id : undefined;
       setState(produce((s: CoreState) => {

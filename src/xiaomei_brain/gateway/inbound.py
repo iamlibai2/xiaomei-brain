@@ -357,11 +357,29 @@ class Gateway:
         session_id: str,
     ) -> bool:
         """Resolve channel text as Clarify/Action control without creating a Turn."""
-        if raw.source != "human" or raw.peer_type != "human" or raw.channel == "ws":
+        desktop_audio = (
+            raw.channel == "ws"
+            and str(raw.metadata.get("message_type", "")) == "audio"
+        )
+        # Desktop text answers use the explicit interaction.respond RPC so a
+        # normal typed message can never accidentally dismiss a card. Spoken
+        # answers have no card-click path, therefore the one pending Clarify
+        # in this verified Person/session may consume them conversationally.
+        if (
+            raw.source != "human"
+            or raw.peer_type != "human"
+            or (raw.channel == "ws" and not desktop_audio)
+        ):
             return False
         capabilities = self._channel_capabilities(raw.channel)
 
-        if content.strip().lower().startswith("/approve") and capabilities.action_approval:
+        # Voice never approves a side-effecting Action implicitly. Those keep
+        # using the explicit action.respond boundary in Desktop.
+        if (
+            not desktop_audio
+            and content.strip().lower().startswith("/approve")
+            and capabilities.action_approval
+        ):
             parts = content.strip().split()
             if len(parts) != 3 or parts[2].lower() not in {"allow", "allow-once", "deny"}:
                 self._deliver_control_message(
