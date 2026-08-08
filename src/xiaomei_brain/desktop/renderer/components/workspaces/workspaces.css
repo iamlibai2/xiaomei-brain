@@ -109,6 +109,16 @@
 .workspace-event-list > div:last-child { border-bottom: 0; }
 .workspace-event-list i { width: 6px; height: 6px; border-radius: 50%; background: var(--ui-brand-primary); }
 .workspace-event-list time { color: var(--ui-color-text-tertiary); font-size: 11px; }
+.workspace-action-candidates { margin-top: 12px; border: 1px solid var(--ui-border-subtle); border-radius: 13px; background: var(--ui-bg-secondary); overflow: hidden; }
+.workspace-action-candidates h4 { margin: 0; padding: 13px 16px; border-bottom: 1px solid var(--ui-border-subtle); font-size: 13px; font-weight: 620; }
+.workspace-action-candidates > div { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 11px; padding: 11px 14px; border-bottom: 1px solid var(--ui-border-subtle); }
+.workspace-action-candidates > div:last-child { border-bottom: 0; }
+.workspace-action-status { padding: 3px 7px; border-radius: 999px; background: var(--ui-bg-tertiary); color: var(--ui-color-text-secondary); font-size: 10px; white-space: nowrap; }
+.workspace-action-status.candidate { background: color-mix(in srgb, var(--ui-brand-primary) 13%, transparent); color: var(--ui-brand-primary); }
+.workspace-action-copy { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.workspace-action-copy strong { font-size: 12px; font-weight: 620; color: var(--ui-color-text-primary); }
+.workspace-action-copy small { overflow: hidden; color: var(--ui-color-text-tertiary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-action-count { color: var(--ui-color-text-tertiary); font-size: 11px; white-space: nowrap; }
 .workspace-conversation-hint { margin-top: 16px; min-height: 48px; border: 1px dashed var(--ui-border-default); border-radius: 11px; display: flex; align-items: center; gap: 8px; padding: 8px 12px; color: var(--ui-color-text-secondary); font-size: 12px; }
 .workspace-conversation-hint button { margin-left: auto; }
 .workspace-empty { height: 100%; min-height: 340px; display: grid; place-content: center; justify-items: center; color: var(--ui-color-text-tertiary); }

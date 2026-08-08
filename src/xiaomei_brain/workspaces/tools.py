@@ -7,6 +7,7 @@ from typing import Any
 from xiaomei_brain.tools.base import Tool
 
 from .dataset_tools import create_dataset_tools
+from .import_tools import create_import_tools
 
 
 def create_workspace_tools(agent: Any) -> list[Tool]:
@@ -620,4 +621,4 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             category="workspace",
         ),
     ]
-    return tools + create_dataset_tools(agent)
+    return tools + create_dataset_tools(agent) + create_import_tools(agent)

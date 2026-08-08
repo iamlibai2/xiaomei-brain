@@ -15,6 +15,7 @@ from typing import Any, Callable, Iterable
 from xiaomei_brain.agent.runtime import (
     AgentRuntimeContext,
     AgentRuntimeFactory,
+    IsolatedAgentProvider,
     clone_llm_for_isolated_run,
 )
 from xiaomei_brain.tools.action_policy import assess_tool_action
@@ -42,6 +43,25 @@ DEFAULT_BACKGROUND_TOOLS = frozenset({
     "web_get",
     "read_document",
     "write_document",
+})
+
+WORKSPACE_BACKGROUND_TOOLS = frozenset({
+    "create_workspace",
+    "update_workspace",
+    "create_surface",
+    "update_surface",
+    "get_workspace",
+    "list_workspaces",
+    "create_data_source",
+    "record_observation",
+    "define_collection",
+    "upsert_business_record",
+    "add_collection_fields",
+    "query_business_records",
+    "create_dataset",
+    "recompute_dataset",
+    "list_datasets",
+    "import_tabular_data",
 })
 
 _WAIT_PATTERN = re.compile(
@@ -128,6 +148,8 @@ class IsolatedAssignmentRunner:
         runtime.tool_workspace_root = str(workspace_root)
         runtime.tool_working_directory = str(work_dir)
         runtime.tool_output_root = str(outputs_dir)
+        if self._needs_workspace_tools(context):
+            self._install_workspace_tools(isolated_tools, runtime)
 
         tool_trace: list[dict[str, Any]] = list(
             control.checkpoint_data.get("tool_trace", []),
@@ -168,7 +190,7 @@ class IsolatedAssignmentRunner:
             # Execution Plan is deliberately local to AssignmentRun. It is
             # not a Goal/PACE node and does not touch PurposeEngine state.
             if (
-                tool_name in self.allowed_tools
+                self._is_background_tool(tool_name, context)
                 and self._execution_plan(control.checkpoint_data) is None
             ):
                 return {
@@ -237,23 +259,7 @@ class IsolatedAssignmentRunner:
             context,
             artifact_db=artifact_db,
         )
-        runtime.current_attachments = [
-            {
-                "id": str(resource.get("key") or ""),
-                "name": str(resource.get("metadata", {}).get("name") or resource.get("key") or ""),
-                "mime_type": str(resource.get("metadata", {}).get("mime_type") or ""),
-                "size": int(resource.get("metadata", {}).get("size") or 0),
-                "kind": "document",
-                "local_path": str(resource.get("metadata", {}).get("workspace_path") or ""),
-            }
-            for resource in prepared_resources
-            if resource.get("metadata", {}).get("workspace_path")
-            and (
-                resource.get("metadata", {}).get("kind") == "document"
-                or Path(str(resource.get("metadata", {}).get("name") or "")).suffix.lower()
-                in {".docx", ".pptx", ".pdf", ".xlsx"}
-            )
-        ]
+        runtime.current_attachments = self._runtime_attachments(prepared_resources)
 
         def on_artifact(
             tool_call_id: str,
@@ -852,6 +858,84 @@ class IsolatedAssignmentRunner:
             if tool.name in self.allowed_tools:
                 registry.register(tool)
         return registry
+
+    @staticmethod
+    def _needs_workspace_tools(context: AssignmentExecutionContext) -> bool:
+        """Expose the Agent's business world only to Workspace-related work."""
+        if any(item.resource_type == "workspace" for item in context.resources):
+            return True
+        text = "\n".join((
+            context.title,
+            context.objective,
+            *context.acceptance_criteria,
+        )).casefold()
+        return any(keyword in text for keyword in (
+            "workspace",
+            "工作空间",
+            "客户经营",
+            "经营看板",
+            "业务看板",
+            "业务数据",
+            "collection",
+            "surface",
+            "dataset",
+        ))
+
+    def _install_workspace_tools(self, registry: ToolRegistry, runtime: Any) -> None:
+        """Bind Workspace tools to the isolated Core, not the live conversation."""
+        from xiaomei_brain.workspaces import create_workspace_tools
+
+        provider = IsolatedAgentProvider(self.agent_instance, runtime)
+        for tool in create_workspace_tools(provider):
+            if (
+                tool.name in WORKSPACE_BACKGROUND_TOOLS
+                and registry.get(tool.name) is None
+            ):
+                registry.register(tool)
+
+    def _is_background_tool(
+        self,
+        tool_name: str,
+        context: AssignmentExecutionContext,
+    ) -> bool:
+        return tool_name in self.allowed_tools or (
+            self._needs_workspace_tools(context)
+            and tool_name in WORKSPACE_BACKGROUND_TOOLS
+        )
+
+    @staticmethod
+    def _runtime_attachments(
+        prepared_resources: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        supported_suffixes = {
+            ".csv", ".tsv", ".docx", ".pptx", ".pdf", ".xlsx",
+        }
+        return [
+            {
+                "id": str(resource.get("key") or ""),
+                "name": str(
+                    resource.get("metadata", {}).get("name")
+                    or resource.get("key")
+                    or ""
+                ),
+                "mime_type": str(
+                    resource.get("metadata", {}).get("mime_type") or ""
+                ),
+                "size": int(resource.get("metadata", {}).get("size") or 0),
+                "kind": "document",
+                "local_path": str(
+                    resource.get("metadata", {}).get("workspace_path") or ""
+                ),
+            }
+            for resource in prepared_resources
+            if resource.get("metadata", {}).get("workspace_path")
+            and (
+                resource.get("metadata", {}).get("kind") == "document"
+                or Path(
+                    str(resource.get("metadata", {}).get("name") or "")
+                ).suffix.lower() in supported_suffixes
+            )
+        ]
 
     @staticmethod
     def _workspace_dirs(

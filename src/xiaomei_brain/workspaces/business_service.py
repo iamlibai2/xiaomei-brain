@@ -10,6 +10,7 @@ from typing import Any
 
 from .business_store import BusinessStore
 from .models import (
+    BusinessActionCandidate,
     BusinessEvent,
     BusinessRecord,
     CollectionDefinition,
@@ -174,6 +175,7 @@ class BusinessWorldService:
         event_occurred_at: float | None = None,
         event_idempotency_key: str = "",
         event_metadata: dict[str, Any] | None = None,
+        notify: bool = True,
     ) -> tuple[BusinessRecord, list[RecordChange], BusinessEvent | None]:
         collection = self.require_collection(collection_id)
         fields = self.store.list_fields(collection.id)
@@ -228,7 +230,24 @@ class BusinessWorldService:
             event_metadata=dict(event_metadata or {}),
             now=self._clock(),
         )
-        if self._on_collection_changed is not None:
+        action_candidate_payload = None
+        if notify and changes:
+            observed = self.store.observe_action_occurrence(changes)
+            if observed is not None:
+                fingerprint, previous_count, current_count = observed
+                if previous_count < 3 <= current_count:
+                    candidate = next((
+                        item for item in self.store.list_action_candidates(
+                            collection.workspace_id,
+                            min_occurrences=3,
+                        )
+                        if item.id.endswith(fingerprint[:24])
+                    ), None)
+                    if candidate is not None:
+                        action_candidate_payload = self.action_candidate_snapshot(
+                            candidate,
+                        )
+        if notify and self._on_collection_changed is not None:
             self._on_collection_changed(
                 collection.id,
                 reason=(
@@ -241,16 +260,23 @@ class BusinessWorldService:
             "changes": [self.change_snapshot(item, fields) for item in changes],
             "event": self.event_snapshot(event) if event is not None else None,
         }
-        self._publish_to_workspace(
-            "record.changed", collection.workspace_id, payload,
-            session_id=session_id, turn_id=turn_id,
-        )
-        if event is not None:
+        if notify:
             self._publish_to_workspace(
-                "business_event.created", collection.workspace_id,
-                self.event_snapshot(event),
+                "record.changed", collection.workspace_id, payload,
                 session_id=session_id, turn_id=turn_id,
             )
+            if event is not None:
+                self._publish_to_workspace(
+                    "business_event.created", collection.workspace_id,
+                    self.event_snapshot(event),
+                    session_id=session_id, turn_id=turn_id,
+                )
+            if action_candidate_payload is not None:
+                self._publish_to_workspace(
+                    "business_action.candidate", collection.workspace_id,
+                    action_candidate_payload,
+                    session_id=session_id, turn_id=turn_id,
+                )
         return record, changes, event
 
     def require_collection(self, collection_id: str) -> CollectionDefinition:
@@ -277,10 +303,14 @@ class BusinessWorldService:
             for identity in (field.name, field.label, *field.aliases)
         }
         for field in normalized:
-            for identity in (field["name"], field["label"], *field["aliases"]):
-                if identity.casefold() in identities:
-                    raise ValueError(f"Duplicate field name or alias: {identity}")
-                identities.add(identity.casefold())
+            field_identities = list(dict.fromkeys(
+                identity.casefold()
+                for identity in (field["name"], field["label"], *field["aliases"])
+            ))
+            for folded in field_identities:
+                if folded in identities:
+                    raise ValueError(f"Duplicate field name or alias: {folded}")
+                identities.add(folded)
         if any(field["required"] for field in normalized):
             if self.store.list_records(collection.id, limit=1):
                 raise ValueError(
@@ -341,13 +371,20 @@ class BusinessWorldService:
                 for item in self.store.list_data_sources(workspace_id)
             ],
             "observations": [
-                self.observation_snapshot(item)
+                self.observation_snapshot_with_links(item)
                 for item in self.store.list_observations(workspace_id, limit=100)
             ],
             "collections": collections,
             "events": [
                 self.event_snapshot(item)
                 for item in self.store.list_events(workspace_id, limit=100)
+            ],
+            "action_candidates": [
+                self.action_candidate_snapshot(item)
+                for item in self.store.list_action_candidates(
+                    workspace_id,
+                    min_occurrences=2,
+                )
             ],
         }
 
@@ -373,6 +410,61 @@ class BusinessWorldService:
             "resolved_collection_id": item.resolved_collection_id,
             "resolved_record_id": item.resolved_record_id,
         }
+
+    def observation_snapshot_with_links(self, item: Observation) -> dict[str, Any]:
+        payload = self.observation_snapshot(item)
+        payload["resolved_record_ids"] = self.store.linked_record_ids(item.id)
+        return payload
+
+    def action_candidate_snapshot(
+        self,
+        item: BusinessActionCandidate,
+    ) -> dict[str, Any]:
+        collection = self.require_collection(item.collection_id)
+        field_map = {
+            field.id: field for field in self.store.list_fields(item.collection_id)
+        }
+        fields = [
+            {
+                "id": field_id,
+                "name": field_map[field_id].name,
+                "label": field_map[field_id].label,
+            }
+            for field_id in item.field_ids
+            if field_id in field_map
+        ]
+        return {
+            "id": item.id,
+            "workspace_id": item.workspace_id,
+            "collection_id": item.collection_id,
+            "collection_name": collection.name,
+            "collection_label": collection.label,
+            "operation": item.operation,
+            "fields": fields,
+            "occurrence_count": item.occurrence_count,
+            "record_count": item.record_count,
+            "example_intents": list(item.example_intents),
+            "status": item.status,
+            "first_seen_at": item.first_seen_at,
+            "last_seen_at": item.last_seen_at,
+        }
+
+    def publish_import_completed(
+        self,
+        workspace_id: str,
+        payload: dict[str, Any],
+        *,
+        collection_id: str,
+        reason: str,
+        session_id: str = "",
+        turn_id: str = "",
+    ) -> None:
+        if self._on_collection_changed is not None:
+            self._on_collection_changed(collection_id, reason=reason)
+        self._publish_to_workspace(
+            "data_import.completed", workspace_id, payload,
+            session_id=session_id, turn_id=turn_id,
+        )
 
     @staticmethod
     def collection_snapshot(
@@ -487,10 +579,15 @@ class BusinessWorldService:
                 str(item).strip() for item in (field.get("aliases") or [])
                 if str(item).strip()
             )
-            for identity in (name, label, *aliases):
-                folded = identity.casefold()
+            # A machine name and its display label may intentionally be the
+            # same (common for English spreadsheet headers). Treat that as one
+            # identity while still rejecting collisions across fields.
+            field_identities = list(dict.fromkeys(
+                identity.casefold() for identity in (name, label, *aliases)
+            ))
+            for folded in field_identities:
                 if folded in identities:
-                    raise ValueError(f"Duplicate field name or alias: {identity}")
+                    raise ValueError(f"Duplicate field name or alias: {folded}")
                 identities.add(folded)
             normalized.append({
                 "name": name, "label": label, "data_type": data_type,

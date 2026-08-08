@@ -5,6 +5,7 @@ from .business_store import BusinessStore
 from .dataset_service import DatasetService
 from .dataset_store import DatasetStore
 from .models import (
+    BusinessActionCandidate,
     BusinessEvent,
     BusinessRecord,
     CollectionDefinition,
@@ -20,10 +21,12 @@ from .models import (
 )
 from .service import ALLOWED_COMPONENT_TYPES, SurfaceService, WorkspaceService
 from .store import WorkspaceStore, new_surface_id, new_workspace_id
+from .tabular_import import TabularImportService
 from .tools import create_workspace_tools
 
 __all__ = [
     "ALLOWED_COMPONENT_TYPES",
+    "BusinessActionCandidate",
     "BusinessEvent",
     "BusinessRecord",
     "BusinessStore",
@@ -38,6 +41,7 @@ __all__ = [
     "RecordChange",
     "Surface",
     "SurfaceService",
+    "TabularImportService",
     "Workspace",
     "WorkspaceConflictError",
     "WorkspacePermissionError",

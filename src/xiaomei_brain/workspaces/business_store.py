@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 import time
 import uuid
@@ -12,6 +13,7 @@ from typing import Any, Callable
 from xiaomei_brain.base.sqlite_store import SQLiteStore
 
 from .models import (
+    BusinessActionCandidate,
     BusinessEvent,
     BusinessRecord,
     CollectionDefinition,
@@ -23,7 +25,7 @@ from .models import (
 )
 
 SCHEMA_COMPONENT = "workspace_business"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 
 def _new_id(prefix: str) -> str:
@@ -189,6 +191,48 @@ class BusinessStore(SQLiteStore):
                 WHERE idempotency_key <> '';
             CREATE INDEX IF NOT EXISTS idx_business_events_workspace
                 ON business_events(workspace_id, occurred_at DESC, recorded_at DESC);
+
+            CREATE TABLE IF NOT EXISTS business_action_occurrences (
+                id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                collection_id TEXT NOT NULL,
+                fingerprint TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                field_ids_json TEXT NOT NULL DEFAULT '[]',
+                business_intent TEXT NOT NULL DEFAULT '',
+                person_id TEXT NOT NULL DEFAULT '',
+                session_id TEXT NOT NULL DEFAULT '',
+                turn_id TEXT NOT NULL DEFAULT '',
+                occurrence_key TEXT NOT NULL,
+                record_id TEXT NOT NULL,
+                observed_at REAL NOT NULL,
+                UNIQUE (fingerprint, occurrence_key, record_id),
+                FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+                FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE,
+                FOREIGN KEY (record_id) REFERENCES business_records(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_business_action_occurrences_workspace
+                ON business_action_occurrences(workspace_id, observed_at DESC);
+
+            CREATE TABLE IF NOT EXISTS observation_record_links (
+                observation_id TEXT NOT NULL,
+                collection_id TEXT NOT NULL,
+                record_id TEXT NOT NULL,
+                linked_at REAL NOT NULL,
+                PRIMARY KEY (observation_id, record_id),
+                FOREIGN KEY (observation_id) REFERENCES observations(id) ON DELETE CASCADE,
+                FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE,
+                FOREIGN KEY (record_id) REFERENCES business_records(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_observation_record_links_record
+                ON observation_record_links(record_id, linked_at DESC);
+
+            INSERT OR IGNORE INTO observation_record_links (
+                observation_id, collection_id, record_id, linked_at
+            )
+            SELECT id, resolved_collection_id, resolved_record_id, received_at
+            FROM observations
+            WHERE resolved_collection_id <> '' AND resolved_record_id <> '';
         """)
         conn.commit()
         self._set_schema_version(SCHEMA_COMPONENT, SCHEMA_VERSION)
@@ -235,6 +279,21 @@ class BusinessStore(SQLiteStore):
         ).fetchall()
         return [self._data_source_row(row) for row in rows]
 
+    def find_data_source(
+        self,
+        workspace_id: str,
+        *,
+        kind: str,
+        locator: str,
+    ) -> DataSource | None:
+        row = self._get_conn().execute(
+            """SELECT * FROM data_sources
+               WHERE workspace_id = ? AND kind = ? AND locator = ?
+               ORDER BY updated_at DESC LIMIT 1""",
+            (workspace_id, kind, locator),
+        ).fetchone()
+        return self._data_source_row(row) if row is not None else None
+
     def create_observation(
         self,
         workspace_id: str,
@@ -279,6 +338,66 @@ class BusinessStore(SQLiteStore):
             "SELECT * FROM observations WHERE id = ?", (observation_id,),
         ).fetchone()
         return self._observation_row(row) if row is not None else None
+
+    def find_observation(
+        self,
+        data_source_id: str,
+        external_ref: str,
+    ) -> Observation | None:
+        row = self._get_conn().execute(
+            """SELECT * FROM observations
+               WHERE data_source_id = ? AND external_ref = ? LIMIT 1""",
+            (data_source_id, external_ref),
+        ).fetchone()
+        return self._observation_row(row) if row is not None else None
+
+    def latest_resolved_observation(
+        self,
+        data_source_id: str,
+    ) -> Observation | None:
+        row = self._get_conn().execute(
+            """SELECT * FROM observations
+               WHERE data_source_id = ? AND resolved_collection_id <> ''
+               ORDER BY received_at DESC LIMIT 1""",
+            (data_source_id,),
+        ).fetchone()
+        return self._observation_row(row) if row is not None else None
+
+    def linked_record_ids(self, observation_id: str) -> list[str]:
+        rows = self._get_conn().execute(
+            """SELECT record_id FROM observation_record_links
+               WHERE observation_id = ? ORDER BY linked_at, rowid""",
+            (observation_id,),
+        ).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def link_observation_to_record(
+        self,
+        observation_id: str,
+        collection_id: str,
+        record_id: str,
+        *,
+        now: float | None = None,
+    ) -> None:
+        timestamp = time.time() if now is None else now
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                """INSERT OR IGNORE INTO observation_record_links
+                   (observation_id, collection_id, record_id, linked_at)
+                   VALUES (?, ?, ?, ?)""",
+                (observation_id, collection_id, record_id, timestamp),
+            )
+            conn.execute(
+                """UPDATE observations SET status = 'resolved',
+                   resolved_collection_id = ?, resolved_record_id = ?
+                   WHERE id = ?""",
+                (collection_id, record_id, observation_id),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
     def list_observations(
         self,
@@ -644,6 +763,12 @@ class BusinessStore(SQLiteStore):
                        WHERE id = ?""",
                     (collection_id, record.id, observation_id),
                 )
+                conn.execute(
+                    """INSERT OR IGNORE INTO observation_record_links
+                       (observation_id, collection_id, record_id, linked_at)
+                       VALUES (?, ?, ?, ?)""",
+                    (observation_id, collection_id, record.id, timestamp),
+                )
             conn.execute(
                 """UPDATE workspaces SET updated_at = ?, last_active_at = ?
                    WHERE id = ?""",
@@ -662,6 +787,95 @@ class BusinessStore(SQLiteStore):
             (record_id, max(1, min(limit, 500))),
         ).fetchall()
         return [self._change_row(row) for row in rows]
+
+    def observe_action_occurrence(
+        self,
+        changes: list[RecordChange],
+    ) -> tuple[str, int, int] | None:
+        """Persist one structural operation without mistaking rows for Turns."""
+        if not changes or not changes[0].business_intent.strip():
+            return None
+        first = changes[0]
+        field_ids = tuple(sorted({item.field_id for item in changes if item.field_id}))
+        if not field_ids:
+            return None
+        signature = "|".join((first.collection_id, first.operation, *field_ids))
+        fingerprint = hashlib.sha256(signature.encode("utf-8")).hexdigest()
+        occurrence_key = (
+            first.turn_id.strip()
+            or first.observation_id.strip()
+            or first.id
+        )
+        conn = self._get_conn()
+        before = int(conn.execute(
+            """SELECT COUNT(DISTINCT occurrence_key)
+               FROM business_action_occurrences WHERE fingerprint = ?""",
+            (fingerprint,),
+        ).fetchone()[0])
+        conn.execute(
+            """INSERT OR IGNORE INTO business_action_occurrences (
+                id, workspace_id, collection_id, fingerprint, operation,
+                field_ids_json, business_intent, person_id, session_id,
+                turn_id, occurrence_key, record_id, observed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                _new_id("action_occurrence"), first.workspace_id,
+                first.collection_id, fingerprint, first.operation,
+                self._json(list(field_ids)), first.business_intent,
+                first.person_id, first.session_id, first.turn_id,
+                occurrence_key, first.record_id, first.changed_at,
+            ),
+        )
+        conn.commit()
+        after = int(conn.execute(
+            """SELECT COUNT(DISTINCT occurrence_key)
+               FROM business_action_occurrences WHERE fingerprint = ?""",
+            (fingerprint,),
+        ).fetchone()[0])
+        return fingerprint, before, after
+
+    def list_action_candidates(
+        self,
+        workspace_id: str,
+        *,
+        min_occurrences: int = 2,
+    ) -> list[BusinessActionCandidate]:
+        rows = self._get_conn().execute(
+            """SELECT * FROM business_action_occurrences
+               WHERE workspace_id = ? ORDER BY observed_at ASC""",
+            (workspace_id,),
+        ).fetchall()
+        grouped: dict[str, list[sqlite3.Row]] = {}
+        for row in rows:
+            grouped.setdefault(str(row["fingerprint"]), []).append(row)
+        candidates: list[BusinessActionCandidate] = []
+        for fingerprint, items in grouped.items():
+            occurrence_count = len({str(item["occurrence_key"]) for item in items})
+            if occurrence_count < max(1, min_occurrences):
+                continue
+            intents = tuple(dict.fromkeys(
+                str(item["business_intent"]).strip()
+                for item in reversed(items)
+                if str(item["business_intent"]).strip()
+            ))[:3]
+            candidates.append(BusinessActionCandidate(
+                id=f"action_candidate_{fingerprint[:24]}",
+                workspace_id=workspace_id,
+                collection_id=str(items[0]["collection_id"]),
+                operation=str(items[0]["operation"]),
+                field_ids=tuple(self._load_json(items[0]["field_ids_json"], [])),
+                occurrence_count=occurrence_count,
+                record_count=len({str(item["record_id"]) for item in items}),
+                example_intents=intents,
+                status="candidate" if occurrence_count >= 3 else "observed",
+                first_seen_at=float(items[0]["observed_at"]),
+                last_seen_at=float(items[-1]["observed_at"]),
+            ))
+        return sorted(
+            candidates,
+            key=lambda item: (item.status == "candidate", item.last_seen_at),
+            reverse=True,
+        )
 
     def list_events(self, workspace_id: str, *, limit: int = 100) -> list[BusinessEvent]:
         rows = self._get_conn().execute(

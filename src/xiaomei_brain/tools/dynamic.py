@@ -81,6 +81,30 @@ TOOL_CONTEXT_USER_MESSAGES = 3
 TOOL_CONTEXT_MAX_CHARS = 2400
 TOOL_PROGRESS_MAX_CHARS = 1200
 
+
+def _contextual_required_tool_names(query: str) -> set[str]:
+    """Select small deterministic dependencies for unmistakable task shapes.
+
+    Semantic retrieval remains the default.  This only covers cases where the
+    attachment type and the user's destination together identify one platform
+    operation; omitting that operation would force the model to rebuild it row
+    by row with lower-level tools.
+    """
+    text = str(query or "").casefold()
+    has_tabular_attachment = any(marker in text for marker in (
+        ".csv", ".tsv", ".xlsx",
+        "text/csv", "tab-separated-values", "spreadsheetml",
+    ))
+    has_import_intent = any(marker in text for marker in (
+        "导入", "写入", "放进", "放入", "存入", "import",
+    ))
+    has_workspace_destination = any(marker in text for marker in (
+        "workspace", "工作空间", "经营数据", "业务数据", "经营看板",
+    ))
+    if has_tabular_attachment and has_import_intent and has_workspace_destination:
+        return {"import_tabular_data"}
+    return set()
+
 # 全局活跃的 loader，供 MCP/Plugin 热重载后通知重建索引
 _active_loader: DynamicToolLoader | None = None
 
@@ -540,12 +564,14 @@ class DynamicToolLoader:
 
         # 分离核心工具
         core_tools = [t for t in all_tools if t.name in _CORE_TOOL_NAMES]
+        contextual_required = _contextual_required_tool_names(query)
+        required_names = self._active_required_tools | contextual_required
         required_tools = [
             t for t in all_tools
-            if t.name in self._active_required_tools
+            if t.name in required_names
             and t.name not in _CORE_TOOL_NAMES
         ]
-        always_included = _CORE_TOOL_NAMES | self._active_required_tools
+        always_included = _CORE_TOOL_NAMES | required_names
 
         # LanceDB 搜索
         table = self._get_lance_table()

@@ -5,6 +5,7 @@ import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -20,6 +21,7 @@ from xiaomei_brain.assignments import (
 )
 from xiaomei_brain.tools.base import Tool
 from xiaomei_brain.tools.registry import ToolRegistry
+from xiaomei_brain.workspaces import WorkspaceService, WorkspaceStore
 
 
 class FakeLLM:
@@ -242,6 +244,67 @@ def test_isolated_runner_copies_only_explicit_background_tools(tmp_path):
     assert copied.get("read") is not None
     assert copied.get("clarify") is None
     store.close()
+
+
+def test_workspace_assignment_gets_tools_bound_to_isolated_identity(tmp_path):
+    store, assignment_service, agent, context, _control, _checkpoints = _context(
+        tmp_path,
+        [_response("done")],
+    )
+    events = []
+    workspace_service = WorkspaceService(
+        WorkspaceStore(tmp_path / "workspaces.db"),
+        publish=lambda name, payload, **metadata: events.append(
+            (name, payload, metadata)
+        ),
+    )
+    agent.workspace_service = workspace_service
+    context = replace(context, objective="Update the customer Workspace")
+    runtime = SimpleNamespace(
+        user_id="person_assignment",
+        session_id="assignment-session",
+        turn_id="assignment-turn",
+        workspace_service=workspace_service,
+    )
+    registry = ToolRegistry()
+    runner = IsolatedAssignmentRunner(agent, assignment_service)
+
+    runner._install_workspace_tools(registry, runtime)
+    created = json.loads(registry.execute(
+        "create_workspace",
+        name="Customer operations",
+        purpose="Maintain customer facts",
+    ))
+
+    assert runner._needs_workspace_tools(context) is True
+    assert registry.get("import_tabular_data") is not None
+    assert created["created_by_person_id"] == "person_assignment"
+    assert events[0][2]["session_id"] == "assignment-session"
+    store.close()
+
+
+def test_assignment_runtime_keeps_current_csv_and_tsv_resources():
+    attachments = IsolatedAssignmentRunner._runtime_attachments([
+        {
+            "key": "attachment-csv",
+            "metadata": {
+                "name": "customers.csv",
+                "mime_type": "text/csv",
+                "workspace_path": "inputs/customers.csv",
+            },
+        },
+        {
+            "key": "attachment-txt",
+            "metadata": {
+                "name": "notes.txt",
+                "mime_type": "text/plain",
+                "workspace_path": "inputs/notes.txt",
+            },
+        },
+    ])
+
+    assert [item["id"] for item in attachments] == ["attachment-csv"]
+    assert attachments[0]["local_path"] == "inputs/customers.csv"
 
 
 def test_isolated_runner_executes_valid_shell_without_approval(tmp_path):

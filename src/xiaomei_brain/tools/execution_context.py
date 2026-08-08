@@ -10,6 +10,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from xiaomei_brain.projects.models import ProjectRuntimeContext
@@ -69,6 +70,49 @@ _current_context: ContextVar[ToolExecutionContext | None] = ContextVar(
 def current_tool_execution() -> ToolExecutionContext | None:
     """Return the active tool call context in the current execution context."""
     return _current_context.get()
+
+
+def resolve_current_attachment(
+    reference: str = "",
+    *,
+    allowed_suffixes: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Resolve an attachment without granting access beyond the current Turn.
+
+    Models do not reliably echo opaque attachment IDs.  Accept an exact ID or
+    filename and, when only one compatible attachment exists, select it
+    automatically.  The candidate set is always the sealed tool-execution
+    context, never conversation history or an arbitrary filesystem path.
+    """
+    context = current_tool_execution()
+    if context is None:
+        raise ValueError("Attachment access is only available during an Agent tool call")
+    suffixes = {str(item).casefold() for item in allowed_suffixes if str(item)}
+
+    def compatible(item: dict[str, Any]) -> bool:
+        if not suffixes:
+            return True
+        name = str(item.get("name") or item.get("local_path") or "")
+        return Path(name).suffix.casefold() in suffixes
+
+    candidates = [item for item in context.attachments if compatible(item)]
+    normalized = str(reference or "").strip().casefold()
+    if normalized:
+        for item in candidates:
+            identities = {
+                str(item.get("id") or "").strip().casefold(),
+                str(item.get("name") or "").strip().casefold(),
+                Path(str(item.get("local_path") or "")).name.casefold(),
+            }
+            if normalized in identities:
+                return item
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        raise ValueError("No compatible attachment is available in the current Turn")
+    raise ValueError(
+        "Multiple compatible attachments are available; use the attachment ID or filename"
+    )
 
 
 @contextmanager

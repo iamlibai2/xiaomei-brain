@@ -110,6 +110,7 @@ class AgentRuntimeFactory:
             "_skill_loader",
             "identity_mgr",
             "people_service",
+            "workspace_service",
             "exp_stream",
             "essence",
             "_living_cfg",

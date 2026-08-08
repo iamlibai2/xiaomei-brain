@@ -45,8 +45,10 @@ class GatewayEventProjection:
         "collection.updated",
         "record.changed",
         "business_event.created",
+        "business_action.candidate",
         "dataset.created",
         "dataset.updated",
+        "data_import.completed",
         "process.updated",
         "activity.queued",
         "activity.started",
@@ -72,10 +74,12 @@ class GatewayEventProjection:
         is_surface_event = event.name.startswith("surface.")
         is_business_event = (
             event.name.startswith("data_source.")
+            or event.name.startswith("data_import.")
             or event.name.startswith("observation.")
             or event.name.startswith("collection.")
             or event.name.startswith("record.")
             or event.name.startswith("business_event.")
+            or event.name.startswith("business_action.")
             or event.name.startswith("dataset.")
         )
         is_process_event = event.name.startswith("process.")

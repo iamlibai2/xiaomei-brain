@@ -143,6 +143,23 @@ class BusinessEvent:
 
 
 @dataclass(frozen=True)
+class BusinessActionCandidate:
+    """A repeated business operation observed across independent Turns."""
+
+    id: str
+    workspace_id: str
+    collection_id: str
+    operation: str
+    field_ids: tuple[str, ...]
+    occurrence_count: int
+    record_count: int
+    example_intents: tuple[str, ...]
+    status: str
+    first_seen_at: float
+    last_seen_at: float
+
+
+@dataclass(frozen=True)
 class Dataset:
     id: str
     workspace_id: str

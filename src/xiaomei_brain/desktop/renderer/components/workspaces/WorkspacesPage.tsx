@@ -32,10 +32,20 @@ type BusinessCollection = {
   records: BusinessRecord[];
 };
 type BusinessEvent = { id: string; summary: string; occurred_at: number };
+type BusinessActionCandidate = {
+  id: string;
+  collection_label: string;
+  fields: Array<{ id: string; label: string }>;
+  occurrence_count: number;
+  record_count: number;
+  example_intents: string[];
+  status: "observed" | "candidate";
+};
 type BusinessSnapshot = {
   summary: Record<string, number>;
   collections: BusinessCollection[];
   events: BusinessEvent[];
+  actionCandidates: BusinessActionCandidate[];
 };
 
 type WorkspaceSnapshot = {
@@ -82,6 +92,9 @@ function snapshot(value: unknown): WorkspaceSnapshot | null {
       : [],
     events: Array.isArray(businessValue.events)
       ? businessValue.events as BusinessEvent[]
+      : [],
+    actionCandidates: Array.isArray(businessValue.action_candidates)
+      ? businessValue.action_candidates as BusinessActionCandidate[]
       : [],
   } : null;
   return {
@@ -203,7 +216,9 @@ export function WorkspacesPage({
       "workspace.created", "workspace.updated", "surface.created", "surface.updated",
       "data_source.created", "observation.created", "collection.created", "collection.updated",
       "record.changed", "business_event.created",
+      "business_action.candidate",
       "dataset.created", "dataset.updated",
+      "data_import.completed",
     ].includes(eventName)) {
       const data = event.data && typeof event.data === "object"
         ? event.data as Record<string, unknown>
@@ -356,6 +371,31 @@ function WorkspaceBusinessFacts({
           </div>
         </article>
       ))}
+      {business.actionCandidates.length > 0 && (
+        <article className="workspace-action-candidates">
+          <h4>{t("workspaceUi.emergingPractices")}</h4>
+          {business.actionCandidates.map((candidate) => {
+            const fieldNames = candidate.fields.map((field) => field.label).join("、");
+            return (
+              <div key={candidate.id}>
+                <span className={`workspace-action-status ${candidate.status}`}>
+                  {t(`workspaceUi.actionStatus_${candidate.status}`)}
+                </span>
+                <span className="workspace-action-copy">
+                  <strong>{t("workspaceUi.repeatedlyUpdates", {
+                    collection: candidate.collection_label,
+                    fields: fieldNames || t("workspaceUi.businessFields"),
+                  })}</strong>
+                  <small>{candidate.example_intents[0] || ""}</small>
+                </span>
+                <span className="workspace-action-count">
+                  {t("workspaceUi.observedTurns", { count: candidate.occurrence_count })}
+                </span>
+              </div>
+            );
+          })}
+        </article>
+      )}
       {business.events.length > 0 && (
         <article className="workspace-event-list">
           <h4>{t("workspaceUi.recentEvents")}</h4>

@@ -14,6 +14,7 @@ from .dataset_service import DatasetService
 from .dataset_store import DatasetStore
 from .models import Surface, Workspace, WorkspacePermissionError
 from .store import WorkspaceStore
+from .tabular_import import TabularImportService
 
 PublishCallback = Callable[..., Any]
 
@@ -56,6 +57,7 @@ class WorkspaceService:
             clock=clock,
         )
         self.business._on_collection_changed = self.datasets.invalidate_collection
+        self.imports = TabularImportService(self.business)
         self.surfaces = SurfaceService(
             store, datasets=self.datasets, publish=publish, clock=clock,
         )

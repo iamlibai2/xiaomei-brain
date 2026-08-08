@@ -215,3 +215,52 @@ def test_agent_tools_expose_business_fact_vertical_slice(tmp_path):
     )
     assert result["record"]["values"]["name"] == "A 公司"
     assert result["changes"][0]["person_id"] == "person-1"
+
+
+def test_repeated_cross_turn_changes_form_candidate_business_practice(tmp_path):
+    events = []
+    service = WorkspaceService(
+        WorkspaceStore(tmp_path / "workspaces.db"),
+        publish=lambda name, payload, **metadata: events.append((name, payload)),
+        clock=lambda: 100.0,
+    )
+    workspace = service.create(
+        name="客户经营",
+        purpose="持续推进客户",
+        created_by_person_id="person-1",
+    )
+    collection, _fields = _customer_collection(service, workspace.id)
+    records = []
+    for index in range(4):
+        record, _changes, _event = service.business.upsert_record(
+            collection.id,
+            stable_key=f"customer:{index}",
+            values={"name": f"客户 {index}", "stage": "线索"},
+            business_intent="初始导入",
+            notify=False,
+        )
+        records.append(record)
+
+    for index, record in enumerate(records):
+        service.business.upsert_record(
+            collection.id,
+            record_id=record.id,
+            expected_revision=1,
+            values={"stage": "报价"},
+            business_intent="把客户推进到报价阶段",
+            person_id="person-1",
+            session_id="session-1",
+            turn_id="turn-1" if index < 2 else f"turn-{index}",
+        )
+
+    candidates = service.business.workspace_snapshot(
+        workspace.id,
+    )["action_candidates"]
+    assert len(candidates) == 1
+    assert candidates[0]["status"] == "candidate"
+    assert candidates[0]["occurrence_count"] == 3
+    assert candidates[0]["record_count"] == 4
+    assert [field["label"] for field in candidates[0]["fields"]] == ["阶段"]
+    assert [name for name, _payload in events].count(
+        "business_action.candidate",
+    ) == 1

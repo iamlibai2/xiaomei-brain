@@ -256,6 +256,46 @@ def test_skill_required_tools_are_scoped_to_conversation(monkeypatch):
     assert "write_document" in names
 
 
+def test_workspace_tabular_import_is_required_by_attachment_and_destination(monkeypatch):
+    reg = _registry_with_tools(
+        ("shell", "Run shell commands"),
+        ("import_tabular_data", "Import a spreadsheet into a Workspace"),
+        ("upsert_business_record", "Write one business record"),
+    )
+    loader = DynamicToolLoader(reg, top_k=1)
+
+    class _EmptySearch:
+        def limit(self, _count):
+            return self
+
+        def to_list(self):
+            return []
+
+    class _Table:
+        def count_rows(self):
+            return 1
+
+        def search(self, _vector):
+            return _EmptySearch()
+
+    monkeypatch.setattr(loader, "_get_lance_table", lambda: _Table())
+    monkeypatch.setattr(loader._shared, "embed", lambda _query: [0.0])
+
+    query = (
+        "Current user request:\n把这份表导入刚才的 Workspace，作为持续经营数据\n\n"
+        "Current attachments:\n- file, text/csv, 客户经营数据.csv"
+    )
+    names = [tool.name for tool in loader.select_tools(query, top_k=1)]
+    assert "import_tabular_data" in names
+
+    analysis_only = [
+        tool.name for tool in loader.select_tools(
+            "分析这份 CSV 的缺失值", top_k=1,
+        )
+    ]
+    assert "import_tabular_data" not in analysis_only
+
+
 # ── Dynamic tool selection ─────────────────────────────────────
 
 
