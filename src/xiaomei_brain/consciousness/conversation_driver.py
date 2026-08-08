@@ -1205,6 +1205,11 @@ class ConversationDriver:
                 public_artifact_metadata,
             )
 
+            core_getter = getattr(parent.agent, "_get_agent", None)
+            core = core_getter() if callable(core_getter) else None
+            source_attachments = tuple(
+                getattr(core, "current_attachments", ()) or (),
+            )
             artifacts = discover_tool_artifacts(
                 getattr(parent, "_agent_id", "default"),
                 session_id,
@@ -1212,6 +1217,7 @@ class ConversationDriver:
                 tool_name,
                 arguments,
                 result,
+                source_attachments=source_attachments,
             )
             if not artifacts:
                 return
@@ -1232,8 +1238,6 @@ class ConversationDriver:
                         user_id=user_id,
                         tool_call_id=tool_call_id,
                     )
-                core_getter = getattr(parent.agent, "_get_agent", None)
-                core = core_getter() if callable(core_getter) else None
                 assignment_id = str(
                     getattr(core, "active_assignment_id", ""),
                 ).strip()

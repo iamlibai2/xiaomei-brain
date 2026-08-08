@@ -33,6 +33,7 @@ def discover_tool_artifacts(
     *,
     workspace_root: Path | None = None,
     scan_roots: tuple[Path, ...] = (),
+    source_attachments: tuple[dict[str, Any], ...] = (),
 ) -> list[dict[str, Any]]:
     """Find real output files mentioned by a successful tool call.
 
@@ -74,6 +75,28 @@ def discover_tool_artifacts(
             continue
 
     replacements = _artifact_replacements(result)
+    # A fullscreen visualization remains one logical artifact even when the
+    # model chooses the generic edit tool for a small change. The trusted
+    # attachment metadata is supplied by Gateway, never by a client path.
+    for attachment in source_attachments:
+        if attachment.get("presentation_mode") != "visualization_fullscreen":
+            continue
+        source_artifact = attachment.get("source_artifact")
+        managed_path = str(attachment.get("managed_artifact_path") or "")
+        if not isinstance(source_artifact, dict) or not managed_path:
+            continue
+        artifact_id = str(source_artifact.get("artifact_id") or "")
+        source_session_id = str(source_artifact.get("session_id") or "")
+        if not re.fullmatch(r"[a-f0-9]{32}", artifact_id) or not source_session_id:
+            continue
+        try:
+            normalized_path = os.path.normcase(str(Path(managed_path).resolve()))
+        except OSError:
+            continue
+        replacements.setdefault(normalized_path, {
+            "artifact_id": artifact_id,
+            "session_id": source_session_id,
+        })
     artifacts: list[dict[str, Any]] = []
     seen: set[str] = set()
     for candidate in candidates:

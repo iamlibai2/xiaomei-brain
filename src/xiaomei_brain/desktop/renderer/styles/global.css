@@ -254,16 +254,23 @@ body[data-platform="mac"] .menubar {
   width: 440px;
 }
 
-.identity-note {
-  margin: 4px 0 16px;
-  color: var(--ui-color-text-tertiary);
-  font-size: 12px;
-  line-height: 1.6;
-  text-align: left;
-}
-
 .identity-login-actions {
   display: grid;
-  gap: 4px;
-  margin-top: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--ui-border-subtle, var(--ui-border-default));
+}
+
+.identity-login-action {
+  width: 100%;
+  justify-content: center;
+  color: var(--ui-color-text-secondary);
+  background: color-mix(in srgb, var(--ui-bg-primary) 72%, transparent);
+}
+
+.identity-login-action:hover:not(:disabled) {
+  color: var(--ui-color-text-primary);
+  border-color: var(--ui-border-strong, var(--ui-border-default));
 }

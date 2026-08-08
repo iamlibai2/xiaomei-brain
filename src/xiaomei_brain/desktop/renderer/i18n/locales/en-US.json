@@ -20,7 +20,6 @@
       "passwordPlaceholder": "At least 8 characters",
       "confirmPassword": "Confirm password",
       "passwordMismatch": "The two passwords do not match.",
-      "localOnly": "The password only unlocks your encrypted identity key on this computer. It is never sent to an Agent.",
       "create": "Create identity",
       "unlock": "Unlock",
       "processing": "Processing...",

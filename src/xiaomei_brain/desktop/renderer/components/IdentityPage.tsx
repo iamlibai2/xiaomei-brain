@@ -144,7 +144,6 @@ export function IdentityPage({ status, onReady }: IdentityPageProps) {
           </div>
         )}
 
-        <p className="identity-note">{t("identity.localOnly")}</p>
         {error && <p className="connect-error">{error}</p>}
         <Button
           variant="primary"
@@ -161,8 +160,10 @@ export function IdentityPage({ status, onReady }: IdentityPageProps) {
         <div className="identity-login-actions">
           {status.exists && (
             <Button
-              variant="ghost"
-              size="lg"
+              variant="secondary"
+              size="md"
+              icon={creating ? "chevron-left" : "plus"}
+              className="identity-login-action"
               onClick={() => {
                 setCreating((current) => !current);
                 setPassword("");
@@ -175,9 +176,10 @@ export function IdentityPage({ status, onReady }: IdentityPageProps) {
             </Button>
           )}
           <Button
-            variant="ghost"
-            size="lg"
-            className="identity-import-btn"
+            variant="secondary"
+            size="md"
+            icon="file-text"
+            className="identity-login-action"
             onClick={() => void importBackup()}
             disabled={loading}
           >

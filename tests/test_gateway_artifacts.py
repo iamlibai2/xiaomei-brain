@@ -569,6 +569,75 @@ def test_artifact_update_reuses_id_and_refreshes_stored_content(tmp_path, monkey
     db.close()
 
 
+def test_fullscreen_visualization_edit_reuses_attached_artifact_identity(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
+    output = (
+        tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace"
+        / "dashboard.visualization.html"
+    )
+    output.parent.mkdir(parents=True)
+    output.write_text("<div>updated</div>", encoding="utf-8")
+    artifact_id = "a" * 32
+
+    artifact = discover_tool_artifacts(
+        "xiaomei",
+        "current-session",
+        "turn-2",
+        "edit",
+        {"path": "dashboard.visualization.html"},
+        json.dumps({"path": str(output), "replacements": 1}),
+        source_attachments=({
+            "presentation_mode": "visualization_fullscreen",
+            "managed_artifact_path": str(output),
+            "source_artifact": {
+                "artifact_id": artifact_id,
+                "session_id": "source-session",
+            },
+        },),
+    )[0]
+
+    assert artifact["id"] == artifact_id
+    assert artifact["session_id"] == "source-session"
+    assert artifact["updated"] is True
+
+
+def test_non_fullscreen_visualization_edit_keeps_normal_artifact_discovery(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
+    output = (
+        tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace"
+        / "dashboard.visualization.html"
+    )
+    output.parent.mkdir(parents=True)
+    output.write_text("<div>updated</div>", encoding="utf-8")
+    source_id = "b" * 32
+
+    artifact = discover_tool_artifacts(
+        "xiaomei",
+        "current-session",
+        "turn-2",
+        "edit",
+        {"path": "dashboard.visualization.html"},
+        json.dumps({"path": str(output), "replacements": 1}),
+        source_attachments=({
+            "managed_artifact_path": str(output),
+            "source_artifact": {
+                "artifact_id": source_id,
+                "session_id": "source-session",
+            },
+        },),
+    )[0]
+
+    assert artifact["id"] != source_id
+    assert artifact["session_id"] == "current-session"
+    assert artifact["updated"] is False
+
+
 def test_chat_history_exposes_artifact_card_without_internal_path(tmp_path, monkeypatch):
     monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
     output = tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace" / "history.txt"

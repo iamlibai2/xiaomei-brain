@@ -20,7 +20,6 @@
       "passwordPlaceholder": "至少 8 个字符",
       "confirmPassword": "再次输入密码",
       "passwordMismatch": "两次输入的密码不一致。",
-      "localOnly": "密码只用于解锁这台电脑上加密保存的身份私钥，不会发送给 Agent。",
       "create": "创建身份",
       "unlock": "解锁",
       "processing": "处理中...",
