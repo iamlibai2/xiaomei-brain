@@ -21,6 +21,9 @@
 .workspaces-topbar h1 { margin: 0; font-size: 17px; font-weight: 650; }
 .workspaces-topbar p { margin: 3px 0 0; color: var(--ui-color-text-tertiary); font-size: 12px; }
 .workspaces-topbar-actions { display: flex; gap: 8px; }
+.workspace-refresh-icon { display: inline-flex; }
+.workspace-refresh-icon.spinning { animation: workspace-spin .75s linear infinite; }
+@keyframes workspace-spin { to { transform: rotate(360deg); } }
 .workspaces-topbar-actions button,
 .workspace-conversation-hint button {
   border: 1px solid var(--ui-border-default);

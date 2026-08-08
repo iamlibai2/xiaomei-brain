@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from xiaomei_brain.tools.builtin import file_ops
 from xiaomei_brain.tools.execution_context import bind_tool_execution
 
@@ -44,6 +46,16 @@ def test_relative_parent_escape_is_rejected(tmp_path):
 
     assert "error" in result
     assert not (tmp_path.parent / "outside.txt").exists()
+
+
+def test_workspace_prefix_is_a_virtual_root_not_a_nested_directory(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    with _context(workspace):
+        result = file_ops.write("workspace/analyze.py", "print('ok')\n")
+
+    assert Path(result["path"]).resolve() == (workspace / "analyze.py").resolve()
+    assert not (workspace / "workspace" / "analyze.py").exists()
 
 
 def test_protected_path_stays_denied_when_extra_root_is_broad(tmp_path, monkeypatch):

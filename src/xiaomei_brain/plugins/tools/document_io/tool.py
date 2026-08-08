@@ -84,14 +84,39 @@ def create_read_document_tool(plugin_registry: Any, db_path_provider: Any) -> To
         offset: int = 0,
         limit: int = 12000,
     ) -> dict[str, Any]:
-        """Read one attachment owned by the current turn, optionally by section."""
+        """Read one attachment owned by the current session, optionally by section."""
         context = current_tool_execution()
         if context is None:
             return {"error": "read_document is only available during an Agent tool call"}
+        source = db_path_provider()
         attachment = next(
             (item for item in context.attachments if str(item.get("id")) == attachment_id),
             None,
         )
+        if attachment is None and context.session_id:
+            # An attachment remains an Agent-owned session asset after its
+            # original turn. Resolve it from durable metadata instead of
+            # requiring the Person to upload the same file on every follow-up.
+            db_path = getattr(source, "db_path", None) if source is not None else None
+            agent_id = str(getattr(source, "agent_id", "") or "") if source is not None else ""
+            if db_path is not None and agent_id:
+                try:
+                    from xiaomei_brain.gateway.attachments import restore_attachment_refs
+                    from xiaomei_brain.memory.conversation_db import ConversationDB
+
+                    metadata = ConversationDB(db_path).get_attachment_metadata(
+                        context.session_id,
+                        attachment_id,
+                    )
+                    if metadata is not None:
+                        restored, _ = restore_attachment_refs(
+                            agent_id,
+                            context.session_id,
+                            [metadata],
+                        )
+                        attachment = restored[0] if restored else None
+                except Exception:
+                    attachment = None
         if attachment is None or attachment.get("kind") != "document":
             return {"error": "Attachment is not available in the current execution context"}
         readable_attachment = dict(attachment)
@@ -101,7 +126,6 @@ def create_read_document_tool(plugin_registry: Any, db_path_provider: Any) -> To
             # prepared attachment is an immutable ingress snapshot, so reading
             # it after write_document would otherwise return stale content.
             readable_attachment["local_path"] = str(managed_path)
-        source = db_path_provider()
         db_path = getattr(source, "db_path", None) if source is not None else None
         try:
             return DocumentService(plugin_registry, db_path).read(
@@ -117,7 +141,7 @@ def create_read_document_tool(plugin_registry: Any, db_path_provider: Any) -> To
     return Tool(
         name="read_document",
         description=(
-            "Read a Word, PDF, spreadsheet or presentation attachment from the current turn. "
+            "Read a Word, PDF, spreadsheet or presentation attachment from the current session. "
             "Pass its attachment_id; do not pass a filesystem path. The first call returns a "
             "bounded preview and section list. Use section and next_offset for large documents."
         ),

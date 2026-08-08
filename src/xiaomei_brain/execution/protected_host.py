@@ -115,20 +115,46 @@ class ProtectedHostEnvironment(ExecutionEnvironment):
                 continue
         return data.decode("utf-8", errors="replace")
 
+    def _python_environment_healthy(self, python_path: Path) -> bool:
+        """Check that a persisted venv still points to a live base Python."""
+        if not python_path.is_file():
+            return False
+        try:
+            completed = subprocess.run(
+                [str(python_path), "-c", "import sys"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+                creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0),
+                check=False,
+            )
+            return completed.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
+
     def _ensure_python_environment(self, cwd: str) -> Path:
         environment_dir = self._environment_dir(cwd)
         python_path = self._python_path(environment_dir)
-        if python_path.is_file():
+        if self._python_environment_healthy(python_path):
             return environment_dir
         with _EXECUTION_ENV_LOCK:
-            if python_path.is_file():
+            if self._python_environment_healthy(python_path):
                 return environment_dir
             environment_dir.parent.mkdir(parents=True, exist_ok=True)
             create_env = os.environ.copy()
             create_env.pop("VIRTUAL_ENV", None)
             create_env.pop("PYTHONHOME", None)
+            repair_existing = python_path.is_file()
+            arguments = [sys.executable, "-m", "venv"]
+            if repair_existing:
+                # A uv/Python upgrade can leave the venv launcher present while
+                # its recorded base interpreter no longer exists. ``--upgrade``
+                # rewires that launcher without discarding installed packages.
+                arguments.append("--upgrade")
+            arguments.append(str(environment_dir))
             completed = subprocess.run(
-                [sys.executable, "-m", "venv", str(environment_dir)],
+                arguments,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -137,11 +163,12 @@ class ProtectedHostEnvironment(ExecutionEnvironment):
                 creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0),
                 check=False,
             )
-            if completed.returncode != 0 or not python_path.is_file():
+            if completed.returncode != 0 or not self._python_environment_healthy(python_path):
                 detail = self._decode(completed.stdout).strip()
                 suffix = f": {detail}" if detail else ""
                 raise RuntimeError(
-                    f"Unable to create dedicated Python execution environment{suffix}"
+                    f"Unable to {'repair' if repair_existing else 'create'} "
+                    f"dedicated Python execution environment{suffix}"
                 )
         return environment_dir
 

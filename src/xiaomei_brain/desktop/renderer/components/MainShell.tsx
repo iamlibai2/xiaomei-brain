@@ -13,6 +13,19 @@ export function MainShell() {
   const [requestedWorkspaceId, setRequestedWorkspaceId] = useState("");
   const activeAgentId = useCoreStore((state) => state.activeAgentId || "");
 
+  useEffect(() => {
+    const clearPersonScopedSurface = () => {
+      setRequestedWorkspaceId("");
+      setSurface("chat");
+    };
+    window.addEventListener("xiaomei:identity-status-changed", clearPersonScopedSurface);
+    window.addEventListener("xiaomei:identity-locked", clearPersonScopedSurface);
+    return () => {
+      window.removeEventListener("xiaomei:identity-status-changed", clearPersonScopedSurface);
+      window.removeEventListener("xiaomei:identity-locked", clearPersonScopedSurface);
+    };
+  }, []);
+
   useEffect(() => registerEmbodimentCommand("ui.left_sidebar.set", ({ arguments: args }) => {
     const state = String(args.state || "");
     if (!["open", "closed", "toggle"].includes(state)) {

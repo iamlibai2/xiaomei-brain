@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useCoreStore } from "../../store";
 import { Icon } from "../ui";
@@ -67,39 +67,97 @@ export function WorkspacesPage({
   const [selectedId, setSelectedId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const selectedIdRef = useRef("");
+  const loadSequenceRef = useRef(0);
 
-  const load = useCallback(async () => {
-    if (!activeAgentId || connectionStatus !== "connected") {
-      setItems([]);
-      setSelectedId("");
-      return;
-    }
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
+
+  const load = useCallback(async (focusWorkspaceId = "", refreshDetail = false) => {
+    const sequence = ++loadSequenceRef.current;
     setLoading(true);
     setError("");
+    if (!activeAgentId || connectionStatus !== "connected") {
+      // Workspace data is Person-scoped. Never leave the previous Person's
+      // canvas visible while the authenticated Gateway connection changes.
+      setItems([]);
+      setSelectedId("");
+      setError(t("workspaceUi.notConnected"));
+      setLoading(false);
+      return;
+    }
     try {
       const response = await window.gateway.listWorkspaces({ agentId: activeAgentId, limit: 100 });
       if (response.error) throw new Error(response.error.message);
       const values = Array.isArray(response.result?.workspaces) ? response.result.workspaces : [];
-      const next = values.map(snapshot).filter((entry): entry is WorkspaceSnapshot => entry !== null);
+      let next = values.map(snapshot).filter((entry): entry is WorkspaceSnapshot => entry !== null);
+      // IDs retained by the renderer may belong to the account that was active
+      // before an identity switch. Only request details for a workspace that
+      // the freshly authenticated list has already made visible.
+      const requestedIds = [focusWorkspaceId, preferredWorkspaceId, selectedIdRef.current];
+      const targetId = requestedIds.find((id) => (
+        Boolean(id) && next.some((item) => item.id === id)
+      )) || next[0]?.id || "";
+      if (refreshDetail && targetId) {
+        const detailResponse = await window.gateway.getWorkspace({
+          agentId: activeAgentId,
+          workspaceId: targetId,
+        });
+        if (detailResponse.error) throw new Error(detailResponse.error.message);
+        const detail = snapshot(detailResponse.result?.workspace);
+        if (detail) {
+          const existingIndex = next.findIndex((item) => item.id === detail.id);
+          next = existingIndex >= 0
+            ? next.map((item) => item.id === detail.id ? detail : item)
+            : [detail, ...next];
+        }
+      }
+      // Event-driven and manual refreshes may overlap. Never let an older RPC
+      // response replace a newer workspace revision in the visible canvas.
+      if (sequence !== loadSequenceRef.current) return;
       setItems(next);
       setSelectedId((current) => (
-        preferredWorkspaceId && next.some((item) => item.id === preferredWorkspaceId)
-          ? preferredWorkspaceId
+        targetId && next.some((item) => item.id === targetId)
+          ? targetId
           : current && next.some((item) => item.id === current) ? current : next[0]?.id || ""
       ));
     } catch (reason) {
+      if (sequence !== loadSequenceRef.current) return;
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
-      setLoading(false);
+      if (sequence === loadSequenceRef.current) setLoading(false);
     }
-  }, [activeAgentId, connectionStatus, preferredWorkspaceId]);
+  }, [activeAgentId, connectionStatus, preferredWorkspaceId, t]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(preferredWorkspaceId, true); }, [load, preferredWorkspaceId]);
 
-  useEffect(() => window.gateway.onEvent((event: { event?: string; agentId?: string }) => {
+  useEffect(() => {
+    const clearPersonScopedView = () => {
+      ++loadSequenceRef.current;
+      selectedIdRef.current = "";
+      setItems([]);
+      setSelectedId("");
+      setError("");
+      setLoading(false);
+    };
+    window.addEventListener("xiaomei:identity-status-changed", clearPersonScopedView);
+    window.addEventListener("xiaomei:identity-locked", clearPersonScopedView);
+    return () => {
+      window.removeEventListener("xiaomei:identity-status-changed", clearPersonScopedView);
+      window.removeEventListener("xiaomei:identity-locked", clearPersonScopedView);
+    };
+  }, []);
+
+  useEffect(() => window.gateway.onEvent((event: { event?: string; agentId?: string; data?: unknown }) => {
     if (event.agentId !== activeAgentId) return;
     const eventName = typeof event.event === "string" ? event.event : "";
-    if (eventName === "workspace.created" || eventName === "workspace.updated") void load();
+    if (eventName === "workspace.created" || eventName === "workspace.updated") {
+      const data = event.data && typeof event.data === "object"
+        ? event.data as Record<string, unknown>
+        : {};
+      void load(String(data.id || ""), true);
+    }
   }), [activeAgentId, load]);
 
   const selected = useMemo(
@@ -116,9 +174,16 @@ export function WorkspacesPage({
           <p>{t("workspaceUi.subtitle")}</p>
         </div>
         <div className="workspaces-topbar-actions">
-          <button type="button" onClick={() => void load()} disabled={loading}>
-            <Icon name="refresh" size={15} />
-            {t("common.refresh")}
+          <button
+            type="button"
+            onClick={() => void load(selectedIdRef.current, true)}
+            disabled={loading}
+            aria-busy={loading}
+          >
+            <span className={loading ? "workspace-refresh-icon spinning" : "workspace-refresh-icon"}>
+              <Icon name="refresh" size={15} />
+            </span>
+            {loading ? t("workspaceUi.refreshing") : t("workspaceUi.refresh")}
           </button>
           <button type="button" onClick={onBackToChat}>
             <Icon name="chevron-left" size={15} />

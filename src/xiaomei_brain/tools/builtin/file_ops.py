@@ -102,6 +102,12 @@ def _expand_virtual_root(path: str) -> str:
     if candidate.is_absolute() or not candidate.parts:
         return path
     first = candidate.parts[0].lower()
+    workspace_root = Path(get_workspace_dir()).resolve()
+    if first == workspace_root.name.lower():
+        # The model may call the visible root "workspace/" even though every
+        # file tool already starts inside that directory. Treat the prefix as
+        # a virtual root instead of creating workspace/workspace/ by accident.
+        return str(workspace_root.joinpath(*candidate.parts[1:]))
     for root in (*_writable_roots(), *_read_only_roots()):
         if first == root.name.lower():
             return str(root.joinpath(*candidate.parts[1:]))
@@ -497,14 +503,14 @@ read_tool = _tool(
 )
 write_tool = _tool(
     "write",
-    "Create or completely replace a UTF-8 text file atomically in workspace/, images/, music/, or tts/. The attachments/ archive is read-only.",
+    "Create or completely replace a UTF-8 text file atomically. The current directory is already the Agent workspace: use analyze.py, not workspace/analyze.py. Named asset roots images/, music/, and tts/ are writable; attachments/ is read-only.",
     {"path": {"type": "string"}, "content": {"type": "string"}},
     ["path", "content"],
     write,
 )
 edit_tool = _tool(
     "edit",
-    "Edit a text file by exact replacement in workspace/, images/, music/, or tts/ and return a unified diff. Reuse the exact relative path returned by glob/read; do not rebuild an absolute Agent data path. The attachments/ archive is read-only.",
+    "Edit a text file by exact replacement and return a unified diff. The current directory is already the Agent workspace; reuse the exact relative path returned by glob/read and do not prepend workspace/ or rebuild an absolute Agent data path. Named asset roots images/, music/, and tts/ are writable; attachments/ is read-only.",
     {
         "path": {"type": "string"},
         "old_string": {"type": "string"},

@@ -18,7 +18,7 @@ def register(ctx):
     )
     read_tool = create_read_document_tool(
         ctx.registry,
-        lambda: SimpleNamespace(db_path=brain_db),
+        lambda: SimpleNamespace(db_path=brain_db, agent_id=ctx.agent_id),
     )
     read_tool.source = "plugin:document_io"
     write_tool = create_write_document_tool(

@@ -106,6 +106,32 @@ def test_agent_execution_manager_defaults_to_protected_host(tmp_path) -> None:
     }
 
 
+def test_protected_host_repairs_stale_workspace_python_environment(tmp_path, monkeypatch) -> None:
+    environment = ProtectedHostEnvironment()
+    workspace = tmp_path / "workspace"
+    python_path = environment._python_path(environment._environment_dir(str(workspace)))
+    python_path.parent.mkdir(parents=True)
+    python_path.write_bytes(b"stale launcher")
+    health = iter((False, False, True))
+    monkeypatch.setattr(
+        environment,
+        "_python_environment_healthy",
+        lambda _path: next(health),
+    )
+    calls = []
+
+    def run(arguments, **_kwargs):
+        calls.append(list(arguments))
+        return subprocess.CompletedProcess(arguments, 0, b"", b"")
+
+    monkeypatch.setattr(subprocess, "run", run)
+
+    result = environment._ensure_python_environment(str(workspace))
+
+    assert result == workspace / ".venv"
+    assert "--upgrade" in calls[0]
+
+
 def test_unknown_execution_backend_never_falls_back_to_host(tmp_path) -> None:
     with pytest.raises(ValueError, match="Unsupported execution backend: mystery"):
         ExecutionEnvironmentManager(

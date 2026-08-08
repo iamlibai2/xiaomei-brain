@@ -133,7 +133,7 @@ def test_document_service_caches_by_asset_hash_and_supports_paging(tmp_path):
     assert extractor.calls == 2
 
 
-def test_read_document_tool_only_accepts_current_turn_attachment(tmp_path):
+def test_read_document_tool_accepts_current_turn_attachment(tmp_path):
     path = tmp_path / "test.docx"
     path.write_bytes(b"content")
     extractor = _CountingExtractor()
@@ -153,6 +153,60 @@ def test_read_document_tool_only_accepts_current_turn_attachment(tmp_path):
         denied = tool.execute(attachment_id="another")
 
     assert allowed["content"] == "01234"
+    assert "error" in denied
+
+
+def test_read_document_restores_attachment_from_current_session(tmp_path, monkeypatch):
+    path = tmp_path / "stored.docx"
+    path.write_bytes(b"content")
+    extractor = _CountingExtractor()
+    registry = PluginRegistry()
+    registry.register_document_extractor(extractor)
+
+    from xiaomei_brain.memory.conversation_db import ConversationDB
+    db_path = tmp_path / "brain.db"
+    ConversationDB(db_path).log(
+        "session-1",
+        "user",
+        "attached",
+        user_id="person-1",
+        metadata={"attachments": [{
+            "id": "session-asset",
+            "name": "stored.docx",
+            "mime_type": "application/test-document",
+            "size": 7,
+            "kind": "document",
+        }]},
+    )
+
+    def restore(agent_id, session_id, attachments):
+        assert agent_id == "test"
+        assert session_id == "session-1"
+        assert attachments[0]["id"] == "session-asset"
+        return ([{**attachments[0], "local_path": str(path)}], [])
+
+    monkeypatch.setattr(
+        "xiaomei_brain.gateway.attachments.restore_attachment_refs",
+        restore,
+    )
+    tool = create_read_document_tool(
+        registry,
+        lambda: SimpleNamespace(db_path=db_path, agent_id="test"),
+    )
+
+    with bind_tool_execution(
+        tool_call_id="call-session",
+        tool_name="read_document",
+        arguments={},
+        artifact_callback=None,
+        session_id="session-1",
+        person_id="person-1",
+        attachments=(),
+    ):
+        restored = tool.execute(attachment_id="session-asset", limit=5)
+        denied = tool.execute(attachment_id="missing")
+
+    assert restored["content"] == "01234"
     assert "error" in denied
 
 
