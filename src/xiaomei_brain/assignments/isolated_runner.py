@@ -52,6 +52,8 @@ WORKSPACE_BACKGROUND_TOOLS = frozenset({
     "update_surface",
     "get_workspace",
     "list_workspaces",
+    "focus_workspace",
+    "get_current_workspace",
     "create_data_source",
     "record_observation",
     "define_collection",

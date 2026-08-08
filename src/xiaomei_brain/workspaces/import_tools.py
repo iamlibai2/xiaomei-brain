@@ -38,6 +38,13 @@ def create_import_tools(agent: Any) -> list[Tool]:
         if context is None:
             return {"error": "import_tabular_data is only available during an Agent tool call"}
         try:
+            service().require_for_person(
+                workspace_id,
+                person_id=context.person_id,
+            )
+        except Exception as exc:
+            return {"error": str(exc), "workspace_id": workspace_id}
+        try:
             attachment = resolve_current_attachment(
                 attachment_id,
                 allowed_suffixes=(".csv", ".tsv", ".xlsx"),
@@ -48,7 +55,7 @@ def create_import_tools(agent: Any) -> list[Tool]:
         if not local_path.is_file():
             return {"error": "Attachment file is not available"}
         try:
-            return service().imports.import_path(
+            result = service().imports.import_path(
                 workspace_id,
                 local_path,
                 source_name=str(attachment.get("name") or local_path.name),
@@ -62,6 +69,14 @@ def create_import_tools(agent: Any) -> list[Tool]:
                 session_id=context.session_id,
                 turn_id=context.turn_id,
             )
+            if context.session_id and context.person_id:
+                service().focus_session(
+                    workspace_id,
+                    session_id=context.session_id,
+                    person_id=context.person_id,
+                    turn_id=context.turn_id,
+                )
+            return result
         except Exception as exc:
             return {"error": str(exc), "attachment_id": attachment_id}
 

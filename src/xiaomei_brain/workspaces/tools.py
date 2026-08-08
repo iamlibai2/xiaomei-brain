@@ -35,6 +35,16 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             str(getattr(current, "turn_id", "") or ""),
         )
 
+    def focus(workspace_id: str) -> None:
+        session_id, turn_id = context()
+        if session_id:
+            service().focus_session(
+                workspace_id,
+                session_id=session_id,
+                person_id=person_id(),
+                turn_id=turn_id,
+            )
+
     def create_workspace(
         name: str,
         purpose: str,
@@ -53,6 +63,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             session_id=session_id,
             turn_id=turn_id,
         )
+        focus(workspace.id)
         return service().snapshot(workspace, include_surfaces=True)
 
     def update_workspace(
@@ -120,18 +131,64 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
 
     def get_workspace(workspace_id: str) -> dict[str, Any]:
         """Inspect a Workspace, its Surfaces and current business world."""
+        workspace = service().require_for_person(
+            workspace_id,
+            person_id=person_id(),
+        )
+        focus(workspace.id)
         return service().snapshot(
-            service().require(workspace_id), include_surfaces=True,
+            workspace, include_surfaces=True,
             include_business=True, include_records=True,
         )
 
     def list_workspaces() -> dict[str, Any]:
-        """List every Workspace in this Agent's world."""
+        """List Workspaces related to the current Person and current Session focus."""
+        session_id, _turn_id = context()
+        focused = service().current_for_session(
+            session_id,
+            person_id=person_id(),
+        )
         return {
             "workspaces": [
                 service().snapshot(item)
-                for item in service().list_all(limit=100)
+                for item in service().list_for_person(person_id(), limit=100)
             ],
+            "focused_workspace_id": focused.id if focused is not None else "",
+        }
+
+    def focus_workspace(workspace_id: str) -> dict[str, Any]:
+        """Make one Workspace the continuing business context of this Session."""
+        focus(workspace_id)
+        workspace = service().require_for_person(
+            workspace_id,
+            person_id=person_id(),
+        )
+        return service().snapshot(
+            workspace,
+            include_surfaces=True,
+            include_business=True,
+        )
+
+    def get_current_workspace() -> dict[str, Any]:
+        """Read the Workspace currently focused by this conversation Session."""
+        session_id, _turn_id = context()
+        workspace = service().current_for_session(
+            session_id,
+            person_id=person_id(),
+        )
+        if workspace is None:
+            return {
+                "focused": False,
+                "message": "This conversation has no focused Workspace",
+            }
+        return {
+            "focused": True,
+            "workspace": service().snapshot(
+                workspace,
+                include_surfaces=True,
+                include_business=True,
+                include_records=True,
+            ),
         }
 
     def create_data_source(
@@ -426,9 +483,37 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         ),
         Tool(
             name="list_workspaces",
-            description="List the persistent business Workspaces known by this Agent.",
+            description=(
+                "List persistent business Workspaces related to the current Person, "
+                "including which one this conversation currently focuses."
+            ),
             parameters={"type": "object", "properties": {}},
             func=list_workspaces,
+            category="workspace",
+        ),
+        Tool(
+            name="focus_workspace",
+            description=(
+                "Focus this conversation on one Workspace. Use when the Person says "
+                "they are entering, switching to or continuing work in a Workspace."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {"workspace_id": {"type": "string"}},
+                "required": ["workspace_id"],
+            },
+            func=focus_workspace,
+            category="workspace",
+        ),
+        Tool(
+            name="get_current_workspace",
+            description=(
+                "Inspect the Workspace already focused by this conversation. Use it "
+                "for follow-up customer, quote, contract, payment, metric or dashboard "
+                "requests when the Person does not repeat the Workspace name."
+            ),
+            parameters={"type": "object", "properties": {}},
+            func=get_current_workspace,
             category="workspace",
         ),
         Tool(

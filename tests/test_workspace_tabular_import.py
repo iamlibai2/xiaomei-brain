@@ -73,7 +73,11 @@ def test_reimport_is_idempotent_and_new_snapshot_updates_existing_records(tmp_pa
 
 def test_import_tool_reads_only_current_execution_attachment(tmp_path):
     service = _service(tmp_path)
-    workspace = service.create(name="销售", purpose="经营销售数据")
+    workspace = service.create(
+        name="销售",
+        purpose="经营销售数据",
+        created_by_person_id="person-1",
+    )
     source = tmp_path / "sales.csv"
     source.write_text("order_id,amount\nSO-1,99\n", encoding="utf-8")
     core = SimpleNamespace(user_id="person-1", session_id="session-1", turn_id="turn-1")
@@ -102,11 +106,19 @@ def test_import_tool_reads_only_current_execution_attachment(tmp_path):
     assert result["success"] is True
     assert result["created"] == 1
     assert result["data_source"]["locator"] == "attachment:sales.csv"
+    assert service.current_for_session(
+        "session-1",
+        person_id="person-1",
+    ).id == workspace.id
 
 
 def test_import_tool_resolves_the_only_compatible_attachment_without_opaque_id(tmp_path):
     service = _service(tmp_path)
-    workspace = service.create(name="销售", purpose="经营销售数据")
+    workspace = service.create(
+        name="销售",
+        purpose="经营销售数据",
+        created_by_person_id="person-1",
+    )
     source = tmp_path / "sales.csv"
     source.write_text("order_id,amount\nSO-1,99\n", encoding="utf-8")
     core = SimpleNamespace(user_id="person-1", session_id="session-1", turn_id="turn-1")
@@ -131,6 +143,42 @@ def test_import_tool_resolves_the_only_compatible_attachment_without_opaque_id(t
 
     assert result["success"] is True
     assert result["created"] == 1
+
+
+def test_import_tool_rejects_workspace_from_another_person(tmp_path):
+    service = _service(tmp_path)
+    workspace = service.create(
+        name="销售",
+        purpose="经营销售数据",
+        created_by_person_id="person-2",
+    )
+    source = tmp_path / "sales.csv"
+    source.write_text("order_id,amount\nSO-1,99\n", encoding="utf-8")
+    core = SimpleNamespace(user_id="person-1", session_id="session-1", turn_id="turn-1")
+    agent = SimpleNamespace(workspace_service=service, _get_agent=lambda: core)
+    tool = {item.name: item for item in create_workspace_tools(agent)}["import_tabular_data"]
+
+    with bind_tool_execution(
+        tool_call_id="call-1",
+        tool_name="import_tabular_data",
+        arguments={},
+        artifact_callback=None,
+        session_id="session-1",
+        turn_id="turn-1",
+        person_id="person-1",
+        attachments=({
+            "id": "attachment-1",
+            "name": "sales.csv",
+            "local_path": str(source),
+        },),
+    ):
+        result = tool.execute(
+            workspace_id=workspace.id,
+            attachment_id="attachment-1",
+        )
+
+    assert result["error"] == "Workspace is not available to the current Person"
+    assert service.current_for_session("session-1", person_id="person-1") is None
 
 
 def test_xlsx_and_another_source_can_update_same_collection_by_business_key(tmp_path):

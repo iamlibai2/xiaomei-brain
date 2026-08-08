@@ -14,7 +14,7 @@ from xiaomei_brain.base.sqlite_store import SQLiteStore
 from .models import Surface, Workspace, WorkspaceConflictError
 
 SCHEMA_COMPONENT = "workspaces"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 LEGACY_IMPORT = "brain_db_workspace_v1"
 
 
@@ -33,12 +33,14 @@ class WorkspaceStore(SQLiteStore):
         *,
         legacy_db_path: str | Path | None = None,
         before_legacy_migration: Callable[[], Any] | None = None,
+        before_schema_migration: Callable[[], Any] | None = None,
     ) -> None:
         self.legacy_db_path = (
             Path(legacy_db_path).expanduser().resolve()
             if legacy_db_path is not None else None
         )
         self._before_legacy_migration = before_legacy_migration
+        self._before_schema_migration = before_schema_migration
         super().__init__(db_path)
         self._ensure_tables()
         self._import_legacy()
@@ -47,6 +49,15 @@ class WorkspaceStore(SQLiteStore):
         conn = self._get_conn()
         if self._get_schema_version(SCHEMA_COMPONENT) >= SCHEMA_VERSION:
             return
+        has_workspace_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'workspaces'",
+        ).fetchone() is not None
+        if (
+            has_workspace_table
+            and int(conn.execute("SELECT COUNT(*) FROM workspaces").fetchone()[0])
+            and self._before_schema_migration is not None
+        ):
+            self._before_schema_migration()
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS workspaces (
                 id TEXT PRIMARY KEY,
@@ -97,6 +108,17 @@ class WorkspaceStore(SQLiteStore):
                 imported_at REAL NOT NULL,
                 item_count INTEGER NOT NULL DEFAULT 0
             );
+
+            CREATE TABLE IF NOT EXISTS workspace_session_focus (
+                session_id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                person_id TEXT NOT NULL DEFAULT '',
+                turn_id TEXT NOT NULL DEFAULT '',
+                focused_at REAL NOT NULL,
+                FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_workspace_session_focus_workspace
+                ON workspace_session_focus(workspace_id, focused_at DESC);
         """)
         conn.commit()
         self._set_schema_version(SCHEMA_COMPONENT, SCHEMA_VERSION)
@@ -290,6 +312,49 @@ class WorkspaceStore(SQLiteStore):
             (workspace_id,),
         ).fetchall()
         return [str(row["person_id"]) for row in rows]
+
+    def focus_session(
+        self,
+        workspace_id: str,
+        *,
+        session_id: str,
+        person_id: str,
+        turn_id: str = "",
+        now: float | None = None,
+    ) -> None:
+        timestamp = time.time() if now is None else now
+        self._get_conn().execute(
+            """INSERT INTO workspace_session_focus (
+                session_id, workspace_id, person_id, turn_id, focused_at
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET
+                workspace_id = excluded.workspace_id,
+                person_id = excluded.person_id,
+                turn_id = excluded.turn_id,
+                focused_at = excluded.focused_at""",
+            (session_id, workspace_id, person_id, turn_id, timestamp),
+        )
+        self._get_conn().commit()
+
+    def focused_workspace_id(
+        self,
+        session_id: str,
+        *,
+        person_id: str = "",
+    ) -> str:
+        if not session_id.strip():
+            return ""
+        row = self._get_conn().execute(
+            """SELECT workspace_id, person_id FROM workspace_session_focus
+               WHERE session_id = ?""",
+            (session_id.strip(),),
+        ).fetchone()
+        if row is None:
+            return ""
+        focused_person = str(row["person_id"])
+        if person_id.strip() and focused_person and focused_person != person_id.strip():
+            return ""
+        return str(row["workspace_id"])
 
     def update(
         self,

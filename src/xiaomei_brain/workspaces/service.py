@@ -102,6 +102,47 @@ class WorkspaceService:
         )
         return workspace
 
+    def focus_session(
+        self,
+        workspace_id: str,
+        *,
+        session_id: str,
+        person_id: str,
+        turn_id: str = "",
+    ) -> Workspace:
+        resolved_session = session_id.strip()
+        if not resolved_session:
+            raise ValueError("A conversation Session is required to focus a Workspace")
+        workspace = self.require_for_person(
+            workspace_id,
+            person_id=person_id.strip(),
+        )
+        self.store.focus_session(
+            workspace.id,
+            session_id=resolved_session,
+            person_id=person_id.strip(),
+            turn_id=turn_id.strip(),
+            now=self._clock(),
+        )
+        return workspace
+
+    def current_for_session(
+        self,
+        session_id: str,
+        *,
+        person_id: str,
+    ) -> Workspace | None:
+        workspace_id = self.store.focused_workspace_id(
+            session_id,
+            person_id=person_id,
+        )
+        if not workspace_id:
+            return None
+        try:
+            return self.require_for_person(workspace_id, person_id=person_id)
+        except (KeyError, WorkspacePermissionError):
+            return None
+
     def require(self, workspace_id: str) -> Workspace:
         workspace = self.store.get(workspace_id.strip())
         if workspace is None:

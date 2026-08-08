@@ -627,6 +627,9 @@ class ConsciousLiving(Living):
                 before_legacy_migration=lambda: self._backup_service.backup_now(
                     reason="workspace_schema_migration",
                 ),
+                before_schema_migration=lambda: self._backup_service.backup_now(
+                    reason="workspace_schema_migration",
+                ),
             ),
             publish=self._event_hub.publish,
             before_business_migration=lambda: self._backup_service.backup_now(

@@ -101,9 +101,24 @@ def _contextual_required_tool_names(query: str) -> set[str]:
     has_workspace_destination = any(marker in text for marker in (
         "workspace", "工作空间", "经营数据", "业务数据", "经营看板",
     ))
+    required: set[str] = set()
     if has_tabular_attachment and has_import_intent and has_workspace_destination:
-        return {"import_tabular_data"}
-    return set()
+        required.add("import_tabular_data")
+    has_business_object = any(marker in text for marker in (
+        "客户", "报价", "合同", "订单", "回款", "应收", "经营",
+        "customer", "quote", "contract", "order", "payment", "receivable",
+    ))
+    has_business_operation = any(marker in text for marker in (
+        "推进", "更新", "登记", "修改", "查询", "统计", "汇总", "多少", "哪些",
+        "advance", "update", "register", "change", "query", "summarize", "count",
+    ))
+    if has_business_object and has_business_operation:
+        required.update({
+            "get_current_workspace",
+            "query_business_records",
+            "upsert_business_record",
+        })
+    return required
 
 # 全局活跃的 loader，供 MCP/Plugin 热重载后通知重建索引
 _active_loader: DynamicToolLoader | None = None

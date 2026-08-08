@@ -296,6 +296,44 @@ def test_workspace_tabular_import_is_required_by_attachment_and_destination(monk
     assert "import_tabular_data" not in analysis_only
 
 
+def test_customer_business_followup_requires_workspace_tools(monkeypatch):
+    reg = _registry_with_tools(
+        ("shell", "Run shell commands"),
+        ("get_current_workspace", "Inspect focused Workspace"),
+        ("query_business_records", "Query business records"),
+        ("upsert_business_record", "Update a business record"),
+        ("write_document", "Write a document"),
+    )
+    loader = DynamicToolLoader(reg, top_k=1)
+
+    class _EmptySearch:
+        def limit(self, _count):
+            return self
+
+        def to_list(self):
+            return []
+
+    class _Table:
+        def count_rows(self):
+            return 1
+
+        def search(self, _vector):
+            return _EmptySearch()
+
+    monkeypatch.setattr(loader, "_get_lance_table", lambda: _Table())
+    monkeypatch.setattr(loader._shared, "embed", lambda _query: [0.0])
+
+    names = [
+        tool.name for tool in loader.select_tools(
+            "把甲公司推进到合同阶段",
+            top_k=1,
+        )
+    ]
+    assert "get_current_workspace" in names
+    assert "query_business_records" in names
+    assert "upsert_business_record" in names
+
+
 # ── Dynamic tool selection ─────────────────────────────────────
 
 
