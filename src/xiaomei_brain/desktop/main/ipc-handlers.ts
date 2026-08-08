@@ -879,7 +879,7 @@ export function registerIpcHandlers(
       artifactReferences?: Array<{
         artifactId: string;
         sessionId: string;
-        presentationMode?: "visualization_fullscreen";
+        presentationMode?: "visualization_fullscreen" | "presentation_stage";
         selection?: ({
           kind: "text";
           page?: number;

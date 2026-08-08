@@ -169,7 +169,7 @@ export function HtmlArtifactPreview({
 }: {
   dataBase64: string;
   fileName: string;
-  onAnnotate: (selection: ArtifactHtmlSelection, instruction: string) => void;
+  onAnnotate?: (selection: ArtifactHtmlSelection, instruction: string) => void;
   onOpenOriginal: () => void;
   onBack: () => void;
   opening?: boolean;
@@ -272,13 +272,15 @@ export function HtmlArtifactPreview({
           >
             <Icon name="external-link" size={19} />
           </button>
-          <button
-            type="button"
-            className={`html-browser-action ${elementMode ? "active" : ""}`}
-            onClick={() => setElementMode((value) => !value)}
-          >
-            {elementMode ? t("artifactUi.exitSelect") : t("artifactUi.selectElement")}
-          </button>
+          {onAnnotate && (
+            <button
+              type="button"
+              className={`html-browser-action ${elementMode ? "active" : ""}`}
+              onClick={() => setElementMode((value) => !value)}
+            >
+              {elementMode ? t("artifactUi.exitSelect") : t("artifactUi.selectElement")}
+            </button>
+          )}
         </div>
       </div>
       <iframe
@@ -297,7 +299,7 @@ export function HtmlArtifactPreview({
           }, "*");
         }}
       />
-      {selection && (
+      {selection && onAnnotate && (
         <ArtifactAnnotationComposer
           excerpt={selection.selectedText || selection.outerHtml}
           location={`${selection.tag} · ${selection.selector}`}

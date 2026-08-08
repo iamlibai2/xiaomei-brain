@@ -60,7 +60,7 @@ export interface ChatArtifactReference {
   artifactId: string;
   sessionId: string;
   selection?: ArtifactSelection;
-  presentationMode?: "visualization_fullscreen";
+  presentationMode?: "visualization_fullscreen" | "presentation_stage";
   // Renderer-only display fields are omitted by Electron; presentationMode is
   // the explicit exception used to preserve the fullscreen editing context.
   name?: string;

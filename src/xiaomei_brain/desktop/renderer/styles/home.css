@@ -3885,6 +3885,39 @@ body.is-resizing-artifact-workspace {
   color: var(--ui-brand-primary);
 }
 
+.artifact-inline-image-meta > div {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.artifact-card-group {
+  position: relative;
+}
+
+.artifact-present-button {
+  display: grid;
+  position: absolute;
+  top: 50%;
+  right: 38px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  color: var(--ui-color-text-tertiary);
+  background: transparent;
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.artifact-present-button:hover {
+  color: var(--ui-brand-primary);
+  background: var(--ui-bg-hover);
+}
+
 .message-image-lightbox {
   position: fixed;
   z-index: 3000;
@@ -4980,8 +5013,8 @@ body.is-resizing-artifact-workspace {
   padding: 0;
 }
 
-/* Fullscreen visualizations retain a compact conversation entry point. */
-.main-content.visualization-fullscreen-mode .wb-home-composer {
+/* The presentation stage retains a compact conversation entry point. */
+.main-content.presentation-stage-mode .wb-home-composer {
   position: fixed;
   z-index: 80;
   left: 50%;
@@ -4993,7 +5026,7 @@ body.is-resizing-artifact-workspace {
   transform: translateX(-50%);
 }
 
-.main-content.visualization-fullscreen-mode .chat-input-container {
+.main-content.presentation-stage-mode .chat-input-container {
   gap: 2px;
   padding: 6px 10px;
   border-color: color-mix(in srgb, var(--ui-border-default) 70%, transparent);
@@ -5004,28 +5037,28 @@ body.is-resizing-artifact-workspace {
   transition: background .18s ease, border-color .18s ease, box-shadow .18s ease;
 }
 
-.main-content.visualization-fullscreen-mode .chat-input-container:focus-within,
-.main-content.visualization-fullscreen-mode .chat-input-container.is-sending {
+.main-content.presentation-stage-mode .chat-input-container:focus-within,
+.main-content.presentation-stage-mode .chat-input-container.is-sending {
   background: color-mix(in srgb, var(--ui-bg-primary) 72%, transparent);
 }
 
-.main-content.visualization-fullscreen-mode .chat-input-textarea {
+.main-content.presentation-stage-mode .chat-input-textarea {
   min-height: 20px;
   max-height: 44px;
   line-height: 1.4;
 }
 
-.main-content.visualization-fullscreen-mode .chat-input-toolbar {
+.main-content.presentation-stage-mode .chat-input-toolbar {
   min-height: 28px;
 }
 
-.main-content.visualization-fullscreen-mode .chat-input-btn,
-.main-content.visualization-fullscreen-mode .chat-input-send {
+.main-content.presentation-stage-mode .chat-input-btn,
+.main-content.presentation-stage-mode .chat-input-send {
   width: 28px;
   height: 28px;
 }
 
-.main-content.visualization-fullscreen-mode .chat-input-abort {
+.main-content.presentation-stage-mode .chat-input-abort {
   width: auto;
   min-width: 52px;
   height: 28px;
@@ -5042,7 +5075,7 @@ body.is-resizing-artifact-workspace {
   display: none;
 }
 
-.main-content.visualization-fullscreen-mode .chat-input-running-state {
+.main-content.presentation-stage-mode .chat-input-running-state {
   display: inline-flex;
   height: 28px;
   padding: 0 4px;
@@ -5053,29 +5086,29 @@ body.is-resizing-artifact-workspace {
   white-space: nowrap;
 }
 
-.main-content.visualization-fullscreen-mode .chat-input-running-state i {
+.main-content.presentation-stage-mode .chat-input-running-state i {
   width: 8px;
   height: 8px;
   border: 2px solid color-mix(in srgb, var(--ui-brand-primary) 28%, transparent);
   border-top-color: var(--ui-brand-primary);
   border-radius: 50%;
-  animation: visualization-agent-running .72s linear infinite;
+  animation: presentation-stage-agent-running .72s linear infinite;
 }
 
-@keyframes visualization-agent-running {
+@keyframes presentation-stage-agent-running {
   to { transform: rotate(360deg); }
 }
 
-.main-content.visualization-fullscreen-mode .chat-input-container.is-listening {
+.main-content.presentation-stage-mode .chat-input-container.is-listening {
   gap: 0;
   padding-top: 4px;
 }
 
-.main-content.visualization-fullscreen-mode .chat-input-container.is-listening .chat-input-textarea {
+.main-content.presentation-stage-mode .chat-input-container.is-listening .chat-input-textarea {
   display: none;
 }
 
-.main-content.visualization-fullscreen-mode .voice-live-panel {
+.main-content.presentation-stage-mode .voice-live-panel {
   min-height: 66px;
   justify-content: center;
   padding: 0;
@@ -5083,13 +5116,13 @@ body.is-resizing-artifact-workspace {
   overflow: visible;
 }
 
-.main-content.visualization-fullscreen-mode .voice-live-orb {
+.main-content.presentation-stage-mode .voice-live-orb {
   width: 66px;
   height: 66px;
   flex: 0 0 66px;
 }
 
-.main-content.visualization-fullscreen-mode .voice-live-copy {
+.main-content.presentation-stage-mode .voice-live-copy {
   position: absolute;
   left: 50%;
   bottom: -1px;
@@ -5098,12 +5131,12 @@ body.is-resizing-artifact-workspace {
   text-align: center;
 }
 
-.main-content.visualization-fullscreen-mode .voice-live-copy strong,
-.main-content.visualization-fullscreen-mode .voice-live-copy small {
+.main-content.presentation-stage-mode .voice-live-copy strong,
+.main-content.presentation-stage-mode .voice-live-copy small {
   display: none;
 }
 
-.main-content.visualization-fullscreen-mode .voice-live-copy span {
+.main-content.presentation-stage-mode .voice-live-copy span {
   overflow: hidden;
   font-size: 11px;
   line-height: 1.2;
@@ -5111,13 +5144,13 @@ body.is-resizing-artifact-workspace {
   white-space: nowrap;
 }
 
-.main-content.visualization-fullscreen-mode .voice-live-stop {
+.main-content.presentation-stage-mode .voice-live-stop {
   top: 50%;
   right: 4px;
   transform: translateY(-50%);
 }
 
-.main-content.visualization-fullscreen-mode .voice-live-stop:hover {
+.main-content.presentation-stage-mode .voice-live-stop:hover {
   transform: translateY(-50%) scale(1.04);
 }
 

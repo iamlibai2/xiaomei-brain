@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Literal
 
 from xiaomei_brain.tools.base import tool
@@ -19,6 +20,11 @@ def set_embodiment_command_broker(broker: Any) -> None:
 @tool(
     name="embodiment_control",
     description=(
+        "控制当前对话来源的 Desktop 界面和演示台。可将当前会话产物放入全屏演示台，"
+        "选择单项、左右对比、画廊或主内容加说明布局，并控制前后切换及音视频播放暂停。"
+        "open_presentation 用于打开并装载产物；set_presentation_layout 可只切换布局，"
+        "也可同时传 artifact_ids 来替换台上的演示内容。操作后可用 "
+        "get_presentation_state 核对台面实际装载的布局、顺序和产物。"
         "控制当前对话来源的 Desktop 界面。适用于用户要求打开、关闭或切换左右侧栏，"
         "打开右侧栏的动态、状态、项目、委托、产物、记忆、上下文栏目，或打开当前产物。"
         "它只控制界面和打开文件，不用于修改文件内容，也不能控制飞书、钉钉或其他软件。"
@@ -35,11 +41,21 @@ def embodiment_control(
         "open_right_section",
         "open_current_artifact",
         "open_current_artifact_external",
+        "open_presentation",
+        "close_presentation",
+        "next_presentation_item",
+        "previous_presentation_item",
+        "set_presentation_layout",
+        "play_presentation_media",
+        "pause_presentation_media",
+        "get_presentation_state",
     ],
     section: Literal[
         "activity", "state", "project", "assignment", "artifact", "memory", "context",
     ] = "activity",
     artifact_id: str = "",
+    artifact_ids: list[str] | None = None,
+    layout: Literal["single", "split", "gallery", "media_with_details"] = "single",
 ) -> str:
     if _broker is None:
         return "Error: Desktop 控制服务尚未初始化"
@@ -60,6 +76,28 @@ def embodiment_control(
             "file.artifact.open_external",
             {"artifact_id": artifact_id},
         ),
+        "open_presentation": (
+            "stage.open",
+            {
+                "artifact_id": artifact_id,
+                "artifact_ids": list(artifact_ids or []),
+                "layout": layout,
+            },
+        ),
+        "close_presentation": ("stage.close", {}),
+        "next_presentation_item": ("stage.next", {}),
+        "previous_presentation_item": ("stage.previous", {}),
+        "set_presentation_layout": (
+            "stage.layout.set",
+            {
+                "artifact_id": artifact_id,
+                "artifact_ids": list(artifact_ids or []),
+                "layout": layout,
+            },
+        ),
+        "play_presentation_media": ("stage.play", {}),
+        "pause_presentation_media": ("stage.pause", {}),
+        "get_presentation_state": ("stage.state.get", {}),
     }
     command, arguments = commands[action]
     response = _broker.request(
@@ -70,4 +108,10 @@ def embodiment_control(
     )
     if response.get("status") != "completed":
         return f"Error: {response.get('error') or 'Desktop 未能执行命令'}"
+    result = response.get("result")
+    if isinstance(result, dict) and result:
+        return json.dumps(
+            {"status": "completed", "command": command, "result": result},
+            ensure_ascii=False,
+        )
     return "Desktop 命令已执行"

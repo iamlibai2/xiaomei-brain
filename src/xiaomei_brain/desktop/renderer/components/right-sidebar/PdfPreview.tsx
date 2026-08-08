@@ -148,7 +148,7 @@ export function PdfPreview({
 }: {
   dataBase64: string;
   fileName: string;
-  onAnnotate: (selection: ArtifactTextSelection, instruction: string) => void;
+  onAnnotate?: (selection: ArtifactTextSelection, instruction: string) => void;
 }) {
   const { t } = useTranslation();
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -212,6 +212,7 @@ export function PdfPreview({
         ref={viewportRef}
         className="pdf-preview-viewport"
         onMouseUp={() => {
+          if (!onAnnotate) return;
           const root = viewportRef.current;
           if (!root) return;
           const browserSelection = window.getSelection();
@@ -229,7 +230,7 @@ export function PdfPreview({
           <div className="artifact-preview-limit">{t("preview.pageLimit", { count: MAX_PREVIEW_PAGES })}</div>
         )}
       </div>
-      {selection && (
+      {selection && onAnnotate && (
         <ArtifactAnnotationComposer
           excerpt={selection.selectedText}
           location={selection.page ? t("preview.page", { page: selection.page }) : t("artifactUi.selectedText")}

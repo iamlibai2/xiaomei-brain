@@ -79,7 +79,7 @@ def discover_tool_artifacts(
     # model chooses the generic edit tool for a small change. The trusted
     # attachment metadata is supplied by Gateway, never by a client path.
     for attachment in source_attachments:
-        if attachment.get("presentation_mode") != "visualization_fullscreen":
+        if attachment.get("presentation_mode") not in {"visualization_fullscreen", "presentation_stage"}:
             continue
         source_artifact = attachment.get("source_artifact")
         managed_path = str(attachment.get("managed_artifact_path") or "")
@@ -111,10 +111,11 @@ def discover_tool_artifacts(
         if relative_path in seen:
             continue
         seen.add(relative_path)
+        suffix = _effective_suffix(resolved.name)
         mime_type = _guess_mime_type(resolved)
         kind = _artifact_kind(
             mime_type,
-            resolved.suffix.lower(),
+            suffix,
             resolved.name,
         )
         size = resolved.stat().st_size
@@ -132,7 +133,6 @@ def discover_tool_artifacts(
             replacement = None
         if not storage_session_id:
             storage_session_id = session_id
-        suffix = resolved.suffix.lower()[:16]
         storage_path = _artifact_storage_path(
             agent_id, storage_session_id, artifact_id, suffix,
         )
@@ -177,7 +177,12 @@ def read_stored_artifact(
     if not re.fullmatch(r"[a-f0-9]{32}", artifact_id):
         raise ArtifactError("产物标识无效")
     if suffix and not re.fullmatch(r"\.[A-Za-z0-9]{1,15}", suffix):
-        raise ArtifactError("产物类型无效")
+        legacy_suffix = Path(str(artifact.get("name") or "")).suffix.lower()
+        if (
+            suffix != legacy_suffix
+            or not re.fullmatch(r"\.[A-Za-z0-9]{1,15}[》〉】）\)\]」』”’]+", suffix)
+        ):
+            raise ArtifactError("产物类型无效")
     path = _artifact_storage_path(agent_id, session_id, artifact_id, suffix)
     try:
         data = path.read_bytes()
@@ -371,13 +376,17 @@ def _artifact_kind(mime_type: str, suffix: str, name: str = "") -> str:
     return "file"
 
 
+def _effective_suffix(name: str) -> str:
+    """Recognize an extension wrapped by closing typography, e.g. 《song.wav》."""
+    match = re.search(r"(\.[A-Za-z0-9]{1,15})[》〉】）\)\]」』”’]*$", name)
+    return match.group(1).lower() if match else Path(name).suffix.lower()[:16]
+
+
 def _guess_mime_type(path: Path) -> str:
     office_types = {
         ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     }
-    return office_types.get(
-        path.suffix.lower(),
-        mimetypes.guess_type(path.name)[0] or "application/octet-stream",
-    )
+    suffix = _effective_suffix(path.name)
+    return office_types.get(suffix, mimetypes.types_map.get(suffix, "application/octet-stream"))

@@ -504,7 +504,7 @@ def append_text_attachments(content: str, attachments: list[dict[str, Any]]) -> 
                 isinstance(source_artifact, dict)
                 and str(item.get("name", "")).lower().endswith(".visualization.html")
                 and managed_relative_path
-                and item.get("presentation_mode") == "visualization_fullscreen"
+                and item.get("presentation_mode") in {"visualization_fullscreen", "presentation_stage"}
             ):
                 id_attribute = f' id="{safe_id}"' if safe_id else ""
                 revision_instruction = (

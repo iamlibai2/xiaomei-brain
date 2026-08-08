@@ -1198,7 +1198,12 @@ class ConversationDriver:
         parent: Any,
     ):
         """Persist and publish files produced by one Agent tool call."""
-        def callback(tool_call_id: str, tool_name: str, arguments: dict, result: str) -> None:
+        def callback(
+            tool_call_id: str,
+            tool_name: str,
+            arguments: dict,
+            result: str,
+        ) -> list[dict[str, Any]]:
             from xiaomei_brain.gateway.artifacts import (
                 discover_tool_artifacts,
                 managed_artifact_path,
@@ -1220,7 +1225,8 @@ class ConversationDriver:
                 source_attachments=source_attachments,
             )
             if not artifacts:
-                return
+                return []
+            published: list[dict[str, Any]] = []
             db = getattr(getattr(parent, "agent", None), "conversation_db", None)
             presentation_message = ""
             if tool_name == "present_artifacts":
@@ -1319,6 +1325,7 @@ class ConversationDriver:
                     session_id=session_id,
                     turn_id=turn_id,
                 )
+                published.append(public_artifact_metadata(artifact))
                 if tool_name == "present_artifacts":
                     presented_payload = public_artifact_metadata(artifact)
                     if presentation_message:
@@ -1338,6 +1345,8 @@ class ConversationDriver:
                         artifact.get("id", ""),
                         artifact.get("name", ""),
                     )
+
+            return published
 
         return callback
 

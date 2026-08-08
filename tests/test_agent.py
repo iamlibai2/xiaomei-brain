@@ -6,7 +6,11 @@ import pytest
 from unittest.mock import Mock
 
 from xiaomei_brain.agent.completion import CompletionGuardResult
-from xiaomei_brain.agent.core import Agent, REPEATED_TOOL_FAILURE_MESSAGE
+from xiaomei_brain.agent.core import (
+    Agent,
+    REPEATED_TOOL_FAILURE_MESSAGE,
+    _include_published_artifacts,
+)
 from xiaomei_brain.agent.steering import SteerMessage
 from xiaomei_brain.llm.types import NormalizedResponse, ToolCall
 from xiaomei_brain.tools.registry import ToolRegistry
@@ -378,6 +382,26 @@ def test_structured_tool_error_marks_action_failed(mock_llm, registry):
 
     assert result == '{"error": "眼睛不可用"}'
     agent.on_action_complete.assert_called_once_with("action-1", result, True)
+
+
+def test_present_artifacts_result_exposes_persisted_artifact_ids():
+    result = _include_published_artifacts(
+        "present_artifacts",
+        json.dumps({"path": ["C:/agent/images/a.png"], "delivered": True}),
+        [{
+            "id": "a" * 32,
+            "session_id": "session-1",
+            "name": "a.png",
+            "kind": "image",
+        }],
+    )
+
+    assert json.loads(result)["artifacts"] == [{
+        "artifact_id": "a" * 32,
+        "session_id": "session-1",
+        "name": "a.png",
+        "kind": "image",
+    }]
 
 
 def test_document_output_is_auto_presented_when_model_omits_delivery(

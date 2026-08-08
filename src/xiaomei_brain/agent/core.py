@@ -71,6 +71,47 @@ def _tool_result_failed(result: Any) -> bool:
     }
 
 
+def _include_published_artifacts(
+    tool_name: str,
+    result: Any,
+    published: Any,
+) -> str:
+    """Expose persisted artifact identities to the same ReAct turn.
+
+    Artifact projection happens after a tool returns because it needs to inspect
+    the real files.  ``present_artifacts`` must nevertheless tell the model
+    which immutable conversation assets were created; otherwise later UI
+    commands are forced to guess IDs from paths or attachment hashes.
+    """
+    text = normalize_tool_result(result)
+    if tool_name != "present_artifacts" or not isinstance(published, list):
+        return text
+    artifacts: list[dict[str, Any]] = []
+    for item in published:
+        if not isinstance(item, dict):
+            continue
+        artifact_id = str(item.get("id") or item.get("artifact_id") or "")
+        session_id = str(item.get("session_id") or "")
+        if not artifact_id or not session_id:
+            continue
+        artifacts.append({
+            "artifact_id": artifact_id,
+            "session_id": session_id,
+            "name": str(item.get("name") or ""),
+            "kind": str(item.get("kind") or "file"),
+        })
+    if not artifacts:
+        return text
+    try:
+        payload = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return text
+    if not isinstance(payload, dict):
+        return text
+    payload["artifacts"] = artifacts
+    return normalize_tool_result(payload)
+
+
 from xiaomei_brain.agent.tool_call_buffer import ToolCallBuffer, tool_call_buffer
 
 
@@ -148,7 +189,7 @@ class Agent:
         # ── Tool event callbacks (set by caller, e.g. ConversationDriver) ──
         self.on_tool_start: Callable[[int, str, str, dict], None] | None = None
         self.on_tool_complete: Callable[[int, str, str, dict, str], None] | None = None
-        self.on_artifact: Callable[[str, str, dict, str], None] | None = None
+        self.on_artifact: Callable[[str, str, dict, str], Any] | None = None
         self.on_speech: Callable[[Any], str] | None = None
         self.on_tool_approval: Callable[[str, str, dict], dict | None] | None = None
         self.on_action_complete: Callable[[str, str, bool], None] | None = None
@@ -561,6 +602,16 @@ class Agent:
                             _ptr(idx, result)
                         if self.on_tool_complete:
                             self.on_tool_complete(idx, tc.id, tc.name, args_dict, str(result))
+                        if self.on_artifact:
+                            try:
+                                published = self.on_artifact(
+                                    tc.id, tc.name, args_dict, str(result),
+                                )
+                                result = _include_published_artifacts(
+                                    tc.name, result, published,
+                                )
+                            except Exception:
+                                logger.exception("Failed to publish tool artifacts")
                         logger.debug("Tool result: %s", str(result)[:200])
 
                         # 存 tool result 到 DB，保存 DB id 到消息（DAG 压缩需要）
@@ -588,12 +639,6 @@ class Agent:
                                 user_id=self.user_id,
                                 session_id=self.session_id,
                             )
-                        if self.on_artifact:
-                            try:
-                                self.on_artifact(tc.id, tc.name, args_dict, str(result))
-                            except Exception:
-                                logger.exception("Failed to publish tool artifacts")
-
                         # Co-write to experience stream
                         if self.exp_stream:
                             try:
@@ -1211,11 +1256,14 @@ class Agent:
                         )
                     if self.on_artifact:
                         try:
-                            self.on_artifact(
+                            published = self.on_artifact(
                                 tc.id,
                                 tc.name,
                                 args_dict,
                                 str(result),
+                            )
+                            result = _include_published_artifacts(
+                                tc.name, result, published,
                             )
                         except Exception:
                             logger.exception(

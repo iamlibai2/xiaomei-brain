@@ -64,7 +64,7 @@ export function DocxPreview({
 }: {
   dataBase64: string;
   fileName: string;
-  onAnnotate: (selection: ArtifactTextSelection, instruction: string) => void;
+  onAnnotate?: (selection: ArtifactTextSelection, instruction: string) => void;
 }) {
   const { t } = useTranslation();
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -120,6 +120,7 @@ export function DocxPreview({
   }, [dataBase64, fileName]);
 
   const captureSelection = () => {
+    if (!onAnnotate) return;
     const root = bodyRef.current;
     if (!root) return;
     const range = selectionInside(root);
@@ -140,7 +141,7 @@ export function DocxPreview({
         {error && <div className="docx-preview-state error">{t("preview.failed", { error })}</div>}
         <div ref={bodyRef} className="docx-preview-surface" aria-label={`${fileName} ${t("common.preview")}`} />
       </div>
-      {selection && (
+      {selection && onAnnotate && (
         <ArtifactAnnotationComposer
           excerpt={selection.selectedText}
           location={selection.page ? t("preview.selectedPage", { page: selection.page }) : t("preview.selectedText")}

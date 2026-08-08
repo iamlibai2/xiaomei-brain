@@ -15,7 +15,7 @@ from typing import Any, Callable, Iterator
 from xiaomei_brain.projects.models import ProjectRuntimeContext
 
 
-ArtifactCallback = Callable[[str, str, dict, str], None]
+ArtifactCallback = Callable[[str, str, dict, str], Any]
 SpeechCallback = Callable[[Any], str]
 
 
@@ -42,15 +42,16 @@ class ToolExecutionContext:
     project_service: Any = None
     cancel_check: Callable[[], bool] | None = None
 
-    def publish_artifacts(self, result: str) -> None:
+    def publish_artifacts(self, result: str) -> Any:
         """Run the original turn's artifact projection, if one was installed."""
         if self.artifact_callback is not None:
-            self.artifact_callback(
+            return self.artifact_callback(
                 self.tool_call_id,
                 self.tool_name,
                 dict(self.arguments),
                 result,
             )
+        return None
 
     def publish_speech(self, audio: Any) -> str | None:
         """Route one speech expression through the original conversation Turn."""

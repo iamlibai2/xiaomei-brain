@@ -1,0 +1,217 @@
+.presentation-stage {
+  position: fixed;
+  z-index: 70;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  color: var(--ui-color-text-primary);
+  background: var(--ui-bg-primary);
+}
+
+.presentation-stage-canvas {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  gap: 16px;
+  padding: 0;
+}
+
+.presentation-stage.layout-split .presentation-stage-canvas {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 28px;
+}
+
+.presentation-stage.layout-gallery .presentation-stage-canvas {
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  padding: 28px;
+}
+
+.presentation-stage.layout-media_with_details .presentation-stage-canvas {
+  grid-template-columns: minmax(0, 1.7fr) minmax(280px, .7fr);
+  padding: 28px;
+}
+
+.presentation-stage-slot {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--ui-bg-primary) 92%, #000 8%);
+}
+
+.presentation-stage-slot > * {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.presentation-stage-slot > .docx-preview-shell,
+.presentation-stage-slot > .pdf-preview-shell,
+.presentation-stage-slot > .spreadsheet-preview-shell,
+.presentation-stage-slot > .text-artifact-preview-shell,
+.presentation-stage-slot > .html-artifact-preview-shell {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.presentation-stage-slot .docx-preview-viewport,
+.presentation-stage-slot .pdf-preview-viewport,
+.presentation-stage-slot .spreadsheet-preview-viewport,
+.presentation-stage-slot .text-artifact-preview-viewport,
+.presentation-stage-slot .html-artifact-preview-frame {
+  height: auto;
+  min-height: 0;
+  flex: 1;
+}
+
+.presentation-stage.layout-single .presentation-stage-slot {
+  border-radius: 0;
+}
+
+.presentation-stage .visualization-preview,
+.presentation-stage .visualization-preview iframe {
+  width: 100%;
+  height: 100% !important;
+  min-height: 100%;
+}
+
+.presentation-stage-image {
+  display: grid;
+  place-items: center;
+  margin: 0;
+}
+
+.presentation-stage-image img,
+.presentation-stage video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #090a0c;
+}
+
+.presentation-stage-text {
+  overflow: auto;
+  padding: clamp(36px, 6vw, 96px);
+  background: var(--ui-bg-primary);
+}
+
+.presentation-stage-text.detail {
+  padding: 32px;
+}
+
+.presentation-stage-text .message-md {
+  max-width: 1000px;
+  margin: 0 auto;
+  font-size: clamp(18px, 2vw, 30px);
+  line-height: 1.65;
+}
+
+.presentation-stage-text.detail .message-md {
+  font-size: 16px;
+}
+
+.presentation-stage-audio,
+.presentation-stage-unsupported,
+.presentation-stage-loading,
+.presentation-stage-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 40px;
+  text-align: center;
+}
+
+.presentation-stage-audio-cover {
+  display: grid;
+  width: 132px;
+  height: 132px;
+  place-items: center;
+  border-radius: 50%;
+  color: white;
+  background: #20242c;
+  font-size: 54px;
+}
+
+.presentation-stage-audio audio { width: min(560px, 80vw); }
+.presentation-stage-unsupported span { color: var(--ui-color-text-secondary); }
+.presentation-stage-error { color: var(--ui-color-text-error-default); }
+
+.presentation-stage-chrome {
+  position: fixed;
+  z-index: 82;
+  border: 1px solid color-mix(in srgb, var(--ui-border-default) 68%, transparent);
+  background: color-mix(in srgb, var(--ui-bg-primary) 68%, transparent);
+  box-shadow: 0 6px 22px color-mix(in srgb, #000 18%, transparent);
+  backdrop-filter: blur(16px) saturate(125%);
+}
+
+.presentation-stage-title {
+  top: 14px;
+  left: 14px;
+  max-width: min(48vw, 520px);
+  overflow: hidden;
+  padding: 8px 13px;
+  border-radius: 999px;
+  color: var(--ui-color-text-secondary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.presentation-stage-exit {
+  top: 14px;
+  right: 14px;
+  display: grid;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--ui-color-text-primary);
+  cursor: pointer;
+}
+
+.presentation-stage-pagination {
+  left: 50%;
+  bottom: 96px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px;
+  border-radius: 999px;
+  transform: translateX(-50%);
+  color: var(--ui-color-text-secondary);
+  font-size: 12px;
+}
+
+.presentation-stage-pagination button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.presentation-stage-pagination button:hover,
+.presentation-stage-exit:hover {
+  color: var(--ui-color-text-primary);
+  background: color-mix(in srgb, var(--ui-bg-primary) 90%, transparent);
+}

@@ -94,6 +94,54 @@ def test_visualization_html_becomes_sandboxed_artifact_kind(tmp_path, monkeypatc
     assert public_artifact_metadata(artifact)["kind"] == "visualization"
 
 
+def test_audio_extension_wrapped_in_book_title_marks_is_playable(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
+    output = (
+        tmp_path / ".xiaomei-brain" / "xiaomei" / "music"
+        / "《正午散步.wav》"
+    )
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"RIFF\x04\x00\x00\x00WAVE")
+
+    artifact = discover_tool_artifacts(
+        "xiaomei",
+        "session-audio",
+        "turn-audio",
+        "present_artifacts",
+        {"paths": [str(output)]},
+        json.dumps({"path": str(output)}, ensure_ascii=False),
+    )[0]
+
+    assert artifact["kind"] == "audio"
+    assert artifact["mime_type"].startswith("audio/")
+    assert artifact["storage_suffix"] == ".wav"
+    stored = read_stored_artifact("xiaomei", "session-audio", artifact)
+    assert base64.b64decode(stored["data_base64"]) == output.read_bytes()
+
+
+def test_legacy_wrapped_audio_storage_suffix_remains_readable(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
+    artifact_id = "a" * 32
+    payload = b"RIFF\x04\x00\x00\x00WAVE"
+    stored_path = artifact_module._artifact_storage_path(
+        "xiaomei", "session-audio", artifact_id, ".wav》",
+    )
+    stored_path.parent.mkdir(parents=True)
+    stored_path.write_bytes(payload)
+    artifact = {
+        "id": artifact_id,
+        "name": "《正午散步.wav》",
+        "mime_type": "application/octet-stream",
+        "kind": "file",
+        "size": len(payload),
+        "storage_suffix": ".wav》",
+    }
+
+    stored = read_stored_artifact("xiaomei", "session-audio", artifact)
+
+    assert base64.b64decode(stored["data_base64"]) == payload
+
+
 def test_oversized_visualization_is_not_discovered(tmp_path, monkeypatch):
     monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
     monkeypatch.setattr(artifact_module, "MAX_VISUALIZATION_ARTIFACT_BYTES", 8)
@@ -450,7 +498,7 @@ def test_present_artifacts_publishes_created_then_presented(tmp_path, monkeypatc
     )
 
     result = json.dumps({"path": [str(output)], "message": "这是最终报告"})
-    callback(
+    published = callback(
         "tool-1",
         "present_artifacts",
         {"paths": [str(output)], "message": "这是最终报告"},
@@ -466,6 +514,10 @@ def test_present_artifacts_publishes_created_then_presented(tmp_path, monkeypatc
     stored = db.list_artifacts("session-1")[0]
     assert stored["name"] == "answer.md"
     assert stored["presented"] is True
+    assert len(published) == 1
+    assert published[0]["id"] == stored["id"]
+    assert published[0]["session_id"] == "session-1"
+    assert published[0]["name"] == "answer.md"
     db.close()
 
 

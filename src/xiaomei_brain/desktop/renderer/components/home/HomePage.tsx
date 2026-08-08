@@ -23,6 +23,11 @@ import { ArtifactWorkspace } from "../artifact-workspace/ArtifactWorkspace";
 import { supportsArtifactPreview } from "../../artifacts/preview-capability";
 import { registerEmbodimentCommand } from "../../embodiment/command-registry";
 import { VisualizationPreview } from "../visualization/VisualizationPreview";
+import {
+  ArtifactPresentationStage,
+  type PresentationMediaCommand,
+} from "../presentation-stage/ArtifactPresentationStage";
+import type { PresentationStageLayout } from "../presentation-stage/PresentationStage";
 import type { ChatArtifactReference } from "../../types";
 
 const EMPTY_MSGS: DisplayMessage[] = [];
@@ -33,6 +38,12 @@ type FullscreenVisualizationRequest = {
   artifactId: string;
   sessionId: string;
   sentAt: number;
+};
+type PresentationStageState = {
+  artifactKeys: string[];
+  layout: PresentationStageLayout;
+  activeIndex: number;
+  mediaCommand?: PresentationMediaCommand;
 };
 
 function displayMessageTurnId(message: DisplayMessage): string {
@@ -130,7 +141,7 @@ export function HomePage({
   const [activityPanelOpen, setActivityPanelOpen] = useState(false);
   const [rightSidebarSection, setRightSidebarSection] = useState<RightSidebarSection>("activity");
   const [focusedArtifactKey, setFocusedArtifactKey] = useState("");
-  const [fullscreenVisualizationKey, setFullscreenVisualizationKey] = useState("");
+  const [presentationStage, setPresentationStage] = useState<PresentationStageState | null>(null);
   const [fullscreenVisualizationRequest, setFullscreenVisualizationRequest] = useState<FullscreenVisualizationRequest | null>(null);
   const [focusedMemories, setFocusedMemories] = useState<MemoryReference[]>([]);
   const [selectedAssignmentId, setSelectedAssignmentId] = useState<string | null>(null);
@@ -140,7 +151,9 @@ export function HomePage({
   const [focusedSearchMessageId, setFocusedSearchMessageId] = useState("");
   const autoCollapsedLeftSidebarRef = useRef(false);
   const conversationItems = useMemo(() => groupConversationMessages(messages), [messages]);
-
+  const activePresentationKey = presentationStage?.artifactKeys[
+    Math.min(presentationStage.activeIndex, Math.max(0, presentationStage.artifactKeys.length - 1))
+  ] || "";
   const bottomRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
@@ -188,6 +201,26 @@ export function HomePage({
     const currentArtifact = (artifactId: string) => activeArtifacts.find((artifact) => (
       artifact.sessionId === activeSessionId && (!artifactId || artifact.id === artifactId)
     ));
+    const requestedArtifactIds = (args: Record<string, unknown>) => [
+        ...(Array.isArray(args.artifact_ids) ? args.artifact_ids : []),
+        args.artifact_id,
+      ].map((value) => String(value || "").trim()).filter(Boolean);
+    const requestedArtifacts = (args: Record<string, unknown>) => {
+      const ids = [...new Set(requestedArtifactIds(args))];
+      const candidates = activeArtifacts
+        .filter((artifact) => artifact.sessionId === activeSessionId)
+        .sort((left, right) => right.updatedAt - left.updatedAt);
+      if (!ids.length) {
+        const layout = String(args.layout || "single");
+        const limit = layout === "gallery" ? 6 : layout === "split" || layout === "media_with_details" ? 2 : 1;
+        return candidates.slice(0, limit);
+      }
+      const byId = new Map(candidates.map((artifact) => [artifact.id, artifact]));
+      return ids.flatMap((id) => {
+        const artifact = byId.get(id);
+        return artifact ? [artifact] : [];
+      }).slice(0, 6);
+    };
 
     const disposers = [
       registerEmbodimentCommand("ui.right_sidebar.set", ({ agentId, sessionId, arguments: args }) => {
@@ -239,9 +272,141 @@ export function HomePage({
           ? { status: "completed", result: { artifact_id: artifact.id } }
           : { status: "failed", error: response.error || "无法打开产物" };
       }),
+      registerEmbodimentCommand("stage.open", ({ agentId, sessionId, arguments: args }) => {
+        if (!belongsToVisibleConversation(agentId, sessionId)) {
+          return { status: "rejected", error: "发起命令的会话当前不可见" };
+        }
+        const artifacts = requestedArtifacts(args);
+        if (!artifacts.length) return { status: "failed", error: "当前会话没有可演示的产物" };
+        const requestedIds = [...new Set(requestedArtifactIds(args))];
+        if (requestedIds.length && artifacts.length !== requestedIds.length) {
+          return { status: "failed", error: "部分指定产物不属于当前会话或尚未完成登记" };
+        }
+        const requestedLayout = String(args.layout || "single") as PresentationStageLayout;
+        const allowedLayouts: PresentationStageLayout[] = ["single", "split", "gallery", "media_with_details"];
+        const layout = allowedLayouts.includes(requestedLayout) ? requestedLayout : "single";
+        setFocusedArtifactKey("");
+        setActivityPanelOpen(false);
+        setPresentationStage({
+          artifactKeys: artifacts.map((artifact) => `${artifact.sessionId}:${artifact.id}`),
+          layout,
+          activeIndex: 0,
+        });
+        return {
+          status: "completed",
+          result: { artifact_ids: artifacts.map((artifact) => artifact.id), layout },
+        };
+      }),
+      registerEmbodimentCommand("stage.close", ({ agentId, sessionId }) => {
+        if (!belongsToVisibleConversation(agentId, sessionId)) {
+          return { status: "rejected", error: "发起命令的会话当前不可见" };
+        }
+        setPresentationStage(null);
+        return { status: "completed" };
+      }),
+      registerEmbodimentCommand("stage.next", ({ agentId, sessionId }) => {
+        if (!belongsToVisibleConversation(agentId, sessionId)) {
+          return { status: "rejected", error: "发起命令的会话当前不可见" };
+        }
+        if (!activePresentationKey) return { status: "failed", error: "演示台尚未打开" };
+        setPresentationStage((current) => current && current.artifactKeys.length
+          ? { ...current, activeIndex: (current.activeIndex + 1) % current.artifactKeys.length }
+          : current);
+        return { status: "completed" };
+      }),
+      registerEmbodimentCommand("stage.previous", ({ agentId, sessionId }) => {
+        if (!belongsToVisibleConversation(agentId, sessionId)) {
+          return { status: "rejected", error: "发起命令的会话当前不可见" };
+        }
+        if (!activePresentationKey) return { status: "failed", error: "演示台尚未打开" };
+        setPresentationStage((current) => current && current.artifactKeys.length
+          ? { ...current, activeIndex: (current.activeIndex - 1 + current.artifactKeys.length) % current.artifactKeys.length }
+          : current);
+        return { status: "completed" };
+      }),
+      registerEmbodimentCommand("stage.layout.set", ({ agentId, sessionId, arguments: args }) => {
+        if (!belongsToVisibleConversation(agentId, sessionId)) {
+          return { status: "rejected", error: "发起命令的会话当前不可见" };
+        }
+        const requestedLayout = String(args.layout || "") as PresentationStageLayout;
+        const allowedLayouts: PresentationStageLayout[] = ["single", "split", "gallery", "media_with_details"];
+        if (!allowedLayouts.includes(requestedLayout)) {
+          return { status: "rejected", error: "未知的演示布局" };
+        }
+        if (!activePresentationKey) return { status: "failed", error: "演示台尚未打开" };
+        const requestedIds = [...new Set(requestedArtifactIds(args))];
+        const hasRequestedArtifacts = requestedIds.length > 0;
+        const artifacts = hasRequestedArtifacts ? requestedArtifacts(args) : [];
+        if (hasRequestedArtifacts && !artifacts.length) {
+          return { status: "failed", error: "没有找到指定的会话产物" };
+        }
+        if (hasRequestedArtifacts && artifacts.length !== requestedIds.length) {
+          return { status: "failed", error: "部分指定产物不属于当前会话或尚未完成登记" };
+        }
+        setPresentationStage((current) => current ? {
+          ...current,
+          layout: requestedLayout,
+          artifactKeys: hasRequestedArtifacts
+            ? artifacts.map((artifact) => `${artifact.sessionId}:${artifact.id}`)
+            : current.artifactKeys,
+          activeIndex: hasRequestedArtifacts ? 0 : current.activeIndex,
+        } : current);
+        return {
+          status: "completed",
+          result: {
+            layout: requestedLayout,
+            artifact_ids: hasRequestedArtifacts
+              ? artifacts.map((artifact) => artifact.id)
+              : undefined,
+          },
+        };
+      }),
+      registerEmbodimentCommand("stage.state.get", ({ agentId, sessionId }) => {
+        if (!belongsToVisibleConversation(agentId, sessionId)) {
+          return { status: "rejected", error: "发起命令的会话当前不可见" };
+        }
+        if (!presentationStage) {
+          return {
+            status: "completed",
+            result: { open: false, artifact_ids: [] },
+          };
+        }
+        const artifacts = presentationStage.artifactKeys.flatMap((key) => {
+          const artifact = activeArtifacts.find((item) => `${item.sessionId}:${item.id}` === key);
+          return artifact ? [artifact] : [];
+        });
+        return {
+          status: "completed",
+          result: {
+            open: true,
+            layout: presentationStage.layout,
+            active_index: presentationStage.activeIndex,
+            artifact_ids: artifacts.map((artifact) => artifact.id),
+            artifacts: artifacts.map((artifact) => ({
+              artifact_id: artifact.id,
+              name: artifact.name,
+              kind: artifact.kind,
+              mime_type: artifact.mimeType,
+            })),
+          },
+        };
+      }),
+      ...(["play", "pause"] as const).map((action) => registerEmbodimentCommand(`stage.${action}`, ({ agentId, sessionId }) => {
+        if (!belongsToVisibleConversation(agentId, sessionId)) {
+          return { status: "rejected" as const, error: "发起命令的会话当前不可见" };
+        }
+        if (!activePresentationKey) {
+          return { status: "failed" as const, error: "演示台尚未打开" };
+        }
+        setPresentationStage((current) => current ? {
+          ...current,
+          mediaCommand: { type: action, revision: Date.now() },
+        } : current);
+        return { status: "completed" as const };
+      })),
     ];
     return () => disposers.forEach((dispose) => dispose());
-  }, [activeAgentId, activeArtifacts, activeSessionId, activateArtifact]);
+  }, [activeAgentId, activeArtifacts, activePresentationKey, activeSessionId, activateArtifact, presentationStage]);
 
   useEffect(() => {
     if (focusedArtifactKey && !leftSidebarCollapsed) {
@@ -467,21 +632,22 @@ export function HomePage({
     setActivityPanelOpen(false);
     if (!leftSidebarCollapsed) onLeftSidebarCollapsedChange(true);
   }, [leftSidebarCollapsed, onLeftSidebarCollapsedChange]);
-  const toggleVisualizationFullscreen = useCallback((artifactKey: string) => {
-    setFullscreenVisualizationKey((current) => current === artifactKey ? "" : artifactKey);
+  const toggleArtifactPresentation = useCallback((artifactKey: string) => {
+    setPresentationStage((current) => current?.artifactKeys.includes(artifactKey)
+      ? null
+      : { artifactKeys: [artifactKey], layout: "single", activeIndex: 0 });
   }, []);
 
   const sendComposerMessage = useCallback((
     text: string,
     artifactReferences: ChatArtifactReference[] = [],
   ) => {
-    if (!fullscreenVisualizationKey) {
+    if (!activePresentationKey) {
       sendMessage(text, artifactReferences);
       return;
     }
     const current = activeArtifacts.find((artifact) => (
-      `${artifact.sessionId}:${artifact.id}` === fullscreenVisualizationKey
-      && artifact.kind === "visualization"
+      `${artifact.sessionId}:${artifact.id}` === activePresentationKey
     ));
     if (!current) {
       sendMessage(text, artifactReferences);
@@ -494,38 +660,40 @@ export function HomePage({
       mimeType: current.mimeType,
       size: current.size,
       kind: current.kind,
-      presentationMode: "visualization_fullscreen",
+      presentationMode: "presentation_stage",
     };
     const references = artifactReferences.some((reference) => (
       reference.artifactId === current.id && reference.sessionId === current.sessionId
     ))
       ? artifactReferences
       : [...artifactReferences, implicitReference];
-    setFullscreenVisualizationRequest({
-      artifactId: current.id,
-      sessionId: current.sessionId,
-      sentAt: Date.now(),
-    });
+    if (current.kind === "visualization") {
+      setFullscreenVisualizationRequest({
+        artifactId: current.id,
+        sessionId: current.sessionId,
+        sentAt: Date.now(),
+      });
+    }
     sendMessage(text, references);
-  }, [activeArtifacts, fullscreenVisualizationKey, sendMessage]);
+  }, [activeArtifacts, activePresentationKey, sendMessage]);
 
   useEffect(() => {
-    if (!fullscreenVisualizationKey) return undefined;
+    if (!activePresentationKey) return undefined;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setFullscreenVisualizationKey("");
+      if (event.key === "Escape") setPresentationStage(null);
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [fullscreenVisualizationKey]);
+  }, [activePresentationKey]);
 
   useEffect(() => {
-    setFullscreenVisualizationKey("");
+    setPresentationStage(null);
     setFullscreenVisualizationRequest(null);
   }, [activeAgentId, activeSessionId]);
 
   useEffect(() => {
     const request = fullscreenVisualizationRequest;
-    if (!request || !fullscreenVisualizationKey) return;
+    if (!request || !activePresentationKey) return;
     const userMessage = [...messages].reverse().find((message) => (
       message.role === "user"
       && (message.createdAt || 0) >= request.sentAt - 250
@@ -538,12 +706,19 @@ export function HomePage({
       && artifact.turnId === userMessage.turnId
     ));
     if (replacement) {
-      setFullscreenVisualizationKey(`${replacement.sessionId}:${replacement.id}`);
+      setPresentationStage((current) => current ? {
+        ...current,
+        artifactKeys: current.artifactKeys.map((key) => (
+          key === `${request.sessionId}:${request.artifactId}`
+            ? `${replacement.sessionId}:${replacement.id}`
+            : key
+        )),
+      } : current);
       setFullscreenVisualizationRequest(null);
       return;
     }
     if (!sending) setFullscreenVisualizationRequest(null);
-  }, [activeArtifacts, fullscreenVisualizationKey, fullscreenVisualizationRequest, messages, sending]);
+  }, [activeArtifacts, activePresentationKey, fullscreenVisualizationRequest, messages, sending]);
   const showMemories = useCallback((references: MemoryReference[]) => {
     setFocusedMemories(references);
     setRightSidebarSection("context");
@@ -558,9 +733,15 @@ export function HomePage({
     }
     return agentName || t("home.defaultAgentName");
   })();
+  const presentationArtifacts = presentationStage
+    ? presentationStage.artifactKeys.flatMap((key) => {
+      const artifact = activeArtifacts.find((item) => `${item.sessionId}:${item.id}` === key);
+      return artifact ? [artifact] : [];
+    })
+    : [];
 
   return (
-    <div className={`main-content ${focusedArtifactKey ? "has-artifact-workspace" : ""} ${fullscreenVisualizationKey ? "visualization-fullscreen-mode" : ""}`}>
+    <div className={`main-content ${focusedArtifactKey ? "has-artifact-workspace" : ""} ${activePresentationKey ? "presentation-stage-mode" : ""}`}>
       <div className="main-content-primary">
       {activeAgentId && !showAgentStart && (
         <ChatTopbar
@@ -688,8 +869,7 @@ export function HomePage({
                         highlighted={focusedSearchMessageId === m.id}
                         onShowArtifact={showArtifact}
                         onMaximizeVisualization={maximizeVisualization}
-                        fullscreenVisualizationKey={fullscreenVisualizationKey}
-                        onToggleVisualizationFullscreen={toggleVisualizationFullscreen}
+                        onPresentArtifact={toggleArtifactPresentation}
                         onShowMemories={showMemories}
                       />
                     );
@@ -735,6 +915,20 @@ export function HomePage({
           agentId={activeAgentId}
           artifactKey={focusedArtifactKey}
           onClose={closeArtifactWorkspace}
+        />
+      )}
+      {presentationStage && activeAgentId && presentationArtifacts.length > 0 && (
+        <ArtifactPresentationStage
+          agentId={activeAgentId}
+          artifacts={presentationArtifacts}
+          layout={presentationStage.layout}
+          activeIndex={presentationStage.activeIndex}
+          mediaCommand={presentationStage.mediaCommand}
+          onClose={() => setPresentationStage(null)}
+          onActiveIndexChange={(activeIndex) => setPresentationStage((current) => (
+            current ? { ...current, activeIndex } : current
+          ))}
+          onFollowUp={(prompt) => useCoreStore.getState().setDraft(prompt)}
         />
       )}
     </div>
@@ -809,8 +1003,7 @@ function MessageRow({
   highlighted,
   onShowArtifact,
   onMaximizeVisualization,
-  fullscreenVisualizationKey,
-  onToggleVisualizationFullscreen,
+  onPresentArtifact,
   onShowMemories,
 }: {
   message: DisplayMessage;
@@ -819,8 +1012,7 @@ function MessageRow({
   highlighted: boolean;
   onShowArtifact: (artifactId: string, sessionId: string) => void;
   onMaximizeVisualization: () => void;
-  fullscreenVisualizationKey: string;
-  onToggleVisualizationFullscreen: (artifactKey: string) => void;
+  onPresentArtifact: (artifactKey: string) => void;
   onShowMemories: (references: MemoryReference[]) => void;
 }) {
   const { t } = useTranslation();
@@ -871,8 +1063,7 @@ function MessageRow({
         sessionId={activeSessionId}
         onShowArtifact={onShowArtifact}
         onMaximizeVisualization={onMaximizeVisualization}
-        fullscreenVisualizationKey={fullscreenVisualizationKey}
-        onToggleVisualizationFullscreen={onToggleVisualizationFullscreen}
+        onPresentArtifact={onPresentArtifact}
       />
     );
   }
@@ -1287,8 +1478,7 @@ function ArtifactCard({
   sessionId,
   onShowArtifact,
   onMaximizeVisualization,
-  fullscreenVisualizationKey,
-  onToggleVisualizationFullscreen,
+  onPresentArtifact,
 }: {
   message: DisplayMessage;
   agentName: string;
@@ -1297,8 +1487,7 @@ function ArtifactCard({
   sessionId: string;
   onShowArtifact: (artifactId: string, sessionId: string) => void;
   onMaximizeVisualization: () => void;
-  fullscreenVisualizationKey: string;
-  onToggleVisualizationFullscreen: (artifactKey: string) => void;
+  onPresentArtifact: (artifactKey: string) => void;
 }) {
   const { t } = useTranslation();
   const storedArtifact = useCoreStore((state) => (
@@ -1371,7 +1560,6 @@ function ArtifactCard({
 
   if (artifact.kind === "visualization") {
     const visualizationKey = `${sessionId}:${artifact.id}`;
-    const visualizationFullscreen = fullscreenVisualizationKey === visualizationKey;
     return (
       <div className={`assistant-message-row artifact-message-row visualization-message-row ${showAgentHeader ? "" : "agent-turn-continuation"}`}>
         {showAgentHeader && (
@@ -1385,9 +1573,8 @@ function ArtifactCard({
             dataBase64={visualizationData}
             fileName={artifact.name}
             inline
-            fullscreen={visualizationFullscreen}
             onExpand={onMaximizeVisualization}
-            onFullscreen={() => onToggleVisualizationFullscreen(visualizationKey)}
+            onFullscreen={() => onPresentArtifact(visualizationKey)}
             onFollowUp={(prompt) => setDraft(prompt)}
           />
         ) : (
@@ -1428,9 +1615,19 @@ function ArtifactCard({
           </button>
           <div className="artifact-inline-image-meta">
             <span title={artifact.name}>{artifact.name}</span>
-            <button type="button" onClick={() => onShowArtifact(artifact.id, sessionId)}>
-              {t("common.preview")}
-            </button>
+            <div>
+              <button type="button" onClick={() => onShowArtifact(artifact.id, sessionId)}>
+                {t("common.preview")}
+              </button>
+              <button
+                type="button"
+                onClick={() => onPresentArtifact(`${sessionId}:${artifact.id}`)}
+                title={t("visualize.fullscreen")}
+                aria-label={t("visualize.fullscreen")}
+              >
+                <Icon name="maximize" size={14} />
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1469,6 +1666,15 @@ function ArtifactCard({
             {error && <span className="artifact-error">{error}</span>}
           </span>
           <Icon name={previewSupported ? "eye" : "external-link"} size={16} className="artifact-open-icon" />
+        </button>
+        <button
+          type="button"
+          className="artifact-present-button"
+          onClick={() => onPresentArtifact(`${sessionId}:${artifact.id}`)}
+          title={t("visualize.fullscreen")}
+          aria-label={t("visualize.fullscreen")}
+        >
+          <Icon name="maximize" size={15} />
         </button>
       </div>
     </div>

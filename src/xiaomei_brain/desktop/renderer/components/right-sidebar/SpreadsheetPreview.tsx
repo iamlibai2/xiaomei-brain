@@ -46,7 +46,7 @@ export function SpreadsheetPreview({
 }: {
   dataBase64: string;
   fileName: string;
-  onAnnotate: (selection: ArtifactSpreadsheetSelection, instruction: string) => void;
+  onAnnotate?: (selection: ArtifactSpreadsheetSelection, instruction: string) => void;
 }) {
   const { t } = useTranslation();
   const [xlsx, setXlsx] = useState<XlsxModule | null>(null);
@@ -221,6 +221,7 @@ export function SpreadsheetPreview({
                         data-selected={selected ? "true" : undefined}
                         title={value}
                         onMouseDown={(event) => {
+                          if (!onAnnotate) return;
                           event.preventDefault();
                           const nextAnchor = event.shiftKey && anchor ? anchor : position;
                           setAnchor(nextAnchor);
@@ -231,7 +232,9 @@ export function SpreadsheetPreview({
                         onMouseEnter={() => {
                           if (dragging) setFocus(position);
                         }}
-                        onDoubleClick={() => setShowComposer(true)}
+                        onDoubleClick={() => {
+                          if (onAnnotate) setShowComposer(true);
+                        }}
                       >
                         {value}
                       </td>
@@ -248,7 +251,7 @@ export function SpreadsheetPreview({
           </div>
         )}
       </div>
-      {selection && showComposer && (
+      {selection && showComposer && onAnnotate && (
         <ArtifactAnnotationComposer
           excerpt={selection.selectedText}
           location={`${selection.sheet}!${selection.range}`}

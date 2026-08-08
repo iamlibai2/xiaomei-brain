@@ -382,7 +382,7 @@ class ArtifactHtmlSelection(BaseModel):
 class ChatArtifactReference(BaseModel):
     artifact_id: str = Field(..., min_length=32, max_length=32, pattern=r"^[a-f0-9]+$")
     session_id: str = Field(..., min_length=1, max_length=256)
-    presentation_mode: Literal["visualization_fullscreen"] | None = None
+    presentation_mode: Literal["visualization_fullscreen", "presentation_stage"] | None = None
     selection: ArtifactTextSelection | ArtifactSpreadsheetSelection | ArtifactHtmlSelection | None = None
 
 

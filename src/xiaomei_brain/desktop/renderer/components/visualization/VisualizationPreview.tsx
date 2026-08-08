@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Icon } from "../ui";
 import {
@@ -47,7 +46,6 @@ export function VisualizationPreview({
   dataBase64,
   fileName,
   inline = false,
-  fullscreen = false,
   onExpand,
   onFullscreen,
   onFollowUp,
@@ -55,7 +53,6 @@ export function VisualizationPreview({
   dataBase64: string;
   fileName: string;
   inline?: boolean;
-  fullscreen?: boolean;
   onExpand?: () => void;
   onFullscreen?: () => void;
   onFollowUp?: (prompt: string) => void;
@@ -78,14 +75,6 @@ export function VisualizationPreview({
   }, [dataBase64, sourceDocument, t]);
 
   useEffect(() => {
-    if (!fullscreen) return undefined;
-    void window.win.setFullScreen(true);
-    return () => {
-      void window.win.setFullScreen(false);
-    };
-  }, [fullscreen]);
-
-  useEffect(() => {
     const receive = (event: MessageEvent) => {
       if (event.source !== frameRef.current?.contentWindow) return;
       const data = event.data as Record<string, unknown> | null;
@@ -106,12 +95,12 @@ export function VisualizationPreview({
   }, [inline, onFollowUp, t, token]);
 
   const preview = (
-    <section className={`visualization-preview ${inline ? "inline" : "workspace"} ${fullscreen ? "fullscreen" : ""}`}>
-      {inline && !fullscreen && (
+    <section className={`visualization-preview ${inline ? "inline" : "workspace"}`}>
+      {inline && (
         <header className="visualization-preview-header">
           <span><Icon name="chart-bar" size={16} />{fileName.replace(/\.visualization\.html$/i, "")}</span>
           <div className="visualization-preview-actions">
-            {SHOW_EXPAND_ACTION && onExpand && !fullscreen && (
+            {SHOW_EXPAND_ACTION && onExpand && (
               <button type="button" onClick={onExpand} title={t("visualize.expand")} aria-label={t("visualize.expand")}>
                 <Icon name="sidebar-panel-left" size={15} />
               </button>
@@ -120,25 +109,14 @@ export function VisualizationPreview({
               <button
                 type="button"
                 onClick={onFullscreen}
-                title={t(fullscreen ? "visualize.exitFullscreen" : "visualize.fullscreen")}
-                aria-label={t(fullscreen ? "visualize.exitFullscreen" : "visualize.fullscreen")}
+                title={t("visualize.fullscreen")}
+                aria-label={t("visualize.fullscreen")}
               >
-                <Icon name={fullscreen ? "minimize" : "maximize"} size={15} />
+                <Icon name="maximize" size={15} />
               </button>
             )}
           </div>
         </header>
-      )}
-      {fullscreen && onFullscreen && (
-        <button
-          type="button"
-          className="visualization-fullscreen-exit"
-          onClick={onFullscreen}
-          title={t("visualize.exitFullscreen")}
-          aria-label={t("visualize.exitFullscreen")}
-        >
-          <Icon name="minimize" size={17} />
-        </button>
       )}
       {error && <div className="visualization-preview-error">{error}</div>}
       {sourceDocument && (
@@ -154,7 +132,5 @@ export function VisualizationPreview({
     </section>
   );
 
-  // Fullscreen previews must leave the message-list stacking and clipping
-  // context so they can cover the complete Desktop renderer viewport.
-  return fullscreen ? createPortal(preview, document.body) : preview;
+  return preview;
 }

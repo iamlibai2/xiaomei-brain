@@ -57,7 +57,7 @@ export function TextArtifactPreview({
   dataBase64: string;
   fileName: string;
   markdown: boolean;
-  onAnnotate: (selection: ArtifactTextSelection, instruction: string) => void;
+  onAnnotate?: (selection: ArtifactTextSelection, instruction: string) => void;
 }) {
   const { t } = useTranslation();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -68,6 +68,7 @@ export function TextArtifactPreview({
   const content = truncated ? decoded.slice(0, MAX_RENDERED_CHARACTERS) : decoded;
 
   const captureSelection = () => {
+    if (!onAnnotate) return;
     const root = rootRef.current;
     if (!root) return;
     const range = selectionInside(root);
@@ -107,7 +108,7 @@ export function TextArtifactPreview({
           </div>
         )}
       </div>
-      {selection && (
+      {selection && onAnnotate && (
         <ArtifactAnnotationComposer
           excerpt={selection.selectedText}
           location={t("artifactUi.selectedText")}

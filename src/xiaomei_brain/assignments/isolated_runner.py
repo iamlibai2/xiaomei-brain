@@ -260,7 +260,7 @@ class IsolatedAssignmentRunner:
             tool_name: str,
             arguments: dict[str, Any],
             result: str,
-        ) -> None:
+        ) -> list[dict[str, Any]]:
             from xiaomei_brain.gateway.artifacts import (
                 discover_tool_artifacts,
                 public_artifact_metadata,
@@ -281,6 +281,7 @@ class IsolatedAssignmentRunner:
                 # arguments/results still discover individual work files.
                 scan_roots=(outputs_dir,),
             )
+            published: list[dict[str, Any]] = []
             for artifact in discovered:
                 relative_path = str(artifact.get("relative_path") or "")
                 output_prefix = outputs_dir.relative_to(
@@ -360,6 +361,8 @@ class IsolatedAssignmentRunner:
                 )
                 if is_new_artifact:
                     artifacts.append(public)
+                published.append(public)
+            return published
 
         runtime.on_tool_complete = on_tool_complete
         runtime.on_tool_approval = on_tool_approval
