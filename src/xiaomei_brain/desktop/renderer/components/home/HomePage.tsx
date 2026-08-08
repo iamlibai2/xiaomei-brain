@@ -23,11 +23,17 @@ import { ArtifactWorkspace } from "../artifact-workspace/ArtifactWorkspace";
 import { supportsArtifactPreview } from "../../artifacts/preview-capability";
 import { registerEmbodimentCommand } from "../../embodiment/command-registry";
 import { VisualizationPreview } from "../visualization/VisualizationPreview";
+import type { ChatArtifactReference } from "../../types";
 
 const EMPTY_MSGS: DisplayMessage[] = [];
 const EMPTY_ASSIGNMENTS: AssignmentSnapshot[] = [];
 const EMPTY_ARTIFACTS: ArtifactSnapshot[] = [];
 type RightSidebarSection = "activity" | "state" | "project" | "assignment" | "artifact" | "memory" | "context";
+type FullscreenVisualizationRequest = {
+  artifactId: string;
+  sessionId: string;
+  sentAt: number;
+};
 
 function displayMessageTurnId(message: DisplayMessage): string {
   return message.turnId
@@ -125,6 +131,7 @@ export function HomePage({
   const [rightSidebarSection, setRightSidebarSection] = useState<RightSidebarSection>("activity");
   const [focusedArtifactKey, setFocusedArtifactKey] = useState("");
   const [fullscreenVisualizationKey, setFullscreenVisualizationKey] = useState("");
+  const [fullscreenVisualizationRequest, setFullscreenVisualizationRequest] = useState<FullscreenVisualizationRequest | null>(null);
   const [focusedMemories, setFocusedMemories] = useState<MemoryReference[]>([]);
   const [selectedAssignmentId, setSelectedAssignmentId] = useState<string | null>(null);
   const [historyTraversalStarted, setHistoryTraversalStarted] = useState<Set<string>>(() => new Set());
@@ -464,6 +471,44 @@ export function HomePage({
     setFullscreenVisualizationKey((current) => current === artifactKey ? "" : artifactKey);
   }, []);
 
+  const sendComposerMessage = useCallback((
+    text: string,
+    artifactReferences: ChatArtifactReference[] = [],
+  ) => {
+    if (!fullscreenVisualizationKey) {
+      sendMessage(text, artifactReferences);
+      return;
+    }
+    const current = activeArtifacts.find((artifact) => (
+      `${artifact.sessionId}:${artifact.id}` === fullscreenVisualizationKey
+      && artifact.kind === "visualization"
+    ));
+    if (!current) {
+      sendMessage(text, artifactReferences);
+      return;
+    }
+    const implicitReference: ChatArtifactReference = {
+      artifactId: current.id,
+      sessionId: current.sessionId,
+      name: current.name,
+      mimeType: current.mimeType,
+      size: current.size,
+      kind: current.kind,
+      presentationMode: "visualization_fullscreen",
+    };
+    const references = artifactReferences.some((reference) => (
+      reference.artifactId === current.id && reference.sessionId === current.sessionId
+    ))
+      ? artifactReferences
+      : [...artifactReferences, implicitReference];
+    setFullscreenVisualizationRequest({
+      artifactId: current.id,
+      sessionId: current.sessionId,
+      sentAt: Date.now(),
+    });
+    sendMessage(text, references);
+  }, [activeArtifacts, fullscreenVisualizationKey, sendMessage]);
+
   useEffect(() => {
     if (!fullscreenVisualizationKey) return undefined;
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -475,7 +520,30 @@ export function HomePage({
 
   useEffect(() => {
     setFullscreenVisualizationKey("");
+    setFullscreenVisualizationRequest(null);
   }, [activeAgentId, activeSessionId]);
+
+  useEffect(() => {
+    const request = fullscreenVisualizationRequest;
+    if (!request || !fullscreenVisualizationKey) return;
+    const userMessage = [...messages].reverse().find((message) => (
+      message.role === "user"
+      && (message.createdAt || 0) >= request.sentAt - 250
+      && message.attachments?.some((attachment) => attachment.id === request.artifactId)
+    ));
+    if (!userMessage?.turnId) return;
+    const replacement = activeArtifacts.find((artifact) => (
+      artifact.sessionId === request.sessionId
+      && artifact.kind === "visualization"
+      && artifact.turnId === userMessage.turnId
+    ));
+    if (replacement) {
+      setFullscreenVisualizationKey(`${replacement.sessionId}:${replacement.id}`);
+      setFullscreenVisualizationRequest(null);
+      return;
+    }
+    if (!sending) setFullscreenVisualizationRequest(null);
+  }, [activeArtifacts, fullscreenVisualizationKey, fullscreenVisualizationRequest, messages, sending]);
   const showMemories = useCallback((references: MemoryReference[]) => {
     setFocusedMemories(references);
     setRightSidebarSection("context");
@@ -645,7 +713,7 @@ export function HomePage({
         )}
         {!showAgentStart && (
           <div className="wb-home-composer">
-            <ChatInput onSend={sendMessage} sending={sending} onAbort={abortMessage} />
+            <ChatInput onSend={sendComposerMessage} sending={sending} onAbort={abortMessage} />
           </div>
         )}
       </div>
@@ -1233,7 +1301,10 @@ function ArtifactCard({
   onToggleVisualizationFullscreen: (artifactKey: string) => void;
 }) {
   const { t } = useTranslation();
-  const artifact = message.artifact!;
+  const storedArtifact = useCoreStore((state) => (
+    state.artifactsByAgent[agentId] || []
+  ).find((item) => item.id === message.artifact?.id && item.sessionId === sessionId));
+  const artifact = storedArtifact || message.artifact!;
   const [previewUrl, setPreviewUrl] = useState("");
   const [visualizationData, setVisualizationData] = useState("");
   const [error, setError] = useState("");
@@ -1269,7 +1340,15 @@ function ArtifactCard({
       })
       .catch((reason) => { if (!cancelled) setError(String(reason)); });
     return () => { cancelled = true; };
-  }, [agentId, artifact.id, artifact.kind, artifact.mimeType, artifact.size, sessionId]);
+  }, [
+    agentId,
+    artifact.id,
+    artifact.kind,
+    artifact.mimeType,
+    artifact.size,
+    storedArtifact?.updatedAt,
+    sessionId,
+  ]);
 
   const open = async () => {
     if (!agentId || !sessionId || opening) return;

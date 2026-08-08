@@ -496,9 +496,28 @@ def append_text_attachments(content: str, attachments: list[dict[str, Any]]) -> 
                 "</attached_video>"
             )
         else:
+            safe_id = html.escape(str(item.get("id", "")), quote=True)
+            id_attribute = ""
+            source_artifact = item.get("source_artifact")
+            revision_instruction = ""
+            if (
+                isinstance(source_artifact, dict)
+                and str(item.get("name", "")).lower().endswith(".visualization.html")
+                and managed_relative_path
+                and item.get("presentation_mode") == "visualization_fullscreen"
+            ):
+                id_attribute = f' id="{safe_id}"' if safe_id else ""
+                revision_instruction = (
+                    "\nThis is the visualization currently open in Desktop. "
+                    "For a requested revision, preserve unrelated behavior and call "
+                    "write_visualization with this source_attachment_id so the same "
+                    "artifact is updated in place. Use workspace_path exactly; do not "
+                    "reconstruct an absolute Agent data path."
+                )
             sections.append(
-                f'\n<attached_file name="{safe_name}"{path_attribute}>\n'
+                f'\n<attached_file{id_attribute} name="{safe_name}"{path_attribute}>\n'
                 f'{item.get("text_content", "")}\n'
+                f"{revision_instruction}\n"
                 f"{annotation_context}\n"
                 "</attached_file>"
             )

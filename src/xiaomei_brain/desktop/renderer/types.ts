@@ -60,8 +60,9 @@ export interface ChatArtifactReference {
   artifactId: string;
   sessionId: string;
   selection?: ArtifactSelection;
-  // Renderer-only presentation fields; Electron sends only Agent-owned IDs
-  // and the structured selection to Gateway.
+  presentationMode?: "visualization_fullscreen";
+  // Renderer-only display fields are omitted by Electron; presentationMode is
+  // the explicit exception used to preserve the fullscreen editing context.
   name?: string;
   mimeType?: string;
   size?: number;

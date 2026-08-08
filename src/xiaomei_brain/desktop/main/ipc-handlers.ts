@@ -879,6 +879,7 @@ export function registerIpcHandlers(
       artifactReferences?: Array<{
         artifactId: string;
         sessionId: string;
+        presentationMode?: "visualization_fullscreen";
         selection?: ({
           kind: "text";
           page?: number;
@@ -924,6 +925,7 @@ export function registerIpcHandlers(
         artifact_references: (args.artifactReferences || []).map((reference) => ({
           artifact_id: reference.artifactId,
           session_id: reference.sessionId,
+          presentation_mode: reference.presentationMode,
           selection: reference.selection
             ? reference.selection.kind === "spreadsheet"
               ? {

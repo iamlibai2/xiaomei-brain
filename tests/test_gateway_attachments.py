@@ -105,6 +105,54 @@ def test_text_artifact_annotation_is_added_to_model_context(tmp_path, monkeypatc
     assert "Update this Agent-owned artifact in place" in model_input
 
 
+def test_visualization_artifact_exposes_in_place_revision_context():
+    artifact_id = "a" * 32
+    model_input = append_text_attachments("make it dark", [{
+        "id": artifact_id,
+        "name": "dashboard.visualization.html",
+        "mime_type": "text/html",
+        "size": 24,
+        "kind": "text",
+        "text_content": '<div id="dashboard"></div>',
+        "managed_artifact_relative_path": "dashboard.visualization.html",
+        "managed_artifact_path": r"C:\agent\workspace\dashboard.visualization.html",
+        "presentation_mode": "visualization_fullscreen",
+        "source_artifact": {
+            "artifact_id": artifact_id,
+            "session_id": "session-1",
+        },
+    }])
+
+    assert (
+        f'<attached_file id="{artifact_id}" name="dashboard.visualization.html" '
+        'workspace_path="dashboard.visualization.html">'
+    ) in model_input
+    assert "write_visualization with this source_attachment_id" in model_input
+    assert "updated in place" in model_input
+
+
+def test_non_fullscreen_visualization_keeps_normal_attachment_context():
+    artifact_id = "b" * 32
+    model_input = append_text_attachments("summarize this", [{
+        "id": artifact_id,
+        "name": "dashboard.visualization.html",
+        "mime_type": "text/html",
+        "size": 24,
+        "kind": "text",
+        "text_content": '<div id="dashboard"></div>',
+        "managed_artifact_relative_path": "dashboard.visualization.html",
+        "managed_artifact_path": r"C:\agent\workspace\dashboard.visualization.html",
+        "source_artifact": {
+            "artifact_id": artifact_id,
+            "session_id": "session-1",
+        },
+    }])
+
+    assert f'<attached_file name="dashboard.visualization.html"' in model_input
+    assert "source_attachment_id" not in model_input
+    assert "updated in place" not in model_input
+
+
 def test_image_attachment_id_is_added_to_model_context(tmp_path, monkeypatch):
     monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: tmp_path))
     prepared, images, _ = prepare_attachments(

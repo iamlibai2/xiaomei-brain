@@ -57,7 +57,11 @@ def _available_output_path(output_root: Path, filename: str) -> Path:
     raise ValueError("unable to allocate a unique visualization file name")
 
 
-def write_visualization(filename: str, content: str) -> dict[str, Any]:
+def write_visualization(
+    filename: str,
+    content: str,
+    source_attachment_id: str = "",
+) -> dict[str, Any]:
     """Write one self-contained visualization fragment into the output area."""
     context = current_tool_execution()
     if context is None:
@@ -72,14 +76,38 @@ def write_visualization(filename: str, content: str) -> dict[str, Any]:
         safe_name = _visualization_filename(filename)
         output_root = Path(context.output_root or get_workspace_dir()).resolve()
         output_root.mkdir(parents=True, exist_ok=True)
-        output_path = _available_output_path(output_root, safe_name)
+        source_artifact: dict[str, Any] | None = None
+        if source_attachment_id:
+            attachment = next(
+                (
+                    item for item in context.attachments
+                    if str(item.get("id", "")) == source_attachment_id
+                ),
+                None,
+            )
+            if attachment is None:
+                return {"error": "source attachment is not available in this turn"}
+            raw_source = attachment.get("source_artifact")
+            raw_managed_path = str(attachment.get("managed_artifact_path") or "")
+            if not isinstance(raw_source, dict) or not raw_managed_path:
+                return {"error": "source attachment is not an Agent-owned artifact"}
+            output_path = Path(raw_managed_path).resolve()
+            if not output_path.name.lower().endswith(".visualization.html"):
+                return {"error": "source artifact is not a visualization"}
+            try:
+                output_path.relative_to(output_root)
+            except ValueError:
+                return {"error": "source visualization is outside the current output area"}
+            source_artifact = dict(raw_source)
+        else:
+            output_path = _available_output_path(output_root, safe_name)
     except (OSError, ValueError) as exc:
         return {"error": str(exc)}
 
     result = write(str(output_path), content)
     if result.get("error"):
         return result
-    return {
+    response = {
         "success": True,
         "type": "visualization_write_result",
         "kind": "visualization",
@@ -87,6 +115,13 @@ def write_visualization(filename: str, content: str) -> dict[str, Any]:
         "output_path": str(output_path),
         **result,
     }
+    if source_artifact is not None:
+        response["updated_artifact"] = {
+            "artifact_id": str(source_artifact.get("artifact_id") or ""),
+            "session_id": str(source_artifact.get("session_id") or ""),
+            "output_path": str(output_path),
+        }
+    return response
 
 
 write_visualization_tool = Tool(
@@ -97,8 +132,9 @@ write_visualization_tool = Tool(
         "JavaScript. Version-pinned static dependencies may use the visualization CDN "
         "allowlist, but API requests are unavailable. The platform assigns the protected "
         ".visualization.html suffix; do not use the generic write tool for visualizations. "
-        "When revising an existing visualization, first read the exact relative path "
-        "returned by glob and never reconstruct the Agent data directory as an absolute path."
+        "When revising an attached Agent-owned visualization, pass its source_attachment_id "
+        "to update the same artifact in place. Never reconstruct the Agent data directory "
+        "as an absolute path."
     ),
     parameters={
         "type": "object",
@@ -113,6 +149,13 @@ write_visualization_tool = Tool(
             "content": {
                 "type": "string",
                 "description": "HTML fragment with inline CSS and JavaScript, at most 1 MB",
+            },
+            "source_attachment_id": {
+                "type": "string",
+                "description": (
+                    "Optional id of the current attached visualization. When present, "
+                    "the Agent-owned source and artifact identity are updated in place"
+                ),
             },
         },
         "required": ["filename", "content"],

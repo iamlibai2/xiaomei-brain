@@ -232,6 +232,8 @@ class ChatMethods:
                         "artifact_id": reference.artifact_id,
                         "session_id": reference.session_id,
                     }
+                    if reference.presentation_mode is not None:
+                        item["presentation_mode"] = reference.presentation_mode
                     managed_relative_path = str(
                         artifact.get("relative_path") or "",
                     ).replace("\\", "/")

@@ -27,6 +27,7 @@ requires_tools: [write_visualization, present_artifacts]
 6. 根元素必须有唯一 ID，脚本通过这个 ID 查询自己的内容，不能依赖 `document.currentScript`。
 7. 使用原生 HTML、SVG、Canvas 和 JavaScript；宿主不保证任何第三方库存在。
 8. 完成后调用 `present_artifacts`，将 `write_visualization` 返回的 `output_path` 展示到当前对话。
+9. 当 `attached_file` 明确说明它是 Desktop 当前全屏打开的可视化，且用户要求修改它时，先阅读其现有内容，再把该文件的 `id` 作为 `source_attachment_id` 传给 `write_visualization`。这会原位更新同一产物；不要另起文件名，也不要自行拼接绝对路径。用户明确要求“重新做一个”时才创建新可视化。
 
 ## 外部资源
 
