@@ -37,6 +37,8 @@ class GatewayEventProjection:
         "project.updated",
         "workspace.created",
         "workspace.updated",
+        "surface.created",
+        "surface.updated",
         "process.updated",
         "activity.queued",
         "activity.started",
@@ -59,6 +61,7 @@ class GatewayEventProjection:
         is_activity_event = event.name.startswith("activity.")
         is_project_event = event.name.startswith("project.")
         is_workspace_event = event.name.startswith("workspace.")
+        is_surface_event = event.name.startswith("surface.")
         is_process_event = event.name.startswith("process.")
         is_agent_state_event = event.name.startswith("agent.state.")
         is_agent_speech_event = event.name.startswith("agent.speech.")
@@ -68,6 +71,7 @@ class GatewayEventProjection:
             and not is_activity_event
             and not is_project_event
             and not is_workspace_event
+            and not is_surface_event
             and not is_process_event
             and not is_agent_state_event
             and not is_agent_speech_event
@@ -122,6 +126,7 @@ class GatewayEventProjection:
                     or is_activity_event
                     or is_project_event
                     or is_workspace_event
+                    or is_surface_event
                     or is_process_event
                 )
                 and event.session_id
@@ -135,6 +140,7 @@ class GatewayEventProjection:
                     or is_activity_event
                     or is_project_event
                     or is_workspace_event
+                    or is_surface_event
                     or is_process_event
                 )
                 and target_person_id
@@ -232,6 +238,7 @@ class GatewayEventProjection:
                 or is_activity_event
                 or is_project_event
                 or is_workspace_event
+                or is_surface_event
                 or is_process_event
                 or is_agent_state_event
                 or is_agent_speech_event

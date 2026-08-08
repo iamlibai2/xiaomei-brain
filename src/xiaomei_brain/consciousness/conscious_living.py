@@ -34,6 +34,7 @@ import os
 import re
 from collections import deque
 from datetime import datetime
+from pathlib import Path
 import threading
 import time
 from typing import Any
@@ -581,6 +582,18 @@ class ConsciousLiving(Living):
             f"{len(self._people_service.store.list_people())} 人物",
         )
 
+        # Agent data is authoritative on the Agent host. Workspace business
+        # data has its own database so it can grow without coupling operational
+        # queries and migrations to memory and consciousness tables in brain.db.
+        agent_root = Path(db_path).expanduser().resolve().parent
+        workspace_root = agent_root / "workspaces"
+        workspace_db_path = workspace_root / "workspaces.db"
+        from xiaomei_brain.backup import AgentBackupService
+        self._backup_service = AgentBackupService(
+            agent_root,
+            (Path(db_path), workspace_db_path),
+        )
+
         # 统一加载所有子系统（先加载数据，确保 drive/purpose/self_image 已就绪）
         # Projects share brain.db while owning only their independent tables.
         # They organize work but do not execute it in place of Assignment.
@@ -602,18 +615,28 @@ class ConsciousLiving(Living):
         logger.info("[ConsciousLiving] Project service initialized")
         boot_line("Project system", "OK")
 
-        # Workspaces are persistent, Person-scoped data views assembled by the
-        # Agent. They are deliberately separate from Project file workspaces
-        # and from the transient presentation stage in Desktop.
+        # Workspaces belong to this Agent's world. Person links describe who is
+        # involved and which projection Desktop may request; they are not
+        # ownership of the Agent or Workspace. The prototype stored in brain.db
+        # is imported once after creating a consistent pre-migration backup.
         from xiaomei_brain.workspaces import WorkspaceService, WorkspaceStore
         self._workspace_service = WorkspaceService(
-            WorkspaceStore(db_path),
+            WorkspaceStore(
+                workspace_db_path,
+                legacy_db_path=db_path,
+                before_legacy_migration=lambda: self._backup_service.backup_now(
+                    reason="workspace_schema_migration",
+                ),
+            ),
             publish=self._event_hub.publish,
         )
         self.agent.workspace_service = self._workspace_service
         self.agent._get_agent().workspace_service = self._workspace_service
-        logger.info("[ConsciousLiving] Workspace service initialized")
-        boot_line("Workspaces", "OK")
+        logger.info(
+            "[ConsciousLiving] Workspace service initialized: %s",
+            workspace_db_path,
+        )
+        boot_line("Workspaces", "OK", str(workspace_db_path))
 
         # Process is deliberately separate from ProjectStep: the former is a
         # user-selected delivery standard, the latter is the Agent's own map.
@@ -912,6 +935,14 @@ class ConsciousLiving(Living):
         self.register_periodic("heartbeat", self._config.living.tick_interval, self._heartbeat)
         self.register_periodic("death_check", 60.0, self._check_death)  # 每分钟检查生存状态
         self.register_periodic("model_service_probe", 5.0, self._probe_model_service)
+        self.register_periodic(
+            "agent_backup",
+            60 * 60,
+            lambda _state: self._backup_service.backup_if_due(
+                max_age_seconds=24 * 60 * 60,
+                reason="scheduled",
+            ),
+        )
 
         # 启动 Layer 0 自主层线程 + DMN 默认模式网络线程
         if self._load_consciousness:

@@ -60,10 +60,10 @@ export function MainShell() {
   useEffect(() => window.gateway.onEvent((event: { event?: string; agentId?: string; data?: unknown }) => {
     if (
       event.agentId !== activeAgentId
-      || !["workspace.created", "workspace.updated"].includes(event.event || "")
+      || !["workspace.created", "workspace.updated", "surface.created", "surface.updated"].includes(event.event || "")
     ) return;
     const data = event.data && typeof event.data === "object" ? event.data as Record<string, unknown> : {};
-    setRequestedWorkspaceId(String(data.id || ""));
+    setRequestedWorkspaceId(String(data.workspace_id || data.id || ""));
     setSurface("workspaces");
   }), [activeAgentId]);
 

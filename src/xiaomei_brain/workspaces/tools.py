@@ -1,4 +1,4 @@
-"""Agent tools for creating and evolving workspaces through dialogue."""
+"""Agent tools for creating business workspaces and interactive surfaces."""
 
 from __future__ import annotations
 
@@ -32,51 +32,101 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             str(getattr(current, "turn_id", "") or ""),
         )
 
-    def create_workspace(name: str, description: str, spec: dict[str, Any]) -> dict[str, Any]:
-        """Create a persistent workspace from structured components."""
+    def create_workspace(
+        name: str,
+        purpose: str,
+        description: str = "",
+        initial_surface: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Create a persistent business world, optionally with its first Surface."""
         session_id, turn_id = context()
         workspace = service().create(
             name=name,
+            purpose=purpose,
             description=description,
-            scope_type="person",
-            scope_id=person_id(),
-            spec=spec,
+            created_reason="Created by the Agent from the current conversation",
+            created_by_person_id=person_id(),
+            default_surface_definition=initial_surface,
             session_id=session_id,
             turn_id=turn_id,
         )
-        return service().snapshot(workspace)
+        return service().snapshot(workspace, include_surfaces=True)
 
     def update_workspace(
         workspace_id: str,
-        spec: dict[str, Any],
+        expected_revision: int,
         name: str = "",
+        purpose: str = "",
         description: str = "",
-        expected_revision: int = 0,
+        status: str = "",
     ) -> dict[str, Any]:
-        """Replace a workspace description after inspecting its current state."""
+        """Update a Workspace's identity, purpose, lifecycle or description."""
         session_id, turn_id = context()
         workspace = service().update(
             workspace_id,
-            person_id=person_id(),
             name=name or None,
+            purpose=purpose or None,
             description=description or None,
-            spec=spec,
-            expected_revision=expected_revision or None,
+            status=status or None,
+            expected_revision=expected_revision,
             session_id=session_id,
             turn_id=turn_id,
         )
-        return service().snapshot(workspace)
+        return service().snapshot(workspace, include_surfaces=True)
+
+    def create_surface(
+        workspace_id: str,
+        name: str,
+        purpose: str,
+        definition: dict[str, Any],
+        is_default: bool = False,
+    ) -> dict[str, Any]:
+        """Create a durable interactive Surface inside a Workspace."""
+        service().require(workspace_id)
+        session_id, turn_id = context()
+        surface = service().surfaces.create(
+            workspace_id,
+            name=name,
+            purpose=purpose,
+            definition=definition,
+            is_default=is_default,
+            session_id=session_id,
+            turn_id=turn_id,
+        )
+        return service().surfaces.snapshot(surface)
+
+    def update_surface(
+        surface_id: str,
+        definition: dict[str, Any],
+        expected_revision: int,
+        name: str = "",
+        purpose: str = "",
+    ) -> dict[str, Any]:
+        """Replace one Surface definition after inspecting its current revision."""
+        session_id, turn_id = context()
+        surface = service().surfaces.update(
+            surface_id,
+            name=name or None,
+            purpose=purpose or None,
+            definition=definition,
+            expected_revision=expected_revision,
+            session_id=session_id,
+            turn_id=turn_id,
+        )
+        return service().surfaces.snapshot(surface)
 
     def get_workspace(workspace_id: str) -> dict[str, Any]:
-        """Inspect one workspace before explaining or changing it."""
-        return service().snapshot(service().require(workspace_id, person_id=person_id()))
+        """Inspect a Workspace and all of its Surfaces."""
+        return service().snapshot(
+            service().require(workspace_id), include_surfaces=True,
+        )
 
     def list_workspaces() -> dict[str, Any]:
-        """List persistent workspaces belonging to the current Person."""
+        """List every Workspace in this Agent's world."""
         return {
             "workspaces": [
                 service().snapshot(item)
-                for item in service().list_for_person(person_id(), limit=100)
+                for item in service().list_all(limit=100)
             ],
         }
 
@@ -87,46 +137,29 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             "id": {"type": "string"},
             "type": {
                 "type": "string",
-                "enum": ["metric", "text", "table", "bar_chart", "line_chart", "pie_chart"],
+                "enum": [
+                    "metric", "text", "table", "record", "bar_chart",
+                    "line_chart", "pie_chart", "timeline", "asset", "group",
+                ],
             },
             "title": {"type": "string"},
-            "value": {
-                "type": "string",
-                "description": "metric value; use a number or short display string",
-            },
+            "value": {},
             "unit": {"type": "string"},
             "detail": {"type": "string"},
-            "content": {
-                "type": "string",
-                "description": "text component body",
-            },
-            "columns": {
-                "type": "array",
-                "description": "table column keys in display order",
-                "items": {"type": "string"},
-            },
+            "content": {"type": "string"},
+            "columns": {"type": "array", "items": {}},
             "rows": {
                 "type": "array",
-                "description": "table rows whose keys match columns",
                 "items": {"type": "object", "additionalProperties": True},
             },
             "data": {
                 "type": "array",
-                "description": "chart points as {label: string, value: number}",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "label": {"type": "string"},
-                        "value": {"type": "number"},
-                    },
-                    "required": ["label", "value"],
-                    "additionalProperties": False,
-                },
+                "items": {"type": "object", "additionalProperties": True},
             },
         },
         "required": ["type"],
     }
-    spec_schema = {
+    definition_schema = {
         "type": "object",
         "additionalProperties": True,
         "properties": {
@@ -134,7 +167,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
                 "type": "array",
                 "items": component_schema,
                 "minItems": 1,
-                "maxItems": 24,
+                "maxItems": 48,
             },
         },
         "required": ["components"],
@@ -143,18 +176,19 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         Tool(
             name="create_workspace",
             description=(
-                "Create a persistent data workspace when the user asks for a 工作台, dashboard, "
-                "or reusable data view. Components may be metric, text, table, bar_chart, "
-                "line_chart, or pie_chart. Return real analyzed data, not placeholders."
+                "Create a Workspace only for a business that will continue to change, "
+                "be queried or receive future action. Do not create one for a one-off task. "
+                "An optional initial_surface may present the first useful business interface."
             ),
             parameters={
                 "type": "object",
                 "properties": {
                     "name": {"type": "string"},
+                    "purpose": {"type": "string"},
                     "description": {"type": "string"},
-                    "spec": spec_schema,
+                    "initial_surface": definition_schema,
                 },
-                "required": ["name", "description", "spec"],
+                "required": ["name", "purpose"],
             },
             func=create_workspace,
             category="workspace",
@@ -162,26 +196,67 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         Tool(
             name="update_workspace",
             description=(
-                "Update an existing workspace after get_workspace. Send the complete replacement "
-                "spec and its current revision so concurrent changes are not overwritten."
+                "Update a Workspace's name, purpose, description or active/closed status. "
+                "Surface contents are changed with update_surface instead."
             ),
             parameters={
                 "type": "object",
                 "properties": {
                     "workspace_id": {"type": "string"},
-                    "spec": spec_schema,
-                    "name": {"type": "string"},
-                    "description": {"type": "string"},
                     "expected_revision": {"type": "integer", "minimum": 1},
+                    "name": {"type": "string"},
+                    "purpose": {"type": "string"},
+                    "description": {"type": "string"},
+                    "status": {"type": "string", "enum": ["active", "closed"]},
                 },
-                "required": ["workspace_id", "spec", "expected_revision"],
+                "required": ["workspace_id", "expected_revision"],
             },
             func=update_workspace,
             category="workspace",
         ),
         Tool(
+            name="create_surface",
+            description=(
+                "Create a persistent interactive Surface in an existing Workspace. "
+                "A Surface presents business data; it is not the Workspace itself."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "workspace_id": {"type": "string"},
+                    "name": {"type": "string"},
+                    "purpose": {"type": "string"},
+                    "definition": definition_schema,
+                    "is_default": {"type": "boolean"},
+                },
+                "required": ["workspace_id", "name", "purpose", "definition"],
+            },
+            func=create_surface,
+            category="workspace",
+        ),
+        Tool(
+            name="update_surface",
+            description=(
+                "Update an existing Surface after get_workspace. Send its complete "
+                "definition and current revision so concurrent changes are preserved."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "surface_id": {"type": "string"},
+                    "definition": definition_schema,
+                    "expected_revision": {"type": "integer", "minimum": 1},
+                    "name": {"type": "string"},
+                    "purpose": {"type": "string"},
+                },
+                "required": ["surface_id", "definition", "expected_revision"],
+            },
+            func=update_surface,
+            category="workspace",
+        ),
+        Tool(
             name="get_workspace",
-            description="Read the current structured state of a workspace before modifying it.",
+            description="Read one Workspace and its Surfaces before changing them.",
             parameters={
                 "type": "object",
                 "properties": {"workspace_id": {"type": "string"}},
@@ -192,7 +267,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         ),
         Tool(
             name="list_workspaces",
-            description="List the current Person's saved workspaces.",
+            description="List the persistent business Workspaces known by this Agent.",
             parameters={"type": "object", "properties": {}},
             func=list_workspaces,
             category="workspace",

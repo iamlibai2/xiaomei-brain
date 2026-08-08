@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from xiaomei_brain.gateway.server_methods import MethodRouter
 from xiaomei_brain.consciousness.event_hub import DomainEvent
 from xiaomei_brain.gateway.event_projection import GatewayEventProjection
 from xiaomei_brain.gateway.router import OutputRoute
+from xiaomei_brain.gateway.server_methods import MethodRouter
 from xiaomei_brain.people import IdentityContext
 from xiaomei_brain.workspaces import WorkspaceService, WorkspaceStore
 
@@ -22,15 +22,19 @@ def _identity(person_id: str, conn_id: str) -> IdentityContext:
     )
 
 
-def test_workspace_rpc_is_person_scoped(tmp_path):
-    service = WorkspaceService(WorkspaceStore(tmp_path / "brain.db"))
+def test_workspace_rpc_projects_related_workspaces_and_surface_details(tmp_path):
+    service = WorkspaceService(WorkspaceStore(tmp_path / "workspaces.db"))
     own = service.create(
-        name="Own", description="", scope_type="person", scope_id="person-1",
-        spec={"components": [{"type": "metric", "value": 1}]},
+        name="Own",
+        purpose="Own business",
+        created_by_person_id="person-1",
+        default_surface_definition={"components": [{"type": "metric", "value": 1}]},
     )
     other = service.create(
-        name="Other", description="", scope_type="person", scope_id="person-2",
-        spec={"components": [{"type": "metric", "value": 2}]},
+        name="Other",
+        purpose="Other business",
+        created_by_person_id="person-2",
+        default_surface_definition={"components": [{"type": "metric", "value": 2}]},
     )
     router = MethodRouter(living=SimpleNamespace(_workspace_service=service))
     router._auth_sessions.add("conn-1")
@@ -38,10 +42,11 @@ def test_workspace_rpc_is_person_scoped(tmp_path):
 
     listed = router.dispatch("conn-1", "list", "workspace.list", {})
     assert [item["id"] for item in listed["result"]["workspaces"]] == [own.id]
+    assert "surfaces" not in listed["result"]["workspaces"][0]
     fetched = router.dispatch(
         "conn-1", "get", "workspace.get", {"workspace_id": own.id},
     )
-    assert fetched["result"]["workspace"]["name"] == "Own"
+    assert fetched["result"]["workspace"]["surfaces"][0]["is_default"] is True
     forbidden = router.dispatch(
         "conn-1", "forbidden", "workspace.get", {"workspace_id": other.id},
     )
@@ -50,7 +55,7 @@ def test_workspace_rpc_is_person_scoped(tmp_path):
     assert "workspace.events" in router._capabilities()
 
 
-def test_workspace_event_reaches_person_without_private_routing_fields():
+def test_surface_event_reaches_related_person_without_routing_fields():
     delivered = []
 
     class FakeRouter:
@@ -71,15 +76,15 @@ def test_workspace_event_reaches_person_without_private_routing_fields():
             return True
 
     GatewayEventProjection(lambda: FakeRouter())(DomainEvent(
-        name="workspace.updated",
+        name="surface.updated",
         payload={
-            "id": "workspace_1",
-            "name": "销售工作台",
+            "id": "surface_1",
+            "workspace_id": "workspace_1",
             "_target_person_id": "person-1",
         },
         timestamp=10,
     ))
     name, payload, route, _ = delivered[0]
-    assert name == "workspace.updated"
-    assert payload == {"id": "workspace_1", "name": "销售工作台"}
+    assert name == "surface.updated"
+    assert payload == {"id": "surface_1", "workspace_id": "workspace_1"}
     assert route.target == "conn-person-1"

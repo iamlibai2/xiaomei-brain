@@ -390,6 +390,24 @@ Action 完成并产生 Event 后，相关 Dataset 标记失效，正在显示的
 - 备份结果写入日志并能被 Desktop 查看；
 - 第一版允许整体恢复，不先做字段级、记录级和可视化回滚。
 
+### 14.1 存储布局决定
+
+Workspace 权威数据只存在 Agent 所在宿主机。Desktop 是通过 Gateway 访问 Agent 世界的交互身体，只保存窗口、选中项等界面状态或可丢弃缓存，不建立第二份 Workspace 事实数据库。
+
+每个 Agent 使用一份独立 Workspace 数据库，而不是每个 Workspace 一份数据库：
+
+```text
+<agent-root>/
+├─ brain.db
+├─ workspaces/
+│  └─ workspaces.db
+└─ backups/
+```
+
+`brain.db` 继续保存人物、会话、记忆、意识等 Agent 内部世界；`workspaces.db` 保存持续业务数据。两者都属于同一个 Agent，只是按领域和负载分开。跨库只保存稳定 ID，不建立依赖跨数据库事务的外键。
+
+不采用“一 Workspace 一 SQLite 文件”，避免大量连接、迁移文件、跨 Workspace 查询和备份协调问题。未来大规模 Dataset 与 Asset 内容进入受管文件或外部存储，元数据仍由该 Agent 的 `workspaces.db` 统一管理。
+
 ## 15. 建议的核心服务边界
 
 ```text

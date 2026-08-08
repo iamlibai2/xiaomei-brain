@@ -44,13 +44,15 @@ class WorkspaceMethods:
         if error:
             return error
         try:
-            workspace = self._service().require(
+            workspace = self._service().require_for_person(
                 parsed.workspace_id, person_id=person_id,
             )
         except (KeyError, WorkspacePermissionError) as exc:
             return build_error(req_id, ErrorCode.INVALID_REQUEST, str(exc))
         return build_response(req_id, result={
-            "workspace": self._service().snapshot(workspace),
+            "workspace": self._service().snapshot(
+                workspace, include_surfaces=True,
+            ),
         })
 
     def _person_id(self, conn_id: str, req_id: str):

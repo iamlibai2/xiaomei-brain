@@ -26,17 +26,25 @@ type WorkspaceSnapshot = {
   createdAt: number;
   updatedAt: number;
   components: WorkspaceComponent[];
+  surfaceId: string;
+  surfaceRevision: number;
 };
 
 function snapshot(value: unknown): WorkspaceSnapshot | null {
   if (!value || typeof value !== "object") return null;
   const item = value as Record<string, unknown>;
-  const spec = item.spec && typeof item.spec === "object"
-    ? item.spec as Record<string, unknown>
+  const surfaces = Array.isArray(item.surfaces)
+    ? item.surfaces.filter((entry): entry is Record<string, unknown> => (
+      Boolean(entry) && typeof entry === "object"
+    ))
+    : [];
+  const surface = surfaces.find((entry) => entry.is_default === true) || surfaces[0];
+  const definition = surface?.definition && typeof surface.definition === "object"
+    ? surface.definition as Record<string, unknown>
     : {};
   if (typeof item.id !== "string" || typeof item.name !== "string") return null;
-  const components = Array.isArray(spec.components)
-    ? spec.components.filter((entry): entry is WorkspaceComponent => (
+  const components = Array.isArray(definition.components)
+    ? definition.components.filter((entry): entry is WorkspaceComponent => (
       Boolean(entry) && typeof entry === "object" && typeof (entry as WorkspaceComponent).type === "string"
     ))
     : [];
@@ -48,6 +56,8 @@ function snapshot(value: unknown): WorkspaceSnapshot | null {
     createdAt: typeof item.created_at === "number" ? item.created_at : 0,
     updatedAt: typeof item.updated_at === "number" ? item.updated_at : 0,
     components,
+    surfaceId: typeof surface?.id === "string" ? surface.id : "",
+    surfaceRevision: typeof surface?.revision === "number" ? surface.revision : 0,
   };
 }
 
@@ -152,11 +162,11 @@ export function WorkspacesPage({
   useEffect(() => window.gateway.onEvent((event: { event?: string; agentId?: string; data?: unknown }) => {
     if (event.agentId !== activeAgentId) return;
     const eventName = typeof event.event === "string" ? event.event : "";
-    if (eventName === "workspace.created" || eventName === "workspace.updated") {
+    if (["workspace.created", "workspace.updated", "surface.created", "surface.updated"].includes(eventName)) {
       const data = event.data && typeof event.data === "object"
         ? event.data as Record<string, unknown>
         : {};
-      void load(String(data.id || ""), true);
+      void load(String(data.workspace_id || data.id || ""), true);
     }
   }), [activeAgentId, load]);
 
