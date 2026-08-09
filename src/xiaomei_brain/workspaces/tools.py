@@ -132,6 +132,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         purpose: str,
         definition: dict[str, Any],
         is_default: bool = False,
+        persistence: str = "persistent",
     ) -> dict[str, Any]:
         """Create a durable interactive Surface inside a Workspace."""
         require_workspace(workspace_id)
@@ -142,6 +143,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             purpose=purpose,
             definition=definition,
             is_default=is_default,
+            persistence=persistence,
             session_id=session_id,
             turn_id=turn_id,
         )
@@ -153,6 +155,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         expected_revision: int,
         name: str = "",
         purpose: str = "",
+        persistence: str = "",
     ) -> dict[str, Any]:
         """Replace one Surface definition after inspecting its current revision."""
         require_surface(surface_id)
@@ -162,6 +165,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             name=name or None,
             purpose=purpose or None,
             definition=definition,
+            persistence=persistence or None,
             expected_revision=expected_revision,
             session_id=session_id,
             turn_id=turn_id,
@@ -708,16 +712,32 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
                 "type": "array",
                 "items": {"type": "object", "additionalProperties": True},
             },
+            "items": {
+                "type": "array",
+                "items": {"type": "object", "additionalProperties": True},
+            },
+            "asset_id": {"type": "string"},
+            "components": {
+                "type": "array",
+                "items": {"type": "object", "additionalProperties": True},
+            },
             "binding": {
                 "type": "object",
                 "additionalProperties": False,
                 "properties": {
                     "dataset_id": {"type": "string"},
+                    "asset_id": {"type": "string"},
                     "metric_key": {"type": "string"},
                     "label_field": {"type": "string"},
                     "value_field": {"type": "string"},
+                    "time_field": {"type": "string"},
+                    "title_field": {"type": "string"},
+                    "detail_field": {"type": "string"},
                 },
-                "required": ["dataset_id"],
+                "anyOf": [
+                    {"required": ["dataset_id"]},
+                    {"required": ["asset_id"]},
+                ],
             },
         },
         "required": ["type"],
@@ -780,7 +800,9 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         Tool(
             name="create_surface",
             description=(
-                "Create a persistent interactive Surface in an existing Workspace. "
+                "Create an interactive Surface in an existing Workspace. Use temporary "
+                "for a one-time presentation; only the newest temporary Surface is kept. "
+                "Use persistent when the interface will be reused or the person asks to keep it. "
                 "A Surface presents business data; it is not the Workspace itself. "
                 "For durable business values, bind components to a Dataset instead "
                 "of copying static values into the Surface."
@@ -793,6 +815,10 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
                     "purpose": {"type": "string"},
                     "definition": definition_schema,
                     "is_default": {"type": "boolean"},
+                    "persistence": {
+                        "type": "string",
+                        "enum": ["temporary", "persistent"],
+                    },
                 },
                 "required": ["workspace_id", "name", "purpose", "definition"],
             },
@@ -804,6 +830,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             description=(
                 "Update an existing Surface after get_workspace. Send its complete "
                 "definition and current revision so concurrent changes are preserved."
+                " Set persistence to persistent when keeping a useful temporary Surface."
             ),
             parameters={
                 "type": "object",
@@ -813,6 +840,10 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
                     "expected_revision": {"type": "integer", "minimum": 1},
                     "name": {"type": "string"},
                     "purpose": {"type": "string"},
+                    "persistence": {
+                        "type": "string",
+                        "enum": ["temporary", "persistent"],
+                    },
                 },
                 "required": ["surface_id", "definition", "expected_revision"],
             },

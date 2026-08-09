@@ -95,7 +95,11 @@ class WorkspaceService:
         self.business._on_collection_changed = self.datasets.invalidate_collection
         self.imports = TabularImportService(self.business)
         self.surfaces = SurfaceService(
-            store, datasets=self.datasets, publish=publish, clock=clock,
+            store,
+            datasets=self.datasets,
+            assets=self.assets,
+            publish=publish,
+            clock=clock,
         )
 
     def create(
@@ -316,11 +320,13 @@ class SurfaceService:
         store: WorkspaceStore,
         *,
         datasets: DatasetService | None = None,
+        assets: AssetService | None = None,
         publish: PublishCallback | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.store = store
         self.datasets = datasets
+        self.assets = assets
         self._publish = publish
         self._clock = clock
 
@@ -332,17 +338,24 @@ class SurfaceService:
         purpose: str,
         definition: dict[str, Any],
         is_default: bool = False,
+        persistence: str = "persistent",
         session_id: str = "",
         turn_id: str = "",
     ) -> Surface:
         if self.store.get(workspace_id) is None:
             raise KeyError(workspace_id)
+        resolved_persistence = persistence.strip() or "persistent"
+        if resolved_persistence not in {"temporary", "persistent"}:
+            raise ValueError("Surface persistence must be temporary or persistent")
+        if is_default and resolved_persistence != "persistent":
+            raise ValueError("A default Surface must be persistent")
         surface = self.store.create_surface(
             workspace_id,
             name=name.strip() or "Surface",
             purpose=purpose.strip(),
             definition=self.validate_definition(definition),
             is_default=is_default,
+            status=resolved_persistence,
             now=self._clock(),
         )
         self._publish_surface(
@@ -358,6 +371,7 @@ class SurfaceService:
         name: str | None = None,
         purpose: str | None = None,
         definition: dict[str, Any] | None = None,
+        persistence: str | None = None,
         expected_revision: int | None = None,
         session_id: str = "",
         turn_id: str = "",
@@ -365,6 +379,13 @@ class SurfaceService:
         current = self.store.get_surface(surface_id)
         if current is None:
             raise KeyError(surface_id)
+        resolved_persistence = current.status
+        if persistence is not None:
+            resolved_persistence = persistence.strip()
+            if resolved_persistence not in {"temporary", "persistent"}:
+                raise ValueError("Surface persistence must be temporary or persistent")
+        if current.is_default and resolved_persistence != "persistent":
+            raise ValueError("A default Surface must be persistent")
         surface = self.store.update_surface(
             current.id,
             name=current.name if name is None else (name.strip() or current.name),
@@ -373,6 +394,7 @@ class SurfaceService:
                 current.definition if definition is None
                 else self.validate_definition(definition)
             ),
+            status=resolved_persistence,
             expected_revision=expected_revision,
             now=self._clock(),
         )
@@ -389,18 +411,31 @@ class SurfaceService:
         components = definition.get("components")
         if not isinstance(components, list) or not components:
             raise ValueError("Surface requires at least one component")
-        if len(components) > MAX_COMPONENTS:
-            raise ValueError(f"Surface supports at most {MAX_COMPONENTS} components")
         seen: set[str] = set()
-        normalized: list[dict[str, Any]] = []
-        for index, component in enumerate(components):
+        component_count = 0
+
+        def normalize_component(
+            component: Any,
+            index: int,
+            parent_id: str = "",
+        ) -> dict[str, Any]:
+            nonlocal component_count
             if not isinstance(component, dict):
                 raise ValueError(f"Component {index + 1} must be an object")
+            component_count += 1
+            if component_count > MAX_COMPONENTS:
+                raise ValueError(
+                    f"Surface supports at most {MAX_COMPONENTS} components"
+                )
             item = dict(component)
             component_type = str(item.get("type") or "").strip()
             if component_type not in ALLOWED_COMPONENT_TYPES:
                 raise ValueError(f"Unsupported surface component: {component_type}")
-            component_id = str(item.get("id") or f"component_{index + 1}").strip()
+            fallback_id = (
+                f"{parent_id}_component_{index + 1}"
+                if parent_id else f"component_{index + 1}"
+            )
+            component_id = str(item.get("id") or fallback_id).strip()
             if not component_id or component_id in seen:
                 raise ValueError("Surface component IDs must be unique")
             seen.add(component_id)
@@ -411,9 +446,28 @@ class SurfaceService:
             if binding is not None:
                 if not isinstance(binding, dict):
                     raise ValueError("Surface component binding must be an object")
-                if not str(binding.get("dataset_id") or "").strip():
+                if component_type == "asset":
+                    if not str(binding.get("asset_id") or "").strip():
+                        raise ValueError("Asset component binding requires asset_id")
+                elif not str(binding.get("dataset_id") or "").strip():
                     raise ValueError("Surface Dataset binding requires dataset_id")
-            normalized.append(item)
+            if component_type == "asset" and binding is None:
+                if not str(item.get("asset_id") or "").strip():
+                    raise ValueError("Asset component requires asset_id")
+            if component_type == "group":
+                children = item.get("components")
+                if not isinstance(children, list) or not children:
+                    raise ValueError("Group component requires nested components")
+                item["components"] = [
+                    normalize_component(child, child_index, component_id)
+                    for child_index, child in enumerate(children)
+                ]
+            return item
+
+        normalized = [
+            normalize_component(component, index)
+            for index, component in enumerate(components)
+        ]
         result = dict(definition)
         result["components"] = normalized
         encoded = json.dumps(result, ensure_ascii=False).encode("utf-8")
@@ -437,24 +491,54 @@ class SurfaceService:
         if self.datasets is not None:
             payload["resolved_definition"] = self._resolve_definition(
                 surface.definition,
+                surface.workspace_id,
             )
         return payload
 
-    def _resolve_definition(self, definition: dict[str, Any]) -> dict[str, Any]:
+    def _resolve_definition(
+        self,
+        definition: dict[str, Any],
+        workspace_id: str,
+    ) -> dict[str, Any]:
         resolved = copy.deepcopy(definition)
         components = resolved.get("components")
         if not isinstance(components, list) or self.datasets is None:
             return resolved
-        for component in components:
+        def resolve_component(component: Any) -> None:
             if not isinstance(component, dict):
-                continue
+                return
+            if component.get("type") == "group":
+                for child in component.get("components") or []:
+                    resolve_component(child)
+                return
             binding = component.get("binding")
+            if component.get("type") == "asset":
+                asset_id = str(
+                    (binding or {}).get("asset_id")
+                    if isinstance(binding, dict)
+                    else component.get("asset_id") or ""
+                ).strip()
+                if not asset_id or self.assets is None:
+                    component["binding_error"] = "Asset binding is unavailable"
+                    return
+                asset = self.assets.store.get(asset_id)
+                if (
+                    asset is None
+                    or not self.assets.store.is_linked(
+                        asset.id,
+                        workspace_id,
+                    )
+                ):
+                    component["binding_error"] = "Asset is not linked to this Workspace"
+                    return
+                component["asset"] = self.assets.snapshot(asset)
+                return
             if not isinstance(binding, dict):
-                continue
+                return
             dataset_id = str(binding.get("dataset_id") or "").strip()
             if not dataset_id:
                 component["binding_error"] = "Dataset binding has no dataset_id"
-                continue
+                return
             try:
                 dataset = self.datasets.require(dataset_id, refresh_stale=True)
                 self._apply_dataset(component, dataset.data, binding)
@@ -462,6 +546,8 @@ class SurfaceService:
                 component["dataset_status"] = dataset.status
             except Exception as exc:
                 component["binding_error"] = str(exc)
+        for component in components:
+            resolve_component(component)
         return resolved
 
     @staticmethod
@@ -488,6 +574,31 @@ class SurfaceService:
         if component_type in {"table", "record"}:
             component["columns"] = data.get("columns") or []
             component["rows"] = data.get("rows") or []
+            return
+        if component_type == "timeline":
+            if isinstance(data.get("points"), list):
+                component["items"] = [
+                    {
+                        "time": item.get("period"),
+                        "title": item.get("label") or item.get("period"),
+                        "detail": item.get("value"),
+                    }
+                    for item in data["points"]
+                    if isinstance(item, dict)
+                ]
+                return
+            rows = data.get("rows") if isinstance(data.get("rows"), list) else []
+            time_field = str(binding.get("time_field") or "")
+            title_field = str(binding.get("title_field") or "")
+            detail_field = str(binding.get("detail_field") or "")
+            component["items"] = [
+                {
+                    "time": row.get(time_field) if time_field else "",
+                    "title": row.get(title_field) if title_field else "",
+                    "detail": row.get(detail_field) if detail_field else "",
+                }
+                for row in rows if isinstance(row, dict)
+            ]
             return
         if component_type in {"bar_chart", "line_chart", "pie_chart"}:
             if isinstance(data.get("points"), list):

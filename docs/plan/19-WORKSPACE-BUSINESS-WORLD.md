@@ -365,7 +365,7 @@ Surface 是人和 Agent 共同接触、理解和操作 Workspace 的交互表面
 
 Surface 只保存如何看和如何交互，不保存业务真相。组件绑定 Dataset、Collection 查询或 Asset；输入和按钮表达业务意图并调用 Action，不能直接修改数据库。
 
-一次性展示形成临时 Surface；反复使用或明确要求保留后形成持久 Surface。一个 Surface 可以带参数，在不同客户、项目、时间范围和负责人上复用。
+一次性展示形成临时 Surface；同一 Workspace 只保留最新的临时 Surface，Agent 重启后自动清理。反复使用或明确要求保留时，原地提升为持久 Surface。一个 Surface 可以带参数，在不同客户、项目、时间范围和负责人上复用。
 
 Action 完成并产生 Event 后，相关 Dataset 标记失效，正在显示的 Surface 按事件重新读取，不使用固定周期全量轮询。
 
@@ -566,6 +566,8 @@ Agent 形成 Workspace
 - Event 驱动失效和刷新；
 - 临时 Surface 与持久 Surface。
 
+阶段 C 的第一版纵向闭环已经落地：Dataset 支持 table、metric set 与 time series，业务记录变化会使相关 Dataset 失效，Surface 读取时按需重新计算；声明式渲染支持 record、timeline、asset 与递归 group。一次性 Surface 使用现有状态字段标记为 temporary，同一 Workspace 只保留最新项，重启后清理；用户明确保留时可原地提升为 persistent。Desktop 会优先浮现临时 Surface，并允许在一个 Workspace 的多个 Surface 之间切换，不再把默认 Surface 当成唯一界面。
+
 ### 阶段 D：Context 与 Action 结晶
 
 - Context 分层、证据和现场快照；
@@ -576,7 +578,7 @@ Agent 形成 Workspace
 
 当前已落地 Action 的最小纵向闭环：通用记录变化按独立 Turn 聚合为候选做法，Agent 可将有三次以上成功证据的候选结晶为 `BusinessActionDefinition`，后续执行形成 `BusinessActionRun` 并关联 RecordChange 与 Event。Action 只约束业务效果字段和完成含义，不规定执行步骤。
 
-Context 已落地第一版：Agent 工具与 Desktop 都能将一个 Session 明确聚焦到 Workspace；实时对话按当前 Person 和 Session 读取精简现场快照，确定性选择相关或最近的 Record、Event 与来源 Observation，并把来源内容作为不可信数据而非指令注入。该快照只帮助 Agent 理解和解释当前业务世界，所有写入仍经过 Workspace 工具。更完整的 Context 分层、隔离 LLM 归纳、历史只读重放验证以及规则覆盖仍属于后续工作，不能将当前实现误称为阶段 D 全部完成。
+Context 与 Action 的第一版纵向闭环已经落地：Agent 工具与 Desktop 都能将一个 Session 明确聚焦到 Workspace；实时对话按当前 Person 和 Session 读取精简现场快照，确定性选择相关或最近的 Record、Event 与来源 Observation，并把来源内容作为不可信数据而非指令注入。重复的独立业务操作形成候选 Action，结晶前可对不可变更的历史变化执行只读验证；稳定 Context 支持 Workspace、Person、业务对象三层作用范围、个案覆盖和更正链。该快照只帮助 Agent 理解和解释当前业务世界，所有写入仍经过 Workspace 工具。自动制度生成、复杂冲突裁决和 Workflow 编排仍暂缓。
 
 稳定业务 Context 已落地最小闭环：Agent 可以将术语、默认做法、约束、决定、计算口径和业务边界保存到 Workspace，并按 Workspace、当前 Person 或具体业务对象确定作用范围。Context 可关联来源 Observation；更正时旧条目进入 `superseded`，替代条目继续生效，历史不会被覆盖。当前只允许 Agent 明确记录和更正，不自动把一句偶然表达提升为长期规则；自动候选发现、正式制度和复杂冲突裁决仍暂缓。
 
@@ -599,6 +601,8 @@ Asset 统一身份已落地第一步：`workspaces.db` 新增 Agent 级 Asset �
 外部 Asset 已通过真实邮箱入口落地第一条纵向链路：人物在已聚焦 Workspace 的会话中读取 QQ 邮件时，邮件仍以邮箱为权威来源，同时按账户、邮箱目录与稳定邮件标识登记为 `external` Asset，并形成可幂等重建的 email DataSource 与 Observation。未聚焦 Workspace 的普通邮箱使用保持原样；Workspace 投影失败也不会阻断读信。后续其他邮箱、飞书文档和企业系统沿用这一语义，但由各自能力插件负责来源细节。
 
 邮件附件同时保留外部身份与本地工作身份：读信时附件按邮箱、目录、邮件 UID 与附件 ID 登记为 external Asset；真正下载后继续复用既有 Artifact 交付链登记为 working Asset，并通过 `materialized_from` / `materialized_as` 关系连接两者。外部引用不会伪装成本地文件，本地副本也不会抹掉它来自哪封邮件。
+
+工具执行现场现已支持受控的 `asset_id` 内容解析：解析前同时校验当前 Person、聚焦 Workspace 和 Asset 性质，宿主机路径不会进入公开快照或模型上下文。`write_document` 已作为第一个使用者支持 `source_asset_id`，可以跨 Turn、跨 Session 继续修改同一份 working Asset；evidence 和 external Asset 不能借此被覆盖。该解析能力属于通用工具现场，后续表格、视频和其他插件可按需复用，而不需要继续在 Agent Core 中加入领域分支。
 
 每个阶段都必须产生可对话、可查看、可重启恢复的真实纵向结果，不能只增加空接口和抽象层。
 

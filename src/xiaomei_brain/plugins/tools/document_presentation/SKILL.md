@@ -3,7 +3,7 @@ name: presentation-documents
 description: 创建、修改和验收 PowerPoint PPTX 演示文稿
 version: 1.0.0
 tags: [presentation, powerpoint, pptx, slides]
-requires_tools: [read_document, write, write_document, present_artifacts]
+requires_tools: [read_document, read_workspace_asset, write, write_document, list_workspace_assets, present_artifacts]
 ---
 
 # 演示文稿工作流
@@ -95,6 +95,11 @@ write_document(
 先使用 `read_document` 阅读原演示文稿，再通过当前消息中的真实
 `source_attachment_id` 修改文稿。用户上传的附件会生成副本，不覆盖上传源文件；
 Agent 自己生成并交付的产物会原位更新，继续使用同一个产物 ID：
+
+如果人物要求继续修改当前 Workspace 中以前生成的演示文稿，先用
+`list_workspace_assets` 找到 working Asset，并把其 `asset_id` 作为
+`source_asset_id` 传给 `write_document`。先用 `read_workspace_asset` 读取现有文稿，
+再编写精确的修改 operations；不要猜测历史路径或要求人物重新上传。
 
 ```json
 {

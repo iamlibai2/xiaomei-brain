@@ -638,6 +638,18 @@ class ConsciousLiving(Living):
         )
         self.agent.workspace_service = self._workspace_service
         self.agent._get_agent().workspace_service = self._workspace_service
+        from xiaomei_brain.workspaces.content_resolver import (
+            WorkspaceAssetContentResolver,
+        )
+        self._workspace_asset_resolver = WorkspaceAssetContentResolver(
+            self._workspace_service,
+            self.agent.conversation_db,
+            self._agent_id,
+        ).resolve
+        self.agent.workspace_asset_resolver = self._workspace_asset_resolver
+        self.agent._get_agent().workspace_asset_resolver = (
+            self._workspace_asset_resolver
+        )
         logger.info(
             "[ConsciousLiving] Workspace service initialized: %s",
             workspace_db_path,

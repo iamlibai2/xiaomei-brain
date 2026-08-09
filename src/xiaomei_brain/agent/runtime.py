@@ -111,6 +111,7 @@ class AgentRuntimeFactory:
             "identity_mgr",
             "people_service",
             "workspace_service",
+            "workspace_asset_resolver",
             "exp_stream",
             "essence",
             "_living_cfg",

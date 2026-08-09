@@ -18,6 +18,7 @@ from xiaomei_brain.projects.models import ProjectRuntimeContext
 
 ArtifactCallback = Callable[[str, str, dict, str], Any]
 SpeechCallback = Callable[[Any], str]
+WorkspaceAssetResolver = Callable[..., dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,7 @@ class ToolExecutionContext:
     project_context: ProjectRuntimeContext | None = None
     project_service: Any = None
     workspace_service: Any = None
+    workspace_asset_resolver: WorkspaceAssetResolver | None = None
     cancel_check: Callable[[], bool] | None = None
 
     def publish_artifacts(self, result: str) -> Any:
@@ -116,6 +118,33 @@ def resolve_current_attachment(
     )
 
 
+def resolve_current_workspace_asset(
+    asset_id: str,
+    *,
+    workspace_id: str = "",
+    writable: bool = False,
+    allowed_suffixes: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Resolve a Person-visible Asset without exposing arbitrary host paths."""
+    context = current_tool_execution()
+    if context is None or context.workspace_asset_resolver is None:
+        raise ValueError("Workspace Asset access is unavailable in this tool call")
+    item = context.workspace_asset_resolver(
+        asset_id,
+        person_id=context.person_id,
+        session_id=context.session_id,
+        workspace_id=workspace_id,
+        writable=writable,
+    )
+    path = Path(str(item.get("local_path") or ""))
+    suffixes = {str(value).casefold() for value in allowed_suffixes if str(value)}
+    if suffixes and path.suffix.casefold() not in suffixes:
+        raise ValueError(
+            f"Workspace Asset format {path.suffix or '(none)'} is not supported here"
+        )
+    return item
+
+
 @contextmanager
 def bind_tool_execution(
     *,
@@ -137,6 +166,7 @@ def bind_tool_execution(
     project_context: ProjectRuntimeContext | None = None,
     project_service: Any = None,
     workspace_service: Any = None,
+    workspace_asset_resolver: WorkspaceAssetResolver | None = None,
     cancel_check: Callable[[], bool] | None = None,
 ) -> Iterator[ToolExecutionContext]:
     """Expose one tool call's immutable context while its function starts."""
@@ -163,6 +193,7 @@ def bind_tool_execution(
         project_context=project_context,
         project_service=project_service,
         workspace_service=workspace_service,
+        workspace_asset_resolver=workspace_asset_resolver,
         cancel_check=cancel_check,
     )
     token = _current_context.set(context)

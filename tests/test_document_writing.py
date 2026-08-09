@@ -7,11 +7,19 @@ from docx.enum.section import WD_ORIENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.shared import RGBColor
+from openpyxl import Workbook, load_workbook
+from pptx import Presentation
 
 from xiaomei_brain.plugin.context import PluginContext
 from xiaomei_brain.plugin.loader import PluginLoader
 from xiaomei_brain.plugin.registry import PluginRegistry
 from xiaomei_brain.plugins.tools.document_word.adapter import register as register_word
+from xiaomei_brain.plugins.tools.document_spreadsheet.adapter import (
+    register as register_spreadsheet,
+)
+from xiaomei_brain.plugins.tools.document_presentation.adapter import (
+    register as register_presentation,
+)
 from xiaomei_brain.plugins.tools.document_io.tool import create_write_document_tool
 from xiaomei_brain.tools.execution_context import bind_tool_execution
 from xiaomei_brain.gateway import artifacts as artifact_module
@@ -22,6 +30,18 @@ def _word_registry() -> PluginRegistry:
     registry = PluginRegistry()
     context = PluginContext({}, "document_word", "test", registry)
     register_word(context)
+    return registry
+
+
+def _office_registry() -> PluginRegistry:
+    registry = PluginRegistry()
+    register_word(PluginContext({}, "document_word", "test", registry))
+    register_spreadsheet(
+        PluginContext({}, "document_spreadsheet", "test", registry),
+    )
+    register_presentation(
+        PluginContext({}, "document_presentation", "test", registry),
+    )
     return registry
 
 
@@ -397,6 +417,173 @@ def test_write_document_updates_agent_artifact_in_place(tmp_path):
     assert not (workspace / "ignored-new-name.docx").exists()
     updated = Document(managed)
     assert "New wording" in "\n".join(item.text for item in updated.paragraphs)
+
+
+def test_write_document_updates_focused_workspace_asset_in_place(tmp_path):
+    registry = _word_registry()
+    tool = create_write_document_tool(registry)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    managed = workspace / "customer-proposal.docx"
+    original = Document()
+    original.add_paragraph("Draft price")
+    original.save(managed)
+    spec = workspace / "revision.json"
+    spec.write_text(json.dumps({
+        "operations": [{
+            "type": "replace_text",
+            "old": "Draft price",
+            "new": "Confirmed price",
+        }],
+    }), encoding="utf-8")
+    calls = []
+
+    def resolve_asset(asset_id, **kwargs):
+        calls.append((asset_id, kwargs))
+        return {
+            "local_path": str(managed),
+            "managed_artifact_path": str(managed),
+            "source_artifact": {
+                "artifact_id": "artifact-1",
+                "session_id": "source-session",
+                "workspace_asset_id": asset_id,
+            },
+        }
+
+    with bind_tool_execution(
+        tool_call_id="call-workspace-asset",
+        tool_name="write_document",
+        arguments={},
+        artifact_callback=None,
+        session_id="current-session",
+        person_id="person-1",
+        workspace_root=str(workspace),
+        output_root=str(workspace),
+        workspace_asset_resolver=resolve_asset,
+    ):
+        result = tool.execute(
+            format="word",
+            specification_path="revision.json",
+            output_name="ignored-new-name.docx",
+            source_asset_id="asset-1",
+        )
+
+    assert result["success"] is True
+    assert result["workspace_asset_id"] == "asset-1"
+    assert Path(result["output_path"]) == managed
+    assert calls == [("asset-1", {
+        "person_id": "person-1",
+        "session_id": "current-session",
+        "workspace_id": "",
+        "writable": True,
+    })]
+    updated = Document(managed)
+    assert "Confirmed price" in "\n".join(item.text for item in updated.paragraphs)
+    assert not (workspace / "ignored-new-name.docx").exists()
+
+
+def test_write_document_updates_workspace_spreadsheet_asset_in_place(tmp_path):
+    tool = create_write_document_tool(_office_registry())
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    managed = workspace / "pipeline.xlsx"
+    workbook = Workbook()
+    workbook.active.title = "客户"
+    workbook.active["A1"] = "待报价"
+    workbook.save(managed)
+    spec = workspace / "spreadsheet-revision.json"
+    spec.write_text(json.dumps({
+        "operations": [{
+            "type": "set_cells",
+            "sheet": "客户",
+            "cells": {"A1": "已报价"},
+        }],
+    }), encoding="utf-8")
+
+    with bind_tool_execution(
+        tool_call_id="call-workspace-sheet",
+        tool_name="write_document",
+        arguments={},
+        artifact_callback=None,
+        session_id="current-session",
+        person_id="person-1",
+        workspace_root=str(workspace),
+        output_root=str(workspace),
+        workspace_asset_resolver=lambda asset_id, **_kwargs: {
+            "local_path": str(managed),
+            "managed_artifact_path": str(managed),
+            "source_artifact": {
+                "artifact_id": "sheet-artifact",
+                "session_id": "source-session",
+                "workspace_asset_id": asset_id,
+            },
+        },
+    ):
+        result = tool.execute(
+            format="spreadsheet",
+            specification_path=spec.name,
+            output_name="ignored.xlsx",
+            source_asset_id="sheet-asset",
+        )
+
+    assert result["success"] is True
+    assert result["workspace_asset_id"] == "sheet-asset"
+    assert Path(result["output_path"]) == managed
+    assert load_workbook(managed, data_only=False)["客户"]["A1"].value == "已报价"
+    assert not (workspace / "ignored.xlsx").exists()
+
+
+def test_write_document_updates_workspace_presentation_asset_in_place(tmp_path):
+    tool = create_write_document_tool(_office_registry())
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    managed = workspace / "proposal.pptx"
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[5])
+    slide.shapes.title.text = "旧方案"
+    presentation.save(managed)
+    spec = workspace / "presentation-revision.json"
+    spec.write_text(json.dumps({
+        "operations": [{
+            "type": "replace_text",
+            "old": "旧方案",
+            "new": "新方案",
+            "all": True,
+        }],
+    }), encoding="utf-8")
+
+    with bind_tool_execution(
+        tool_call_id="call-workspace-presentation",
+        tool_name="write_document",
+        arguments={},
+        artifact_callback=None,
+        session_id="current-session",
+        person_id="person-1",
+        workspace_root=str(workspace),
+        output_root=str(workspace),
+        workspace_asset_resolver=lambda asset_id, **_kwargs: {
+            "local_path": str(managed),
+            "managed_artifact_path": str(managed),
+            "source_artifact": {
+                "artifact_id": "presentation-artifact",
+                "session_id": "source-session",
+                "workspace_asset_id": asset_id,
+            },
+        },
+    ):
+        result = tool.execute(
+            format="presentation",
+            specification_path=spec.name,
+            output_name="ignored.pptx",
+            source_asset_id="presentation-asset",
+        )
+
+    assert result["success"] is True
+    assert result["workspace_asset_id"] == "presentation-asset"
+    assert Path(result["output_path"]) == managed
+    updated = Presentation(managed)
+    assert updated.slides[0].shapes.title.text == "新方案"
+    assert not (workspace / "ignored.pptx").exists()
 
 
 def test_write_document_styles_only_selected_existing_table_cells(tmp_path):

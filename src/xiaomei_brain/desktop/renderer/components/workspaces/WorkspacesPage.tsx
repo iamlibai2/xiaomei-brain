@@ -6,7 +6,7 @@ import "./workspaces.css";
 
 type WorkspaceComponent = {
   id: string;
-  type: "metric" | "text" | "table" | "bar_chart" | "line_chart" | "pie_chart";
+  type: "metric" | "text" | "table" | "record" | "bar_chart" | "line_chart" | "pie_chart" | "timeline" | "asset" | "group";
   title?: string;
   value?: unknown;
   detail?: string;
@@ -15,6 +15,10 @@ type WorkspaceComponent = {
   columns?: Array<string | { key?: string; label?: string }>;
   rows?: Array<Record<string, unknown>>;
   data?: Array<{ label?: string; value?: number; name?: string }>;
+  items?: Array<{ time?: unknown; title?: unknown; detail?: unknown }>;
+  components?: WorkspaceComponent[];
+  asset?: BusinessAsset;
+  binding_error?: string;
   [key: string]: unknown;
 };
 
@@ -100,6 +104,16 @@ type BusinessSnapshot = {
   actionRuns: BusinessActionRun[];
 };
 
+type WorkspaceSurface = {
+  id: string;
+  name: string;
+  status: "temporary" | "persistent";
+  isDefault: boolean;
+  revision: number;
+  updatedAt: number;
+  components: WorkspaceComponent[];
+};
+
 type WorkspaceSnapshot = {
   id: string;
   name: string;
@@ -110,28 +124,61 @@ type WorkspaceSnapshot = {
   components: WorkspaceComponent[];
   surfaceId: string;
   surfaceRevision: number;
+  surfaces: WorkspaceSurface[];
   business: BusinessSnapshot | null;
 };
 
-function snapshot(value: unknown): WorkspaceSnapshot | null {
+function surfaceSnapshot(value: Record<string, unknown>): WorkspaceSurface | null {
+  if (typeof value.id !== "string") return null;
+  const definitionValue = value.resolved_definition || value.definition;
+  const definition = definitionValue && typeof definitionValue === "object"
+    ? definitionValue as Record<string, unknown>
+    : {};
+  return {
+    id: value.id,
+    name: typeof value.name === "string" && value.name ? value.name : "Surface",
+    status: value.status === "temporary" ? "temporary" : "persistent",
+    isDefault: value.is_default === true,
+    revision: typeof value.revision === "number" ? value.revision : 0,
+    updatedAt: typeof value.updated_at === "number" ? value.updated_at : 0,
+    components: Array.isArray(definition.components)
+      ? definition.components.filter((entry): entry is WorkspaceComponent => (
+        Boolean(entry) && typeof entry === "object" && typeof (entry as WorkspaceComponent).type === "string"
+      ))
+      : [],
+  };
+}
+
+function showSurface(item: WorkspaceSnapshot, surfaceId: string): WorkspaceSnapshot {
+  const surface = item.surfaces.find((entry) => entry.id === surfaceId);
+  if (!surface) return item;
+  return {
+    ...item,
+    components: surface.components,
+    surfaceId: surface.id,
+    surfaceRevision: surface.revision,
+  };
+}
+
+function snapshot(value: unknown, preferredSurfaceId = ""): WorkspaceSnapshot | null {
   if (!value || typeof value !== "object") return null;
   const item = value as Record<string, unknown>;
-  const surfaces = Array.isArray(item.surfaces)
+  const surfaceValues = Array.isArray(item.surfaces)
     ? item.surfaces.filter((entry): entry is Record<string, unknown> => (
       Boolean(entry) && typeof entry === "object"
     ))
     : [];
-  const surface = surfaces.find((entry) => entry.is_default === true) || surfaces[0];
-  const definitionValue = surface?.resolved_definition || surface?.definition;
-  const definition = definitionValue && typeof definitionValue === "object"
-    ? definitionValue as Record<string, unknown>
-    : {};
+  const surfaces = surfaceValues
+    .map(surfaceSnapshot)
+    .filter((entry): entry is WorkspaceSurface => entry !== null);
+  const latestTemporary = surfaces
+    .filter((entry) => entry.status === "temporary")
+    .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+  const surface = surfaces.find((entry) => entry.id === preferredSurfaceId)
+    || latestTemporary
+    || surfaces.find((entry) => entry.isDefault)
+    || surfaces[0];
   if (typeof item.id !== "string" || typeof item.name !== "string") return null;
-  const components = Array.isArray(definition.components)
-    ? definition.components.filter((entry): entry is WorkspaceComponent => (
-      Boolean(entry) && typeof entry === "object" && typeof (entry as WorkspaceComponent).type === "string"
-    ))
-    : [];
   const businessValue = item.business && typeof item.business === "object"
     ? item.business as Record<string, unknown>
     : null;
@@ -171,9 +218,10 @@ function snapshot(value: unknown): WorkspaceSnapshot | null {
     revision: typeof item.revision === "number" ? item.revision : 1,
     createdAt: typeof item.created_at === "number" ? item.created_at : 0,
     updatedAt: typeof item.updated_at === "number" ? item.updated_at : 0,
-    components,
-    surfaceId: typeof surface?.id === "string" ? surface.id : "",
-    surfaceRevision: typeof surface?.revision === "number" ? surface.revision : 0,
+    components: surface?.components || [],
+    surfaceId: surface?.id || "",
+    surfaceRevision: surface?.revision || 0,
+    surfaces,
     business,
   };
 }
@@ -201,6 +249,7 @@ export function WorkspacesPage({
   const [enteringConversation, setEnteringConversation] = useState(false);
   const [error, setError] = useState("");
   const selectedIdRef = useRef("");
+  const selectedSurfaceByWorkspaceRef = useRef<Record<string, string>>({});
   const loadSequenceRef = useRef(0);
   const eventRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -300,7 +349,10 @@ export function WorkspacesPage({
           workspaceId: targetId,
         });
         if (detailResponse.error) throw new Error(detailResponse.error.message);
-        const detail = snapshot(detailResponse.result?.workspace);
+        const detail = snapshot(
+          detailResponse.result?.workspace,
+          selectedSurfaceByWorkspaceRef.current[targetId] || "",
+        );
         if (detail) {
           const existingIndex = next.findIndex((item) => item.id === detail.id);
           next = existingIndex >= 0
@@ -331,6 +383,7 @@ export function WorkspacesPage({
     const clearPersonScopedView = () => {
       ++loadSequenceRef.current;
       selectedIdRef.current = "";
+      selectedSurfaceByWorkspaceRef.current = {};
       setItems([]);
       setSelectedId("");
       setError("");
@@ -363,6 +416,9 @@ export function WorkspacesPage({
         ? event.data as Record<string, unknown>
         : {};
       const eventWorkspaceId = String(data.workspace_id || data.id || "");
+      if (eventName.startsWith("surface.") && eventWorkspaceId && typeof data.id === "string") {
+        selectedSurfaceByWorkspaceRef.current[eventWorkspaceId] = data.id;
+      }
       if (eventRefreshTimerRef.current !== null) {
         clearTimeout(eventRefreshTimerRef.current);
       }
@@ -459,9 +515,33 @@ export function WorkspacesPage({
                 </div>
                 <span className="workspace-revision">R{selected.revision}</span>
               </header>
+              {selected.surfaces.length > 1 && (
+                <nav className="workspace-surface-switcher" aria-label="Surface">
+                  {selected.surfaces.map((surface) => (
+                    <button
+                      key={surface.id}
+                      type="button"
+                      className={surface.id === selected.surfaceId ? "active" : ""}
+                      onClick={() => {
+                        selectedSurfaceByWorkspaceRef.current[selected.id] = surface.id;
+                        setItems((current) => current.map((item) => (
+                          item.id === selected.id ? showSurface(item, surface.id) : item
+                        )));
+                      }}
+                    >
+                      {surface.name}
+                      {surface.status === "temporary" && <span aria-hidden="true">●</span>}
+                    </button>
+                  ))}
+                </nav>
+              )}
               <div className="workspace-component-grid">
                 {selected.components.map((component) => (
-                  <WorkspaceComponentCard key={component.id} component={component} />
+                  <WorkspaceComponentCard
+                    key={component.id}
+                    component={component}
+                    onOpenAsset={openAsset}
+                  />
                 ))}
               </div>
               {selected.business && (
@@ -696,7 +776,21 @@ function WorkspaceEmpty({ text, error = false }: { text: string; error?: boolean
   );
 }
 
-function WorkspaceComponentCard({ component }: { component: WorkspaceComponent }) {
+function WorkspaceComponentCard({
+  component,
+  onOpenAsset,
+}: {
+  component: WorkspaceComponent;
+  onOpenAsset: (asset: BusinessAsset) => void;
+}) {
+  if (component.binding_error) {
+    return (
+      <article className="workspace-component workspace-component-error">
+        {component.title && <h3>{component.title}</h3>}
+        <p>{component.binding_error}</p>
+      </article>
+    );
+  }
   if (component.type === "metric") {
     return (
       <article className="workspace-component workspace-metric">
@@ -715,16 +809,42 @@ function WorkspaceComponentCard({ component }: { component: WorkspaceComponent }
     );
   }
   if (component.type === "table") return <WorkspaceTable component={component} />;
+  if (component.type === "record") return <WorkspaceRecord component={component} />;
+  if (component.type === "timeline") return <WorkspaceTimeline component={component} />;
+  if (component.type === "asset") {
+    return <WorkspaceAssetCard component={component} onOpenAsset={onOpenAsset} />;
+  }
+  if (component.type === "group") {
+    return (
+      <section className="workspace-component workspace-component-group">
+        {component.title && <h3>{component.title}</h3>}
+        <div className="workspace-component-grid workspace-nested-grid">
+          {(component.components || []).map((child) => (
+            <WorkspaceComponentCard
+              key={child.id}
+              component={child}
+              onOpenAsset={onOpenAsset}
+            />
+          ))}
+        </div>
+      </section>
+    );
+  }
   return <WorkspaceChart component={component} />;
 }
 
-function WorkspaceTable({ component }: { component: WorkspaceComponent }) {
+function normalizedColumns(component: WorkspaceComponent) {
   const rows = Array.isArray(component.rows) ? component.rows : [];
-  const columns = Array.isArray(component.columns) && component.columns.length
+  return Array.isArray(component.columns) && component.columns.length
     ? component.columns.map((column) => typeof column === "string"
       ? { key: column, label: column }
       : { key: String(column.key || column.label || ""), label: String(column.label || column.key || "") })
     : Object.keys(rows[0] || {}).map((key) => ({ key, label: key }));
+}
+
+function WorkspaceTable({ component }: { component: WorkspaceComponent }) {
+  const rows = Array.isArray(component.rows) ? component.rows : [];
+  const columns = normalizedColumns(component);
   return (
     <article className="workspace-component workspace-table-card">
       {component.title && <h3>{component.title}</h3>}
@@ -739,6 +859,78 @@ function WorkspaceTable({ component }: { component: WorkspaceComponent }) {
         </table>
       </div>
     </article>
+  );
+}
+
+function WorkspaceRecord({ component }: { component: WorkspaceComponent }) {
+  const rows = Array.isArray(component.rows) ? component.rows : [];
+  const columns = normalizedColumns(component);
+  return (
+    <article className="workspace-component workspace-record-card">
+      {component.title && <h3>{component.title}</h3>}
+      <div className="workspace-record-list">
+        {rows.slice(0, 12).map((row, index) => (
+          <dl key={index}>
+            {columns.map((column) => (
+              <div key={column.key}>
+                <dt>{column.label}</dt>
+                <dd>{String(row[column.key] ?? "—")}</dd>
+              </div>
+            ))}
+          </dl>
+        ))}
+      </div>
+    </article>
+  );
+}
+
+function WorkspaceTimeline({ component }: { component: WorkspaceComponent }) {
+  const items = Array.isArray(component.items) ? component.items : [];
+  return (
+    <article className="workspace-component workspace-timeline-card">
+      {component.title && <h3>{component.title}</h3>}
+      <ol>
+        {items.slice(0, 50).map((item, index) => (
+          <li key={index}>
+            <time>{String(item.time ?? "")}</time>
+            <span>
+              <strong>{String(item.title ?? "")}</strong>
+              {item.detail !== undefined && <small>{String(item.detail)}</small>}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </article>
+  );
+}
+
+function WorkspaceAssetCard({
+  component,
+  onOpenAsset,
+}: {
+  component: WorkspaceComponent;
+  onOpenAsset: (asset: BusinessAsset) => void;
+}) {
+  const { t } = useTranslation();
+  const asset = component.asset;
+  if (!asset) return null;
+  const canOpen = asset.nature !== "external";
+  return (
+    <button
+      type="button"
+      className="workspace-component workspace-surface-asset"
+      disabled={!canOpen}
+      onClick={() => canOpen && onOpenAsset(asset)}
+    >
+      <span className={`workspace-asset-nature ${asset.nature}`}>
+        {t(`workspaceUi.assetNature_${asset.nature}`)}
+      </span>
+      <span>
+        <strong>{component.title || asset.name}</strong>
+        <small>{asset.mime_type || asset.kind}</small>
+      </span>
+      {canOpen && <Icon name="external-link" size={15} />}
+    </button>
   );
 }
 

@@ -44,6 +44,7 @@ class WorkspaceStore(SQLiteStore):
         super().__init__(db_path)
         self._ensure_tables()
         self._import_legacy()
+        self.purge_temporary_surfaces()
 
     def _ensure_tables(self) -> None:
         conn = self._get_conn()
@@ -399,6 +400,7 @@ class WorkspaceStore(SQLiteStore):
         purpose: str,
         definition: dict[str, Any],
         is_default: bool = False,
+        status: str = "persistent",
         now: float | None = None,
     ) -> Surface:
         timestamp = time.time() if now is None else now
@@ -408,9 +410,14 @@ class WorkspaceStore(SQLiteStore):
                 "UPDATE surfaces SET is_default = 0 WHERE workspace_id = ?",
                 (workspace_id,),
             )
+        if status == "temporary":
+            conn.execute(
+                "DELETE FROM surfaces WHERE workspace_id = ? AND status = 'temporary'",
+                (workspace_id,),
+            )
         surface = self._insert_surface(
             conn, workspace_id, name, purpose, definition,
-            is_default=is_default, now=timestamp,
+            is_default=is_default, status=status, now=timestamp,
         )
         conn.commit()
         return surface
@@ -425,10 +432,11 @@ class WorkspaceStore(SQLiteStore):
         *,
         is_default: bool,
         now: float,
+        status: str = "persistent",
     ) -> Surface:
         surface = Surface(
             id=new_surface_id(), workspace_id=workspace_id, name=name,
-            purpose=purpose, definition=definition, status="persistent",
+            purpose=purpose, definition=definition, status=status,
             is_default=is_default, revision=1, created_at=now, updated_at=now,
         )
         conn.execute(
@@ -471,6 +479,7 @@ class WorkspaceStore(SQLiteStore):
         name: str,
         purpose: str,
         definition: dict[str, Any],
+        status: str | None = None,
         expected_revision: int | None = None,
         now: float | None = None,
     ) -> Surface:
@@ -483,12 +492,13 @@ class WorkspaceStore(SQLiteStore):
             )
         timestamp = time.time() if now is None else now
         revision = current.revision + 1
+        resolved_status = current.status if status is None else status
         self._get_conn().execute(
             """UPDATE surfaces SET name = ?, purpose = ?, definition_json = ?,
-               revision = ?, updated_at = ? WHERE id = ?""",
+               status = ?, revision = ?, updated_at = ? WHERE id = ?""",
             (
                 name, purpose, json.dumps(definition, ensure_ascii=False),
-                revision, timestamp, surface_id,
+                resolved_status, revision, timestamp, surface_id,
             ),
         )
         self._get_conn().execute(
@@ -501,6 +511,14 @@ class WorkspaceStore(SQLiteStore):
         if updated is None:
             raise KeyError(surface_id)
         return updated
+
+    def purge_temporary_surfaces(self) -> int:
+        """Remove one-session presentation surfaces left by a previous process."""
+        cursor = self._get_conn().execute(
+            "DELETE FROM surfaces WHERE status = 'temporary'",
+        )
+        self._get_conn().commit()
+        return max(0, int(cursor.rowcount))
 
     @staticmethod
     def _workspace_row(row: sqlite3.Row) -> Workspace:

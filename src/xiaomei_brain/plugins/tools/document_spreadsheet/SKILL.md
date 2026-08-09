@@ -3,7 +3,7 @@ name: spreadsheet-documents
 description: 创建、修改和验收 Excel XLSX 工作簿
 version: 1.0.0
 tags: [spreadsheet, excel, xlsx, data]
-requires_tools: [read_document, write, write_document, present_artifacts]
+requires_tools: [read_document, read_workspace_asset, write, write_document, list_workspace_assets, present_artifacts]
 ---
 
 # 电子表格工作流
@@ -110,6 +110,10 @@ Writer只保存并校验公式，不负责计算公式结果；Excel或其他表
 
 修改时传入当前消息中的真实 `source_attachment_id`。用户上传的工作簿会生成副本，
 不覆盖上传源文件；Agent 自己生成并交付的工作簿会原位更新，继续使用同一个产物 ID。
+如果人物要求继续修改当前 Workspace 中以前生成的工作簿，先用
+`list_workspace_assets` 找到 working Asset，并把其 `asset_id` 作为
+`source_asset_id` 传给 `write_document`。先用 `read_workspace_asset` 读取现有工作簿，
+再编写精确的修改 operations；不要猜测历史路径或要求人物重新上传。
 
 ## 完成标准
 

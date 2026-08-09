@@ -3,7 +3,7 @@ name: word-documents
 description: 创建、修改和验收 Word DOCX 文档
 version: 1.5.0
 tags: [word, docx, document, report]
-requires_tools: [read_document, write, write_document, preview_word_themes, manage_document_template, present_artifacts, clarify]
+requires_tools: [read_document, read_workspace_asset, write, write_document, list_workspace_assets, preview_word_themes, manage_document_template, present_artifacts, clarify]
 ---
 
 ## 对话式企业模板库
@@ -245,7 +245,12 @@ write_document(
 }
 ```
 
-调用时传入当前消息中真实存在的 `source_attachment_id`。
+修改当前消息附带的文档时，传入真实存在的 `source_attachment_id`。如果人物要求
+继续修改当前 Workspace 中以前生成的文档，先调用 `list_workspace_assets` 找到对应的
+working Asset，再把其稳定 `asset_id` 作为 `source_asset_id` 传给 `write_document`。
+先用 `read_workspace_asset` 读取现有内容，再编写精确的修改 operations。不要要求人物
+重新上传，也不要猜测旧会话路径。evidence 和 external Asset 不能直接覆盖；
+需要继续工作时，应取得或生成 working Asset。
 
 `read_document` 会用 `[表格 1 | 8 行 × 12 列]` 标记表格。`style_table_cells`
 中的 `table_index`、`rows` 和 `columns` 均为从 1 开始的编号；行列可以传

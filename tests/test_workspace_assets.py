@@ -9,6 +9,7 @@ from xiaomei_brain.consciousness.conversation_driver import ConversationDriver
 from xiaomei_brain.consciousness.living import LivingMessage
 from xiaomei_brain.memory.conversation_db import ConversationDB
 from xiaomei_brain.workspaces import WorkspaceService, WorkspaceStore, create_workspace_tools
+from xiaomei_brain.workspaces.content_resolver import WorkspaceAssetContentResolver
 
 
 def _service(tmp_path):
@@ -135,6 +136,53 @@ def test_same_name_at_different_working_paths_creates_distinct_assets(tmp_path):
     )
 
     assert second.id != first.id
+
+
+def test_content_resolver_exposes_managed_working_asset_only_after_person_check(
+    tmp_path,
+    monkeypatch,
+):
+    service, workspace, _events = _service(tmp_path)
+    artifact = _artifact()
+    item = service.assets.register_artifact(
+        workspace.id,
+        person_id="person-1",
+        session_id="session-1",
+        artifact=artifact,
+        sha256=hashlib.sha256(b"document").hexdigest(),
+    )
+    managed = tmp_path / "quote.docx"
+    managed.write_bytes(b"document")
+    db = SimpleNamespace(
+        get_artifact_metadata=lambda session_id, artifact_id: artifact
+        if (session_id, artifact_id) == ("session-1", artifact["id"])
+        else None,
+    )
+    monkeypatch.setattr(
+        "xiaomei_brain.gateway.artifacts.managed_artifact_path",
+        lambda _agent_id, _artifact: managed,
+    )
+    resolver = WorkspaceAssetContentResolver(service, db, "test")
+
+    resolved = resolver.resolve(
+        item.id,
+        person_id="person-1",
+        session_id="session-1",
+        writable=True,
+    )
+
+    assert resolved["workspace_asset_id"] == item.id
+    assert resolved["local_path"] == str(managed.resolve())
+    assert resolved["managed_artifact_path"] == str(managed.resolve())
+    assert resolved["source_artifact"]["artifact_id"] == artifact["id"]
+    with pytest.raises(PermissionError):
+        resolver.resolve(
+            item.id,
+            person_id="person-2",
+            session_id="session-1",
+            workspace_id=workspace.id,
+            writable=True,
+        )
 
 
 def test_evidence_freezes_one_working_revision_without_overwrite(tmp_path):

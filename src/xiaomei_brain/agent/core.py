@@ -1064,6 +1064,9 @@ class Agent:
                     project_context=self.project_context,
                     project_service=getattr(self, "project_service", None),
                     workspace_service=getattr(self, "workspace_service", None),
+                    workspace_asset_resolver=getattr(
+                        self, "workspace_asset_resolver", None,
+                    ),
                     cancel_check=cancel_check,
                 ):
                     result = normalize_tool_result(

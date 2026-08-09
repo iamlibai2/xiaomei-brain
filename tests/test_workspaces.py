@@ -92,6 +92,70 @@ def test_workspace_can_start_without_surface_but_surface_is_validated(tmp_path):
         )
 
 
+def test_temporary_surface_can_be_replaced_promoted_and_cleaned_on_restart(tmp_path):
+    db_path = tmp_path / "workspaces.db"
+    service = WorkspaceService(WorkspaceStore(db_path))
+    workspace = service.create(
+        name="Temporary presentation",
+        purpose="Present a one-time result",
+        created_by_person_id="person-1",
+    )
+
+    first = service.surfaces.create(
+        workspace.id,
+        name="First preview",
+        purpose="One-time preview",
+        definition=_surface(10),
+        persistence="temporary",
+    )
+    second = service.surfaces.create(
+        workspace.id,
+        name="Second preview",
+        purpose="Replace the first preview",
+        definition=_surface(20),
+        persistence="temporary",
+    )
+    assert service.store.get_surface(first.id) is None
+    assert service.store.get_surface(second.id).status == "temporary"
+
+    promoted = service.surfaces.update(
+        second.id,
+        definition=_surface(30),
+        persistence="persistent",
+        expected_revision=1,
+    )
+    assert promoted.status == "persistent"
+
+    service.surfaces.create(
+        workspace.id,
+        name="Ephemeral preview",
+        purpose="Should not survive an Agent restart",
+        definition=_surface(40),
+        persistence="temporary",
+    )
+    reopened = WorkspaceStore(db_path)
+    remaining = reopened.list_surfaces(workspace.id)
+    assert [item.id for item in remaining] == [promoted.id]
+
+
+def test_default_surface_cannot_be_temporary(tmp_path):
+    service = WorkspaceService(WorkspaceStore(tmp_path / "workspaces.db"))
+    workspace = service.create(
+        name="Persistent default",
+        purpose="Keep the default interface stable",
+        created_by_person_id="person-1",
+    )
+    with pytest.raises(ValueError, match="default Surface must be persistent"):
+        service.surfaces.create(
+            workspace.id,
+            name="Invalid default",
+            purpose="",
+            definition=_surface(),
+            is_default=True,
+            persistence="temporary",
+        )
+
+
 def test_workspace_tools_use_person_as_provenance_not_agent_ownership(tmp_path):
     service = WorkspaceService(WorkspaceStore(tmp_path / "workspaces.db"))
     core = SimpleNamespace(user_id="person-1", session_id="session-1", turn_id="turn-1")

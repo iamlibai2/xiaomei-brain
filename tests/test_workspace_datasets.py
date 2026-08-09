@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from types import SimpleNamespace
 
 from xiaomei_brain.workspaces import WorkspaceService, WorkspaceStore, create_workspace_tools
@@ -127,6 +128,108 @@ def test_record_change_invalidates_dataset_and_surface_lazily_recomputes(tmp_pat
     assert component["unit"] == "元"
     assert component["dataset_revision"] == 2
     assert service.datasets.store.get(metrics.id).status == "valid"
+
+
+def test_surface_resolves_record_timeline_asset_and_nested_group(tmp_path):
+    service, workspace, collection, _first, _second = _world(tmp_path)
+    records = service.datasets.create(
+        workspace.id,
+        name="客户明细",
+        kind="table",
+        description="客户经营记录",
+        source_collection_id=collection.id,
+        source_spec={"fields": ["客户名称", "阶段", "金额"]},
+    )
+    timeline = service.datasets.create(
+        workspace.id,
+        name="客户增长",
+        kind="time_series",
+        description="按日统计新增客户",
+        source_collection_id=collection.id,
+        source_spec={
+            "date_field": "登记日期",
+            "operation": "count",
+            "interval": "day",
+            "label": "新增客户",
+        },
+    )
+    artifact = {
+        "id": "a" * 32,
+        "session_id": "session-1",
+        "name": "客户报价.xlsx",
+        "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "size": 12,
+        "kind": "document",
+        "relative_path": "workspace/outputs/customer-quote.xlsx",
+    }
+    asset = service.assets.register_artifact(
+        workspace.id,
+        person_id="person-1",
+        session_id="session-1",
+        artifact=artifact,
+        sha256=hashlib.sha256(b"spreadsheet").hexdigest(),
+    )
+    surface = service.surfaces.create(
+        workspace.id,
+        name="完整经营界面",
+        purpose="验证标准组件",
+        definition={"components": [
+            {
+                "id": "business-group",
+                "type": "group",
+                "title": "客户现场",
+                "components": [
+                    {
+                        "id": "customer-records",
+                        "type": "record",
+                        "binding": {"dataset_id": records.id},
+                    },
+                    {
+                        "id": "customer-timeline",
+                        "type": "timeline",
+                        "binding": {"dataset_id": timeline.id},
+                    },
+                ],
+            },
+            {
+                "id": "quote-asset",
+                "type": "asset",
+                "title": "当前报价",
+                "binding": {"asset_id": asset.id},
+            },
+        ]},
+    )
+
+    resolved = service.surfaces.snapshot(surface)["resolved_definition"]["components"]
+    group = resolved[0]
+    assert {
+        row["name"] for row in group["components"][0]["rows"]
+    } == {"甲公司", "乙公司"}
+    assert group["components"][1]["items"] == [
+        {"time": "2026-08-01", "title": "2026-08-01", "detail": 1},
+        {"time": "2026-08-02", "title": "2026-08-02", "detail": 1},
+    ]
+    assert resolved[1]["asset"]["id"] == asset.id
+
+
+def test_surface_rejects_empty_group_and_unbound_asset(tmp_path):
+    service, workspace, _collection, _first, _second = _world(tmp_path)
+
+    for component in (
+        {"type": "group", "components": []},
+        {"type": "asset"},
+    ):
+        try:
+            service.surfaces.create(
+                workspace.id,
+                name="无效界面",
+                purpose="验证约束",
+                definition={"components": [component]},
+            )
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Invalid standard component was accepted")
 
 
 def test_dataset_tools_are_registered_without_new_agent_manager_wiring(tmp_path):

@@ -10,7 +10,10 @@ from uuid import uuid4
 
 from xiaomei_brain.documents import DocumentService
 from xiaomei_brain.tools.base import Tool
-from xiaomei_brain.tools.execution_context import current_tool_execution
+from xiaomei_brain.tools.execution_context import (
+    current_tool_execution,
+    resolve_current_workspace_asset,
+)
 
 
 _DOCUMENT_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
@@ -171,6 +174,7 @@ def create_write_document_tool(
         specification_path: str,
         output_name: str,
         source_attachment_id: str = "",
+        source_asset_id: str = "",
         template_id: str = "",
     ) -> dict[str, Any]:
         context = current_tool_execution()
@@ -215,8 +219,18 @@ def create_write_document_tool(
         source_artifact: dict[str, Any] | None = None
         managed_artifact_target: Path | None = None
         template_record = None
-        if source_attachment_id and template_id:
-            return {"error": "source_attachment_id 和 template_id 不能同时使用"}
+        source_count = sum(bool(value) for value in (
+            source_attachment_id,
+            source_asset_id,
+            template_id,
+        ))
+        if source_count > 1:
+            return {
+                "error": (
+                    "source_attachment_id、source_asset_id 和 template_id "
+                    "只能选择一个"
+                ),
+            }
         if template_id:
             if template_service is None:
                 return {"error": "当前运行环境没有启用文档模板库"}
@@ -258,6 +272,29 @@ def create_write_document_tool(
                     # Multiple revisions in one turn must build on the latest
                     # Agent-owned file, not on the immutable ingress snapshot.
                     source_path = candidate
+
+        if source_asset_id:
+            try:
+                resolved_asset = resolve_current_workspace_asset(
+                    source_asset_id,
+                    writable=True,
+                    allowed_suffixes=(suffix,),
+                )
+            except Exception as exc:
+                return {"error": str(exc), "source_asset_id": source_asset_id}
+            source_path = Path(str(resolved_asset.get("local_path") or ""))
+            if not source_path.is_file():
+                return {
+                    "error": "Workspace Asset content is unavailable",
+                    "source_asset_id": source_asset_id,
+                }
+            raw_source_artifact = resolved_asset.get("source_artifact")
+            raw_managed_path = str(
+                resolved_asset.get("managed_artifact_path") or "",
+            )
+            if isinstance(raw_source_artifact, dict) and raw_managed_path:
+                source_artifact = dict(raw_source_artifact)
+                managed_artifact_target = Path(raw_managed_path).resolve()
 
         try:
             output_root.mkdir(parents=True, exist_ok=True)
@@ -331,6 +368,8 @@ def create_write_document_tool(
                 "session_id": str(source_artifact.get("session_id") or ""),
                 "output_path": str(output_path),
             }
+        if source_asset_id:
+            response["workspace_asset_id"] = source_asset_id
         return response
 
     return Tool(
@@ -339,6 +378,7 @@ def create_write_document_tool(
             "Create or revise a document through a registered format plugin. First write the "
             "format-specific JSON specification inside the current workspace, then pass its "
             "relative path. To revise an uploaded document, pass its current attachment id; "
+            "to continue a durable file from the focused Workspace, pass source_asset_id; "
             "to create from an Agent-owned template, pass template_id instead. The original "
             "uploaded attachment or template is never overwritten. When the source attachment is an "
             "Agent-owned artifact, update that artifact in place and keep its artifact id. Specifications "
@@ -352,6 +392,7 @@ def create_write_document_tool(
                 "specification_path": {"type": "string", "description": "JSON specification path inside the workspace"},
                 "output_name": {"type": "string", "description": "Plain final file name including extension"},
                 "source_attachment_id": {"type": "string", "description": "Optional current attachment id to revise"},
+                "source_asset_id": {"type": "string", "description": "Optional working Asset id from list_workspace_assets to revise"},
                 "template_id": {"type": "string", "description": "Optional reusable template id or exact visible template name"},
             },
             "required": ["format", "specification_path", "output_name"],
