@@ -241,10 +241,28 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         """Record what was received before deciding whether it is a business fact."""
         require_workspace(workspace_id)
         session_id, turn_id = context()
+        resolved_data_source_id = data_source_id.strip()
+        if not resolved_data_source_id and session_id:
+            locator = f"session:{session_id}"
+            source = service().business.store.find_data_source(
+                workspace_id,
+                kind="conversation",
+                locator=locator,
+            )
+            if source is None:
+                source = service().business.create_data_source(
+                    workspace_id,
+                    kind="conversation",
+                    name="Conversation",
+                    locator=locator,
+                    session_id=session_id,
+                    turn_id=turn_id,
+                )
+            resolved_data_source_id = source.id
         observation = service().business.observe(
             workspace_id,
             content=content,
-            data_source_id=data_source_id,
+            data_source_id=resolved_data_source_id,
             source_person_id=person_id(),
             external_ref=external_ref,
             attributes=attributes,
@@ -253,7 +271,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             session_id=session_id,
             turn_id=turn_id,
         )
-        return service().business.observation_snapshot(observation)
+        return service().business.observation_snapshot_with_links(observation)
 
     def define_collection(
         workspace_id: str,

@@ -25,7 +25,7 @@ from .models import (
 )
 
 SCHEMA_COMPONENT = "workspace_business"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def _new_id(prefix: str) -> str:
@@ -54,6 +54,22 @@ class BusinessStore(SQLiteStore):
         ).fetchone()[0])
         if existing_workspace_count and self._before_schema_migration is not None:
             self._before_schema_migration()
+        observation_table_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'observations'",
+        ).fetchone() is not None
+        if observation_table_exists:
+            observation_columns = {
+                str(row["name"])
+                for row in conn.execute("PRAGMA table_info(observations)").fetchall()
+            }
+            if "session_id" not in observation_columns:
+                conn.execute(
+                    "ALTER TABLE observations ADD COLUMN session_id TEXT NOT NULL DEFAULT ''",
+                )
+            if "turn_id" not in observation_columns:
+                conn.execute(
+                    "ALTER TABLE observations ADD COLUMN turn_id TEXT NOT NULL DEFAULT ''",
+                )
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS data_sources (
                 id TEXT PRIMARY KEY,
@@ -78,6 +94,8 @@ class BusinessStore(SQLiteStore):
                 content TEXT NOT NULL DEFAULT '',
                 attributes_json TEXT NOT NULL DEFAULT '{}',
                 asset_id TEXT NOT NULL DEFAULT '',
+                session_id TEXT NOT NULL DEFAULT '',
+                turn_id TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'unprocessed',
                 occurred_at REAL,
                 received_at REAL NOT NULL,
@@ -304,6 +322,8 @@ class BusinessStore(SQLiteStore):
         content: str,
         attributes: dict[str, Any],
         asset_id: str,
+        session_id: str,
+        turn_id: str,
         occurred_at: float | None,
         now: float | None = None,
     ) -> Observation:
@@ -312,7 +332,8 @@ class BusinessStore(SQLiteStore):
             id=_new_id("observation"), workspace_id=workspace_id,
             data_source_id=data_source_id, source_person_id=source_person_id,
             external_ref=external_ref, content=content, attributes=attributes,
-            asset_id=asset_id, status="unprocessed", occurred_at=occurred_at,
+            asset_id=asset_id, session_id=session_id, turn_id=turn_id,
+            status="unprocessed", occurred_at=occurred_at,
             received_at=timestamp, resolved_collection_id="",
             resolved_record_id="",
         )
@@ -320,13 +341,15 @@ class BusinessStore(SQLiteStore):
         conn.execute(
             """INSERT INTO observations (
                 id, workspace_id, data_source_id, source_person_id, external_ref,
-                content, attributes_json, asset_id, status, occurred_at,
+                content, attributes_json, asset_id, session_id, turn_id,
+                status, occurred_at,
                 received_at, resolved_collection_id, resolved_record_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '')""",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '')""",
             (
                 item.id, item.workspace_id, item.data_source_id,
                 item.source_person_id, item.external_ref, item.content,
-                self._json(item.attributes), item.asset_id, item.status,
+                self._json(item.attributes), item.asset_id,
+                item.session_id, item.turn_id, item.status,
                 item.occurred_at, item.received_at,
             ),
         )
@@ -935,7 +958,8 @@ class BusinessStore(SQLiteStore):
             source_person_id=str(row["source_person_id"]),
             external_ref=str(row["external_ref"]), content=str(row["content"]),
             attributes=attributes if isinstance(attributes, dict) else {},
-            asset_id=str(row["asset_id"]), status=str(row["status"]),
+            asset_id=str(row["asset_id"]), session_id=str(row["session_id"]),
+            turn_id=str(row["turn_id"]), status=str(row["status"]),
             occurred_at=(
                 float(row["occurred_at"]) if row["occurred_at"] is not None else None
             ),

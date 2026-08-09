@@ -32,6 +32,16 @@ type BusinessCollection = {
   records: BusinessRecord[];
 };
 type BusinessEvent = { id: string; summary: string; occurred_at: number };
+type BusinessObservation = {
+  id: string;
+  content: string;
+  status: "unprocessed" | "resolved";
+  received_at: number;
+  session_id: string;
+  turn_id: string;
+  resolved_record_ids: string[];
+  data_source?: { kind?: string; name?: string } | null;
+};
 type BusinessActionCandidate = {
   id: string;
   collection_label: string;
@@ -61,6 +71,7 @@ type BusinessActionRun = {
 type BusinessSnapshot = {
   summary: Record<string, number>;
   collections: BusinessCollection[];
+  observations: BusinessObservation[];
   events: BusinessEvent[];
   actionCandidates: BusinessActionCandidate[];
   actions: BusinessActionDefinition[];
@@ -108,6 +119,9 @@ function snapshot(value: unknown): WorkspaceSnapshot | null {
       : {},
     collections: Array.isArray(businessValue.collections)
       ? businessValue.collections as BusinessCollection[]
+      : [],
+    observations: Array.isArray(businessValue.observations)
+      ? businessValue.observations as BusinessObservation[]
       : [],
     events: Array.isArray(businessValue.events)
       ? businessValue.events as BusinessEvent[]
@@ -396,6 +410,25 @@ function WorkspaceBusinessFacts({
           </div>
         </article>
       ))}
+      {business.observations.length > 0 && (
+        <article className="workspace-evidence-list">
+          <h4>{t("workspaceUi.businessEvidence")}</h4>
+          {business.observations.slice(0, 8).map((observation) => (
+            <div key={observation.id} title={[observation.session_id, observation.turn_id].filter(Boolean).join(" / ")}>
+              <span className={`workspace-evidence-status ${observation.status}`}>
+                {t(`workspaceUi.observationStatus_${observation.status}`)}
+              </span>
+              <span className="workspace-evidence-copy">
+                <strong>{observation.content}</strong>
+                <small>{observation.data_source?.kind === "conversation"
+                  ? t("workspaceUi.conversationSource")
+                  : observation.data_source?.name || t("workspaceUi.unknownSource")}</small>
+              </span>
+              <time>{new Date(observation.received_at * 1000).toLocaleString(locale)}</time>
+            </div>
+          ))}
+        </article>
+      )}
       {business.actions.length > 0 && (
         <article className="workspace-action-candidates workspace-established-actions">
           <h4>{t("workspaceUi.establishedPractices")}</h4>

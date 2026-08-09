@@ -110,6 +110,8 @@ class BusinessWorldService:
             content=resolved_content,
             attributes=dict(attributes or {}),
             asset_id=asset_id.strip(),
+            session_id=session_id.strip(),
+            turn_id=turn_id.strip(),
             occurred_at=occurred_at,
             now=self._clock(),
         )
@@ -405,6 +407,7 @@ class BusinessWorldService:
             "source_person_id": item.source_person_id,
             "external_ref": item.external_ref, "content": item.content,
             "attributes": item.attributes, "asset_id": item.asset_id,
+            "session_id": item.session_id, "turn_id": item.turn_id,
             "status": item.status, "occurred_at": item.occurred_at,
             "received_at": item.received_at,
             "resolved_collection_id": item.resolved_collection_id,
@@ -414,6 +417,13 @@ class BusinessWorldService:
     def observation_snapshot_with_links(self, item: Observation) -> dict[str, Any]:
         payload = self.observation_snapshot(item)
         payload["resolved_record_ids"] = self.store.linked_record_ids(item.id)
+        source = (
+            self.store.get_data_source(item.data_source_id)
+            if item.data_source_id else None
+        )
+        payload["data_source"] = (
+            self.data_source_snapshot(source) if source is not None else None
+        )
         return payload
 
     def action_candidate_snapshot(

@@ -47,6 +47,54 @@ def test_existing_workspace_is_backed_up_before_business_schema_migration(tmp_pa
     assert calls == ["backup"]
 
 
+def test_observation_source_columns_upgrade_without_losing_existing_rows(tmp_path):
+    db_path = tmp_path / "workspaces.db"
+    workspace_store = WorkspaceStore(db_path)
+    workspace = workspace_store.create(
+        name="既有经营数据",
+        purpose="验证来源迁移",
+        description="",
+        created_reason="test",
+        created_by_person_id="person-1",
+    )
+    conn = workspace_store._get_conn()
+    conn.execute("""CREATE TABLE observations (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        data_source_id TEXT NOT NULL DEFAULT '',
+        source_person_id TEXT NOT NULL DEFAULT '',
+        external_ref TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL DEFAULT '',
+        attributes_json TEXT NOT NULL DEFAULT '{}',
+        asset_id TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'unprocessed',
+        occurred_at REAL,
+        received_at REAL NOT NULL,
+        resolved_collection_id TEXT NOT NULL DEFAULT '',
+        resolved_record_id TEXT NOT NULL DEFAULT ''
+    )""")
+    conn.execute(
+        """INSERT INTO observations (
+            id, workspace_id, content, received_at
+        ) VALUES ('observation-old', ?, '旧消息', 10)""",
+        (workspace.id,),
+    )
+    conn.commit()
+    workspace_store._set_schema_version("workspace_business", 3)
+    calls = []
+
+    store = BusinessStore(
+        db_path,
+        before_schema_migration=lambda: calls.append("backup"),
+    )
+
+    migrated = store.get_observation("observation-old")
+    assert calls == ["backup"]
+    assert migrated.content == "旧消息"
+    assert migrated.session_id == ""
+    assert migrated.turn_id == ""
+
+
 def test_observation_becomes_record_with_atomic_change_and_event(tmp_path):
     events = []
     store = WorkspaceStore(tmp_path / "workspaces.db")
@@ -68,6 +116,8 @@ def test_observation_becomes_record_with_atomic_change_and_event(tmp_path):
         data_source_id=source.id,
         source_person_id="person-1",
         content="甲公司确认进入报价阶段",
+        session_id="session-1",
+        turn_id="turn-1",
     )
     collection, fields = _customer_collection(service, workspace.id)
     record, changes, event = service.business.upsert_record(
@@ -88,6 +138,8 @@ def test_observation_becomes_record_with_atomic_change_and_event(tmp_path):
     assert event is not None
     assert set(event.record_change_ids) == {item.id for item in changes}
     assert service.business.store.get_observation(observation.id).status == "resolved"
+    assert service.business.store.get_observation(observation.id).session_id == "session-1"
+    assert service.business.store.get_observation(observation.id).turn_id == "turn-1"
     visible = service.business.record_snapshot(record, fields)
     assert visible["values"] == {
         "name": "甲公司", "stage": "报价", "amount": 120000,
@@ -215,6 +267,32 @@ def test_agent_tools_expose_business_fact_vertical_slice(tmp_path):
     )
     assert result["record"]["values"]["name"] == "A 公司"
     assert result["changes"][0]["person_id"] == "person-1"
+
+
+def test_conversation_observation_tool_persists_and_reuses_source_context(tmp_path):
+    service = _service(tmp_path)
+    core = SimpleNamespace(user_id="person-1", session_id="session-1", turn_id="turn-1")
+    agent = SimpleNamespace(workspace_service=service, _get_agent=lambda: core)
+    tools = {item.name: item for item in create_workspace_tools(agent)}
+    workspace = tools["create_workspace"].execute(name="销售", purpose="持续经营")
+
+    first = tools["record_observation"].execute(
+        workspace_id=workspace["id"],
+        content="甲公司确认报价",
+    )
+    core.turn_id = "turn-2"
+    second = tools["record_observation"].execute(
+        workspace_id=workspace["id"],
+        content="甲公司确认合同",
+    )
+
+    assert first["session_id"] == "session-1"
+    assert first["turn_id"] == "turn-1"
+    assert second["turn_id"] == "turn-2"
+    assert first["data_source_id"] == second["data_source_id"]
+    assert first["data_source"]["kind"] == "conversation"
+    assert first["data_source"]["locator"] == "session:session-1"
+    assert len(service.business.store.list_data_sources(workspace["id"])) == 1
 
 
 def test_repeated_cross_turn_changes_form_candidate_business_practice(tmp_path):

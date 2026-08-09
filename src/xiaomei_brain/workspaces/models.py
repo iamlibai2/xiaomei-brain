@@ -57,6 +57,8 @@ class Observation:
     content: str
     attributes: dict[str, Any]
     asset_id: str
+    session_id: str
+    turn_id: str
     status: str
     occurred_at: float | None
     received_at: float
