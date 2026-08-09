@@ -13,7 +13,7 @@ from xiaomei_brain.base.sqlite_store import SQLiteStore
 from .models import WorkspaceContextEntry
 
 SCHEMA_COMPONENT = "workspace_context"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def _new_id() -> str:
@@ -51,6 +51,7 @@ class WorkspaceContextStore(SQLiteStore):
                 status TEXT NOT NULL DEFAULT 'established',
                 evidence_observation_ids_json TEXT NOT NULL DEFAULT '[]',
                 supersedes_context_id TEXT NOT NULL DEFAULT '',
+                overrides_context_id TEXT NOT NULL DEFAULT '',
                 created_by_person_id TEXT NOT NULL DEFAULT '',
                 revision INTEGER NOT NULL DEFAULT 1,
                 created_at REAL NOT NULL,
@@ -62,6 +63,15 @@ class WorkspaceContextStore(SQLiteStore):
             CREATE INDEX IF NOT EXISTS idx_workspace_context_entries_scope
                 ON workspace_context_entries(workspace_id, scope_type, scope_id, status);
         """)
+        columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(workspace_context_entries)")
+        }
+        if "overrides_context_id" not in columns:
+            conn.execute(
+                """ALTER TABLE workspace_context_entries
+                   ADD COLUMN overrides_context_id TEXT NOT NULL DEFAULT ''"""
+            )
         conn.commit()
         self._set_schema_version(SCHEMA_COMPONENT, SCHEMA_VERSION)
 
@@ -76,6 +86,7 @@ class WorkspaceContextStore(SQLiteStore):
         evidence_observation_ids: tuple[str, ...],
         created_by_person_id: str,
         supersedes_context_id: str = "",
+        overrides_context_id: str = "",
         status: str = "established",
         now: float | None = None,
     ) -> WorkspaceContextEntry:
@@ -86,6 +97,7 @@ class WorkspaceContextStore(SQLiteStore):
             context_type=context_type, statement=statement, status=status,
             evidence_observation_ids=evidence_observation_ids,
             supersedes_context_id=supersedes_context_id,
+            overrides_context_id=overrides_context_id,
             created_by_person_id=created_by_person_id, revision=1,
             created_at=timestamp,
             updated_at=timestamp,
@@ -112,6 +124,7 @@ class WorkspaceContextStore(SQLiteStore):
             status="established",
             evidence_observation_ids=evidence_observation_ids,
             supersedes_context_id=current.id,
+            overrides_context_id=current.overrides_context_id,
             created_by_person_id=created_by_person_id, revision=1,
             created_at=timestamp, updated_at=timestamp,
         )
@@ -161,13 +174,15 @@ class WorkspaceContextStore(SQLiteStore):
             """INSERT INTO workspace_context_entries (
                 id, workspace_id, scope_type, scope_id, context_type, statement,
                 status, evidence_observation_ids_json, supersedes_context_id,
-                created_by_person_id, revision, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                overrides_context_id, created_by_person_id, revision,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 item.id, item.workspace_id, item.scope_type, item.scope_id,
                 item.context_type, item.statement, item.status,
                 json.dumps(list(item.evidence_observation_ids), ensure_ascii=False),
-                item.supersedes_context_id, item.created_by_person_id,
+                item.supersedes_context_id, item.overrides_context_id,
+                item.created_by_person_id,
                 item.revision, item.created_at, item.updated_at,
             ),
         )
@@ -183,6 +198,7 @@ class WorkspaceContextStore(SQLiteStore):
                 row["evidence_observation_ids_json"] or "[]"
             )),
             supersedes_context_id=str(row["supersedes_context_id"]),
+            overrides_context_id=str(row["overrides_context_id"]),
             created_by_person_id=str(row["created_by_person_id"]),
             revision=int(row["revision"]), created_at=float(row["created_at"]),
             updated_at=float(row["updated_at"]),

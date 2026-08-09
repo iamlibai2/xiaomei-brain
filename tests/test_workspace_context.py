@@ -6,6 +6,7 @@ import pytest
 
 from xiaomei_brain.workspaces import (
     WorkspaceService,
+    WorkspaceContextStore,
     WorkspaceStore,
     create_workspace_tools,
     render_workspace_context,
@@ -343,3 +344,102 @@ def test_business_context_rejects_cross_workspace_transaction_and_deduplicates(t
         person_id="person-1",
     )
     assert duplicate.id == first.id
+
+
+def test_transaction_context_overrides_default_without_replacing_it_globally(tmp_path):
+    service, workspace, collection, _fields, _observation = _business_world(tmp_path)
+    yi = service.business.query_records(collection.id, filters={"客户名称": "乙公司"})[0]
+    default = service.context.establish(
+        workspace.id,
+        statement="预计金额默认按含税人民币口径记录",
+        context_type="calculation",
+        person_id="person-1",
+    )
+    exception = service.context.establish(
+        workspace.id,
+        statement="乙公司本次预计金额按未税人民币口径记录",
+        context_type="calculation",
+        scope_type="transaction",
+        scope_id=yi["id"],
+        overrides_context_id=default.id,
+        person_id="person-1",
+    )
+
+    yi_snapshot = service.context.build_snapshot(
+        session_id="session-1",
+        person_id="person-1",
+        query="乙公司的预计金额是什么口径？",
+    )
+    jia_snapshot = service.context.build_snapshot(
+        session_id="session-1",
+        person_id="person-1",
+        query="甲公司的预计金额是什么口径？",
+    )
+
+    assert yi_snapshot is not None and jia_snapshot is not None
+    assert [item["id"] for item in yi_snapshot["business_context"]] == [
+        exception.id,
+    ]
+    assert yi_snapshot["context_overrides"] == [{
+        "overriding_context_id": exception.id,
+        "overridden_context_id": default.id,
+    }]
+    assert [item["id"] for item in jia_snapshot["business_context"]] == [
+        default.id,
+    ]
+    assert jia_snapshot["context_overrides"] == []
+
+
+def test_mandatory_context_cannot_be_overridden(tmp_path):
+    service, workspace, collection, _fields, _observation = _business_world(tmp_path)
+    yi = service.business.query_records(collection.id, filters={"客户名称": "乙公司"})[0]
+    constraint = service.context.establish(
+        workspace.id,
+        statement="合同金额不得使用未经确认的汇率换算",
+        context_type="constraint",
+        person_id="person-1",
+    )
+
+    with pytest.raises(ValueError, match="cannot be overridden"):
+        service.context.establish(
+            workspace.id,
+            statement="乙公司可以使用未经确认的汇率",
+            context_type="constraint",
+            scope_type="transaction",
+            scope_id=yi["id"],
+            overrides_context_id=constraint.id,
+            person_id="person-1",
+        )
+
+
+def test_context_schema_upgrade_adds_override_relation_without_losing_entries(tmp_path):
+    service, workspace, _collection, _fields, _observation = _business_world(tmp_path)
+    entry = service.context.establish(
+        workspace.id,
+        statement="预计金额默认按含税人民币口径记录",
+        context_type="calculation",
+        person_id="person-1",
+    )
+    conn = service.context.store._get_conn()
+    conn.execute("ALTER TABLE workspace_context_entries DROP COLUMN overrides_context_id")
+    conn.execute(
+        "UPDATE schema_versions SET version = 1 WHERE component = 'workspace_context'"
+    )
+    conn.commit()
+    service.context.store.close()
+    backups: list[str] = []
+
+    reopened = WorkspaceContextStore(
+        tmp_path / "workspaces.db",
+        before_schema_migration=lambda: backups.append("backup"),
+    )
+
+    columns = {
+        row["name"]
+        for row in reopened._get_conn().execute(
+            "PRAGMA table_info(workspace_context_entries)"
+        )
+    }
+    assert backups == ["backup"]
+    assert "overrides_context_id" in columns
+    assert reopened.get(entry.id).statement == entry.statement

@@ -157,6 +157,7 @@ class WorkspaceContextEntry:
     status: str
     evidence_observation_ids: tuple[str, ...]
     supersedes_context_id: str
+    overrides_context_id: str
     created_by_person_id: str
     revision: int
     created_at: float

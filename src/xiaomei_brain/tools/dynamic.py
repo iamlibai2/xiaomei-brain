@@ -140,6 +140,17 @@ def _contextual_required_tool_names(query: str) -> set[str]:
             "list_business_actions",
             "establish_business_action",
         })
+    has_business_action_validation = any(marker in text for marker in (
+        "只读验证", "历史验证", "历史案例", "验证这个动作", "验证业务动作",
+        "为什么被认为是稳定", "为什么是稳定", "稳定 action",
+        "validate action", "historical validation", "why is this action stable",
+    ))
+    if has_business_action_validation:
+        required.update({
+            "get_current_workspace",
+            "list_business_actions",
+            "validate_business_action_candidate",
+        })
     return required
 
 # 全局活跃的 loader，供 MCP/Plugin 热重载后通知重建索引

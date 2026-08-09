@@ -306,6 +306,7 @@ def test_customer_business_followup_requires_workspace_tools(monkeypatch):
         ("list_business_actions", "List established business actions"),
         ("execute_business_action", "Execute an established business action"),
         ("establish_business_action", "Establish an action candidate"),
+        ("validate_business_action_candidate", "Validate historical action evidence"),
         ("write_document", "Write a document"),
     )
     loader = DynamicToolLoader(reg, top_k=1)
@@ -359,6 +360,16 @@ def test_customer_business_followup_requires_workspace_tools(monkeypatch):
     assert "get_current_workspace" in crystallize_names
     assert "list_business_actions" in crystallize_names
     assert "establish_business_action" in crystallize_names
+
+    validation_names = [
+        tool.name for tool in loader.select_tools(
+            "检查推进客户阶段为什么被认为是稳定 Action，做历史案例只读验证",
+            top_k=1,
+        )
+    ]
+    assert "get_current_workspace" in validation_names
+    assert "list_business_actions" in validation_names
+    assert "validate_business_action_candidate" in validation_names
 
 
 # ── Dynamic tool selection ─────────────────────────────────────

@@ -13,7 +13,7 @@ from xiaomei_brain.base.sqlite_store import SQLiteStore
 from .models import BusinessActionDefinition, BusinessActionRun
 
 SCHEMA_COMPONENT = "workspace_actions"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def _new_id(prefix: str) -> str:
@@ -90,6 +90,20 @@ class BusinessActionStore(SQLiteStore):
                 ON business_action_runs(workspace_id, started_at DESC);
             CREATE INDEX IF NOT EXISTS idx_business_action_runs_action
                 ON business_action_runs(action_id, started_at DESC);
+
+            CREATE TABLE IF NOT EXISTS business_action_validations (
+                action_id TEXT PRIMARY KEY,
+                candidate_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                occurrence_count INTEGER NOT NULL DEFAULT 0,
+                record_count INTEGER NOT NULL DEFAULT 0,
+                checked_occurrence_count INTEGER NOT NULL DEFAULT 0,
+                reasons_json TEXT NOT NULL DEFAULT '[]',
+                evidence_json TEXT NOT NULL DEFAULT '[]',
+                validated_at REAL NOT NULL,
+                FOREIGN KEY (action_id) REFERENCES business_action_definitions(id)
+                    ON DELETE CASCADE
+            );
         """)
         conn.commit()
         self._set_schema_version(SCHEMA_COMPONENT, SCHEMA_VERSION)
@@ -106,6 +120,7 @@ class BusinessActionStore(SQLiteStore):
         field_ids: tuple[str, ...],
         completion_criteria: str,
         evidence_count: int,
+        validation: dict[str, Any],
         created_by_person_id: str,
         now: float | None = None,
     ) -> BusinessActionDefinition:
@@ -122,22 +137,49 @@ class BusinessActionStore(SQLiteStore):
             created_by_person_id=created_by_person_id,
             created_at=timestamp, updated_at=timestamp,
         )
-        self._get_conn().execute(
-            """INSERT INTO business_action_definitions (
-                id, workspace_id, collection_id, source_candidate_id, name,
-                description, operation, field_ids_json, completion_criteria,
-                status, evidence_count, revision, created_by_person_id,
-                created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, 1, ?, ?, ?)""",
-            (
-                item.id, item.workspace_id, item.collection_id,
-                item.source_candidate_id, item.name, item.description,
-                item.operation, json.dumps(list(item.field_ids), ensure_ascii=False),
-                item.completion_criteria, item.evidence_count,
-                item.created_by_person_id, item.created_at, item.updated_at,
-            ),
-        )
-        self._get_conn().commit()
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                """INSERT INTO business_action_definitions (
+                    id, workspace_id, collection_id, source_candidate_id, name,
+                    description, operation, field_ids_json, completion_criteria,
+                    status, evidence_count, revision, created_by_person_id,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, 1, ?, ?, ?)""",
+                (
+                    item.id, item.workspace_id, item.collection_id,
+                    item.source_candidate_id, item.name, item.description,
+                    item.operation,
+                    json.dumps(list(item.field_ids), ensure_ascii=False),
+                    item.completion_criteria, item.evidence_count,
+                    item.created_by_person_id, item.created_at, item.updated_at,
+                ),
+            )
+            conn.execute(
+                """INSERT INTO business_action_validations (
+                    action_id, candidate_id, status, occurrence_count,
+                    record_count, checked_occurrence_count, reasons_json,
+                    evidence_json, validated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    item.id, item.source_candidate_id,
+                    str(validation.get("status", "failed")),
+                    int(validation.get("occurrence_count", 0)),
+                    int(validation.get("record_count", 0)),
+                    int(validation.get("checked_occurrence_count", 0)),
+                    json.dumps(validation.get("reasons", []), ensure_ascii=False),
+                    json.dumps(
+                        validation.get("evidence", []),
+                        ensure_ascii=False,
+                        default=str,
+                    ),
+                    float(validation.get("validated_at", timestamp)),
+                ),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         return item
 
     def get_definition(self, action_id: str) -> BusinessActionDefinition | None:
@@ -164,6 +206,80 @@ class BusinessActionStore(SQLiteStore):
             (workspace_id,),
         ).fetchall()
         return [self._definition_row(row) for row in rows]
+
+    def get_validation(self, action_id: str) -> dict[str, Any] | None:
+        row = self._get_conn().execute(
+            "SELECT * FROM business_action_validations WHERE action_id = ?",
+            (action_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        evidence = list(json.loads(row["evidence_json"] or "[]"))
+        establishment_keys = {
+            str(item.get("occurrence_key", ""))
+            for item in evidence
+            if item.get("phase") == "establishment_evidence"
+        }
+        subsequent_keys = {
+            str(item.get("occurrence_key", ""))
+            for item in evidence
+            if item.get("phase") == "subsequent_confirmation"
+        }
+        return {
+            "action_id": str(row["action_id"]),
+            "candidate_id": str(row["candidate_id"]),
+            "status": str(row["status"]),
+            "occurrence_count": int(row["occurrence_count"]),
+            "record_count": int(row["record_count"]),
+            "checked_occurrence_count": int(row["checked_occurrence_count"]),
+            "reasons": list(json.loads(row["reasons_json"] or "[]")),
+            "establishment_occurrence_count": len(establishment_keys),
+            "subsequent_occurrence_count": len(subsequent_keys),
+            "evidence": evidence,
+            "validated_at": float(row["validated_at"]),
+        }
+
+    def save_validation(
+        self,
+        action_id: str,
+        candidate_id: str,
+        validation: dict[str, Any],
+    ) -> dict[str, Any]:
+        self._get_conn().execute(
+            """INSERT INTO business_action_validations (
+                action_id, candidate_id, status, occurrence_count,
+                record_count, checked_occurrence_count, reasons_json,
+                evidence_json, validated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(action_id) DO UPDATE SET
+                candidate_id = excluded.candidate_id,
+                status = excluded.status,
+                occurrence_count = excluded.occurrence_count,
+                record_count = excluded.record_count,
+                checked_occurrence_count = excluded.checked_occurrence_count,
+                reasons_json = excluded.reasons_json,
+                evidence_json = excluded.evidence_json,
+                validated_at = excluded.validated_at""",
+            (
+                action_id, candidate_id,
+                str(validation.get("status", "failed")),
+                int(validation.get("occurrence_count", 0)),
+                int(validation.get("record_count", 0)),
+                int(validation.get("checked_occurrence_count", 0)),
+                json.dumps(validation.get("reasons", []), ensure_ascii=False),
+                json.dumps(
+                    validation.get("evidence", []),
+                    ensure_ascii=False,
+                    default=str,
+                ),
+                float(validation.get("validated_at", time.time())),
+            ),
+        )
+        self._get_conn().commit()
+        saved = self.get_validation(action_id)
+        if saved is None:
+            raise RuntimeError("Business Action validation was not persisted")
+        return saved
 
     def start_run(
         self,

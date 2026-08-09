@@ -409,6 +409,14 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         )
         return service().actions.definition_snapshot(definition)
 
+    def validate_business_action_candidate(
+        candidate_id: str,
+        workspace_id: str = "",
+    ) -> dict[str, Any]:
+        """Read historical evidence for a candidate without changing business state."""
+        resolved = resolve_workspace_id(workspace_id)
+        return service().actions.validate_candidate(resolved, candidate_id)
+
     def list_business_actions(workspace_id: str = "") -> dict[str, Any]:
         """Inspect stable business actions and their recent attempts."""
         resolved_workspace_id = workspace_id.strip()
@@ -481,6 +489,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         context_type: str,
         scope_type: str = "workspace",
         scope_id: str = "",
+        overrides_context_id: str = "",
         evidence_observation_ids: list[str] | None = None,
         workspace_id: str = "",
     ) -> dict[str, Any]:
@@ -493,6 +502,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             context_type=context_type,
             scope_type=scope_type,
             scope_id=scope_id,
+            overrides_context_id=overrides_context_id,
             evidence_observation_ids=evidence_observation_ids or [],
             person_id=person_id(),
             session_id=session_id,
@@ -941,11 +951,35 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             category="workspace",
         ),
         Tool(
+            name="validate_business_action_candidate",
+            description=(
+                "Read-only validation for a repeated Business Action candidate. It "
+                "checks independent historical Turns, distinct business records and "
+                "the exact RecordChange field effect without executing the action. "
+                "Use it before establishment when the evidence needs explanation."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "workspace_id": {"type": "string"},
+                    "candidate_id": {"type": "string"},
+                },
+                "required": ["candidate_id"],
+            },
+            func=validate_business_action_candidate,
+            category="workspace",
+        ),
+        Tool(
             name="list_business_actions",
             description=(
                 "List stable business actions and recent ActionRuns in the current or "
                 "specified Workspace. Use before a recurring business change so an "
-                "established meaning can be reused instead of guessed from scratch."
+                "established meaning can be reused instead of guessed from scratch. "
+                "evidence_count is the count captured when the Action was established, "
+                "and ActionRuns are later executions; neither is a current historical "
+                "validation. When the user asks why an Action is stable or requests "
+                "read-only validation, call validate_business_action_candidate with "
+                "the returned source_candidate_id."
             ),
             parameters={
                 "type": "object",
@@ -1011,6 +1045,14 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
                         "enum": ["workspace", "person", "transaction"],
                     },
                     "scope_id": {"type": "string"},
+                    "overrides_context_id": {
+                        "type": "string",
+                        "description": (
+                            "Active broader Context replaced only for this more-specific "
+                            "Person or transaction. Use correction instead for a global "
+                            "replacement. Constraints and boundaries cannot be overridden."
+                        ),
+                    },
                     "evidence_observation_ids": {
                         "type": "array",
                         "items": {"type": "string"},

@@ -925,6 +925,66 @@ class BusinessStore(SQLiteStore):
             reverse=True,
         )
 
+    def list_action_occurrence_evidence(
+        self,
+        workspace_id: str,
+        candidate_id: str,
+    ) -> list[dict[str, Any]]:
+        """Read historical changes behind a candidate without replaying writes."""
+        prefix = str(candidate_id).removeprefix("action_candidate_").strip()
+        if not prefix:
+            return []
+        rows = self._get_conn().execute(
+            """SELECT * FROM business_action_occurrences
+               WHERE workspace_id = ? AND fingerprint LIKE ?
+               ORDER BY observed_at ASC""",
+            (workspace_id, f"{prefix}%"),
+        ).fetchall()
+        fingerprints = {str(row["fingerprint"]) for row in rows}
+        if len(fingerprints) > 1:
+            raise RuntimeError("Business Action candidate fingerprint is ambiguous")
+        evidence: list[dict[str, Any]] = []
+        for row in rows:
+            change_rows = self._get_conn().execute(
+                """SELECT * FROM record_changes
+                   WHERE workspace_id = ? AND collection_id = ?
+                     AND record_id = ? AND changed_at = ?
+                     AND turn_id = ? AND business_intent = ?
+                   ORDER BY id ASC""",
+                (
+                    workspace_id,
+                    str(row["collection_id"]),
+                    str(row["record_id"]),
+                    float(row["observed_at"]),
+                    str(row["turn_id"]),
+                    str(row["business_intent"]),
+                ),
+            ).fetchall()
+            changes = [self._change_row(item) for item in change_rows]
+            evidence.append({
+                "occurrence_key": str(row["occurrence_key"]),
+                "collection_id": str(row["collection_id"]),
+                "record_id": str(row["record_id"]),
+                "operation": str(row["operation"]),
+                "field_ids": list(self._load_json(row["field_ids_json"], [])),
+                "business_intent": str(row["business_intent"]),
+                "person_id": str(row["person_id"]),
+                "session_id": str(row["session_id"]),
+                "turn_id": str(row["turn_id"]),
+                "observed_at": float(row["observed_at"]),
+                "changes": [
+                    {
+                        "id": change.id,
+                        "operation": change.operation,
+                        "field_id": change.field_id,
+                        "before": change.before_value,
+                        "after": change.after_value,
+                    }
+                    for change in changes
+                ],
+            })
+        return evidence
+
     def list_events(self, workspace_id: str, *, limit: int = 100) -> list[BusinessEvent]:
         rows = self._get_conn().execute(
             """SELECT * FROM business_events WHERE workspace_id = ?

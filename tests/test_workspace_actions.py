@@ -82,6 +82,15 @@ def test_candidate_crystallizes_and_action_run_links_real_changes(tmp_path):
     )
     assert definition.status == "active"
     assert definition.evidence_count == 3
+    validation = service.actions.store.get_validation(definition.id)
+    assert validation is not None
+    assert validation["status"] == "passed"
+    assert validation["occurrence_count"] == 3
+    assert validation["record_count"] == 3
+    assert validation["checked_occurrence_count"] == 3
+    assert validation["establishment_occurrence_count"] == 3
+    assert validation["subsequent_occurrence_count"] == 0
+    assert all(item["valid"] for item in validation["evidence"])
 
     target = records[3]
     run, record, changes, event = service.actions.execute(
@@ -102,6 +111,13 @@ def test_candidate_crystallizes_and_action_run_links_real_changes(tmp_path):
     assert run.record_change_ids == tuple(change.id for change in changes)
     assert run.event_id == event.id
     assert record.values[next(iter(definition.field_ids))] == "合同"
+    refreshed_validation = service.actions.validate_candidate(
+        workspace.id,
+        candidate.id,
+    )
+    assert refreshed_validation["occurrence_count"] == 4
+    assert refreshed_validation["establishment_occurrence_count"] == 3
+    assert refreshed_validation["subsequent_occurrence_count"] == 1
     assert {name for name, _payload, _metadata in events} >= {
         "business_action.established",
         "business_action.completed",
@@ -115,6 +131,7 @@ def test_candidate_crystallizes_and_action_run_links_real_changes(tmp_path):
         include_records=True,
     )["business"]
     assert snapshot["actions"][0]["name"] == "推进客户阶段"
+    assert snapshot["actions"][0]["validation"]["status"] == "passed"
     assert snapshot["action_runs"][0]["status"] == "completed"
     assert candidate.id not in {item["id"] for item in snapshot["action_candidates"]}
 
@@ -183,6 +200,110 @@ def test_action_tools_enforce_person_boundary(tmp_path):
             action_id=definition.id,
             values={"阶段": "合同"},
             business_intent="越权执行",
+        )
+
+
+def test_candidate_validation_tool_is_read_only(tmp_path):
+    service, workspace, _collection, _records, candidate, _events = _world(tmp_path)
+    core = SimpleNamespace(user_id="person-1", session_id="session-1", turn_id="turn")
+    agent = SimpleNamespace(workspace_service=service, _get_agent=lambda: core)
+    tools = {item.name: item for item in create_workspace_tools(agent)}
+    before = service.business.store.summary(workspace.id)
+
+    report = tools["validate_business_action_candidate"].execute(
+        workspace_id=workspace.id,
+        candidate_id=candidate.id,
+    )
+
+    assert report["status"] == "passed"
+    assert report["checked_occurrence_count"] == 3
+    assert report["establishment_occurrence_count"] == 3
+    assert report["subsequent_occurrence_count"] == 0
+    assert service.business.store.summary(workspace.id) == before
+    assert service.actions.store.list_definitions(workspace.id) == []
+
+
+def test_validation_backfills_an_existing_action_without_replaying_it(tmp_path):
+    service, workspace, _collection, _records, candidate, _events = _world(tmp_path)
+    definition = service.actions.establish(
+        workspace.id,
+        candidate_id=candidate.id,
+        name="推进客户阶段",
+        description="更新客户阶段",
+        completion_criteria="阶段字段已经更新",
+        person_id="person-1",
+    )
+    conn = service.actions.store._get_conn()
+    conn.execute(
+        "DELETE FROM business_action_validations WHERE action_id = ?",
+        (definition.id,),
+    )
+    conn.commit()
+    before = service.business.store.summary(workspace.id)
+
+    report = service.actions.validate_candidate(workspace.id, candidate.id)
+
+    assert report["status"] == "passed"
+    assert service.actions.store.get_validation(definition.id)["status"] == "passed"
+    assert service.business.store.summary(workspace.id) == before
+
+
+def test_candidate_from_one_record_cannot_be_established_as_stable_action(tmp_path):
+    service = WorkspaceService(WorkspaceStore(tmp_path / "workspaces.db"))
+    workspace = service.create(
+        name="单一客户测试",
+        purpose="验证历史证据必须跨业务对象",
+        created_by_person_id="person-1",
+    )
+    collection, fields = service.business.create_collection(
+        workspace.id,
+        name="customers",
+        label="客户",
+        purpose="客户阶段",
+        fields=[
+            {"name": "name", "label": "名称", "data_type": "text"},
+            {"name": "stage", "label": "阶段", "data_type": "enum"},
+        ],
+    )
+    record, _changes, _event = service.business.upsert_record(
+        collection.id,
+        stable_key="customer:only",
+        values={"name": "唯一客户", "stage": "接洽"},
+        business_intent="登记客户",
+        person_id="person-1",
+        turn_id="create",
+    )
+    for index, stage in enumerate(("报价", "合同", "合作"), start=1):
+        record, _changes, _event = service.business.upsert_record(
+            collection.id,
+            record_id=record.id,
+            expected_revision=record.revision,
+            values={"stage": stage},
+            business_intent="推进客户阶段",
+            person_id="person-1",
+            turn_id=f"advance-{index}",
+        )
+    stage_field = next(item for item in fields if item.name == "stage")
+    candidate = next(
+        item for item in service.business.store.list_action_candidates(
+            workspace.id,
+            min_occurrences=3,
+        )
+        if item.field_ids == (stage_field.id,)
+    )
+
+    report = service.actions.validate_candidate(workspace.id, candidate.id)
+    assert report["status"] == "failed"
+    assert report["record_count"] == 1
+    assert "at least two business records" in " ".join(report["reasons"])
+    with pytest.raises(ValueError, match="historical validation"):
+        service.actions.establish(
+            workspace.id,
+            candidate_id=candidate.id,
+            name="推进客户阶段",
+            description="推进阶段",
+            completion_criteria="阶段已更新",
+            person_id="person-1",
         )
 
 
