@@ -464,6 +464,10 @@ class SessionSwitchParams(BaseModel):
     history_limit: int = Field(default=50, ge=1, le=200)
 
 
+class SessionDeleteParams(BaseModel):
+    session_id: str = Field(..., min_length=1, max_length=256)
+
+
 class SearchQueryParams(BaseModel):
     query: str = Field(..., min_length=1, max_length=200)
     limit: int = Field(default=8, ge=1, le=20)

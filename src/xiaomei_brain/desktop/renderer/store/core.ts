@@ -1649,6 +1649,7 @@ interface CoreActions {
   setInvocation: (invocation?: ChatInvocationSelection) => void;
   newSession: (name?: string) => Promise<void>;
   switchSession: (sessionId: string) => Promise<void>;
+  deleteSession: (sessionId: string) => Promise<string>;
   openSearchMessage: (sessionId: string, messageId: number) => Promise<void>;
   loadOlderMessages: () => Promise<void>;
   searchSessions: (query: string) => Promise<void>;
@@ -2874,6 +2875,53 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
   },
 
   // ── UI ──
+
+  deleteSession: async (sessionId) => {
+    const agentId = get().activeAgentId;
+    if (!agentId || !sessionId) return i18n.t("storeUi.sessionUnavailable");
+    const conversationKey = conversationStateKey(agentId, sessionId);
+    if (get().sendingByConversation[conversationKey]) {
+      return i18n.t("sidebar.sessionDeleteWorking");
+    }
+
+    if (get().activeSessionByAgent[agentId] === sessionId) {
+      const fallback = (get().sessionsByAgent[agentId] || [])
+        .find((session) => session.id !== sessionId);
+      if (fallback) {
+        await get().switchSession(fallback.id);
+      } else {
+        // Deleting the only conversation still needs a replacement even when
+        // the current conversation is empty; the normal new-session action
+        // intentionally suppresses duplicate empty conversations.
+        await get().newSession(i18n.t("sidebar.newSession"));
+      }
+      if (get().activeSessionByAgent[agentId] === sessionId) {
+        return i18n.t("sidebar.sessionDeleteSwitchFailed");
+      }
+    }
+
+    const response = await window.gateway.deleteSession({ agentId, sessionId });
+    if (response.error) return response.error.message || i18n.t("sidebar.sessionDeleteFailed");
+
+    set(produce((s: CoreState) => {
+      s.sessionsByAgent[agentId] = (s.sessionsByAgent[agentId] || [])
+        .filter((session) => session.id !== sessionId);
+      delete s.messagesByConversation[conversationKey];
+      delete s.sendingByConversation[conversationKey];
+      delete s.draftByConversation[conversationKey];
+      delete s.attachmentsByConversation[conversationKey];
+      delete s.artifactReferencesByConversation[conversationKey];
+      delete s.attachmentErrorByConversation[conversationKey];
+      delete s.invocationByConversation[conversationKey];
+      delete s.unreadByConversation[conversationKey];
+      s.recentConversationKeys = s.recentConversationKeys
+        .filter((key) => key !== conversationKey);
+      if (s.historyPaginationByAgent[agentId]) {
+        delete s.historyPaginationByAgent[agentId][sessionId];
+      }
+    }));
+    return "";
+  },
 
   searchSessions: async (query) => {
     const agentId = get().activeAgentId;

@@ -44,6 +44,7 @@ def test_method_router_exposes_domain_composed_catalog():
         "session.subscribe",
         "session.unsubscribe",
         "session.switch",
+        "session.delete",
         "search.query",
         "attachment.get",
         "artifact.get",

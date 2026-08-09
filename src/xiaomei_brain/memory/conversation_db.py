@@ -987,6 +987,7 @@ class ConversationDB(SQLiteStore):
                      ON scoped.session_id = m.session_id
                     AND scoped.scope_type = 'person'
                     AND scoped.scope_id = ?
+                    AND scoped.deleted_at IS NULL
                    WHERE m.role IN ('user', 'assistant')
                      AND m.content LIKE ?
                    ORDER BY m.created_at DESC, m.id DESC
@@ -1003,6 +1004,7 @@ class ConversationDB(SQLiteStore):
                          ON scoped.session_id = m.session_id
                         AND scoped.scope_type = 'person'
                         AND scoped.scope_id = ?
+                        AND scoped.deleted_at IS NULL
                        WHERE messages_fts MATCH ?
                          AND m.role IN ('user', 'assistant')
                        ORDER BY rank
@@ -1016,6 +1018,7 @@ class ConversationDB(SQLiteStore):
                          ON scoped.session_id = m.session_id
                         AND scoped.scope_type = 'person'
                         AND scoped.scope_id = ?
+                        AND scoped.deleted_at IS NULL
                        WHERE m.role IN ('user', 'assistant')
                          AND m.content LIKE ?
                        ORDER BY m.created_at DESC, m.id DESC
@@ -1187,6 +1190,7 @@ class ConversationDB(SQLiteStore):
                   ON scoped.session_id = m.session_id
                  AND scoped.scope_type = ?
                  AND scoped.scope_id = ?
+                 AND scoped.deleted_at IS NULL
             """
             scope_params.extend([scope_type, scope_id])
         conn = self._get_conn()

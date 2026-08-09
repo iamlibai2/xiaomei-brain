@@ -18,7 +18,7 @@ from .models import (
     Person,
 )
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 SCHEMA_COMPONENT = "people"
 
 
@@ -108,7 +108,8 @@ class PeopleStore(SQLiteStore):
                 scope_id TEXT NOT NULL,
                 metadata_json TEXT NOT NULL DEFAULT '{}',
                 created_at REAL NOT NULL,
-                updated_at REAL NOT NULL
+                updated_at REAL NOT NULL,
+                deleted_at REAL
             );
 
             CREATE INDEX IF NOT EXISTS idx_conversation_sessions_scope
@@ -137,6 +138,16 @@ class PeopleStore(SQLiteStore):
             CREATE INDEX IF NOT EXISTS idx_identity_link_requests_person
                 ON identity_link_requests(person_id, created_at DESC);
         """)
+        session_columns = {
+            str(row["name"])
+            for row in conn.execute(
+                "PRAGMA table_info(conversation_sessions)",
+            ).fetchall()
+        }
+        if "deleted_at" not in session_columns:
+            conn.execute(
+                "ALTER TABLE conversation_sessions ADD COLUMN deleted_at REAL",
+            )
         conn.commit()
         self._set_schema_version(SCHEMA_COMPONENT, SCHEMA_VERSION)
 
@@ -619,10 +630,19 @@ class PeopleStore(SQLiteStore):
         conn = self._get_conn()
         conn.execute(
             """
-            INSERT OR IGNORE INTO conversation_sessions (
+            INSERT INTO conversation_sessions (
                 session_id, scope_type, scope_id, metadata_json,
                 created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET
+                updated_at = CASE
+                    WHEN conversation_sessions.deleted_at IS NOT NULL
+                    THEN excluded.updated_at
+                    ELSE conversation_sessions.updated_at
+                END,
+                deleted_at = NULL
+            WHERE conversation_sessions.scope_type = excluded.scope_type
+              AND conversation_sessions.scope_id = excluded.scope_id
             """,
             (
                 session_id,
@@ -644,16 +664,42 @@ class PeopleStore(SQLiteStore):
 
     def get_session(self, session_id: str) -> ConversationSession | None:
         row = self._get_conn().execute(
-            "SELECT * FROM conversation_sessions WHERE session_id = ?",
+            """SELECT * FROM conversation_sessions
+               WHERE session_id = ? AND deleted_at IS NULL""",
             (session_id,),
         ).fetchone()
         return self._session_from_row(row) if row else None
+
+    def delete_session(
+        self,
+        session_id: str,
+        scope_type: str,
+        scope_id: str,
+        *,
+        now: float | None = None,
+    ) -> bool:
+        """Hide an owned conversation without destroying its source records."""
+        timestamp = time.time() if now is None else now
+        conn = self._get_conn()
+        cursor = conn.execute(
+            """
+            UPDATE conversation_sessions
+            SET deleted_at = ?, updated_at = ?
+            WHERE session_id = ?
+              AND scope_type = ?
+              AND scope_id = ?
+              AND deleted_at IS NULL
+            """,
+            (timestamp, timestamp, session_id, scope_type, scope_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
 
     def list_scope_session_ids(self, scope_type: str, scope_id: str) -> list[str]:
         rows = self._get_conn().execute(
             """
             SELECT session_id FROM conversation_sessions
-            WHERE scope_type = ? AND scope_id = ?
+            WHERE scope_type = ? AND scope_id = ? AND deleted_at IS NULL
             ORDER BY updated_at DESC
             """,
             (scope_type, scope_id),

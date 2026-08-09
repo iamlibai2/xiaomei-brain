@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from xiaomei_brain.consciousness.context_pipeline import determine_mode, build_context
+from xiaomei_brain.consciousness.memory_window import refresh_memory_window
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
@@ -159,7 +160,7 @@ def test_shared_conversation_labels_speaker_and_excludes_personal_memory(
 
 @patch("xiaomei_brain.consciousness.context_pipeline.inject_consciousness")
 @patch("xiaomei_brain.consciousness.memory_window.refresh_memory_window")
-def test_person_context_loads_recent_dialog_across_channels(
+def test_person_context_keeps_raw_dialog_in_current_session(
     mock_refresh,
     mock_inject,
 ):
@@ -171,11 +172,56 @@ def test_person_context_loads_recent_dialog_across_channels(
 
     build_context(agent, "继续刚才的话题", self_image=MagicMock())
 
-    assert mock_refresh.call_args.kwargs["recent_dialog_session_id"] is None
     assert (
-        mock_refresh.call_args.kwargs["recent_dialog_user_id"]
-        == "person-1"
+        mock_refresh.call_args.kwargs["recent_dialog_session_id"]
+        == "feishu-person-1"
     )
+    assert mock_refresh.call_args.kwargs["recent_dialog_user_id"] is None
+    assert mock_refresh.call_args.kwargs["allow_cross_user_dialog"] is False
+
+
+@patch(
+    "xiaomei_brain.consciousness.memory_window.select_attention",
+    return_value=("平静，等待中", {}),
+)
+def test_memory_window_scopes_dag_summaries_to_current_session(_mock_attention):
+    """DAG 是会话摘要，不能按 Person 跨会话注入。"""
+    self_image = MagicMock()
+    dag = MagicMock()
+    dag.get_higher_summaries.return_value = []
+
+    refresh_memory_window(
+        self_image,
+        dag=dag,
+        session_id="ws-current",
+        user_id="person-1",
+        dag_max_tokens=1200,
+    )
+
+    dag.get_higher_summaries.assert_called_once_with(
+        session_id="ws-current",
+        user_id="person-1",
+        max_tokens=1200,
+    )
+
+
+@patch(
+    "xiaomei_brain.consciousness.memory_window.select_attention",
+    return_value=("平静，等待中", {}),
+)
+def test_memory_window_does_not_load_cross_session_dag_without_session(
+    _mock_attention,
+):
+    dag = MagicMock()
+
+    refresh_memory_window(
+        MagicMock(),
+        dag=dag,
+        session_id=None,
+        user_id="person-1",
+    )
+
+    dag.get_higher_summaries.assert_not_called()
 
 
 def test_build_context_conversation_db_logging():

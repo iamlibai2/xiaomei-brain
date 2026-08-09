@@ -317,7 +317,12 @@
       "creating": "创建中...",
       "connect": "连接",
       "close": "关闭"
-      ,"sessionSwitchBlocked": "Agent 正在回复，完成后可切换会话"
+      ,"sessionSwitchBlocked": "Agent 正在回复，完成后可切换会话",
+      "deleteSession": "删除会话",
+      "deleteSessionConfirm": "确定删除会话“{{name}}”吗？删除后将从会话列表中移除。",
+      "sessionDeleteWorking": "会话仍在工作，暂时不能删除",
+      "sessionDeleteSwitchFailed": "无法切换到其他会话，请稍后重试",
+      "sessionDeleteFailed": "删除会话失败"
     },
     "about": {
       "subtitle": "应用信息与问题诊断",

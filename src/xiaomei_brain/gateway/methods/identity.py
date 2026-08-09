@@ -628,7 +628,7 @@ class IdentityMethods:
         active_turn = turn_registry.snapshot(session_id) if turn_registry else None
         if active_turn is not None:
             return
-        living.load_fresh_tail()
+        restored = living.load_fresh_tail(session_id) or []
         attention = getattr(living, "_attention", None)
         if attention:
             # Desktop session IDs already use the ``ws-`` prefix.  Reapplying
@@ -637,7 +637,11 @@ class IdentityMethods:
             # conversation context after Desktop restarts.
             ws_sid = session_id if session_id.startswith("ws-") else f"ws-{session_id}"
             context_key = f"session:{ws_sid}"
-            attention.adopt_current(context_key)
+            attention.activate_loaded(context_key, restored)
+        elif agent_core is not None:
+            ws_sid = session_id if session_id.startswith("ws-") else f"ws-{session_id}"
+            agent_core.context_key = f"session:{ws_sid}"
+            agent_core.messages = list(restored)
 
     @staticmethod
     def _context_result(context: IdentityContext) -> dict:

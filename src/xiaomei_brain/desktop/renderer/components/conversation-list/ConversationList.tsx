@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useCoreStore, AgentEntry } from "../../store";
 import { Icon, Button } from "../ui";
@@ -23,6 +24,11 @@ export function ConversationList({
 }) {
   const { t } = useTranslation();
   const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [sessionMenu, setSessionMenu] = useState<{
+    session: import("../../types").SessionEntry;
+    x: number;
+    y: number;
+  } | null>(null);
 
   const agents = useCoreStore((s) => s.agents);
   const activeAgentId = useCoreStore((s) => s.activeAgentId);
@@ -30,6 +36,7 @@ export function ConversationList({
   const switchAgent = useCoreStore((s) => s.switchAgent);
   const newSession = useCoreStore((s) => s.newSession);
   const switchSession = useCoreStore((s) => s.switchSession);
+  const deleteSession = useCoreStore((s) => s.deleteSession);
   const sessionsByAgent = useCoreStore((s) => s.sessionsByAgent);
   const sessionListByAgent = useCoreStore((s) => s.sessionListByAgent);
   const activeMessageCount = useCoreStore((s) => {
@@ -64,6 +71,31 @@ export function ConversationList({
     window.addEventListener("xiaomei:identity-status-changed", refreshIdentityName);
     return () => window.removeEventListener("xiaomei:identity-status-changed", refreshIdentityName);
   }, []);
+
+  useEffect(() => {
+    if (!sessionMenu) return undefined;
+    const close = () => setSessionMenu(null);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    document.addEventListener("pointerdown", close);
+    window.addEventListener("blur", close);
+    window.addEventListener("resize", close);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      window.removeEventListener("blur", close);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [sessionMenu]);
+
+  async function handleDeleteSession(session: import("../../types").SessionEntry) {
+    setSessionMenu(null);
+    if (!window.confirm(t("sidebar.deleteSessionConfirm", { name: session.name }))) return;
+    const error = await deleteSession(session.id);
+    if (error) window.alert(error);
+  }
 
   function handleNewSession() {
     onOpenChat();
@@ -220,6 +252,14 @@ export function ConversationList({
                     isWorking={Boolean(sendingByConversation[`${activeAgentId}\u0000${session.id}`])}
                     unreadCount={unreadByConversation[`${activeAgentId}\u0000${session.id}`] || 0}
                     onClick={() => { onOpenChat(); void switchSession(session.id); }}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      setSessionMenu({
+                        session,
+                        x: Math.max(8, Math.min(event.clientX, window.innerWidth - 180)),
+                        y: Math.max(8, Math.min(event.clientY, window.innerHeight - 64)),
+                      });
+                    }}
                   />
                 ))}
                 {sessionListState?.error && (
@@ -253,6 +293,28 @@ export function ConversationList({
         </div>
       )}
       {addDialogOpen && <AddAgentDialog onClose={() => setAddDialogOpen(false)} />}
+      {sessionMenu && createPortal(
+        <div
+          className="session-context-menu"
+          style={{ left: sessionMenu.x, top: sessionMenu.y }}
+          role="menu"
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="danger"
+            role="menuitem"
+            disabled={sessionBusy || Boolean(activeAgentId && sendingByConversation[
+              `${activeAgentId}\u0000${sessionMenu.session.id}`
+            ])}
+            onClick={() => { void handleDeleteSession(sessionMenu.session); }}
+          >
+            <Icon name="trash" size={15} />
+            <span>{t("sidebar.deleteSession")}</span>
+          </button>
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }
@@ -391,6 +453,7 @@ function SessionItem({
   isWorking = false,
   unreadCount = 0,
   onClick,
+  onContextMenu,
 }: {
   session: import("../../types").SessionEntry;
   isActive: boolean;
@@ -399,6 +462,7 @@ function SessionItem({
   isWorking?: boolean;
   unreadCount?: number;
   onClick: () => void;
+  onContextMenu: (event: React.MouseEvent<HTMLDivElement>) => void;
 }) {
   const { t } = useTranslation();
   const channel = session.channel
@@ -408,6 +472,7 @@ function SessionItem({
     <div
       className={`session-item ${isActive ? "active" : ""} ${isCurrent ? "current" : ""} ${disabled ? "disabled" : ""} ${unreadCount > 0 ? "unread" : ""}`}
       onClick={disabled ? undefined : onClick}
+      onContextMenu={onContextMenu}
       title={disabled ? t("sidebar.sessionSwitchBlocked") : session.name}
       onKeyDown={(event) => {
         if (disabled || isCurrent) return;

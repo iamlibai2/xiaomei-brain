@@ -397,11 +397,11 @@ class CliTuiApp:
         if ltm and not ltm.is_embedder_ready():
             ltm.wait_embedder()
 
-        living.load_fresh_tail()
         sid = 'cli-%s' % self.agent_id
+        restored = living.load_fresh_tail(sid)
         if hasattr(living, '_attention') and living._attention:
             context_key = f"person:{user_id}"
-            living._attention.adopt_current(context_key)
+            living._attention.activate_loaded(context_key, restored)
         if hasattr(living, '_router') and living._router:
             living._router.register_peer(
                 peer_type="human", peer_id=user_id, channel="cli",

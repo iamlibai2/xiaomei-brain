@@ -41,7 +41,7 @@ def test_people_schema_is_additive_and_preserves_existing_user_id(tmp_path):
     }.issubset(tables)
     assert conn.execute(
         "SELECT version FROM schema_versions WHERE component = 'people'",
-    ).fetchone()[0] == 2
+    ).fetchone()[0] == 3
     assert [
         row[1] for row in conn.execute("PRAGMA table_info(messages)").fetchall()
     ] == ["id", "user_id", "content"]
@@ -134,6 +134,21 @@ def test_conversation_session_scope_cannot_change(tmp_path):
     ) == session
     with pytest.raises(ValueError, match="会话作用域不一致"):
         store.ensure_session("session-1", "agent", "xiaomei")
+
+
+def test_deleted_conversation_session_revives_only_for_same_scope(tmp_path):
+    store = PeopleStore(tmp_path / "brain.db")
+    store.ensure_session("session-1", "person", "libai", now=1.0)
+
+    assert store.delete_session("session-1", "person", "libai", now=2.0)
+    assert store.get_session("session-1") is None
+    with pytest.raises(RuntimeError):
+        store.ensure_session("session-1", "person", "other", now=3.0)
+    assert store.get_session("session-1") is None
+
+    revived = store.ensure_session("session-1", "person", "libai", now=4.0)
+    assert revived.scope_id == "libai"
+    assert revived.updated_at == 4.0
 
 
 def test_legacy_session_claim_is_additive_and_audited(tmp_path):

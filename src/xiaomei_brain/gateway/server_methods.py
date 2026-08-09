@@ -163,6 +163,7 @@ class MethodRouter:
             "session.unsubscribe": {"session.unsubscribe"},
             "session.switch": {"session.switch"},
             "session.list": {"chat.sessions"},
+            "session.delete": {"session.delete"},
             "search.unified": {"search.query"},
             "message.attachments": {"chat.send", "attachment.get"},
             "embodiment.desktop": {

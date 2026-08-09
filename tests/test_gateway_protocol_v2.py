@@ -842,7 +842,7 @@ def test_reconnect_does_not_reload_context_during_active_turn():
             })
             self.agent = SimpleNamespace(_get_agent=lambda: SimpleNamespace(user_id=""))
 
-        def load_fresh_tail(self):
+        def load_fresh_tail(self, _session_id: str):
             self.fresh_tail_loads += 1
 
     living = Living()

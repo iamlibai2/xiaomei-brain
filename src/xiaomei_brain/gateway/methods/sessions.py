@@ -9,6 +9,7 @@ from ..protocol import ErrorCode, build_error, build_response
 from ..schemas import (
     ChatSessionsParams,
     SessionResumeParams,
+    SessionDeleteParams,
     SessionSwitchParams,
     format_error,
 )
@@ -30,6 +31,7 @@ class SessionMethods:
             "session.subscribe": self.handle_subscribe,
             "session.unsubscribe": self.handle_unsubscribe,
             "session.switch": self.handle_switch,
+            "session.delete": self.handle_delete,
         }
 
     def _owned_session(self, conn_id: str, session_id: str):
@@ -197,3 +199,42 @@ class SessionMethods:
             "inflight": inflight,
         })
         return build_response(req_id, result=result)
+
+    def handle_delete(self, conn_id: str, req_id: str, params: dict) -> dict:
+        """Remove a Person-owned conversation from active conversation views."""
+        try:
+            parsed = SessionDeleteParams.model_validate(params)
+        except Exception as exc:
+            return build_error(
+                req_id,
+                ErrorCode.INVALID_REQUEST,
+                f"参数无效: {format_error(exc)}",
+            )
+        person_id = cm.get_person_id(conn_id)
+        if not person_id:
+            return build_error(req_id, ErrorCode.UNAUTHORIZED, "当前连接没有人物身份")
+        if cm.get_session_id(conn_id) == parsed.session_id:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, "请先切换到其他会话")
+        if self._owned_session(conn_id, parsed.session_id) is None:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, "目标会话不属于当前人物")
+
+        registry = getattr(self._living, "_turn_registry", None)
+        inflight = registry.snapshot(parsed.session_id) if registry is not None else None
+        if inflight and inflight.get("status") in {"queued", "running", "waiting_user"}:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, "会话仍在工作，暂时不能删除")
+
+        people_service = getattr(self._living, "_people_service", None)
+        if people_service is None:
+            return build_error(req_id, ErrorCode.GATEWAY_NOT_READY, "人物服务尚未就绪")
+        deleted = people_service.store.delete_session(
+            parsed.session_id,
+            "person",
+            person_id,
+        )
+        if not deleted:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, "会话不存在或已经删除")
+        cm.unsubscribe_session(parsed.session_id, conn_id)
+        return build_response(req_id, result={
+            "session_id": parsed.session_id,
+            "deleted": True,
+        })

@@ -1281,6 +1281,15 @@ export function registerIpcHandlers(
     }
   );
 
+  ipcMain.handle(
+    "gateway:deleteSession",
+    async (_event, args: { agentId: string; sessionId: string }) => {
+      const client = getClient(args.agentId);
+      if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+      return client.rpc("session.delete", { session_id: args.sessionId });
+    },
+  );
+
   ipcMain.handle("gateway:unifiedSearch", async (_event, args: {
     agentId: string; query: string; limit?: number;
   }) => {

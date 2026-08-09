@@ -107,17 +107,26 @@ class AttentionLayer:
             self._current_context = context_key
         logger.info("[Attention] 新建上下文: %s", context_key)
 
-    def adopt_current(self, context_key: str) -> None:
-        """Move the currently loaded message tail under a resolved context key."""
+    def activate_loaded(
+        self,
+        context_key: str,
+        messages: list[dict[str, Any]],
+    ) -> None:
+        """Activate a context using messages loaded specifically for it.
+
+        The previously active context is saved first.  An empty target remains
+        empty and never inherits the previous context's message list.
+        """
+        if context_key != self._current_context:
+            self.save_session()
+        loaded = list(messages[-MAX_SESSION_MESSAGES:])
         with self._lock:
-            loaded = list(self._agent.messages[-MAX_SESSION_MESSAGES:])
+            self._context_messages[context_key] = list(loaded)
             self._agent.context_key = context_key
-            self._agent.messages = loaded
-            if loaded:
-                self._context_messages[context_key] = list(loaded)
+            self._agent.messages = list(loaded)
             self._current_context = context_key
         logger.info(
-            "[Attention] 采用上下文 %s: %d 条消息",
+            "[Attention] 加载并激活上下文 %s: %d 条消息",
             context_key,
             len(loaded),
         )

@@ -92,9 +92,13 @@ def refresh_memory_window(
             logger.warning("[MemoryWindow] 叙事记忆获取失败: %s", e)
 
     # ── 2. DAG 摘要 ────────────────────────────────────
-    if dag:
+    if dag and session_id:
         try:
-            summaries = dag.get_higher_summaries(user_id=user_id, max_tokens=dag_max_tokens)
+            summaries = dag.get_higher_summaries(
+                session_id=session_id,
+                user_id=user_id,
+                max_tokens=dag_max_tokens,
+            )
             if summaries:
                 dag_summaries = [
                     {"id": s.id, "depth": s.depth, "content": s.content,
@@ -105,6 +109,8 @@ def refresh_memory_window(
                 ]
         except Exception as e:
             logger.warning("[MemoryWindow] DAG摘要获取失败: %s", e)
+    elif dag:
+        logger.debug("[MemoryWindow] 未提供 session_id，跳过 DAG 会话摘要")
 
     # ── 3. 重要记忆 ────────────────────────────────────
     if longterm:

@@ -338,11 +338,6 @@ def build_context(
         memory_scope_id = getattr(agent, "memory_scope_id", None)
         if not isinstance(memory_scope_id, str) or not memory_scope_id:
             memory_scope_id = getattr(agent, "user_id", "global")
-        context_key = getattr(agent, "context_key", "")
-        person_context = (
-            isinstance(context_key, str)
-            and context_key.startswith("person:")
-        )
         refresh_memory_window(
             self_image,
             longterm=getattr(agent, "longterm_memory", None),
@@ -354,14 +349,14 @@ def build_context(
             user_input=user_input,
             dag_max_tokens=max_tokens // 5,
             exp_stream=getattr(agent, "exp_stream", None),
-            allow_cross_user_dialog=not is_shared_conversation,
-            recent_dialog_session_id=(
-                None if person_context else session_id
-            ),
-            recent_dialog_user_id=(
-                getattr(agent, "user_id", "global")
-                if person_context else None
-            ),
+            # Raw dialogue from another Person must never enter the active
+            # conversation prompt. Cross-Person continuity can only come from
+            # deliberately shared Agent knowledge, not private message rows.
+            allow_cross_user_dialog=False,
+            # 原始消息属于一次具体会话。Person 跨会话连续性只能来自
+            # 长期记忆、关系和经验，不能通过 recent_dialog 绕过会话边界。
+            recent_dialog_session_id=session_id,
+            recent_dialog_user_id=None,
         )
         # Persist the exact safe projection supplied to this answer. Desktop
         # can then explain the recall without running a second, different

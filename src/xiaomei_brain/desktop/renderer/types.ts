@@ -568,6 +568,7 @@ export interface GatewayBridge {
   respondAction(args: { agentId: string; actionId: string; turnId: string; decision: "allow" | "deny" }): Promise<JsonRpcResponse>;
   getHistory(args: { sessionId?: string; limit?: number; beforeId?: number; agentId: string }): Promise<JsonRpcResponse>;
   listSessions(args: { limit?: number; offset?: number; query?: string; agentId: string }): Promise<JsonRpcResponse>;
+  deleteSession(args: { agentId: string; sessionId: string }): Promise<JsonRpcResponse>;
   unifiedSearch(args: { agentId: string; query: string; limit?: number }): Promise<JsonRpcResponse>;
   listAssignments(args: { agentId: string; status?: string; limit?: number }): Promise<JsonRpcResponse>;
   getAssignment(args: { agentId: string; assignmentId: string; eventLimit?: number }): Promise<JsonRpcResponse>;

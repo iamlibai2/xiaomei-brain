@@ -345,14 +345,15 @@ def _run_agent(
                 print(f"  \033[90m[....] Embedding 模型加载中（首次约 20 秒），请稍候...\033[0m", flush=True)
                 ltm.wait_embedder()
                 print(f"  \033[90m[ OK ] Embedding 模型就绪\033[0m", flush=True)
-            living.load_fresh_tail()
+            cli_session_id = f"cli-{agent_id}"
+            restored = living.load_fresh_tail(cli_session_id)
             if hasattr(living, '_attention') and living._attention:
                 context_key = f"person:{_user_id}"
-                living._attention.adopt_current(context_key)
+                living._attention.activate_loaded(context_key, restored)
             if hasattr(living, '_router') and living._router:
                 living._router.register_peer(
                     peer_type="human", peer_id=_user_id, channel="cli",
-                    session_id=f"cli-{agent_id}",
+                    session_id=cli_session_id,
                     output_type="cli", output_target="stdout",
                     priority=10,
                 )

@@ -39,6 +39,7 @@ const CHANNEL_MAP = {
     respondAction:      { invoke: "gateway:respondAction" },
     getHistory:      { invoke: "gateway:getHistory" },
     listSessions:    { invoke: "gateway:listSessions" },
+    deleteSession:   { invoke: "gateway:deleteSession" },
     unifiedSearch:   { invoke: "gateway:unifiedSearch" },
     listAssignments: { invoke: "gateway:listAssignments" },
     getAssignment: { invoke: "gateway:getAssignment" },

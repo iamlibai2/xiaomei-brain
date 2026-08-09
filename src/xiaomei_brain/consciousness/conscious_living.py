@@ -2235,24 +2235,31 @@ class ConsciousLiving(Living):
             body.open()
             logger.info("[ConsciousLiving] Body 感官已上线")
 
-    def load_fresh_tail(self) -> None:
-        """加载 fresh tail：让 agent "带着最近的记忆醒来"。
+    def load_fresh_tail(self, session_id: str) -> list[dict[str, Any]]:
+        """加载当前会话的 fresh tail，让 Agent 恢复该会话的执行现场。
 
+        原始消息属于会话现场，必须同时按 Person 和 session_id 过滤；
+        跨会话连续性由长期记忆、关系和经验提供，不能用其他会话的原始消息代替。
         在用户登录后调用（此时 user_id 已确定），从 DB 还原完整的消息序列，
         包括 assistant(tool_calls) + tool 配对。
         """
-        if not self.agent.conversation_db or not getattr(self.agent, "dag", None):
-            return
+        if not self.agent.conversation_db:
+            return []
 
         agent = self.agent._get_agent()
         recent = self.agent.conversation_db.get_recent(
             self._config.context.fresh_tail_count,
+            session_id=session_id,
             user_id=self.user_id,
         )
 
         if not recent:
-            logger.info("[ConsciousLiving] fresh_tail: 无历史消息 (user_id=%s)", self.user_id)
-            return
+            logger.info(
+                "[ConsciousLiving] fresh_tail: 无历史消息 (user_id=%s, session_id=%s)",
+                self.user_id,
+                session_id,
+            )
+            return []
 
         import json
 
@@ -2416,8 +2423,13 @@ class ConsciousLiving(Living):
         if merged and merged[0].get("role") != "user":
             merged.insert(0, {"role": "user", "content": ""})
 
-        agent.messages = merged
-        logger.info("[ConsciousLiving] 加载 fresh_tail: %d 条消息 (user_id=%s)", len(agent.messages), self.user_id)
+        logger.info(
+            "[ConsciousLiving] 加载 fresh_tail: %d 条消息 (user_id=%s, session_id=%s)",
+            len(merged),
+            self.user_id,
+            session_id,
+        )
+        return merged
 
     def _get_sleep_reason(self, si) -> str:
         """从意图缓冲中提取 SLEEP 意图的原因。"""

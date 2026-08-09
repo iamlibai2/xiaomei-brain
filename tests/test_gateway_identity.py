@@ -74,13 +74,16 @@ class _Living:
         self._agent_id = "xiaomei"
         self.user_id = "global"
         self.fresh_tail_loads = 0
+        self.fresh_tail_sessions: list[str] = []
         self._turn_registry = SimpleNamespace(snapshot=lambda _session_id: None)
         self._attention = None
         self._core = SimpleNamespace(user_id="global")
         self.agent = SimpleNamespace(_get_agent=lambda: self._core)
 
-    def load_fresh_tail(self):
+    def load_fresh_tail(self, session_id: str):
         self.fresh_tail_loads += 1
+        self.fresh_tail_sessions.append(session_id)
+        return []
 
 
 def _connect(router: MethodRouter, conn_id: str, session_id: str) -> dict:
@@ -96,8 +99,10 @@ def _connect(router: MethodRouter, conn_id: str, session_id: str) -> dict:
 
 def test_legacy_context_activation_does_not_duplicate_desktop_session_prefix(tmp_path):
     living = _Living(tmp_path / "brain.db")
-    adopted: list[str] = []
-    living._attention = SimpleNamespace(adopt_current=adopted.append)
+    activated: list[tuple[str, list[dict]]] = []
+    living._attention = SimpleNamespace(
+        activate_loaded=lambda key, messages: activated.append((key, messages)),
+    )
     router = MethodRouter(living=living)
 
     router._identity_methods._activate_legacy_conversation_context(
@@ -107,9 +112,53 @@ def test_legacy_context_activation_does_not_duplicate_desktop_session_prefix(tmp
         "legacy-session", "person-1"
     )
 
-    assert adopted == [
-        "session:ws-db65e318",
-        "session:ws-legacy-session",
+    assert activated == [
+        ("session:ws-db65e318", []),
+        ("session:ws-legacy-session", []),
+    ]
+    assert living.fresh_tail_sessions == [
+        "ws-db65e318",
+        "legacy-session",
+    ]
+
+
+def test_fresh_tail_queries_only_the_authenticated_session():
+    """原始消息恢复必须同时受 Person 和 session_id 约束。"""
+    from xiaomei_brain.consciousness.conscious_living import ConsciousLiving
+
+    calls: list[dict] = []
+
+    class ConversationDB:
+        def get_recent(self, count, **filters):
+            calls.append({"count": count, **filters})
+            return []
+
+    core = SimpleNamespace(messages=[
+        {"role": "user", "content": "message from the previous session"},
+    ])
+    agent = SimpleNamespace(
+        conversation_db=ConversationDB(),
+        dag=object(),
+        _get_agent=lambda: core,
+    )
+    living = SimpleNamespace(
+        agent=agent,
+        user_id="person-1",
+        _config=SimpleNamespace(
+            context=SimpleNamespace(fresh_tail_count=40),
+        ),
+    )
+
+    restored = ConsciousLiving.load_fresh_tail(living, "ws-current")
+
+    assert calls == [{
+        "count": 40,
+        "session_id": "ws-current",
+        "user_id": "person-1",
+    }]
+    assert restored == []
+    assert core.messages == [
+        {"role": "user", "content": "message from the previous session"},
     ]
 
 
@@ -148,6 +197,7 @@ def test_register_challenge_binds_server_verified_person_to_connection(tmp_path)
         assert cm.get_session_id(conn_id) == "session-1"
         assert living.user_id == person_id
         assert living.fresh_tail_loads == 1
+        assert living.fresh_tail_sessions == ["session-1"]
 
         spoofed = router.dispatch(conn_id, "chat-1", "chat.send", {
             "content": "冒用别人",

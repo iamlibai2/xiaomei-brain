@@ -73,6 +73,65 @@ class GatewaySessionsTest(unittest.TestCase):
         self.assertEqual(session["session_id"], "desktop-session")
         self.assertEqual(session["first_user_message"], "restore me")
 
+    def test_session_delete_hides_owned_session_without_deleting_messages(self):
+        self.db.log("session-delete", "user", "keep this source record")
+        router = self.authorized_router("session-delete")
+
+        response = router.dispatch(
+            "desktop-connection",
+            "delete-1",
+            "session.delete",
+            {"session_id": "session-delete"},
+        )
+
+        self.assertNotIn("error", response, response)
+        listed = router.dispatch(
+            "desktop-connection",
+            "list-after-delete",
+            "chat.sessions",
+            {"limit": 20},
+        )["result"]["sessions"]
+        self.assertNotIn("session-delete", [item["session_id"] for item in listed])
+        self.assertEqual(
+            self.db.search_messages_for_person(
+                "keep this",
+                self.person.person_id,
+            ),
+            [],
+        )
+        raw_count = self.db._get_conn().execute(
+            "SELECT COUNT(*) FROM messages WHERE session_id = ?",
+            ("session-delete",),
+        ).fetchone()[0]
+        self.assertEqual(raw_count, 1)
+
+    def test_session_delete_rejects_current_or_foreign_session(self):
+        self.db.log("owned-session", "user", "owned")
+        self.db.log("foreign-session", "user", "foreign")
+        router = self.authorized_router("owned-session")
+        self.people.store.ensure_session(
+            "foreign-session",
+            "person",
+            self.people.create_person("Other").person_id,
+        )
+        cm.set_session("owned-session", "desktop-connection", self.person.person_id)
+
+        current = router.dispatch(
+            "desktop-connection",
+            "delete-current",
+            "session.delete",
+            {"session_id": "owned-session"},
+        )
+        foreign = router.dispatch(
+            "desktop-connection",
+            "delete-foreign",
+            "session.delete",
+            {"session_id": "foreign-session"},
+        )
+
+        self.assertIn("error", current)
+        self.assertIn("error", foreign)
+
     def test_session_list_exposes_channel_and_recognizes_legacy_channel_ids(self):
         self.db.log(
             "feishu-person-1",

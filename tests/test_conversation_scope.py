@@ -29,6 +29,22 @@ def test_agent_short_term_messages_are_scoped_by_context_key():
     assert [message["content"] for message in agent.messages] == ["群聊内容"]
 
 
+def test_activate_loaded_empty_session_preserves_previous_context():
+    agent = Agent(llm=Mock(), tools=ToolRegistry())
+    attention = AttentionLayer(agent)
+
+    agent.context_key = "session:old"
+    agent.messages = [{"role": "user", "content": "old session"}]
+    attention._current_context = "session:old"
+
+    attention.activate_loaded("session:new", [])
+    assert agent.context_key == "session:new"
+    assert agent.messages == []
+
+    attention.switch_to("session:old")
+    assert agent.messages == [{"role": "user", "content": "old session"}]
+
+
 def test_shared_conversation_uses_its_own_memory_scope(tmp_path):
     people = PeopleService(PeopleStore(tmp_path / "brain.db"))
     people.store.ensure_session(
