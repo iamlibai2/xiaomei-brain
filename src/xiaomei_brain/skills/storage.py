@@ -369,18 +369,21 @@ class SkillStorage(SQLiteStore):
         try:
             query_vec = self._embed(query)
             table = self._get_lance_table()
-            results = table.search(query_vec).limit(top_k).to_pandas()
+            results = table.search(query_vec).limit(top_k).to_list()
         except Exception:
             logger.debug("SkillStorage: semantic search failed, fallback to keyword")
             return self._keyword_search(query, top_k)
 
-        if results.empty:
+        if not results:
             return []
 
-        skill_ids = results["id"].tolist()
+        skill_ids = [item["id"] for item in results]
         # LanceDB returns a distance, not a similarity score: smaller values
         # are more relevant. Keep that meaning explicit when ranking results.
-        distances = dict(zip(results["id"].tolist(), results["_distance"].tolist()))
+        distances = {
+            item["id"]: item.get("_distance", 0)
+            for item in results
+        }
 
         placeholders = ",".join("?" * len(skill_ids))
         rows = conn.execute(

@@ -211,7 +211,7 @@ def test_collection_validates_schema_values_and_query_aliases(tmp_path):
         )
     service.business.upsert_record(
         collection.id,
-        values={"客户": "A", "阶段": "线索", "预计金额": 20},
+        values={"客户": "A", "阶段": "线索", "预计金额": "20"},
         business_intent="登记客户",
     )
     assert service.business.query_records(
@@ -234,6 +234,52 @@ def test_collection_validates_schema_values_and_query_aliases(tmp_path):
     )
     assert changed.revision == 2
     assert "owner" in {field.name for field in fields}
+
+
+def test_collection_coerces_only_unambiguous_numeric_text(tmp_path):
+    service = _service(tmp_path)
+    workspace = service.create(name="采购", purpose="管理原料采购")
+    collection, _fields = service.business.create_collection(
+        workspace.id,
+        name="materials",
+        label="原料",
+        purpose="记录原料价格",
+        fields=[
+            {"name": "name", "label": "名称", "data_type": "text", "required": True},
+            {"name": "quantity", "label": "数量", "data_type": "integer"},
+            {"name": "price", "label": "参考单价", "data_type": "money"},
+        ],
+    )
+
+    record, _changes, _event = service.business.upsert_record(
+        collection.id,
+        stable_key="soybean",
+        values={"名称": "大豆", "数量": "20.0", "参考单价": "4,800.50"},
+        business_intent="登记原料",
+    )
+    snapshot = service.business.record_snapshot(
+        record,
+        service.business.store.list_fields(collection.id),
+    )
+    assert snapshot["values"]["quantity"] == 20
+    assert snapshot["values"]["price"] == 4800.5
+
+    for invalid in ("4800元", "1,2,3", "", "NaN", "Infinity"):
+        with pytest.raises(ValueError, match="requires a number"):
+            service.business.upsert_record(
+                collection.id,
+                stable_key=f"invalid:{invalid}",
+                values={"名称": "无效原料", "参考单价": invalid},
+                business_intent="验证非法价格",
+            )
+
+    with pytest.raises(ValueError, match="requires a number"):
+        service.business.upsert_record(
+            collection.id,
+            stable_key="boolean-price",
+            values={"名称": "无效原料", "参考单价": True},
+            business_intent="验证布尔值不能作为价格",
+        )
 
 
 def test_agent_tools_expose_business_fact_vertical_slice(tmp_path):

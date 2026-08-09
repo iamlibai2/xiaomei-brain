@@ -42,6 +42,15 @@ def create_import_tools(agent: Any) -> list[Tool]:
                 workspace_id,
                 person_id=context.person_id,
             )
+            focused = service().current_for_session(
+                context.session_id,
+                person_id=context.person_id,
+            )
+            if focused is None or focused.id != workspace_id:
+                raise ValueError(
+                    "Import targets a different Workspace than the current "
+                    "conversation. Call focus_workspace first"
+                )
         except Exception as exc:
             return {"error": str(exc), "workspace_id": workspace_id}
         try:

@@ -15,6 +15,7 @@ from .asset_store import AssetStore
 from .business_service import BusinessWorldService
 from .business_store import BusinessStore
 from .context_service import WorkspaceContextService
+from .context_execution import WorkspaceContextExecutionService
 from .context_store import WorkspaceContextStore
 from .dataset_service import DatasetService
 from .dataset_store import DatasetStore
@@ -62,13 +63,21 @@ class WorkspaceService:
             publish=publish,
             clock=clock,
         )
+        self.schema = self.business.schema
+        context_store = WorkspaceContextStore(
+            store.db_path,
+            before_schema_migration=before_business_migration,
+        )
+        self.context_execution = WorkspaceContextExecutionService(
+            context_store,
+            self.business,
+            clock=clock,
+        )
         self.context = WorkspaceContextService(
             self.store,
             self.business,
-            WorkspaceContextStore(
-                store.db_path,
-                before_schema_migration=before_business_migration,
-            ),
+            context_store,
+            execution=self.context_execution,
             publish=publish,
             clock=clock,
         )
@@ -93,6 +102,9 @@ class WorkspaceService:
             clock=clock,
         )
         self.business._on_collection_changed = self.datasets.invalidate_collection
+        self.business.set_context_executor(
+            self.context_execution.apply_before_record_write,
+        )
         self.imports = TabularImportService(self.business)
         self.surfaces = SurfaceService(
             store,
@@ -349,11 +361,13 @@ class SurfaceService:
             raise ValueError("Surface persistence must be temporary or persistent")
         if is_default and resolved_persistence != "persistent":
             raise ValueError("A default Surface must be persistent")
+        normalized_definition = self.validate_definition(definition)
+        self._validate_bindings(workspace_id, normalized_definition)
         surface = self.store.create_surface(
             workspace_id,
             name=name.strip() or "Surface",
             purpose=purpose.strip(),
-            definition=self.validate_definition(definition),
+            definition=normalized_definition,
             is_default=is_default,
             status=resolved_persistence,
             now=self._clock(),
@@ -386,14 +400,16 @@ class SurfaceService:
                 raise ValueError("Surface persistence must be temporary or persistent")
         if current.is_default and resolved_persistence != "persistent":
             raise ValueError("A default Surface must be persistent")
+        normalized_definition = (
+            current.definition if definition is None
+            else self.validate_definition(definition)
+        )
+        self._validate_bindings(current.workspace_id, normalized_definition)
         surface = self.store.update_surface(
             current.id,
             name=current.name if name is None else (name.strip() or current.name),
             purpose=current.purpose if purpose is None else purpose.strip(),
-            definition=(
-                current.definition if definition is None
-                else self.validate_definition(definition)
-            ),
+            definition=normalized_definition,
             status=resolved_persistence,
             expected_revision=expected_revision,
             now=self._clock(),
@@ -475,6 +491,87 @@ class SurfaceService:
             raise ValueError("Surface definition is too large")
         return result
 
+    def _validate_bindings(
+        self,
+        workspace_id: str,
+        definition: dict[str, Any],
+    ) -> None:
+        """Reject invented or cross-Workspace Dataset IDs before persistence."""
+        if self.datasets is None:
+            return
+
+        def validate_component(component: Any) -> None:
+            if not isinstance(component, dict):
+                return
+            if component.get("type") == "group":
+                for child in component.get("components") or []:
+                    validate_component(child)
+                return
+            binding = component.get("binding")
+            if not isinstance(binding, dict) or component.get("type") == "asset":
+                return
+            dataset_id = str(binding.get("dataset_id") or "").strip()
+            if not dataset_id:
+                return
+            dataset = self.datasets.store.get(dataset_id)
+            if dataset is None:
+                raise ValueError(
+                    "Surface binding requires an existing dataset_id returned "
+                    f"by create_dataset: {dataset_id}",
+                )
+            dataset = self.datasets.require(dataset_id, refresh_stale=True)
+            if dataset.workspace_id != workspace_id:
+                raise ValueError("Dataset does not belong to the Surface Workspace")
+            component_type = str(component.get("type") or "")
+            columns = dataset.data.get("columns")
+            column_keys = {
+                str(item.get("key") or "")
+                for item in columns or []
+                if isinstance(item, dict) and str(item.get("key") or "")
+            }
+            if component_type == "metric":
+                metric_key = str(binding.get("metric_key") or "").strip()
+                metric_keys = {
+                    str(item.get("key") or "")
+                    for item in dataset.data.get("metrics") or []
+                    if isinstance(item, dict)
+                }
+                if not metric_key or metric_key not in metric_keys:
+                    raise ValueError(
+                        f"Surface metric binding not found in Dataset: {metric_key}"
+                    )
+            elif component_type in {"table", "record"}:
+                if not isinstance(dataset.data.get("rows"), list):
+                    raise ValueError(
+                        f"Surface {component_type} requires a row Dataset"
+                    )
+            elif component_type in {"bar_chart", "line_chart", "pie_chart"}:
+                if not isinstance(dataset.data.get("points"), list):
+                    label_field = str(binding.get("label_field") or "").strip()
+                    value_field = str(binding.get("value_field") or "").strip()
+                    for field_name, role in (
+                        (label_field, "label_field"),
+                        (value_field, "value_field"),
+                    ):
+                        if not field_name or field_name not in column_keys:
+                            raise ValueError(
+                                f"Surface chart {role} not found in Dataset columns: "
+                                f"{field_name}"
+                            )
+            elif component_type == "timeline" and not isinstance(
+                dataset.data.get("points"), list,
+            ):
+                for role in ("time_field", "title_field", "detail_field"):
+                    field_name = str(binding.get(role) or "").strip()
+                    if field_name and field_name not in column_keys:
+                        raise ValueError(
+                            f"Surface timeline {role} not found in Dataset columns: "
+                            f"{field_name}"
+                        )
+
+        for component in definition.get("components") or []:
+            validate_component(component)
+
     def snapshot(self, surface: Surface) -> dict[str, Any]:
         payload = {
             "id": surface.id,
@@ -541,7 +638,11 @@ class SurfaceService:
                 return
             try:
                 dataset = self.datasets.require(dataset_id, refresh_stale=True)
-                self._apply_dataset(component, dataset.data, binding)
+                presented_data = self.datasets.present_data(
+                    workspace_id,
+                    dataset.data,
+                )
+                self._apply_dataset(component, presented_data, binding)
                 component["dataset_revision"] = dataset.revision
                 component["dataset_status"] = dataset.status
             except Exception as exc:

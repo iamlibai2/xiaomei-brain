@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import copy
 import datetime as dt
+import json
 import time
 from collections import defaultdict
 from collections.abc import Callable
@@ -14,7 +16,9 @@ from .models import BusinessRecord, Dataset, FieldDefinition
 
 PublishCallback = Callable[..., Any]
 ALLOWED_KINDS = frozenset({"table", "metric_set", "time_series"})
-ALLOWED_OPERATIONS = frozenset({"count", "sum", "average", "minimum", "maximum"})
+ALLOWED_OPERATIONS = frozenset({
+    "count", "distinct_count", "sum", "average", "minimum", "maximum",
+})
 
 
 class DatasetService:
@@ -126,6 +130,47 @@ class DatasetService:
         if not refresh_stale:
             return datasets
         return [self.require(item.id, refresh_stale=True) for item in datasets]
+
+    def present_data(
+        self,
+        workspace_id: str,
+        data: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Resolve internal reference IDs for human-facing Dataset projections.
+
+        Dataset results deliberately retain stable record IDs so recomputation and
+        joins do not depend on mutable names.  A Surface is a presentation layer,
+        however, and must never make people interpret those internal IDs.
+        """
+        presented = copy.deepcopy(data)
+        columns = presented.get("columns")
+        rows = presented.get("rows")
+        if not isinstance(columns, list) or not isinstance(rows, list):
+            return presented
+        reference_keys = {
+            str(column.get("key") or "")
+            for column in columns
+            if isinstance(column, dict)
+            and str(column.get("data_type") or "") == "reference"
+            and str(column.get("key") or "")
+        }
+        if not reference_keys:
+            return presented
+        labels: dict[str, str] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            for key in reference_keys:
+                value = row.get(key)
+                if not isinstance(value, str) or not value:
+                    continue
+                if value not in labels:
+                    labels[value] = self.business.resolve_reference_value(
+                        workspace_id,
+                        value,
+                    )
+                row[key] = labels[value]
+        return presented
 
     @staticmethod
     def snapshot(dataset: Dataset) -> dict[str, Any]:
@@ -244,6 +289,16 @@ class DatasetService:
         field_id = str(spec.get("field_id") or "")
         if operation == "count":
             value: int | float = len(records)
+        elif operation == "distinct_count":
+            value = len({
+                json.dumps(
+                    record.values.get(field_id),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                for record in records
+                if record.values.get(field_id) is not None
+            })
         else:
             values = [
                 float(record.values[field_id])
@@ -277,8 +332,8 @@ class DatasetService:
     ) -> dict[str, Any]:
         if not isinstance(source_spec, dict):
             raise ValueError("Dataset source_spec must be an object")
-        lookup = self._field_lookup(fields)
-        filters = self.business._normalize_record_values(
+        lookup = self.business.schema.field_index(fields)
+        filters = self.business._normalize_filters(
             dict(source_spec.get("filters") or {}), fields,
         )
         result: dict[str, Any] = {"filters": filters}
@@ -319,7 +374,7 @@ class DatasetService:
     def _normalize_metrics(
         self,
         metrics: Any,
-        lookup: dict[str, FieldDefinition],
+        lookup: dict[str, tuple[FieldDefinition, ...]],
     ) -> list[dict[str, Any]]:
         if not isinstance(metrics, list) or not metrics:
             raise ValueError("Dataset requires at least one metric")
@@ -346,20 +401,17 @@ class DatasetService:
             seen.add(key)
         return result
 
-    @staticmethod
-    def _field_lookup(fields: list[FieldDefinition]) -> dict[str, FieldDefinition]:
-        return {
-            identity.casefold(): field
-            for field in fields
-            for identity in (field.id, field.name, field.label, *field.aliases)
-        }
-
-    @staticmethod
-    def _resolve_field(value: Any, lookup: dict[str, FieldDefinition]) -> FieldDefinition:
-        field = lookup.get(str(value or "").strip().casefold())
-        if field is None:
+    def _resolve_field(
+        self,
+        value: Any,
+        lookup: dict[str, tuple[FieldDefinition, ...]],
+    ) -> FieldDefinition:
+        matches = lookup.get(self.business.schema.identity_key(value), ())
+        if not matches:
             raise ValueError(f"Unknown Collection field: {value}")
-        return field
+        if len(matches) > 1:
+            raise ValueError(f"Ambiguous Collection field: {value}")
+        return matches[0]
 
     def _publish_dataset(
         self,

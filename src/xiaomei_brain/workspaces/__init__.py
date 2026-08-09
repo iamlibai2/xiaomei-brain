@@ -6,8 +6,14 @@ from .asset_service import AssetService
 from .asset_store import AssetStore
 from .business_service import BusinessWorldService
 from .business_store import BusinessStore
-from .context_service import WorkspaceContextService, render_workspace_context
+from .context_service import (
+    WorkspaceContextService,
+    render_workspace_context,
+    render_workspace_tool_selection_context,
+)
 from .context_store import WorkspaceContextStore
+from .context_execution import WorkspaceContextExecutionService
+from .schema_resolver import FieldEvolutionPlan, SchemaAmbiguityError, SchemaResolver
 from .dataset_service import DatasetService
 from .dataset_store import DatasetStore
 from .models import (
@@ -27,6 +33,7 @@ from .models import (
     Surface,
     Workspace,
     WorkspaceContextEntry,
+    WorkspaceContextExecutable,
     WorkspaceConflictError,
     WorkspacePermissionError,
 )
@@ -64,13 +71,19 @@ __all__ = [
     "Workspace",
     "WorkspaceConflictError",
     "WorkspaceContextService",
+    "WorkspaceContextExecutionService",
     "WorkspaceContextStore",
     "WorkspaceContextEntry",
+    "WorkspaceContextExecutable",
     "WorkspacePermissionError",
+    "FieldEvolutionPlan",
+    "SchemaAmbiguityError",
+    "SchemaResolver",
     "WorkspaceService",
     "WorkspaceStore",
     "create_workspace_tools",
     "new_workspace_id",
     "new_surface_id",
     "render_workspace_context",
+    "render_workspace_tool_selection_context",
 ]

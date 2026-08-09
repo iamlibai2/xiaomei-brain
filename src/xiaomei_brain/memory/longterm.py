@@ -494,14 +494,17 @@ class LongTermMemory(SQLiteStore):
         search = table.search(query_vector).limit(top_k * 3)
         if lance_filter:
             search = search.where(lance_filter)
-        results = search.to_pandas()
+        results = search.to_list()
 
-        if results.empty:
+        if not results:
             return []
 
         conn = self._get_conn()
-        cs_ids = results["id"].tolist()
-        distances = dict(zip(results["id"].tolist(), results["_distance"].tolist()))
+        cs_ids = [item["id"] for item in results]
+        distances = {
+            item["id"]: item.get("_distance", 1.0)
+            for item in results
+        }
 
         placeholders = ",".join("?" * len(cs_ids))
         sql = f"SELECT * FROM consciousness_stream WHERE id IN ({placeholders})"
@@ -555,14 +558,17 @@ class LongTermMemory(SQLiteStore):
         results = table.search(query_vector) \
             .where(f"user_id = '{safe_user_id}' OR user_id = 'global'") \
             .limit(top_k * 3) \
-            .to_pandas()
+            .to_list()
 
-        if results.empty:
+        if not results:
             return []
 
         conn = self._get_conn()
-        nm_ids = results["id"].tolist()
-        distances = dict(zip(results["id"].tolist(), results["_distance"].tolist()))
+        nm_ids = [item["id"] for item in results]
+        distances = {
+            item["id"]: item.get("_distance", 1.0)
+            for item in results
+        }
 
         placeholders = ",".join("?" * len(nm_ids))
         sql = f"SELECT * FROM narrative_memories WHERE id IN ({placeholders}) AND status = 'active'"
@@ -1455,14 +1461,17 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
 
         results = table.search(query_vector) \
             .limit(top_k * 3) \
-            .to_pandas()
+            .to_list()
 
-        if results.empty:
+        if not results:
             return []
 
         conn = self._get_conn()
-        mem_ids = results["id"].tolist()
-        distances = dict(zip(results["id"].tolist(), results["_distance"].tolist()))
+        mem_ids = [item["id"] for item in results]
+        distances = {
+            item["id"]: item.get("_distance", 1.0)
+            for item in results
+        }
 
         # Fetch full metadata from SQLite (exclude extinct, filter by user_id + global)
         placeholders = ",".join("?" * len(mem_ids))

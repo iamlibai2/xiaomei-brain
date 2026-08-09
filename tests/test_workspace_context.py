@@ -10,6 +10,7 @@ from xiaomei_brain.workspaces import (
     WorkspaceStore,
     create_workspace_tools,
     render_workspace_context,
+    render_workspace_tool_selection_context,
 )
 
 
@@ -88,6 +89,26 @@ def _business_world(tmp_path):
         turn_id="turn-jia",
     )
     return service, workspace, collection, fields, observation
+
+
+def test_workspace_tool_selection_context_is_focused_and_bounded(tmp_path):
+    service, workspace, _collection, _fields, _observation = _business_world(tmp_path)
+    agent = SimpleNamespace(
+        workspace_service=service,
+        session_id="session-1",
+        user_id="person-1",
+    )
+
+    rendered = render_workspace_tool_selection_context(agent)
+
+    assert rendered.startswith("<focused_workspace>")
+    assert workspace.id in rendered
+    assert "客户经营" in rendered
+    assert "customers" in rendered
+    assert "recent_events" not in rendered
+
+    agent.session_id = "another-session"
+    assert render_workspace_tool_selection_context(agent) == ""
 
 
 def test_workspace_context_prefers_query_relevant_record_and_keeps_evidence(tmp_path):

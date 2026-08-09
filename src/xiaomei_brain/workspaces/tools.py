@@ -10,6 +10,32 @@ from .dataset_tools import create_dataset_tools
 from .import_tools import create_import_tools
 
 
+CONTEXT_EXECUTION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "description": (
+        "Optional safe executable form of this Context. target_collection_id must "
+        "be a real Collection ID. condition supports field/operator/value leaves and "
+        "all, any or not composition. effects support set, set_default and reject. "
+        "A set value may be a literal, {field: name}, or an arithmetic expression "
+        "{operator: add|subtract|multiply|divide|round|min|max, args: [...]}."
+    ),
+    "properties": {
+        "target_collection_id": {"type": "string"},
+        "trigger": {
+            "type": "string",
+            "enum": ["before_record_write"],
+        },
+        "condition": {"type": "object"},
+        "effects": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "object"},
+        },
+    },
+    "required": ["target_collection_id", "effects"],
+}
+
+
 def create_workspace_tools(agent: Any) -> list[Tool]:
     def core() -> Any:
         return agent._get_agent()
@@ -41,9 +67,34 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             person_id=person_id(),
         )
 
+    def require_focused_workspace(workspace_id: str):
+        """Allow mutations only inside this Session's focused Workspace."""
+        workspace = require_workspace(workspace_id)
+        session_id, _turn_id = context()
+        current = service().current_for_session(
+            session_id,
+            person_id=person_id(),
+        )
+        if current is None:
+            raise ValueError(
+                "The current conversation is not focused on a Workspace; "
+                "call focus_workspace before changing business state"
+            )
+        if current.id != workspace.id:
+            raise ValueError(
+                "This write targets a different Workspace than the current "
+                "conversation. Call focus_workspace first, then retry the write"
+            )
+        return workspace
+
     def require_collection(collection_id: str):
         collection = service().business.require_collection(collection_id)
         require_workspace(collection.workspace_id)
+        return collection
+
+    def require_focused_collection(collection_id: str):
+        collection = service().business.require_collection(collection_id)
+        require_focused_workspace(collection.workspace_id)
         return collection
 
     def require_surface(surface_id: str):
@@ -53,9 +104,19 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         require_workspace(surface.workspace_id)
         return surface
 
+    def require_focused_surface(surface_id: str):
+        surface = require_surface(surface_id)
+        require_focused_workspace(surface.workspace_id)
+        return surface
+
     def require_action(action_id: str):
         definition = service().actions.require(action_id)
         require_workspace(definition.workspace_id)
+        return definition
+
+    def require_focused_action(action_id: str):
+        definition = require_action(action_id)
+        require_focused_workspace(definition.workspace_id)
         return definition
 
     def focus(workspace_id: str) -> None:
@@ -112,7 +173,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         status: str = "",
     ) -> dict[str, Any]:
         """Update a Workspace's identity, purpose, lifecycle or description."""
-        require_workspace(workspace_id)
+        require_focused_workspace(workspace_id)
         session_id, turn_id = context()
         workspace = service().update(
             workspace_id,
@@ -135,7 +196,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         persistence: str = "persistent",
     ) -> dict[str, Any]:
         """Create a durable interactive Surface inside a Workspace."""
-        require_workspace(workspace_id)
+        require_focused_workspace(workspace_id)
         session_id, turn_id = context()
         surface = service().surfaces.create(
             workspace_id,
@@ -158,7 +219,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         persistence: str = "",
     ) -> dict[str, Any]:
         """Replace one Surface definition after inspecting its current revision."""
-        require_surface(surface_id)
+        require_focused_surface(surface_id)
         session_id, turn_id = context()
         surface = service().surfaces.update(
             surface_id,
@@ -235,7 +296,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         locator: str = "",
     ) -> dict[str, Any]:
         """Register a stable source from which business observations arrive."""
-        require_workspace(workspace_id)
+        require_focused_workspace(workspace_id)
         session_id, turn_id = context()
         source = service().business.create_data_source(
             workspace_id,
@@ -257,7 +318,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         occurred_at: float | None = None,
     ) -> dict[str, Any]:
         """Record what was received before deciding whether it is a business fact."""
-        require_workspace(workspace_id)
+        require_focused_workspace(workspace_id)
         session_id, turn_id = context()
         resolved_data_source_id = data_source_id.strip()
         if not resolved_data_source_id and session_id:
@@ -300,7 +361,19 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         maturity: str = "candidate",
     ) -> dict[str, Any]:
         """Define a stable business object and its typed fields."""
-        require_workspace(workspace_id)
+        require_focused_workspace(workspace_id)
+        previous = service().business.schema.resolve_collection_identity(
+            workspace_id,
+            name=name,
+            label=label,
+        )
+        previous_field_ids = {
+            field.id
+            for field in (
+                service().business.store.list_fields(previous.id)
+                if previous is not None else []
+            )
+        }
         session_id, turn_id = context()
         collection, definitions = service().business.create_collection(
             workspace_id,
@@ -312,7 +385,20 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             session_id=session_id,
             turn_id=turn_id,
         )
-        return service().business.collection_snapshot(collection, definitions)
+        result = service().business.collection_snapshot(collection, definitions)
+        result["schema_resolution"] = {
+            "outcome": "created" if previous is None else "reused",
+            "canonical_collection_id": collection.id,
+            "added_field_ids": [
+                field.id for field in definitions
+                if field.id not in previous_field_ids
+            ],
+            "reused_field_ids": [
+                field.id for field in definitions
+                if field.id in previous_field_ids
+            ],
+        }
+        return result
 
     def upsert_business_record(
         collection_id: str,
@@ -329,7 +415,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         event_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Create or update current business state and preserve every field change."""
-        require_collection(collection_id)
+        require_focused_collection(collection_id)
         session_id, turn_id = context()
         record, changes, event = service().business.upsert_record(
             collection_id,
@@ -367,7 +453,9 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         fields: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """Extend a Collection as the Agent learns more about the business."""
-        require_collection(collection_id)
+        require_focused_collection(collection_id)
+        previous_fields = service().business.store.list_fields(collection_id)
+        previous_field_ids = {field.id for field in previous_fields}
         session_id, turn_id = context()
         collection, definitions = service().business.add_collection_fields(
             collection_id,
@@ -376,7 +464,23 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             session_id=session_id,
             turn_id=turn_id,
         )
-        return service().business.collection_snapshot(collection, definitions)
+        result = service().business.collection_snapshot(collection, definitions)
+        result["schema_resolution"] = {
+            "outcome": (
+                "unchanged"
+                if collection.revision == expected_revision
+                else "evolved"
+            ),
+            "added_field_ids": [
+                field.id for field in definitions
+                if field.id not in previous_field_ids
+            ],
+            "reused_field_ids": [
+                field.id for field in definitions
+                if field.id in previous_field_ids
+            ],
+        }
+        return result
 
     def query_business_records(
         collection_id: str,
@@ -399,7 +503,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         completion_criteria: str,
     ) -> dict[str, Any]:
         """Crystallize a repeated successful pattern as reusable business meaning."""
-        require_workspace(workspace_id)
+        require_focused_workspace(workspace_id)
         session_id, turn_id = context()
         definition = service().actions.establish(
             workspace_id,
@@ -454,7 +558,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         event_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Execute one stable business meaning while preserving Agent freedom."""
-        definition = require_action(action_id)
+        definition = require_focused_action(action_id)
         session_id, turn_id = context()
         run, record, changes, event = service().actions.execute(
             definition.id,
@@ -496,9 +600,11 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         overrides_context_id: str = "",
         evidence_observation_ids: list[str] | None = None,
         workspace_id: str = "",
+        executable: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Persist a stable business meaning, not an incidental conversation detail."""
         resolved_workspace_id = resolve_workspace_id(workspace_id)
+        require_focused_workspace(resolved_workspace_id)
         session_id, turn_id = context()
         item = service().context.establish(
             resolved_workspace_id,
@@ -508,6 +614,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             scope_id=scope_id,
             overrides_context_id=overrides_context_id,
             evidence_observation_ids=evidence_observation_ids or [],
+            executable=executable,
             person_id=person_id(),
             session_id=session_id,
             turn_id=turn_id,
@@ -518,22 +625,46 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         context_id: str,
         statement: str,
         evidence_observation_ids: list[str] | None = None,
+        executable: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Replace an active business meaning while preserving its correction chain."""
         current = service().context.store.get(context_id)
         if current is None:
             raise KeyError(context_id)
-        require_workspace(current.workspace_id)
+        require_focused_workspace(current.workspace_id)
         session_id, turn_id = context()
         item = service().context.correct(
             context_id,
             statement=statement,
             evidence_observation_ids=evidence_observation_ids or [],
+            executable=executable,
             person_id=person_id(),
             session_id=session_id,
             turn_id=turn_id,
         )
         return service().context.entry_snapshot(item)
+
+    def configure_context_execution(
+        context_id: str,
+        executable: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Make an existing Context enforceable at the unified write boundary."""
+        current = service().context.store.get(context_id)
+        if current is None:
+            raise KeyError(context_id)
+        require_focused_workspace(current.workspace_id)
+        session_id, turn_id = context()
+        service().context.configure_execution(
+            context_id,
+            executable,
+            person_id=person_id(),
+            session_id=session_id,
+            turn_id=turn_id,
+        )
+        refreshed = service().context.store.get(context_id)
+        if refreshed is None:
+            raise KeyError(context_id)
+        return service().context.entry_snapshot(refreshed)
 
     def list_business_context(
         workspace_id: str = "",
@@ -805,7 +936,9 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
                 "Use persistent when the interface will be reused or the person asks to keep it. "
                 "A Surface presents business data; it is not the Workspace itself. "
                 "For durable business values, bind components to a Dataset instead "
-                "of copying static values into the Surface."
+                "of copying static values into the Surface. Create every Dataset first, "
+                "then use the exact dataset_id returned by create_dataset; never invent "
+                "a Dataset ID or use its name as dataset_id."
             ),
             parameters={
                 "type": "object",
@@ -830,7 +963,8 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             description=(
                 "Update an existing Surface after get_workspace. Send its complete "
                 "definition and current revision so concurrent changes are preserved."
-                " Set persistence to persistent when keeping a useful temporary Surface."
+                " Set persistence to persistent when keeping a useful temporary Surface. "
+                "Every binding must use an existing dataset_id returned by create_dataset."
             ),
             parameters={
                 "type": "object",
@@ -955,7 +1089,11 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             name="define_collection",
             description=(
                 "Define a reusable typed business object such as customer, quote, "
-                "contract or payment. Use a stable machine name and human-readable label."
+                "contract or payment. Use a stable machine name and human-readable label. "
+                "SchemaResolver reuses an unambiguous existing Collection and compatible "
+                "fields instead of creating duplicates. If it reports ambiguity or a type "
+                "conflict, inspect the Workspace and resolve the business meaning; do not "
+                "invent a suffixed name."
             ),
             parameters={
                 "type": "object",
@@ -1012,6 +1150,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             ),
             parameters={
                 "type": "object",
+                "additionalProperties": False,
                 "properties": {
                     "collection_id": {"type": "string"},
                     "record_id": {"type": "string"},
@@ -1036,7 +1175,9 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             description=(
                 "Extend an existing Collection when repeated business use reveals "
                 "new facts worth storing. Inspect the Collection first and provide "
-                "its current revision. Existing field IDs and values remain unchanged."
+                "its current revision. SchemaResolver reuses compatible names, labels "
+                "and aliases, merges new aliases, and rejects ambiguous or incompatible "
+                "fields. Existing field IDs and values remain unchanged."
             ),
             parameters={
                 "type": "object",
@@ -1078,8 +1219,10 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         Tool(
             name="query_business_records",
             description=(
-                "Query a Collection's current records. Filters are exact matches and "
-                "may use field IDs, names, labels or aliases."
+                "Query a Collection's current records. Filters may use field IDs, "
+                "names, labels or aliases. A scalar means exact match. Operator "
+                "objects support $eq, $ne, $in, $not_in, $gt, $gte, $lt, $lte "
+                "and $is_null; filters across fields are combined with AND."
             ),
             parameters={
                 "type": "object",
@@ -1167,6 +1310,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             ),
             parameters={
                 "type": "object",
+                "additionalProperties": False,
                 "properties": {
                     "action_id": {"type": "string"},
                     "record_id": {"type": "string"},
@@ -1225,6 +1369,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
                         "type": "array",
                         "items": {"type": "string"},
                     },
+                    "executable": CONTEXT_EXECUTION_SCHEMA,
                 },
                 "required": ["statement", "context_type"],
             },
@@ -1247,10 +1392,33 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
                         "type": "array",
                         "items": {"type": "string"},
                     },
+                    "executable": CONTEXT_EXECUTION_SCHEMA,
                 },
                 "required": ["context_id", "statement"],
             },
             func=correct_business_context,
+            category="workspace",
+        ),
+        Tool(
+            name="configure_context_execution",
+            description=(
+                "Attach safe executable behavior to an existing active Context. Use "
+                "this when a business statement must apply consistently to every "
+                "direct write, table import and Business Action. Inspect the Context "
+                "and Collection fields first. This configures the existing Context; "
+                "it does not create a separate business-rule concept. Example: "
+                "condition {field: '含水量', operator: 'lt', value: 10}, effect "
+                "{type: 'set', field: '质量状态', value: '残次品'}."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "context_id": {"type": "string"},
+                    "executable": CONTEXT_EXECUTION_SCHEMA,
+                },
+                "required": ["context_id", "executable"],
+            },
+            func=configure_context_execution,
             category="workspace",
         ),
         Tool(

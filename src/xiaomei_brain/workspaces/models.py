@@ -158,6 +158,10 @@ class RecordChange:
     turn_id: str
     observation_id: str
     changed_at: float
+    origin: str = "direct"
+    context_id: str = ""
+    context_revision: int = 0
+    reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -194,6 +198,23 @@ class WorkspaceContextEntry:
     overrides_context_id: str
     created_by_person_id: str
     revision: int
+    created_at: float
+    updated_at: float
+
+
+@dataclass(frozen=True)
+class WorkspaceContextExecutable:
+    """Validated executable form derived from one active Context entry."""
+
+    context_id: str
+    workspace_id: str
+    collection_id: str
+    trigger: str
+    specification: dict[str, Any]
+    read_field_ids: tuple[str, ...]
+    write_field_ids: tuple[str, ...]
+    status: str
+    context_revision: int
     created_at: float
     updated_at: float
 

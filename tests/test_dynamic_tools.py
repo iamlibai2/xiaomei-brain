@@ -2,6 +2,7 @@
 
 import pytest
 
+from xiaomei_brain.agent.core import Agent
 from xiaomei_brain.tools.base import Tool
 from xiaomei_brain.tools.registry import ToolRegistry
 from xiaomei_brain.tools.dynamic import (
@@ -107,6 +108,85 @@ def test_step_selection_context_keeps_intent_and_bounds_tool_progress():
     assert len(context.split("Recent execution progress:\n", 1)[1]) <= 120
 
 
+def test_agent_refreshes_runtime_tool_context_after_first_step():
+    agent = Agent(llm=object(), tools=ToolRegistry())
+    state = {"focused": False}
+
+    def workspace_context(_agent, _query):
+        if not state["focused"]:
+            return ""
+        return (
+            '<focused_workspace>{"id":"workspace-1",'
+            '"name":"原料采购"}</focused_workspace>'
+        )
+
+    agent.add_tool_selection_context_provider(workspace_context)
+    _messages, initial = agent._prepare_execution_selection([
+        {"role": "user", "content": "新建一个原料采购工作空间"},
+    ])
+    assert "focused_workspace" not in initial
+
+    state["focused"] = True
+    refreshed = agent._step_tool_selection_context(initial, [
+        "create_workspace: workspace-1",
+    ])
+    assert "<focused_workspace>" in refreshed
+    assert "原料采购" in refreshed
+
+
+def test_focused_workspace_authoring_kit_is_deterministic(monkeypatch):
+    tool_names = (
+        "get_current_workspace",
+        "define_collection",
+        "add_collection_fields",
+        "record_business_context",
+        "create_surface",
+        "update_surface",
+        "list_business_actions",
+        "establish_business_action",
+        "unrelated_tool",
+    )
+    reg = _registry_with_tools(*((name, name) for name in tool_names))
+    loader = DynamicToolLoader(reg, top_k=1)
+
+    class _EmptySearch:
+        def limit(self, _count):
+            return self
+
+        def to_list(self):
+            return []
+
+    class _Table:
+        def count_rows(self):
+            return 1
+
+        def search(self, _vector):
+            return _EmptySearch()
+
+    monkeypatch.setattr(loader, "_get_lance_table", lambda: _Table())
+    monkeypatch.setattr(loader._shared, "embed", lambda _query: [0.0])
+
+    query = (
+        "Current user request:\n你先按你自己理解建\n\n"
+        "Current runtime context:\n"
+        '<focused_workspace>{"id":"workspace-1",'
+        '"name":"原料采购"}</focused_workspace>'
+    )
+    selected = {tool.name for tool in loader.select_tools(query, top_k=1)}
+
+    assert selected.issuperset(set(tool_names) - {"unrelated_tool"})
+    assert "unrelated_tool" not in selected
+
+    without_focus = {
+        tool.name
+        for tool in loader.select_tools(
+            "Current user request:\n你先按你自己理解建",
+            top_k=1,
+        )
+    }
+    assert "define_collection" not in without_focus
+
+
 def test_tool_embedding_fingerprint_includes_parameter_schema():
     reg = ToolRegistry()
     first = Tool(
@@ -126,6 +206,39 @@ def test_tool_embedding_fingerprint_includes_parameter_schema():
     loader = DynamicToolLoader(reg)
 
     assert loader._tool_fingerprint(first) != loader._tool_fingerprint(second)
+
+
+def test_cached_fingerprints_are_read_without_pandas(monkeypatch):
+    """The packaged Agent runtime must not need pandas to open the tool cache."""
+
+    class _ArrowRows:
+        def select(self, columns):
+            assert columns == ["id", "fingerprint"]
+            return self
+
+        @staticmethod
+        def to_pylist():
+            return [
+                {"id": "read_document", "fingerprint": "abc"},
+                {"id": "write_document", "fingerprint": "def"},
+            ]
+
+    class _Table:
+        @staticmethod
+        def count_rows():
+            return 2
+
+        @staticmethod
+        def to_arrow():
+            return _ArrowRows()
+
+    loader = DynamicToolLoader(ToolRegistry())
+    monkeypatch.setattr(loader, "_get_lance_table", lambda: _Table())
+
+    assert loader._get_cached_fingerprints() == {
+        "read_document": "abc",
+        "write_document": "def",
+    }
 
 
 # ── Basic loading ──────────────────────────────────────────────

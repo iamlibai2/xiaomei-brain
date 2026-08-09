@@ -195,6 +195,13 @@ class Agent:
         self.on_action_complete: Callable[[str, str, bool], None] | None = None
         self.on_steer_consumed: Callable[[list[SteerMessage]], None] | None = None
         self.completion_guards: list[CompletionGuard] = []
+        # Domain modules may contribute small, structured runtime facts to
+        # dynamic tool selection.  Providers receive this Core so isolated
+        # runtimes use their own session/person state rather than the live
+        # conversation's mutable state.
+        self.tool_selection_context_providers: list[
+            Callable[[Any, str], str]
+        ] = []
 
         # ── Internal display (injected by ConversationDriver) ──
         self.internal_display: Any = None  # InternalDisplay 实例
@@ -213,6 +220,42 @@ class Agent:
         if guard not in self.completion_guards:
             self.completion_guards.append(guard)
 
+    def add_tool_selection_context_provider(
+        self,
+        provider: Callable[[Any, str], str],
+    ) -> None:
+        """Register a structured runtime-context provider once."""
+        if provider not in self.tool_selection_context_providers:
+            self.tool_selection_context_providers.append(provider)
+
+    def _with_runtime_tool_selection_context(self, query: str) -> str:
+        """Append fresh domain runtime facts without trusting model history."""
+        rendered: list[str] = []
+        for provider in self.tool_selection_context_providers:
+            try:
+                value = provider(self, query)
+            except Exception:
+                logger.exception("Failed to build tool-selection runtime context")
+                continue
+            text = str(value or "").strip()
+            if text:
+                rendered.append(text)
+        if not rendered:
+            return query
+        return (
+            f"{query}\n\nCurrent runtime context:\n"
+            + "\n".join(rendered)
+        ).strip()
+
+    def _step_tool_selection_context(
+        self,
+        original_intent: str,
+        progress: list[str],
+    ) -> str:
+        """Build one step query and refresh mutable runtime facts."""
+        query = build_step_tool_selection_context(original_intent, progress)
+        return self._with_runtime_tool_selection_context(query)
+
     def _prepare_execution_selection(
         self,
         messages: list[dict[str, Any]],
@@ -221,6 +264,9 @@ class Agent:
         selection_query = build_tool_selection_context(
             messages,
             self.current_attachments,
+        )
+        selection_query = self._with_runtime_tool_selection_context(
+            selection_query,
         )
         if self._dynamic_loader:
             self._dynamic_loader.begin_run(self.session_id)
@@ -434,7 +480,7 @@ class Agent:
 
                 # 每步根据累积上下文动态选择工具
                 if self._dynamic_loader:
-                    selection_context = build_step_tool_selection_context(
+                    selection_context = self._step_tool_selection_context(
                         _accumulated_context,
                         _selection_progress,
                     )
@@ -1143,7 +1189,7 @@ class Agent:
 
             # 每步根据累积上下文动态选择工具
             if self._dynamic_loader:
-                selection_context = build_step_tool_selection_context(
+                selection_context = self._step_tool_selection_context(
                     _accumulated_context,
                     _selection_progress,
                 )

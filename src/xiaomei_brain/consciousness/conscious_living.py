@@ -637,7 +637,12 @@ class ConsciousLiving(Living):
             ),
         )
         self.agent.workspace_service = self._workspace_service
-        self.agent._get_agent().workspace_service = self._workspace_service
+        workspace_core = self.agent._get_agent()
+        workspace_core.workspace_service = self._workspace_service
+        from xiaomei_brain.workspaces import render_workspace_tool_selection_context
+        workspace_core.add_tool_selection_context_provider(
+            render_workspace_tool_selection_context,
+        )
         from xiaomei_brain.workspaces.content_resolver import (
             WorkspaceAssetContentResolver,
         )

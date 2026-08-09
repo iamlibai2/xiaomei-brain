@@ -25,7 +25,7 @@ from .models import (
 )
 
 SCHEMA_COMPONENT = "workspace_business"
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def _new_id(prefix: str) -> str:
@@ -177,6 +177,10 @@ class BusinessStore(SQLiteStore):
                 session_id TEXT NOT NULL DEFAULT '',
                 turn_id TEXT NOT NULL DEFAULT '',
                 observation_id TEXT NOT NULL DEFAULT '',
+                origin TEXT NOT NULL DEFAULT 'direct',
+                context_id TEXT NOT NULL DEFAULT '',
+                context_revision INTEGER NOT NULL DEFAULT 0,
+                reason TEXT NOT NULL DEFAULT '',
                 changed_at REAL NOT NULL,
                 FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
                 FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE,
@@ -252,6 +256,20 @@ class BusinessStore(SQLiteStore):
             FROM observations
             WHERE resolved_collection_id <> '' AND resolved_record_id <> '';
         """)
+        change_columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(record_changes)")
+        }
+        for name, definition in (
+            ("origin", "TEXT NOT NULL DEFAULT 'direct'"),
+            ("context_id", "TEXT NOT NULL DEFAULT ''"),
+            ("context_revision", "INTEGER NOT NULL DEFAULT 0"),
+            ("reason", "TEXT NOT NULL DEFAULT ''"),
+        ):
+            if name not in change_columns:
+                conn.execute(
+                    f"ALTER TABLE record_changes ADD COLUMN {name} {definition}"
+                )
         conn.commit()
         self._set_schema_version(SCHEMA_COMPONENT, SCHEMA_VERSION)
 
@@ -554,6 +572,7 @@ class BusinessStore(SQLiteStore):
         collection_id: str,
         *,
         fields: list[dict[str, Any]],
+        alias_updates: dict[str, tuple[str, ...]] | None = None,
         expected_revision: int,
         now: float | None = None,
     ) -> tuple[CollectionDefinition, list[FieldDefinition]]:
@@ -565,6 +584,9 @@ class BusinessStore(SQLiteStore):
                 f"Collection revision changed: expected {expected_revision}, current {current.revision}",
             )
         timestamp = time.time() if now is None else now
+        resolved_alias_updates = dict(alias_updates or {})
+        if not fields and not resolved_alias_updates:
+            return current, self.list_fields(collection_id)
         definitions = [
             FieldDefinition(
                 id=_new_id("field"), collection_id=collection_id,
@@ -578,6 +600,20 @@ class BusinessStore(SQLiteStore):
         ]
         conn = self._get_conn()
         try:
+            for field_id, aliases in resolved_alias_updates.items():
+                cursor = conn.execute(
+                    """UPDATE collection_fields
+                       SET aliases_json = ?, revision = revision + 1, updated_at = ?
+                       WHERE id = ? AND collection_id = ? AND status = 'active'""",
+                    (
+                        self._json(list(aliases)), timestamp,
+                        field_id, collection_id,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise WorkspaceConflictError(
+                        f"Collection field changed while merging aliases: {field_id}"
+                    )
             conn.executemany(
                 """INSERT INTO collection_fields (
                     id, collection_id, name, label, data_type, required,
@@ -660,8 +696,28 @@ class BusinessStore(SQLiteStore):
         for field_id, value in filters.items():
             # Field IDs are generated internally. Passing the JSON path as a
             # bound parameter keeps values and paths out of SQL text.
-            sql += " AND json_extract(values_json, ?) IS ?"
-            params.extend([f'$."{field_id}"', value])
+            path = f'$."{field_id}"'
+            if not isinstance(value, dict):
+                sql += " AND json_extract(values_json, ?) IS ?"
+                params.extend([path, value])
+                continue
+            for operator, operand in value.items():
+                if operator in {"$in", "$not_in"}:
+                    placeholders = ", ".join("?" for _ in operand)
+                    keyword = "IN" if operator == "$in" else "NOT IN"
+                    sql += f" AND json_extract(values_json, ?) {keyword} ({placeholders})"
+                    params.extend([path, *operand])
+                elif operator == "$is_null":
+                    sql += " AND json_extract(values_json, ?) IS "
+                    sql += "NULL" if operand else "NOT NULL"
+                    params.append(path)
+                else:
+                    comparison = {
+                        "$eq": "IS", "$ne": "IS NOT", "$gt": ">",
+                        "$gte": ">=", "$lt": "<", "$lte": "<=",
+                    }[operator]
+                    sql += f" AND json_extract(values_json, ?) {comparison} ?"
+                    params.extend([path, operand])
         sql += " ORDER BY updated_at DESC"
         if limit is not None:
             sql += " LIMIT ?"
@@ -688,6 +744,7 @@ class BusinessStore(SQLiteStore):
         event_occurred_at: float | None,
         event_idempotency_key: str,
         event_metadata: dict[str, Any],
+        change_metadata: dict[str, dict[str, Any]] | None = None,
         now: float | None = None,
     ) -> tuple[BusinessRecord, list[RecordChange], BusinessEvent | None]:
         timestamp = time.time() if now is None else now
@@ -709,6 +766,7 @@ class BusinessStore(SQLiteStore):
             field_id for field_id, after in values.items()
             if old_values.get(field_id) != after
         ]
+        field_metadata = change_metadata or {}
         changes = [
             RecordChange(
                 id=_new_id("change"), workspace_id=workspace_id,
@@ -718,6 +776,12 @@ class BusinessStore(SQLiteStore):
                 after_value=merged.get(field_id), business_intent=business_intent,
                 person_id=person_id, session_id=session_id, turn_id=turn_id,
                 observation_id=observation_id, changed_at=timestamp,
+                origin=str(field_metadata.get(field_id, {}).get("origin") or "direct"),
+                context_id=str(field_metadata.get(field_id, {}).get("context_id") or ""),
+                context_revision=int(
+                    field_metadata.get(field_id, {}).get("context_revision") or 0
+                ),
+                reason=str(field_metadata.get(field_id, {}).get("reason") or ""),
             )
             for field_id in changed_fields
         ]
@@ -773,15 +837,18 @@ class BusinessStore(SQLiteStore):
                 """INSERT INTO record_changes (
                     id, workspace_id, collection_id, record_id, operation,
                     field_id, before_json, after_json, business_intent, person_id,
-                    session_id, turn_id, observation_id, changed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    session_id, turn_id, observation_id, origin, context_id,
+                    context_revision, reason, changed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [
                     (
                         change.id, change.workspace_id, change.collection_id,
                         change.record_id, change.operation, change.field_id,
                         self._json(change.before_value), self._json(change.after_value),
                         change.business_intent, change.person_id, change.session_id,
-                        change.turn_id, change.observation_id, change.changed_at,
+                        change.turn_id, change.observation_id, change.origin,
+                        change.context_id, change.context_revision, change.reason,
+                        change.changed_at,
                     )
                     for change in changes
                 ],
@@ -1098,6 +1165,9 @@ class BusinessStore(SQLiteStore):
             business_intent=str(row["business_intent"]),
             person_id=str(row["person_id"]), session_id=str(row["session_id"]),
             turn_id=str(row["turn_id"]), observation_id=str(row["observation_id"]),
+            origin=str(row["origin"]), context_id=str(row["context_id"]),
+            context_revision=int(row["context_revision"]),
+            reason=str(row["reason"]),
             changed_at=float(row["changed_at"]),
         )
 

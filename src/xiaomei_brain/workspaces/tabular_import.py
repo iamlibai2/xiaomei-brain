@@ -12,6 +12,7 @@ from typing import Any
 
 from .business_service import BusinessWorldService
 from .models import CollectionDefinition, DataSource, FieldDefinition
+from .schema_resolver import SchemaAmbiguityError
 
 MAX_IMPORT_ROWS = 10_000
 MAX_IMPORT_COLUMNS = 128
@@ -205,6 +206,12 @@ class TabularImportService:
             "row_count": len(rows),
             "column_count": len(headers),
             "key_column": resolved_key,
+            "schema_resolution": {
+                "canonical_collection_id": collection.id,
+                "fields_by_column": {
+                    header: column_fields[header].id for header in headers
+                },
+            },
             "created": created,
             "updated": updated,
             "unchanged": unchanged,
@@ -248,9 +255,18 @@ class TabularImportService:
             compatible = self._find_compatible_collection(workspace_id, headers)
             if compatible is not None:
                 return compatible
-        machine_name = self._available_collection_name(
-            workspace_id, collection_name or collection_label,
-        )
+        requested_identity = collection_name.strip() or collection_label.strip()
+        if requested_identity:
+            existing = self.business.schema.resolve_collection_identity(
+                workspace_id,
+                name=collection_name.strip(),
+                label=collection_label.strip(),
+            )
+            if existing is not None:
+                return existing
+            machine_name = self._machine_name(requested_identity) or "imported_data"
+        else:
+            machine_name = self._available_collection_name(workspace_id, "")
         fields = self._infer_fields(headers, rows)
         collection, _ = self.business.create_collection(
             workspace_id,
@@ -269,35 +285,10 @@ class TabularImportService:
         workspace_id: str,
         headers: list[str],
     ) -> CollectionDefinition | None:
-        """Reuse one unambiguous Collection whose schema already fits the file.
-
-        A new file often represents a later snapshot of an existing business
-        collection. Requiring the model to rediscover and pass its ID makes
-        imports fragile, while matching a single generic column would be too
-        eager. Reuse therefore requires one clear match covering at least half
-        of the incoming columns and at least two columns.
-        """
-        normalized_headers = {
-            header.strip().casefold() for header in headers if header.strip()
-        }
-        if len(normalized_headers) < 2:
-            return None
-        candidates: list[tuple[int, float, CollectionDefinition]] = []
-        for collection in self.business.store.list_collections(workspace_id):
-            identities = set(self._field_lookup(
-                self.business.store.list_fields(collection.id),
-            ))
-            matched = len(normalized_headers & identities)
-            coverage = matched / len(normalized_headers)
-            if matched >= 2 and coverage >= 0.5:
-                candidates.append((matched, coverage, collection))
-        if not candidates:
-            return None
-        candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
-        best = candidates[0]
-        if len(candidates) > 1 and candidates[1][:2] == best[:2]:
-            return None
-        return best[2]
+        return self.business.schema.resolve_import_collection(
+            workspace_id,
+            headers,
+        )
 
     def _ensure_fields(
         self,
@@ -308,72 +299,66 @@ class TabularImportService:
         session_id: str,
         turn_id: str,
     ) -> list[FieldDefinition]:
-        fields = self.business.store.list_fields(collection.id)
-        lookup = self._field_lookup(fields)
-        missing_indexes = [
-            index for index, header in enumerate(headers)
-            if header.casefold() not in lookup
-        ]
-        if not missing_indexes:
-            return fields
-        inferred = self._infer_fields(headers, rows)
-        used_identities = set(self._field_lookup(fields))
-        additions = []
-        for index in missing_indexes:
-            item = dict(inferred[index])
-            base = str(item["name"])
-            candidate = base
-            suffix = 2
-            while candidate.casefold() in used_identities:
-                candidate = f"{base}_{suffix}"
-                suffix += 1
-            item["name"] = candidate
-            used_identities.add(candidate.casefold())
-            used_identities.add(str(item["label"]).casefold())
-            additions.append(item)
+        existing = self.business.store.list_fields(collection.id)
+        inferred = self._align_inferred_fields(
+            self._infer_fields(headers, rows),
+            existing,
+        )
         _collection, fields = self.business.add_collection_fields(
             collection.id,
-            fields=additions,
+            fields=inferred,
             expected_revision=collection.revision,
             session_id=session_id,
             turn_id=turn_id,
         )
         return fields
 
-    @classmethod
+    def _align_inferred_fields(
+        self,
+        inferred: list[dict[str, Any]],
+        existing: list[FieldDefinition],
+    ) -> list[dict[str, Any]]:
+        """Let a durable schema interpret weak types inferred from one file."""
+        aligned: list[dict[str, Any]] = []
+        for proposal in inferred:
+            resolved = None
+            for identity in (proposal["label"], proposal["name"]):
+                try:
+                    resolved = self.business.schema.resolve_field(existing, identity)
+                    break
+                except SchemaAmbiguityError:
+                    raise
+                except ValueError:
+                    continue
+            if resolved is None:
+                aligned.append(proposal)
+                continue
+            item = dict(proposal)
+            item["data_type"] = resolved.data_type
+            aligned.append(item)
+        return aligned
+
     def _column_field_map(
-        cls,
+        self,
         headers: list[str],
         fields: list[FieldDefinition],
     ) -> dict[str, FieldDefinition]:
-        lookup = cls._field_lookup(fields)
         result: dict[str, FieldDefinition] = {}
         for header in headers:
-            field = lookup.get(header.casefold())
-            if field is None:
-                raise ValueError(f"No Collection field matches column: {header}")
-            result[header] = field
+            result[header] = self.business.schema.resolve_field(fields, header)
         return result
-
-    @staticmethod
-    def _field_lookup(fields: list[FieldDefinition]) -> dict[str, FieldDefinition]:
-        return {
-            identity.casefold(): field
-            for field in fields
-            for identity in (field.id, field.name, field.label, *field.aliases)
-        }
 
     def _available_collection_name(self, workspace_id: str, requested: str) -> str:
         base = self._machine_name(requested) or "imported_data"
         existing = {
-            item.name.casefold()
+            self.business.schema.identity_key(item.name)
             for item in self.business.store.list_collections(workspace_id)
         }
-        if base.casefold() not in existing:
+        if self.business.schema.identity_key(base) not in existing:
             return base
         for index in range(2, 10_000):
             candidate = f"{base}_{index}"
-            if candidate.casefold() not in existing:
+            if self.business.schema.identity_key(candidate) not in existing:
                 return candidate
         raise ValueError("Unable to allocate a Collection name")
 
@@ -424,15 +409,19 @@ class TabularImportService:
             return "datetime" if any(cls._has_time(value) for value in present) else "date"
         return "text"
 
-    @staticmethod
     def _choose_key_column(
+        self,
         headers: list[str],
         rows: list[list[Any]],
         requested: str,
     ) -> str:
         if requested.strip():
+            requested_key = self.business.schema.identity_key(requested)
             match = next(
-                (header for header in headers if header.casefold() == requested.strip().casefold()),
+                (
+                    header for header in headers
+                    if self.business.schema.identity_key(header) == requested_key
+                ),
                 None,
             )
             if match is None:

@@ -34,6 +34,24 @@ def create_dataset_tools(agent: Any) -> list[Tool]:
             person_id=person_id(),
         )
 
+    def require_focused_workspace(workspace_id: str) -> None:
+        require_workspace(workspace_id)
+        session_id, _turn_id = context()
+        current = workspace_service().current_for_session(
+            session_id,
+            person_id=person_id(),
+        )
+        if current is None:
+            raise ValueError(
+                "The current conversation is not focused on a Workspace; "
+                "call focus_workspace before changing Datasets"
+            )
+        if current.id != workspace_id:
+            raise ValueError(
+                "This Dataset write targets a different Workspace than the "
+                "current conversation. Call focus_workspace first"
+            )
+
     def require_dataset(dataset_id: str) -> None:
         dataset = service().store.get(dataset_id)
         if dataset is None:
@@ -55,7 +73,7 @@ def create_dataset_tools(agent: Any) -> list[Tool]:
         source_spec: dict[str, Any],
         description: str = "",
     ) -> dict[str, Any]:
-        require_workspace(workspace_id)
+        require_focused_workspace(workspace_id)
         collection = workspace_service().business.require_collection(
             source_collection_id,
         )
@@ -76,6 +94,10 @@ def create_dataset_tools(agent: Any) -> list[Tool]:
 
     def recompute_dataset(dataset_id: str, expected_revision: int) -> dict[str, Any]:
         require_dataset(dataset_id)
+        dataset = service().store.get(dataset_id)
+        if dataset is None:
+            raise KeyError(dataset_id)
+        require_focused_workspace(dataset.workspace_id)
         session_id, turn_id = context()
         return service().snapshot(service().recompute(
             dataset_id,
@@ -100,7 +122,10 @@ def create_dataset_tools(agent: Any) -> list[Tool]:
             "label": {"type": "string"},
             "operation": {
                 "type": "string",
-                "enum": ["count", "sum", "average", "minimum", "maximum"],
+                "enum": [
+                    "count", "distinct_count", "sum", "average",
+                    "minimum", "maximum",
+                ],
             },
             "field": {"type": "string"},
             "unit": {"type": "string"},
@@ -111,7 +136,15 @@ def create_dataset_tools(agent: Any) -> list[Tool]:
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "filters": {"type": "object", "additionalProperties": True},
+            "filters": {
+                "type": "object",
+                "additionalProperties": True,
+                "description": (
+                    "Field filters. A scalar is exact match; operator objects "
+                    "support $eq, $ne, $in, $not_in, $gt, $gte, $lt, $lte "
+                    "and $is_null. Different fields are combined with AND."
+                ),
+            },
             "fields": {"type": "array", "items": {"type": "string"}},
             "dimensions": {"type": "array", "items": {"type": "string"}},
             "metrics": {"type": "array", "items": metric_schema},
@@ -119,7 +152,10 @@ def create_dataset_tools(agent: Any) -> list[Tool]:
             "value_field": {"type": "string"},
             "operation": {
                 "type": "string",
-                "enum": ["count", "sum", "average", "minimum", "maximum"],
+                "enum": [
+                    "count", "distinct_count", "sum", "average",
+                    "minimum", "maximum",
+                ],
             },
             "interval": {"type": "string", "enum": ["day", "month"]},
             "label": {"type": "string"},
@@ -131,10 +167,14 @@ def create_dataset_tools(agent: Any) -> list[Tool]:
             description=(
                 "Create a reusable computed Dataset from one Collection. Use table "
                 "for raw or grouped rows, metric_set for KPIs, and time_series for "
-                "day/month trends. This is controlled aggregation, not arbitrary SQL."
+                "day/month trends. The source is always source_collection_id plus "
+                "source_spec; there is no source_type parameter. Create separate "
+                "Datasets when a Surface needs grouped rows, KPI metrics and raw rows. "
+                "This is controlled aggregation, not arbitrary SQL."
             ),
             parameters={
                 "type": "object",
+                "additionalProperties": False,
                 "properties": {
                     "workspace_id": {"type": "string"},
                     "name": {"type": "string"},
@@ -162,6 +202,7 @@ def create_dataset_tools(agent: Any) -> list[Tool]:
             ),
             parameters={
                 "type": "object",
+                "additionalProperties": False,
                 "properties": {
                     "dataset_id": {"type": "string"},
                     "expected_revision": {"type": "integer", "minimum": 1},
@@ -176,6 +217,7 @@ def create_dataset_tools(agent: Any) -> list[Tool]:
             description="List reusable Datasets in one Workspace and inspect their bindings.",
             parameters={
                 "type": "object",
+                "additionalProperties": False,
                 "properties": {"workspace_id": {"type": "string"}},
                 "required": ["workspace_id"],
             },

@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import datetime as dt
 import math
+import re
 import time
 from collections.abc import Callable
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from .business_store import BusinessStore
+from .schema_resolver import SchemaResolver
 from .models import (
     BusinessActionCandidate,
     BusinessEvent,
@@ -33,6 +36,11 @@ ALLOWED_FIELD_TYPES = frozenset({
 })
 ALLOWED_MATURITY = frozenset({"provisional", "candidate", "established"})
 
+_NUMERIC_TEXT_PATTERN = re.compile(
+    r"^[+-]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d*)?|\.\d+)"
+    r"(?:[eE][+-]?\d+)?$",
+)
+
 
 class BusinessWorldService:
     """Facade over business sources, observations and current facts."""
@@ -50,6 +58,12 @@ class BusinessWorldService:
         self._publish = publish
         self._clock = clock
         self._on_collection_changed: Callable[..., Any] | None = None
+        self._context_executor: Callable[..., Any] | None = None
+        self.schema = SchemaResolver(store)
+
+    def set_context_executor(self, executor: Callable[..., Any] | None) -> None:
+        """Attach the Context rule boundary without coupling the two services."""
+        self._context_executor = executor
 
     def create_data_source(
         self,
@@ -151,6 +165,38 @@ class BusinessWorldService:
             raise ValueError("Collection name and label cannot be empty")
         if resolved_maturity not in ALLOWED_MATURITY:
             raise ValueError(f"Unsupported collection maturity: {resolved_maturity}")
+        existing = self.schema.resolve_collection_identity(
+            workspace_id,
+            name=resolved_name,
+            label=resolved_label,
+        )
+        if existing is not None:
+            current_fields = self.store.list_fields(existing.id)
+            plan = self.schema.plan_field_evolution(
+                current_fields,
+                normalized_fields,
+            )
+            self._validate_required_additions(existing, list(plan.additions))
+            if plan.changed:
+                existing, current_fields = self.store.add_collection_fields(
+                    existing.id,
+                    fields=list(plan.additions),
+                    alias_updates=plan.alias_updates,
+                    expected_revision=existing.revision,
+                    now=self._clock(),
+                )
+                payload = self.collection_snapshot(existing, current_fields)
+                payload["schema_resolution"] = {
+                    "outcome": "reused_and_evolved",
+                    "added_field_count": len(plan.additions),
+                    "reused_field_ids": [item.id for item in plan.reused],
+                    "updated_alias_field_ids": list(plan.alias_updates),
+                }
+                self._publish_to_workspace(
+                    "collection.updated", workspace_id, payload,
+                    session_id=session_id, turn_id=turn_id,
+                )
+            return existing, current_fields
         collection, definitions = self.store.create_collection(
             workspace_id,
             name=resolved_name,
@@ -198,6 +244,8 @@ class BusinessWorldService:
         elif stable_key.strip():
             current = self.store.find_record_by_key(collection.id, stable_key.strip())
         if current is not None:
+            if current.collection_id != collection.id:
+                raise ValueError("Record does not belong to the collection")
             if expected_revision is None:
                 raise ValueError(
                     "expected_revision is required when updating an existing record",
@@ -207,6 +255,15 @@ class BusinessWorldService:
         else:
             record_id = ""
             resolved_key = stable_key.strip()
+        change_metadata: dict[str, dict[str, Any]] = {}
+        if self._context_executor is not None:
+            normalized, change_metadata = self._context_executor(
+                collection,
+                normalized,
+                current,
+                person_id,
+            )
+        if current is None:
             missing = [
                 field.label for field in fields
                 if field.required and field.id not in normalized
@@ -238,6 +295,7 @@ class BusinessWorldService:
             event_occurred_at=event_occurred_at,
             event_idempotency_key=event_idempotency_key.strip(),
             event_metadata=dict(event_metadata or {}),
+            change_metadata=change_metadata,
             now=self._clock(),
         )
         action_candidate_payload = None
@@ -305,30 +363,21 @@ class BusinessWorldService:
         turn_id: str = "",
     ) -> tuple[CollectionDefinition, list[FieldDefinition]]:
         collection = self.require_collection(collection_id)
+        if collection.revision != expected_revision:
+            raise WorkspaceConflictError(
+                "Collection revision changed: expected "
+                f"{expected_revision}, current {collection.revision}"
+            )
         normalized = self._normalize_fields(fields)
         existing = self.store.list_fields(collection.id)
-        identities = {
-            identity.casefold()
-            for field in existing
-            for identity in (field.name, field.label, *field.aliases)
-        }
-        for field in normalized:
-            field_identities = list(dict.fromkeys(
-                identity.casefold()
-                for identity in (field["name"], field["label"], *field["aliases"])
-            ))
-            for folded in field_identities:
-                if folded in identities:
-                    raise ValueError(f"Duplicate field name or alias: {folded}")
-                identities.add(folded)
-        if any(field["required"] for field in normalized):
-            if self.store.list_records(collection.id, limit=1):
-                raise ValueError(
-                    "Cannot add a required field after records exist without a default value",
-                )
+        plan = self.schema.plan_field_evolution(existing, normalized)
+        self._validate_required_additions(collection, list(plan.additions))
+        if not plan.changed:
+            return collection, existing
         updated, definitions = self.store.add_collection_fields(
             collection.id,
-            fields=normalized,
+            fields=list(plan.additions),
+            alias_updates=plan.alias_updates,
             expected_revision=expected_revision,
             now=self._clock(),
         )
@@ -348,7 +397,7 @@ class BusinessWorldService:
     ) -> list[dict[str, Any]]:
         collection = self.require_collection(collection_id)
         fields = self.store.list_fields(collection.id)
-        normalized_filters = self._normalize_record_values(filters or {}, fields)
+        normalized_filters = self._normalize_filters(filters or {}, fields)
         records = self.store.query_records(
             collection.id, filters=normalized_filters, limit=limit,
         )
@@ -506,8 +555,8 @@ class BusinessWorldService:
             ],
         }
 
-    @staticmethod
     def record_snapshot(
+        self,
         record: BusinessRecord,
         fields: list[FieldDefinition],
     ) -> dict[str, Any]:
@@ -516,13 +565,63 @@ class BusinessWorldService:
             by_id[field_id].name if field_id in by_id else field_id: value
             for field_id, value in record.values.items()
         }
+        display_values = {
+            by_id[field_id].name if field_id in by_id else field_id: (
+                self.resolve_reference_value(record.workspace_id, value)
+                if field_id in by_id and by_id[field_id].data_type == "reference"
+                else value
+            )
+            for field_id, value in record.values.items()
+        }
         return {
             "id": record.id, "workspace_id": record.workspace_id,
             "collection_id": record.collection_id, "stable_key": record.stable_key,
-            "values": values, "values_by_field_id": record.values,
+            "values": values, "display_values": display_values,
+            "values_by_field_id": record.values,
             "status": record.status, "revision": record.revision,
             "created_at": record.created_at, "updated_at": record.updated_at,
         }
+
+    def resolve_reference_value(self, workspace_id: str, value: Any) -> Any:
+        """Project a stable record reference as a human-readable business label."""
+        if not isinstance(value, str) or not value:
+            return value
+        record = self.store.get_record(value)
+        if record is None or record.workspace_id != workspace_id:
+            return value
+        fields = self.store.list_fields(record.collection_id)
+        ranked_fields = sorted(
+            enumerate(fields),
+            key=lambda item: self._display_field_priority(item[1], item[0]),
+        )
+        for _index, field in ranked_fields:
+            candidate = record.values.get(field.id)
+            if (
+                isinstance(candidate, str)
+                and candidate.strip()
+                and not candidate.startswith("record_")
+            ):
+                return candidate.strip()
+        return record.stable_key or record.id
+
+    @staticmethod
+    def _display_field_priority(
+        field: FieldDefinition,
+        index: int,
+    ) -> tuple[int, int]:
+        name = field.name.casefold()
+        label = field.label.casefold()
+        if name in {"name", "title", "display_name", "code", "number"}:
+            return (0, index)
+        if name.endswith(("_name", "_title", "_code", "_number")):
+            return (1, index)
+        if any(token in label for token in ("名称", "姓名", "标题", "编号", "代码")):
+            return (2, index)
+        if field.required and field.data_type in {"text", "enum"}:
+            return (3, index)
+        if field.data_type in {"text", "enum"}:
+            return (4, index)
+        return (5, index)
 
     @staticmethod
     def change_snapshot(
@@ -538,6 +637,9 @@ class BusinessWorldService:
             "business_intent": change.business_intent,
             "person_id": change.person_id, "session_id": change.session_id,
             "turn_id": change.turn_id, "observation_id": change.observation_id,
+            "origin": change.origin, "context_id": change.context_id,
+            "context_revision": change.context_revision,
+            "reason": change.reason,
             "changed_at": change.changed_at,
         }
 
@@ -575,8 +677,7 @@ class BusinessWorldService:
             targeted["_target_person_id"] = person_id
             self._publish(event, targeted, session_id=session_id, turn_id=turn_id)
 
-    @staticmethod
-    def _normalize_fields(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _normalize_fields(self, fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not fields:
             raise ValueError("Collection requires at least one field")
         if len(fields) > 128:
@@ -601,7 +702,8 @@ class BusinessWorldService:
             # same (common for English spreadsheet headers). Treat that as one
             # identity while still rejecting collisions across fields.
             field_identities = list(dict.fromkeys(
-                identity.casefold() for identity in (name, label, *aliases)
+                self.schema.identity_key(identity)
+                for identity in (name, label, *aliases)
             ))
             for folded in field_identities:
                 if folded in identities:
@@ -614,27 +716,68 @@ class BusinessWorldService:
             })
         return normalized
 
-    @classmethod
     def _normalize_record_values(
-        cls,
+        self,
         values: dict[str, Any],
         fields: list[FieldDefinition],
     ) -> dict[str, Any]:
-        if not isinstance(values, dict) or not values:
-            if values == {}:
-                return {}
-            raise ValueError("Record values must be an object")
-        lookup: dict[str, FieldDefinition] = {}
-        for field in fields:
-            for identity in (field.id, field.name, field.label, *field.aliases):
-                lookup[identity.casefold()] = field
+        return self.schema.normalize_values(
+            values,
+            fields,
+            validate=self._validate_value,
+        )
+
+    def _normalize_filters(
+        self,
+        filters: dict[str, Any],
+        fields: list[FieldDefinition],
+    ) -> dict[str, Any]:
+        """Normalize a small typed filter grammar without exposing SQL."""
+        if not isinstance(filters, dict):
+            raise ValueError("Record filters must be an object")
+        allowed = {"$eq", "$ne", "$in", "$not_in", "$gt", "$gte", "$lt", "$lte", "$is_null"}
         normalized: dict[str, Any] = {}
-        for key, value in values.items():
-            field = lookup.get(str(key).strip().casefold())
-            if field is None:
-                raise ValueError(f"Unknown Collection field: {key}")
-            normalized[field.id] = cls._validate_value(field, value)
+        for key, raw in filters.items():
+            field = self.schema.resolve_field(fields, key)
+            if field.id in normalized:
+                raise ValueError(
+                    f"Multiple filters resolve to the same field: {field.label}"
+                )
+            if not isinstance(raw, dict):
+                normalized[field.id] = self._validate_value(field, raw)
+                continue
+            unknown = set(raw) - allowed
+            if unknown:
+                raise ValueError(f"Unsupported filter operator: {sorted(unknown)[0]}")
+            if not raw:
+                raise ValueError(f"Filter for {field.label} cannot be empty")
+            operators: dict[str, Any] = {}
+            for operator, operand in raw.items():
+                if operator in {"$in", "$not_in"}:
+                    if not isinstance(operand, list) or not operand:
+                        raise ValueError(f"{operator} requires a non-empty array")
+                    operators[operator] = [
+                        self._validate_value(field, item) for item in operand
+                    ]
+                elif operator == "$is_null":
+                    if not isinstance(operand, bool):
+                        raise ValueError("$is_null requires true or false")
+                    operators[operator] = operand
+                else:
+                    operators[operator] = self._validate_value(field, operand)
+            normalized[field.id] = operators
         return normalized
+
+    def _validate_required_additions(
+        self,
+        collection: CollectionDefinition,
+        additions: list[dict[str, Any]],
+    ) -> None:
+        if any(field["required"] for field in additions):
+            if self.store.list_records(collection.id, limit=1):
+                raise ValueError(
+                    "Cannot add a required field after records exist without a default value",
+                )
 
     @staticmethod
     def _validate_value(field: FieldDefinition, value: Any) -> Any:
@@ -644,9 +787,14 @@ class BusinessWorldService:
             return None
         kind = field.data_type
         if kind == "integer":
+            value = BusinessWorldService._coerce_numeric_text(
+                value,
+                integer=True,
+            )
             if isinstance(value, bool) or not isinstance(value, int):
                 raise ValueError(f"Field {field.label} requires an integer")
         elif kind in {"number", "money"}:
+            value = BusinessWorldService._coerce_numeric_text(value)
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise ValueError(f"Field {field.label} requires a number")
             if not math.isfinite(float(value)):
@@ -671,3 +819,33 @@ class BusinessWorldService:
         elif kind != "json" and not isinstance(value, str):
             raise ValueError(f"Field {field.label} requires text")
         return value
+
+    @staticmethod
+    def _coerce_numeric_text(value: Any, *, integer: bool = False) -> Any:
+        """Convert an unambiguous JSON string number to its stored scalar type.
+
+        Dynamic ``values`` keys cannot express each Collection field's schema
+        in the static tool definition, and LLMs commonly emit ``"4800"`` for
+        such values.  Keep coercion deliberately narrow: currency symbols,
+        units, malformed thousands separators, blanks and booleans remain
+        invalid instead of being guessed.
+        """
+        if not isinstance(value, str):
+            return value
+        text = value.strip()
+        if not text or _NUMERIC_TEXT_PATTERN.fullmatch(text) is None:
+            return value
+        normalized = text.replace(",", "")
+        try:
+            parsed = Decimal(normalized)
+            if not parsed.is_finite():
+                return value
+            if integer:
+                if parsed == parsed.to_integral_value():
+                    return int(parsed)
+                return value
+            if re.fullmatch(r"[+-]?\d+", normalized):
+                return int(normalized)
+            return float(parsed)
+        except (InvalidOperation, OverflowError, ValueError):
+            return value

@@ -81,6 +81,20 @@ TOOL_CONTEXT_USER_MESSAGES = 3
 TOOL_CONTEXT_MAX_CHARS = 2400
 TOOL_PROGRESS_MAX_CHARS = 1200
 
+_WORKSPACE_AUTHORING_TOOLS = frozenset({
+    "get_current_workspace",
+    "define_collection",
+    "add_collection_fields",
+    "record_business_context",
+    "configure_context_execution",
+    "correct_business_context",
+    "list_business_context",
+    "create_surface",
+    "update_surface",
+    "list_business_actions",
+    "establish_business_action",
+})
+
 
 def _contextual_required_tool_names(query: str) -> set[str]:
     """Select small deterministic dependencies for unmistakable task shapes.
@@ -102,6 +116,25 @@ def _contextual_required_tool_names(query: str) -> set[str]:
         "workspace", "工作空间", "经营数据", "业务数据", "经营看板",
     ))
     required: set[str] = set()
+    # A focused Workspace is durable runtime state, not something semantic
+    # retrieval should have to rediscover from a short follow-up.  When the
+    # user asks to build or continue shaping that Workspace, expose the small
+    # authoring kit deterministically.  This only makes the tools available;
+    # it does not prescribe a workflow or force the Agent to call them.
+    has_focused_workspace = "<focused_workspace>" in text
+    has_workspace_authoring_intent = any(marker in text for marker in (
+        "搭建", "建设", "创建结构", "业务结构", "初始化", "完善", "补齐",
+        "定义字段", "定义集合", "创建集合", "创建看板", "创建界面",
+        "按你理解", "按你的理解", "按你自己理解", "你自己看着", "继续",
+        "继续推进", "继续建设", "继续完善", "build out", "set up",
+        "initialize", "schema",
+        "collection", "surface", "use your judgment", "continue building",
+        "规则", "约束", "默认值", "计算规则", "business rule",
+    ))
+    if has_focused_workspace:
+        required.add("get_current_workspace")
+    if has_focused_workspace and has_workspace_authoring_intent:
+        required.update(_WORKSPACE_AUTHORING_TOOLS)
     if has_tabular_attachment and has_import_intent and has_workspace_destination:
         required.add("import_tabular_data")
     has_business_object = any(marker in text for marker in (
@@ -387,8 +420,15 @@ class DynamicToolLoader:
             n = table.count_rows()
             if n == 0:
                 return {}
-            frame = table.to_pandas()
-            cached = dict(zip(frame["id"].tolist(), frame["fingerprint"].tolist()))
+            # Reading cached metadata does not require pandas.  Keeping this on
+            # Arrow also lets the Agent run in the minimal runtime environment
+            # used by the CLI and packaged Desktop.
+            rows = table.to_arrow().select(["id", "fingerprint"]).to_pylist()
+            cached = {
+                str(row["id"]): str(row["fingerprint"])
+                for row in rows
+                if row.get("id") is not None and row.get("fingerprint") is not None
+            }
             logger.debug(
                 "DynamicToolLoader: read %d cached fingerprints from LanceDB",
                 len(cached),

@@ -211,20 +211,13 @@ def test_semantic_search_orders_smallest_lance_distance_first(populated_storage)
     ).fetchall()
     ids = {row["name"]: row["id"] for row in rows}
 
-    frame = MagicMock()
-    frame.empty = False
-    frame.__getitem__.side_effect = lambda key: MagicMock(
-        tolist=lambda: {
-            "id": [
-                ids["python-testing"],
-                ids["git-workflow"],
-                ids["browser-automation"],
-            ],
-            "_distance": [0.1, 0.5, 0.9],
-        }[key]
-    )
+    results = [
+        {"id": ids["python-testing"], "_distance": 0.1},
+        {"id": ids["git-workflow"], "_distance": 0.5},
+        {"id": ids["browser-automation"], "_distance": 0.9},
+    ]
     table = MagicMock()
-    table.search.return_value.limit.return_value.to_pandas.return_value = frame
+    table.search.return_value.limit.return_value.to_list.return_value = results
 
     with (
         patch.object(populated_storage, "_embed", return_value=[0.0]),

@@ -112,6 +112,7 @@ class AgentRuntimeFactory:
             "people_service",
             "workspace_service",
             "workspace_asset_resolver",
+            "tool_selection_context_providers",
             "exp_stream",
             "essence",
             "_living_cfg",

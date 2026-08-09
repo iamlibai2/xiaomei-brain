@@ -122,8 +122,13 @@ class ConversationDriver:
 
         # Record the trusted original input before slash commands inject Skill
         # instructions into ``msg.content`` for the model.
-        asset_ids = self._register_message_assets(msg)
-        self._register_message_observation(msg, asset_ids)
+        self._register_message_assets(msg)
+
+        # Do not equate every utterance with a business observation. Questions,
+        # UI commands, Clarify answers and document requests polluted the
+        # business evidence stream when projection happened here. The Agent now
+        # records actual reported facts explicitly through record_observation;
+        # channel group history keeps its separate projection path.
 
         # 斜杠命令拦截：/skill-name 注入技能内容
         self._handle_slash_command(msg)

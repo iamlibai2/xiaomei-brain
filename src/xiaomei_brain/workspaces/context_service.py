@@ -10,6 +10,7 @@ from typing import Any
 
 from .business_service import BusinessWorldService
 from .context_store import WorkspaceContextStore
+from .context_execution import WorkspaceContextExecutionService
 from .models import (
     BusinessRecord,
     CollectionDefinition,
@@ -43,12 +44,14 @@ class WorkspaceContextService:
         business: BusinessWorldService,
         store: WorkspaceContextStore,
         *,
+        execution: WorkspaceContextExecutionService | None = None,
         publish: PublishCallback | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.workspace_store = workspace_store
         self.business = business
         self.store = store
+        self.execution = execution
         self._publish = publish
         self._clock = clock
 
@@ -62,6 +65,7 @@ class WorkspaceContextService:
         scope_id: str = "",
         overrides_context_id: str = "",
         evidence_observation_ids: list[str] | tuple[str, ...] = (),
+        executable: dict[str, Any] | None = None,
         person_id: str,
         session_id: str = "",
         turn_id: str = "",
@@ -111,7 +115,26 @@ class WorkspaceContextService:
                     override_target.id if override_target is not None else ""
                 )
             ):
+                if executable is not None:
+                    self.configure_execution(
+                        existing.id,
+                        executable,
+                        person_id=person_id,
+                        session_id=session_id,
+                        turn_id=turn_id,
+                    )
                 return existing
+        if executable is not None:
+            self._validate_new_execution(
+                workspace_id=workspace_id,
+                scope_type=resolved_scope,
+                scope_id=resolved_scope_id,
+                context_type=resolved_type,
+                statement=resolved_statement,
+                person_id=person_id,
+                executable=executable,
+                replaces_context_id="",
+            )
         item = self.store.create(
             workspace_id=workspace_id,
             scope_type=resolved_scope,
@@ -129,6 +152,14 @@ class WorkspaceContextService:
             "workspace_context.established", item,
             session_id=session_id, turn_id=turn_id,
         )
+        if executable is not None:
+            self.configure_execution(
+                item.id,
+                executable,
+                person_id=person_id,
+                session_id=session_id,
+                turn_id=turn_id,
+            )
         return item
 
     def correct(
@@ -137,6 +168,7 @@ class WorkspaceContextService:
         *,
         statement: str,
         evidence_observation_ids: list[str] | tuple[str, ...] = (),
+        executable: dict[str, Any] | None = None,
         person_id: str,
         session_id: str = "",
         turn_id: str = "",
@@ -154,6 +186,17 @@ class WorkspaceContextService:
         evidence_ids = self._validate_evidence(
             current.workspace_id, evidence_observation_ids,
         )
+        if executable is not None:
+            self._validate_new_execution(
+                workspace_id=current.workspace_id,
+                scope_type=current.scope_type,
+                scope_id=current.scope_id,
+                context_type=current.context_type,
+                statement=resolved_statement,
+                person_id=person_id,
+                executable=executable,
+                replaces_context_id=current.id,
+            )
         replacement = self.store.supersede(
             current,
             statement=resolved_statement,
@@ -165,7 +208,43 @@ class WorkspaceContextService:
             "workspace_context.superseded", replacement,
             session_id=session_id, turn_id=turn_id,
         )
+        if executable is not None:
+            self.configure_execution(
+                replacement.id,
+                executable,
+                person_id=person_id,
+                session_id=session_id,
+                turn_id=turn_id,
+            )
         return replacement
+
+    def configure_execution(
+        self,
+        context_id: str,
+        executable: dict[str, Any],
+        *,
+        person_id: str,
+        session_id: str = "",
+        turn_id: str = "",
+    ) -> Any:
+        if self.execution is None:
+            raise RuntimeError("Workspace Context execution is unavailable")
+        configured = self.execution.configure(
+            context_id,
+            executable,
+            person_id=person_id,
+            session_id=session_id,
+            turn_id=turn_id,
+        )
+        current = self.store.get(context_id)
+        if current is not None:
+            self._publish_entry(
+                "workspace_context.execution_configured",
+                current,
+                session_id=session_id,
+                turn_id=turn_id,
+            )
+        return configured
 
     def list_snapshots(
         self,
@@ -233,9 +312,8 @@ class WorkspaceContextService:
             ],
         }
 
-    @staticmethod
-    def entry_snapshot(item: WorkspaceContextEntry) -> dict[str, Any]:
-        return {
+    def entry_snapshot(self, item: WorkspaceContextEntry) -> dict[str, Any]:
+        payload = {
             "id": item.id,
             "workspace_id": item.workspace_id,
             "scope_type": item.scope_type,
@@ -251,6 +329,48 @@ class WorkspaceContextService:
             "created_at": item.created_at,
             "updated_at": item.updated_at,
         }
+        if self.execution is not None:
+            executable = self.execution.get_snapshot(item.id)
+            if executable is not None:
+                payload["execution"] = executable
+        return payload
+
+    def _validate_new_execution(
+        self,
+        *,
+        workspace_id: str,
+        scope_type: str,
+        scope_id: str,
+        context_type: str,
+        statement: str,
+        person_id: str,
+        executable: dict[str, Any],
+        replaces_context_id: str,
+    ) -> None:
+        if self.execution is None:
+            raise RuntimeError("Workspace Context execution is unavailable")
+        timestamp = self._clock()
+        candidate = WorkspaceContextEntry(
+            id="pending_context",
+            workspace_id=workspace_id,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            context_type=context_type,
+            statement=statement,
+            status="established",
+            evidence_observation_ids=(),
+            supersedes_context_id="",
+            overrides_context_id="",
+            created_by_person_id=person_id.strip(),
+            revision=1,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        self.execution.validate_specification(
+            candidate,
+            executable,
+            replaces_context_id=replaces_context_id,
+        )
 
     def build_snapshot(
         self,
@@ -449,7 +569,10 @@ class WorkspaceContextService:
             "Use business_context for established terminology, defaults, constraints, "
             "decisions, calculations and boundaries. Entries removed by an applicable "
             "context_overrides relation are not effective for this business object. "
-            "All changes must still use Workspace tools.\n"
+            "Short follow-ups refer to this focused Workspace unless the Person "
+            "explicitly changes topic. All changes must still use Workspace tools. "
+            "Agent tools are the tools supplied to the current model call; never use "
+            "Shell or PowerShell to inspect whether an Agent tool exists.\n"
             f"{payload}\n"
             "</workspace_context>"
         )
@@ -638,3 +761,43 @@ def render_workspace_context(agent: Any, user_input: str) -> str:
         logger.exception("Failed to build Workspace context")
         return ""
     return rendered if isinstance(rendered, str) else ""
+
+
+def render_workspace_tool_selection_context(agent: Any, _query: str = "") -> str:
+    """Describe focused Workspace state for deterministic tool availability.
+
+    This intentionally contains only identity and topology, not records or
+    conversation text.  It keeps short follow-ups anchored while leaving the
+    Agent free to decide what business structure is appropriate.
+    """
+    service = getattr(agent, "workspace_service", None)
+    if service is None:
+        return ""
+    session_id = str(getattr(agent, "session_id", "") or "").strip()
+    person_id = str(getattr(agent, "user_id", "") or "").strip()
+    if not session_id or not person_id:
+        return ""
+    try:
+        workspace = service.current_for_session(
+            session_id,
+            person_id=person_id,
+        )
+        if workspace is None:
+            return ""
+        collections = service.business.store.list_collections(workspace.id)
+        surfaces = service.store.list_surfaces(workspace.id)
+    except Exception:
+        logger.exception("Failed to build Workspace tool-selection context")
+        return ""
+    payload = {
+        "id": workspace.id,
+        "name": workspace.name,
+        "purpose": workspace.purpose,
+        "collections": [item.name for item in collections[:20]],
+        "surfaces": [item.name for item in surfaces[:20]],
+    }
+    return (
+        "<focused_workspace>"
+        + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        + "</focused_workspace>"
+    )

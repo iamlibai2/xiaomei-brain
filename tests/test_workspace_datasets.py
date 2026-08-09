@@ -212,6 +212,77 @@ def test_surface_resolves_record_timeline_asset_and_nested_group(tmp_path):
     assert resolved[1]["asset"]["id"] == asset.id
 
 
+def test_surface_presents_reference_fields_as_record_labels(tmp_path):
+    service, workspace, _collection, _first, _second = _world(tmp_path)
+    suppliers, _ = service.business.create_collection(
+        workspace.id,
+        name="suppliers",
+        label="Suppliers",
+        purpose="Supplier directory",
+        fields=[
+            {"name": "supplier_name", "label": "Supplier name", "data_type": "text", "required": True},
+        ],
+    )
+    supplier, _, _ = service.business.upsert_record(
+        suppliers.id,
+        stable_key="supplier:north-grain",
+        values={"supplier_name": "North Grain"},
+        business_intent="Register supplier",
+    )
+    orders, _ = service.business.create_collection(
+        workspace.id,
+        name="orders",
+        label="Orders",
+        purpose="Purchase orders",
+        fields=[
+            {"name": "order_no", "label": "Order number", "data_type": "text", "required": True},
+            {"name": "supplier", "label": "Supplier", "data_type": "reference", "required": True},
+        ],
+    )
+    service.business.upsert_record(
+        orders.id,
+        stable_key="CG-001",
+        values={"order_no": "CG-001", "supplier": supplier.id},
+        business_intent="Create purchase order",
+    )
+    dataset = service.datasets.create(
+        workspace.id,
+        name="Order list",
+        kind="table",
+        description="Orders and suppliers",
+        source_collection_id=orders.id,
+        source_spec={"fields": ["order_no", "supplier"]},
+    )
+    surface = service.surfaces.create(
+        workspace.id,
+        name="Purchasing",
+        purpose="Readable purchasing data",
+        definition={"components": [{
+            "id": "orders",
+            "type": "table",
+            "binding": {"dataset_id": dataset.id},
+        }]},
+    )
+
+    # Stable IDs remain in the reusable Dataset; only the Surface projection is
+    # converted to a human-readable label.
+    assert dataset.data["rows"][0]["supplier"] == supplier.id
+    order_snapshot = service.business.workspace_snapshot(
+        workspace.id,
+        include_records=True,
+    )
+    order_collection = next(
+        item for item in order_snapshot["collections"] if item["id"] == orders.id
+    )
+    assert order_collection["records"][0]["values"]["supplier"] == supplier.id
+    assert order_collection["records"][0]["display_values"]["supplier"] == "North Grain"
+    resolved = service.surfaces.snapshot(surface)["resolved_definition"]
+    assert resolved["components"][0]["rows"] == [{
+        "order_no": "CG-001",
+        "supplier": "North Grain",
+    }]
+
+
 def test_surface_rejects_empty_group_and_unbound_asset(tmp_path):
     service, workspace, _collection, _first, _second = _world(tmp_path)
 
@@ -237,6 +308,12 @@ def test_dataset_tools_are_registered_without_new_agent_manager_wiring(tmp_path)
     core = SimpleNamespace(user_id="person-1", session_id="session-1", turn_id="turn-1")
     agent = SimpleNamespace(workspace_service=service, _get_agent=lambda: core)
     tools = {tool.name: tool for tool in create_workspace_tools(agent)}
+    service.focus_session(
+        workspace.id,
+        session_id=core.session_id,
+        person_id=core.user_id,
+        turn_id=core.turn_id,
+    )
     result = tools["create_dataset"].execute(
         workspace_id=workspace.id,
         name="客户数",
@@ -248,3 +325,81 @@ def test_dataset_tools_are_registered_without_new_agent_manager_wiring(tmp_path)
     )
     assert result["data"]["metrics"][0]["value"] == 2
     assert tools["list_datasets"].execute(workspace_id=workspace.id)["datasets"][0]["id"] == result["id"]
+
+
+def test_dataset_filters_support_sets_comparisons_and_distinct_count(tmp_path):
+    service, workspace, collection, first, second = _world(tmp_path)
+    service.business.upsert_record(
+        collection.id,
+        record_id=first.id,
+        expected_revision=first.revision,
+        values={"stage": "合同", "amount": 250},
+        business_intent="Align stages for aggregation",
+    )
+    filtered = service.datasets.create(
+        workspace.id,
+        name="Filtered customers",
+        kind="table",
+        description="Operator filter coverage",
+        source_collection_id=collection.id,
+        source_spec={
+            "filters": {
+                "stage": {"$in": ["合同", "合作"]},
+                "amount": {"$gte": 200, "$lt": 300},
+            },
+            "fields": ["name", "stage", "amount"],
+        },
+    )
+    assert filtered.data["rows"] == [{
+        "name": "甲公司", "stage": "合同", "amount": 250,
+    }]
+    metrics = service.datasets.create(
+        workspace.id,
+        name="Distinct stages",
+        kind="metric_set",
+        description="Distinct aggregation coverage",
+        source_collection_id=collection.id,
+        source_spec={"metrics": [{
+            "key": "stage_count",
+            "label": "Distinct stage count",
+            "operation": "distinct_count",
+            "field": "stage",
+        }]},
+    )
+    assert metrics.data["metrics"][0]["value"] == 1
+
+
+def test_surface_rejects_dataset_fields_that_do_not_exist(tmp_path):
+    service, workspace, collection, _first, _second = _world(tmp_path)
+    grouped = service.datasets.create(
+        workspace.id,
+        name="Stage totals",
+        kind="table",
+        description="Chart source",
+        source_collection_id=collection.id,
+        source_spec={
+            "dimensions": ["stage"],
+            "metrics": [{
+                "key": "total_amount", "label": "Total",
+                "operation": "sum", "field": "amount",
+            }],
+        },
+    )
+    try:
+        service.surfaces.create(
+            workspace.id,
+            name="Broken chart",
+            purpose="Reject invented presentation fields",
+            definition={"components": [{
+                "type": "bar_chart",
+                "binding": {
+                    "dataset_id": grouped.id,
+                    "label_field": "stage_name",
+                    "value_field": "total_amount",
+                },
+            }]},
+        )
+    except ValueError as exc:
+        assert "label_field" in str(exc)
+    else:
+        raise AssertionError("Surface accepted a field absent from its Dataset")

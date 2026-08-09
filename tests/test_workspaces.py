@@ -29,6 +29,42 @@ def _surface(value: int = 12):
     }
 
 
+def test_workspace_tools_reject_writes_to_a_non_focused_workspace(tmp_path):
+    service = WorkspaceService(WorkspaceStore(tmp_path / "workspaces.db"))
+    first = service.create(
+        name="First",
+        purpose="First business world",
+        created_by_person_id="person-1",
+    )
+    second = service.create(
+        name="Second",
+        purpose="Second business world",
+        created_by_person_id="person-1",
+    )
+    collection, _fields = service.business.create_collection(
+        first.id,
+        name="customers",
+        label="Customers",
+        purpose="Customer records",
+        fields=[{
+            "name": "name", "label": "Name", "data_type": "text",
+        }],
+    )
+    core = SimpleNamespace(
+        user_id="person-1", session_id="session-1", turn_id="turn-1",
+    )
+    agent = SimpleNamespace(workspace_service=service, _get_agent=lambda: core)
+    tools = {tool.name: tool for tool in create_workspace_tools(agent)}
+    tools["focus_workspace"].execute(workspace_id=second.id)
+
+    with pytest.raises(ValueError, match="different Workspace"):
+        tools["upsert_business_record"].execute(
+            collection_id=collection.id,
+            values={"name": "Wrong world"},
+            business_intent="Must not cross the current focus",
+        )
+
+
 def test_workspace_and_surface_are_independent_and_revisioned(tmp_path):
     store = WorkspaceStore(tmp_path / "workspaces.db")
     events = []
@@ -90,6 +126,17 @@ def test_workspace_can_start_without_surface_but_surface_is_validated(tmp_path):
             purpose="",
             definition={"components": [{"type": "arbitrary_html"}]},
         )
+    with pytest.raises(ValueError, match="existing dataset_id"):
+        service.surfaces.create(
+            workspace.id,
+            name="Invented Dataset",
+            purpose="Must not persist an invalid binding",
+            definition={"components": [{
+                "type": "table",
+                "binding": {"dataset_id": "dataset-by-name"},
+            }]},
+        )
+    assert service.store.list_surfaces(workspace.id) == []
 
 
 def test_temporary_surface_can_be_replaced_promoted_and_cleaned_on_restart(tmp_path):

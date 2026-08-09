@@ -27,6 +27,7 @@ type BusinessRecord = {
   id: string;
   revision: number;
   values: Record<string, unknown>;
+  display_values?: Record<string, unknown>;
 };
 type BusinessCollection = {
   id: string;
@@ -619,7 +620,10 @@ function WorkspaceBusinessFacts({
                 {(collection.records || []).map((record) => (
                   <tr key={record.id}>
                     {collection.fields.map((field) => (
-                      <td key={field.id}>{formatBusinessValue(record.values?.[field.name], locale)}</td>
+                      <td key={field.id}>{formatBusinessValue(
+                        record.display_values?.[field.name] ?? record.values?.[field.name],
+                        locale,
+                      )}</td>
                     ))}
                   </tr>
                 ))}

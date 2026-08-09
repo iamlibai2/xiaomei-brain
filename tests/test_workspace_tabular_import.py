@@ -11,6 +11,15 @@ def _service(tmp_path):
     return WorkspaceService(WorkspaceStore(tmp_path / "workspaces.db"))
 
 
+def _focus(service, workspace, core):
+    service.focus_session(
+        workspace.id,
+        session_id=core.session_id,
+        person_id=core.user_id,
+        turn_id=core.turn_id,
+    )
+
+
 def test_csv_import_creates_source_observation_collection_and_records(tmp_path):
     events = []
     service = WorkspaceService(
@@ -82,6 +91,7 @@ def test_import_tool_reads_only_current_execution_attachment(tmp_path):
     source = tmp_path / "sales.csv"
     source.write_text("order_id,amount\nSO-1,99\n", encoding="utf-8")
     core = SimpleNamespace(user_id="person-1", session_id="session-1", turn_id="turn-1")
+    _focus(service, workspace, core)
     agent = SimpleNamespace(workspace_service=service, _get_agent=lambda: core)
     tool = {item.name: item for item in create_workspace_tools(agent)}["import_tabular_data"]
 
@@ -136,6 +146,7 @@ def test_import_tool_links_stable_workspace_asset_to_import_observation(tmp_path
         sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
     )
     core = SimpleNamespace(user_id="person-1", session_id="session-1", turn_id="turn-1")
+    _focus(service, workspace, core)
     agent = SimpleNamespace(workspace_service=service, _get_agent=lambda: core)
     tool = {item.name: item for item in create_workspace_tools(agent)}["import_tabular_data"]
 
@@ -192,6 +203,7 @@ def test_import_tool_rejects_unlinked_workspace_asset_before_import(tmp_path):
         sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
     )
     core = SimpleNamespace(user_id="person-1", session_id="session-1", turn_id="turn-1")
+    _focus(service, workspace, core)
     agent = SimpleNamespace(workspace_service=service, _get_agent=lambda: core)
     tool = {item.name: item for item in create_workspace_tools(agent)}["import_tabular_data"]
 
@@ -226,6 +238,7 @@ def test_import_tool_resolves_the_only_compatible_attachment_without_opaque_id(t
     source = tmp_path / "sales.csv"
     source.write_text("order_id,amount\nSO-1,99\n", encoding="utf-8")
     core = SimpleNamespace(user_id="person-1", session_id="session-1", turn_id="turn-1")
+    _focus(service, workspace, core)
     agent = SimpleNamespace(workspace_service=service, _get_agent=lambda: core)
     tool = {item.name: item for item in create_workspace_tools(agent)}["import_tabular_data"]
 
