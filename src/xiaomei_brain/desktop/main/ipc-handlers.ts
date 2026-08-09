@@ -1362,6 +1362,17 @@ export function registerIpcHandlers(
     return client.rpc("workspace.get", { workspace_id: args.workspaceId });
   });
 
+  ipcMain.handle("gateway:focusWorkspace", async (_event, args: {
+    agentId: string; workspaceId: string; sessionId: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("workspace.focus", {
+      workspace_id: args.workspaceId,
+      session_id: args.sessionId,
+    });
+  });
+
   ipcMain.handle("gateway:listActivities", async (_event, args: {
     agentId: string; status?: string; category?: string; limit?: number; offset?: number;
   }) => {

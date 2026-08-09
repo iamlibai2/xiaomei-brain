@@ -210,6 +210,7 @@ class MethodRouter:
             },
             "project.events": {"project.get"},
             "workspace.read": {"workspace.list", "workspace.get"},
+            "workspace.focus": {"workspace.focus"},
             "workspace.events": {"workspace.get"},
             "memory.read": {"memory.list"},
             "agent.state": {"agent.state.get"},

@@ -47,6 +47,7 @@ const CHANNEL_MAP = {
     getCurrentProject: { invoke: "gateway:getCurrentProject" },
     listWorkspaces: { invoke: "gateway:listWorkspaces" },
     getWorkspace: { invoke: "gateway:getWorkspace" },
+    focusWorkspace: { invoke: "gateway:focusWorkspace" },
     listActivities: { invoke: "gateway:listActivities" },
     getActivity: { invoke: "gateway:getActivity" },
     getAgentState: { invoke: "gateway:getAgentState" },

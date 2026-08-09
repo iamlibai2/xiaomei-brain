@@ -394,6 +394,31 @@ class BusinessStore(SQLiteStore):
         ).fetchall()
         return [str(row[0]) for row in rows]
 
+    def observations_for_records(
+        self,
+        workspace_id: str,
+        record_ids: set[str],
+        *,
+        limit: int = 20,
+    ) -> list[Observation]:
+        """Return source observations linked to the selected current facts."""
+
+        resolved_ids = sorted(item.strip() for item in record_ids if item.strip())
+        if not resolved_ids:
+            return []
+        placeholders = ",".join("?" for _item in resolved_ids)
+        rows = self._get_conn().execute(
+            f"""SELECT DISTINCT o.* FROM observations AS o
+                JOIN observation_record_links AS links
+                  ON links.observation_id = o.id
+                WHERE o.workspace_id = ?
+                  AND links.record_id IN ({placeholders})
+                ORDER BY o.received_at DESC
+                LIMIT ?""",
+            [workspace_id, *resolved_ids, max(1, min(limit, 100))],
+        ).fetchall()
+        return [self._observation_row(row) for row in rows]
+
     def link_observation_to_record(
         self,
         observation_id: str,

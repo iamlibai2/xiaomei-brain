@@ -7,7 +7,12 @@ from typing import Any
 from xiaomei_brain.workspaces import WorkspacePermissionError
 
 from ..protocol import ErrorCode, build_error, build_response
-from ..schemas import WorkspaceGetParams, WorkspaceListParams, format_error
+from ..schemas import (
+    WorkspaceFocusParams,
+    WorkspaceGetParams,
+    WorkspaceListParams,
+    format_error,
+)
 
 
 class WorkspaceMethods:
@@ -20,6 +25,7 @@ class WorkspaceMethods:
         return {
             "workspace.list": self.handle_list,
             "workspace.get": self.handle_get,
+            "workspace.focus": self.handle_focus,
         }
 
     def handle_list(self, conn_id: str, req_id: str, params: dict) -> dict:
@@ -56,6 +62,28 @@ class WorkspaceMethods:
                 include_business=True,
                 include_records=True,
             ),
+        })
+
+    def handle_focus(self, conn_id: str, req_id: str, params: dict) -> dict:
+        try:
+            parsed = WorkspaceFocusParams.model_validate(params)
+        except Exception as exc:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, format_error(exc))
+        person_id, error = self._person_id(conn_id, req_id)
+        if error:
+            return error
+        try:
+            workspace = self._service().focus_session(
+                parsed.workspace_id,
+                session_id=parsed.session_id,
+                person_id=person_id,
+            )
+        except (KeyError, WorkspacePermissionError, ValueError) as exc:
+            return build_error(req_id, ErrorCode.INVALID_REQUEST, str(exc))
+        return build_response(req_id, result={
+            "focused": True,
+            "session_id": parsed.session_id,
+            "workspace": self._service().snapshot(workspace),
         })
 
     def _person_id(self, conn_id: str, req_id: str):

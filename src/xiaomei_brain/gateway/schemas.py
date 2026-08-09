@@ -537,6 +537,11 @@ class WorkspaceGetParams(BaseModel):
     workspace_id: str = Field(..., min_length=1, max_length=128)
 
 
+class WorkspaceFocusParams(BaseModel):
+    workspace_id: str = Field(..., min_length=1, max_length=128)
+    session_id: str = Field(..., min_length=1, max_length=256)
+
+
 # ── Activity ──────────────────────────────────────────────────────────────
 
 class ActivityListParams(BaseModel):

@@ -574,7 +574,9 @@ Agent 形成 Workspace
 - 候选 Action 的历史只读验证；
 - 默认规则、个案覆盖和更正链路。
 
-当前已落地 Action 的最小纵向闭环：通用记录变化按独立 Turn 聚合为候选做法，Agent 可将有三次以上成功证据的候选结晶为 `BusinessActionDefinition`，后续执行形成 `BusinessActionRun` 并关联 RecordChange 与 Event。Action 只约束业务效果字段和完成含义，不规定执行步骤。Context 分层、隔离 LLM 归纳、历史只读重放验证以及规则覆盖仍属于后续工作，不能将当前最小实现误称为阶段 D 全部完成。
+当前已落地 Action 的最小纵向闭环：通用记录变化按独立 Turn 聚合为候选做法，Agent 可将有三次以上成功证据的候选结晶为 `BusinessActionDefinition`，后续执行形成 `BusinessActionRun` 并关联 RecordChange 与 Event。Action 只约束业务效果字段和完成含义，不规定执行步骤。
+
+Context 已落地第一版：Agent 工具与 Desktop 都能将一个 Session 明确聚焦到 Workspace；实时对话按当前 Person 和 Session 读取精简现场快照，确定性选择相关或最近的 Record、Event 与来源 Observation，并把来源内容作为不可信数据而非指令注入。该快照只帮助 Agent 理解和解释当前业务世界，所有写入仍经过 Workspace 工具。更完整的 Context 分层、隔离 LLM 归纳、历史只读重放验证以及规则覆盖仍属于后续工作，不能将当前实现误称为阶段 D 全部完成。
 
 ### 阶段 E：Asset 与 DataSource 收束
 

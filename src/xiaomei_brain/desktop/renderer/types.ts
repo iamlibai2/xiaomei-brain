@@ -513,6 +513,7 @@ export interface GatewayBridge {
   getCurrentProject(args: { agentId: string; sessionId: string }): Promise<JsonRpcResponse>;
   listWorkspaces(args: { agentId: string; limit?: number }): Promise<JsonRpcResponse>;
   getWorkspace(args: { agentId: string; workspaceId: string }): Promise<JsonRpcResponse>;
+  focusWorkspace(args: { agentId: string; workspaceId: string; sessionId: string }): Promise<JsonRpcResponse>;
   listActivities(args: {
     agentId: string;
     status?: string;

@@ -4,6 +4,7 @@ from .action_service import BusinessActionService
 from .action_store import BusinessActionStore
 from .business_service import BusinessWorldService
 from .business_store import BusinessStore
+from .context_service import WorkspaceContextService, render_workspace_context
 from .dataset_service import DatasetService
 from .dataset_store import DatasetStore
 from .models import (
@@ -52,10 +53,12 @@ __all__ = [
     "TabularImportService",
     "Workspace",
     "WorkspaceConflictError",
+    "WorkspaceContextService",
     "WorkspacePermissionError",
     "WorkspaceService",
     "WorkspaceStore",
     "create_workspace_tools",
     "new_workspace_id",
     "new_surface_id",
+    "render_workspace_context",
 ]

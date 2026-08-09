@@ -12,6 +12,7 @@ from .action_service import BusinessActionService
 from .action_store import BusinessActionStore
 from .business_service import BusinessWorldService
 from .business_store import BusinessStore
+from .context_service import WorkspaceContextService
 from .dataset_service import DatasetService
 from .dataset_store import DatasetStore
 from .models import Surface, Workspace, WorkspacePermissionError
@@ -70,6 +71,7 @@ class WorkspaceService:
         )
         self.business._on_collection_changed = self.datasets.invalidate_collection
         self.imports = TabularImportService(self.business)
+        self.context = WorkspaceContextService(self.store, self.business)
         self.surfaces = SurfaceService(
             store, datasets=self.datasets, publish=publish, clock=clock,
         )

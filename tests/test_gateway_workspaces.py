@@ -47,11 +47,29 @@ def test_workspace_rpc_projects_related_workspaces_and_surface_details(tmp_path)
         "conn-1", "get", "workspace.get", {"workspace_id": own.id},
     )
     assert fetched["result"]["workspace"]["surfaces"][0]["is_default"] is True
+    focused = router.dispatch(
+        "conn-1",
+        "focus",
+        "workspace.focus",
+        {"workspace_id": own.id, "session_id": "session-1"},
+    )
+    assert focused["result"]["focused"] is True
+    assert service.current_for_session(
+        "session-1", person_id="person-1",
+    ).id == own.id
     forbidden = router.dispatch(
         "conn-1", "forbidden", "workspace.get", {"workspace_id": other.id},
     )
     assert forbidden["error"]["code"] == -32600
+    forbidden_focus = router.dispatch(
+        "conn-1",
+        "forbidden-focus",
+        "workspace.focus",
+        {"workspace_id": other.id, "session_id": "session-1"},
+    )
+    assert forbidden_focus["error"]["code"] == -32600
     assert "workspace.read" in router._capabilities()
+    assert "workspace.focus" in router._capabilities()
     assert "workspace.events" in router._capabilities()
 
 

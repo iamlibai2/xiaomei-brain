@@ -94,6 +94,25 @@ def _connect(router: MethodRouter, conn_id: str, session_id: str) -> dict:
     return response
 
 
+def test_legacy_context_activation_does_not_duplicate_desktop_session_prefix(tmp_path):
+    living = _Living(tmp_path / "brain.db")
+    adopted: list[str] = []
+    living._attention = SimpleNamespace(adopt_current=adopted.append)
+    router = MethodRouter(living=living)
+
+    router._identity_methods._activate_legacy_conversation_context(
+        "ws-db65e318", "person-1"
+    )
+    router._identity_methods._activate_legacy_conversation_context(
+        "legacy-session", "person-1"
+    )
+
+    assert adopted == [
+        "session:ws-db65e318",
+        "session:ws-legacy-session",
+    ]
+
+
 def test_register_challenge_binds_server_verified_person_to_connection(tmp_path):
     living = _Living(tmp_path / "brain.db")
     router = MethodRouter(living=living)

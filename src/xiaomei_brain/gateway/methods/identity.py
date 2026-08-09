@@ -631,7 +631,11 @@ class IdentityMethods:
         living.load_fresh_tail()
         attention = getattr(living, "_attention", None)
         if attention:
-            ws_sid = f"ws-{session_id}"
+            # Desktop session IDs already use the ``ws-`` prefix.  Reapplying
+            # it on reconnect stores the loaded tail under ``ws-ws-*`` while
+            # inbound messages restore ``ws-*``, which silently loses the
+            # conversation context after Desktop restarts.
+            ws_sid = session_id if session_id.startswith("ws-") else f"ws-{session_id}"
             context_key = f"session:{ws_sid}"
             attention.adopt_current(context_key)
 

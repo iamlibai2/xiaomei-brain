@@ -80,6 +80,7 @@ export function MainShell() {
         <WorkspacesPage
           preferredWorkspaceId={requestedWorkspaceId}
           onBackToChat={() => setSurface("chat")}
+          onEnterConversation={() => setSurface("chat")}
         />
       ) : (
         <HomePage

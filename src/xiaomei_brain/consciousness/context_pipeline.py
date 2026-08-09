@@ -347,6 +347,11 @@ def build_context(
         if project_context:
             system_content += "\n\n" + project_context
 
+        from xiaomei_brain.workspaces import render_workspace_context
+        workspace_context = render_workspace_context(agent, user_input)
+        if workspace_context:
+            system_content += "\n\n" + workspace_context
+
         from xiaomei_brain.processes import render_process_context
         process_context = render_process_context(agent)
         if process_context:

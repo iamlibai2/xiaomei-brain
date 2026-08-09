@@ -153,18 +153,24 @@ function snapshot(value: unknown): WorkspaceSnapshot | null {
 export function WorkspacesPage({
   preferredWorkspaceId,
   onBackToChat,
+  onEnterConversation,
 }: {
   preferredWorkspaceId?: string;
   onBackToChat: () => void;
+  onEnterConversation: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const activeAgentId = useCoreStore((state) => state.activeAgentId || "");
+  const activeSessionId = useCoreStore((state) => (
+    state.activeSessionByAgent[state.activeAgentId || ""] || ""
+  ));
   const connectionStatus = useCoreStore((state) => (
     state.connectionByAgent[state.activeAgentId || ""]?.status || "disconnected"
   ));
   const [items, setItems] = useState<WorkspaceSnapshot[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [loading, setLoading] = useState(false);
+  const [enteringConversation, setEnteringConversation] = useState(false);
   const [error, setError] = useState("");
   const selectedIdRef = useRef("");
   const loadSequenceRef = useRef(0);
@@ -172,6 +178,31 @@ export function WorkspacesPage({
   useEffect(() => {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
+
+  const enterConversation = useCallback(async () => {
+    if (!activeAgentId || !activeSessionId || !selectedId || enteringConversation) return;
+    setEnteringConversation(true);
+    setError("");
+    try {
+      const response = await window.gateway.focusWorkspace({
+        agentId: activeAgentId,
+        workspaceId: selectedId,
+        sessionId: activeSessionId,
+      });
+      if (response.error) throw new Error(response.error.message);
+      onEnterConversation();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setEnteringConversation(false);
+    }
+  }, [
+    activeAgentId,
+    activeSessionId,
+    enteringConversation,
+    onEnterConversation,
+    selectedId,
+  ]);
 
   const load = useCallback(async (focusWorkspaceId = "", refreshDetail = false) => {
     const sequence = ++loadSequenceRef.current;
@@ -353,7 +384,15 @@ export function WorkspacesPage({
               <footer className="workspace-conversation-hint">
                 <Icon name="sparkles" size={15} />
                 <span>{t("workspaceUi.modifyHint", { name: selected.name })}</span>
-                <button type="button" onClick={onBackToChat}>{t("workspaceUi.openConversation")}</button>
+                <button
+                  type="button"
+                  onClick={() => { void enterConversation(); }}
+                  disabled={!activeSessionId || enteringConversation}
+                >
+                  {enteringConversation
+                    ? `${t("workspaceUi.openConversation")}…`
+                    : t("workspaceUi.openConversation")}
+                </button>
               </footer>
             </div>
           )}
