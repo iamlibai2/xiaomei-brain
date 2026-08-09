@@ -115,6 +115,8 @@
 .workspace-action-candidates > div:last-child { border-bottom: 0; }
 .workspace-action-status { padding: 3px 7px; border-radius: 999px; background: var(--ui-bg-tertiary); color: var(--ui-color-text-secondary); font-size: 10px; white-space: nowrap; }
 .workspace-action-status.candidate { background: color-mix(in srgb, var(--ui-brand-primary) 13%, transparent); color: var(--ui-brand-primary); }
+.workspace-action-status.active { background: color-mix(in srgb, var(--ui-color-success, #147253) 14%, transparent); color: var(--ui-color-success, #147253); }
+.workspace-established-actions { background: color-mix(in srgb, var(--ui-color-success, #147253) 3%, var(--ui-bg-secondary)); }
 .workspace-action-copy { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
 .workspace-action-copy strong { font-size: 12px; font-weight: 620; color: var(--ui-color-text-primary); }
 .workspace-action-copy small { overflow: hidden; color: var(--ui-color-text-tertiary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }

@@ -160,6 +160,50 @@ class BusinessActionCandidate:
 
 
 @dataclass(frozen=True)
+class BusinessActionDefinition:
+    """A stable business meaning crystallized from repeated successful work."""
+
+    id: str
+    workspace_id: str
+    collection_id: str
+    source_candidate_id: str
+    name: str
+    description: str
+    operation: str
+    field_ids: tuple[str, ...]
+    completion_criteria: str
+    status: str
+    evidence_count: int
+    revision: int
+    created_by_person_id: str
+    created_at: float
+    updated_at: float
+
+
+@dataclass(frozen=True)
+class BusinessActionRun:
+    """One attempt to achieve a BusinessActionDefinition's outcome."""
+
+    id: str
+    action_id: str
+    workspace_id: str
+    collection_id: str
+    record_id: str
+    status: str
+    business_intent: str
+    input_values: dict[str, Any]
+    record_change_ids: tuple[str, ...]
+    event_id: str
+    error: str
+    person_id: str
+    session_id: str
+    turn_id: str
+    observation_id: str
+    started_at: float
+    completed_at: float | None
+
+
+@dataclass(frozen=True)
 class Dataset:
     id: str
     workspace_id: str

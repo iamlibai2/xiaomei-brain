@@ -278,6 +278,8 @@ def test_workspace_assignment_gets_tools_bound_to_isolated_identity(tmp_path):
 
     assert runner._needs_workspace_tools(context) is True
     assert registry.get("import_tabular_data") is not None
+    assert registry.get("list_business_actions") is not None
+    assert registry.get("execute_business_action") is not None
     assert created["created_by_person_id"] == "person_assignment"
     assert events[0][2]["session_id"] == "assignment-session"
     store.close()

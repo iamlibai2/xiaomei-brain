@@ -1,0 +1,232 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import pytest
+
+from xiaomei_brain.workspaces import WorkspaceService, WorkspaceStore, create_workspace_tools
+
+
+def _world(tmp_path):
+    events = []
+    service = WorkspaceService(
+        WorkspaceStore(tmp_path / "workspaces.db"),
+        publish=lambda name, payload, **metadata: events.append((name, payload, metadata)),
+    )
+    workspace = service.create(
+        name="客户经营",
+        purpose="持续推进客户",
+        created_by_person_id="person-1",
+    )
+    collection, _fields = service.business.create_collection(
+        workspace.id,
+        name="customers",
+        label="客户",
+        purpose="客户经营状态",
+        fields=[
+            {"name": "name", "label": "客户名称", "data_type": "text", "required": True},
+            {"name": "stage", "label": "阶段", "data_type": "enum", "required": True},
+            {"name": "amount", "label": "金额", "data_type": "money"},
+        ],
+    )
+    records = []
+    for index, name in enumerate(("甲公司", "乙公司", "丙公司", "丁公司"), start=1):
+        record, _changes, _event = service.business.upsert_record(
+            collection.id,
+            stable_key=f"customer-{index}",
+            values={"name": name, "stage": "报价", "amount": index * 100},
+            business_intent="登记客户",
+            person_id="person-1",
+            session_id="session-1",
+            turn_id=f"create-{index}",
+        )
+        records.append(record)
+    for index, record in enumerate(records[:3], start=1):
+        service.business.upsert_record(
+            collection.id,
+            record_id=record.id,
+            expected_revision=record.revision,
+            values={"stage": "合同"},
+            business_intent="推进客户到合同阶段",
+            person_id="person-1",
+            session_id="session-1",
+            turn_id=f"advance-{index}",
+        )
+    stage_field_id = next(
+        field.id
+        for field in service.business.store.list_fields(collection.id)
+        if field.name == "stage"
+    )
+    candidate = next(
+        item
+        for item in service.business.store.list_action_candidates(
+            workspace.id,
+            min_occurrences=3,
+        )
+        if item.operation == "update" and item.field_ids == (stage_field_id,)
+    )
+    return service, workspace, collection, records, candidate, events
+
+
+def test_candidate_crystallizes_and_action_run_links_real_changes(tmp_path):
+    service, workspace, _collection, records, candidate, events = _world(tmp_path)
+    definition = service.actions.establish(
+        workspace.id,
+        candidate_id=candidate.id,
+        name="推进客户阶段",
+        description="将客户推进到已经确认的新阶段",
+        completion_criteria="客户阶段字段已更新，并记录对应业务事实",
+        person_id="person-1",
+        session_id="session-1",
+        turn_id="establish-1",
+    )
+    assert definition.status == "active"
+    assert definition.evidence_count == 3
+
+    target = records[3]
+    run, record, changes, event = service.actions.execute(
+        definition.id,
+        record_id=target.id,
+        expected_revision=target.revision,
+        values={"阶段": "合同"},
+        business_intent="推进丁公司到合同阶段",
+        event_type="customer_stage_advanced",
+        event_summary="丁公司已进入合同阶段",
+        person_id="person-1",
+        session_id="session-1",
+        turn_id="advance-4",
+    )
+
+    assert run.status == "completed"
+    assert run.record_id == record.id
+    assert run.record_change_ids == tuple(change.id for change in changes)
+    assert run.event_id == event.id
+    assert record.values[next(iter(definition.field_ids))] == "合同"
+    assert {name for name, _payload, _metadata in events} >= {
+        "business_action.established",
+        "business_action.completed",
+        "record.changed",
+        "business_event.created",
+    }
+
+    snapshot = service.snapshot(
+        workspace,
+        include_business=True,
+        include_records=True,
+    )["business"]
+    assert snapshot["actions"][0]["name"] == "推进客户阶段"
+    assert snapshot["action_runs"][0]["status"] == "completed"
+    assert candidate.id not in {item["id"] for item in snapshot["action_candidates"]}
+
+
+def test_failed_action_run_does_not_manufacture_event(tmp_path):
+    service, workspace, _collection, records, candidate, _events = _world(tmp_path)
+    definition = service.actions.establish(
+        workspace.id,
+        candidate_id=candidate.id,
+        name="推进客户阶段",
+        description="更新阶段",
+        completion_criteria="阶段已更新",
+        person_id="person-1",
+    )
+    event_count = service.business.store.summary(workspace.id)["events"]
+
+    with pytest.raises(ValueError, match="outside its definition"):
+        service.actions.execute(
+            definition.id,
+            record_id=records[3].id,
+            expected_revision=records[3].revision,
+            values={"金额": 999},
+            business_intent="错误地修改金额",
+            event_type="amount_changed",
+            event_summary="金额已修改",
+            person_id="person-1",
+        )
+
+    assert service.actions.store.list_runs(workspace.id) == []
+    assert service.business.store.summary(workspace.id)["events"] == event_count
+
+    with pytest.raises(Exception):
+        service.actions.execute(
+            definition.id,
+            record_id=records[3].id,
+            expected_revision=999,
+            values={"阶段": "合同"},
+            business_intent="使用过期记录推进",
+            event_type="customer_stage_advanced",
+            event_summary="丁公司已进入合同阶段",
+            person_id="person-1",
+        )
+
+    failed = service.actions.store.list_runs(workspace.id)[0]
+    assert failed.status == "failed"
+    assert failed.error
+    assert service.business.store.summary(workspace.id)["events"] == event_count
+
+
+def test_action_tools_enforce_person_boundary(tmp_path):
+    service, workspace, _collection, _records, candidate, _events = _world(tmp_path)
+    definition = service.actions.establish(
+        workspace.id,
+        candidate_id=candidate.id,
+        name="推进客户阶段",
+        description="更新阶段",
+        completion_criteria="阶段已更新",
+        person_id="person-1",
+    )
+    core = SimpleNamespace(user_id="person-2", session_id="session-2", turn_id="turn-2")
+    agent = SimpleNamespace(workspace_service=service, _get_agent=lambda: core)
+    tools = {item.name: item for item in create_workspace_tools(agent)}
+
+    with pytest.raises(PermissionError, match="current Person"):
+        tools["execute_business_action"].execute(
+            action_id=definition.id,
+            values={"阶段": "合同"},
+            business_intent="越权执行",
+        )
+
+
+def test_action_definitions_and_runs_survive_restart(tmp_path):
+    service, workspace, _collection, records, candidate, _events = _world(tmp_path)
+    definition = service.actions.establish(
+        workspace.id,
+        candidate_id=candidate.id,
+        name="推进客户阶段",
+        description="更新阶段",
+        completion_criteria="阶段已更新",
+        person_id="person-1",
+    )
+    run, _record, _changes, _event = service.actions.execute(
+        definition.id,
+        record_id=records[3].id,
+        expected_revision=records[3].revision,
+        values={"阶段": "合同"},
+        business_intent="推进丁公司",
+        person_id="person-1",
+    )
+
+    reopened = WorkspaceService(WorkspaceStore(tmp_path / "workspaces.db"))
+    assert reopened.actions.require(definition.id).name == "推进客户阶段"
+    assert reopened.actions.store.get_run(run.id).status == "completed"
+
+
+def test_action_schema_upgrade_requests_backup(tmp_path):
+    service, _workspace, _collection, _records, _candidate, _events = _world(tmp_path)
+    conn = service.actions.store._get_conn()
+    conn.executescript("""
+        DROP TABLE business_action_runs;
+        DROP TABLE business_action_definitions;
+        DELETE FROM schema_versions WHERE component = 'workspace_actions';
+    """)
+    conn.commit()
+    service.actions.store.close()
+
+    backups = []
+    reopened = WorkspaceService(
+        WorkspaceStore(tmp_path / "workspaces.db"),
+        before_business_migration=lambda: backups.append("backup"),
+    )
+    assert backups == ["backup"]
+    assert reopened.actions.store.list_definitions(
+        service.store.list_all()[0].id,
+    ) == []

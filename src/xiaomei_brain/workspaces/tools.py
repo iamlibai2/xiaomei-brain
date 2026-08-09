@@ -53,6 +53,11 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         require_workspace(surface.workspace_id)
         return surface
 
+    def require_action(action_id: str):
+        definition = service().actions.require(action_id)
+        require_workspace(definition.workspace_id)
+        return definition
+
     def focus(workspace_id: str) -> None:
         session_id, turn_id = context()
         if session_id:
@@ -347,6 +352,95 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         return {
             "records": service().business.query_records(
                 collection_id, filters=filters, limit=limit,
+            ),
+        }
+
+    def establish_business_action(
+        workspace_id: str,
+        candidate_id: str,
+        name: str,
+        description: str,
+        completion_criteria: str,
+    ) -> dict[str, Any]:
+        """Crystallize a repeated successful pattern as reusable business meaning."""
+        require_workspace(workspace_id)
+        session_id, turn_id = context()
+        definition = service().actions.establish(
+            workspace_id,
+            candidate_id=candidate_id,
+            name=name,
+            description=description,
+            completion_criteria=completion_criteria,
+            person_id=person_id(),
+            session_id=session_id,
+            turn_id=turn_id,
+        )
+        return service().actions.definition_snapshot(definition)
+
+    def list_business_actions(workspace_id: str = "") -> dict[str, Any]:
+        """Inspect stable business actions and their recent attempts."""
+        resolved_workspace_id = workspace_id.strip()
+        if not resolved_workspace_id:
+            session_id, _turn_id = context()
+            current = service().current_for_session(
+                session_id,
+                person_id=person_id(),
+            )
+            if current is None:
+                return {"actions": [], "action_runs": [], "focused": False}
+            resolved_workspace_id = current.id
+        require_workspace(resolved_workspace_id)
+        return {
+            **service().actions.workspace_snapshot(resolved_workspace_id),
+            "focused": True,
+        }
+
+    def execute_business_action(
+        action_id: str,
+        values: dict[str, Any],
+        business_intent: str,
+        record_id: str = "",
+        stable_key: str = "",
+        expected_revision: int | None = None,
+        observation_id: str = "",
+        event_type: str = "",
+        event_summary: str = "",
+        event_occurred_at: float | None = None,
+        event_idempotency_key: str = "",
+        event_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Execute one stable business meaning while preserving Agent freedom."""
+        definition = require_action(action_id)
+        session_id, turn_id = context()
+        run, record, changes, event = service().actions.execute(
+            definition.id,
+            values=values,
+            business_intent=business_intent,
+            person_id=person_id(),
+            record_id=record_id,
+            stable_key=stable_key,
+            expected_revision=expected_revision,
+            observation_id=observation_id,
+            event_type=event_type,
+            event_summary=event_summary,
+            event_occurred_at=event_occurred_at,
+            event_idempotency_key=event_idempotency_key,
+            event_metadata=event_metadata,
+            session_id=session_id,
+            turn_id=turn_id,
+        )
+        fields = service().business.store.list_fields(definition.collection_id)
+        return {
+            "action": service().actions.definition_snapshot(definition),
+            "run": service().actions.run_snapshot(run),
+            "record": service().business.record_snapshot(record, fields),
+            "changes": [
+                service().business.change_snapshot(change, fields)
+                for change in changes
+            ],
+            "event": (
+                service().business.event_snapshot(event)
+                if event is not None else None
             ),
         }
 
@@ -728,6 +822,75 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
                 "required": ["collection_id"],
             },
             func=query_business_records,
+            category="workspace",
+        ),
+        Tool(
+            name="establish_business_action",
+            description=(
+                "Turn a repeated candidate shown by get_workspace into a stable named "
+                "business action. This records the business outcome and completion "
+                "meaning, not a fixed workflow or reasoning sequence. Only establish "
+                "a candidate supported by at least three independent successful Turns."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "workspace_id": {"type": "string"},
+                    "candidate_id": {"type": "string"},
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "completion_criteria": {"type": "string"},
+                },
+                "required": [
+                    "workspace_id", "candidate_id", "name",
+                    "description", "completion_criteria",
+                ],
+            },
+            func=establish_business_action,
+            category="workspace",
+        ),
+        Tool(
+            name="list_business_actions",
+            description=(
+                "List stable business actions and recent ActionRuns in the current or "
+                "specified Workspace. Use before a recurring business change so an "
+                "established meaning can be reused instead of guessed from scratch."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {"workspace_id": {"type": "string"}},
+            },
+            func=list_business_actions,
+            category="workspace",
+        ),
+        Tool(
+            name="execute_business_action",
+            description=(
+                "Execute an established business action against one record. The Agent "
+                "remains free to reason and choose tools; this call only validates the "
+                "declared business effect and records one ActionRun. Inspect the record "
+                "first, pass expected_revision for updates, and link the current "
+                "Observation when the request came from conversation."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action_id": {"type": "string"},
+                    "record_id": {"type": "string"},
+                    "stable_key": {"type": "string"},
+                    "expected_revision": {"type": "integer", "minimum": 1},
+                    "values": {"type": "object", "additionalProperties": True},
+                    "business_intent": {"type": "string"},
+                    "observation_id": {"type": "string"},
+                    "event_type": {"type": "string"},
+                    "event_summary": {"type": "string"},
+                    "event_occurred_at": {"type": "number"},
+                    "event_idempotency_key": {"type": "string"},
+                    "event_metadata": {"type": "object", "additionalProperties": True},
+                },
+                "required": ["action_id", "values", "business_intent"],
+            },
+            func=execute_business_action,
             category="workspace",
         ),
     ]

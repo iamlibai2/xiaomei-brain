@@ -8,6 +8,8 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from .action_service import BusinessActionService
+from .action_store import BusinessActionStore
 from .business_service import BusinessWorldService
 from .business_store import BusinessStore
 from .dataset_service import DatasetService
@@ -43,6 +45,16 @@ class WorkspaceService:
                 store.db_path,
                 before_schema_migration=before_business_migration,
             ),
+            store,
+            publish=publish,
+            clock=clock,
+        )
+        self.actions = BusinessActionService(
+            BusinessActionStore(
+                store.db_path,
+                before_schema_migration=before_business_migration,
+            ),
+            self.business,
             store,
             publish=publish,
             clock=clock,
@@ -232,6 +244,16 @@ class WorkspaceService:
             payload["business"] = self.business.workspace_snapshot(
                 workspace.id, include_records=include_records,
             )
+            action_snapshot = self.actions.workspace_snapshot(workspace.id)
+            established_candidates = {
+                item["source_candidate_id"]
+                for item in action_snapshot["actions"]
+            }
+            payload["business"]["action_candidates"] = [
+                item for item in payload["business"]["action_candidates"]
+                if item["id"] not in established_candidates
+            ]
+            payload["business"].update(action_snapshot)
             payload["datasets"] = [
                 self.datasets.snapshot(item)
                 for item in self.datasets.list_for_workspace(workspace.id)

@@ -303,6 +303,9 @@ def test_customer_business_followup_requires_workspace_tools(monkeypatch):
         ("query_business_records", "Query business records"),
         ("upsert_business_record", "Update a business record"),
         ("record_observation", "Preserve received business information"),
+        ("list_business_actions", "List established business actions"),
+        ("execute_business_action", "Execute an established business action"),
+        ("establish_business_action", "Establish an action candidate"),
         ("write_document", "Write a document"),
     )
     loader = DynamicToolLoader(reg, top_k=1)
@@ -334,6 +337,8 @@ def test_customer_business_followup_requires_workspace_tools(monkeypatch):
     assert "query_business_records" in names
     assert "upsert_business_record" in names
     assert "record_observation" in names
+    assert "list_business_actions" in names
+    assert "execute_business_action" in names
 
     query_names = [
         tool.name for tool in loader.select_tools(
@@ -344,6 +349,16 @@ def test_customer_business_followup_requires_workspace_tools(monkeypatch):
     assert "get_current_workspace" in query_names
     assert "query_business_records" in query_names
     assert "record_observation" not in query_names
+
+    crystallize_names = [
+        tool.name for tool in loader.select_tools(
+            "把这个候选业务做法稳定下来",
+            top_k=1,
+        )
+    ]
+    assert "get_current_workspace" in crystallize_names
+    assert "list_business_actions" in crystallize_names
+    assert "establish_business_action" in crystallize_names
 
 
 # ── Dynamic tool selection ─────────────────────────────────────

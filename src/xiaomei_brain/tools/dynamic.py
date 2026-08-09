@@ -125,7 +125,21 @@ def _contextual_required_tool_names(query: str) -> set[str]:
             "upsert_business_record",
         })
     if has_business_object and has_business_change:
-        required.add("record_observation")
+        required.update({
+            "record_observation",
+            "list_business_actions",
+            "execute_business_action",
+        })
+    has_business_crystallization = any(marker in text for marker in (
+        "业务做法", "候选做法", "稳定下来", "固定下来", "结晶", "形成动作",
+        "business practice", "action candidate", "crystallize", "establish action",
+    ))
+    if has_business_crystallization:
+        required.update({
+            "get_current_workspace",
+            "list_business_actions",
+            "establish_business_action",
+        })
     return required
 
 # 全局活跃的 loader，供 MCP/Plugin 热重载后通知重建索引

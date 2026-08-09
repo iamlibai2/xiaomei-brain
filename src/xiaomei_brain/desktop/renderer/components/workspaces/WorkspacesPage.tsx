@@ -41,11 +41,30 @@ type BusinessActionCandidate = {
   example_intents: string[];
   status: "observed" | "candidate";
 };
+type BusinessActionDefinition = {
+  id: string;
+  name: string;
+  description: string;
+  completion_criteria: string;
+  collection_label: string;
+  fields: Array<{ id: string; label: string }>;
+  evidence_count: number;
+  status: "active" | "retired";
+};
+type BusinessActionRun = {
+  id: string;
+  action_id: string;
+  status: "running" | "completed" | "failed";
+  business_intent: string;
+  started_at: number;
+};
 type BusinessSnapshot = {
   summary: Record<string, number>;
   collections: BusinessCollection[];
   events: BusinessEvent[];
   actionCandidates: BusinessActionCandidate[];
+  actions: BusinessActionDefinition[];
+  actionRuns: BusinessActionRun[];
 };
 
 type WorkspaceSnapshot = {
@@ -95,6 +114,12 @@ function snapshot(value: unknown): WorkspaceSnapshot | null {
       : [],
     actionCandidates: Array.isArray(businessValue.action_candidates)
       ? businessValue.action_candidates as BusinessActionCandidate[]
+      : [],
+    actions: Array.isArray(businessValue.actions)
+      ? businessValue.actions as BusinessActionDefinition[]
+      : [],
+    actionRuns: Array.isArray(businessValue.action_runs)
+      ? businessValue.action_runs as BusinessActionRun[]
       : [],
   } : null;
   return {
@@ -371,6 +396,30 @@ function WorkspaceBusinessFacts({
           </div>
         </article>
       ))}
+      {business.actions.length > 0 && (
+        <article className="workspace-action-candidates workspace-established-actions">
+          <h4>{t("workspaceUi.establishedPractices")}</h4>
+          {business.actions.map((action) => {
+            const lastRun = business.actionRuns.find((run) => run.action_id === action.id);
+            return (
+              <div key={action.id}>
+                <span className="workspace-action-status active">
+                  {t("workspaceUi.actionStatus_active")}
+                </span>
+                <span className="workspace-action-copy">
+                  <strong>{action.name}</strong>
+                  <small>{action.description || action.completion_criteria}</small>
+                </span>
+                <span className="workspace-action-count">
+                  {lastRun
+                    ? t(`workspaceUi.actionRun_${lastRun.status}`)
+                    : t("workspaceUi.evidenceCount", { count: action.evidence_count })}
+                </span>
+              </div>
+            );
+          })}
+        </article>
+      )}
       {business.actionCandidates.length > 0 && (
         <article className="workspace-action-candidates">
           <h4>{t("workspaceUi.emergingPractices")}</h4>
