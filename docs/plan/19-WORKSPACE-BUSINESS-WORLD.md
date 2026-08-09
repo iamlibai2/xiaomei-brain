@@ -578,6 +578,8 @@ Agent 形成 Workspace
 
 Context 已落地第一版：Agent 工具与 Desktop 都能将一个 Session 明确聚焦到 Workspace；实时对话按当前 Person 和 Session 读取精简现场快照，确定性选择相关或最近的 Record、Event 与来源 Observation，并把来源内容作为不可信数据而非指令注入。该快照只帮助 Agent 理解和解释当前业务世界，所有写入仍经过 Workspace 工具。更完整的 Context 分层、隔离 LLM 归纳、历史只读重放验证以及规则覆盖仍属于后续工作，不能将当前实现误称为阶段 D 全部完成。
 
+稳定业务 Context 已落地最小闭环：Agent 可以将术语、默认做法、约束、决定、计算口径和业务边界保存到 Workspace，并按 Workspace、当前 Person 或具体业务对象确定作用范围。Context 可关联来源 Observation；更正时旧条目进入 `superseded`，替代条目继续生效，历史不会被覆盖。当前只允许 Agent 明确记录和更正，不自动把一句偶然表达提升为长期规则；自动候选发现、正式制度和复杂冲突裁决仍暂缓。
+
 ### 阶段 E：Asset 与 DataSource 收束
 
 - 统一 Asset 注册与 asset_id 工具访问；

@@ -13,6 +13,7 @@ from .action_store import BusinessActionStore
 from .business_service import BusinessWorldService
 from .business_store import BusinessStore
 from .context_service import WorkspaceContextService
+from .context_store import WorkspaceContextStore
 from .dataset_service import DatasetService
 from .dataset_store import DatasetStore
 from .models import Surface, Workspace, WorkspacePermissionError
@@ -71,7 +72,16 @@ class WorkspaceService:
         )
         self.business._on_collection_changed = self.datasets.invalidate_collection
         self.imports = TabularImportService(self.business)
-        self.context = WorkspaceContextService(self.store, self.business)
+        self.context = WorkspaceContextService(
+            self.store,
+            self.business,
+            WorkspaceContextStore(
+                store.db_path,
+                before_schema_migration=before_business_migration,
+            ),
+            publish=publish,
+            clock=clock,
+        )
         self.surfaces = SurfaceService(
             store, datasets=self.datasets, publish=publish, clock=clock,
         )
@@ -256,6 +266,10 @@ class WorkspaceService:
                 if item["id"] not in established_candidates
             ]
             payload["business"].update(action_snapshot)
+            payload["business"]["contexts"] = self.context.list_snapshots(
+                workspace.id,
+                include_inactive=True,
+            )
             payload["datasets"] = [
                 self.datasets.snapshot(item)
                 for item in self.datasets.list_for_workspace(workspace.id)

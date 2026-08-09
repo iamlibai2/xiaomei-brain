@@ -145,6 +145,25 @@ class BusinessEvent:
 
 
 @dataclass(frozen=True)
+class WorkspaceContextEntry:
+    """One durable business meaning used while acting in a Workspace."""
+
+    id: str
+    workspace_id: str
+    scope_type: str
+    scope_id: str
+    context_type: str
+    statement: str
+    status: str
+    evidence_observation_ids: tuple[str, ...]
+    supersedes_context_id: str
+    created_by_person_id: str
+    revision: int
+    created_at: float
+    updated_at: float
+
+
+@dataclass(frozen=True)
 class BusinessActionCandidate:
     """A repeated business operation observed across independent Turns."""
 

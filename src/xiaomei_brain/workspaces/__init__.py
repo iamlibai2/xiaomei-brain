@@ -5,6 +5,7 @@ from .action_store import BusinessActionStore
 from .business_service import BusinessWorldService
 from .business_store import BusinessStore
 from .context_service import WorkspaceContextService, render_workspace_context
+from .context_store import WorkspaceContextStore
 from .dataset_service import DatasetService
 from .dataset_store import DatasetStore
 from .models import (
@@ -21,6 +22,7 @@ from .models import (
     RecordChange,
     Surface,
     Workspace,
+    WorkspaceContextEntry,
     WorkspaceConflictError,
     WorkspacePermissionError,
 )
@@ -54,6 +56,8 @@ __all__ = [
     "Workspace",
     "WorkspaceConflictError",
     "WorkspaceContextService",
+    "WorkspaceContextStore",
+    "WorkspaceContextEntry",
     "WorkspacePermissionError",
     "WorkspaceService",
     "WorkspaceStore",

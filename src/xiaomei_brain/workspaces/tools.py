@@ -68,6 +68,20 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
                 turn_id=turn_id,
             )
 
+    def resolve_workspace_id(workspace_id: str = "") -> str:
+        resolved = workspace_id.strip()
+        if resolved:
+            require_workspace(resolved)
+            return resolved
+        session_id, _turn_id = context()
+        current = service().current_for_session(
+            session_id,
+            person_id=person_id(),
+        )
+        if current is None:
+            raise ValueError("The current conversation is not focused on a Workspace")
+        return current.id
+
     def create_workspace(
         name: str,
         purpose: str,
@@ -459,6 +473,65 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             "event": (
                 service().business.event_snapshot(event)
                 if event is not None else None
+            ),
+        }
+
+    def record_business_context(
+        statement: str,
+        context_type: str,
+        scope_type: str = "workspace",
+        scope_id: str = "",
+        evidence_observation_ids: list[str] | None = None,
+        workspace_id: str = "",
+    ) -> dict[str, Any]:
+        """Persist a stable business meaning, not an incidental conversation detail."""
+        resolved_workspace_id = resolve_workspace_id(workspace_id)
+        session_id, turn_id = context()
+        item = service().context.establish(
+            resolved_workspace_id,
+            statement=statement,
+            context_type=context_type,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            evidence_observation_ids=evidence_observation_ids or [],
+            person_id=person_id(),
+            session_id=session_id,
+            turn_id=turn_id,
+        )
+        return service().context.entry_snapshot(item)
+
+    def correct_business_context(
+        context_id: str,
+        statement: str,
+        evidence_observation_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Replace an active business meaning while preserving its correction chain."""
+        current = service().context.store.get(context_id)
+        if current is None:
+            raise KeyError(context_id)
+        require_workspace(current.workspace_id)
+        session_id, turn_id = context()
+        item = service().context.correct(
+            context_id,
+            statement=statement,
+            evidence_observation_ids=evidence_observation_ids or [],
+            person_id=person_id(),
+            session_id=session_id,
+            turn_id=turn_id,
+        )
+        return service().context.entry_snapshot(item)
+
+    def list_business_context(
+        workspace_id: str = "",
+        include_inactive: bool = False,
+    ) -> dict[str, Any]:
+        """Inspect durable business meanings and their correction history."""
+        resolved = resolve_workspace_id(workspace_id)
+        return {
+            "workspace_id": resolved,
+            "contexts": service().context.list_snapshots(
+                resolved,
+                include_inactive=include_inactive,
             ),
         }
 
@@ -909,6 +982,82 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
                 "required": ["action_id", "values", "business_intent"],
             },
             func=execute_business_action,
+            category="workspace",
+        ),
+        Tool(
+            name="record_business_context",
+            description=(
+                "Record a durable business meaning in the focused Workspace: a term, "
+                "default practice, constraint, effective decision, calculation rule or "
+                "business boundary. Do not store one-off chat details as Context. Use "
+                "workspace scope for shared business meaning, person scope only for the "
+                "current Person's working preference, and transaction scope for one "
+                "specific business record. Link source Observations when available."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "workspace_id": {"type": "string"},
+                    "statement": {"type": "string"},
+                    "context_type": {
+                        "type": "string",
+                        "enum": [
+                            "term", "default", "constraint", "decision",
+                            "calculation", "boundary",
+                        ],
+                    },
+                    "scope_type": {
+                        "type": "string",
+                        "enum": ["workspace", "person", "transaction"],
+                    },
+                    "scope_id": {"type": "string"},
+                    "evidence_observation_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": ["statement", "context_type"],
+            },
+            func=record_business_context,
+            category="workspace",
+        ),
+        Tool(
+            name="correct_business_context",
+            description=(
+                "Correct or replace an established business Context entry. The old "
+                "entry remains in history as superseded and only the replacement stays "
+                "active. Inspect Context first so the exact entry is corrected."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "context_id": {"type": "string"},
+                    "statement": {"type": "string"},
+                    "evidence_observation_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": ["context_id", "statement"],
+            },
+            func=correct_business_context,
+            category="workspace",
+        ),
+        Tool(
+            name="list_business_context",
+            description=(
+                "List durable terminology, defaults, constraints, decisions, calculation "
+                "rules and boundaries in the focused Workspace. Include inactive entries "
+                "only when explaining a correction history."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "workspace_id": {"type": "string"},
+                    "include_inactive": {"type": "boolean"},
+                },
+            },
+            func=list_business_context,
             category="workspace",
         ),
     ]
