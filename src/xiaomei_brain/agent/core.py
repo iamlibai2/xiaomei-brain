@@ -199,15 +199,40 @@ class Agent:
         self.on_steer_consumed: Callable[[list[SteerMessage]], None] | None = None
         self.completion_guards: list[CompletionGuard] = []
         # Domain modules may contribute small, structured runtime facts to
-        # dynamic tool selection.  Providers receive this Core so isolated
-        # runtimes use their own session/person state rather than the live
-        # conversation's mutable state.
+        # dynamic tool selection. Providers receive this Core so isolated
+        # runtimes use their own session/person state rather than live mutable
+        # conversation state.
         self.tool_selection_context_providers: list[
             Callable[[Any, str], str]
         ] = []
 
         # ── Internal display (injected by ConversationDriver) ──
         self.internal_display: Any = None  # InternalDisplay 实例
+
+    def _llm_usage_scope(self, category: str = "other"):
+        """Attach this execution scene to every LLM call made by the Core."""
+        from xiaomei_brain.llm.usage import usage_context
+        return usage_context(
+            person_id=self.user_id,
+            session_id=self.session_id,
+            turn_id=self.turn_id,
+            category=category,
+        )
+
+    @staticmethod
+    def _internal_usage_category(label: str) -> str:
+        value = str(label or "").strip().lower()
+        if value in {"intent", "l2", "layer2"} or value.startswith("l2_"):
+            return "intent"
+        if value in {"assignment", "delegation"}:
+            return "assignment"
+        if value in {"dream", "dreaming"}:
+            return "dream"
+        if value in {"memory", "compact", "procedure"}:
+            return "memory"
+        if value in {"alarm", "work", "learning", "learn", "pace", "goal", "pleasure"}:
+            return "autonomous"
+        return "other"
 
     @property
     def messages(self) -> list[dict[str, Any]]:
@@ -1249,7 +1274,8 @@ class Agent:
             if not quiet:
                 print("💭 思考中...", flush=True)
 
-            response = self.llm.chat(messages=all_messages, tools=openai_tools)
+            with self._llm_usage_scope(self._internal_usage_category(label)):
+                response = self.llm.chat(messages=all_messages, tools=openai_tools)
 
             if response.reasoning and reasoning_collector is not None:
                 reasoning_collector.append(response.reasoning)
@@ -1415,7 +1441,8 @@ class Agent:
         }
         all_messages = list(messages) + loop_messages + [finish_msg]
         all_messages = clean_messages(all_messages)
-        resp = self.llm.chat(messages=all_messages, tools=None)
+        with self._llm_usage_scope(self._internal_usage_category(label)):
+            resp = self.llm.chat(messages=all_messages, tools=None)
         if resp.reasoning and reasoning_collector is not None:
             reasoning_collector.append(resp.reasoning)
         final_text = resp.content or resp.reasoning or ""
@@ -1441,7 +1468,8 @@ class Agent:
         }
         try:
             msgs = clean_messages(messages + [summary_prompt])
-            resp = self.llm.chat(messages=msgs, tools=None)
+            with self._llm_usage_scope("memory"):
+                resp = self.llm.chat(messages=msgs, tools=None)
             return (resp.content or "").strip()
         except Exception as e:
             logger.debug("[Agent] react summary failed: %s", e)
@@ -1459,18 +1487,23 @@ class Agent:
         生成器结束后，通过 self.llm._last_stream_response 获取 ChatResponse。
         """
         import traceback
-        try:
-            self.llm._reasoning_end_yielded = False
-            return self.llm.chat_stream(messages, tools)
-        except Exception as e:
-            logger.warning("[LLM] Streaming failed, falling back: %s\n%s", e, traceback.format_exc())
-            response = self.llm.chat(messages=messages, tools=tools)
-            self.llm._last_stream_response = response
 
-            def _gen():
-                if response.content:
-                    yield response.content
-            return _gen()
+        def _gen():
+            with self._llm_usage_scope("conversation"):
+                try:
+                    self.llm._reasoning_end_yielded = False
+                    yield from self.llm.chat_stream(messages, tools)
+                except Exception as e:
+                    logger.warning(
+                        "[LLM] Streaming failed, falling back: %s\n%s",
+                        e,
+                        traceback.format_exc(),
+                    )
+                    response = self.llm.chat(messages=messages, tools=tools)
+                    self.llm._last_stream_response = response
+                    if response.content:
+                        yield response.content
+        return _gen()
 
     # ── Helpers ──────────────────────────────────────────────────
 

@@ -102,6 +102,7 @@ class LLMClient:
 
         # Token callback
         self._token_callback: Any = None
+        self._usage_callback: Any = None
 
         # Tracking
         self._last_call_latency_ms: float = 0.0
@@ -230,8 +231,11 @@ class LLMClient:
         resp = self._request_with_retry(payload, headers, log_level)
 
         # Token 估算
-        tokens = self._estimate_call_tokens(api_messages, resp.content)
-        self._record_call(self._last_call_latency_ms, False, tokens)
+        usage = self._resolve_call_usage(
+            api_messages, api_tools, resp.content, resp.reasoning, resp.usage,
+        )
+        resp.usage = usage
+        self._record_call(self._last_call_latency_ms, False, usage=usage)
         self._log_call(len(api_messages), bool(api_tools), self._last_call_latency_ms,
                        "", success=True, stream=False)
 
@@ -273,6 +277,7 @@ class LLMClient:
         reasoning_text = ""
         tool_calls_raw: list[dict] | None = None
         finish_reason = ""
+        provider_usage: dict[str, Any] | None = None
 
         response = self._request_with_retry(payload, headers, stream=True)
 
@@ -292,6 +297,8 @@ class LLMClient:
                         reasoning_text = extra["reasoning"]
                     if extra.get("content_raw"):
                         content_raw = extra["content_raw"]
+                    if extra.get("usage"):
+                        provider_usage = dict(extra["usage"])
         except Exception as e:
             logger.warning("[LLM] Streaming failed: %s", e)
             raise
@@ -330,8 +337,11 @@ class LLMClient:
         )
 
         elapsed = (time.time() - t0) * 1000
-        tokens = self._estimate_call_tokens(api_messages, content)
-        self._record_call(elapsed, False, tokens)
+        usage = self._resolve_call_usage(
+            api_messages, api_tools, content, reasoning_text, provider_usage,
+        )
+        self._last_stream_response.usage = usage
+        self._record_call(elapsed, False, usage=usage)
         self._log_call(len(api_messages), bool(api_tools), elapsed,
                        "", success=True, stream=True)
         self._save_llm_log(payload, self._last_stream_response)
@@ -458,6 +468,46 @@ class LLMClient:
             total += estimate_tokens(response_content)
         return total
 
+    def _resolve_call_usage(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None,
+        response_content: str | None,
+        reasoning_content: str | None,
+        provider_usage: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Normalize provider usage, falling back to a marked local estimate."""
+        from .usage import estimate_input_breakdown, scale_input_breakdown
+
+        raw = dict(provider_usage or {})
+        input_breakdown = estimate_input_breakdown(messages, tools)
+        exact = bool(provider_usage)
+        if exact:
+            input_tokens = int(raw.get("input_tokens", 0) or 0)
+            output_tokens = int(raw.get("output_tokens", 0) or 0)
+            cached_tokens = int(raw.get("cached_input_tokens", 0) or 0)
+            reasoning_tokens = int(raw.get("reasoning_tokens", 0) or 0)
+        else:
+            from xiaomei_brain.base.message_utils import estimate_tokens
+            input_tokens = sum(input_breakdown.values())
+            reasoning_tokens = estimate_tokens(reasoning_content or "")
+            output_tokens = estimate_tokens(response_content or "") + reasoning_tokens
+            cached_tokens = 0
+        total_tokens = int(raw.get("total_tokens", 0) or 0)
+        if total_tokens <= 0:
+            total_tokens = input_tokens + output_tokens
+        input_breakdown = scale_input_breakdown(input_breakdown, input_tokens)
+        return {
+            "input_tokens": max(0, input_tokens),
+            "output_tokens": max(0, output_tokens),
+            "cached_input_tokens": max(0, cached_tokens),
+            "reasoning_tokens": max(0, reasoning_tokens),
+            "total_tokens": max(0, total_tokens),
+            "exact": exact,
+            "raw": raw,
+            "input_breakdown": input_breakdown,
+        }
+
     def _log_call(self, n_msgs: int, has_tools: bool, elapsed_ms: float,
                   detail: str, *, success: bool, stream: bool) -> None:
         ts = datetime.datetime.now().strftime("%H:%M:%S")
@@ -470,8 +520,14 @@ class LLMClient:
         )
         logger.info("\033[91m[%s] %s\033[0m" if success else "[%s] %s", tag, msg)
 
-    def _record_call(self, latency_ms: float, is_error: bool, tokens: int = 0,
-                     status_code: int = 0) -> None:
+    def _record_call(
+        self,
+        latency_ms: float,
+        is_error: bool,
+        tokens: int = 0,
+        status_code: int = 0,
+        usage: dict[str, Any] | None = None,
+    ) -> None:
         self._last_call_latency_ms = latency_ms
         self._last_call_error = is_error
         if is_error and status_code >= 400:
@@ -489,11 +545,35 @@ class LLMClient:
                 self._interoception.record_llm_call(latency_ms, is_error)
             except Exception as e:
                 logger.warning("Interoception failed: %s", e)
-        if self._token_callback and tokens > 0:
+        resolved_tokens = int((usage or {}).get("total_tokens", tokens) or 0)
+        if self._token_callback and resolved_tokens > 0:
             try:
-                self._token_callback(tokens)
+                self._token_callback(resolved_tokens)
             except Exception as e:
                 logger.warning("Token callback failed: %s", e)
+        if self._usage_callback and usage and resolved_tokens > 0:
+            try:
+                from .usage import LLMUsageRecord, current_usage_context
+                context = current_usage_context()
+                self._usage_callback(LLMUsageRecord(
+                    provider=self.provider,
+                    model=self.model,
+                    input_tokens=int(usage.get("input_tokens", 0) or 0),
+                    output_tokens=int(usage.get("output_tokens", 0) or 0),
+                    cached_input_tokens=int(usage.get("cached_input_tokens", 0) or 0),
+                    reasoning_tokens=int(usage.get("reasoning_tokens", 0) or 0),
+                    total_tokens=resolved_tokens,
+                    exact=bool(usage.get("exact", False)),
+                    latency_ms=latency_ms,
+                    person_id=context.person_id,
+                    session_id=context.session_id,
+                    turn_id=context.turn_id,
+                    category=context.category,
+                    raw_usage=dict(usage.get("raw", {}) or {}),
+                    input_breakdown=dict(usage.get("input_breakdown", {}) or {}),
+                ))
+            except Exception as e:
+                logger.warning("Usage callback failed: %s", e)
 
     def _save_llm_log(self, payload: dict, response: NormalizedResponse | None = None) -> None:
         log_dir = os.path.expanduser(
@@ -512,6 +592,7 @@ class LLMClient:
                                    for tc in (response.tool_calls or [])],
                     "finish_reason": response.finish_reason,
                     "reasoning_content": response.reasoning,
+                    "usage": response.usage,
                 }
             entry = {
                 "timestamp": now.isoformat(),

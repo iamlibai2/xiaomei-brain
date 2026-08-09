@@ -110,6 +110,25 @@
   opacity: 0.65;
 }
 
+.menubar-dropdown-submenu {
+  position: relative;
+}
+
+.menubar-dropdown-submenu-trigger {
+  justify-content: space-between;
+}
+
+.menubar-dropdown-nested {
+  top: -5px;
+  left: calc(100% - 2px);
+  display: none;
+}
+
+.menubar-dropdown-submenu:hover > .menubar-dropdown-nested,
+.menubar-dropdown-submenu:focus-within > .menubar-dropdown-nested {
+  display: block;
+}
+
 .menubar-dropdown-separator {
   height: 1px;
   margin: 4px 6px;

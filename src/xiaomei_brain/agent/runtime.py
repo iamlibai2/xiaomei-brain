@@ -43,6 +43,10 @@ def clone_llm_for_isolated_run(llm: Any) -> Any:
         enabled=getattr(base, "thinking_enabled", None),
         effort=str(getattr(base, "thinking_effort", "default")),
     )
+    # Isolated runtimes own mutable ReAct state but share the deployed
+    # Agent's accounting sinks.
+    cloned._token_callback = getattr(base, "_token_callback", None)
+    cloned._usage_callback = getattr(base, "_usage_callback", None)
     return ContextGuard(cloned, max_tokens=guard_tokens) if guard_tokens else cloned
 
 

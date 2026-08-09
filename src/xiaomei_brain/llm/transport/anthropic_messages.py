@@ -195,7 +195,10 @@ class AnthropicMessagesTransport(Transport):
             usage = {
                 "input_tokens": usage_raw.get("input_tokens", 0),
                 "output_tokens": usage_raw.get("output_tokens", 0),
+                "cached_input_tokens": usage_raw.get("cache_read_input_tokens", 0),
+                "reasoning_tokens": 0,
             }
+            usage["total_tokens"] = usage["input_tokens"] + usage["output_tokens"]
 
         return NormalizedResponse(
             content=content,
@@ -287,7 +290,10 @@ class AnthropicMessagesTransport(Transport):
                         usage = {
                             "input_tokens": usage_raw.get("input_tokens", 0),
                             "output_tokens": usage_raw.get("output_tokens", 0),
+                            "cached_input_tokens": usage_raw.get("cache_read_input_tokens", 0),
+                            "reasoning_tokens": 0,
                         }
+                        usage["total_tokens"] = usage["input_tokens"] + usage["output_tokens"]
 
                 elif current_event == "message_stop":
                     pass

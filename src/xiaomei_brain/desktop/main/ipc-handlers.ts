@@ -1402,6 +1402,33 @@ export function registerIpcHandlers(
     return client.rpc("agent.state.get", {});
   });
 
+  ipcMain.handle("gateway:getUsageSummary", async (_event, args: {
+    agentId: string; sessionId?: string; turnLimit?: number;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("usage.summary", {
+      session_id: args.sessionId || "",
+      turn_limit: args.turnLimit || 100,
+    });
+  });
+
+  ipcMain.handle("gateway:listUsage", async (_event, args: {
+    agentId: string; sessionId?: string; category?: string; model?: string;
+    since?: number; limit?: number; offset?: number;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("usage.list", {
+      session_id: args.sessionId || "",
+      category: args.category || "",
+      model: args.model || "",
+      since: args.since,
+      limit: args.limit || 100,
+      offset: args.offset || 0,
+    });
+  });
+
   ipcMain.handle("gateway:listCapabilities", async (_event, args: {
     agentId: string;
   }) => {

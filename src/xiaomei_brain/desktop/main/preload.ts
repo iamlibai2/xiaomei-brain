@@ -51,6 +51,8 @@ const CHANNEL_MAP = {
     listActivities: { invoke: "gateway:listActivities" },
     getActivity: { invoke: "gateway:getActivity" },
     getAgentState: { invoke: "gateway:getAgentState" },
+    getUsageSummary: { invoke: "gateway:getUsageSummary" },
+    listUsage: { invoke: "gateway:listUsage" },
     listCapabilities: { invoke: "gateway:listCapabilities" },
     getCapability: { invoke: "gateway:getCapability" },
     setCapabilityEnabled: { invoke: "gateway:setCapabilityEnabled" },

@@ -296,6 +296,27 @@ class ConsciousLiving(Living):
         else:
             llm._token_callback = self.drive.record_token_usage
 
+        # Drive keeps its compact daily/monthly pressure counter.  The usage
+        # ledger separately preserves auditable per-call facts for analysis.
+        from ..llm.usage_store import UsageStore
+        self.usage_store = UsageStore(db_path)
+
+        def _record_llm_usage(record) -> None:
+            usage_id = self.usage_store.record(record)
+            payload = record.to_dict()
+            payload.update({"id": usage_id, "_agent_global": True})
+            self._event_hub.publish(
+                "usage.updated",
+                payload,
+                session_id=record.session_id,
+                turn_id=record.turn_id,
+            )
+
+        if hasattr(llm, '_llm'):
+            llm._llm._usage_callback = _record_llm_usage
+        else:
+            llm._usage_callback = _record_llm_usage
+
         # CronScheduler（闹钟系统）
         from ..schedule import CronScheduler
         self.cron_scheduler = CronScheduler(self._agent_id)

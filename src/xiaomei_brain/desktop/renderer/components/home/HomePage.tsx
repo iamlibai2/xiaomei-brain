@@ -28,7 +28,8 @@ import {
   type PresentationMediaCommand,
 } from "../presentation-stage/ArtifactPresentationStage";
 import type { PresentationStageLayout } from "../presentation-stage/PresentationStage";
-import type { ChatArtifactReference } from "../../types";
+import type { ChatArtifactReference, TokenUsageTurn } from "../../types";
+import { formatTokens, useTokenUsage } from "../../usage";
 
 const EMPTY_MSGS: DisplayMessage[] = [];
 const EMPTY_ASSIGNMENTS: AssignmentSnapshot[] = [];
@@ -117,6 +118,11 @@ export function HomePage({
   const sendMessage = useCoreStore((s) => s.sendMessage);
   const abortMessage = useCoreStore((s) => s.abortMessage);
   const activeSessionId = useCoreStore((s) => s.activeSessionByAgent[s.activeAgentId || ""] || null);
+  const { summary: tokenUsageSummary } = useTokenUsage(
+    activeAgentId || "",
+    activeSessionId || "",
+    Boolean(activeAgentId && activeSessionId),
+  );
   const sessionsByAgent = useCoreStore((s) => s.sessionsByAgent);
   const historyPage = useCoreStore((s) => {
     const agentId = s.activeAgentId;
@@ -151,6 +157,29 @@ export function HomePage({
   const [focusedSearchMessageId, setFocusedSearchMessageId] = useState("");
   const autoCollapsedLeftSidebarRef = useRef(false);
   const conversationItems = useMemo(() => groupConversationMessages(messages), [messages]);
+  const turnUsageById = useMemo(() => new Map(
+    (tokenUsageSummary?.turns || []).map((item) => [item.turn_id, item]),
+  ), [tokenUsageSummary]);
+  const finalAgentMessageByTurn = useMemo(() => {
+    const result = new Map<string, string>();
+    for (const message of messages) {
+      const turnId = displayMessageTurnId(message);
+      if (
+        turnId
+        && message.role === "agent"
+        && !message.tool
+        && !message.action
+        && !message.interaction
+        && !message.capabilitySetup
+        && !message.artifact
+        && !message.serviceError
+        && message.content.trim()
+      ) {
+        result.set(turnId, message.id);
+      }
+    }
+    return result;
+  }, [messages]);
   const activePresentationKey = presentationStage?.artifactKeys[
     Math.min(presentationStage.activeIndex, Math.max(0, presentationStage.artifactKeys.length - 1))
   ] || "";
@@ -867,6 +896,9 @@ export function HomePage({
                         agentName={agentName || t("home.defaultAgentName")}
                         showAgentHeader={showAgentHeader}
                         highlighted={focusedSearchMessageId === m.id}
+                        turnUsage={turnId && finalAgentMessageByTurn.get(turnId) === m.id
+                          ? turnUsageById.get(turnId)
+                          : undefined}
                         onShowArtifact={showArtifact}
                         onMaximizeVisualization={maximizeVisualization}
                         onPresentArtifact={toggleArtifactPresentation}
@@ -1001,6 +1033,7 @@ function MessageRow({
   agentName,
   showAgentHeader,
   highlighted,
+  turnUsage,
   onShowArtifact,
   onMaximizeVisualization,
   onPresentArtifact,
@@ -1010,6 +1043,7 @@ function MessageRow({
   agentName: string;
   showAgentHeader: boolean;
   highlighted: boolean;
+  turnUsage?: TokenUsageTurn;
   onShowArtifact: (artifactId: string, sessionId: string) => void;
   onMaximizeVisualization: () => void;
   onPresentArtifact: (artifactKey: string) => void;
@@ -1256,17 +1290,48 @@ function MessageRow({
           content={displayedContent}
           streaming={message.streaming}
         />
-        {message.memoryReferences && message.memoryReferences.length > 0 && (
-          <button
-            type="button"
-            className="message-memory-reference"
-            onClick={() => onShowMemories(message.memoryReferences || [])}
-          >
-            <Icon name="sparkles" size={13} />
-            {t("home.memoryReferences", { count: message.memoryReferences.length })}
-          </button>
-        )}
       </div>
+      {(!message.streaming && turnUsage)
+        || (message.memoryReferences && message.memoryReferences.length > 0) ? (
+        <div className="message-hover-metadata">
+          {turnUsage && !message.streaming && (
+            <div
+              className="message-token-usage"
+              title={t("usage.turnDetails", {
+                input: formatTokens(turnUsage.input_tokens),
+                output: formatTokens(turnUsage.output_tokens),
+                latency: (turnUsage.latency_ms / 1000).toFixed(1),
+              })}
+            >
+              <span>{turnUsage.estimated_calls > 0 ? "≈" : ""}{formatTokens(turnUsage.total_tokens)} tokens</span>
+              <span>·</span>
+              <span>{t("usage.callCount", { count: turnUsage.calls })}</span>
+              <span>·</span>
+              <span>{(turnUsage.latency_ms / 1000).toFixed(1)}s</span>
+            </div>
+          )}
+          {turnUsage && turnUsage.tool_input_tokens > 0 && (
+            <span className="message-input-component">
+              {t("usage.component.tools")} {formatTokens(turnUsage.tool_input_tokens)}
+            </span>
+          )}
+          {turnUsage && turnUsage.skill_input_tokens > 0 && (
+            <span className="message-input-component">
+              Skill {formatTokens(turnUsage.skill_input_tokens)}
+            </span>
+          )}
+          {message.memoryReferences && message.memoryReferences.length > 0 && (
+            <button
+              type="button"
+              className="message-memory-reference"
+              onClick={() => onShowMemories(message.memoryReferences || [])}
+            >
+              <Icon name="sparkles" size={13} />
+              {t("home.memoryReferences", { count: message.memoryReferences.length })}
+            </button>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

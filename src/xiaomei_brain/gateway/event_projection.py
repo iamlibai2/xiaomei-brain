@@ -64,6 +64,7 @@ class GatewayEventProjection:
         "agent.state.changed",
         "agent.speech.started",
         "agent.speech.completed",
+        "usage.updated",
     })
 
     def __init__(self, router_getter: RouterGetter) -> None:
@@ -88,6 +89,7 @@ class GatewayEventProjection:
         is_process_event = event.name.startswith("process.")
         is_agent_state_event = event.name.startswith("agent.state.")
         is_agent_speech_event = event.name.startswith("agent.speech.")
+        is_usage_event = event.name.startswith("usage.")
         if event.name not in self.PUBLIC_EVENTS or (
             not event.session_id
             and not is_assignment_event
@@ -99,6 +101,7 @@ class GatewayEventProjection:
             and not is_process_event
             and not is_agent_state_event
             and not is_agent_speech_event
+            and not is_usage_event
         ):
             if event.name in {
                 "interaction.requested",
@@ -120,7 +123,7 @@ class GatewayEventProjection:
 
         router = self._router_getter()
         if (
-            (is_activity_event or is_agent_state_event or is_agent_speech_event)
+            (is_activity_event or is_agent_state_event or is_agent_speech_event or is_usage_event)
             and event.payload.get("_agent_global")
             and router is not None
             and hasattr(router, "broadcast_event")

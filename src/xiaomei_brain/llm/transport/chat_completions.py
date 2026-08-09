@@ -127,6 +127,8 @@ class ChatCompletionsTransport(Transport):
         }
         if stream:
             payload["stream"] = True
+            if self._resolve_cap(model, profile, "supports_usage_in_streaming"):
+                payload["stream_options"] = {"include_usage": True}
         if tools:
             payload["tools"] = tools
 
@@ -168,9 +170,14 @@ class ChatCompletionsTransport(Transport):
         usage_raw = raw.get("usage", {})
         usage = None
         if usage_raw:
+            prompt_details = usage_raw.get("prompt_tokens_details", {}) or {}
+            completion_details = usage_raw.get("completion_tokens_details", {}) or {}
             usage = {
                 "input_tokens": usage_raw.get("prompt_tokens", 0),
                 "output_tokens": usage_raw.get("completion_tokens", 0),
+                "cached_input_tokens": prompt_details.get("cached_tokens", 0),
+                "reasoning_tokens": completion_details.get("reasoning_tokens", 0),
+                "total_tokens": usage_raw.get("total_tokens", 0),
             }
 
         return NormalizedResponse(
@@ -200,6 +207,7 @@ class ChatCompletionsTransport(Transport):
         reasoning_parts: list[str] = []
         tool_calls_acc: dict[int, dict] = {}
         finish_reason = ""
+        usage = None
 
         try:
             for line in response.iter_lines():
@@ -220,6 +228,18 @@ class ChatCompletionsTransport(Transport):
                     chunk = json.loads(data)
                 except json.JSONDecodeError:
                     continue
+
+                usage_raw = chunk.get("usage", {}) or {}
+                if usage_raw:
+                    prompt_details = usage_raw.get("prompt_tokens_details", {}) or {}
+                    completion_details = usage_raw.get("completion_tokens_details", {}) or {}
+                    usage = {
+                        "input_tokens": usage_raw.get("prompt_tokens", 0),
+                        "output_tokens": usage_raw.get("completion_tokens", 0),
+                        "cached_input_tokens": prompt_details.get("cached_tokens", 0),
+                        "reasoning_tokens": completion_details.get("reasoning_tokens", 0),
+                        "total_tokens": usage_raw.get("total_tokens", 0),
+                    }
 
                 choices = chunk.get("choices")
                 if not choices:
@@ -339,6 +359,7 @@ class ChatCompletionsTransport(Transport):
             "tool_calls": tool_calls_raw if tool_calls_raw else None,
             "reasoning": "".join(reasoning_parts) if reasoning_parts else None,
             "content_raw": "".join(content_parts),
+            "usage": usage,
         }
 
     # ── helpers ───────────────────────────────────────────────

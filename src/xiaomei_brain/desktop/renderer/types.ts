@@ -453,6 +453,55 @@ export interface ChatInvocationSelection {
 
 // ── Bridge API ──
 
+export interface TokenUsageTotals {
+  input_tokens: number;
+  output_tokens: number;
+  cached_input_tokens: number;
+  reasoning_tokens: number;
+  total_tokens: number;
+  calls: number;
+  exact_calls: number;
+  estimated_calls: number;
+  latency_ms: number;
+  message_input_tokens: number;
+  system_input_tokens: number;
+  tool_input_tokens: number;
+  skill_input_tokens: number;
+  workspace_input_tokens: number;
+}
+
+export interface TokenUsageTurn extends TokenUsageTotals {
+  turn_id: string;
+  updated_at: number;
+}
+
+export interface TokenUsageBreakdown {
+  provider?: string;
+  model?: string;
+  category?: string;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  calls: number;
+}
+
+export interface TokenUsageSummary {
+  periods: {
+    today: TokenUsageTotals;
+    seven_days: TokenUsageTotals;
+    month: TokenUsageTotals;
+  };
+  breakdowns: Record<"today" | "seven_days" | "month", {
+    models: TokenUsageBreakdown[];
+    categories: TokenUsageBreakdown[];
+  }>;
+  current_session: TokenUsageTotals;
+  models: TokenUsageBreakdown[];
+  categories: TokenUsageBreakdown[];
+  turns: TokenUsageTurn[];
+  first_recorded_at: number | null;
+}
+
 export interface GatewayBridge {
   connect(args: { host: string; port: number; token: string; agentId: string; sessionId?: string }): Promise<JsonRpcResponse>;
   switchSession(args: { agentId: string; sessionId: string }): Promise<JsonRpcResponse>;
@@ -523,6 +572,16 @@ export interface GatewayBridge {
   }): Promise<JsonRpcResponse>;
   getActivity(args: { agentId: string; activityId: string }): Promise<JsonRpcResponse>;
   getAgentState(args: { agentId: string }): Promise<JsonRpcResponse>;
+  getUsageSummary(args: { agentId: string; sessionId?: string; turnLimit?: number }): Promise<JsonRpcResponse>;
+  listUsage(args: {
+    agentId: string;
+    sessionId?: string;
+    category?: string;
+    model?: string;
+    since?: number;
+    limit?: number;
+    offset?: number;
+  }): Promise<JsonRpcResponse>;
   listCapabilities(args: { agentId: string }): Promise<JsonRpcResponse>;
   getCapability(args: { agentId: string; capabilityId: string }): Promise<JsonRpcResponse>;
   setCapabilityEnabled(args: {

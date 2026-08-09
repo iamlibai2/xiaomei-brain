@@ -2,18 +2,21 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useCoreStore } from "../store";
 import { openSettingsCenter } from "./settings/events";
+import { TokenUsageDialog } from "./TokenUsageDialog";
 
 interface MenuItem {
   label: string;
   action?: () => void;
   separator?: boolean;
   disabled?: boolean;
+  children?: MenuItem[];
 }
 
 export function MenuBar() {
   const { t } = useTranslation();
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [maximized, setMaximized] = useState(false);
+  const [usageOpen, setUsageOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const activeAgent = useCoreStore((state) => (
     state.agents.find((agent) => agent.id === state.activeAgentId)
@@ -42,6 +45,14 @@ export function MenuBar() {
           ? () => openAgentLogs(activeAgent.localAgentId!)
           : undefined,
         disabled: !activeAgent || activeAgent.source !== "local" || !activeAgent.localAgentId,
+      },
+      {
+        label: t("menu.analysis"),
+        children: [{
+          label: t("menu.tokenUsage"),
+          action: () => setUsageOpen(true),
+          disabled: !activeAgent,
+        }],
       },
       { separator: true, label: "" },
       { label: t("menu.reload"), action: () => location.reload() },
@@ -95,6 +106,29 @@ export function MenuBar() {
                   {menus[key].map((item, i) =>
                     item.separator ? (
                       <div className="menubar-dropdown-separator" key={i} />
+                    ) : item.children ? (
+                      <div className="menubar-dropdown-submenu" key={i}>
+                        <button type="button" className="menubar-dropdown-item menubar-dropdown-submenu-trigger">
+                          <span>{item.label}</span>
+                          <span aria-hidden="true">›</span>
+                        </button>
+                        <div className="menubar-dropdown menubar-dropdown-nested">
+                          {item.children.map((child, childIndex) => (
+                            <button
+                              type="button"
+                              key={childIndex}
+                              className="menubar-dropdown-item"
+                              disabled={child.disabled}
+                              onClick={() => {
+                                child.action?.();
+                                setOpenMenu(null);
+                              }}
+                            >
+                              {child.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     ) : (
                       <button
                         key={i}
@@ -143,6 +177,7 @@ export function MenuBar() {
           </div>
         )}
       </div>
+      {usageOpen && <TokenUsageDialog onClose={() => setUsageOpen(false)} />}
     </>
   );
 }
