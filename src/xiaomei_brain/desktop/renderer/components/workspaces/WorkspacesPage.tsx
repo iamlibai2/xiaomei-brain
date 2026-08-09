@@ -32,6 +32,26 @@ type BusinessCollection = {
   records: BusinessRecord[];
 };
 type BusinessEvent = { id: string; summary: string; occurred_at: number };
+type BusinessDataSource = {
+  id: string;
+  kind: string;
+  name: string;
+  status: string;
+};
+type BusinessAsset = {
+  id: string;
+  nature: "working" | "evidence" | "external";
+  name: string;
+  kind: string;
+  mime_type: string;
+  size: number;
+  source_type: string;
+  source_id: string;
+  source_session_id: string;
+  metadata: Record<string, unknown>;
+  revision: number;
+  updated_at: number;
+};
 type BusinessObservation = {
   id: string;
   content: string;
@@ -70,6 +90,8 @@ type BusinessActionRun = {
 };
 type BusinessSnapshot = {
   summary: Record<string, number>;
+  dataSources: BusinessDataSource[];
+  assets: BusinessAsset[];
   collections: BusinessCollection[];
   observations: BusinessObservation[];
   events: BusinessEvent[];
@@ -117,6 +139,12 @@ function snapshot(value: unknown): WorkspaceSnapshot | null {
     summary: businessValue.summary && typeof businessValue.summary === "object"
       ? businessValue.summary as Record<string, number>
       : {},
+    dataSources: Array.isArray(businessValue.data_sources)
+      ? businessValue.data_sources as BusinessDataSource[]
+      : [],
+    assets: Array.isArray(businessValue.assets)
+      ? businessValue.assets as BusinessAsset[]
+      : [],
     collections: Array.isArray(businessValue.collections)
       ? businessValue.collections as BusinessCollection[]
       : [],
@@ -174,6 +202,7 @@ export function WorkspacesPage({
   const [error, setError] = useState("");
   const selectedIdRef = useRef("");
   const loadSequenceRef = useRef(0);
+  const eventRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     selectedIdRef.current = selectedId;
@@ -203,6 +232,42 @@ export function WorkspacesPage({
     onEnterConversation,
     selectedId,
   ]);
+
+  const openAsset = useCallback(async (asset: BusinessAsset) => {
+    if (!activeAgentId || asset.nature === "external") return;
+    setError("");
+    try {
+      const metadata = asset.metadata || {};
+      const contentKind = asset.source_type === "asset_evidence_snapshot"
+        ? String(metadata.content_source_kind || "")
+        : asset.source_type === "conversation_attachment" ? "attachment" : "artifact";
+      const sessionId = asset.source_type === "asset_evidence_snapshot"
+        ? String(metadata.content_source_session_id || "")
+        : String(metadata.latest_artifact_session_id || asset.source_session_id || "");
+      const contentId = asset.source_type === "asset_evidence_snapshot"
+        ? String(metadata.content_source_id || "")
+        : contentKind === "attachment"
+          ? asset.source_id
+          : String(metadata.latest_artifact_id || asset.source_id || "");
+      if (!sessionId || !contentId || !["attachment", "artifact"].includes(contentKind)) {
+        throw new Error(t("preview.notFound"));
+      }
+      const response = contentKind === "attachment"
+        ? await window.gateway.openAttachment({
+          agentId: activeAgentId,
+          sessionId,
+          attachmentId: contentId,
+        })
+        : await window.gateway.openArtifact({
+          agentId: activeAgentId,
+          sessionId,
+          artifactId: contentId,
+        });
+      if (!response.ok) throw new Error(response.error || t("preview.openFailed"));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }, [activeAgentId, t]);
 
   const load = useCallback(async (focusWorkspaceId = "", refreshDetail = false) => {
     const sequence = ++loadSequenceRef.current;
@@ -279,23 +344,44 @@ export function WorkspacesPage({
     };
   }, []);
 
-  useEffect(() => window.gateway.onEvent((event: { event?: string; agentId?: string; data?: unknown }) => {
-    if (event.agentId !== activeAgentId) return;
-    const eventName = typeof event.event === "string" ? event.event : "";
-    if ([
-      "workspace.created", "workspace.updated", "surface.created", "surface.updated",
-      "data_source.created", "observation.created", "collection.created", "collection.updated",
-      "record.changed", "business_event.created",
-      "business_action.candidate",
-      "dataset.created", "dataset.updated",
-      "data_import.completed",
-    ].includes(eventName)) {
+  useEffect(() => {
+    const dispose = window.gateway.onEvent((event: {
+      event?: string; agentId?: string; data?: unknown;
+    }) => {
+      if (event.agentId !== activeAgentId) return;
+      const eventName = typeof event.event === "string" ? event.event : "";
+      if (![
+        "workspace.created", "workspace.updated", "surface.created", "surface.updated",
+        "data_source.created", "observation.created", "collection.created", "collection.updated",
+        "record.changed", "business_event.created",
+        "business_action.candidate",
+        "dataset.created", "dataset.updated",
+        "data_import.completed",
+        "workspace_asset.created", "workspace_asset.updated",
+      ].includes(eventName)) return;
       const data = event.data && typeof event.data === "object"
         ? event.data as Record<string, unknown>
         : {};
-      void load(String(data.workspace_id || data.id || ""), true);
-    }
-  }), [activeAgentId, load]);
+      const eventWorkspaceId = String(data.workspace_id || data.id || "");
+      if (eventRefreshTimerRef.current !== null) {
+        clearTimeout(eventRefreshTimerRef.current);
+      }
+      eventRefreshTimerRef.current = setTimeout(() => {
+        eventRefreshTimerRef.current = null;
+        // A background update must not pull the user into another Workspace.
+        // Refresh the currently visible detail; use the event target only when
+        // no Workspace has been selected yet.
+        void load(selectedIdRef.current || eventWorkspaceId, true);
+      }, 120);
+    });
+    return () => {
+      dispose();
+      if (eventRefreshTimerRef.current !== null) {
+        clearTimeout(eventRefreshTimerRef.current);
+        eventRefreshTimerRef.current = null;
+      }
+    };
+  }, [activeAgentId, load]);
 
   const selected = useMemo(
     () => items.find((item) => item.id === selectedId) || null,
@@ -379,7 +465,11 @@ export function WorkspacesPage({
                 ))}
               </div>
               {selected.business && (
-                <WorkspaceBusinessFacts business={selected.business} locale={locale} />
+                <WorkspaceBusinessFacts
+                  business={selected.business}
+                  locale={locale}
+                  onOpenAsset={openAsset}
+                />
               )}
               <footer className="workspace-conversation-hint">
                 <Icon name="sparkles" size={15} />
@@ -405,12 +495,22 @@ export function WorkspacesPage({
 function WorkspaceBusinessFacts({
   business,
   locale,
+  onOpenAsset,
 }: {
   business: BusinessSnapshot;
   locale: string;
+  onOpenAsset: (asset: BusinessAsset) => void;
 }) {
   const { t } = useTranslation();
-  if (!business.collections.length && !business.events.length) return null;
+  if (
+    !business.collections.length
+    && !business.events.length
+    && !business.observations.length
+    && !business.dataSources.length
+    && !business.assets.length
+    && !business.actions.length
+    && !business.actionCandidates.length
+  ) return null;
   return (
     <section className="workspace-business-world">
       <header>
@@ -423,6 +523,8 @@ function WorkspaceBusinessFacts({
           <span>{t("workspaceUi.recordsCount", { count: business.summary.records || 0 })}</span>
           <span>{t("workspaceUi.eventsCount", { count: business.summary.events || 0 })}</span>
           <span>{t("workspaceUi.pendingObservations", { count: business.summary.unprocessed_observations || 0 })}</span>
+          <span>{t("workspaceUi.sourcesCount", { count: business.dataSources.length })}</span>
+          <span>{t("workspaceUi.assetsCount", { count: business.assets.length })}</span>
         </div>
       </header>
       {business.collections.map((collection) => (
@@ -466,6 +568,44 @@ function WorkspaceBusinessFacts({
               <time>{new Date(observation.received_at * 1000).toLocaleString(locale)}</time>
             </div>
           ))}
+        </article>
+      )}
+      {(business.dataSources.length > 0 || business.assets.length > 0) && (
+        <article className="workspace-resource-list">
+          <header>
+            <h4>{t("workspaceUi.businessResources")}</h4>
+            <div className="workspace-source-strip">
+              {business.dataSources.map((source) => (
+                <span key={source.id}>{source.name}</span>
+              ))}
+            </div>
+          </header>
+          {business.assets.slice(0, 12).map((asset) => {
+            const canOpen = asset.nature !== "external";
+            return (
+              <button
+                type="button"
+                key={asset.id}
+                className="workspace-resource-item"
+                disabled={!canOpen}
+                onClick={() => canOpen && onOpenAsset(asset)}
+                title={canOpen ? t("preview.openExternal") : asset.name}
+              >
+                <span className={`workspace-asset-nature ${asset.nature}`}>
+                  {t(`workspaceUi.assetNature_${asset.nature}`)}
+                </span>
+                <span className="workspace-resource-copy">
+                  <strong>{asset.name}</strong>
+                  <small>{asset.mime_type || asset.kind}</small>
+                </span>
+                <span className="workspace-resource-meta">
+                  {asset.size > 0 && <small>{formatFileSize(asset.size)}</small>}
+                  <time>{new Date(asset.updated_at * 1000).toLocaleString(locale)}</time>
+                </span>
+                {canOpen && <Icon name="external-link" size={14} />}
+              </button>
+            );
+          })}
         </article>
       )}
       {business.actions.length > 0 && (
@@ -539,6 +679,12 @@ function formatBusinessValue(value: unknown, locale: string) {
   if (typeof value === "number") return value.toLocaleString(locale);
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
+}
+
+function formatFileSize(size: number) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function WorkspaceEmpty({ text, error = false }: { text: string; error?: boolean }) {
