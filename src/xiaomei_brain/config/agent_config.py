@@ -415,9 +415,8 @@ def _build_living_config(data: dict):
                 fresh_tail_count=context.get("fresh_tail_count", 40),
                 flow_tail_count=context.get("flow_tail_count", 4),
                 reflect_tail_count=context.get("reflect_tail_count", 12),
-                messages_per_compact=context.get("messages_per_compact", 8),
-                reserved_fresh_count=context.get("reserved_fresh_count", 10),
                 compact_token_ratio=context.get("compact_token_ratio", 0.5),
+                compact_target_ratio=context.get("compact_target_ratio", 0.35),
                 compact_time_window=context.get("compact_time_window", 7200.0),
                 daily_max_memories=context.get("daily_max_memories", 12),
                 reflect_max_memories=context.get("reflect_max_memories", 15),
@@ -683,9 +682,8 @@ def _format_config_yaml(data: dict) -> str:
     _w(f"    fresh_tail_count:      {context.get('fresh_tail_count', 40)}   # daily 模式新鲜消息条数")
     _w(f"    flow_tail_count:       {context.get('flow_tail_count', 4)}     # flow 模式新鲜消息条数")
     _w(f"    reflect_tail_count:    {context.get('reflect_tail_count', 12)}   # reflect 模式新鲜消息条数")
-    _w(f"    messages_per_compact:  {context.get('messages_per_compact', 8)}     # 每次压缩的消息条数")
-    _w(f"    reserved_fresh_count:  {context.get('reserved_fresh_count', 10)}    # 保留的新鲜消息条数")
     _w(f"    compact_token_ratio:   {context.get('compact_token_ratio', 0.5)}   # 未摘要 token 占比阈值")
+    _w(f"    compact_target_ratio:  {context.get('compact_target_ratio', 0.35)}  # 压缩后完整 Turn 的目标占比")
     _w(f"    compact_time_window:   {context.get('compact_time_window', 7200.0)}  # 压缩时间窗口（秒）")
     _w(f"    daily_max_memories:    {context.get('daily_max_memories', 12)}    # daily 模式最大记忆数")
     _w(f"    reflect_max_memories:  {context.get('reflect_max_memories', 15)}    # reflect 模式最大记忆数")

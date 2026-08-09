@@ -127,9 +127,8 @@ consciousness:
     fresh_tail_count:      40   # daily 模式新鲜消息条数
     flow_tail_count:       4     # flow 模式新鲜消息条数
     reflect_tail_count:    12   # reflect 模式新鲜消息条数
-    messages_per_compact:  8     # 每次压缩的消息条数
-    reserved_fresh_count:   10    # 保留的新鲜消息条数
     compact_token_ratio:   0.5   # 未摘要 token 占比阈值
+    compact_target_ratio:  0.35  # 压缩后完整 Turn 的目标占比
     compact_time_window:   7200.0  # 压缩时间窗口（秒）
     daily_max_memories:    12    # daily 模式最大记忆数
     reflect_max_memories:  15    # reflect 模式最大记忆数

@@ -105,9 +105,8 @@ class ContextConfig:
     reflect_tail_count: int = 12       # reflect 模式新鲜消息条数
 
     # DAG 压缩
-    messages_per_compact: int = 8      # 每次压缩的消息条数
-    reserved_fresh_count: int = 10     # 硬保留的新鲜消息条数（任何触发条件都不能压缩）
-    compact_token_ratio: float = 0.5   # 未摘要消息 token 占比阈值
+    compact_token_ratio: float = 0.5   # Trigger at this share of the context window.
+    compact_target_ratio: float = 0.35 # Compact complete turns down to this share.
     compact_time_window: float = 7200.0  # 压缩时间窗口（秒）
 
     # 记忆召回

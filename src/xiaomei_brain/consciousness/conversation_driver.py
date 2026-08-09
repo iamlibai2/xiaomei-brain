@@ -1121,6 +1121,10 @@ class ConversationDriver:
             _dag = dag
             _session_id = session_id
             _agent = agent_core
+            _active_turn_id = str(getattr(agent_core, "turn_id", "") or "")
+            _memory_scope_id = str(
+                getattr(agent_core, "memory_scope_id", "global") or "global"
+            )
             display = self.display
 
             def _run():
@@ -1133,6 +1137,8 @@ class ConversationDriver:
                         _session_id,
                         max_tokens=max_tokens,
                         messages=None,
+                        active_turn_id=_active_turn_id,
+                        memory_scope_id=_memory_scope_id,
                     ) or {}
                     count = compact_data.get("compact_count", 0)
                     tokens = compact_data.get("summary_tokens", 0)

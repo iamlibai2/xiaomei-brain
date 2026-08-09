@@ -1,7 +1,8 @@
 """上下文组装管线：通过 SelfImage + memory_window 统一组装。
 
 记忆检索由 memory_window 推入 SelfImage，渲染由 inject_consciousness(mode) 统一输出。
-DAG 压缩和过滤由 Agent._auto_compact() / agent.dag.filter_compressed_messages() 直接调用。
+DAG 持久化由 memory.dag 负责；Turn 边界、压缩选择和 token 裁剪由
+Agent.context_compactor 统一负责。
 """
 
 from __future__ import annotations
@@ -222,15 +223,20 @@ def build_context(
     user_msg_id = user_message_id
     if agent.conversation_db and user_msg_id is None:
         public_attachments = public_attachment_metadata(attachments)
-        meta = {"attachments": public_attachments} if public_attachments else (
-            {"images": images} if images else None
-        )
+        meta: dict[str, Any] = {}
+        if public_attachments:
+            meta["attachments"] = public_attachments
+        elif images:
+            meta["images"] = images
+        turn_id = getattr(agent, "turn_id", "")
+        if isinstance(turn_id, str) and turn_id:
+            meta["turn_id"] = turn_id
         user_msg_id = agent.conversation_db.log(
             session_id=agent.session_id,
             role="user",
             content=user_input,
             user_id=agent.user_id,
-            metadata=meta,
+            metadata=meta or None,
         )
 
         # Co-write to experience stream
@@ -277,9 +283,13 @@ def build_context(
                 **tagged_content[0],
                 "text": speaker_prefix + tagged_content[0].get("text", ""),
             }
-    agent.messages.append({
+    user_message = {
         "role": "user", "content": tagged_content, "id": user_msg_id,
-    })
+    }
+    turn_id = getattr(agent, "turn_id", "")
+    if isinstance(turn_id, str) and turn_id:
+        user_message["turn_id"] = turn_id
+    agent.messages.append(user_message)
 
     # ── 开关：不组装时直接返回裸消息 ──
     logger.info("[ContextPipeline] ENTRY assemble=%s intent_ctx=%d", assemble, len(intent_context) if intent_context else 0)
@@ -433,22 +443,29 @@ def build_context(
             agent.messages, agent.session_id,
         )
 
-    # 7. token 裁剪
+    # 7. Token trimming preserves complete Turns and tool-call chains.
     system_tokens = estimate_tokens(system_content) if system_content else 0
     messages_budget = max(200, max_tokens - system_tokens - 500)
     logger.info(
         "[ContextPipeline] 裁剪前: %d条消息, system_tokens=%d, budget=%d, max_tokens=%d",
         len(agent.messages), system_tokens, messages_budget, max_tokens,
     )
-    trimmed: list[dict[str, Any]] = []
-    used = 0
-    for m in reversed(agent.messages):
-        t = estimate_content_tokens(m.get("content", ""))
-        if used + t > messages_budget and trimmed:
-            break
-        trimmed.append(m)
-        used += t
-    agent.messages = list(reversed(trimmed))
+    from xiaomei_brain.agent.context_compactor import ContextCompactor
+    compactor = getattr(agent, "context_compactor", None)
+    if not isinstance(compactor, ContextCompactor):
+        compactor = ContextCompactor()
+    active_turn_id = getattr(agent, "turn_id", "")
+    if not isinstance(active_turn_id, str):
+        active_turn_id = ""
+    agent.messages = compactor.trim_to_budget(
+        agent.messages,
+        token_budget=messages_budget,
+        active_turn_id=active_turn_id,
+    )
+    used = sum(
+        estimate_content_tokens(message.get("content", ""))
+        for message in agent.messages
+    )
     logger.info(
         "[ContextPipeline] 裁剪后: %d条消息, used=%d tokens",
         len(agent.messages), used,

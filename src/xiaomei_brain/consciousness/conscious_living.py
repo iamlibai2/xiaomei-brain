@@ -2259,6 +2259,19 @@ class ConsciousLiving(Living):
             role = m.get("role", "user")
             db_id = m.get("id")  # SQLite row id
             created_ts = m.get("created_at", 0)
+            metadata = m.get("metadata", {})
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except Exception:
+                    metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            turn_id = str(
+                metadata.get("steered_into_turn_id")
+                or metadata.get("turn_id")
+                or ""
+            )
             time_prefix = ""
             if created_ts and role in ("user", "assistant"):
                 try:
@@ -2271,6 +2284,8 @@ class ConsciousLiving(Living):
                     msg["id"] = db_id
                 if created_ts:
                     msg["created_at"] = created_ts
+                if turn_id:
+                    msg["turn_id"] = turn_id
                 restored.append(msg)
             elif role == "assistant":
                 msg: dict[str, Any] = {"role": "assistant", "content": f"{time_prefix}{m.get('content', '')}"}
@@ -2278,25 +2293,20 @@ class ConsciousLiving(Living):
                     msg["id"] = db_id
                 if created_ts:
                     msg["created_at"] = created_ts
-                metadata = m.get("metadata", {})
-                if isinstance(metadata, str):
-                    try:
-                        metadata = json.loads(metadata)
-                    except Exception:
-                        metadata = {}
-                if isinstance(metadata, dict):
-                    if metadata.get("tool_calls"):
-                        msg["tool_calls"] = metadata["tool_calls"]
-                        # DeepSeek V4: 有工具调用的轮次必须传回 reasoning_content
-                        # 空字符串也是新工具轮次的有效值；只有字段完全
-                        # 缺失时才视为无法安全恢复的旧历史记录。
-                        if "reasoning_content" in metadata:
-                            msg["reasoning_content"] = metadata.get("reasoning_content") or ""
-                        elif "reasoning" in metadata:
-                            msg["reasoning_content"] = metadata.get("reasoning") or ""
-                    elif metadata.get("reasoning_content"):
-                        # 无工具调用的轮次不需要传回，但保留 metadata 以备他用
-                        pass
+                if turn_id:
+                    msg["turn_id"] = turn_id
+                if metadata.get("tool_calls"):
+                    msg["tool_calls"] = metadata["tool_calls"]
+                    # DeepSeek V4: 有工具调用的轮次必须传回 reasoning_content
+                    # 空字符串也是新工具轮次的有效值；只有字段完全
+                    # 缺失时才视为无法安全恢复的旧历史记录。
+                    if "reasoning_content" in metadata:
+                        msg["reasoning_content"] = metadata.get("reasoning_content") or ""
+                    elif "reasoning" in metadata:
+                        msg["reasoning_content"] = metadata.get("reasoning") or ""
+                elif metadata.get("reasoning_content"):
+                    # 无工具调用的轮次不需要传回，但保留 metadata 以备他用
+                    pass
                 restored.append(msg)
             elif role == "tool":
                 tc_id = m.get("tool_call_id", "")
@@ -2308,6 +2318,8 @@ class ConsciousLiving(Living):
                     }
                     if db_id is not None:
                         msg["id"] = db_id
+                    if turn_id:
+                        msg["turn_id"] = turn_id
                     restored.append(msg)
 
         # 第三遍：清理不完整的 tool_calls（防止 DeepSeek 400）
@@ -2348,7 +2360,16 @@ class ConsciousLiving(Living):
                 j = i + 1
                 while j < len(cleaned):
                     nm = cleaned[j]
-                    if nm.get("role") == "assistant" and not nm.get("tool_calls"):
+                    same_turn = (
+                        not m.get("turn_id")
+                        or not nm.get("turn_id")
+                        or nm.get("turn_id") == m.get("turn_id")
+                    )
+                    if (
+                        nm.get("role") == "assistant"
+                        and not nm.get("tool_calls")
+                        and same_turn
+                    ):
                         run.append(nm)
                         j += 1
                     else:

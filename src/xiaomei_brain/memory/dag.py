@@ -1,12 +1,12 @@
 """DAG Summary Graph: hierarchical conversation summaries.
 
-Implements the Lossless-claw inspired DAG approach:
-- 8 messages → leaf summary (~1200 tokens)
-- Leaf summaries accumulate → higher-level summaries
-- 75% context threshold triggers compression
-- Three-step protocol: normal → aggressive → hard cut
+Implements the persistent side of hierarchical conversation summaries:
+- Complete Turns become leaf summaries
+- Leaf summaries accumulate into higher-level summaries
+- Source message IDs remain traceable and expandable
 
-All summaries stored in SQLite summaries table (shared brain.db).
+Token pressure and Turn selection deliberately live in agent.context_compactor.
+All summaries are stored in the SQLite summaries table (shared brain.db).
 """
 
 from __future__ import annotations
@@ -46,16 +46,13 @@ class DAGNode:
 class DAGSummaryGraph(SQLiteStore):
     """DAG-based hierarchical summary system.
 
-    Compression lifecycle:
-    1. Messages accumulate in messages table
-    2. When context reaches 75% threshold → compact recent messages into leaf summary
-    3. When enough leaf summaries exist → promote to higher-level summary
-    4. Context assembly uses: high-level summaries + fresh original messages
+    Persistence lifecycle:
+    1. ContextCompactor selects a prefix of completed Turns
+    2. DAG stores that prefix as a leaf summary
+    3. Enough sibling summaries are promoted to a higher-level summary
+    4. Context assembly uses higher summaries plus fresh original Turns
     """
 
-    COMPACT_THRESHOLD = 0.75     # 75% of max context → trigger compression
-    MESSAGES_PER_LEAF = 8       # messages per leaf summary
-    LEAF_TARGET_TOKENS = 1200   # target tokens for leaf summary
     PROMOTE_THRESHOLD = 4       # number of same-depth nodes before promoting
 
     @classmethod
@@ -124,10 +121,6 @@ class DAGSummaryGraph(SQLiteStore):
             self._set_schema_version("dag", 1)
             conn.commit()
             logger.info("[DAG] 迁移完成: v0 → v1")
-
-    def should_compact(self, current_tokens: int, max_tokens: int) -> bool:
-        """Check if context has reached compression threshold."""
-        return current_tokens >= max_tokens * self.COMPACT_THRESHOLD
 
     def compact(
         self,
@@ -603,19 +596,54 @@ class DAGSummaryGraph(SQLiteStore):
                 break
 
     def _format_messages_for_summary(self, messages: list[dict]) -> str:
-        """Format messages for LLM summarization."""
-        lines = []
+        """Format complete Turns, including tool intent and execution facts."""
+        lines: list[str] = []
+        current_turn_id = ""
         for m in messages:
             role = m.get("role", "unknown")
             content = m.get("content", "")
+            if not isinstance(content, str):
+                content = json.dumps(content, ensure_ascii=False, default=str)
+            metadata = m.get("metadata")
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except (TypeError, json.JSONDecodeError):
+                    metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            turn_id = str(m.get("turn_id") or metadata.get("turn_id") or "")
+            if turn_id and turn_id != current_turn_id:
+                lines.append(f"\n<Turn {turn_id}>")
+                current_turn_id = turn_id
             if role == "tool":
                 tool_name = m.get("tool_name", "tool")
-                lines.append(f"[{tool_name}] {content[:200]}")
+                tool_call_id = str(m.get("tool_call_id") or "")
+                duration_ms = metadata.get("duration_ms")
+                facts = f" id={tool_call_id}" if tool_call_id else ""
+                if duration_ms is not None:
+                    facts += f" duration_ms={duration_ms}"
+                lines.append(f"[tool result: {tool_name}{facts}] {content[:1000]}")
             elif role == "assistant":
-                lines.append(f"[我] {content}")
+                tool_calls = m.get("tool_calls") or metadata.get("tool_calls") or []
+                if tool_calls:
+                    rendered_calls: list[str] = []
+                    for call in tool_calls:
+                        call_data = call if isinstance(call, dict) else {}
+                        function = call_data.get("function", {})
+                        if not isinstance(function, dict):
+                            function = {}
+                        name = function.get("name") or call_data.get("name") or "tool"
+                        arguments = function.get("arguments") or call_data.get("arguments") or "{}"
+                        if not isinstance(arguments, str):
+                            arguments = json.dumps(arguments, ensure_ascii=False, default=str)
+                        rendered_calls.append(f"{name}({arguments[:500]})")
+                    lines.append("[assistant tool calls] " + "; ".join(rendered_calls))
+                if content.strip():
+                    lines.append(f"[assistant] {content[:2000]}")
             else:
                 label = m.get("user_id") or m.get("user_display_name") or role
-                lines.append(f"[{label}] {content}")
+                lines.append(f"[{label}] {content[:2000]}")
         return "\n".join(lines)
 
     def _llm_summarize(self, formatted: str, prompt_template: str | None = None) -> str | None:

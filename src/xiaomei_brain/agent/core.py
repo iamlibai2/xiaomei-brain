@@ -13,6 +13,7 @@ from typing import Any, Callable, Generator
 from xiaomei_brain.llm.client import LLMClient
 from xiaomei_brain.agent.steering import SteerMessage
 from xiaomei_brain.agent.completion import CompletionGuard, CompletionGuardResult
+from xiaomei_brain.agent.context_compactor import ContextCompactor
 from xiaomei_brain.memory.conversation_db import ConversationDB
 from xiaomei_brain.base.message_utils import estimate_tokens
 from xiaomei_brain.memory.self_model import SelfModel
@@ -32,7 +33,7 @@ from xiaomei_brain.tools.dynamic import (
 from xiaomei_brain.agent.message_utils import (
     strip_orphaned_tool_messages,
     strip_orphaned_assistant_tool_calls, clean_messages,
-    append_to_content, estimate_content_tokens,
+    append_to_content,
 )
 
 logger = logging.getLogger(__name__)
@@ -184,6 +185,7 @@ class Agent:
         # ── DAG auto-compact ─────────────────────────────────────────────
         self._living_cfg: Any = None  # LivingConfig, 由 ConsciousLiving 注入
         self.on_compact: Callable[[dict], None] | None = None
+        self.context_compactor = ContextCompactor()
         self._compact_locks: dict[str, threading.Lock] = {}
         self._locks_lock = threading.Lock()
 
@@ -318,14 +320,14 @@ class Agent:
         session_id: str,
         max_tokens: int,
         messages: list[dict] | None = None,
+        *,
+        active_turn_id: str | None = None,
+        memory_scope_id: str | None = None,
     ) -> dict[str, int] | None:
-        """Auto-compact: 消息积累到阈值时自动压缩为 DAG 叶子摘要。
+        """Delegate live-context policy to the turn-aware compactor.
 
-        原在 ContextAssembler._auto_compact()，搬到 Agent 直接管理。
-
-        ``reserved_fresh_count`` 是硬边界：无论按消息数还是 token
-        触发，都不能压缩最近的这些消息。token 触发仍然必要，因为
-        单条工具结果可能远大于多轮普通对话。
+        DAG owns summary generation and persistence; this method only bridges
+        Agent runtime state, locking and observability callbacks.
         """
         with self._locks_lock:
             lock = self._compact_locks.get(session_id)
@@ -344,68 +346,60 @@ class Agent:
                 unsummarized = self._unsummarized_from_messages(session_id, messages)
             else:
                 unsummarized = self.dag.get_unsummarized_messages(
-                    session_id, limit=100,
+                    session_id, limit=2000,
                 )
             if not unsummarized:
                 logger.debug("[DAG] Auto compact: no unsummarized messages")
                 return
 
             cfg = self._get_ctx_cfg()
-            unsummarized_tokens = sum(
-                estimate_content_tokens(m.get("content")) for m in unsummarized
+            trigger_ratio = float(cfg.get("compact_token_ratio", 0.5))
+            target_ratio = float(cfg.get("compact_target_ratio", 0.35))
+            plan = self.context_compactor.plan_compaction(
+                unsummarized,
+                max_tokens=max_tokens,
+                trigger_ratio=trigger_ratio,
+                target_ratio=target_ratio,
+                active_turn_id=(
+                    self.turn_id if active_turn_id is None else active_turn_id
+                ),
             )
-            threshold = int(max_tokens * cfg.get("compact_token_ratio", 0.5))
-
-            messages_per_compact = max(1, int(cfg.get("messages_per_compact", 8)))
-            reserved_fresh_count = max(0, int(cfg.get("reserved_fresh_count", 10)))
-            compactable_count = max(0, len(unsummarized) - reserved_fresh_count)
-            compact_threshold = messages_per_compact + reserved_fresh_count
-            token_triggered = unsummarized_tokens >= threshold
-            count_triggered = len(unsummarized) >= compact_threshold
-
-            if (token_triggered or count_triggered) and compactable_count > 0:
-                compact_count = min(messages_per_compact, compactable_count)
-                msgs_to_compact = unsummarized[:compact_count]
-                compact_tokens = sum(
-                    estimate_content_tokens(m.get("content")) for m in msgs_to_compact
-                )
-                remaining_tokens = unsummarized_tokens - compact_tokens
-
+            if plan:
                 node = self.dag.compact(
                     session_id,
-                    [m["id"] for m in msgs_to_compact],
-                    msgs_to_compact,
-                    user_id=self.memory_scope_id,
+                    list(plan.message_ids),
+                    list(plan.messages),
+                    user_id=(
+                        self.memory_scope_id
+                        if memory_scope_id is None else memory_scope_id
+                    ),
                 )
                 if node:
                     summary_tokens = estimate_tokens(node.content)
-                    after_tokens = remaining_tokens + summary_tokens
+                    after_tokens = plan.remaining_tokens + summary_tokens
 
                     stats = {
-                        "compact_count": len(msgs_to_compact),
-                        "before_tokens": unsummarized_tokens,
+                        "compact_count": len(plan.messages),
+                        "compact_turn_count": plan.turn_count,
+                        "before_tokens": plan.before_tokens,
                         "after_tokens": after_tokens,
                         "summary_tokens": summary_tokens,
-                        "remaining_count": len(unsummarized) - len(msgs_to_compact),
-                        "remaining_tokens": remaining_tokens,
+                        "remaining_count": len(unsummarized) - len(plan.messages),
+                        "remaining_tokens": plan.remaining_tokens,
                     }
                     if self.on_compact:
                         self.on_compact(stats)
 
                     logger.info(
-                        "[DAG] Auto compact: %d msgs (%d tokens) → summary #%d (depth=%d, %d tokens), "
+                        "[DAG] Auto compact: %d turns / %d msgs (%d tokens) "
+                        "→ summary #%d (depth=%d, %d tokens), "
                         "%d msgs (%d tokens) remain fresh",
-                        len(msgs_to_compact), compact_tokens,
+                        plan.turn_count, len(plan.messages), plan.compact_tokens,
                         node.id, node.depth, summary_tokens,
-                        len(unsummarized) - len(msgs_to_compact),
-                        remaining_tokens,
+                        len(unsummarized) - len(plan.messages),
+                        plan.remaining_tokens,
                     )
                     return stats
-            elif token_triggered and compactable_count == 0:
-                logger.debug(
-                    "[DAG] Auto compact skipped: %d fresh msgs are protected (reserved=%d)",
-                    len(unsummarized), reserved_fresh_count,
-                )
         except Exception as e:
             import traceback
             logger.warning("[DAG] Auto compact failed: %s\n%s", e, traceback.format_exc())
@@ -487,6 +481,9 @@ class Agent:
                         }
                         if steer_msg.message_id is not None:
                             injected["id"] = steer_msg.message_id
+                        injected["turn_id"] = (
+                            steer_msg.active_turn_id or self.turn_id or steer_msg.turn_id
+                        )
                         self.messages.append(injected)
                     steer_context = "\n".join(
                         message.content for message in steer_messages
@@ -575,6 +572,8 @@ class Agent:
                         # from legacy rows where the field was never stored.
                         "reasoning_content": response.reasoning or "",
                     }
+                    if self.turn_id:
+                        msg["turn_id"] = self.turn_id
                     self.messages.append(msg)
 
                     # 存 assistant(tool_calls) 到 DB，tool_calls + reasoning_content 存入 metadata
@@ -724,14 +723,15 @@ class Agent:
                                 )
                             except Exception as e:
                                 logger.debug("[ExpStream] co-write tool_exec failed: %s", e)
-                        self.messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tc.id,
-                                "content": str(result),
-                                "id": tool_msg_id,
-                            }
-                        )
+                        tool_message = {
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": str(result),
+                            "id": tool_msg_id,
+                        }
+                        if self.turn_id:
+                            tool_message["turn_id"] = self.turn_id
+                        self.messages.append(tool_message)
 
                         # 累积上下文供下步动态工具召回
                         _selection_progress.append(f"{tc.name}: {str(result)[:500]}")
@@ -765,11 +765,14 @@ class Agent:
                                 user_id=self.user_id,
                                 metadata=metadata or None,
                             )
-                        self.messages.append({
+                        handoff_message_record = {
                             "role": "assistant",
                             "content": handoff_message,
                             "id": assistant_msg_id,
-                        })
+                        }
+                        if self.turn_id:
+                            handoff_message_record["turn_id"] = self.turn_id
+                        self.messages.append(handoff_message_record)
                         if self.exp_stream:
                             try:
                                 self.exp_stream.log(
@@ -801,18 +804,23 @@ class Agent:
                             if retries < completion_guard.max_retries:
                                 retries += 1
                                 _completion_guard_retries[completion_guard.key] = retries
-                                self.messages.append({
+                                guarded_assistant = {
                                     "role": "assistant",
                                     "content": content,
-                                })
-                                self.messages.append({
+                                }
+                                guarded_user = {
                                     "role": "user",
                                     "content": (
                                         "[Completion guard] "
                                         f"{completion_guard.reason} "
                                         "不要只描述接下来要做什么；请立即调用所需工具。"
                                     ),
-                                })
+                                }
+                                if self.turn_id:
+                                    guarded_assistant["turn_id"] = self.turn_id
+                                    guarded_user["turn_id"] = self.turn_id
+                                self.messages.append(guarded_assistant)
+                                self.messages.append(guarded_user)
                                 _selection_progress.append(
                                     "Completion guard: " + completion_guard.reason
                                 )
@@ -898,6 +906,8 @@ class Agent:
                         msg: dict[str, Any] = {"role": "assistant", "content": display_content, "id": assistant_msg_id}
                         if response.reasoning:
                             msg["reasoning_content"] = response.reasoning
+                        if self.turn_id:
+                            msg["turn_id"] = self.turn_id
                         self.messages.append(msg)
 
                         # Co-write to experience stream
@@ -945,11 +955,14 @@ class Agent:
                     user_id=self.user_id,
                     metadata=metadata,
                 )
-            self.messages.append({
+            failure_message = {
                 "role": "assistant",
                 "content": REPEATED_TOOL_FAILURE_MESSAGE,
                 "id": assistant_msg_id,
-            })
+            }
+            if self.turn_id:
+                failure_message["turn_id"] = self.turn_id
+            self.messages.append(failure_message)
             yield REPEATED_TOOL_FAILURE_MESSAGE
             return
         yield "Agent reached maximum steps without producing a final answer."
