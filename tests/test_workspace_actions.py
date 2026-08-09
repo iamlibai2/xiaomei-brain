@@ -331,6 +331,128 @@ def test_action_definitions_and_runs_survive_restart(tmp_path):
     assert reopened.actions.store.get_run(run.id).status == "completed"
 
 
+def test_action_run_preserves_effective_context_after_rules_are_corrected(tmp_path):
+    service, workspace, _collection, records, candidate, _events = _world(tmp_path)
+    definition = service.actions.establish(
+        workspace.id,
+        candidate_id=candidate.id,
+        name="推进客户阶段",
+        description="更新阶段",
+        completion_criteria="阶段已更新",
+        person_id="person-1",
+    )
+    default = service.context.establish(
+        workspace.id,
+        statement="客户默认先进入报价阶段",
+        context_type="default",
+        person_id="person-1",
+    )
+    constraint = service.context.establish(
+        workspace.id,
+        statement="阶段变化必须保留业务记录",
+        context_type="constraint",
+        person_id="person-1",
+    )
+    exception = service.context.establish(
+        workspace.id,
+        statement="丁公司可以直接进入合同阶段",
+        context_type="default",
+        scope_type="transaction",
+        scope_id=records[3].id,
+        overrides_context_id=default.id,
+        person_id="person-1",
+    )
+
+    first_run, record, _changes, _event = service.actions.execute(
+        definition.id,
+        record_id=records[3].id,
+        expected_revision=records[3].revision,
+        values={"阶段": "合同"},
+        business_intent="推进丁公司到合同阶段",
+        person_id="person-1",
+    )
+    first_context_ids = {
+        item["id"] for item in first_run.context_snapshot["contexts"]
+    }
+    assert first_context_ids == {constraint.id, exception.id}
+    assert first_run.context_snapshot["context_overrides"] == [{
+        "overriding_context_id": exception.id,
+        "overridden_context_id": default.id,
+    }]
+
+    replacement = service.context.correct(
+        exception.id,
+        statement="丁公司后续可以直接进入合作阶段",
+        person_id="person-1",
+    )
+    second_run, _record, _changes, _event = service.actions.execute(
+        definition.id,
+        record_id=record.id,
+        expected_revision=record.revision,
+        values={"阶段": "合作"},
+        business_intent="推进丁公司到合作阶段",
+        person_id="person-1",
+    )
+    second_context_ids = {
+        item["id"] for item in second_run.context_snapshot["contexts"]
+    }
+    assert second_context_ids == {constraint.id, replacement.id}
+    assert exception.id in first_context_ids
+    assert replacement.id not in first_context_ids
+
+    reopened = WorkspaceService(WorkspaceStore(tmp_path / "workspaces.db"))
+    historical = reopened.actions.store.get_run(first_run.id)
+    assert historical is not None
+    assert {item["id"] for item in historical.context_snapshot["contexts"]} == {
+        constraint.id,
+        exception.id,
+    }
+
+
+def test_action_schema_upgrade_adds_context_snapshot_without_losing_runs(tmp_path):
+    service, _workspace, _collection, records, candidate, _events = _world(tmp_path)
+    definition = service.actions.establish(
+        service.store.list_all()[0].id,
+        candidate_id=candidate.id,
+        name="推进客户阶段",
+        description="更新阶段",
+        completion_criteria="阶段已更新",
+        person_id="person-1",
+    )
+    run, _record, _changes, _event = service.actions.execute(
+        definition.id,
+        record_id=records[3].id,
+        expected_revision=records[3].revision,
+        values={"阶段": "合同"},
+        business_intent="推进丁公司",
+        person_id="person-1",
+    )
+    conn = service.actions.store._get_conn()
+    conn.execute("ALTER TABLE business_action_runs DROP COLUMN context_snapshot_json")
+    conn.execute(
+        "UPDATE schema_versions SET version = 2 WHERE component = 'workspace_actions'"
+    )
+    conn.commit()
+    service.actions.store.close()
+
+    backups = []
+    reopened = WorkspaceService(
+        WorkspaceStore(tmp_path / "workspaces.db"),
+        before_business_migration=lambda: backups.append("backup"),
+    )
+    migrated = reopened.actions.store.get_run(run.id)
+    assert backups == ["backup"]
+    assert migrated is not None
+    assert migrated.context_snapshot == {}
+    columns = {
+        str(row["name"])
+        for row in reopened.actions.store._get_conn().execute(
+            "PRAGMA table_info(business_action_runs)"
+        )
+    }
+    assert "context_snapshot_json" in columns
+
+
 def test_action_schema_upgrade_requests_backup(tmp_path):
     service, _workspace, _collection, _records, _candidate, _events = _world(tmp_path)
     conn = service.actions.store._get_conn()

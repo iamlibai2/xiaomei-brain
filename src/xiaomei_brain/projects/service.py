@@ -466,6 +466,7 @@ class ProjectService:
         name: str = "",
         source_id: str = "",
         producer: str = "present_artifacts",
+        unified_asset_id: str = "",
     ) -> ProjectAsset:
         """Adopt one explicitly delivered Agent file into a Project.
 
@@ -516,6 +517,8 @@ class ProjectService:
                 "presented": True,
                 "logical_name": safe_name,
             }
+            if unified_asset_id.strip():
+                metadata["asset_id"] = unified_asset_id.strip()
             metadata.update(probe_media_facts(target, mime_type))
             now = self._clock()
             updated = ProjectAsset(
@@ -565,7 +568,15 @@ class ProjectService:
             source_type="conversation_artifact",
             source_id=source_id,
             producer=producer,
-            metadata={"presented": True, "logical_name": safe_name},
+            metadata={
+                "presented": True,
+                "logical_name": safe_name,
+                **(
+                    {"asset_id": unified_asset_id.strip()}
+                    if unified_asset_id.strip()
+                    else {}
+                ),
+            },
         )
 
     def link_resource(

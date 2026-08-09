@@ -168,6 +168,7 @@ def create_project_tools(agent: Any = None) -> list[Tool]:
                     "status": asset.status.value,
                     "size": asset.size,
                     "mime_type": asset.mime_type,
+                    "asset_id": str(asset.metadata.get("asset_id") or ""),
                 }
                 for asset in _service().store.list_assets(project.id)
             ]

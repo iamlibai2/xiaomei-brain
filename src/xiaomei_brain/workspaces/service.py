@@ -10,6 +10,8 @@ from typing import Any
 
 from .action_service import BusinessActionService
 from .action_store import BusinessActionStore
+from .asset_service import AssetService
+from .asset_store import AssetStore
 from .business_service import BusinessWorldService
 from .business_store import BusinessStore
 from .context_service import WorkspaceContextService
@@ -42,12 +44,31 @@ class WorkspaceService:
         self.store = store
         self._publish = publish
         self._clock = clock
+        self.assets = AssetService(
+            AssetStore(
+                store.db_path,
+                before_schema_migration=before_business_migration,
+            ),
+            store,
+            publish=publish,
+            clock=clock,
+        )
         self.business = BusinessWorldService(
             BusinessStore(
                 store.db_path,
                 before_schema_migration=before_business_migration,
             ),
             store,
+            publish=publish,
+            clock=clock,
+        )
+        self.context = WorkspaceContextService(
+            self.store,
+            self.business,
+            WorkspaceContextStore(
+                store.db_path,
+                before_schema_migration=before_business_migration,
+            ),
             publish=publish,
             clock=clock,
         )
@@ -58,6 +79,7 @@ class WorkspaceService:
             ),
             self.business,
             store,
+            self.context,
             publish=publish,
             clock=clock,
         )
@@ -72,16 +94,6 @@ class WorkspaceService:
         )
         self.business._on_collection_changed = self.datasets.invalidate_collection
         self.imports = TabularImportService(self.business)
-        self.context = WorkspaceContextService(
-            self.store,
-            self.business,
-            WorkspaceContextStore(
-                store.db_path,
-                before_schema_migration=before_business_migration,
-            ),
-            publish=publish,
-            clock=clock,
-        )
         self.surfaces = SurfaceService(
             store, datasets=self.datasets, publish=publish, clock=clock,
         )
@@ -269,6 +281,9 @@ class WorkspaceService:
             payload["business"]["contexts"] = self.context.list_snapshots(
                 workspace.id,
                 include_inactive=True,
+            )
+            payload["business"]["assets"] = self.assets.list_snapshots(
+                workspace.id,
             )
             payload["datasets"] = [
                 self.datasets.snapshot(item)

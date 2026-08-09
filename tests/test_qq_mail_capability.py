@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import time
 from email.message import EmailMessage
+from types import SimpleNamespace
 
 from xiaomei_brain.external_accounts import ExternalAccountStore
 from xiaomei_brain.plugins.runtimes.qq_mail.client import QQMailClient
 from xiaomei_brain.plugins.runtimes.qq_mail.runtime import QQMailRuntime
 from xiaomei_brain.plugins.runtimes.qq_mail.tools import create_qq_mail_tools
 from xiaomei_brain.tools.execution_context import bind_tool_execution
+from xiaomei_brain.workspaces import WorkspaceService, WorkspaceStore
 
 
 def _runtime(tmp_path):
@@ -100,6 +102,140 @@ def test_qq_mail_tools_resolve_account_from_sealed_person(tmp_path, monkeypatch)
         result = json.loads(tool.execute())
 
     assert result == {"account": "b@qq.com"}
+
+
+def test_read_qq_mail_projects_external_asset_into_focused_workspace(tmp_path):
+    service = WorkspaceService(WorkspaceStore(tmp_path / "workspaces.db"))
+    workspace = service.create(
+        name="客户经营",
+        purpose="持续经营客户",
+        created_by_person_id="person_a",
+    )
+    service.focus_session(
+        workspace.id,
+        session_id="session-1",
+        person_id="person_a",
+        turn_id="turn-1",
+    )
+
+    class FakeClient:
+        email_address = "person_a@qq.com"
+
+        @staticmethod
+        def read(uid, *, mailbox="INBOX"):
+            return {
+                "uid": uid,
+                "message_id": "<quote-42@example.com>",
+                "subject": "报价确认",
+                "from": ["customer@example.com"],
+                "to": ["person_a@qq.com"],
+                "date": "2026-08-09T09:00:00+08:00",
+                "body": "客户确认接受报价。",
+                "attachments": [{
+                    "attachment_id": "2",
+                    "name": "确认单.pdf",
+                    "content_type": "application/pdf",
+                    "size": 2048,
+                }],
+            }
+
+        @staticmethod
+        def download_attachment(uid, attachment_id, destination, *, mailbox="INBOX"):
+            return {
+                "downloaded": True,
+                "uid": uid,
+                "attachment_id": attachment_id,
+                "name": "确认单.pdf",
+                "path": (destination / "确认单.pdf").resolve().as_posix(),
+            }
+
+    runtime = SimpleNamespace(client_for=lambda _person_id: FakeClient())
+    tool = next(
+        item for item in create_qq_mail_tools(runtime)
+        if item.name == "read_qq_mail"
+    )
+    for _ in range(2):
+        with bind_tool_execution(
+            tool_call_id="call_qq",
+            tool_name="read_qq_mail",
+            arguments={"uid": "42"},
+            artifact_callback=None,
+            person_id="person_a",
+            session_id="session-1",
+            turn_id="turn-1",
+            workspace_service=service,
+        ):
+            result = json.loads(tool.execute(uid="42"))
+
+    assets = service.assets.store.list_for_workspace(workspace.id)
+    sources = service.business.store.list_data_sources(workspace.id)
+    observations = service.business.store.list_observations(workspace.id)
+    assert len(assets) == 2
+    assert len(sources) == len(observations) == 1
+    mail_asset = next(item for item in assets if item.kind == "email")
+    attachment_asset = next(
+        item for item in assets if item.source_type == "qq_mail_attachment"
+    )
+    assert mail_asset.nature == "external"
+    assert mail_asset.source_type == "qq_mail_message"
+    assert attachment_asset.nature == "external"
+    assert attachment_asset.mime_type == "application/pdf"
+    assert attachment_asset.size == 2048
+    assert sources[0].kind == "email"
+    assert observations[0].asset_id == mail_asset.id
+    assert result["workspace_asset_id"] == mail_asset.id
+    assert result["attachments"][0]["workspace_asset_id"] == attachment_asset.id
+    assert result["workspace_observation_id"] == observations[0].id
+    assert service.assets.store.has_link(
+        mail_asset.id,
+        workspace.id,
+        entity_type="observation",
+        entity_id=observations[0].id,
+        relation="observed_with",
+    )
+    download_tool = next(
+        item for item in create_qq_mail_tools(runtime)
+        if item.name == "download_qq_mail_attachment"
+    )
+    with bind_tool_execution(
+        tool_call_id="call_download",
+        tool_name="download_qq_mail_attachment",
+        arguments={"uid": "42", "attachment_id": "2"},
+        artifact_callback=None,
+        person_id="person_a",
+        session_id="session-1",
+        turn_id="turn-2",
+        workspace_root=str(tmp_path / "agent-workspace"),
+        workspace_service=service,
+    ):
+        downloaded = json.loads(download_tool.execute(uid="42", attachment_id="2"))
+
+    assert downloaded["source_asset_id"] == attachment_asset.id
+
+
+def test_read_qq_mail_without_workspace_keeps_plain_mail_result():
+    class FakeClient:
+        email_address = "person_a@qq.com"
+
+        @staticmethod
+        def read(uid, *, mailbox="INBOX"):
+            return {"uid": uid, "subject": "普通邮件", "body": "你好"}
+
+    runtime = SimpleNamespace(client_for=lambda _person_id: FakeClient())
+    tool = next(
+        item for item in create_qq_mail_tools(runtime)
+        if item.name == "read_qq_mail"
+    )
+    with bind_tool_execution(
+        tool_call_id="call_qq",
+        tool_name="read_qq_mail",
+        arguments={"uid": "7"},
+        artifact_callback=None,
+        person_id="person_a",
+    ):
+        result = json.loads(tool.execute(uid="7"))
+
+    assert result == {"uid": "7", "subject": "普通邮件", "body": "你好"}
 
 
 def test_qq_mail_client_search_decodes_and_filters_messages(monkeypatch):

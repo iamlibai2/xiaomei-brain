@@ -54,7 +54,16 @@ def create_import_tools(agent: Any) -> list[Tool]:
         local_path = Path(str(attachment.get("local_path") or ""))
         if not local_path.is_file():
             return {"error": "Attachment file is not available"}
+        workspace_asset_id = str(
+            attachment.get("workspace_asset_id") or ""
+        ).strip()
         try:
+            if workspace_asset_id:
+                service().assets.require_for_person(
+                    workspace_asset_id,
+                    workspace_id,
+                    person_id=context.person_id,
+                )
             result = service().imports.import_path(
                 workspace_id,
                 local_path,
@@ -65,10 +74,25 @@ def create_import_tools(agent: Any) -> list[Tool]:
                 collection_label=collection_label,
                 key_column=key_column,
                 source_person_id=context.person_id,
-                asset_id=attachment_id,
+                # The attachment ID only identifies one transport delivery.
+                # Once the message enters a Workspace, use its durable Asset ID
+                # so later imports, evidence and Project work share one identity.
+                asset_id=workspace_asset_id or str(
+                    attachment.get("id") or attachment_id
+                ),
                 session_id=context.session_id,
                 turn_id=context.turn_id,
             )
+            observation_id = str(
+                (result.get("observation") or {}).get("id") or ""
+            ).strip()
+            if workspace_asset_id and observation_id:
+                service().assets.link_observation(
+                    workspace_id,
+                    workspace_asset_id,
+                    person_id=context.person_id,
+                    observation_id=observation_id,
+                )
             if context.session_id and context.person_id:
                 service().focus_session(
                     workspace_id,

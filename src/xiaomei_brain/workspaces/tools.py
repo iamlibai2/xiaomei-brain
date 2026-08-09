@@ -545,6 +545,143 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             ),
         }
 
+    def list_workspace_assets(
+        workspace_id: str = "",
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """List stable Assets without exposing Agent-local filesystem paths."""
+        resolved = resolve_workspace_id(workspace_id)
+        return {
+            "workspace_id": resolved,
+            "assets": service().assets.list_snapshots(
+                resolved,
+                limit=max(1, min(int(limit), 200)),
+            ),
+        }
+
+    def read_workspace_asset(
+        asset_id: str,
+        workspace_id: str = "",
+        section: str = "",
+        offset: int = 0,
+        limit: int = 12000,
+    ) -> dict[str, Any]:
+        """Read a durable Workspace Asset through its managed content source."""
+        resolved = resolve_workspace_id(workspace_id)
+        try:
+            item, source_kind, source_session_id, source_id = (
+                service().assets.content_reference(
+                    asset_id,
+                    resolved,
+                    person_id=person_id(),
+                )
+            )
+            current = core()
+            db = getattr(agent, "conversation_db", None) or getattr(
+                current, "conversation_db", None,
+            )
+            if db is None:
+                raise RuntimeError("Conversation storage is not initialized")
+            agent_id = str(getattr(agent, "id", "default") or "default")
+            if source_kind == "attachment":
+                attachment = db.get_attachment_metadata(source_session_id, source_id)
+                if attachment is None:
+                    raise ValueError("Asset source Attachment no longer exists")
+                from pathlib import Path
+                from xiaomei_brain.gateway.attachments import restore_attachment_refs
+
+                restored, _images = restore_attachment_refs(
+                    agent_id,
+                    source_session_id,
+                    [attachment],
+                )
+                if not restored:
+                    raise ValueError("Asset source Attachment cannot be restored")
+                path = Path(str(restored[0].get("local_path") or ""))
+                mime_type = str(item.mime_type or attachment.get("mime_type") or "")
+            else:
+                artifact = db.get_artifact_metadata(source_session_id, source_id)
+                if artifact is None:
+                    raise ValueError("Asset source Artifact no longer exists")
+                if source_kind == "artifact_snapshot":
+                    from xiaomei_brain.gateway.artifacts import stored_artifact_path
+
+                    path = stored_artifact_path(
+                        agent_id,
+                        source_session_id,
+                        artifact,
+                    )
+                else:
+                    from xiaomei_brain.gateway.artifacts import managed_artifact_path
+
+                    path = managed_artifact_path(agent_id, artifact)
+                mime_type = str(item.mime_type or artifact.get("mime_type") or "")
+            suffix = path.suffix.casefold()
+            bounded_offset = max(0, int(offset))
+            bounded_limit = max(1, min(int(limit), 20000))
+            if mime_type.startswith("text/") or suffix in {
+                ".txt", ".md", ".markdown", ".csv", ".tsv", ".json",
+                ".html", ".htm", ".xml", ".yaml", ".yml", ".log",
+            }:
+                content = path.read_text(encoding="utf-8-sig")
+                chunk = content[bounded_offset:bounded_offset + bounded_limit]
+                next_offset = bounded_offset + len(chunk)
+                return {
+                    "asset": service().assets.snapshot(item),
+                    "content": chunk,
+                    "offset": bounded_offset,
+                    "next_offset": next_offset if next_offset < len(content) else None,
+                }
+
+            registry = getattr(agent, "_registry", None)
+            db_path = getattr(db, "db_path", None)
+            if registry is not None and item.kind == "document":
+                from xiaomei_brain.documents.service import DocumentService
+
+                return {
+                    "asset": service().assets.snapshot(item),
+                    "document": DocumentService(registry, db_path).read(
+                        {
+                            "id": item.id,
+                            "name": item.name,
+                            "mime_type": mime_type,
+                            "local_path": str(path),
+                        },
+                        session_id=f"workspace-asset:{item.id}",
+                        section=section,
+                        offset=bounded_offset,
+                        limit=bounded_limit,
+                    ),
+                }
+            return {
+                "asset": service().assets.snapshot(item),
+                "readable": False,
+                "message": "This Asset requires its media-specific understanding tool",
+            }
+        except Exception as exc:
+            return {"error": str(exc), "asset_id": asset_id}
+
+    def preserve_workspace_asset_as_evidence(
+        asset_id: str,
+        reason: str,
+        workspace_id: str = "",
+    ) -> dict[str, Any]:
+        """Preserve the current working revision as immutable business evidence."""
+        resolved = resolve_workspace_id(workspace_id)
+        session_id, turn_id = context()
+        item = service().assets.preserve_as_evidence(
+            resolved,
+            asset_id,
+            person_id=person_id(),
+            reason=reason,
+            session_id=session_id,
+            turn_id=turn_id,
+        )
+        return {
+            "workspace_id": resolved,
+            "evidence": service().assets.snapshot(item),
+        }
+
     component_schema = {
         "type": "object",
         "additionalProperties": True,
@@ -1100,6 +1237,65 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
                 },
             },
             func=list_business_context,
+            category="workspace",
+        ),
+        Tool(
+            name="list_workspace_assets",
+            description=(
+                "List stable digital Assets linked to the focused Workspace. "
+                "Use this to find durable files by asset_id instead of guessing "
+                "attachments, outputs or Project paths."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "workspace_id": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200},
+                },
+            },
+            func=list_workspace_assets,
+            category="workspace",
+        ),
+        Tool(
+            name="read_workspace_asset",
+            description=(
+                "Read a stable Asset from the focused Workspace by asset_id. "
+                "Use this after list_workspace_assets instead of guessing a filesystem path "
+                "or asking the Person to upload the same file again. Supports text, Word, "
+                "PDF, spreadsheet and presentation content."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "asset_id": {"type": "string"},
+                    "workspace_id": {"type": "string"},
+                    "section": {"type": "string"},
+                    "offset": {"type": "integer", "minimum": 0},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 20000},
+                },
+                "required": ["asset_id"],
+            },
+            func=read_workspace_asset,
+            category="workspace",
+        ),
+        Tool(
+            name="preserve_workspace_asset_as_evidence",
+            description=(
+                "Preserve the current revision of a working Workspace Asset as immutable "
+                "business evidence after it has been sent, signed, accepted or used as the "
+                "basis of a recorded business fact. This does not create a user-visible "
+                "versioning workflow and never overwrites earlier evidence."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "asset_id": {"type": "string"},
+                    "reason": {"type": "string"},
+                    "workspace_id": {"type": "string"},
+                },
+                "required": ["asset_id", "reason"],
+            },
+            func=preserve_workspace_asset_as_evidence,
             category="workspace",
         ),
     ]

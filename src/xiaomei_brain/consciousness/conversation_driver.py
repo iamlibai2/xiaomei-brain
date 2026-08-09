@@ -6,10 +6,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import threading
 import time
+from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from .internal_display import InternalDisplay
@@ -117,6 +120,11 @@ class ConversationDriver:
         gm = self._goal_manager
         parent = self._parent
 
+        # Record the trusted original input before slash commands inject Skill
+        # instructions into ``msg.content`` for the model.
+        asset_ids = self._register_message_assets(msg)
+        self._register_message_observation(msg, asset_ids)
+
         # 斜杠命令拦截：/skill-name 注入技能内容
         self._handle_slash_command(msg)
 
@@ -194,6 +202,191 @@ class ConversationDriver:
             intent_type=PurposeIntentType.CHAT, confidence=1.0, reasoning="聊天模式，跳过意图分析")
         gm.log_intent_context(intent_result, "", msg.content)
         self._run_chat(msg, "")
+
+    def _register_message_assets(self, msg: LivingMessage) -> list[str]:
+        """Project trusted message attachments into the focused Workspace."""
+        attachments = tuple(getattr(msg, "attachments", None) or ())
+        if not attachments:
+            return []
+        service = getattr(
+            getattr(self._parent, "agent", None),
+            "workspace_service",
+            None,
+        )
+        if service is None:
+            return []
+        person_id = str(getattr(msg, "user_id", "") or "").strip()
+        session_id = str(getattr(msg, "session_id", "") or "").strip()
+        if not person_id or not session_id:
+            return []
+        workspace_id = service.store.focused_workspace_id(
+            session_id,
+            person_id=person_id,
+        )
+        if not workspace_id:
+            return []
+        registered: list[str] = []
+        for attachment in attachments:
+            try:
+                source_artifact = attachment.get("source_artifact")
+                existing_asset_id = (
+                    str(source_artifact.get("workspace_asset_id") or "").strip()
+                    if isinstance(source_artifact, dict)
+                    else ""
+                )
+                if existing_asset_id:
+                    asset = service.assets.link_existing(
+                        workspace_id,
+                        existing_asset_id,
+                        person_id=person_id,
+                        session_id=session_id,
+                    )
+                    attachment["workspace_asset_id"] = asset.id
+                    registered.append(asset.id)
+                    continue
+                path = Path(str(attachment.get("local_path") or ""))
+                if not path.is_file():
+                    continue
+                digest = hashlib.sha256()
+                with path.open("rb") as stream:
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                asset = service.assets.register_attachment(
+                    workspace_id,
+                    person_id=person_id,
+                    session_id=session_id,
+                    attachment=attachment,
+                    sha256=digest.hexdigest(),
+                )
+                attachment["workspace_asset_id"] = asset.id
+                registered.append(asset.id)
+            except Exception:
+                # Conversation input remains authoritative. Asset registration
+                # is a durable business projection and must not block chat.
+                logger.exception(
+                    "Failed to register attachment %s in focused Workspace",
+                    attachment.get("id"),
+                )
+        return list(dict.fromkeys(registered))
+
+    def _register_message_observation(
+        self,
+        msg: LivingMessage,
+        asset_ids: list[str],
+    ) -> str:
+        """Project one original human message into the focused business world."""
+        service = getattr(
+            getattr(self._parent, "agent", None),
+            "workspace_service",
+            None,
+        )
+        if service is None:
+            return ""
+        person_id = str(getattr(msg, "user_id", "") or "").strip()
+        session_id = str(getattr(msg, "session_id", "") or "").strip()
+        turn_id = str(getattr(msg, "turn_id", "") or "").strip()
+        if not person_id or person_id in {"global", "system"} or not session_id:
+            return ""
+        workspace_id = service.store.focused_workspace_id(
+            session_id,
+            person_id=person_id,
+        )
+        if not workspace_id:
+            return ""
+        try:
+            metadata: dict[str, Any] = {}
+            message_id = getattr(msg, "message_id", None)
+            db = getattr(getattr(self._parent, "agent", None), "conversation_db", None)
+            if isinstance(message_id, int) and db is not None:
+                row = db.get_user_message(message_id, session_id)
+                if row is not None:
+                    raw_metadata = row.get("metadata")
+                    try:
+                        metadata = (
+                            dict(json.loads(raw_metadata))
+                            if isinstance(raw_metadata, str) and raw_metadata
+                            else dict(raw_metadata or {})
+                        )
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        metadata = {}
+            channel = str(metadata.get("channel") or "conversation").strip().lower()
+            source_kind = (
+                "channel"
+                if channel not in {"", "conversation", "cli", "ws", "desktop"}
+                else "conversation"
+            )
+            locator = (
+                f"channel:{channel}:session:{session_id}"
+                if source_kind == "channel"
+                else f"session:{session_id}"
+            )
+            source = service.business.store.find_data_source(
+                workspace_id,
+                kind=source_kind,
+                locator=locator,
+            )
+            if source is None:
+                source = service.business.create_data_source(
+                    workspace_id,
+                    kind=source_kind,
+                    name=(f"{channel} conversation" if source_kind == "channel" else "Conversation"),
+                    locator=locator,
+                    session_id=session_id,
+                    turn_id=turn_id,
+                )
+            external_message_id = str(
+                metadata.get("external_message_id") or "",
+            ).strip()
+            external_ref = (
+                f"external:{external_message_id}"
+                if external_message_id
+                else f"message:{message_id}"
+                if isinstance(message_id, int)
+                else f"turn:{turn_id}"
+            )
+            occurred_at = metadata.get("external_timestamp")
+            try:
+                occurred_at = float(occurred_at) if occurred_at is not None else None
+                if occurred_at is not None and occurred_at > 10_000_000_000:
+                    occurred_at /= 1000
+            except (TypeError, ValueError):
+                occurred_at = None
+            attributes = {
+                "channel": channel,
+                "message_id": message_id,
+                "attachment_asset_ids": list(asset_ids),
+            }
+            external_subject = str(metadata.get("external_subject") or "").strip()
+            if external_subject:
+                attributes["external_subject"] = external_subject
+            observation = service.business.observe(
+                workspace_id,
+                content=str(msg.content or ""),
+                data_source_id=source.id,
+                source_person_id=person_id,
+                external_ref=external_ref,
+                attributes=attributes,
+                asset_id=asset_ids[0] if asset_ids else "",
+                occurred_at=occurred_at,
+                session_id=session_id,
+                turn_id=turn_id,
+            )
+            for asset_id in asset_ids:
+                service.assets.link_observation(
+                    workspace_id,
+                    asset_id,
+                    person_id=person_id,
+                    observation_id=observation.id,
+                )
+            return observation.id
+        except Exception:
+            # The durable conversation remains authoritative. Business-world
+            # projection must never prevent the Agent from answering.
+            logger.exception(
+                "Failed to register message observation for session %s",
+                session_id,
+            )
+            return ""
 
     # ── Slash command ────────────────────────────────────────
 
@@ -1226,6 +1419,15 @@ class ConversationDriver:
             )
             if not artifacts:
                 return []
+            source_asset_id = ""
+            try:
+                structured_result = json.loads(result)
+                if isinstance(structured_result, dict):
+                    source_asset_id = str(
+                        structured_result.get("source_asset_id") or ""
+                    ).strip()
+            except (TypeError, ValueError):
+                pass
             published: list[dict[str, Any]] = []
             db = getattr(getattr(parent, "agent", None), "conversation_db", None)
             presentation_message = ""
@@ -1237,6 +1439,50 @@ class ConversationDriver:
                 artifact_session_id = str(
                     artifact.get("session_id") or session_id,
                 )
+                workspace_asset = None
+                focused_workspace_id = ""
+                workspace_service = getattr(
+                    getattr(parent, "agent", None),
+                    "workspace_service",
+                    None,
+                )
+                if workspace_service is not None:
+                    try:
+                        focused_workspace_id = (
+                            workspace_service.store.focused_workspace_id(
+                                session_id,
+                                person_id=user_id,
+                            )
+                        )
+                        if focused_workspace_id:
+                            source_path = managed_artifact_path(
+                                str(getattr(parent, "_agent_id", "default")),
+                                artifact,
+                            )
+                            workspace_asset = workspace_service.assets.register_artifact(
+                                focused_workspace_id,
+                                person_id=user_id,
+                                session_id=session_id,
+                                artifact=artifact,
+                                sha256=hashlib.sha256(
+                                    source_path.read_bytes(),
+                                ).hexdigest(),
+                            )
+                            artifact["workspace_asset_id"] = workspace_asset.id
+                            if source_asset_id:
+                                workspace_service.assets.link_materialization(
+                                    focused_workspace_id,
+                                    workspace_asset.id,
+                                    person_id=user_id,
+                                    source_asset_id=source_asset_id,
+                                )
+                    except Exception:
+                        # Artifact delivery remains authoritative. Workspace
+                        # adoption is a secondary durable projection.
+                        logger.exception(
+                            "Failed to register artifact %s in focused Workspace",
+                            artifact.get("id"),
+                        )
                 if db is not None:
                     db.save_artifact(
                         artifact_session_id,
@@ -1296,7 +1542,7 @@ class ConversationDriver:
                             ProjectActorType,
                         )
 
-                        project_service.import_delivered_asset(
+                        project_asset = project_service.import_delivered_asset(
                             project_id,
                             actor=ProjectActor(
                                 ProjectActorType.AGENT,
@@ -1309,7 +1555,22 @@ class ConversationDriver:
                             kind=str(artifact.get("kind") or "file"),
                             name=str(artifact.get("name") or ""),
                             source_id=str(artifact.get("id") or ""),
+                            unified_asset_id=(
+                                workspace_asset.id if workspace_asset is not None else ""
+                            ),
                         )
+                        if (
+                            workspace_service is not None
+                            and workspace_asset is not None
+                            and focused_workspace_id
+                        ):
+                            workspace_service.assets.link_project_asset(
+                                focused_workspace_id,
+                                workspace_asset.id,
+                                person_id=user_id,
+                                project_id=project_id,
+                                project_asset_id=project_asset.id,
+                            )
                     except Exception:
                         # Conversation delivery remains authoritative. Project
                         # adoption is a secondary durable projection.

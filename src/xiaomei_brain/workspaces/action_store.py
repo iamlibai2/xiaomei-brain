@@ -13,7 +13,7 @@ from xiaomei_brain.base.sqlite_store import SQLiteStore
 from .models import BusinessActionDefinition, BusinessActionRun
 
 SCHEMA_COMPONENT = "workspace_actions"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def _new_id(prefix: str) -> str:
@@ -80,6 +80,7 @@ class BusinessActionStore(SQLiteStore):
                 session_id TEXT NOT NULL DEFAULT '',
                 turn_id TEXT NOT NULL DEFAULT '',
                 observation_id TEXT NOT NULL DEFAULT '',
+                context_snapshot_json TEXT NOT NULL DEFAULT '{}',
                 started_at REAL NOT NULL,
                 completed_at REAL,
                 FOREIGN KEY (action_id) REFERENCES business_action_definitions(id),
@@ -105,6 +106,15 @@ class BusinessActionStore(SQLiteStore):
                     ON DELETE CASCADE
             );
         """)
+        run_columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(business_action_runs)")
+        }
+        if "context_snapshot_json" not in run_columns:
+            conn.execute(
+                """ALTER TABLE business_action_runs
+                   ADD COLUMN context_snapshot_json TEXT NOT NULL DEFAULT '{}'"""
+            )
         conn.commit()
         self._set_schema_version(SCHEMA_COMPONENT, SCHEMA_VERSION)
 
@@ -291,6 +301,7 @@ class BusinessActionStore(SQLiteStore):
         session_id: str,
         turn_id: str,
         observation_id: str,
+        context_snapshot: dict[str, Any] | None = None,
         now: float | None = None,
     ) -> BusinessActionRun:
         timestamp = time.time() if now is None else now
@@ -302,6 +313,7 @@ class BusinessActionStore(SQLiteStore):
             input_values=dict(input_values), record_change_ids=(), event_id="",
             error="", person_id=person_id, session_id=session_id,
             turn_id=turn_id, observation_id=observation_id,
+            context_snapshot=dict(context_snapshot or {}),
             started_at=timestamp, completed_at=None,
         )
         self._get_conn().execute(
@@ -309,13 +321,14 @@ class BusinessActionStore(SQLiteStore):
                 id, action_id, workspace_id, collection_id, record_id, status,
                 business_intent, input_values_json, record_change_ids_json,
                 event_id, error, person_id, session_id, turn_id, observation_id,
-                started_at, completed_at
-            ) VALUES (?, ?, ?, ?, '', 'running', ?, ?, '[]', '', '', ?, ?, ?, ?, ?, NULL)""",
+                context_snapshot_json, started_at, completed_at
+            ) VALUES (?, ?, ?, ?, '', 'running', ?, ?, '[]', '', '', ?, ?, ?, ?, ?, ?, NULL)""",
             (
                 run.id, run.action_id, run.workspace_id, run.collection_id,
                 run.business_intent,
                 json.dumps(run.input_values, ensure_ascii=False, default=str),
                 run.person_id, run.session_id, run.turn_id, run.observation_id,
+                json.dumps(run.context_snapshot, ensure_ascii=False, default=str),
                 run.started_at,
             ),
         )
@@ -395,6 +408,7 @@ class BusinessActionStore(SQLiteStore):
             event_id=str(row["event_id"]), error=str(row["error"]),
             person_id=str(row["person_id"]), session_id=str(row["session_id"]),
             turn_id=str(row["turn_id"]), observation_id=str(row["observation_id"]),
+            context_snapshot=dict(json.loads(row["context_snapshot_json"] or "{}")),
             started_at=float(row["started_at"]),
             completed_at=(
                 float(row["completed_at"]) if row["completed_at"] is not None else None

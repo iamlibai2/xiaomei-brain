@@ -580,6 +580,8 @@ Context 已落地第一版：Agent 工具与 Desktop 都能将一个 Session 明
 
 稳定业务 Context 已落地最小闭环：Agent 可以将术语、默认做法、约束、决定、计算口径和业务边界保存到 Workspace，并按 Workspace、当前 Person 或具体业务对象确定作用范围。Context 可关联来源 Observation；更正时旧条目进入 `superseded`，替代条目继续生效，历史不会被覆盖。当前只允许 Agent 明确记录和更正，不自动把一句偶然表达提升为长期规则；自动候选发现、正式制度和复杂冲突裁决仍暂缓。
 
+Action 与 Context 的历史解释链路已经接通：每次 `BusinessActionRun` 开始前会确定性解析 Workspace、当前 Person 和目标业务记录当时实际生效的 Context，应用合法的个案覆盖，并将 Context ID、修订号及覆盖关系作为不可变快照引用保存。后续规则通过更正链产生新条目，不会改写旧 ActionRun 当时依据的规则；该快照只用于审计和解释，不把 Context 变成固定 Workflow，也不自动替 Agent 作业务判断。
+
 ### 阶段 E：Asset 与 DataSource 收束
 
 - 统一 Asset 注册与 asset_id 工具访问；
@@ -587,6 +589,16 @@ Context 已落地第一版：Agent 工具与 Desktop 都能将一个 Session 明
 - working、evidence、external 三类 Asset；
 - 对话、文件和现有 Channel 进入统一 Observation；
 - 后续按真实需求增加邮箱、数据库和企业系统来源。
+
+Asset 统一身份已落地第一步：`workspaces.db` 新增 Agent 级 Asset 注册表与通用业务关系表。会话已经聚焦 Workspace 时，Agent 生成或修改的真实 Artifact 会在原会话交付成功后自动登记为稳定 `asset_id`；同一 Agent 工作文件跨 Turn、跨 Session 修改时复用 Asset 身份并提升修订号，对话 Artifact 仍保留每轮交付历史。人物上传到该会话的 Attachment 也会登记到当前 Workspace，之后可以作为同一个 Asset 继续读取。显式交付给 Project 的文件继续保留 Project 自己的副本、角色和验收元数据，同时通过 `asset_id` 与统一 Asset 建立投影关系。工作 Asset 在已发送、签署、验收或成为业务事实依据时，可以将当时修订保存为不可覆盖的 evidence Asset；后续继续修改工作文件不会改变既有证据。Workspace 快照和 Agent 查询工具不暴露宿主机路径；Agent 可以通过 `asset_id` 直接读取文本、Word、PDF、表格和演示文稿，不再猜测工作区路径或要求人物重复上传。当前 Attachment、Artifact 和 ProjectAsset 仍是各自输入、交付与项目执行的权威内容快照，Asset 登记只是可失败的业务投影，不会阻断对话。
+
+统一 Observation 已接入真实会话入口：已聚焦 Workspace 中的人物原始消息在斜杠 Skill 注入前登记为 Observation；Desktop/CLI 按 Conversation DataSource 归档，飞书、钉钉等按 Channel DataSource 保存渠道、外部消息 ID、外部发生时间和主题。消息携带的 Asset 通过关系表关联到同一 Observation，不复制正文或文件。已经明确聚焦 Workspace 的群会话还会投影未触发 Agent 的背景群消息，但不会创建 Turn 或唤醒 Agent；未聚焦群聊仍只保留在原 `group_messages`。ConversationDB 和 Channel 原始消息仍是权威记录，Observation 是可失败、可幂等重建的业务投影，不会阻塞实时回复。
+
+文件导入也已接入同一追溯链：CSV、TSV 或 XLSX Attachment 在进入 Workspace 时先获得稳定 `asset_id`，表格导入形成的 Observation 保存该 Asset 身份并建立显式关系，再由 Observation 关联本次解析或更新的业务 Record。临时 `attachment_id` 只用于定位当前消息中的传输对象，不再充当长期业务资产身份。
+
+外部 Asset 已通过真实邮箱入口落地第一条纵向链路：人物在已聚焦 Workspace 的会话中读取 QQ 邮件时，邮件仍以邮箱为权威来源，同时按账户、邮箱目录与稳定邮件标识登记为 `external` Asset，并形成可幂等重建的 email DataSource 与 Observation。未聚焦 Workspace 的普通邮箱使用保持原样；Workspace 投影失败也不会阻断读信。后续其他邮箱、飞书文档和企业系统沿用这一语义，但由各自能力插件负责来源细节。
+
+邮件附件同时保留外部身份与本地工作身份：读信时附件按邮箱、目录、邮件 UID 与附件 ID 登记为 external Asset；真正下载后继续复用既有 Artifact 交付链登记为 working Asset，并通过 `materialized_from` / `materialized_as` 关系连接两者。外部引用不会伪装成本地文件，本地副本也不会抹掉它来自哪封邮件。
 
 每个阶段都必须产生可对话、可查看、可重启恢复的真实纵向结果，不能只增加空接口和抽象层。
 

@@ -163,6 +163,7 @@ def public_artifact_metadata(artifact: dict[str, Any]) -> dict[str, Any]:
         "id", "name", "mime_type", "size", "kind", "description",
         "tool_call_id", "turn_id", "workspace_role", "session_id",
         "updated", "created_at", "updated_at", "presented_at",
+        "workspace_asset_id",
     )
     return {key: artifact[key] for key in keys if key in artifact}
 
@@ -172,18 +173,7 @@ def read_stored_artifact(
     session_id: str,
     artifact: dict[str, Any],
 ) -> dict[str, Any]:
-    artifact_id = str(artifact.get("id", ""))
-    suffix = str(artifact.get("storage_suffix", ""))
-    if not re.fullmatch(r"[a-f0-9]{32}", artifact_id):
-        raise ArtifactError("产物标识无效")
-    if suffix and not re.fullmatch(r"\.[A-Za-z0-9]{1,15}", suffix):
-        legacy_suffix = Path(str(artifact.get("name") or "")).suffix.lower()
-        if (
-            suffix != legacy_suffix
-            or not re.fullmatch(r"\.[A-Za-z0-9]{1,15}[》〉】）\)\]」』”’]+", suffix)
-        ):
-            raise ArtifactError("产物类型无效")
-    path = _artifact_storage_path(agent_id, session_id, artifact_id, suffix)
+    path = stored_artifact_path(agent_id, session_id, artifact)
     try:
         data = path.read_bytes()
     except FileNotFoundError as exc:
@@ -199,6 +189,26 @@ def read_stored_artifact(
         **public_artifact_metadata(artifact),
         "data_base64": base64.b64encode(data).decode("ascii"),
     }
+
+
+def stored_artifact_path(
+    agent_id: str,
+    session_id: str,
+    artifact: dict[str, Any],
+) -> Path:
+    """Resolve the immutable managed snapshot for a validated Artifact."""
+    artifact_id = str(artifact.get("id", ""))
+    suffix = str(artifact.get("storage_suffix", ""))
+    if not re.fullmatch(r"[a-f0-9]{32}", artifact_id):
+        raise ArtifactError("产物标识无效")
+    if suffix and not re.fullmatch(r"\.[A-Za-z0-9]{1,15}", suffix):
+        legacy_suffix = Path(str(artifact.get("name") or "")).suffix.lower()
+        if (
+            suffix != legacy_suffix
+            or not re.fullmatch(r"\.[A-Za-z0-9]{1,15}[》〉】）\)\]」』”’]+", suffix)
+        ):
+            raise ArtifactError("产物类型无效")
+    return _artifact_storage_path(agent_id, session_id, artifact_id, suffix)
 
 
 def project_stored_artifact(

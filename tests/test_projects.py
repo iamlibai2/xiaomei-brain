@@ -342,11 +342,13 @@ def test_delivered_asset_update_preserves_identity_and_filename(tmp_path):
     first = service.import_delivered_asset(
         project.id, actor=actor, source_path=source, kind="text",
         source_id="artifact_first",
+        unified_asset_id="asset_stable",
     )
     source.write_text("second revision", encoding="utf-8")
     second = service.import_delivered_asset(
         project.id, actor=actor, source_path=source, kind="text",
         source_id="artifact_second",
+        unified_asset_id="asset_stable",
     )
 
     assert second.id == first.id
@@ -354,6 +356,7 @@ def test_delivered_asset_update_preserves_identity_and_filename(tmp_path):
     assert second.sha256 != first.sha256
     assert second.source_id == "artifact_second"
     assert second.metadata["logical_name"] == "demo.html"
+    assert second.metadata["asset_id"] == "asset_stable"
     assert len(service.store.list_assets(project.id)) == 1
     delivered = Path(project.state_root) / second.relative_uri
     assert delivered.read_text(encoding="utf-8") == "second revision"

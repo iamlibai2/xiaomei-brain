@@ -232,6 +232,28 @@ class ChatMethods:
                         "artifact_id": reference.artifact_id,
                         "session_id": reference.session_id,
                     }
+                    workspace_asset_id = str(
+                        artifact.get("workspace_asset_id") or "",
+                    ).strip()
+                    if not workspace_asset_id:
+                        workspace_service = getattr(
+                            getattr(living, "agent", None),
+                            "workspace_service",
+                            None,
+                        )
+                        if workspace_service is not None:
+                            linked_asset = (
+                                workspace_service.assets.find_by_artifact_reference(
+                                    reference.session_id,
+                                    reference.artifact_id,
+                                )
+                            )
+                            if linked_asset is not None:
+                                workspace_asset_id = linked_asset.id
+                    if workspace_asset_id:
+                        item["source_artifact"]["workspace_asset_id"] = (
+                            workspace_asset_id
+                        )
                     if reference.presentation_mode is not None:
                         item["presentation_mode"] = reference.presentation_mode
                     managed_relative_path = str(

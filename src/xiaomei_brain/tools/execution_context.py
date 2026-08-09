@@ -41,6 +41,7 @@ class ToolExecutionContext:
     execution_environment: Any = None
     project_context: ProjectRuntimeContext | None = None
     project_service: Any = None
+    workspace_service: Any = None
     cancel_check: Callable[[], bool] | None = None
 
     def publish_artifacts(self, result: str) -> Any:
@@ -135,6 +136,7 @@ def bind_tool_execution(
     execution_environment: Any = None,
     project_context: ProjectRuntimeContext | None = None,
     project_service: Any = None,
+    workspace_service: Any = None,
     cancel_check: Callable[[], bool] | None = None,
 ) -> Iterator[ToolExecutionContext]:
     """Expose one tool call's immutable context while its function starts."""
@@ -160,6 +162,7 @@ def bind_tool_execution(
         execution_environment=execution_environment,
         project_context=project_context,
         project_service=project_service,
+        workspace_service=workspace_service,
         cancel_check=cancel_check,
     )
     token = _current_context.set(context)

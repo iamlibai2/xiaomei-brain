@@ -181,6 +181,58 @@ class WorkspaceContextService:
             )
         ]
 
+    def build_action_snapshot(
+        self,
+        workspace_id: str,
+        *,
+        person_id: str,
+        record_id: str = "",
+    ) -> dict[str, Any]:
+        """Capture immutable references to the Context effective for one ActionRun.
+
+        Context entries are never edited in place: corrections create a new entry and
+        supersede the old one. Persisting IDs and revisions is therefore enough to
+        explain an old run without copying durable business rules into every run.
+        """
+
+        record_ids = {record_id.strip()} if record_id.strip() else set()
+        applicable = self._applicable_contexts(
+            workspace_id,
+            person_id=person_id.strip(),
+            record_ids=record_ids,
+            limit=64,
+        )
+        overridden_context_ids = {
+            item.overrides_context_id
+            for item in applicable
+            if item.overrides_context_id
+        }
+        effective = [
+            item for item in applicable if item.id not in overridden_context_ids
+        ]
+        return {
+            "captured_at": self._clock(),
+            "record_id": record_id.strip(),
+            "contexts": [
+                {
+                    "id": item.id,
+                    "revision": item.revision,
+                    "context_type": item.context_type,
+                    "scope_type": item.scope_type,
+                    "scope_id": item.scope_id,
+                }
+                for item in effective
+            ],
+            "context_overrides": [
+                {
+                    "overriding_context_id": item.id,
+                    "overridden_context_id": item.overrides_context_id,
+                }
+                for item in applicable
+                if item.overrides_context_id
+            ],
+        }
+
     @staticmethod
     def entry_snapshot(item: WorkspaceContextEntry) -> dict[str, Any]:
         return {

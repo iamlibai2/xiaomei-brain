@@ -67,6 +67,40 @@ class Observation:
 
 
 @dataclass(frozen=True)
+class Asset:
+    """One stable digital object in the Agent's business world."""
+
+    id: str
+    nature: str
+    name: str
+    kind: str
+    mime_type: str
+    size: int
+    sha256: str
+    status: str
+    source_type: str
+    source_id: str
+    source_session_id: str
+    locator: str
+    metadata: dict[str, Any]
+    revision: int
+    created_at: float
+    updated_at: float
+
+
+@dataclass(frozen=True)
+class AssetLink:
+    """A relationship between one Asset and a durable business object."""
+
+    asset_id: str
+    workspace_id: str
+    entity_type: str
+    entity_id: str
+    relation: str
+    created_at: float
+
+
+@dataclass(frozen=True)
 class CollectionDefinition:
     id: str
     workspace_id: str
@@ -221,6 +255,7 @@ class BusinessActionRun:
     session_id: str
     turn_id: str
     observation_id: str
+    context_snapshot: dict[str, Any]
     started_at: float
     completed_at: float | None
 

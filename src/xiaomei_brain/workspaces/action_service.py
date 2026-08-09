@@ -8,6 +8,7 @@ from typing import Any
 
 from .action_store import BusinessActionStore
 from .business_service import BusinessWorldService
+from .context_service import WorkspaceContextService
 from .models import (
     BusinessActionDefinition,
     BusinessActionRun,
@@ -28,6 +29,7 @@ class BusinessActionService:
         store: BusinessActionStore,
         business: BusinessWorldService,
         workspace_store: WorkspaceStore,
+        context: WorkspaceContextService,
         *,
         publish: PublishCallback | None = None,
         clock: Callable[[], float] = time.time,
@@ -35,6 +37,7 @@ class BusinessActionService:
         self.store = store
         self.business = business
         self.workspace_store = workspace_store
+        self.context = context
         self._publish = publish
         self._clock = clock
 
@@ -282,6 +285,11 @@ class BusinessActionService:
             for field_id, value in normalized.items()
         ):
             raise ValueError("Business Action would not change the current business state")
+        context_snapshot = self.context.build_action_snapshot(
+            definition.workspace_id,
+            person_id=person_id,
+            record_id=current_record.id if current_record is not None else "",
+        )
         run = self.store.start_run(
             definition,
             business_intent=business_intent.strip(),
@@ -290,6 +298,7 @@ class BusinessActionService:
             session_id=session_id,
             turn_id=turn_id,
             observation_id=observation_id.strip(),
+            context_snapshot=context_snapshot,
             now=self._clock(),
         )
         try:
@@ -396,6 +405,7 @@ class BusinessActionService:
             "session_id": item.session_id,
             "turn_id": item.turn_id,
             "observation_id": item.observation_id,
+            "context_snapshot": item.context_snapshot,
             "started_at": item.started_at,
             "completed_at": item.completed_at,
         }

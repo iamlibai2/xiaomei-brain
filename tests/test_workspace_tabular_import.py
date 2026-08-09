@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from types import SimpleNamespace
 
 from xiaomei_brain.tools.execution_context import bind_tool_execution
@@ -110,6 +111,109 @@ def test_import_tool_reads_only_current_execution_attachment(tmp_path):
         "session-1",
         person_id="person-1",
     ).id == workspace.id
+
+
+def test_import_tool_links_stable_workspace_asset_to_import_observation(tmp_path):
+    service = _service(tmp_path)
+    workspace = service.create(
+        name="销售",
+        purpose="经营销售数据",
+        created_by_person_id="person-1",
+    )
+    source = tmp_path / "sales.csv"
+    source.write_text("order_id,amount\nSO-1,99\n", encoding="utf-8")
+    asset = service.assets.register_attachment(
+        workspace.id,
+        person_id="person-1",
+        session_id="session-1",
+        attachment={
+            "id": "attachment-1",
+            "name": "sales.csv",
+            "kind": "file",
+            "mime_type": "text/csv",
+            "size": source.stat().st_size,
+        },
+        sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+    )
+    core = SimpleNamespace(user_id="person-1", session_id="session-1", turn_id="turn-1")
+    agent = SimpleNamespace(workspace_service=service, _get_agent=lambda: core)
+    tool = {item.name: item for item in create_workspace_tools(agent)}["import_tabular_data"]
+
+    with bind_tool_execution(
+        tool_call_id="call-1",
+        tool_name="import_tabular_data",
+        arguments={},
+        artifact_callback=None,
+        session_id="session-1",
+        turn_id="turn-1",
+        person_id="person-1",
+        attachments=({
+            "id": "attachment-1",
+            "name": "sales.csv",
+            "local_path": str(source),
+            "workspace_asset_id": asset.id,
+        },),
+    ):
+        result = tool.execute(
+            workspace_id=workspace.id,
+            attachment_id="attachment-1",
+        )
+
+    assert result["success"] is True
+    assert result["observation"]["asset_id"] == asset.id
+    assert service.assets.store.has_link(
+        asset.id,
+        workspace.id,
+        entity_type="observation",
+        entity_id=result["observation"]["id"],
+        relation="observed_with",
+    )
+
+
+def test_import_tool_rejects_unlinked_workspace_asset_before_import(tmp_path):
+    service = _service(tmp_path)
+    workspace = service.create(
+        name="销售",
+        purpose="经营销售数据",
+        created_by_person_id="person-1",
+    )
+    other = service.create(
+        name="采购",
+        purpose="经营采购数据",
+        created_by_person_id="person-1",
+    )
+    source = tmp_path / "sales.csv"
+    source.write_text("order_id,amount\nSO-1,99\n", encoding="utf-8")
+    foreign_asset = service.assets.register_attachment(
+        other.id,
+        person_id="person-1",
+        session_id="session-1",
+        attachment={"id": "attachment-1", "name": "sales.csv"},
+        sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+    )
+    core = SimpleNamespace(user_id="person-1", session_id="session-1", turn_id="turn-1")
+    agent = SimpleNamespace(workspace_service=service, _get_agent=lambda: core)
+    tool = {item.name: item for item in create_workspace_tools(agent)}["import_tabular_data"]
+
+    with bind_tool_execution(
+        tool_call_id="call-1",
+        tool_name="import_tabular_data",
+        arguments={},
+        artifact_callback=None,
+        session_id="session-1",
+        turn_id="turn-1",
+        person_id="person-1",
+        attachments=({
+            "id": "attachment-1",
+            "name": "sales.csv",
+            "local_path": str(source),
+            "workspace_asset_id": foreign_asset.id,
+        },),
+    ):
+        result = tool.execute(workspace_id=workspace.id)
+
+    assert result["error"] == f"'{foreign_asset.id}'"
+    assert service.business.store.list_data_sources(workspace.id) == []
 
 
 def test_import_tool_resolves_the_only_compatible_attachment_without_opaque_id(tmp_path):

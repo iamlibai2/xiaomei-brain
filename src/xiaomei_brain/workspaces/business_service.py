@@ -24,7 +24,8 @@ from .store import WorkspaceStore
 PublishCallback = Callable[..., Any]
 
 ALLOWED_SOURCE_KINDS = frozenset({
-    "conversation", "file", "channel", "manual", "external_api", "import",
+    "conversation", "file", "channel", "email", "manual", "external_api",
+    "import",
 })
 ALLOWED_FIELD_TYPES = frozenset({
     "text", "integer", "number", "boolean", "date", "datetime", "money",
@@ -99,6 +100,13 @@ class BusinessWorldService:
             source = self.store.get_data_source(data_source_id)
             if source is None or source.workspace_id != workspace_id:
                 raise ValueError("Data source does not belong to the Workspace")
+            if external_ref.strip():
+                existing = self.store.find_observation(
+                    data_source_id,
+                    external_ref.strip(),
+                )
+                if existing is not None:
+                    return existing
         resolved_content = content.strip()
         if not resolved_content and not asset_id.strip() and not attributes:
             raise ValueError("Observation requires content, attributes or an Asset")

@@ -1063,6 +1063,7 @@ class Agent:
                     execution_environment=self.tool_execution_environment,
                     project_context=self.project_context,
                     project_service=getattr(self, "project_service", None),
+                    workspace_service=getattr(self, "workspace_service", None),
                     cancel_check=cancel_check,
                 ):
                     result = normalize_tool_result(

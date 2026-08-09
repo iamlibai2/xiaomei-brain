@@ -25,6 +25,11 @@ from xiaomei_brain.projects import (
     ProjectStore,
     ProjectWorkspaceManager,
 )
+from xiaomei_brain.workspaces import (
+    WorkspaceService,
+    WorkspaceStore,
+    create_workspace_tools,
+)
 
 
 def _identity(person_id: str, conn_id: str) -> IdentityContext:
@@ -521,6 +526,172 @@ def test_present_artifacts_publishes_created_then_presented(tmp_path, monkeypatc
     db.close()
 
 
+def test_focused_workspace_adopts_conversation_artifact(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
+    output = tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace" / "quote.md"
+    output.parent.mkdir(parents=True)
+    output.write_text("quote", encoding="utf-8")
+    db = ConversationDB(tmp_path / "brain.db")
+    workspace_service = WorkspaceService(
+        WorkspaceStore(tmp_path / "workspaces.db"),
+    )
+    workspace = workspace_service.create(
+        name="客户经营",
+        purpose="跟进客户与报价",
+        created_by_person_id="person-1",
+    )
+    workspace_service.focus_session(
+        workspace.id,
+        session_id="session-1",
+        person_id="person-1",
+        turn_id="turn-focus",
+    )
+    core = SimpleNamespace(
+        current_attachments=[], active_assignment_id="", active_project_id="",
+    )
+    agent = SimpleNamespace(
+        id="xiaomei",
+        conversation_db=db,
+        workspace_service=workspace_service,
+        _get_agent=lambda: core,
+    )
+    parent = SimpleNamespace(_agent_id="xiaomei", agent=agent, _router=None)
+    callback = ConversationDriver._make_artifact_callback(
+        "session-1", "turn-1", "person-1", parent,
+    )
+
+    published = callback(
+        "tool-1",
+        "present_artifacts",
+        {"paths": [str(output)], "message": "报价方案"},
+        json.dumps({"path": [str(output)]}),
+    )
+
+    first_artifact_id = published[0]["id"]
+    output.write_text("quote revised", encoding="utf-8")
+    second_callback = ConversationDriver._make_artifact_callback(
+        "session-1", "turn-2", "person-1", parent,
+    )
+    revised = second_callback(
+        "tool-2",
+        "edit",
+        {"path": str(output)},
+        json.dumps({"path": str(output)}),
+    )
+
+    assets = workspace_service.assets.store.list_for_workspace(workspace.id)
+    assert len(assets) == 1
+    assert first_artifact_id != revised[0]["id"]
+    assert published[0]["workspace_asset_id"] == assets[0].id
+    assert revised[0]["workspace_asset_id"] == assets[0].id
+    assert assets[0].revision == 2
+    assert assets[0].source_type == "agent_working_file"
+    assert assets[0].metadata["latest_artifact_id"] == revised[0]["id"]
+    assert assets[0].sha256
+    restored_asset = workspace_service.assets.find_by_artifact_reference(
+        "session-1",
+        revised[0]["id"],
+    )
+    assert restored_asset is not None
+    assert restored_asset.id == assets[0].id
+
+    core.user_id = "person-1"
+    core.session_id = "session-1"
+    core.turn_id = "turn-3"
+    tools = {tool.name: tool for tool in create_workspace_tools(agent)}
+    read_result = tools["read_workspace_asset"].execute(asset_id=assets[0].id)
+    assert read_result["content"] == "quote revised"
+    assert read_result["next_offset"] is None
+    evidence_result = tools["preserve_workspace_asset_as_evidence"].execute(
+        asset_id=assets[0].id,
+        reason="报价已发送给客户",
+    )
+    evidence_id = evidence_result["evidence"]["id"]
+    output.write_text("unrecorded later edit", encoding="utf-8")
+    evidence_read = tools["read_workspace_asset"].execute(asset_id=evidence_id)
+    assert evidence_read["content"] == "quote revised"
+    db.close()
+
+
+def test_downloaded_artifact_links_back_to_external_workspace_asset(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
+    output = (
+        tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace"
+        / "downloads" / "确认单.pdf"
+    )
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"pdf-content")
+    db = ConversationDB(tmp_path / "brain.db")
+    workspace_service = WorkspaceService(
+        WorkspaceStore(tmp_path / "workspaces.db"),
+    )
+    workspace = workspace_service.create(
+        name="客户经营",
+        purpose="跟进客户与报价",
+        created_by_person_id="person-1",
+    )
+    workspace_service.focus_session(
+        workspace.id,
+        session_id="session-1",
+        person_id="person-1",
+        turn_id="turn-focus",
+    )
+    external = workspace_service.assets.register_external(
+        workspace.id,
+        person_id="person-1",
+        source_type="qq_mail_attachment",
+        source_id="person@qq.com:INBOX:42:2",
+        name="确认单.pdf",
+        locator="qq-mail://person@qq.com/INBOX/42/attachments/2",
+        kind="file",
+        mime_type="application/pdf",
+        session_id="session-1",
+    )
+    core = SimpleNamespace(
+        current_attachments=[], active_assignment_id="", active_project_id="",
+    )
+    agent = SimpleNamespace(
+        id="xiaomei",
+        conversation_db=db,
+        workspace_service=workspace_service,
+        _get_agent=lambda: core,
+    )
+    parent = SimpleNamespace(_agent_id="xiaomei", agent=agent, _router=None)
+    callback = ConversationDriver._make_artifact_callback(
+        "session-1", "turn-1", "person-1", parent,
+    )
+
+    published = callback(
+        "tool-1",
+        "download_qq_mail_attachment",
+        {"uid": "42", "attachment_id": "2"},
+        json.dumps({
+            "path": output.resolve().as_posix(),
+            "source_asset_id": external.id,
+        }),
+    )
+
+    working_id = published[0]["workspace_asset_id"]
+    assert workspace_service.assets.store.has_link(
+        working_id,
+        workspace.id,
+        entity_type="asset",
+        entity_id=external.id,
+        relation="materialized_from",
+    )
+    assert workspace_service.assets.store.has_link(
+        external.id,
+        workspace.id,
+        entity_type="asset",
+        entity_id=working_id,
+        relation="materialized_as",
+    )
+    db.close()
+
+
 def test_presented_workspace_artifact_is_adopted_by_active_project(tmp_path, monkeypatch):
     monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
     output = tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace" / "final.mp4"
@@ -530,6 +701,20 @@ def test_presented_workspace_artifact_is_adopted_by_active_project(tmp_path, mon
     project_service = ProjectService(
         ProjectStore(tmp_path / "project.db"),
         ProjectWorkspaceManager(tmp_path / "projects"),
+    )
+    workspace_service = WorkspaceService(
+        WorkspaceStore(tmp_path / "workspaces.db"),
+    )
+    workspace = workspace_service.create(
+        name="Film workspace",
+        purpose="Produce and deliver one film",
+        created_by_person_id="person-1",
+    )
+    workspace_service.focus_session(
+        workspace.id,
+        session_id="session-1",
+        person_id="person-1",
+        turn_id="turn-focus",
     )
     actor = ProjectActor(ProjectActorType.AGENT, "xiaomei")
     project = project_service.create(
@@ -541,6 +726,7 @@ def test_presented_workspace_artifact_is_adopted_by_active_project(tmp_path, mon
         id="xiaomei",
         conversation_db=db,
         project_service=project_service,
+        workspace_service=workspace_service,
         _get_agent=lambda: core,
     )
     parent = SimpleNamespace(_agent_id="xiaomei", agent=agent, _router=None)
@@ -557,6 +743,16 @@ def test_presented_workspace_artifact_is_adopted_by_active_project(tmp_path, mon
     assets = project_service.store.list_assets(project.id)
     assert len(assets) == 1
     assert assets[0].role.value == "deliverable"
+    unified_assets = workspace_service.assets.store.list_for_workspace(workspace.id)
+    assert len(unified_assets) == 1
+    assert assets[0].metadata["asset_id"] == unified_assets[0].id
+    assert workspace_service.assets.store.has_link(
+        unified_assets[0].id,
+        workspace.id,
+        entity_type="project_asset",
+        entity_id=assets[0].id,
+        relation="projected_as",
+    )
     adopted = Path(project.state_root) / assets[0].relative_uri
     assert adopted.read_bytes() == b"final-video"
     project_service.store.close()

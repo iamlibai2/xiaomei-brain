@@ -8,6 +8,7 @@ from xiaomei_brain.consciousness.context_pipeline import (
 )
 from xiaomei_brain.gateway.inbound import Gateway, RawMessage
 from xiaomei_brain.memory.conversation_db import ConversationDB
+from xiaomei_brain.workspaces import WorkspaceService, WorkspaceStore
 
 
 def test_existing_conversation_database_upgrades_without_touching_messages(
@@ -112,6 +113,70 @@ def test_gateway_observation_does_not_enqueue_a_turn(tmp_path):
     observations = db.get_recent_group_messages("feishu-group-demo-oc-1")
     assert len(observations) == 1
     assert observations[0]["display_name"] == "张三"
+    db.close()
+
+
+def test_focused_group_projects_background_message_into_workspace(tmp_path):
+    db = ConversationDB(tmp_path / "brain.db")
+    workspace_service = WorkspaceService(
+        WorkspaceStore(tmp_path / "workspaces.db"),
+    )
+    workspace = workspace_service.create(
+        name="客户经营",
+        purpose="持续跟进客户群中的业务事实",
+        created_by_person_id="person-1",
+    )
+    workspace_service.focus_session(
+        workspace.id,
+        session_id="feishu-group-demo-oc-1",
+        person_id="person-1",
+        turn_id="turn-focus",
+    )
+
+    class Living:
+        agent = SimpleNamespace(
+            conversation_db=db,
+            workspace_service=workspace_service,
+        )
+
+        def put_message(self, **_kwargs):
+            raise AssertionError("group observation must not enter Living queue")
+
+    gateway = Gateway(Living(), SimpleNamespace())
+    raw = RawMessage(
+        content="客户确认下周签合同",
+        channel="feishu",
+        peer_id="ou_external_person",
+        session_id="feishu-group-demo-oc-1",
+        metadata={
+            "external_issuer": "feishu:app:demo",
+            "external_subject": "oc-customer-group",
+            "external_message_id": "om-contract-1",
+            "external_timestamp": 1_786_100_000_000,
+            "sender_display_name": "客户张总",
+        },
+    )
+
+    assert gateway.observe_group_message(raw) is True
+    assert gateway.observe_group_message(raw) is True
+
+    observations = workspace_service.business.store.list_observations(workspace.id)
+    assert len(observations) == 1
+    assert observations[0].content == "客户确认下周签合同"
+    assert observations[0].source_person_id == ""
+    assert observations[0].external_ref == "external:om-contract-1"
+    assert observations[0].occurred_at == 1_786_100_000
+    assert observations[0].attributes == {
+        "channel": "feishu",
+        "group": True,
+        "display_name": "客户张总",
+        "external_peer_id": "ou_external_person",
+        "external_subject": "oc-customer-group",
+    }
+    sources = workspace_service.business.store.list_data_sources(workspace.id)
+    assert len(sources) == 1
+    assert sources[0].kind == "channel"
+    assert db.get_recent() == []
     db.close()
 
 

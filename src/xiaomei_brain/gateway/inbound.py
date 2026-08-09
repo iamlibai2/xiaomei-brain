@@ -327,7 +327,7 @@ class Gateway:
             created_at = time.time()
 
         try:
-            db.log_group_message(
+            group_message_id = db.log_group_message(
                 session_id=raw.session_id,
                 channel=raw.channel,
                 issuer=issuer,
@@ -340,6 +340,16 @@ class Gateway:
                 metadata=metadata,
                 created_at=created_at,
             )
+            if group_message_id is not None:
+                self._project_group_observation(
+                    raw,
+                    group_message_id=group_message_id,
+                    content=content,
+                    external_message_id=external_message_id,
+                    external_subject=external_subject,
+                    display_name=display_name,
+                    occurred_at=created_at,
+                )
             return True
         except Exception:
             logger.exception(
@@ -348,6 +358,78 @@ class Gateway:
                 raw.session_id,
             )
             return False
+
+    def _project_group_observation(
+        self,
+        raw: RawMessage,
+        *,
+        group_message_id: int,
+        content: str,
+        external_message_id: str,
+        external_subject: str,
+        display_name: str,
+        occurred_at: float,
+    ) -> None:
+        """Project group chatter only into an explicitly focused Workspace."""
+        agent = getattr(self._living, "agent", None)
+        service = getattr(agent, "workspace_service", None)
+        if service is None:
+            return
+        workspace_id = service.store.focused_workspace_id(raw.session_id)
+        if not workspace_id:
+            return
+        try:
+            channel = str(raw.channel or "channel").strip().lower()
+            locator = f"channel:{channel}:session:{raw.session_id}"
+            source = service.business.store.find_data_source(
+                workspace_id,
+                kind="channel",
+                locator=locator,
+            )
+            if source is None:
+                source = service.business.create_data_source(
+                    workspace_id,
+                    kind="channel",
+                    name=f"{channel} group conversation",
+                    locator=locator,
+                    session_id=raw.session_id,
+                )
+            source_person_id = ""
+            peer_id = str(raw.peer_id or "").strip()
+            if (
+                peer_id.startswith("person_")
+                and service.store.person_is_linked(workspace_id, peer_id)
+            ):
+                source_person_id = peer_id
+            attributes = {
+                "channel": channel,
+                "group": True,
+                "display_name": display_name,
+                "external_peer_id": peer_id,
+            }
+            if external_subject:
+                attributes["external_subject"] = external_subject
+            service.business.observe(
+                workspace_id,
+                content=content,
+                data_source_id=source.id,
+                source_person_id=source_person_id,
+                external_ref=(
+                    f"external:{external_message_id}"
+                    if external_message_id
+                    else f"group_message:{group_message_id}"
+                ),
+                attributes=attributes,
+                occurred_at=occurred_at,
+                session_id=raw.session_id,
+            )
+        except Exception:
+            # group_messages remains the authoritative channel record.
+            logger.exception(
+                "[Gateway] failed to project group observation: channel=%s session=%s",
+                raw.channel,
+                raw.session_id,
+            )
 
     def _handle_conversation_control(
         self,
@@ -448,6 +530,19 @@ class Gateway:
             "status": "queued",
             "queued_at": time.time(),
         }
+        external_message_id = str(
+            raw.metadata.get("external_message_id") or "",
+        ).strip()
+        if external_message_id:
+            metadata["external_message_id"] = external_message_id
+        external_timestamp = raw.metadata.get("external_timestamp")
+        if external_timestamp is not None:
+            metadata["external_timestamp"] = external_timestamp
+        external_subject = str(
+            raw.metadata.get("external_subject") or "",
+        ).strip()
+        if external_subject:
+            metadata["external_subject"] = external_subject
         retry_of = raw.metadata.get("retry_of")
         if isinstance(retry_of, int) and retry_of > 0:
             metadata["retry_of"] = retry_of
