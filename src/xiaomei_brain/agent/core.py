@@ -454,6 +454,54 @@ class Agent:
             return vars(self._living_cfg.context) if hasattr(self._living_cfg.context, '__dict__') else {}
         return {}
 
+    def get_context_compaction_status(self, session_id: str) -> dict[str, Any]:
+        """Return this session's live DAG-compaction pressure.
+
+        The persisted, unsummarized messages are measured with the same turn
+        splitter and token estimator as ``_auto_compact``. Summed LLM prompt
+        usage cannot be used here because it counts repeated history again.
+        """
+        session_id = str(session_id or "")
+        living_cfg = getattr(self, "_living_cfg", None)
+        living = getattr(living_cfg, "living", None)
+        max_tokens = max(1, int(getattr(living, "max_context_tokens", 50000)))
+        cfg = self._get_ctx_cfg()
+        trigger_ratio = float(cfg.get("compact_token_ratio", 0.5))
+        target_ratio = float(cfg.get("compact_target_ratio", 0.35))
+        trigger_tokens = max(1, int(max_tokens * trigger_ratio))
+        target_tokens = max(0, int(max_tokens * min(trigger_ratio, target_ratio)))
+
+        result: dict[str, Any] = {
+            "available": bool(self.dag and session_id),
+            "session_id": session_id,
+            "message_tokens": 0,
+            "message_count": 0,
+            "turn_count": 0,
+            "max_tokens": max_tokens,
+            "trigger_tokens": trigger_tokens,
+            "target_tokens": target_tokens,
+            "pressure_ratio": 0.0,
+            "reached": False,
+        }
+        if not result["available"]:
+            return result
+
+        messages = self.dag.get_unsummarized_messages(session_id, limit=2000)
+        active_turn_id = self.turn_id if session_id == self.session_id else ""
+        turns = self.context_compactor.split_turns(
+            messages,
+            active_turn_id=active_turn_id,
+        )
+        message_tokens = sum(turn.token_count for turn in turns)
+        result.update({
+            "message_tokens": message_tokens,
+            "message_count": len(messages),
+            "turn_count": len(turns),
+            "pressure_ratio": message_tokens / trigger_tokens,
+            "reached": message_tokens >= trigger_tokens,
+        })
+        return result
+
     def stream(
         self,
         messages: list[dict[str, Any]],

@@ -30,9 +30,11 @@ def register(ctx):
         models=[
             ModelDefinition(id="deepseek-v4-flash", name="DeepSeek V4 Flash",
                             context_window=128000, max_tokens=8192, reasoning=True,
+                            supports_usage_in_streaming=True,
                             **flash_thinking),
             ModelDefinition(id="deepseek-v4-pro", name="DeepSeek V4 Pro",
                             context_window=128000, max_tokens=8192, reasoning=True,
+                            supports_usage_in_streaming=True,
                             **pro_thinking),
         ],
     ))

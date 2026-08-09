@@ -52,6 +52,10 @@ def test_provider_plugin_discovery_and_registration():
         assert deepseek is not None, "deepseek provider not found"
         assert deepseek.provider_id == "deepseek"
         assert deepseek.base_url == "https://api.deepseek.com/v1"
+        assert all(
+            model.supports_usage_in_streaming is True
+            for model in deepseek.models
+        )
 
         anthropic = registry.get_provider("anthropic")
         assert anthropic is not None, "anthropic provider not found"
@@ -216,6 +220,95 @@ def test_deepseek_non_reasoning_explicitly_disables_thinking():
 
     assert payload["thinking"] == {"type": "disabled"}
     assert "reasoning_effort" not in payload
+
+
+def test_openai_compatible_stream_requests_usage_by_default():
+    from xiaomei_brain.llm.transport.chat_completions import ChatCompletionsTransport
+    from xiaomei_brain.llm.types import ModelDefinition, ProviderProfile
+
+    profile = ProviderProfile(
+        provider_id="compatible",
+        name="Compatible",
+        base_url="https://compatible.example.com/v1",
+    )
+    model = ModelDefinition(
+        id="compatible-model",
+        name="Compatible Model",
+        context_window=8192,
+        max_tokens=1024,
+    )
+    payload = ChatCompletionsTransport().build_kwargs(
+        [], None, model, profile, stream=True,
+    )
+
+    assert payload["stream_options"] == {"include_usage": True}
+
+
+def test_openai_compatible_model_can_disable_stream_usage():
+    from xiaomei_brain.llm.transport.chat_completions import ChatCompletionsTransport
+    from xiaomei_brain.llm.types import ModelDefinition, ProviderProfile
+
+    profile = ProviderProfile(
+        provider_id="compatible",
+        name="Compatible",
+        base_url="https://compatible.example.com/v1",
+    )
+    model = ModelDefinition(
+        id="limited-model",
+        name="Limited Model",
+        context_window=8192,
+        max_tokens=1024,
+        supports_usage_in_streaming=False,
+    )
+    payload = ChatCompletionsTransport().build_kwargs(
+        [], None, model, profile, stream=True,
+    )
+
+    assert "stream_options" not in payload
+
+
+def test_stream_usage_chunk_with_empty_choices_is_preserved():
+    import json
+
+    from xiaomei_brain.llm.transport.chat_completions import ChatCompletionsTransport
+    from xiaomei_brain.llm.types import ModelDefinition, ProviderProfile
+
+    class Response:
+        def iter_lines(self):
+            chunks = [
+                {"choices": [{"delta": {"content": "ok"}, "finish_reason": None}]},
+                {"choices": [], "usage": {
+                    "prompt_tokens": 12,
+                    "completion_tokens": 3,
+                    "total_tokens": 15,
+                }},
+            ]
+            for chunk in chunks:
+                yield f"data: {json.dumps(chunk)}".encode()
+            yield b"data: [DONE]"
+
+    profile = ProviderProfile(
+        provider_id="compatible",
+        name="Compatible",
+        base_url="https://compatible.example.com/v1",
+    )
+    model = ModelDefinition(
+        id="compatible-model",
+        name="Compatible Model",
+        context_window=8192,
+        max_tokens=1024,
+    )
+    events = list(ChatCompletionsTransport().stream_iter(Response(), model, profile))
+    summary = events[-1][1]
+
+    assert summary is not None
+    assert summary["usage"] == {
+        "input_tokens": 12,
+        "output_tokens": 3,
+        "cached_input_tokens": 0,
+        "reasoning_tokens": 0,
+        "total_tokens": 15,
+    }
 
 
 def test_anthropic_register_creates_fresh_profile():

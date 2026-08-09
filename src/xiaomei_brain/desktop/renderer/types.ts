@@ -485,6 +485,19 @@ export interface TokenUsageBreakdown {
   calls: number;
 }
 
+export interface ContextTokenPressure {
+  available: boolean;
+  session_id: string;
+  message_tokens: number;
+  message_count: number;
+  turn_count: number;
+  max_tokens: number;
+  trigger_tokens: number;
+  target_tokens: number;
+  pressure_ratio: number;
+  reached: boolean;
+}
+
 export interface TokenUsageSummary {
   periods: {
     today: TokenUsageTotals;
@@ -500,6 +513,7 @@ export interface TokenUsageSummary {
   categories: TokenUsageBreakdown[];
   turns: TokenUsageTurn[];
   first_recorded_at: number | null;
+  context_pressure: ContextTokenPressure | null;
 }
 
 export interface GatewayBridge {

@@ -28,7 +28,11 @@ import {
   type PresentationMediaCommand,
 } from "../presentation-stage/ArtifactPresentationStage";
 import type { PresentationStageLayout } from "../presentation-stage/PresentationStage";
-import type { ChatArtifactReference, TokenUsageTurn } from "../../types";
+import type {
+  ChatArtifactReference,
+  ContextTokenPressure,
+  TokenUsageTurn,
+} from "../../types";
 import { formatTokens, useTokenUsage } from "../../usage";
 
 const EMPTY_MSGS: DisplayMessage[] = [];
@@ -180,6 +184,16 @@ export function HomePage({
     }
     return result;
   }, [messages]);
+  const latestFinalAgentMessageId = useMemo(() => {
+    let latest = "";
+    for (const message of messages) {
+      const turnId = displayMessageTurnId(message);
+      if (turnId && finalAgentMessageByTurn.get(turnId) === message.id) {
+        latest = message.id;
+      }
+    }
+    return latest;
+  }, [finalAgentMessageByTurn, messages]);
   const activePresentationKey = presentationStage?.artifactKeys[
     Math.min(presentationStage.activeIndex, Math.max(0, presentationStage.artifactKeys.length - 1))
   ] || "";
@@ -899,6 +913,9 @@ export function HomePage({
                         turnUsage={turnId && finalAgentMessageByTurn.get(turnId) === m.id
                           ? turnUsageById.get(turnId)
                           : undefined}
+                        contextPressure={m.id === latestFinalAgentMessageId
+                          ? tokenUsageSummary?.context_pressure || undefined
+                          : undefined}
                         onShowArtifact={showArtifact}
                         onMaximizeVisualization={maximizeVisualization}
                         onPresentArtifact={toggleArtifactPresentation}
@@ -1034,6 +1051,7 @@ function MessageRow({
   showAgentHeader,
   highlighted,
   turnUsage,
+  contextPressure,
   onShowArtifact,
   onMaximizeVisualization,
   onPresentArtifact,
@@ -1044,6 +1062,7 @@ function MessageRow({
   showAgentHeader: boolean;
   highlighted: boolean;
   turnUsage?: TokenUsageTurn;
+  contextPressure?: ContextTokenPressure;
   onShowArtifact: (artifactId: string, sessionId: string) => void;
   onMaximizeVisualization: () => void;
   onPresentArtifact: (artifactKey: string) => void;
@@ -1291,7 +1310,7 @@ function MessageRow({
           streaming={message.streaming}
         />
       </div>
-      {(!message.streaming && turnUsage)
+      {(!message.streaming && (turnUsage || contextPressure?.available))
         || (message.memoryReferences && message.memoryReferences.length > 0) ? (
         <div className="message-hover-metadata">
           {turnUsage && !message.streaming && (
@@ -1303,7 +1322,12 @@ function MessageRow({
                 latency: (turnUsage.latency_ms / 1000).toFixed(1),
               })}
             >
-              <span>{turnUsage.estimated_calls > 0 ? "≈" : ""}{formatTokens(turnUsage.total_tokens)} tokens</span>
+              <span>
+                {turnUsage.estimated_calls > 0 ? "≈" : ""}
+                {t("usage.input")} {formatTokens(turnUsage.input_tokens)}
+              </span>
+              <span>·</span>
+              <span>{t("usage.output")} {formatTokens(turnUsage.output_tokens)}</span>
               <span>·</span>
               <span>{t("usage.callCount", { count: turnUsage.calls })}</span>
               <span>·</span>
@@ -1318,6 +1342,25 @@ function MessageRow({
           {turnUsage && turnUsage.skill_input_tokens > 0 && (
             <span className="message-input-component">
               Skill {formatTokens(turnUsage.skill_input_tokens)}
+            </span>
+          )}
+          {contextPressure?.available && !message.streaming && (
+            <span
+              className={`message-context-pressure${contextPressure.reached ? " is-reached" : ""}`}
+              title={t("usage.contextPressureHint", {
+                current: formatTokens(contextPressure.message_tokens),
+                threshold: formatTokens(contextPressure.trigger_tokens),
+                percent: Math.round(contextPressure.pressure_ratio * 100),
+              })}
+            >
+              {t("usage.contextPressure", {
+                current: formatTokens(contextPressure.message_tokens),
+                threshold: formatTokens(contextPressure.trigger_tokens),
+              })}
+              <span>·</span>
+              <span>{contextPressure.reached
+                ? t("usage.contextPressureReached")
+                : `${Math.round(contextPressure.pressure_ratio * 100)}%`}</span>
             </span>
           )}
           {message.memoryReferences && message.memoryReferences.length > 0 && (

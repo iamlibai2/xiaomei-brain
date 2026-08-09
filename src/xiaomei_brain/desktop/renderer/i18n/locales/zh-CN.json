@@ -277,6 +277,9 @@
       "since": "统计自 {{value}} 起",
       "noRecords": "尚无用量记录",
       "turnDetails": "输入 {{input}} · 输出 {{output}} · 耗时 {{latency}} 秒",
+      "contextPressure": "对话 {{current}} / {{threshold}}",
+      "contextPressureReached": "已达压缩阈值",
+      "contextPressureHint": "当前未压缩会话消息 {{current}} tokens；达到 {{threshold}} tokens 时触发 DAG 压缩（{{percent}}%）",
       "category": {
         "conversation": "实时对话",
         "assignment": "委托",

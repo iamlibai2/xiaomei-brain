@@ -27,6 +27,7 @@ def _agent_with_messages(messages: list[dict]) -> tuple[Agent, _FakeDag]:
     dag = _FakeDag(messages)
     agent.dag = dag
     agent._living_cfg = SimpleNamespace(
+        living=SimpleNamespace(max_context_tokens=4000),
         context=SimpleNamespace(
             compact_token_ratio=0.5,
             compact_target_ratio=0.35,
@@ -199,6 +200,35 @@ def test_agent_delegates_compaction_plan_to_dag():
     assert result is not None
     assert result["compact_turn_count"] == 1
     assert [item["id"] for item in dag.compacted] == [1, 2]
+
+
+def test_context_status_uses_same_tokens_and_threshold_as_compaction():
+    messages = [
+        _message(1, "user", "x" * 10000, "turn-1"),
+        _message(2, "assistant", "done", "turn-1"),
+        _message(3, "user", "next", "turn-2"),
+    ]
+    agent, _dag = _agent_with_messages(messages)
+    agent.session_id = "session"
+    agent.turn_id = "turn-2"
+
+    status = agent.get_context_compaction_status("session")
+    plan = agent.context_compactor.plan_compaction(
+        messages,
+        max_tokens=4000,
+        trigger_ratio=0.5,
+        target_ratio=0.35,
+        active_turn_id="turn-2",
+    )
+
+    assert plan is not None
+    assert status["available"] is True
+    assert status["message_tokens"] == plan.before_tokens
+    assert status["message_count"] == 3
+    assert status["turn_count"] == 2
+    assert status["trigger_tokens"] == 2000
+    assert status["target_tokens"] == 1400
+    assert status["reached"] is True
 
 
 def test_dag_summary_input_contains_tool_arguments_and_result_facts():

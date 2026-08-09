@@ -137,3 +137,41 @@ def test_usage_gateway_methods_require_auth_and_return_summary(tmp_path):
         {"session_id": "session-1"},
     )
     assert response["result"]["usage"]["current_session"]["total_tokens"] == 140
+
+
+def test_usage_summary_includes_current_context_pressure(tmp_path):
+    store = UsageStore(tmp_path / "brain.db")
+    store.record(_record())
+    pressure = {
+        "available": True,
+        "session_id": "session-1",
+        "message_tokens": 12000,
+        "message_count": 24,
+        "turn_count": 8,
+        "max_tokens": 50000,
+        "trigger_tokens": 25000,
+        "target_tokens": 17500,
+        "pressure_ratio": 0.48,
+        "reached": False,
+    }
+    core = SimpleNamespace(
+        get_context_compaction_status=lambda session_id: {
+            **pressure,
+            "session_id": session_id,
+        }
+    )
+    living = SimpleNamespace(
+        usage_store=store,
+        agent=SimpleNamespace(_agent=core),
+    )
+    router = MethodRouter(living=living)
+    router._auth_sessions.add("conn-1")
+
+    response = router.dispatch(
+        "conn-1",
+        "req-1",
+        "usage.summary",
+        {"session_id": "session-1"},
+    )
+
+    assert response["result"]["usage"]["context_pressure"] == pressure

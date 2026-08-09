@@ -19,13 +19,15 @@ from xiaomei_brain.llm.types import ModelDefinition, ProviderProfile, Normalized
 
 logger = logging.getLogger(__name__)
 
-# ── 非原生端点默认值 ──
-_NON_NATIVE_DEFAULTS = {
+# ── OpenAI-compatible endpoint defaults ──
+# Providers using the Chat Completions contract can explicitly disable any
+# unsupported capability per model.
+_COMPATIBLE_DEFAULTS = {
     "supports_developer_role": False,
-    "supports_usage_in_streaming": False,
+    "supports_usage_in_streaming": True,
     "supports_strict_mode": False,
 }
-_NATIVE_DEFAULTS = {
+_OPENAI_OFFICIAL_DEFAULTS = {
     "supports_developer_role": True,
     "supports_usage_in_streaming": True,
     "supports_strict_mode": True,
@@ -70,7 +72,11 @@ class ChatCompletionsTransport(Transport):
         val = getattr(model, field, None)
         if val is not None:
             return val
-        defaults = _NATIVE_DEFAULTS if self._is_native_openai(profile) else _NON_NATIVE_DEFAULTS
+        defaults = (
+            _OPENAI_OFFICIAL_DEFAULTS
+            if self._is_native_openai(profile)
+            else _COMPATIBLE_DEFAULTS
+        )
         return defaults.get(field, False)
 
     # ── convert_messages ─────────────────────────────────────

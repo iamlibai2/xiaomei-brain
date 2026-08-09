@@ -277,6 +277,9 @@
       "since": "Recording since {{value}}",
       "noRecords": "No usage has been recorded yet",
       "turnDetails": "Input {{input}} · output {{output}} · {{latency}} seconds",
+      "contextPressure": "Conversation {{current}} / {{threshold}}",
+      "contextPressureReached": "Compaction threshold reached",
+      "contextPressureHint": "Unsummarized conversation messages use {{current}} tokens; DAG compaction starts at {{threshold}} tokens ({{percent}}%)",
       "category": {
         "conversation": "Conversation",
         "assignment": "Assignment",
