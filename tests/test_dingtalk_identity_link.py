@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import types
+from types import SimpleNamespace
 
 import pytest
 
@@ -215,6 +217,16 @@ def test_dingtalk_adapter_consumes_link_then_routes_as_person(tmp_path, monkeypa
             self.observations.append(raw)
             return True
 
+        def capture_group_message(self, raw):
+            self.observations.append(raw)
+            return types.SimpleNamespace(
+                accepted=True,
+                group_message_id=len(self.observations),
+                workspace_observation_id=(
+                    f"observation-{len(self.observations)}"
+                ),
+            )
+
     class FakeBroker:
         def __init__(self):
             self.calls = []
@@ -352,6 +364,8 @@ def test_dingtalk_adapter_consumes_link_then_routes_as_person(tmp_path, monkeypa
     raw = gateway.messages[-1]
     assert raw.session_id == "dingtalk-group-ding_demo-group-1"
     assert raw.reply_target == "group-1"
+    assert raw.metadata["workspace_observation_id"] == "observation-3"
+    assert gateway.observations[-1].metadata["processing_mode"] == "interactive"
     group_session = people.store.get_session(raw.session_id)
     assert group_session is not None
     assert group_session.scope_type == "conversation"

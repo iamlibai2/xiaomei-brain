@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import types
+from types import SimpleNamespace
+
 from xiaomei_brain.people import IdentityLinkService, PeopleService, PeopleStore
 import pytest
 
@@ -154,6 +157,15 @@ def test_feishu_adapter_consumes_link_then_routes_as_person(tmp_path):
     class FakeGateway:
         def __init__(self):
             self.messages = []
+            self.group_messages = []
+
+        def capture_group_message(self, raw):
+            self.group_messages.append(raw)
+            return types.SimpleNamespace(
+                accepted=True,
+                group_message_id=1,
+                workspace_observation_id="observation-group-1",
+            )
 
         def accept(self, raw):
             self.messages.append(raw)
@@ -248,6 +260,8 @@ def test_feishu_adapter_consumes_link_then_routes_as_person(tmp_path):
     group_raw = gateway.messages[-1]
     assert group_raw.session_id == "feishu-group-cli_demo-oc_group"
     assert group_raw.reply_target == "oc_group"
+    assert group_raw.metadata["workspace_observation_id"] == "observation-group-1"
+    assert gateway.group_messages[-1].metadata["processing_mode"] == "interactive"
     group_session = people.store.get_session(group_raw.session_id)
     assert group_session is not None
     assert group_session.scope_type == "conversation"

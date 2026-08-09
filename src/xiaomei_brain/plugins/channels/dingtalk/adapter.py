@@ -1039,6 +1039,53 @@ class DingTalkAdapter(ChannelAdapter):
             )
             return {}
 
+    @staticmethod
+    def _capture_group_perception(
+        living,
+        *,
+        content: str,
+        session_id: str,
+        person_id: str,
+        issuer: str,
+        sender: str,
+        conversation_id: str,
+        message_id: str,
+        sender_display_name: str,
+        message_type: str,
+        processing_mode: str,
+    ) -> str:
+        """Persist one group message before optionally admitting it as a Turn."""
+        gateway = getattr(living, "_gateway_inbound", None)
+        if gateway is None:
+            return ""
+        from xiaomei_brain.gateway.inbound import RawMessage
+
+        raw = RawMessage(
+            content=content,
+            source="human",
+            channel="dingtalk",
+            peer_id=person_id,
+            peer_type="human",
+            session_id=session_id,
+            metadata={
+                "external_issuer": issuer,
+                "external_subject": sender,
+                "external_conversation_id": conversation_id,
+                "external_message_id": message_id,
+                "sender_display_name": sender_display_name,
+                "message_type": message_type,
+                "processing_mode": processing_mode,
+            },
+        )
+        if hasattr(gateway, "capture_group_message"):
+            capture = gateway.capture_group_message(raw)
+            return str(
+                getattr(capture, "workspace_observation_id", "") or ""
+            )
+        if hasattr(gateway, "observe_group_message"):
+            gateway.observe_group_message(raw)
+        return ""
+
     def _handle_audio_message(
         self,
         msg_dict: dict,
@@ -1069,6 +1116,7 @@ class DingTalkAdapter(ChannelAdapter):
                 if people else None
             )
             person_id = resolved[0].person_id if resolved is not None else ""
+            workspace_observation_id = ""
             if is_group:
                 session_id = (
                     f"dingtalk-group-{self._client.client_id}-{conversation_id}"
@@ -1085,27 +1133,21 @@ class DingTalkAdapter(ChannelAdapter):
                         },
                     )
                 if msg_dict.get("bot_mentioned") is not True:
-                    gateway = getattr(living, "_gateway_inbound", None)
-                    if gateway and hasattr(gateway, "observe_group_message"):
-                        from xiaomei_brain.gateway.inbound import RawMessage
-                        gateway.observe_group_message(RawMessage(
-                            content="[语音]",
-                            source="human",
-                            channel="dingtalk",
-                            peer_id=person_id,
-                            peer_type="human",
-                            session_id=session_id,
-                            metadata={
-                                "external_issuer": issuer,
-                                "external_subject": sender,
-                                "external_conversation_id": conversation_id,
-                                "external_message_id": msg_dict.get("msg_id", ""),
-                                "sender_display_name": (
-                                    msg_dict.get("sender_name") or sender
-                                ),
-                                "message_type": "audio",
-                            },
-                        ))
+                    self._capture_group_perception(
+                        living,
+                        content="[语音]",
+                        session_id=session_id,
+                        person_id=person_id,
+                        issuer=issuer,
+                        sender=sender,
+                        conversation_id=conversation_id,
+                        message_id=str(msg_dict.get("msg_id", "")),
+                        sender_display_name=str(
+                            msg_dict.get("sender_name") or sender
+                        ),
+                        message_type="audio",
+                        processing_mode="background",
+                    )
                     return
 
             if resolved is None:
@@ -1145,6 +1187,20 @@ class DingTalkAdapter(ChannelAdapter):
             if not text:
                 self.send(output_target, "我听到了语音，但没能辨认出其中的内容。")
                 return
+            if is_group:
+                workspace_observation_id = self._capture_group_perception(
+                    living,
+                    content=text,
+                    session_id=session_id,
+                    person_id=person.person_id,
+                    issuer=issuer,
+                    sender=sender,
+                    conversation_id=conversation_id,
+                    message_id=str(msg_dict.get("msg_id", "")),
+                    sender_display_name=str(msg_dict.get("sender_name") or sender),
+                    message_type="audio",
+                    processing_mode="interactive",
+                )
 
             mime_type = {
                 ".ogg": "audio/ogg",
@@ -1188,6 +1244,7 @@ class DingTalkAdapter(ChannelAdapter):
                     "audio_duration_ms": int(msg_dict.get("duration", 0) or 0),
                     "speech_emotion": str(perception.get("emotion", "")),
                     "speech_events": list(perception.get("events", []) or []),
+                    "workspace_observation_id": workspace_observation_id,
                 },
                 reply_channel="dingtalk",
                 reply_target=output_target,
@@ -1258,6 +1315,7 @@ class DingTalkAdapter(ChannelAdapter):
                 if people else None
             )
             person_id = resolved[0].person_id if resolved is not None else ""
+            workspace_observation_id = ""
 
             if is_group:
                 session_id = (
@@ -1278,28 +1336,22 @@ class DingTalkAdapter(ChannelAdapter):
                 # DingTalk deployments that deliver non-mention group events
                 # can use the same observation path. Ordinary robot setups may
                 # still only receive explicit mentions from the platform.
+                workspace_observation_id = self._capture_group_perception(
+                    living,
+                    content=text,
+                    session_id=session_id,
+                    person_id=person_id,
+                    issuer=issuer,
+                    sender=sender,
+                    conversation_id=conversation_id,
+                    message_id=str(msg_dict.get("msg_id", "")),
+                    sender_display_name=str(msg_dict.get("sender_name") or sender),
+                    message_type=str(msg_dict.get("msg_type", "text")),
+                    processing_mode=(
+                        "interactive" if bot_mentioned is True else "background"
+                    ),
+                )
                 if bot_mentioned is not True:
-                    gw = getattr(living, "_gateway_inbound", None)
-                    if gw and hasattr(gw, "observe_group_message"):
-                        from xiaomei_brain.gateway.inbound import RawMessage
-                        gw.observe_group_message(RawMessage(
-                            content=text,
-                            source="human",
-                            channel="dingtalk",
-                            peer_id=person_id,
-                            peer_type="human",
-                            session_id=session_id,
-                            metadata={
-                                "external_issuer": issuer,
-                                "external_subject": sender,
-                                "external_conversation_id": conversation_id,
-                                "external_message_id": msg_dict.get("msg_id", ""),
-                                "sender_display_name": (
-                                    msg_dict.get("sender_name") or sender
-                                ),
-                                "message_type": msg_dict.get("msg_type", "text"),
-                            },
-                        ))
                     logger.info(
                         "[DingTalk] stored group observation: conversation=%s sender=%s",
                         conversation_id,
@@ -1424,6 +1476,7 @@ class DingTalkAdapter(ChannelAdapter):
                         "external_subject": sender,
                         "external_conversation_id": conversation_id,
                         "external_message_id": msg_dict.get("msg_id", ""),
+                        "workspace_observation_id": workspace_observation_id,
                     },
                     reply_channel="dingtalk", reply_target=output_target,
                 ))

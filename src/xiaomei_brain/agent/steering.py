@@ -19,6 +19,7 @@ class SteerMessage:
     session_id: str
     turn_id: str
     message_id: int | None = None
+    observation_id: str = ""
     source: str = ""
     context_key: str = ""
     user_display_name: str = ""

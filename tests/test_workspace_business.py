@@ -341,6 +341,65 @@ def test_conversation_observation_tool_persists_and_reuses_source_context(tmp_pa
     assert len(service.business.store.list_data_sources(workspace["id"])) == 1
 
 
+def test_inbound_channel_observation_is_reused_and_auto_linked(tmp_path):
+    service = _service(tmp_path)
+    core = SimpleNamespace(
+        user_id="person-1",
+        session_id="group-session-1",
+        turn_id="turn-1",
+        current_observation_id="",
+    )
+    agent = SimpleNamespace(workspace_service=service, _get_agent=lambda: core)
+    tools = {item.name: item for item in create_workspace_tools(agent)}
+    workspace = tools["create_workspace"].execute(
+        name="Customer operations",
+        purpose="Track customer progress",
+    )
+    source = service.business.create_data_source(
+        workspace["id"],
+        kind="channel",
+        name="Customer group",
+        locator="channel:feishu:group:demo",
+    )
+    observation = service.business.observe(
+        workspace["id"],
+        content="Acme confirmed the quote",
+        data_source_id=source.id,
+        external_ref="external:om-1",
+        session_id=core.session_id,
+    )
+    core.current_observation_id = observation.id
+
+    reused = tools["record_observation"].execute(
+        workspace_id=workspace["id"],
+        content="A paraphrase that must not create another Observation",
+    )
+    assert reused["id"] == observation.id
+    assert len(service.business.store.list_observations(workspace["id"])) == 1
+
+    collection = tools["define_collection"].execute(
+        workspace_id=workspace["id"],
+        name="customers",
+        label="Customers",
+        purpose="Current customer state",
+        fields=[{
+            "name": "name",
+            "label": "Name",
+            "data_type": "text",
+            "required": True,
+        }],
+    )
+    result = tools["upsert_business_record"].execute(
+        collection_id=collection["id"],
+        stable_key="acme",
+        values={"name": "Acme"},
+        business_intent="Record customer confirmation",
+    )
+    assert result["changes"][0]["observation_id"] == observation.id
+    linked = service.business.observation_snapshot_with_links(observation)
+    assert linked["resolved_record_ids"] == [result["record"]["id"]]
+
+
 def test_repeated_cross_turn_changes_form_candidate_business_practice(tmp_path):
     events = []
     service = WorkspaceService(

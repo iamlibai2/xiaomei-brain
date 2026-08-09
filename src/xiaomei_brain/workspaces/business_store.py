@@ -392,6 +392,42 @@ class BusinessStore(SQLiteStore):
         ).fetchone()
         return self._observation_row(row) if row is not None else None
 
+    def attach_asset_to_observation(
+        self,
+        observation_id: str,
+        asset_id: str,
+        *,
+        attribute_updates: dict[str, Any] | None = None,
+    ) -> tuple[Observation, bool]:
+        """Attach one durable Asset to an Observation without replacing its facts."""
+        current = self.get_observation(observation_id)
+        if current is None:
+            raise KeyError(observation_id)
+        resolved_asset_id = asset_id.strip()
+        if not resolved_asset_id:
+            raise ValueError("Observation Asset ID cannot be empty")
+        if current.asset_id and current.asset_id != resolved_asset_id:
+            raise ValueError("Observation is already linked to a different Asset")
+        attributes = dict(current.attributes)
+        attributes.update(dict(attribute_updates or {}))
+        changed = (
+            current.asset_id != resolved_asset_id
+            or attributes != current.attributes
+        )
+        if not changed:
+            return current, False
+        self._get_conn().execute(
+            """UPDATE observations
+               SET asset_id = ?, attributes_json = ?
+               WHERE id = ?""",
+            (resolved_asset_id, self._json(attributes), current.id),
+        )
+        self._get_conn().commit()
+        updated = self.get_observation(current.id)
+        if updated is None:  # pragma: no cover - guarded by the same transaction
+            raise KeyError(current.id)
+        return updated, True
+
     def latest_resolved_observation(
         self,
         data_source_id: str,

@@ -144,6 +144,38 @@ class BusinessWorldService:
         )
         return observation
 
+    def attach_observation_asset(
+        self,
+        workspace_id: str,
+        *,
+        observation_id: str,
+        asset_id: str,
+        attribute_updates: dict[str, Any] | None = None,
+        session_id: str = "",
+        turn_id: str = "",
+    ) -> Observation:
+        """Backfill the durable Asset created for an existing Observation."""
+        self._require_workspace(workspace_id)
+        current = self.store.get_observation(observation_id.strip())
+        if current is None:
+            raise KeyError(observation_id)
+        if current.workspace_id != workspace_id:
+            raise ValueError("Observation does not belong to the Workspace")
+        updated, changed = self.store.attach_asset_to_observation(
+            current.id,
+            asset_id,
+            attribute_updates=attribute_updates,
+        )
+        if changed:
+            self._publish_to_workspace(
+                "observation.updated",
+                workspace_id,
+                self.observation_snapshot_with_links(updated),
+                session_id=session_id,
+                turn_id=turn_id,
+            )
+        return updated
+
     def create_collection(
         self,
         workspace_id: str,

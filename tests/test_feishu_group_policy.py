@@ -291,16 +291,30 @@ def test_feishu_adapter_stores_group_message_without_starting_a_turn():
         "sender": "ou_sender",
         "sender_name": "张三",
         "conversation_id": "oc_group",
-        "text": "大家好",
+        "text": "[文件: quote.xlsx]",
         "chat_type": "group",
         "bot_mentioned": False,
         "message_id": "om_observation",
         "timestamp": int(time.time() * 1000),
-        "msg_type": "text",
+        "msg_type": "file",
+        "resource_key": "file-key-1",
+        "resource_type": "file",
+        "file_name": "quote.xlsx",
     })
 
     assert channel.sent == []
     assert len(observations) == 1
-    assert observations[0].content == "大家好"
+    assert observations[0].content == "[文件: quote.xlsx]"
     assert observations[0].session_id == "feishu-group-cli_demo-oc_group"
     assert observations[0].metadata["external_message_id"] == "om_observation"
+    assert observations[0].metadata["remote_attachment"] == {
+        "id": "feishu_om_observation",
+        "channel": "feishu",
+        "account_id": "default",
+        "message_id": "om_observation",
+        "resource_key": "file-key-1",
+        "resource_type": "file",
+        "message_type": "file",
+        "name": "quote.xlsx",
+        "status": "remote",
+    }

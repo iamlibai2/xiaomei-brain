@@ -61,6 +61,10 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             str(getattr(current, "turn_id", "") or ""),
         )
 
+    def current_observation_id() -> str:
+        """Return the durable source attached to the current inbound message."""
+        return str(getattr(core(), "current_observation_id", "") or "").strip()
+
     def require_workspace(workspace_id: str):
         return service().require_for_person(
             workspace_id,
@@ -319,6 +323,18 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
     ) -> dict[str, Any]:
         """Record what was received before deciding whether it is a business fact."""
         require_focused_workspace(workspace_id)
+        inbound_observation_id = current_observation_id()
+        if inbound_observation_id:
+            existing = service().business.store.get_observation(
+                inbound_observation_id,
+            )
+            if existing is None:
+                raise ValueError("The current message Observation no longer exists")
+            if existing.workspace_id != workspace_id:
+                raise ValueError(
+                    "The current message Observation belongs to another Workspace"
+                )
+            return service().business.observation_snapshot_with_links(existing)
         session_id, turn_id = context()
         resolved_data_source_id = data_source_id.strip()
         if not resolved_data_source_id and session_id:
@@ -417,6 +433,9 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         """Create or update current business state and preserve every field change."""
         require_focused_collection(collection_id)
         session_id, turn_id = context()
+        resolved_observation_id = (
+            observation_id.strip() or current_observation_id()
+        )
         record, changes, event = service().business.upsert_record(
             collection_id,
             values=values,
@@ -427,7 +446,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             person_id=person_id(),
             session_id=session_id,
             turn_id=turn_id,
-            observation_id=observation_id,
+            observation_id=resolved_observation_id,
             event_type=event_type,
             event_summary=event_summary,
             event_occurred_at=event_occurred_at,
@@ -560,6 +579,9 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
         """Execute one stable business meaning while preserving Agent freedom."""
         definition = require_focused_action(action_id)
         session_id, turn_id = context()
+        resolved_observation_id = (
+            observation_id.strip() or current_observation_id()
+        )
         run, record, changes, event = service().actions.execute(
             definition.id,
             values=values,
@@ -568,7 +590,7 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
             record_id=record_id,
             stable_key=stable_key,
             expected_revision=expected_revision,
-            observation_id=observation_id,
+            observation_id=resolved_observation_id,
             event_type=event_type,
             event_summary=event_summary,
             event_occurred_at=event_occurred_at,
@@ -1067,7 +1089,9 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
                 "requests a customer, quote, contract, order or payment change, call "
                 "this first with a faithful concise account of what they said, then "
                 "pass its observation_id to upsert_business_record. Keep uncertain "
-                "statements here without prematurely changing a Collection."
+                "statements here without prematurely changing a Collection. If the "
+                "current Channel message was already captured, this returns that same "
+                "Observation instead of creating a duplicate."
             ),
             parameters={
                 "type": "object",
@@ -1146,7 +1170,9 @@ def create_workspace_tools(agent: Any) -> list[Tool]:
                 "requests received in conversation, first call record_observation and "
                 "link its observation_id so the source remains traceable. Add event_type "
                 "and event_summary only when a meaningful past-tense business fact is "
-                "known to have occurred; ordinary data cleanup must not manufacture Events."
+                "known to have occurred; ordinary data cleanup must not manufacture Events. "
+                "An Observation attached to the current Channel message is linked "
+                "automatically when observation_id is omitted."
             ),
             parameters={
                 "type": "object",

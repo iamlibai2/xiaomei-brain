@@ -100,6 +100,8 @@ class LivingMessage:
     turn_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     # Database row for an external user message persisted before enqueueing.
     message_id: int | None = None
+    # Business-world evidence captured before an interactive Channel Turn.
+    observation_id: str = ""
     user_display_name: str = ""
     # Non-empty only when this message was accepted into an active Turn.
     steered_into_turn_id: str = ""
@@ -308,6 +310,7 @@ class Living:
         display_name: str | None = None,
         turn_id: str | None = None,
         message_id: int | None = None,
+        observation_id: str = "",
         context_key: str | None = None,
         assignment_id: str = "",
     ) -> LivingMessage:
@@ -333,6 +336,7 @@ class Living:
             assignment_id=assignment_id,
             turn_id=turn_id or str(uuid.uuid4()),
             message_id=message_id,
+            observation_id=observation_id,
         )
         if display_name:
             msg.user_display_name = display_name
@@ -374,6 +378,7 @@ class Living:
             or msg.attachments
             or msg.invocation
             or msg.assignment_id
+            or msg.observation_id
             or msg.source in {"agent", "system"}
         ):
             return False
@@ -393,6 +398,7 @@ class Living:
                     session_id=msg.session_id,
                     turn_id=msg.turn_id,
                     message_id=msg.message_id,
+                    observation_id=msg.observation_id,
                     source=msg.source,
                     context_key=msg.context_key,
                     user_display_name=msg.user_display_name,

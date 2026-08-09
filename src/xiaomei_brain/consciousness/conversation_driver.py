@@ -83,7 +83,7 @@ class ConversationDriver:
         self._scheduler = RoundScheduler()
         self._scheduler.every(1, self._salience_feedback)
         self._scheduler.every(3, self._invoke_inner_voice_chat_turn)
-        self._scheduler.every(1, self._invoke_dag_compact)
+        self._scheduler.every(3, self._invoke_dag_compact)
         self._scheduler.every(10, self._invoke_memory_extract)
         self._scheduler.every(15, self._invoke_procedure_learn)
         self._scheduler.every(20, self._invoke_narrative_learn)
@@ -474,6 +474,9 @@ class ConversationDriver:
             agent_core.user_id = msg.user_id
             agent_core.session_id = msg.session_id
             agent_core.turn_id = msg.turn_id
+            agent_core.current_observation_id = str(
+                getattr(msg, "observation_id", "") or ""
+            )
             agent_core.current_source = getattr(msg, "source", "conversation")
             agent_core.current_attachments = list(
                 getattr(msg, "attachments", None) or [],
@@ -534,6 +537,7 @@ class ConversationDriver:
             agent_core.on_speech = None
             agent_core.on_tool_approval = None
             agent_core.on_action_complete = None
+            agent_core.current_observation_id = ""
             agent_core.current_attachments = []
 
     # ── ReAct ─────────────────────────────────────────────────
@@ -577,6 +581,9 @@ class ConversationDriver:
                             source=steer.source,
                             turn_id=steer.turn_id,
                             message_id=steer.message_id,
+                            observation_id=str(
+                                getattr(steer, "observation_id", "") or ""
+                            ),
                             user_display_name=steer.user_display_name,
                             steered_into_turn_id=steer.active_turn_id,
                         )
@@ -652,6 +659,9 @@ class ConversationDriver:
                             msg.session_id,
                         )
                 agent.current_source = getattr(msg, "source", "conversation")
+                agent.current_observation_id = str(
+                    getattr(msg, "observation_id", "") or ""
+                )
                 agent.current_attachments = list(
                     getattr(msg, "attachments", None) or [],
                 )
@@ -690,6 +700,9 @@ class ConversationDriver:
                     agent.user_id = current_msg.user_id
                     agent.session_id = current_msg.session_id
                     agent.turn_id = current_msg.turn_id
+                    agent.current_observation_id = str(
+                        getattr(current_msg, "observation_id", "") or ""
+                    )
                     agent.user_display_name = getattr(current_msg, 'user_display_name', agent.user_display_name)
 
                     # 注册工具事件 callback（非 CLI 通道通过 Router 投递）
@@ -997,6 +1010,7 @@ class ConversationDriver:
                     agent_core.active_project_id = ""
                     agent_core.project_context = None
                     agent_core.current_source = ""
+                    agent_core.current_observation_id = ""
                     agent_core.current_attachments = []
                     agent_core.current_memory_references = []
                 except Exception:
@@ -1017,6 +1031,9 @@ class ConversationDriver:
                         display_name=steer.user_display_name or None,
                         turn_id=steer.turn_id,
                         message_id=steer.message_id,
+                        observation_id=str(
+                            getattr(steer, "observation_id", "") or ""
+                        ),
                         context_key=steer.context_key or None,
                     )
 
@@ -1106,23 +1123,19 @@ class ConversationDriver:
             _agent = agent_core
             display = self.display
 
-            # 临时 callback 捕获压缩数据
-            _compact_data: dict = {}
-            _orig_on_compact = _agent.on_compact
-
-            def _capture_compact(data: dict) -> None:
-                _compact_data.update(data)
-                if _orig_on_compact:
-                    _orig_on_compact(data)
-
-            _agent.on_compact = _capture_compact
-
             def _run():
                 try:
                     logger.info("[ConversationDriver] DAG compact 开始 (session=%s)", _session_id)
-                    _agent._auto_compact(_session_id, max_tokens=4000, messages=None)
-                    count = _compact_data.get("compact_count", 0)
-                    tokens = _compact_data.get("summary_tokens", 0)
+                    living_cfg = getattr(_agent, "_living_cfg", None)
+                    living = getattr(living_cfg, "living", None)
+                    max_tokens = int(getattr(living, "max_context_tokens", 50000))
+                    compact_data = _agent._auto_compact(
+                        _session_id,
+                        max_tokens=max_tokens,
+                        messages=None,
+                    ) or {}
+                    count = compact_data.get("compact_count", 0)
+                    tokens = compact_data.get("summary_tokens", 0)
                     if count:
                         logger.info("[ConversationDriver] DAG compact 完成: %d msgs → summary (%d tokens)", count, tokens)
                         display.record_dag_compact(count, tokens)

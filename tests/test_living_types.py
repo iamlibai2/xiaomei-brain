@@ -101,6 +101,7 @@ def test_same_person_session_plain_text_steers_active_turn():
     {"images": ["image.png"]},
     {"attachments": [{"id": "file-1"}]},
     {"assignment_id": "assignment-1"},
+    {"observation_id": "observation-1"},
 ])
 def test_ineligible_message_remains_in_normal_queue(overrides):
     living, core = _living_with_active_turn()

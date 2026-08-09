@@ -452,6 +452,103 @@ class ConversationDB(SQLiteStore):
         ).fetchall()
         return [dict(row) for row in reversed(rows)]
 
+    def get_group_message(
+        self,
+        issuer: str,
+        external_message_id: str,
+    ) -> dict[str, Any] | None:
+        """Resolve one durable channel message after an idempotent redelivery."""
+        row = self._get_conn().execute(
+            """SELECT * FROM group_messages
+               WHERE issuer = ? AND external_message_id = ? LIMIT 1""",
+            (issuer, external_message_id),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def find_group_attachments(
+        self,
+        session_id: str,
+        reference: str = "",
+        *,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Find deferred Channel attachments inside one group conversation."""
+        normalized = str(reference or "").strip().casefold()
+        bounded_limit = max(1, min(int(limit), 100))
+        if normalized:
+            rows = self._get_conn().execute(
+                """SELECT * FROM group_messages
+                   WHERE session_id = ? AND (
+                     LOWER(json_extract(metadata, '$.remote_attachment.id')) = ?
+                     OR LOWER(json_extract(metadata, '$.remote_attachment.name')) = ?
+                     OR LOWER(external_message_id) = ?
+                   )
+                   ORDER BY created_at DESC LIMIT ?""",
+                (
+                    session_id,
+                    normalized,
+                    normalized,
+                    normalized,
+                    bounded_limit,
+                ),
+            ).fetchall()
+        else:
+            rows = self._get_conn().execute(
+                """SELECT * FROM group_messages
+                   WHERE session_id = ?
+                     AND json_type(metadata, '$.remote_attachment') = 'object'
+                   ORDER BY created_at DESC LIMIT ?""",
+                (session_id, bounded_limit),
+            ).fetchall()
+        matches: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            try:
+                metadata = json.loads(item.get("metadata") or "{}")
+            except (TypeError, json.JSONDecodeError):
+                continue
+            remote = metadata.get("remote_attachment")
+            if not isinstance(remote, dict):
+                continue
+            item["metadata"] = metadata
+            item["remote_attachment"] = dict(remote)
+            materialized = metadata.get("materialized_attachment")
+            item["materialized_attachment"] = (
+                dict(materialized) if isinstance(materialized, dict) else None
+            )
+            matches.append(item)
+        return matches
+
+    def update_group_message_metadata(
+        self,
+        group_message_id: int,
+        updates: dict[str, Any],
+    ) -> bool:
+        """Merge durable materialization state into one group message."""
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT metadata FROM group_messages WHERE id = ? LIMIT 1",
+            (int(group_message_id),),
+        ).fetchone()
+        if row is None:
+            return False
+        try:
+            metadata = json.loads(row["metadata"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata.update(dict(updates))
+        conn.execute(
+            "UPDATE group_messages SET metadata = ? WHERE id = ?",
+            (
+                json.dumps(metadata, ensure_ascii=False),
+                int(group_message_id),
+            ),
+        )
+        conn.commit()
+        return True
+
     def update_message_metadata(
         self,
         message_id: int,

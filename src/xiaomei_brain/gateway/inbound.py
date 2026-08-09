@@ -52,6 +52,15 @@ class Rejected:
 AcceptResult = Accepted | Rejected
 
 
+@dataclass(frozen=True)
+class GroupMessageCapture:
+    """Durable identities created while perceiving one group message."""
+
+    accepted: bool
+    group_message_id: int | None = None
+    workspace_observation_id: str = ""
+
+
 # ── Gateway ──────────────────────────────────────────────────
 
 class Gateway:
@@ -259,6 +268,11 @@ class Gateway:
             display_name=user_display_name,
             turn_id=turn_id,
         )
+        workspace_observation_id = str(
+            raw.metadata.get("workspace_observation_id") or ""
+        )
+        if workspace_observation_id:
+            message_kwargs["observation_id"] = workspace_observation_id
         if isinstance(message_id, int):
             message_kwargs["message_id"] = message_id
         invocation = raw.metadata.get("invocation")
@@ -295,6 +309,9 @@ class Gateway:
                 invocation=dict(invocation) if isinstance(invocation, dict) else {},
                 turn_id=turn_id,
                 message_id=message_id if isinstance(message_id, int) else None,
+                observation_id=str(
+                    raw.metadata.get("workspace_observation_id") or ""
+                ),
                 context_key=context_key,
                 assignment_id=assignment_id,
             )
@@ -302,15 +319,24 @@ class Gateway:
         return Accepted(living_message=msg)
 
     def observe_group_message(self, raw: RawMessage) -> bool:
-        """Persist group chatter without creating a Turn or waking the Agent."""
+        """Compatibility wrapper for background-only channel adapters."""
+        return self.capture_group_message(raw).accepted
+
+    def capture_group_message(self, raw: RawMessage) -> GroupMessageCapture:
+        """Persist group perception and return its traceable business identity.
+
+        This method never creates a Turn.  A channel adapter may subsequently
+        pass an explicitly mentioned message through ``accept`` while carrying
+        the returned Observation ID.
+        """
         content = self._sanitize(raw.content)
         if content is None or not content.strip() or not raw.session_id:
-            return False
+            return GroupMessageCapture(accepted=False)
 
         agent = getattr(self._living, "agent", None)
         db = getattr(agent, "conversation_db", None)
         if db is None or not hasattr(db, "log_group_message"):
-            return False
+            return GroupMessageCapture(accepted=False)
 
         metadata = dict(raw.metadata)
         external_message_id = str(metadata.pop("external_message_id", "") or "")
@@ -340,8 +366,14 @@ class Gateway:
                 metadata=metadata,
                 created_at=created_at,
             )
+            if group_message_id is None and hasattr(db, "get_group_message"):
+                existing = db.get_group_message(issuer, external_message_id)
+                group_message_id = (
+                    int(existing["id"]) if existing is not None else None
+                )
+            observation_id = ""
             if group_message_id is not None:
-                self._project_group_observation(
+                observation_id = self._project_group_observation(
                     raw,
                     group_message_id=group_message_id,
                     content=content,
@@ -350,14 +382,23 @@ class Gateway:
                     display_name=display_name,
                     occurred_at=created_at,
                 )
-            return True
+                if observation_id and hasattr(db, "update_group_message_metadata"):
+                    db.update_group_message_metadata(
+                        group_message_id,
+                        {"workspace_observation_id": observation_id},
+                    )
+            return GroupMessageCapture(
+                accepted=True,
+                group_message_id=group_message_id,
+                workspace_observation_id=observation_id,
+            )
         except Exception:
             logger.exception(
                 "[Gateway] failed to persist group observation: channel=%s session=%s",
                 raw.channel,
                 raw.session_id,
             )
-            return False
+            return GroupMessageCapture(accepted=False)
 
     def _project_group_observation(
         self,
@@ -369,15 +410,15 @@ class Gateway:
         external_subject: str,
         display_name: str,
         occurred_at: float,
-    ) -> None:
+    ) -> str:
         """Project group chatter only into an explicitly focused Workspace."""
         agent = getattr(self._living, "agent", None)
         service = getattr(agent, "workspace_service", None)
         if service is None:
-            return
+            return ""
         workspace_id = service.store.focused_workspace_id(raw.session_id)
         if not workspace_id:
-            return
+            return ""
         try:
             channel = str(raw.channel or "channel").strip().lower()
             locator = f"channel:{channel}:session:{raw.session_id}"
@@ -404,12 +445,25 @@ class Gateway:
             attributes = {
                 "channel": channel,
                 "group": True,
+                "processing_mode": str(
+                    raw.metadata.get("processing_mode") or "background"
+                ),
                 "display_name": display_name,
                 "external_peer_id": peer_id,
             }
             if external_subject:
                 attributes["external_subject"] = external_subject
-            service.business.observe(
+            remote_attachment = raw.metadata.get("remote_attachment")
+            if isinstance(remote_attachment, dict):
+                attributes["remote_attachment"] = {
+                    "id": str(remote_attachment.get("id") or ""),
+                    "name": str(remote_attachment.get("name") or ""),
+                    "message_type": str(
+                        remote_attachment.get("message_type") or "file"
+                    ),
+                    "status": "remote",
+                }
+            observation = service.business.observe(
                 workspace_id,
                 content=content,
                 data_source_id=source.id,
@@ -423,6 +477,7 @@ class Gateway:
                 occurred_at=occurred_at,
                 session_id=raw.session_id,
             )
+            return observation.id
         except Exception:
             # group_messages remains the authoritative channel record.
             logger.exception(
@@ -430,6 +485,7 @@ class Gateway:
                 raw.channel,
                 raw.session_id,
             )
+            return ""
 
     def _handle_conversation_control(
         self,
@@ -543,6 +599,11 @@ class Gateway:
         ).strip()
         if external_subject:
             metadata["external_subject"] = external_subject
+        workspace_observation_id = str(
+            raw.metadata.get("workspace_observation_id") or "",
+        ).strip()
+        if workspace_observation_id:
+            metadata["workspace_observation_id"] = workspace_observation_id
         retry_of = raw.metadata.get("retry_of")
         if isinstance(retry_of, int) and retry_of > 0:
             metadata["retry_of"] = retry_of

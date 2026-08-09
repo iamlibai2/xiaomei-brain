@@ -156,6 +156,7 @@ class Agent:
         self.user_display_name: str = "这位用户"  # 当前用户的显示名，identity 绑定后设置
         self.session_id: str = "main"
         self.turn_id: str = ""
+        self.current_observation_id: str = ""
         self.current_memory_references: list[dict[str, Any]] = []
         # Turn-owned assets available to tools. A tool never receives an
         # arbitrary filesystem path from the model for attachment access.
@@ -312,10 +313,19 @@ class Agent:
                 return result
         return None
 
-    def _auto_compact(self, session_id: str, max_tokens: int, messages: list[dict] | None = None) -> None:
+    def _auto_compact(
+        self,
+        session_id: str,
+        max_tokens: int,
+        messages: list[dict] | None = None,
+    ) -> dict[str, int] | None:
         """Auto-compact: 消息积累到阈值时自动压缩为 DAG 叶子摘要。
 
         原在 ContextAssembler._auto_compact()，搬到 Agent 直接管理。
+
+        ``reserved_fresh_count`` 是硬边界：无论按消息数还是 token
+        触发，都不能压缩最近的这些消息。token 触发仍然必要，因为
+        单条工具结果可能远大于多轮普通对话。
         """
         with self._locks_lock:
             lock = self._compact_locks.get(session_id)
@@ -346,9 +356,16 @@ class Agent:
             )
             threshold = int(max_tokens * cfg.get("compact_token_ratio", 0.5))
 
-            compact_threshold = cfg.get("messages_per_compact", 8) + cfg.get("reserved_fresh_count", 10)
-            if unsummarized_tokens >= threshold or len(unsummarized) >= compact_threshold:
-                msgs_to_compact = unsummarized[: cfg.get("messages_per_compact", 8)]
+            messages_per_compact = max(1, int(cfg.get("messages_per_compact", 8)))
+            reserved_fresh_count = max(0, int(cfg.get("reserved_fresh_count", 10)))
+            compactable_count = max(0, len(unsummarized) - reserved_fresh_count)
+            compact_threshold = messages_per_compact + reserved_fresh_count
+            token_triggered = unsummarized_tokens >= threshold
+            count_triggered = len(unsummarized) >= compact_threshold
+
+            if (token_triggered or count_triggered) and compactable_count > 0:
+                compact_count = min(messages_per_compact, compactable_count)
+                msgs_to_compact = unsummarized[:compact_count]
                 compact_tokens = sum(
                     estimate_content_tokens(m.get("content")) for m in msgs_to_compact
                 )
@@ -364,15 +381,16 @@ class Agent:
                     summary_tokens = estimate_tokens(node.content)
                     after_tokens = remaining_tokens + summary_tokens
 
+                    stats = {
+                        "compact_count": len(msgs_to_compact),
+                        "before_tokens": unsummarized_tokens,
+                        "after_tokens": after_tokens,
+                        "summary_tokens": summary_tokens,
+                        "remaining_count": len(unsummarized) - len(msgs_to_compact),
+                        "remaining_tokens": remaining_tokens,
+                    }
                     if self.on_compact:
-                        self.on_compact({
-                            "compact_count": len(msgs_to_compact),
-                            "before_tokens": unsummarized_tokens,
-                            "after_tokens": after_tokens,
-                            "summary_tokens": summary_tokens,
-                            "remaining_count": len(unsummarized) - len(msgs_to_compact),
-                            "remaining_tokens": remaining_tokens,
-                        })
+                        self.on_compact(stats)
 
                     logger.info(
                         "[DAG] Auto compact: %d msgs (%d tokens) → summary #%d (depth=%d, %d tokens), "
@@ -382,11 +400,19 @@ class Agent:
                         len(unsummarized) - len(msgs_to_compact),
                         remaining_tokens,
                     )
+                    return stats
+            elif token_triggered and compactable_count == 0:
+                logger.debug(
+                    "[DAG] Auto compact skipped: %d fresh msgs are protected (reserved=%d)",
+                    len(unsummarized), reserved_fresh_count,
+                )
         except Exception as e:
             import traceback
             logger.warning("[DAG] Auto compact failed: %s\n%s", e, traceback.format_exc())
         finally:
             lock.release()
+
+        return None
 
     def _unsummarized_from_messages(self, session_id: str, messages: list[dict]) -> list[dict]:
         """从 self.messages 中找出未被 DAG 摘要覆盖的消息。"""

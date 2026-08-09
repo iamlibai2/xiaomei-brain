@@ -132,7 +132,9 @@ def _contextual_required_tool_names(query: str) -> set[str]:
         "规则", "约束", "默认值", "计算规则", "business rule",
     ))
     if has_focused_workspace:
-        required.add("get_current_workspace")
+        required.update({"get_current_workspace", "record_observation"})
+    if "remote_group_attachment" in text:
+        required.add("fetch_group_attachment")
     if has_focused_workspace and has_workspace_authoring_intent:
         required.update(_WORKSPACE_AUTHORING_TOOLS)
     if has_tabular_attachment and has_import_intent and has_workspace_destination:

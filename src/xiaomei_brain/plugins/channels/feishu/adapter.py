@@ -35,7 +35,10 @@ def register(ctx):
     if not app_id or not app_secret:
         ctx.logger.warning("飞书配置缺失，跳过注册")
         return
-    ctx.register_channel("feishu", create_adapter(ctx.config))
+    adapter = create_adapter(ctx.config)
+    ctx.register_channel("feishu", adapter)
+    from .deferred_attachment import create_fetch_group_attachment_tool
+    ctx.register_agent_tool(create_fetch_group_attachment_tool(adapter))
 
 
 def create_adapter(config: dict) -> "FeishuAdapter":
@@ -188,38 +191,82 @@ class FeishuAdapter(ChannelAdapter):
                         },
                     )
 
-                # Ordinary group chatter is perception, not a request. Store it
-                # separately so it cannot enter fresh_tail, dreams or personal
-                # memory, and never create a Turn or a reply.
+                # Every group message is first preserved as perception.  An
+                # explicit @ mention continues into Gateway.accept below while
+                # carrying the same Workspace Observation; ordinary chatter
+                # stops here and is handled by the background observation path.
+                gw = getattr(living, "_gateway_inbound", None)
+                remote_attachment = self._remote_attachment_descriptor(msg_dict)
+                if gw and hasattr(gw, "capture_group_message"):
+                    from xiaomei_brain.gateway.inbound import RawMessage
+                    capture = gw.capture_group_message(RawMessage(
+                        content=text,
+                        source="human",
+                        channel="feishu",
+                        peer_id=person_id,
+                        peer_type="human",
+                        session_id=session_id,
+                        metadata={
+                            "external_issuer": issuer,
+                            "external_subject": sender,
+                            "external_conversation_id": conversation_id,
+                            "external_message_id": msg_dict.get("message_id", ""),
+                            "external_timestamp": msg_dict.get("timestamp"),
+                            "sender_display_name": (
+                                resolved[0].display_name
+                                if resolved is not None
+                                else (
+                                    msg_dict.get("sender_name")
+                                    if msg_dict.get("sender_name") not in {"", "user"}
+                                    else sender
+                                )
+                            ),
+                            "message_type": msg_dict.get("msg_type", "text"),
+                            **({
+                                "remote_attachment": remote_attachment,
+                            } if remote_attachment else {}),
+                            "processing_mode": (
+                                "interactive"
+                                if msg_dict.get("bot_mentioned", False)
+                                else "background"
+                            ),
+                        },
+                    ))
+                    if capture.workspace_observation_id:
+                        msg_dict["_workspace_observation_id"] = (
+                            capture.workspace_observation_id
+                        )
+                elif gw and hasattr(gw, "observe_group_message"):
+                    from xiaomei_brain.gateway.inbound import RawMessage
+                    gw.observe_group_message(RawMessage(
+                        content=text,
+                        source="human",
+                        channel="feishu",
+                        peer_id=person_id,
+                        peer_type="human",
+                        session_id=session_id,
+                        metadata={
+                            "external_issuer": issuer,
+                            "external_subject": sender,
+                            "external_conversation_id": conversation_id,
+                            "external_message_id": msg_dict.get("message_id", ""),
+                            "external_timestamp": msg_dict.get("timestamp"),
+                            "sender_display_name": (
+                                msg_dict.get("sender_name") or sender
+                            ),
+                            "message_type": msg_dict.get("msg_type", "text"),
+                            **({
+                                "remote_attachment": remote_attachment,
+                            } if remote_attachment else {}),
+                            "processing_mode": (
+                                "interactive"
+                                if msg_dict.get("bot_mentioned", False)
+                                else "background"
+                            ),
+                        },
+                    ))
+
                 if not msg_dict.get("bot_mentioned", False):
-                    gw = getattr(living, "_gateway_inbound", None)
-                    if gw and hasattr(gw, "observe_group_message"):
-                        from xiaomei_brain.gateway.inbound import RawMessage
-                        gw.observe_group_message(RawMessage(
-                            content=text,
-                            source="human",
-                            channel="feishu",
-                            peer_id=person_id,
-                            peer_type="human",
-                            session_id=session_id,
-                            metadata={
-                                "external_issuer": issuer,
-                                "external_subject": sender,
-                                "external_conversation_id": conversation_id,
-                                "external_message_id": msg_dict.get("message_id", ""),
-                                "external_timestamp": msg_dict.get("timestamp"),
-                                "sender_display_name": (
-                                    resolved[0].display_name
-                                    if resolved is not None
-                                    else (
-                                        msg_dict.get("sender_name")
-                                        if msg_dict.get("sender_name") not in {"", "user"}
-                                        else sender
-                                    )
-                                ),
-                                "message_type": msg_dict.get("msg_type", "text"),
-                            },
-                        ))
                     logger.info(
                         "[Feishu/Inbound] stored group observation: %s",
                         conversation_id,
@@ -317,6 +364,10 @@ class FeishuAdapter(ChannelAdapter):
                         "external_subject": sender,
                         "external_conversation_id": conversation_id,
                         "external_message_id": msg_dict.get("message_id", ""),
+                        "external_timestamp": msg_dict.get("timestamp"),
+                        "workspace_observation_id": msg_dict.get(
+                            "_workspace_observation_id", "",
+                        ),
                     },
                     reply_channel="feishu",
                     reply_target=conversation_id,
@@ -492,6 +543,27 @@ class FeishuAdapter(ChannelAdapter):
             encoded.data,
             encoded.duration_ms,
         )
+
+    def _remote_attachment_descriptor(self, msg_dict: dict) -> dict[str, str]:
+        """Describe a Feishu group resource without downloading its bytes."""
+        message_type = str(msg_dict.get("msg_type", ""))
+        resource_key = str(msg_dict.get("resource_key", ""))
+        message_id = str(msg_dict.get("message_id", ""))
+        if message_type not in {"image", "file", "media"}:
+            return {}
+        if not resource_key or not message_id:
+            return {}
+        return {
+            "id": f"feishu_{message_id}",
+            "channel": "feishu",
+            "account_id": str(getattr(self._channel, "account_id", "default")),
+            "message_id": message_id,
+            "resource_key": resource_key,
+            "resource_type": str(msg_dict.get("resource_type", "file")),
+            "message_type": message_type,
+            "name": str(msg_dict.get("file_name", "")).strip() or "飞书附件",
+            "status": "remote",
+        }
 
     def _handle_media_message(self, msg_dict: dict, resume) -> None:
         """Download one Feishu image/file/video, then resume normal routing."""
