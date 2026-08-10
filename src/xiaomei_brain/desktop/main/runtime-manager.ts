@@ -18,6 +18,7 @@ interface RuntimePackageManifest {
   schemaVersion: number;
   component: string;
   agentVersion: string;
+  nodeVersion: string;
   archive: string;
   archiveSha256: string;
   runtimeFileCount: number;
@@ -151,9 +152,10 @@ function bundledLarkCliPath(): string {
 async function readRuntimeManifest(manifestPath: string): Promise<RuntimePackageManifest> {
   const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8")) as RuntimePackageManifest;
   if (
-    manifest.schemaVersion !== 2
+    manifest.schemaVersion !== 3
     || manifest.component !== "agent-runtime"
     || !manifest.agentVersion
+    || !/^\d+\.\d+\.\d+$/.test(manifest.nodeVersion)
     || path.basename(manifest.archive) !== manifest.archive
     || !/^[a-f0-9]{64}$/i.test(manifest.archiveSha256)
   ) {
@@ -185,8 +187,11 @@ export class RuntimeManager {
     manifest: RuntimePackageManifest,
   ): Promise<boolean> {
     const python = path.join(runtimeDir, "python", process.platform === "win32" ? "python.exe" : "bin/python");
+    const node = path.join(runtimeDir, "node", process.platform === "win32" ? "node.exe" : "bin/node");
+    const npm = path.join(runtimeDir, "node", process.platform === "win32" ? "npm.cmd" : "bin/npm");
+    const npx = path.join(runtimeDir, "node", process.platform === "win32" ? "npx.cmd" : "bin/npx");
     const readyPath = path.join(runtimeDir, ".runtime-ready.json");
-    if (!await isFile(python) || !await isFile(readyPath)) return false;
+    if (!await isFile(python) || !await isFile(node) || !await isFile(npm) || !await isFile(npx) || !await isFile(readyPath)) return false;
     try {
       const ready = JSON.parse(await fs.readFile(readyPath, "utf8")) as {
         agentVersion?: string;
@@ -275,6 +280,10 @@ export class RuntimeManager {
       if (!await isFile(stagingPython)) {
         throw new Error(`Extracted Runtime does not contain Python: ${stagingPython}`);
       }
+      const stagingNode = path.join(stagingDir, "node", "node.exe");
+      if (!await isFile(stagingNode)) {
+        throw new Error(`Extracted Runtime does not contain Node.js: ${stagingNode}`);
+      }
 
       await execFileAsync(stagingPython, [
         "-c",
@@ -285,6 +294,14 @@ export class RuntimeManager {
         maxBuffer: 1024 * 1024,
         env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", PYTHONUTF8: "1" },
       });
+      const { stdout: nodeVersion } = await execFileAsync(stagingNode, ["--version"], {
+        windowsHide: true,
+        timeout: 30_000,
+        maxBuffer: 1024 * 1024,
+      });
+      if (nodeVersion.trim() !== `v${manifest.nodeVersion}`) {
+        throw new Error(`Bundled Node.js version mismatch: ${nodeVersion.trim()}`);
+      }
 
       await fs.writeFile(
         path.join(stagingDir, "runtime-manifest.json"),
@@ -373,13 +390,17 @@ export class RuntimeManager {
     return descriptorForExecutable(process.platform === "win32" ? "python.exe" : "python3", "path");
   }
 
-  private commandEnvironment(): NodeJS.ProcessEnv {
+  private commandEnvironment(runtime?: RuntimeDescriptor): NodeJS.ProcessEnv {
     const sourceRoot = path.resolve(__dirname, "../../../..");
     const pythonPath = app.isPackaged
       ? process.env.PYTHONPATH
       : [sourceRoot, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter);
     const managedFfmpegBin = this.config.get("managed_ffmpeg_bin");
-    const runtimePath = [managedFfmpegBin, process.env.PATH].filter(Boolean).join(path.delimiter);
+    const runtimeExecutableName = runtime ? path.basename(runtime.executable).toLowerCase() : "";
+    const managedNodeBin = runtime?.source === "bundled" && runtimeExecutableName.startsWith("python")
+      ? path.join(path.dirname(path.dirname(runtime.executable)), "node")
+      : undefined;
+    const runtimePath = [managedNodeBin, managedFfmpegBin, process.env.PATH].filter(Boolean).join(path.delimiter);
     return {
       ...process.env,
       PATH: runtimePath,
@@ -396,7 +417,7 @@ export class RuntimeManager {
       command: runtime.executable,
       args: [...runtime.prefixArgs, ...args],
       cwd: os.homedir(),
-      env: this.commandEnvironment(),
+      env: this.commandEnvironment(runtime),
       source: runtime.source,
     };
   }
@@ -407,7 +428,7 @@ export class RuntimeManager {
       command: runtime.executable,
       args,
       cwd: os.homedir(),
-      env: this.commandEnvironment(),
+      env: this.commandEnvironment(runtime),
       source: runtime.source,
     };
   }
@@ -490,7 +511,7 @@ export class RuntimeManager {
         windowsHide: true,
         timeout: 45_000,
         maxBuffer: 1024 * 1024,
-        env: this.commandEnvironment(),
+        env: this.commandEnvironment(runtime),
       });
       const message = [stdout, stderr].map((value) => value.trim()).filter(Boolean).join("\n");
       return {
@@ -524,7 +545,7 @@ export class RuntimeManager {
         windowsHide: true,
         timeout: 45_000,
         maxBuffer: 1024 * 1024,
-        env: this.commandEnvironment(),
+        env: this.commandEnvironment(runtime),
       });
       const message = [stdout, stderr].map((value) => value.trim()).filter(Boolean).join("\n");
       return {

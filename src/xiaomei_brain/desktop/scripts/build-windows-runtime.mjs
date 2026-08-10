@@ -1,9 +1,13 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { cp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { createReadStream, createWriteStream } from "node:fs";
+import { cp, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
+import extract from "extract-zip";
 
 if (process.platform !== "win32") {
   throw new Error("The Windows runtime builder must run on Windows");
@@ -17,8 +21,16 @@ const runtimeDir = path.join(stageRoot, "runtime");
 const runtimePackageDir = path.join(stageRoot, "package");
 const runtimePythonDir = path.join(runtimeDir, "python");
 const runtimePython = path.join(runtimePythonDir, "python.exe");
+const runtimeNodeDir = path.join(runtimeDir, "node");
 const runtimeArchive = path.join(runtimePackageDir, "agent-runtime.zip");
 const runtimeRequirements = path.join(desktopDir, "runtime-requirements.txt");
+const nodeVersion = "24.15.0";
+const nodeDistribution = `node-v${nodeVersion}-win-x64`;
+const nodeArchiveName = `${nodeDistribution}.zip`;
+const buildCacheDir = path.resolve(
+  process.env.XIAOMEI_BRAIN_BUILD_CACHE
+    || path.join(process.env.LOCALAPPDATA || os.tmpdir(), "xiaomei-brain", "build-cache"),
+);
 
 if (path.dirname(stageRoot) !== desktopDir || path.basename(stageRoot) !== "runtime-stage") {
   throw new Error(`Unsafe runtime staging path: ${stageRoot}`);
@@ -96,6 +108,65 @@ function hashFile(filePath) {
   });
 }
 
+async function downloadFile(url, destination) {
+  const partial = `${destination}.partial`;
+  await mkdir(path.dirname(destination), { recursive: true });
+  await rm(partial, { force: true });
+  const response = await fetch(url, { redirect: "follow" });
+  if (!response.ok || !response.body) {
+    throw new Error(`Download failed (${response.status}): ${url}`);
+  }
+  await pipeline(Readable.fromWeb(response.body), createWriteStream(partial));
+  await rename(partial, destination);
+}
+
+async function installNodeRuntime() {
+  const releaseRoot = `https://nodejs.org/dist/v${nodeVersion}`;
+  const archivePath = path.join(buildCacheDir, nodeArchiveName);
+  const checksumsResponse = await fetch(`${releaseRoot}/SHASUMS256.txt`, { redirect: "follow" });
+  if (!checksumsResponse.ok) {
+    throw new Error(`Unable to download Node.js checksums (${checksumsResponse.status})`);
+  }
+  const checksums = await checksumsResponse.text();
+  const checksumLine = checksums.split(/\r?\n/).find((line) => line.trim().endsWith(`  ${nodeArchiveName}`));
+  const expectedSha256 = checksumLine?.trim().split(/\s+/)[0];
+  if (!expectedSha256 || !/^[a-f0-9]{64}$/i.test(expectedSha256)) {
+    throw new Error(`Node.js checksum was not found for ${nodeArchiveName}`);
+  }
+
+  if (!await stat(archivePath).then((entry) => entry.isFile()).catch(() => false)) {
+    console.log(`[runtime] downloading Node.js v${nodeVersion} LTS`);
+    await downloadFile(`${releaseRoot}/${nodeArchiveName}`, archivePath);
+  }
+  let actualSha256 = await hashFile(archivePath);
+  if (actualSha256.toLowerCase() !== expectedSha256.toLowerCase()) {
+    await rm(archivePath, { force: true });
+    await downloadFile(`${releaseRoot}/${nodeArchiveName}`, archivePath);
+    actualSha256 = await hashFile(archivePath);
+  }
+  if (actualSha256.toLowerCase() !== expectedSha256.toLowerCase()) {
+    throw new Error(`Node.js checksum mismatch: ${archivePath}`);
+  }
+
+  const extractionRoot = path.join(stageRoot, "node-extract");
+  await rm(extractionRoot, { recursive: true, force: true });
+  await mkdir(extractionRoot, { recursive: true });
+  await extract(archivePath, { dir: extractionRoot });
+  await cp(path.join(extractionRoot, nodeDistribution), runtimeNodeDir, { recursive: true });
+  await rm(extractionRoot, { recursive: true, force: true });
+
+  const nodeExecutable = path.join(runtimeNodeDir, "node.exe");
+  const npmCli = path.join(runtimeNodeDir, "node_modules", "npm", "bin", "npm-cli.js");
+  const npxCli = path.join(runtimeNodeDir, "node_modules", "npm", "bin", "npx-cli.js");
+  const installedVersion = execFileSync(nodeExecutable, ["--version"], { encoding: "utf8", windowsHide: true }).trim();
+  execFileSync(nodeExecutable, [npmCli, "--version"], { encoding: "utf8", windowsHide: true });
+  execFileSync(nodeExecutable, [npxCli, "--version"], { encoding: "utf8", windowsHide: true });
+  if (installedVersion !== `v${nodeVersion}`) {
+    throw new Error(`Unexpected bundled Node.js version: ${installedVersion}`);
+  }
+  console.log(`[runtime] bundled Node.js ${installedVersion} with npm and npx`);
+}
+
 async function removeNamedDirectories(directory, names) {
   const entries = await readdir(directory, { withFileTypes: true });
   for (const entry of entries) {
@@ -149,6 +220,8 @@ await cp(pythonBaseDir, runtimePythonDir, {
   },
 });
 
+await installNodeRuntime();
+
 const uvExecutable = process.env.UV_EXE || "uv.exe";
 run(uvExecutable, [
   "pip", "install",
@@ -194,9 +267,9 @@ run(runtimePython, [
     "with ZipFile(destination, 'w', compression=ZIP_DEFLATED, compresslevel=9, allowZip64=True) as archive:",
     "    for file in sorted(root.rglob('*')):",
     "        if file.is_file():",
-    "            archive.write(file, Path('python') / file.relative_to(root))",
+    "            archive.write(file, file.relative_to(root))",
   ].join("\n"),
-  runtimePythonDir,
+  runtimeDir,
   runtimeArchive,
 ], {
   env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", PYTHONUTF8: "1" },
@@ -223,11 +296,12 @@ try {
 }
 
 const manifest = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   component: "agent-runtime",
   desktopVersion: project.version,
   agentVersion,
   pythonVersion: pythonInfo.version,
+  nodeVersion,
   architecture: `x${pythonInfo.architecture}`,
   revision,
   embeddingBundled: false,

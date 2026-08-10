@@ -3,7 +3,7 @@
 The Windows installer contains two independently versioned layers:
 
 - Electron Desktop UI and main process.
-- A portable Python 3.11 Agent Runtime distributed as
+- A portable Agent Runtime containing Python 3.11 and Node.js LTS, distributed as
   `resources/runtime-package/agent-runtime.zip`.
 
 Agent configuration, memory, logs, and models remain in
@@ -37,14 +37,17 @@ npm run package:win
 The command performs these steps:
 
 1. Copies the base CPython distribution into `runtime-stage/runtime/python`.
-2. Installs `xiaomei-brain` and its core dependencies into that runtime.
-3. Removes bytecode caches, test suites, Tcl/Tk data, and native development
+2. Downloads the pinned official Node.js Windows x64 archive, verifies it
+   against `SHASUMS256.txt`, and includes Node.js, npm, and npx under
+   `runtime-stage/runtime/node`.
+3. Installs `xiaomei-brain` and its core dependencies into that runtime.
+4. Removes bytecode caches, test suites, Tcl/Tk data, and native development
    headers that are not needed by the packaged Agent.
-4. Verifies the pruned Runtime imports.
-5. Creates `agent-runtime.zip` and a schema-2 manifest containing its SHA256,
+5. Verifies Python imports and the bundled Node.js/npm/npx executables.
+6. Creates `agent-runtime.zip` and a schema-3 manifest containing its SHA256,
    compressed size, uncompressed size, and file count.
-6. Builds the Electron application.
-7. Creates an MSI installer under `release/`.
+7. Builds the Electron application.
+8. Creates an NSIS installer and updater metadata under `release/`.
 
 ## Runtime initialization
 
@@ -58,11 +61,6 @@ recovered on a later launch.
 Set `XIAOMEI_BRAIN_RUNTIME_HOME` to override the extraction root for packaging
 smoke tests. Existing `XIAOMEI_BRAIN_RUNTIME`, `XIAOMEI_BRAIN_PYTHON`, and
 legacy directly bundled Runtime paths remain supported.
-
-The MSI build skips WiX ICE validation because restricted Windows build
-sessions may not expose the Windows Installer service to the linker. The
-resulting package must still pass an actual `msiexec` install/uninstall smoke
-test before release.
 
 The prototype sets `signAndEditExecutable: false`, so it can build without a
 Windows code-signing certificate or symlink privileges. Enable executable
@@ -97,3 +95,6 @@ component to be prepared once for the new Python Runtime.
 Managed FFmpeg is added only to child-process `PATH`; setup does not modify the
 user or machine environment variables. All local Agents share these host
 components, while a remote Agent remains responsible for its own dependencies.
+The bundled Node.js directory is injected into local Agent child-process
+`PATH` in the same way, so `node`, `npm`, and `npx` work without a system-wide
+Node.js installation.

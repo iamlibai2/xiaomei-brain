@@ -7,7 +7,6 @@ fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
 pyyaml>=6.0
 lancedb>=0.4.0
-pylance
 rich>=13.0.0
 pydantic>=2.0
 numpy>=1.24.0
