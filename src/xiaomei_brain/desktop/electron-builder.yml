@@ -1,7 +1,11 @@
 appId: com.xiaomei.brain.desktop
 productName: xiaomei-brain
 npmRebuild: false
-msiProjectCreated: scripts/patch-msi-project.cjs
+publish:
+  provider: github
+  owner: iamlibai2
+  repo: xiaomei-brain
+  releaseType: release
 directories:
   output: release
 files:
@@ -20,16 +24,23 @@ extraResources:
     to: runtime-package
     filter:
       - "**/*"
+  - from: ai-runtime-requirements.txt
+    to: setup/ai-runtime-requirements.txt
+  - from: optional-ai-services.json
+    to: setup/optional-ai-services.json
 win:
-  target: msi
+  target: nsis
   icon: assets/icon.png
   artifactName: "xiaomei-brain-${version}-setup.${ext}"
   signAndEditExecutable: false
-msi:
+nsis:
   oneClick: true
   perMachine: false
-  additionalLightArgs:
-    - -sval
+  allowElevation: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false
 mac:
   target: dmg
   icon: assets/icon.icns

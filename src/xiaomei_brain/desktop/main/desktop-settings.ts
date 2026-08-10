@@ -17,10 +17,7 @@ export interface DesktopSettings {
   language: DesktopLanguage;
   theme: DesktopTheme;
   openRightSidebarByDefault: boolean;
-  automaticUpdates: {
-    state: "disabled";
-    message: string;
-  };
+  automaticUpdatesEnabled: boolean;
 }
 
 const KEYS = {
@@ -32,6 +29,7 @@ const KEYS = {
   language: "desktop.language",
   theme: "desktop.theme",
   openRightSidebarByDefault: "desktop.openRightSidebarByDefault",
+  automaticUpdatesEnabled: "desktop.automaticUpdatesEnabled",
 } as const;
 
 function readBoolean(config: ConfigStore, key: string, fallback: boolean): boolean {
@@ -65,10 +63,7 @@ export function readDesktopSettings(config: ConfigStore): DesktopSettings {
       KEYS.openRightSidebarByDefault,
       false,
     ),
-    automaticUpdates: {
-      state: "disabled",
-      message: "正式更新服务尚未启用，Desktop 不会自动检查更新。",
-    },
+    automaticUpdatesEnabled: readBoolean(config, KEYS.automaticUpdatesEnabled, true),
   };
 }
 
@@ -96,7 +91,7 @@ export function registerDesktopSettingsIpc(config: ConfigStore): void {
   ipcMain.handle("desktop:getSettings", async () => readDesktopSettings(config));
   ipcMain.handle(
     "desktop:updateSettings",
-    async (_event, patch: Partial<Omit<DesktopSettings, "openAtLoginAvailable" | "automaticUpdates">>) => {
+    async (_event, patch: Partial<Omit<DesktopSettings, "openAtLoginAvailable">>) => {
       const current = readDesktopSettings(config);
 
       if (typeof patch?.openAtLogin === "boolean") {
@@ -133,6 +128,9 @@ export function registerDesktopSettingsIpc(config: ConfigStore): void {
           KEYS.openRightSidebarByDefault,
           String(patch.openRightSidebarByDefault),
         );
+      }
+      if (typeof patch?.automaticUpdatesEnabled === "boolean") {
+        config.set(KEYS.automaticUpdatesEnabled, String(patch.automaticUpdatesEnabled));
       }
       return { ok: true, settings: readDesktopSettings(config) };
     },

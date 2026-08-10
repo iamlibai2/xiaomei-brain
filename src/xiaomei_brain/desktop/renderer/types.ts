@@ -983,6 +983,33 @@ export interface LocalAIBridge {
   openDirectory(): Promise<DirectoryOpenResult>;
 }
 
+export interface FirstRunSetupStatus {
+  requiredReady: boolean;
+  inference: {
+    ready: boolean;
+    variant: "cpu" | "cuda" | "unknown";
+    torchVersion: string;
+    cudaAvailable: boolean;
+  };
+  ffmpeg: { ready: boolean; path: string };
+  gpu: { detected: boolean; name: string };
+}
+
+export interface SetupProgress {
+  component: string;
+  state: "downloading" | "installing" | "complete";
+  percent: number;
+  message: string;
+}
+
+export interface SetupBridge {
+  status(): Promise<{ ok: boolean; status?: FirstRunSetupStatus; error?: string }>;
+  installInference(args: { variant: "cpu" | "cuda" }): Promise<{ ok: boolean; status?: FirstRunSetupStatus; error?: string }>;
+  installFfmpeg(): Promise<{ ok: boolean; status?: FirstRunSetupStatus; error?: string }>;
+  installOptionalService(args: { serviceId: string }): Promise<{ ok: boolean; error?: string }>;
+  onProgress(callback: (progress: SetupProgress) => void): () => void;
+}
+
 export interface NotificationsBridge {
   show(args: { title: string; body: string; agentId: string; sessionId: string }): Promise<{ shown: boolean }>;
   onSelect(callback: (target: { agentId: string; sessionId: string }) => void): () => void;
@@ -1016,10 +1043,7 @@ export interface DesktopSettings {
   language: "zh-CN" | "en-US";
   theme: "system" | "light" | "dark";
   openRightSidebarByDefault: boolean;
-  automaticUpdates: {
-    state: "disabled";
-    message: string;
-  };
+  automaticUpdatesEnabled: boolean;
 }
 
 export interface DesktopSettingsResult {
@@ -1042,6 +1066,7 @@ export interface DesktopBridge {
       | "language"
       | "theme"
       | "openRightSidebarByDefault"
+      | "automaticUpdatesEnabled"
     >>,
   ): Promise<DesktopSettingsResult>;
   readLog(): Promise<{ content: string }>;
@@ -1054,6 +1079,39 @@ export interface DesktopBridge {
     stack?: string;
     componentStack?: string;
   }): void;
+}
+
+export type DesktopUpdatePhase =
+  | "disabled"
+  | "idle"
+  | "checking"
+  | "available"
+  | "not_available"
+  | "downloading"
+  | "downloaded"
+  | "error";
+
+export interface DesktopUpdateState {
+  phase: DesktopUpdatePhase;
+  currentVersion: string;
+  availableVersion?: string;
+  checkedAt?: number;
+  releaseNotes?: string;
+  error?: string;
+  progress?: {
+    percent: number;
+    transferred: number;
+    total: number;
+    bytesPerSecond: number;
+  };
+}
+
+export interface DesktopUpdateBridge {
+  getState(): Promise<DesktopUpdateState>;
+  check(): Promise<DesktopUpdateState>;
+  download(): Promise<DesktopUpdateState>;
+  install(): Promise<DesktopUpdateState>;
+  onState(callback: (state: DesktopUpdateState) => void): () => void;
 }
 
 export interface WinBridge {
@@ -1086,8 +1144,10 @@ declare global {
     identity: IdentityBridge;
     localAgents: LocalAgentsBridge;
     localAI: LocalAIBridge;
+    setup: SetupBridge;
     notifications: NotificationsBridge;
     desktop: DesktopBridge;
+    desktopUpdate: DesktopUpdateBridge;
     win: WinBridge;
     terminal: TerminalBridge;
   }

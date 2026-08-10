@@ -12,6 +12,7 @@ import { AgentLifecycleAction, RuntimeManager } from "./runtime-manager";
 import { sanitizeNotificationText } from "./notification-text";
 import { IdentityVault } from "./identity-vault";
 import { LocalAIRuntimeManager, type LocalAIServiceAction } from "./local-ai-runtime-manager";
+import { SetupManager } from "./setup-manager";
 
 const connections = new Map<string, GatewayClient>();
 const connectionSessions = new Map<string, string>();
@@ -109,6 +110,7 @@ export function registerIpcHandlers(
   const terminalMgr = new TerminalManager();
   const runtimeManager = new RuntimeManager(config);
   const localAIRuntime = new LocalAIRuntimeManager(runtimeManager);
+  const setupManager = new SetupManager(runtimeManager, config, getWindow);
   const identityVault = new IdentityVault();
   let desktopDeviceId = config.get("desktop_device_id") || "";
   if (!desktopDeviceId) {
@@ -136,6 +138,23 @@ export function registerIpcHandlers(
     return undefined;
   }).catch((error) => {
     console.error("[local-ai] embedding initialization failed", error);
+  });
+
+  ipcMain.handle("setup:status", async () => {
+    try { return { ok: true, status: await setupManager.status() }; }
+    catch (error) { return { ok: false, error: String(error instanceof Error ? error.message : error) }; }
+  });
+  ipcMain.handle("setup:installInference", async (_event, args: { variant: "cpu" | "cuda" }) => {
+    try { return { ok: true, status: await setupManager.installInference(args.variant) }; }
+    catch (error) { return { ok: false, error: String(error instanceof Error ? error.message : error) }; }
+  });
+  ipcMain.handle("setup:installFfmpeg", async () => {
+    try { return { ok: true, status: await setupManager.installFfmpeg() }; }
+    catch (error) { return { ok: false, error: String(error instanceof Error ? error.message : error) }; }
+  });
+  ipcMain.handle("setup:installOptionalService", async (_event, args: { serviceId: string }) => {
+    try { await setupManager.installOptionalService(args.serviceId); return { ok: true }; }
+    catch (error) { return { ok: false, error: String(error instanceof Error ? error.message : error) }; }
   });
 
   ipcMain.handle("localAI:list", async () => {

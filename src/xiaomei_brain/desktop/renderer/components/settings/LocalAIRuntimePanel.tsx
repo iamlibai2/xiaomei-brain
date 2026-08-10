@@ -168,6 +168,15 @@ export function LocalAIRuntimePanel({ language }: { language: DesktopSettings["l
     setLog({ id: service.id, content: result.content || t("localAiUi.emptyLog") });
   }
 
+  async function installRuntime(service: LocalAIServiceStatus) {
+    setBusy(`${service.id}:runtime`);
+    setError("");
+    const result = await window.setup.installOptionalService({ serviceId: service.id });
+    if (!result.ok) setError(result.error || t("localAiRuntimeInstall.failed"));
+    await load(true);
+    setBusy("");
+  }
+
   async function selectModel(service: LocalAIServiceStatus, modelId: string) {
     if (modelId === service.selected_model_id) return;
     const selected = service.models.find((model) => model.id === modelId);
@@ -320,6 +329,11 @@ export function LocalAIRuntimePanel({ language }: { language: DesktopSettings["l
                     </div>
                   )}
                   <div className="local-ai-service-actions">
+                    {!service.installed && service.id !== "embedding" && (
+                      <Button size="sm" disabled={working} onClick={() => void installRuntime(service)}>
+                        {t("localAiRuntimeInstall.install")}
+                      </Button>
+                    )}
                     {service.downloadable && !service.model_present && service.state !== "downloading" && (
                       <Button size="sm" disabled={working} onClick={() => setDownloadTarget(service)}>
                         {service.state === "download_error" ? t("localAiUi.retryDownload") : t("localAiUi.download")}

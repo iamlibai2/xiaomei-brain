@@ -278,7 +278,7 @@ export class RuntimeManager {
 
       await execFileAsync(stagingPython, [
         "-c",
-        "import fastapi, lancedb, modelscope, numpy, pyarrow, sentence_transformers, xiaomei_brain; print('runtime ready')",
+        "import fastapi, lancedb, numpy, pip, pyarrow, xiaomei_brain; print('runtime ready')",
       ], {
         windowsHide: true,
         timeout: 60_000,
@@ -378,8 +378,11 @@ export class RuntimeManager {
     const pythonPath = app.isPackaged
       ? process.env.PYTHONPATH
       : [sourceRoot, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter);
+    const managedFfmpegBin = this.config.get("managed_ffmpeg_bin");
+    const runtimePath = [managedFfmpegBin, process.env.PATH].filter(Boolean).join(path.delimiter);
     return {
       ...process.env,
+      PATH: runtimePath,
       PYTHONDONTWRITEBYTECODE: "1",
       PYTHONUTF8: "1",
       XIAOMEI_BRAIN_LARK_CLI: bundledLarkCliPath(),
@@ -392,6 +395,17 @@ export class RuntimeManager {
     return {
       command: runtime.executable,
       args: [...runtime.prefixArgs, ...args],
+      cwd: os.homedir(),
+      env: this.commandEnvironment(),
+      source: runtime.source,
+    };
+  }
+
+  async buildPythonCommand(args: string[]): Promise<RuntimeCommandDescriptor> {
+    const runtime = await this.resolve();
+    return {
+      command: runtime.executable,
+      args,
       cwd: os.homedir(),
       env: this.commandEnvironment(),
       source: runtime.source,

@@ -1,6 +1,6 @@
 {
   "name": "xiaomei-brain-desktop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "xiaomei-brain Desktop Client",
   "author": "李白 libai <iamlibai2@gmail.com>",
   "main": "dist/main/index.js",
@@ -13,12 +13,13 @@
     "build:renderer": "vite build",
     "runtime:win": "node scripts/build-windows-runtime.mjs",
     "package": "npm run package:win",
-    "package:win": "npm run runtime:win && npm run build && electron-builder --win msi",
+    "package:win": "npm run runtime:win && npm run build && electron-builder --win nsis",
     "start": "electron ."
   },
   "dependencies": {
     "@larksuite/cli": "1.0.84",
     "docx-preview": "^0.3.7",
+    "electron-updater": "^6.8.9",
     "extract-zip": "^2.0.1",
     "immer": "^11.1.11",
     "mermaid": "^11.16.0",

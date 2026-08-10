@@ -1,0 +1,6 @@
+# Required shared embedding dependencies installed during first-run setup.
+# PyTorch itself is installed separately from the selected official CPU/CUDA
+# wheel index before this file is applied.
+sentence-transformers>=2.2.0
+transformers>=4.40.0
+modelscope>=1.14.0

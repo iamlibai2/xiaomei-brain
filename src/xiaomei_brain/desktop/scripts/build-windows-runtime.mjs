@@ -158,17 +158,6 @@ run(uvExecutable, [
   "--no-compile",
   "--requirements", runtimeRequirements,
 ]);
-// face-recognition depends on the source-only `dlib` distribution even when
-// the compatible `dlib-bin` wheel is installed. Install its pure Python layer
-// without dependencies so Windows packaging never attempts a C++ build.
-run(uvExecutable, [
-  "pip", "install",
-  "--python", runtimePython,
-  "--break-system-packages",
-  "--no-deps",
-  "--no-compile",
-  "face-recognition==1.3.0",
-]);
 run(uvExecutable, [
   "pip", "install",
   "--python", runtimePython,
@@ -183,7 +172,7 @@ await pruneRuntime();
 run(runtimePython, [
   "-c",
   [
-    "import face_recognition, fastapi, funasr, lancedb, numpy, psutil, pyarrow, soundfile, speechbrain, voxcpm, xiaomei_brain",
+    "import fastapi, lancedb, numpy, pip, psutil, pyarrow, xiaomei_brain",
     "import win32com.client",
     "from xiaomei_brain.cli.lifecycle import _build_restart_args",
     "assert _build_restart_args('agent', ['--cli']) == ['agent']",

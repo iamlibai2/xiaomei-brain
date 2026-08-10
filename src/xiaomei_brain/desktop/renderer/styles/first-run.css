@@ -1,0 +1,18 @@
+.first-run-page { flex: 1; display: grid; place-items: center; overflow: auto; padding: 32px; background: var(--ui-bg-primary); }
+.first-run-card { width: min(560px, 100%); padding: 34px; border: 1px solid var(--ui-border-default); border-radius: 20px; background: var(--ui-bg-secondary); }
+.first-run-card header h1 { margin: 0 0 8px; font-size: 28px; }
+.first-run-card header p { margin: 0 0 28px; line-height: 1.6; color: var(--ui-color-text-secondary); }
+.setup-section-title { display: flex; justify-content: space-between; align-items: center; margin: 22px 2px 10px; font-weight: 650; }
+.setup-section-title em { font-style: normal; font-size: 12px; font-weight: 500; color: var(--ui-color-text-tertiary); }
+.setup-choice { display: flex; gap: 12px; align-items: flex-start; padding: 14px; margin-top: 8px; border: 1px solid var(--ui-border-default); border-radius: 12px; cursor: pointer; transition: border-color .15s, background .15s; }
+.setup-choice.selected { border-color: var(--ui-color-accent); background: color-mix(in srgb, var(--ui-color-accent) 7%, transparent); }
+.setup-choice.disabled { opacity: .5; cursor: default; }
+.setup-choice input { margin-top: 3px; accent-color: var(--ui-color-accent); }
+.setup-choice span { display: flex; flex-direction: column; gap: 4px; }
+.setup-choice small { color: var(--ui-color-text-secondary); line-height: 1.4; }
+.setup-progress { margin-top: 22px; }
+.setup-progress > div { height: 6px; overflow: hidden; border-radius: 99px; background: var(--ui-bg-tertiary); }
+.setup-progress span { display: block; height: 100%; min-width: 4px; border-radius: inherit; background: var(--ui-color-accent); transition: width .25s ease; }
+.setup-progress p { margin: 8px 0 0; color: var(--ui-color-text-secondary); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.setup-error { margin-top: 18px; padding: 10px 12px; border-radius: 10px; color: var(--ui-color-danger); background: color-mix(in srgb, var(--ui-color-danger) 8%, transparent); }
+.setup-start { width: 100%; margin-top: 24px; justify-content: center; }

@@ -126,6 +126,13 @@ const CHANNEL_MAP = {
     readLog:          { invoke: "localAI:readLog" },
     openDirectory:    { invoke: "localAI:openDirectory" },
   },
+  setup: {
+    status:           { invoke: "setup:status" },
+    installInference:{ invoke: "setup:installInference" },
+    installFfmpeg:    { invoke: "setup:installFfmpeg" },
+    installOptionalService: { invoke: "setup:installOptionalService" },
+    onProgress:       { event: "setup:progress" },
+  },
   identity: {
     status:           { invoke: "identity:status" },
     create:           { invoke: "identity:create" },
@@ -151,6 +158,13 @@ const CHANNEL_MAP = {
     openConfigDirectory:    { invoke: "desktop:openConfigDirectory" },
     openExternal:           { invoke: "desktop:openExternal" },
     reportRendererError:    { send: "desktop:reportRendererError" },
+  },
+  desktopUpdate: {
+    getState:                { invoke: "desktop-update:getState" },
+    check:                   { invoke: "desktop-update:check" },
+    download:                { invoke: "desktop-update:download" },
+    install:                 { invoke: "desktop-update:install" },
+    onState:                 { event: "desktop-update:state" },
   },
   win: {
     minimize:          { send: "window:minimize" },

@@ -1888,6 +1888,48 @@
   font-size: 10px;
 }
 
+.desktop-update-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.desktop-update-progress {
+  height: 4px;
+  margin: 0 0 9px 42px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--ui-bg-primary);
+}
+
+.desktop-update-progress > span {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: inherit;
+  background: var(--ui-brand-primary);
+  transition: width .2s ease;
+}
+
+.desktop-update-notes {
+  margin: 0 0 9px 42px;
+  color: var(--ui-color-text-secondary);
+  font-size: 11px;
+}
+
+.desktop-update-notes summary {
+  cursor: pointer;
+}
+
+.desktop-update-notes p {
+  max-height: 150px;
+  margin: 8px 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+
 .desktop-directory-row {
   display: flex;
   align-items: center;

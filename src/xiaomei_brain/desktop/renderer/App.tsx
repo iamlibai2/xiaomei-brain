@@ -6,7 +6,8 @@ import { MainShell } from "./components/MainShell";
 import { DesktopInfoProvider } from "./desktop-info";
 import { IdentityPage } from "./components/IdentityPage";
 import { DesktopLockScreen } from "./components/DesktopLockScreen";
-import type { IdentityStatus } from "./types";
+import { FirstRunSetup } from "./components/FirstRunSetup";
+import type { FirstRunSetupStatus, IdentityStatus } from "./types";
 import i18n from "./i18n";
 import { initializeMessageSound, setMessageSound } from "./message-sound";
 
@@ -22,6 +23,8 @@ export function App() {
   const [identityStatus, setIdentityStatus] = useState<IdentityStatus | null>(null);
   const [startupRestoreComplete, setStartupRestoreComplete] = useState(false);
   const [desktopLocked, setDesktopLocked] = useState(false);
+  const [setupStatus, setSetupStatus] = useState<FirstRunSetupStatus | null>(null);
+  const [setupReady, setSetupReady] = useState(false);
   const startupRestoreAgentRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -66,13 +69,62 @@ export function App() {
   }, [desktopLocked]);
 
   useEffect(() => {
-    if (identityStatus?.unlocked) {
+    if (!identityStatus?.unlocked) {
+      setSetupStatus(null);
+      setSetupReady(false);
+      return;
+    }
+    let cancelled = false;
+    const loadSetupState = async () => {
+      try {
+        const info = await window.desktop.getInfo();
+        if (cancelled) return;
+        // Development uses the selected virtual environment and must never be
+        // gated by the packaged application's first-run component installer.
+        // It also keeps Renderer HMR compatible with a main process that has
+        // not restarted yet after a new IPC method was added.
+        if (info.environment === "development") {
+          setSetupReady(true);
+          return;
+        }
+        const setup = await window.setup.status();
+        const cached = await window.localAI.cachedList();
+        const cachedEmbedding = cached.services?.find((item) => item.id === "embedding");
+        const localAI = cached.ok && cachedEmbedding?.model_present
+          ? cached
+          : await window.localAI.list();
+        if (cancelled) return;
+        const status = setup.status;
+        const embedding = localAI.services?.find((item) => item.id === "embedding");
+        if (setup.ok && status && status.requiredReady && embedding?.model_present) {
+          setSetupReady(true);
+        } else if (setup.ok && status) {
+          setSetupStatus(status);
+        } else {
+          setSetupReady(true);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        // Setup diagnostics must never make an otherwise usable Desktop blank.
+        window.desktop.reportRendererError({
+          type: "setup-check",
+          message: error instanceof Error ? error.message : String(error),
+        });
+        setSetupReady(true);
+      }
+    };
+    void loadSetupState();
+    return () => { cancelled = true; };
+  }, [identityStatus?.unlocked]);
+
+  useEffect(() => {
+    if (identityStatus?.unlocked && setupReady) {
       void refreshLocalAgents();
     } else {
       startupRestoreAgentRef.current = null;
       setStartupRestoreComplete(false);
     }
-  }, [identityStatus?.unlocked]);
+  }, [identityStatus?.unlocked, setupReady]);
 
   useEffect(() => {
     const handleIdentityChange = (event: Event) => {
@@ -134,7 +186,12 @@ export function App() {
         <MenuBar />
         {!identityStatus ? null : !identityStatus.unlocked ? (
           <IdentityPage status={identityStatus} onReady={setIdentityStatus} />
-        ) : !startupRestoreComplete ? null : page === "connect" ? (
+        ) : !setupReady && setupStatus ? (
+          <FirstRunSetup initial={setupStatus} onComplete={() => {
+            setSetupStatus(null);
+            setSetupReady(true);
+          }} />
+        ) : !setupReady || !startupRestoreComplete ? null : page === "connect" ? (
           <ConnectPage />
         ) : (
           <MainShell />

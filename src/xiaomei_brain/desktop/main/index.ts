@@ -10,6 +10,7 @@ import {
   readDesktopSettings,
   registerDesktopSettingsIpc,
 } from "./desktop-settings";
+import { DesktopUpdateService } from "./update-service";
 
 const isMac = process.platform === "darwin";
 const isWindows = process.platform === "win32";
@@ -25,6 +26,10 @@ let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
 const gateway = new GatewayClient();
 const config = new ConfigStore();
+const updates = new DesktopUpdateService(
+  () => mainWindow,
+  () => readDesktopSettings(config).automaticUpdatesEnabled,
+);
 
 async function loadDevelopmentRenderer(window: BrowserWindow): Promise<void> {
   const rendererUrl = "http://localhost:5173";
@@ -203,12 +208,15 @@ app.whenReady().then(() => {
   createWindow();
   registerDesktopDiagnosticsIpc();
   registerDesktopSettingsIpc(config);
+  updates.registerIpc();
   registerIpcHandlers(gateway, config, () => mainWindow);
+  updates.initialize();
 
 });
 
 app.on("before-quit", () => {
   isQuitting = true;
+  updates.dispose();
 });
 
 app.on("window-all-closed", () => {

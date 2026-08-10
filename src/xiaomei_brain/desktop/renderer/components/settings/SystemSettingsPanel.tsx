@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import i18n from "../../i18n";
 import { useTranslation } from "react-i18next";
 import { useDesktopInfo } from "../../desktop-info";
-import type { DesktopSettings } from "../../types";
+import type { DesktopSettings, DesktopUpdateState } from "../../types";
 import { Button, Icon, SelectMenu } from "../ui";
 import { previewMessageSound } from "../../message-sound";
 
@@ -13,6 +13,7 @@ export function SystemSettingsPanel() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [logContent, setLogContent] = useState<string | null>(null);
+  const [updateState, setUpdateState] = useState<DesktopUpdateState | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -25,6 +26,20 @@ export function SystemSettingsPanel() {
       });
     return () => {
       active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void window.desktopUpdate.getState().then((value) => {
+      if (active) setUpdateState(value);
+    });
+    const unsubscribe = window.desktopUpdate.onState((value) => {
+      if (active) setUpdateState(value);
+    });
+    return () => {
+      active = false;
+      unsubscribe();
     };
   }, []);
 
@@ -63,6 +78,16 @@ export function SystemSettingsPanel() {
     }
     const result = await window.desktop.readLog();
     setLogContent(result.content || t("systemUi.emptyLog"));
+  }
+
+  async function runUpdateAction(action: "check" | "download" | "install") {
+    setError("");
+    try {
+      const next = await window.desktopUpdate[action]();
+      setUpdateState(next);
+    } catch (actionError) {
+      setError(String(actionError));
+    }
   }
 
   if (!settings) {
@@ -179,10 +204,31 @@ export function SystemSettingsPanel() {
         <SettingRow
           icon="refresh"
           title={t("systemUi.update")}
-          description={t("systemUi.updateHint")}
+          description={updateDescription(updateState, t)}
         >
-          <span className="desktop-setting-status">{t("systemUi.updateDisabled")}</span>
+          <div className="desktop-update-controls">
+            <Switch
+              checked={settings.automaticUpdatesEnabled}
+              onChange={(checked) => void update({ automaticUpdatesEnabled: checked })}
+            />
+            <UpdateAction
+              state={updateState}
+              onAction={(action) => void runUpdateAction(action)}
+              t={t}
+            />
+          </div>
         </SettingRow>
+        {updateState?.phase === "downloading" && updateState.progress && (
+          <div className="desktop-update-progress" aria-label={t("systemUi.updateDownloading")}>
+            <span style={{ width: `${updateState.progress.percent}%` }} />
+          </div>
+        )}
+        {updateState?.releaseNotes && (
+          <details className="desktop-update-notes">
+            <summary>{t("systemUi.updateNotes")}</summary>
+            <p>{updateState.releaseNotes}</p>
+          </details>
+        )}
       </section>
 
       <section className="settings-card">
@@ -213,6 +259,55 @@ export function SystemSettingsPanel() {
       {error && <p className="settings-error">{error}</p>}
     </div>
   );
+}
+
+function updateDescription(
+  state: DesktopUpdateState | null,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
+  if (!state) return t("systemUi.updateLoading");
+  if (state.phase === "disabled") return t("systemUi.updateDevelopment");
+  if (state.phase === "checking") return t("systemUi.updateChecking");
+  if (state.phase === "available") {
+    return t("systemUi.updateAvailable", { version: state.availableVersion || "" });
+  }
+  if (state.phase === "downloading") {
+    return t("systemUi.updateDownloadingPercent", {
+      percent: Math.round(state.progress?.percent || 0),
+    });
+  }
+  if (state.phase === "downloaded") {
+    return t("systemUi.updateDownloaded", { version: state.availableVersion || "" });
+  }
+  if (state.phase === "not_available") {
+    return t("systemUi.updateCurrent", { version: state.currentVersion });
+  }
+  if (state.phase === "error") return state.error || t("systemUi.updateError");
+  return t("systemUi.updateHint", { version: state.currentVersion });
+}
+
+function UpdateAction({
+  state,
+  onAction,
+  t,
+}: {
+  state: DesktopUpdateState | null;
+  onAction: (action: "check" | "download" | "install") => void;
+  t: (key: string) => string;
+}) {
+  if (!state || state.phase === "disabled") {
+    return <span className="desktop-setting-status">{t("systemUi.updatePackagedOnly")}</span>;
+  }
+  if (state.phase === "checking" || state.phase === "downloading") {
+    return <span className="desktop-setting-status">{t(`systemUi.updateState.${state.phase}`)}</span>;
+  }
+  if (state.phase === "available") {
+    return <Button size="sm" onClick={() => onAction("download")}>{t("systemUi.updateDownload")}</Button>;
+  }
+  if (state.phase === "downloaded") {
+    return <Button size="sm" onClick={() => onAction("install")}>{t("systemUi.updateRestart")}</Button>;
+  }
+  return <Button variant="secondary" size="sm" onClick={() => onAction("check")}>{t("systemUi.updateCheck")}</Button>;
 }
 
 function SettingRow({

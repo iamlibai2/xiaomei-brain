@@ -71,13 +71,29 @@ editing/signing and configure a certificate before public distribution.
 Both `runtime-stage/` and `release/` are generated artifacts and are ignored by
 Git.
 
-## Embedding boundary
+## First-run components
 
-The Desktop runtime does not include PyTorch, Sentence Transformers, ModelScope,
-or model weights. Its curated dependencies are listed in
-`runtime-requirements.txt`, and it expects the shared embedding HTTP service
-when semantic features are needed. A normal Python package installation keeps
-the existing local embedding dependencies.
+The NSIS package stays small by separating the Agent Runtime from host-local
+inference and media components:
 
-A later installer phase can download a CPU or CUDA embedding component without
-making every Desktop installation carry GPU-specific packages and model files.
+- `runtime-requirements.txt` contains only the Agent's core runtime.
+- `ai-runtime-requirements.txt` is installed after the person chooses CPU or
+  NVIDIA CUDA acceleration during first-run setup.
+- PyTorch 2.6 is installed from the explicit official CPU or CUDA 12.4 wheel
+  index. A CUDA selection is installed directly; setup never downloads CPU
+  PyTorch first and replaces it afterwards.
+- The selected embedding model is mandatory and is downloaded and started
+  before normal Agent startup.
+- FFmpeg/FFprobe is recommended but optional. On Windows it is downloaded as
+  the release essentials build, verified against the publisher's SHA256, and
+  stored under `%LOCALAPPDATA%\xiaomei-brain\components`.
+- STT, TTS, face, voiceprint, and their model weights remain opt-in services.
+
+Completed setup is recorded outside the application directory and tied to the
+resolved Python Runtime path. Normal launches read that marker and do not render
+or execute the first-run flow. Runtime upgrades naturally require the inference
+component to be prepared once for the new Python Runtime.
+
+Managed FFmpeg is added only to child-process `PATH`; setup does not modify the
+user or machine environment variables. All local Agents share these host
+components, while a remote Agent remains responsible for its own dependencies.

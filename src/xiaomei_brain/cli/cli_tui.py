@@ -19,8 +19,14 @@ import sys
 import threading
 import time
 from datetime import datetime
+from importlib.metadata import PackageNotFoundError, version as package_version
 
 logger = logging.getLogger(__name__)
+
+try:
+    _APP_VERSION = package_version("xiaomei-brain")
+except PackageNotFoundError:
+    _APP_VERSION = "development"
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.layout import Layout, Window
@@ -250,7 +256,7 @@ class CliTuiApp:
         buf = []
 
         buf.append('')
-        buf.append('  %sxiaomei-brain%s  %sv0.1.0%s' % (_C_USER, _C_RST, _C_AGENT, _C_RST))
+        buf.append('  %sxiaomei-brain%s  %sv%s%s' % (_C_USER, _C_RST, _C_AGENT, _APP_VERSION, _C_RST))
         buf.append('  %s多 Agent AI 大脑框架%s' % (_C_AGENT, _C_RST))
         buf.append('')
         buf.append('  %sAgent     %s%s %s%s' % (
