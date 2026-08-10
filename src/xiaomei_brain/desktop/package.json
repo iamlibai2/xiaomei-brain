@@ -2,7 +2,10 @@
   "name": "xiaomei-brain-desktop",
   "version": "0.1.1",
   "description": "xiaomei-brain Desktop Client",
-  "author": "李白 libai <iamlibai2@gmail.com>",
+  "author": {
+    "name": "成都双角鲸互联网科技有限公司",
+    "email": "iamlibai2@gmail.com"
+  },
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "concurrently \"npm run dev:main\" \"npm run dev:renderer\"",

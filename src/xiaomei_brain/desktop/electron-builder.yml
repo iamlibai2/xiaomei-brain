@@ -1,5 +1,5 @@
 appId: com.xiaomei.brain.desktop
-productName: xiaomei-brain
+productName: XiaoMei-Brain
 npmRebuild: false
 publish:
   provider: github
@@ -20,6 +20,8 @@ asarUnpack:
   # app.asar; no system Node/npm installation is required at runtime.
   - node_modules/@larksuite/cli/bin/**/*
 extraResources:
+  - from: assets/icon.png
+    to: assets/icon.png
   - from: runtime-stage/package
     to: runtime-package
     filter:
@@ -34,13 +36,14 @@ win:
   artifactName: "xiaomei-brain-${version}-setup.${ext}"
   signAndEditExecutable: false
 nsis:
-  oneClick: true
-  perMachine: false
+  oneClick: false
+  perMachine: true
   allowElevation: true
+  allowToChangeInstallationDirectory: true
+  uninstallDisplayName: "${productName}"
   createDesktopShortcut: true
   createStartMenuShortcut: true
   runAfterFinish: true
-  deleteAppDataOnUninstall: false
 mac:
   target: dmg
   icon: assets/icon.icns

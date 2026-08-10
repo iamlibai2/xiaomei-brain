@@ -1,4 +1,14 @@
-import { app, BrowserWindow, ipcMain, Menu, session, shell, type MenuItemConstructorOptions } from "electron";
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  Menu,
+  nativeImage,
+  session,
+  shell,
+  Tray,
+  type MenuItemConstructorOptions,
+} from "electron";
 import { existsSync } from "fs";
 import path from "path";
 import { GatewayClient } from "./gateway-client";
@@ -23,6 +33,7 @@ if (isWindows) {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
 let isQuitting = false;
 const gateway = new GatewayClient();
 const config = new ConfigStore();
@@ -99,6 +110,41 @@ function registerWindowsShortcutIdentity(): void {
   }
 }
 
+function showMainWindow(): void {
+  if (mainWindow === null) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function createTray(): void {
+  if (tray !== null) return;
+
+  const iconPath = app.isPackaged
+    ? path.join(process.resourcesPath, "assets", "icon.png")
+    : path.join(__dirname, "../../assets/icon.png");
+  const icon = nativeImage.createFromPath(iconPath);
+  if (icon.isEmpty()) {
+    console.warn(`[tray] icon unavailable: ${iconPath}`);
+    return;
+  }
+
+  tray = new Tray(icon);
+  tray.setToolTip("XiaoMei-Brain");
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: "打开 XiaoMei-Brain", click: showMainWindow },
+    { type: "separator" },
+    { label: "退出 XiaoMei-Brain", click: () => app.quit() },
+  ]));
+  tray.on("click", showMainWindow);
+  tray.on("double-click", showMainWindow);
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -106,7 +152,7 @@ function createWindow(): void {
     minWidth: 800,
     minHeight: 600,
     show: false,
-    title: "xiaomei-brain",
+    title: "XiaoMei-Brain",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -130,7 +176,12 @@ function createWindow(): void {
   mainWindow.on("close", (event) => {
     if (!isQuitting && readDesktopSettings(config).closeBehavior === "minimize") {
       event.preventDefault();
-      mainWindow?.minimize();
+      if (tray !== null) {
+        mainWindow?.hide();
+      } else {
+        // Never make the window unreachable if tray creation failed.
+        mainWindow?.minimize();
+      }
     }
   });
 
@@ -206,6 +257,7 @@ app.whenReady().then(() => {
   applyStoredDesktopSettings(config);
   registerWindowsShortcutIdentity();
   createWindow();
+  createTray();
   registerDesktopDiagnosticsIpc();
   registerDesktopSettingsIpc(config);
   updates.registerIpc();
@@ -216,6 +268,8 @@ app.whenReady().then(() => {
 
 app.on("before-quit", () => {
   isQuitting = true;
+  tray?.destroy();
+  tray = null;
   updates.dispose();
 });
 
@@ -228,5 +282,7 @@ app.on("window-all-closed", () => {
 app.on("activate", () => {
   if (mainWindow === null) {
     createWindow();
+  } else {
+    showMainWindow();
   }
 });

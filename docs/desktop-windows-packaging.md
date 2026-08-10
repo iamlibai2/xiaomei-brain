@@ -14,9 +14,11 @@ On first packaged launch, Desktop verifies the archive SHA256 and extracts the
 Runtime to `%LOCALAPPDATA%\xiaomei-brain\runtimes\<agent-version>-<hash>`.
 This cache is independent of Agent data and can be recreated from the package.
 
-The first packaged release uses a one-click installation for the current
-Windows user. It does not request administrator privileges or show an install
-scope/directory wizard.
+The Windows package uses an assisted all-users installation. It requests
+elevation, shows the installation directory and progress pages, and lets the
+person choose a destination under `Program Files` or another writable drive.
+Uninstalling the Desktop application does not delete Agent data under the
+person's profile.
 
 ## Build prerequisites
 
