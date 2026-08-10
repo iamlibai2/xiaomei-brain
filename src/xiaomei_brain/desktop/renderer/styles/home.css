@@ -5058,7 +5058,8 @@ body.is-resizing-artifact-workspace {
   height: 28px;
 }
 
-.main-content.presentation-stage-mode .chat-input-abort {
+.main-content.presentation-stage-mode .chat-input-abort,
+.main-content.presentation-stage-mode .chat-input-continue {
   width: auto;
   min-width: 52px;
   height: 28px;
@@ -6135,6 +6136,29 @@ body.is-resizing-artifact-workspace {
 
 .chat-input-abort:hover {
   opacity: 0.9;
+}
+
+.chat-input-continue {
+  min-width: 52px;
+  height: 32px;
+  padding: 0 14px;
+  border: none;
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-palette-black-100);
+  color: var(--ui-palette-white-100);
+  font-family: var(--ui-font-family);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chat-input-continue:hover {
+  opacity: 0.85;
+}
+
+.chat-input-continue:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 /* ─── 窄屏适配 ─── */

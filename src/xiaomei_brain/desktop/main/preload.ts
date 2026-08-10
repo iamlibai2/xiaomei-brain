@@ -34,6 +34,7 @@ const CHANNEL_MAP = {
     openArtifact:    { invoke: "gateway:openArtifact" },
     respondEmbodimentCommand: { invoke: "gateway:respondEmbodimentCommand" },
     abortMessage:    { invoke: "gateway:abortMessage" },
+    continueMessage: { invoke: "gateway:continueMessage" },
     retryMessage:    { invoke: "gateway:retryMessage" },
     respondInteraction: { invoke: "gateway:respondInteraction" },
     respondAction:      { invoke: "gateway:respondAction" },

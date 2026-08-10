@@ -414,8 +414,15 @@ class ChatRetryParams(BaseModel):
     session_id: str = Field(..., min_length=1, max_length=256)
 
 
+class ChatContinueParams(BaseModel):
+    session_id: str = Field(..., min_length=1, max_length=256)
+    interrupted_turn_id: str = Field(..., min_length=1, max_length=128)
+    client_request_id: str = Field(..., min_length=1, max_length=128)
+
+
 class ChatAbortParams(BaseModel):
-    session_id: str = ""
+    session_id: str = Field(..., min_length=1, max_length=256)
+    turn_id: str = Field(..., min_length=1, max_length=128)
 
 
 class ChatCompactParams(BaseModel):

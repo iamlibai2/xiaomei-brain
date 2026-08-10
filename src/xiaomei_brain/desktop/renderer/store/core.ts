@@ -1641,6 +1641,7 @@ interface CoreActions {
   setAttachmentError: (error: string) => void;
   removeAttachment: (attachmentId: string) => void;
   abortMessage: () => Promise<void>;
+  continueTurn: (turnId: string) => Promise<void>;
   retryMessage: (messageId: number) => Promise<void>;
   resumeCapabilityRequest: (messageId: number) => Promise<string>;
   respondToInteraction: (requestId: string, response: string) => Promise<void>;
@@ -2522,8 +2523,15 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     const agentId = get().activeAgentId;
     if (!agentId) return;
     const sessionId = get().activeSessionByAgent[agentId] || "";
+    const activeResponse = [...(get().messagesByAgent[agentId] || [])]
+      .reverse()
+      .find((message) => message.role === "agent"
+        && Boolean(message.turnId)
+        && Boolean(message.streaming || message.responsePhase));
+    const turnId = activeResponse?.turnId || "";
+    if (!sessionId || !turnId) return;
 
-    const res = await window.gateway.abortMessage({ agentId });
+    const res = await window.gateway.abortMessage({ agentId, sessionId, turnId });
     if (res.error) {
       set(produce((s: CoreState) => {
         if (!s.messagesByAgent[agentId]) s.messagesByAgent[agentId] = [];
@@ -2537,8 +2545,56 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
       return;
     }
 
-    clearSessionStreams(agentId, sessionId);
-    set(produce((s: CoreState) => { setSessionSending(s, agentId, sessionId, false); }));
+    if (res.result?.aborted === true) {
+      clearSessionStreams(agentId, sessionId);
+      set(produce((s: CoreState) => { setSessionSending(s, agentId, sessionId, false); }));
+    }
+  },
+
+  continueTurn: async (turnId) => {
+    const agentId = get().activeAgentId;
+    const sessionId = agentId ? get().activeSessionByAgent[agentId] || "" : "";
+    if (!agentId || !sessionId || !turnId
+      || get().sendingByConversation[conversationStateKey(agentId, sessionId)]) return;
+    const clientRequestId = crypto.randomUUID();
+    const optimisticId = `continue-${clientRequestId}`;
+    set(produce((s: CoreState) => {
+      s.messagesByAgent[agentId].push({
+        id: optimisticId,
+        role: "user",
+        content: i18n.t("home.continue"),
+        streaming: false,
+        createdAt: Date.now(),
+        deliveryStatus: "processing",
+      });
+      setSessionSending(s, agentId, sessionId, true);
+      touchSession(s, agentId, sessionId, 1, i18n.t("home.continue"));
+    }));
+    try {
+      const response = await window.gateway.continueMessage({
+        agentId, sessionId, interruptedTurnId: turnId, clientRequestId,
+      });
+      if (response.error || response.result?.accepted === false) {
+        throw new Error(response.error?.message || String(response.result?.reason || "Continue failed"));
+      }
+      set(produce((s: CoreState) => {
+        const message = s.messagesByAgent[agentId]
+          .find((item) => item.id === optimisticId);
+        if (!message) return;
+        if (typeof response.result?.turn_id === "string") message.turnId = response.result.turn_id;
+        if (typeof response.result?.message_id === "number") message.sourceMessageId = response.result.message_id;
+      }));
+    } catch (error) {
+      set(produce((s: CoreState) => {
+        const message = s.messagesByAgent[agentId]
+          .find((item) => item.id === optimisticId);
+        if (message) {
+          message.deliveryStatus = "failed";
+          message.deliveryError = String(error);
+        }
+        setSessionSending(s, agentId, sessionId, false);
+      }));
+    }
   },
 
   retryMessage: async (messageId) => {

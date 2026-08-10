@@ -562,7 +562,8 @@ export interface GatewayBridge {
     result?: Record<string, unknown>;
     error?: string;
   }): Promise<JsonRpcResponse>;
-  abortMessage(args: { agentId: string }): Promise<JsonRpcResponse>;
+  abortMessage(args: { agentId: string; sessionId: string; turnId: string }): Promise<JsonRpcResponse>;
+  continueMessage(args: { agentId: string; sessionId: string; interruptedTurnId: string; clientRequestId: string }): Promise<JsonRpcResponse>;
   retryMessage(args: { agentId: string; sessionId: string; messageId: number; clientRequestId: string }): Promise<JsonRpcResponse>;
   respondInteraction(args: { agentId: string; requestId: string; turnId: string; response: string }): Promise<JsonRpcResponse>;
   respondAction(args: { agentId: string; actionId: string; turnId: string; decision: "allow" | "deny" }): Promise<JsonRpcResponse>;

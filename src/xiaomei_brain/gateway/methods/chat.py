@@ -25,6 +25,7 @@ from ..protocol import ErrorCode, build_error, build_response
 from ..schemas import (
     ChatAbortParams,
     ChatCompactParams,
+    ChatContinueParams,
     ChatHistoryParams,
     ChatRetryParams,
     ChatSendParams,
@@ -47,6 +48,7 @@ class ChatMethods:
         return {
             "chat.send": self.handle_send,
             "chat.retry": self.handle_retry,
+            "chat.continue": self.handle_continue,
             "chat.abort": self.handle_abort,
             "chat.compact": self.handle_compact,
             "chat.history": self.handle_history,
@@ -447,6 +449,78 @@ class ChatMethods:
             "retry_of_message_id": parsed.message_id,
         })
 
+    def handle_continue(self, conn_id: str, req_id: str, params: dict) -> dict:
+        """Create a new Turn that continues an interrupted Turn."""
+        try:
+            parsed = ChatContinueParams.model_validate(params)
+        except Exception as exc:
+            return build_error(req_id, ErrorCode.INVALID_REQUEST, f"参数无效: {format_error(exc)}")
+        session_id = cm.resolve_session(conn_id, parsed.session_id)
+        if session_id is None and cm.is_subscribed(conn_id, parsed.session_id):
+            session_id = parsed.session_id
+        if session_id is None:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, "不能访问当前连接之外的会话")
+        user_id = cm.resolve_user(conn_id, "")
+        if user_id is None:
+            return build_error(req_id, ErrorCode.UNAUTHORIZED, "当前连接身份无效或尚未认证")
+        living = self._living
+        db = getattr(getattr(living, "agent", None), "conversation_db", None) if living else None
+        gateway = getattr(living, "_gateway_inbound", None) if living else None
+        if db is None or gateway is None:
+            return build_error(req_id, ErrorCode.GATEWAY_NOT_READY, "会话运行时尚未就绪")
+
+        source = db.get_user_message_by_turn(parsed.interrupted_turn_id, session_id)
+        if source is None or str(source.get("user_id") or "") != user_id:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, "中断 Turn 不属于当前会话或人物")
+        try:
+            source_metadata = json.loads(source.get("metadata") or "{}")
+        except (TypeError, json.JSONDecodeError):
+            source_metadata = {}
+        if not isinstance(source_metadata, dict) or source_metadata.get("status") != "interrupted":
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, "只有已中断的 Turn 可以继续")
+
+        active = living.active_turn_snapshot() if hasattr(living, "active_turn_snapshot") else None
+        if active and active.get("session_id") == session_id:
+            return build_error(req_id, ErrorCode.INVALID_PARAMS, "该会话已有 Turn 正在执行")
+
+        fingerprint = f"continue:{parsed.interrupted_turn_id}"
+        receipt_key = (session_id, parsed.client_request_id)
+        with self._receipts_lock:
+            receipt = self._receipts.get(receipt_key)
+            if receipt is not None:
+                original_content, original_user_id, original_fingerprint, original_response = receipt
+                if original_user_id != user_id or original_fingerprint != fingerprint:
+                    return build_error(req_id, ErrorCode.INVALID_PARAMS, "client_request_id 已被其他请求使用")
+                self._receipts.move_to_end(receipt_key)
+                return build_response(req_id, result={**original_response, "duplicate": True})
+
+        from ..inbound import Accepted, RawMessage
+
+        accepted_result = gateway.accept(RawMessage(
+            content="继续",
+            source="human",
+            channel="ws",
+            peer_id=user_id,
+            peer_type="human",
+            session_id=session_id,
+            metadata={"continued_from_turn_id": parsed.interrupted_turn_id},
+            reply_channel="ws",
+            reply_target=session_id,
+        ))
+        if not isinstance(accepted_result, Accepted):
+            return build_error(req_id, ErrorCode.INTERNAL_ERROR, "继续请求未能进入会话队列")
+        message = accepted_result.living_message
+        response = {
+            "accepted": True,
+            "session_id": session_id,
+            "turn_id": message.turn_id,
+            "message_id": message.message_id,
+            "status": "queued",
+            "continued_from_turn_id": parsed.interrupted_turn_id,
+        }
+        self._remember_receipt(receipt_key, "继续", user_id, fingerprint, response)
+        return build_response(req_id, result=response)
+
     def _resumable_capability_id(self, metadata: Any) -> str:
         capability_id = self._blocked_capability_id(metadata)
         agent = getattr(self._living, "agent", None)
@@ -510,22 +584,39 @@ class ChatMethods:
 
     def handle_abort(self, conn_id: str, req_id: str, params: dict) -> dict:
         try:
-            ChatAbortParams.model_validate(params)
+            parsed = ChatAbortParams.model_validate(params)
         except Exception as exc:
             return build_error(req_id, ErrorCode.INVALID_REQUEST, f"参数无效: {format_error(exc)}")
         living = self._living
         if living is None:
             return build_error(req_id, ErrorCode.GATEWAY_NOT_READY, "Gateway 未就绪")
         try:
-            session_id = cm.get_session_id(conn_id)
+            session_id = cm.resolve_session(conn_id, parsed.session_id)
+            if session_id is None and cm.is_subscribed(conn_id, parsed.session_id):
+                session_id = parsed.session_id
+            if session_id is None:
+                return build_error(req_id, ErrorCode.INVALID_PARAMS, "不能中断当前连接之外的会话")
+            aborted, reason = living.abort_chat(session_id, parsed.turn_id)
+            if not aborted:
+                active = living.active_turn_snapshot() if hasattr(living, "active_turn_snapshot") else None
+                return build_response(req_id, result={
+                    "aborted": False,
+                    "session_id": session_id,
+                    "turn_id": parsed.turn_id,
+                    "reason": reason,
+                    "active_turn_id": active.get("turn_id", "") if active else "",
+                })
             broker = getattr(living, "_interaction_broker", None)
-            if broker is not None and session_id:
-                broker.cancel_session(session_id)
+            if broker is not None:
+                broker.cancel_turn(session_id, parsed.turn_id)
             action_broker = getattr(living, "_action_broker", None)
-            if action_broker is not None and session_id:
-                action_broker.cancel_session(session_id)
-            living.abort_chat()
-            return build_response(req_id, result={"aborted": True})
+            if action_broker is not None:
+                action_broker.cancel_turn(session_id, parsed.turn_id)
+            return build_response(req_id, result={
+                "aborted": True,
+                "session_id": session_id,
+                "turn_id": parsed.turn_id,
+            })
         except Exception as exc:
             return build_error(req_id, ErrorCode.INTERNAL_ERROR, str(exc))
 

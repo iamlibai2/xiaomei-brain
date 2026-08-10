@@ -149,6 +149,21 @@ class InteractionBroker:
         for request in requests:
             self._emit("interaction.updated", request)
 
+    def cancel_turn(self, session_id: str, turn_id: str) -> None:
+        """Cancel pending interactions owned by one exact Turn."""
+        with self._lock:
+            requests = [
+                request for request in self._requests.values()
+                if request.session_id == session_id
+                and request.turn_id == turn_id
+                and request.status == "pending"
+            ]
+            for request in requests:
+                request.status = "cancelled"
+                request._ready.set()
+        for request in requests:
+            self._emit("interaction.updated", request)
+
     def _emit(self, event: str, request: InteractionRequest) -> None:
         if self._publish is not None:
             self._publish(event, request.public_data())

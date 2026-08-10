@@ -605,6 +605,23 @@ class ConversationDB(SQLiteStore):
         ).fetchone()
         return dict(row) if row is not None else None
 
+    def get_user_message_by_turn(self, turn_id: str, session_id: str) -> dict[str, Any] | None:
+        """Return the user message that owns an exact Turn in one session."""
+        rows = self._get_conn().execute(
+            """SELECT * FROM messages
+               WHERE session_id = ? AND role = 'user' AND metadata LIKE ?
+               ORDER BY id DESC""",
+            (session_id, f"%{turn_id}%"),
+        ).fetchall()
+        for row in rows:
+            try:
+                metadata = json.loads(row["metadata"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(metadata, dict) and metadata.get("turn_id") == turn_id:
+                return dict(row)
+        return None
+
     def get_message_created_at(self, message_id: int, session_id: str | None = None) -> float | None:
         """Return a message timestamp for aligning cross-table history cursors."""
         if session_id:

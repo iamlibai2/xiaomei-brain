@@ -3,12 +3,33 @@ import unittest
 from types import SimpleNamespace
 
 from xiaomei_brain.consciousness.interaction_broker import InteractionBroker
+from xiaomei_brain.consciousness.living import Living, LivingMessage
 from xiaomei_brain.gateway.connection import cm
 from xiaomei_brain.gateway.server_methods import MethodRouter
 from xiaomei_brain.tools.builtin.clarify import _normalize_choices, clarify
 
 
 class InteractionBrokerTest(unittest.TestCase):
+    def test_turn_cancellation_never_hits_a_different_turn(self):
+        living = Living(SimpleNamespace())
+        living.begin_active_turn(LivingMessage(
+            content="work",
+            user_id="user-1",
+            session_id="session-1",
+            turn_id="turn-1",
+        ))
+
+        self.assertEqual(
+            living.cancel_active_turn("session-1", "stale-turn"),
+            (False, "turn_mismatch"),
+        )
+        self.assertFalse(living.is_turn_cancelled("session-1", "turn-1"))
+        self.assertEqual(
+            living.cancel_active_turn("session-1", "turn-1"),
+            (True, "interrupted"),
+        )
+        self.assertTrue(living.is_turn_cancelled("session-1", "turn-1"))
+
     def test_clarify_choices_are_exposed_as_string_array(self):
         self.assertEqual(clarify.parameters["properties"]["choices"], {
             "type": "array",
@@ -167,15 +188,20 @@ class InteractionBrokerTest(unittest.TestCase):
             def __init__(self):
                 self.cancelled = []
 
-            def cancel_session(self, session_id):
-                self.cancelled.append(session_id)
+            def cancel_turn(self, session_id, turn_id):
+                self.cancelled.append((session_id, turn_id))
 
         broker = Broker()
         action_broker = Broker()
+        turn_id = "abort-test-turn"
         living = SimpleNamespace(
             _interaction_broker=broker,
             _action_broker=action_broker,
-            abort_chat=lambda: None,
+            abort_chat=lambda requested_session, requested_turn: (True, "interrupted"),
+            active_turn_snapshot=lambda: {
+                "session_id": session_id,
+                "turn_id": turn_id,
+            },
         )
         router = MethodRouter(living=living)
         conn_id = "abort-test-connection"
@@ -183,14 +209,17 @@ class InteractionBrokerTest(unittest.TestCase):
         router._auth_sessions.add(conn_id)
         cm.set_session(session_id, conn_id)
         try:
-            response = router.dispatch(conn_id, "request-2", "chat.abort", {})
+            response = router.dispatch(conn_id, "request-2", "chat.abort", {
+                "session_id": session_id,
+                "turn_id": turn_id,
+            })
             self.assertNotIn("error", response)
             router.drop_session(conn_id)
         finally:
             cm.unregister(conn_id)
 
-        self.assertEqual(broker.cancelled, [session_id])
-        self.assertEqual(action_broker.cancelled, [session_id])
+        self.assertEqual(broker.cancelled, [(session_id, turn_id)])
+        self.assertEqual(action_broker.cancelled, [(session_id, turn_id)])
 
 
 if __name__ == "__main__":

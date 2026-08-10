@@ -1011,6 +1011,11 @@ class Agent:
             # Ownership of unconsumed messages returns to Living when the
             # active Turn closes.  Never discard a human message here.
             pass
+        # Cancellation is a normal terminal state owned by the conversation
+        # boundary. Do not turn it into a synthetic max-steps reply.
+        if cancel_check and cancel_check():
+            logger.info("[Agent] ReAct ended by cancellation")
+            return
         self._auto_present_artifact_outputs(
             _pending_artifact_outputs,
             _presented_outputs,

@@ -470,6 +470,21 @@ class ConversationDriver:
         self._update_message_status(parent, msg, "processing")
         self._deliver_message_start(parent, msg.session_id, msg.turn_id)
         parent._clarify_listening.set()
+        begin_active_turn = getattr(parent, "begin_active_turn", None)
+        if callable(begin_active_turn):
+            try:
+                begin_active_turn(msg, phase="pace")
+            except TypeError:
+                # Lightweight integrations may still expose the old signature.
+                begin_active_turn(msg)
+        turn_cancelled = getattr(parent, "is_turn_cancelled", None)
+        is_cancelled = lambda: (
+            parent._cancel_requested
+            or (
+                callable(turn_cancelled)
+                and turn_cancelled(msg.session_id, msg.turn_id)
+            )
+        )
         try:
             agent_core.user_id = msg.user_id
             agent_core.session_id = msg.session_id
@@ -500,9 +515,12 @@ class ConversationDriver:
             exit_reason = gm._run_pace(
                 msg,
                 intent_context,
+                cancel_check=is_cancelled,
                 on_output=on_output,
             )
-            if exit_reason == "error":
+            if is_cancelled():
+                terminal_status = "interrupted"
+            elif exit_reason == "error":
                 terminal_status = "error"
                 terminal_error = {
                     "code": "PACE_EXECUTION_FAILED",
@@ -518,6 +536,12 @@ class ConversationDriver:
             logger.exception("[ConversationDriver] PACE delivery failed")
             return "error"
         finally:
+            end_active_turn = getattr(parent, "end_active_turn", None)
+            if callable(end_active_turn):
+                try:
+                    end_active_turn(msg.turn_id)
+                except Exception:
+                    logger.exception("Failed to close active PACE Turn")
             terminal_text = "\n\n".join(outputs)
             if terminal_error and not terminal_text:
                 terminal_text = terminal_error["message"]
@@ -751,8 +775,24 @@ class ConversationDriver:
                         parent.agent,
                         getattr(current_msg, "invocation", None),
                     )
+                    continued_from_turn_id = str(
+                        getattr(current_msg, "continued_from_turn_id", "") or ""
+                    ).strip()
+                    continuation_context = ""
+                    if continued_from_turn_id:
+                        continuation_context = (
+                            "[Continuation]\n"
+                            f"This is a new Turn continuing interrupted Turn {continued_from_turn_id}. "
+                            "Inspect the conversation and current external state before acting. "
+                            "Preserve completed work, do not repeat side effects, and continue only "
+                            "the unfinished work."
+                        )
                     effective_context = "\n\n".join(
-                        part for part in (current_context, invocation_context) if part
+                        part for part in (
+                            current_context,
+                            invocation_context,
+                            continuation_context,
+                        ) if part
                     )
 
                     assembled = build_context(
@@ -773,7 +813,18 @@ class ConversationDriver:
 
                     chunks = []
                     on_chunk = getattr(parent, "on_chat_chunk", None)
-                    for chunk in agent.stream(messages=assembled, cancel_check=lambda: parent._cancel_requested):
+                    turn_cancelled = getattr(parent, "is_turn_cancelled", None)
+                    is_cancelled = lambda: (
+                        parent._cancel_requested
+                        or (
+                            callable(turn_cancelled)
+                            and turn_cancelled(
+                                current_msg.session_id,
+                                current_msg.turn_id,
+                            )
+                        )
+                    )
+                    for chunk in agent.stream(messages=assembled, cancel_check=is_cancelled):
                         chunks.append(chunk)
                         if on_chunk:
                             on_chunk(chunk)
@@ -797,7 +848,7 @@ class ConversationDriver:
                     if self._drive and elapsed > 1.0:
                         self._drive.consume_energy(0.05)
 
-                    if parent._cancel_requested:
+                    if is_cancelled():
                         terminal_status = "interrupted"
                         logger.info("[ConversationDriver] LLM 结果已丢弃（取消请求）")
                         print("\n[取消] 已中断", flush=True)

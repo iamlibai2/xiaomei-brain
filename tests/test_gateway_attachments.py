@@ -21,6 +21,7 @@ from xiaomei_brain.gateway.attachments import (
     restore_attachment_refs,
 )
 from xiaomei_brain.gateway.inbound import Accepted
+from xiaomei_brain.gateway.connection import cm
 from xiaomei_brain.gateway.schemas import ChatAttachment, ChatSendParams
 from xiaomei_brain.gateway.server_methods import MethodRouter
 from xiaomei_brain.memory.conversation_db import ConversationDB as RealConversationDB
@@ -677,6 +678,65 @@ def test_chat_retry_reuses_agent_owned_message_and_attachments(tmp_path, monkeyp
     assert retried.metadata == {"retry_of": message_id}
     assert retried.attachments[0]["text_content"] == "important context"
     assert Path(retried.attachments[0]["local_path"]).is_file()
+    db.close()
+
+
+def test_chat_continue_creates_a_new_turn_without_replaying_original_input(tmp_path):
+    db = RealConversationDB(tmp_path / "brain.db")
+    db.log(
+        "session-1",
+        "user",
+        "run a side-effecting task",
+        user_id="ws-user",
+        metadata={"turn_id": "turn-interrupted", "status": "interrupted"},
+    )
+
+    class Inbound:
+        def __init__(self):
+            self.messages = []
+
+        def accept(self, raw):
+            self.messages.append(raw)
+            return Accepted(LivingMessage(
+                content=raw.content,
+                user_id=raw.peer_id,
+                session_id=raw.session_id,
+                turn_id="turn-continuation",
+                message_id=42,
+                continued_from_turn_id=raw.metadata["continued_from_turn_id"],
+            ))
+
+    inbound = Inbound()
+    living = SimpleNamespace(
+        agent=SimpleNamespace(conversation_db=db),
+        _gateway_inbound=inbound,
+        active_turn_snapshot=lambda: None,
+    )
+    router = MethodRouter(living=living)
+    conn_id = "continue-connection"
+    router._auth_sessions.add(conn_id)
+    cm.set_session("session-1", conn_id)
+    cm.bind_person(conn_id, "ws-user")
+    params = {
+        "session_id": "session-1",
+        "interrupted_turn_id": "turn-interrupted",
+        "client_request_id": "continue-1",
+    }
+
+    try:
+        first = router.dispatch(conn_id, "rpc-1", "chat.continue", params)
+        duplicate = router.dispatch(conn_id, "rpc-2", "chat.continue", params)
+    finally:
+        cm.unregister(conn_id)
+
+    assert first["result"]["accepted"] is True
+    assert first["result"]["turn_id"] == "turn-continuation"
+    assert duplicate["result"]["duplicate"] is True
+    assert len(inbound.messages) == 1
+    assert inbound.messages[0].content == "继续"
+    assert inbound.messages[0].metadata == {
+        "continued_from_turn_id": "turn-interrupted",
+    }
     db.close()
 
 

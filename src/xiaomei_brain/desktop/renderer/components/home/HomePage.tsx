@@ -94,6 +94,13 @@ export function HomePage({
   const { t } = useTranslation();
   const activeAgentId = useCoreStore((s) => s.activeAgentId);
   const messages = useCoreStore((s) => s.messagesByAgent[s.activeAgentId || ""] || EMPTY_MSGS);
+  const continueTurn = useCoreStore((s) => s.continueTurn);
+  const latestUserMessage = [...messages]
+    .reverse()
+    .find((message) => message.role === "user");
+  const continueTurnId = latestUserMessage?.deliveryStatus === "interrupted"
+    ? latestUserMessage.turnId
+    : undefined;
   const sending = useCoreStore((s) => {
     const agentId = s.activeAgentId || "";
     const sessionId = agentId ? s.activeSessionByAgent[agentId] : null;
@@ -942,7 +949,13 @@ export function HomePage({
         )}
         {!showAgentStart && (
           <div className="wb-home-composer">
-            <ChatInput onSend={sendComposerMessage} sending={sending} onAbort={abortMessage} />
+            <ChatInput
+              onSend={sendComposerMessage}
+              sending={sending}
+              onAbort={abortMessage}
+              continueTurnId={continueTurnId}
+              onContinue={(turnId) => { void continueTurn(turnId); }}
+            />
           </div>
         )}
       </div>
@@ -1194,7 +1207,7 @@ function MessageRow({
               </div>
             )}
             {message.content && <div>{message.content}</div>}
-            {(message.deliveryStatus === "failed" || message.deliveryStatus === "interrupted") &&
+            {message.deliveryStatus === "failed" &&
               !message.deliveryErrorCode?.startsWith("MODEL_") &&
               message.sourceMessageId && (
                 <button

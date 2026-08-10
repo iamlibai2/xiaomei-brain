@@ -105,16 +105,23 @@ class LivingMessage:
     user_display_name: str = ""
     # Non-empty only when this message was accepted into an active Turn.
     steered_into_turn_id: str = ""
+    # Set only for a new Turn that continues an interrupted predecessor.
+    continued_from_turn_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
 class ActiveTurn:
-    """Identity boundary for the one realtime conversation currently running."""
+    """Identity and cancellation boundary for the realtime Turn in progress."""
 
     user_id: str
     session_id: str
     turn_id: str
     phase: str = "react"
+    cancelled: threading.Event = field(
+        default_factory=threading.Event,
+        compare=False,
+        repr=False,
+    )
 
 
 #---------------------------------------------------------------------------
@@ -313,6 +320,7 @@ class Living:
         observation_id: str = "",
         context_key: str | None = None,
         assignment_id: str = "",
+        continued_from_turn_id: str = "",
     ) -> LivingMessage:
         """Enqueue a message.
 
@@ -337,23 +345,63 @@ class Living:
             turn_id=turn_id or str(uuid.uuid4()),
             message_id=message_id,
             observation_id=observation_id,
+            continued_from_turn_id=continued_from_turn_id,
         )
         if display_name:
             msg.user_display_name = display_name
 
-        if self._try_steer(msg):
+        # Continue is deliberately a new Turn, never an in-flight steer.
+        if not continued_from_turn_id and self._try_steer(msg):
             return msg
 
         self._queue.put_nowait(msg)
         return msg
 
-    def begin_active_turn(self, msg: LivingMessage) -> None:
-        """Open the identity boundary in which text steering is allowed."""
+    def begin_active_turn(self, msg: LivingMessage, *, phase: str = "react") -> None:
+        """Open the identity and cancellation boundary for one realtime Turn."""
         with self._active_turn_lock:
             self._active_turn = ActiveTurn(
                 user_id=msg.user_id,
                 session_id=msg.session_id,
                 turn_id=msg.turn_id,
+                phase=phase,
+            )
+
+    def active_turn_snapshot(self) -> dict[str, str] | None:
+        """Return the active Turn identity without exposing its mutable token."""
+        with self._active_turn_lock:
+            active = self._active_turn
+            if active is None:
+                return None
+            return {
+                "user_id": active.user_id,
+                "session_id": active.session_id,
+                "turn_id": active.turn_id,
+                "phase": active.phase,
+            }
+
+    def cancel_active_turn(self, session_id: str, turn_id: str) -> tuple[bool, str]:
+        """Cancel only the exact active Turn named by the caller."""
+        with self._active_turn_lock:
+            active = self._active_turn
+            if active is None:
+                return False, "no_active_turn"
+            if active.session_id != session_id:
+                return False, "session_mismatch"
+            if active.turn_id != turn_id:
+                return False, "turn_mismatch"
+            active.cancelled.set()
+            return True, "interrupted"
+
+    def is_turn_cancelled(self, session_id: str, turn_id: str) -> bool:
+        """Check the token belonging to one exact Turn."""
+        with self._active_turn_lock:
+            active = self._active_turn
+            return bool(
+                active is not None
+                and active.session_id == session_id
+                and active.turn_id == turn_id
+                and active.cancelled.is_set()
             )
 
     def end_active_turn(self, turn_id: str) -> list[SteerMessage]:
@@ -550,8 +598,11 @@ class Living:
         # messages are accepted independently of this presentation state.
         # 请求取消当前动作；_chatting 在当前 Turn 真正退出前保持为 true。
         self._cancel_requested = True
+        with self._active_turn_lock:
+            if self._active_turn is not None:
+                self._active_turn.cancelled.set()
 
-    def abort_chat(self) -> None:
+    def abort_chat(self, session_id: str = "", turn_id: str = "") -> tuple[bool, str]:
         """Abort current LLM generation.
 
         Used by Gateway chat.abort RPC.
@@ -560,7 +611,10 @@ class Living:
 
         由 Gateway chat.abort RPC 调用。
         """
+        if session_id and turn_id:
+            return self.cancel_active_turn(session_id, turn_id)
         self.cancel()
+        return True, "interrupted"
 
     def reset_cancel(self) -> None:
         # Reset cancellation flag.

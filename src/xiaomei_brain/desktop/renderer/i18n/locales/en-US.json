@@ -139,6 +139,7 @@
       "modelUnavailable": "Model service unavailable",
       "interrupted": "Interrupted",
       "retry": "Retry",
+      "continue": "Continue",
       "copyMessage": "Copy message",
       "copyAnswer": "Copy answer",
       "memoryReferences": "View {{count}} memories recalled for this answer",

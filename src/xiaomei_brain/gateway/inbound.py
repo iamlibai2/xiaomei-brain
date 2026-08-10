@@ -278,6 +278,11 @@ class Gateway:
         invocation = raw.metadata.get("invocation")
         if isinstance(invocation, dict):
             message_kwargs["invocation"] = dict(invocation)
+        continued_from_turn_id = str(
+            raw.metadata.get("continued_from_turn_id") or ""
+        ).strip()
+        if continued_from_turn_id:
+            message_kwargs["continued_from_turn_id"] = continued_from_turn_id
         try:
             import inspect
             put_parameters = inspect.signature(self._living.put_message).parameters
@@ -308,6 +313,7 @@ class Gateway:
                 attachments=raw.attachments,
                 invocation=dict(invocation) if isinstance(invocation, dict) else {},
                 turn_id=turn_id,
+                continued_from_turn_id=continued_from_turn_id,
                 message_id=message_id if isinstance(message_id, int) else None,
                 observation_id=str(
                     raw.metadata.get("workspace_observation_id") or ""
@@ -607,6 +613,11 @@ class Gateway:
         retry_of = raw.metadata.get("retry_of")
         if isinstance(retry_of, int) and retry_of > 0:
             metadata["retry_of"] = retry_of
+        continued_from_turn_id = str(
+            raw.metadata.get("continued_from_turn_id") or ""
+        ).strip()
+        if continued_from_turn_id:
+            metadata["continued_from_turn_id"] = continued_from_turn_id
         invocation = raw.metadata.get("invocation")
         if isinstance(invocation, dict):
             metadata["invocation"] = {

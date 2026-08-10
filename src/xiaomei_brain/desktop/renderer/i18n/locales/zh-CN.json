@@ -139,6 +139,7 @@
       "modelUnavailable": "模型服务不可用",
       "interrupted": "已中断",
       "retry": "重试",
+      "continue": "继续",
       "copyMessage": "复制整条消息",
       "copyAnswer": "复制整条回答",
       "memoryReferences": "查看本次召回的 {{count}} 条记忆",

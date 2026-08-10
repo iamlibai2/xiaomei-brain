@@ -37,6 +37,7 @@ def test_method_router_exposes_domain_composed_catalog():
         "connect",
         "chat.send",
         "chat.retry",
+        "chat.continue",
         "chat.abort",
         "chat.history",
         "chat.sessions",

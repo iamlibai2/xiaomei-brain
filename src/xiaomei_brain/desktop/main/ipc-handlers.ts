@@ -970,11 +970,26 @@ export function registerIpcHandlers(
 
   // ─── chat.abort ─────────────────────────────
 
-  ipcMain.handle("gateway:abortMessage", async (_event, args: { agentId: string }) => {
+  ipcMain.handle("gateway:abortMessage", async (_event, args: {
+    agentId: string; sessionId: string; turnId: string;
+  }) => {
     const client = getClient(args.agentId);
     if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
     return client.rpc("chat.abort", {
-      session_id: connectionSessions.get(args.agentId) || "",
+      session_id: args.sessionId,
+      turn_id: args.turnId,
+    });
+  });
+
+  ipcMain.handle("gateway:continueMessage", async (_event, args: {
+    agentId: string; sessionId: string; interruptedTurnId: string; clientRequestId: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("chat.continue", {
+      session_id: args.sessionId,
+      interrupted_turn_id: args.interruptedTurnId,
+      client_request_id: args.clientRequestId,
     });
   });
 

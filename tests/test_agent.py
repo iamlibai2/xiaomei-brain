@@ -107,6 +107,18 @@ def test_agent_max_steps(mock_llm, registry):
     assert isinstance(response, str)
 
 
+def test_agent_cancellation_does_not_emit_max_steps_message(mock_llm, registry):
+    agent = Agent(llm=mock_llm, tools=registry, max_steps=3)
+
+    response = "".join(agent.stream(
+        [{"role": "user", "content": "Run a long task"}],
+        cancel_check=lambda: True,
+    ))
+
+    assert response == ""
+    mock_llm.chat_stream.assert_not_called()
+
+
 def test_agent_stops_after_model_ignores_blocked_retry(mock_llm, registry):
     """A stubborn model must not turn one failed command into a long loop."""
     from xiaomei_brain.tools import tool

@@ -58,9 +58,17 @@ interface ChatInputProps {
   onSend: (text: string, artifactReferences?: ChatArtifactReference[]) => void;
   sending: boolean;
   onAbort: () => void;
+  continueTurnId?: string;
+  onContinue: (turnId: string) => void;
 }
 
-export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
+export function ChatInput({
+  onSend,
+  sending,
+  onAbort,
+  continueTurnId,
+  onContinue,
+}: ChatInputProps) {
   const { t } = useTranslation();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const slashMenuRef = useRef<SlashInvocationMenuHandle>(null);
@@ -1072,6 +1080,18 @@ export function ChatInput({ onSend, sending, onAbort }: ChatInputProps) {
                 {t("home.abort")}
               </button>
             </>
+          ) : continueTurnId
+            && !input.trim()
+            && attachments.length === 0
+            && artifactReferences.length === 0 ? (
+            <button
+              type="button"
+              className="chat-input-continue"
+              onClick={() => onContinue(continueTurnId)}
+              disabled={!connected}
+            >
+              {t("home.continue")}
+            </button>
           ) : (
             <button
               className="chat-input-send"
