@@ -174,6 +174,7 @@ export function ActivitySidebar({
       type="button"
       className="agent-right-sidebar-backdrop"
       aria-label={t("rightSidebarUi.close")}
+      title={`${t("rightSidebarUi.close")} (Ctrl+Shift+B)`}
       onClick={onClose}
     />
     <aside className="agent-right-sidebar" aria-label={t("rightSidebarUi.details")}>
@@ -203,7 +204,7 @@ export function ActivitySidebar({
           }} title={t("rightSidebarUi.refresh")}>
             <Icon name="refresh" size={15} />
           </button>
-          <button type="button" onClick={onClose} title={t("rightSidebarUi.close")} aria-label={t("rightSidebarUi.close")}>
+          <button type="button" onClick={onClose} title={`${t("rightSidebarUi.close")} (Ctrl+Shift+B)`} aria-label={t("rightSidebarUi.close")}>
             <Icon name="sidebar-panel-right" size={15} />
           </button>
         </div>

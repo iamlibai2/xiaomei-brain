@@ -516,6 +516,30 @@ export interface TokenUsageSummary {
   context_pressure: ContextTokenPressure | null;
 }
 
+export interface ModelTraceSummary {
+  id: string;
+  created_at: number;
+  updated_at: number;
+  provider: string;
+  model: string;
+  stream: boolean;
+  status: "running" | "completed" | "failed";
+  person_id: string;
+  session_id: string;
+  turn_id: string;
+  category: string;
+  message_count: number;
+  tool_count: number;
+  total_tokens: number;
+  latency_ms: number;
+  error: string;
+}
+
+export interface ModelTraceRecord extends ModelTraceSummary {
+  request: Record<string, unknown>;
+  response?: Record<string, unknown> | null;
+}
+
 export interface GatewayBridge {
   connect(args: { host: string; port: number; token: string; agentId: string; sessionId?: string }): Promise<JsonRpcResponse>;
   switchSession(args: { agentId: string; sessionId: string }): Promise<JsonRpcResponse>;
@@ -598,6 +622,15 @@ export interface GatewayBridge {
     limit?: number;
     offset?: number;
   }): Promise<JsonRpcResponse>;
+  listModelTraces(args: {
+    agentId: string;
+    sessionId?: string;
+    category?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<JsonRpcResponse>;
+  getModelTrace(args: { agentId: string; traceId: string }): Promise<JsonRpcResponse>;
+  clearModelTraces(args: { agentId: string }): Promise<JsonRpcResponse>;
   listCapabilities(args: { agentId: string }): Promise<JsonRpcResponse>;
   getCapability(args: { agentId: string; capabilityId: string }): Promise<JsonRpcResponse>;
   setCapabilityEnabled(args: {

@@ -3,6 +3,9 @@ import { useTranslation } from "react-i18next";
 import { useCoreStore } from "../store";
 import { openSettingsCenter } from "./settings/events";
 import { TokenUsageDialog } from "./TokenUsageDialog";
+import { AboutDialog } from "./AboutDialog";
+import { ShortcutDialog } from "./ShortcutDialog";
+import { ModelContextDialog } from "./ModelContextDialog";
 
 interface MenuItem {
   label: string;
@@ -17,6 +20,9 @@ export function MenuBar() {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [maximized, setMaximized] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [modelContextOpen, setModelContextOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const activeAgent = useCoreStore((state) => (
     state.agents.find((agent) => agent.id === state.activeAgentId)
@@ -54,23 +60,37 @@ export function MenuBar() {
       },
       {
         label: t("menu.analysis"),
-        children: [{
-          label: t("menu.tokenUsage"),
-          action: () => setUsageOpen(true),
-          disabled: !activeAgent,
-        }],
+        children: [
+          {
+            label: t("menu.tokenUsage"),
+            action: () => setUsageOpen(true),
+            disabled: !activeAgent,
+          },
+          {
+            label: t("menu.modelContext"),
+            action: () => setModelContextOpen(true),
+            disabled: !activeAgent,
+          },
+        ],
       },
       { separator: true, label: "" },
       { label: t("menu.reload"), action: () => location.reload() },
-      { label: t("menu.devtools"), action: () => {} },
-      { separator: true, label: "" },
       { label: t("menu.close"), action: () => window.win.close() },
       { label: t("menu.quit"), action: () => window.win.quit() },
     ],
     [t("menu.help")]: [
       {
+        label: t("shortcutUi.title"),
+        action: () => setShortcutsOpen(true),
+      },
+      {
+        label: t("systemUi.updateCheck"),
+        action: () => { void window.desktopUpdate.check(); },
+      },
+      { separator: true, label: "" },
+      {
         label: t("menu.about"),
-        action: () => openSettingsCenter("system"),
+        action: () => setAboutOpen(true),
       },
     ],
   }), [activeAgent, openAgentLogs, setTerminalOpen, t, terminalOpen]);
@@ -79,6 +99,23 @@ export function MenuBar() {
     if (!window.win) return;
     window.win.isMaximized().then(setMaximized);
     window.win.onMaximizeChange(setMaximized);
+  }, []);
+
+  useEffect(() => {
+    const handleWindowShortcut = (event: KeyboardEvent) => {
+      if (
+        event.repeat
+        || event.isComposing
+        || event.altKey
+        || !(event.ctrlKey || event.metaKey)
+        || !event.shiftKey
+        || event.key.toLowerCase() !== "f"
+      ) return;
+      event.preventDefault();
+      window.win.maximize();
+    };
+    window.addEventListener("keydown", handleWindowShortcut);
+    return () => window.removeEventListener("keydown", handleWindowShortcut);
   }, []);
 
   useEffect(() => {
@@ -163,27 +200,46 @@ export function MenuBar() {
               className="menubar-window-btn"
               onClick={() => window.win.minimize()}
               title={t("menu.minimize")}
+              aria-label={t("menu.minimize")}
             >
-              &#x2212;
+              <svg className="menubar-window-icon" viewBox="0 0 12 12" aria-hidden="true">
+                <path d="M2 6.5h8" />
+              </svg>
             </button>
             <button
               className="menubar-window-btn"
               onClick={() => window.win.maximize()}
-              title={maximized ? t("menu.restore") : t("menu.maximize")}
+              title={`${maximized ? t("menu.restore") : t("menu.maximize")} (Ctrl+Shift+F)`}
+              aria-label={maximized ? t("menu.restore") : t("menu.maximize")}
             >
-              {maximized ? "\u29C9" : "\u25A1"}
+              {maximized ? (
+                <svg className="menubar-window-icon" viewBox="0 0 12 12" aria-hidden="true">
+                  <path d="M4.5 3.5v-1h5v5h-1" />
+                  <rect x="2.5" y="4.5" width="5" height="5" />
+                </svg>
+              ) : (
+                <svg className="menubar-window-icon" viewBox="0 0 12 12" aria-hidden="true">
+                  <rect x="2.5" y="2.5" width="7" height="7" />
+                </svg>
+              )}
             </button>
             <button
               className="menubar-window-btn menubar-window-btn-close"
               onClick={() => window.win.close()}
               title={t("menu.close")}
+              aria-label={t("menu.close")}
             >
-              &#x2715;
+              <svg className="menubar-window-icon" viewBox="0 0 12 12" aria-hidden="true">
+                <path d="m2.5 2.5 7 7m0-7-7 7" />
+              </svg>
             </button>
           </div>
         )}
       </div>
       {usageOpen && <TokenUsageDialog onClose={() => setUsageOpen(false)} />}
+      {aboutOpen && <AboutDialog onClose={() => setAboutOpen(false)} />}
+      {shortcutsOpen && <ShortcutDialog onClose={() => setShortcutsOpen(false)} />}
+      {modelContextOpen && <ModelContextDialog onClose={() => setModelContextOpen(false)} />}
     </>
   );
 }

@@ -20,15 +20,15 @@ from xiaomei_brain.memory.self_model import SelfModel
 from xiaomei_brain.memory.dag import DAGSummaryGraph
 from xiaomei_brain.memory.longterm import LongTermMemory
 from xiaomei_brain.memory.extractor import MemoryExtractor
-from xiaomei_brain.prompts import MEMORY_DECISION_PROMPT
 from xiaomei_brain.tools.registry import (
     ToolRegistry,
     normalize_tool_result,
     split_tool_control,
 )
-from xiaomei_brain.tools.dynamic import (
-    build_step_tool_selection_context,
-    build_tool_selection_context,
+from xiaomei_brain.agent.render_execution_context import (
+    inject_memory_policy,
+    prepare_execution_selection,
+    render_step_selection_context,
 )
 from xiaomei_brain.agent.message_utils import (
     strip_orphaned_tool_messages,
@@ -275,64 +275,6 @@ class Agent:
             + "\n".join(rendered)
         ).strip()
 
-    def _step_tool_selection_context(
-        self,
-        original_intent: str,
-        progress: list[str],
-    ) -> str:
-        """Build one step query and refresh mutable runtime facts."""
-        query = build_step_tool_selection_context(original_intent, progress)
-        return self._with_runtime_tool_selection_context(query)
-
-    def _prepare_execution_selection(
-        self,
-        messages: list[dict[str, Any]],
-    ) -> tuple[list[dict[str, Any]], str]:
-        """Prepare one shared Capability -> Skill -> Tool selection context."""
-        selection_query = build_tool_selection_context(
-            messages,
-            self.current_attachments,
-        )
-        selection_query = self._with_runtime_tool_selection_context(
-            selection_query,
-        )
-        if self._dynamic_loader:
-            self._dynamic_loader.begin_run(self.session_id)
-
-        required_skills: list[str] = []
-        prepare = getattr(
-            self._capability_registry,
-            "prepare_execution_selection",
-            None,
-        )
-        if callable(prepare):
-            required_skills = prepare(
-                selection_query,
-                scope_id=self.session_id,
-                person_id=self.user_id,
-            )
-            # Capability pinning may have populated the current scope after
-            # begin_run; refresh the active reference defensively.
-            if self._dynamic_loader:
-                self._dynamic_loader.begin_run(self.session_id)
-
-        skill_prompt = ""
-        if self._skill_loader:
-            skill_prompt = self._skill_loader.build_skill_index_prompt(
-                selection_query,
-                required_names=required_skills,
-            )
-
-        prepared = [dict(message) for message in messages]
-        if skill_prompt:
-            if prepared and prepared[0].get("role") == "system":
-                prepared[0]["content"] = (
-                    str(prepared[0].get("content", "")) + "\n\n" + skill_prompt
-                )
-            else:
-                prepared.insert(0, {"role": "system", "content": skill_prompt})
-        return prepared, selection_query
-
     def _completion_guard_result(self, content: str) -> CompletionGuardResult | None:
         for guard in tuple(self.completion_guards):
             result = guard(self, content)
@@ -535,7 +477,7 @@ class Agent:
         _pre_count = len(self.messages)
 
         # 动态工具加载：累积上下文供每步 embed 召回
-        messages, _accumulated_context = self._prepare_execution_selection(messages)
+        messages, _accumulated_context = prepare_execution_selection(self, messages)
         _selection_progress: list[str] = []
 
         try:
@@ -576,7 +518,8 @@ class Agent:
 
                 # 每步根据累积上下文动态选择工具
                 if self._dynamic_loader:
-                    selection_context = self._step_tool_selection_context(
+                    selection_context = render_step_selection_context(
+                        self,
                         _accumulated_context,
                         _selection_progress,
                     )
@@ -594,14 +537,7 @@ class Agent:
                 # 缓存当前完整上下文（供 context 命令使用）
                 self._last_all_messages = all_messages
 
-                # Inject MEMORY_DECISION_PROMPT into system message (not user message)
-                mem_prompt = MEMORY_DECISION_PROMPT.format(user_name=self.user_display_name)
-                if all_messages and all_messages[0].get("role") == "system":
-                    all_messages[0] = dict(all_messages[0])
-                    all_messages[0]["content"] = all_messages[0]["content"] + "\n\n" + mem_prompt
-                    logger.info("[Memory] injected MEMORY_DECISION_PROMPT into system message")
-                else:
-                    logger.warning("[Memory] No system message found for MEMORY_DECISION_PROMPT")
+                all_messages = inject_memory_policy(self, all_messages)
 
                 # Clean surrogate characters from all message content before sending to LLM
                 all_messages = clean_messages(all_messages)
@@ -1296,7 +1232,7 @@ class Agent:
         _idx = 0
 
         # 动态工具加载：累积上下文供每步 embed 召回
-        messages, _accumulated_context = self._prepare_execution_selection(messages)
+        messages, _accumulated_context = prepare_execution_selection(self, messages)
         _selection_progress: list[str] = []
 
         for step in range(max_steps):
@@ -1306,7 +1242,8 @@ class Agent:
 
             # 每步根据累积上下文动态选择工具
             if self._dynamic_loader:
-                selection_context = self._step_tool_selection_context(
+                selection_context = render_step_selection_context(
+                    self,
                     _accumulated_context,
                     _selection_progress,
                 )

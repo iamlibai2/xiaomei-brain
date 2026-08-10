@@ -12,6 +12,7 @@ export function MainShell() {
   const [surface, setSurface] = useState<"chat" | "workspaces">("chat");
   const [requestedWorkspaceId, setRequestedWorkspaceId] = useState("");
   const activeAgentId = useCoreStore((state) => state.activeAgentId || "");
+  const newSession = useCoreStore((state) => state.newSession);
 
   useEffect(() => {
     const clearPersonScopedSurface = () => {
@@ -66,6 +67,36 @@ export function MainShell() {
     setRequestedWorkspaceId(String(data.workspace_id || data.id || ""));
     setSurface("workspaces");
   }), [activeAgentId]);
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (event.repeat || event.isComposing || event.altKey || !(event.ctrlKey || event.metaKey)) return;
+      if (event.key.toLowerCase() === "n" && !event.shiftKey) {
+        if (document.querySelector('[aria-modal="true"]')) return;
+        event.preventDefault();
+        setSurface("chat");
+        void newSession();
+        return;
+      }
+      if (event.key.toLowerCase() === "m" && !event.shiftKey) {
+        if (document.querySelector('[aria-modal="true"]')) return;
+        event.preventDefault();
+        window.dispatchEvent(new CustomEvent("xiaomei:voice-control", {
+          detail: { action: "toggle" },
+        }));
+        return;
+      }
+      if (event.key.toLowerCase() !== "b") return;
+      event.preventDefault();
+      if (event.shiftKey) {
+        window.dispatchEvent(new CustomEvent("xiaomei:right-sidebar-toggle"));
+      } else {
+        setLeftSidebarCollapsed((collapsed) => !collapsed);
+      }
+    };
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, [newSession]);
 
   return (
     <div className="main-shell">

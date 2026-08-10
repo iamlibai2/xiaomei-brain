@@ -7,6 +7,8 @@ from xiaomei_brain.llm.usage import (
     LLMUsageRecord,
     current_usage_context,
     estimate_input_breakdown,
+    estimate_detailed_input_breakdown,
+    scale_detailed_input_breakdown,
     scale_input_breakdown,
     usage_context,
 )
@@ -85,6 +87,17 @@ def test_input_breakdown_attributes_tools_skills_and_workspace():
     assert breakdown["workspace"] > 0
     scaled = scale_input_breakdown(breakdown, 1000)
     assert sum(scaled.values()) == 1000
+
+    detailed = estimate_detailed_input_breakdown(messages, tools)
+    assert detailed["system"] > 0
+    assert detailed["user"] > 0
+    assert detailed["tool_definitions"] > 0
+    assert detailed["tool_calls"] > 0
+    assert detailed["skills"] > 0
+    assert detailed["workspace"] > 0
+    assert detailed["tool_results"] == 0  # skill_view result is attributed to Skill
+    scaled_detailed = scale_detailed_input_breakdown(detailed, 1000)
+    assert sum(scaled_detailed.values()) == 1000
 
 
 def test_usage_store_aggregates_period_session_and_turn(tmp_path):

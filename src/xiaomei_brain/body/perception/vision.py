@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import time
 
 import requests
 
@@ -80,7 +81,19 @@ class VisionUnderstanding:
             ],
         }
 
+        trace_id = ""
+        started_at = time.time()
         try:
+            from xiaomei_brain.llm.client import (
+                begin_external_model_trace,
+                finish_external_model_trace,
+            )
+            trace_id = begin_external_model_trace(
+                provider="vision",
+                model=_VISION_MODEL,
+                payload=payload,
+                category="vision",
+            )
             resp = requests.post(
                 f"{_VISION_BASE_URL}/chat/completions",
                 headers={
@@ -92,6 +105,11 @@ class VisionUnderstanding:
             )
             resp.raise_for_status()
             data = resp.json()
+            finish_external_model_trace(
+                trace_id,
+                response=data,
+                latency_ms=(time.time() - started_at) * 1000,
+            )
             choices = data.get("choices", [])
             if choices:
                 content = choices[0].get("message", {}).get("content", "")
@@ -103,8 +121,20 @@ class VisionUnderstanding:
                 return content.strip() or None
             return None
         except requests.Timeout:
+            if trace_id:
+                finish_external_model_trace(
+                    trace_id,
+                    error="Vision request timed out",
+                    latency_ms=(time.time() - started_at) * 1000,
+                )
             logger.error("[Vision] 请求超时 (60s)")
             return None
         except Exception as e:
+            if trace_id:
+                finish_external_model_trace(
+                    trace_id,
+                    error=str(e),
+                    latency_ms=(time.time() - started_at) * 1000,
+                )
             logger.error("[Vision] 多模态 LLM 调用失败: %s", e)
             return None

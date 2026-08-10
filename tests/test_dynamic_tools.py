@@ -1,6 +1,7 @@
 """Tests for DynamicToolLoader (Tool RAG)."""
 
 import pytest
+from unittest.mock import MagicMock
 
 from xiaomei_brain.agent.core import Agent
 from xiaomei_brain.tools.base import Tool
@@ -109,6 +110,8 @@ def test_step_selection_context_keeps_intent_and_bounds_tool_progress():
 
 
 def test_agent_refreshes_runtime_tool_context_after_first_step():
+    from xiaomei_brain.agent.render_execution_context import prepare_execution_selection
+
     agent = Agent(llm=object(), tools=ToolRegistry())
     state = {"focused": False}
 
@@ -121,17 +124,40 @@ def test_agent_refreshes_runtime_tool_context_after_first_step():
         )
 
     agent.add_tool_selection_context_provider(workspace_context)
-    _messages, initial = agent._prepare_execution_selection([
+    _messages, initial = prepare_execution_selection(agent, [
         {"role": "user", "content": "新建一个原料采购工作空间"},
     ])
     assert "focused_workspace" not in initial
 
     state["focused"] = True
-    refreshed = agent._step_tool_selection_context(initial, [
+    from xiaomei_brain.agent.render_execution_context import render_step_selection_context
+
+    refreshed = render_step_selection_context(agent, initial, [
         "create_workspace: workspace-1",
     ])
     assert "<focused_workspace>" in refreshed
     assert "原料采购" in refreshed
+
+
+def test_execution_renderer_injects_selected_skill():
+    from xiaomei_brain.agent.render_execution_context import prepare_execution_selection
+
+    agent = Agent(llm=object(), tools=ToolRegistry())
+    agent.session_id = "session-1"
+    agent.user_id = "person-1"
+    agent._skill_loader = MagicMock()
+    agent._skill_loader.build_skill_index_prompt.return_value = (
+        "<available_skills>document-writing</available_skills>"
+    )
+
+    prepared, query = prepare_execution_selection(agent, [
+        {"role": "system", "content": "consciousness"},
+        {"role": "user", "content": "写一份报告"},
+    ])
+
+    assert "写一份报告" in query
+    assert prepared[0]["content"].startswith("consciousness")
+    assert "document-writing" in prepared[0]["content"]
 
 
 def test_focused_workspace_authoring_kit_is_deterministic(monkeypatch):

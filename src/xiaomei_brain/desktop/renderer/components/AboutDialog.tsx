@@ -56,7 +56,7 @@ export function AboutDialog({ onClose, embedded = false }: { onClose: () => void
       >
         <header className="about-header">
           <div>
-            <h2 id="about-title">{embedded ? t("settings.title") : "xiaomei-brain Desktop"}</h2>
+            <h2 id="about-title">{embedded ? t("settings.title") : "XiaoMei-Brain"}</h2>
             <p>{embedded ? t("settings.system.description") : t("about.subtitle")}</p>
           </div>
           <button className="about-close" onClick={onClose} aria-label={t("about.close")}>×</button>

@@ -138,3 +138,48 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+.shortcut-dialog {
+  width: min(500px, 92vw);
+}
+
+.shortcut-list {
+  padding: 10px 24px 18px;
+}
+
+.shortcut-row {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  border-bottom: 1px solid var(--ui-border-subtle);
+  color: var(--ui-color-text-primary);
+  font-size: 13px;
+}
+
+.shortcut-row:last-child {
+  border-bottom: 0;
+}
+
+.shortcut-keys {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.shortcut-keys kbd {
+  min-width: 26px;
+  height: 25px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--ui-border-default);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  color: var(--ui-color-text-primary);
+  background: var(--ui-bg-secondary);
+  font: 11px/1 Consolas, "Cascadia Mono", monospace;
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--ui-color-text-primary) 5%, transparent);
+}

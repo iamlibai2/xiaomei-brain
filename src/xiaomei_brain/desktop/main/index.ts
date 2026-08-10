@@ -137,9 +137,9 @@ function createTray(): void {
   tray = new Tray(icon);
   tray.setToolTip("XiaoMei-Brain");
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: "打开 XiaoMei-Brain", click: showMainWindow },
+    { label: "打开窗口", click: showMainWindow },
     { type: "separator" },
-    { label: "退出 XiaoMei-Brain", click: () => app.quit() },
+    { label: "退出", click: () => app.quit() },
   ]));
   tray.on("click", showMainWindow);
   tray.on("double-click", showMainWindow);

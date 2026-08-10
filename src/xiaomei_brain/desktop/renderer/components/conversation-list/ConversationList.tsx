@@ -238,7 +238,7 @@ export function ConversationList({
                   className="session-new-btn"
                   onClick={handleNewSession}
                   disabled={!canCreateSession}
-                  title={t("sidebar.newSession")}
+                  title={`${t("sidebar.newSession")} (Ctrl+N)`}
                 >
                   <Icon name="plus" size={13} />
                   <span>{t("sidebar.newSession")}</span>

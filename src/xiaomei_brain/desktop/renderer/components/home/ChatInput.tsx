@@ -834,6 +834,17 @@ export function ChatInput({
     }
   };
 
+  useEffect(() => {
+    const controlVoice = (event: Event) => {
+      const action = (event as CustomEvent<{ action?: "toggle" }>).detail?.action;
+      if (action === "toggle") {
+        void toggleVoiceRecording();
+      }
+    };
+    window.addEventListener("xiaomei:voice-control", controlVoice);
+    return () => window.removeEventListener("xiaomei:voice-control", controlVoice);
+  }, [listening, toggleVoiceRecording]);
+
   const captureCamera = async () => {
     if (!connected || sending || mediaBusy || attachments.length >= 4) return;
     setAttachmentError("");
@@ -1055,7 +1066,7 @@ export function ChatInput({
           <button
             type="button"
             className={`chat-input-btn ${listening ? "is-recording" : ""}`}
-            title={listening ? t("home.stopContinuousVoice") : t("home.startContinuousVoice")}
+            title={`${listening ? t("home.stopContinuousVoice") : t("home.startContinuousVoice")} (Ctrl+M)`}
             onClick={() => { void toggleVoiceRecording(); }}
             disabled={!listening && (!connected || sending)}
           >

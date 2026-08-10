@@ -228,6 +228,19 @@ export function HomePage({
     autoCollapsedLeftSidebarRef.current = false;
   }, [leftSidebarCollapsed, onLeftSidebarCollapsedChange]);
 
+  useEffect(() => {
+    const toggleRightSidebar = () => {
+      if (focusedArtifactKey) {
+        closeArtifactWorkspace();
+        setActivityPanelOpen(true);
+      } else {
+        setActivityPanelOpen((open) => !open);
+      }
+    };
+    window.addEventListener("xiaomei:right-sidebar-toggle", toggleRightSidebar);
+    return () => window.removeEventListener("xiaomei:right-sidebar-toggle", toggleRightSidebar);
+  }, [closeArtifactWorkspace, focusedArtifactKey]);
+
   const activateArtifact = useCallback((artifactId: string, sessionId: string) => {
     const artifact = activeArtifacts.find((item) => item.id === artifactId && item.sessionId === sessionId);
     if (!artifact || supportsArtifactPreview(artifact)) {

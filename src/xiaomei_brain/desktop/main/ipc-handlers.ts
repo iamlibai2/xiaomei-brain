@@ -1472,6 +1472,33 @@ export function registerIpcHandlers(
     });
   });
 
+  ipcMain.handle("gateway:listModelTraces", async (_event, args: {
+    agentId: string; sessionId?: string; category?: string; limit?: number; offset?: number;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("model.trace.list", {
+      session_id: args.sessionId || "",
+      category: args.category || "",
+      limit: args.limit || 100,
+      offset: args.offset || 0,
+    });
+  });
+
+  ipcMain.handle("gateway:getModelTrace", async (_event, args: {
+    agentId: string; traceId: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("model.trace.get", { trace_id: args.traceId });
+  });
+
+  ipcMain.handle("gateway:clearModelTraces", async (_event, args: { agentId: string }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("model.trace.clear", {});
+  });
+
   ipcMain.handle("gateway:listCapabilities", async (_event, args: {
     agentId: string;
   }) => {

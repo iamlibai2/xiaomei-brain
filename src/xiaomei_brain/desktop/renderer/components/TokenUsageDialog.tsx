@@ -17,7 +17,6 @@ export function TokenUsageDialog({ onClose }: { onClose: () => void }) {
   const breakdown = summary?.breakdowns?.[period];
   const categories = breakdown?.categories || summary?.categories || [];
   const categoryTotal = Math.max(1, totals?.total_tokens || 0);
-  const periodLabel = t(`usage.period.${period}`);
   const firstRecorded = summary?.first_recorded_at
     ? new Date(summary.first_recorded_at * 1000).toLocaleString()
     : "";
@@ -31,7 +30,9 @@ export function TokenUsageDialog({ onClose }: { onClose: () => void }) {
       <section className="usage-dialog" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
         <header className="usage-dialog-header">
           <div>
-            <span className="usage-dialog-eyebrow">{activeAgent?.name || t("usage.agent")}</span>
+            <span className="usage-dialog-eyebrow">
+              {t("usage.currentAgent", { name: activeAgent?.name || t("usage.agent") })}
+            </span>
             <h2>{t("usage.title")}</h2>
             <p>{t("usage.subtitle")}</p>
           </div>
@@ -58,7 +59,6 @@ export function TokenUsageDialog({ onClose }: { onClose: () => void }) {
         {summary && totals ? (
           <div className="usage-dialog-body">
             <section className="usage-hero-card">
-              <span>{periodLabel}</span>
               <strong>{formatTokens(totals.total_tokens)}</strong>
               <div className="usage-hero-details">
                 <Metric label={t("usage.input")} value={formatTokens(totals.input_tokens)} />

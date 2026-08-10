@@ -26,6 +26,7 @@ from .methods import (
     MediaServiceMethods,
     MemoryMethods,
     ModelMethods,
+    ModelTraceMethods,
     ProjectMethods,
     SearchMethods,
     SessionMethods,
@@ -67,6 +68,7 @@ class MethodRouter:
         self._invocation_methods = InvocationMethods(living)
         self._memory_methods = MemoryMethods(living, self._identity_contexts)
         self._model_methods = ModelMethods(living)
+        self._model_trace_methods = ModelTraceMethods(living)
         self._media_service_methods = MediaServiceMethods(living)
         self._tool_service_methods = ToolServiceMethods(living)
         self._usage_methods = UsageMethods(living)
@@ -108,6 +110,7 @@ class MethodRouter:
             self._invocation_methods,
             self._memory_methods,
             self._model_methods,
+            self._model_trace_methods,
             self._media_service_methods,
             self._tool_service_methods,
             self._usage_methods,
@@ -219,6 +222,8 @@ class MethodRouter:
             "memory.read": {"memory.list"},
             "agent.state": {"agent.state.get"},
             "usage.read": {"usage.summary", "usage.list"},
+            "model.trace.read": {"model.trace.list", "model.trace.get"},
+            "model.trace.manage": {"model.trace.clear"},
             "capability.read": {"capability.list", "capability.get"},
             "capability.activation": {"capability.enable", "capability.disable"},
             "capability.setup": {

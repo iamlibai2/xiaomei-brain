@@ -438,7 +438,7 @@ body[data-platform="mac"] .sidebar-topbar {
   cursor: pointer;
   padding: 0 6px;
   font-family: var(--ui-font-family);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1;
 }
 
@@ -663,13 +663,95 @@ body[data-platform="mac"] .sidebar-topbar {
 }
 
 /* ─── Sidebar Footer ─── */
+.sidebar-footer-region {
+  flex-shrink: 0;
+  border-top: 1px solid var(--ui-border-subtle);
+}
+
 .sidebar-footer {
   padding: 10px 12px;
   display: flex;
   align-items: center;
   justify-content: flex-start;
   flex-shrink: 0;
-  border-top: 1px solid var(--ui-border-subtle);
+}
+
+.sidebar-update-card {
+  margin: 10px 12px 2px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--ui-brand-primary) 36%, var(--ui-border-default));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ui-brand-primary) 7%, var(--ui-bg-primary));
+  box-shadow: var(--ui-shadow-sm);
+}
+
+.sidebar-update-card-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 10px;
+  color: var(--ui-color-text-primary);
+  font-size: 13px;
+}
+
+.sidebar-update-card-title svg {
+  color: var(--ui-brand-primary);
+}
+
+.sidebar-update-card dl {
+  margin: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.sidebar-update-card dl > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.sidebar-update-card dt {
+  color: var(--ui-color-text-secondary);
+}
+
+.sidebar-update-card dd {
+  margin: 0;
+  color: var(--ui-color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.sidebar-update-download {
+  margin-top: 10px;
+  color: var(--ui-color-text-secondary);
+  font-size: 11px;
+}
+
+.sidebar-update-download > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+
+.sidebar-update-progress {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--ui-border-subtle);
+}
+
+.sidebar-update-progress span {
+  height: 100%;
+  display: block;
+  border-radius: inherit;
+  background: var(--ui-brand-primary);
+  transition: width 180ms ease;
+}
+
+.sidebar-update-action {
+  width: 100%;
+  margin-top: 11px;
 }
 
 .sidebar-footer-identity {
@@ -890,7 +972,7 @@ body[data-platform="mac"] .sidebar-topbar {
 }
 
 .agent-name {
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--ui-color-text-primary);
   overflow: hidden;
@@ -1131,6 +1213,11 @@ body[data-platform="mac"] .sidebar-topbar {
 .sidebar-identity-menu-account:hover {
   color: var(--ui-color-text-primary);
   background: var(--ui-button-ghost-bg-hover);
+}
+
+.sidebar-identity-menu-signout:hover {
+  color: var(--ui-status-error);
+  background: color-mix(in srgb, var(--ui-status-error) 9%, transparent);
 }
 
 .agent-lifecycle-btn:hover {

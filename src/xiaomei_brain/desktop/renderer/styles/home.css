@@ -3459,6 +3459,10 @@ body.is-resizing-artifact-workspace {
   display: none;
 }
 
+.assistant-text-content .message-md {
+  font-size: inherit;
+}
+
 .message-memory-reference {
   display: inline-flex;
   align-items: center;

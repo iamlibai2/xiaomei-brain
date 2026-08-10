@@ -317,6 +317,49 @@ class ConsciousLiving(Living):
         else:
             llm._usage_callback = _record_llm_usage
 
+        # Model traces preserve the provider-specific request body separately
+        # from conversation memory. They are diagnostic data and never enter
+        # the Agent's recall or message tables.
+        from ..llm.client import set_model_trace_callback
+        from ..llm.trace_store import ModelTraceStore
+
+        trace_directory = os.path.expanduser(
+            f"~/.xiaomei-brain/{self._agent_id}/logs/model-traces"
+        )
+
+        def _publish_model_trace(event: str, payload: dict[str, Any]) -> None:
+            event_payload = dict(payload)
+            event_payload["_agent_global"] = True
+            self._event_hub.publish(
+                event,
+                event_payload,
+                session_id=str(payload.get("session_id") or ""),
+                turn_id=str(payload.get("turn_id") or ""),
+            )
+
+        self.model_trace_store = ModelTraceStore(
+            trace_directory,
+            on_change=_publish_model_trace,
+        )
+
+        def _record_model_trace(action: str, payload: dict[str, Any]) -> str | None:
+            if action == "begin":
+                return self.model_trace_store.begin(payload)
+            if action == "complete":
+                self.model_trace_store.complete(
+                    str(payload.get("id") or ""),
+                    response=payload.get("response"),
+                    error=str(payload.get("error") or ""),
+                    latency_ms=float(payload.get("latency_ms") or 0.0),
+                )
+            return None
+
+        set_model_trace_callback(_record_model_trace)
+        if hasattr(llm, '_llm'):
+            llm._llm._trace_callback = _record_model_trace
+        else:
+            llm._trace_callback = _record_model_trace
+
         # CronScheduler（闹钟系统）
         from ..schedule import CronScheduler
         self.cron_scheduler = CronScheduler(self._agent_id)

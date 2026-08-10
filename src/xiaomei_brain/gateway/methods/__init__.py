@@ -17,6 +17,7 @@ from .invocations import InvocationMethods
 from .media import MediaServiceMethods
 from .memories import MemoryMethods
 from .models import ModelMethods
+from .model_traces import ModelTraceMethods
 from .projects import ProjectMethods
 from .search import SearchMethods
 from .sessions import SessionMethods
@@ -42,6 +43,7 @@ __all__ = [
     "MediaServiceMethods",
     "MemoryMethods",
     "ModelMethods",
+    "ModelTraceMethods",
     "ProjectMethods",
     "SearchMethods",
     "SessionMethods",

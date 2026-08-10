@@ -21,7 +21,7 @@ export function SidebarTopbar({ collapsed, onToggleCollapse, onSearch, onRefresh
           icon="sidebar-panel-left"
           iconSize={18}
           onClick={onToggleCollapse}
-          title={t("sidebar.expand")}
+          title={`${t("sidebar.expand")} (Ctrl+B)`}
         />
       ) : (
         <>
@@ -32,7 +32,7 @@ export function SidebarTopbar({ collapsed, onToggleCollapse, onSearch, onRefresh
           <div className="sidebar-topbar-actions">
             <Button variant="ghost" size="icon-md" icon="refresh" onClick={onRefresh} title={t("sidebar.refresh")} />
             <Button variant="ghost" size="icon-md" icon="search" onClick={onSearch} title={t("sidebar.search")} />
-            <Button variant="ghost" size="icon-md" icon="sidebar-panel-right" onClick={onToggleCollapse} title={t("sidebar.collapse")} />
+            <Button variant="ghost" size="icon-md" icon="sidebar-panel-right" onClick={onToggleCollapse} title={`${t("sidebar.collapse")} (Ctrl+B)`} />
           </div>
         </>
       )}

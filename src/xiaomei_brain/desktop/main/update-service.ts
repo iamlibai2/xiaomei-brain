@@ -80,7 +80,9 @@ export class DesktopUpdateService {
       return;
     }
 
-    autoUpdater.autoDownload = false;
+    // Once a check finds a new version, download it silently. Installing the
+    // downloaded version remains an explicit action in the Desktop sidebar.
+    autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = false;
     autoUpdater.allowPrerelease = false;
     autoUpdater.logger = console;
@@ -165,7 +167,7 @@ export class DesktopUpdateService {
 
   async check(): Promise<DesktopUpdateState> {
     if (!this.supported) return this.snapshot();
-    if (this.state.phase === "checking" || this.state.phase === "downloading") {
+    if (["checking", "available", "downloading", "downloaded"].includes(this.state.phase)) {
       return this.snapshot();
     }
     try {

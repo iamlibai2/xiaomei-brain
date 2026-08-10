@@ -62,7 +62,7 @@ export function ChatTopbar({
             className="right-panel-toggle"
             onClick={onToggleRightPanel}
             aria-pressed={false}
-            title={t("home.toggleRightPanel")}
+            title={`${t("home.toggleRightPanel")} (Ctrl+Shift+B)`}
           />
         )}
       </div>

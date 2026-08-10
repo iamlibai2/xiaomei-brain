@@ -162,7 +162,6 @@ export function DesktopLockScreen({ identity, onUnlock }: DesktopLockScreenProps
             <span><Icon name="microphone" size={15} /> {t("lockUi.voiceHint")}</span>
           )}
         </div>
-        <p className="desktop-lock-background-hint">{t("lockUi.backgroundHint")}</p>
       </div>
     </div>
   );

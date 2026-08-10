@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button, Icon } from "../ui";
-import type { DesktopSettings } from "../../types";
+import type { DesktopSettings, DesktopUpdateState } from "../../types";
+import { useCoreStore } from "../../store";
 
 interface SidebarFooterProps {
   userName: string;
@@ -12,7 +13,11 @@ export function SidebarFooter({ userName, onSettings }: SidebarFooterProps) {
   const { t } = useTranslation();
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   const [theme, setTheme] = useState<DesktopSettings["theme"]>("system");
+  const [updateState, setUpdateState] = useState<DesktopUpdateState | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const agents = useCoreStore((state) => state.agents);
+  const disconnectAgent = useCoreStore((state) => state.disconnectAgent);
+  const resetIdentityState = useCoreStore((state) => state.resetIdentityState);
 
   useEffect(() => {
     void window.desktop.getSettings().then((settings) => setTheme(settings.theme));
@@ -22,6 +27,20 @@ export function SidebarFooter({ userName, onSettings }: SidebarFooterProps) {
     };
     window.addEventListener("xiaomei:desktop-settings-changed", handleSettings);
     return () => window.removeEventListener("xiaomei:desktop-settings-changed", handleSettings);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void window.desktopUpdate.getState().then((state) => {
+      if (active) setUpdateState(state);
+    });
+    const unsubscribe = window.desktopUpdate.onState((state) => {
+      if (active) setUpdateState(state);
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -54,13 +73,68 @@ export function SidebarFooter({ userName, onSettings }: SidebarFooterProps) {
     window.dispatchEvent(new CustomEvent("xiaomei:desktop-settings-changed", { detail: result.settings }));
   }
 
+  async function signOut() {
+    setAppearanceOpen(false);
+    await Promise.allSettled(agents.map((agent) => disconnectAgent(agent.id)));
+    resetIdentityState();
+    const status = await window.identity.lock();
+    window.dispatchEvent(new CustomEvent("xiaomei:identity-locked", { detail: status }));
+  }
+
   const activeTheme = theme === "system"
     ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
     : theme;
 
+  const showUpdate = updateState?.phase === "available"
+    || updateState?.phase === "downloading"
+    || updateState?.phase === "downloaded";
+
   return (
-    <div className="sidebar-footer">
-      <div className="sidebar-identity-menu-wrap" ref={menuRef}>
+    <div className="sidebar-footer-region">
+      {showUpdate && updateState && (
+        <div className="sidebar-update-card">
+          <div className="sidebar-update-card-title">
+            <Icon name="refresh" size={16} />
+            <strong>{t("systemUi.updateAvailableTitle")}</strong>
+          </div>
+          <dl>
+            <div>
+              <dt>{t("systemUi.updateCurrentVersion")}</dt>
+              <dd>v{updateState.currentVersion}</dd>
+            </div>
+            <div>
+              <dt>{t("systemUi.updateAvailableVersion")}</dt>
+              <dd>v{updateState.availableVersion}</dd>
+            </div>
+          </dl>
+          {updateState.phase === "downloading" && (
+            <div className="sidebar-update-download">
+              <div>
+                <span>{t("systemUi.updateState.downloading")}</span>
+                <span>{Math.round(updateState.progress?.percent || 0)}%</span>
+              </div>
+              <div className="sidebar-update-progress">
+                <span style={{ width: `${updateState.progress?.percent || 0}%` }} />
+              </div>
+            </div>
+          )}
+          {updateState.phase === "available" && (
+            <div className="sidebar-update-download">{t("systemUi.updatePreparing")}</div>
+          )}
+          {updateState.phase === "downloaded" && (
+            <Button
+              variant="primary"
+              size="sm"
+              className="sidebar-update-action"
+              onClick={() => { void window.desktopUpdate.install(); }}
+            >
+              {t("systemUi.updateUpgrade")}
+            </Button>
+          )}
+        </div>
+      )}
+      <div className="sidebar-footer">
+        <div className="sidebar-identity-menu-wrap" ref={menuRef}>
         <button
           type="button"
           className={`sidebar-footer-identity ${appearanceOpen ? "is-open" : ""}`}
@@ -104,6 +178,18 @@ export function SidebarFooter({ userName, onSettings }: SidebarFooterProps) {
               </div>
             </div>
             <div className="sidebar-identity-menu-actions">
+              <button
+                type="button"
+                className="sidebar-identity-menu-account"
+                onClick={() => {
+                  setAppearanceOpen(false);
+                  void window.desktopUpdate.check();
+                }}
+              >
+                <Icon name="refresh" size={16} />
+                <span>{t("systemUi.updateCheck")}</span>
+                <Icon name="chevron-right" size={14} />
+              </button>
               {onSettings && (
                 <button type="button" className="sidebar-identity-menu-account" onClick={() => { setAppearanceOpen(false); onSettings(); }}>
                   <Icon name="settings" size={16} />
@@ -123,12 +209,22 @@ export function SidebarFooter({ userName, onSettings }: SidebarFooterProps) {
                 <span>{t("appearanceUi.lockDesktop")}</span>
                 <Icon name="chevron-right" size={14} />
               </button>
+              <button
+                type="button"
+                className="sidebar-identity-menu-account sidebar-identity-menu-signout"
+                onClick={() => { void signOut(); }}
+              >
+                <Icon name="power" size={16} />
+                <span>{t("appearanceUi.signOut")}</span>
+                <Icon name="chevron-right" size={14} />
+              </button>
             </div>
           </div>
         )}
-      </div>
-      <div className="sidebar-footer-actions">
-        <Button variant="ghost" size="icon-md" icon="settings" onClick={onSettings} title={t("sidebar.settings")} />
+        </div>
+        <div className="sidebar-footer-actions">
+          <Button variant="ghost" size="icon-md" icon="settings" onClick={onSettings} title={t("sidebar.settings")} />
+        </div>
       </div>
     </div>
   );

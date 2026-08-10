@@ -36,8 +36,7 @@
   font-weight: 650;
 }
 
-.desktop-lock-title,
-.desktop-lock-background-hint {
+.desktop-lock-title {
   margin: 7px 0 24px;
   color: var(--ui-color-text-secondary);
   font-size: 13px;
@@ -162,9 +161,4 @@
   color: inherit;
   background: var(--ui-bg-secondary);
   cursor: pointer;
-}
-
-.desktop-lock-background-hint {
-  margin-top: 18px;
-  font-size: 11px;
 }

@@ -26,11 +26,58 @@ logger = logging.getLogger(__name__)
 
 # ── Per-agent LLM 日志目录 ──
 _log_agent_id: str | None = None
+_model_trace_callback: Any = None
 
 
 def set_log_agent(agent_id: str) -> None:
     global _log_agent_id
     _log_agent_id = agent_id
+
+
+def set_model_trace_callback(callback: Any) -> None:
+    """Install the trace sink for every LLM client in this Agent process."""
+    global _model_trace_callback
+    _model_trace_callback = callback
+
+
+def begin_external_model_trace(
+    *, provider: str, model: str, payload: dict[str, Any], category: str = "other",
+) -> str:
+    """Record a direct model request that does not use LLMClient."""
+    if not callable(_model_trace_callback):
+        return ""
+    try:
+        from .usage import current_usage_context
+        context = current_usage_context()
+        return str(_model_trace_callback("begin", {
+            "provider": provider,
+            "model": model,
+            "stream": False,
+            "person_id": context.person_id,
+            "session_id": context.session_id,
+            "turn_id": context.turn_id,
+            "category": context.category if context.category != "other" else category,
+            "request": payload,
+        }) or "")
+    except Exception:
+        logger.warning("[LLM] Failed to start external model trace", exc_info=True)
+        return ""
+
+
+def finish_external_model_trace(
+    trace_id: str, *, response: dict[str, Any] | None = None, error: str = "", latency_ms: float = 0.0,
+) -> None:
+    if not trace_id or not callable(_model_trace_callback):
+        return
+    try:
+        _model_trace_callback("complete", {
+            "id": trace_id,
+            "response": response,
+            "error": error,
+            "latency_ms": latency_ms,
+        })
+    except Exception:
+        logger.warning("[LLM] Failed to finish external model trace", exc_info=True)
 
 
 class LLMError(Exception):
@@ -103,6 +150,7 @@ class LLMClient:
         # Token callback
         self._token_callback: Any = None
         self._usage_callback: Any = None
+        self._trace_callback: Any = None
 
         # Tracking
         self._last_call_latency_ms: float = 0.0
@@ -228,7 +276,12 @@ class LLMClient:
         headers = self._transport.get_headers(self._api_key)
         headers["Content-Type"] = "application/json"
 
-        resp = self._request_with_retry(payload, headers, log_level)
+        trace_id = self._begin_model_trace(payload, stream=False)
+        try:
+            resp = self._request_with_retry(payload, headers, log_level)
+        except BaseException as exc:
+            self._finish_model_trace(trace_id, error=str(exc))
+            raise
 
         # Token 估算
         usage = self._resolve_call_usage(
@@ -240,6 +293,7 @@ class LLMClient:
                        "", success=True, stream=False)
 
         self._save_llm_log(payload, resp)
+        self._finish_model_trace(trace_id, response=resp)
         return resp
 
     def chat_stream(
@@ -270,7 +324,7 @@ class LLMClient:
         headers = self._transport.get_headers(self._api_key)
         headers["Content-Type"] = "application/json"
 
-        self._save_llm_log(payload)
+        trace_id = self._begin_model_trace(payload, stream=True)
 
         t0 = time.time()
         content_parts: list[str] = []
@@ -279,7 +333,11 @@ class LLMClient:
         finish_reason = ""
         provider_usage: dict[str, Any] | None = None
 
-        response = self._request_with_retry(payload, headers, stream=True)
+        try:
+            response = self._request_with_retry(payload, headers, stream=True)
+        except BaseException as exc:
+            self._finish_model_trace(trace_id, error=str(exc))
+            raise
 
         try:
             content_raw = ""
@@ -299,8 +357,9 @@ class LLMClient:
                         content_raw = extra["content_raw"]
                     if extra.get("usage"):
                         provider_usage = dict(extra["usage"])
-        except Exception as e:
+        except BaseException as e:
             logger.warning("[LLM] Streaming failed: %s", e)
+            self._finish_model_trace(trace_id, error=str(e))
             raise
 
         # 构建最终响应 — 优先使用 content_raw（包含 <MEMORY> 块等完整内容）
@@ -345,6 +404,7 @@ class LLMClient:
         self._log_call(len(api_messages), bool(api_tools), elapsed,
                        "", success=True, stream=True)
         self._save_llm_log(payload, self._last_stream_response)
+        self._finish_model_trace(trace_id, response=self._last_stream_response)
 
     # ── Retry logic ────────────────────────────────────────
 
@@ -477,10 +537,13 @@ class LLMClient:
         provider_usage: dict[str, Any] | None,
     ) -> dict[str, Any]:
         """Normalize provider usage, falling back to a marked local estimate."""
-        from .usage import estimate_input_breakdown, scale_input_breakdown
+        from .usage import (
+            estimate_detailed_input_breakdown,
+            scale_detailed_input_breakdown,
+        )
 
         raw = dict(provider_usage or {})
-        input_breakdown = estimate_input_breakdown(messages, tools)
+        detailed_input_breakdown = estimate_detailed_input_breakdown(messages, tools)
         exact = bool(provider_usage)
         if exact:
             input_tokens = int(raw.get("input_tokens", 0) or 0)
@@ -489,14 +552,32 @@ class LLMClient:
             reasoning_tokens = int(raw.get("reasoning_tokens", 0) or 0)
         else:
             from xiaomei_brain.base.message_utils import estimate_tokens
-            input_tokens = sum(input_breakdown.values())
+            input_tokens = sum(detailed_input_breakdown.values())
             reasoning_tokens = estimate_tokens(reasoning_content or "")
             output_tokens = estimate_tokens(response_content or "") + reasoning_tokens
             cached_tokens = 0
         total_tokens = int(raw.get("total_tokens", 0) or 0)
         if total_tokens <= 0:
             total_tokens = input_tokens + output_tokens
-        input_breakdown = scale_input_breakdown(input_breakdown, input_tokens)
+        detailed_input_breakdown = scale_detailed_input_breakdown(
+            detailed_input_breakdown,
+            input_tokens,
+        )
+        input_breakdown = {
+            "messages": (
+                detailed_input_breakdown["user"]
+                + detailed_input_breakdown["assistant"]
+                + detailed_input_breakdown["other"]
+            ),
+            "system": detailed_input_breakdown["system"],
+            "tools": (
+                detailed_input_breakdown["tool_definitions"]
+                + detailed_input_breakdown["tool_calls"]
+                + detailed_input_breakdown["tool_results"]
+            ),
+            "skills": detailed_input_breakdown["skills"],
+            "workspace": detailed_input_breakdown["workspace"],
+        }
         return {
             "input_tokens": max(0, input_tokens),
             "output_tokens": max(0, output_tokens),
@@ -506,6 +587,7 @@ class LLMClient:
             "exact": exact,
             "raw": raw,
             "input_breakdown": input_breakdown,
+            "detailed_input_breakdown": detailed_input_breakdown,
         }
 
     def _log_call(self, n_msgs: int, has_tools: bool, elapsed_ms: float,
@@ -576,6 +658,8 @@ class LLMClient:
                 logger.warning("Usage callback failed: %s", e)
 
     def _save_llm_log(self, payload: dict, response: NormalizedResponse | None = None) -> None:
+        from .trace_store import sanitize_model_payload
+
         log_dir = os.path.expanduser(
             f"~/.xiaomei-brain/{_log_agent_id}/logs/llm" if _log_agent_id
             else "~/.xiaomei-brain/global/logs"
@@ -597,13 +681,71 @@ class LLMClient:
             entry = {
                 "timestamp": now.isoformat(),
                 "model": self._model_id,
-                "payload": {"messages": payload.get("messages", []), "tools": payload.get("tools")},
-                "response": resp_data,
+                "payload": sanitize_model_payload({
+                    "messages": payload.get("messages", []),
+                    "tools": payload.get("tools"),
+                }),
+                "response": sanitize_model_payload(resp_data),
             }
             with open(log_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except Exception as e:
             logger.warning("[LLM] Failed to save log: %s", e)
+
+    def _begin_model_trace(self, payload: dict, *, stream: bool) -> str:
+        callback = self._trace_callback or _model_trace_callback
+        if not callable(callback):
+            return ""
+        try:
+            from .usage import current_usage_context
+            context = current_usage_context()
+            return str(callback("begin", {
+                "provider": self.provider,
+                "model": self.model,
+                "stream": stream,
+                "person_id": context.person_id,
+                "session_id": context.session_id,
+                "turn_id": context.turn_id,
+                "category": context.category,
+                # This is the provider-specific payload after message and tool
+                # conversion, i.e. the exact JSON body sent over HTTP.
+                "request": payload,
+            }) or "")
+        except Exception:
+            logger.warning("[LLM] Failed to start model trace", exc_info=True)
+            return ""
+
+    def _finish_model_trace(
+        self,
+        trace_id: str,
+        *,
+        response: NormalizedResponse | None = None,
+        error: str = "",
+    ) -> None:
+        callback = self._trace_callback or _model_trace_callback
+        if not trace_id or not callable(callback):
+            return
+        response_data = None
+        if response is not None:
+            response_data = {
+                "content": response.content,
+                "reasoning": response.reasoning,
+                "tool_calls": [
+                    {"id": item.id, "name": item.name, "arguments": item.arguments}
+                    for item in (response.tool_calls or [])
+                ],
+                "finish_reason": response.finish_reason,
+                "usage": response.usage,
+            }
+        try:
+            callback("complete", {
+                "id": trace_id,
+                "response": response_data,
+                "error": error,
+                "latency_ms": self._last_call_latency_ms,
+            })
+        except Exception:
+            logger.warning("[LLM] Failed to finish model trace", exc_info=True)
 
     # ── Fallback ───────────────────────────────────────────
 
