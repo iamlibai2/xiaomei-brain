@@ -46,8 +46,6 @@ export function ConversationList({
   const searchSessions = useCoreStore((s) => s.searchSessions);
   const loadMoreSessions = useCoreStore((s) => s.loadMoreSessions);
   const activeSessionId = useCoreStore((s) => s.activeSessionByAgent[s.activeAgentId || ""] || null);
-  const terminalOpen = useCoreStore((s) => s.terminalOpen);
-  const setTerminalOpen = useCoreStore((s) => s.setTerminalOpen);
   const unreadByAgent = useCoreStore((s) => s.unreadByAgent);
   const unreadByConversation = useCoreStore((s) => s.unreadByConversation);
   const sendingByAgent = useCoreStore((s) => s.sendingByAgent);
@@ -122,7 +120,6 @@ export function ConversationList({
         onToggleCollapse={() => onCollapsedChange(!collapsed)}
         onSearch={openUnifiedSearch}
         onRefresh={() => { void refreshLocalAgents(); }}
-        onTerminalToggle={() => setTerminalOpen(!terminalOpen)}
       />
 
       {collapsed ? (
@@ -131,6 +128,15 @@ export function ConversationList({
             {agents.map((a) => {
               const conn = connectionByAgent[a.id];
               const isActive = a.id === activeAgentId;
+              const statusLabel = sendingByAgent[a.id]
+                ? t("sidebar.agentWorking")
+                : conn?.status === "connected"
+                  ? ""
+                  : a.source === "local" && localAvailabilityByAgent[a.id] === false
+                    ? t("sidebar.agentOffline")
+                    : a.source === "local" && localAvailabilityByAgent[a.id] === true
+                      ? t("sidebar.agentAvailable")
+                      : t("sidebar.agentDisconnected");
               return (
                 <button
                   key={a.id}
@@ -142,7 +148,7 @@ export function ConversationList({
                       void switchAgent(a.id);
                     }
                   }}
-                  title={`${a.name} (${a.host}:${a.port}) — ${conn?.status || "disconnected"}`}
+                  title={statusLabel ? `${a.name} · ${statusLabel}` : a.name}
                 >
                   {a.name.charAt(0)}
                   {(unreadByAgent[a.id] || 0) > 0 && (
@@ -234,7 +240,8 @@ export function ConversationList({
                   disabled={!canCreateSession}
                   title={t("sidebar.newSession")}
                 >
-                  <Icon name="plus" size={14} />
+                  <Icon name="plus" size={13} />
+                  <span>{t("sidebar.newSession")}</span>
                 </button>
               </div>
               <div className="session-list">
@@ -380,17 +387,19 @@ function AgentItem({
       <div className="agent-avatar">{agent.name.charAt(0)}</div>
       <div className="agent-info">
         <span className="agent-name">{agent.name}</span>
-        <span className="agent-host">
-          {lifecycleBusy
-            ? lifecycleLabel
-            : isWorking
-              ? t("sidebar.agentWorking")
-            : localOnline === false
-              ? t("sidebar.agentOffline")
-              : localOnline === true && status !== "connected"
-                ? t("sidebar.agentAvailable")
-                : `${agent.host}:${agent.port}${localInfo?.pid ? ` · PID ${localInfo.pid}` : ""}`}
-        </span>
+        {(lifecycleBusy || isWorking || status !== "connected") && (
+          <span className="agent-host">
+            {lifecycleBusy
+              ? lifecycleLabel
+              : isWorking
+                ? t("sidebar.agentWorking")
+              : localOnline === false
+                ? t("sidebar.agentOffline")
+                : localOnline === true
+                  ? t("sidebar.agentAvailable")
+                  : t("sidebar.agentDisconnected")}
+          </span>
+        )}
       </div>
       {agent.source === "local" && (
         <div className="agent-lifecycle-actions">
@@ -424,18 +433,18 @@ function AgentItem({
           )}
         </div>
       )}
-      <span
-        className={`agent-status-dot ${localOnline === true && status === "disconnected" ? "available" : statusClass}`}
-        title={lifecycle?.status === "error"
-          ? lifecycle.error
-          : isWorking
-          ? t("sidebar.agentWorking")
-          : localOnline === false
-            ? t("sidebar.agentOffline")
+      {!(agent.source === "local" && localOnline === false) && (
+        <span
+          className={`agent-status-dot ${localOnline === true && status === "disconnected" ? "available" : statusClass}`}
+          title={lifecycle?.status === "error"
+            ? lifecycle.error
+            : isWorking
+            ? t("sidebar.agentWorking")
             : localOnline === true && status !== "connected"
-              ? t("sidebar.agentAvailable")
-              : status}
-      />
+                ? t("sidebar.agentAvailable")
+                : status}
+        />
+      )}
       {unreadCount > 0 && (
         <span className="agent-unread-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>
       )}

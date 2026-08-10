@@ -7,10 +7,9 @@ interface SidebarTopbarProps {
   onToggleCollapse: () => void;
   onSearch: () => void;
   onRefresh: () => void;
-  onTerminalToggle: () => void;
 }
 
-export function SidebarTopbar({ collapsed, onToggleCollapse, onSearch, onRefresh, onTerminalToggle }: SidebarTopbarProps) {
+export function SidebarTopbar({ collapsed, onToggleCollapse, onSearch, onRefresh }: SidebarTopbarProps) {
   const { t } = useTranslation();
   const desktopInfo = useDesktopInfo();
   return (
@@ -33,7 +32,6 @@ export function SidebarTopbar({ collapsed, onToggleCollapse, onSearch, onRefresh
           <div className="sidebar-topbar-actions">
             <Button variant="ghost" size="icon-md" icon="refresh" onClick={onRefresh} title={t("sidebar.refresh")} />
             <Button variant="ghost" size="icon-md" icon="search" onClick={onSearch} title={t("sidebar.search")} />
-            <Button variant="ghost" size="icon-md" icon="terminal" onClick={onTerminalToggle} title={t("sidebar.terminal")} />
             <Button variant="ghost" size="icon-md" icon="sidebar-panel-right" onClick={onToggleCollapse} title={t("sidebar.collapse")} />
           </div>
         </>

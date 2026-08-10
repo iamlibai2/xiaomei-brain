@@ -4,6 +4,8 @@
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  user-select: none;
+  -webkit-user-select: none;
   width: 272px;
   height: 100%;
   overflow: hidden;
@@ -103,8 +105,8 @@ body[data-platform="mac"] .sidebar-topbar {
 
 .sidebar-logo-row {
   display: flex;
-  flex-direction: column;
-  gap: 0;
+  align-items: center;
+  gap: 5px;
   flex: 1;
   min-width: 0;
   -webkit-app-region: no-drag;
@@ -134,18 +136,29 @@ body[data-platform="mac"] .sidebar-topbar {
 }
 
 .sidebar-logo-text {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--ui-color-text-primary);
-  line-height: 18px;
+  line-height: 20px;
 }
 
 .sidebar-version-badge {
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
   font-size: 10px;
   font-weight: 400;
   color: var(--ui-text-version-badge);
   line-height: 1;
   white-space: nowrap;
+  transform: translateX(-3px);
+  transition: max-width 0.18s ease, opacity 0.15s ease, transform 0.18s ease;
+}
+
+.sidebar-logo-row:hover .sidebar-version-badge {
+  max-width: 48px;
+  opacity: 1;
+  transform: translateX(0);
 }
 
 /* ─── New Task Button ─── */
@@ -406,23 +419,27 @@ body[data-platform="mac"] .sidebar-topbar {
 }
 
 .session-section-title {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
-  color: var(--ui-todo-menu-text-heading);
+  color: color-mix(in srgb, var(--ui-color-text-secondary) 45%, var(--ui-todo-menu-text-heading));
 }
 
 .session-new-btn {
-  width: 24px;
+  width: auto;
   height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 4px;
   border: none;
   background: none;
-  color: var(--ui-color-text-disabled);
+  color: var(--ui-color-text-tertiary);
   border-radius: var(--ui-radius-sm);
   cursor: pointer;
-  padding: 0;
+  padding: 0 6px;
+  font-family: var(--ui-font-family);
+  font-size: 12px;
+  line-height: 1;
 }
 
 .session-new-btn:hover {
@@ -647,12 +664,42 @@ body[data-platform="mac"] .sidebar-topbar {
 
 /* ─── Sidebar Footer ─── */
 .sidebar-footer {
-  padding: 12px 16px 12px 12px;
+  padding: 10px 12px;
   display: flex;
   align-items: center;
   justify-content: flex-start;
   flex-shrink: 0;
   border-top: 1px solid var(--ui-border-subtle);
+}
+
+.sidebar-footer-identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 4px;
+  border: 0;
+  border-radius: 10px;
+  color: var(--ui-color-text-primary);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sidebar-footer-identity:hover,
+.sidebar-footer-identity.is-open {
+  background: var(--ui-button-ghost-bg-hover);
+}
+
+.sidebar-footer-identity > svg {
+  flex: 0 0 auto;
+  color: var(--ui-color-text-tertiary);
+  transition: transform 0.16s ease;
+}
+
+.sidebar-footer-identity.is-open > svg {
+  transform: rotate(180deg);
 }
 
 .sidebar-footer-avatar {
@@ -668,15 +715,13 @@ body[data-platform="mac"] .sidebar-topbar {
   font-size: 14px;
   font-weight: 600;
   flex-shrink: 0;
-  cursor: pointer;
 }
 
 .sidebar-footer-name {
   flex: 1;
   min-width: 0;
-  margin-left: 10px;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 600;
   color: var(--ui-color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -749,10 +794,10 @@ body[data-platform="mac"] .sidebar-topbar {
 
 .agent-list-header-text {
   flex: 1;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   line-height: 16px;
-  color: var(--ui-todo-menu-text-heading);
+  color: color-mix(in srgb, var(--ui-color-text-secondary) 45%, var(--ui-todo-menu-text-heading));
 }
 
 .agent-list-header-add {
@@ -845,7 +890,7 @@ body[data-platform="mac"] .sidebar-topbar {
 }
 
 .agent-name {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--ui-color-text-primary);
   overflow: hidden;
@@ -855,7 +900,7 @@ body[data-platform="mac"] .sidebar-topbar {
 }
 
 .agent-host {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ui-color-text-tertiary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -929,21 +974,17 @@ body[data-platform="mac"] .sidebar-topbar {
 
 .sidebar-identity-menu-wrap {
   position: relative;
-  flex-shrink: 0;
-}
-
-.sidebar-footer-avatar.is-open,
-.sidebar-footer-avatar:hover {
-  background: var(--ui-bg-hover);
+  flex: 1;
+  min-width: 0;
 }
 
 .sidebar-identity-menu {
   position: absolute;
   z-index: 1205;
-  left: -8px;
+  left: 0;
   bottom: calc(100% + 10px);
-  width: 248px;
-  padding: 12px;
+  width: 256px;
+  padding: 10px;
   border: 1px solid var(--ui-border-default);
   border-radius: var(--ui-radius-xl);
   background: var(--ui-bg-primary);
@@ -959,50 +1000,86 @@ body[data-platform="mac"] .sidebar-topbar {
 }
 
 .sidebar-identity-menu-heading {
-  padding: 2px 2px 10px;
+  justify-content: flex-start;
+  padding: 5px 5px 13px;
   color: var(--ui-color-text-primary);
   border-bottom: 1px solid var(--ui-border-subtle);
 }
 
+.sidebar-identity-menu-heading strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-identity-menu-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  color: var(--ui-brand-primary);
+  background: color-mix(in srgb, var(--ui-brand-primary) 13%, var(--ui-bg-secondary));
+  font-size: 15px;
+  font-weight: 700;
+}
+
 .sidebar-identity-menu-close {
   border: 0;
-  padding: 2px 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 7px;
   color: var(--ui-color-text-tertiary);
   background: transparent;
   cursor: pointer;
-  font-size: 12px;
+}
+
+.sidebar-identity-menu-close:hover {
+  color: var(--ui-color-text-primary);
+  background: var(--ui-button-ghost-bg-hover);
 }
 
 .sidebar-identity-menu-section {
-  padding: 12px 2px 10px;
+  padding: 14px 4px;
 }
 
 .sidebar-identity-menu-title {
-  margin-bottom: 8px;
+  margin-bottom: 10px;
   color: var(--ui-color-text-primary);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
 }
 
 .sidebar-appearance-options {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .sidebar-appearance-option {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 5px;
+  justify-content: flex-start;
+  gap: 9px;
   min-width: 0;
-  padding: 7px 3px;
+  padding: 9px 10px;
   border: 1px solid var(--ui-border-default);
   border-radius: var(--ui-radius-md);
   color: var(--ui-color-text-secondary);
   background: var(--ui-bg-secondary);
   cursor: pointer;
-  font-size: 11px;
+  font-size: 13px;
+  font-weight: 550;
 }
 
 .sidebar-appearance-option:hover,
@@ -1013,8 +1090,9 @@ body[data-platform="mac"] .sidebar-topbar {
 }
 
 .sidebar-appearance-swatch {
-  width: 30px;
-  height: 19px;
+  width: 28px;
+  height: 20px;
+  flex: 0 0 auto;
   border: 1px solid var(--ui-border-default);
   border-radius: 4px;
   background: #f7f7f7;
@@ -1026,32 +1104,33 @@ body[data-platform="mac"] .sidebar-topbar {
   box-shadow: inset 0 -5px 0 #17181a;
 }
 
-.sidebar-appearance-swatch.system {
-  background: linear-gradient(90deg, #f7f7f7 50%, #25272b 50%);
-  box-shadow: none;
-}
-
-.sidebar-identity-menu-description {
-  margin: 9px 0 0;
-  color: var(--ui-color-text-tertiary);
-  font-size: 11px;
-  line-height: 1.4;
+.sidebar-identity-menu-actions {
+  padding-top: 4px;
+  border-top: 1px solid var(--ui-border-subtle);
 }
 
 .sidebar-identity-menu-account {
   width: 100%;
   border: 0;
-  border-top: 1px solid var(--ui-border-subtle);
-  padding: 10px 2px 0;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 10px 8px;
+  border-radius: 8px;
   color: var(--ui-color-text-secondary);
   background: transparent;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 13px;
   text-align: left;
+}
+
+.sidebar-identity-menu-account span {
+  flex: 1;
 }
 
 .sidebar-identity-menu-account:hover {
   color: var(--ui-color-text-primary);
+  background: var(--ui-button-ghost-bg-hover);
 }
 
 .agent-lifecycle-btn:hover {

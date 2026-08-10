@@ -22,6 +22,8 @@ export function MenuBar() {
     state.agents.find((agent) => agent.id === state.activeAgentId)
   ));
   const openAgentLogs = useCoreStore((state) => state.openAgentLogs);
+  const terminalOpen = useCoreStore((state) => state.terminalOpen);
+  const setTerminalOpen = useCoreStore((state) => state.setTerminalOpen);
 
   const menus: Record<string, MenuItem[]> = useMemo(() => ({
     [t("menu.edit")]: [
@@ -39,6 +41,10 @@ export function MenuBar() {
         action: () => openSettingsCenter("agents"),
       },
       { separator: true, label: "" },
+      {
+        label: t("sidebar.terminal"),
+        action: () => setTerminalOpen(!terminalOpen),
+      },
       {
         label: t("menu.viewAgentLogs"),
         action: activeAgent?.localAgentId
@@ -67,7 +73,7 @@ export function MenuBar() {
         action: () => openSettingsCenter("system"),
       },
     ],
-  }), [activeAgent, openAgentLogs, t]);
+  }), [activeAgent, openAgentLogs, setTerminalOpen, t, terminalOpen]);
 
   useEffect(() => {
     if (!window.win) return;
