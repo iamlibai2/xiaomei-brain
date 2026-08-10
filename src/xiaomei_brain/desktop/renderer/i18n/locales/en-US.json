@@ -228,7 +228,13 @@
       "notifications": "Notifications",
       "settings": "Settings",
       "terminal": "Terminal",
-      "close": "Close"
+      "close": "Close",
+      "sessionSwitchBlocked": "The Agent is replying. You can switch conversations when it finishes.",
+      "deleteSession": "Delete conversation",
+      "deleteSessionConfirm": "Delete “{{name}}”? It will be removed from the conversation list.",
+      "sessionDeleteWorking": "This conversation is still active and cannot be deleted yet.",
+      "sessionDeleteSwitchFailed": "Unable to switch to another conversation. Try again later.",
+      "sessionDeleteFailed": "Unable to delete the conversation"
     },
     "menu": {
       "viewAgentLogs": "View Current Agent Logs",
@@ -317,12 +323,6 @@
       "creating": "Creating...",
       "connect": "Connect",
       "close": "Close"
-      ,"sessionSwitchBlocked": "The Agent is replying. You can switch conversations when it finishes.",
-      "deleteSession": "Delete conversation",
-      "deleteSessionConfirm": "Delete “{{name}}”? It will be removed from the conversation list.",
-      "sessionDeleteWorking": "This conversation is still active and cannot be deleted yet.",
-      "sessionDeleteSwitchFailed": "Unable to switch to another conversation. Try again later.",
-      "sessionDeleteFailed": "Unable to delete the conversation"
     },
     "about": {
       "subtitle": "Application information and diagnostics",

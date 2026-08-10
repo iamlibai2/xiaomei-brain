@@ -2275,16 +2275,31 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
             : "";
           if (turnId) {
             const sessionMessages = messagesForSession(s, agentId, sessionId);
+            const terminal = sessionMessages.find((message) => (
+              message.role === "agent"
+              && message.turnId === turnId
+              && !message.streaming
+              && !message.responsePhase
+              && Boolean(message.content.trim())
+            ));
             const existing = sessionMessages.find((message) => (
               message.role === "agent"
               && message.turnId === turnId
               && (message.responsePhase || message.streaming)
             ));
             const localPending = sessionMessages.find((message) => message.id === localPendingId);
-            if (existing && localPending && existing !== localPending) {
+            // Gateway events and the chat.send RPC response travel on separate
+            // paths. A fast Agent can start, or even complete, before this
+            // callback runs. Never rename or revive a message already claimed
+            // by the event stream: its stable id is how message.complete finds
+            // and finalizes the same renderer entry.
+            if (terminal) {
+              if (localPending && localPending !== terminal) {
+                sessionMessages.splice(sessionMessages.indexOf(localPending), 1);
+              }
+            } else if (existing && localPending && existing !== localPending) {
               sessionMessages.splice(sessionMessages.indexOf(localPending), 1);
             } else if (localPending) {
-              localPending.id = pendingResponseId(turnId);
               localPending.turnId = turnId;
               localPending.responsePhase = res.result?.deferred === true ? "waiting" : "replying";
             } else if (!existing) {
@@ -4231,11 +4246,23 @@ export function initGatewayEvents(): () => void {
       if (stream.id) {
         const finalText = stream.ref || terminalText;
         const streamingMessageExists = readEventMessages(store())
-          .some((message) => message.id === stream.id);
+          .some((message) => (
+            message.id === stream.id
+            || (message.role === "agent"
+              && message.turnId === eventTurnId
+              && Boolean(message.streaming || message.responsePhase))
+          ));
         if (streamingMessageExists) completedText = finalText;
         setState(produce((s: CoreState) => {
           const sessionMessages = eventMessages(s);
-          const idx = sessionMessages.findIndex(m => m.id === stream.id);
+          let idx = sessionMessages.findIndex(m => m.id === stream.id);
+          if (idx === -1 && eventTurnId) {
+            idx = sessionMessages.findIndex((message) => (
+              message.role === "agent"
+              && message.turnId === eventTurnId
+              && Boolean(message.streaming || message.responsePhase)
+            ));
+          }
           if (idx !== -1) {
             if (!finalText.trim()) {
               sessionMessages.splice(idx, 1);
