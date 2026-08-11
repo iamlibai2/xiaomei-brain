@@ -48,8 +48,10 @@ def test_background_music_keeps_original_artifact_callback(
     assert tool_name == "generate_music"
     assert arguments["prompt"] == "calm"
     assert "- 文件:" in artifact_result
-    assert str(tmp_path / "music" / "song.mp3") in artifact_result
-    assert (tmp_path / "music" / "song.mp3").read_bytes() == b"fake music"
+    assert str(tmp_path / "workspace" / "outputs" / "audio" / "song.mp3") in artifact_result
+    assert (
+        tmp_path / "workspace" / "outputs" / "audio" / "song.mp3"
+    ).read_bytes() == b"fake music"
 
 
 def test_music_ignores_model_supplied_output_directory(tmp_path: Path, monkeypatch) -> None:
@@ -66,5 +68,7 @@ def test_music_ignores_model_supplied_output_directory(tmp_path: Path, monkeypat
 
     assert "后台" in result
     assert completed.wait(timeout=2)
-    assert (tmp_path / "agent" / "music" / "song.mp3").is_file()
+    assert (
+        tmp_path / "agent" / "workspace" / "outputs" / "audio" / "song.mp3"
+    ).is_file()
     assert not (tmp_path / "outside" / "song.mp3").exists()

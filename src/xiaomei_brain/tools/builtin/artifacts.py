@@ -10,7 +10,6 @@ from ..execution_context import current_tool_execution
 from .file_ops import get_workspace_dir
 
 
-_PRESENTABLE_DIRS = frozenset({"workspace", "images", "music", "tts"})
 _MAX_PRESENTED_FILES = 10
 _MAX_PRESENTED_BYTES = 20 * 1024 * 1024
 _MAX_VISUALIZATION_BYTES = 1 * 1024 * 1024
@@ -21,29 +20,17 @@ def _resolve_presentable_file(raw_path: str) -> tuple[Path | None, str]:
     if not str(raw_path).strip():
         return None, "文件路径不能为空"
 
-    agent_root = Path(get_workspace_dir()).resolve().parent
+    workspace_root = Path(get_workspace_dir()).resolve()
     candidate = Path(os.path.expanduser(str(raw_path).strip()))
     if not candidate.is_absolute():
-        # ``glob`` exposes named Agent roots as images/..., music/... and
-        # tts/.... Preserve that canonical meaning instead of nesting them
-        # below workspace/. Calls outside Agent Core retain the same behavior.
-        first = candidate.parts[0].lower() if candidate.parts else ""
-        candidate = (
-            agent_root / candidate
-            if first in _PRESENTABLE_DIRS
-            else Path(get_workspace_dir()) / candidate
-        )
+        candidate = workspace_root / candidate
     try:
         resolved = candidate.resolve(strict=True)
-        relative = resolved.relative_to(agent_root)
+        resolved.relative_to(workspace_root)
     except (OSError, ValueError):
         return None, f"文件不存在或不属于当前 Agent：{raw_path}"
 
-    if (
-        not relative.parts
-        or relative.parts[0] not in _PRESENTABLE_DIRS
-        or not resolved.is_file()
-    ):
+    if not resolved.is_file():
         return None, f"只能交付当前 Agent 自己生成的文件：{raw_path}"
     size = resolved.stat().st_size
     if size <= 0:

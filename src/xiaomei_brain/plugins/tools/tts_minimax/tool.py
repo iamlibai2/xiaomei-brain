@@ -15,6 +15,7 @@ from pathlib import Path
 from xiaomei_brain.tools.base import tool
 from xiaomei_brain.media.audio import SpeechAudio
 from xiaomei_brain.tools.execution_context import current_tool_execution
+from xiaomei_brain.execution.workspace_layout import workspace_output_directory
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +27,7 @@ _output_base: str | None = None
 
 
 def _get_output_dir() -> str:
-    """获取 TTS 输出根目录：agent workspace 优先，否则全局 fallback。"""
-    if _output_base:
-        return str(Path(_output_base) / "tts")
-    return str(Path.home() / ".xiaomei-brain" / "global" / "tts")
+    return str(workspace_output_directory("audio", fallback_agent_root=_output_base or ""))
 
 
 def set_output_base(base_dir: str) -> None:

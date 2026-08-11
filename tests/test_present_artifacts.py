@@ -6,9 +6,9 @@ from xiaomei_brain.tools.execution_context import bind_tool_execution
 def test_present_artifacts_resolves_final_files_in_agent_storage(tmp_path, monkeypatch):
     agent_root = tmp_path / "agent"
     workspace = agent_root / "workspace"
-    images = agent_root / "images"
+    images = workspace / "outputs" / "images"
     workspace.mkdir(parents=True)
-    images.mkdir()
+    images.mkdir(parents=True)
     report = workspace / "report.docx"
     preview = images / "preview.png"
     report.write_bytes(b"report")
@@ -16,7 +16,7 @@ def test_present_artifacts_resolves_final_files_in_agent_storage(tmp_path, monke
     monkeypatch.setattr(file_ops, "_output_base", str(agent_root))
 
     result = present_artifacts_tool.execute(
-        paths=["report.docx", "images/preview.png", "report.docx"],
+        paths=["report.docx", "outputs/images/preview.png", "report.docx"],
         message="最终文件",
     )
 

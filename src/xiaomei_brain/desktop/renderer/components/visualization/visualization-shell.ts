@@ -68,6 +68,21 @@ function bridgeScript(token: string): string {
     const source = ${JSON.stringify(BRIDGE_SOURCE)};
     const token = ${JSON.stringify(token)};
     const send = (type, payload = {}) => window.parent.postMessage({ source, token, type, ...payload }, '*');
+    let mediaState = Object.freeze({ status: 'idle', title: '', positionMs: 0, durationMs: 0 });
+    const mediaListeners = new Set();
+    const mediaCommand = (action) => {
+      if (navigator.userActivation && !navigator.userActivation.isActive) return false;
+      send('media-command', { action });
+      return true;
+    };
+    window.addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (event.source !== window.parent || data.source !== source || data.token !== token || data.type !== 'media-state') return;
+      mediaState = Object.freeze({ ...(data.state || {}) });
+      mediaListeners.forEach((listener) => {
+        try { listener(mediaState); } catch (error) { setTimeout(() => { throw error; }); }
+      });
+    });
     Object.defineProperty(window, 'xiaomei', {
       configurable: false,
       writable: false,
@@ -79,6 +94,28 @@ function bridgeScript(token: string): string {
           const title = String(item.title || '').trim().slice(0, 250);
           if (prompt) send('follow-up', { prompt, title });
         },
+        media: Object.freeze({
+          getState() { return mediaState; },
+          subscribe(listener) {
+            if (typeof listener !== 'function') return () => {};
+            mediaListeners.add(listener);
+            listener(mediaState);
+            return () => mediaListeners.delete(listener);
+          },
+          play() { return mediaCommand('play'); },
+          pause() { return mediaCommand('pause'); },
+          stop() { return mediaCommand('stop'); },
+          seek(positionMs) {
+            if (!Number.isFinite(Number(positionMs))) return false;
+            send('media-command', { action: 'seek', positionMs: Number(positionMs) });
+            return true;
+          },
+          setVolume(volume) {
+            if (!Number.isFinite(Number(volume))) return false;
+            send('media-command', { action: 'volume', volume: Number(volume) });
+            return true;
+          },
+        }),
       }),
     });
     const reportHeight = () => {
@@ -100,6 +137,7 @@ function bridgeScript(token: string): string {
       if (anchor && anchor.getAttribute('href') !== '#') event.preventDefault();
     }, true);
     window.addEventListener('DOMContentLoaded', () => {
+      send('media-ready');
       reportHeight();
       if (window.ResizeObserver) new ResizeObserver(reportHeight).observe(document.documentElement);
       else window.setInterval(reportHeight, 500);

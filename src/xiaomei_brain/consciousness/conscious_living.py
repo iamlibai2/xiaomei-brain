@@ -258,28 +258,22 @@ class ConsciousLiving(Living):
             self._gateway_inbound.set_agent_commands(self.agent.commands)
 
         # Per-agent 输出目录隔离
-        agent_base_dir = os.path.expanduser(f"~/.xiaomei-brain/{self._agent_id}")
+        # Use the deployed instance's real directory.  Reconstructing it from
+        # ``~`` here would create a second path source when AgentRegistry uses
+        # a custom base directory.
+        agent_base_dir = self.agent.agent_dir() or os.path.expanduser(
+            f"~/.xiaomei-brain/{self._agent_id}"
+        )
         from ..tools.builtin import file_ops
         file_ops.set_output_base(agent_base_dir)
-        live_agent = self.agent._get_agent()
-        workspace_dir = os.path.join(agent_base_dir, "workspace")
-        live_agent.tool_workspace_root = workspace_dir
-        live_agent.tool_working_directory = workspace_dir
-        live_agent.tool_output_root = workspace_dir
-        live_agent.tool_writable_roots = tuple(
-            os.path.join(agent_base_dir, name)
-            for name in ("images", "music", "tts")
-        )
-        # The canonical attachment archive belongs to this Agent. File tools
-        # may discover and read it, but must not modify it.
+        # AgentManager owns the canonical execution paths.  Re-apply them here
+        # for older/custom startup paths without mutating one Core directly.
         skill_loader = getattr(self.agent, "_skill_loader", None)
-        skill_resource_roots = (
-            skill_loader.resource_roots() if skill_loader is not None else []
+        skill_resource_roots = skill_loader.resource_roots() if skill_loader else []
+        self.agent.configure_tool_paths(
+            agent_base_dir,
+            extra_read_only_roots=skill_resource_roots,
         )
-        live_agent.tool_read_only_roots = tuple(dict.fromkeys([
-            os.path.join(agent_base_dir, "attachments"),
-            *skill_resource_roots,
-        ]))
 
         boot_line("记忆提取器", "OK")
 
@@ -671,9 +665,9 @@ class ConsciousLiving(Living):
             ProjectStore,
             ProjectWorkspaceManager,
         )
-        project_root = os.path.expanduser(
-            f"~/.xiaomei-brain/{self._agent_id}/projects"
-        )
+        from xiaomei_brain.execution.workspace_layout import AgentWorkspaceLayout
+        project_agent_root = self.agent.agent_dir() or Path(db_path).resolve().parents[1]
+        project_root = AgentWorkspaceLayout.create(project_agent_root).projects
         self._project_service = ProjectService(
             ProjectStore(db_path),
             ProjectWorkspaceManager(project_root),

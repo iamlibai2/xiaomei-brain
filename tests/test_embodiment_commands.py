@@ -218,3 +218,30 @@ def test_embodiment_control_queries_actual_presentation_state():
         assert broker.request_args["arguments"] == {}
     finally:
         set_embodiment_command_broker(None)
+
+
+def test_embodiment_control_maps_music_player_action():
+    class Broker:
+        request_args = None
+
+        def request(self, **kwargs):
+            self.request_args = kwargs
+            return {"status": "completed", "result": {}}
+
+    broker = Broker()
+    set_embodiment_command_broker(broker)
+    try:
+        with bind_tool_execution(
+            tool_call_id="tool-music-control",
+            tool_name="embodiment_control",
+            arguments={},
+            artifact_callback=None,
+            session_id="session-1",
+            turn_id="turn-1",
+        ):
+            result = embodiment_control.execute(action="pause_music")
+        assert result == "Desktop 命令已执行"
+        assert broker.request_args["command"] == "media.player.pause"
+        assert broker.request_args["arguments"] == {}
+    finally:
+        set_embodiment_command_broker(None)

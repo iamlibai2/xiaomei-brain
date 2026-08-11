@@ -38,6 +38,7 @@ export type IconName =
   | "minimize"
   | "terminal"
   | "play"
+  | "pause"
   | "power"
   | "trash";
 
@@ -274,6 +275,12 @@ const ICON_PATHS: Record<IconName, React.ReactNode> = {
     <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" />
   ),
   play: <polygon points="5 3 19 12 5 21 5 3" />,
+  pause: (
+    <>
+      <rect x="6" y="4" width="4" height="16" rx="1" />
+      <rect x="14" y="4" width="4" height="16" rx="1" />
+    </>
+  ),
   power: (
     <>
       <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />

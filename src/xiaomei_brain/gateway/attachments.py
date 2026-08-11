@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+
 MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 MAX_TOTAL_BYTES = 8 * 1024 * 1024
 MAX_VIDEO_ATTACHMENT_BYTES = 20 * 1024 * 1024
@@ -102,7 +103,10 @@ def prepare_attachments(
 
     safe_agent = re.sub(r"[^A-Za-z0-9_.-]", "_", agent_id or "default")
     session_key = hashlib.sha256((session_id or "main").encode("utf-8")).hexdigest()[:16]
-    target_dir = Path.home() / ".xiaomei-brain" / safe_agent / "attachments" / session_key
+    target_dir = (
+        Path.home() / ".xiaomei-brain" / safe_agent / "workspace"
+        / "inputs" / "attachments" / session_key
+    )
 
     try:
         for values in values_list:
@@ -394,8 +398,8 @@ def _stored_attachment_path(
     session_key = hashlib.sha256((session_id or "main").encode("utf-8")).hexdigest()[:16]
     file_key = hashlib.sha256(attachment_id.encode("utf-8")).hexdigest()[:24]
     return (
-        Path.home() / ".xiaomei-brain" / safe_agent / "attachments"
-        / session_key / f"{file_key}{suffix}"
+        Path.home() / ".xiaomei-brain" / safe_agent / "workspace"
+        / "inputs" / "attachments" / session_key / f"{file_key}{suffix}"
     )
 
 

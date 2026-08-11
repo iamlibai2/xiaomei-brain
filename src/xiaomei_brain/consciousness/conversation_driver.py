@@ -1706,14 +1706,18 @@ class ConversationDriver:
             if resolution is None:
                 raise RuntimeError("当前会话没有可用的说话身体")
             embodiment = resolution.embodiment
+            media_kind = str(getattr(audio, "media_kind", "speech") or "speech")
+            is_music = media_kind == "music"
             ConversationDriver._publish_event(
                 parent,
-                "agent.speech.started",
+                "agent.media.started" if is_music else "agent.speech.started",
                 {
                     "body": embodiment.body_id,
                     "embodiment_id": embodiment.body_id,
                     "location": embodiment.kind.value,
-                    "status": "speaking",
+                    "status": "playing" if is_music else "speaking",
+                    "media_kind": media_kind,
+                    "title": str(getattr(audio, "title", "") or ""),
                     "_agent_global": True,
                 },
                 session_id=session_id,
@@ -1732,12 +1736,14 @@ class ConversationDriver:
             finally:
                 ConversationDriver._publish_event(
                     parent,
-                    "agent.speech.completed",
+                    "agent.media.completed" if is_music else "agent.speech.completed",
                     {
                         "body": embodiment.body_id,
                         "embodiment_id": embodiment.body_id,
                         "location": embodiment.kind.value,
                         "status": status,
+                        "media_kind": media_kind,
+                        "title": str(getattr(audio, "title", "") or ""),
                         "_agent_global": True,
                     },
                     session_id=session_id,

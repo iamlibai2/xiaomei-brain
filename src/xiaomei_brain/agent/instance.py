@@ -62,6 +62,57 @@ class AgentInstance:
     _process_template_registry: Any = field(default=None, init=False, repr=False)
     _execution_environment_manager: Any = field(default=None, init=False, repr=False)
     tool_execution_environment: Any = field(default=None, init=False, repr=False)
+    # Agent-owned filesystem boundary.  Keep it on the deployed instance,
+    # rather than only on one transient Core, so every execution runtime sees
+    # the same unified workspace.
+    tool_workspace_root: str = field(default="", init=False)
+    tool_working_directory: str = field(default="", init=False)
+    tool_output_root: str = field(default="", init=False)
+    tool_writable_roots: tuple[str, ...] = field(default=(), init=False)
+    tool_read_only_roots: tuple[str, ...] = field(default=(), init=False)
+
+    def configure_tool_paths(
+        self,
+        agent_base_dir: str,
+        *,
+        extra_read_only_roots: tuple[str, ...] | list[str] = (),
+    ) -> None:
+        """Configure the canonical filesystem boundary for this Agent.
+
+        Every user-operable file lives below ``workspace``. Inputs are
+        read-only; work files and generated outputs share the same visible
+        tree. Skill resources remain separate read-only references.
+        """
+        from xiaomei_brain.execution.workspace_layout import AgentWorkspaceLayout
+
+        layout = AgentWorkspaceLayout.create(agent_base_dir)
+        self.tool_workspace_root = str(layout.root)
+        self.tool_working_directory = str(layout.root)
+        self.tool_output_root = str(layout.outputs)
+        self.tool_writable_roots = ()
+        self.tool_read_only_roots = tuple(dict.fromkeys([
+            str(layout.inputs),
+            *(
+                os.path.abspath(os.path.expanduser(str(item)))
+                for item in extra_read_only_roots
+                if str(item).strip()
+            ),
+        ]))
+        self._sync_tool_execution_context()
+
+    def _sync_tool_execution_context(self) -> None:
+        """Copy the durable execution boundary onto the current Core."""
+        if self._agent is None:
+            return
+        for attribute in (
+            "tool_execution_environment",
+            "tool_workspace_root",
+            "tool_working_directory",
+            "tool_output_root",
+            "tool_writable_roots",
+            "tool_read_only_roots",
+        ):
+            setattr(self._agent, attribute, getattr(self, attribute))
 
     def get_system_prompt(self) -> str:
         """Dynamically read identity.md for system prompt."""
@@ -131,7 +182,9 @@ class AgentInstance:
             self._agent.longterm_memory = self.longterm_memory
             self._agent.memory_extractor = self.memory_extractor
             self._agent._procedure_memory = getattr(self, "_procedure_memory", None)
-            self._agent.tool_execution_environment = self.tool_execution_environment
+        # Execution configuration belongs to AgentInstance and must survive a
+        # Core replacement or a different startup path.
+        self._sync_tool_execution_context()
         # These registries are assembled after the core in some startup paths
         # and can be hot-reloaded. Synchronize them whenever the core is used.
         self._agent._dynamic_loader = getattr(self, "_dynamic_loader", None)

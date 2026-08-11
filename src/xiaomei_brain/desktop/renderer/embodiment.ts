@@ -1,9 +1,17 @@
 import i18n from "./i18n";
+import {
+  controlMediaPlayback,
+  registerMediaPlaybackController,
+  seekMediaPlayback,
+  setMediaPlaybackVolume,
+  updateMediaPlayback,
+} from "./media-playback";
 
 let playbackQueue = Promise.resolve();
 let playbackEpoch = 0;
 let activePlayback: ActivePlayback | null = null;
 let activeStream: StreamingPlayback | null = null;
+let activeMediaFile: MediaFilePlayback | null = null;
 
 type PlaybackStatus = "completed" | "interrupted" | "failed";
 type PcmCodec = "pcm_s16" | "pcm_f32";
@@ -29,20 +37,48 @@ interface StreamingPlayback {
   nextStartTime: number;
   started: boolean;
   completionTimer: ReturnType<typeof setTimeout> | null;
+  progressTimer: ReturnType<typeof setInterval> | null;
+  mediaKind: "music" | "speech";
+  title: string;
+  sourceRef: string;
+  playbackStartTime: number;
+  durationMs: number;
+  inputCompleted: boolean;
   finish: (status: PlaybackStatus) => void;
+}
+
+interface MediaFilePlayback {
+  agentId: string;
+  playbackId: string;
+  audio: HTMLAudioElement;
+  title: string;
+  sourceRef: string;
+  stopped: boolean;
+  dispose: () => void;
 }
 
 export const DESKTOP_SPEECH_STARTED = "xiaomei:desktop-speech-started";
 export const DESKTOP_SPEECH_FINISHED = "xiaomei:desktop-speech-finished";
 
 export function isDesktopSpeechActive(): boolean {
-  return activePlayback !== null || activeStream !== null;
+  return activePlayback !== null || activeStream !== null || Boolean(
+    activeMediaFile && !activeMediaFile.audio.paused && !activeMediaFile.audio.ended,
+  );
 }
 
 /** Install the Desktop speaker once; every Agent connection remains isolated. */
 export function installDesktopEmbodiment(): () => void {
+  registerMediaPlaybackController({
+    control: controlActiveMedia,
+    seek: seekActiveMedia,
+    setVolume: setActiveMediaVolume,
+  });
   return window.gateway.onEvent((raw) => {
     const payload = asRecord(raw.data);
+    if (raw.event === "embodiment.media.output.started") {
+      startMediaFilePlayback(raw.agentId, payload);
+      return;
+    }
     if (raw.event === "embodiment.audio.output.started") {
       startPcmStream(raw.agentId, payload);
       return;
@@ -78,7 +114,13 @@ export function installDesktopEmbodiment(): () => void {
 export function stopDesktopSpeech(agentId?: string): boolean {
   const legacy = activePlayback;
   const stream = activeStream;
-  if (agentId && legacy?.agentId !== agentId && stream?.agentId !== agentId) return false;
+  const media = activeMediaFile;
+  if (
+    agentId
+    && legacy?.agentId !== agentId
+    && stream?.agentId !== agentId
+    && media?.agentId !== agentId
+  ) return false;
   playbackEpoch += 1;
   let stopped = false;
   if (legacy && (!agentId || legacy.agentId === agentId)) {
@@ -89,7 +131,110 @@ export function stopDesktopSpeech(agentId?: string): boolean {
     stream.finish("interrupted");
     stopped = true;
   }
+  if (media && (!agentId || media.agentId === agentId)) {
+    media.audio.pause();
+    try { media.audio.currentTime = 0; } catch { /* metadata not loaded yet */ }
+    media.stopped = true;
+    updateMediaPlayback({ status: "stopped", positionMs: 0 });
+    stopped = true;
+  }
   return stopped;
+}
+
+function startMediaFilePlayback(agentId: string, payload: Record<string, unknown>): void {
+  const playbackId = stringValue(payload.playback_id);
+  const mediaPath = stringValue(payload.media_path);
+  if (!playbackId || !mediaPath.startsWith("/media/")) return;
+  disposeActiveMediaFile();
+  stopDesktopSpeech();
+
+  let mediaUrl = "";
+  try {
+    mediaUrl = new URL(mediaPath, `http://${agentId}`).toString();
+  } catch {
+    return;
+  }
+  const audio = new Audio(mediaUrl);
+  audio.preload = "metadata";
+  const playback: MediaFilePlayback = {
+    agentId,
+    playbackId,
+    audio,
+    title: stringValue(payload.title) || i18n.t("mediaPlayer.untitled"),
+    sourceRef: stringValue(payload.source_ref),
+    stopped: false,
+    dispose: () => undefined,
+  };
+  const publishProgress = () => {
+    if (activeMediaFile !== playback) return;
+    updateMediaPlayback({
+      positionMs: Math.max(0, Math.round(audio.currentTime * 1000)),
+      durationMs: Number.isFinite(audio.duration) ? Math.max(0, Math.round(audio.duration * 1000)) : 0,
+      volume: audio.volume,
+      seekable: Number.isFinite(audio.duration) && audio.duration > 0,
+    });
+  };
+  const onLoaded = () => publishProgress();
+  const onTime = () => publishProgress();
+  const onWaiting = () => updateMediaPlayback({ status: "buffering" });
+  const onPlaying = () => {
+    playback.stopped = false;
+    updateMediaPlayback({ status: "playing" });
+    publishProgress();
+  };
+  const onPause = () => {
+    if (activeMediaFile === playback && !audio.ended && !playback.stopped) {
+      updateMediaPlayback({ status: "paused" });
+    }
+  };
+  const onEnded = () => {
+    publishProgress();
+    updateMediaPlayback({ status: "completed" });
+  };
+  const onError = () => updateMediaPlayback({ status: "failed" });
+  playback.dispose = () => {
+    audio.pause();
+    audio.removeEventListener("loadedmetadata", onLoaded);
+    audio.removeEventListener("durationchange", onLoaded);
+    audio.removeEventListener("timeupdate", onTime);
+    audio.removeEventListener("waiting", onWaiting);
+    audio.removeEventListener("playing", onPlaying);
+    audio.removeEventListener("pause", onPause);
+    audio.removeEventListener("ended", onEnded);
+    audio.removeEventListener("error", onError);
+    audio.removeAttribute("src");
+    audio.load();
+  };
+  audio.addEventListener("loadedmetadata", onLoaded);
+  audio.addEventListener("durationchange", onLoaded);
+  audio.addEventListener("timeupdate", onTime);
+  audio.addEventListener("waiting", onWaiting);
+  audio.addEventListener("playing", onPlaying);
+  audio.addEventListener("pause", onPause);
+  audio.addEventListener("ended", onEnded);
+  audio.addEventListener("error", onError);
+  activeMediaFile = playback;
+  updateMediaPlayback({
+    agentId,
+    playbackId,
+    mediaKind: "music",
+    title: playback.title,
+    sourceRef: playback.sourceRef,
+    status: "buffering",
+    positionMs: 0,
+    durationMs: 0,
+    volume: audio.volume,
+    seekable: false,
+  });
+  void audio.play().catch(() => updateMediaPlayback({ status: "failed" }));
+}
+
+function disposeActiveMediaFile(): void {
+  const playback = activeMediaFile;
+  if (!playback) return;
+  activeMediaFile = null;
+  playback.dispose();
+  updateMediaPlayback({ status: "idle", positionMs: 0, durationMs: 0, seekable: false });
 }
 
 function startPcmStream(agentId: string, payload: Record<string, unknown>): void {
@@ -97,6 +242,7 @@ function startPcmStream(agentId: string, payload: Record<string, unknown>): void
   const codec = stringValue(payload.codec);
   const sampleRate = numberValue(payload.sample_rate);
   const channels = numberValue(payload.channels);
+  const mediaKind = stringValue(payload.media_kind) === "music" ? "music" : "speech";
   if (
     !speechId
     || (codec !== "pcm_s16" && codec !== "pcm_f32")
@@ -105,6 +251,7 @@ function startPcmStream(agentId: string, payload: Record<string, unknown>): void
   ) return;
 
   stopDesktopSpeech();
+  disposeActiveMediaFile();
   const context = new AudioContext({ sampleRate });
   const stream: StreamingPlayback = {
     agentId,
@@ -121,10 +268,31 @@ function startPcmStream(agentId: string, payload: Record<string, unknown>): void
     nextStartTime: 0,
     started: false,
     completionTimer: null,
+    progressTimer: null,
+    mediaKind,
+    title: stringValue(payload.title),
+    sourceRef: stringValue(payload.source_ref),
+    playbackStartTime: 0,
+    durationMs: 0,
+    inputCompleted: false,
     finish: () => undefined,
   };
   stream.finish = (status) => finishPcmStream(stream, status);
   activeStream = stream;
+  if (mediaKind === "music") {
+    updateMediaPlayback({
+      agentId,
+      playbackId: speechId,
+      mediaKind,
+      title: stream.title || i18n.t("mediaPlayer.untitled"),
+      sourceRef: stream.sourceRef,
+      status: "buffering",
+      positionMs: 0,
+      durationMs: 0,
+      volume: 1,
+      seekable: false,
+    });
+  }
 }
 
 function appendPcmChunk(agentId: string, payload: Record<string, unknown>): void {
@@ -153,12 +321,16 @@ function completePcmStream(agentId: string, payload: Record<string, unknown>): v
   const stream = activeStream;
   if (!stream || stream.agentId !== agentId || stream.speechId !== stringValue(payload.speech_id)) return;
   schedulePendingPcm(stream);
+  stream.inputCompleted = true;
+  stream.durationMs = Math.max(0, numberValue(payload.duration_ms));
+  if (stream.mediaKind === "music") {
+    updateMediaPlayback({ durationMs: stream.durationMs });
+  }
   if (!stream.started) {
     stream.finish("completed");
     return;
   }
-  const remainingMs = Math.max(0, (stream.nextStartTime - stream.context.currentTime) * 1000);
-  stream.completionTimer = setTimeout(() => stream.finish("completed"), remainingMs + 40);
+  scheduleStreamCompletion(stream);
 }
 
 function failPcmStream(agentId: string, payload: Record<string, unknown>): void {
@@ -172,9 +344,15 @@ function schedulePendingPcm(stream: StreamingPlayback): void {
   if (!stream.started) {
     stream.started = true;
     stream.nextStartTime = stream.context.currentTime + 0.03;
-    window.dispatchEvent(new CustomEvent(DESKTOP_SPEECH_STARTED, {
-      detail: { agentId: stream.agentId },
-    }));
+    stream.playbackStartTime = stream.nextStartTime;
+    if (stream.mediaKind === "music") {
+      updateMediaPlayback({ status: "playing" });
+      stream.progressTimer = setInterval(() => publishMediaProgress(stream), 500);
+    } else {
+      window.dispatchEvent(new CustomEvent(DESKTOP_SPEECH_STARTED, {
+        detail: { agentId: stream.agentId },
+      }));
+    }
     void stream.context.resume().catch(() => stream.finish("failed"));
   }
   if (stream.nextStartTime < stream.context.currentTime + 0.02) {
@@ -223,6 +401,7 @@ function finishPcmStream(stream: StreamingPlayback, status: PlaybackStatus): voi
   if (activeStream !== stream) return;
   activeStream = null;
   if (stream.completionTimer) clearTimeout(stream.completionTimer);
+  if (stream.progressTimer) clearInterval(stream.progressTimer);
   for (const source of stream.sources) {
     try { source.stop(); } catch { /* already ended */ }
   }
@@ -230,12 +409,108 @@ function finishPcmStream(stream: StreamingPlayback, status: PlaybackStatus): voi
   stream.pending = [];
   stream.pendingBytes = 0;
   void stream.context.close().catch(() => undefined);
-  if (stream.started || status === "failed") {
+  if (stream.mediaKind === "music") {
+    const mediaStatus = status === "completed"
+      ? "completed"
+      : status === "failed" ? "failed" : "stopped";
+    updateMediaPlayback({
+      status: mediaStatus,
+      positionMs: status === "completed"
+        ? Math.max(stream.durationMs, currentMediaPosition(stream))
+        : currentMediaPosition(stream),
+    });
+  } else if (stream.started || status === "failed") {
     window.dispatchEvent(new CustomEvent(DESKTOP_SPEECH_FINISHED, {
       detail: { agentId: stream.agentId, status },
     }));
   }
 }
+
+function currentMediaPosition(stream: StreamingPlayback): number {
+  if (!stream.started || !stream.playbackStartTime) return 0;
+  return Math.max(0, Math.round((stream.context.currentTime - stream.playbackStartTime) * 1000));
+}
+
+function publishMediaProgress(stream: StreamingPlayback): void {
+  if (activeStream !== stream || stream.mediaKind !== "music") return;
+  updateMediaPlayback({
+    positionMs: Math.min(
+      stream.durationMs || Number.MAX_SAFE_INTEGER,
+      currentMediaPosition(stream),
+    ),
+  });
+}
+
+function scheduleStreamCompletion(stream: StreamingPlayback): void {
+  if (activeStream !== stream || !stream.inputCompleted || stream.context.state === "suspended") return;
+  if (stream.completionTimer) clearTimeout(stream.completionTimer);
+  const remainingMs = Math.max(0, (stream.nextStartTime - stream.context.currentTime) * 1000);
+  stream.completionTimer = setTimeout(() => stream.finish("completed"), remainingMs + 40);
+}
+
+async function controlActiveMedia(action: "play" | "pause" | "stop"): Promise<boolean> {
+  const media = activeMediaFile;
+  if (media) {
+    if (action === "stop") {
+      media.stopped = true;
+      media.audio.pause();
+      try { media.audio.currentTime = 0; } catch { /* metadata not loaded yet */ }
+      updateMediaPlayback({ status: "stopped", positionMs: 0 });
+      return true;
+    }
+    if (action === "pause") {
+      if (media.audio.paused || media.audio.ended) return false;
+      media.audio.pause();
+      updateMediaPlayback({ status: "paused" });
+      return true;
+    }
+    if (!media.audio.paused && !media.audio.ended) return false;
+    if (media.audio.ended) media.audio.currentTime = 0;
+    media.stopped = false;
+    await media.audio.play();
+    return true;
+  }
+  const stream = activeStream;
+  if (!stream || stream.mediaKind !== "music") return false;
+  if (action === "stop") {
+    stream.finish("interrupted");
+    return true;
+  }
+  if (action === "pause") {
+    if (stream.context.state !== "running") return false;
+    if (stream.completionTimer) {
+      clearTimeout(stream.completionTimer);
+      stream.completionTimer = null;
+    }
+    await stream.context.suspend();
+    publishMediaProgress(stream);
+    updateMediaPlayback({ status: "paused" });
+    return true;
+  }
+  if (stream.context.state === "running") return false;
+  await stream.context.resume();
+  updateMediaPlayback({ status: "playing" });
+  scheduleStreamCompletion(stream);
+  return true;
+}
+
+function seekActiveMedia(positionMs: number): boolean {
+  const media = activeMediaFile;
+  if (!media || !Number.isFinite(media.audio.duration) || media.audio.duration <= 0) return false;
+  media.audio.currentTime = Math.max(0, Math.min(media.audio.duration, positionMs / 1000));
+  updateMediaPlayback({ positionMs: Math.round(media.audio.currentTime * 1000) });
+  return true;
+}
+
+function setActiveMediaVolume(volume: number): boolean {
+  const media = activeMediaFile;
+  if (!media) return false;
+  media.audio.volume = Math.max(0, Math.min(1, volume));
+  updateMediaPlayback({ volume: media.audio.volume });
+  return true;
+}
+
+export { controlMediaPlayback, seekMediaPlayback, setMediaPlaybackVolume };
 
 async function playBase64Audio(
   agentId: string,
@@ -243,6 +518,8 @@ async function playBase64Audio(
   mimeType: string,
   epoch: number,
 ): Promise<void> {
+  stopDesktopSpeech();
+  disposeActiveMediaFile();
   const data = decodeBase64(dataBase64);
   const blobData = data.buffer.slice(
     data.byteOffset,

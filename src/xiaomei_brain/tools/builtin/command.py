@@ -224,9 +224,9 @@ def create_command_tool(
             "read/write/edit/glob/grep for file operations. The shell starts in "
             "the same Agent workspace: run a root file as 'python analyze.py', "
             "not 'python workspace/analyze.py'. Never reconstruct the hidden "
-            "Agent data directory. For a named asset path such as music/song.wav, "
-            "set workdir='music' and use song.wav inside the command. The same "
-            "rule applies to images/ and tts/. For long commands, "
+            "Agent data directory. All files are workspace-relative: inbound "
+            "files are under inputs/, temporary work under work/, and generated "
+            "deliverables under outputs/. For long commands, "
             "run in the background and inspect them with process. Non-zero exit "
             "codes are returned as neutral process facts; inspect the command "
             "output and verify requested side effects before deciding success."
@@ -245,8 +245,8 @@ def create_command_tool(
                 "workdir": {
                     "type": "string",
                     "description": (
-                        "Optional controlled working directory. Use '.', "
-                        "'music', 'images', or 'tts'; never build a hidden "
+                        "Optional workspace-relative working directory such as "
+                        "'.', 'work', or 'outputs/audio'; never build a hidden "
                         "absolute Agent data path."
                     ),
                     "default": "",

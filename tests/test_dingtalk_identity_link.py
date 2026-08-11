@@ -321,7 +321,7 @@ def test_dingtalk_adapter_consumes_link_then_routes_as_person(tmp_path, monkeypa
     assert raw.images == [raw.attachments[0]["local_path"]]
     assert str(inbound_image) not in raw.content
     assert Path(raw.images[0]).is_relative_to(
-        tmp_path / ".xiaomei-brain" / "default" / "attachments"
+        tmp_path / ".xiaomei-brain" / "default" / "workspace" / "inputs" / "attachments"
     )
 
     invalid_attachment = tmp_path / "unknown.bin"

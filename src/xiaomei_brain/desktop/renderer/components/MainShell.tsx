@@ -7,6 +7,8 @@ import { registerEmbodimentCommand } from "../embodiment/command-registry";
 import { WorkspacesPage } from "./workspaces/WorkspacesPage";
 import { useCoreStore } from "../store";
 import { ModelContextDialog } from "./ModelContextDialog";
+import { MusicPlayer } from "./music-player/MusicPlayer";
+import { controlMediaPlayback } from "../media-playback";
 
 export function MainShell() {
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
@@ -59,6 +61,18 @@ export function MainShell() {
     }));
     return () => { disposeOpen(); disposeClose(); disposeState(); };
   }, [requestedWorkspaceId, surface]);
+
+  useEffect(() => {
+    const disposers = (["pause", "resume", "stop"] as const).map((action) => (
+      registerEmbodimentCommand(`media.player.${action}`, async () => {
+        const completed = await controlMediaPlayback(action === "resume" ? "play" : action);
+        return completed
+          ? { status: "completed" }
+          : { status: "rejected", error: "当前没有可执行此操作的音乐" };
+      })
+    ));
+    return () => disposers.forEach((dispose) => dispose());
+  }, []);
 
   useEffect(() => window.gateway.onEvent((event: { event?: string; agentId?: string; data?: unknown }) => {
     if (
@@ -160,6 +174,7 @@ export function MainShell() {
       </div>
       <SettingsCenter />
       <UnifiedSearchDialog />
+      <MusicPlayer />
     </div>
   );
 }

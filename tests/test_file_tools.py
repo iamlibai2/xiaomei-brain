@@ -142,12 +142,12 @@ def test_attachment_archive_is_searchable_and_read_only(tmp_path):
     assert note.read_text(encoding="utf-8") == "from dingtalk"
 
 
-def test_agent_media_roots_are_addressable_and_writable(tmp_path):
+def test_unified_workspace_outputs_are_addressable_and_inputs_are_read_only(tmp_path):
     workspace = tmp_path / "workspace"
-    images = tmp_path / "images"
-    music = tmp_path / "music"
-    tts = tmp_path / "tts"
+    inputs = workspace / "inputs"
     workspace.mkdir()
+    inputs.mkdir()
+    (inputs / "source.txt").write_text("source", encoding="utf-8")
 
     with bind_tool_execution(
         tool_call_id="call-media-assets",
@@ -157,23 +157,50 @@ def test_agent_media_roots_are_addressable_and_writable(tmp_path):
         workspace_root=str(workspace),
         working_directory=str(workspace),
         output_root=str(workspace),
-        writable_roots=(str(images), str(music), str(tts)),
+        read_only_roots=(str(inputs),),
     ):
-        image_result = file_ops.write("images/description.txt", "image")
-        music_result = file_ops.write("music/credits.txt", "music")
-        tts_result = file_ops.write("tts/transcript.txt", "speech")
-        found = file_ops.glob("**/*.txt", path="music")
-        found_from_prefixed_pattern = file_ops.glob("music/**/*.txt")
-        grep_from_prefixed_pattern = file_ops.grep(
-            "music", glob="music/**/*.txt"
-        )
+        image_result = file_ops.write("outputs/images/description.txt", "image")
+        music_result = file_ops.write("outputs/audio/credits.txt", "music")
+        found = file_ops.glob("**/*.txt")
+        input_write = file_ops.write("inputs/changed.txt", "no")
 
-    assert image_result["relative_path"] == "images/description.txt"
-    assert music_result["relative_path"] == "music/credits.txt"
-    assert tts_result["relative_path"] == "tts/transcript.txt"
-    assert found["files"] == ["music/credits.txt"]
-    assert found_from_prefixed_pattern["files"] == ["music/credits.txt"]
-    assert grep_from_prefixed_pattern["matches"][0]["path"] == "music/credits.txt"
-    assert (images / "description.txt").read_text() == "image"
-    assert (music / "credits.txt").read_text() == "music"
-    assert (tts / "transcript.txt").read_text() == "speech"
+    assert image_result["relative_path"] == "outputs/images/description.txt"
+    assert music_result["relative_path"] == "outputs/audio/credits.txt"
+    assert set(found["files"]) == {
+        "inputs/source.txt", "outputs/images/description.txt", "outputs/audio/credits.txt",
+    }
+    assert "read-only" in input_write["error"]
+
+
+def test_glob_supports_brace_alternatives_across_workspace(tmp_path):
+    workspace = tmp_path / "workspace"
+    music = workspace / "outputs" / "audio"
+    workspace.mkdir()
+    music.mkdir(parents=True)
+    (music / "song.mp3").write_bytes(b"mp3")
+    (music / "voice.wav").write_bytes(b"wav")
+    (music / "notes.txt").write_text("not audio", encoding="utf-8")
+
+    with bind_tool_execution(
+        tool_call_id="call-brace-glob",
+        tool_name="glob",
+        arguments={},
+        artifact_callback=None,
+        workspace_root=str(workspace),
+        working_directory=str(workspace),
+        output_root=str(workspace),
+    ):
+        found = file_ops.glob("**/*.{mp3,wav,m4a}")
+
+    assert set(found["files"]) == {
+        "outputs/audio/song.mp3", "outputs/audio/voice.wav",
+    }
+    assert found["count"] == 2
+
+
+def test_empty_workspace_glob_returns_plain_empty_result(tmp_path):
+    with _context(tmp_path):
+        found = file_ops.glob("**/*.{mp3,wav}")
+
+    assert found["files"] == []
+    assert "hint" not in found

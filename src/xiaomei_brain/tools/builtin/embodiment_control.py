@@ -28,6 +28,7 @@ def set_embodiment_command_broker(broker: Any) -> None:
         "控制当前对话来源的 Desktop 界面。适用于用户要求打开、关闭或切换左右侧栏，"
         "打开右侧栏的动态、状态、项目、委托、产物、记忆、上下文栏目，或打开当前产物。"
         "也可用 open_workspace、close_workspace 和 get_workspace_state 打开、关闭或核对工作台页面。"
+        "音乐播放期间可用 pause_music、resume_music 和 stop_music 控制当前 Desktop 播放器。"
         "它只控制界面和打开文件，不用于修改文件内容，也不能控制飞书、钉钉或其他软件。"
     ),
 )
@@ -53,6 +54,9 @@ def embodiment_control(
         "open_workspace",
         "close_workspace",
         "get_workspace_state",
+        "pause_music",
+        "resume_music",
+        "stop_music",
     ],
     section: Literal[
         "activity", "state", "project", "assignment", "artifact", "memory", "context",
@@ -106,6 +110,9 @@ def embodiment_control(
         "open_workspace": ("ui.workspace.open", {"workspace_id": workspace_id}),
         "close_workspace": ("ui.workspace.close", {}),
         "get_workspace_state": ("ui.workspace.state.get", {}),
+        "pause_music": ("media.player.pause", {}),
+        "resume_music": ("media.player.resume", {}),
+        "stop_music": ("media.player.stop", {}),
     }
     command, arguments = commands[action]
     response = _broker.request(

@@ -122,6 +122,11 @@ class WSAdapter(ChannelAdapter):
 
         if not embodiment.supports(OrganCapability.SPEECH):
             return False
+        if (
+            str(getattr(audio, "media_kind", "") or "") == "music"
+            and str(getattr(audio, "file_path", "") or "")
+        ):
+            return self._send_media_file(target, embodiment, audio)
         sample_width = {"pcm_s16": 2, "pcm_f32": 4}.get(audio.codec)
         if sample_width is None or audio.sample_rate <= 0 or audio.channels <= 0:
             raise ValueError(f"Unsupported Desktop speech format: {audio.codec}")
@@ -138,6 +143,9 @@ class WSAdapter(ChannelAdapter):
             "sample_rate": audio.sample_rate,
             "channels": audio.channels,
             "initial_buffer_ms": max(0, int(audio.initial_buffer_ms)),
+            "media_kind": str(getattr(audio, "media_kind", "speech") or "speech"),
+            "title": str(getattr(audio, "title", "") or ""),
+            "source_ref": str(getattr(audio, "source_ref", "") or ""),
         }, session_id=target)
 
         pending = bytearray()
@@ -182,6 +190,41 @@ class WSAdapter(ChannelAdapter):
                 "message": str(exc),
             }, session_id=target)
             raise
+
+    def _send_media_file(self, target: str, embodiment, audio) -> bool:
+        """Authorize an encoded file instead of expanding it into PCM frames."""
+        from .media_access import MediaAccessError, media_access_registry
+
+        person_ids = {
+            self._conn_manager.get_person_id(conn_id)
+            for conn_id in self._conn_manager.get_conn_ids(target)
+        }
+        person_ids.discard(None)
+        if not person_ids:
+            return False
+        try:
+            grant = media_access_registry.issue(
+                str(audio.file_path),
+                session_id=target,
+                person_id=str(sorted(person_ids)[0]),
+                mime_type=str(getattr(audio, "mime_type", "") or ""),
+            )
+        except MediaAccessError as exc:
+            logger.warning("[WSAdapter] Media reference rejected: %s", exc)
+            return False
+        playback_id = uuid.uuid4().hex
+        self.send_event(target, "embodiment.media.output.started", {
+            "playback_id": playback_id,
+            "embodiment_id": embodiment.body_id,
+            "media_kind": "music",
+            "title": str(getattr(audio, "title", "") or grant.path.stem),
+            "source_ref": str(getattr(audio, "source_ref", "") or ""),
+            "mime_type": grant.mime_type,
+            "size": grant.size,
+            "media_path": f"/media/{grant.token}",
+            "expires_at": round(grant.expires_at),
+        }, session_id=target)
+        return True
 
     def send(self, target: str, text: str, msg_type: str = "text") -> None:
         """推送文本到指定 WebSocket 连接。

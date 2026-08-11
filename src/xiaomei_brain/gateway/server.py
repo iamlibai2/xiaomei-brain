@@ -10,8 +10,10 @@ import asyncio
 import logging
 import uuid
 from typing import Any
+from urllib.parse import quote
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi.responses import StreamingResponse
 
 from .connection import ConnectionManager, cm
 from .protocol import (
@@ -21,6 +23,12 @@ from .schemas import ReqFrame, format_error
 from .server_methods import MethodRouter
 from .auth import resolve_auth_mode
 from .router import OutputRoute
+from .media_access import (
+    MediaAccessError,
+    iter_media_range,
+    media_access_registry,
+    parse_byte_range,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +50,43 @@ async def _capture_loop() -> None:
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "connections": cm.count}
+
+
+@app.api_route("/media/{token}", methods=["GET", "HEAD"])
+async def read_media(token: str, request: Request):
+    """Serve one short-lived Agent-authorized media file with Range support."""
+    try:
+        grant = media_access_registry.resolve(token)
+    except MediaAccessError as exc:
+        return Response(str(exc), status_code=404)
+    try:
+        selected = parse_byte_range(request.headers.get("range", ""), grant.size)
+    except MediaAccessError as exc:
+        return Response(
+            str(exc),
+            status_code=416,
+            headers={"Content-Range": f"bytes */{grant.size}"},
+        )
+
+    start, end = selected or (0, grant.size - 1)
+    status_code = 206 if selected is not None else 200
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(end - start + 1),
+        "Content-Disposition": f"inline; filename*=UTF-8''{quote(grant.name)}",
+        "Cache-Control": "private, no-store",
+        "Access-Control-Allow-Origin": "*",
+    }
+    if selected is not None:
+        headers["Content-Range"] = f"bytes {start}-{end}/{grant.size}"
+    if request.method == "HEAD":
+        return Response(status_code=status_code, media_type=grant.mime_type, headers=headers)
+    return StreamingResponse(
+        iter_media_range(grant.path, start, end),
+        status_code=status_code,
+        media_type=grant.mime_type,
+        headers=headers,
+    )
 
 
 @app.websocket("/ws")
@@ -171,6 +216,7 @@ def create_app(
     _global_router = router
     _global_config = config
     _method_router = MethodRouter(living=living, config=config)
+    media_access_registry.configure(getattr(living, "_agent_id", "default"))
 
     if router:
         from .ws_adapter import WSAdapter

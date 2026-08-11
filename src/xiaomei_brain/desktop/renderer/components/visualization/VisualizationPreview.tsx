@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { Icon } from "../ui";
 import {
@@ -7,6 +7,13 @@ import {
   type VisualizationTheme,
 } from "./visualization-shell";
 import "./visualization.css";
+import {
+  controlMediaPlayback,
+  getMediaPlaybackSnapshot,
+  seekMediaPlayback,
+  setMediaPlaybackVolume,
+  subscribeMediaPlayback,
+} from "../../media-playback";
 
 const MAX_VISUALIZATION_BYTES = 1024 * 1024;
 // Keep the wider conversation mode available without exposing two similar
@@ -63,6 +70,11 @@ export function VisualizationPreview({
   const [error, setError] = useState("");
   const theme = useVisualizationTheme();
   const token = useMemo(() => crypto.randomUUID(), [dataBase64, fileName, theme]);
+  const mediaState = useSyncExternalStore(
+    subscribeMediaPlayback,
+    getMediaPlaybackSnapshot,
+    getMediaPlaybackSnapshot,
+  );
   const sourceDocument = useMemo(() => {
     if (!dataBase64) return "";
     if (Math.ceil(dataBase64.length * 0.75) > MAX_VISUALIZATION_BYTES) return "";
@@ -88,11 +100,33 @@ export function VisualizationPreview({
         setError(typeof data.message === "string" ? data.message : t("visualize.runtimeError"));
       } else if (data.type === "follow-up" && typeof data.prompt === "string") {
         onFollowUp?.(data.prompt);
+      } else if (data.type === "media-command" && ["play", "pause", "stop"].includes(String(data.action))) {
+        void controlMediaPlayback(String(data.action) as "play" | "pause" | "stop");
+      } else if (data.type === "media-command" && data.action === "seek") {
+        void seekMediaPlayback(Number(data.positionMs));
+      } else if (data.type === "media-command" && data.action === "volume") {
+        void setMediaPlaybackVolume(Number(data.volume));
+      } else if (data.type === "media-ready") {
+        frameRef.current?.contentWindow?.postMessage({
+          source: BRIDGE_SOURCE,
+          token,
+          type: "media-state",
+          state: mediaState,
+        }, "*");
       }
     };
     window.addEventListener("message", receive);
     return () => window.removeEventListener("message", receive);
-  }, [inline, onFollowUp, t, token]);
+  }, [inline, mediaState, onFollowUp, t, token]);
+
+  useEffect(() => {
+    frameRef.current?.contentWindow?.postMessage({
+      source: BRIDGE_SOURCE,
+      token,
+      type: "media-state",
+      state: mediaState,
+    }, "*");
+  }, [mediaState, token]);
 
   const preview = (
     <section className={`visualization-preview ${inline ? "inline" : "workspace"}`}>

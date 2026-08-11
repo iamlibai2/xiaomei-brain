@@ -61,11 +61,11 @@ def test_command_uses_environment_bound_to_tool_context(tmp_path):
     assert environment.commands == [(expression, str(workspace))]
 
 
-def test_command_accepts_named_agent_root_as_controlled_workdir(tmp_path):
+def test_command_accepts_workspace_output_as_controlled_workdir(tmp_path):
     workspace = tmp_path / "workspace"
-    music = tmp_path / "music"
+    music = workspace / "outputs" / "audio"
     workspace.mkdir()
-    music.mkdir()
+    music.mkdir(parents=True)
     expression = (
         "[System.IO.Directory]::GetCurrentDirectory()"
         if sys.platform == "win32"
@@ -74,14 +74,13 @@ def test_command_accepts_named_agent_root_as_controlled_workdir(tmp_path):
     with bind_tool_execution(
         tool_call_id="named-root-workdir",
         tool_name=command.command_tool_name(),
-        arguments={"command": expression, "workdir": "music"},
+        arguments={"command": expression, "workdir": "outputs/audio"},
         artifact_callback=None,
         workspace_root=str(workspace),
         working_directory=str(workspace),
         output_root=str(workspace),
-        writable_roots=(str(music),),
     ):
-        result = command.run_command(expression, workdir="music")
+        result = command.run_command(expression, workdir="outputs/audio")
 
     assert isinstance(result, str)
     assert Path(result.strip()).resolve() == music.resolve()

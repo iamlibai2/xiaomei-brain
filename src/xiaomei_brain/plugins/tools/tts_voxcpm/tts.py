@@ -13,6 +13,7 @@ from pathlib import Path
 from xiaomei_brain.tools.base import tool
 from xiaomei_brain.media.audio import SpeechAudio
 from xiaomei_brain.tools.execution_context import current_tool_execution
+from xiaomei_brain.execution.workspace_layout import workspace_output_directory
 
 logger = logging.getLogger(__name__)
 
@@ -37,18 +38,9 @@ def _tts_output_path(filename: str) -> Path:
     """Choose an Agent-owned TTS output path from the sealed tool context."""
     requested = Path(str(filename or "").strip()).name or "output.wav"
     requested = str(Path(requested).with_suffix(".wav"))
-    context = current_tool_execution()
-    if context is not None:
-        for value in context.writable_roots:
-            root = Path(value).expanduser().resolve()
-            if root.name.casefold() == "tts":
-                return root / requested
-        if context.output_root:
-            return Path(context.output_root).expanduser().resolve() / "tts" / requested
     voice_ref_dir = str(getattr(_provider, "_voice_ref_dir", "") or "")
-    if voice_ref_dir:
-        return Path(voice_ref_dir).expanduser().resolve().parent / "tts" / requested
-    return Path.home() / ".xiaomei-brain" / "global" / "tts" / requested
+    fallback = Path(voice_ref_dir).expanduser().resolve().parent if voice_ref_dir else ""
+    return workspace_output_directory("audio", fallback_agent_root=fallback) / requested
 
 
 @tool(

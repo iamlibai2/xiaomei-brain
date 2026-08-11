@@ -206,7 +206,7 @@ def test_sing_streams_through_embodiment_and_saves_wav(tmp_path: Path, monkeypat
 
     assert "正在准备演唱" in result
     assert completed.wait(timeout=2)
-    output = tmp_path / "music" / "demo.wav"
+    output = tmp_path / "workspace" / "outputs" / "audio" / "demo.wav"
     assert output.is_file()
     with wave.open(str(output), "rb") as wav_file:
         assert wav_file.getnchannels() == 2
@@ -220,6 +220,7 @@ def test_play_music_prefers_current_embodiment(monkeypatch, tmp_path) -> None:
     from xiaomei_brain.plugins.tools.play_music import adapter
 
     played = bytearray()
+    published_audio = []
     workspace = tmp_path / "workspace"
     music = tmp_path / "music"
     workspace.mkdir()
@@ -239,6 +240,7 @@ def test_play_music_prefers_current_embodiment(monkeypatch, tmp_path) -> None:
     )
 
     def play(audio):
+        published_audio.append(audio)
         for chunk in audio.chunks:
             played.extend(chunk)
         return "Desktop"
@@ -257,7 +259,38 @@ def test_play_music_prefers_current_embodiment(monkeypatch, tmp_path) -> None:
 
     assert played == b"\x00\x00\x00\x00"
     assert resolved_paths == [str(audio_file.resolve())]
+    assert published_audio[0].media_kind == "music"
+    assert published_audio[0].title == "song"
+    assert published_audio[0].source_ref == "music/song.mp3"
+    assert published_audio[0].file_path == str(audio_file.resolve())
+    assert published_audio[0].mime_type == "audio/mpeg"
     assert result == {"played": "music/song.mp3", "through": "Desktop"}
+
+
+def test_play_music_keeps_local_body_fallback_without_turn_context(tmp_path) -> None:
+    from xiaomei_brain.plugins.body._refs import body_ref
+    from xiaomei_brain.plugins.tools.play_music import adapter
+
+    audio_file = tmp_path / "local.mp3"
+    audio_file.write_bytes(b"audio")
+    played = []
+
+    class Throat:
+        def is_available(self):
+            return True
+
+        def play(self, path):
+            played.append(path)
+
+    previous = body_ref[0]
+    body_ref[0] = SimpleNamespace(throat=Throat())
+    try:
+        result = adapter.play_music(str(audio_file))
+    finally:
+        body_ref[0] = previous
+
+    assert result == {"played": str(audio_file)}
+    assert played == [str(audio_file)]
 
 
 def test_voxcpm_file_output_stays_in_current_agent_tts_root(monkeypatch, tmp_path) -> None:
@@ -271,9 +304,10 @@ def test_voxcpm_file_output_stays_in_current_agent_tts_root(monkeypatch, tmp_pat
             Path(path).write_bytes(b"wav")
 
     workspace = tmp_path / "workspace"
-    tts_root = tmp_path / "tts"
+    output_root = workspace / "outputs"
+    tts_root = output_root / "audio"
     workspace.mkdir()
-    tts_root.mkdir()
+    tts_root.mkdir(parents=True)
     monkeypatch.setattr(tts, "_provider", Provider())
 
     with bind_tool_execution(
@@ -283,7 +317,7 @@ def test_voxcpm_file_output_stays_in_current_agent_tts_root(monkeypatch, tmp_pat
         artifact_callback=None,
         workspace_root=str(workspace),
         working_directory=str(workspace),
-        writable_roots=(str(tts_root),),
+        output_root=str(output_root),
     ):
         result = tts.voxcpm_speak_to_file_tool.execute(
             text="hello",

@@ -102,9 +102,7 @@ class ArtifactMethods:
             not normalized
             or path.is_absolute()
             or ".." in path.parts
-            or path.parts[0] not in {
-                "workspace", "images", "music", "tts", "videos", "projects",
-            }
+            or path.parts[0] != "workspace"
         ):
             return ""
         return path.as_posix()

@@ -142,6 +142,11 @@ class AgentManager:
         if agent.llm is not None:
             return agent
 
+        # Establish the Agent filesystem boundary before any Core or tool can
+        # be used.  Skill resource roots are added after Skill discovery.
+        agent_base_dir = self._agent_dir(agent.id)
+        agent.configure_tool_paths(agent_base_dir)
+
         provider = agent.provider or global_config.provider
         model = agent.model or global_config.model
 
@@ -443,6 +448,10 @@ class AgentManager:
             boot_line("加载技能", "FAIL", "扫描或向量索引出错，已跳过")
             skill_names = []
         agent._skill_loader = skill_loader
+        agent.configure_tool_paths(
+            agent_base_dir,
+            extra_read_only_roots=skill_loader.resource_roots(),
+        )
         for skill_tool in create_skill_tools(agent):
             tools.register(skill_tool)
 

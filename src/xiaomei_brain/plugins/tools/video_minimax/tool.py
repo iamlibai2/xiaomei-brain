@@ -16,6 +16,7 @@ from xiaomei_brain.tools.execution_context import (
     ToolExecutionContext,
     current_tool_execution,
 )
+from xiaomei_brain.execution.workspace_layout import workspace_output_directory
 
 from .provider import H3_MODEL, HAILUO_MODEL, MiniMaxVideoProvider, VideoTask
 
@@ -54,13 +55,7 @@ def _roots(context: ToolExecutionContext | None) -> tuple[Path, Path]:
             )
             return work_root / "motion", state_root / "state" / "video_tasks"
         return state_root / "deliverables", state_root / "state" / "video_tasks"
-    if context is not None and context.output_root:
-        output = Path(context.output_root).resolve() / "videos"
-        return output, output / "tasks"
-    if _output_base:
-        output = Path(_output_base).resolve() / "videos"
-        return output, output / "tasks"
-    output = Path.home() / ".xiaomei-brain" / "global" / "videos"
+    output = workspace_output_directory("video", fallback_agent_root=_output_base or "")
     return output, output / "tasks"
 
 

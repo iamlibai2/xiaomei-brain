@@ -74,6 +74,29 @@ window.xiaomei?.sendFollowUpMessage({
 
 这只会把建议内容放入 Desktop 输入框，由用户确认后发送。筛选、切换、拖动和参数调整等展示操作应留在可视化内部完成。
 
+## 宿主音乐播放器
+
+制作音乐播放器、频谱、歌词或音乐演示界面时，不要在可视化中引用 Agent 的绝对路径，
+也不要重新创建一套独立播放状态。Desktop 会提供同一个可复用播放器：
+
+```javascript
+const unsubscribe = window.xiaomei.media.subscribe((state) => {
+  // state.status: buffering / playing / paused / completed / stopped / failed
+  // state.title, state.positionMs, state.durationMs
+  renderPlayer(state);
+});
+
+playButton.onclick = () => window.xiaomei.media.play();
+pauseButton.onclick = () => window.xiaomei.media.pause();
+stopButton.onclick = () => window.xiaomei.media.stop();
+progressInput.oninput = () => window.xiaomei.media.seek(Number(progressInput.value));
+volumeInput.oninput = () => window.xiaomei.media.setVolume(Number(volumeInput.value));
+```
+
+真实音乐由 Agent 调用 `play_music` 交给当前 Desktop 身体播放。可视化只负责外观和交互，
+通过 `window.xiaomei.media` 读取并控制宿主播放器；不要写死 `music/...`、本机绝对路径或
+私有 `<audio>` 播放列表。组件卸载时调用 `unsubscribe()`。
+
 ## 完成前检查
 
 - 首屏无需操作也能看懂主要内容。

@@ -353,13 +353,38 @@ def _pattern_error(pattern: str) -> str:
     return ""
 
 
-def _split_named_root_pattern(pattern: str, path: str) -> tuple[str, str]:
-    """Treat ``music/**/*.mp3`` like ``path=music, pattern=**/*.mp3``.
+def _expand_brace_patterns(pattern: str, *, limit: int = 64) -> tuple[list[str], str]:
+    """Expand shell-style ``*.{mp3,wav}`` alternatives for Python glob.
 
-    File tools expose Agent asset directories as virtual named roots. Models
-    naturally place that root either in ``path`` or at the start of the glob;
-    both forms must resolve identically instead of silently searching a
-    same-named directory under Workspace.
+    ``glob`` from Python's standard library does not implement brace
+    expansion, while models and users commonly use this portable-looking
+    syntax.  Expand it explicitly and cap the result to avoid pathological
+    patterns.
+    """
+    pending = [pattern]
+    expanded: list[str] = []
+    expression = re.compile(r"\{([^{}]+)\}")
+    while pending:
+        current = pending.pop()
+        match = expression.search(current)
+        if match is None:
+            expanded.append(current)
+            continue
+        choices = [item.strip() for item in match.group(1).split(",") if item.strip()]
+        if not choices:
+            return [], "Error: glob brace alternatives cannot be empty"
+        if len(pending) + len(expanded) + len(choices) > limit:
+            return [], f"Error: glob pattern expands to more than {limit} alternatives"
+        prefix, suffix = current[:match.start()], current[match.end():]
+        pending.extend(f"{prefix}{choice}{suffix}" for choice in reversed(choices))
+    return list(dict.fromkeys(expanded)), ""
+
+
+def _split_named_root_pattern(pattern: str, path: str) -> tuple[str, str]:
+    """Treat ``inputs/**/*.csv`` like ``path=inputs, pattern=**/*.csv``.
+
+    Models naturally place a workspace directory either in ``path`` or at the
+    start of the glob. Both forms must resolve identically.
     """
     if str(path or ".").strip() not in {"", ".", "./", ".\\"}:
         return pattern, path
@@ -392,28 +417,37 @@ def glob(pattern: str, path: str = ".", limit: int = 200) -> dict[str, Any]:
     assert root is not None
     if not root.is_dir():
         return {"error": f"Error: not a directory: {path}"}
+    patterns, error = _expand_brace_patterns(pattern)
+    if error:
+        return {"error": error}
     limit = min(1000, max(1, int(limit or 200)))
     found: list[Path] = []
+    seen: set[Path] = set()
     try:
-        iterator = glob_module.iglob(
-            str(root / pattern),
-            recursive=True,
-            include_hidden=True,
-        )
-        for value in iterator:
-            item = Path(value)
-            if item.is_file():
-                found.append(item)
-                if len(found) > limit:
-                    break
+        for expanded_pattern in patterns:
+            iterator = glob_module.iglob(
+                str(root / expanded_pattern),
+                recursive=True,
+                include_hidden=True,
+            )
+            for value in iterator:
+                item = Path(value)
+                if item.is_file() and item not in seen:
+                    seen.add(item)
+                    found.append(item)
+                    if len(found) > limit:
+                        break
+            if len(found) > limit:
+                break
     except (OSError, ValueError) as exc:
         return {"error": f"Error: {exc}"}
     found.sort(key=lambda item: item.stat().st_mtime, reverse=True)
-    return {
+    result: dict[str, Any] = {
         "files": [_display(item) for item in found[:limit]],
         "count": min(len(found), limit),
         "truncated": len(found) > limit,
     }
+    return result
 
 
 def _grep_candidates(path: str, file_glob: str) -> tuple[Iterator[Path], str]:
@@ -533,7 +567,7 @@ def _tool(
 
 read_tool = _tool(
     "read",
-    "Read a text file with line numbers and pagination. Reuse relative paths returned by glob/write/edit exactly; never reconstruct ~/.xiaomei-brain or another Agent data directory as an absolute path. Agent assets are available under images/, music/, and tts/; historical attachments are read-only under attachments/.",
+    "Read a text file with line numbers and pagination. Every user-operable file is below the current Agent workspace. Reuse relative paths returned by glob/write/edit exactly and never reconstruct an absolute Agent data directory. Inbound files are under inputs/ and generated files are normally under outputs/.",
     {
         "path": {"type": "string"},
         "offset": {"type": "integer", "minimum": 1, "default": 1},
@@ -544,14 +578,14 @@ read_tool = _tool(
 )
 write_tool = _tool(
     "write",
-    "Create or completely replace a UTF-8 text file atomically. The current directory is already the Agent workspace: use analyze.py, not workspace/analyze.py. Named asset roots images/, music/, and tts/ are writable; attachments/ is read-only.",
+    "Create or completely replace a UTF-8 text file atomically. The current directory is already the Agent workspace: use work/analyze.py or outputs/report.md, never workspace/work/analyze.py. inputs/ is read-only.",
     {"path": {"type": "string"}, "content": {"type": "string"}},
     ["path", "content"],
     write,
 )
 edit_tool = _tool(
     "edit",
-    "Edit a text file by exact replacement and return a unified diff. The current directory is already the Agent workspace; reuse the exact relative path returned by glob/read and do not prepend workspace/ or rebuild an absolute Agent data path. Named asset roots images/, music/, and tts/ are writable; attachments/ is read-only.",
+    "Edit a text file by exact replacement and return a unified diff. Reuse the exact workspace-relative path returned by glob/read; do not prepend workspace/ or rebuild an absolute Agent data path. inputs/ is read-only.",
     {
         "path": {"type": "string"},
         "old_string": {"type": "string"},
@@ -563,10 +597,17 @@ edit_tool = _tool(
 )
 glob_tool = _tool(
     "glob",
-    "Find files using a glob path pattern. Returned file names are canonical paths relative to the Agent workspace or a named asset root; pass them unchanged to read/edit or the shell. Do not prepend an inferred absolute Agent data directory. Agent asset roots are images/, music/, tts/, and the read-only historical archive attachments/.",
+    "Find files anywhere in the current Agent workspace. The default path '.' includes inputs, work, outputs, and project files. Shell-style alternatives such as **/*.{mp3,wav,m4a} are supported. Returned names are workspace-relative canonical paths; pass them unchanged to read/edit or the shell and never construct an absolute Agent data directory.",
     {
-        "pattern": {"type": "string"},
-        "path": {"type": "string", "default": "."},
+        "pattern": {
+            "type": "string",
+            "description": "Relative glob pattern; brace alternatives such as **/*.{mp3,wav} are supported.",
+        },
+        "path": {
+            "type": "string",
+            "default": ".",
+            "description": "Workspace-relative directory to search; '.' searches the complete Agent workspace.",
+        },
         "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 200},
     },
     ["pattern"],
@@ -574,7 +615,7 @@ glob_tool = _tool(
 )
 grep_tool = _tool(
     "grep",
-    "Search text contents with a regular expression. Agent-owned historical attachments are available read-only under attachments/.",
+    "Search text contents with a regular expression anywhere below the current Agent workspace. inputs/ contains read-only inbound files.",
     {
         "pattern": {"type": "string"},
         "path": {"type": "string", "default": "."},

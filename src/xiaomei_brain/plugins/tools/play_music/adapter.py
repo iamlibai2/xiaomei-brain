@@ -1,5 +1,8 @@
 """play_music 工具插件 — 调用 body.throat 音频输出。"""
 
+from pathlib import Path
+import mimetypes
+
 from xiaomei_brain.tools.base import Tool
 from xiaomei_brain.plugins.body._refs import body_ref
 from xiaomei_brain.media.audio import SpeechAudio, stream_audio_file_as_pcm
@@ -33,6 +36,11 @@ def play_music(audio_path: str) -> dict:
             sample_rate=44100,
             channels=2,
             initial_buffer_ms=1000,
+            media_kind="music",
+            title=Path(resolved_audio_path).stem,
+            source_ref=audio_path,
+            file_path=resolved_audio_path,
+            mime_type=mimetypes.guess_type(resolved_audio_path)[0] or "audio/mpeg",
         ))
         return {"played": audio_path, "through": result or "当前身体"}
 

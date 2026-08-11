@@ -560,7 +560,11 @@ def test_ws_turn_resolves_concrete_desktop_and_sends_audio(monkeypatch):
         ]
         assert manager.speak(
             resolution,
-            SpeechAudio([b"pcm"], "pcm_s16", 16000, initial_buffer_ms=500),
+            SpeechAudio(
+                [b"pcm"], "pcm_s16", 16000, initial_buffer_ms=500,
+                media_kind="music", title="Midnight",
+                source_ref="music/midnight.mp3",
+            ),
         )
         assert [item[1] for item in sent] == [
             "embodiment.audio.output.started",
@@ -569,6 +573,9 @@ def test_ws_turn_resolves_concrete_desktop_and_sends_audio(monkeypatch):
         ]
         speech_id = sent[0][2]["speech_id"]
         assert sent[0][2]["initial_buffer_ms"] == 500
+        assert sent[0][2]["media_kind"] == "music"
+        assert sent[0][2]["title"] == "Midnight"
+        assert sent[0][2]["source_ref"] == "music/midnight.mp3"
         assert sent[1][2]["speech_id"] == speech_id
         assert sent[1][2]["sequence"] == 1
         assert base64.b64decode(sent[1][2]["data_base64"]) == b"pcm"

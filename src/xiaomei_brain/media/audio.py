@@ -18,13 +18,24 @@ class AudioConversionError(RuntimeError):
 
 @dataclass(frozen=True)
 class SpeechAudio:
-    """One streaming speech expression produced by an Agent tool."""
+    """One streaming audio expression produced by an Agent tool.
+
+    ``media_kind`` keeps speech and reusable media playback on the same
+    transport without pretending that a song is spoken language.  Speech
+    remains the default so existing TTS and channel routes keep their current
+    behaviour.
+    """
 
     chunks: Iterable[bytes]
     codec: str
     sample_rate: int
     channels: int = 1
     initial_buffer_ms: int = 3000
+    media_kind: str = "speech"
+    title: str = ""
+    source_ref: str = ""
+    file_path: str = ""
+    mime_type: str = ""
 
 
 @dataclass(frozen=True)

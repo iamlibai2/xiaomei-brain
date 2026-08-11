@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
+from pathlib import Path
 from typing import Any
 
 from xiaomei_brain.prompts import MEMORY_DECISION_PROMPT
@@ -27,6 +29,10 @@ logger = logging.getLogger(__name__)
 
 _GROUP_OBSERVATION_LIMIT = 50
 _GROUP_OBSERVATION_WINDOW_SECONDS = 30 * 60
+_EXPLICIT_FILE_REFERENCE_LIMIT = 8
+_EXPLICIT_FILE_REFERENCE_RE = re.compile(
+    r"(?<![\w./\\-])([^\s\"'<>|:*?]+(?:[./\\][^\s\"'<>|:*?]+)*\.[A-Za-z0-9]{1,16})(?![\w.])"
+)
 _TOOL_DISCOVERY_PROMPT = """<tool_discovery>
 Only the universal core tools and a small set of likely tools are visible initially.
 If the current tools cannot perform a required action, call tool_search with a
@@ -45,6 +51,7 @@ def render_execution_context(agent: Any, user_input: str) -> str:
     if callable(capability_builder):
         _append(parts, capability_builder(user_input))
 
+    _append(parts, _render_explicit_workspace_files(agent, user_input))
     _append(parts, _render_group_observations(agent))
 
     from xiaomei_brain.projects import render_project_context
@@ -154,6 +161,60 @@ def _append(parts: list[str], value: Any) -> None:
 def _with_runtime_context(agent: Any, query: str) -> str:
     renderer = getattr(agent, "_with_runtime_tool_selection_context", None)
     return renderer(query) if callable(renderer) else query
+
+
+def _render_explicit_workspace_files(agent: Any, user_input: str) -> str:
+    """Resolve exact file references already present in the Agent workspace.
+
+    A user naming ``report.html`` should not make the model rediscover the
+    Agent's hidden data directory or spend a tool call searching for a root
+    file.  Only literal paths that already exist under the active workspace are
+    exposed.  Ambiguous basename searches and filesystem-wide scans remain the
+    responsibility of ``glob``.
+    """
+    root_value = str(getattr(agent, "tool_workspace_root", "") or "").strip()
+    if not root_value or not isinstance(user_input, str):
+        return ""
+    try:
+        workspace_root = Path(root_value).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return ""
+    if not workspace_root.is_dir():
+        return ""
+
+    resolved_paths: list[str] = []
+    seen: set[str] = set()
+    for match in _EXPLICIT_FILE_REFERENCE_RE.finditer(user_input):
+        raw = match.group(1).strip("`，。；：、()（）[]【】")
+        if not raw or raw.lower() in seen:
+            continue
+        normalized = raw.replace("\\", "/")
+        if normalized.lower().startswith("workspace/"):
+            normalized = normalized[len("workspace/"):]
+        candidate = workspace_root.joinpath(*Path(normalized).parts)
+        try:
+            resolved = candidate.resolve(strict=True)
+            relative = resolved.relative_to(workspace_root).as_posix()
+        except (FileNotFoundError, OSError, RuntimeError, ValueError):
+            continue
+        if not resolved.is_file():
+            continue
+        seen.add(raw.lower())
+        resolved_paths.append(relative)
+        if len(resolved_paths) >= _EXPLICIT_FILE_REFERENCE_LIMIT:
+            break
+
+    if not resolved_paths:
+        return ""
+    lines = [
+        "<explicit_workspace_files>",
+        "当前请求明确提到以下已存在的 Agent 工作区文件。"
+        "直接把给出的相对路径原样传给 read/edit/write；无需先 glob，"
+        "也不要重建 Agent 数据目录的绝对路径。",
+        *(f"- {path}" for path in resolved_paths),
+        "</explicit_workspace_files>",
+    ]
+    return "\n".join(lines)
 
 
 def _render_group_observations(agent: Any) -> str:

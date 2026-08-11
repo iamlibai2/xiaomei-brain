@@ -58,7 +58,7 @@ def test_channel_local_image_is_imported_as_durable_session_attachment(
     assert images == [str(saved[0])]
     assert saved[0].read_bytes() == b"jpeg-content"
     assert saved[0].is_relative_to(
-        home / ".xiaomei-brain" / "test" / "attachments"
+        home / ".xiaomei-brain" / "test" / "workspace" / "inputs" / "attachments"
     )
     assert source.exists()
 

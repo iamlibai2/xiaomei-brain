@@ -16,7 +16,7 @@ from uuid import uuid4
 MAX_ARTIFACT_BYTES = 20 * 1024 * 1024
 MAX_VIDEO_ARTIFACT_BYTES = 128 * 1024 * 1024
 MAX_VISUALIZATION_ARTIFACT_BYTES = 1 * 1024 * 1024
-_OUTPUT_DIRS = {"workspace", "images", "music", "tts", "videos", "projects"}
+_OUTPUT_DIRS = {"workspace"}
 
 
 class ArtifactError(ValueError):

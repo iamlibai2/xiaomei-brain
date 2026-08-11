@@ -102,7 +102,7 @@ def test_visualization_html_becomes_sandboxed_artifact_kind(tmp_path, monkeypatc
 def test_audio_extension_wrapped_in_book_title_marks_is_playable(tmp_path, monkeypatch):
     monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
     output = (
-        tmp_path / ".xiaomei-brain" / "xiaomei" / "music"
+        tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace" / "outputs" / "audio"
         / "《正午散步.wav》"
     )
     output.parent.mkdir(parents=True)
@@ -188,7 +188,7 @@ def test_project_video_uses_video_specific_artifact_limit(tmp_path, monkeypatch)
     monkeypatch.setattr(artifact_module, "MAX_ARTIFACT_BYTES", 4)
     monkeypatch.setattr(artifact_module, "MAX_VIDEO_ARTIFACT_BYTES", 16)
     output = (
-        tmp_path / ".xiaomei-brain" / "xiaomei" / "projects"
+        tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace" / "projects"
         / "project_1" / "deliverables" / "clip.mp4"
     )
     output.parent.mkdir(parents=True)
@@ -206,7 +206,7 @@ def test_project_video_uses_video_specific_artifact_limit(tmp_path, monkeypatch)
     assert len(artifacts) == 1
     assert artifacts[0]["kind"] == "video"
     assert artifacts[0]["relative_path"] == (
-        "projects/project_1/deliverables/clip.mp4"
+        "workspace/projects/project_1/deliverables/clip.mp4"
     )
 
 
