@@ -18,15 +18,19 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
-from .base import Tool
+from .base import Tool, tool
 from .registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
-# 核心工具：无论 query 是什么都始终保留
+# Core tools are the Agent's universal execution floor. Domain tools must be
+# discovered from the current task, activated by a Skill, or requested through
+# ``tool_search``. Keeping this set deliberately small prevents every repaired
+# retrieval miss from becoming permanent prompt cost.
 _CORE_TOOL_NAMES = frozenset({
     "powershell",
     "bash",
@@ -43,150 +47,31 @@ _CORE_TOOL_NAMES = frozenset({
     "read_file",
     "write_file",
     "edit_file",
-    "present_artifacts",
-    "send_message",
-    "check_inbox",
     "memory_search",
-    "memory_add",
-    "memory_list",
-    "dag",
-    "skills_list",
     "skill_view",
-    # Direct control of the current Desktop body must not depend on semantic
-    # Top-K retrieval; short phrases such as "打开右侧栏" are common.
-    "embodiment_control",
-    # A Person may refer to earlier work with a short phrase such as
-    # "continue that report".  Semantic tool retrieval cannot reliably infer
-    # the Assignment lifecycle from those words alone, so keep the two small
-    # lookup/revision tools available in every conversation turn.
-    "list_assignments",
-    "revise_assignment",
-    "start_assignment",
-    # Project confirmation often arrives as a context-dependent short reply
-    # such as "可以了".  Keep the small reflection tool available so the Agent
-    # can reconcile its plan without turning Project into a fixed workflow.
-    "review_project",
-    # Short follow-up requests such as "把华东放前面" still need access to the
-    # currently discussed workspace even when semantic retrieval is ambiguous.
-    "list_workspaces",
-    "get_workspace",
-    "create_workspace",
-    "update_workspace",
+    "tool_search",
 })
 
-DEFAULT_TOP_K = 10
-STEP_GROWTH = 3       # 每步增加动态工具名额
-MAX_DYNAMIC = 50       # 动态工具上限
+DEFAULT_TOP_K = 5
+# Prefetch is a latency optimization, not the only discovery path. It must not
+# grow on every ReAct step; the model can call tool_search when something is
+# missing.
+STEP_GROWTH = 0
+MAX_DYNAMIC = 5
+MAX_TOOL_SEARCH_RESULTS = 8
 TOOL_CONTEXT_USER_MESSAGES = 3
 TOOL_CONTEXT_MAX_CHARS = 2400
 TOOL_PROGRESS_MAX_CHARS = 1200
+# Tool embeddings are normalized before they are stored. LanceDB's default L2
+# distance is therefore comparable across the supported embedding models. A
+# result above this distance is merely the nearest tool, not necessarily a
+# relevant one. Lexical matches remain eligible independently of this gate.
+MAX_SEMANTIC_L2_DISTANCE = 0.82
 
-_WORKSPACE_AUTHORING_TOOLS = frozenset({
-    "get_current_workspace",
-    "define_collection",
-    "add_collection_fields",
-    "record_business_context",
-    "configure_context_execution",
-    "correct_business_context",
-    "list_business_context",
-    "create_surface",
-    "update_surface",
-    "list_business_actions",
-    "establish_business_action",
-})
-
-
-def _contextual_required_tool_names(query: str) -> set[str]:
-    """Select small deterministic dependencies for unmistakable task shapes.
-
-    Semantic retrieval remains the default.  This only covers cases where the
-    attachment type and the user's destination together identify one platform
-    operation; omitting that operation would force the model to rebuild it row
-    by row with lower-level tools.
-    """
-    text = str(query or "").casefold()
-    has_tabular_attachment = any(marker in text for marker in (
-        ".csv", ".tsv", ".xlsx",
-        "text/csv", "tab-separated-values", "spreadsheetml",
-    ))
-    has_import_intent = any(marker in text for marker in (
-        "导入", "写入", "放进", "放入", "存入", "import",
-    ))
-    has_workspace_destination = any(marker in text for marker in (
-        "workspace", "工作空间", "经营数据", "业务数据", "经营看板",
-    ))
-    required: set[str] = set()
-    # A focused Workspace is durable runtime state, not something semantic
-    # retrieval should have to rediscover from a short follow-up.  When the
-    # user asks to build or continue shaping that Workspace, expose the small
-    # authoring kit deterministically.  This only makes the tools available;
-    # it does not prescribe a workflow or force the Agent to call them.
-    has_focused_workspace = "<focused_workspace>" in text
-    has_workspace_authoring_intent = any(marker in text for marker in (
-        "搭建", "建设", "创建结构", "业务结构", "初始化", "完善", "补齐",
-        "定义字段", "定义集合", "创建集合", "创建看板", "创建界面",
-        "按你理解", "按你的理解", "按你自己理解", "你自己看着", "继续",
-        "继续推进", "继续建设", "继续完善", "build out", "set up",
-        "initialize", "schema",
-        "collection", "surface", "use your judgment", "continue building",
-        "规则", "约束", "默认值", "计算规则", "business rule",
-    ))
-    if has_focused_workspace:
-        required.update({"get_current_workspace", "record_observation"})
-    if "remote_group_attachment" in text:
-        required.add("fetch_group_attachment")
-    if has_focused_workspace and has_workspace_authoring_intent:
-        required.update(_WORKSPACE_AUTHORING_TOOLS)
-    if has_tabular_attachment and has_import_intent and has_workspace_destination:
-        required.add("import_tabular_data")
-    has_business_object = any(marker in text for marker in (
-        "客户", "报价", "合同", "订单", "回款", "应收", "经营",
-        "customer", "quote", "contract", "order", "payment", "receivable",
-    ))
-    has_business_change = any(marker in text for marker in (
-        "推进", "更新", "登记", "修改", "记下", "记录", "录入", "保存",
-        "确认", "反馈", "收到", "已经", "预计", "承诺", "签了", "付款", "到账",
-        "advance", "update", "register", "change", "record", "save",
-        "confirmed", "reported", "received", "paid",
-    ))
-    has_business_query = any(marker in text for marker in (
-        "查询", "统计", "汇总", "多少", "哪些",
-        "query", "summarize", "count",
-    ))
-    if has_business_object and (has_business_change or has_business_query):
-        required.update({
-            "get_current_workspace",
-            "query_business_records",
-            "upsert_business_record",
-        })
-    if has_business_object and has_business_change:
-        required.update({
-            "record_observation",
-            "list_business_actions",
-            "execute_business_action",
-        })
-    has_business_crystallization = any(marker in text for marker in (
-        "业务做法", "候选做法", "稳定下来", "固定下来", "结晶", "形成动作",
-        "business practice", "action candidate", "crystallize", "establish action",
-    ))
-    if has_business_crystallization:
-        required.update({
-            "get_current_workspace",
-            "list_business_actions",
-            "establish_business_action",
-        })
-    has_business_action_validation = any(marker in text for marker in (
-        "只读验证", "历史验证", "历史案例", "验证这个动作", "验证业务动作",
-        "为什么被认为是稳定", "为什么是稳定", "稳定 action",
-        "validate action", "historical validation", "why is this action stable",
-    ))
-    if has_business_action_validation:
-        required.update({
-            "get_current_workspace",
-            "list_business_actions",
-            "validate_business_action_candidate",
-        })
-    return required
+_MESSAGE_TRANSPORT_PREFIXES = (
+    re.compile(r"^\s*距上条消息\s+\S+\s*"),
+    re.compile(r"^\s*\[\d{2}-\d{2}\s+\d{2}:\d{2}\]\s*"),
+)
 
 # 全局活跃的 loader，供 MCP/Plugin 热重载后通知重建索引
 _active_loader: DynamicToolLoader | None = None
@@ -195,7 +80,10 @@ _active_loader: DynamicToolLoader | None = None
 def _message_text_for_tool_selection(content: Any) -> str:
     """Extract searchable text without copying image data into the query."""
     if isinstance(content, str):
-        return content.strip()
+        text = content.strip()
+        for pattern in _MESSAGE_TRANSPORT_PREFIXES:
+            text = pattern.sub("", text, count=1)
+        return text.strip()
     if not isinstance(content, list):
         return ""
 
@@ -556,9 +444,17 @@ class DynamicToolLoader:
         self._built = False
         self.build_index()
 
-    def begin_run(self, scope_id: str = "main") -> None:
-        """Select the conversation-scoped Skill bindings for a ReAct run."""
+    def begin_run(self, scope_id: str = "main", *, reset: bool = False) -> None:
+        """Select the turn-scoped explicit bindings for a ReAct run.
+
+        A session can contain many user turns.  Tools discovered for an older
+        turn must not accumulate forever, so the first preparation call resets
+        the scope.  Skill and Capability bindings are then pinned again from
+        the current request and remain active for the whole ReAct loop.
+        """
         normalized_scope = str(scope_id or "main")
+        if reset:
+            self._required_tools_by_scope[normalized_scope] = set()
         self._active_required_tools = self._required_tools_by_scope.setdefault(
             normalized_scope,
             set(),
@@ -625,24 +521,158 @@ class DynamicToolLoader:
                 missing.append(normalized)
         return activated, missing
 
+    @staticmethod
+    def _search_terms(value: str) -> set[str]:
+        """Return lightweight multilingual lexical terms for hybrid search."""
+        text = str(value or "").casefold().replace("_", " ").replace("-", " ")
+        ascii_terms = {
+            token for token in re.findall(r"[a-z0-9]+", text)
+            if len(token) > 1 and token not in {
+                "the", "and", "for", "with", "from", "into", "this", "that",
+                "tool", "please", "use", "need", "want", "current", "user",
+                "request", "message", "messages",
+            }
+        }
+        chinese_runs = re.findall(r"[\u4e00-\u9fff]+", text)
+        chinese_terms = {
+            run[index:index + 2]
+            for run in chinese_runs
+            for index in range(max(0, len(run) - 1))
+        }
+        return ascii_terms | chinese_terms
+
+    def _rank_candidates(
+        self,
+        query: str,
+        *,
+        limit: int,
+        excluded_names: set[str] | frozenset[str],
+    ) -> list[Tool]:
+        """Hybrid-rank non-core tools without ever falling back to all tools."""
+        all_tools = [
+            item for item in self._registry.list_tools()
+            if item.name not in self._disabled_names
+            and item.name not in excluded_names
+        ]
+        if not all_tools or limit <= 0:
+            return []
+
+        name_to_tool = {item.name: item for item in all_tools}
+        query_text = str(query or "").casefold().strip()
+        query_terms = self._search_terms(query_text)
+        scores: dict[str, float] = {}
+
+        # Lexical matching protects exact tool names and domain vocabulary from
+        # being displaced by semantically similar neighbours.
+        for item in all_tools:
+            normalized_name = item.name.casefold().replace("_", " ").replace("-", " ")
+            searchable = (
+                f"{item.name} {item.category} {item.description}"
+            ).casefold().replace("_", " ").replace("-", " ")
+            item_terms = self._search_terms(searchable)
+            overlap = len(query_terms & item_terms)
+            score = float(overlap * 3)
+            if query_text and query_text in searchable:
+                score += 8.0
+            if normalized_name and normalized_name in query_text:
+                score += 20.0
+            if item.name.casefold() in query_text:
+                score += 24.0
+            if score > 0:
+                scores[item.name] = score
+
+        # Semantic retrieval supplies recall when user language describes a
+        # business goal rather than a technical tool name.
+        table = self._get_lance_table()
+        if table is not None:
+            try:
+                if table.count_rows() > 0:
+                    query_vec = self._get_embedder().embed(query)
+                    rows = table.search(query_vec).limit(
+                        min(
+                            len(all_tools) + len(excluded_names),
+                            max(limit * 4 + len(excluded_names), 12),
+                        )
+                    ).to_list()
+                    semantic_rank = 0
+                    for row in rows:
+                        name = str(row.get("id") or "")
+                        if name not in name_to_tool:
+                            continue
+                        try:
+                            distance = float(row["_distance"])
+                        except (KeyError, TypeError, ValueError):
+                            # A semantic result without an absolute score cannot
+                            # establish relevance. It may still survive through
+                            # the independent lexical score above.
+                            continue
+                        if distance > MAX_SEMANTIC_L2_DISTANCE:
+                            continue
+                        # Reciprocal rank is stable across LanceDB distance
+                        # ordering and combines cleanly with lexical evidence.
+                        scores[name] = scores.get(name, 0.0) + 6.0 / (semantic_rank + 1)
+                        semantic_rank += 1
+            except Exception:
+                logger.debug(
+                    "DynamicToolLoader: semantic tool search failed; using lexical results",
+                    exc_info=True,
+                )
+
+        ranked = sorted(
+            scores.items(),
+            key=lambda item: (-item[1], item[0]),
+        )
+        return [name_to_tool[name] for name, _score in ranked[:limit]]
+
+    def search_and_activate(self, query: str, limit: int = 5) -> dict[str, Any]:
+        """Discover tools after model reasoning and expose them next step."""
+        bounded_limit = max(1, min(int(limit or 5), MAX_TOOL_SEARCH_RESULTS))
+        excluded = _CORE_TOOL_NAMES | self._active_required_tools
+        candidates = self._rank_candidates(
+            query,
+            limit=bounded_limit,
+            excluded_names=excluded,
+        )
+        activated, missing = self.activate_required_tools(
+            [item.name for item in candidates]
+        )
+        return {
+            "query": str(query),
+            "activated": [
+                {
+                    "name": item.name,
+                    "category": item.category,
+                    "description": item.description[:300],
+                }
+                for item in candidates
+                if item.name in activated
+            ],
+            "missing": missing,
+            "instruction": (
+                "Activated tool schemas will be available in the next reasoning step. "
+                "Use a more specific search query if the required tool is not listed."
+            ),
+        }
+
     # ── 搜索 ──────────────────────────────────────────────
 
     def select_tools(self, query: str, top_k: int | None = None, step: int = 0) -> list[Tool]:
         """根据 query 召回相关工具。
 
         返回：核心工具 + top_k 个最相关的动态工具。
-        动态工具数量随 step 增长：base + step * STEP_GROWTH，上限 MAX_DYNAMIC。
+        预取数量始终受 MAX_DYNAMIC 限制，不会随 ReAct 步数自动增长。
+        如果缺少工具，模型应调用 tool_search 主动发现。
 
         Args:
             query: 用户意图文本（原始任务 + 工具返回摘要）
             top_k: 基础动态工具数量，None 使用构造时的默认值
-            step: 当前 ReAct 步数，每步增长 STEP_GROWTH 个名额
+            step: 当前 ReAct 步数，仅用于日志和兼容现有调用签名
 
         Returns:
             选中的工具列表，去重，保持 core 在前
         """
         base = top_k if top_k is not None else self._top_k
-        k = min(base + step * STEP_GROWTH, MAX_DYNAMIC)
+        k = min(max(0, int(base)), MAX_DYNAMIC)
         all_tools = [
             tool for tool in self._registry.list_tools()
             if tool.name not in self._disabled_names
@@ -650,12 +680,9 @@ class DynamicToolLoader:
         if not all_tools:
             return []
 
-        name_to_tool = {t.name: t for t in all_tools}
-
         # 分离核心工具
         core_tools = [t for t in all_tools if t.name in _CORE_TOOL_NAMES]
-        contextual_required = _contextual_required_tool_names(query)
-        required_names = self._active_required_tools | contextual_required
+        required_names = set(self._active_required_tools)
         required_tools = [
             t for t in all_tools
             if t.name in required_names
@@ -663,64 +690,14 @@ class DynamicToolLoader:
         ]
         always_included = _CORE_TOOL_NAMES | required_names
 
-        # LanceDB 搜索
-        table = self._get_lance_table()
-        if table is None or table.count_rows() == 0:
-            return core_tools + required_tools + [
-                t for t in all_tools if t.name not in always_included
-            ]
-
-        try:
-            embedder = self._get_embedder()
-            query_vec = embedder.embed(query)
-        except Exception:
-            logger.debug("DynamicToolLoader: embed query failed, fallback to all tools")
-            return core_tools + required_tools + [
-                t for t in all_tools if t.name not in always_included
-            ]
-
-        try:
-            results = table.search(query_vec).limit(k + len(self._disabled_names)).to_list()
-        except Exception:
-            logger.debug("DynamicToolLoader: LanceDB search failed, fallback to all tools")
-            return core_tools + required_tools + [
-                t for t in all_tools if t.name not in always_included
-            ]
-
-        # 映射回 Tool 对象（排除已包含的核心工具）
-        selected = []
-        seen = set()
-        for r in results:
-            name = r["id"]
-            if name in seen or name in always_included:
-                continue
-            tool = name_to_tool.get(name)
-            if tool:
-                selected.append(tool)
-                seen.add(name)
-
-        # 规则兜底：query 中明确出现工具名 → 强制入选
-        # 避免用户说 "generate_music" 时 embedding 没把它排在 top-K
-        forced: list[Tool] = []
-        for name, tool in name_to_tool.items():
-            if name in seen or name in always_included:
-                continue
-            # 支持原始名 (generate_music) 和 normalize 名 (generate music)
-            normalized = name.replace("_", " ").replace("-", " ")
-            if name in query or normalized in query:
-                forced.append(tool)
-                seen.add(name)
-
-        # Explicitly named tools have priority over semantic results.  The old
-        # append-then-truncate order could silently discard the forced tool
-        # whenever embedding had already filled all K slots.
-        if forced:
-            selected = forced[:k] + selected[:max(0, k - len(forced))]
-        else:
-            selected = selected[:k]
+        selected = self._rank_candidates(
+            query,
+            limit=k,
+            excluded_names=always_included,
+        )
 
         logger.info(
-            "DynamicToolLoader: step growth → %d core + %d dynamic = %d tools (top_k=%d, step=%d)",
+            "DynamicToolLoader: %d fixed + %d prefetched = %d tools (top_k=%d, step=%d)",
             len(core_tools) + len(required_tools),
             len(selected),
             len(core_tools) + len(required_tools) + len(selected),
@@ -748,3 +725,23 @@ class DynamicToolLoader:
                 },
             })
         return result
+
+
+def create_tool_search_tool(loader: DynamicToolLoader) -> Tool:
+    """Create the model-driven discovery entry for deferred tools."""
+
+    @tool(
+        name="tool_search",
+        description=(
+            "Search the Agent's deferred tool catalog when the currently visible tools "
+            "cannot complete the task. Call this after understanding the missing action, "
+            "using a specific capability query such as 'query Workspace customer records' "
+            "or 'send a file through Feishu'. Matching tool schemas are activated for the "
+            "next reasoning step; do not guess an unavailable tool name."
+        ),
+    )
+    def tool_search(query: str, limit: int = 5) -> dict[str, Any]:
+        return loader.search_and_activate(query, limit)
+
+    tool_search.category = "internal"
+    return tool_search

@@ -24,7 +24,15 @@ def _resolve_presentable_file(raw_path: str) -> tuple[Path | None, str]:
     agent_root = Path(get_workspace_dir()).resolve().parent
     candidate = Path(os.path.expanduser(str(raw_path).strip()))
     if not candidate.is_absolute():
-        candidate = Path(get_workspace_dir()) / candidate
+        # ``glob`` exposes named Agent roots as images/..., music/... and
+        # tts/.... Preserve that canonical meaning instead of nesting them
+        # below workspace/. Calls outside Agent Core retain the same behavior.
+        first = candidate.parts[0].lower() if candidate.parts else ""
+        candidate = (
+            agent_root / candidate
+            if first in _PRESENTABLE_DIRS
+            else Path(get_workspace_dir()) / candidate
+        )
     try:
         resolved = candidate.resolve(strict=True)
         relative = resolved.relative_to(agent_root)

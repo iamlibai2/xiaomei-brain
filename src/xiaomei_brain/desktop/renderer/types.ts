@@ -530,6 +530,11 @@ export interface ModelTraceSummary {
   category: string;
   message_count: number;
   tool_count: number;
+  tool_call_count: number;
+  tool_call_names: string[];
+  prompt_preview: string;
+  input_tokens: number;
+  output_tokens: number;
   total_tokens: number;
   latency_ms: number;
   error: string;

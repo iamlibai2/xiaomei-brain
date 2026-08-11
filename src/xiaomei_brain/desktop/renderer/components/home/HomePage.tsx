@@ -241,6 +241,15 @@ export function HomePage({
     return () => window.removeEventListener("xiaomei:right-sidebar-toggle", toggleRightSidebar);
   }, [closeArtifactWorkspace, focusedArtifactKey]);
 
+  useEffect(() => {
+    const closeRightSidebar = () => {
+      if (focusedArtifactKey) closeArtifactWorkspace();
+      setActivityPanelOpen(false);
+    };
+    window.addEventListener("xiaomei:right-sidebar-close", closeRightSidebar);
+    return () => window.removeEventListener("xiaomei:right-sidebar-close", closeRightSidebar);
+  }, [closeArtifactWorkspace, focusedArtifactKey]);
+
   const activateArtifact = useCallback((artifactId: string, sessionId: string) => {
     const artifact = activeArtifacts.find((item) => item.id === artifactId && item.sessionId === sessionId);
     if (!artifact || supportsArtifactPreview(artifact)) {

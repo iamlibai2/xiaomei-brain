@@ -226,6 +226,34 @@ class ModelTraceStore:
         top_level_system = request.get("system")
         response = record.get("response") if isinstance(record.get("response"), dict) else {}
         usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
+        prompt_preview = ""
+        for message in reversed(messages):
+            if not isinstance(message, dict) or message.get("role") != "user":
+                continue
+            content = message.get("content")
+            if isinstance(content, str):
+                prompt_preview = " ".join(content.split())
+            elif isinstance(content, list):
+                text_parts = [
+                    str(part.get("text") or "")
+                    for part in content
+                    if isinstance(part, dict) and part.get("type") in {"text", "input_text"}
+                ]
+                prompt_preview = " ".join(" ".join(text_parts).split())
+            if prompt_preview:
+                prompt_preview = prompt_preview[:160]
+                break
+        response_tool_calls = response.get("tool_calls") if isinstance(response.get("tool_calls"), list) else []
+        tool_call_names: list[str] = []
+        for call in response_tool_calls:
+            if not isinstance(call, dict):
+                continue
+            function = call.get("function") if isinstance(call.get("function"), dict) else {}
+            name = str(function.get("name") or call.get("name") or "").strip()
+            if name and name not in tool_call_names:
+                tool_call_names.append(name)
+        input_tokens = int(usage.get("input_tokens", usage.get("prompt_tokens", 0)) or 0)
+        output_tokens = int(usage.get("output_tokens", usage.get("completion_tokens", 0)) or 0)
         return {
             "id": record.get("id", ""),
             "created_at": float(record.get("created_at") or 0.0),
@@ -240,6 +268,11 @@ class ModelTraceStore:
             "category": record.get("category", "other"),
             "message_count": len(messages) + (1 if top_level_system not in (None, "", []) else 0),
             "tool_count": len(tools),
+            "tool_call_count": len(response_tool_calls),
+            "tool_call_names": tool_call_names[:12],
+            "prompt_preview": prompt_preview,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
             "total_tokens": int(usage.get("total_tokens", 0) or 0),
             "latency_ms": float(record.get("latency_ms") or 0.0),
             "error": record.get("error", ""),

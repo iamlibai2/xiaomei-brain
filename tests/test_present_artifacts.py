@@ -16,7 +16,7 @@ def test_present_artifacts_resolves_final_files_in_agent_storage(tmp_path, monke
     monkeypatch.setattr(file_ops, "_output_base", str(agent_root))
 
     result = present_artifacts_tool.execute(
-        paths=["report.docx", str(preview), "report.docx"],
+        paths=["report.docx", "images/preview.png", "report.docx"],
         message="最终文件",
     )
 

@@ -168,8 +168,9 @@ export function ConversationList({
             </button>
             <button
               className="sidebar-collapsed-agent-btn"
-              onClick={() => { setAddDialogOpen(true); }}
-              title={t("sidebar.addAgent")}
+              onClick={handleNewSession}
+              disabled={!canCreateSession}
+              title={`${t("sidebar.newSession")} (Ctrl+N)`}
             >
               <Icon name="plus" size={16} />
             </button>

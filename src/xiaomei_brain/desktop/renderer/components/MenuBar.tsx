@@ -5,7 +5,6 @@ import { openSettingsCenter } from "./settings/events";
 import { TokenUsageDialog } from "./TokenUsageDialog";
 import { AboutDialog } from "./AboutDialog";
 import { ShortcutDialog } from "./ShortcutDialog";
-import { ModelContextDialog } from "./ModelContextDialog";
 
 interface MenuItem {
   label: string;
@@ -22,7 +21,6 @@ export function MenuBar() {
   const [usageOpen, setUsageOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const [modelContextOpen, setModelContextOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const activeAgent = useCoreStore((state) => (
     state.agents.find((agent) => agent.id === state.activeAgentId)
@@ -68,7 +66,7 @@ export function MenuBar() {
           },
           {
             label: t("menu.modelContext"),
-            action: () => setModelContextOpen(true),
+            action: () => window.dispatchEvent(new CustomEvent("xiaomei:model-context-toggle")),
             disabled: !activeAgent,
           },
         ],
@@ -239,7 +237,6 @@ export function MenuBar() {
       {usageOpen && <TokenUsageDialog onClose={() => setUsageOpen(false)} />}
       {aboutOpen && <AboutDialog onClose={() => setAboutOpen(false)} />}
       {shortcutsOpen && <ShortcutDialog onClose={() => setShortcutsOpen(false)} />}
-      {modelContextOpen && <ModelContextDialog onClose={() => setModelContextOpen(false)} />}
     </>
   );
 }

@@ -8,6 +8,7 @@ const SHORTCUTS = [
   { keys: ["Ctrl", "B"], label: "shortcutUi.leftSidebar" },
   { keys: ["Ctrl", "Shift", "B"], label: "shortcutUi.rightSidebar" },
   { keys: ["Ctrl", "M"], label: "shortcutUi.voice" },
+  { keys: ["Ctrl", "Shift", "M"], label: "shortcutUi.modelContext" },
   { keys: ["Ctrl", "Shift", "F"], label: "shortcutUi.maximize" },
 ] as const;
 

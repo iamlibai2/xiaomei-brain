@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 
 from xiaomei_brain.tools.base import tool
 from xiaomei_brain.media.audio import SpeechAudio
@@ -30,6 +31,24 @@ def _get_throat():
     if body is None:
         return None
     return body.throat
+
+
+def _tts_output_path(filename: str) -> Path:
+    """Choose an Agent-owned TTS output path from the sealed tool context."""
+    requested = Path(str(filename or "").strip()).name or "output.wav"
+    requested = str(Path(requested).with_suffix(".wav"))
+    context = current_tool_execution()
+    if context is not None:
+        for value in context.writable_roots:
+            root = Path(value).expanduser().resolve()
+            if root.name.casefold() == "tts":
+                return root / requested
+        if context.output_root:
+            return Path(context.output_root).expanduser().resolve() / "tts" / requested
+    voice_ref_dir = str(getattr(_provider, "_voice_ref_dir", "") or "")
+    if voice_ref_dir:
+        return Path(voice_ref_dir).expanduser().resolve().parent / "tts" / requested
+    return Path.home() / ".xiaomei-brain" / "global" / "tts" / requested
 
 
 @tool(
@@ -85,13 +104,10 @@ def voxcpm_speak_to_file(text: str, filename: str = "output.wav") -> str:
         return "文本为空。"
 
     try:
-        if not os.path.isabs(filename):
-            output_dir = os.path.expanduser("~/.xiaomei-brain/global/tts")
-            os.makedirs(output_dir, exist_ok=True)
-            filename = os.path.join(output_dir, filename)
-
-        _provider.generate_to_file(text, filename)
-        return f"音频已保存: {filename}"
+        output_path = _tts_output_path(filename)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        _provider.generate_to_file(text, str(output_path))
+        return f"音频已保存: {output_path}"
     except Exception as e:
         logger.error("VoxCPM speak_to_file error: %s", e)
         return f"语音保存失败: {e}"

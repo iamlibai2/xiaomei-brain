@@ -216,14 +216,26 @@ def test_sing_streams_through_embodiment_and_saves_wav(tmp_path: Path, monkeypat
     assert "Desktop" in published[0]
 
 
-def test_play_music_prefers_current_embodiment(monkeypatch) -> None:
+def test_play_music_prefers_current_embodiment(monkeypatch, tmp_path) -> None:
     from xiaomei_brain.plugins.tools.play_music import adapter
 
     played = bytearray()
+    workspace = tmp_path / "workspace"
+    music = tmp_path / "music"
+    workspace.mkdir()
+    music.mkdir()
+    audio_file = music / "song.mp3"
+    audio_file.write_bytes(b"test")
+    resolved_paths = []
+
+    def stream(path):
+        resolved_paths.append(path)
+        return iter((b"\x00\x00\x00\x00",))
+
     monkeypatch.setattr(
         adapter,
         "stream_audio_file_as_pcm",
-        lambda _path: iter((b"\x00\x00\x00\x00",)),
+        stream,
     )
 
     def play(audio):
@@ -237,8 +249,49 @@ def test_play_music_prefers_current_embodiment(monkeypatch) -> None:
         arguments={"audio_path": "song.mp3"},
         artifact_callback=None,
         speech_callback=play,
+        workspace_root=str(workspace),
+        working_directory=str(workspace),
+        writable_roots=(str(music),),
     ):
-        result = adapter.play_music("song.mp3")
+        result = adapter.play_music("music/song.mp3")
 
     assert played == b"\x00\x00\x00\x00"
-    assert result == {"played": "song.mp3", "through": "Desktop"}
+    assert resolved_paths == [str(audio_file.resolve())]
+    assert result == {"played": "music/song.mp3", "through": "Desktop"}
+
+
+def test_voxcpm_file_output_stays_in_current_agent_tts_root(monkeypatch, tmp_path) -> None:
+    from xiaomei_brain.plugins.tools.tts_voxcpm import tts
+
+    generated = []
+
+    class Provider:
+        def generate_to_file(self, text, path):
+            generated.append((text, path))
+            Path(path).write_bytes(b"wav")
+
+    workspace = tmp_path / "workspace"
+    tts_root = tmp_path / "tts"
+    workspace.mkdir()
+    tts_root.mkdir()
+    monkeypatch.setattr(tts, "_provider", Provider())
+
+    with bind_tool_execution(
+        tool_call_id="tts-1",
+        tool_name="vox_speak_to_file",
+        arguments={},
+        artifact_callback=None,
+        workspace_root=str(workspace),
+        working_directory=str(workspace),
+        writable_roots=(str(tts_root),),
+    ):
+        result = tts.voxcpm_speak_to_file_tool.execute(
+            text="hello",
+            filename=str(tmp_path / "outside" / "voice.mp3"),
+        )
+
+    expected = tts_root / "voice.wav"
+    assert expected.is_file()
+    assert generated == [("hello", str(expected))]
+    assert str(expected) in result
+    assert not (tmp_path / "outside" / "voice.mp3").exists()

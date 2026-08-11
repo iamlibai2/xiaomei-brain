@@ -27,6 +27,13 @@ logger = logging.getLogger(__name__)
 
 _GROUP_OBSERVATION_LIMIT = 50
 _GROUP_OBSERVATION_WINDOW_SECONDS = 30 * 60
+_TOOL_DISCOVERY_PROMPT = """<tool_discovery>
+Only the universal core tools and a small set of likely tools are visible initially.
+If the current tools cannot perform a required action, call tool_search with a
+specific description of that missing action. The discovered tool schemas become
+available on the next reasoning step. Do not claim a capability is unavailable
+before searching for it.
+</tool_discovery>"""
 
 
 def render_execution_context(agent: Any, user_input: str) -> str:
@@ -65,7 +72,7 @@ def prepare_execution_selection(
 
     dynamic_loader = getattr(agent, "_dynamic_loader", None)
     if dynamic_loader:
-        dynamic_loader.begin_run(agent.session_id)
+        dynamic_loader.begin_run(agent.session_id, reset=True)
 
     required_skills: list[str] = []
     capability_registry = getattr(agent, "_capability_registry", None)
@@ -87,7 +94,13 @@ def prepare_execution_selection(
             required_names=required_skills,
         )
 
-    return append_system_context(messages, skill_prompt), selection_query
+    execution_prompts = [skill_prompt]
+    if dynamic_loader:
+        execution_prompts.append(_TOOL_DISCOVERY_PROMPT)
+    return append_system_context(
+        messages,
+        "\n\n".join(part for part in execution_prompts if part),
+    ), selection_query
 
 
 def render_step_selection_context(

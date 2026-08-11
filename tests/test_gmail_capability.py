@@ -163,6 +163,30 @@ def test_gmail_tools_take_person_from_sealed_execution_context(tmp_path, monkeyp
     assert result == {"query": "is:unread", "page_size": 5}
 
 
+def test_gmail_attachment_paths_accept_named_agent_roots(tmp_path):
+    from xiaomei_brain.plugins.runtimes.gmail_workspace.tools import _attachment_paths
+
+    workspace = tmp_path / "workspace"
+    music = tmp_path / "music"
+    workspace.mkdir()
+    music.mkdir()
+    song = music / "song.mp3"
+    song.write_bytes(b"music")
+
+    with bind_tool_execution(
+        tool_call_id="call_attachment",
+        tool_name="send_gmail",
+        arguments={},
+        artifact_callback=None,
+        workspace_root=str(workspace),
+        working_directory=str(workspace),
+        writable_roots=(str(music),),
+    ):
+        paths = _attachment_paths(["music/song.mp3"])
+
+    assert paths == [song.resolve()]
+
+
 def _wait(runtime: GmailRuntime, person_id: str, job_id: str):
     deadline = time.time() + 2
     while time.time() < deadline:

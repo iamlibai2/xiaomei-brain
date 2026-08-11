@@ -6,11 +6,13 @@ import { UnifiedSearchDialog } from "./search/UnifiedSearchDialog";
 import { registerEmbodimentCommand } from "../embodiment/command-registry";
 import { WorkspacesPage } from "./workspaces/WorkspacesPage";
 import { useCoreStore } from "../store";
+import { ModelContextDialog } from "./ModelContextDialog";
 
 export function MainShell() {
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
   const [surface, setSurface] = useState<"chat" | "workspaces">("chat");
   const [requestedWorkspaceId, setRequestedWorkspaceId] = useState("");
+  const [modelContextOpen, setModelContextOpen] = useState(false);
   const activeAgentId = useCoreStore((state) => state.activeAgentId || "");
   const newSession = useCoreStore((state) => state.newSession);
 
@@ -69,6 +71,30 @@ export function MainShell() {
   }), [activeAgentId]);
 
   useEffect(() => {
+    const openComparison = () => {
+      setSurface("chat");
+      setModelContextOpen(true);
+      window.dispatchEvent(new CustomEvent("xiaomei:right-sidebar-close"));
+    };
+    const toggleComparison = () => setModelContextOpen((open) => {
+      if (!open) {
+        setSurface("chat");
+        window.dispatchEvent(new CustomEvent("xiaomei:right-sidebar-close"));
+      }
+      return !open;
+    });
+    const closeComparison = () => setModelContextOpen(false);
+    window.addEventListener("xiaomei:model-context-open", openComparison);
+    window.addEventListener("xiaomei:model-context-toggle", toggleComparison);
+    window.addEventListener("xiaomei:model-context-close", closeComparison);
+    return () => {
+      window.removeEventListener("xiaomei:model-context-open", openComparison);
+      window.removeEventListener("xiaomei:model-context-toggle", toggleComparison);
+      window.removeEventListener("xiaomei:model-context-close", closeComparison);
+    };
+  }, []);
+
+  useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
       if (event.repeat || event.isComposing || event.altKey || !(event.ctrlKey || event.metaKey)) return;
       if (event.key.toLowerCase() === "n" && !event.shiftKey) {
@@ -86,6 +112,12 @@ export function MainShell() {
         }));
         return;
       }
+      if (event.key.toLowerCase() === "m" && event.shiftKey) {
+        if (document.querySelector('[aria-modal="true"]')) return;
+        event.preventDefault();
+        window.dispatchEvent(new CustomEvent("xiaomei:model-context-toggle"));
+        return;
+      }
       if (event.key.toLowerCase() !== "b") return;
       event.preventDefault();
       if (event.shiftKey) {
@@ -99,14 +131,15 @@ export function MainShell() {
   }, [newSession]);
 
   return (
-    <div className="main-shell">
+    <div className={`main-shell${modelContextOpen ? " has-model-context" : ""}`}>
       <ConversationList
-        collapsed={leftSidebarCollapsed}
+        collapsed={leftSidebarCollapsed || modelContextOpen}
         onCollapsedChange={setLeftSidebarCollapsed}
         surface={surface}
         onOpenChat={() => setSurface("chat")}
         onOpenWorkspaces={() => setSurface("workspaces")}
       />
+      <div className="main-shell-content">
       {surface === "workspaces" ? (
         <WorkspacesPage
           preferredWorkspaceId={requestedWorkspaceId}
@@ -115,10 +148,16 @@ export function MainShell() {
         />
       ) : (
         <HomePage
-          leftSidebarCollapsed={leftSidebarCollapsed}
+          leftSidebarCollapsed={leftSidebarCollapsed || modelContextOpen}
           onLeftSidebarCollapsedChange={setLeftSidebarCollapsed}
         />
       )}
+      {modelContextOpen && (
+        <div className="model-context-dock">
+          <ModelContextDialog embedded onClose={() => setModelContextOpen(false)} />
+        </div>
+      )}
+      </div>
       <SettingsCenter />
       <UnifiedSearchDialog />
     </div>

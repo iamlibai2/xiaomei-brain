@@ -313,9 +313,17 @@
       "title": "模型上下文",
       "subtitle": "查看实际发送给模型的系统提示词、消息、工具调用、工具结果与工具说明",
       "currentAgent": "当前 Agent：{{name}}",
+      "currentAgentSession": "当前 Agent：{{name}} · Session：{{session}}",
+      "currentSessionTokens": "累计 {{value}} Tokens",
       "currentSessionOnly": "仅当前会话",
       "allCategories": "全部来源",
       "recordCount": "{{count}} 条请求",
+      "turnAndRequestCount": "{{turns}} 轮 · {{requests}} 次 LLM 调用",
+      "noPromptPreview": "内部模型请求",
+      "requestSteps": "{{count}} 个步骤",
+      "calledTools": "调用 {{names}}",
+      "directResponse": "回复",
+      "stepTitle": "本轮第 {{step}} / {{total}} 次模型请求",
       "empty": "还没有模型请求记录。重启 Agent 后的新请求会出现在这里。",
       "selectHint": "选择一条模型请求查看完整上下文",
       "loadFailed": "无法读取模型上下文",
@@ -330,6 +338,35 @@
       "messages": "消息序列",
       "toolDefinitions": "工具说明",
       "response": "模型响应",
+      "inputTokens": "输入 Token",
+      "outputTokens": "输出 Token",
+      "availableTools": "可用工具",
+      "toolCalls": "工具调用",
+      "latency": "耗时",
+      "error": "请求错误",
+      "searchMessages": "搜索消息内容",
+      "searchTools": "搜索工具",
+      "noMatches": "没有匹配的内容",
+      "noToolDescription": "暂无工具说明",
+      "requiredParameters": "{{count}} 个必填参数",
+      "emptyContent": "（空内容）",
+      "messageMetadata": "元数据与工具调用",
+      "messageCount": "{{count}} 条",
+      "toolDefinitionCount": "{{count}} 个",
+      "tab": {
+        "overview": "概览",
+        "messages": "消息",
+        "tools": "工具说明",
+        "response": "响应",
+        "raw": "原始数据"
+      },
+      "role": {
+        "all": "全部",
+        "system": "System",
+        "user": "User",
+        "assistant": "Assistant",
+        "tool": "Tool"
+      },
       "tokenComposition": "输入 Token 构成",
       "tokenEstimateHintExact": "分类为本地估算，并按 Provider 返回的精确输入总量校准",
       "tokenEstimateHintLocal": "Provider 未返回用量，本次总量和分类均为本地估算",
@@ -780,7 +817,7 @@
 ,    "systemUi": { "title": "系统设置", "subtitle": "这些设置只影响当前 Desktop，不会修改任何 Agent。", "behavior": "启动与窗口", "openAtLogin": "开机启动", "openAtLoginHint": "登录 Windows 后自动启动 xiaomei-brain Desktop。", "unavailable": "当前系统不可用", "closeBehavior": "关闭窗口时", "closeHint": "选择点击关闭按钮后退出 Desktop，或仅最小化窗口。", "exit": "退出 Desktop", "minimize": "最小化窗口", "experience": "界面与通知", "notifications": "Windows 通知", "notificationsHint": "Desktop 最小化或失焦时，显示 Agent 的新消息通知。", "messageSounds": "消息提示音", "messageSoundsHint": "Agent 完成回复时播放一次轻提示音。", "messageSoundNone": "无", "messageSoundSoft": "柔和双音", "messageSoundCrisp": "清脆单音", "messageSoundBubble": "气泡音", "language": "语言", "languageHint": "切换 Desktop 界面语言。", "rightSidebar": "默认打开右侧栏", "rightSidebarHint": "进入会话时默认展示 Agent 的动态和状态。", "update": "自动更新", "updateHint": "当前版本 v{{version}}。安装版启动后会自动检查一次更新。", "updateLoading": "正在读取更新状态…", "updateDevelopment": "开发版不连接更新服务，请在 NSIS 安装版中验证。", "updateChecking": "正在检查新版本…", "updateAvailable": "发现新版本 v{{version}}，正在后台下载。", "updateDownloading": "正在下载更新", "updateDownloadingPercent": "正在下载更新 {{percent}}%", "updateDownloaded": "v{{version}} 已下载，重启 Desktop 后安装。", "updateCurrent": "当前已是最新版本 v{{version}}。", "updateError": "检查更新失败", "updatePackagedOnly": "仅安装版", "updateDownload": "下载更新", "updateRestart": "重启并安装", "updateCheck": "检查更新", "updateAvailableTitle": "发现新版本", "updateCurrentVersion": "当前版本", "updateAvailableVersion": "可升级版本", "updatePreparing": "正在准备后台下载…", "updateUpgrade": "进行升级", "updateNotes": "版本说明", "updateState": { "checking": "检查中", "downloading": "下载中" }, "directories": "目录与诊断", "configDirectory": "Desktop 配置目录", "logDirectory": "Desktop 日志目录", "open": "打开目录", "viewLog": "查看日志", "hideLog": "收起日志", "emptyLog": "日志文件目前为空。", "saved": "设置已保存", "failed": "保存设置失败", "loading": "正在读取 Desktop 设置…", "chinese": "简体中文" }
     ,"fontUi": { "title": "消息字体", "hint": "只改变 Agent 回复的显示字体，不影响输入框和设置界面。", "default": "默认", "pianpian": "翩翩体-简", "wanweiwei": "我爱万伟伟手写体", "honglei": "鸿雷拙书简体", "ozcaramel": "OZ焦糖体" }
     ,"appearanceUi": { "title": "外观", "description": "选择 Desktop 的显示外观", "light": "浅色", "dark": "深色", "system": "跟随系统", "accountSettings": "账户管理", "lockDesktop": "锁屏", "signOut": "退出当前用户", "close": "关闭" }
-    ,"shortcutUi": { "title": "快捷键", "description": "使用键盘快速完成常用操作。", "search": "统一搜索", "leftSidebar": "打开或关闭左侧栏", "rightSidebar": "打开或关闭右侧栏", "voice": "开始或停止实时语音", "maximize": "最大化或还原窗口" }
+    ,"shortcutUi": { "title": "快捷键", "description": "使用键盘快速完成常用操作。", "search": "统一搜索", "leftSidebar": "打开或关闭左侧栏", "rightSidebar": "打开或关闭右侧栏", "voice": "开始或停止实时语音", "modelContext": "打开或关闭模型上下文对照", "maximize": "最大化或还原窗口" }
     ,"visualize": { "loading": "正在加载可视化…", "tooLarge": "可视化内容超过 1 MB，无法在对话中运行", "runtimeError": "可视化运行失败", "expand": "扩大中央区域", "fullscreen": "全屏显示", "exitFullscreen": "退出全屏", "previewTitle": "可视化：{{name}}" }
     ,"stageUi": { "title": "演示台", "loading": "正在准备演示内容…", "emptyArtifact": "产物内容为空，无法展示", "unsupported": "此文件可作为演示资料，但当前还没有内嵌演示渲染器。", "previous": "上一项", "next": "下一项" }
     ,"workspaceUi": { "title": "工作台", "subtitle": "由 Agent 根据真实数据生成并持续调整", "backToChat": "返回对话", "saved": "已保存的工作台", "emptyList": "还没有工作台。可以在对话中上传数据并让 Agent 创建。", "emptyHint": "上传一份 CSV 或 Excel，然后对 Agent 说：根据这份数据创建一个工作台。", "loading": "正在读取工作台…", "refresh": "刷新", "refreshing": "刷新中…", "notConnected": "Agent 当前未连接，无法刷新工作台。", "modifyHint": "继续在对话中告诉 Agent 如何调整“{{name}}”", "openConversation": "去对话中调整", "businessFacts": "业务事实", "collectionsCount": "{{count}} 类对象", "recordsCount": "{{count}} 条记录", "eventsCount": "{{count}} 个事件", "pendingObservations": "{{count}} 条待确认", "sourcesCount": "{{count}} 个来源", "assetsCount": "{{count}} 份资料", "noRecords": "还没有业务记录", "businessEvidence": "最近业务依据", "businessResources": "来源与资料", "conversationSource": "来自对话", "unknownSource": "来源未标记", "assetNature_working": "工作中", "assetNature_evidence": "已留证", "assetNature_external": "外部", "observationStatus_unprocessed": "待理解", "observationStatus_resolved": "已形成事实", "recentEvents": "最近发生", "establishedPractices": "已经形成的业务做法", "emergingPractices": "逐渐形成的业务做法", "actionStatus_active": "已形成", "actionStatus_observed": "正在形成", "actionStatus_candidate": "候选做法", "actionRun_running": "执行中", "actionRun_completed": "最近执行成功", "actionRun_failed": "最近执行失败", "evidenceCount": "来自 {{count}} 次实践", "repeatedlyUpdates": "{{collection}} · 更新{{fields}}", "businessFields": "业务字段", "observedTurns": "{{count}} 次独立操作" }

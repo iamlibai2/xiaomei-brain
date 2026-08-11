@@ -39,11 +39,23 @@ def test_trace_store_records_request_response_and_filters(tmp_path) -> None:
         "category": "conversation",
         "stream": True,
         "request": {
-            "messages": [{"role": "system", "content": "You are an Agent."}],
+            "messages": [
+                {"role": "system", "content": "You are an Agent."},
+                {"role": "user", "content": "  Analyze   this report.  "},
+                {"role": "assistant", "tool_calls": [{"function": {"name": "read"}}]},
+            ],
             "tools": [{"type": "function", "function": {"name": "read"}}],
         },
     })
-    store.complete(trace_id, response={"content": "ok", "usage": {"total_tokens": 12}}, latency_ms=42)
+    store.complete(trace_id, response={
+        "content": "ok",
+        "tool_calls": [{"name": "read", "arguments": "{}"}],
+        "usage": {
+            "input_tokens": 9,
+            "output_tokens": 3,
+            "total_tokens": 12,
+        },
+    }, latency_ms=42)
 
     record = store.get(trace_id)
     assert record is not None
@@ -52,6 +64,11 @@ def test_trace_store_records_request_response_and_filters(tmp_path) -> None:
     listed = store.list_records(session_id="session-a")
     assert listed["total"] == 1
     assert listed["items"][0]["tool_count"] == 1
+    assert listed["items"][0]["tool_call_count"] == 1
+    assert listed["items"][0]["tool_call_names"] == ["read"]
+    assert listed["items"][0]["prompt_preview"] == "Analyze this report."
+    assert listed["items"][0]["input_tokens"] == 9
+    assert listed["items"][0]["output_tokens"] == 3
     assert listed["items"][0]["total_tokens"] == 12
     assert [event[0] for event in events] == ["model.trace.created", "model.trace.updated"]
 

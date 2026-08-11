@@ -10,6 +10,7 @@ from xiaomei_brain.tools.dynamic import (
     DynamicToolLoader,
     build_step_tool_selection_context,
     build_tool_selection_context,
+    create_tool_search_tool,
     set_active_loader,
     notify_tools_changed,
     DEFAULT_TOP_K,
@@ -81,6 +82,21 @@ def test_tool_selection_context_uses_only_latest_three_user_messages():
     assert "制作季度报告" in context
     assert "输出 Word 文档" in context
     assert "继续" in context
+
+
+def test_tool_selection_context_removes_transport_timestamps_from_user_intent():
+    messages = [
+        {"role": "user", "content": "距上条消息 2分钟 hi"},
+        {"role": "user", "content": "[08-11 23:31] hello"},
+    ]
+
+    context = build_tool_selection_context(messages)
+
+    assert "距上条消息" not in context
+    assert "2分钟" not in context
+    assert "08-11 23:31" not in context
+    assert "hi" in context
+    assert "hello" in context
 
 
 def test_tool_selection_context_is_bounded():
@@ -160,7 +176,7 @@ def test_execution_renderer_injects_selected_skill():
     assert "document-writing" in prepared[0]["content"]
 
 
-def test_focused_workspace_authoring_kit_is_deterministic(monkeypatch):
+def test_focused_workspace_does_not_expand_a_keyword_rule_kit(monkeypatch):
     tool_names = (
         "get_current_workspace",
         "define_collection",
@@ -200,17 +216,10 @@ def test_focused_workspace_authoring_kit_is_deterministic(monkeypatch):
     )
     selected = {tool.name for tool in loader.select_tools(query, top_k=1)}
 
-    assert selected.issuperset(set(tool_names) - {"unrelated_tool"})
-    assert "unrelated_tool" not in selected
-
-    without_focus = {
-        tool.name
-        for tool in loader.select_tools(
-            "Current user request:\n你先按你自己理解建",
-            top_k=1,
-        )
-    }
-    assert "define_collection" not in without_focus
+    # Runtime context improves retrieval, but no longer injects an entire
+    # authoring kit before the model has decided what operation is missing.
+    assert len(selected) <= 1
+    assert not selected.issuperset(set(tool_names) - {"unrelated_tool"})
 
 
 def test_tool_embedding_fingerprint_includes_parameter_schema():
@@ -327,12 +336,11 @@ def test_core_tools_first():
     tools = loader.select_tools("search the web", top_k=2)
     names = [t.name for t in tools]
     # Core tools must come first
-    core = ["shell", "send_message"]
+    core = ["shell"]
     assert names[:len(core)] == core, f"Expected core tools first, got {names}"
 
 
-def test_assignment_continuation_tools_are_always_available():
-    """Short follow-ups still need access to existing Assignment work."""
+def test_assignment_tools_are_deferred_instead_of_permanent_core():
     reg = _registry_with_tools(
         ("shell", "Run shell commands"),
         ("list_assignments", "List earlier assignments"),
@@ -345,13 +353,13 @@ def test_assignment_continuation_tools_are_always_available():
 
     names = [tool.name for tool in loader.select_tools("再增加一些代码结构分析", top_k=1)]
 
-    assert "list_assignments" in names
-    assert "revise_assignment" in names
-    assert "start_assignment" in names
+    assignment_names = {
+        "list_assignments", "revise_assignment", "start_assignment",
+    }
+    assert len(assignment_names & set(names)) <= 1
 
 
-def test_skill_required_tools_are_scoped_to_conversation(monkeypatch):
-    """A Skill remains active on follow-ups without leaking to other sessions."""
+def test_skill_required_tools_are_scoped_to_one_run(monkeypatch):
     reg = _registry_with_tools(
         ("shell", "Run shell commands"),
         ("write_document", "Create or edit a document"),
@@ -394,8 +402,12 @@ def test_skill_required_tools_are_scoped_to_conversation(monkeypatch):
     names = [tool.name for tool in loader.select_tools("make a report")]
     assert "write_document" in names
 
+    loader.begin_run("session-a", reset=True)
+    names = [tool.name for tool in loader.select_tools("unrelated request")]
+    assert "write_document" not in names
 
-def test_workspace_tabular_import_is_required_by_attachment_and_destination(monkeypatch):
+
+def test_tool_search_activates_deferred_workspace_import(monkeypatch):
     reg = _registry_with_tools(
         ("shell", "Run shell commands"),
         ("import_tabular_data", "Import a spreadsheet into a Workspace"),
@@ -424,18 +436,14 @@ def test_workspace_tabular_import_is_required_by_attachment_and_destination(monk
         "Current user request:\n把这份表导入刚才的 Workspace，作为持续经营数据\n\n"
         "Current attachments:\n- file, text/csv, 客户经营数据.csv"
     )
-    names = [tool.name for tool in loader.select_tools(query, top_k=1)]
+    loader.begin_run("session-a", reset=True)
+    result = loader.search_and_activate(query, limit=1)
+    assert result["activated"][0]["name"] == "import_tabular_data"
+    names = [tool.name for tool in loader.select_tools("continue", top_k=0)]
     assert "import_tabular_data" in names
 
-    analysis_only = [
-        tool.name for tool in loader.select_tools(
-            "分析这份 CSV 的缺失值", top_k=1,
-        )
-    ]
-    assert "import_tabular_data" not in analysis_only
 
-
-def test_customer_business_followup_requires_workspace_tools(monkeypatch):
+def test_model_directed_search_can_activate_business_tools(monkeypatch):
     reg = _registry_with_tools(
         ("shell", "Run shell commands"),
         ("get_current_workspace", "Inspect focused Workspace"),
@@ -467,48 +475,14 @@ def test_customer_business_followup_requires_workspace_tools(monkeypatch):
     monkeypatch.setattr(loader, "_get_lance_table", lambda: _Table())
     monkeypatch.setattr(loader._shared, "embed", lambda _query: [0.0])
 
-    names = [
-        tool.name for tool in loader.select_tools(
-            "把甲公司推进到合同阶段",
-            top_k=1,
-        )
-    ]
-    assert "get_current_workspace" in names
-    assert "query_business_records" in names
-    assert "upsert_business_record" in names
-    assert "record_observation" in names
-    assert "list_business_actions" in names
-    assert "execute_business_action" in names
-
-    query_names = [
-        tool.name for tool in loader.select_tools(
-            "统计当前有多少客户",
-            top_k=1,
-        )
-    ]
-    assert "get_current_workspace" in query_names
-    assert "query_business_records" in query_names
-    assert "record_observation" not in query_names
-
-    crystallize_names = [
-        tool.name for tool in loader.select_tools(
-            "把这个候选业务做法稳定下来",
-            top_k=1,
-        )
-    ]
-    assert "get_current_workspace" in crystallize_names
-    assert "list_business_actions" in crystallize_names
-    assert "establish_business_action" in crystallize_names
-
-    validation_names = [
-        tool.name for tool in loader.select_tools(
-            "检查推进客户阶段为什么被认为是稳定 Action，做历史案例只读验证",
-            top_k=1,
-        )
-    ]
-    assert "get_current_workspace" in validation_names
-    assert "list_business_actions" in validation_names
-    assert "validate_business_action_candidate" in validation_names
+    loader.begin_run("session-a", reset=True)
+    result = loader.search_and_activate(
+        "query and update Workspace customer business records",
+        limit=5,
+    )
+    activated = {item["name"] for item in result["activated"]}
+    assert "query_business_records" in activated
+    assert "upsert_business_record" in activated
 
 
 # ── Dynamic tool selection ─────────────────────────────────────
@@ -598,8 +572,7 @@ def test_notify_tools_changed_triggers_rebuild():
 # ── Context accumulation simulation ────────────────────────────
 
 
-def test_context_accumulation_improves_selection():
-    """Simulate per-step context accumulation like stream()/react_nodb()."""
+def test_model_can_refine_tool_search_between_steps():
     reg = _registry_with_tools(
         ("shell", "Run shell commands"),
         ("send_message", "Send a message"),
@@ -611,24 +584,17 @@ def test_context_accumulation_improves_selection():
     loader = DynamicToolLoader(reg)
     loader.build_index()
 
-    # Step 1: initial task
-    ctx = "open baidu and search for python"
-    tools1 = loader.select_tools(ctx, top_k=2)
-    dynamic1 = [t.name for t in tools1 if t.name not in
-                ("shell", "send_message", "read_file", "write_file", "edit_file",
-                 "check_inbox", "memory_search", "memory_add", "memory_list", "dag")]
-    assert "navigate_page" in dynamic1
+    loader.begin_run("session-a", reset=True)
+    first = loader.search_and_activate("navigate browser to a URL", limit=1)
+    assert first["activated"][0]["name"] == "navigate_page"
 
-    # Step 2: after navigation, need to fill form
-    ctx += "\nnavigate_page: Navigated to baidu.com, page loaded with search form"
-    tools2 = loader.select_tools(ctx, top_k=2)
-    dynamic2 = [t.name for t in tools2 if t.name not in
-                ("shell", "send_message", "read_file", "write_file", "edit_file",
-                 "check_inbox", "memory_search", "memory_add", "memory_list", "dag")]
-    # fill_form or click_button should now be ranked higher
-    browser_actions = {"fill_form", "click_button", "navigate_page"}
-    assert set(dynamic2) & browser_actions, \
-        f"Step 2 should surface form/click tools, got {dynamic2}"
+    second = loader.search_and_activate("fill a form field on the browser page", limit=2)
+    assert "fill_form" in {item["name"] for item in second["activated"]}
+
+    visible = {
+        item.name for item in loader.select_tools("continue", top_k=0)
+    }
+    assert {"navigate_page", "fill_form"}.issubset(visible)
 
 
 # ── OpenAI format ──────────────────────────────────────────────
@@ -701,7 +667,10 @@ def test_explicit_tool_name_is_not_truncated_by_full_embedding_results(monkeypat
 
         @staticmethod
         def to_list():
-            return [{"id": "tool_a"}, {"id": "tool_b"}]
+            return [
+                {"id": "tool_a", "_distance": 0.40},
+                {"id": "tool_b", "_distance": 0.50},
+            ]
 
     monkeypatch.setattr(loader, "_get_lance_table", lambda: _Table())
     monkeypatch.setattr(loader._get_embedder(), "embed", lambda _query: [0.0])
@@ -709,6 +678,131 @@ def test_explicit_tool_name_is_not_truncated_by_full_embedding_results(monkeypat
     selected = loader.select_tools("please run forced_tool", top_k=2)
 
     assert [tool.name for tool in selected] == ["forced_tool", "tool_a"]
+
+
+def test_semantic_prefetch_rejects_nearest_but_irrelevant_tools(monkeypatch):
+    reg = _registry_with_tools(
+        ("schedule_alarm", "Schedule a reminder or alarm"),
+        ("check_inbox", "Check unread inbox messages"),
+    )
+    loader = DynamicToolLoader(reg, top_k=5)
+
+    class _Table:
+        @staticmethod
+        def count_rows():
+            return 2
+
+        @staticmethod
+        def search(_query):
+            return _Table()
+
+        @staticmethod
+        def limit(_count):
+            return _Table()
+
+        @staticmethod
+        def to_list():
+            return [
+                {"id": "schedule_alarm", "_distance": 0.90},
+                {"id": "check_inbox", "_distance": 0.94},
+            ]
+
+    monkeypatch.setattr(loader, "_get_lance_table", lambda: _Table())
+    monkeypatch.setattr(loader._get_embedder(), "embed", lambda _query: [0.0])
+
+    assert loader.select_tools("hi") == []
+
+
+def test_transport_scaffolding_does_not_create_lexical_tool_relevance(monkeypatch):
+    reg = _registry_with_tools(
+        ("schedule_alarm", "Schedule an action for the current user in a few minutes"),
+        ("check_inbox", "Check the current user's new messages"),
+    )
+    loader = DynamicToolLoader(reg, top_k=5)
+
+    class _Table:
+        @staticmethod
+        def count_rows():
+            return 2
+
+        @staticmethod
+        def search(_query):
+            return _Table()
+
+        @staticmethod
+        def limit(_count):
+            return _Table()
+
+        @staticmethod
+        def to_list():
+            return [
+                {"id": "schedule_alarm", "_distance": 0.90},
+                {"id": "check_inbox", "_distance": 0.94},
+            ]
+
+    monkeypatch.setattr(loader, "_get_lance_table", lambda: _Table())
+    monkeypatch.setattr(loader._get_embedder(), "embed", lambda _query: [0.0])
+
+    query = build_tool_selection_context([
+        {"role": "user", "content": "距上条消息 2分钟 hi"},
+    ])
+    assert loader.select_tools(query) == []
+
+
+def test_semantic_prefetch_accepts_absolutely_relevant_tool(monkeypatch):
+    reg = _registry_with_tools(
+        ("schedule_alarm", "Schedule a reminder or alarm"),
+        ("check_inbox", "Check unread inbox messages"),
+    )
+    loader = DynamicToolLoader(reg, top_k=1)
+
+    class _Table:
+        @staticmethod
+        def count_rows():
+            return 2
+
+        @staticmethod
+        def search(_query):
+            return _Table()
+
+        @staticmethod
+        def limit(_count):
+            return _Table()
+
+        @staticmethod
+        def to_list():
+            return [
+                {"id": "schedule_alarm", "_distance": 0.72},
+                {"id": "check_inbox", "_distance": 0.93},
+            ]
+
+    monkeypatch.setattr(loader, "_get_lance_table", lambda: _Table())
+    monkeypatch.setattr(loader._get_embedder(), "embed", lambda _query: [0.0])
+
+    assert [tool.name for tool in loader.select_tools("remind me later")] == [
+        "schedule_alarm"
+    ]
+
+
+def test_tool_search_activates_deferred_schema_for_next_step(monkeypatch):
+    reg = _registry_with_tools(
+        ("shell", "Run shell commands"),
+        ("workspace_record_query", "Query business records in a Workspace"),
+    )
+    loader = DynamicToolLoader(reg, top_k=0)
+    loader.build_index()
+    monkeypatch.setattr(loader, "_get_lance_table", lambda: None)
+
+    search_tool = create_tool_search_tool(loader)
+    reg.register(search_tool)
+
+    before = [tool.name for tool in loader.select_tools("inspect customers", top_k=0)]
+    result = search_tool.execute(query="query Workspace business records", limit=3)
+    after = [tool.name for tool in loader.select_tools("inspect customers", top_k=0)]
+
+    assert before == ["shell", "tool_search"]
+    assert [item["name"] for item in result["activated"]] == ["workspace_record_query"]
+    assert after == ["shell", "tool_search", "workspace_record_query"]
 
 
 # ── Fallback when _dynamic_loader is None ──────────────────────
@@ -728,9 +822,9 @@ def test_no_loader_returns_all():
 # ── Step growth ────────────────────────────────────────────────
 
 
-def test_step_growth():
-    """Dynamic tool slots grow by STEP_GROWTH each step, capped at MAX_DYNAMIC."""
-    from xiaomei_brain.tools.dynamic import STEP_GROWTH, MAX_DYNAMIC
+def test_prefetch_does_not_grow_across_steps():
+    """Later ReAct steps discover tools explicitly instead of growing schemas."""
+    from xiaomei_brain.tools.dynamic import MAX_DYNAMIC
 
     # Create many tools so we're not limited by registry size
     tools = [("shell", "Run shell commands"), ("send_message", "Send a message")]
@@ -747,16 +841,9 @@ def test_step_growth():
                     ("shell", "send_message", "read_file", "write_file", "edit_file",
                      "check_inbox", "memory_search", "memory_add", "memory_list", "dag")])
 
-    # Step 0: base top_k
-    assert dynamic_count(10, step=0) == 10
-
-    # Step 1: base + 3
-    assert dynamic_count(10, step=1) == 13
-
-    # Step 5: base + 15 = 25
-    assert dynamic_count(10, step=5) == 25
-
-    # Step 20: base + 60 = 70, but capped at MAX_DYNAMIC=50
+    assert dynamic_count(10, step=0) == MAX_DYNAMIC
+    assert dynamic_count(10, step=1) == MAX_DYNAMIC
+    assert dynamic_count(10, step=5) == MAX_DYNAMIC
     assert dynamic_count(10, step=20) == MAX_DYNAMIC
 
 

@@ -199,7 +199,7 @@ class CapabilityRegistry:
         *,
         scope_id: str,
         person_id: str = "",
-        limit: int = 3,
+        limit: int = 1,
     ) -> list[str]:
         """Pin Capability and Skill dependencies for one scoped ReAct run."""
         tool_names, skill_names = self.select_execution_components(

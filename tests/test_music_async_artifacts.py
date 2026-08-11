@@ -50,3 +50,21 @@ def test_background_music_keeps_original_artifact_callback(
     assert "- 文件:" in artifact_result
     assert str(tmp_path / "music" / "song.mp3") in artifact_result
     assert (tmp_path / "music" / "song.mp3").read_bytes() == b"fake music"
+
+
+def test_music_ignores_model_supplied_output_directory(tmp_path: Path, monkeypatch) -> None:
+    completed = threading.Event()
+    monkeypatch.setattr(music_tool, "_music_provider", _FakeMusicProvider())
+    monkeypatch.setattr(music_tool, "_output_base", str(tmp_path / "agent"))
+    monkeypatch.setattr(music_tool, "_on_generation_complete", lambda *_args: completed.set())
+
+    result = music_tool.music_generate_tool.execute(
+        prompt="calm",
+        lyrics="[verse] hello",
+        filename=str(tmp_path / "outside" / "song.mp3"),
+    )
+
+    assert "后台" in result
+    assert completed.wait(timeout=2)
+    assert (tmp_path / "agent" / "music" / "song.mp3").is_file()
+    assert not (tmp_path / "outside" / "song.mp3").exists()

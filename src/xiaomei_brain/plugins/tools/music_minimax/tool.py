@@ -182,11 +182,14 @@ def music_generate(
     if not is_instrumental and not lyrics.strip() and not lyrics_optimizer:
         return "歌曲需要提供歌词，或启用自动写词；生成纯音乐请设置 is_instrumental=true。"
 
-    # If filename is relative, save to output dir
-    if not os.path.isabs(filename):
-        output_dir = _get_output_dir()
-        os.makedirs(output_dir, exist_ok=True)
-        filename = os.path.join(output_dir, os.path.basename(filename))
+    # The model chooses a display filename, never a host destination.  Keeping
+    # output ownership here prevents absolute paths from escaping this Agent.
+    requested_name = os.path.basename(str(filename or "").strip())
+    if not requested_name or not Path(requested_name).suffix:
+        return "音乐文件名必须是带扩展名的普通文件名，例如 song.mp3。"
+    output_dir = _get_output_dir()
+    os.makedirs(output_dir, exist_ok=True)
+    filename = os.path.join(output_dir, requested_name)
 
     # ContextVar values do not automatically become useful after the Agent
     # clears the live turn callbacks.  Capture the immutable execution context

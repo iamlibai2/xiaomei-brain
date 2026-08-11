@@ -504,11 +504,17 @@ class AgentManager:
         if merged_config:
             dynamic_cfg = merged_config.get("xiaomei_brain", {}).get("tools", {}).get("dynamic", {})
         if dynamic_cfg.get("enabled", True):
-            from xiaomei_brain.tools.dynamic import DynamicToolLoader, set_active_loader
-            top_k = dynamic_cfg.get("top_k", 10)
+            from xiaomei_brain.tools.dynamic import (
+                DynamicToolLoader,
+                create_tool_search_tool,
+                set_active_loader,
+            )
+            top_k = dynamic_cfg.get("top_k", 5)
             lance_path = os.path.join(self._agent_dir(agent.id), "memory", "lancedb")
             boot_section("工具索引")
             loader = DynamicToolLoader(tools, top_k=top_k, lance_db_path=lance_path)
+            if tools.get("tool_search") is None:
+                tools.register(create_tool_search_tool(loader))
             loader.build_index()
             total_tools = len(tools.list_tools())
             boot_line("向量索引", "OK", f"{total_tools} 个工具")
