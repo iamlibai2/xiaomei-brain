@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from xiaomei_brain.skills.loader import Skill, SkillLoader
-from xiaomei_brain.skills.storage import SkillStorage
+from xiaomei_brain.skills.storage import SCHEMA_VERSION, SkillStorage
 
 # ── Fixtures ───────────────────────────────────────────────────
 
@@ -95,7 +95,7 @@ def test_init_sets_schema_version(tmp_db):
     ):
         s = SkillStorage(db_path=tmp_db)
         v = s._get_schema_version("skills")
-        assert v == 1
+        assert v == SCHEMA_VERSION
         s.close()
 
 
@@ -231,6 +231,39 @@ def test_semantic_search_orders_smallest_lance_distance_first(populated_storage)
         "browser-automation",
     ]
     assert [item["_distance"] for item in skills] == [0.1, 0.5, 0.9]
+
+
+def test_explicit_skill_metadata_match_precedes_semantic_top_k(storage):
+    """An explicit Word request must not be hidden by unrelated neighbours."""
+    for name, description, tags in (
+        ("word-documents", "Create and edit Word DOCX documents", ["word", "docx"]),
+        ("presentation-documents", "Create PowerPoint slides", ["pptx"]),
+        ("spreadsheet-documents", "Create Excel workbooks", ["xlsx"]),
+        ("pdf-documents", "Create PDF reports", ["pdf"]),
+    ):
+        storage.add_skill(name, description, "content", tags=tags)
+
+    rows = storage._get_conn().execute("SELECT id, name FROM skills").fetchall()
+    ids = {row["name"]: row["id"] for row in rows}
+    semantic_results = [
+        {"id": ids["presentation-documents"], "_distance": 0.1},
+        {"id": ids["spreadsheet-documents"], "_distance": 0.2},
+        {"id": ids["pdf-documents"], "_distance": 0.3},
+    ]
+    table = MagicMock()
+    table.search.return_value.limit.return_value.to_list.return_value = semantic_results
+
+    with (
+        patch.object(storage, "_embed", return_value=[0.0]),
+        patch.object(storage, "_get_lance_table", return_value=table),
+    ):
+        skills = storage.list_skills(
+            query="帮我写个 Word 文件，内容是加油站收银系统建设方案",
+            top_k=3,
+        )
+
+    assert skills[0]["name"] == "word-documents"
+    assert len(skills) == 3
 
 
 # ═══ SkillStorage — view_skill ═══════════════════════════════════
@@ -430,6 +463,8 @@ requires_tools:
     assert skill["tags"] == ["browser", "web"]
     assert skill["tool_bindings"] == ["navigate_page", "take_screenshot"]
     assert "## Steps" in skill["content"]
+    assert skill["source_path"] == str(Path(skill_md).resolve())
+    assert skill["resource_root"] == str(Path(skill_md).parent.resolve())
 
 
 def test_import_from_dir_accepts_common_tools_alias(storage, tmp_path):
@@ -569,6 +604,29 @@ description: Installed while Agent is running
         storage.add_skill("v", "d", "c")
         s = loader.view_skill("v")
         assert s["content"] == "c"
+        assert s["runtime_content"] == "c"
+
+    def test_view_skill_resolves_relative_resources_from_skill_root(self, tmp_db):
+        skills_dir = Path(tmp_db).parent / "resource-skills"
+        skill_dir = skills_dir / "pptx"
+        (skill_dir / "scripts" / "office").mkdir(parents=True)
+        (skill_dir / "scripts" / "office" / "validate.py").write_text(
+            "print('ok')", encoding="utf-8"
+        )
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: pptx\ndescription: PPTX work\n---\n"
+            "Run scripts/office/validate.py.\n",
+            encoding="utf-8",
+        )
+        loader = SkillLoader(skills_dir=str(skills_dir), db_path=tmp_db)
+        loader.scan()
+
+        skill = loader.view_skill("pptx")
+
+        assert skill is not None
+        assert f"root: {skill_dir.resolve()}" in skill["runtime_content"]
+        assert "not to the Agent Workspace" in skill["runtime_content"]
+        assert loader.resource_roots() == [str(skill_dir.resolve())]
 
     def test_view_skill_missing(self, tmp_db):
         loader = SkillLoader(skills_dir="/tmp/x", db_path=tmp_db)
@@ -707,6 +765,7 @@ class TestSkillTools:
         loader.record_usage = storage.record_usage
         agent = MagicMock()
         agent._skill_loader = loader
+        agent._get_agent = None
         return agent
 
     def test_skills_list_empty(self, storage):
@@ -753,6 +812,36 @@ class TestSkillTools:
         assert "browser-automation" in result
         assert "Playwright" in result
         assert "navigate" in result
+
+    def test_skill_view_exposes_and_activates_skill_resource_root(
+        self, storage, tmp_path
+    ):
+        from xiaomei_brain.skills.tools import create_skill_tools
+
+        skill_root = tmp_path / "resource-skill"
+        script = skill_root / "scripts" / "validate.py"
+        script.parent.mkdir(parents=True)
+        script.write_text("print('ok')", encoding="utf-8")
+        (skill_root / "SKILL.md").write_text(
+            "---\n"
+            "name: resource-skill\n"
+            "description: Skill with bundled scripts\n"
+            "---\n"
+            "Run scripts/validate.py.\n",
+            encoding="utf-8",
+        )
+        storage.import_from_dir(tmp_path)
+        agent = self._make_agent(storage)
+        agent.tool_read_only_roots = ("existing-read-only",)
+        tools = create_skill_tools(agent)
+        skill_view_fn = next(t.func for t in tools if t.name == "skill_view")
+
+        result = skill_view_fn(name="resource-skill")
+
+        resolved_root = str(skill_root.resolve())
+        assert f"只读根目录: {resolved_root}" in result
+        assert "不要在 Agent Workspace 中搜索" in result
+        assert agent.tool_read_only_roots == ("existing-read-only", resolved_root)
 
     def test_skill_view_activates_declared_tools(self, populated_storage):
         from xiaomei_brain.skills.tools import create_skill_tools
@@ -817,8 +906,8 @@ def test_sqlite_store_shared_connection(tmp_db):
         s1 = SkillStorage(db_path=tmp_db)
         s2 = SkillStorage(db_path=tmp_db)
 
-        assert s1._get_schema_version("skills") == 1
-        assert s2._get_schema_version("skills") == 1
+        assert s1._get_schema_version("skills") == SCHEMA_VERSION
+        assert s2._get_schema_version("skills") == SCHEMA_VERSION
 
         s1.close()
         s2.close()

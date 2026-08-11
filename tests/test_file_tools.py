@@ -163,11 +163,17 @@ def test_agent_media_roots_are_addressable_and_writable(tmp_path):
         music_result = file_ops.write("music/credits.txt", "music")
         tts_result = file_ops.write("tts/transcript.txt", "speech")
         found = file_ops.glob("**/*.txt", path="music")
+        found_from_prefixed_pattern = file_ops.glob("music/**/*.txt")
+        grep_from_prefixed_pattern = file_ops.grep(
+            "music", glob="music/**/*.txt"
+        )
 
     assert image_result["relative_path"] == "images/description.txt"
     assert music_result["relative_path"] == "music/credits.txt"
     assert tts_result["relative_path"] == "tts/transcript.txt"
     assert found["files"] == ["music/credits.txt"]
+    assert found_from_prefixed_pattern["files"] == ["music/credits.txt"]
+    assert grep_from_prefixed_pattern["matches"][0]["path"] == "music/credits.txt"
     assert (images / "description.txt").read_text() == "image"
     assert (music / "credits.txt").read_text() == "music"
     assert (tts / "transcript.txt").read_text() == "speech"

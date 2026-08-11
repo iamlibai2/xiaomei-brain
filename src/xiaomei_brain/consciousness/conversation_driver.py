@@ -421,9 +421,12 @@ class ConversationDriver:
         if not skill:
             return
 
+        from xiaomei_brain.skills.resources import activate_skill_resource_root
+        activate_skill_resource_root(self._agent, skill)
+
         msg.content = (
             f'[IMPORTANT: 用户激活了技能 "{cmd}"，请严格按其指示执行。]\n\n'
-            f"{skill['content']}\n\n"
+            f"{skill.get('runtime_content') or skill['content']}\n\n"
             f"{user_input or '请按此技能的要求执行。'}"
         )
         logger.info("[ConversationDriver] 斜杠命令: /%s → 技能已注入", cmd)

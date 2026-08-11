@@ -149,6 +149,17 @@ def resolve_readable_path(path: str, *, exists: bool = True) -> tuple[Path | Non
     return _resolve(path, exists=exists)
 
 
+def resolve_writable_directory(path: str) -> tuple[Path | None, str]:
+    """Resolve a shell working directory inside a writable Agent root."""
+    resolved, error = _resolve(path, exists=True, for_write=True)
+    if error:
+        return None, error
+    assert resolved is not None
+    if not resolved.is_dir():
+        return None, f"Error: not a directory: {path}"
+    return resolved, ""
+
+
 def _display(path: Path) -> str:
     resolved = path.resolve()
     for root in (*_writable_roots(), *_read_only_roots()):
@@ -342,10 +353,39 @@ def _pattern_error(pattern: str) -> str:
     return ""
 
 
+def _split_named_root_pattern(pattern: str, path: str) -> tuple[str, str]:
+    """Treat ``music/**/*.mp3`` like ``path=music, pattern=**/*.mp3``.
+
+    File tools expose Agent asset directories as virtual named roots. Models
+    naturally place that root either in ``path`` or at the start of the glob;
+    both forms must resolve identically instead of silently searching a
+    same-named directory under Workspace.
+    """
+    if str(path or ".").strip() not in {"", ".", "./", ".\\"}:
+        return pattern, path
+    parts = Path(pattern).parts
+    if len(parts) < 2:
+        return pattern, path
+    first = str(parts[0])
+    named_roots = {
+        root.name.casefold()
+        for root in (
+            Path(get_workspace_dir()).resolve(),
+            *_writable_roots(),
+            *_read_only_roots(),
+        )
+    }
+    if first.casefold() not in named_roots:
+        return pattern, path
+    remainder = str(Path(*parts[1:]))
+    return remainder, first
+
+
 def glob(pattern: str, path: str = ".", limit: int = 200) -> dict[str, Any]:
     error = _pattern_error(pattern)
     if error:
         return {"error": error}
+    pattern, path = _split_named_root_pattern(pattern, path)
     root, error = _resolve(path, exists=True)
     if error:
         return {"error": error}
@@ -377,15 +417,16 @@ def glob(pattern: str, path: str = ".", limit: int = 200) -> dict[str, Any]:
 
 
 def _grep_candidates(path: str, file_glob: str) -> tuple[Iterator[Path], str]:
+    error = _pattern_error(file_glob)
+    if error:
+        return iter(()), error
+    file_glob, path = _split_named_root_pattern(file_glob, path)
     root, error = _resolve(path, exists=True)
     if error:
         return iter(()), error
     assert root is not None
     if root.is_file():
         return iter((root,)), ""
-    error = _pattern_error(file_glob)
-    if error:
-        return iter(()), error
     if "/" not in file_glob and "\\" not in file_glob:
         file_glob = f"**/{file_glob}"
     iterator = (

@@ -272,9 +272,14 @@ class ConsciousLiving(Living):
         )
         # The canonical attachment archive belongs to this Agent. File tools
         # may discover and read it, but must not modify it.
-        live_agent.tool_read_only_roots = (
-            os.path.join(agent_base_dir, "attachments"),
+        skill_loader = getattr(self.agent, "_skill_loader", None)
+        skill_resource_roots = (
+            skill_loader.resource_roots() if skill_loader is not None else []
         )
+        live_agent.tool_read_only_roots = tuple(dict.fromkeys([
+            os.path.join(agent_base_dir, "attachments"),
+            *skill_resource_roots,
+        ]))
 
         boot_line("记忆提取器", "OK")
 

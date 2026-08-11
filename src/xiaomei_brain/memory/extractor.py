@@ -256,7 +256,8 @@ class MemoryExtractor:
             return False
         technical_subject = re.search(
             r"工具|命令|shell|powershell|bash|python-docx|write_document|read_document|"
-            r"api|接口|模型|服务|网络|数据库|sqlite|依赖|环境|配置|权限|余额|插件",
+            r"api|接口|模型|服务|网络|数据库|sqlite|依赖|环境|配置|权限|余额|插件|"
+            r"路径|目录|文件夹|工作区|workspace",
             text,
             re.IGNORECASE,
         )

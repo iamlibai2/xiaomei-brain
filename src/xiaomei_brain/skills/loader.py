@@ -183,7 +183,31 @@ class SkillLoader:
         if name in self._effective_disabled_names():
             return None
         storage = self._get_storage()
-        return storage.view_skill(name)
+        skill = storage.view_skill(name)
+        if not skill:
+            return None
+        skill = dict(skill)
+        content = str(skill.get("content") or "")
+        resource_root = str(skill.get("resource_root") or "").strip()
+        if resource_root:
+            resource_context = "\n".join([
+                "<skill_resources>",
+                f"root: {resource_root}",
+                "Relative paths such as scripts/, assets/, references/, "
+                "templates/ and examples/ are relative to this root, not to "
+                "the Agent Workspace. Use an absolute path built from this root.",
+                "Do not search for bundled Skill resources in the Agent Workspace.",
+                "</skill_resources>",
+            ])
+            skill["runtime_content"] = f"{resource_context}\n\n{content}"
+        else:
+            skill["runtime_content"] = content
+        return skill
+
+    def resource_roots(self) -> list[str]:
+        """Return every installed Skill package root for read-only tool access."""
+        self.refresh_if_changed()
+        return self._get_storage().list_resource_roots()
 
     def list_names(self) -> list[str]:
         """返回所有已加载的技能名称。"""
@@ -222,7 +246,7 @@ class SkillLoader:
     def build_skill_index_prompt(
         self,
         query: str,
-        top_k: int = 5,
+        top_k: int = 3,
         required_names: list[str] | tuple[str, ...] | None = None,
     ) -> str:
         """生成注入 system prompt 的动态技能索引文本。

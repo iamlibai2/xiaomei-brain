@@ -90,11 +90,13 @@ def render_invocation_context(instance: Any, value: dict[str, Any] | None) -> st
     ]
     if kind == "skill":
         skill = instance._skill_loader.view_skill(selected_id)
+        from xiaomei_brain.skills.resources import activate_skill_resource_root
+        activate_skill_resource_root(instance, skill)
         lines.extend([
             f"- 工作方法：{skill.get('name', selected_id)}",
             f"- 说明：{skill.get('description', '')}",
             "- 必须遵循下列完整 Skill 指引：",
-            str(skill.get("content") or ""),
+            str(skill.get("runtime_content") or skill.get("content") or ""),
         ])
     elif kind == "capability":
         capability = instance.get_capability(selected_id) or {}
@@ -126,4 +128,3 @@ def render_invocation_context(instance: Any, value: dict[str, Any] | None) -> st
             ])
     lines.append("</用户明确选择的工作方式>")
     return "\n".join(lines)
-

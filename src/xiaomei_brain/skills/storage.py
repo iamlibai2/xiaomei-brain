@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 import time
 from pathlib import Path
@@ -30,7 +31,7 @@ from xiaomei_brain.base.sqlite_store import SQLiteStore
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class SkillStorage(SQLiteStore):
@@ -61,8 +62,6 @@ class SkillStorage(SQLiteStore):
 
     def _init_tables(self) -> None:
         conn = self._get_conn()
-        current_version = self._get_schema_version("skills")
-
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS skills (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,20 +76,36 @@ class SkillStorage(SQLiteStore):
                 last_used_at REAL DEFAULT 0,
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL,
-                content_hash TEXT DEFAULT ''
+                content_hash TEXT DEFAULT '',
+                source_path TEXT DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS idx_skills_name ON skills(name);
             CREATE INDEX IF NOT EXISTS idx_skills_source ON skills(source);
         """)
         conn.commit()
 
-        # 迁移：v1 → v2（添加 content_hash 列）
-        if current_version == 1:
+        # 开发中的数据库可能跨过不止一个版本。按实际列迁移，避免版本号
+        # 跳跃后漏掉字段。source_path 保存 SKILL.md 的真实位置，使 Skill
+        # 自带 scripts/assets/references 不再被误当作 Workspace 相对路径。
+        columns = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(skills)").fetchall()
+        }
+        if "content_hash" not in columns:
             try:
                 conn.execute("ALTER TABLE skills ADD COLUMN content_hash TEXT DEFAULT ''")
                 conn.commit()
             except Exception:
                 logger.debug("ALTER TABLE skills ADD content_hash failed (column may already exist)", exc_info=True)
+        if "source_path" not in columns:
+            try:
+                conn.execute("ALTER TABLE skills ADD COLUMN source_path TEXT DEFAULT ''")
+                conn.commit()
+            except Exception:
+                logger.debug(
+                    "ALTER TABLE skills ADD source_path failed (column may already exist)",
+                    exc_info=True,
+                )
 
         self._set_schema_version("skills", SCHEMA_VERSION)
 
@@ -270,6 +285,7 @@ class SkillStorage(SQLiteStore):
                     content=body,
                     source="local",
                     tool_bindings=tool_bindings,
+                    source_path=str(skill_file.resolve()),
                 )
                 imported += 1
                 logger.debug("SkillStorage: imported %s from %s", name, skill_file)
@@ -288,6 +304,7 @@ class SkillStorage(SQLiteStore):
         content: str,
         source: str,
         tool_bindings: list[str] | None = None,
+        source_path: str = "",
     ) -> int:
         """插入或更新技能。返回 skill id。
 
@@ -315,9 +332,13 @@ class SkillStorage(SQLiteStore):
             conn.execute("""
                 UPDATE skills SET
                     description = ?, version = ?, tags = ?, content = ?,
-                    source = ?, tool_bindings = ?, updated_at = ?, content_hash = ?
+                    source = ?, tool_bindings = ?, updated_at = ?, content_hash = ?,
+                    source_path = ?
                 WHERE id = ?
-            """, (description, version, tags_json, content, source, bindings_json, now, content_fp, skill_id))
+            """, (
+                description, version, tags_json, content, source, bindings_json,
+                now, content_fp, source_path, skill_id,
+            ))
             conn.commit()
 
             # 内容未变 → 跳过 LanceDB 更新
@@ -327,9 +348,13 @@ class SkillStorage(SQLiteStore):
         else:
             cursor = conn.execute("""
                 INSERT INTO skills (name, description, version, tags, content, source,
-                                    tool_bindings, created_at, updated_at, content_hash)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (name, description, version, tags_json, content, source, bindings_json, now, now, content_fp))
+                                    tool_bindings, created_at, updated_at, content_hash,
+                                    source_path)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                name, description, version, tags_json, content, source,
+                bindings_json, now, now, content_fp, source_path,
+            ))
             skill_id = cursor.lastrowid
             conn.commit()
 
@@ -397,28 +422,72 @@ class SkillStorage(SQLiteStore):
             d["_distance"] = round(distances.get(row["id"], 0), 4)
             skills.append(d)
         skills.sort(key=lambda x: x["_distance"])
-        return skills
+
+        # An explicit name, tag or description match is stronger evidence than
+        # an embedding neighbour.  Keep semantic Top-K as the fallback, but do
+        # not let it hide an unmistakable request such as "Word document".
+        semantic_by_name = {item["name"]: item for item in skills}
+        ranked: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in self._lexical_search(query, top_k):
+            candidate = semantic_by_name.get(item["name"], item)
+            ranked.append(candidate)
+            seen.add(candidate["name"])
+        for item in skills:
+            if item["name"] not in seen:
+                ranked.append(item)
+                seen.add(item["name"])
+        return ranked[:top_k]
+
+    @staticmethod
+    def _search_terms(value: str) -> set[str]:
+        """Build lightweight English tokens and Chinese bigrams for matching."""
+        text = str(value or "").casefold().replace("_", " ").replace("-", " ")
+        ascii_terms = {
+            token for token in re.findall(r"[a-z0-9]+", text)
+            if len(token) > 1 and token not in {
+                "the", "and", "for", "with", "from", "into", "this", "that",
+                "skill", "please", "use", "need", "want",
+            }
+        }
+        chinese_runs = re.findall(r"[\u4e00-\u9fff]+", text)
+        chinese_terms = {
+            run[index:index + 2]
+            for run in chinese_runs
+            for index in range(max(0, len(run) - 1))
+        }
+        return ascii_terms | chinese_terms
+
+    def _lexical_search(self, query: str, top_k: int) -> list[dict[str, Any]]:
+        """Return explicit metadata matches, ordered before semantic results."""
+        terms = self._search_terms(query)
+        if not terms:
+            return []
+        rows = self._get_conn().execute(
+            "SELECT * FROM skills ORDER BY usage_count DESC"
+        ).fetchall()
+        scored: list[tuple[Any, int]] = []
+        for row in rows:
+            name = str(row["name"] or "").casefold().replace("_", " ").replace("-", " ")
+            description = str(row["description"] or "").casefold()
+            tags = json.loads(row["tags"]) if row["tags"] else []
+            tag_text = " ".join(str(tag).casefold() for tag in tags)
+            score = sum(
+                (100 if term in name else 0)
+                + (60 if term in tag_text else 0)
+                + (20 if term in description else 0)
+                for term in terms
+            )
+            if score:
+                scored.append((row, score))
+        scored.sort(key=lambda item: (-item[1], -int(item[0]["usage_count"] or 0), item[0]["name"]))
+        return [
+            self._row_to_dict(row, include_content=False)
+            for row, _score in scored[:top_k]
+        ]
 
     def _keyword_search(self, query: str, top_k: int) -> list[dict[str, Any]]:
-        conn = self._get_conn()
-        q_lower = query.lower()
-        rows = conn.execute("SELECT * FROM skills ORDER BY usage_count DESC").fetchall()
-
-        scored = []
-        for row in rows:
-            score = 0
-            if q_lower in row["name"].lower():
-                score += 100
-            if q_lower in row["description"].lower():
-                score += 50
-            tags = json.loads(row["tags"]) if row["tags"] else []
-            for tag in tags:
-                if q_lower in tag.lower():
-                    score += 30
-            if score > 0:
-                scored.append((row, score))
-        scored.sort(key=lambda x: x[1], reverse=True)
-        return [self._row_to_dict(r, include_content=False) for r, _ in scored[:top_k]]
+        return self._lexical_search(query, top_k)
 
     def view_skill(self, name: str) -> dict[str, Any] | None:
         """查看技能完整内容（Tier 1）。
@@ -440,6 +509,18 @@ class SkillStorage(SQLiteStore):
         conn = self._get_conn()
         rows = conn.execute("SELECT name FROM skills ORDER BY name").fetchall()
         return [r["name"] for r in rows]
+
+    def list_resource_roots(self) -> list[str]:
+        """Return canonical read-only roots for filesystem-backed Skills."""
+        rows = self._get_conn().execute(
+            "SELECT source_path FROM skills WHERE source_path != ''"
+        ).fetchall()
+        roots = {
+            str(Path(str(row["source_path"])).parent)
+            for row in rows
+            if str(row["source_path"] or "").strip()
+        }
+        return sorted(roots)
 
     def count(self) -> int:
         conn = self._get_conn()
@@ -564,4 +645,9 @@ class SkillStorage(SQLiteStore):
         }
         if include_content:
             d["content"] = row["content"]
+            source_path = str(row["source_path"] or "").strip()
+            d["source_path"] = source_path
+            d["resource_root"] = (
+                str(Path(source_path).parent) if source_path else ""
+            )
         return d

@@ -17,6 +17,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ..tools.base import Tool, tool
+from .resources import activate_skill_resource_root
 
 if TYPE_CHECKING:
     from ..agent.instance import AgentInstance
@@ -117,6 +118,22 @@ def create_skill_tools(agent: "AgentInstance") -> list[Tool]:
             f"# {skill['name']}",
             f"版本: {skill.get('version', '1.0.0')}",
         ]
+
+        # Skill 是带资源的只读包，不只是被复制进数据库的一段 Markdown。
+        # 相对资源路径属于 Skill 根目录，绝不能按 Agent Workspace 解析。
+        # 选中 Skill 后仅开放它自己的根目录，供后续文件工具只读访问。
+        resource_root = str(skill.get("resource_root") or "").strip()
+        if resource_root:
+            activate_skill_resource_root(agent, skill)
+            lines.extend([
+                "",
+                "## Skill 资源目录",
+                f"只读根目录: {resource_root}",
+                "SKILL.md 中的 scripts/、assets/、references/、templates/、"
+                "examples/ 等相对路径都必须相对于这个根目录解析。",
+                "不要在 Agent Workspace 中搜索或猜测这些 Skill 自带资源；"
+                "执行脚本或读取资源时请使用上面的根目录组成绝对路径。",
+            ])
         if skill.get("tags"):
             lines.append(f"标签: {', '.join(skill['tags'])}")
 

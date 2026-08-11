@@ -12,7 +12,7 @@ from xiaomei_brain.execution import ExecutionEnvironment, current_execution_envi
 
 from ..base import Tool
 from ..execution_context import current_tool_execution
-from .file_ops import get_working_directory
+from .file_ops import get_working_directory, resolve_writable_directory
 from .process import process_registry
 
 MAX_OUTPUT_BYTES = 1024 * 1024
@@ -135,6 +135,7 @@ def run_command(
     command: str,
     timeout: float = 120,
     run_in_background: bool = False,
+    workdir: str = "",
 ) -> str | dict[str, Any]:
     blocked = check_command(command)
     if blocked:
@@ -142,6 +143,12 @@ def run_command(
     try:
         environment = current_execution_environment()
         cwd = get_working_directory()
+        if str(workdir or "").strip():
+            resolved_workdir, error = resolve_writable_directory(workdir)
+            if error:
+                return error
+            assert resolved_workdir is not None
+            cwd = str(resolved_workdir)
         launch = environment.start_process(command, cwd)
         process = launch.process
         shell_name = launch.shell_name
@@ -216,9 +223,10 @@ def create_command_tool(
             "'python -m pip', never bare 'pip'. Use "
             "read/write/edit/glob/grep for file operations. The shell starts in "
             "the same Agent workspace: run a root file as 'python analyze.py', "
-            "not 'python workspace/analyze.py'. Reuse relative paths returned by "
-            "those tools verbatim, do not cd to or reconstruct the hidden Agent "
-            "data directory. For long commands, "
+            "not 'python workspace/analyze.py'. Never reconstruct the hidden "
+            "Agent data directory. For a named asset path such as music/song.wav, "
+            "set workdir='music' and use song.wav inside the command. The same "
+            "rule applies to images/ and tts/. For long commands, "
             "run in the background and inspect them with process. Non-zero exit "
             "codes are returned as neutral process facts; inspect the command "
             "output and verify requested side effects before deciding success."
@@ -234,6 +242,15 @@ def create_command_tool(
                     "default": 120,
                 },
                 "run_in_background": {"type": "boolean", "default": False},
+                "workdir": {
+                    "type": "string",
+                    "description": (
+                        "Optional controlled working directory. Use '.', "
+                        "'music', 'images', or 'tts'; never build a hidden "
+                        "absolute Agent data path."
+                    ),
+                    "default": "",
+                },
             },
             "required": ["command"],
         },
