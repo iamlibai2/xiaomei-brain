@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..base import Tool, tool
+from ..execution_context import current_tool_execution
 
 if TYPE_CHECKING:
     from ...memory.longterm import LongTermMemory
@@ -42,17 +43,25 @@ def create_memory_search_tools(agent: Any = None) -> list[Tool]:
             "日常场景：不确定的事、不知道该说什么、对方提到之前聊过的事但记不清时使用。"
         ),
     )
-    def memory_search(query: str, user_id: str = "global", top_k: int = 5) -> str:
+    def memory_search(query: str, top_k: int = 5) -> str:
         """Search memories with spreading activation.
 
         Args:
             query: 你想回忆的事或场景描述，越具体越好
-            user_id: 用户ID，默认 global
             top_k: 种子记忆条数，默认 5
         """
         longterm = _longterm()
         if not longterm:
             return "记忆系统未初始化。"
+
+        execution = current_tool_execution()
+        user_id = (
+            execution.person_id
+            if execution is not None and execution.person_id
+            else getattr(agent, "memory_scope_id", "")
+            or getattr(agent, "user_id", "")
+            or "global"
+        )
 
         import logging
         logger = logging.getLogger(__name__)

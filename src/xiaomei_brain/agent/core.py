@@ -39,10 +39,44 @@ from xiaomei_brain.agent.message_utils import (
 logger = logging.getLogger(__name__)
 
 MAX_BLOCKED_TOOL_RETRIES_PER_RUN = 2
+MAX_IDENTICAL_TOOL_RESULTS = 2
 REPEATED_TOOL_FAILURE_MESSAGE = (
     "同一个工具调用已经连续失败，我已停止继续重试，避免陷入无效循环。"
     "需要先修正调用参数、输入文件或执行方案后再继续。"
 )
+REPEATED_TOOL_LOOP_MESSAGE = (
+    "同一个工具以相同参数连续返回了相同结果，我已停止重复调用，避免陷入无效循环。"
+    "需要更换查询、工具或处理方案后再继续。"
+)
+
+
+class _RepeatedToolResultGuard:
+    """Detect consecutive successful calls that make no observable progress."""
+
+    def __init__(self) -> None:
+        self._last_key: tuple[str, str] | None = None
+        self._last_result: str | None = None
+        self._identical_count = 0
+
+    def should_block(self, call_key: tuple[str, str]) -> bool:
+        return (
+            call_key == self._last_key
+            and self._identical_count >= MAX_IDENTICAL_TOOL_RESULTS
+        )
+
+    def record_success(self, call_key: tuple[str, str], result: Any) -> None:
+        normalized = normalize_tool_result(result)
+        if call_key == self._last_key and normalized == self._last_result:
+            self._identical_count += 1
+            return
+        self._last_key = call_key
+        self._last_result = normalized
+        self._identical_count = 1
+
+    def reset(self) -> None:
+        self._last_key = None
+        self._last_result = None
+        self._identical_count = 0
 
 
 def _tool_result_failed(result: Any) -> bool:
@@ -469,6 +503,9 @@ class Agent:
         _tool_failure_counts: dict[tuple, int] = {}  # (name, args_json) -> 失败次数
         _blocked_tool_retries = 0
         _repeated_failure_stop = False
+        _repeated_result_guard = _RepeatedToolResultGuard()
+        _blocked_repeated_results = 0
+        _repeated_result_stop = False
         _completion_guard_retries: dict[str, int] = {}
         _pending_artifact_outputs: dict[str, str] = {}
         _presented_outputs: set[str] = set()
@@ -620,7 +657,26 @@ class Agent:
                         # 重试检测：同一工具+参数失败超过2次则拦截
                         call_key = (tc.name, json.dumps(args_dict, sort_keys=True))
                         fail_count = _tool_failure_counts.get(call_key, 0)
-                        if fail_count >= 3:
+                        repeated_result_blocked = _repeated_result_guard.should_block(call_key)
+                        if repeated_result_blocked:
+                            _blocked_repeated_results += 1
+                            result = (
+                                f"Blocked repeated call: {tc.name} with the same arguments "
+                                "already returned the same result twice. Do NOT retry it "
+                                "unchanged. Use the existing result, change the arguments or "
+                                "tool, or answer the user."
+                            )
+                            logger.warning(
+                                "[Agent] blocked repeated no-progress tool call: %s",
+                                tc.name,
+                            )
+                            if _blocked_repeated_results >= MAX_BLOCKED_TOOL_RETRIES_PER_RUN:
+                                _repeated_result_stop = True
+                        else:
+                            _blocked_repeated_results = 0
+                        if repeated_result_blocked:
+                            pass
+                        elif fail_count >= 3:
                             _blocked_tool_retries += 1
                             result = (
                                 f"Blocked retry: {tc.name} with the same arguments has failed "
@@ -658,15 +714,19 @@ class Agent:
                         )
 
                         # 记录失败次数，成功则清除
-                        if fail_count >= 3:
+                        if repeated_result_blocked:
+                            pass
+                        elif fail_count >= 3:
                             # The blocked result is framework feedback, not a
                             # new execution failure. Keep the real failure
                             # count stable instead of increasing forever.
                             pass
                         elif _tool_result_failed(result):
                             _tool_failure_counts[call_key] = fail_count + 1
+                            _repeated_result_guard.reset()
                         else:
                             _tool_failure_counts.pop(call_key, None)
+                            _repeated_result_guard.record_success(call_key, result)
 
                         # Update buffer with actual result
                         rec = self.tool_call_buffer.get(idx)
@@ -754,6 +814,15 @@ class Agent:
                             "[Agent] ReAct 因重复失败工具调用停止 (step=%d, blocked=%d)",
                             step,
                             _blocked_tool_retries,
+                        )
+                        break
+
+                    if _repeated_result_stop:
+                        logger.error(
+                            "[Agent] ReAct stopped after repeated no-progress tool calls "
+                            "(step=%d, blocked=%d)",
+                            step,
+                            _blocked_repeated_results,
                         )
                         break
 
@@ -978,6 +1047,29 @@ class Agent:
                 failure_message["turn_id"] = self.turn_id
             self.messages.append(failure_message)
             yield REPEATED_TOOL_FAILURE_MESSAGE
+            return
+        if _repeated_result_stop:
+            assistant_msg_id = None
+            if self.conversation_db:
+                metadata = {"stop_reason": "repeated_tool_result"}
+                if self.turn_id:
+                    metadata["turn_id"] = self.turn_id
+                assistant_msg_id = self.conversation_db.log(
+                    session_id=self.session_id,
+                    role="assistant",
+                    content=REPEATED_TOOL_LOOP_MESSAGE,
+                    user_id=self.user_id,
+                    metadata=metadata,
+                )
+            loop_message = {
+                "role": "assistant",
+                "content": REPEATED_TOOL_LOOP_MESSAGE,
+                "id": assistant_msg_id,
+            }
+            if self.turn_id:
+                loop_message["turn_id"] = self.turn_id
+            self.messages.append(loop_message)
+            yield REPEATED_TOOL_LOOP_MESSAGE
             return
         yield "Agent reached maximum steps without producing a final answer."
 
@@ -1229,6 +1321,8 @@ class Agent:
         loop_messages: list[dict[str, Any]] = []
         _tool_failure_counts: dict[tuple, int] = {}
         _blocked_tool_retries = 0
+        _repeated_result_guard = _RepeatedToolResultGuard()
+        _blocked_repeated_results = 0
         _idx = 0
 
         # 动态工具加载：累积上下文供每步 embed 召回
@@ -1316,7 +1410,24 @@ class Agent:
 
                     call_key = (tc.name, json.dumps(args_dict, sort_keys=True))
                     fail_count = _tool_failure_counts.get(call_key, 0)
-                    if fail_count >= 3:
+                    repeated_result_blocked = _repeated_result_guard.should_block(call_key)
+                    if repeated_result_blocked:
+                        _blocked_repeated_results += 1
+                        result = (
+                            f"Blocked repeated call: {tc.name} with the same arguments "
+                            "already returned the same result twice. Do NOT retry it "
+                            "unchanged. Use the existing result, change the arguments or "
+                            "tool, or produce the final response."
+                        )
+                        logger.warning(
+                            "[Agent] react_nodb blocked repeated no-progress tool call: %s",
+                            tc.name,
+                        )
+                    else:
+                        _blocked_repeated_results = 0
+                    if repeated_result_blocked:
+                        pass
+                    elif fail_count >= 3:
                         _blocked_tool_retries += 1
                         result = (
                             f"Blocked retry: {tc.name} with the same arguments has failed "
@@ -1336,12 +1447,16 @@ class Agent:
                                 cancel_check=cancel_check,
                             )
 
-                    if fail_count >= 3:
+                    if repeated_result_blocked:
+                        pass
+                    elif fail_count >= 3:
                         pass
                     elif _tool_result_failed(result):
                         _tool_failure_counts[call_key] = fail_count + 1
+                        _repeated_result_guard.reset()
                     else:
                         _tool_failure_counts.pop(call_key, None)
+                        _repeated_result_guard.record_success(call_key, result)
 
                     args_dict = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
                     if not quiet:
@@ -1408,6 +1523,14 @@ class Agent:
                         _blocked_tool_retries,
                     )
                     return REPEATED_TOOL_FAILURE_MESSAGE
+                if _blocked_repeated_results >= MAX_BLOCKED_TOOL_RETRIES_PER_RUN:
+                    logger.error(
+                        "[Agent] react_nodb stopped after repeated no-progress tool calls "
+                        "(step=%d, blocked=%d)",
+                        step,
+                        _blocked_repeated_results,
+                    )
+                    return REPEATED_TOOL_LOOP_MESSAGE
             else:
                 final_text = response.content or response.reasoning or ""
                 if not final_text:

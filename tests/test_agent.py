@@ -9,6 +9,7 @@ from xiaomei_brain.agent.completion import CompletionGuardResult
 from xiaomei_brain.agent.core import (
     Agent,
     REPEATED_TOOL_FAILURE_MESSAGE,
+    REPEATED_TOOL_LOOP_MESSAGE,
     _include_published_artifacts,
 )
 from xiaomei_brain.agent.steering import SteerMessage
@@ -177,6 +178,80 @@ def test_react_nodb_stops_after_model_ignores_blocked_retry(mock_llm, registry):
     assert response == REPEATED_TOOL_FAILURE_MESSAGE
     assert executions["count"] == 3
     assert mock_llm.chat.call_count == 5
+
+
+def test_agent_stops_repeating_successful_call_with_identical_result(mock_llm, registry):
+    """A successful but no-progress tool call must not consume the full step budget."""
+    from xiaomei_brain.tools import tool
+
+    executions = {"count": 0}
+
+    @tool(name="empty_search", description="Return an empty search result")
+    def empty_search(query: str) -> str:
+        executions["count"] += 1
+        return "No matching records found"
+
+    registry.register(empty_search)
+    agent = Agent(llm=mock_llm, tools=registry, max_steps=20)
+
+    def repeat_call(*_args, **_kwargs):
+        call_number = mock_llm.chat_stream.call_count
+        mock_llm._last_stream_response = NormalizedResponse(
+            content="",
+            tool_calls=[ToolCall(
+                id=f"empty-{call_number}",
+                name="empty_search",
+                arguments='{"query":"same"}',
+            )],
+            finish_reason="tool_calls",
+        )
+        return iter(())
+
+    mock_llm.chat_stream.side_effect = repeat_call
+    mock_llm._reasoning_end_yielded = False
+
+    response = _chat(agent, "Keep searching")
+
+    assert response == REPEATED_TOOL_LOOP_MESSAGE
+    assert executions["count"] == 2
+    assert mock_llm.chat_stream.call_count == 4
+
+
+def test_react_nodb_stops_repeating_successful_call_with_identical_result(
+    mock_llm,
+    registry,
+):
+    """The no-progress guard also protects isolated/internal runtimes."""
+    from xiaomei_brain.tools import tool
+
+    executions = {"count": 0}
+
+    @tool(name="empty_search", description="Return an empty search result")
+    def empty_search(query: str) -> str:
+        executions["count"] += 1
+        return "No matching records found"
+
+    registry.register(empty_search)
+    agent = Agent(llm=mock_llm, tools=registry, max_steps=20)
+    mock_llm.chat.return_value = NormalizedResponse(
+        content="",
+        tool_calls=[ToolCall(
+            id="empty-call",
+            name="empty_search",
+            arguments='{"query":"same"}',
+        )],
+        finish_reason="tool_calls",
+    )
+
+    response = agent.react_nodb(
+        [{"role": "user", "content": "Keep searching"}],
+        max_steps=20,
+        quiet=True,
+    )
+
+    assert response == REPEATED_TOOL_LOOP_MESSAGE
+    assert executions["count"] == 2
+    assert mock_llm.chat.call_count == 4
 
 
 def test_stream_preserves_empty_reasoning_for_tool_result(mock_llm, registry):
