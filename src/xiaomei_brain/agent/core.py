@@ -175,6 +175,8 @@ class Agent:
         self.conversation_db: ConversationDB | None = None
         self.dag: DAGSummaryGraph | None = None
         self.longterm_memory: LongTermMemory | None = None
+        self.short_term_memory: Any = None
+        self.memory_formation: Any = None
         self.memory_extractor: MemoryExtractor | None = None
 
         # Short-term dialogue follows an explicit runtime context boundary.
@@ -926,6 +928,8 @@ class Agent:
                                 self.memory_extractor.execute_block(
                                     memory_block,
                                     user_id=self.memory_scope_id,
+                                    session_id=self.session_id,
+                                    turn_id=self.turn_id,
                                 )
                                 if self.internal_display:
                                     self.internal_display.record_memory(memory_block)

@@ -618,6 +618,7 @@ class SelfMemory:
     internal_narratives: list[dict] = field(default_factory=list)  # 内部叙事（consciousness_stream）
     dag_summaries: list[dict] = field(default_factory=list)  # [{id, depth, content}]
     important_memories: list[dict] = field(default_factory=list)
+    short_term_memories: list[dict] = field(default_factory=list)
     recalled_memories: list[dict] = field(default_factory=list)
     relation_chains: list[dict] = field(default_factory=list)
     procedures: list[dict] = field(default_factory=list)
@@ -635,6 +636,7 @@ class SelfMemory:
             "internal_narratives": [n.get("id", "") for n in self.internal_narratives[-5:]],
             "dag_summaries": [s.get("id", "") for s in self.dag_summaries[-5:]],
             "important_memories": [m.get("id", "") for m in self.important_memories[-5:]],
+            "short_term_memories": [m.get("id", "") for m in self.short_term_memories[-5:]],
             "recalled_memories": [m.get("id", "") for m in self.recalled_memories[-5:]],
             "relation_chains": [
                 {k: v for k, v in r.items() if k != "embedding"}

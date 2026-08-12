@@ -470,6 +470,8 @@ class ActionExecutor:
                         "memory_scope_id",
                         agent_core.user_id,
                     ),
+                    session_id=getattr(agent_core, "session_id", ""),
+                    turn_id=getattr(agent_core, "turn_id", ""),
                 )
                 logger.info("[ActionExecutor] WORK 记忆已提取")
                 return clean_content

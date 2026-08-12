@@ -356,6 +356,8 @@ function MemoryPanel({
   onLoadMore: () => void;
 }) {
   const { t } = useTranslation();
+  const shortTermMemories = memories.filter((memory) => memory.memoryLayer === "short_term");
+  const longTermMemories = memories.filter((memory) => memory.memoryLayer === "long_term");
   return (
     <section className="person-memory-panel">
       {focusedMemories.length > 0 && (
@@ -384,6 +386,30 @@ function MemoryPanel({
           </div>
         </div>
       )}
+      {shortTermMemories.length > 0 && (
+        <div className="focused-memory-section">
+          <div className="person-memory-heading">
+            <div>
+              <strong>{t("rightSidebarUi.shortTermMemory")}</strong>
+              <p>{t("rightSidebarUi.shortTermMemoryHint")}</p>
+            </div>
+          </div>
+          <div className="person-memory-list">
+            {shortTermMemories.map((memory) => (
+              <article key={memory.id}>
+                <strong>{memory.summary}</strong>
+                <div className="person-memory-meta">
+                  <span>{t("rightSidebarUi.shortTermMemory")}</span>
+                  {memory.createdAt > 0 && <time>{new Date(memory.createdAt * 1000).toLocaleString()}</time>}
+                </div>
+                <small>
+                  {t("rightSidebarUi.shortTermMemoryStrength", { count: memory.reinforcementCount })}
+                </small>
+              </article>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="person-memory-heading">
         <div>
           <strong>{t("rightSidebarUi.longTermMemory")}</strong>
@@ -395,14 +421,14 @@ function MemoryPanel({
       </div>
       {page.loading && memories.length === 0 && <p className="activity-empty">{t("rightSidebarUi.loading")}</p>}
       {page.error && <p className="activity-error">{page.error}</p>}
-      {!page.loading && !page.error && memories.length === 0 && (
+      {!page.loading && !page.error && longTermMemories.length === 0 && shortTermMemories.length === 0 && (
         <div className="activity-empty-state">
           <strong>{t("rightSidebarUi.noLongTermMemory")}</strong>
           <p>{t("rightSidebarUi.longTermMemoryEmpty")}</p>
         </div>
       )}
       <div className="person-memory-list">
-        {memories.map((memory) => (
+        {longTermMemories.map((memory) => (
           <article key={memory.id}>
             <strong>{memory.summary}</strong>
             <div className="person-memory-meta">

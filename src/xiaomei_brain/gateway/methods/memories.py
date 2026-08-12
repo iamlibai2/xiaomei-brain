@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from xiaomei_brain.memory.observability import list_person_memory_views
+from xiaomei_brain.memory.observability import (
+    list_person_memory_views,
+    list_person_short_term_memory_views,
+)
 
 from ..protocol import ErrorCode, build_error, build_response
 from ..schemas import MemoryListParams, format_error
@@ -48,8 +51,19 @@ class MemoryMethods:
             limit=parsed.limit,
             offset=parsed.offset,
         )
+        short_term = self._short_term_memory()
+        short_term_memories = (
+            list_person_short_term_memory_views(
+                short_term,
+                str(context.person_id),
+                limit=min(parsed.limit, 20),
+            )
+            if short_term is not None and parsed.offset == 0
+            else []
+        )
         return build_response(req_id, result={
             "memories": memories,
+            "short_term_memories": short_term_memories,
             "has_more": has_more,
             "next_offset": (
                 parsed.offset + len(memories) if has_more else None
@@ -64,3 +78,12 @@ class MemoryMethods:
         get_agent = getattr(agent, "_get_agent", None)
         core = get_agent() if callable(get_agent) else None
         return getattr(core, "longterm_memory", None)
+
+    def _short_term_memory(self):
+        agent = getattr(self._living, "agent", None)
+        memory = getattr(agent, "short_term_memory", None)
+        if memory is not None:
+            return memory
+        get_agent = getattr(agent, "_get_agent", None)
+        core = get_agent() if callable(get_agent) else None
+        return getattr(core, "short_term_memory", None)

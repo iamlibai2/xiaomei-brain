@@ -19,7 +19,7 @@ from typing import Any, TYPE_CHECKING
 from ..self_modules import SelfPerception
 from .render_consciousness_v3 import (
     _render_header, _render_being, _render_body, _render_observed,
-    _render_longterm_memories, _render_relation_chains,
+    _render_short_term_memories, _render_longterm_memories, _render_relation_chains,
     _render_dag_summaries,
     _render_cornerstone, _render_essence, _render_narratives, _render_internal_narratives,
     _render_experience, _render_experience_timeline, _render_learn_queue, _render_desk,
@@ -83,6 +83,7 @@ def _assemble_daily(si) -> str:
         + _render_body(si)
         + _render_observed(si)
         + _render_procedures(si)
+        + _render_short_term_memories(si)
         + _render_longterm_memories(si)
         + _render_relation_chains(si)
         + _render_dag_summaries(si)
@@ -105,6 +106,7 @@ def _assemble_task(si) -> str:
         + _render_body(si)
         + _render_observed(si)
         + _render_experience(si)
+        + _render_short_term_memories(si)
         + _render_longterm_memories(si)
         + _render_dag_summaries(si)
         + _render_learn_queue(si)
@@ -121,6 +123,7 @@ def _assemble_reflect(si) -> str:
         + _render_essence(si)
         + _render_body(si)
         + _render_observed(si)
+        + _render_short_term_memories(si)
         + _render_longterm_memories(si)
         + _render_relation_chains(si)
         + _render_dag_summaries(si)
@@ -167,6 +170,7 @@ def _assemble_proactive(si) -> str:
         + _render_body(si)
         + _render_observed(si)
         + _render_procedures(si)
+        + _render_short_term_memories(si)
         + _render_longterm_memories(si)
         + _render_relation_chains(si)
         + _render_dag_summaries(si)
@@ -195,6 +199,7 @@ def _assemble_internal(si) -> str:
         + _render_body(si)
         + _render_observed(si)
         + _render_procedures(si)
+        + _render_short_term_memories(si)
         + _render_longterm_memories(si)
         + _render_relation_chains(si)
         + _render_dag_summaries(si)

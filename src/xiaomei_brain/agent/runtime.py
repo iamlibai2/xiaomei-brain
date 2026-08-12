@@ -110,6 +110,8 @@ class AgentRuntimeFactory:
             "conversation_db",
             "dag",
             "longterm_memory",
+            "short_term_memory",
+            "memory_formation",
             "memory_extractor",
             "_procedure_memory",
             "_skill_loader",

@@ -32,7 +32,7 @@ from datetime import datetime
 from typing import Any
 
 from .emotion_processor import EmotionProcessor
-from .memory_jobs import ReinforceJob, ExtractJob, RelationReinforceJob
+from .memory_jobs import ConsolidateShortTermJob, ReinforceJob, RelationReinforceJob
 from .reflection import Reflection
 logger = logging.getLogger(__name__)
 
@@ -119,18 +119,17 @@ class DreamEngine:
 
         logger.info("[DreamEngine] 开始梦境")
 
-        # ── 阶段1a：记忆提取 ────────────────────────────
-        # 先提取今日对话中的新记忆，让后续阶段（强化、关系、燃烧）都能用到
-        # 梦境处理所有用户的消息，不依赖 current_user_id，
-        # 每条记忆的归属由消息自身的 user_id 决定
+        # ── 阶段1a：短期记忆巩固 ────────────────────────
+        # 对话阶段已经把经历放入 memories0。梦境只整理梦开始前的
+        # 固定集合，不再从原始消息旁路生成另一批长期记忆。
         try:
-            if self.extractor and self.extractor.llm:
-                ej = ExtractJob(self.extractor)
-                e = ej.run()
+            formation = getattr(self.extractor, "formation_service", None)
+            if formation:
+                e = ConsolidateShortTermJob(formation).run()
                 report.memories_extracted = e.saved
-                logger.info("[DreamEngine] 记忆提取: saved=%d", e.saved)
+                logger.info("[DreamEngine] 短期记忆巩固: %s", e.details)
         except Exception as e:
-            logger.error("[DreamEngine] 记忆提取失败: %s", e)
+            logger.error("[DreamEngine] 短期记忆巩固失败: %s", e)
             report.errors += 1
 
         # ── 阶段1b：记忆强化 ────────────────────────────

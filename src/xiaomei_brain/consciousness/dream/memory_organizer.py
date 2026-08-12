@@ -76,8 +76,8 @@ class MemoryOrganizer:
             result.errors += reinforce_result.get("errors", 0)
             result.details = str(reinforce_result)
 
-        # 2. 从对话提取新记忆
-        if self.extractor and self.extractor.llm:
+        # 2. 巩固 memories0。旧的“从原始对话直写长期记忆”路径不再自动执行。
+        if self.extractor and getattr(self.extractor, "formation_service", None):
             extract_result = self._run_extract()
             result.extracted = extract_result.get("saved", 0)
             result.errors += extract_result.get("errors", 0)
@@ -116,13 +116,13 @@ class MemoryOrganizer:
             return {"errors": 1, "details": str(e)}
 
     def _run_extract(self) -> dict:
-        """运行提取 job"""
+        """运行短期记忆巩固 job"""
         if not self.extractor:
             return {}
 
         try:
-            from .memory_jobs import ExtractJob
-            job = ExtractJob(self.extractor, user_id=self.user_id or "global")
+            from .memory_jobs import ConsolidateShortTermJob
+            job = ConsolidateShortTermJob(self.extractor.formation_service)
             res = job.run()
             return {
                 "saved": res.saved,

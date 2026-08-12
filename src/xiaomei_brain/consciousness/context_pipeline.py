@@ -253,6 +253,7 @@ def build_context(
         refresh_memory_window(
             self_image,
             longterm=getattr(agent, "longterm_memory", None),
+            short_term=getattr(agent, "short_term_memory", None),
             dag=getattr(agent, "dag", None),
             conversation_db=getattr(agent, "conversation_db", None),
             procedure_memory=getattr(agent, "_procedure_memory", None),

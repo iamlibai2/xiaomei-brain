@@ -1,0 +1,208 @@
+from __future__ import annotations
+
+import sqlite3
+import time
+from unittest.mock import MagicMock
+
+from xiaomei_brain.memory.formation import MemoryFormationService
+from xiaomei_brain.memory.conversation_db import ConversationDB
+from xiaomei_brain.memory.short_term import (
+    ShortTermMemoryCandidate,
+    ShortTermMemoryStore,
+)
+
+
+def test_memories0_is_created_and_exact_candidate_is_reinforced(tmp_path):
+    db_path = tmp_path / "brain.db"
+    store = ShortTermMemoryStore(str(db_path))
+    candidate = ShortTermMemoryCandidate(
+        content="博士明天下午可能去成都",
+        kind="temporary_plan",
+        scope_type="person",
+        scope_id="person-a",
+        person_id="person-a",
+        session_id="session-a",
+        evidence_refs=(("message", "10"),),
+    )
+
+    first = store.remember(candidate)
+    second = store.remember(candidate)
+
+    assert first == second
+    row = store.list_active()[0]
+    assert row["reinforcement_count"] == 2
+    assert row["scope_id"] == "person-a"
+    with sqlite3.connect(db_path) as conn:
+        tables = {item[0] for item in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert "memories0" in tables
+        assert "short_term_memories" not in tables
+        evidence_count = conn.execute(
+            "SELECT COUNT(*) FROM memory_evidence_links WHERE memory_layer='short_term'"
+        ).fetchone()[0]
+        assert evidence_count == 1
+
+
+def test_recall_filters_person_session_and_agent_scopes(tmp_path):
+    store = ShortTermMemoryStore(str(tmp_path / "brain.db"))
+    for content, scope_type, scope_id in (
+        ("person A likes tea", "person", "person-a"),
+        ("person B likes coffee", "person", "person-b"),
+        ("current session plan", "session", "session-a"),
+        ("other session plan", "session", "session-b"),
+        ("agent learned patience", "agent", "global"),
+    ):
+        store.remember(
+            ShortTermMemoryCandidate(
+                content=content,
+                scope_type=scope_type,
+                scope_id=scope_id,
+                person_id=scope_id if scope_type == "person" else "",
+                session_id=scope_id if scope_type == "session" else "",
+            )
+        )
+
+    recalled = store.recall(
+        "plan tea patience",
+        person_id="person-a",
+        session_id="session-a",
+        limit=10,
+    )
+    contents = {item["content"] for item in recalled}
+    assert "person A likes tea" in contents
+    assert "current session plan" in contents
+    assert "agent learned patience" in contents
+    assert "person B likes coffee" not in contents
+    assert "other session plan" not in contents
+
+
+def test_expired_memory_is_not_recalled(tmp_path):
+    store = ShortTermMemoryStore(str(tmp_path / "brain.db"))
+    memory_id = store.remember(
+        ShortTermMemoryCandidate(
+            content="a temporary detail",
+            scope_type="person",
+            scope_id="person-a",
+            person_id="person-a",
+            retention_seconds=60,
+        )
+    )
+    conn = store._get_conn()
+    conn.execute("UPDATE memories0 SET expires_at = ? WHERE id = ?", (time.time() - 1, memory_id))
+    conn.commit()
+
+    assert store.recall("temporary", person_id="person-a") == []
+    status = conn.execute("SELECT status FROM memories0 WHERE id = ?", (memory_id,)).fetchone()[0]
+    assert status == "expired"
+
+
+def test_formation_defaults_conversation_memory_to_memories0(tmp_path):
+    short_term = ShortTermMemoryStore(str(tmp_path / "brain.db"))
+    long_term = MagicMock()
+    service = MemoryFormationService(short_term=short_term, long_term=long_term)
+
+    results = service.form_actions(
+        [{
+            "type": "ADD",
+            "tag": "preference_signal",
+            "content": "博士这次表示喜欢苹果",
+            "self": False,
+        }],
+        source="immediate",
+        user_id="person-a",
+        session_id="session-a",
+    )
+
+    assert [item.layer for item in results] == ["short_term"]
+    assert short_term.list_active()[0]["content"] == "博士这次表示喜欢苹果"
+    long_term.store.assert_not_called()
+
+
+def test_formation_links_only_messages_from_current_turn(tmp_path):
+    db_path = tmp_path / "brain.db"
+    conversation = ConversationDB(str(db_path))
+    conversation.log(
+        "session-a", "user", "old turn", user_id="person-a",
+        metadata={"turn_id": "turn-old"},
+    )
+    current_id = conversation.log(
+        "session-a", "user", "remember this", user_id="person-a",
+        metadata={"turn_id": "turn-current"},
+    )
+    short_term = ShortTermMemoryStore(str(db_path))
+    service = MemoryFormationService(
+        short_term=short_term,
+        long_term=MagicMock(),
+        conversation_db=conversation,
+    )
+
+    results = service.form_actions(
+        [{"type": "ADD", "content": "current evidence"}],
+        source="immediate",
+        user_id="person-a",
+        session_id="session-a",
+        turn_id="turn-current",
+    )
+
+    links = short_term._get_conn().execute(
+        "SELECT evidence_id FROM memory_evidence_links WHERE memory_id = ?",
+        (results[0].memory_id,),
+    ).fetchall()
+    assert [row[0] for row in links] == [str(current_id)]
+    conversation.close()
+    short_term.close()
+
+
+def test_explicit_long_term_candidate_bypasses_memories0(tmp_path):
+    short_term = ShortTermMemoryStore(str(tmp_path / "brain.db"))
+    long_term = MagicMock()
+    long_term.store.return_value = 42
+    service = MemoryFormationService(short_term=short_term, long_term=long_term)
+
+    results = service.form_actions(
+        [{
+            "type": "ADD",
+            "tag": "safety",
+            "content": "博士对花生严重过敏",
+            "retention": "long_term",
+            "importance": 0.95,
+        }],
+        source="immediate",
+        user_id="person-a",
+        session_id="session-a",
+    )
+
+    assert results[0].layer == "long_term"
+    assert results[0].memory_id == 42
+    assert short_term.list_active() == []
+
+
+def test_dream_consolidates_repeated_memory_and_retains_weak_one(tmp_path):
+    short_term = ShortTermMemoryStore(str(tmp_path / "brain.db"))
+    long_term = MagicMock()
+    long_term.store.return_value = 88
+    service = MemoryFormationService(short_term=short_term, long_term=long_term)
+    repeated = ShortTermMemoryCandidate(
+        content="博士不喜欢苹果",
+        kind="preference_signal",
+        scope_type="person",
+        scope_id="person-a",
+        person_id="person-a",
+    )
+    for _ in range(3):
+        short_term.remember(repeated)
+    short_term.remember(
+        ShortTermMemoryCandidate(
+            content="博士今天穿了蓝色衣服",
+            scope_type="person",
+            scope_id="person-a",
+            person_id="person-a",
+            importance=0.2,
+        )
+    )
+
+    result = service.consolidate_for_dream()
+
+    assert result == {"consolidated": 1, "retained": 1, "expired": 0}
+    active = short_term.list_active()
+    assert [item["content"] for item in active] == ["博士今天穿了蓝色衣服"]
+    long_term.store.assert_called_once()

@@ -49,6 +49,31 @@ class DreamResult:
     details: str = ""
 
 
+class ConsolidateShortTermJob:
+    """Dream boundary for memories0: consolidate, retain, or let expire."""
+
+    def __init__(self, formation_service) -> None:
+        self.formation_service = formation_service
+
+    def run(self) -> DreamResult:
+        try:
+            outcome = self.formation_service.consolidate_for_dream(cutoff=time.time())
+            return DreamResult(
+                job="consolidate_short_term",
+                saved=outcome["consolidated"],
+                extinct=outcome["expired"],
+                details=(
+                    f"consolidated={outcome['consolidated']} "
+                    f"retained={outcome['retained']} expired={outcome['expired']}"
+                ),
+            )
+        except Exception as exc:
+            logger.exception("[ConsolidateShortTermJob] failed")
+            return DreamResult(
+                job="consolidate_short_term", errors=1, details=str(exc),
+            )
+
+
 # ── ReinforceJob ────────────────────────────────────────────
 
 class ReinforceJob:

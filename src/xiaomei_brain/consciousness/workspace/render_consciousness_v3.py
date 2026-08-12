@@ -725,6 +725,24 @@ def _render_observed(si) -> list[str]:
     return lines
 
 
+def _render_short_term_memories(si) -> list[str]:
+    """渲染仍在短期保持、尚未巩固为长期认知的近期经历。"""
+    items = getattr(si.memory, "short_term_memories", None) or []
+    if not items:
+        return []
+    lines = [
+        "\n<短期记忆>",
+        "这些是你近期仍记得、但尚未形成长期认知的事情。它们可能过期，使用时注意时间和不确定性。",
+    ]
+    for item in items[:8]:
+        content = str(item.get("content", ""))[:240]
+        confidence = float(item.get("confidence", 0.0) or 0.0)
+        kind = str(item.get("kind", "event"))
+        lines.append(f"- [{kind} 置信度{confidence:.0%}] {content}")
+    lines.append("</短期记忆>")
+    return lines
+
+
 def _render_longterm_memories(si) -> list[str]:
     """渲染长期记忆 — important_memories + recalled_memories 去重合并。
 

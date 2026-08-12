@@ -120,7 +120,7 @@ MEMORY_DECISION_PROMPT = """\
 
 **重要：请先正常回复{user_name}，回复完成后，再在末尾输出 MEMORY 块。**
 
-判断是否需要提取相关的长期记忆。
+判断本轮是否形成了仍值得暂时记住的经历，以及它应进入短期记忆还是长期记忆。
 
 **规则**：
 - 从最近一次{user_name}的输入中提取，也从最近一次你的回复中提取，只提取最近一次的，否则会造成重复记忆
@@ -129,6 +129,9 @@ MEMORY_DECISION_PROMPT = """\
 - 如果新记忆与已有记忆有语义关联，在 relations 字段建立关联
 - 关系类型: causal(因果), temporal(时序), contrast(对比), contains(包含)
 - 判断处理方式：ADD（全新）、UPDATE（更新旧记忆）、MERGE（合并同类）、NOOP（无意义/重复/推测）
+- 每条记忆必须有 retention：默认使用 short_term。只有对方明确说“请记住”、稳定身份信息、长期安全事实，或明确纠正已有长期记忆时，才使用 long_term
+- 普通聊天细节、临时计划、偏好线索、关系线索和近期事件都先进入 short_term，等待重复强化或梦境整理
+- tag 优先使用 temporary_plan、unfinished、event、preference_signal、relationship_signal、emotion_event；明确长期事实可继续使用事实、偏好、关系等标签
 - **每条记忆都必须有 "self" 字段**：涉及你自己（与你有关的就算，比如：博士说明天晚上我们一起去上海）→ true，只关于对方 → false
 - 每条记忆都要标注 scenes（场景标签，1~3个），反映这条记忆在什么场景下会被唤起
 - **场景标签用中文，具体且有画面感，如：家、院子、工作、学习、编程、休闲、社交、美食、旅行、出行、健康、创作、家庭、生活、童年、购物 等。一个场景就是一个能被唤起的情境——请认真思考这条记忆会在什么情境下被用到。如果实在想不出合适的，可以空着，不要用"日常"兜底。**
@@ -160,14 +163,14 @@ MEMORY_DECISION_PROMPT = """\
 你的正常回复内容...
 
 <MEMORY>
-{{"relations": [{{"from": "新记忆内容", "type": "causal", "to": "已有记忆内容"}}], "actions": [{{"type": "ADD", "tag": "偏好", "content": "{user_name}喜欢川菜", "scenes": ["美食"], "self": false}}, {{"type": "ADD", "tag": "经验", "content": "我答应明天陪{user_name}过生日", "scenes": ["社交"], "self": true}}]}}
+{{"relations": [], "actions": [{{"type": "ADD", "tag": "preference_signal", "content": "{user_name}这次表示喜欢川菜", "retention": "short_term", "confidence": 0.7, "importance": 0.5, "scenes": ["美食"], "self": false}}]}}
 </MEMORY>
 
 示例：
 好的，我记住了你喜欢川菜！
 
 <MEMORY>
-{{"relations": [{{"from": "{user_name}叫李四", "type": "causal", "to": "{user_name}上周刚搬家"}}, {{"from": "{user_name}喜欢MacBook", "type": "causal", "to": "{user_name}买新电脑"}}], "actions": [{{"type": "ADD", "tag": "偏好", "content": "{user_name}喜欢川菜", "scenes": ["美食"], "self": false}}]}}
+{{"relations": [], "actions": [{{"type": "ADD", "tag": "preference_signal", "content": "{user_name}这次表示喜欢川菜", "retention": "short_term", "confidence": 0.7, "importance": 0.5, "scenes": ["美食"], "self": false}}]}}
 </MEMORY>
 """
 

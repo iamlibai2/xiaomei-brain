@@ -38,6 +38,8 @@ class AgentInstance:
     # Memory system (新架构)
     conversation_db: Any = None  # ConversationDB
     longterm_memory: Any = None  # LongTermMemory
+    short_term_memory: Any = None  # ShortTermMemoryStore (memories0)
+    memory_formation: Any = None  # MemoryFormationService
     memory_extractor: Any = None  # MemoryExtractor
 
     # Command registry
@@ -180,6 +182,8 @@ class AgentInstance:
             self._agent.conversation_db = self.conversation_db
             self._agent.dag = getattr(self, "dag", None)
             self._agent.longterm_memory = self.longterm_memory
+            self._agent.short_term_memory = self.short_term_memory
+            self._agent.memory_formation = self.memory_formation
             self._agent.memory_extractor = self.memory_extractor
             self._agent._procedure_memory = getattr(self, "_procedure_memory", None)
         # Execution configuration belongs to AgentInstance and must survive a

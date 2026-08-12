@@ -29,6 +29,7 @@ def refresh_memory_window(
     si: "SelfImage",
     *,
     longterm: Any = None,
+    short_term: Any = None,
     dag: Any = None,
     conversation_db: Any = None,
     procedure_memory: Any = None,
@@ -63,6 +64,7 @@ def refresh_memory_window(
     dag_summaries: list[dict] = []
     important_memories: list[dict] = []
     recalled_memories: list[dict] = []
+    short_term_memories: list[dict] = []
     relation_chains: list[dict] = []
     procedures: list[dict] = []
     recent_dialog: list[dict] = []
@@ -79,6 +81,19 @@ def refresh_memory_window(
         perception=si.perception,
         last_snapshot=getattr(si, "_last_attention_snapshot", None),
     )
+
+    # 第 0 层记忆先按确定性范围过滤，再按相关性和时效排序。
+    if short_term:
+        try:
+            short_term_memories = short_term.recall(
+                user_input or attention_query,
+                person_id=user_id,
+                session_id=session_id or "",
+                agent_scope_id="global",
+                limit=8,
+            ) or []
+        except Exception as e:
+            logger.warning("[MemoryWindow] 短期记忆召回失败: %s", e)
 
     # ── 1. 叙事记忆 ──────────────────────────────────────
     if longterm:
@@ -370,6 +385,7 @@ def refresh_memory_window(
             "dag_summaries": dag_summaries,
             "important_memories": important_memories,
             "recalled_memories": recalled_memories,
+            "short_term_memories": short_term_memories,
             "relation_chains": relation_chains,
             "procedures": procedures,
             "recent_dialog": recent_dialog,
@@ -386,14 +402,16 @@ def refresh_memory_window(
     )
 
     _total = (
-        len(narratives) + len(dag_summaries) + len(important_memories)
+        len(narratives) + len(dag_summaries) + len(short_term_memories)
+        + len(important_memories)
         + len(recalled_memories) + len(relation_chains) + len(procedures)
         + len(recent_dialog) + len(internal_narratives) + len(patterns)
     )
     logger.info(
-        "[MemoryWindow] 刷新完成: narr=%d dag=%d important=%d recalled=%d "
+        "[MemoryWindow] 刷新完成: narr=%d dag=%d short=%d important=%d recalled=%d "
         "chains=%d proc=%d dialog=%d cross_user=%d internal=%d project_map=%d exp=%d timeline=%d patterns=%d milestones=%d total=%d",
-        len(narratives), len(dag_summaries), len(important_memories),
+        len(narratives), len(dag_summaries), len(short_term_memories),
+        len(important_memories),
         len(recalled_memories), len(relation_chains), len(procedures),
         len(recent_dialog), len(cross_user_dialog), len(internal_narratives),
         len(project_map), len(experience),

@@ -208,6 +208,14 @@ class ConsciousLiving(Living):
         from ..memory.longterm import LongTermMemory
         dag = DAGSummaryGraph.for_agent(self._agent_id, llm_client=_llm)
         self.agent.longterm_memory = LongTermMemory(db_path)
+        from ..memory.short_term import ShortTermMemoryStore
+        from ..memory.formation import MemoryFormationService
+        self.agent.short_term_memory = ShortTermMemoryStore(db_path)
+        self.agent.memory_formation = MemoryFormationService(
+            short_term=self.agent.short_term_memory,
+            long_term=self.agent.longterm_memory,
+            conversation_db=self.agent.conversation_db,
+        )
         self.agent.dag = dag
         boot_line("摘要图谱 (DAG)", "OK")
         ltm_count = self.agent.longterm_memory.count() if hasattr(self.agent.longterm_memory, 'count') else 0
@@ -236,6 +244,7 @@ class ConsciousLiving(Living):
             llm_client=_llm,
             longterm_memory=self.agent.longterm_memory,
             conversation_db=self.agent.conversation_db,
+            formation_service=self.agent.memory_formation,
         )
 
         # 设置延迟绑定工具的依赖引用（工具已在 init_agent() 注册）

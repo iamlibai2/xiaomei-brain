@@ -399,6 +399,7 @@ class SelfImage:
                 len(getattr(self.memory, k, []) or [])
                 for k in ["narratives", "internal_narratives", "dag_summaries",
                           "important_memories", "recalled_memories", "relation_chains",
+                          "short_term_memories",
                           "procedures", "recent_dialog", "cross_user_dialog",
                           "experience_timeline",
                           "experience", "patterns", "milestones"]

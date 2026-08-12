@@ -400,6 +400,11 @@ function personMemorySnapshot(value: unknown): PersonMemorySnapshot | null {
       : [],
     createdAt: typeof item.created_at === "number" ? item.created_at : 0,
     lastAccessed: typeof item.last_accessed === "number" ? item.last_accessed : 0,
+    memoryLayer: item.memory_layer === "short_term" ? "short_term" : "long_term",
+    expiresAt: typeof item.expires_at === "number" ? item.expires_at : 0,
+    reinforcementCount: typeof item.reinforcement_count === "number"
+      ? item.reinforcement_count
+      : 1,
   };
 }
 
@@ -906,6 +911,9 @@ export interface MemoryReference {
 
 export interface PersonMemorySnapshot extends MemoryReference {
   lastAccessed: number;
+  memoryLayer: "short_term" | "long_term";
+  expiresAt: number;
+  reinforcementCount: number;
 }
 
 export interface DisplayAttachment {
@@ -3334,7 +3342,11 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
     try {
       const response = await window.gateway.listMemories({ agentId, limit: 30, offset: 0 });
       if (response.error) throw new Error(response.error.message);
-      const rows = Array.isArray(response.result?.memories) ? response.result.memories : [];
+      const shortRows = Array.isArray(response.result?.short_term_memories)
+        ? response.result.short_term_memories
+        : [];
+      const longRows = Array.isArray(response.result?.memories) ? response.result.memories : [];
+      const rows = [...shortRows, ...longRows];
       const memories = rows
         .map(personMemorySnapshot)
         .filter((item): item is PersonMemorySnapshot => item !== null);

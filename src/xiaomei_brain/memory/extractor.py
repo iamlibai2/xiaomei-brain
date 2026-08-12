@@ -47,10 +47,12 @@ class MemoryExtractor:
         llm_client: Any = None,
         longterm_memory: LongTermMemory | None = None,
         conversation_db: ConversationDB | None = None,
+        formation_service: Any = None,
     ) -> None:
         self.llm = llm_client
         self.ltm = longterm_memory
         self.db = conversation_db
+        self.formation_service = formation_service
         self._last_extract_time = time.time()
 
     # [废弃] 全代码库零调用。
@@ -273,6 +275,7 @@ class MemoryExtractor:
     def _execute_actions(
         self, llm_output: str, source: str = "manual",
         importance: float = 0.5, user_id: str = "global",
+        session_id: str = "", turn_id: str = "",
     ) -> list[int]:
         """解析 LLM 输出，直接执行操作。
 
@@ -288,13 +291,23 @@ class MemoryExtractor:
         # ── 尝试 JSON 格式 ──────────────────────────────────────────────
         parsed = self._parse_json_actions(llm_output)
         if parsed:
-            ids, content_to_id = self._execute_json_actions(parsed, source, importance, user_id)
+            ids, content_to_id = self._execute_json_actions(
+                parsed, source, importance, user_id,
+                session_id=session_id, turn_id=turn_id,
+            )
             for rel in parsed.get("relations", []):
                 self._execute_json_relation(rel, content_to_id, user_id)
             return ids
 
         # ── 回退：行格式 ────────────────────────────────────────────────
-        return self._execute_line_actions(llm_output, source, importance, user_id)
+        return self._execute_line_actions(
+            llm_output,
+            source,
+            importance,
+            user_id,
+            session_id=session_id,
+            turn_id=turn_id,
+        )
 
     def _parse_json_actions(self, llm_output: str) -> dict | None:
         """从 LLM 输出中解析 JSON 格式的动作列表。
@@ -371,12 +384,36 @@ class MemoryExtractor:
 
     def _execute_json_actions(
         self, parsed: dict, source: str, importance: float, user_id: str,
+        *, session_id: str = "", turn_id: str = "",
     ) -> tuple[list[int], dict[str, int]]:
         """执行 JSON 格式的动作列表。
 
         Returns (memory_ids, content_to_id_map).
         """
         import re
+
+        formation_service = getattr(self, "formation_service", None)
+        if formation_service is not None:
+            results = formation_service.form_actions(
+                parsed.get("actions", []) if isinstance(parsed, dict) else [],
+                source=source,
+                user_id=user_id,
+                session_id=session_id,
+                turn_id=turn_id,
+                default_importance=importance,
+            )
+            ids = [result.memory_id for result in results]
+            content_to_id = {
+                result.content[:50]: result.memory_id
+                for result in results
+                if result.layer == "long_term" and len(result.content) >= 5
+            }
+            logger.info(
+                "[MemoryFormation] formed %d memories (%s)",
+                len(results),
+                ", ".join(result.layer for result in results) or "none",
+            )
+            return ids, content_to_id
 
         ids: list[int] = []
         content_to_id: dict[str, int] = {}
@@ -523,9 +560,43 @@ class MemoryExtractor:
     def _execute_line_actions(
         self, llm_output: str, source: str = "manual",
         importance: float = 0.5, user_id: str = "global",
+        *, session_id: str = "", turn_id: str = "",
     ) -> list[int]:
         """行格式的动作解析（回退路径）。"""
         import re
+
+        formation_service = getattr(self, "formation_service", None)
+        if formation_service is not None:
+            parsed_actions: list[dict[str, Any]] = []
+            for raw_line in llm_output.strip().split("\n"):
+                line = raw_line.strip()
+                if not line or line == "无" or line.startswith(("**", "#")):
+                    continue
+                if line.upper().startswith("RELATES"):
+                    continue
+                parts = line.split("|")
+                if len(parts) >= 3 and parts[0].strip().upper() in self.formation_service.VALID_OPERATIONS:
+                    operation = parts[0].strip().upper()
+                    tag = parts[1].strip()
+                    content = "|".join(parts[2:]).strip()
+                else:
+                    operation = "ADD"
+                    tag = "event"
+                    content = "|".join(parts[1:]).strip() if len(parts) > 1 else line
+                parsed_actions.append({
+                    "type": operation,
+                    "tag": tag,
+                    "content": content,
+                })
+            results = formation_service.form_actions(
+                parsed_actions,
+                source=source,
+                user_id=user_id,
+                session_id=session_id,
+                turn_id=turn_id,
+                default_importance=importance,
+            )
+            return [result.memory_id for result in results]
 
         ids: list[int] = []
         relates_lines: list[str] = []
@@ -853,7 +924,14 @@ class MemoryExtractor:
         except json.JSONDecodeError:
             return None, clean
 
-    def execute_block(self, memory_block: str, user_id: str = "global") -> list[int]:
+    def execute_block(
+        self,
+        memory_block: str,
+        user_id: str = "global",
+        *,
+        session_id: str = "",
+        turn_id: str = "",
+    ) -> list[int]:
         """执行 MEMORY block（合并模式，无需调 LLM）。
 
         判断是否有有效 ACTION，有则执行，无则跳过。
@@ -868,14 +946,27 @@ class MemoryExtractor:
             import json
             data = json.loads(block_clean)
             if isinstance(data, dict) and ("actions" in data or "relations" in data):
-                return self._execute_actions(memory_block, source="immediate", user_id=user_id)
+                return self._execute_actions(
+                    memory_block,
+                    source="immediate",
+                    user_id=user_id,
+                    session_id=session_id,
+                    turn_id=turn_id,
+                )
         except json.JSONDecodeError:
             pass
 
         # ── 截断 JSON salvage（直接从 block 提取，不走 _execute_actions） ─
         parsed = self._parse_json_actions(memory_block)
         if parsed and parsed.get("actions"):
-            ids, content_to_id = self._execute_json_actions(parsed, source="immediate", importance=0.5, user_id=user_id)
+            ids, content_to_id = self._execute_json_actions(
+                parsed,
+                source="immediate",
+                importance=0.5,
+                user_id=user_id,
+                session_id=session_id,
+                turn_id=turn_id,
+            )
             for rel in parsed.get("relations", []):
                 self._execute_json_relation(rel, content_to_id, user_id)
             return ids
@@ -894,7 +985,13 @@ class MemoryExtractor:
         if not has_valid and not has_relates:
             return []
 
-        return self._execute_actions(memory_block, source="immediate", user_id=user_id)
+        return self._execute_actions(
+            memory_block,
+            source="immediate",
+            user_id=user_id,
+            session_id=session_id,
+            turn_id=turn_id,
+        )
 
     # ── Task 完成提取 ─────────────────────────────────────────────
 

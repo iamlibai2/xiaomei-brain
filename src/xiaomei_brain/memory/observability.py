@@ -81,6 +81,33 @@ def list_person_memory_views(
     return memories, has_more
 
 
+def list_person_short_term_memory_views(
+    short_term_memory: Any,
+    person_id: str,
+    *,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Return the active memories0 projection visible to one Person."""
+    memories: list[dict[str, Any]] = []
+    for row in short_term_memory.list_for_person(person_id, limit=limit):
+        summary = _clean_text(row.get("content"), 500)
+        if not summary:
+            continue
+        memories.append({
+            "id": f"m0:{row.get('id')}",
+            "summary": summary,
+            "source": "short_term",
+            "memory_type": _clean_text(row.get("kind"), 40),
+            "tags": [],
+            "created_at": _number(row.get("created_at")),
+            "last_accessed": _number(row.get("last_seen_at")),
+            "expires_at": _number(row.get("expires_at")),
+            "reinforcement_count": int(row.get("reinforcement_count") or 1),
+            "memory_layer": "short_term",
+        })
+    return memories
+
+
 def _clean_text(value: Any, limit: int) -> str:
     text = " ".join(str(value or "").replace("\x00", "").split())
     return text[:limit]
