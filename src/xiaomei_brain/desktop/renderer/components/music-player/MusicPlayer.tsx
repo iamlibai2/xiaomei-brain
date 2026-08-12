@@ -16,12 +16,17 @@ import {
 } from "../../media-playback";
 import { Icon } from "../ui";
 import {
+  MEDIA_PLAYER_OPEN_EVENT,
   MEDIA_QUEUE_VISIBILITY_EVENT,
   openMediaLibrary,
 } from "../../media-library";
 import {
   isMusicPlayerSkin,
+  getMusicPlayerSkinSnapshot,
+  hydrateMusicPlayerSkin,
   MUSIC_PLAYER_SKINS,
+  setActiveMusicPlayerSkin,
+  subscribeMusicPlayerSkin,
   type MusicPlayerSkinId,
 } from "./music-player-skins";
 import "./music-player.css";
@@ -42,7 +47,12 @@ export function MusicPlayer({
   const [queueOpen, setQueueOpen] = useState(false);
   const [skinOpen, setSkinOpen] = useState(false);
   const [volumeOpen, setVolumeOpen] = useState(false);
-  const [skin, setSkin] = useState<MusicPlayerSkinId>("default");
+  const [manuallyOpen, setManuallyOpen] = useState(false);
+  const skin = useSyncExternalStore(
+    subscribeMusicPlayerSkin,
+    getMusicPlayerSkinSnapshot,
+    getMusicPlayerSkinSnapshot,
+  );
   const playerRef = useRef<HTMLElement | null>(null);
   const state = useSyncExternalStore(
     subscribeMediaPlayback,
@@ -63,23 +73,29 @@ export function MusicPlayer({
     && state.toolCallId === toolCallId;
 
   useEffect(() => {
+    if (variant !== "floating") return;
+    const open = () => setManuallyOpen(true);
+    window.addEventListener(MEDIA_PLAYER_OPEN_EVENT, open);
+    return () => window.removeEventListener(MEDIA_PLAYER_OPEN_EVENT, open);
+  }, [variant]);
+
+  useEffect(() => {
     if (state.queue.length === 0) setQueueOpen(false);
   }, [state.queue.length]);
 
   useEffect(() => {
-    let active = true;
-    void window.desktop.getSettings().then((settings) => {
-      if (active && isMusicPlayerSkin(settings.musicPlayerSkin)) {
-        setSkin(settings.musicPlayerSkin);
-      }
+    void hydrateMusicPlayerSkin(async () => {
+      const settings = await window.desktop.getSettings();
+      return settings.musicPlayerSkin;
     });
     const receive = (event: Event) => {
       const settings = (event as CustomEvent<import("../../types").DesktopSettings>).detail;
-      if (isMusicPlayerSkin(settings?.musicPlayerSkin)) setSkin(settings.musicPlayerSkin);
+      if (isMusicPlayerSkin(settings?.musicPlayerSkin)) {
+        setActiveMusicPlayerSkin(settings.musicPlayerSkin);
+      }
     };
     window.addEventListener("xiaomei:desktop-settings-changed", receive);
     return () => {
-      active = false;
       window.removeEventListener("xiaomei:desktop-settings-changed", receive);
     };
   }, []);
@@ -117,18 +133,19 @@ export function MusicPlayer({
   }, []);
 
   async function selectSkin(nextSkin: MusicPlayerSkinId) {
-    setSkin(nextSkin);
+    setActiveMusicPlayerSkin(nextSkin);
     setSkinOpen(false);
-    const result = await window.desktop.updateSettings({ musicPlayerSkin: nextSkin });
-    if (!result.ok || !result.settings) {
-      const current = await window.desktop.getSettings();
-      setSkin(isMusicPlayerSkin(current.musicPlayerSkin) ? current.musicPlayerSkin : "default");
-      return;
+    try {
+      const result = await window.desktop.updateSettings({ musicPlayerSkin: nextSkin });
+      if (!result.ok || !result.settings) return;
+      window.dispatchEvent(new CustomEvent(
+        "xiaomei:desktop-settings-changed",
+        { detail: result.settings },
+      ));
+    } catch {
+      // The selected skin remains usable for this Desktop session even if
+      // persisting the preference fails. A later successful save will persist it.
     }
-    window.dispatchEvent(new CustomEvent(
-      "xiaomei:desktop-settings-changed",
-      { detail: result.settings },
-    ));
   }
 
   useEffect(() => {
@@ -153,9 +170,10 @@ export function MusicPlayer({
     };
   }, [inlineMatches, state.playbackId]);
 
-  if (state.mediaKind !== "music" || !state.playbackId || state.status === "idle") return null;
+  const hasPlayback = state.mediaKind === "music" && Boolean(state.playbackId) && state.status !== "idle";
+  if (!hasPlayback && (variant !== "floating" || !manuallyOpen)) return null;
   if (variant === "inline" && !inlineMatches) return null;
-  if (variant === "floating" && state.inlinePlayerVisible) return null;
+  if (variant === "floating" && hasPlayback && state.inlinePlayerVisible) return null;
 
   return (
     <aside
@@ -171,7 +189,11 @@ export function MusicPlayer({
               key={definition.id}
               type="button"
               className={skin === definition.id ? "active" : ""}
-              onClick={() => { void selectSkin(definition.id); }}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                void selectSkin(definition.id);
+              }}
             >
               <span className={`desktop-music-skin-preview skin-${definition.id}`} aria-hidden="true">
                 <i />
@@ -343,7 +365,10 @@ export function MusicPlayer({
       <button
         type="button"
         className="desktop-music-close"
-        onClick={() => { void clearMediaQueue(); }}
+        onClick={() => {
+          setManuallyOpen(false);
+          void clearMediaQueue();
+        }}
         title={t("common.close")}
         aria-label={t("common.close")}
       >

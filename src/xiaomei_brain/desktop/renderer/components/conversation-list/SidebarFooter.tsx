@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Button, Icon } from "../ui";
 import type { DesktopSettings, DesktopUpdateState } from "../../types";
 import { useCoreStore } from "../../store";
+import { openMusicPlayer } from "../../media-library";
 
 interface SidebarFooterProps {
   userName: string;
@@ -16,6 +17,7 @@ export function SidebarFooter({ userName, onSettings }: SidebarFooterProps) {
   const [updateState, setUpdateState] = useState<DesktopUpdateState | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const agents = useCoreStore((state) => state.agents);
+  const activeAgentId = useCoreStore((state) => state.activeAgentId);
   const disconnectAgent = useCoreStore((state) => state.disconnectAgent);
   const resetIdentityState = useCoreStore((state) => state.resetIdentityState);
 
@@ -223,6 +225,14 @@ export function SidebarFooter({ userName, onSettings }: SidebarFooterProps) {
         )}
         </div>
         <div className="sidebar-footer-actions">
+          <Button
+            variant="ghost"
+            size="icon-md"
+            icon="music"
+            onClick={openMusicPlayer}
+            disabled={!activeAgentId}
+            title={t("mediaPlayer.title")}
+          />
           <Button variant="ghost" size="icon-md" icon="settings" onClick={onSettings} title={t("sidebar.settings")} />
         </div>
       </div>

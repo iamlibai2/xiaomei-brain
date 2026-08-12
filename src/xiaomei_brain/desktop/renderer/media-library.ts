@@ -20,7 +20,12 @@ export type MediaLibraryTrack = MediaTrackReference & {
 };
 
 export const MEDIA_LIBRARY_OPEN_EVENT = "xiaomei:media-library-open";
+export const MEDIA_PLAYER_OPEN_EVENT = "xiaomei:media-player-open";
 export const MEDIA_QUEUE_VISIBILITY_EVENT = "xiaomei:media-queue-visibility";
+
+export function openMusicPlayer(): void {
+  window.dispatchEvent(new Event(MEDIA_PLAYER_OPEN_EVENT));
+}
 
 export function openMediaLibrary(mode: "replace" | "append" = "replace"): void {
   window.dispatchEvent(new CustomEvent(MEDIA_LIBRARY_OPEN_EVENT, { detail: { mode } }));

@@ -5,6 +5,7 @@ import { openSettingsCenter } from "./settings/events";
 import { TokenUsageDialog } from "./TokenUsageDialog";
 import { AboutDialog } from "./AboutDialog";
 import { ShortcutDialog } from "./ShortcutDialog";
+import { openMusicPlayer } from "../media-library";
 
 interface MenuItem {
   label: string;
@@ -43,6 +44,11 @@ export function MenuBar() {
       {
         label: t("sidebar.settings"),
         action: () => openSettingsCenter("agents"),
+      },
+      {
+        label: t("mediaPlayer.title"),
+        action: openMusicPlayer,
+        disabled: !activeAgent,
       },
       { separator: true, label: "" },
       {
