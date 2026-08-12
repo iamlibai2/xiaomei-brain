@@ -2,6 +2,8 @@ import i18n from "./i18n";
 import {
   controlMediaPlayback,
   registerMediaPlaybackController,
+  playNextMediaTrack,
+  playPreviousMediaTrack,
   seekMediaPlayback,
   setMediaPlaybackVolume,
   updateMediaPlayback,
@@ -12,6 +14,9 @@ let playbackEpoch = 0;
 let activePlayback: ActivePlayback | null = null;
 let activeStream: StreamingPlayback | null = null;
 let activeMediaFile: MediaFilePlayback | null = null;
+let mediaQueue: MediaQueueItem[] = [];
+let mediaQueueIndex = -1;
+let resumeMediaAfterSpeech = false;
 
 type PlaybackStatus = "completed" | "interrupted" | "failed";
 type PcmCodec = "pcm_s16" | "pcm_f32";
@@ -57,6 +62,21 @@ interface MediaFilePlayback {
   dispose: () => void;
 }
 
+interface MediaQueueItem {
+  agentId: string;
+  playbackId: string;
+  mediaPath: string;
+  title: string;
+  sourceRef: string;
+  personId: string;
+  sessionId: string;
+  expiresAt: number;
+  playlistId: string;
+  playlistIndex: number;
+  artifactId: string;
+  toolCallId: string;
+}
+
 export const DESKTOP_SPEECH_STARTED = "xiaomei:desktop-speech-started";
 export const DESKTOP_SPEECH_FINISHED = "xiaomei:desktop-speech-finished";
 
@@ -72,11 +92,16 @@ export function installDesktopEmbodiment(): () => void {
     control: controlActiveMedia,
     seek: seekActiveMedia,
     setVolume: setActiveMediaVolume,
+    previous: playPreviousQueuedMedia,
+    next: playNextQueuedMedia,
+    playTrack: playQueuedMediaTrack,
+    removeTrack: removeQueuedMediaTrack,
+    clearQueue: clearMediaQueue,
   });
   return window.gateway.onEvent((raw) => {
     const payload = asRecord(raw.data);
     if (raw.event === "embodiment.media.output.started") {
-      startMediaFilePlayback(raw.agentId, payload);
+      enqueueMediaFilePlayback(raw.agentId, payload);
       return;
     }
     if (raw.event === "embodiment.audio.output.started") {
@@ -141,10 +166,94 @@ export function stopDesktopSpeech(agentId?: string): boolean {
   return stopped;
 }
 
-function startMediaFilePlayback(agentId: string, payload: Record<string, unknown>): void {
+export function enqueueMediaFilePlayback(agentId: string, payload: Record<string, unknown>): void {
   const playbackId = stringValue(payload.playback_id);
   const mediaPath = stringValue(payload.media_path);
   if (!playbackId || !mediaPath.startsWith("/media/")) return;
+  const item: MediaQueueItem = {
+    agentId,
+    playbackId,
+    mediaPath,
+    title: stringValue(payload.title) || i18n.t("mediaPlayer.untitled"),
+    sourceRef: stringValue(payload.source_ref),
+    personId: stringValue(payload.person_id),
+    sessionId: stringValue(payload.session_id),
+    expiresAt: numberValue(payload.expires_at),
+    playlistId: stringValue(payload.playlist_id),
+    playlistIndex: Math.max(0, numberValue(payload.playlist_index)),
+    artifactId: stringValue(payload.artifact_id) || stringValue(payload.source_id),
+    toolCallId: stringValue(payload.tool_call_id),
+  };
+  const owner = mediaQueue[0];
+  if (
+    owner
+    && (
+      owner.agentId !== item.agentId
+      || owner.personId !== item.personId
+    )
+  ) {
+    mediaQueue = [];
+    mediaQueueIndex = -1;
+  }
+  const startsNewPlaylist = Boolean(
+    payload.append_to_queue !== true
+    &&
+    item.playlistId
+    && (item.playlistIndex === 0 || mediaQueue[0]?.playlistId !== item.playlistId),
+  );
+  if (startsNewPlaylist) {
+    mediaQueue = [];
+    mediaQueueIndex = -1;
+  }
+  mediaQueue = [...mediaQueue.filter((track) => track.playbackId !== item.playbackId), item]
+    .sort((left, right) => left.playlistIndex - right.playlistIndex)
+    .slice(-30);
+
+  const autoplay = payload.autoplay !== false;
+  if (autoplay) {
+    mediaQueueIndex = mediaQueue.findIndex((track) => track.playbackId === item.playbackId);
+    playMediaQueueItem(item);
+  } else {
+    publishMediaQueue();
+  }
+}
+
+function publishMediaQueue(): void {
+  const queue = mediaQueue.map((track) => ({
+      id: track.playbackId,
+      title: track.title,
+      agentId: track.agentId,
+      personId: track.personId,
+      sessionId: track.sessionId,
+      sourceRef: track.sourceRef,
+      artifactId: track.artifactId || undefined,
+  }));
+  if (!activeMediaFile && mediaQueue.length > 0) {
+    if (mediaQueueIndex < 0 || mediaQueueIndex >= mediaQueue.length) mediaQueueIndex = 0;
+    const current = mediaQueue[mediaQueueIndex];
+    updateMediaPlayback({
+      agentId: current.agentId,
+      playbackId: current.playbackId,
+      mediaKind: "music",
+      title: current.title,
+      sourceRef: current.sourceRef,
+      sessionId: current.sessionId,
+      toolCallId: current.toolCallId,
+      status: "stopped",
+      positionMs: 0,
+      durationMs: 0,
+      seekable: false,
+      queue,
+      currentIndex: mediaQueueIndex,
+      inlinePlayerVisible: false,
+    });
+    return;
+  }
+  updateMediaPlayback({ queue, currentIndex: mediaQueueIndex });
+}
+
+function playMediaQueueItem(item: MediaQueueItem): void {
+  const { agentId, playbackId, mediaPath } = item;
   disposeActiveMediaFile();
   stopDesktopSpeech();
 
@@ -160,8 +269,8 @@ function startMediaFilePlayback(agentId: string, payload: Record<string, unknown
     agentId,
     playbackId,
     audio,
-    title: stringValue(payload.title) || i18n.t("mediaPlayer.untitled"),
-    sourceRef: stringValue(payload.source_ref),
+    title: item.title,
+    sourceRef: item.sourceRef,
     stopped: false,
     dispose: () => undefined,
   };
@@ -189,7 +298,7 @@ function startMediaFilePlayback(agentId: string, payload: Record<string, unknown
   };
   const onEnded = () => {
     publishProgress();
-    updateMediaPlayback({ status: "completed" });
+    if (!playNextQueuedMedia()) updateMediaPlayback({ status: "completed" });
   };
   const onError = () => updateMediaPlayback({ status: "failed" });
   playback.dispose = () => {
@@ -220,13 +329,80 @@ function startMediaFilePlayback(agentId: string, payload: Record<string, unknown
     mediaKind: "music",
     title: playback.title,
     sourceRef: playback.sourceRef,
+    sessionId: item.sessionId,
+    toolCallId: item.toolCallId,
+    inlinePlayerVisible: false,
     status: "buffering",
     positionMs: 0,
     durationMs: 0,
     volume: audio.volume,
     seekable: false,
   });
+  publishMediaQueue();
   void audio.play().catch(() => updateMediaPlayback({ status: "failed" }));
+}
+
+function playPreviousQueuedMedia(): boolean {
+  if (mediaQueueIndex <= 0) return false;
+  mediaQueueIndex -= 1;
+  playMediaQueueItem(mediaQueue[mediaQueueIndex]);
+  return true;
+}
+
+function playNextQueuedMedia(): boolean {
+  if (mediaQueueIndex < 0 || mediaQueueIndex >= mediaQueue.length - 1) return false;
+  mediaQueueIndex += 1;
+  playMediaQueueItem(mediaQueue[mediaQueueIndex]);
+  return true;
+}
+
+function playQueuedMediaTrack(trackId: string): boolean {
+  const index = mediaQueue.findIndex((track) => track.playbackId === trackId);
+  if (index < 0) return false;
+  mediaQueueIndex = index;
+  playMediaQueueItem(mediaQueue[index]);
+  return true;
+}
+
+function removeQueuedMediaTrack(trackId: string): boolean {
+  const index = mediaQueue.findIndex((track) => track.playbackId === trackId);
+  if (index < 0) return false;
+  const removingCurrent = index === mediaQueueIndex;
+  mediaQueue.splice(index, 1);
+  if (!mediaQueue.length) return clearMediaQueue();
+  if (index < mediaQueueIndex) mediaQueueIndex -= 1;
+  if (removingCurrent) {
+    mediaQueueIndex = Math.min(index, mediaQueue.length - 1);
+    playMediaQueueItem(mediaQueue[mediaQueueIndex]);
+  } else {
+    publishMediaQueue();
+  }
+  return true;
+}
+
+function clearMediaQueue(): boolean {
+  const hadQueue = mediaQueue.length > 0 || activeMediaFile !== null;
+  mediaQueue = [];
+  mediaQueueIndex = -1;
+  resumeMediaAfterSpeech = false;
+  disposeActiveMediaFile();
+  updateMediaPlayback({
+    agentId: "",
+    playbackId: "",
+    mediaKind: "speech",
+    title: "",
+    sourceRef: "",
+    sessionId: "",
+    toolCallId: "",
+    status: "idle",
+    positionMs: 0,
+    durationMs: 0,
+    seekable: false,
+    queue: [],
+    currentIndex: -1,
+    inlinePlayerVisible: false,
+  });
+  return hadQueue;
 }
 
 function disposeActiveMediaFile(): void {
@@ -250,8 +426,13 @@ function startPcmStream(agentId: string, payload: Record<string, unknown>): void
     || channels <= 0
   ) return;
 
-  stopDesktopSpeech();
-  disposeActiveMediaFile();
+  if (mediaKind === "music") {
+    stopDesktopSpeech();
+    disposeActiveMediaFile();
+  } else {
+    stopSpokenAudio();
+    pauseMediaForSpeech();
+  }
   const context = new AudioContext({ sampleRate });
   const stream: StreamingPlayback = {
     agentId,
@@ -286,6 +467,9 @@ function startPcmStream(agentId: string, payload: Record<string, unknown>): void
       mediaKind,
       title: stream.title || i18n.t("mediaPlayer.untitled"),
       sourceRef: stream.sourceRef,
+      sessionId: stringValue(payload.session_id),
+      toolCallId: "",
+      inlinePlayerVisible: false,
       status: "buffering",
       positionMs: 0,
       durationMs: 0,
@@ -419,10 +603,13 @@ function finishPcmStream(stream: StreamingPlayback, status: PlaybackStatus): voi
         ? Math.max(stream.durationMs, currentMediaPosition(stream))
         : currentMediaPosition(stream),
     });
-  } else if (stream.started || status === "failed") {
-    window.dispatchEvent(new CustomEvent(DESKTOP_SPEECH_FINISHED, {
-      detail: { agentId: stream.agentId, status },
-    }));
+  } else {
+    if (stream.started || status === "failed") {
+      window.dispatchEvent(new CustomEvent(DESKTOP_SPEECH_FINISHED, {
+        detail: { agentId: stream.agentId, status },
+      }));
+    }
+    resumeMediaAfterSpeechIfNeeded();
   }
 }
 
@@ -470,6 +657,11 @@ async function controlActiveMedia(action: "play" | "pause" | "stop"): Promise<bo
     await media.audio.play();
     return true;
   }
+  if (action === "play" && mediaQueue.length > 0) {
+    if (mediaQueueIndex < 0 || mediaQueueIndex >= mediaQueue.length) mediaQueueIndex = 0;
+    playMediaQueueItem(mediaQueue[mediaQueueIndex]);
+    return true;
+  }
   const stream = activeStream;
   if (!stream || stream.mediaKind !== "music") return false;
   if (action === "stop") {
@@ -510,7 +702,13 @@ function setActiveMediaVolume(volume: number): boolean {
   return true;
 }
 
-export { controlMediaPlayback, seekMediaPlayback, setMediaPlaybackVolume };
+export {
+  controlMediaPlayback,
+  playNextMediaTrack,
+  playPreviousMediaTrack,
+  seekMediaPlayback,
+  setMediaPlaybackVolume,
+};
 
 async function playBase64Audio(
   agentId: string,
@@ -518,8 +716,8 @@ async function playBase64Audio(
   mimeType: string,
   epoch: number,
 ): Promise<void> {
-  stopDesktopSpeech();
-  disposeActiveMediaFile();
+  stopSpokenAudio();
+  pauseMediaForSpeech();
   const data = decodeBase64(dataBase64);
   const blobData = data.buffer.slice(
     data.byteOffset,
@@ -543,6 +741,7 @@ async function playBase64Audio(
       window.dispatchEvent(new CustomEvent(DESKTOP_SPEECH_FINISHED, {
         detail: { agentId, status },
       }));
+      resumeMediaAfterSpeechIfNeeded();
       if (status === "failed") reject(new Error(i18n.t("home.unablePlay")));
       else resolve();
     };
@@ -560,6 +759,28 @@ async function playBase64Audio(
     }
     void audio.play().catch(() => finish("failed"));
   });
+}
+
+function stopSpokenAudio(): void {
+  const legacy = activePlayback;
+  if (legacy) legacy.finish("interrupted");
+  const stream = activeStream;
+  if (stream && stream.mediaKind === "speech") stream.finish("interrupted");
+}
+
+function pauseMediaForSpeech(): void {
+  const media = activeMediaFile;
+  if (!media || media.audio.paused || media.audio.ended || media.stopped) return;
+  resumeMediaAfterSpeech = true;
+  media.audio.pause();
+}
+
+function resumeMediaAfterSpeechIfNeeded(): void {
+  if (!resumeMediaAfterSpeech) return;
+  resumeMediaAfterSpeech = false;
+  const media = activeMediaFile;
+  if (!media || media.stopped || media.audio.ended || !media.audio.paused) return;
+  void media.audio.play().catch(() => updateMediaPlayback({ status: "failed" }));
 }
 
 function decodeBase64(value: string): Uint8Array {

@@ -248,14 +248,14 @@ def test_play_music_prefers_current_embodiment(monkeypatch, tmp_path) -> None:
     with bind_tool_execution(
         tool_call_id="play-1",
         tool_name="play_music",
-        arguments={"audio_path": "song.mp3"},
+        arguments={"audio_paths": ["music/song.mp3"]},
         artifact_callback=None,
         speech_callback=play,
         workspace_root=str(workspace),
         working_directory=str(workspace),
         writable_roots=(str(music),),
     ):
-        result = adapter.play_music("music/song.mp3")
+        result = adapter.play_music(["music/song.mp3"])
 
     assert played == b"\x00\x00\x00\x00"
     assert resolved_paths == [str(audio_file.resolve())]
@@ -264,7 +264,53 @@ def test_play_music_prefers_current_embodiment(monkeypatch, tmp_path) -> None:
     assert published_audio[0].source_ref == "music/song.mp3"
     assert published_audio[0].file_path == str(audio_file.resolve())
     assert published_audio[0].mime_type == "audio/mpeg"
-    assert result == {"played": "music/song.mp3", "through": "Desktop"}
+    assert published_audio[0].playlist_id
+    assert published_audio[0].playlist_index == 0
+    assert published_audio[0].playlist_size == 1
+    assert published_audio[0].autoplay is True
+    assert published_audio[0].tool_call_id == "play-1"
+    assert result == {
+        "played": ["music/song.mp3"],
+        "queue_size": 1,
+        "through": "Desktop",
+    }
+
+
+def test_play_music_publishes_one_ordered_playlist(monkeypatch, tmp_path) -> None:
+    from xiaomei_brain.plugins.tools.play_music import adapter
+
+    workspace = tmp_path / "workspace"
+    music = workspace / "outputs" / "audio"
+    music.mkdir(parents=True)
+    for name in ("one.mp3", "two.mp3", "three.mp3"):
+        (music / name).write_bytes(b"audio")
+
+    published_audio = []
+
+    def publish(audio):
+        published_audio.append(audio)
+        return "Desktop"
+
+    paths = [f"outputs/audio/{name}" for name in ("one.mp3", "two.mp3", "three.mp3")]
+    with bind_tool_execution(
+        tool_call_id="playlist-1",
+        tool_name="play_music",
+        arguments={"audio_paths": paths},
+        artifact_callback=None,
+        speech_callback=publish,
+        workspace_root=str(workspace),
+        working_directory=str(workspace),
+        writable_roots=(str(workspace),),
+    ):
+        result = adapter.play_music(paths)
+
+    assert result == {"played": paths, "queue_size": 3, "through": "Desktop"}
+    assert len(published_audio) == 3
+    assert len({audio.playlist_id for audio in published_audio}) == 1
+    assert [audio.playlist_index for audio in published_audio] == [0, 1, 2]
+    assert [audio.playlist_size for audio in published_audio] == [3, 3, 3]
+    assert [audio.autoplay for audio in published_audio] == [True, False, False]
+    assert [audio.tool_call_id for audio in published_audio] == ["playlist-1"] * 3
 
 
 def test_play_music_keeps_local_body_fallback_without_turn_context(tmp_path) -> None:
@@ -285,11 +331,11 @@ def test_play_music_keeps_local_body_fallback_without_turn_context(tmp_path) -> 
     previous = body_ref[0]
     body_ref[0] = SimpleNamespace(throat=Throat())
     try:
-        result = adapter.play_music(str(audio_file))
+        result = adapter.play_music([str(audio_file)])
     finally:
         body_ref[0] = previous
 
-    assert result == {"played": str(audio_file)}
+    assert result == {"played": [str(audio_file)], "queue_size": 1}
     assert played == [str(audio_file)]
 
 

@@ -39,6 +39,10 @@ export type IconName =
   | "terminal"
   | "play"
   | "pause"
+  | "skip-back"
+  | "skip-forward"
+  | "volume"
+  | "volume-muted"
   | "power"
   | "trash";
 
@@ -279,6 +283,32 @@ const ICON_PATHS: Record<IconName, React.ReactNode> = {
     <>
       <rect x="6" y="4" width="4" height="16" rx="1" />
       <rect x="14" y="4" width="4" height="16" rx="1" />
+    </>
+  ),
+  "skip-back": (
+    <>
+      <line x1="6" y1="5" x2="6" y2="19" />
+      <polygon points="18 5 8 12 18 19 18 5" />
+    </>
+  ),
+  "skip-forward": (
+    <>
+      <line x1="18" y1="5" x2="18" y2="19" />
+      <polygon points="6 5 16 12 6 19 6 5" />
+    </>
+  ),
+  volume: (
+    <>
+      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+      <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+      <path d="M18.5 5.5a9 9 0 0 1 0 13" />
+    </>
+  ),
+  "volume-muted": (
+    <>
+      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+      <line x1="16" y1="9" x2="21" y2="14" />
+      <line x1="21" y1="9" x2="16" y2="14" />
     </>
   ),
   power: (

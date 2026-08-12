@@ -300,6 +300,17 @@ class MediaServiceConfigureParams(MediaServiceTestParams):
     enabled: bool = True
 
 
+class MediaLibraryListParams(BaseModel):
+    limit: int = Field(default=100, ge=1, le=200)
+    offset: int = Field(default=0, ge=0)
+
+
+class MediaTrackAuthorizeParams(BaseModel):
+    source_type: Literal["artifact"]
+    source_id: str = Field(..., min_length=1, max_length=160)
+    session_id: str = Field(..., min_length=1, max_length=200)
+
+
 class ToolServiceListParams(BaseModel):
     capability: Literal["", "web_search"] = ""
 

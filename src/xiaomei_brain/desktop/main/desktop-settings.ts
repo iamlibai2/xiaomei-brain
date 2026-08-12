@@ -6,6 +6,7 @@ export type CloseBehavior = "exit" | "minimize";
 export type DesktopTheme = "system" | "light" | "dark";
 export type MessageSound = "none" | "soft" | "crisp" | "bubble";
 export type MessageFont = "default" | "pianpian" | "wanweiwei" | "honglei" | "ozcaramel";
+export type MusicPlayerSkin = "default" | "vinyl" | "visualization";
 
 export interface DesktopSettings {
   openAtLogin: boolean;
@@ -14,6 +15,7 @@ export interface DesktopSettings {
   notificationsEnabled: boolean;
   messageSound: MessageSound;
   messageFont: MessageFont;
+  musicPlayerSkin: MusicPlayerSkin;
   language: DesktopLanguage;
   theme: DesktopTheme;
   openRightSidebarByDefault: boolean;
@@ -26,6 +28,7 @@ const KEYS = {
   notificationsEnabled: "desktop.notificationsEnabled",
   messageSound: "desktop.messageSound",
   messageFont: "desktop.messageFont",
+  musicPlayerSkin: "desktop.musicPlayerSkin",
   language: "desktop.language",
   theme: "desktop.theme",
   openRightSidebarByDefault: "desktop.openRightSidebarByDefault",
@@ -45,6 +48,7 @@ export function readDesktopSettings(config: ConfigStore): DesktopSettings {
   const theme = config.get(KEYS.theme);
   const messageSound = config.get(KEYS.messageSound);
   const messageFont = config.get(KEYS.messageFont);
+  const musicPlayerSkin = config.get(KEYS.musicPlayerSkin);
   return {
     openAtLogin: readBoolean(config, KEYS.openAtLogin, false),
     openAtLoginAvailable: process.platform === "win32" || process.platform === "darwin",
@@ -55,6 +59,9 @@ export function readDesktopSettings(config: ConfigStore): DesktopSettings {
       : "soft",
     messageFont: messageFont === "pianpian" || messageFont === "wanweiwei" || messageFont === "honglei" || messageFont === "ozcaramel"
       ? messageFont
+      : "default",
+    musicPlayerSkin: musicPlayerSkin === "vinyl" || musicPlayerSkin === "visualization"
+      ? musicPlayerSkin
       : "default",
     language: language === "en-US" ? "en-US" : "zh-CN",
     theme: theme === "light" || theme === "dark" ? theme : "system",
@@ -116,6 +123,9 @@ export function registerDesktopSettingsIpc(config: ConfigStore): void {
       }
       if (patch?.messageFont === "default" || patch?.messageFont === "pianpian" || patch?.messageFont === "wanweiwei" || patch?.messageFont === "honglei" || patch?.messageFont === "ozcaramel") {
         config.set(KEYS.messageFont, patch.messageFont);
+      }
+      if (patch?.musicPlayerSkin === "default" || patch?.musicPlayerSkin === "vinyl" || patch?.musicPlayerSkin === "visualization") {
+        config.set(KEYS.musicPlayerSkin, patch.musicPlayerSkin);
       }
       if (patch?.language === "zh-CN" || patch?.language === "en-US") {
         config.set(KEYS.language, patch.language);

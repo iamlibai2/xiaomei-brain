@@ -8,6 +8,7 @@ import { WorkspacesPage } from "./workspaces/WorkspacesPage";
 import { useCoreStore } from "../store";
 import { ModelContextDialog } from "./ModelContextDialog";
 import { MusicPlayer } from "./music-player/MusicPlayer";
+import { MediaLibraryDialog } from "./music-player/MediaLibraryDialog";
 import { controlMediaPlayback } from "../media-playback";
 
 export function MainShell() {
@@ -174,7 +175,8 @@ export function MainShell() {
       </div>
       <SettingsCenter />
       <UnifiedSearchDialog />
-      <MusicPlayer />
+      {surface === "workspaces" && <MusicPlayer />}
+      <MediaLibraryDialog />
     </div>
   );
 }

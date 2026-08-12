@@ -36,6 +36,11 @@ class SpeechAudio:
     source_ref: str = ""
     file_path: str = ""
     mime_type: str = ""
+    playlist_id: str = ""
+    playlist_index: int = 0
+    playlist_size: int = 1
+    autoplay: bool = True
+    tool_call_id: str = ""
 
 
 @dataclass(frozen=True)

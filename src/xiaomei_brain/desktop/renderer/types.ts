@@ -581,6 +581,14 @@ export interface GatewayBridge {
   getAttachment(args: { agentId: string; sessionId: string; attachmentId: string }): Promise<JsonRpcResponse>;
   openAttachment(args: { agentId: string; sessionId: string; attachmentId: string }): Promise<{ ok: boolean; error?: string }>;
   getArtifact(args: { agentId: string; sessionId: string; artifactId: string }): Promise<JsonRpcResponse>;
+  authorizeArtifactMedia(args: { agentId: string; sessionId: string; artifactId: string }): Promise<JsonRpcResponse>;
+  listMediaLibrary(args: { agentId: string; limit?: number; offset?: number }): Promise<JsonRpcResponse>;
+  authorizeMediaTrack(args: {
+    agentId: string;
+    sourceType: "artifact";
+    sourceId: string;
+    sessionId: string;
+  }): Promise<JsonRpcResponse>;
   listArtifacts(args: { agentId: string; limit?: number; offset?: number }): Promise<JsonRpcResponse>;
   listMemories(args: { agentId: string; limit?: number; offset?: number }): Promise<JsonRpcResponse>;
   openArtifact(args: { agentId: string; sessionId: string; artifactId: string }): Promise<{ ok: boolean; error?: string }>;
@@ -1078,6 +1086,7 @@ export interface DesktopSettings {
   notificationsEnabled: boolean;
   messageSound: "none" | "soft" | "crisp" | "bubble";
   messageFont: "default" | "pianpian" | "wanweiwei" | "honglei" | "ozcaramel";
+  musicPlayerSkin: "default" | "vinyl" | "visualization";
   language: "zh-CN" | "en-US";
   theme: "system" | "light" | "dark";
   openRightSidebarByDefault: boolean;
@@ -1101,6 +1110,7 @@ export interface DesktopBridge {
       | "notificationsEnabled"
       | "messageSound"
       | "messageFont"
+      | "musicPlayerSkin"
       | "language"
       | "theme"
       | "openRightSidebarByDefault"

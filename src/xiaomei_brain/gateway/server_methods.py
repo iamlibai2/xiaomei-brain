@@ -69,7 +69,7 @@ class MethodRouter:
         self._memory_methods = MemoryMethods(living, self._identity_contexts)
         self._model_methods = ModelMethods(living)
         self._model_trace_methods = ModelTraceMethods(living)
-        self._media_service_methods = MediaServiceMethods(living)
+        self._media_service_methods = MediaServiceMethods(living, self._identity_contexts)
         self._tool_service_methods = ToolServiceMethods(living)
         self._usage_methods = UsageMethods(living)
         self._identity_methods = IdentityMethods(
@@ -195,8 +195,16 @@ class MethodRouter:
                 "identity.biometrics.enroll",
             },
             "attachment.read": {"attachment.get"},
-            "artifact.read": {"artifact.get", "artifact.list"},
+            "artifact.read": {
+                "artifact.get",
+                "artifact.list",
+                "artifact.media.authorize",
+            },
             "artifact.events": {"artifact.get"},
+            "media.library": {
+                "media.library.list",
+                "media.track.authorize",
+            },
             "assignment.read": {"assignment.list", "assignment.get"},
             "assignment.artifacts": {"assignment.artifact.get"},
             "assignment.control": {

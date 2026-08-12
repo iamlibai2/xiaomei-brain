@@ -320,10 +320,10 @@ class TestBodyTools:
         body.open()
 
         self._inject_refs(body)
-        result = play_music("/music/chengdu.mp3")
+        result = play_music(["/music/chengdu.mp3"])
         self._clear_refs()
 
-        assert result["played"] == "/music/chengdu.mp3"
+        assert result["played"] == ["/music/chengdu.mp3"]
         assert speaker.last_played == "/music/chengdu.mp3"
 
     def test_listen_to_environment_with_mock(self):

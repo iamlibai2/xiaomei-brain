@@ -732,6 +732,28 @@ class ConversationDB(SQLiteStore):
         ).fetchall()
         return [self._artifact_from_row(row) for row in rows]
 
+    def list_audio_artifacts_for_person(
+        self,
+        person_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List playable audio artifacts visible to one verified Person."""
+        rows = self._get_conn().execute(
+            """SELECT * FROM artifacts
+               WHERE user_id IN (?, 'global')
+                 AND mime_type LIKE 'audio/%'
+               ORDER BY updated_at DESC, id DESC
+               LIMIT ? OFFSET ?""",
+            (
+                person_id,
+                max(1, min(int(limit), 201)),
+                max(0, int(offset)),
+            ),
+        ).fetchall()
+        return [self._artifact_from_row(row) for row in rows]
+
     def search_artifacts_for_person(
         self,
         person_id: str,

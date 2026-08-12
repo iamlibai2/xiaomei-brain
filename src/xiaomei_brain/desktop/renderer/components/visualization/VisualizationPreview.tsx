@@ -8,12 +8,24 @@ import {
 } from "./visualization-shell";
 import "./visualization.css";
 import {
+  clearMediaQueue,
   controlMediaPlayback,
   getMediaPlaybackSnapshot,
+  playNextMediaTrack,
+  playPreviousMediaTrack,
+  playMediaTrack,
+  removeMediaTrack,
   seekMediaPlayback,
   setMediaPlaybackVolume,
   subscribeMediaPlayback,
 } from "../../media-playback";
+import { useCoreStore } from "../../store";
+import {
+  loadMediaTracks,
+  openMediaLibrary,
+  setMediaQueueVisibility,
+  type MediaTrackReference,
+} from "../../media-library";
 
 const MAX_VISUALIZATION_BYTES = 1024 * 1024;
 // Keep the wider conversation mode available without exposing two similar
@@ -49,6 +61,19 @@ function useVisualizationTheme(): VisualizationTheme {
   return theme;
 }
 
+function mediaTrackReferences(value: unknown): MediaTrackReference[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 30).flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const item = entry as Record<string, unknown>;
+    const sourceType = String(item.sourceType || item.source_type || "");
+    const sourceId = String(item.sourceId || item.source_id || "");
+    const sessionId = String(item.sessionId || item.session_id || "");
+    if (sourceType !== "artifact" || !sourceId || !sessionId) return [];
+    return [{ sourceType: "artifact" as const, sourceId, sessionId }];
+  });
+}
+
 export function VisualizationPreview({
   dataBase64,
   fileName,
@@ -65,6 +90,7 @@ export function VisualizationPreview({
   onFollowUp?: (prompt: string) => void;
 }) {
   const { t } = useTranslation();
+  const activeAgentId = useCoreStore((state) => state.activeAgentId || "");
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(inline ? 320 : 640);
   const [error, setError] = useState("");
@@ -102,6 +128,32 @@ export function VisualizationPreview({
         onFollowUp?.(data.prompt);
       } else if (data.type === "media-command" && ["play", "pause", "stop"].includes(String(data.action))) {
         void controlMediaPlayback(String(data.action) as "play" | "pause" | "stop");
+      } else if (data.type === "media-command" && data.action === "previous") {
+        void playPreviousMediaTrack();
+      } else if (data.type === "media-command" && data.action === "next") {
+        void playNextMediaTrack();
+      } else if (data.type === "media-command" && data.action === "library-open") {
+        openMediaLibrary("replace");
+      } else if (data.type === "media-command" && data.action === "queue-show") {
+        setMediaQueueVisibility(true);
+      } else if (data.type === "media-command" && data.action === "queue-hide") {
+        setMediaQueueVisibility(false);
+      } else if (data.type === "media-command" && data.action === "queue-replace") {
+        void loadMediaTracks(activeAgentId, mediaTrackReferences(data.tracks), {
+          mode: "replace",
+          autoplay: data.autoplay !== false,
+        });
+      } else if (data.type === "media-command" && data.action === "queue-append") {
+        void loadMediaTracks(activeAgentId, mediaTrackReferences(data.tracks), {
+          mode: "append",
+          autoplay: false,
+        });
+      } else if (data.type === "media-command" && data.action === "queue-select") {
+        void playMediaTrack(String(data.trackId || ""));
+      } else if (data.type === "media-command" && data.action === "queue-remove") {
+        void removeMediaTrack(String(data.trackId || ""));
+      } else if (data.type === "media-command" && data.action === "queue-clear") {
+        void clearMediaQueue();
       } else if (data.type === "media-command" && data.action === "seek") {
         void seekMediaPlayback(Number(data.positionMs));
       } else if (data.type === "media-command" && data.action === "volume") {
@@ -117,7 +169,7 @@ export function VisualizationPreview({
     };
     window.addEventListener("message", receive);
     return () => window.removeEventListener("message", receive);
-  }, [inline, mediaState, onFollowUp, t, token]);
+  }, [activeAgentId, inline, mediaState, onFollowUp, t, token]);
 
   useEffect(() => {
     frameRef.current?.contentWindow?.postMessage({

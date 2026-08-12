@@ -136,6 +136,11 @@ def test_ws_adapter_sends_media_reference_without_consuming_pcm(tmp_path, monkey
         source_ref="outputs/audio/track.mp3",
         file_path=str(path),
         mime_type="audio/mpeg",
+        playlist_id="playlist-1",
+        playlist_index=1,
+        playlist_size=3,
+        autoplay=False,
+        tool_call_id="tool-play-1",
     )
 
     assert adapter.send_audio("session-1", audio) is True
@@ -143,4 +148,11 @@ def test_ws_adapter_sends_media_reference_without_consuming_pcm(tmp_path, monkey
     assert event == "embodiment.media.output.started"
     assert payload["media_path"].startswith("/media/")
     assert payload["title"] == "Track"
+    assert payload["person_id"] == "person-1"
+    assert payload["session_id"] == "session-1"
+    assert payload["playlist_id"] == "playlist-1"
+    assert payload["playlist_index"] == 1
+    assert payload["playlist_size"] == 3
+    assert payload["autoplay"] is False
+    assert payload["tool_call_id"] == "tool-play-1"
     assert "file_path" not in payload

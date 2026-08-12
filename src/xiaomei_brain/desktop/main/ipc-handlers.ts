@@ -1237,6 +1237,40 @@ export function registerIpcHandlers(
     return { result: { artifact: result.artifact } };
   });
 
+  ipcMain.handle("gateway:authorizeArtifactMedia", async (_event, args: {
+    agentId: string; sessionId: string; artifactId: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("artifact.media.authorize", {
+      session_id: args.sessionId,
+      artifact_id: args.artifactId,
+    });
+  });
+
+  ipcMain.handle("gateway:listMediaLibrary", async (_event, args: {
+    agentId: string; limit?: number; offset?: number;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("media.library.list", {
+      limit: args.limit || 100,
+      offset: args.offset || 0,
+    });
+  });
+
+  ipcMain.handle("gateway:authorizeMediaTrack", async (_event, args: {
+    agentId: string; sourceType: "artifact"; sourceId: string; sessionId: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("media.track.authorize", {
+      source_type: args.sourceType,
+      source_id: args.sourceId,
+      session_id: args.sessionId,
+    });
+  });
+
   ipcMain.handle("gateway:listArtifacts", async (_event, args: {
     agentId: string; limit?: number; offset?: number;
   }) => {

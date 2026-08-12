@@ -177,6 +177,20 @@ export function SystemSettingsPanel() {
             })}
           />
         </SettingRow>
+        <SettingRow icon="sparkles" title={t("mediaPlayer.skin")} description={t("mediaPlayer.skinHint")}>
+          <SelectMenu
+            value={settings.musicPlayerSkin}
+            placeholder={t("mediaPlayer.skin")}
+            options={[
+              { value: "default", label: t("mediaPlayer.skins.default") },
+              { value: "vinyl", label: t("mediaPlayer.skins.vinyl") },
+              { value: "visualization", label: t("mediaPlayer.skins.visualization") },
+            ]}
+            onChange={(value) => void update({
+              musicPlayerSkin: value as DesktopSettings["musicPlayerSkin"],
+            })}
+          />
+        </SettingRow>
         <SettingRow icon="info" title={t("systemUi.language")} description={t("systemUi.languageHint")}>
           <select
             value={settings.language}

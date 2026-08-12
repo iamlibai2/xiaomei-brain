@@ -105,6 +105,32 @@ function bridgeScript(token: string): string {
           play() { return mediaCommand('play'); },
           pause() { return mediaCommand('pause'); },
           stop() { return mediaCommand('stop'); },
+          previous() { return mediaCommand('previous'); },
+          next() { return mediaCommand('next'); },
+          openLibrary() { return mediaCommand('library-open'); },
+          showQueue() { return mediaCommand('queue-show'); },
+          hideQueue() { return mediaCommand('queue-hide'); },
+          replaceQueue(tracks, options = {}) {
+            if (!Array.isArray(tracks)) return false;
+            send('media-command', { action: 'queue-replace', tracks, autoplay: options.autoplay !== false });
+            return true;
+          },
+          appendToQueue(tracks) {
+            if (!Array.isArray(tracks)) return false;
+            send('media-command', { action: 'queue-append', tracks });
+            return true;
+          },
+          selectTrack(trackId) {
+            if (!String(trackId || '').trim()) return false;
+            send('media-command', { action: 'queue-select', trackId: String(trackId) });
+            return true;
+          },
+          removeTrack(trackId) {
+            if (!String(trackId || '').trim()) return false;
+            send('media-command', { action: 'queue-remove', trackId: String(trackId) });
+            return true;
+          },
+          clearQueue() { return mediaCommand('queue-clear'); },
           seek(positionMs) {
             if (!Number.isFinite(Number(positionMs))) return false;
             send('media-command', { action: 'seek', positionMs: Number(positionMs) });

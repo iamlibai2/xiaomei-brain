@@ -289,6 +289,119 @@ def test_artifact_rpc_reads_only_exact_session_asset(tmp_path, monkeypatch):
     db.close()
 
 
+def test_artifact_rpc_authorizes_visible_audio_for_playback(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
+    output = tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace" / "song.mp3"
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"audio data")
+    artifact = discover_tool_artifacts(
+        "xiaomei", "session-1", "turn-1", "write_file",
+        {"path": "song.mp3"}, f"Successfully wrote to {output}",
+    )[0]
+    db = ConversationDB(tmp_path / "brain.db")
+    db.save_artifact("session-1", artifact, user_id="person-1")
+    router = MethodRouter(living=SimpleNamespace(
+        _agent_id="xiaomei",
+        agent=SimpleNamespace(conversation_db=db),
+    ))
+    router._auth_sessions.add("connection-1")
+    router._identity_contexts["connection-1"] = _identity("person-1", "connection-1")
+    from xiaomei_brain.gateway.media_access import media_access_registry
+
+    media_access_registry.configure("xiaomei")
+    response = router.dispatch(
+        "connection-1",
+        "rpc-1",
+        "artifact.media.authorize",
+        {"session_id": "session-1", "artifact_id": artifact["id"]},
+    )
+
+    result = response["result"]
+    assert result["artifact_id"] == artifact["id"]
+    assert result["session_id"] == "session-1"
+    assert result["person_id"] == "person-1"
+    assert result["mime_type"] == "audio/mpeg"
+    assert result["media_path"].startswith("/media/")
+    assert "relative_path" not in result
+    db.close()
+
+
+def test_artifact_rpc_rejects_non_audio_playback(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
+    output = tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace" / "report.txt"
+    output.parent.mkdir(parents=True)
+    output.write_text("report", encoding="utf-8")
+    artifact = discover_tool_artifacts(
+        "xiaomei", "session-1", "turn-1", "write_file",
+        {"path": "report.txt"}, f"Successfully wrote to {output}",
+    )[0]
+    db = ConversationDB(tmp_path / "brain.db")
+    db.save_artifact("session-1", artifact, user_id="person-1")
+    router = MethodRouter(living=SimpleNamespace(
+        _agent_id="xiaomei",
+        agent=SimpleNamespace(conversation_db=db),
+    ))
+    router._auth_sessions.add("connection-1")
+    router._identity_contexts["connection-1"] = _identity("person-1", "connection-1")
+
+    response = router.dispatch(
+        "connection-1",
+        "rpc-1",
+        "artifact.media.authorize",
+        {"session_id": "session-1", "artifact_id": artifact["id"]},
+    )
+
+    assert response["error"]["code"] == -32602
+    db.close()
+
+
+def test_media_library_lists_and_authorizes_only_visible_audio(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
+    workspace = tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace"
+    workspace.mkdir(parents=True)
+    db = ConversationDB(tmp_path / "brain.db")
+    saved = []
+    for name, owner in (
+        ("mine.mp3", "person-1"),
+        ("other.mp3", "person-2"),
+        ("notes.txt", "person-1"),
+    ):
+        output = workspace / name
+        output.write_bytes(b"media" if name.endswith(".mp3") else b"text")
+        artifact = discover_tool_artifacts(
+            "xiaomei", f"session-{name}", "turn-1", "write_file",
+            {"path": name}, f"Successfully wrote to {output}",
+        )[0]
+        db.save_artifact(f"session-{name}", artifact, user_id=owner)
+        saved.append(artifact)
+    router = MethodRouter(living=SimpleNamespace(
+        _agent_id="xiaomei",
+        agent=SimpleNamespace(conversation_db=db),
+    ))
+    router._auth_sessions.add("connection-1")
+    router._identity_contexts["connection-1"] = _identity("person-1", "connection-1")
+    from xiaomei_brain.gateway.media_access import media_access_registry
+
+    media_access_registry.configure("xiaomei")
+    listed = router.dispatch("connection-1", "rpc-list", "media.library.list", {
+        "limit": 100,
+        "offset": 0,
+    })
+    tracks = listed["result"]["tracks"]
+    assert [track["title"] for track in tracks] == ["mine.mp3"]
+    assert tracks[0]["source_type"] == "artifact"
+    assert "relative_path" not in tracks[0]
+
+    authorized = router.dispatch("connection-1", "rpc-auth", "media.track.authorize", {
+        "source_type": "artifact",
+        "source_id": tracks[0]["source_id"],
+        "session_id": tracks[0]["session_id"],
+    })
+    assert authorized["result"]["media_path"].startswith("/media/")
+    assert authorized["result"]["person_id"] == "person-1"
+    db.close()
+
+
 def test_chat_send_references_person_owned_artifact_as_annotated_attachment(tmp_path, monkeypatch):
     monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
     output = tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace" / "proposal.docx"

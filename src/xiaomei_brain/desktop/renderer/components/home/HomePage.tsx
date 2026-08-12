@@ -22,6 +22,8 @@ import { MarkdownMessage } from "./MarkdownMessage";
 import { ArtifactWorkspace } from "../artifact-workspace/ArtifactWorkspace";
 import { supportsArtifactPreview } from "../../artifacts/preview-capability";
 import { registerEmbodimentCommand } from "../../embodiment/command-registry";
+import { enqueueMediaFilePlayback } from "../../embodiment";
+import { MusicPlayer } from "../music-player/MusicPlayer";
 import { VisualizationPreview } from "../visualization/VisualizationPreview";
 import {
   ArtifactPresentationStage,
@@ -971,6 +973,7 @@ export function HomePage({
         )}
         {!showAgentStart && (
           <div className="wb-home-composer">
+            <MusicPlayer />
             <ChatInput
               onSend={sendComposerMessage}
               sending={sending}
@@ -1641,6 +1644,7 @@ function ArtifactCard({
   const [visualizationData, setVisualizationData] = useState("");
   const [error, setError] = useState("");
   const [opening, setOpening] = useState(false);
+  const [playing, setPlaying] = useState(false);
   const previewSupported = supportsArtifactPreview(artifact);
   const setDraft = useCoreStore((state) => state.setDraft);
 
@@ -1692,6 +1696,28 @@ function ArtifactCard({
       setError(result.ok ? "" : result.error || t("preview.openFailed"));
     } finally {
       setOpening(false);
+    }
+  };
+
+  const playAudio = async () => {
+    if (!agentId || !sessionId || playing) return;
+    setPlaying(true);
+    try {
+      const response = await window.gateway.authorizeArtifactMedia({
+        agentId,
+        sessionId,
+        artifactId: artifact.id,
+      });
+      if (response.error) {
+        setError(response.error.message);
+        return;
+      }
+      enqueueMediaFilePlayback(agentId, response.result || {});
+      setError("");
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setPlaying(false);
     }
   };
 
@@ -1789,26 +1815,38 @@ function ArtifactCard({
         <button
           type="button"
           className={`artifact-card artifact-${artifact.kind}`}
-          onClick={() => previewSupported ? onShowArtifact(artifact.id, sessionId) : void open()}
-          disabled={opening}
-          title={error || `${previewSupported ? t("common.preview") : t("common.open")} ${artifact.name}`}
+          onClick={() => artifact.kind === "audio"
+            ? void playAudio()
+            : previewSupported ? onShowArtifact(artifact.id, sessionId) : void open()}
+          disabled={opening || playing}
+          title={error || `${artifact.kind === "audio"
+            ? t("mediaPlayer.play")
+            : previewSupported ? t("common.preview") : t("common.open")} ${artifact.name}`}
         >
           {previewUrl ? (
             <img className="artifact-preview" src={previewUrl} alt={artifact.name} />
           ) : (
             <span className={`artifact-icon ${error ? "error" : ""}`}>
-              <Icon name="file-text" size={20} />
+              <Icon name={artifact.kind === "audio" ? "play" : "file-text"} size={20} />
             </span>
           )}
           <span className="artifact-info">
             <span className="artifact-label">{t("home.artifactLabel")}</span>
             <span className="artifact-name">{artifact.name}</span>
             <span className="artifact-meta">
-              {size} · {opening ? t("home.opening") : previewSupported ? t("home.preview") : t("home.open")}
+              {size} · {playing
+                ? t("mediaPlayer.loading")
+                : opening ? t("home.opening")
+                  : artifact.kind === "audio" ? t("mediaPlayer.play")
+                    : previewSupported ? t("home.preview") : t("home.open")}
             </span>
             {error && <span className="artifact-error">{error}</span>}
           </span>
-          <Icon name={previewSupported ? "eye" : "external-link"} size={16} className="artifact-open-icon" />
+          <Icon
+            name={artifact.kind === "audio" ? "play" : previewSupported ? "eye" : "external-link"}
+            size={16}
+            className="artifact-open-icon"
+          />
         </button>
         <button
           type="button"
@@ -1980,17 +2018,24 @@ function ToolActivityGroup({ messages }: { messages: DisplayMessage[] }) {
   const { t } = useTranslation();
   const running = messages.some((message) => message.tool?.status === "running");
   const failed = messages.some((message) => message.tool?.status === "error");
+  const musicToolCallId = [...messages]
+    .reverse()
+    .find((message) => message.tool?.name === "play_music")
+    ?.tool?.id || "";
   return (
-    <div className={`tool-process ${running ? "tool-process-running" : ""} ${failed ? "tool-process-error" : ""}`}>
-      <div className="tool-process-header">
-        <Icon name="terminal" size={14} />
-        <span>{t("home.toolProcess")}</span>
-        <span className="tool-process-count">{t("home.toolCount", { count: messages.length })}</span>
+    <>
+      <div className={`tool-process ${running ? "tool-process-running" : ""} ${failed ? "tool-process-error" : ""}`}>
+        <div className="tool-process-header">
+          <Icon name="terminal" size={14} />
+          <span>{t("home.toolProcess")}</span>
+          <span className="tool-process-count">{t("home.toolCount", { count: messages.length })}</span>
+        </div>
+        <div className="tool-process-list">
+          {messages.map((message) => <ToolActivityRow key={message.id} message={message} />)}
+        </div>
       </div>
-      <div className="tool-process-list">
-        {messages.map((message) => <ToolActivityRow key={message.id} message={message} />)}
-      </div>
-    </div>
+      {musicToolCallId && <MusicPlayer variant="inline" toolCallId={musicToolCallId} />}
+    </>
   );
 }
 
