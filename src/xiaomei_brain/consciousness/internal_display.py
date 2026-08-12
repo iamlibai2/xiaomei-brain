@@ -89,7 +89,7 @@ class InternalDisplay:
     _inner_voice_mode: str = ""
     _dag_msg_count: int = 0
     _dag_summary_tokens: int = 0
-    _periodic_count: int = 0
+    _memory_review: dict = field(default_factory=dict)
     _intent_type: str = ""
     _intent_reason: str = ""
     _emergence_stored: int = 0
@@ -161,9 +161,16 @@ class InternalDisplay:
         self._dag_msg_count = msg_count
         self._dag_summary_tokens = summary_tokens
 
-    def record_periodic_extract(self, count: int) -> None:
-        """记录定期记忆提取结果。"""
-        self._periodic_count = count
+    def record_memory_review(self, stats: dict) -> None:
+        """Record scoped short-term memory review operation counts."""
+        if stats and int(stats.get("turn_count") or 0) > 0:
+            self._memory_review = {
+                key: int(stats.get(key) or 0)
+                for key in (
+                    "turn_count", "added", "updated", "merged", "reinforced",
+                    "deleted", "noop", "rejected", "count",
+                )
+            }
 
     def record_intent(self, intent_type: str, reason: str) -> None:
         """记录意图决策结果。"""
@@ -234,7 +241,7 @@ class InternalDisplay:
             or self._insert_count
             or self._inner_voice_mode
             or self._dag_msg_count
-            or self._periodic_count
+            or self._memory_review
             or self._intent_type
             or self._recall_count
             or self._procedure_count
@@ -339,8 +346,25 @@ class InternalDisplay:
         if self._dag_msg_count:
             lines.append(f"📦 DAG: {self._dag_msg_count} 条消息 → 摘要 ({self._dag_summary_tokens} tokens)")
 
-        if self._periodic_count:
-            lines.append(f"🗂  定期提取: {self._periodic_count} 条记忆")
+        if self._memory_review:
+            parts = []
+            labels = (
+                ("added", "新增"),
+                ("updated", "更新"),
+                ("merged", "合并"),
+                ("reinforced", "强化"),
+                ("deleted", "遗忘"),
+            )
+            for key, label in labels:
+                value = int(self._memory_review.get(key) or 0)
+                if value:
+                    parts.append(f"{label}{value}条")
+            if not parts:
+                parts.append("无需调整")
+            lines.append(
+                f"🧠 三轮记忆复盘: {' · '.join(parts)}"
+                f"（{int(self._memory_review.get('turn_count') or 0)}轮）"
+            )
 
         if self._procedure_count:
             lines.append(f"🧭 流程学习: {self._procedure_count} 条")
@@ -409,8 +433,8 @@ class InternalDisplay:
                 "summary_tokens": self._dag_summary_tokens,
             }
 
-        if self._periodic_count:
-            data["periodic"] = {"count": self._periodic_count}
+        if self._memory_review:
+            data["memory_review"] = dict(self._memory_review)
 
         if self._intent_type:
             data["intent"] = {"type": self._intent_type, "reason": self._intent_reason}
@@ -451,7 +475,7 @@ class InternalDisplay:
         self._inner_voice_mode = ""
         self._dag_msg_count = 0
         self._dag_summary_tokens = 0
-        self._periodic_count = 0
+        self._memory_review.clear()
         self._intent_type = ""
         self._intent_reason = ""
         self._recall_count = 0

@@ -192,6 +192,41 @@ def test_capability_setup_navigation_is_only_delivered_to_desktop():
     assert router.events[1][0] == "capability.setup.updated"
 
 
+def test_memory_change_refresh_signal_is_only_delivered_to_desktop():
+    class Router:
+        def __init__(self):
+            self.route = OutputRoute("feishu", "chat-1")
+            self.events = []
+
+        def route_for_session(self, _session_id):
+            return self.route
+
+        def deliver_event(self, name, payload, route, **metadata):
+            self.events.append((name, payload, route, metadata))
+
+    router = Router()
+    projection = GatewayEventProjection(lambda: router)
+    hub = EventHub()
+    hub.subscribe(projection)
+
+    hub.publish(
+        "memory.changed",
+        {"person_id": "person-1", "source": "turn_batch_review"},
+        session_id="session-1",
+        turn_id="turn-3",
+    )
+    assert router.events == []
+
+    router.route = OutputRoute("ws", "session-1")
+    hub.publish(
+        "memory.changed",
+        {"person_id": "person-1", "source": "turn_batch_review"},
+        session_id="session-1",
+        turn_id="turn-3",
+    )
+    assert router.events[0][0] == "memory.changed"
+
+
 def test_gateway_projection_uses_turn_origin_for_shared_session():
     class Router:
         def __init__(self):

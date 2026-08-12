@@ -318,7 +318,7 @@ def test_internal_processing_is_one_agent_global_activity(tmp_path) -> None:
         "type": "internal_display",
         "data": {
             "dag": {"msg_count": 12, "summary_tokens": 800},
-            "periodic": {"count": 2},
+            "memory_review": {"added": 2, "turn_count": 3},
             "emergence_stored": 1,
             "narr_extracted": 1,
             "doubt_count": 2,
@@ -344,7 +344,7 @@ def test_internal_processing_is_one_agent_global_activity(tmp_path) -> None:
     assert activity.completed_steps == 6
     assert {step.id for step in activity.steps} == {
         "dag",
-        "periodic_memory",
+        "memory_review_added",
         "emergence_stored",
         "narr_extracted",
         "doubt_count",

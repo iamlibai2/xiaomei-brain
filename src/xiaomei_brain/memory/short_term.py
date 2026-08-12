@@ -8,6 +8,7 @@ the long-term vector index until consolidation decides they should persist.
 from __future__ import annotations
 
 import json
+import math
 import time
 from dataclasses import dataclass
 from typing import Any, Iterable
@@ -29,6 +30,7 @@ class ShortTermMemoryCandidate:
     retention_seconds: float = 3 * 24 * 60 * 60
     structured_value: dict[str, Any] | None = None
     evidence_refs: tuple[tuple[str, str], ...] = ()
+    formation_source: str = "immediate"
 
 
 class ShortTermMemoryStore(SQLiteStore):
@@ -65,7 +67,8 @@ class ShortTermMemoryStore(SQLiteStore):
                 created_at REAL NOT NULL,
                 last_seen_at REAL NOT NULL,
                 expires_at REAL NOT NULL,
-                consolidated_memory_id INTEGER DEFAULT NULL
+                consolidated_memory_id INTEGER DEFAULT NULL,
+                formation_source TEXT NOT NULL DEFAULT 'unknown'
             );
 
             CREATE TABLE IF NOT EXISTS memory_evidence_links (
@@ -88,6 +91,14 @@ class ShortTermMemoryStore(SQLiteStore):
                 ON memory_evidence_links(memory_layer, memory_id);
             """
         )
+        columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(memories0)").fetchall()
+        }
+        if "formation_source" not in columns:
+            conn.execute(
+                "ALTER TABLE memories0 ADD COLUMN formation_source TEXT NOT NULL DEFAULT 'unknown'"
+            )
         conn.commit()
 
     @staticmethod
@@ -119,12 +130,14 @@ class ShortTermMemoryStore(SQLiteStore):
             conn.execute(
                 """UPDATE memories0
                    SET reinforcement_count = reinforcement_count + 1,
+                       formation_source = ?,
                        confidence = MAX(confidence, ?),
                        importance = MAX(importance, ?),
                        emotion_intensity = MAX(emotion_intensity, ?),
                        last_seen_at = ?, expires_at = MAX(expires_at, ?)
                    WHERE id = ?""",
                 (
+                    candidate.formation_source,
                     candidate.confidence,
                     candidate.importance,
                     candidate.emotion_intensity,
@@ -140,8 +153,8 @@ class ShortTermMemoryStore(SQLiteStore):
                        scope_type, scope_id, person_id, session_id,
                        confidence, importance, emotion_intensity,
                        reinforcement_count, status, created_at, last_seen_at,
-                       expires_at
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?, ?)""",
+                       expires_at, formation_source
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?, ?, ?)""",
                 (
                     candidate.kind,
                     content,
@@ -157,6 +170,7 @@ class ShortTermMemoryStore(SQLiteStore):
                     now,
                     now,
                     expires_at,
+                    candidate.formation_source,
                 ),
             )
             memory_id = int(cur.lastrowid)
@@ -164,6 +178,164 @@ class ShortTermMemoryStore(SQLiteStore):
         self._link_evidence(conn, memory_id, candidate.evidence_refs)
         conn.commit()
         return memory_id
+
+    def get_active(self, memory_id: int) -> dict[str, Any] | None:
+        """Return one active memory, including expired-state enforcement."""
+        self.expire_due()
+        row = self._get_conn().execute(
+            """SELECT * FROM memories0
+               WHERE id = ? AND status = 'active' AND expires_at > ?""",
+            (int(memory_id), time.time()),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def apply_action(
+        self,
+        candidate: ShortTermMemoryCandidate,
+        *,
+        operation: str,
+        target_memory_id: int | None = None,
+    ) -> int:
+        """Apply one validated short-term memory operation.
+
+        ``UPDATE`` and ``MERGE`` replace the target with the complete content
+        produced by the reviewer. ``REINFORCE`` keeps its wording and only
+        strengthens recency/confidence. Scope changes are never accepted.
+        """
+        action = str(operation or "ADD").upper()
+        if action == "ADD":
+            return self.remember(candidate)
+        if action not in {"UPDATE", "MERGE", "REINFORCE", "DELETE"}:
+            raise ValueError(f"unsupported short-term memory operation: {action}")
+        if target_memory_id is None:
+            raise ValueError(f"{action} requires target_memory_id")
+        existing = self.get_active(int(target_memory_id))
+        if not existing:
+            raise ValueError("target short-term memory is not active")
+        if (
+            existing.get("scope_type") != candidate.scope_type
+            or existing.get("scope_id") != candidate.scope_id
+        ):
+            raise ValueError("target short-term memory is outside the current scope")
+
+        conn = self._get_conn()
+        now = time.time()
+        if action == "DELETE":
+            conn.execute(
+                """UPDATE memories0 SET status = 'discarded', last_seen_at = ?
+                   WHERE id = ? AND status = 'active'""",
+                (now, int(target_memory_id)),
+            )
+        else:
+            expires_at = now + max(60.0, float(candidate.retention_seconds))
+            content = str(existing.get("content") or "")
+            normalized = str(existing.get("normalized_content") or "")
+            kind = str(existing.get("kind") or candidate.kind)
+            structured_value = str(existing.get("structured_value") or "{}")
+            if action in {"UPDATE", "MERGE"}:
+                content = str(candidate.content or "").strip()
+                normalized = self.normalize_content(content)
+                kind = candidate.kind or kind
+                structured_value = json.dumps(
+                    candidate.structured_value or {},
+                    ensure_ascii=False,
+                )
+            conn.execute(
+                """UPDATE memories0
+                   SET kind = ?, content = ?, normalized_content = ?,
+                       structured_value = ?,
+                       formation_source = ?,
+                       confidence = MAX(confidence, ?),
+                       importance = MAX(importance, ?),
+                       emotion_intensity = MAX(emotion_intensity, ?),
+                       reinforcement_count = reinforcement_count + 1,
+                       last_seen_at = ?, expires_at = MAX(expires_at, ?)
+                   WHERE id = ? AND status = 'active'""",
+                (
+                    kind,
+                    content,
+                    normalized,
+                    structured_value,
+                    candidate.formation_source,
+                    candidate.confidence,
+                    candidate.importance,
+                    candidate.emotion_intensity,
+                    now,
+                    expires_at,
+                    int(target_memory_id),
+                ),
+            )
+        self._link_evidence(conn, int(target_memory_id), candidate.evidence_refs)
+        conn.commit()
+        return int(target_memory_id)
+
+    def find_similar(
+        self,
+        query: str,
+        *,
+        scope_type: str,
+        scope_id: str,
+        embedder: Any = None,
+        limit: int = 8,
+    ) -> list[dict[str, Any]]:
+        """Find active candidates after strict scope filtering.
+
+        The shared embedding service is preferred. A deterministic lexical
+        score remains available for tests and temporary embedding failures.
+        """
+        self.expire_due()
+        rows = self._get_conn().execute(
+            """SELECT * FROM memories0
+               WHERE scope_type = ? AND scope_id = ?
+                 AND status = 'active' AND expires_at > ?
+               ORDER BY last_seen_at DESC LIMIT 80""",
+            (scope_type, scope_id, time.time()),
+        ).fetchall()
+        items = [dict(row) for row in rows]
+        if not items:
+            return []
+
+        normalized_query = self.normalize_content(query)
+        query_chars = set(normalized_query)
+        lexical_scores = []
+        for item in items:
+            chars = set(str(item.get("normalized_content") or ""))
+            overlap = len(query_chars & chars)
+            lexical_scores.append(overlap / max(1, len(query_chars | chars)))
+
+        semantic_scores: list[float] | None = None
+        if callable(embedder):
+            try:
+                vectors = embedder([query] + [str(item.get("content") or "") for item in items])
+                if len(vectors) == len(items) + 1:
+                    semantic_scores = [
+                        self._cosine_similarity(vectors[0], vector)
+                        for vector in vectors[1:]
+                    ]
+            except Exception:
+                semantic_scores = None
+
+        ranked: list[tuple[float, dict[str, Any]]] = []
+        for index, item in enumerate(items):
+            lexical = lexical_scores[index]
+            semantic = semantic_scores[index] if semantic_scores is not None else lexical
+            score = semantic * 0.85 + lexical * 0.15
+            item["similarity"] = score
+            ranked.append((score, item))
+        ranked.sort(key=lambda pair: pair[0], reverse=True)
+        return [item for score, item in ranked[: max(1, min(int(limit), 20))] if score >= 0.12]
+
+    @staticmethod
+    def _cosine_similarity(left: Any, right: Any) -> float:
+        try:
+            dot = sum(float(a) * float(b) for a, b in zip(left, right))
+            left_norm = math.sqrt(sum(float(value) ** 2 for value in left))
+            right_norm = math.sqrt(sum(float(value) ** 2 for value in right))
+            if not left_norm or not right_norm:
+                return 0.0
+            return max(-1.0, min(1.0, dot / (left_norm * right_norm)))
+        except (TypeError, ValueError):
+            return 0.0
 
     @staticmethod
     def _link_evidence(
@@ -268,13 +440,13 @@ class ShortTermMemoryStore(SQLiteStore):
         return [dict(row) for row in rows]
 
     def list_for_person(self, person_id: str, *, limit: int = 30) -> list[dict[str, Any]]:
-        """Return active Person-scoped memories for safe UI observation."""
+        """Return active memories owned by a Person for safe UI observation."""
         self.expire_due()
         rows = self._get_conn().execute(
             """SELECT * FROM memories0
-               WHERE scope_type = 'person' AND scope_id = ?
+               WHERE (person_id = ? OR (scope_type = 'person' AND scope_id = ?))
                  AND status = 'active' AND expires_at > ?
                ORDER BY last_seen_at DESC LIMIT ?""",
-            (person_id, time.time(), max(1, min(int(limit), 100))),
+            (person_id, person_id, time.time(), max(1, min(int(limit), 100)),),
         ).fetchall()
         return [dict(row) for row in rows]

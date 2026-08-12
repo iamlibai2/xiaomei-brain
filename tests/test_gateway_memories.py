@@ -82,6 +82,7 @@ def test_memory_list_only_exposes_current_person_ordinary_memories(tmp_path):
         person_id="person-1",
         content="喜欢简洁的交互。",
         created_at=10,
+        last_accessed=1000,
         tags=("偏好",),
     )
     own_recent = _insert(
@@ -126,6 +127,7 @@ def test_memory_list_only_exposes_current_person_ordinary_memories(tmp_path):
         str(own_old),
     ]
     assert response["result"]["memories"][1]["tags"] == ["偏好"]
+    assert response["result"]["memories"][1]["last_accessed"] == 1000
     assert all("user_id" not in item for item in response["result"]["memories"])
     assert "memory.read" in router._capabilities()
     memory.close()
@@ -137,7 +139,7 @@ def test_memory_list_paginates_and_requires_verified_identity(tmp_path):
         _insert(
             memory,
             person_id="person-1",
-            content=f"记忆 {index}",
+            content=f"这是一条记忆 {index}",
             created_at=float(index + 1),
         )
     router = _router(memory)
@@ -155,12 +157,12 @@ def test_memory_list_paginates_and_requires_verified_identity(tmp_path):
         {"limit": 2, "offset": first["result"]["next_offset"]},
     )
     assert [item["summary"] for item in first["result"]["memories"]] == [
-        "记忆 2",
-        "记忆 1",
+        "这是一条记忆 2",
+        "这是一条记忆 1",
     ]
     assert first["result"]["has_more"] is True
     assert first["result"]["next_offset"] == 2
-    assert [item["summary"] for item in second["result"]["memories"]] == ["记忆 0"]
+    assert [item["summary"] for item in second["result"]["memories"]] == ["这是一条记忆 0"]
     assert second["result"]["has_more"] is False
     assert second["result"]["next_offset"] is None
 

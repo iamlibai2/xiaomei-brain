@@ -356,8 +356,9 @@ function MemoryPanel({
   onLoadMore: () => void;
 }) {
   const { t } = useTranslation();
-  const shortTermMemories = memories.filter((memory) => memory.memoryLayer === "short_term");
-  const longTermMemories = memories.filter((memory) => memory.memoryLayer === "long_term");
+  const recentMemories = [...memories].sort((left, right) => (
+    right.createdAt - left.createdAt
+  ));
   return (
     <section className="person-memory-panel">
       {focusedMemories.length > 0 && (
@@ -386,34 +387,10 @@ function MemoryPanel({
           </div>
         </div>
       )}
-      {shortTermMemories.length > 0 && (
-        <div className="focused-memory-section">
-          <div className="person-memory-heading">
-            <div>
-              <strong>{t("rightSidebarUi.shortTermMemory")}</strong>
-              <p>{t("rightSidebarUi.shortTermMemoryHint")}</p>
-            </div>
-          </div>
-          <div className="person-memory-list">
-            {shortTermMemories.map((memory) => (
-              <article key={memory.id}>
-                <strong>{memory.summary}</strong>
-                <div className="person-memory-meta">
-                  <span>{t("rightSidebarUi.shortTermMemory")}</span>
-                  {memory.createdAt > 0 && <time>{new Date(memory.createdAt * 1000).toLocaleString()}</time>}
-                </div>
-                <small>
-                  {t("rightSidebarUi.shortTermMemoryStrength", { count: memory.reinforcementCount })}
-                </small>
-              </article>
-            ))}
-          </div>
-        </div>
-      )}
       <div className="person-memory-heading">
         <div>
-          <strong>{t("rightSidebarUi.longTermMemory")}</strong>
-          <p>{t("rightSidebarUi.longTermMemoryHint")}</p>
+          <strong>{t("rightSidebarUi.recentMemory")}</strong>
+          <p>{t("rightSidebarUi.recentMemoryHint")}</p>
         </div>
         <button type="button" onClick={onRefresh} disabled={page.loading || page.loadingMore}>
           {t("rightSidebarUi.refresh")}
@@ -421,27 +398,34 @@ function MemoryPanel({
       </div>
       {page.loading && memories.length === 0 && <p className="activity-empty">{t("rightSidebarUi.loading")}</p>}
       {page.error && <p className="activity-error">{page.error}</p>}
-      {!page.loading && !page.error && longTermMemories.length === 0 && shortTermMemories.length === 0 && (
+      {!page.loading && !page.error && recentMemories.length === 0 && (
         <div className="activity-empty-state">
-          <strong>{t("rightSidebarUi.noLongTermMemory")}</strong>
-          <p>{t("rightSidebarUi.longTermMemoryEmpty")}</p>
+          <strong>{t("rightSidebarUi.noRecentMemory")}</strong>
+          <p>{t("rightSidebarUi.recentMemoryEmpty")}</p>
         </div>
       )}
       <div className="person-memory-list">
-        {longTermMemories.map((memory) => (
+        {recentMemories.map((memory) => (
           <article key={memory.id}>
             <strong>{memory.summary}</strong>
             <div className="person-memory-meta">
-              <span>{memorySourceName(memory.source) || t("rightSidebarUi.longTermMemory")}</span>
-              {memory.createdAt > 0 && <time>{new Date(memory.createdAt * 1000).toLocaleString()}</time>}
+              <span>
+                {memory.memoryLayer === "short_term"
+                  ? t("rightSidebarUi.shortTermMemory")
+                  : t("rightSidebarUi.longTermMemoryLabel")}
+                {` / ${memorySourceName(memory.source)}`}
+              </span>
+              {memory.createdAt > 0 && (
+                <time>{new Date(memory.createdAt * 1000).toLocaleString()}</time>
+              )}
             </div>
             {memory.tags.length > 0 && (
               <div className="person-memory-tags">
                 {memory.tags.map((tag) => <span key={tag}>#{tag}</span>)}
               </div>
             )}
-            {memory.lastAccessed > memory.createdAt && (
-              <small>{t("projectUi.lastUsed", { value: new Date(memory.lastAccessed * 1000).toLocaleString() })}</small>
+            {memory.memoryLayer === "short_term" && (
+              <small>{t("rightSidebarUi.shortTermMemoryStrength", { count: memory.reinforcementCount })}</small>
             )}
           </article>
         ))}

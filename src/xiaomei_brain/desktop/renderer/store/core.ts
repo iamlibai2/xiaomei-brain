@@ -3589,6 +3589,11 @@ export function initGatewayEvents(): () => void {
       return;
     }
 
+    if (event === "memory.changed") {
+      void store().refreshPersonMemories(agentId);
+      return;
+    }
+
     if (event.startsWith("activity.")) {
       const activity = activitySnapshot(d.activity);
       if (!activity) return;

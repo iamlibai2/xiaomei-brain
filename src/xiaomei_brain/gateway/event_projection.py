@@ -67,6 +67,7 @@ class GatewayEventProjection:
         "usage.updated",
         "model.trace.created",
         "model.trace.updated",
+        "memory.changed",
     })
 
     def __init__(self, router_getter: RouterGetter) -> None:
@@ -93,6 +94,7 @@ class GatewayEventProjection:
         is_agent_speech_event = event.name.startswith("agent.speech.")
         is_usage_event = event.name.startswith("usage.")
         is_model_trace_event = event.name.startswith("model.trace.")
+        is_memory_event = event.name.startswith("memory.")
         if event.name not in self.PUBLIC_EVENTS or (
             not event.session_id
             and not is_assignment_event
@@ -106,6 +108,7 @@ class GatewayEventProjection:
             and not is_agent_speech_event
             and not is_usage_event
             and not is_model_trace_event
+            and not is_memory_event
         ):
             if event.name in {
                 "interaction.requested",
@@ -160,6 +163,7 @@ class GatewayEventProjection:
                     or is_surface_event
                     or is_business_event
                     or is_process_event
+                    or is_memory_event
                 )
                 and event.session_id
                 and hasattr(router, "route_for_session")
@@ -175,6 +179,7 @@ class GatewayEventProjection:
                     or is_surface_event
                     or is_business_event
                     or is_process_event
+                    or is_memory_event
                 )
                 and target_person_id
                 and hasattr(router, "route_for_user")
@@ -273,6 +278,7 @@ class GatewayEventProjection:
                 or is_workspace_event
                 or is_surface_event
                 or is_process_event
+                or is_memory_event
                 or is_agent_state_event
                 or is_agent_speech_event
             ):
@@ -281,6 +287,8 @@ class GatewayEventProjection:
                     for key, value in public_payload.items()
                     if not key.startswith("_") and key != "session_id"
                 }
+            if is_memory_event and route.type != "ws":
+                return
             delivered = router.deliver_event(
                 event.name,
                 public_payload,

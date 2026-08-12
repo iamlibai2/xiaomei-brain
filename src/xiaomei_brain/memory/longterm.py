@@ -2348,7 +2348,9 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
                   AND status = ?
                   AND type = 'common'
                   AND source IN ({placeholders})
-                ORDER BY MAX(created_at, last_accessed) DESC, id DESC
+                -- "Latest memory" means when a memory was formed. Recall is
+                -- a read and must not make an old memory look newly created.
+                ORDER BY created_at DESC, id DESC
                 LIMIT ? OFFSET ?""",
             (
                 person_id,

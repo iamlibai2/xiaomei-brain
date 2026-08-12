@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class MemoryFormationService:
     """Own the short-term/long-term persistence decision."""
 
-    VALID_OPERATIONS = {"ADD", "UPDATE", "MERGE", "DELETE", "NOOP"}
+    VALID_OPERATIONS = {"ADD", "UPDATE", "MERGE", "REINFORCE", "DELETE", "NOOP"}
     VALID_RETENTION = {"short_term", "long_term"}
     LONG_TERM_SOURCES = {"dream", "task_completion", "manual", "insight", "learned"}
 
@@ -33,10 +33,23 @@ class MemoryFormationService:
         session_id: str = "",
         turn_id: str = "",
         default_importance: float = 0.5,
+        evidence_by_turn: dict[str, tuple[tuple[str, str], ...]] | None = None,
+        allowed_target_ids: set[int] | None = None,
+        embedder: Any = None,
     ) -> list[FormationResult]:
         results: list[FormationResult] = []
-        evidence = self._evidence_refs(session_id=session_id, turn_id=turn_id)
+        default_evidence = self._evidence_refs(session_id=session_id, turn_id=turn_id)
         for raw in actions:
+            evidence = self._evidence_for_action(
+                raw,
+                evidence_by_turn=evidence_by_turn,
+                default_evidence=default_evidence,
+            )
+            if evidence_by_turn is not None and not evidence:
+                logger.warning(
+                    "[MemoryFormation] rejected review action without valid evidence turns",
+                )
+                continue
             candidate = self._candidate_from_action(
                 raw,
                 source=source,
@@ -47,7 +60,41 @@ class MemoryFormationService:
             )
             if candidate is None:
                 continue
-            result = self.form(candidate, source=source, user_id=user_id, session_id=session_id)
+            target_memory_id = self._target_memory_id(raw)
+            if target_memory_id is not None and (
+                allowed_target_ids is not None
+                and target_memory_id not in allowed_target_ids
+            ):
+                logger.warning(
+                    "[MemoryFormation] rejected target outside review candidates: %s",
+                    target_memory_id,
+                )
+                continue
+            if candidate.operation in {"UPDATE", "MERGE", "REINFORCE", "DELETE"}:
+                if target_memory_id is None:
+                    logger.warning(
+                        "[MemoryFormation] rejected %s without target_memory_id",
+                        candidate.operation,
+                    )
+                    continue
+                if not self._target_is_related(
+                    candidate,
+                    target_memory_id,
+                    embedder=embedder,
+                ):
+                    logger.warning(
+                        "[MemoryFormation] rejected unrelated target #%s for %s",
+                        target_memory_id,
+                        candidate.operation,
+                    )
+                    continue
+            result = self.form(
+                candidate,
+                source=source,
+                user_id=user_id,
+                session_id=session_id,
+                target_memory_id=target_memory_id,
+            )
             if result is not None:
                 results.append(result)
         return results
@@ -59,6 +106,7 @@ class MemoryFormationService:
         source: str,
         user_id: str,
         session_id: str = "",
+        target_memory_id: int | None = None,
     ) -> FormationResult | None:
         if candidate.operation == "NOOP" or not candidate.content.strip():
             return None
@@ -79,23 +127,29 @@ class MemoryFormationService:
                 candidate.scope_type, candidate.scope_id,
             )
 
-        short_id = self.short_term.remember(
-            ShortTermMemoryCandidate(
-                content=candidate.content,
-                kind=candidate.tag or "event",
-                scope_type=candidate.scope_type,
-                scope_id=candidate.scope_id,
-                person_id=user_id if candidate.scope_type == "person" else "",
-                session_id=session_id,
-                confidence=candidate.confidence,
-                importance=candidate.importance,
-                emotion_intensity=candidate.emotion_intensity,
-                retention_seconds=retention_seconds(
-                    candidate.tag, candidate.importance, candidate.emotion_intensity,
-                ),
-                structured_value=candidate.structured_value,
-                evidence_refs=candidate.evidence_refs,
-            )
+        short_candidate = ShortTermMemoryCandidate(
+            content=candidate.content,
+            kind=candidate.tag or "event",
+            scope_type=candidate.scope_type,
+            scope_id=candidate.scope_id,
+            # Session memories still belong to the authenticated Person.  The
+            # scope controls recall; person_id controls safe observation.
+            person_id=user_id if candidate.scope_type not in {"agent", "world"} else "",
+            session_id=session_id,
+            confidence=candidate.confidence,
+            importance=candidate.importance,
+            emotion_intensity=candidate.emotion_intensity,
+            retention_seconds=retention_seconds(
+                candidate.tag, candidate.importance, candidate.emotion_intensity,
+            ),
+            structured_value=candidate.structured_value,
+            evidence_refs=candidate.evidence_refs,
+            formation_source=source,
+        )
+        short_id = self.short_term.apply_action(
+            short_candidate,
+            operation=candidate.operation,
+            target_memory_id=target_memory_id,
         )
         return FormationResult(
             "short_term", short_id, candidate.operation, candidate.content,
@@ -166,9 +220,20 @@ class MemoryFormationService:
         content = str(raw.get("content") or "").strip()
         if operation == "NOOP" or not content:
             return None
+        if len("".join(content.split())) < 6:
+            logger.warning(
+                "[MemoryFormation] rejected incomplete memory fragment: %r",
+                content,
+            )
+            return None
 
         self_memory = bool(raw.get("self"))
         requested_scope = str(raw.get("scope_type") or "").strip().lower()
+        if source == "turn_batch_review" and requested_scope == "agent" and not self_memory:
+            # A model cannot turn Person facts into Agent-global memory merely
+            # by writing scope_type=agent. It must explicitly classify the
+            # content as being about the Agent itself.
+            requested_scope = "person"
         if requested_scope in {"session", "person", "workspace", "agent", "world"}:
             scope_type = requested_scope
         else:
@@ -179,7 +244,13 @@ class MemoryFormationService:
             "agent": "global",
             "world": "world",
         }.get(scope_type, "")
-        scope_id = str(raw.get("scope_id") or default_scope_id).strip()
+        # Model output may choose the kind of scope, but never its identity.
+        # Person/session/Agent ids come from the trusted execution context.
+        scope_id = (
+            str(raw.get("scope_id") or "").strip()
+            if scope_type in {"workspace"}
+            else str(default_scope_id).strip()
+        )
         if not scope_id:
             logger.warning("[MemoryFormation] rejected candidate without scope id: %s", content[:80])
             return None
@@ -208,6 +279,71 @@ class MemoryFormationService:
             structured_value=structured,
             evidence_refs=evidence_refs,
         )
+
+    @staticmethod
+    def _target_memory_id(raw: dict[str, Any]) -> int | None:
+        value = raw.get("target_memory_id") if isinstance(raw, dict) else None
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _evidence_for_action(
+        raw: dict[str, Any],
+        *,
+        evidence_by_turn: dict[str, tuple[tuple[str, str], ...]] | None,
+        default_evidence: tuple[tuple[str, str], ...],
+    ) -> tuple[tuple[str, str], ...]:
+        if evidence_by_turn is None:
+            return default_evidence
+        requested = raw.get("evidence_turn_ids") if isinstance(raw, dict) else None
+        if not isinstance(requested, list):
+            return ()
+        refs: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for raw_turn_id in requested:
+            turn_id = str(raw_turn_id or "").strip()
+            for ref in evidence_by_turn.get(turn_id, ()):
+                if ref not in seen:
+                    refs.append(ref)
+                    seen.add(ref)
+        return tuple(refs)
+
+    def _target_is_related(
+        self,
+        candidate: MemoryCandidate,
+        target_memory_id: int,
+        *,
+        embedder: Any = None,
+    ) -> bool:
+        existing = self.short_term.get_active(target_memory_id)
+        if not existing:
+            return False
+        if (
+            existing.get("scope_type") != candidate.scope_type
+            or existing.get("scope_id") != candidate.scope_id
+        ):
+            return False
+        if candidate.operation == "DELETE":
+            return True
+        old_content = str(existing.get("content") or "")
+        if candidate.operation == "REINFORCE" and not candidate.content.strip():
+            return True
+        try:
+            if callable(embedder):
+                vectors = embedder([old_content, candidate.content])
+                if len(vectors) == 2:
+                    score = self.short_term._cosine_similarity(vectors[0], vectors[1])
+                    threshold = 0.68 if candidate.operation == "REINFORCE" else 0.42
+                    return score >= threshold
+        except Exception:
+            pass
+        old_chars = set(self.short_term.normalize_content(old_content))
+        new_chars = set(self.short_term.normalize_content(candidate.content))
+        lexical = len(old_chars & new_chars) / max(1, len(old_chars | new_chars))
+        threshold = 0.35 if candidate.operation == "REINFORCE" else 0.18
+        return lexical >= threshold
 
     @staticmethod
     def _clamp(value: Any, default: float) -> float:

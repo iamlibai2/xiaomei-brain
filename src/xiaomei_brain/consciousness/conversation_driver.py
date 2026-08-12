@@ -84,12 +84,15 @@ class ConversationDriver:
         self._scheduler.every(1, self._salience_feedback)
         self._scheduler.every(3, self._invoke_inner_voice_chat_turn)
         self._scheduler.every(3, self._invoke_dag_compact)
-        self._scheduler.every(10, self._invoke_memory_extract)
+        # 每轮只检查当前 Person + Session 是否已积累三个完整 Turn。
+        # 真实三轮边界和进度由数据库检查点维护，不使用全局轮次计数。
+        self._scheduler.every(1, self._invoke_memory_review)
         self._scheduler.every(15, self._invoke_procedure_learn)
         self._scheduler.every(20, self._invoke_narrative_learn)
 
-        # 异步任务互斥（防止重叠执行）
-        self._extracting: bool = False
+        # 每个 Person + Session 独立互斥；不同会话的复盘互不阻塞。
+        self._reviewing_streams: set[tuple[str, str]] = set()
+        self._reviewing_streams_lock = threading.Lock()
 
         # 内部处理展示
         self.display = InternalDisplay()
@@ -1205,37 +1208,97 @@ class ConversationDriver:
         except Exception as e:
             logger.warning("[ConversationDriver] DAG compact 调度失败: %s", e)
 
-    def _invoke_memory_extract(self, **kwargs: Any) -> None:
-        """每 10 轮对话提取增量记忆。复用 MemoryExtractor.extract_periodic()。"""
-        if self._extracting:
-            return  # 上一轮提取还未完成，跳过
+    def _invoke_memory_review(
+        self,
+        person_id: str = "",
+        session_id: str = "",
+        **kwargs: Any,
+    ) -> None:
+        """Review each Person + Session after three complete Turns."""
+        normalized_person = str(person_id or "").strip()
+        normalized_session = str(session_id or "").strip()
+        normalized_turn = str(kwargs.get("turn_id") or "").strip()
+        if not normalized_session or normalized_person in {"", "global", "system"}:
+            return
+        stream_key = (normalized_person, normalized_session)
+        with self._reviewing_streams_lock:
+            if stream_key in self._reviewing_streams:
+                return
+            self._reviewing_streams.add(stream_key)
         try:
             agent_core = self._parent.agent._get_agent()
             extractor = getattr(agent_core, 'memory_extractor', None)
             if not extractor or not extractor.llm:
+                with self._reviewing_streams_lock:
+                    self._reviewing_streams.discard(stream_key)
                 return
 
             user_name = getattr(agent_core, 'user_display_name', '') or "用户"
-            self._extracting = True
             _extractor = extractor
             _self = self
             display = self.display
 
             def _run():
                 try:
-                    result = _extractor.extract_periodic(user_name=user_name)
-                    count = len(result) if result else 0
-                    if count:
-                        display.record_periodic_extract(count)
+                    totals = {
+                        "turn_count": 0,
+                        "added": 0,
+                        "updated": 0,
+                        "merged": 0,
+                        "reinforced": 0,
+                        "deleted": 0,
+                        "noop": 0,
+                        "rejected": 0,
+                        "count": 0,
+                    }
+                    # If a slow review overlapped later Turns, consume every
+                    # now-complete three-Turn batch before releasing the stream.
+                    for _ in range(10):
+                        result = _extractor.review_turn_batch(
+                            person_id=normalized_person,
+                            session_id=normalized_session,
+                            user_name=user_name,
+                            minimum_turns=3,
+                        )
+                        if not result.processed:
+                            break
+                        data = result.to_dict()
+                        for key in totals:
+                            totals[key] += int(data.get(key) or 0)
+                    if totals["turn_count"]:
+                        display.record_memory_review(totals)
+                        _self._publish_event(
+                            _self._parent,
+                            "memory.changed",
+                            {
+                                "person_id": normalized_person,
+                                "source": "turn_batch_review",
+                                "summary": totals,
+                                "_target_person_id": normalized_person,
+                            },
+                            session_id=normalized_session,
+                            turn_id=normalized_turn,
+                        )
                 except Exception as e:
-                    logger.warning("[ConversationDriver] 记忆提取失败: %s", e)
+                    logger.warning(
+                        "[ConversationDriver] 三轮记忆复盘失败: person=%s session=%s: %s",
+                        normalized_person,
+                        normalized_session,
+                        e,
+                    )
                 finally:
-                    _self._extracting = False
+                    with _self._reviewing_streams_lock:
+                        _self._reviewing_streams.discard(stream_key)
 
-            threading.Thread(target=_run, daemon=True, name="memory_extract").start()
+            threading.Thread(
+                target=_run,
+                daemon=True,
+                name=f"memory_review:{normalized_session[:20]}",
+            ).start()
         except Exception as e:
-            self._extracting = False
-            logger.warning("[ConversationDriver] 记忆提取失败: %s", e)
+            with self._reviewing_streams_lock:
+                self._reviewing_streams.discard(stream_key)
+            logger.warning("[ConversationDriver] 三轮记忆复盘调度失败: %s", e)
 
     def _invoke_procedure_learn(self, **kwargs: Any) -> None:
         """每 15 轮对话检测一次：从增量对话中学习新的 procedure。"""

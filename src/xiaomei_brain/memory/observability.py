@@ -63,7 +63,7 @@ def list_person_memory_views(
     memories = []
     for row in rows[:limit]:
         summary = _clean_text(row.get("content"), 500)
-        if not summary:
+        if not _is_complete_memory_summary(summary):
             continue
         memories.append({
             "id": str(row.get("id") or ""),
@@ -91,12 +91,12 @@ def list_person_short_term_memory_views(
     memories: list[dict[str, Any]] = []
     for row in short_term_memory.list_for_person(person_id, limit=limit):
         summary = _clean_text(row.get("content"), 500)
-        if not summary:
+        if not _is_complete_memory_summary(summary):
             continue
         memories.append({
             "id": f"m0:{row.get('id')}",
             "summary": summary,
-            "source": "short_term",
+            "source": _clean_text(row.get("formation_source"), 40) or "short_term",
             "memory_type": _clean_text(row.get("kind"), 40),
             "tags": [],
             "created_at": _number(row.get("created_at")),
@@ -111,6 +111,17 @@ def list_person_short_term_memory_views(
 def _clean_text(value: Any, limit: int) -> str:
     text = " ".join(str(value or "").replace("\x00", "").split())
     return text[:limit]
+
+
+def _is_complete_memory_summary(value: str) -> bool:
+    """Keep UI cards useful without encoding language-specific phrases.
+
+    Very short fragments such as an isolated subject and verb are extraction
+    debris rather than independently understandable memories. Six visible
+    characters still allows concise facts while rejecting those fragments.
+    """
+    compact = "".join(str(value or "").split())
+    return len(compact) >= 6
 
 
 def _number(value: Any) -> float:

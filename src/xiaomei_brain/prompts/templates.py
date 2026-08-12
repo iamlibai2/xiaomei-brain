@@ -16,32 +16,38 @@ from __future__ import annotations
 # Memory prompts
 # ═══════════════════════════════════════════════════════════════════════
 
-# ── [USER] 周期性记忆提取 ─────────────────────────────────────
-# 调用: memory/extractor.py:285 (extract_periodic) — CLI `memory periodic` 命令手动触发
-# 作用: 从多轮对话片段批量提炼长期记忆，比较已有记忆做去重
-# 后处理: JSON 解析 → _execute_actions() 执行 ADD/UPDATE/MERGE/DELETE → longterm.store()
-PERIODIC_EXTRACT_PROMPT = """从对话片段中提炼值得长期记住的信息，并判断如何处理。
+# ── [USER] 三轮短期记忆复盘 ───────────────────────────────────
+# v1 mirror；运行时使用 templates_v2.py。
+TURN_BATCH_MEMORY_REVIEW_PROMPT = """复盘下面一组完整对话轮次，整理近期仍可能有用的短期记忆。
 
-【已有记忆】（供参考）
-{recent_memories}
+当前人物：{user_name}
 
-【对话片段】
+【相关短期记忆候选】
+{short_term_memories}
+
+【相关长期记忆】
+{long_term_memories}
+
+【本批对话】
 {messages}
 
-【提炼规则】
-- 关于{user_name}用"{user_name}..."，关于自己用"我..."
-- 只提取确实重要和有价值的内容
-- 对每条记忆判断处理方式：
-  * ADD: 全新信息
-  * UPDATE: 已有记忆的更新
-  * MERGE: 可合并的同类信息
-  * NOOP: 无意义/重复，无需存储
-- 如果没有值得提炼的内容，输出：无
+规则：
+- 只使用本批对话明确出现的事实，不推测，不补写。
+- 忽略寒暄、无信息量应答、工具执行细节、临时错误和模型身份试探。
+- 同一件事的连续补充应形成一条完整记忆，不按每句话拆开。
+- 本轮只处理短期记忆；禁止决定或写入长期记忆。
+- ADD：没有对应候选时新增。
+- UPDATE：新信息纠正或替换某条候选，content 必须给出更新后的完整表述。
+- MERGE：新信息补全某条候选，content 必须给出合并后的完整表述。
+- REINFORCE：再次确认某条候选，保持原意并增强可信度。
+- NOOP：没有值得处理的内容。
+- UPDATE、MERGE、REINFORCE 必须填写候选中的 target_memory_id。
+- 每个动作必须填写 evidence_turn_ids，且只能引用本批对话标出的 turn_id。
+- 关于当前人物默认 scope_type="person"；关于 Agent 自身才使用 scope_type="agent"。
 
-输出格式（每条一行）：
-ACTION|类别|内容
-
-直接输出，无需解释："""
+只输出一个 JSON 对象，不要 Markdown，不要解释：
+{{"actions":[{{"operation":"ADD|UPDATE|MERGE|REINFORCE|NOOP","target_memory_id":null,"kind":"event","content":"完整记忆","scope_type":"person","self":false,"confidence":0.7,"importance":0.5,"evidence_turn_ids":["turn_id"]}}]}}
+"""
 
 # ── [USER] 梦境记忆提取 ───────────────────────────────────────
 # 调用: memory/extractor.py:328 (extract_dream) — CLI `memory dream` 命令手动触发

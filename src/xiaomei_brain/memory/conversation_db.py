@@ -285,6 +285,189 @@ class ConversationDB(SQLiteStore):
                 "[ConversationDB] migrated to v5: tracked artifact updates",
             )
 
+        if current < 6:
+            # Memory review checkpoints are scoped by Person and Session.  On
+            # an existing Agent, begin after the already stored history so the
+            # first post-upgrade Turn does not re-review years of conversation.
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS memory_review_checkpoints (
+                    person_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    review_type TEXT NOT NULL DEFAULT 'turn_batch',
+                    last_message_id INTEGER NOT NULL DEFAULT 0,
+                    reviewed_turn_count INTEGER NOT NULL DEFAULT 0,
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY (person_id, session_id, review_type)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_memory_review_session
+                    ON memory_review_checkpoints(session_id, review_type);
+            """)
+            conn.execute(
+                """INSERT OR IGNORE INTO memory_review_checkpoints (
+                       person_id, session_id, review_type, last_message_id,
+                       reviewed_turn_count, updated_at
+                   )
+                   SELECT user_id, session_id, 'turn_batch', MAX(id), 0, ?
+                   FROM messages
+                   WHERE user_id NOT IN ('', 'global', 'system')
+                     AND session_id <> ''
+                     AND role IN ('user', 'assistant')
+                   GROUP BY user_id, session_id""",
+                (time.time(),),
+            )
+            self._set_schema_version("conversation_db", 6)
+            conn.commit()
+            logger.info(
+                "[ConversationDB] migrated to v6: added scoped memory review checkpoints",
+            )
+
+    def get_memory_review_checkpoint(
+        self,
+        person_id: str,
+        session_id: str,
+        *,
+        review_type: str = "turn_batch",
+    ) -> dict[str, Any]:
+        """Return one durable review cursor without creating it eagerly."""
+        row = self._get_conn().execute(
+            """SELECT * FROM memory_review_checkpoints
+               WHERE person_id = ? AND session_id = ? AND review_type = ?""",
+            (person_id, session_id, review_type),
+        ).fetchone()
+        if row:
+            return dict(row)
+        return {
+            "person_id": person_id,
+            "session_id": session_id,
+            "review_type": review_type,
+            "last_message_id": 0,
+            "reviewed_turn_count": 0,
+            "updated_at": 0.0,
+        }
+
+    def get_next_memory_review_batch(
+        self,
+        person_id: str,
+        session_id: str,
+        *,
+        batch_turns: int = 3,
+        minimum_turns: int | None = None,
+        review_type: str = "turn_batch",
+    ) -> dict[str, Any] | None:
+        """Read the next complete, scoped Turn batch after its checkpoint.
+
+        The query takes the first complete Turns after the durable cursor. New
+        messages arriving while the LLM reviews this result remain after the
+        returned ``max_message_id`` and naturally belong to the next batch.
+        """
+        normalized_person = str(person_id or "").strip()
+        normalized_session = str(session_id or "").strip()
+        if not normalized_person or normalized_person in {"global", "system"}:
+            return None
+        if not normalized_session:
+            return None
+        size = max(1, min(int(batch_turns), 10))
+        required = size if minimum_turns is None else max(1, min(int(minimum_turns), size))
+        checkpoint = self.get_memory_review_checkpoint(
+            normalized_person,
+            normalized_session,
+            review_type=review_type,
+        )
+        rows = self._get_conn().execute(
+            """SELECT id, user_id, session_id, role, content, metadata, created_at
+               FROM messages
+               WHERE user_id = ? AND session_id = ? AND id > ?
+                 AND role IN ('user', 'assistant')
+               ORDER BY id ASC
+               LIMIT 200""",
+            (
+                normalized_person,
+                normalized_session,
+                int(checkpoint.get("last_message_id") or 0),
+            ),
+        ).fetchall()
+
+        turns: dict[str, list[dict[str, Any]]] = {}
+        order: list[str] = []
+        for raw in rows:
+            item = dict(raw)
+            try:
+                metadata = json.loads(item.get("metadata") or "{}")
+            except (TypeError, json.JSONDecodeError):
+                metadata = {}
+            turn_id = str(metadata.get("turn_id") or "").strip()
+            if not turn_id:
+                continue
+            if turn_id not in turns:
+                turns[turn_id] = []
+                order.append(turn_id)
+            turns[turn_id].append(item)
+
+        complete: list[tuple[str, list[dict[str, Any]]]] = []
+        for turn_id in order:
+            messages = turns[turn_id]
+            roles = {str(message.get("role") or "") for message in messages}
+            if {"user", "assistant"}.issubset(roles):
+                complete.append((turn_id, messages))
+            if len(complete) >= size:
+                break
+        if len(complete) < required:
+            return None
+
+        selected = complete[:size]
+        selected_messages = [message for _, messages in selected for message in messages]
+        return {
+            "person_id": normalized_person,
+            "session_id": normalized_session,
+            "turn_ids": [turn_id for turn_id, _ in selected],
+            "messages": selected_messages,
+            "max_message_id": max(int(message["id"]) for message in selected_messages),
+            "turn_count": len(selected),
+        }
+
+    def advance_memory_review_checkpoint(
+        self,
+        person_id: str,
+        session_id: str,
+        *,
+        last_message_id: int,
+        reviewed_turn_count: int,
+        review_type: str = "turn_batch",
+    ) -> None:
+        """Advance a review cursor only after the batch has been processed."""
+        conn = self._get_conn()
+        conn.execute(
+            """INSERT INTO memory_review_checkpoints (
+                   person_id, session_id, review_type, last_message_id,
+                   reviewed_turn_count, updated_at
+               ) VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(person_id, session_id, review_type) DO UPDATE SET
+                   last_message_id = MAX(last_message_id, excluded.last_message_id),
+                   reviewed_turn_count = reviewed_turn_count + excluded.reviewed_turn_count,
+                   updated_at = excluded.updated_at""",
+            (
+                person_id,
+                session_id,
+                review_type,
+                int(last_message_id),
+                max(0, int(reviewed_turn_count)),
+                time.time(),
+            ),
+        )
+        conn.commit()
+
+    def latest_session_for_person(self, person_id: str) -> str:
+        """Resolve the most recently active session for the manual CLI wrapper."""
+        row = self._get_conn().execute(
+            """SELECT session_id FROM messages
+               WHERE user_id = ? AND session_id <> ''
+                 AND role IN ('user', 'assistant')
+               ORDER BY id DESC LIMIT 1""",
+            (person_id,),
+        ).fetchone()
+        return str(row["session_id"] or "") if row else ""
+
     def store_tool(
         self,
         tool_name: str,

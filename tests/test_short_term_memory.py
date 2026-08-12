@@ -114,7 +114,46 @@ def test_formation_defaults_conversation_memory_to_memories0(tmp_path):
 
     assert [item.layer for item in results] == ["short_term"]
     assert short_term.list_active()[0]["content"] == "博士这次表示喜欢苹果"
+    assert short_term.list_active()[0]["formation_source"] == "immediate"
     long_term.store.assert_not_called()
+
+
+def test_session_scoped_memory_remains_visible_to_its_person(tmp_path):
+    short_term = ShortTermMemoryStore(str(tmp_path / "brain.db"))
+    service = MemoryFormationService(short_term=short_term, long_term=MagicMock())
+
+    service.form_actions(
+        [{
+            "type": "ADD",
+            "content": "This detail only belongs to the current conversation.",
+            "scope_type": "session",
+        }],
+        source="turn_batch_review",
+        user_id="person-a",
+        session_id="session-a",
+    )
+
+    visible = short_term.list_for_person("person-a")
+    assert len(visible) == 1
+    assert visible[0]["scope_type"] == "session"
+    assert visible[0]["person_id"] == "person-a"
+    assert visible[0]["formation_source"] == "turn_batch_review"
+    assert short_term.list_for_person("person-b") == []
+
+
+def test_incomplete_memory_fragment_is_rejected(tmp_path):
+    short_term = ShortTermMemoryStore(str(tmp_path / "brain.db"))
+    service = MemoryFormationService(short_term=short_term, long_term=MagicMock())
+
+    result = service.form_actions(
+        [{"type": "ADD", "content": "博士认同"}],
+        source="immediate",
+        user_id="person-a",
+        session_id="session-a",
+    )
+
+    assert result == []
+    assert short_term.list_active() == []
 
 
 def test_formation_links_only_messages_from_current_turn(tmp_path):

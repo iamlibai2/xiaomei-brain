@@ -1,8 +1,8 @@
 """MemoryExtractor: extract long-term memories from conversations.
 
-Three extraction modes:
+Three formation modes:
 1. Every-turn: LLM-judged extraction every turn (Mem0 route, default)
-2. Periodic: batch extraction every N minutes (background thread)
+2. Turn review: scoped review after every three complete conversation Turns
 3. Dream: deep analysis during idle/nighttime
 """
 
@@ -11,15 +11,14 @@ from __future__ import annotations
 import datetime
 import logging
 import re
-import time
 from typing import Any
 
 from .conversation_db import ConversationDB
 from .longterm import LongTermMemory
+from .review import MemoryReviewResult, TurnBatchMemoryReviewer
 
 # 集中化提示词
 from xiaomei_brain.prompts import (
-    PERIODIC_EXTRACT_PROMPT,
     DREAM_EXTRACT_PROMPT,
     TASK_COMPLETION_PROMPT,
     MEMORY_DECISION_PROMPT,
@@ -30,9 +29,9 @@ logger = logging.getLogger(__name__)
 class MemoryExtractor:
     """Memory extractor — extracts memories from conversations.
 
-    Extraction modes:
+    Formation modes:
     1. Every-turn: LLM-judged extraction every turn (Mem0 route, default)
-    2. Periodic: batch extraction every N minutes (background thread)
+    2. Turn review: scoped review after every three complete conversation Turns
     3. Dream: deep analysis at night / idle
     """
 
@@ -53,7 +52,14 @@ class MemoryExtractor:
         self.ltm = longterm_memory
         self.db = conversation_db
         self.formation_service = formation_service
-        self._last_extract_time = time.time()
+        self._reviewer: TurnBatchMemoryReviewer | None = None
+        if all((self.llm, self.ltm, self.db, self.formation_service)):
+            self._reviewer = TurnBatchMemoryReviewer(
+                llm_client=self.llm,
+                conversation_db=self.db,
+                formation_service=self.formation_service,
+                longterm_memory=self.ltm,
+            )
 
     # [废弃] 全代码库零调用。
     def check_immediate(self, user_input: str) -> bool:
@@ -86,47 +92,47 @@ class MemoryExtractor:
             logger.error("Immediate extraction failed: %s", e)
             return []
 
-    # [手动] 仅 CLI `memory periodic` 命令触发，无自动调用路径。
+    def review_turn_batch(
+        self,
+        *,
+        person_id: str,
+        session_id: str,
+        user_name: str = "",
+        minimum_turns: int = 3,
+    ) -> MemoryReviewResult:
+        """Review the next scoped batch through the shared formation service."""
+        if self._reviewer is None:
+            return MemoryReviewResult(person_id=person_id, session_id=session_id)
+        return self._reviewer.review_next(
+            person_id=person_id,
+            session_id=session_id,
+            user_name=user_name,
+            batch_turns=3,
+            minimum_turns=minimum_turns,
+        )
+
+    # CLI compatibility: the old command now delegates to the same scoped review.
     def extract_periodic(
         self, interval_minutes: int = 10, user_id: str = "global",
-        user_name: str = "",
+        user_name: str = "", session_id: str = "",
     ) -> list[int]:
-        """Periodic extraction of recent conversations."""
-        if not self.ltm or not self.db:
+        """Manually review the latest available Person session."""
+        del interval_minutes
+        if self._reviewer is None or not self.db:
             return []
-
-        since = self._last_extract_time
-        messages = self.db.query(since=since, limit=50)
-
-        if len(messages) < 3:
+        scoped_session = session_id or self.db.latest_session_for_person(user_id)
+        if not scoped_session:
             return []
-
-        if not self.llm:
-            return []
-
         try:
-            formatted = self._format_messages(messages)
-            recent_memories = ""
-            existing = self.ltm.get_recent(10, user_id=user_id)
-            if existing:
-                recent_memories = "\n".join(f"- [{m['id']}] {m['content']}" for m in existing)
-            prompt = PERIODIC_EXTRACT_PROMPT.format(
-                messages=formatted,
-                recent_memories=recent_memories or "（无已有记忆）",
-                user_name=user_name or "用户",
+            result = self.review_turn_batch(
+                person_id=user_id,
+                session_id=scoped_session,
+                user_name=user_name,
+                minimum_turns=1,
             )
-            result = self.llm.chat(
-                messages=[{"role": "user", "content": prompt}],
-                tools=None,
-                log_level=logging.DEBUG,
-            )
-            ids = self._execute_actions(
-                result.content or "", source="periodic", user_id=user_id,
-            )
-            self._last_extract_time = time.time()
-            return ids
+            return list(result.memory_ids)
         except Exception as e:
-            logger.error("Periodic extraction failed: %s", e)
+            logger.error("Manual memory review failed: %s", e)
             return []
 
     # [手动] 仅 CLI `memory dream` 命令触发，无自动调用路径。

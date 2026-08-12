@@ -102,9 +102,16 @@ class InternalProcessingReport:
                 "条消息",
                 f"{tokens} tokens" if tokens else "",
             )
-        periodic = data.get("periodic")
-        if isinstance(periodic, dict):
-            add("periodic_memory", "提取长期记忆", periodic.get("count"), "条")
+        memory_review = data.get("memory_review")
+        if isinstance(memory_review, dict):
+            for key, label in (
+                ("added", "新增短期记忆"),
+                ("updated", "更新短期记忆"),
+                ("merged", "合并短期记忆"),
+                ("reinforced", "强化短期记忆"),
+                ("deleted", "遗忘短期记忆"),
+            ):
+                add(f"memory_review_{key}", label, memory_review.get(key), "条")
         recall = data.get("recall")
         if isinstance(recall, dict):
             add("memory_recall", "召回相关记忆", recall.get("count"), "条")

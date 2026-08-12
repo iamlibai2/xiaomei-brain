@@ -142,9 +142,9 @@ class MemoryConsole:
         if cmd == "dag":
             return self._cmd_dag_list(session_id)
 
-        # ── Periodic extraction ─────────────────────────────────
+        # ── Manual turn-batch memory review ─────────────────────
         if cmd == "periodic":
-            return self._cmd_periodic(user_id)
+            return self._cmd_periodic(user_id, session_id)
 
         # ── Dream extraction ────────────────────────────────────
         if cmd == "dream":
@@ -520,8 +520,8 @@ class MemoryConsole:
             lines.append("")
         return CommandResult(output="\n".join(lines))
 
-    def _cmd_periodic(self, user_id: str) -> CommandResult:
-        """Manually trigger periodic memory extraction."""
+    def _cmd_periodic(self, user_id: str, session_id: str) -> CommandResult:
+        """Manually trigger the scoped short-term memory review."""
         if not self.extractor:
             return CommandResult(output="  \033[38;5;73m(MemoryExtractor 未配置)\033[0m")
 
@@ -531,17 +531,19 @@ class MemoryConsole:
         R = "\033[0m"
 
         user_name = getattr(self.agent_instance, 'name', '') or "用户"
-        ids = self.extractor.extract_periodic(interval_minutes=2, user_id=user_id, user_name=user_name)
+        ids = self.extractor.extract_periodic(
+            interval_minutes=2,
+            user_id=user_id,
+            user_name=user_name,
+            session_id=session_id,
+        )
         if ids:
-            lines = [f"  {G}定时提取完成{R}  {V}{len(ids)} 条{R}"]
-            if self.ltm:
-                for r in self.ltm.get_recent(len(ids), user_id=user_id):
-                    lines.append(f"  {D}[{r['user_id']}]{R} {r['content'][:60]}")
+            lines = [f"  {G}三轮记忆复盘完成{R}  {V}{len(ids)} 条变更{R}"]
             return CommandResult(
                 output="\n".join(lines),
-                data={"extracted_ids": ids},
+                data={"reviewed_memory_ids": ids},
             )
-        return CommandResult(output=f"  {D}无新记忆{R}")
+        return CommandResult(output=f"  {D}当前会话没有待复盘的完整对话{R}")
 
     def _cmd_dream(self, user_id: str) -> CommandResult:
         """Manually trigger dream extraction."""

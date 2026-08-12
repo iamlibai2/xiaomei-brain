@@ -8,7 +8,7 @@ from .templates_v2 import *  # noqa: F401, F403
 
 __all__ = [
     # Memory
-    "PERIODIC_EXTRACT_PROMPT",
+    "TURN_BATCH_MEMORY_REVIEW_PROMPT",
     "DREAM_EXTRACT_PROMPT",
     "DREAM_USER_EXTRACT_PROMPT",
     "TASK_COMPLETION_PROMPT",
