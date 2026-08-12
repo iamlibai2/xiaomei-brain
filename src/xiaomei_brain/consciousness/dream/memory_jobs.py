@@ -43,6 +43,7 @@ class DreamResult:
     """Job 执行结果"""
     job: str
     saved: int = 0
+    retained: int = 0
     reinforced: int = 0
     extinct: int = 0
     errors: int = 0
@@ -61,6 +62,7 @@ class ConsolidateShortTermJob:
             return DreamResult(
                 job="consolidate_short_term",
                 saved=outcome["consolidated"],
+                retained=outcome["retained"],
                 extinct=outcome["expired"],
                 details=(
                     f"consolidated={outcome['consolidated']} "

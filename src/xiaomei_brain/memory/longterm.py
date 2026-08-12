@@ -60,6 +60,7 @@ class LongTermMemory(SQLiteStore):
     PERSON_VISIBLE_SOURCES = {
         "immediate",
         "periodic",
+        "dream",
         "manual",
         "every_turn",
         "merged",
@@ -2331,8 +2332,10 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
         """List ordinary long-term memories belonging to exactly one Person.
 
         This observation path deliberately excludes global knowledge and
-        private/internal sources such as dreams and internal narratives. It
-        does not count as a recall and therefore does not mutate access stats.
+        private internal narratives. Person-scoped dream memories and the
+        Agent's own dream memories are observable; world/global knowledge is
+        still excluded. This does not count as a recall and does not mutate
+        access stats.
         """
         person_id = str(person_id or "").strip()
         if not person_id:
@@ -2342,20 +2345,22 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
         sources = sorted(self.PERSON_VISIBLE_SOURCES)
         placeholders = ",".join("?" * len(sources))
         rows = self._get_conn().execute(
-            f"""SELECT id, content, source, created_at, last_accessed, type
+            f"""SELECT id, user_id, content, source, created_at, last_accessed, type
                 FROM memories
-                WHERE user_id = ?
+                WHERE (
+                    (user_id = ? AND source IN ({placeholders}))
+                    OR (user_id = 'global' AND source = 'dream')
+                )
                   AND status = ?
                   AND type = 'common'
-                  AND source IN ({placeholders})
                 -- "Latest memory" means when a memory was formed. Recall is
                 -- a read and must not make an old memory look newly created.
                 ORDER BY created_at DESC, id DESC
                 LIMIT ? OFFSET ?""",
             (
                 person_id,
-                STATUS_ACTIVE,
                 *sources,
+                STATUS_ACTIVE,
                 normalized_limit,
                 normalized_offset,
             ),
@@ -2365,6 +2370,9 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
             {
                 **dict(row),
                 "tags": tag_map.get(int(row["id"]), []),
+                "memory_scope": (
+                    "agent" if row["user_id"] == "global" else "person"
+                ),
             }
             for row in rows
         ]

@@ -130,7 +130,7 @@ class GatewayEventProjection:
 
         router = self._router_getter()
         if (
-            (is_activity_event or is_agent_state_event or is_agent_speech_event or is_usage_event or is_model_trace_event)
+            (is_activity_event or is_agent_state_event or is_agent_speech_event or is_usage_event or is_model_trace_event or is_memory_event)
             and event.payload.get("_agent_global")
             and router is not None
             and hasattr(router, "broadcast_event")

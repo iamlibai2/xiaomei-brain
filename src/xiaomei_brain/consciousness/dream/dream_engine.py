@@ -49,6 +49,8 @@ class DreamReport:
     memories_reinforced: int = 0
     """强化了多少条记忆"""
     memories_extracted: int = 0
+    memories_retained: int = 0
+    memories_expired: int = 0
     """提取了多少条新记忆"""
     relations_reinforced: int = 0
     """加固了多少条关系"""
@@ -127,6 +129,8 @@ class DreamEngine:
             if formation:
                 e = ConsolidateShortTermJob(formation).run()
                 report.memories_extracted = e.saved
+                report.memories_retained = e.retained
+                report.memories_expired = e.extinct
                 logger.info("[DreamEngine] 短期记忆巩固: %s", e.details)
         except Exception as e:
             logger.error("[DreamEngine] 短期记忆巩固失败: %s", e)

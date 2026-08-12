@@ -357,7 +357,7 @@ function MemoryPanel({
 }) {
   const { t } = useTranslation();
   const recentMemories = [...memories].sort((left, right) => (
-    right.createdAt - left.createdAt
+    right.updatedAt - left.updatedAt
   ));
   return (
     <section className="person-memory-panel">
@@ -410,13 +410,21 @@ function MemoryPanel({
             <strong>{memory.summary}</strong>
             <div className="person-memory-meta">
               <span>
-                {memory.memoryLayer === "short_term"
-                  ? t("rightSidebarUi.shortTermMemory")
-                  : t("rightSidebarUi.longTermMemoryLabel")}
+                {memory.memoryScope === "agent"
+                  ? t("rightSidebarUi.agentSelfMemory")
+                  : (memory.memoryLayer === "short_term"
+                    ? t("rightSidebarUi.shortTermMemory")
+                    : t("rightSidebarUi.longTermMemoryLabel"))}
                 {` / ${memorySourceName(memory.source)}`}
               </span>
-              {memory.createdAt > 0 && (
-                <time>{new Date(memory.createdAt * 1000).toLocaleString()}</time>
+              {memory.updatedAt > 0 && (
+                <time>
+                  {memory.updatedAt > memory.createdAt + 1
+                    ? t("rightSidebarUi.memoryUpdatedAt", {
+                      time: new Date(memory.updatedAt * 1000).toLocaleString(),
+                    })
+                    : new Date(memory.createdAt * 1000).toLocaleString()}
+                </time>
               )}
             </div>
             {memory.tags.length > 0 && (

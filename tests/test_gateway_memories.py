@@ -95,7 +95,13 @@ def test_memory_list_only_exposes_current_person_ordinary_memories(tmp_path):
     )
     _insert(memory, person_id="person-2", content="另一个人的记忆。", created_at=50)
     _insert(memory, person_id="global", content="全局知识。", created_at=60)
-    _insert(memory, person_id="person-1", content="梦境。", source="dream", created_at=70)
+    _insert(
+        memory,
+        person_id="person-1",
+        content="梦境中形成的人物记忆。",
+        source="dream",
+        created_at=70,
+    )
     _insert(memory, person_id="person-1", content="内在叙事。", source="internal", created_at=80)
     _insert(
         memory,
@@ -111,6 +117,16 @@ def test_memory_list_only_exposes_current_person_ordinary_memories(tmp_path):
         status="extinct",
         created_at=100,
     )
+    person_dream = int(memory._get_conn().execute(
+        "SELECT id FROM memories WHERE user_id = 'person-1' AND source = 'dream'",
+    ).fetchone()[0])
+    self_dream = _insert(
+        memory,
+        person_id="global",
+        content="Agent learned not to invent shared experiences.",
+        source="dream",
+        created_at=75,
+    )
     router = _router(memory)
 
     # A client-supplied identity must never change the server-derived Person.
@@ -123,11 +139,15 @@ def test_memory_list_only_exposes_current_person_ordinary_memories(tmp_path):
 
     assert response["result"]["has_more"] is False
     assert [item["id"] for item in response["result"]["memories"]] == [
+        str(self_dream),
+        str(person_dream),
         str(own_recent),
         str(own_old),
     ]
-    assert response["result"]["memories"][1]["tags"] == ["偏好"]
-    assert response["result"]["memories"][1]["last_accessed"] == 1000
+    assert response["result"]["memories"][0]["memory_scope"] == "agent"
+    assert response["result"]["memories"][1]["memory_scope"] == "person"
+    assert response["result"]["memories"][3]["tags"] == ["偏好"]
+    assert response["result"]["memories"][3]["last_accessed"] == 1000
     assert all("user_id" not in item for item in response["result"]["memories"])
     assert "memory.read" in router._capabilities()
     memory.close()

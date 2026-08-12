@@ -440,11 +440,20 @@ class ShortTermMemoryStore(SQLiteStore):
         return [dict(row) for row in rows]
 
     def list_for_person(self, person_id: str, *, limit: int = 30) -> list[dict[str, Any]]:
-        """Return active memories owned by a Person for safe UI observation."""
+        """Return memories this Person may observe in the current Agent.
+
+        Person/session memories remain identity-isolated. Agent-scoped
+        memories describe the Agent itself and are visible to every verified
+        Person who can converse with this Agent.
+        """
         self.expire_due()
         rows = self._get_conn().execute(
             """SELECT * FROM memories0
-               WHERE (person_id = ? OR (scope_type = 'person' AND scope_id = ?))
+               WHERE (
+                    person_id = ?
+                    OR (scope_type = 'person' AND scope_id = ?)
+                    OR (scope_type = 'agent' AND scope_id = 'global')
+               )
                  AND status = 'active' AND expires_at > ?
                ORDER BY last_seen_at DESC LIMIT ?""",
             (person_id, person_id, time.time(), max(1, min(int(limit), 100)),),

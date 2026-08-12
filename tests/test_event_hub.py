@@ -227,6 +227,26 @@ def test_memory_change_refresh_signal_is_only_delivered_to_desktop():
     assert router.events[0][0] == "memory.changed"
 
 
+def test_agent_global_memory_change_is_broadcast_only_to_websockets():
+    class Router:
+        def __init__(self):
+            self.broadcasts = []
+
+        def broadcast_event(self, name, payload, **metadata):
+            self.broadcasts.append((name, payload, metadata))
+
+    router = Router()
+    projection = GatewayEventProjection(lambda: router)
+    hub = EventHub()
+    hub.subscribe(projection)
+
+    hub.publish("memory.changed", {"source": "dream", "_agent_global": True})
+
+    assert router.broadcasts[0][0] == "memory.changed"
+    assert router.broadcasts[0][1] == {"source": "dream"}
+    assert router.broadcasts[0][2]["output_types"] == {"ws"}
+
+
 def test_gateway_projection_uses_turn_origin_for_shared_session():
     class Router:
         def __init__(self):

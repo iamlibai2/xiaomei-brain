@@ -68,7 +68,9 @@ def test_person_memory_projection_is_bounded_and_omits_internal_fields() -> None
         "memory_type": "common",
         "tags": ["关系"] * 8,
         "created_at": 10.0,
+        "updated_at": 10.0,
         "last_accessed": 12.0,
+        "memory_scope": "person",
     }]
     assert has_more is True
 
@@ -102,11 +104,34 @@ def test_short_term_projection_exposes_review_source_and_update_time() -> None:
         "memory_type": "preference_signal",
         "tags": [],
         "created_at": 10.0,
+        "updated_at": 20.0,
         "last_accessed": 20.0,
         "expires_at": 30.0,
         "reinforcement_count": 2,
         "memory_layer": "short_term",
+        "memory_scope": "person",
     }]
+
+
+def test_short_term_projection_marks_agent_self_memory() -> None:
+    class FakeShortTermMemory:
+        def list_for_person(self, person_id, *, limit):
+            return [{
+                "id": 9,
+                "content": "I should not invent personal history to create rapport.",
+                "kind": "self_correction",
+                "scope_type": "agent",
+                "formation_source": "turn_batch_review",
+                "created_at": 10,
+                "last_seen_at": 25,
+                "expires_at": 30,
+            }]
+
+    memory = list_person_short_term_memory_views(
+        FakeShortTermMemory(), "person-1", limit=5,
+    )[0]
+    assert memory["memory_scope"] == "agent"
+    assert memory["updated_at"] == 25.0
 
 
 def test_person_memory_projection_hides_incomplete_fragments() -> None:

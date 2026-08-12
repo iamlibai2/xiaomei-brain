@@ -863,7 +863,7 @@
       "loading": "正在加载…", "noCurrent": "现在没有后台活动", "noHistory": "还没有最近活动",
       "currentHint": "Agent 有新的工作或内在整理时会自然出现在这里。", "historyHint": "完成的活动会按时间浮到这里。",
       "memoryReferences": "本次回答召回的记忆", "memoryReferencesHint": "这些记忆在回答前被召回并提供给 Agent，不代表逐条直接引用。",
-      "shortTermMemory": "短期", "shortTermMemoryHint": "这些近期经历还没有形成长期记忆，会随时间自然淡忘。", "shortTermMemoryStrength": "出现 {{count}} 次", "recentMemory": "最新记忆", "recentMemoryHint": "对话中形成、三轮复盘的短期记忆与长期记忆按形成时间排列。", "noRecentMemory": "还没有新记忆", "recentMemoryEmpty": "对话中值得记住的内容会在这里出现。", "longTermMemoryLabel": "长期", "memorySourceTurnBatchReview": "三轮复盘", "memorySourceUnknown": "此前形成",
+      "shortTermMemory": "短期", "agentSelfMemory": "自我记忆", "memoryUpdatedAt": "更新于 {{time}}", "shortTermMemoryHint": "这些近期经历还没有形成长期记忆，会随时间自然淡忘。", "shortTermMemoryStrength": "出现 {{count}} 次", "recentMemory": "最新记忆", "recentMemoryHint": "人物记忆与 Agent 自我记忆按形成或内容更新时间排列。", "noRecentMemory": "还没有新记忆", "recentMemoryEmpty": "对话中值得记住的内容会在这里出现。", "longTermMemoryLabel": "长期", "memorySourceTurnBatchReview": "三轮复盘", "memorySourceUnknown": "此前形成",
       "longTermMemory": "与当前人物相关的长期记忆", "longTermMemoryHint": "只展示 Agent 可以向当前人物呈现的记忆，不包含全局知识、梦境或内在叙事。",
       "noLongTermMemory": "还没有形成长期记忆", "longTermMemoryEmpty": "随着你们持续交流，适合长期保留的内容会自然出现在这里。",
       "artifactsCurrentEmpty": "当前会话还没有产物", "artifactsEmpty": "还没有产物", "artifactsHint": "文件、图片和报告生成后会集中出现在这里。",

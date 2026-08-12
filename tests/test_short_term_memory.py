@@ -141,6 +141,26 @@ def test_session_scoped_memory_remains_visible_to_its_person(tmp_path):
     assert short_term.list_for_person("person-b") == []
 
 
+def test_agent_scoped_memory_is_visible_but_other_person_memory_is_not(tmp_path):
+    short_term = ShortTermMemoryStore(str(tmp_path / "brain.db"))
+    short_term.remember(ShortTermMemoryCandidate(
+        content="I learned not to invent personal history for rapport.",
+        scope_type="agent",
+        scope_id="global",
+        formation_source="turn_batch_review",
+    ))
+    short_term.remember(ShortTermMemoryCandidate(
+        content="Person B prefers private status summaries.",
+        scope_type="person",
+        scope_id="person-b",
+        person_id="person-b",
+    ))
+
+    visible = short_term.list_for_person("person-a")
+    assert len(visible) == 1
+    assert visible[0]["scope_type"] == "agent"
+
+
 def test_incomplete_memory_fragment_is_rejected(tmp_path):
     short_term = ShortTermMemoryStore(str(tmp_path / "brain.db"))
     service = MemoryFormationService(short_term=short_term, long_term=MagicMock())

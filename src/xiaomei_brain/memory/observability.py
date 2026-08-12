@@ -76,7 +76,11 @@ def list_person_memory_views(
                 if (cleaned := _clean_text(tag, 40))
             ][:8],
             "created_at": _number(row.get("created_at")),
+            "updated_at": _number(row.get("created_at")),
             "last_accessed": _number(row.get("last_accessed")),
+            "memory_scope": (
+                "agent" if row.get("memory_scope") == "agent" else "person"
+            ),
         })
     return memories, has_more
 
@@ -100,10 +104,17 @@ def list_person_short_term_memory_views(
             "memory_type": _clean_text(row.get("kind"), 40),
             "tags": [],
             "created_at": _number(row.get("created_at")),
+            # Short-term last_seen changes only on formation, merge or
+            # reinforcement; unlike long-term last_accessed, recall does not
+            # mutate it. It is therefore a truthful content update time.
+            "updated_at": _number(row.get("last_seen_at")),
             "last_accessed": _number(row.get("last_seen_at")),
             "expires_at": _number(row.get("expires_at")),
             "reinforcement_count": int(row.get("reinforcement_count") or 1),
             "memory_layer": "short_term",
+            "memory_scope": (
+                "agent" if row.get("scope_type") == "agent" else "person"
+            ),
         })
     return memories
 

@@ -1966,6 +1966,21 @@ class ConsciousLiving(Living):
                 report.summary[:50] if report.summary else "",
             )
             self._print_dream_results(report)
+            if report.memories_extracted or getattr(report, "memories_expired", 0):
+                event_hub = getattr(self, "_event_hub", None)
+                if event_hub is not None:
+                    event_hub.publish(
+                        "memory.changed",
+                        {
+                            "source": "dream",
+                            "summary": {
+                                "consolidated": report.memories_extracted,
+                                "retained": getattr(report, "memories_retained", 0),
+                                "expired": getattr(report, "memories_expired", 0),
+                            },
+                            "_agent_global": True,
+                        },
+                    )
             if dream_activity_id and activity_service is not None:
                 from xiaomei_brain.activity import ActivityStep
                 summary = (
@@ -1975,6 +1990,15 @@ class ConsciousLiving(Living):
                         f"梦境整理完成：提取 {report.memories_extracted} 条记忆，"
                         f"强化 {report.memories_reinforced} 条记忆"
                     )
+                )
+                memory_summary = (
+                    f"记忆整理：巩固 {report.memories_extracted} 条，"
+                    f"保留 {getattr(report, 'memories_retained', 0)} 条，"
+                    f"淡忘 {getattr(report, 'memories_expired', 0)} 条"
+                )
+                summary = (
+                    f"{report.summary.strip()[:150]} · {memory_summary}"
+                    if report.summary else memory_summary
                 )
                 activity_service.report_progress(
                     dream_activity_id,

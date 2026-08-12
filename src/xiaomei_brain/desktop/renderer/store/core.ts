@@ -399,8 +399,12 @@ function personMemorySnapshot(value: unknown): PersonMemorySnapshot | null {
       ? item.tags.filter((tag): tag is string => typeof tag === "string").slice(0, 8)
       : [],
     createdAt: typeof item.created_at === "number" ? item.created_at : 0,
+    updatedAt: typeof item.updated_at === "number"
+      ? item.updated_at
+      : (typeof item.created_at === "number" ? item.created_at : 0),
     lastAccessed: typeof item.last_accessed === "number" ? item.last_accessed : 0,
     memoryLayer: item.memory_layer === "short_term" ? "short_term" : "long_term",
+    memoryScope: item.memory_scope === "agent" ? "agent" : "person",
     expiresAt: typeof item.expires_at === "number" ? item.expires_at : 0,
     reinforcementCount: typeof item.reinforcement_count === "number"
       ? item.reinforcement_count
@@ -910,8 +914,10 @@ export interface MemoryReference {
 }
 
 export interface PersonMemorySnapshot extends MemoryReference {
+  updatedAt: number;
   lastAccessed: number;
   memoryLayer: "short_term" | "long_term";
+  memoryScope: "agent" | "person";
   expiresAt: number;
   reinforcementCount: number;
 }
