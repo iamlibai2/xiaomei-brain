@@ -55,7 +55,7 @@ interface StreamingPlayback {
 interface MediaFilePlayback {
   agentId: string;
   playbackId: string;
-  audio: HTMLAudioElement;
+  audio: HTMLMediaElement;
   title: string;
   sourceRef: string;
   stopped: boolean;
@@ -75,6 +75,8 @@ interface MediaQueueItem {
   playlistIndex: number;
   artifactId: string;
   toolCallId: string;
+  mediaKind: "music" | "video";
+  mimeType: string;
 }
 
 export const DESKTOP_SPEECH_STARTED = "xiaomei:desktop-speech-started";
@@ -183,6 +185,8 @@ export function enqueueMediaFilePlayback(agentId: string, payload: Record<string
     playlistIndex: Math.max(0, numberValue(payload.playlist_index)),
     artifactId: stringValue(payload.artifact_id) || stringValue(payload.source_id),
     toolCallId: stringValue(payload.tool_call_id),
+    mediaKind: stringValue(payload.media_kind) === "video" ? "video" : "music",
+    mimeType: stringValue(payload.mime_type),
   };
   const owner = mediaQueue[0];
   if (
@@ -227,6 +231,7 @@ function publishMediaQueue(): void {
       sessionId: track.sessionId,
       sourceRef: track.sourceRef,
       artifactId: track.artifactId || undefined,
+      mediaKind: track.mediaKind,
   }));
   if (!activeMediaFile && mediaQueue.length > 0) {
     if (mediaQueueIndex < 0 || mediaQueueIndex >= mediaQueue.length) mediaQueueIndex = 0;
@@ -234,7 +239,7 @@ function publishMediaQueue(): void {
     updateMediaPlayback({
       agentId: current.agentId,
       playbackId: current.playbackId,
-      mediaKind: "music",
+      mediaKind: current.mediaKind,
       title: current.title,
       sourceRef: current.sourceRef,
       sessionId: current.sessionId,
@@ -246,6 +251,8 @@ function publishMediaQueue(): void {
       queue,
       currentIndex: mediaQueueIndex,
       inlinePlayerVisible: false,
+      mediaUrl: "",
+      artifactId: current.artifactId,
     });
     return;
   }
@@ -261,6 +268,37 @@ function playMediaQueueItem(item: MediaQueueItem): void {
   try {
     mediaUrl = new URL(mediaPath, `http://${agentId}`).toString();
   } catch {
+    return;
+  }
+  if (item.mediaKind === "video") {
+    const queue = mediaQueue.map((track) => ({
+      id: track.playbackId,
+      title: track.title,
+      agentId: track.agentId,
+      personId: track.personId,
+      sessionId: track.sessionId,
+      sourceRef: track.sourceRef,
+      artifactId: track.artifactId || undefined,
+      mediaKind: track.mediaKind,
+    }));
+    updateMediaPlayback({
+      agentId,
+      playbackId,
+      mediaKind: "video",
+      title: item.title,
+      sourceRef: item.sourceRef,
+      sessionId: item.sessionId,
+      toolCallId: item.toolCallId,
+      artifactId: item.artifactId,
+      mediaUrl,
+      inlinePlayerVisible: true,
+      status: "buffering",
+      positionMs: 0,
+      durationMs: 0,
+      seekable: false,
+      queue,
+      currentIndex: mediaQueueIndex,
+    });
     return;
   }
   const audio = new Audio(mediaUrl);
@@ -326,7 +364,7 @@ function playMediaQueueItem(item: MediaQueueItem): void {
   updateMediaPlayback({
     agentId,
     playbackId,
-    mediaKind: "music",
+    mediaKind: item.mediaKind,
     title: playback.title,
     sourceRef: playback.sourceRef,
     sessionId: item.sessionId,
@@ -337,6 +375,8 @@ function playMediaQueueItem(item: MediaQueueItem): void {
     durationMs: 0,
     volume: audio.volume,
     seekable: false,
+    mediaUrl,
+    artifactId: item.artifactId,
   });
   publishMediaQueue();
   void audio.play().catch(() => updateMediaPlayback({ status: "failed" }));
@@ -401,8 +441,60 @@ function clearMediaQueue(): boolean {
     queue: [],
     currentIndex: -1,
     inlinePlayerVisible: false,
+    mediaUrl: "",
+    artifactId: "",
   });
   return hadQueue;
+}
+
+/** Bind the visible video element to the same playback controller used by audio. */
+export function bindVideoPlaybackElement(playbackId: string, video: HTMLVideoElement): () => void {
+  const item = mediaQueue.find((entry) => entry.playbackId === playbackId);
+  if (!item || item.mediaKind !== "video") return () => undefined;
+  disposeActiveMediaFile();
+  const playback: MediaFilePlayback = {
+    agentId: item.agentId,
+    playbackId,
+    audio: video,
+    title: item.title,
+    sourceRef: item.sourceRef,
+    stopped: false,
+    dispose: () => undefined,
+  };
+  const publish = () => updateMediaPlayback({
+    positionMs: Math.max(0, Math.round(video.currentTime * 1000)),
+    durationMs: Number.isFinite(video.duration) ? Math.max(0, Math.round(video.duration * 1000)) : 0,
+    volume: video.volume,
+    seekable: Number.isFinite(video.duration) && video.duration > 0,
+  });
+  const onPlaying = () => { updateMediaPlayback({ status: "playing" }); publish(); };
+  const onPause = () => { if (!video.ended) updateMediaPlayback({ status: "paused" }); };
+  const onWaiting = () => updateMediaPlayback({ status: "buffering" });
+  const onEnded = () => updateMediaPlayback({ status: "completed" });
+  const onError = () => updateMediaPlayback({ status: "failed" });
+  playback.dispose = () => {
+    video.pause();
+    video.removeEventListener("loadedmetadata", publish);
+    video.removeEventListener("timeupdate", publish);
+    video.removeEventListener("playing", onPlaying);
+    video.removeEventListener("pause", onPause);
+    video.removeEventListener("waiting", onWaiting);
+    video.removeEventListener("ended", onEnded);
+    video.removeEventListener("error", onError);
+  };
+  video.addEventListener("loadedmetadata", publish);
+  video.addEventListener("timeupdate", publish);
+  video.addEventListener("playing", onPlaying);
+  video.addEventListener("pause", onPause);
+  video.addEventListener("waiting", onWaiting);
+  video.addEventListener("ended", onEnded);
+  video.addEventListener("error", onError);
+  activeMediaFile = playback;
+  void video.play().catch(onError);
+  return () => {
+    if (activeMediaFile === playback) activeMediaFile = null;
+    playback.dispose();
+  };
 }
 
 function disposeActiveMediaFile(): void {

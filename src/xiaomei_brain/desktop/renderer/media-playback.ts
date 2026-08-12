@@ -7,7 +7,7 @@ export type MediaPlaybackStatus =
   | "stopped"
   | "failed";
 
-export type MusicTrackSummary = {
+export type MediaItemSummary = {
   id: string;
   title: string;
   agentId: string;
@@ -15,12 +15,13 @@ export type MusicTrackSummary = {
   sessionId: string;
   sourceRef: string;
   artifactId?: string;
+  mediaKind: "music" | "video";
 };
 
 export type MediaPlaybackState = {
   agentId: string;
   playbackId: string;
-  mediaKind: "music" | "speech";
+  mediaKind: "music" | "video" | "speech";
   title: string;
   sourceRef: string;
   sessionId: string;
@@ -30,7 +31,9 @@ export type MediaPlaybackState = {
   durationMs: number;
   volume: number;
   seekable: boolean;
-  queue: readonly MusicTrackSummary[];
+  queue: readonly MediaItemSummary[];
+  mediaUrl: string;
+  artifactId: string;
   currentIndex: number;
   inlinePlayerVisible: boolean;
 };
@@ -51,6 +54,8 @@ const EMPTY_STATE: MediaPlaybackState = Object.freeze({
   queue: Object.freeze([]),
   currentIndex: -1,
   inlinePlayerVisible: false,
+  mediaUrl: "",
+  artifactId: "",
 });
 
 let snapshot: MediaPlaybackState = EMPTY_STATE;
@@ -95,6 +100,8 @@ export function updateMediaPlayback(next: Partial<MediaPlaybackState>): void {
     && updated.queue === snapshot.queue
     && updated.currentIndex === snapshot.currentIndex
     && updated.inlinePlayerVisible === snapshot.inlinePlayerVisible
+    && updated.mediaUrl === snapshot.mediaUrl
+    && updated.artifactId === snapshot.artifactId
   ) return;
   snapshot = Object.freeze(updated);
   listeners.forEach((listener) => listener());

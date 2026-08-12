@@ -24,6 +24,7 @@ import { supportsArtifactPreview } from "../../artifacts/preview-capability";
 import { registerEmbodimentCommand } from "../../embodiment/command-registry";
 import { enqueueMediaFilePlayback } from "../../embodiment";
 import { MusicPlayer } from "../music-player/MusicPlayer";
+import { VideoPlayer } from "../media-player/VideoPlayer";
 import { VisualizationPreview } from "../visualization/VisualizationPreview";
 import {
   ArtifactPresentationStage,
@@ -1699,7 +1700,7 @@ function ArtifactCard({
     }
   };
 
-  const playAudio = async () => {
+  const playMedia = async () => {
     if (!agentId || !sessionId || playing) return;
     setPlaying(true);
     try {
@@ -1815,11 +1816,11 @@ function ArtifactCard({
         <button
           type="button"
           className={`artifact-card artifact-${artifact.kind}`}
-          onClick={() => artifact.kind === "audio"
-            ? void playAudio()
+          onClick={() => ["audio", "video"].includes(artifact.kind)
+            ? void playMedia()
             : previewSupported ? onShowArtifact(artifact.id, sessionId) : void open()}
           disabled={opening || playing}
-          title={error || `${artifact.kind === "audio"
+          title={error || `${["audio", "video"].includes(artifact.kind)
             ? t("mediaPlayer.play")
             : previewSupported ? t("common.preview") : t("common.open")} ${artifact.name}`}
         >
@@ -1827,7 +1828,7 @@ function ArtifactCard({
             <img className="artifact-preview" src={previewUrl} alt={artifact.name} />
           ) : (
             <span className={`artifact-icon ${error ? "error" : ""}`}>
-              <Icon name={artifact.kind === "audio" ? "play" : "file-text"} size={20} />
+              <Icon name={["audio", "video"].includes(artifact.kind) ? "play" : "file-text"} size={20} />
             </span>
           )}
           <span className="artifact-info">
@@ -1837,13 +1838,13 @@ function ArtifactCard({
               {size} · {playing
                 ? t("mediaPlayer.loading")
                 : opening ? t("home.opening")
-                  : artifact.kind === "audio" ? t("mediaPlayer.play")
+                  : ["audio", "video"].includes(artifact.kind) ? t("mediaPlayer.play")
                     : previewSupported ? t("home.preview") : t("home.open")}
             </span>
             {error && <span className="artifact-error">{error}</span>}
           </span>
           <Icon
-            name={artifact.kind === "audio" ? "play" : previewSupported ? "eye" : "external-link"}
+            name={["audio", "video"].includes(artifact.kind) ? "play" : previewSupported ? "eye" : "external-link"}
             size={16}
             className="artifact-open-icon"
           />
@@ -1858,6 +1859,9 @@ function ArtifactCard({
           <Icon name="maximize" size={15} />
         </button>
       </div>
+      {artifact.kind === "video" && (
+        <VideoPlayer variant="inline" artifactId={artifact.id} />
+      )}
     </div>
   );
 }

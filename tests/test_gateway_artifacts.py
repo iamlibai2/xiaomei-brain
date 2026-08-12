@@ -321,8 +321,44 @@ def test_artifact_rpc_authorizes_visible_audio_for_playback(tmp_path, monkeypatc
     assert result["session_id"] == "session-1"
     assert result["person_id"] == "person-1"
     assert result["mime_type"] == "audio/mpeg"
+    assert result["media_kind"] == "music"
     assert result["media_path"].startswith("/media/")
     assert "relative_path" not in result
+    db.close()
+
+
+def test_artifact_rpc_authorizes_visible_video_for_playback(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
+    output = tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace" / "demo.mp4"
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"video data")
+    artifact = discover_tool_artifacts(
+        "xiaomei", "session-video", "turn-1", "write_file",
+        {"path": "demo.mp4"}, f"Successfully wrote to {output}",
+    )[0]
+    db = ConversationDB(tmp_path / "brain.db")
+    db.save_artifact("session-video", artifact, user_id="person-1")
+    router = MethodRouter(living=SimpleNamespace(
+        _agent_id="xiaomei",
+        agent=SimpleNamespace(conversation_db=db),
+    ))
+    router._auth_sessions.add("connection-1")
+    router._identity_contexts["connection-1"] = _identity("person-1", "connection-1")
+    from xiaomei_brain.gateway.media_access import media_access_registry
+
+    media_access_registry.configure("xiaomei")
+    response = router.dispatch(
+        "connection-1",
+        "rpc-video",
+        "artifact.media.authorize",
+        {"session_id": "session-video", "artifact_id": artifact["id"]},
+    )
+
+    result = response["result"]
+    assert result["artifact_id"] == artifact["id"]
+    assert result["mime_type"] == "video/mp4"
+    assert result["media_kind"] == "video"
+    assert result["media_path"].startswith("/media/")
     db.close()
 
 

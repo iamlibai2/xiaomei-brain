@@ -95,7 +95,7 @@ class ArtifactMethods:
         })
 
     def handle_media_authorize(self, conn_id: str, req_id: str, params: dict) -> dict:
-        """Issue a short-lived playback URL for one visible audio artifact."""
+        """Issue a short-lived playback URL for one visible audio or video artifact."""
         try:
             parsed = ArtifactGetParams.model_validate(params)
         except Exception as exc:
@@ -121,11 +121,16 @@ class ArtifactMethods:
                 "Artifact does not exist or is not visible",
             )
         mime_type = str(artifact.get("mime_type") or "")
-        if not mime_type.startswith("audio/"):
+        media_kind = (
+            "music" if mime_type.startswith("audio/")
+            else "video" if mime_type.startswith("video/")
+            else ""
+        )
+        if not media_kind:
             return build_error(
                 req_id,
                 ErrorCode.INVALID_PARAMS,
-                "Artifact is not playable audio",
+                "Artifact is not playable audio or video",
             )
         try:
             from ..media_access import media_access_registry
@@ -150,6 +155,7 @@ class ArtifactMethods:
             "title": str(artifact.get("name") or ""),
             "source_ref": f"artifact:{parsed.artifact_id}",
             "mime_type": grant.mime_type,
+            "media_kind": media_kind,
             "media_path": f"/media/{grant.token}",
             "expires_at": round(grant.expires_at),
         })
