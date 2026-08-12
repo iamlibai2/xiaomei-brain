@@ -1,18 +1,214 @@
-.first-run-page { flex: 1; display: grid; place-items: center; overflow: auto; padding: 32px; background: var(--ui-bg-primary); }
-.first-run-card { width: min(560px, 100%); padding: 34px; border: 1px solid var(--ui-border-default); border-radius: 20px; background: var(--ui-bg-secondary); }
-.first-run-card header h1 { margin: 0 0 8px; font-size: 28px; }
-.first-run-card header p { margin: 0 0 28px; line-height: 1.6; color: var(--ui-color-text-secondary); }
-.setup-section-title { display: flex; justify-content: space-between; align-items: center; margin: 22px 2px 10px; font-weight: 650; }
-.setup-section-title em { font-style: normal; font-size: 12px; font-weight: 500; color: var(--ui-color-text-tertiary); }
-.setup-choice { display: flex; gap: 12px; align-items: flex-start; padding: 14px; margin-top: 8px; border: 1px solid var(--ui-border-default); border-radius: 12px; cursor: pointer; transition: border-color .15s, background .15s; }
-.setup-choice.selected { border-color: var(--ui-color-accent); background: color-mix(in srgb, var(--ui-color-accent) 7%, transparent); }
-.setup-choice.disabled { opacity: .5; cursor: default; }
-.setup-choice input { margin-top: 3px; accent-color: var(--ui-color-accent); }
-.setup-choice span { display: flex; flex-direction: column; gap: 4px; }
-.setup-choice small { color: var(--ui-color-text-secondary); line-height: 1.4; }
-.setup-progress { margin-top: 22px; }
+.bootstrap-screen,
+.bootstrap-flow {
+  --bootstrap-accent: var(--ui-brand-primary);
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  padding: clamp(20px, 4vw, 48px);
+  color: var(--ui-color-text-primary);
+  background:
+    radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--bootstrap-accent) 8%, transparent), transparent 38%),
+    color-mix(in srgb, var(--ui-bg-primary) 91%, var(--ui-bg-tertiary));
+}
+
+.bootstrap-window {
+  width: min(820px, 100%);
+  overflow: hidden;
+  border: 1px solid var(--ui-border-default);
+  border-radius: 12px;
+  background: var(--ui-bg-secondary);
+  box-shadow: 0 20px 54px color-mix(in srgb, var(--ui-color-text-primary) 12%, transparent);
+}
+
+.bootstrap-titlebar {
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 22px;
+  border-bottom: 1px solid var(--ui-border-subtle);
+  background: color-mix(in srgb, var(--ui-bg-secondary) 84%, var(--ui-bg-tertiary));
+}
+.bootstrap-titlebar strong { color: var(--ui-color-text-tertiary); font-size: 12px; font-weight: 600; letter-spacing: .035em; }
+.bootstrap-mark { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 7px; color: white; background: var(--bootstrap-accent); font-size: 13px; font-weight: 700; }
+
+.bootstrap-stepper {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0;
+  margin: 0;
+  padding: 24px 36px 4px;
+  list-style: none;
+}
+.bootstrap-stepper li { position: relative; min-width: 68px; display: grid; justify-items: center; gap: 7px; color: var(--ui-color-text-tertiary); }
+.bootstrap-stepper li:not(:last-child)::after { content: ""; position: absolute; top: 13px; left: calc(50% + 18px); width: calc(100% - 36px); height: 1px; background: var(--ui-border-default); }
+.bootstrap-stepper li > span { position: relative; z-index: 1; width: 27px; height: 27px; display: grid; place-items: center; border: 1px solid var(--ui-border-default); border-radius: 50%; background: var(--ui-bg-secondary); font-size: 11px; font-variant-numeric: tabular-nums; box-sizing: border-box; }
+.bootstrap-stepper li > small { max-width: 76px; overflow: hidden; font-size: 11px; line-height: 1.3; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.bootstrap-stepper li.active { color: var(--ui-color-text-primary); font-weight: 650; }
+.bootstrap-stepper li.active > span { color: white; border-color: var(--bootstrap-accent); background: var(--bootstrap-accent); }
+.bootstrap-stepper li.complete { color: var(--ui-color-text-secondary); }
+.bootstrap-stepper li.complete > span { color: var(--bootstrap-accent); border-color: color-mix(in srgb, var(--bootstrap-accent) 45%, var(--ui-border-default)); background: color-mix(in srgb, var(--bootstrap-accent) 8%, var(--ui-bg-secondary)); }
+.bootstrap-stepper li.complete::after { background: color-mix(in srgb, var(--bootstrap-accent) 45%, var(--ui-border-default)); }
+.bootstrap-stepper.is-custom li { min-width: 82px; }
+
+.bootstrap-content { padding: 34px 58px 38px; }
+.bootstrap-page-heading { max-width: 590px; margin-bottom: 27px; }
+.bootstrap-page-heading h1 { margin: 0 0 9px; font-size: 29px; line-height: 1.18; font-weight: 650; letter-spacing: -.035em; text-wrap: balance; }
+.bootstrap-page-heading p { max-width: 560px; margin: 0; color: var(--ui-color-text-secondary); font-size: 14px; line-height: 1.7; text-wrap: pretty; }
+.bootstrap-page-body { width: min(570px, 100%); }
+.bootstrap-preview-banner { margin-bottom: 20px; padding: 8px 11px; color: var(--bootstrap-accent); background: color-mix(in srgb, var(--bootstrap-accent) 7%, transparent); font-size: 12px; text-align: center; }
+
+.bootstrap-footer {
+  min-height: 76px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 0 58px;
+  border-top: 1px solid var(--ui-border-subtle);
+  background: color-mix(in srgb, var(--ui-bg-secondary) 84%, var(--ui-bg-tertiary));
+}
+.bootstrap-primary-action { min-width: 132px; justify-content: center; border-radius: 7px; }
+
+.bootstrap-welcome .bootstrap-content { padding-top: 48px; padding-bottom: 46px; }
+.bootstrap-welcome-heading { margin-bottom: 34px; }
+.bootstrap-mode-list { border-top: 1px solid var(--ui-border-default); border-bottom: 1px solid var(--ui-border-default); }
+.bootstrap-mode-list > button { position: relative; width: 100%; min-height: 94px; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto 24px; align-items: center; gap: 15px; padding: 17px 12px; border: 0; border-bottom: 1px solid var(--ui-border-subtle); color: var(--ui-color-text-primary); background: transparent; text-align: left; cursor: pointer; transition: background .18s ease; }
+.bootstrap-mode-list > button:last-child { border-bottom: 0; }
+.bootstrap-mode-list > button:hover { background: color-mix(in srgb, var(--bootstrap-accent) 5%, transparent); }
+.bootstrap-mode-list > button.selected { background: color-mix(in srgb, var(--bootstrap-accent) 7%, transparent); }
+.bootstrap-mode-list > button:focus-visible { outline: 2px solid var(--bootstrap-accent); outline-offset: -2px; }
+.bootstrap-mode-icon { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 10px; color: var(--bootstrap-accent); background: color-mix(in srgb, var(--bootstrap-accent) 10%, transparent); }
+.bootstrap-mode-copy { display: grid; gap: 5px; }
+.bootstrap-mode-copy strong { font-size: 15px; }
+.bootstrap-mode-copy small { color: var(--ui-color-text-secondary); font-size: 13px; line-height: 1.45; }
+.bootstrap-mode-list em { grid-column: 3; color: var(--bootstrap-accent); font-size: 11px; font-style: normal; }
+.bootstrap-mode-list i { grid-column: 4; width: 21px; height: 21px; display: grid; place-items: center; border: 1.5px solid var(--ui-color-text-tertiary); border-radius: 50%; color: transparent; font-style: normal; }
+.bootstrap-mode-list button.selected i { color: white; border-color: var(--bootstrap-accent); background: var(--bootstrap-accent); }
+
+.bootstrap-form,
+.bootstrap-identity-form,
+.bootstrap-model-form { width: min(520px, 100%); display: grid; gap: 17px; }
+.bootstrap-form label,
+.bootstrap-identity-form .connect-field,
+.bootstrap-model-form > label { display: grid; gap: 8px; margin: 0; color: var(--ui-color-text-primary); font-size: 13px; font-weight: 600; }
+.bootstrap-form input,
+.bootstrap-form textarea,
+.bootstrap-identity-form input,
+.bootstrap-identity-form select,
+.bootstrap-model-form > label > input { width: 100%; min-height: 42px; padding: 10px 13px; border: 1px solid var(--ui-border-default); border-radius: 7px; outline: none; color: var(--ui-color-text-primary); background: var(--ui-bg-primary); font: inherit; font-weight: 400; box-sizing: border-box; transition: border-color .16s ease, box-shadow .16s ease; }
+.bootstrap-form textarea { min-height: 96px; resize: vertical; line-height: 1.55; }
+.bootstrap-form input:focus,
+.bootstrap-form textarea:focus,
+.bootstrap-identity-form input:focus,
+.bootstrap-identity-form select:focus,
+.bootstrap-model-form > label > input:focus { border-color: var(--bootstrap-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bootstrap-accent) 13%, transparent); }
+.bootstrap-form small { color: var(--ui-color-text-secondary); font-weight: 400; line-height: 1.45; }
+.bootstrap-identity-form .identity-login-actions { display: flex; justify-content: flex-start; gap: 14px; margin-top: 2px; padding: 0; border: 0; }
+.bootstrap-identity-form .identity-login-action { width: auto; height: 30px; padding: 0; border: 0; color: var(--ui-color-text-secondary); background: transparent; }
+.bootstrap-identity-form .identity-login-action:hover:not(:disabled) { color: var(--ui-color-text-primary); background: transparent; }
+.connect-error { margin: 0; color: var(--ui-color-danger); font-size: 13px; }
+.bootstrap-text-action { width: fit-content; padding: 1px 0; border: 0; color: var(--bootstrap-accent); background: transparent; font: inherit; font-size: 13px; cursor: pointer; }
+.bootstrap-text-action:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+.quick-installation-progress { width: min(560px, 100%); padding: 12px 0 5px; }
+.quick-installation-track,
 .setup-progress > div { height: 6px; overflow: hidden; border-radius: 99px; background: var(--ui-bg-tertiary); }
-.setup-progress span { display: block; height: 100%; min-width: 4px; border-radius: inherit; background: var(--ui-color-accent); transition: width .25s ease; }
-.setup-progress p { margin: 8px 0 0; color: var(--ui-color-text-secondary); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.setup-error { margin-top: 18px; padding: 10px 12px; border-radius: 10px; color: var(--ui-color-danger); background: color-mix(in srgb, var(--ui-color-danger) 8%, transparent); }
-.setup-start { width: 100%; margin-top: 24px; justify-content: center; }
+.quick-installation-track span { display: block; width: 34%; height: 100%; border-radius: inherit; background: var(--bootstrap-accent); animation: bootstrap-progress 1.65s ease-in-out infinite; }
+.quick-installation-track.is-complete span { width: 100%; animation: none; }
+.quick-installation-progress p,
+.setup-progress p { margin: 11px 0 0; color: var(--ui-color-text-secondary); font-size: 13px; }
+.quick-installation-actions { justify-content: flex-start; margin-top: 22px; }
+
+.setup-section-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 13px; font-size: 13px; font-weight: 650; }
+.setup-section-title em { color: var(--ui-color-text-tertiary); font-size: 11px; font-style: normal; font-weight: 500; }
+.setup-choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.setup-choice { position: relative; min-height: 100px; display: flex; align-items: flex-start; padding: 18px 48px 18px 17px; border: 1px solid var(--ui-border-default); border-radius: 8px; cursor: pointer; box-sizing: border-box; transition: border-color .16s ease, background .16s ease; }
+.setup-choice:hover { border-color: color-mix(in srgb, var(--bootstrap-accent) 55%, var(--ui-border-default)); }
+.setup-choice.selected { border-color: var(--bootstrap-accent); background: color-mix(in srgb, var(--bootstrap-accent) 7%, transparent); }
+.setup-choice.disabled { opacity: .48; cursor: default; }
+.setup-choice input { position: absolute; opacity: 0; pointer-events: none; }
+.setup-choice::after { content: ""; position: absolute; top: 18px; right: 17px; width: 18px; height: 18px; border: 1.5px solid var(--ui-color-text-tertiary); border-radius: 50%; box-sizing: border-box; }
+.setup-choice.selected::after { border: 5px solid var(--bootstrap-accent); background: var(--ui-bg-secondary); }
+.setup-choice span { display: grid; gap: 6px; }
+.setup-choice small { color: var(--ui-color-text-secondary); line-height: 1.45; }
+.setup-progress { margin-top: 22px; }
+.setup-progress span { display: block; height: 100%; min-width: 4px; border-radius: inherit; background: var(--bootstrap-accent); transition: width .25s ease; }
+.setup-progress .is-indeterminate { width: 38%; animation: bootstrap-progress 1.65s ease-in-out infinite; }
+
+.bootstrap-service-config { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, .8fr); gap: 16px; }
+.bootstrap-service-config > label,
+.optional-service-config > label { min-width: 0; display: grid; gap: 8px; color: var(--ui-color-text-primary); font-size: 13px; font-weight: 600; }
+.bootstrap-service-fact { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 12px 0; border-top: 1px solid var(--ui-border-subtle); color: var(--ui-color-text-secondary); font-size: 12px; }
+.bootstrap-service-fact strong { color: var(--ui-color-text-primary); font-size: 13px; }
+.bootstrap-field-note { grid-column: 1 / -1; margin: 0; color: var(--ui-color-text-secondary); font-size: 12px; line-height: 1.5; }
+
+.optional-services-list { display: grid; gap: 9px; }
+.optional-service { overflow: hidden; border: 1px solid var(--ui-border-default); border-radius: 8px; transition: border-color .16s ease, background .16s ease; }
+.optional-service:hover { border-color: color-mix(in srgb, var(--bootstrap-accent) 55%, var(--ui-border-default)); }
+.optional-service.selected { border-color: var(--bootstrap-accent); background: color-mix(in srgb, var(--bootstrap-accent) 7%, transparent); }
+.optional-service-main { position: relative; width: 100%; min-height: 76px; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto 20px; align-items: center; gap: 11px; padding: 13px; border: 0; color: var(--ui-color-text-primary); background: transparent; text-align: left; cursor: pointer; }
+.optional-service-main:disabled { cursor: default; }
+.optional-service-check { grid-column: 4; width: 20px; height: 20px; display: grid; place-items: center; border: 1.5px solid var(--ui-color-text-tertiary); border-radius: 5px; color: transparent; box-sizing: border-box; }
+.optional-service.selected .optional-service-check { color: white; border-color: var(--bootstrap-accent); background: var(--bootstrap-accent); }
+.optional-service-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 8px; color: var(--ui-color-text-secondary); background: var(--ui-bg-tertiary); }
+.optional-service-copy { display: grid; gap: 4px; }
+.optional-service-copy small { color: var(--ui-color-text-secondary); font-size: 12px; line-height: 1.4; }
+.optional-service em { grid-column: 3; color: var(--bootstrap-accent); font-size: 10px; font-style: normal; }
+.optional-service-config { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, .8fr); gap: 14px; padding: 4px 13px 15px 58px; border-top: 1px solid color-mix(in srgb, var(--ui-border-subtle) 75%, transparent); }
+.optional-service-config > label { padding-top: 12px; }
+.optional-service-config > p { grid-column: 1 / -1; margin: 0; color: var(--ui-color-text-secondary); font-size: 12px; }
+.bootstrap-mini-status { align-self: end; padding-bottom: 10px; color: var(--ui-color-text-secondary); font-size: 12px; }
+.bootstrap-inline-loading.compact { min-height: 64px; grid-template-columns: auto auto; }
+
+.bootstrap-runtime-summary { display: flex; align-items: flex-start; gap: 11px; padding: 4px 0; }
+.bootstrap-runtime-summary p { margin: 0; color: var(--ui-color-text-secondary); line-height: 1.6; }
+.bootstrap-runtime-state { width: 9px; height: 9px; flex: none; margin-top: 7px; border-radius: 50%; background: var(--ui-color-text-tertiary); }
+.bootstrap-runtime-state.ready { background: var(--ui-color-success); }
+.bootstrap-inline-loading { min-height: 120px; display: grid; place-items: center; align-content: center; gap: 11px; color: var(--ui-color-text-secondary); }
+.bootstrap-inline-loading p { margin: 0; }
+.bootstrap-spinner { width: 21px; height: 21px; border: 2px solid var(--ui-border-default); border-top-color: var(--bootstrap-accent); border-radius: 50%; animation: bootstrap-spin .8s linear infinite; }
+.bootstrap-finish-summary { display: flex; align-items: center; gap: 13px; padding: 7px 0; color: var(--ui-color-text-secondary); }
+.bootstrap-finish-summary > span { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%; color: white; background: var(--bootstrap-accent); }
+.bootstrap-finish-summary p { margin: 0; }
+.bootstrap-complete-mark { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 50%; color: white; background: var(--bootstrap-accent); }
+.setup-error,
+.bootstrap-error { margin-top: 18px; padding: 12px 13px; border-radius: 7px; color: var(--ui-color-danger); background: color-mix(in srgb, var(--ui-color-danger) 8%, transparent); font-size: 13px; }
+.bootstrap-error p { margin: 5px 0 11px; white-space: pre-wrap; }
+.setup-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.setup-log-link { flex: none; padding: 0; border: 0; color: inherit; background: transparent; text-decoration: underline; cursor: pointer; }
+.bootstrap-error-actions { display: flex; align-items: center; gap: 8px; }
+
+.bootstrap-loading-card { width: min(430px, 100%); display: grid; justify-items: center; padding: 38px; text-align: center; }
+.bootstrap-loading-card h1 { margin: 18px 0 8px; font-size: 24px; }
+.bootstrap-loading-card p { margin: 0 0 20px; color: var(--ui-color-text-secondary); line-height: 1.6; }
+
+@keyframes bootstrap-spin { to { transform: rotate(360deg); } }
+@keyframes bootstrap-progress { from { transform: translateX(-130%); } to { transform: translateX(300%); } }
+
+@media (max-width: 760px) {
+  .bootstrap-flow { padding: 14px; place-items: start center; }
+  .bootstrap-window { width: 100%; }
+  .bootstrap-content { padding: 28px 24px 30px; }
+  .bootstrap-footer { padding: 0 24px; }
+  .bootstrap-stepper { justify-content: space-between; padding-inline: 22px; }
+  .bootstrap-stepper li { min-width: 28px !important; }
+  .bootstrap-stepper li:not(:last-child)::after { left: calc(50% + 16px); width: calc(100% - 32px); }
+  .bootstrap-stepper small { display: none; }
+  .setup-choice-grid,
+  .bootstrap-service-config,
+  .optional-service-config { grid-template-columns: 1fr; }
+  .optional-service-config { padding-left: 13px; }
+  .bootstrap-mode-list > button { grid-template-columns: 38px minmax(0, 1fr) 21px; }
+  .bootstrap-mode-list em { display: none; }
+  .bootstrap-mode-list i { grid-column: 3; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bootstrap-spinner,
+  .quick-installation-track span,
+  .setup-progress .is-indeterminate { animation: none; }
+}

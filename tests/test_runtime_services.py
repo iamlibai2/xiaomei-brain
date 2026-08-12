@@ -9,7 +9,7 @@ import numpy as np
 from xiaomei_brain.body.perception.face_id import FaceID
 from xiaomei_brain.body.perception.speaker_id import SpeakerID
 from xiaomei_brain.body.perception.stt import STT
-from xiaomei_brain.runtime_services.catalog import SERVICE_SPECS
+from xiaomei_brain.runtime_services.catalog import MODEL_SPECS, SERVICE_SPECS
 from xiaomei_brain.runtime_services.manager import LocalAIRuntimeManager
 from xiaomei_brain.runtime_services.selection import ModelSelectionStore
 from xiaomei_brain.runtime_services.http_utils import health_payload
@@ -219,6 +219,86 @@ def test_whisper_download_falls_back_to_huggingface(monkeypatch) -> None:
     )
 
     assert downloader._download_whisper_small() == "/models/openai/whisper-small"
+
+
+def test_modelscope_models_fall_back_to_their_official_huggingface_repositories(
+    monkeypatch,
+) -> None:
+    def failing_modelscope(*_args, **_kwargs) -> str:
+        raise RuntimeError("ModelScope unavailable")
+
+    attempts: list[str] = []
+    monkeypatch.setattr("modelscope.snapshot_download", failing_modelscope)
+    monkeypatch.setattr(
+        downloader,
+        "_download_huggingface",
+        lambda repo_id: attempts.append(repo_id) or f"/models/{repo_id}",
+    )
+
+    assert downloader.download("embedding", "bge-m3") == "/models/BAAI/bge-m3"
+    assert (
+        downloader.download("stt", "sensevoice-small")
+        == "/models/FunAudioLLM/SenseVoiceSmall"
+    )
+    assert attempts == ["BAAI/bge-m3", "FunAudioLLM/SenseVoiceSmall"]
+
+
+def test_sensevoice_catalog_recognizes_modelscope_and_huggingface_caches() -> None:
+    service = next(item for item in SERVICE_SPECS if item.service_id == "stt")
+    model = next(
+        item
+        for item in MODEL_SPECS
+        if item.service_id == "stt" and item.model_id == "sensevoice-small"
+    )
+
+    for spec in (service, model):
+        assert any("modelscope" in candidate for candidate in spec.cache_candidates)
+        assert any(
+            "models--FunAudioLLM--SenseVoiceSmall" in candidate
+            for candidate in spec.cache_candidates
+        )
+
+
+def test_model_download_retries_twice_before_succeeding(monkeypatch) -> None:
+    attempts: list[tuple[str, str]] = []
+    delays: list[int] = []
+
+    def flaky_download(service_id: str, model_id: str) -> str:
+        attempts.append((service_id, model_id))
+        if len(attempts) < 3:
+            raise RuntimeError("temporary network failure")
+        return "/models/bge-m3"
+
+    monkeypatch.setattr(downloader, "_download_once", flaky_download)
+    monkeypatch.setattr(downloader.time, "sleep", delays.append)
+
+    assert downloader.download("embedding", "bge-m3") == "/models/bge-m3"
+    assert attempts == [("embedding", "bge-m3")] * 3
+    assert delays == [2, 5]
+
+
+def test_model_download_does_not_retry_invalid_selection(monkeypatch) -> None:
+    attempts = 0
+
+    def invalid_download(_service_id: str, _model_id: str) -> str:
+        nonlocal attempts
+        attempts += 1
+        raise ValueError("unsupported")
+
+    monkeypatch.setattr(downloader, "_download_once", invalid_download)
+    monkeypatch.setattr(
+        downloader.time,
+        "sleep",
+        lambda _delay: (_ for _ in ()).throw(AssertionError("unexpected retry")),
+    )
+
+    try:
+        downloader.download("embedding", "unknown")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("invalid model unexpectedly downloaded")
+    assert attempts == 1
 
 
 def test_modelscope_download_progress_is_read_from_log(tmp_path: Path) -> None:

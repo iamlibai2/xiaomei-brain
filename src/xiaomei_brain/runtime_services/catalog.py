@@ -72,6 +72,7 @@ SERVICE_SPECS: tuple[RuntimeServiceSpec, ...] = (
         dependencies=("funasr", "soundfile"),
         cache_candidates=(
             _home(".cache/modelscope/hub/models/iic/SenseVoiceSmall"),
+            _home(".cache/huggingface/hub/models--FunAudioLLM--SenseVoiceSmall"),
         ),
         downloadable=True,
         expected_size_bytes=940_019_161,
@@ -161,7 +162,10 @@ MODEL_SPECS: tuple[RuntimeModelSpec, ...] = (
         source="iic/SenseVoiceSmall",
         expected_size="约 0.9 GB",
         expected_size_bytes=940_019_161,
-        cache_candidates=(_home(".cache/modelscope/hub/models/iic/SenseVoiceSmall"),),
+        cache_candidates=(
+            _home(".cache/modelscope/hub/models/iic/SenseVoiceSmall"),
+            _home(".cache/huggingface/hub/models--FunAudioLLM--SenseVoiceSmall"),
+        ),
         dependencies=("funasr", "soundfile"),
         recommended_device="cpu",
     ),

@@ -15,7 +15,7 @@ interface MenuItem {
   children?: MenuItem[];
 }
 
-export function MenuBar() {
+export function MenuBar({ windowOnly = false }: { windowOnly?: boolean }) {
   const { t } = useTranslation();
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [maximized, setMaximized] = useState(false);
@@ -134,12 +134,12 @@ export function MenuBar() {
 
   return (
     <>
-      <div className="menubar" ref={menuRef}>
-        <div className="menubar-logo">
+      <div className={`menubar ${windowOnly ? "is-window-only" : ""}`} ref={menuRef}>
+        {!windowOnly && <div className="menubar-logo">
           <div className="menubar-logo-icon">{t("menu.logo")}</div>
-        </div>
+        </div>}
 
-        <div className="menubar-items">
+        {!windowOnly && <div className="menubar-items">
           {Object.keys(menus).map((key) => (
             <div className="menubar-item" key={key}>
               <button
@@ -194,7 +194,7 @@ export function MenuBar() {
               )}
             </div>
           ))}
-        </div>
+        </div>}
 
         <div className="menubar-spacer" />
 

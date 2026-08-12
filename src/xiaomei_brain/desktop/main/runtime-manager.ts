@@ -9,6 +9,7 @@ import { promisify } from "util";
 import { app } from "electron";
 import extract from "extract-zip";
 import { ConfigStore } from "./config-store";
+import { ensureDiskSpace } from "./disk-space";
 
 const execFileAsync = promisify(execFile);
 const RUNTIME_LOCK_STALE_MS = 10 * 60 * 1000;
@@ -21,6 +22,8 @@ interface RuntimePackageManifest {
   nodeVersion: string;
   archive: string;
   archiveSha256: string;
+  archiveSizeBytes: number;
+  runtimeSizeBytes: number;
   runtimeFileCount: number;
 }
 
@@ -38,6 +41,12 @@ export interface RuntimeCommandDescriptor {
   cwd: string;
   env: NodeJS.ProcessEnv;
   source: RuntimeDescriptor["source"];
+}
+
+export interface RuntimeReadiness {
+  ready: boolean;
+  source?: RuntimeDescriptor["source"];
+  error?: string;
 }
 
 export interface AgentLifecycleResult {
@@ -158,6 +167,10 @@ async function readRuntimeManifest(manifestPath: string): Promise<RuntimePackage
     || !/^\d+\.\d+\.\d+$/.test(manifest.nodeVersion)
     || path.basename(manifest.archive) !== manifest.archive
     || !/^[a-f0-9]{64}$/i.test(manifest.archiveSha256)
+    || !Number.isFinite(manifest.archiveSizeBytes)
+    || manifest.archiveSizeBytes <= 0
+    || !Number.isFinite(manifest.runtimeSizeBytes)
+    || manifest.runtimeSizeBytes <= 0
   ) {
     throw new Error(`Invalid bundled Runtime manifest: ${manifestPath}`);
   }
@@ -253,6 +266,11 @@ export class RuntimeManager {
     }
 
     await fs.mkdir(storageRoot, { recursive: true });
+    await ensureDiskSpace(
+      storageRoot,
+      Math.ceil(manifest.runtimeSizeBytes * 1.15),
+      "准备 Python 和 Node.js 运行环境",
+    );
     const lockPath = path.join(storageRoot, `.${runtimeName}.lock`);
     const lockHandle = await this.acquireRuntimeLock(lockPath, runtimeDir, manifest);
     if (lockHandle === null) return descriptorForExecutable(python, "bundled");
@@ -341,6 +359,39 @@ export class RuntimeManager {
 
   async warmup(): Promise<void> {
     if (app.isPackaged) await this.resolve();
+  }
+
+  async readiness(): Promise<RuntimeReadiness> {
+    try {
+      if (!app.isPackaged) {
+        const runtime = await this.resolve();
+        return { ready: true, source: runtime.source };
+      }
+
+      const standaloneCandidates = process.platform === "win32"
+        ? [path.join(process.resourcesPath, "runtime", "xiaomei-agent.exe")]
+        : [path.join(process.resourcesPath, "runtime", "xiaomei-agent")];
+      for (const candidate of standaloneCandidates) {
+        if (await isFile(candidate)) return { ready: true, source: "bundled" };
+      }
+
+      const packageDir = path.join(process.resourcesPath, "runtime-package");
+      const manifestPath = path.join(packageDir, "runtime-manifest.json");
+      if (await isFile(manifestPath)) {
+        const manifest = await readRuntimeManifest(manifestPath);
+        const safeVersion = manifest.agentVersion.replace(/[^A-Za-z0-9._-]/g, "-");
+        const runtimeName = `${safeVersion}-${manifest.archiveSha256.slice(0, 12)}`;
+        const ready = await this.isPreparedRuntime(path.join(runtimeStorageRoot(), runtimeName), manifest);
+        return { ready, source: "bundled" };
+      }
+
+      const legacyPython = process.platform === "win32"
+        ? path.join(process.resourcesPath, "runtime", "python", "python.exe")
+        : path.join(process.resourcesPath, "runtime", "python", "bin", "python");
+      return { ready: await isFile(legacyPython), source: "bundled" };
+    } catch (error) {
+      return { ready: false, error: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   async resolve(): Promise<RuntimeDescriptor> {
@@ -486,7 +537,11 @@ export class RuntimeManager {
     throw new Error("No available local Agent port pair was found");
   }
 
-  async createAgent(displayName: string, description: string): Promise<AgentCreationResult> {
+  async createAgent(
+    displayName: string,
+    description: string,
+    preferredAgentId = "",
+  ): Promise<AgentCreationResult> {
     const name = displayName.trim();
     const role = description.trim();
     if (!name || name.length > 80) {
@@ -498,7 +553,20 @@ export class RuntimeManager {
 
     try {
       const runtime = await this.resolve();
-      const agentId = await this.nextAgentId(name);
+      const preferred = preferredAgentId.trim();
+      if (preferred && !/^[A-Za-z0-9_-]+$/.test(preferred)) {
+        return { ok: false, name, description: role, message: "Invalid preferred Agent ID" };
+      }
+      const preferredPath = preferred ? path.join(os.homedir(), ".xiaomei-brain", preferred) : "";
+      if (preferred && await pathExists(preferredPath)) {
+        return {
+          ok: false,
+          name,
+          description: role,
+          message: `Agent directory already exists but is not discoverable: ${preferredPath}`,
+        };
+      }
+      const agentId = preferred || await this.nextAgentId(name);
       const port = await this.nextGatewayPort();
       const args = [
         ...runtime.prefixArgs,

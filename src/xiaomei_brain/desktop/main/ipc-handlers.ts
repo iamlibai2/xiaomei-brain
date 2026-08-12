@@ -13,6 +13,7 @@ import { sanitizeNotificationText } from "./notification-text";
 import { IdentityVault } from "./identity-vault";
 import { LocalAIRuntimeManager, type LocalAIServiceAction } from "./local-ai-runtime-manager";
 import { SetupManager } from "./setup-manager";
+import { BootstrapManager } from "./bootstrap-manager";
 
 const connections = new Map<string, GatewayClient>();
 const connectionSessions = new Map<string, string>();
@@ -105,13 +106,24 @@ async function ensureImmutableCacheFile(cachePath: string, data: Buffer): Promis
 export function registerIpcHandlers(
   _gateway: GatewayClient,
   config: ConfigStore,
-  getWindow: () => BrowserWindow | null
+  getWindow: () => BrowserWindow | null,
+  services?: {
+    runtimeManager?: RuntimeManager;
+    localAIRuntime?: LocalAIRuntimeManager;
+  },
 ): void {
   const terminalMgr = new TerminalManager();
-  const runtimeManager = new RuntimeManager(config);
-  const localAIRuntime = new LocalAIRuntimeManager(runtimeManager);
+  const runtimeManager = services?.runtimeManager ?? new RuntimeManager(config);
+  const localAIRuntime = services?.localAIRuntime ?? new LocalAIRuntimeManager(runtimeManager);
   const setupManager = new SetupManager(runtimeManager, config, getWindow);
   const identityVault = new IdentityVault();
+  const bootstrapManager = new BootstrapManager(
+    runtimeManager,
+    setupManager,
+    localAIRuntime,
+    identityVault,
+  );
+  bootstrapManager.start();
   let desktopDeviceId = config.get("desktop_device_id") || "";
   if (!desktopDeviceId) {
     desktopDeviceId = randomUUID();
@@ -126,18 +138,51 @@ export function registerIpcHandlers(
       allow_proactive_use: false,
     },
   );
-  void runtimeManager.warmup().catch((error) => {
-    console.error("[runtime] background initialization failed", error);
+  ipcMain.handle("bootstrap:status", async () => {
+    try { return { ok: true, status: await bootstrapManager.status() }; }
+    catch (error) { return { ok: false, error: String(error instanceof Error ? error.message : error) }; }
   });
-  // A fresh installation must let the person choose an embedding model before
-  // the first download. Existing installations still start their cached model
-  // automatically so normal Desktop startup remains unchanged.
-  void localAIRuntime.list().then((services) => {
-    const embedding = services.find((item) => item.id === "embedding");
-    if (embedding?.model_present) return localAIRuntime.ensureEmbedding();
-    return undefined;
-  }).catch((error) => {
-    console.error("[local-ai] embedding initialization failed", error);
+  ipcMain.handle("bootstrap:begin", async () => {
+    try { return { ok: true, status: await bootstrapManager.begin() }; }
+    catch (error) { return { ok: false, error: String(error instanceof Error ? error.message : error) }; }
+  });
+  ipcMain.handle("bootstrap:prepareRuntime", async () => {
+    try { return { ok: true, status: await bootstrapManager.prepareRuntime() }; }
+    catch (error) { return { ok: false, error: String(error instanceof Error ? error.message : error) }; }
+  });
+  ipcMain.handle("bootstrap:selectMode", async (_event, args: { mode: "quick" | "custom" }) => {
+    try { return { ok: true, status: await bootstrapManager.selectMode(args.mode) }; }
+    catch (error) { return { ok: false, error: String(error instanceof Error ? error.message : error) }; }
+  });
+  ipcMain.handle("bootstrap:prepareQuick", async () => {
+    try { return { ok: true, status: await bootstrapManager.prepareQuick() }; }
+    catch (error) { return { ok: false, error: String(error instanceof Error ? error.message : error) }; }
+  });
+  ipcMain.handle("bootstrap:completeOptionalServices", async (_event, args: { services: string[] }) => {
+    try { return { ok: true, status: await bootstrapManager.completeOptionalServices(args.services || []) }; }
+    catch (error) { return { ok: false, error: String(error instanceof Error ? error.message : error) }; }
+  });
+  ipcMain.handle("bootstrap:rememberOptions", async (_event, args: {
+    variant: "cpu" | "cuda";
+  }) => {
+    try {
+      await bootstrapManager.rememberOptions(args.variant);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: String(error instanceof Error ? error.message : error) };
+    }
+  });
+  ipcMain.handle("bootstrap:provisionInitialAgent", async (_event, args?: { name?: string; description?: string }) => {
+    try { return { ok: true, status: await bootstrapManager.provisionInitialAgent(args) }; }
+    catch (error) { return { ok: false, error: String(error instanceof Error ? error.message : error) }; }
+  });
+  ipcMain.handle("bootstrap:complete", async (_event, args?: { initialAgentId?: string }) => {
+    try { return { ok: true, status: await bootstrapManager.complete(args?.initialAgentId) }; }
+    catch (error) { return { ok: false, error: String(error instanceof Error ? error.message : error) }; }
+  });
+  ipcMain.handle("bootstrap:advancePreview", async () => {
+    try { return { ok: true, status: await bootstrapManager.advancePreview() }; }
+    catch (error) { return { ok: false, error: String(error instanceof Error ? error.message : error) }; }
   });
 
   ipcMain.handle("setup:status", async () => {

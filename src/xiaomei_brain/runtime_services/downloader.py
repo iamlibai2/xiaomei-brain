@@ -12,6 +12,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import time
 
 
 _DEFAULT_HUGGINGFACE_ENDPOINTS = (
@@ -47,6 +48,25 @@ def _download_huggingface(repo_id: str) -> str:
     )
 
 
+def _download_modelscope_with_huggingface_fallback(
+    modelscope_repo_id: str,
+    huggingface_repo_id: str,
+) -> str:
+    """Prefer ModelScope, then use the configured Hugging Face fallback chain."""
+    try:
+        from modelscope import snapshot_download
+
+        logging.info("Downloading model from ModelScope: %s", modelscope_repo_id)
+        return str(snapshot_download(modelscope_repo_id))
+    except Exception as exc:
+        logging.warning(
+            "ModelScope download failed for %s; trying Hugging Face sources: %s",
+            modelscope_repo_id,
+            exc,
+        )
+        return _download_huggingface(huggingface_repo_id)
+
+
 def _download_whisper_small() -> str:
     """Prefer the multilingual ModelScope mirror for mainland networks."""
     try:
@@ -76,17 +96,19 @@ def _download_whisper_small() -> str:
         return _download_huggingface("openai/whisper-small")
 
 
-def download(service_id: str, model_id: str) -> str:
+def _download_once(service_id: str, model_id: str) -> str:
     if service_id == "embedding" and model_id == "bge-m3":
-        from modelscope import snapshot_download
-
-        return str(snapshot_download("BAAI/bge-m3"))
+        return _download_modelscope_with_huggingface_fallback(
+            "BAAI/bge-m3",
+            "BAAI/bge-m3",
+        )
     if service_id == "embedding" and model_id == "bge-small-zh-v1.5":
         return _download_huggingface("BAAI/bge-small-zh-v1.5")
     if service_id == "stt" and model_id == "sensevoice-small":
-        from modelscope import snapshot_download
-
-        return str(snapshot_download("iic/SenseVoiceSmall"))
+        return _download_modelscope_with_huggingface_fallback(
+            "iic/SenseVoiceSmall",
+            "FunAudioLLM/SenseVoiceSmall",
+        )
     if service_id == "stt" and model_id == "whisper-small":
         return _download_whisper_small()
     if service_id == "tts_voxcpm" and model_id == "voxcpm-1.5":
@@ -94,6 +116,30 @@ def download(service_id: str, model_id: str) -> str:
     if service_id == "voiceprint" and model_id == "ecapa-voxceleb":
         return _download_huggingface("speechbrain/spkrec-ecapa-voxceleb")
     raise ValueError(f"Model is not downloadable: {service_id}:{model_id}")
+
+
+def download(service_id: str, model_id: str) -> str:
+    """Download a model, retrying the complete source chain twice on failure."""
+    delays = (2, 5)
+    for attempt in range(len(delays) + 1):
+        try:
+            return _download_once(service_id, model_id)
+        except ValueError:
+            # Unsupported model selections are deterministic and cannot be
+            # repaired by retrying network access.
+            raise
+        except Exception:
+            if attempt >= len(delays):
+                raise
+            delay = delays[attempt]
+            logging.warning(
+                "Model download attempt %s failed; retrying in %ss",
+                attempt + 1,
+                delay,
+                exc_info=True,
+            )
+            time.sleep(delay)
+    raise AssertionError("unreachable")
 
 
 def main() -> None:

@@ -7,6 +7,7 @@ import { app, BrowserWindow } from "electron";
 import extract from "extract-zip";
 import { ConfigStore } from "./config-store";
 import { RuntimeManager } from "./runtime-manager";
+import { ensureDiskSpace } from "./disk-space";
 
 const execFileAsync = promisify(execFile);
 const TORCH_VERSION = "2.6.0";
@@ -16,6 +17,21 @@ const TORCH_INDEX = {
 } as const;
 const FFMPEG_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip";
 const FFMPEG_SHA256_URL = `${FFMPEG_URL}.sha256`;
+const INSTALL_RETRY_DELAYS_MS = [2_000, 5_000] as const;
+const GIB = 1024 ** 3;
+const INFERENCE_SPACE_BYTES = {
+  // Peak working space includes the installed packages, pip download/cache,
+  // and a modest reserve. A local CUDA 12.4 environment currently occupies
+  // about 6.4 GiB in total (torch itself about 4.3 GiB).
+  cpu: 2 * GIB,
+  cuda: 8 * GIB,
+} as const;
+const OPTIONAL_SERVICE_SPACE_BYTES: Record<string, number> = {
+  stt: 2 * GIB,
+  tts_voxcpm: 3 * GIB,
+  voiceprint: 2 * GIB,
+  face: 2 * GIB,
+};
 
 export type InferenceVariant = "cpu" | "cuda";
 
@@ -122,13 +138,18 @@ export class SetupManager {
   async installInference(variant: InferenceVariant): Promise<FirstRunSetupStatus> {
     this.progress("inference", "installing", 5, "正在准备本机推理环境");
     const command = await this.runtime.buildPythonCommand([]);
-    await this.run(command.command, [
+    await ensureDiskSpace(
+      path.dirname(command.command),
+      INFERENCE_SPACE_BYTES[variant],
+      variant === "cuda" ? "安装 CUDA 推理环境" : "安装 CPU 推理环境",
+    );
+    await this.runWithRetries(command.command, [
       ...command.args, "-m", "pip", "install", "--disable-pip-version-check",
-      "--upgrade", "--force-reinstall",
+      "--upgrade",
       `torch==${TORCH_VERSION}`, `torchaudio==${TORCH_VERSION}`,
       "--index-url", TORCH_INDEX[variant],
     ], command.cwd, command.env, "inference", 10, 62);
-    await this.run(command.command, [
+    await this.runWithRetries(command.command, [
       ...command.args, "-m", "pip", "install", "--disable-pip-version-check",
       "--upgrade", "--requirement", requirementsPath(),
     ], command.cwd, command.env, "inference", 63, 96);
@@ -138,11 +159,16 @@ export class SetupManager {
   }
 
   async installFfmpeg(): Promise<FirstRunSetupStatus> {
+    return this.withRetries("ffmpeg", () => this.installFfmpegOnce());
+  }
+
+  private async installFfmpegOnce(): Promise<FirstRunSetupStatus> {
     if (process.platform !== "win32") throw new Error("当前仅实现 Windows FFmpeg 组件安装");
     const root = path.join(componentsRoot(), "ffmpeg");
     const archive = path.join(root, "ffmpeg-release-essentials.zip");
     const staging = path.join(root, `.staging-${process.pid}-${Date.now()}`);
     await fs.mkdir(root, { recursive: true });
+    await ensureDiskSpace(root, 1 * GIB, "下载并安装 FFmpeg");
     this.progress("ffmpeg", "downloading", 2, "正在下载 FFmpeg");
     const response = await fetch(FFMPEG_URL);
     if (!response.ok || !response.body) throw new Error(`FFmpeg 下载失败：HTTP ${response.status}`);
@@ -197,19 +223,28 @@ export class SetupManager {
     const spec = catalog[serviceId];
     if (!spec) throw new Error(`没有可安装的本机服务组件：${serviceId}`);
     const command = await this.runtime.buildPythonCommand([]);
+    await ensureDiskSpace(
+      path.dirname(command.command),
+      OPTIONAL_SERVICE_SPACE_BYTES[serviceId] || 1 * GIB,
+      `安装${serviceId}运行组件`,
+    );
     const regular = spec.packages.filter((item) => !item.startsWith("face-recognition=="));
     if (regular.length) {
-      await this.run(command.command, [
+      await this.runWithRetries(command.command, [
         ...command.args, "-m", "pip", "install", "--disable-pip-version-check", "--upgrade", ...regular,
       ], command.cwd, command.env, serviceId, 5, 94);
     }
     const noDeps = spec.packages.filter((item) => item.startsWith("face-recognition=="));
     if (noDeps.length) {
-      await this.run(command.command, [
+      await this.runWithRetries(command.command, [
         ...command.args, "-m", "pip", "install", "--disable-pip-version-check", "--no-deps", ...noDeps,
       ], command.cwd, command.env, serviceId, 94, 99);
     }
     this.progress(serviceId, "complete", 100, "本机服务运行组件已安装");
+  }
+
+  reportProgress(component: string, state: string, percent: number, message: string): void {
+    this.progress(component, state, percent, message);
   }
 
   private async detectNvidiaGpu(): Promise<{ detected: boolean; name: string }> {
@@ -244,7 +279,56 @@ export class SetupManager {
     });
   }
 
-  private progress(component: string, state: string, percent: number, message: string): void {
-    this.getWindow()?.webContents.send("setup:progress", { component, state, percent, message });
+  private async runWithRetries(
+    executable: string,
+    args: string[],
+    cwd: string,
+    env: NodeJS.ProcessEnv,
+    component: string,
+    from: number,
+    to: number,
+  ): Promise<void> {
+    await this.withRetries(
+      component,
+      () => this.run(executable, args, cwd, env, component, from, to),
+    );
+  }
+
+  private async withRetries<T>(component: string, operation: () => Promise<T>): Promise<T> {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await operation();
+      } catch (error) {
+        if (attempt >= INSTALL_RETRY_DELAYS_MS.length) throw error;
+        const delay = INSTALL_RETRY_DELAYS_MS[attempt];
+        this.progress(
+          component,
+          "retrying",
+          2,
+          "",
+          attempt + 1,
+          INSTALL_RETRY_DELAYS_MS.length,
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  private progress(
+    component: string,
+    state: string,
+    percent: number,
+    message: string,
+    attempt?: number,
+    maxAttempts?: number,
+  ): void {
+    this.getWindow()?.webContents.send("setup:progress", {
+      component,
+      state,
+      percent,
+      message,
+      attempt,
+      maxAttempts,
+    });
   }
 }

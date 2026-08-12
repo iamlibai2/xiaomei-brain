@@ -3,16 +3,19 @@ import { useTranslation } from "react-i18next";
 import type { IdentityStatus } from "../types";
 import { useCoreStore } from "../store";
 import { Button } from "./ui";
+import { BootstrapWizard } from "./bootstrap/BootstrapWizard";
 
 interface IdentityPageProps {
   status: IdentityStatus;
   onReady: (status: IdentityStatus) => void;
+  bootstrapMode?: "quick" | "custom" | "";
 }
 
-export function IdentityPage({ status, onReady }: IdentityPageProps) {
+export function IdentityPage({ status, onReady, bootstrapMode }: IdentityPageProps) {
   const { t } = useTranslation();
   const resetIdentityState = useCoreStore((state) => state.resetIdentityState);
   const [creating, setCreating] = useState(!status.exists);
+  const [restoring, setRestoring] = useState(false);
   const [selectedSubject, setSelectedSubject] = useState(
     status.activeSubject || status.subject || status.accounts[0]?.subject || "",
   );
@@ -24,6 +27,7 @@ export function IdentityPage({ status, onReady }: IdentityPageProps) {
 
   useEffect(() => {
     setCreating(!status.exists);
+    setRestoring(false);
     setSelectedSubject(
       status.activeSubject || status.subject || status.accounts[0]?.subject || "",
     );
@@ -35,6 +39,10 @@ export function IdentityPage({ status, onReady }: IdentityPageProps) {
   );
 
   const submit = async () => {
+    if (restoring) {
+      await importBackup();
+      return;
+    }
     if (creating && password !== confirmation) {
       setError(t("identity.passwordMismatch"));
       return;
@@ -75,18 +83,8 @@ export function IdentityPage({ status, onReady }: IdentityPageProps) {
     if (event.key === "Enter" && !loading) void submit();
   };
 
-  return (
-    <div className="connect-page">
-      <div className="connect-card identity-card">
-        <h1>{creating ? t("identity.createTitle") : t("identity.welcomeBack")}</h1>
-        <p className="connect-subtitle">
-          {creating
-            ? t("identity.createDescription")
-            : t("identity.unlockDescription", {
-                name: selectedAccount?.displayName || status.displayName || "",
-              })}
-        </p>
-
+  const form = (
+    <div className={bootstrapMode ? "bootstrap-identity-form" : ""}>
         {!creating && status.accounts.length > 1 && (
           <div className="connect-field">
             <label>{t("identity.account")}</label>
@@ -107,7 +105,7 @@ export function IdentityPage({ status, onReady }: IdentityPageProps) {
           </div>
         )}
 
-        {creating && (
+        {creating && !restoring && (
           <div className="connect-field">
             <label>{t("identity.displayName")}</label>
             <input
@@ -121,7 +119,7 @@ export function IdentityPage({ status, onReady }: IdentityPageProps) {
         )}
 
         <div className="connect-field">
-          <label>{t("identity.password")}</label>
+          <label>{t(restoring ? "identity.backupPassword" : "identity.password")}</label>
           <input
             autoFocus={!creating}
             type="password"
@@ -132,7 +130,7 @@ export function IdentityPage({ status, onReady }: IdentityPageProps) {
           />
         </div>
 
-        {creating && (
+        {creating && !restoring && (
           <div className="connect-field">
             <label>{t("identity.confirmPassword")}</label>
             <input
@@ -145,47 +143,104 @@ export function IdentityPage({ status, onReady }: IdentityPageProps) {
         )}
 
         {error && <p className="connect-error">{error}</p>}
-        <Button
-          variant="primary"
-          size="lg"
-          className="connect-btn"
-          onClick={() => void submit()}
-          disabled={loading || (!creating && !selectedSubject)}
-        >
-          {loading
-            ? t("identity.processing")
-            : creating ? t("identity.create") : t("identity.unlock")}
-        </Button>
-
         <div className="identity-login-actions">
-          {status.exists && (
+          {(status.exists || restoring) && (
             <Button
               variant="secondary"
               size="md"
-              icon={creating ? "chevron-left" : "plus"}
+              icon={creating || restoring ? "chevron-left" : "plus"}
               className="identity-login-action"
               onClick={() => {
-                setCreating((current) => !current);
+                if (restoring) {
+                  setRestoring(false);
+                } else {
+                  setCreating((current) => !current);
+                }
                 setPassword("");
                 setConfirmation("");
                 setError("");
               }}
               disabled={loading}
             >
-              {creating ? t("identity.backToLogin") : t("identity.addLocalAccount")}
+              {restoring
+                ? t(creating ? "identity.backToCreate" : "identity.backToLogin")
+                : creating ? t("identity.backToLogin") : t("identity.addLocalAccount")}
             </Button>
           )}
-          <Button
-            variant="secondary"
-            size="md"
-            icon="file-text"
-            className="identity-login-action"
-            onClick={() => void importBackup()}
-            disabled={loading}
-          >
-            {t("identity.importBackup")}
-          </Button>
+          {!restoring && (
+            <Button
+              variant="secondary"
+              size="md"
+              icon="file-text"
+              className="identity-login-action"
+              onClick={() => {
+                setRestoring(true);
+                setPassword("");
+                setConfirmation("");
+                setError("");
+              }}
+              disabled={loading}
+            >
+              {t("identity.importBackup")}
+            </Button>
+          )}
         </div>
+    </div>
+  );
+
+  const primaryAction = (
+    <Button
+      variant="primary"
+      size="lg"
+      className={bootstrapMode ? "bootstrap-primary-action" : "connect-btn"}
+      onClick={() => void submit()}
+      disabled={loading || (restoring
+        ? !password
+        : creating
+          ? !displayName.trim() || password.length < 8 || confirmation.length < 8
+          : !selectedSubject || !password)}
+    >
+      {loading
+        ? t("identity.processing")
+        : restoring
+          ? t("identity.importBackup")
+          : bootstrapMode
+            ? t("bootstrap.next")
+            : creating ? t("identity.create") : t("identity.unlock")}
+    </Button>
+  );
+
+  if (bootstrapMode) {
+    return (
+      <BootstrapWizard
+        mode={bootstrapMode}
+        current="identity"
+        title={restoring ? t("identity.restoreTitle") : creating ? t("bootstrap.accountTitle") : t("identity.welcomeBack")}
+        description={restoring
+          ? t("identity.restoreDescription")
+          : creating
+            ? t("bootstrap.accountDescription")
+            : t("identity.unlockDescription", { name: selectedAccount?.displayName || status.displayName || "" })}
+        actions={primaryAction}
+      >
+        {form}
+      </BootstrapWizard>
+    );
+  }
+
+  return (
+    <div className="connect-page">
+      <div className="connect-card identity-card">
+        <h1>{restoring ? t("identity.restoreTitle") : creating ? t("identity.createTitle") : t("identity.welcomeBack")}</h1>
+        <p className="connect-subtitle">
+          {restoring
+            ? t("identity.restoreDescription")
+            : creating
+              ? t("identity.createDescription")
+              : t("identity.unlockDescription", { name: selectedAccount?.displayName || status.displayName || "" })}
+        </p>
+        {form}
+        {primaryAction}
       </div>
     </div>
   );

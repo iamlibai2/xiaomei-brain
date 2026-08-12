@@ -53,12 +53,24 @@ The command performs these steps:
 
 ## Runtime initialization
 
-Desktop starts Runtime initialization in the background after its window is
-created. Initialization uses a per-version lock and extracts into a unique
-staging directory. It verifies both the archive hash and key Python imports,
-then atomically renames the staging directory into the versioned Runtime path.
-An interrupted extraction is never treated as ready, and stale locks can be
-recovered on a later launch.
+Desktop delegates Runtime preparation to the unified `BootstrapManager`. A new
+installation extracts the Runtime only after first-run setup reaches that
+stage; existing installations restore it quietly during daily startup.
+Initialization uses a per-version lock and extracts into a unique staging
+directory. It verifies both the archive hash and key Python imports, then
+atomically renames the staging directory into the versioned Runtime path. An
+interrupted extraction is never treated as ready, and stale locks can be
+recovered on a later launch. The complete state machine and acceptance matrix
+are documented in `docs/plan/20-DESKTOP-BOOTSTRAP.md`.
+
+Before extraction, Desktop checks the free space on the Runtime destination
+volume against the manifest's actual uncompressed size plus working reserve.
+Inference installation performs the same check before pip starts (2 GB for the
+CPU baseline and 8 GB for CUDA), while FFmpeg and optional local services use
+their own conservative working-space budgets. Downloadable AI models retain
+their catalog-size check and reserve before a downloader process is created.
+Insufficient space therefore fails at the start of a setup step with the
+required and currently available sizes instead of leaving a partial install.
 
 Set `XIAOMEI_BRAIN_RUNTIME_HOME` to override the extraction root for packaging
 smoke tests. Existing `XIAOMEI_BRAIN_RUNTIME`, `XIAOMEI_BRAIN_PYTHON`, and
@@ -70,6 +82,26 @@ editing/signing and configure a certificate before public distribution.
 
 Both `runtime-stage/` and `release/` are generated artifacts and are ignored by
 Git.
+
+## Desktop updates
+
+The published NSIS setup executable is used for both first installation and
+Desktop updates. `latest.yml` advertises the current release and the generated
+`.blockmap` allows `electron-updater` to reuse unchanged blocks from the
+previous installer instead of always downloading the complete executable.
+
+Selecting the upgrade action is sufficient consent. Desktop records the local
+Agents that are currently running, stops them, and launches NSIS in silent mode
+against the existing installation directory. After the updated Desktop starts,
+it prepares the shared embedding service and starts only the recorded Agents.
+Agents that were already stopped remain stopped, and remote Agents are never
+managed by this host-local update flow. Failed Agent restarts remain recorded
+and are retried on the next packaged Desktop launch.
+
+The update flow does not change `bootstrap-state.json`. A completed installation
+therefore returns to the normal application or lock screen instead of entering
+first-run setup again; genuinely missing required components are handled by the
+existing repair state.
 
 ## First-run components
 

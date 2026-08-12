@@ -1,6 +1,7 @@
 import React from "react";
 
 export type IconName =
+  | "check"
   | "plus"
   | "search"
   | "refresh"
@@ -56,6 +57,7 @@ interface IconProps {
 // ── SVG paths (Feather icons style: 24x24 viewBox, stroke="currentColor") ──
 
 const ICON_PATHS: Record<IconName, React.ReactNode> = {
+  check: <polyline points="20 6 9 17 4 12" />,
   plus: (
     <>
       <line x1="12" y1="5" x2="12" y2="19" />

@@ -21,6 +21,8 @@ import {
   registerDesktopSettingsIpc,
 } from "./desktop-settings";
 import { DesktopUpdateService } from "./update-service";
+import { RuntimeManager } from "./runtime-manager";
+import { LocalAIRuntimeManager } from "./local-ai-runtime-manager";
 
 const isMac = process.platform === "darwin";
 const isWindows = process.platform === "win32";
@@ -37,9 +39,13 @@ let tray: Tray | null = null;
 let isQuitting = false;
 const gateway = new GatewayClient();
 const config = new ConfigStore();
+const runtimeManager = new RuntimeManager(config);
+const localAIRuntime = new LocalAIRuntimeManager(runtimeManager);
 const updates = new DesktopUpdateService(
   () => mainWindow,
   () => readDesktopSettings(config).automaticUpdatesEnabled,
+  runtimeManager,
+  localAIRuntime,
 );
 
 async function loadDevelopmentRenderer(window: BrowserWindow): Promise<void> {
@@ -261,7 +267,7 @@ app.whenReady().then(() => {
   registerDesktopDiagnosticsIpc();
   registerDesktopSettingsIpc(config);
   updates.registerIpc();
-  registerIpcHandlers(gateway, config, () => mainWindow);
+  registerIpcHandlers(gateway, config, () => mainWindow, { runtimeManager, localAIRuntime });
   updates.initialize();
 
 });

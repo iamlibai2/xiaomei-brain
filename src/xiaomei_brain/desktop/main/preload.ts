@@ -139,6 +139,18 @@ const CHANNEL_MAP = {
     installOptionalService: { invoke: "setup:installOptionalService" },
     onProgress:       { event: "setup:progress" },
   },
+  bootstrap: {
+    status:           { invoke: "bootstrap:status" },
+    begin:            { invoke: "bootstrap:begin" },
+    prepareRuntime:   { invoke: "bootstrap:prepareRuntime" },
+    selectMode:       { invoke: "bootstrap:selectMode" },
+    prepareQuick:     { invoke: "bootstrap:prepareQuick" },
+    completeOptionalServices: { invoke: "bootstrap:completeOptionalServices" },
+    rememberOptions:  { invoke: "bootstrap:rememberOptions" },
+    provisionInitialAgent: { invoke: "bootstrap:provisionInitialAgent" },
+    complete:         { invoke: "bootstrap:complete" },
+    advancePreview:   { invoke: "bootstrap:advancePreview" },
+  },
   identity: {
     status:           { invoke: "identity:status" },
     create:           { invoke: "identity:create" },

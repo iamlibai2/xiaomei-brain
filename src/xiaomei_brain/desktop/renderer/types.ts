@@ -1043,9 +1043,11 @@ export interface FirstRunSetupStatus {
 
 export interface SetupProgress {
   component: string;
-  state: "downloading" | "installing" | "complete";
+  state: "downloading" | "installing" | "retrying" | "complete";
   percent: number;
   message: string;
+  attempt?: number;
+  maxAttempts?: number;
 }
 
 export interface SetupBridge {
@@ -1054,6 +1056,65 @@ export interface SetupBridge {
   installFfmpeg(): Promise<{ ok: boolean; status?: FirstRunSetupStatus; error?: string }>;
   installOptionalService(args: { serviceId: string }): Promise<{ ok: boolean; error?: string }>;
   onProgress(callback: (progress: SetupProgress) => void): () => void;
+}
+
+export type BootstrapPhase =
+  | "first_run"
+  | "setup_incomplete"
+  | "repair_required"
+  | "ready_locked"
+  | "ready";
+
+export type BootstrapStep =
+  | "welcome"
+  | "identity"
+  | "runtime"
+  | "inference"
+  | "embedding"
+  | "optional_services"
+  | "agent"
+  | "model"
+  | "complete";
+
+export interface BootstrapStatus {
+  phase: BootstrapPhase;
+  step: BootstrapStep;
+  managedSetup: boolean;
+  legacyReady: boolean;
+  identity: IdentityStatus;
+  runtime: {
+    ready: boolean;
+    source?: "environment" | "config" | "virtualenv" | "bundled" | "path";
+    error?: string;
+  };
+  setup: FirstRunSetupStatus;
+  embedding?: LocalAIServiceStatus;
+  agents: LocalAgentInfo[];
+  initialAgentId: string;
+  startedAt: string;
+  completedAt: string;
+  preview: boolean;
+  setupMode: "quick" | "custom" | "";
+  optionalServices: string[];
+}
+
+export interface BootstrapBridge {
+  status(): Promise<{ ok: boolean; status?: BootstrapStatus; error?: string }>;
+  begin(): Promise<{ ok: boolean; status?: BootstrapStatus; error?: string }>;
+  prepareRuntime(): Promise<{ ok: boolean; status?: BootstrapStatus; error?: string }>;
+  selectMode(args: { mode: "quick" | "custom" }): Promise<{ ok: boolean; status?: BootstrapStatus; error?: string }>;
+  prepareQuick(): Promise<{ ok: boolean; status?: BootstrapStatus; error?: string }>;
+  completeOptionalServices(args: { services: string[] }): Promise<{ ok: boolean; status?: BootstrapStatus; error?: string }>;
+  rememberOptions(args: {
+    variant: "cpu" | "cuda";
+  }): Promise<{ ok: boolean; error?: string }>;
+  provisionInitialAgent(args?: { name?: string; description?: string }): Promise<{ ok: boolean; status?: BootstrapStatus; error?: string }>;
+  advancePreview(): Promise<{ ok: boolean; status?: BootstrapStatus; error?: string }>;
+  complete(args: { initialAgentId?: string }): Promise<{
+    ok: boolean;
+    status?: BootstrapStatus;
+    error?: string;
+  }>;
 }
 
 export interface NotificationsBridge {
@@ -1193,6 +1254,7 @@ declare global {
     localAgents: LocalAgentsBridge;
     localAI: LocalAIBridge;
     setup: SetupBridge;
+    bootstrap: BootstrapBridge;
     notifications: NotificationsBridge;
     desktop: DesktopBridge;
     desktopUpdate: DesktopUpdateBridge;
