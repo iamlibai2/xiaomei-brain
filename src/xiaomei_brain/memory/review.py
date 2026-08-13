@@ -261,7 +261,6 @@ class TurnBatchMemoryReviewer:
         combined: dict[int, dict[str, Any]] = {}
         for scope_type, scope_id in (
             ("person", person_id),
-            ("session", session_id),
             ("agent", "global"),
         ):
             for item in self.short_term.find_similar(

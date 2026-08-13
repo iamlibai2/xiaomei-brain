@@ -42,13 +42,11 @@ def test_memories0_is_created_and_exact_candidate_is_reinforced(tmp_path):
         assert evidence_count == 1
 
 
-def test_recall_filters_person_session_and_agent_scopes(tmp_path):
+def test_recall_filters_person_and_agent_scopes_across_sessions(tmp_path):
     store = ShortTermMemoryStore(str(tmp_path / "brain.db"))
     for content, scope_type, scope_id in (
         ("person A likes tea", "person", "person-a"),
         ("person B likes coffee", "person", "person-b"),
-        ("current session plan", "session", "session-a"),
-        ("other session plan", "session", "session-b"),
         ("agent learned patience", "agent", "global"),
     ):
         store.remember(
@@ -57,7 +55,7 @@ def test_recall_filters_person_session_and_agent_scopes(tmp_path):
                 scope_type=scope_type,
                 scope_id=scope_id,
                 person_id=scope_id if scope_type == "person" else "",
-                session_id=scope_id if scope_type == "session" else "",
+                session_id="session-a",
             )
         )
 
@@ -69,10 +67,19 @@ def test_recall_filters_person_session_and_agent_scopes(tmp_path):
     )
     contents = {item["content"] for item in recalled}
     assert "person A likes tea" in contents
-    assert "current session plan" in contents
     assert "agent learned patience" in contents
     assert "person B likes coffee" not in contents
-    assert "other session plan" not in contents
+
+    recalled_from_another_session = store.recall(
+        "tea patience",
+        person_id="person-a",
+        session_id="session-b",
+        limit=10,
+    )
+    assert {item["content"] for item in recalled_from_another_session} == {
+        "person A likes tea",
+        "agent learned patience",
+    }
 
 
 def test_expired_memory_is_not_recalled(tmp_path):
@@ -118,7 +125,7 @@ def test_formation_defaults_conversation_memory_to_memories0(tmp_path):
     long_term.store.assert_not_called()
 
 
-def test_session_scoped_memory_remains_visible_to_its_person(tmp_path):
+def test_session_context_is_not_persisted_as_memory(tmp_path):
     short_term = ShortTermMemoryStore(str(tmp_path / "brain.db"))
     service = MemoryFormationService(short_term=short_term, long_term=MagicMock())
 
@@ -133,12 +140,26 @@ def test_session_scoped_memory_remains_visible_to_its_person(tmp_path):
         session_id="session-a",
     )
 
-    visible = short_term.list_for_person("person-a")
-    assert len(visible) == 1
-    assert visible[0]["scope_type"] == "session"
-    assert visible[0]["person_id"] == "person-a"
-    assert visible[0]["formation_source"] == "turn_batch_review"
-    assert short_term.list_for_person("person-b") == []
+    assert short_term.list_active() == []
+    assert short_term.list_for_person("person-a") == []
+
+
+def test_legacy_session_memory_is_not_recalled_or_displayed(tmp_path):
+    short_term = ShortTermMemoryStore(str(tmp_path / "brain.db"))
+    short_term.remember(ShortTermMemoryCandidate(
+        content="The second draft is only meaningful in the original conversation.",
+        scope_type="session",
+        scope_id="session-a",
+        person_id="person-a",
+        session_id="session-a",
+    ))
+
+    assert short_term.recall(
+        "second draft",
+        person_id="person-a",
+        session_id="session-a",
+    ) == []
+    assert short_term.list_for_person("person-a") == []
 
 
 def test_agent_scoped_memory_is_visible_but_other_person_memory_is_not(tmp_path):

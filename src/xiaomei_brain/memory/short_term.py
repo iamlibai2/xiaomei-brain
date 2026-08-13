@@ -378,9 +378,9 @@ class ShortTermMemoryStore(SQLiteStore):
         """Recall active memories after deterministic scope filtering."""
         cutoff = time.time() if now is None else float(now)
         self.expire_due(now=cutoff)
+        # Conversation history and DAG summaries own session-local context.
+        # memories0 only carries potentially reusable Person and Agent memory.
         scopes: list[tuple[str, str]] = [("person", person_id), ("agent", agent_scope_id)]
-        if session_id:
-            scopes.append(("session", session_id))
         clauses = " OR ".join("(scope_type = ? AND scope_id = ?)" for _ in scopes)
         params: list[Any] = [item for pair in scopes for item in pair]
         params.extend([cutoff, max(20, min(int(limit) * 8, 100))])
@@ -442,20 +442,19 @@ class ShortTermMemoryStore(SQLiteStore):
     def list_for_person(self, person_id: str, *, limit: int = 30) -> list[dict[str, Any]]:
         """Return memories this Person may observe in the current Agent.
 
-        Person/session memories remain identity-isolated. Agent-scoped
-        memories describe the Agent itself and are visible to every verified
-        Person who can converse with this Agent.
+        Person memories remain identity-isolated. Agent-scoped memories
+        describe the Agent itself and are visible to every verified Person
+        who can converse with this Agent.
         """
         self.expire_due()
         rows = self._get_conn().execute(
             """SELECT * FROM memories0
                WHERE (
-                    person_id = ?
-                    OR (scope_type = 'person' AND scope_id = ?)
+                    (scope_type = 'person' AND scope_id = ?)
                     OR (scope_type = 'agent' AND scope_id = 'global')
                )
                  AND status = 'active' AND expires_at > ?
                ORDER BY last_seen_at DESC LIMIT ?""",
-            (person_id, person_id, time.time(), max(1, min(int(limit), 100)),),
+            (person_id, time.time(), max(1, min(int(limit), 100)),),
         ).fetchall()
         return [dict(row) for row in rows]

@@ -45,7 +45,9 @@ TURN_BATCH_MEMORY_REVIEW_PROMPT = """复盘下面一组完整对话轮次，整�
 - NOOP：没有值得处理的内容。
 - UPDATE、MERGE、REINFORCE 必须填写候选中的 target_memory_id。
 - 每个动作必须填写 evidence_turn_ids，且只能引用本批对话标出的 turn_id。
-- 关于当前人物默认 scope_type="person"；关于 Agent 自身才使用 scope_type="agent"。
+- 只记录关于当前人物或 Agent 自身、脱离本次会话后仍然完整且有用的认识。
+- 关于当前人物使用 scope_type="person"；关于 Agent 自身才使用 scope_type="agent"。
+- 当前文件、当前任务步骤、临时操作要求以及依赖“这个、第二个、上一段”等现场指代的内容属于会话上下文，输出 NOOP，不写入记忆。
 
 只输出一个 JSON 对象，不要 Markdown，不要解释：
 {{
@@ -55,7 +57,7 @@ TURN_BATCH_MEMORY_REVIEW_PROMPT = """复盘下面一组完整对话轮次，整�
       "target_memory_id": null,
       "kind": "event|temporary_plan|unfinished_item|preference_signal|relationship_signal|context",
       "content": "完整、独立、可理解的记忆表述",
-      "scope_type": "person|agent|session",
+      "scope_type": "person|agent",
       "self": false,
       "confidence": 0.0,
       "importance": 0.0,

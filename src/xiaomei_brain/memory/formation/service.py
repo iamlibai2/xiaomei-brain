@@ -132,8 +132,6 @@ class MemoryFormationService:
             kind=candidate.tag or "event",
             scope_type=candidate.scope_type,
             scope_id=candidate.scope_id,
-            # Session memories still belong to the authenticated Person.  The
-            # scope controls recall; person_id controls safe observation.
             person_id=user_id if candidate.scope_type not in {"agent", "world"} else "",
             session_id=session_id,
             confidence=candidate.confidence,
@@ -169,6 +167,7 @@ class MemoryFormationService:
         rows = self.short_term._get_conn().execute(
             """SELECT * FROM memories0
                WHERE status = 'active' AND created_at <= ?
+                 AND scope_type IN ('person', 'agent')
                ORDER BY created_at ASC""",
             (dream_cutoff,),
         ).fetchall()
@@ -229,23 +228,28 @@ class MemoryFormationService:
 
         self_memory = bool(raw.get("self"))
         requested_scope = str(raw.get("scope_type") or "").strip().lower()
+        if requested_scope == "session":
+            logger.info(
+                "[MemoryFormation] ignored session context; conversation history owns it: %s",
+                content[:80],
+            )
+            return None
         if source == "turn_batch_review" and requested_scope == "agent" and not self_memory:
             # A model cannot turn Person facts into Agent-global memory merely
             # by writing scope_type=agent. It must explicitly classify the
             # content as being about the Agent itself.
             requested_scope = "person"
-        if requested_scope in {"session", "person", "workspace", "agent", "world"}:
+        if requested_scope in {"person", "workspace", "agent", "world"}:
             scope_type = requested_scope
         else:
             scope_type = "agent" if self_memory else "person"
         default_scope_id = {
-            "session": session_id,
             "person": user_id,
             "agent": "global",
             "world": "world",
         }.get(scope_type, "")
         # Model output may choose the kind of scope, but never its identity.
-        # Person/session/Agent ids come from the trusted execution context.
+        # Person/Agent ids come from the trusted execution context.
         scope_id = (
             str(raw.get("scope_id") or "").strip()
             if scope_type in {"workspace"}
